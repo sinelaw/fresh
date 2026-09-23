@@ -83,6 +83,42 @@ const FOCUS_GUTTER_BLANK: &str = "  ";
 /// two spaces for every other control. Returns `""` when the panel
 /// didn't opt into the gutter, so non-marker panels render
 /// byte-for-byte as before.
+/// Move a focused control's `▸ ` from the gutter to just before its label,
+/// past the padding a right-aligned label column puts in front of it — so the
+/// marker points at the control instead of sitting at the panel's edge. The
+/// bytes are only rotated, so every offset past the padding is unchanged.
+pub fn hug_focus_marker(text: &mut String) {
+    let Some(rest) = text.strip_prefix(FOCUS_MARKER) else {
+        return;
+    };
+    let pad = rest.len() - rest.trim_start_matches(' ').len();
+    if pad == 0 {
+        return;
+    }
+    let body = rest[pad..].to_string();
+    *text = format!("{}{}{}", " ".repeat(pad), FOCUS_MARKER, body);
+}
+
+/// Where a focused form control's highlight band starts: at its first
+/// visible character, past the focus-marker gutter and a right-aligned
+/// label's padding. Banding from column 0 painted a wide empty strip across
+/// the label column of a form, which read as a selected row rather than a
+/// focused control.
+fn focus_band_start(text: &str) -> usize {
+    let body = text.strip_prefix(FOCUS_MARKER).unwrap_or(text);
+    let skip = text.len() - body.len();
+    let first = body
+        .char_indices()
+        .find(|(_, c)| !c.is_whitespace())
+        .map(|(i, _)| i)
+        .unwrap_or(0);
+    // A marker already moved in front of the label is not part of the band.
+    match body[first..].strip_prefix(FOCUS_MARKER) {
+        Some(_) => skip + first + FOCUS_MARKER.len(),
+        None => skip + first,
+    }
+}
+
 pub fn focus_gutter_prefix(focused: bool, marker_gutter: bool) -> &'static str {
     if !marker_gutter {
         ""
@@ -387,22 +423,6 @@ fn collect_tabbable(spec: &WidgetSpec, out: &mut Vec<String>) {
     }
 }
 
-/// Blank full-height-padding row used to pad a List to its
-/// advertised height. Padding rows aren't clickable.
-pub fn blank_list_row() -> TextPropertyEntry {
-    let mut padding = TextPropertyEntry {
-        text: String::new(),
-        properties: Default::default(),
-        style: None,
-        inline_overlays: Vec::new(),
-        segments: Vec::new(),
-        pad_to_chars: None,
-        truncate_to_chars: None,
-    };
-    ensure_trailing_newline(&mut padding);
-    padding
-}
-
 /// Style one row of a selected *card* so selection reads in any
 /// theme — even when colours are too subtle: a *heavy* box border
 /// (colour-independent marker), bold, and an accent fg on the
@@ -524,69 +544,6 @@ fn ratatui_color_to_spec(c: ratatui::style::Color) -> Option<OverlayColorSpec> {
 // =========================================================================
 // LabeledSection helpers.
 // =========================================================================
-
-pub const LEFT_BORDER_PREFIX: &str = "│ ";
-const RIGHT_BORDER_SUFFIX: &str = " │";
-
-/// Build the top border row for a `LabeledSection`.
-///
-/// Output (with label "Session name", total_cols = 30):
-///
-/// ```text
-/// ╭─ Session name ─────────────╮
-/// ```
-///
-/// When `label` is empty the legend separators collapse and the
-/// border is one unbroken `─` run.
-pub fn render_section_top_border(label: &str, total_cols: usize) -> TextPropertyEntry {
-    let mut text = String::new();
-    let mut overlays: Vec<InlineOverlay> = Vec::new();
-    text.push('╭');
-    if label.is_empty() {
-        for _ in 0..total_cols.saturating_sub(2) {
-            text.push('─');
-        }
-    } else {
-        // `╭─ label ─...─╮`. Capture the byte range of `label`
-        // (after the leading `─ ` and before the trailing ` `)
-        // so the renderer can paint it in a distinct fg, marking
-        // it as the section caption rather than border chrome.
-        let label_cols = label.chars().count();
-        let used = 1 + 1 + 1 + label_cols + 1; // ╭ ─ ` ` label ` `
-        text.push('─');
-        text.push(' ');
-        let label_byte_start = text.len();
-        text.push_str(label);
-        let label_byte_end = text.len();
-        text.push(' ');
-        let remaining = total_cols.saturating_sub(used + 1); // -1 for `╮`
-        for _ in 0..remaining {
-            text.push('─');
-        }
-        overlays.push(InlineOverlay {
-            start: label_byte_start,
-            end: label_byte_end,
-            style: OverlayOptions {
-                fg: Some(OverlayColorSpec::theme_key(KEY_SECTION_LABEL_FG)),
-                bold: true,
-                ..Default::default()
-            },
-            properties: Default::default(),
-            unit: OffsetUnit::Byte,
-        });
-    }
-    text.push('╮');
-    text.push('\n');
-    TextPropertyEntry {
-        text,
-        properties: Default::default(),
-        style: None,
-        inline_overlays: overlays,
-        segments: Vec::new(),
-        pad_to_chars: None,
-        truncate_to_chars: None,
-    }
-}
 
 /// Dim-separator overlay row for the completion popup. Unlike
 /// `render_completion_dim_separator` (which targets a child of
@@ -1042,14 +999,6 @@ pub fn completion_scrollbar_glyph(
     }
 }
 
-/// Wrap a single child row with `│ ... │` and pad / truncate the
-/// child text to fit exactly `inner_width` display columns.
-/// Inline overlays are byte-shifted by the left-prefix length so
-/// they keep aligning with the right characters.
-pub fn wrap_in_side_border(child: TextPropertyEntry, inner_width: usize) -> TextPropertyEntry {
-    wrap_entry_between(child, inner_width, LEFT_BORDER_PREFIX, RIGHT_BORDER_SUFFIX)
-}
-
 /// Pad/truncate `child` to `inner_width` display columns and sandwich it
 /// between `prefix` and `suffix` (side-border chrome), shifting the
 /// child's overlays past the prefix. `LabeledSection` uses the padded
@@ -1263,7 +1212,7 @@ pub fn render_toggle(
     // Focused: full-entry fg/bg + bold.
     if focused {
         overlays.push(InlineOverlay {
-            start: 0,
+            start: focus_band_start(&text),
             end: text.len(),
             style: OverlayOptions {
                 fg: Some(OverlayColorSpec::theme_key(KEY_FOCUSED_FG)),
@@ -1276,6 +1225,7 @@ pub fn render_toggle(
         });
     }
 
+    hug_focus_marker(&mut text);
     TextPropertyEntry {
         text,
         properties: Default::default(),
@@ -1442,6 +1392,7 @@ pub fn render_number(
         );
     }
 
+    hug_focus_marker(&mut text);
     let entry = TextPropertyEntry {
         text,
         properties: Default::default(),
@@ -1597,7 +1548,7 @@ pub fn render_toggle_form(
     }
     if focused {
         overlays.push(InlineOverlay {
-            start: 0,
+            start: focus_band_start(&text),
             end: text.len(),
             style: OverlayOptions {
                 fg: Some(OverlayColorSpec::theme_key(KEY_FOCUSED_FG)),
@@ -1610,6 +1561,7 @@ pub fn render_toggle_form(
         });
     }
 
+    hug_focus_marker(&mut text);
     let entry = TextPropertyEntry {
         text,
         properties: Default::default(),
@@ -1810,7 +1762,7 @@ pub fn render_radio(
     }
     if focused {
         overlays.push(InlineOverlay {
-            start: 0,
+            start: focus_band_start(&text),
             end: text.len(),
             style: OverlayOptions {
                 fg: Some(OverlayColorSpec::theme_key(KEY_FOCUSED_FG)),
@@ -1822,6 +1774,7 @@ pub fn render_radio(
             unit: OffsetUnit::Byte,
         });
     }
+    hug_focus_marker(&mut text);
     RenderedRadio {
         entry: TextPropertyEntry {
             text,
@@ -1931,8 +1884,10 @@ pub fn render_dropdown(
 
     let mut overlays = Vec::new();
     if focused {
+        // The band is the control, `[value ▼]`: the label beside it stays
+        // plain, as a text field's does.
         overlays.push(InlineOverlay {
-            start: 0,
+            start: button_start,
             end: text.len(),
             style: OverlayOptions {
                 fg: Some(OverlayColorSpec::theme_key(KEY_FOCUSED_FG)),
@@ -1958,6 +1913,7 @@ pub fn render_dropdown(
         });
     }
 
+    hug_focus_marker(&mut text);
     let entry = TextPropertyEntry {
         text,
         properties: Default::default(),
@@ -2132,6 +2088,12 @@ pub struct RenderedTreeRow {
     /// `checkable`, or when this node has `checked: None`. The
     /// caller emits a `toggle` hit area over this range.
     pub checkbox_range: Option<(usize, usize)>,
+    /// Byte range within `entry.text` of the row's action button
+    /// (`[ label ]`), brackets included. `None` for a node with no
+    /// `action`. The caller emits an `action` hit area over this range,
+    /// and stops the row-wide `select` hit before it — a press on a
+    /// button is the button's.
+    pub action_range: Option<(usize, usize)>,
     /// Continuation rows below the primary entry when the parent Tree
     /// has `item_height > 1`. Already indented to align under the
     /// primary row's body and blank-padded so the card is exactly
@@ -2139,9 +2101,24 @@ pub struct RenderedTreeRow {
     pub extra_entries: Vec<TextPropertyEntry>,
 }
 
+/// Columns a row's action button takes, its leading gap included.
+///
+/// Measured in one place because three readers need the same number:
+/// the paint that draws it, the budget that keeps the body clear of it,
+/// and [`pan_bounds`], which says how far the body may travel.
+fn tree_row_action_cols(node: &TreeNode) -> usize {
+    node.action
+        .as_deref()
+        .map(|label| ACTION_GAP + crate::primitives::display_width::str_width(label) + 4)
+        .unwrap_or(0)
+}
+
+/// Blank columns between a tree row's body and its action button.
+const ACTION_GAP: usize = 2;
+
 /// Render a single `TreeNode` row.
 ///
-/// Layout: `<indent><disclosure><space>[<checkbox><space>]<node-text>`
+/// Layout: `<indent><disclosure><space>[<checkbox><space>]<node-text>[<action>]`
 /// where:
 /// * `indent` = `depth * 2` spaces.
 /// * `disclosure` = `▶` (collapsed) / `▼` (expanded) for internal
@@ -2152,10 +2129,17 @@ pub struct RenderedTreeRow {
 /// * `<node-text>` is the plugin's pre-rendered row content, with
 ///   its inline overlays byte-shifted by the prefix length.
 ///
+/// * `<action>` = `[ label ]` for a node carrying one, held against the
+///   right edge of the width it is given and outside the body's window.
+///   That width is the window's, not the panel's: a panel whose scrollbar
+///   takes a column passes the narrower number, so a button is never drawn
+///   where a bar will be.
+///
 /// The disclosure glyph is colored with `ui.help_key_fg`; the
 /// checkbox glyph reuses `ui.tab_active_fg` (the same key the
 /// `Toggle` widget uses for its checked-state glyph) so it reads
-/// as a control surface against the row's text.
+/// as a control surface against the row's text. The action button
+/// wears `ui.help_key_fg` for the same reason.
 /// A row body fitted to the columns it has, and where the slice came from.
 ///
 /// The byte offsets are into the *original* body, so the caller can carry the
@@ -2465,7 +2449,9 @@ fn tree_row_pan_range(
     cols: u32,
 ) -> (i32, i32) {
     let gutter = tree_row_gutter_cols(node, checkable, indent_cols);
-    let budget = (cols as usize).saturating_sub(gutter);
+    let budget = (cols as usize)
+        .saturating_sub(gutter)
+        .saturating_sub(tree_row_action_cols(node));
     let w = node.window_anchor.unwrap_or_default();
     let text = row_text(&node.text);
     let pinned_bytes = byte_of_char(&text, w.pinned as usize);
@@ -2588,7 +2574,14 @@ pub fn render_tree_row(
     // and cut by the terminal, so there was nothing to pan and no marker to
     // say anything had been cut. See `window_row_body`.
     let prefix_cols = crate::primitives::display_width::str_width(&text);
-    let budget = (panel_width as usize).saturating_sub(prefix_cols);
+    // **The button is a gutter too, at the other end.** Taking its columns
+    // out of the body's budget is what makes the row slide under it: a body
+    // fitted to the full width would windowed itself right across the button
+    // and pushed it past the panel's edge.
+    let action_cols = tree_row_action_cols(node);
+    let budget = (panel_width as usize)
+        .saturating_sub(prefix_cols)
+        .saturating_sub(action_cols);
     // **The row's own pinned head.** A search result's `path:line` is its
     // identity, not its content: a window that slid it away left rows nobody
     // could tell apart. It stays with the prefix above and the rest of the row
@@ -2607,6 +2600,28 @@ pub fn render_tree_row(
     });
     let window = window_row_body(rest, budget.saturating_sub(pinned_cols), anchor, h_offset);
     text.push_str(&window.text);
+
+    // The action button, against the panel's right edge, so a column of
+    // buttons stands where the reader last left the pointer rather than
+    // wherever each row's text happened to stop.
+    let action_range = node.action.as_deref().map(|label| {
+        let drawn = crate::primitives::display_width::str_width(&text);
+        // The gap is a minimum, not part of the button: the pad reaches from
+        // where the body stopped to where the button starts, and is never
+        // less than the gap — a body fitted to the budget lands exactly there.
+        let pad = (panel_width as usize)
+            .saturating_sub(action_cols - ACTION_GAP)
+            .saturating_sub(drawn)
+            .max(ACTION_GAP);
+        for _ in 0..pad {
+            text.push(' ');
+        }
+        let start = text.len();
+        text.push_str("[ ");
+        text.push_str(label);
+        text.push_str(" ]");
+        (start, text.len())
+    });
 
     // Carry over the plugin's inline overlays. The pinned head keeps its
     // offsets (shifted by the prefix only); everything past it is rebased onto
@@ -2671,6 +2686,22 @@ pub fn render_tree_row(
         });
     }
 
+    // The button's ink is the one the panel already spends on "this is a
+    // control, not prose" — the same key the disclosure glyph and a checked
+    // box wear, so a row's button reads as part of the same family.
+    if let Some((a, b)) = action_range {
+        overlays.push(InlineOverlay {
+            start: a,
+            end: b,
+            style: OverlayOptions {
+                fg: Some(OverlayColorSpec::theme_key(KEY_HELP_KEY_FG)),
+                ..Default::default()
+            },
+            properties: Default::default(),
+            unit: OffsetUnit::Byte,
+        });
+    }
+
     let disclosure_range = if node.has_children {
         Some((disc_start, disc_end))
     } else {
@@ -2715,7 +2746,9 @@ pub fn render_tree_row(
                     // card's continuation lines slide with the line they
                     // continue. No anchor: only the primary row has a span it
                     // exists to show.
-                    let cont_budget = (panel_width as usize).saturating_sub(cont_indent_cols);
+                    let cont_budget = (panel_width as usize)
+                        .saturating_sub(cont_indent_cols)
+                        .saturating_sub(action_cols);
                     let cont = window_row_body(&src.text, cont_budget, None, h_offset);
                     let mut line_text = String::with_capacity(shift + cont.text.len());
                     line_text.push_str(&indent_str);
@@ -2747,6 +2780,7 @@ pub fn render_tree_row(
         entry,
         disclosure_range,
         checkbox_range,
+        action_range,
         extra_entries,
     }
 }
@@ -2873,6 +2907,9 @@ fn render_tree_card(node: &TreeNode, item_height: u32, panel_width: u32) -> Rend
         entry: border_row('╭', '╮'),
         disclosure_range: None,
         checkbox_range: None,
+        // A card's chrome has nowhere to put a button; `TreeNode::action`
+        // says so.
+        action_range: None,
         extra_entries,
     }
 }
@@ -3322,11 +3359,11 @@ pub struct RenderedTextArea {
 
 /// What every row of a text area shares, resolved once from the whole value.
 ///
-/// **A text area does not wrap.** [`render_text_area`] splits `value` on
-/// `\n` and pads or tail-truncates each line to the field width, so the row
-/// drawn for line `i` is a function of that one line plus the four facts
-/// below — none of which depend on which rows are being drawn, or on how
-/// many. That is what lets a caller which owns its own window format only
+/// **A text area soft-wraps, once, up front.** [`text_area_geom`] splits
+/// `value` on `\n` and wraps each line to the field width into rows, so the
+/// row drawn at index `i` is a function of that one row's byte range plus the
+/// four facts below — none of which depend on which rows are being drawn, or
+/// on how many. That is what lets a caller which owns its own window format only
 /// the rows it shows, instead of asking for the whole document and windowing
 /// the answer it gets back.
 ///
@@ -3334,7 +3371,7 @@ pub struct RenderedTextArea {
 /// function (`kinds::text::render_markdown_text_area`) for that reason: there
 /// a row is a slice of a reflowed document rather than a line of this one.
 pub struct TextAreaGeom {
-    /// Byte range of each logical line within the value.
+    /// Byte range of each row within the value: its lines, soft-wrapped.
     lines: Vec<(usize, usize)>,
     /// Columns every row is padded or truncated to.
     width: usize,
@@ -3355,13 +3392,14 @@ pub struct TextAreaGeom {
 }
 
 impl TextAreaGeom {
-    /// How many rows the document has: one per line, always. An empty value
-    /// is one empty line, which is what an empty editor shows.
+    /// How many rows the document has: at least one per line, more where a
+    /// line wraps. An empty value is one empty row, which is what an empty
+    /// editor shows.
     pub fn rows(&self) -> usize {
         self.lines.len()
     }
 
-    /// The line the caret sits on, whether or not it is drawn. The scroll
+    /// The row the caret sits on, whether or not it is drawn. The scroll
     /// clamp is expressed in it.
     pub fn cursor_line(&self) -> usize {
         self.cursor_at.0
@@ -3388,26 +3426,23 @@ pub fn text_area_geom(
         40
     };
 
-    // Split value into lines (without the `\n`), as byte ranges rather than
-    // slices so the geometry outlives the borrow — a windowing caller keeps
-    // it across the whole build and slices `value` per row. `split` always
-    // yields at least one piece, so an empty value is one empty line.
-    let mut lines: Vec<(usize, usize)> = Vec::new();
-    let mut at = 0usize;
-    for line in value.split('\n') {
-        lines.push((at, at + line.len()));
-        at += line.len() + 1;
-    }
+    // Split value into rows, as byte ranges rather than slices so the
+    // geometry outlives the borrow — a windowing caller keeps it across the
+    // whole build and slices `value` per row. A line longer than the field
+    // wraps at its last space (or mid-word, when a word is wider than the
+    // field). `split` always yields at least one piece, so an empty value is
+    // one empty row.
+    let lines = wrap_rows(value, width);
 
-    // Cursor → (line_index, byte_in_line). When `cursor_byte` is
-    // negative (no cursor), we still compute a line for scroll
+    // Cursor → (row_index, byte_in_row). When `cursor_byte` is
+    // negative (no cursor), we still compute a row for scroll
     // bookkeeping but don't draw one.
     let raw_cursor_byte = if cursor_byte < 0 {
         value.len()
     } else {
         (cursor_byte as usize).min(value.len())
     };
-    let cursor_at = byte_to_line_col(value, raw_cursor_byte);
+    let cursor_at = byte_to_row_col(&lines, raw_cursor_byte);
 
     // Selection decomposed onto (line_start, byte_in_line) →
     // (line_end, byte_in_line) so each visible row can emit its own
@@ -3419,7 +3454,7 @@ pub fn text_area_geom(
         if hi <= lo || hi > value.len() {
             return None;
         }
-        Some((byte_to_line_col(value, lo), byte_to_line_col(value, hi)))
+        Some((byte_to_row_col(&lines, lo), byte_to_row_col(&lines, hi)))
     });
 
     let show_placeholder = !focused && value.is_empty();
@@ -3658,18 +3693,65 @@ pub fn render_text_area(
     }
 }
 
-/// Translate a byte offset in `value` to (line_index, byte_in_line).
-fn byte_to_line_col(value: &str, byte: usize) -> (usize, usize) {
-    let byte = byte.min(value.len());
-    let mut line = 0usize;
-    let mut line_start = 0usize;
-    for (i, &b) in value.as_bytes().iter().enumerate().take(byte) {
-        if b == b'\n' {
-            line += 1;
-            line_start = i + 1;
+/// The rows a text area draws `value` as: its lines, each soft-wrapped to
+/// `width` columns.
+///
+/// A row is at most `width - 1` characters (plus the one space it may end
+/// on), so the caret after the last one still lands inside the field. A wrapped row breaks after its last space,
+/// which stays on that row, and a word wider than the row is cut where the
+/// row ends. Rows are byte ranges into `value`; a wrapped line's rows are
+/// contiguous, and the next line's first row starts one byte (the `\n`)
+/// past the last one's end.
+fn wrap_rows(value: &str, width: usize) -> Vec<(usize, usize)> {
+    let limit = width.saturating_sub(1).max(1);
+    let mut rows = Vec::new();
+    let mut at = 0usize;
+    for line in value.split('\n') {
+        let end = at + line.len();
+        let mut pos = at;
+        loop {
+            // The byte `limit` characters on, or the line's end.
+            let hard = value[pos..end]
+                .char_indices()
+                .nth(limit)
+                .map_or(end, |(i, _)| pos + i);
+            if hard >= end {
+                rows.push((pos, end));
+                break;
+            }
+            // A space right after the row's last character still ends it:
+            // the space rides on this row, past the text, rather than
+            // pushing the whole last word down.
+            let scan = if value[hard..].starts_with(' ') {
+                hard + 1
+            } else {
+                hard
+            };
+            let brk = match value[pos..scan].rfind(' ') {
+                Some(i) if i > 0 => pos + i + 1,
+                _ => hard,
+            };
+            rows.push((pos, brk));
+            pos = brk;
+        }
+        at = end + 1;
+    }
+    rows
+}
+
+/// Translate a byte offset in `value` to (row_index, byte_in_row) over the
+/// rows [`wrap_rows`] made. A byte on a wrap boundary is the start of the
+/// next row, where typing there would land; the end of a line is its last
+/// row's end.
+fn byte_to_row_col(rows: &[(usize, usize)], byte: usize) -> (usize, usize) {
+    for (r, &(a, b)) in rows.iter().enumerate() {
+        let continues = rows.get(r + 1).is_some_and(|&(next, _)| next == b);
+        if byte >= a && (byte < b || (byte == b && !continues)) {
+            return (r, byte - a);
         }
     }
-    (line, byte - line_start)
+    let last = rows.len().saturating_sub(1);
+    (last, rows.get(last).map_or(0, |&(a, b)| b - a))
 }
 
 /// Pad `line` with trailing spaces to `target` chars, or
@@ -3933,6 +4015,54 @@ pub mod tests {
         }
     }
 
+    /// A row's button is drawn at the right edge of the width it is given,
+    /// and the body is fitted to what it leaves — a long row slides under its
+    /// button rather than pushing it off the panel. Keeping it clear of the
+    /// scrollbar is the panel's business: its tree reserves the bar a column,
+    /// so the width that arrives here is already one the rows may paint in.
+    #[test]
+    fn tree_row_draws_its_action_at_the_edge() {
+        let mut node = tnode("session-a", 0, false);
+        node.action = Some("Import".into());
+        let r = render_tree_row(&node, false, false, 1, false, 40, 2, 0);
+        let (a, b) = r.action_range.expect("a node with an action has a range");
+        assert_eq!(&r.entry.text[a..b], "[ Import ]", "the button is the range");
+        assert_eq!(
+            crate::primitives::display_width::str_width(&r.entry.text),
+            40,
+            "and it ends at the width it was given: {:?}",
+            r.entry.text
+        );
+
+        // The same row, too wide to fit: the body is windowed, the button is
+        // not — it is drawn after the cut, still at the edge.
+        let mut long = tnode(&"x".repeat(200), 0, false);
+        long.action = Some("Import".into());
+        let wide = render_tree_row(&long, false, false, 1, false, 40, 2, 0);
+        let (a, b) = wide.action_range.expect("still there");
+        assert_eq!(&wide.entry.text[a..b], "[ Import ]");
+        assert_eq!(
+            crate::primitives::display_width::str_width(&wide.entry.text),
+            40,
+            "a row that overflows still ends in its button: {:?}",
+            wide.entry.text
+        );
+
+        // No action, no range, and nothing taken off the body's budget.
+        let plain = render_tree_row(
+            &tnode("session-a", 0, false),
+            false,
+            false,
+            1,
+            false,
+            40,
+            2,
+            0,
+        );
+        assert!(plain.action_range.is_none());
+        assert!(!plain.entry.text.contains('['), "{:?}", plain.entry.text);
+    }
+
     #[test]
     fn fit_label_truncates_with_ellipsis() {
         // Too long → truncated to width with a trailing `…`.
@@ -4042,22 +4172,6 @@ pub mod tests {
     // -------------------------------------------------------------
     // List
     // -------------------------------------------------------------
-
-    pub fn make_list(selected: i32, visible: u32, total: usize, key: Option<&str>) -> WidgetSpec {
-        let items = (0..total)
-            .map(|i| TextPropertyEntry::text(format!("row{}", i)))
-            .collect();
-        let item_keys = (0..total).map(|i| format!("k{}", i)).collect();
-        WidgetSpec::List {
-            items,
-            item_specs: vec![],
-            item_keys,
-            selected_index: selected,
-            visible_rows: Some(visible),
-            focusable: true,
-            key: key.map(|s| s.to_string()),
-        }
-    }
 
     // -------------------------------------------------------------
     // TextInput
@@ -4179,6 +4293,28 @@ pub mod tests {
             o.style.bg.as_ref().and_then(|c| c.as_theme_key()) == Some("ui.text_input_selection_bg")
         });
         assert!(!has_sel_overlay);
+    }
+
+    /// **A long line wraps at a space instead of running off the field.** The
+    /// field is 12 wide, so a row holds 11 characters; the break keeps the
+    /// space on the first row, and the caret at the end of the text sits on
+    /// the second row, where typing continues.
+    #[test]
+    fn a_long_line_wraps_at_a_space_and_the_caret_follows() {
+        let v = "hello there world";
+        let r = render_text_area(v, v.len() as i32, None, true, "", None, 3, 12, 0, 80);
+        assert_eq!(r.entries[0].text.trim_end(), "hello there");
+        assert_eq!(r.entries[1].text.trim_end(), "world");
+        assert_eq!(r.cursor_buffer_row, Some(1));
+        assert_eq!(r.cursor_byte_in_row, Some(5));
+        // A word wider than the row is cut where the row ends.
+        let r = render_text_area("abcdefghijklmnop", 0, None, true, "", None, 3, 6, 0, 80);
+        assert_eq!(r.entries[0].text, "abcde ");
+        assert_eq!(r.entries[1].text.trim_end(), "fghij");
+        // A caret on a wrap boundary starts the next row.
+        let r = render_text_area("hello there", 6, None, true, "", None, 3, 8, 0, 80);
+        assert_eq!(r.cursor_buffer_row, Some(1));
+        assert_eq!(r.cursor_byte_in_row, Some(0));
     }
 
     #[test]
@@ -4409,6 +4545,7 @@ pub mod tests {
             checked: None,
             extra_lines: Vec::new(),
             window_anchor: None,
+            action: None,
         }
     }
 
@@ -4429,6 +4566,7 @@ pub mod tests {
             checkable: false,
             item_height: 1,
             card_borders: false,
+            toggle_on_click: false,
             indent_cols: 2,
             key: key.map(|s| s.to_string()),
         }

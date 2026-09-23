@@ -9,7 +9,17 @@ use std::path::PathBuf;
 use crate::action::Action;
 use crate::{BufferId, CursorId, SplitId};
 
-/// Arguments passed to hook callbacks
+/// A buffer named together with the window it belongs to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+pub struct BufferRef {
+    pub window_id: u64,
+    pub buffer_id: BufferId,
+}
+
+/// Arguments passed to hook callbacks.
+///
+/// A `window_id` next to a `buffer_id` is the window (`WindowId.0`) the
+/// buffer belongs to; a buffer lives in one window, so hold the pair together.
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(untagged)]
 pub enum HookArgs {
@@ -17,13 +27,25 @@ pub enum HookArgs {
     BeforeFileOpen { path: PathBuf },
 
     /// After a file is successfully opened
-    AfterFileOpen { buffer_id: BufferId, path: PathBuf },
+    AfterFileOpen {
+        buffer_id: BufferId,
+        window_id: u64,
+        path: PathBuf,
+    },
 
     /// Before a buffer is saved to disk
-    BeforeFileSave { buffer_id: BufferId, path: PathBuf },
+    BeforeFileSave {
+        buffer_id: BufferId,
+        window_id: u64,
+        path: PathBuf,
+    },
 
     /// After a buffer is successfully saved
-    AfterFileSave { buffer_id: BufferId, path: PathBuf },
+    AfterFileSave {
+        buffer_id: BufferId,
+        window_id: u64,
+        path: PathBuf,
+    },
 
     /// A buffer was reloaded from disk — auto-revert picked up an external
     /// change (e.g. `git checkout <ref> -- <file>` run in another terminal)
@@ -43,11 +65,12 @@ pub enum HookArgs {
     AfterFileExplorerChange { path: PathBuf },
 
     /// A buffer was closed
-    BufferClosed { buffer_id: BufferId },
+    BufferClosed { buffer_id: BufferId, window_id: u64 },
 
     /// Before text is inserted
     BeforeInsert {
         buffer_id: BufferId,
+        window_id: u64,
         position: usize,
         text: String,
     },
@@ -55,6 +78,7 @@ pub enum HookArgs {
     /// After text was inserted
     AfterInsert {
         buffer_id: BufferId,
+        window_id: u64,
         position: usize,
         text: String,
         /// Byte position where the affected range starts
@@ -72,6 +96,7 @@ pub enum HookArgs {
     /// Before text is deleted
     BeforeDelete {
         buffer_id: BufferId,
+        window_id: u64,
         start: usize,
         end: usize,
     },
@@ -79,6 +104,7 @@ pub enum HookArgs {
     /// After text was deleted
     AfterDelete {
         buffer_id: BufferId,
+        window_id: u64,
         start: usize,
         end: usize,
         deleted_text: String,
@@ -97,6 +123,7 @@ pub enum HookArgs {
     /// Cursor moved to a new position
     CursorMoved {
         buffer_id: BufferId,
+        window_id: u64,
         cursor_id: CursorId,
         old_position: usize,
         new_position: usize,
@@ -107,10 +134,10 @@ pub enum HookArgs {
     },
 
     /// Buffer became active
-    BufferActivated { buffer_id: BufferId },
+    BufferActivated { buffer_id: BufferId, window_id: u64 },
 
     /// Buffer was deactivated
-    BufferDeactivated { buffer_id: BufferId },
+    BufferDeactivated { buffer_id: BufferId, window_id: u64 },
 
     /// LSP diagnostics were updated for a file
     DiagnosticsUpdated {
@@ -337,6 +364,7 @@ pub enum HookArgs {
     ViewportChanged {
         split_id: SplitId,
         buffer_id: BufferId,
+        window_id: u64,
         top_byte: usize,
         top_line: Option<usize>,
         width: u16,
@@ -433,6 +461,38 @@ pub enum HookArgs {
         /// The newly active session id. Always present in the
         /// `sessions` list.
         active_id: u64,
+    },
+
+    /// Which chrome region holds the keyboard changed: `"editor"` (a pane),
+    /// `"explorer"` (the file tree), `"dock"`, or `"section"` (a sidebar
+    /// section — `plugin` and `panel_id` name it). The answer to "does the
+    /// pane have the keyboard?" a plugin used to have to guess from its own
+    /// focus events (sinelaw/fresh#3326, G).
+    ChromeFocusChanged {
+        /// The active window.
+        window_id: u64,
+        region: String,
+        plugin: Option<String>,
+        panel_id: Option<u64>,
+    },
+
+    /// What the user is looking at changed: the active buffer of the active
+    /// window is a different `(window, buffer)` than it was. One hook for
+    /// the twelve plugins that want exactly this and used to approximate it
+    /// with `buffer_activated` alone — which fires for every reason below
+    /// too, and keeps firing. Fires after `active_window_changed` and
+    /// `buffer_activated` for the same change.
+    ActiveBufferChanged {
+        /// The window now active.
+        window_id: u64,
+        /// The buffer now active in it.
+        buffer_id: BufferId,
+        /// What was active before, or `None` on the first announcement.
+        previous: Option<BufferRef>,
+        /// Why: `"window"` — a window switch; `"buffer"` — a tab, split or
+        /// open changed the buffer within the same window; `"open"` — the
+        /// same buffer was re-pointed at another file in place.
+        reason: String,
     },
 
     /// PTY terminal received output bytes from the spawned process.
@@ -553,6 +613,9 @@ pub enum HookArgs {
     /// At v1 only widgets that have user-driven behaviour fire this
     /// hook. The HintBar widget is read-only and does not emit events.
     WidgetEvent {
+        /// The window that was active when the widget fired. A panel
+        /// scoped to a buffer or window belongs to this one.
+        window_id: u64,
         /// The plugin-allocated panel ID from the original
         /// `MountWidgetPanel`.
         panel_id: u64,
@@ -908,6 +971,7 @@ mod tests {
     fn hook_args_to_json_delete_fields_are_flat() {
         let json = hook_args_to_json(&HookArgs::BeforeDelete {
             buffer_id: crate::BufferId(1),
+            window_id: 1,
             start: 10,
             end: 20,
         })

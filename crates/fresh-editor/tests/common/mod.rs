@@ -8,6 +8,9 @@ pub mod blog_showcase;
 pub mod dormant_ssh;
 #[cfg(test)]
 #[allow(dead_code)]
+pub mod explorer;
+#[cfg(test)]
+#[allow(dead_code)]
 pub mod fake_lsp;
 #[cfg(test)]
 #[allow(dead_code)]
@@ -23,6 +26,9 @@ pub mod global_state;
 pub mod harness;
 #[cfg(test)]
 #[allow(dead_code)]
+pub mod launch_form;
+#[cfg(test)]
+#[allow(dead_code)]
 pub mod pty;
 #[cfg(test)]
 #[allow(dead_code)]
@@ -30,6 +36,9 @@ pub mod scenario;
 #[cfg(test)]
 #[allow(dead_code)]
 pub mod scrollbar;
+#[cfg(test)]
+#[allow(dead_code)]
+pub mod sidebar;
 #[cfg(test)]
 #[allow(dead_code)]
 pub mod timing;

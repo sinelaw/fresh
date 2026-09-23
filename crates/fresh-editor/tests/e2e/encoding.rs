@@ -1930,13 +1930,10 @@ fn test_large_file_gbk_encoding_cancel() {
         screen
     );
 
-    // Press 'c' and then Enter to cancel
+    // Press 'c' to cancel. The confirmation is a dialog, so the accelerator
+    // is the whole answer — there is no line to press Enter on.
     harness
         .send_key(KeyCode::Char('c'), KeyModifiers::NONE)
-        .unwrap();
-    harness.render().unwrap();
-    harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
     harness.render().unwrap();
 
@@ -2007,13 +2004,9 @@ fn test_large_file_gbk_encoding_change() {
         screen
     );
 
-    // Press 'e' and Enter to open encoding selector
+    // Press 'e' to open the encoding selector.
     harness
         .send_key(KeyCode::Char('e'), KeyModifiers::NONE)
-        .unwrap();
-    harness.render().unwrap();
-    harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
     harness.render().unwrap();
 

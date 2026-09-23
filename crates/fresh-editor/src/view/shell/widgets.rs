@@ -59,10 +59,10 @@
 //! `render::{text_area_geom, text_area_row}`, which the collector calls too —
 //! one copy of each rule rather than two that can drift.
 //!
-//! **A plain text area does not wrap**, which is what let the multi-line field
-//! cross: `render_text_area` splits the value on `\n` and pads or
-//! tail-truncates each line to the field width, so a row is a function of one
-//! line and the field's window can format the rows it draws and no others.
+//! **A plain text area wraps up front**, which is what let the multi-line field
+//! cross: `render::text_area_geom` splits the value on `\n` and soft-wraps each
+//! line to the field width into rows, so a row is a function of one byte range
+//! and the field's window can format the rows it draws and no others.
 //! The wrapping engine is the *markdown* path only (`wrap_styled_lines` over a
 //! parsed document, with a shadow editor over the result), and that is the one
 //! multi-line shape still going through the collector.
@@ -385,6 +385,30 @@ fn keyed(node: Node<UiMsg>, key: Option<fresh_ui::Key>) -> Node<UiMsg> {
 /// e2e tests waiting for it. So a tree is as tall as its content, capped.
 fn tree_rows(content: u32, visible: u32) -> u16 {
     content.min(visible).min(u16::MAX as u32) as u16
+}
+
+/// The column a panel's scrollbar floats in.
+///
+/// A revealed bar takes no gutter: it is painted over its window's last
+/// column, deliberately, so a bar that comes and goes does not reflow the row
+/// under the pointer. That is right wherever the row's last cell is padding —
+/// which is every row a plugin builds to the panel's width, and why the rows
+/// are built to that width at all. Reserving the column instead takes one
+/// from every row, and a row that no longer fits the panel it was built for
+/// is a worse thing than a bar over a blank cell.
+///
+/// It is wrong for one cell only: the action button the *host* draws at a
+/// row's edge, which is chrome and cannot be padding. So a row carrying one
+/// is built a column short — and nothing else changes.
+const PANEL_BAR_COLS: u16 = 1;
+
+/// The width to build one tree row at: the panel's, less the column a
+/// floating bar would cut its button in half in.
+fn tree_row_width(panel: u16, node: &fresh_core::api::TreeNode) -> u16 {
+    match node.action.is_some() {
+        true => panel.saturating_sub(PANEL_BAR_COLS),
+        false => panel,
+    }
 }
 
 /// The description for a covered spec.
@@ -1713,6 +1737,7 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
             indent_cols,
             item_height,
             card_borders,
+            toggle_on_click: _,
         } if *card_borders => {
             let sel_abs = live_selection(cx, key, *selected_index);
             let expanded: std::collections::HashSet<String> =
@@ -1737,7 +1762,7 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                     *checkable,
                     *item_height,
                     true,
-                    width as u32,
+                    tree_row_width(width, &n) as u32,
                     *indent_cols,
                     h_pan,
                 );
@@ -1813,6 +1838,11 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                         "key": item_key,
                         "checked": !n.checked.unwrap_or(false),
                     });
+                    hits.push(((a, b), h));
+                }
+                if let Some((a, b)) = r.action_range {
+                    let mut h = select(false);
+                    h.event_type = "action";
                     hits.push(((a, b), h));
                 }
                 // The body starts after whatever prefix the glyphs took —
@@ -1891,6 +1921,7 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
             indent_cols,
             item_height,
             card_borders,
+            toggle_on_click: _,
         } if !*card_borders => {
             use std::rc::Rc;
             let expanded: std::collections::HashSet<String> =
@@ -1924,7 +1955,7 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                         checkable,
                         1,
                         false,
-                        width as u32,
+                        tree_row_width(width, &node) as u32,
                         indent,
                         h_pan,
                     );
@@ -1972,6 +2003,15 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                                 "key": item_key,
                                 "checked": !node.checked.unwrap_or(false),
                             }),
+                            false,
+                        ));
+                    }
+                    if let Some((a, b)) = r.action_range {
+                        hits.push(hit(
+                            "action",
+                            a,
+                            b,
+                            serde_json::json!({ "index": abs, "key": item_key }),
                             false,
                         ));
                     }
@@ -2059,10 +2099,10 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
         // per line, with the library's own bar, and the caret is what it
         // reveals.
         //
-        // **What made that cheap is that a text area does not wrap.**
-        // `render_text_area` splits the value on `\n` and pads or truncates
-        // each line to the field width, so the row for line `i` is a function
-        // of that line and of five facts resolved once for the whole value —
+        // **What made that cheap is that a text area wraps once, up front.**
+        // `render::text_area_geom` splits the value on `\n` and soft-wraps
+        // each line to the field width, so the row `i` is a function of its
+        // byte range and of five facts resolved once for the whole value —
         // width, focus, the selection in line coordinates, the caret's line,
         // and the placeholder. Those are `render::text_area_geom`, and
         // `render::text_area_row` is the row; the collector is built from the
@@ -2250,24 +2290,30 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
             if let (Some(k), Some(ed)) = (wk, editor) {
                 if cx.is_focused(Some(k)) {
                     let caret = ed.flat_cursor_byte().min(text_len);
-                    let (range, ink) = match ed.selection_flat_range() {
-                        Some((a, b)) if a != b => (
-                            a.min(b).min(text_len)..a.max(b).min(text_len),
-                            "ui.popup_selection_fg/ui.popup_selection_bg".to_string(),
-                        ),
-                        _ => {
-                            let next = doc.text[caret..]
-                                .chars()
-                                .next()
-                                .map(|c| caret + c.len_utf8())
-                                .unwrap_or(caret);
-                            (
-                                caret..next.min(text_len),
-                                cx.surface.clone().plus(Attrs::REVERSED).to_string(),
-                            )
+                    match ed.selection_flat_range() {
+                        Some((a, b)) if a != b => {
+                            run = run.selection_bytes(
+                                a.min(b).min(text_len)..a.max(b).min(text_len),
+                                "ui.popup_selection_fg/ui.popup_selection_bg",
+                            );
                         }
-                    };
-                    run = run.selection_bytes(range, ink);
+                        // **A caret, not a one-byte selection.** It was the
+                        // latter: the range from the caret to the next
+                        // character, washed reversed. A selection is the cells
+                        // its bytes are *drawn* in, and the byte at the end of
+                        // a rendered line is the `\n` the wrap dropped — drawn
+                        // nowhere — so the caret painted nothing at all and
+                        // vanished the moment a click or a drag put it there.
+                        // `block_caret_byte` is placed through the run's own
+                        // `cell_of`, which answers the trailing edge of a row
+                        // like every other position.
+                        _ => {
+                            run = run.block_caret_byte(
+                                caret,
+                                cx.surface.clone().plus(Attrs::REVERSED).to_string(),
+                            );
+                        }
+                    }
                 }
             }
             let body = match wk {
@@ -5065,6 +5111,7 @@ pub(crate) mod tests {
             checked: None,
             extra_lines: Vec::new(),
             window_anchor: None,
+            action: None,
         }
     }
 
@@ -5083,6 +5130,7 @@ pub(crate) mod tests {
             checkable: false,
             item_height: 1,
             card_borders: false,
+            toggle_on_click: false,
             indent_cols: 2,
         }
     }
@@ -6215,6 +6263,7 @@ pub(crate) mod tests {
                     checked: None,
                     extra_lines: vec![raw(&format!("branch-{i}")), raw("2 files")],
                     window_anchor: None,
+                    action: None,
                 })
                 .collect(),
             item_keys: (0..n).map(|i| format!("s{i}")).collect(),
@@ -6226,6 +6275,7 @@ pub(crate) mod tests {
             indent_cols: 2,
             item_height: 3,
             card_borders: true,
+            toggle_on_click: false,
         }
     }
 

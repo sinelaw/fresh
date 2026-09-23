@@ -218,7 +218,7 @@ impl<'a> BodyPainter<'a> {
                 prepared.unwrap_or_else(|| {
                     // The panes at the boxes the tree placed them in —
                     // not a second layout of the grid.
-                    let base_visible = rects.visible(&mgr.visible_leaves());
+                    let base_visible = mgr.visible_leaves();
                     let pass = prepare_content(
                         rects,
                         &base_visible,
@@ -260,23 +260,22 @@ impl<'a> BodyPainter<'a> {
         // A pane the tree mounts and the pass does not list: the window's
         // splits changed under the description. It paints nothing rather than
         // painting a stale leaf's buffer.
-        let Some(mut pane) = pass.visible.iter().copied().find(|(_, id, ..)| *id == leaf) else {
+        let Some(pane) = pass.visible.iter().copied().find(|(_, id, ..)| *id == leaf) else {
             return;
         };
-        // **The fold's rect is the content leaf's.** The pane's box — the
-        // strip and the bars the painter still fills beside the content — is
-        // read off the same tree the leaf was placed in (`PaneRects`), so the
-        // two are one layout's answers; the content rect the pass carves from
-        // that box is asserted equal to this one in `paint_leaf`.
+        // **The fold's rect is the content leaf's.** The pane's box and its
+        // content slot are both read off the tree the leaf was placed in
+        // (`PaneRects`), so they are one layout's two answers, and `paint_leaf`
+        // takes the content slot from the same read rather than carving one of
+        // its own. This says the fold agrees with what it will paint into.
         debug_assert_eq!(
             self.rects.content(leaf),
             Some(rect),
             "pane {leaf:?}: the fold's rect is not the content slot the tree placed"
         );
-        let Some(pane_box) = self.rects.pane(leaf) else {
+        if self.rects.pane(leaf).is_none() {
             return;
-        };
-        pane.3 = pane_box;
+        }
         let state = self.state;
         let window = self.window;
         let contents = &mut self.contents;
@@ -296,7 +295,7 @@ impl<'a> BodyPainter<'a> {
         // grid over the mirror the text pass drew, or — for text — the fade
         // at the pane's scrolled edges. Per pane, inside the host's callback,
         // so the fold is the frame's one paint (design §3.3).
-        let (_, _, buffer_id, _, _) = pane;
+        let (_, _, buffer_id, _) = pane;
         let live_terminal = !self.scrollback.contains(&leaf)
             && self
                 .editor
@@ -586,7 +585,7 @@ pub fn reconcile_body(
         pane_chrome,
         &described_panes,
         |facts, stores, mgr| {
-            let base_visible = rects.visible(&mgr.visible_leaves());
+            let base_visible = mgr.visible_leaves();
             let pass = prepare_content(
                 rects,
                 &base_visible,
@@ -1720,7 +1719,28 @@ impl Editor {
 /// painter's rectangles produced, so deleting those rectangles would have
 /// taken the web's path with them.
 impl Editor {
+    /// A click on a category row, anywhere on it. A category not yet under
+    /// the cursor is selected and expanded; a click on the one already under
+    /// it toggles it open or shut when it can be, and otherwise takes its
+    /// page back to the top as any other selection does.
     pub(crate) fn settings_select_category(&mut self, idx: usize) {
+        use crate::view::settings::state::FocusTarget;
+        if let Some(s) = self.settings_state.as_mut() {
+            s.focus_on(FocusTarget::Categories);
+            if s.selected_category == idx
+                && s.tree_cursor_section.is_none()
+                && s.is_category_expandable(idx)
+            {
+                s.toggle_category_expanded(idx);
+                return;
+            }
+        }
+        self.settings_pick_category(idx);
+    }
+
+    /// Select a category and take its page to the top, expanding it in the
+    /// tree — a click on an unselected row, or any click in the narrow strip.
+    pub(crate) fn settings_pick_category(&mut self, idx: usize) {
         use crate::view::settings::state::FocusTarget;
         if let Some(s) = self.settings_state.as_mut() {
             s.focus_on(FocusTarget::Categories);
@@ -1735,6 +1755,14 @@ impl Editor {
         }
     }
 
+    /// Open or shut a category without selecting it — the web UI's chevron.
+    #[cfg_attr(not(feature = "web"), allow(dead_code))]
+    pub(crate) fn settings_toggle_category(&mut self, idx: usize) {
+        if let Some(s) = self.settings_state.as_mut() {
+            s.toggle_category_expanded(idx);
+        }
+    }
+
     pub(crate) fn settings_jump_to_section(&mut self, cat: usize, section: usize) {
         use crate::view::settings::state::FocusTarget;
         if let Some(s) = self.settings_state.as_mut() {
@@ -1743,12 +1771,6 @@ impl Editor {
             // moving focus to the body is right; a click in the tree keeps
             // the tree focused.
             s.focus_on(FocusTarget::Categories);
-        }
-    }
-
-    pub(crate) fn settings_toggle_category(&mut self, idx: usize) {
-        if let Some(s) = self.settings_state.as_mut() {
-            s.toggle_category_expanded(idx);
         }
     }
 }
@@ -1886,6 +1908,21 @@ impl Editor {
         if let Err(e) = self.dispatch_base_key(ev.code, ev.modifiers) {
             tracing::warn!("key handed on from a keyboard seam failed: {e}");
         }
+    }
+
+    /// The widget the *tree* holds the keyboard on right now, as the panel's
+    /// own key — `None` when focus is outside any described widget, or when
+    /// there is no tree yet.
+    ///
+    /// Read by [`UiFact::WidgetFocus`] to tell a live landing from one a later
+    /// settle has already replaced; see the note there.
+    pub(super) fn tree_focused_widget_key(&self) -> Option<String> {
+        let ui = self.shell_ui.as_ref()?;
+        let id = ui.focused()?;
+        ui.key_of(id)
+            .as_ref()
+            .and_then(crate::view::shell::widgets::widget_key_of)
+            .map(str::to_string)
     }
 
     /// Apply what the tree decided on its own since the last input: the
@@ -2300,6 +2337,17 @@ impl Editor {
                 byte,
                 mods,
             } => {
+                // **The pane half of the press, as the `WidgetHit` arm above
+                // makes it.** The prose run calls `e.stop()` like any other
+                // `hit_node`, so the pane's own pointer surface never sees
+                // this press and nothing else moves the *editor's* focus to
+                // the split the panel is mounted in. Only the widget focus
+                // key moved, so a click on the code tour's description while
+                // the file beside it held the keyboard put a caret in the
+                // prose and left every keystroke going to the file.
+                if let crate::view::shell::widgets::Slot::Pane(pane) = slot {
+                    self.focus_pane(pane);
+                }
                 let Some(pk) = self.panel_key_of_slot(&slot) else {
                     return;
                 };
@@ -2353,6 +2401,26 @@ impl Editor {
                     return;
                 };
                 if self.widget_registry.focus_key(&key) == Some(widget.as_str()) {
+                    return;
+                }
+                // **Only while it is still true.**
+                //
+                // This fact is a *gain* the tree fired at some past settle, and
+                // gains are queued (`Ui::pending_messages`) until the next
+                // input drains them — so a batch can carry two, and the first
+                // is a landing the second already superseded. The tree itself
+                // is the authority on where focus is *now*: a gain it no longer
+                // agrees with describes a frame that has been laid out over,
+                // and applying it walks the panel's focus backwards.
+                //
+                // The dock's `⋯` was that walk. Its press focused the button
+                // (click-to-focus), the menu opened and took the keyboard, and
+                // the two frames in between queued `dock-menu` and then
+                // `menu-pick`. Both landed on the release: `dock-menu` first,
+                // which the plugin reads as focus leaving its menu — so the
+                // menu closed on the release of the very click that opened it,
+                // and only a click fast enough to beat the frames left it up.
+                if self.tree_focused_widget_key().is_some_and(|k| k != widget) {
                     return;
                 }
                 // **Through the same door every other focus move uses.** This
@@ -2640,7 +2708,6 @@ impl Editor {
                 }
             }
             UiFact::PaneTabDrop => self.finish_tab_drag(),
-            UiFact::PaneTabsScroll { pane, delta } => self.scroll_pane_tab_strip(pane, delta),
             UiFact::PaneNewTab { pane, x, y } => self.new_tab_button(pane, x, y),
             // The two strip buttons. They carry no coordinates: each is a node
             // that knows its pane, so what used to be a scan of two recorded
@@ -2650,9 +2717,9 @@ impl Editor {
             UiFact::PaneTabsWheel { pane, x, y, delta } => {
                 self.dismiss_transient_popups();
                 self.active_window().wheel_plugin_hook(x, y, delta);
-                self.scroll_pane_tab_strip(pane, delta);
+                self.pan_pane_tab_strip(pane, delta);
             }
-            UiFact::PaneTabsPan { pane, delta } => self.scroll_pane_tab_strip(pane, delta),
+            UiFact::PaneTabsPan { pane, delta } => self.pan_pane_tab_strip(pane, delta),
             UiFact::PaneContentPress {
                 pane,
                 byte,
@@ -2854,16 +2921,17 @@ impl Editor {
                 if old == target {
                     return;
                 }
-                // **Every registered reaction, not one hand-picked one.**
-                // The tree says where the pointer is; what each surface does
-                // about it stays with that surface. Calling
-                // `menu_hover_reaction` directly instead silently dropped the
-                // reactions belonging to two surfaces that had *also*
-                // migrated: the explorer's git-status tooltip
+                // **Every reaction, and each one called by name.** The tree
+                // says where the pointer is; what each surface does about it
+                // stays with that surface. Calling `menu_hover_reaction`
+                // directly and nothing else once dropped two surfaces that had
+                // *also* migrated — the explorer's git-status tooltip
                 // (`FileExplorerStatusIndicator`) and the status bar's
-                // indicator styling. This is the only thing that reaches any
-                // of them — a reaction this fact does not run is a reaction
-                // that never runs.
+                // indicator styling — and the registry that replaced that call
+                // then dropped the menu's, because its trait method had a
+                // `false` default body and the menu had not written one. Two
+                // surfaces react. Both are named here, so a reaction that is
+                // not run is a name that does not resolve.
                 //
                 // The pointer cell the reactions want is the one the fact
                 // arrived at; a hover fact is always produced by a pointer
@@ -2871,11 +2939,15 @@ impl Editor {
                 // A reaction that changed state — a submenu opened under the
                 // pointer — is a change the next input's routing reads, and
                 // the hover fact itself is transient: this is where it says so.
+                // `|`, not `||`: both reactions run. One surface answering
+                // "yes, that changed something" must not decide whether the
+                // other is offered the move at all — that early return is the
+                // bug the central ladder had.
                 let (col, row) = ev.at;
-                for c in crate::app::chrome::components() {
-                    if c.on_hover_change(self, old.as_ref(), target.as_ref(), col, row) {
-                        self.shell_description_stale = true;
-                    }
+                let changed = self.menu_hover_reaction(target.as_ref())
+                    | self.explorer_hover_reaction(old.as_ref(), target.as_ref(), col, row);
+                if changed {
+                    self.shell_description_stale = true;
                 }
             }
             UiFact::MenuBarPress { index } => {
@@ -3040,15 +3112,13 @@ impl Editor {
             UiFact::GripRelease { which } => {
                 use crate::view::shell::msg::Grip;
                 match which {
-                    // End a dock-resize drag and persist the chosen width so
-                    // it survives toggling the dock off and on.
+                    // End a dock-resize drag. The width itself landed in
+                    // `dock_width` with every step of the drag (so the
+                    // responsive re-fit never snapped it back); the release
+                    // is when it is worth a write to disk.
                     Grip::DockWidth => {
                         self.dock_resizing = false;
-                        if let Some(crate::app::PanelPlacement::LeftDock { width_cols }) =
-                            self.dock.as_ref().map(|f| f.placement)
-                        {
-                            self.dock_width = Some(width_cols);
-                        }
+                        self.persist_dock_width();
                     }
                     // A finished separator drag changed the ratios, so the
                     // frame reflows through the one layout funnel.
@@ -3192,10 +3262,10 @@ impl Editor {
             // what is gone is the five families of rectangle that decided
             // *which* arm, and the walk over them.
             UiFact::SettingsCategory(idx) => self.settings_select_category(idx),
+            UiFact::SettingsStripCategory(idx) => self.settings_pick_category(idx),
             UiFact::SettingsCategorySection(cat, section) => {
                 self.settings_jump_to_section(cat, section)
             }
-            UiFact::SettingsCategoryDisclosure(idx) => self.settings_toggle_category(idx),
             // **The tree's own keys, arriving as what they mean.** The eight
             // arms behind this are the eight `handle_categories_input` still
             // has: one implementation (`SettingsState::tree_key`), reached
@@ -3356,6 +3426,9 @@ impl Editor {
                     KeySlot::WorkspaceTrust => {
                         let _ = self.handle_workspace_trust_key(&ev);
                     }
+                    KeySlot::Confirm => {
+                        self.handle_confirm_dialog_key(&ev);
+                    }
                 }
             }
             // **The prompt: the same seam, and the claim it completes.**
@@ -3496,12 +3569,16 @@ impl Editor {
                 if let crate::app::PanelSlot::Sidebar(_) = slot {
                     let ctx = self.get_key_context();
                     let resolved = self.keybindings.read().ok().map(|kb| kb.resolve(&ev, ctx));
-                    if matches!(
-                        resolved,
-                        Some(crate::input::keybindings::Action::FocusNextSidebarSection)
-                    ) {
-                        self.focus_next_sidebar_section();
-                        return;
+                    match resolved {
+                        Some(crate::input::keybindings::Action::FocusNextSidebarSection) => {
+                            self.focus_next_sidebar_section();
+                            return;
+                        }
+                        Some(crate::input::keybindings::Action::FocusPrevSidebarSection) => {
+                            self.focus_prev_sidebar_section();
+                            return;
+                        }
+                        _ => {}
                     }
                 }
                 // A `false` here is the interior declining —
@@ -3534,6 +3611,10 @@ impl Editor {
                     self.should_quit = true;
                 }
             }
+            // A button on the confirmation modal. One press is the answer —
+            // see `UiFact::ConfirmChoose`.
+            UiFact::ConfirmChoose(i) => self.confirm_dialog_choose(i),
+            UiFact::ConfirmHover(i) => self.confirm_dialog_hover(i),
             // The inspector. Dismissing it is the same statement three
             // places used to make: an outside-press guard returning
             // `PassAfter`, an `on_key` that cleared the field and returned
@@ -3576,14 +3657,18 @@ impl Editor {
             UiFact::ThemeInfoButtonHover(on) => {
                 self.shell_hover = on.then_some(crate::app::types::HoverTarget::ThemeInfoButton);
             }
-            UiFact::ExplorerScroll { delta, x, y } => {
-                // The surface's wheel, with the surface. Unchanged from the
-                // chrome component's `on_wheel`, including the plugin hook —
-                // the position it reports is the pointer's, which the tree
-                // carries on the event.
+            UiFact::ExplorerWheel { delta, x, y } => {
+                // The panel's own reactions to the wheel, unchanged from the
+                // chrome component's `on_wheel`: the plugin hook — the
+                // position it reports is the pointer's, which the tree
+                // carries on the event — and the popup dismissal. The window
+                // itself is moved by the library and arrives as the fact
+                // below.
                 self.dismiss_transient_popups();
                 self.active_window().wheel_plugin_hook(x, y, delta);
-                self.active_window_mut().scroll_file_explorer_view(delta);
+            }
+            UiFact::ExplorerScrollTo(offset) => {
+                self.active_window_mut().scroll_file_explorer_to(offset);
             }
 
             UiFact::MenuItemClick { depth, index } => {

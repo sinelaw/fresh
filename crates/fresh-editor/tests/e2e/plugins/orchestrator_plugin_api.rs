@@ -286,7 +286,7 @@ fn set_card_view(h: &mut EditorTestHarness) {
     h.wait_until(|h| h.screen_to_string().contains("● card view"))
         .unwrap();
     h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
-    h.wait_until(|h| !h.screen_to_string().contains("Manage workspaces"))
+    h.wait_until(|h| !h.screen_to_string().contains("Machines…"))
         .unwrap();
 }
 
@@ -297,7 +297,7 @@ fn open_dock_menu(h: &mut EditorTestHarness) {
         .find_text_on_screen("⋯")
         .unwrap_or_else(|| panic!("screen missing '⋯':\n{}", h.screen_to_string()));
     h.mouse_click(mcol, mrow).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("Manage workspaces"))
+    h.wait_until(|h| h.screen_to_string().contains("Machines…"))
         .unwrap();
 }
 

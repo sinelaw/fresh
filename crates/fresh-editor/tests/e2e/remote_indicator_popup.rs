@@ -131,14 +131,14 @@ impl FileSystem for DisconnectedRemoteFs {
     ) -> io::Result<()> {
         self.inner.sudo_write(path, data, mode, uid, gid)
     }
-    fn walk_files(
+    fn walk(
         &self,
         root: &Path,
-        skip_dirs: &[&str],
+        opts: &fresh_editor_core::model::filesystem::WalkOptions<'_>,
         cancel: &std::sync::atomic::AtomicBool,
-        on_file: &mut dyn FnMut(&Path, &str) -> bool,
-    ) -> io::Result<()> {
-        self.inner.walk_files(root, skip_dirs, cancel, on_file)
+        on_entry: &mut dyn FnMut(fresh_editor_core::model::filesystem::WalkEntry<'_>) -> bool,
+    ) -> std::io::Result<()> {
+        self.inner.walk(root, opts, cancel, on_entry)
     }
     fn remote_connection_info(&self) -> Option<&str> {
         Some("root@127.0.0.1")
@@ -164,6 +164,7 @@ fn ssh_agent_spec() -> SessionAuthoritySpec {
         window: true,
         label: None,
         command: None,
+        adopt_window: None,
     })
 }
 
@@ -525,7 +526,9 @@ fn test_remote_indicator_popup_connected_container_offers_show_build_logs() -> a
         std::sync::Arc::new(fresh::services::workspace_trust::WorkspaceTrust::permissive()),
         std::sync::Arc::new(fresh::services::env_provider::EnvProvider::inactive()),
     )?;
-    harness.editor_mut().set_boot_authority(authority);
+    harness.editor_mut().set_boot_authority(std::sync::Arc::new(
+        fresh::services::authority::Connection::plain(authority),
+    ));
 
     harness.editor_mut().show_remote_indicator_popup();
     harness.render()?;

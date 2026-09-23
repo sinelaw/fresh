@@ -446,8 +446,7 @@ impl JsonSchema for KeybindingMapName {
 /// Main configuration structure
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct Config {
-    /// Configuration version (for migration support)
-    /// Configs without this field are treated as version 0
+    /// Config format version, used for migration. Missing means version 0.
     #[serde(default)]
     pub version: u32,
 
@@ -455,25 +454,27 @@ pub struct Config {
     #[serde(default = "default_theme_name")]
     pub theme: ThemeName,
 
-    /// UI locale (language) for translations
-    /// If not set, auto-detected from environment (LC_ALL, LC_MESSAGES, LANG)
+    /// UI language. If not set, detected from LC_ALL, LC_MESSAGES or LANG.
     #[serde(default)]
     pub locale: LocaleName,
 
     /// Check for new versions on startup (default: true).
-    /// When enabled, also sends basic anonymous telemetry (version, OS, terminal type).
+    /// Also sends basic anonymous telemetry (version, OS, terminal type).
     #[serde(default = "default_true")]
     pub check_for_updates: bool,
 
-    /// Offer an interactive in-editor update when a new version is detected
-    /// (default: true). When on, clicking the status-bar update indicator (or
-    /// the "Update fresh" command) prompts to update now; confirming runs the
-    /// update locally in the background and logs to the data dir. When off, the
-    /// indicator is passive (it only tells you a version is available). Has no
-    /// effect if `check_for_updates` is false or the install method can't
-    /// self-update.
+    /// Offer to update from inside the editor when a new version is found (default: true).
+    /// When off, the status-bar indicator only tells you an update exists.
+    /// Needs `check_for_updates` and an install method that can self-update.
     #[serde(default = "default_true")]
     pub self_update: bool,
+
+    /// When on (default), `fresh` with no arguments reattaches to a single background
+    /// editor with the workspace dock and your last workspace. When off, it opens a
+    /// plain editor in the current directory; runs with files or flags are unaffected.
+    #[serde(default = "default_true")]
+    #[schemars(extend("x-order" = 1))]
+    pub orchestrator_mode: bool,
 
     /// Editor behavior settings (indentation, line numbers, wrapping, etc.)
     #[serde(default)]
@@ -483,7 +484,7 @@ pub struct Config {
     #[serde(default)]
     pub file_explorer: FileExplorerConfig,
 
-    /// The sidebar column the file explorer is the first section of.
+    /// Sidebar settings (the column that holds the file explorer).
     #[serde(default)]
     pub sidebar: SidebarConfig,
 
@@ -501,58 +502,58 @@ pub struct Config {
 
     /// Custom keybindings (overrides for the active map)
     #[serde(default)]
+    #[schemars(extend("x-category" = "Keybindings", "x-order" = 2))]
     pub keybindings: Vec<Keybinding>,
 
-    /// Named keybinding maps (user can define custom maps here)
-    /// Each map can optionally inherit from another map
+    /// Custom named keybinding maps. A map can inherit from another map.
     #[serde(default)]
+    #[schemars(extend("x-category" = "Keybindings", "x-order" = 3))]
     pub keybinding_maps: HashMap<String, KeymapConfig>,
 
     /// Active keybinding map name
     #[serde(default = "default_keybinding_map_name")]
     #[schemars(default = "default_keybinding_map_schema")]
+    #[schemars(extend("x-category" = "Keybindings", "x-order" = 1))]
     pub active_keybinding_map: KeybindingMapName,
 
     /// Per-language configuration overrides (tab size, formatters, etc.)
     #[serde(default)]
+    #[schemars(extend("x-category" = "Syntax & Languages", "x-section" = "Languages", "x-order" = 1))]
     pub languages: HashMap<String, LanguageConfig>,
 
-    /// Default language for files whose type cannot be detected.
-    /// Must reference a key in the `languages` map (e.g., "bash").
-    /// Applied when no extension, filename, glob, or built-in detection matches.
-    /// The referenced language's full configuration (grammar, comment_prefix,
-    /// tab_size, etc.) is used for unrecognized files.
+    /// Language used for files whose type can't be detected.
+    /// Must be a key in `languages` (e.g. "bash"); its full settings apply.
     #[serde(default)]
-    #[schemars(extend("x-enum-from" = "/languages"))]
+    #[schemars(extend(
+        "x-enum-from" = "/languages",
+        "x-category" = "Syntax & Languages",
+        "x-section" = "Languages",
+        "x-order" = 2
+    ))]
     pub default_language: Option<String>,
 
-    /// Master switch for LSP support. When false, no language server is
-    /// started automatically for any language (per-language and universal
-    /// servers alike), without having to disable each server individually.
-    /// Servers can still be started manually, e.g. via the command palette's
-    /// "Start/Restart LSP Server".
+    /// Master switch for language servers. When off, no server starts automatically;
+    /// you can still start one with "Start/Restart LSP Server".
     #[serde(default = "default_true")]
+    #[schemars(extend("x-category" = "Syntax & Languages", "x-section" = "Language Servers", "x-order" = 3))]
     pub lsp_enabled: bool,
 
-    /// LSP server configurations by language.
-    /// Each language maps to one or more server configs (multi-LSP support).
-    /// Accepts both single-object and array forms for backwards compatibility.
+    /// Language servers per language. Each language takes one server or a list.
     #[serde(default)]
+    #[schemars(extend("x-category" = "Syntax & Languages", "x-section" = "Language Servers", "x-order" = 4))]
     pub lsp: HashMap<String, LspLanguageConfig>,
 
-    /// Universal LSP servers that apply to all languages.
-    /// These servers run alongside language-specific LSP servers defined in `lsp`.
+    /// Language servers for all languages, run alongside those in `lsp`.
     /// Keyed by a unique server name (e.g. "quicklsp").
     #[serde(default)]
+    #[schemars(extend("x-category" = "Syntax & Languages", "x-section" = "Language Servers", "x-order" = 5))]
     pub universal_lsp: HashMap<String, LspLanguageConfig>,
 
     /// Warning notification settings
     #[serde(default)]
     pub warnings: WarningsConfig,
 
-    /// Plugin configurations by plugin name
-    /// Plugins are auto-discovered from the plugins directory.
-    /// Use this to enable/disable specific plugins.
+    /// Per-plugin settings, by plugin name. Use it to turn plugins on or off.
     #[serde(default)]
     #[schemars(extend("x-standalone-category" = true, "x-no-add" = true))]
     pub plugins: HashMap<String, PluginConfig>,
@@ -561,23 +562,17 @@ pub struct Config {
     #[serde(default)]
     pub packages: PackagesConfig,
 
-    /// Environment auto-activation detectors (venv / direnv / mise / …).
+    /// Auto-activation of project environments (venv, direnv, mise, …).
     #[serde(default)]
     pub env: EnvConfig,
 }
 
-/// Environment-detection configuration: the single source of truth for which
-/// marker files identify which activatable environment and how to activate it.
-///
-/// Core does the detection; the env-manager plugin only *consumes* the
-/// resolved result (via `editor.detectedEnv()`) — it does not probe the
-/// filesystem itself. The same detector markers also feed the Workspace Trust
-/// prompt, so trust and activation can never disagree about what an env file
-/// is. Users may add or override detectors here.
+/// Which marker files identify a project environment and how to activate it.
+/// The same markers drive the Workspace Trust prompt. You can add or override detectors.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct EnvConfig {
-    /// Ordered list of detectors; the first whose markers match the workspace
-    /// root wins. Defaults cover venv, direnv, mise, pipenv, and poetry.
+    /// Detectors in order; the first that matches the workspace root wins.
+    /// Defaults cover venv, direnv, mise, pipenv and poetry.
     #[serde(default = "default_env_detectors")]
     pub detectors: Vec<EnvDetector>,
 }
@@ -590,43 +585,33 @@ impl Default for EnvConfig {
     }
 }
 
-/// Activation risk class for an environment — decides whether activating it
-/// needs a trust prompt first.
+/// How risky activation is; decides whether a trust prompt is needed first.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum EnvKind {
-    /// Activation only prepends to `PATH` / sets a few vars (e.g. a Python
-    /// virtualenv). Low-risk: auto-activates silently once trusted, and a
-    /// folder whose *only* env is path-only is trusted without a prompt.
+    /// Only changes `PATH` or a few variables (e.g. a Python virtualenv). Low risk:
+    /// activates silently once trusted; a folder with only this kind needs no prompt.
     PathOnly,
-    /// Activation evaluates project-controlled shell (e.g. `direnv export`,
-    /// `mise env`). Runs only after the workspace is trusted.
+    /// Runs project shell code (e.g. `direnv export`, `mise env`). Only after the workspace is trusted.
     Shell,
 }
 
-/// One environment detector: which marker files/dirs identify it, how risky
-/// activation is, how to activate it, and what to call it.
+/// One environment detector: its markers, risk, activation command and name.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[schemars(extend("x-display-field" = "/name"))]
 pub struct EnvDetector {
     /// Short label shown in the status pill (e.g. ".venv", "direnv", "mise").
     pub name: String,
-    /// Marker files or directories at the workspace root. The detector matches
-    /// if any one of them exists.
+    /// Files or folders at the workspace root; the detector matches if any exists.
     pub markers: Vec<String>,
-    /// Activation risk class (see [`EnvKind`]).
+    /// Activation risk class.
     pub kind: EnvKind,
-    /// Shell snippet handed to `editor.setEnv` to activate. It runs with the
-    /// working directory set to the workspace root, so **prefer relative paths**
-    /// (e.g. `source .venv/bin/activate`). `{dir}` expands to the absolute
-    /// workspace root, but interpolating it into a shell command is a
-    /// shell-injection surface when the path is attacker-influenced
-    /// (cf. CVE-2024-9287) — avoid it unless you control the path.
+    /// Shell command that activates the environment, run from the workspace root.
+    /// Prefer relative paths (e.g. `source .venv/bin/activate`). `{dir}` expands to the
+    /// workspace root, but avoid it unless you control the path (shell-injection risk).
     pub snippet: String,
-    /// Optional evidence paths (relative to the workspace root); when present,
-    /// at least one must exist for the detector to match — e.g. a `.venv` must
-    /// actually contain an interpreter, not just the directory. Empty means
-    /// the markers alone are enough.
+    /// Paths (relative to the workspace root) of which at least one must also exist,
+    /// e.g. the Python interpreter inside `.venv`. Empty means markers are enough.
     #[serde(default)]
     pub require: Vec<String>,
 }
@@ -1063,39 +1048,26 @@ fn default_status_bar_right() -> Vec<StatusBarElement> {
     ]
 }
 
-/// Status bar layout and element configuration.
+/// Which elements appear in the status bar, split into a left and a right
+/// group. Elements can be freely reordered.
 ///
-/// Controls which elements appear in the status bar and how they are arranged.
-/// Elements are placed in left and right containers and can be freely reordered.
-///
-/// Example config:
-/// ```json
-/// {
-///   "status_bar": {
-///     "left": ["{filename}", "{cursor:compact}"],
-///     "right": ["{language}", "{encoding}", "{line_ending}"]
-///   }
-/// }
-/// ```
+/// Example: `{"left": ["{filename}", "{cursor:compact}"], "right": ["{language}", "{encoding}"]}`
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct StatusBarConfig {
-    /// Elements shown on the left side of the status bar.
-    /// Default: ["{filename}", "{cursor}", "{diagnostics}", "{cursor_count}", "{messages}"]
+    /// Elements on the left side of the status bar.
+    /// Default: ["{trust}", "{remote}", "{terminal_restart}", "{cursor}", "{diagnostics}", "{cursor_count}", "{messages}"]
     #[serde(default = "default_status_bar_left")]
     #[schemars(extend("x-section" = "Status Bar", "x-dual-list-sibling" = "/editor/status_bar/right", "x-dynamically-extendable-status-bar-elements" = true))]
     pub left: Vec<StatusBarElement>,
 
-    /// Elements shown on the right side of the status bar.
+    /// Elements on the right side of the status bar.
     /// Default: ["{read_only}", "{line_ending}", "{encoding}", "{language}", "{lsp}", "{warnings}", "{update}", "{palette}"]
     #[serde(default = "default_status_bar_right")]
     #[schemars(extend("x-section" = "Status Bar", "x-dual-list-sibling" = "/editor/status_bar/left", "x-dynamically-extendable-status-bar-elements" = true))]
     pub right: Vec<StatusBarElement>,
 
-    /// Separator drawn between status bar elements on both sides, used
-    /// verbatim. Each entry already carries a one-space margin painted in its
-    /// own style, so the default bare `"|"` renders as `LF | UTF-8`. Add your
-    /// own surrounding spaces to widen the gap. An empty string disables the
-    /// separator glyph entirely, leaving just the entries' own margins.
+    /// Text drawn between status bar elements, used as-is. Each element already
+    /// has a one-space margin, so `"|"` shows as `LF | UTF-8`. Empty (default) means no separator.
     #[serde(default = "default_status_bar_separator")]
     #[schemars(extend("x-section" = "Status Bar"))]
     pub separator: String,
@@ -1140,48 +1112,30 @@ impl Default for StatusBarConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct EditorConfig {
     // ===== Display =====
-    /// Enable frame-buffer animations (tab-switch slides, dashboard
-    /// bringup, plugin-driven effects). When `false`, every animation
-    /// call is a no-op: the UI is fully static and each render lands
-    /// the final frame immediately. Useful on slow terminals, over
-    /// SSH, or for users who prefer no motion.
+    /// Enable UI animations (tab-switch slides, dashboard, plugin effects).
+    /// Turn off for a fully static UI, e.g. on slow terminals or over SSH.
     #[serde(default = "default_true")]
     #[schemars(extend("x-section" = "Display"))]
     pub animations: bool,
 
-    /// Enable the cursor-jump trail animation on long cursor moves
-    /// (search jumps, go-to-definition, pane switches). Has no effect
-    /// when `animations` is `false`.
+    /// Show a trail animation when the cursor jumps far (search, go-to-definition,
+    /// pane switch). Needs `animations` on.
     #[serde(default = "default_true")]
     #[schemars(extend("x-section" = "Display"))]
     pub cursor_jump_animation: bool,
 
-    /// Shade the top and bottom rows of each pane, so text meets the
-    /// edge by fading out rather than being cut off mid-line.
-    ///
-    /// The row hard against the edge is painted a third of the way up
-    /// from its background, the one inside it two thirds, and the third
-    /// row in normally. Constant, not animated — the same rows are
-    /// shaded whether the view is moving or still, so scrolling is a
-    /// plain shift of the text through a fixed gradient.
-    ///
-    /// An edge shades only where there is something beyond it to trail off
-    /// into, so the first and last lines of a file are not dimmed for no
-    /// reason, and neither is a file that fits its pane. An edge whose facts
-    /// are missing — a pane with no scrollbar, or a file too large to count
-    /// lines on — is left alone rather than shaded on a guess. So is the edge
-    /// the cursor is sitting in: the shading helps reading, and the line being
-    /// edited is the one line the reader is certainly looking at.
+    /// Fade out the top and bottom two rows of each pane when there is more
+    /// text beyond that edge. The edge the cursor is on is never faded.
     #[serde(default = "default_true")]
     #[schemars(extend("x-section" = "Display"))]
     pub viewport_edge_fade: bool,
 
-    /// Show line numbers in the gutter (default for new buffers)
+    /// Show line numbers in the gutter (default for new buffers).
     #[serde(default = "default_true")]
     #[schemars(extend("x-section" = "Display"))]
     pub line_numbers: bool,
 
-    /// Show line numbers relative to cursor position
+    /// Show line numbers relative to the cursor line.
     #[serde(default = "default_false")]
     #[schemars(extend("x-section" = "Display"))]
     pub relative_line_numbers: bool,
@@ -1196,10 +1150,7 @@ pub struct EditorConfig {
     #[schemars(extend("x-section" = "Display"))]
     pub highlight_occurrences: bool,
 
-    /// Hide the current-line background highlight whenever a selection is
-    /// visible.  When `true` (default: `false`), the `current_line_bg` fill
-    /// is suppressed for the active split as soon as any cursor has a
-    /// non-empty selection, reducing visual clutter while text is selected.
+    /// Hide the current-line highlight while text is selected. Default: false
     #[serde(default = "default_false")]
     #[schemars(extend("x-section" = "Display"))]
     pub hide_current_line_on_selection: bool,
@@ -1214,200 +1165,143 @@ pub struct EditorConfig {
     #[schemars(extend("x-section" = "Display"))]
     pub line_wrap: bool,
 
-    /// Indent wrapped continuation lines to match the leading whitespace of the original line
+    /// Indent wrapped lines to match the original line's indentation.
     #[serde(default = "default_true")]
     #[schemars(extend("x-section" = "Display"))]
     pub wrap_indent: bool,
 
-    /// Column at which to wrap lines when line wrapping is enabled.
-    /// If not specified (`null`), lines wrap at the viewport edge (default behavior).
-    /// A value of `0` is treated the same as `null` (no fixed wrap column).
-    /// Example: `80` wraps at column 80. The actual wrap column is clamped to the
-    /// viewport width (lines can't wrap beyond the visible area).
+    /// Column to wrap lines at (e.g. `80`). Never wider than the window.
+    /// `null` or `0` (default) wraps at the window edge.
     #[serde(default)]
     #[schemars(extend("x-section" = "Display"))]
     pub wrap_column: Option<usize>,
 
-    /// Width of the page in page view mode (in columns).
-    /// Controls the content width when page view is active, with centering margins.
-    /// Defaults to 80. Set to `null` (or `0`) to use the full viewport width.
+    /// Text width in columns in page view, centered with margins. Default: 80.
+    /// `null` or `0` uses the full window width.
     #[serde(default = "default_page_width")]
     #[schemars(extend("x-section" = "Display"))]
     pub page_width: Option<usize>,
 
-    /// Enable syntax highlighting for code files
+    /// Enable syntax highlighting for code files.
     #[serde(default = "default_true")]
     #[schemars(extend("x-section" = "Display"))]
     pub syntax_highlighting: bool,
 
-    /// Whether the menu bar is visible by default.
-    /// The menu bar provides access to menus (File, Edit, View, etc.) at the top of the screen.
-    /// Can be toggled at runtime via command palette or keybinding.
+    /// Show the menu bar (File, Edit, View, …) at the top. Can be toggled at any time.
     /// Default: true
     #[serde(default = "default_true")]
     #[schemars(extend("x-section" = "Display"))]
     pub show_menu_bar: bool,
 
-    /// Enable the wave-animation screensaver. When the editor has been
-    /// idle (no key or mouse input) for `screensaver_idle_minutes`, a
-    /// decorative wave washes over the screen until you press a key or
-    /// move the mouse.
-    /// Default: false
+    /// Show a wave-animation screensaver after `screensaver_idle_minutes` with no
+    /// input. Any key or mouse move ends it. Default: false
     #[serde(default = "default_false")]
     #[schemars(extend("x-section" = "Display"))]
     pub screensaver_enabled: bool,
 
-    /// Minutes of inactivity before the wave-animation screensaver starts
-    /// (only when `screensaver_enabled`). A value of `0` disables it.
-    /// Default: 5
+    /// Idle minutes before the screensaver starts. `0` disables it. Default: 5
     #[serde(default = "default_screensaver_idle_minutes")]
     #[schemars(extend("x-section" = "Display"))]
     pub screensaver_idle_minutes: u32,
 
-    /// Whether menu bar mnemonics (Alt+letter shortcuts) are enabled.
-    /// When enabled, pressing Alt+F opens the File menu, Alt+E opens Edit, etc.
-    /// Disabling this frees up Alt+letter keybindings for other actions.
-    /// Default: true
+    /// Alt+letter opens menus (Alt+F for File, Alt+E for Edit, …). Turn off to free
+    /// Alt+letter keys for other bindings. Default: true
     #[serde(default = "default_true")]
     #[schemars(extend("x-section" = "Display"))]
     pub menu_bar_mnemonics: bool,
 
-    /// Whether the tab bar is visible by default.
-    /// The tab bar shows open files in each split pane.
-    /// Can be toggled at runtime via command palette or keybinding.
+    /// Show the tab bar of open files in each pane. Can be toggled at any time.
     /// Default: true
     #[serde(default = "default_true")]
     #[schemars(extend("x-section" = "Display"))]
     pub show_tab_bar: bool,
 
-    /// Whether the status bar is visible by default.
-    /// The status bar shows file info, cursor position, and editor status at the bottom of the screen.
-    /// Can be toggled at runtime via command palette or keybinding.
+    /// Show the status bar at the bottom. Can be toggled at any time.
     /// Default: true
     #[serde(default = "default_true")]
     #[schemars(extend("x-section" = "Display"))]
     pub show_status_bar: bool,
 
-    /// Status bar layout and element configuration.
-    /// Controls which elements appear in the status bar and how they are arranged.
+    /// Which elements appear in the status bar and in what order.
     #[serde(default)]
     #[schemars(extend("x-section" = "Status Bar"))]
     pub status_bar: StatusBarConfig,
 
-    /// Whether the prompt line is always visible.
-    /// The prompt line is the bottom-most line used for search, file open, and other prompts.
-    /// When `false` (the default), the prompt line auto-hides — it only appears
-    /// while a prompt is active and disappears again once the prompt closes.
-    /// When `true`, the prompt line is always reserved at the bottom of the screen.
-    /// Default: false
+    /// Starting state of the Case / Word / Regex search toggles. Toggles you
+    /// change are remembered per workspace and take priority.
+    #[serde(default)]
+    #[schemars(extend("x-section" = "Search"))]
+    pub search: SearchConfig,
+
+    /// Always keep the bottom prompt line (search, open file, …) visible.
+    /// When off (default), it only appears while a prompt is open.
     #[serde(default = "default_false")]
     #[schemars(extend("x-section" = "Display"))]
     pub show_prompt_line: bool,
 
-    /// Whether the vertical scrollbar is visible in each split pane.
-    /// Can be toggled at runtime via command palette or keybinding.
+    /// Show a vertical scrollbar in each pane. Can be toggled at any time.
     /// Default: true
     #[serde(default = "default_true")]
     #[schemars(extend("x-section" = "Display"))]
     pub show_vertical_scrollbar: bool,
 
-    /// Whether the horizontal scrollbar is visible in each split pane.
-    /// The horizontal scrollbar appears when line wrap is disabled and content extends beyond the viewport.
-    /// Can be toggled at runtime via command palette or keybinding.
-    /// Default: false
+    /// Show a horizontal scrollbar in each pane when line wrap is off and lines
+    /// are wider than the window. Can be toggled at any time. Default: false
     #[serde(default = "default_false")]
     #[schemars(extend("x-section" = "Display"))]
     pub show_horizontal_scrollbar: bool,
 
-    /// Show tilde (~) markers on lines after the end of the file.
-    /// These vim-style markers indicate lines that are not part of the file content.
+    /// Show vim-style `~` markers on empty lines past the end of the file.
     /// Default: true
     #[serde(default = "default_true")]
     #[schemars(extend("x-section" = "Display"))]
     pub show_tilde: bool,
 
-    /// Use Nerd Font icons for decorative UI glyphs (e.g. settings categories
-    /// and file-type icons in the File Explorer). Nerd Font glyphs live in the Unicode private-use
-    /// area and only render correctly when the terminal uses a patched
-    /// "Nerd Font"; on any other font they show up as `?` or empty boxes.
-    /// When disabled, standard Unicode symbols (covered by normal
-    /// terminal font fallback) are used instead.
-    /// Default: false
+    /// Use Nerd Font icons in the UI (e.g. settings category icons). Only turn on
+    /// if your terminal uses a Nerd Font, or icons show as `?` or boxes. Default: false
     #[serde(default = "default_false")]
     #[schemars(extend("x-section" = "Display"))]
     pub nerd_font_icons: bool,
 
-    /// Use the terminal's default background color instead of the theme's editor background.
-    /// When enabled, the editor background inherits from the terminal emulator,
-    /// allowing transparency or custom terminal backgrounds to show through.
-    /// Default: false
+    /// Use the terminal's background instead of the theme's, so terminal
+    /// transparency or custom backgrounds show through. Default: false
     #[serde(default = "default_false")]
     #[schemars(extend("x-section" = "Display"))]
     pub use_terminal_bg: bool,
 
-    /// Update the terminal window title (via OSC 2) to reflect the active buffer.
-    /// When enabled, Fresh sets the terminal/tab title to "<file> — Fresh" as
-    /// you switch buffers. Harmless on terminals that don't understand the
-    /// escape sequence — they silently ignore it.
+    /// Set the terminal window title to "<file> — Fresh" for the active buffer.
     /// Default: true
     #[serde(default = "default_true")]
     #[schemars(extend("x-section" = "Display"))]
     pub set_window_title: bool,
 
-    /// Auto-name terminal tabs after the running program (tmux-style). When
-    /// enabled, an integrated terminal's tab reflects its foreground process
-    /// (e.g. `python3`, `vim`) combined with any title the program set via
-    /// an OSC escape sequence, instead of the static `*Terminal N*` label.
-    /// Disable to keep the fixed `*Terminal N*` names.
-    /// Default: true
+    /// Name terminal tabs after the running program (e.g. `python3`) and its title,
+    /// instead of the fixed `*Terminal N*`. Default: true
     #[serde(default = "default_true")]
     #[schemars(extend("x-section" = "Display"))]
     pub terminal_auto_title: bool,
 
-    /// Cursor style for the terminal cursor.
-    /// Options: blinking_block, steady_block, blinking_bar, steady_bar, blinking_underline, steady_underline
-    /// Default: blinking_block
+    /// Cursor shape: block, bar or underline, blinking or steady.
+    /// Default: the terminal's own style.
     #[serde(default)]
     #[schemars(extend("x-section" = "Display"))]
     pub cursor_style: CursorStyle,
 
-    /// Vertical ruler lines at specific column positions.
-    /// Draws subtle vertical lines to help with line length conventions.
-    /// Columns are 1-based *display* columns — screen cells, not characters:
-    /// a ruler at 80 marks the 80th display column, the last one text may
-    /// occupy. A tab advances to the next tab stop and a full-width character
-    /// (CJK, most emoji) takes two cells, so on lines containing either, the
-    /// ruler column is not the character count the status bar reports; for
-    /// plain ASCII text the two numbers agree.
-    /// If the column falls inside a full-width character, the guide marks that
-    /// character's first cell, so it stays visible on lines of CJK text.
-    /// Values below 1 are not valid columns and are ignored.
-    /// Example: [80, 120] draws rulers at columns 80 and 120.
-    /// Default: [] (no rulers)
+    /// Draw vertical lines at these columns, e.g. [80, 120]. Default: none.
+    /// Columns count screen cells from 1, so tabs and wide characters (CJK, emoji)
+    /// can differ from the status bar's column.
     #[serde(default)]
     #[schemars(extend("x-section" = "Display"), inner(range(min = 1)))]
     pub rulers: Vec<usize>,
 
-    /// Vertical indentation guide rendering mode.
-    /// Guides are drawn at indentation levels derived from the active buffer's
-    /// tab size. They replace existing leading whitespace cells visually only;
-    /// buffer text, cursor positions, and mouse mappings are unchanged.
-    /// Modes:
-    /// - `none`: disable indentation guides.
-    /// - `all`: draw every indentation level in leading whitespace.
-    /// - `active`: draw only the innermost guide for the cursor's current
-    ///   indentation block.
-    ///
-    /// Default: none
+    /// Vertical lines at each indent level (based on tab size). Display only.
+    /// `none` (default): off. `all`: every level. `active`: only the cursor's block.
     #[serde(default)]
     #[schemars(extend("x-section" = "Display"))]
     pub indentation_guide: IndentationGuideMode,
 
-    /// Glyph used to draw indentation guides. The default is a left-aligned
-    /// vertical guide character. Leading/trailing whitespace is ignored, and
-    /// blank values reset to the default glyph. Use a single display-cell glyph
-    /// for stable layout.
-    /// Default: ▏
+    /// Character for indentation guides; use a single-width one. Blank resets
+    /// to the default. Default: ▏
     #[serde(
         default = "default_indentation_guide_glyph",
         deserialize_with = "deserialize_indentation_guide_glyph"
@@ -1415,486 +1309,338 @@ pub struct EditorConfig {
     #[schemars(extend("x-section" = "Display"))]
     pub indentation_guide_glyph: String,
 
-    /// Color indentation guides by indent level, using the active theme's
-    /// `indent_rainbow_1` through `indent_rainbow_6` colors.
-    /// Default: false
+    /// Color indentation guides by level, using the theme's `indent_rainbow_1`–`6`
+    /// colors. Default: false
     #[serde(default = "default_false")]
     #[schemars(extend("x-section" = "Display"))]
     pub rainbow_indentation: bool,
 
     // ===== Whitespace =====
-    /// Master toggle for whitespace indicator visibility.
-    /// When disabled, no whitespace indicators (·, →) are shown regardless
-    /// of the per-position settings below.
-    /// Default: true
+    /// Master switch for whitespace markers (·, →). When off, none are shown,
+    /// whatever the settings below say. Default: true
     #[serde(default = "default_true")]
     #[schemars(extend("x-section" = "Whitespace"))]
     pub whitespace_show: bool,
 
-    /// Show space indicators (·) for leading whitespace (indentation).
-    /// Leading whitespace is everything before the first non-space character on a line.
-    /// Default: false
+    /// Show · for spaces used as indentation. Default: false
     #[serde(default = "default_false")]
     #[schemars(extend("x-section" = "Whitespace"))]
     pub whitespace_spaces_leading: bool,
 
-    /// Show space indicators (·) for inner whitespace (between words/tokens).
-    /// Inner whitespace is spaces between the first and last non-space characters.
-    /// Default: false
+    /// Show · for spaces between words. Default: false
     #[serde(default = "default_false")]
     #[schemars(extend("x-section" = "Whitespace"))]
     pub whitespace_spaces_inner: bool,
 
-    /// Show space indicators (·) for trailing whitespace.
-    /// Trailing whitespace is everything after the last non-space character on a line.
-    /// Default: false
+    /// Show · for spaces at the end of a line. Default: false
     #[serde(default = "default_false")]
     #[schemars(extend("x-section" = "Whitespace"))]
     pub whitespace_spaces_trailing: bool,
 
-    /// Show tab indicators (→) for leading tabs (indentation).
-    /// Can be overridden per-language via `show_whitespace_tabs` in language config.
-    /// Default: true
+    /// Show → for tabs used as indentation. Languages can override this with
+    /// `show_whitespace_tabs`. Default: true
     #[serde(default = "default_true")]
     #[schemars(extend("x-section" = "Whitespace"))]
     pub whitespace_tabs_leading: bool,
 
-    /// Show tab indicators (→) for inner tabs (between words/tokens).
-    /// Can be overridden per-language via `show_whitespace_tabs` in language config.
-    /// Default: true
+    /// Show → for tabs between words. Languages can override this with
+    /// `show_whitespace_tabs`. Default: true
     #[serde(default = "default_true")]
     #[schemars(extend("x-section" = "Whitespace"))]
     pub whitespace_tabs_inner: bool,
 
-    /// Show tab indicators (→) for trailing tabs.
-    /// Can be overridden per-language via `show_whitespace_tabs` in language config.
-    /// Default: true
+    /// Show → for tabs at the end of a line. Languages can override this with
+    /// `show_whitespace_tabs`. Default: true
     #[serde(default = "default_true")]
     #[schemars(extend("x-section" = "Whitespace"))]
     pub whitespace_tabs_trailing: bool,
 
-    /// Show newline indicators (↵) at the end of every line.
-    /// Default: false
+    /// Show ↵ at the end of every line. Default: false
     #[serde(default = "default_false")]
     #[schemars(extend("x-section" = "Whitespace"))]
     pub whitespace_newlines: bool,
 
-    /// Show carriage-return indicators (␍) for the CR half of CRLF line
-    /// endings, next to the newline position. Stray CR bytes that are not
-    /// part of the buffer's line ending always render as `<0D>` escapes.
-    /// Default: false
+    /// Show ␍ for the CR in CRLF line endings. Stray CR characters always show
+    /// as `<0D>`. Default: false
     #[serde(default = "default_false")]
     #[schemars(extend("x-section" = "Whitespace"))]
     pub whitespace_carriage_returns: bool,
 
-    /// Show whitespace indicators (·, →) for whitespace *inside a
-    /// selection*, even when the per-position settings above (or the
-    /// `whitespace_show` master toggle) keep them hidden elsewhere. Makes the
-    /// exact extent of a selection legible without turning indicators on for
-    /// the whole buffer.
-    /// Default: true
+    /// Show whitespace markers (·, →) inside a selection, even if they are
+    /// hidden elsewhere. Default: true
     #[serde(default = "default_true")]
     #[schemars(extend("x-section" = "Whitespace"))]
     pub whitespace_in_selection: bool,
 
     // ===== Editing =====
-    /// Whether pressing Tab inserts a tab character instead of spaces.
-    /// This is the global default; individual languages can override it
-    /// via their own `use_tabs` setting.
-    /// Default: false (insert spaces)
+    /// Tab key inserts a tab character instead of spaces. Languages can
+    /// override this. Default: false (spaces)
     #[serde(default = "default_false")]
     #[schemars(extend("x-section" = "Editing"))]
     pub use_tabs: bool,
 
-    /// Number of spaces per tab character
-    /// A value of `0` is treated as unset and falls back to the default (4).
+    /// Spaces per tab. `0` means the default (4).
     #[serde(default = "default_tab_size")]
     #[schemars(extend("x-section" = "Editing"))]
     pub tab_size: usize,
 
-    /// Automatically indent new lines based on the previous line
+    /// Indent new lines to match the previous line.
     #[serde(default = "default_true")]
     #[schemars(extend("x-section" = "Editing"))]
     pub auto_indent: bool,
 
-    /// Automatically close brackets, parentheses, and quotes when typing.
-    /// When enabled, typing an opening delimiter like `(`, `[`, `{`, `"`, `'`, or `` ` ``
-    /// will automatically insert the matching closing delimiter.
-    /// Also enables skip-over (moving past existing closing delimiters) and
-    /// pair deletion (deleting both delimiters when backspacing between them).
-    /// Default: true
+    /// Typing `(`, `[`, `{`, `"`, `'` or `` ` `` inserts the closing one too. Typing a
+    /// closer skips over an existing one; Backspace between a pair deletes both. Default: true
     #[serde(default = "default_true")]
     #[schemars(extend("x-section" = "Editing"))]
     pub auto_close: bool,
 
-    /// Automatically surround selected text with matching pairs when typing
-    /// an opening delimiter. When enabled and text is selected, typing `(`, `[`,
-    /// `{`, `"`, `'`, or `` ` `` wraps the selection instead of replacing it.
-    /// Default: true
+    /// Typing `(`, `[`, `{`, `"`, `'` or `` ` `` with text selected wraps the
+    /// selection instead of replacing it. Default: true
     #[serde(default = "default_true")]
     #[schemars(extend("x-section" = "Editing"))]
     pub auto_surround: bool,
 
-    /// Allow the cursor to move beyond the end of a line (virtual space).
-    /// "off": cursor is clamped to line content. "block": only block
-    /// (rectangular) selections extend past line ends, producing true
-    /// rectangles. "on": arrow keys, clicks, and block selections may all
-    /// place the cursor past the end of a line; typing there fills the gap
-    /// with spaces.
-    /// Default: "off"
+    /// Let the cursor go past the end of a line. "off" (default): never.
+    /// "block": only block selections. "on": also arrows and clicks; typing there fills with spaces.
     #[serde(default)]
     #[schemars(extend("x-section" = "Editing"))]
     pub virtual_space: VirtualSpaceMode,
 
-    /// Minimum lines to keep visible above/below cursor when scrolling
+    /// Lines to keep visible above and below the cursor when scrolling.
     #[serde(default = "default_scroll_offset")]
     #[schemars(extend("x-section" = "Editing"))]
     pub scroll_offset: usize,
 
-    /// Default line ending format for new files.
-    /// Files loaded from disk will use their detected line ending format.
-    /// Options: "lf" (Unix/Linux/macOS), "crlf" (Windows), "cr" (Classic Mac)
-    /// Default: "lf"
+    /// Line ending for new files; opened files keep their own. "lf" (Unix/macOS,
+    /// default), "crlf" (Windows) or "cr" (classic Mac).
     #[serde(default)]
     #[schemars(extend("x-section" = "Editing"))]
     pub default_line_ending: LineEndingOption,
 
-    /// Remove trailing whitespace from lines when saving.
-    /// Default: false
+    /// Remove spaces at line ends when saving. Default: false
     #[serde(default = "default_false")]
     #[schemars(extend("x-section" = "Editing"))]
     pub trim_trailing_whitespace_on_save: bool,
 
-    /// Ensure files end with a newline when saving.
-    /// Default: false
+    /// Add a final newline when saving, if missing. Default: false
     #[serde(default = "default_false")]
     #[schemars(extend("x-section" = "Editing"))]
     pub ensure_final_newline_on_save: bool,
 
-    /// Automatically open files in read-only mode when they are not
-    /// writable on disk (filesystem permissions) or live in a
-    /// library/vendor directory (rustup toolchains, node_modules,
-    /// /usr/include, /nix/store, ...). When disabled, such files open
-    /// editable; saving may still fail unless permissions allow it.
-    /// Binary files always open read-only regardless of this setting.
-    /// Default: true
+    /// Open files read-only if they aren't writable or are in a library folder
+    /// (node_modules, rustup, /usr/include, /nix/store, …). Binary files are
+    /// always read-only. Default: true
     #[serde(default = "default_true")]
     #[schemars(extend("x-section" = "Editing"))]
     pub auto_read_only: bool,
 
     // ===== Bracket Matching =====
-    /// Highlight matching bracket pairs when cursor is on a bracket.
-    /// Default: true
+    /// Highlight the matching bracket when the cursor is on a bracket. Default: true
     #[serde(default = "default_true")]
     #[schemars(extend("x-section" = "Bracket Matching"))]
     pub highlight_matching_brackets: bool,
 
-    /// Use rainbow colors for nested brackets based on nesting depth.
-    /// Requires highlight_matching_brackets to be enabled.
-    /// Default: true
+    /// Color nested brackets by depth. Needs `highlight_matching_brackets`. Default: true
     #[serde(default = "default_true")]
     #[schemars(extend("x-section" = "Bracket Matching"))]
     pub rainbow_brackets: bool,
 
     // ===== Completion =====
-    /// Automatically show the completion popup while typing.
-    /// When false (default), the popup only appears when explicitly invoked
-    /// (e.g. via Ctrl+Space). When true, it appears automatically after a
-    /// short delay while typing.
-    /// Default: false
+    /// Show the completion popup automatically while typing. When off (default),
+    /// it only opens on request (e.g. Ctrl+Space).
     #[serde(default = "default_false")]
     #[schemars(extend("x-section" = "Completion"))]
     pub completion_popup_auto_show: bool,
 
-    /// Enable quick suggestions (VS Code-like behavior).
-    /// When enabled, completion suggestions appear automatically while typing,
-    /// not just on trigger characters (like `.` or `::`).
-    /// Only takes effect when completion_popup_auto_show is true.
-    /// Default: true
+    /// Suggest completions on any typing, not just after `.` or `::`.
+    /// Needs `completion_popup_auto_show`. Default: true
     #[serde(default = "default_true")]
     #[schemars(extend("x-section" = "Completion"))]
     pub quick_suggestions: bool,
 
-    /// Delay in milliseconds before showing completion suggestions.
-    /// Lower values (10-50ms) feel more responsive but may be distracting.
-    /// Higher values (100-500ms) reduce noise while typing.
-    /// Trigger characters (like `.`) bypass this delay.
-    /// Default: 150
+    /// Milliseconds to wait before showing suggestions. Trigger characters like `.`
+    /// skip the wait. Default: 150
     #[serde(default = "default_quick_suggestions_delay")]
     #[schemars(extend("x-section" = "Completion"))]
     pub quick_suggestions_delay_ms: u64,
 
-    /// Whether trigger characters (like `.`, `::`, `->`) immediately show completions.
-    /// When true, typing a trigger character bypasses quick_suggestions_delay_ms.
-    /// Default: true
+    /// Show completions right away after `.`, `::` or `->`, with no delay. Default: true
     #[serde(default = "default_true")]
     #[schemars(extend("x-section" = "Completion"))]
     pub suggest_on_trigger_characters: bool,
 
     // ===== LSP =====
-    /// Whether to enable LSP inlay hints (type hints, parameter hints, etc.)
+    /// Show inline type and parameter hints from the language server.
     #[serde(default = "default_true")]
     #[schemars(extend("x-section" = "LSP"))]
     pub enable_inlay_hints: bool,
 
-    /// Whether to request full-document LSP semantic tokens.
-    /// Range requests are still used when supported.
-    /// Default: false (range-only to avoid heavy full refreshes).
+    /// Request semantic highlighting for the whole file, not just the visible
+    /// range. Default: false (lighter).
     #[serde(default = "default_false")]
     #[schemars(extend("x-section" = "LSP"))]
     pub enable_semantic_tokens_full: bool,
 
-    /// Whether to show inline diagnostic text at the end of lines with errors/warnings.
-    /// When enabled, the highest-severity diagnostic message is rendered after the
-    /// source code on each affected line.
-    /// Default: false
+    /// Show the most severe error/warning message at the end of its line. Default: false
     #[serde(default = "default_false")]
     #[schemars(extend("x-section" = "Diagnostics"))]
     pub diagnostics_inline_text: bool,
 
     // ===== Mouse =====
-    /// How many lines one notch of the mouse wheel scrolls.
-    ///
-    /// Applies to every surface the wheel scrolls by lines, not just
-    /// buffer text. Shift+wheel pans sideways by columns and is
-    /// unaffected. Clamped to at least 1 — a zero would make the wheel
-    /// dead. Default: 3.
+    /// Lines scrolled per mouse wheel notch, everywhere (minimum 1). Shift+wheel
+    /// is not affected. Default: 3
     #[serde(default = "default_mouse_wheel_scroll_lines")]
     #[schemars(extend("x-section" = "Mouse"))]
     pub mouse_wheel_scroll_lines: usize,
 
-    /// Walk a multi-line wheel notch one line at a time instead of
-    /// jumping the view by the whole `mouse_wheel_scroll_lines` at once.
-    ///
-    /// The first line lands immediately, so the view still answers the
-    /// wheel on the same frame; the rest follow at about a line a frame.
-    /// The walk is paced by the clock, not by frames, so a terminal too
-    /// slow to show it collapses the remainder back into a single jump
-    /// rather than lagging behind the wheel. Has no effect when
-    /// `animations` is `false`, or when a notch is only one line.
+    /// Scroll a wheel notch one line at a time instead of jumping. Slow terminals
+    /// fall back to a jump. Needs `animations` on.
     #[serde(default = "default_true")]
     #[schemars(extend("x-section" = "Mouse"))]
     pub smooth_scroll: bool,
 
-    /// Whether mouse hover triggers LSP hover requests.
-    /// When enabled, hovering over code with the mouse will show documentation.
-    /// On Windows, this also controls the mouse tracking mode: when disabled,
-    /// the editor uses xterm mode 1002 (cell motion — click, drag, release only);
-    /// when enabled, it uses mode 1003 (all motion — full mouse movement tracking).
-    /// Mode 1003 generates high event volume on Windows and may cause input
-    /// corruption on some systems. On macOS and Linux this setting only controls
-    /// LSP hover; the mouse tracking mode is always full motion.
-    /// Default: true (macOS/Linux), false (Windows)
+    /// Show documentation when hovering the mouse over code.
+    /// On Windows it also turns on full mouse-motion tracking, which may garble input
+    /// on some systems. Default: true (macOS/Linux), false (Windows)
     #[serde(default = "default_mouse_hover_enabled")]
     #[schemars(extend("x-section" = "Mouse"))]
     pub mouse_hover_enabled: bool,
 
-    /// Delay in milliseconds before a mouse hover triggers an LSP hover request.
-    /// Lower values show hover info faster but may cause more LSP server load.
-    /// Default: 500ms
+    /// Milliseconds before hover info appears. Lower is faster but loads the
+    /// language server more. Default: 500
     #[serde(default = "default_mouse_hover_delay")]
     #[schemars(extend("x-section" = "Mouse"))]
     pub mouse_hover_delay_ms: u64,
 
-    /// Time window in milliseconds for detecting double-clicks.
-    /// Two clicks within this time are treated as a double-click (word selection).
-    /// Default: 500ms
+    /// Max milliseconds between two clicks to count as a double-click. Default: 500
     #[serde(default = "default_double_click_time")]
     #[schemars(extend("x-section" = "Mouse"))]
     pub double_click_time_ms: u64,
 
-    /// Whether to enable persistent auto-save (save to original file on disk).
-    /// When enabled, modified buffers are saved to their original file path
-    /// at a configurable interval.
-    /// Default: false
+    /// Auto-save changed files to disk every `auto_save_interval_secs`. Default: false
     #[serde(default = "default_false")]
     #[schemars(extend("x-section" = "Recovery"))]
     pub auto_save_enabled: bool,
 
-    /// Interval in seconds for persistent auto-save.
-    /// Modified buffers are saved to their original file at this interval.
-    /// Only effective when auto_save_enabled is true.
-    /// Default: 30 seconds
+    /// Seconds between auto-saves, when `auto_save_enabled` is on. Default: 30
     #[serde(default = "default_auto_save_interval")]
     #[schemars(extend("x-section" = "Recovery"))]
     pub auto_save_interval_secs: u32,
 
-    /// Whether to preserve unsaved changes in all buffers (file-backed and
-    /// unnamed) across editor sessions (VS Code "hot exit" behavior).
-    /// When enabled, modified buffers are backed up on clean exit and their
-    /// unsaved changes are restored on next startup.  Unnamed (scratch)
-    /// buffers are also persisted (Sublime Text / Notepad++ behavior).
-    /// Default: true
+    /// Keep unsaved changes, including unnamed buffers, when you quit, and restore
+    /// them next time. Default: true
     #[serde(default = "default_true", alias = "persist_unnamed_buffers")]
     #[schemars(extend("x-section" = "Recovery"))]
     pub hot_exit: bool,
 
-    /// Whether to confirm before quitting Fresh. When enabled, pressing
-    /// the quit shortcut surfaces a confirmation prompt even when no
-    /// buffers are modified. Useful for users who frequently hit
-    /// `Ctrl+Q` by mistake. Independent of the unsaved-changes prompt,
-    /// which always fires regardless of this setting.
-    /// Default: false
+    /// Always ask before quitting, even with nothing unsaved. (Unsaved changes are
+    /// always confirmed.) Default: false
     #[serde(default)]
     #[schemars(extend("x-section" = "Startup"))]
     pub confirm_quit: bool,
 
-    /// Whether to auto-open previously opened files (session restore) when
-    /// starting Fresh in a directory.  When enabled (the default), tabs,
-    /// splits, cursor positions and the file explorer state are restored
-    /// from the last clean exit in the same working directory.  When
-    /// disabled, Fresh starts with a clean workspace.  The workspace file
-    /// on disk is still written on exit, so re-enabling this setting picks
-    /// up whatever state was saved at the most recent clean exit.  The
-    /// `--no-restore` CLI flag is a stronger override: it skips both
-    /// restoring and saving the workspace.
-    /// Default: true
+    /// Restore tabs, splits, cursors and the file explorer from the last exit in
+    /// the same directory. The session is still saved when off; `--no-restore`
+    /// skips both. Default: true
     #[serde(default = "default_true")]
     #[schemars(extend("x-section" = "Startup"))]
     pub restore_previous_session: bool,
 
-    /// When Fresh is launched with one or more file arguments (e.g.
-    /// `fresh src/main.rs README.md`), skip the workspace session restore
-    /// and open only the files passed on the command line. Hot-exit
-    /// content (unsaved modified files and unnamed `[No Name]` buffers
-    /// with content) is still restored so in-progress work is never lost.
-    /// Pure-directory invocations (`fresh some/dir`) and bare invocations
-    /// (`fresh` with no args) still restore the previous session normally.
-    /// Disable this option to keep the legacy behavior of always
-    /// restoring the previous session even when files are passed.
-    /// Default: true
+    /// When started with files (e.g. `fresh main.rs`), open only those files
+    /// instead of the last session. Unsaved changes are still restored. Default: true
     #[serde(default = "default_true")]
     #[schemars(extend("x-section" = "Startup"))]
     pub skip_session_restore_when_files_passed: bool,
 
-    /// Files whose per-file state (cursor, scroll, folds, …) is never saved
-    /// and never restored, because something outside the editor rewrites
-    /// them: a persisted byte offset would land the cursor at an arbitrary
-    /// point in content that has since been replaced. The default covers
-    /// git's scratch files (`COMMIT_EDITMSG`, `MERGE_MSG`, `TAG_EDITMSG`,
-    /// rebase todo lists), which git regenerates for every operation.
-    ///
-    /// Entries use the same dialect as `languages.*.filenames`: a literal
-    /// entry matches the file name exactly, an entry with `*`/`?` is a glob
-    /// matched against the whole path if it names directories (`**/.git/**`)
-    /// and against the file name otherwise (`*.tmp`).
-    /// Default: `["**/.git/**"]`
+    /// Files whose cursor, scroll and folds are never remembered, because other tools
+    /// rewrite them. Plain names match exactly; `*`/`?` globs match the full path if they
+    /// include folders, else the file name. Default: `["**/.git/**"]` (e.g. `COMMIT_EDITMSG`)
     #[serde(default = "default_ephemeral_file_patterns")]
     #[schemars(extend("x-section" = "Startup"))]
     pub ephemeral_file_patterns: Vec<String>,
 
-    /// Whether to auto-create a fresh empty `[No Name]` buffer when the
-    /// last open buffer is closed. When `false`, the editor still creates
-    /// an internal placeholder buffer (it always needs at least one) but
-    /// hides it from the tab bar so the workspace looks blank. Combined
-    /// with `file_explorer.auto_open_on_last_buffer_close = false`, this
-    /// gives a fully blank workspace where nothing opens automatically.
-    /// Default: true
+    /// Open an empty `[No Name]` tab when the last tab is closed. When off, the
+    /// workspace stays blank (with `file_explorer.auto_open_on_last_buffer_close`
+    /// also off, nothing opens). Default: true
     #[serde(default = "default_true")]
     #[schemars(extend("x-section" = "Startup"))]
     pub auto_create_empty_buffer_on_last_buffer_close: bool,
 
     // ===== Recovery =====
-    /// Whether to enable file recovery (Emacs-style auto-save)
-    /// When enabled, buffers are periodically saved to recovery files
-    /// so they can be recovered if the editor crashes.
+    /// Periodically save changes to recovery files, so work survives a crash.
     #[serde(default = "default_true")]
     #[schemars(extend("x-section" = "Recovery"))]
     pub recovery_enabled: bool,
 
-    /// Interval in seconds for auto-recovery-save.
-    /// Modified buffers are saved to recovery files at this interval.
-    /// Only effective when recovery_enabled is true.
-    /// Default: 2 seconds
+    /// Seconds between recovery saves, when `recovery_enabled` is on. Default: 2
     #[serde(default = "default_auto_recovery_save_interval")]
     #[schemars(extend("x-section" = "Recovery"))]
     pub auto_recovery_save_interval_secs: u32,
 
-    /// Poll interval in milliseconds for auto-reverting open buffers.
-    /// When auto-revert is enabled, file modification times are checked at this interval.
-    /// Lower values detect external changes faster but use more CPU.
-    /// Default: 2000ms (2 seconds)
+    /// How often (ms) to check open files for outside changes when auto-revert is
+    /// on. Lower is faster but uses more CPU. Default: 2000
     #[serde(default = "default_auto_revert_poll_interval")]
     #[schemars(extend("x-section" = "Recovery"))]
     pub auto_revert_poll_interval_ms: u64,
 
     // ===== Keyboard =====
-    /// Enable keyboard enhancement: disambiguate escape codes using CSI-u sequences.
-    /// This allows unambiguous reading of Escape and modified keys.
-    /// Requires terminal support (kitty keyboard protocol).
-    /// Default: true
+    /// Read Escape and modified keys reliably (kitty keyboard protocol, needs
+    /// terminal support). Default: true
     #[serde(default = "default_true")]
     #[schemars(extend("x-section" = "Keyboard"))]
     pub keyboard_disambiguate_escape_codes: bool,
 
-    /// Enable keyboard enhancement: report key event types (repeat/release).
-    /// Adds extra events when keys are autorepeated or released.
-    /// Requires terminal support (kitty keyboard protocol).
-    /// Default: false
+    /// Report key repeat and release events (kitty keyboard protocol, needs
+    /// terminal support). Default: false
     #[serde(default = "default_false")]
     #[schemars(extend("x-section" = "Keyboard"))]
     pub keyboard_report_event_types: bool,
 
-    /// Enable keyboard enhancement: report alternate keycodes.
-    /// Sends alternate keycodes in addition to the base keycode.
-    /// Requires terminal support (kitty keyboard protocol).
-    /// Default: true
+    /// Report alternate keycodes as well as the base key (kitty keyboard protocol,
+    /// needs terminal support). Default: true
     #[serde(default = "default_true")]
     #[schemars(extend("x-section" = "Keyboard"))]
     pub keyboard_report_alternate_keys: bool,
 
-    /// Enable keyboard enhancement: report all keys as escape codes.
-    /// Represents all keyboard events as CSI-u sequences.
-    /// Required for repeat/release events on plain-text keys.
-    /// Requires terminal support (kitty keyboard protocol).
-    /// Default: false
+    /// Report every key as an escape code; needed for repeat/release on plain
+    /// keys (kitty keyboard protocol, needs terminal support). Default: false
     #[serde(default = "default_false")]
     #[schemars(extend("x-section" = "Keyboard"))]
     pub keyboard_report_all_keys_as_escape_codes: bool,
 
     // ===== Performance =====
-    /// Undo history snapshot interval (number of edits between snapshots)
+    /// Edits between undo history snapshots.
     #[serde(default = "default_snapshot_interval")]
     #[schemars(extend("x-section" = "Performance"))]
     pub snapshot_interval: usize,
 
-    /// Number of bytes to look back/forward from the viewport for syntax highlighting context.
-    /// Larger values improve accuracy for multi-line constructs (strings, comments, nested blocks)
-    /// but may slow down highlighting for very large files.
-    /// Default: 10KB (10000 bytes)
+    /// Bytes around the visible area read for syntax highlighting. More is more
+    /// accurate for long strings/comments but slower on big files. Default: 10000
     #[serde(default = "default_highlight_context_bytes")]
     #[schemars(extend("x-section" = "Performance"))]
     pub highlight_context_bytes: usize,
 
-    /// File size threshold in bytes for "large file" behavior
-    /// Files larger than this will:
-    /// - Skip LSP features
-    /// - Use constant-size scrollbar thumb (1 char)
-    ///
-    /// Files smaller will count actual lines for accurate scrollbar rendering
+    /// Files over this size (bytes) count as large: they load lazily, skip
+    /// language servers, and get a fixed-size scrollbar thumb. Default: 10 MB
     #[serde(default = "default_large_file_threshold")]
     #[schemars(extend("x-section" = "Performance"))]
     pub large_file_threshold_bytes: u64,
 
-    /// Estimated average line length in bytes (used for large file line estimation)
-    /// This is used by LineIterator to estimate line positions in large files
-    /// without line metadata. Typical values: 80-120 bytes.
+    /// Assumed average line length in bytes, used to estimate line positions in
+    /// large files. Typical: 80–120.
     #[serde(default = "default_estimated_line_length")]
     #[schemars(extend("x-section" = "Performance"))]
     pub estimated_line_length: usize,
 
-    /// Maximum number of concurrent filesystem read requests.
-    /// Used during line-feed scanning and other bulk I/O operations.
-    /// Higher values improve throughput, especially for remote filesystems.
-    /// Default: 64
+    /// Max parallel file reads during bulk I/O. Higher helps on remote
+    /// filesystems. Default: 64
     #[serde(default = "default_read_concurrency")]
     #[schemars(extend("x-section" = "Performance"))]
     pub read_concurrency: usize,
 
-    /// Poll interval in milliseconds for refreshing expanded directories in the file explorer.
-    /// Directory modification times are checked at this interval to detect new/deleted files.
-    /// Lower values detect changes faster but use more CPU.
-    /// Default: 3000ms (3 seconds)
+    /// How often (ms) the file explorer checks open folders for added or removed
+    /// files. Lower is faster but uses more CPU. Default: 3000
     #[serde(default = "default_file_tree_poll_interval")]
     #[schemars(extend("x-section" = "Performance"))]
     pub file_tree_poll_interval_ms: u64,
@@ -2079,6 +1825,7 @@ impl Default for EditorConfig {
             show_tab_bar: true,
             show_status_bar: true,
             status_bar: StatusBarConfig::default(),
+            search: SearchConfig::default(),
             show_prompt_line: false,
             show_vertical_scrollbar: true,
             show_horizontal_scrollbar: false,
@@ -2118,107 +1865,76 @@ pub enum FileExplorerSide {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SidebarAccordion {
-    /// Any number of sections may be open at once; collapsing one gives its
-    /// rows to the sections still open.
+    /// Any number of sections can be open; closing one gives its space to the others.
     #[default]
     Free,
-    /// One section open at a time: opening a section collapses every other
-    /// one, and the dividers are inert.
+    /// Only one section open at a time; dividers can't be dragged.
     Exclusive,
 }
 
-/// Sidebar configuration: the column that holds the file explorer and any
-/// plugin sections mounted under it.
+/// The sidebar column: the file explorer plus any plugin sections below it.
 #[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
 pub struct SidebarConfig {
-    /// Whether sections open freely (`free`) or one at a time (`exclusive`).
-    /// Default: free
+    /// Open sections freely (`free`, default) or one at a time (`exclusive`).
     #[serde(default)]
     pub accordion: SidebarAccordion,
 }
 
-/// File explorer configuration
+/// File explorer settings.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct FileExplorerConfig {
-    /// Whether `.gitignore` rules apply in the file explorer at all.
-    /// When disabled, ignored entries are neither hidden nor grayed out and
-    /// the "show gitignored files" toggle below has nothing left to hide.
-    /// Default: true
+    /// Apply `.gitignore` rules. When off, ignored files are neither hidden nor
+    /// grayed out. Default: true
     #[serde(default = "default_true")]
     pub respect_gitignore: bool,
 
-    /// Whether to show hidden files (starting with .) by default
+    /// Show hidden files (starting with `.`) by default.
     #[serde(default = "default_false")]
     pub show_hidden: bool,
 
-    /// Whether to show gitignored files by default
+    /// Show gitignored files by default.
     #[serde(default = "default_false")]
     pub show_gitignored: bool,
 
-    /// Custom patterns to ignore (in addition to .gitignore)
+    /// Extra patterns to ignore, on top of `.gitignore`.
     #[serde(default)]
     pub custom_ignore_patterns: Vec<String>,
 
-    /// File explorer width. Either a percent (`"30%"`, 0–100) or an
-    /// absolute column count (`"24"`). Legacy numeric forms are still
-    /// accepted on read: a bare integer is treated as percent, and a
-    /// fractional number in `[0, 1]` is treated as a legacy percent
-    /// fraction (e.g. `0.3` → 30%).
+    /// Explorer width: a percent (`"30%"`, 0–100) or a column count (`"24"`).
+    /// A plain number is read as a percent; `0.3` means 30%.
     #[serde(default = "default_explorer_width")]
     pub width: ExplorerWidth,
 
-    /// Open files in a "preview" (ephemeral) tab on single-click in the
-    /// file explorer. The preview tab is replaced by the next single-click
-    /// instead of accumulating tabs. Editing the file, double-clicking
-    /// (or pressing Enter) on it in the explorer, or dragging its tab
-    /// promotes the tab to a permanent tab.
-    /// Default: true
+    /// A single click opens a temporary preview tab that the next click replaces.
+    /// Editing, double-click, Enter or dragging the tab makes it permanent. Default: true
     #[serde(default = "default_true")]
     pub preview_tabs: bool,
 
-    /// Which side of the screen to show the file explorer on.
-    /// Default: left
+    /// Screen side for the file explorer. Default: left
     #[serde(default = "default_explorer_side")]
     pub side: FileExplorerSide,
 
-    /// Automatically focus the file explorer when the last buffer is
-    /// closed. Set to `false` for a "blank workspace" workflow where
-    /// nothing opens automatically and the user explicitly invokes the
-    /// file explorer (e.g. via keybinding or command palette).
-    /// Default: true
-    #[serde(default = "default_true")]
-    pub auto_open_on_last_buffer_close: bool,
-
-    /// When the file explorer sidebar is open, automatically expand the
-    /// tree and highlight the file that corresponds to the active buffer
-    /// whenever you switch tabs. Set to `true` to keep the explorer
-    /// selection in sync with the active tab.
-    /// Default: false
+    /// Reveal and select the current file in the tree whenever you switch files.
+    /// Skipped while the sidebar is hidden or focused, and for files outside the
+    /// project. Default: false
     #[serde(default = "default_false")]
     pub follow_active_buffer: bool,
 
-    /// Render single-child directory chains on a single line, e.g.
-    /// `src/main/java/com/example`. Only applies when each intermediate
-    /// directory in the chain is expanded and has exactly one visible
-    /// child that is itself a directory. Mirrors VSCode's
-    /// `explorer.compactFolders`.
-    /// Default: true
+    /// Focus the file explorer when the last tab is closed. Turn off for a blank
+    /// workspace where nothing opens by itself. Default: true
+    #[serde(default = "default_true")]
+    pub auto_open_on_last_buffer_close: bool,
+
+    /// Show chains of folders that each hold only one folder on one line, e.g.
+    /// `src/main/java/com/example`. Default: true
     #[serde(default = "default_true")]
     pub compact_directories: bool,
 
-    /// Symbol shown next to a collapsed (closed) directory in the file
-    /// explorer tree. A short string (single character recommended).
-    /// A trailing space is added automatically during rendering; the
-    /// renderer pads narrower indicators so collapsed/expanded rows align.
-    /// Default: ">"
+    /// Symbol before a closed folder (one character recommended). Default: ">"
     #[serde(default = "default_tree_indicator_collapsed")]
     pub tree_indicator_collapsed: String,
 
-    /// Symbol shown next to an expanded (open) directory in the file
-    /// explorer tree. A short string (single character recommended).
-    /// A trailing space is added automatically during rendering; the
-    /// renderer pads narrower indicators so collapsed/expanded rows align.
-    /// Default: "▼"
+    /// Symbol before an open folder (one character recommended). Default: "▼"
     #[serde(default = "default_tree_indicator_expanded")]
     pub tree_indicator_expanded: String,
 }
@@ -2280,6 +1996,32 @@ impl ExplorerWidth {
             Self::Columns(cols) => cols,
         };
         raw.max(Self::MIN_COLS).min(terminal_width)
+    }
+
+    /// The width of the same variant that renders as close to `cols` as it
+    /// can within `terminal_width` — the inverse of [`to_cols`](Self::to_cols).
+    ///
+    /// `Columns` is exact. `Percent` picks whichever of the two percents
+    /// bracketing `cols` renders nearer to it (a tie goes to the wider), so a
+    /// divider dragged by N cells moves N cells whenever a percent can say
+    /// so, and never drifts by the truncation of each step.
+    pub fn with_cols(self, cols: u16, terminal_width: u16) -> Self {
+        let cols = cols.min(terminal_width);
+        match self {
+            Self::Columns(_) => Self::Columns(cols),
+            Self::Percent(_) if terminal_width == 0 => self,
+            Self::Percent(_) => {
+                let w = terminal_width as u32;
+                let lo = (cols as u32 * 100 / w).min(100) as u8;
+                let hi = (cols as u32 * 100).div_ceil(w).min(100) as u8;
+                let miss = |pct: u8| Self::Percent(pct).to_cols(terminal_width).abs_diff(cols);
+                if miss(lo) < miss(hi) {
+                    Self::Percent(lo)
+                } else {
+                    Self::Percent(hi)
+                }
+            }
+        }
     }
 }
 
@@ -2457,25 +2199,40 @@ pub(crate) mod explorer_width {
     }
 }
 
-/// Clipboard configuration
-///
-/// Controls which clipboard methods are used for copy/paste operations.
-/// By default, all methods are enabled and the editor tries them in order:
-/// 1. OSC 52 escape sequences (works in modern terminals like Kitty, Alacritty, Wezterm)
-/// 2. System clipboard via X11/Wayland APIs (works in Gnome Console, XFCE Terminal, etc.)
-/// 3. Internal clipboard (always available as fallback)
-///
-/// If you experience hangs or issues (e.g., when using PuTTY or certain SSH setups),
-/// you can disable specific methods.
+/// Starting state of the search toggles in every search UI (search/replace
+/// prompt, Live Grep, Search & Replace panel).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+pub struct SearchConfig {
+    /// Match case (default: false, so `todo` also finds `TODO`). Flipping the
+    /// toggle overrides this and is saved with the workspace.
+    #[serde(default = "default_false")]
+    pub case_sensitive: bool,
+
+    /// Match whole words only (default: false).
+    #[serde(default = "default_false")]
+    pub whole_word: bool,
+
+    /// Treat the query as a regular expression (default: false).
+    #[serde(default = "default_false")]
+    pub regex: bool,
+
+    /// Ask before each replacement (default: false).
+    #[serde(default = "default_false")]
+    pub confirm_each: bool,
+}
+
+/// Which clipboard methods copy/paste uses, tried in order: OSC 52 (modern
+/// terminals like Kitty, WezTerm), the system clipboard (X11/Wayland), then an
+/// internal clipboard. Disable a method if it hangs (e.g. PuTTY, some SSH setups).
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ClipboardConfig {
-    /// Enable OSC 52 escape sequences for clipboard access (default: true)
-    /// Disable this if your terminal doesn't support OSC 52 or if it causes hangs
+    /// Use the terminal's OSC 52 clipboard (default: true). Turn off if unsupported
+    /// or it hangs.
     #[serde(default = "default_true")]
     pub use_osc52: bool,
 
-    /// Enable system clipboard access via X11/Wayland APIs (default: true)
-    /// Disable this if you don't have a display server or it causes issues
+    /// Use the X11/Wayland system clipboard (default: true). Turn off if there's
+    /// no display server or it causes problems.
     #[serde(default = "default_true")]
     pub use_system_clipboard: bool,
 }
@@ -2489,85 +2246,51 @@ impl Default for ClipboardConfig {
     }
 }
 
-/// Terminal configuration
+/// Integrated terminal settings.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct TerminalConfig {
-    /// When viewing terminal scrollback and new output arrives,
-    /// automatically jump back to terminal mode (default: true)
+    /// Jump back to the live terminal when new output arrives while you're in
+    /// scrollback (default: true).
     #[serde(default = "default_true")]
     pub jump_to_end_on_output: bool,
 
-    /// Override the shell used by the integrated terminal.
-    ///
-    /// When unset (the default), Fresh launches the shell named by the
-    /// `$SHELL` environment variable (or the platform default if `$SHELL`
-    /// is empty). Set this to run a different program — for example a
-    /// wrapper script that forces an interactive shell — without having
-    /// to change `$SHELL` for the whole process, which other features
-    /// such as `format_on_save` also depend on.
-    ///
-    /// Only affects local authorities; plugin-provided authorities
-    /// (e.g. `docker exec`) keep their own wrapper.
+    /// Shell for the terminal. Unset (default) uses `$SHELL` or the system default.
+    /// Doesn't change `$SHELL` for other features, and doesn't apply to remote
+    /// or container terminals.
     #[serde(default)]
     pub shell: Option<TerminalShellConfig>,
 
-    /// Workaround for fresh#2077: when auto-detecting a shell on Windows,
-    /// skip Microsoft Store **App Execution Alias** stubs (zero-byte
-    /// `APPEXECLINK` reparse points under `%LOCALAPPDATA%\Microsoft\WindowsApps`).
-    /// Spawning such a stub through ConPTY has been reported to crash with
-    /// `0xc0000142` (STATUS_DLL_INIT_FAILED) on Windows 11 23H2.
-    ///
-    /// Default `true`. Set to `false` to launch whatever `pwsh.exe`
-    /// appears first on `PATH`, including the Store alias — useful if you
-    /// want the old behavior, or if you've confirmed the alias works on
-    /// your Windows build. No effect on non-Windows platforms or when
-    /// `terminal.shell` is set explicitly.
+    /// Windows only: when picking a shell, skip Microsoft Store app aliases, which
+    /// can crash on start. Turn off to use the first `pwsh.exe` on `PATH`.
+    /// Ignored if `terminal.shell` is set. Default: true
     #[serde(default = "default_true")]
     pub skip_app_execution_alias: bool,
 
-    /// When restoring an Orchestrator agent session that recorded an
-    /// agent-resume spec (e.g. `claude --session-id <id>` → resume with
-    /// `claude --resume <id>`), rejoin the prior conversation instead of
-    /// re-running the launch command fresh. Default `true`.
-    ///
-    /// Set to `false` to always re-run the launch command on restore (the
-    /// pre-resume behaviour) — useful if you'd rather a restart start each
-    /// agent clean. No effect on sessions without a resume spec.
+    /// When restoring Orchestrator agent sessions, resume the previous
+    /// conversation (e.g. `claude --resume`) instead of starting clean. Default: true
     #[serde(default = "default_true")]
     pub resume_agents: bool,
 
-    /// Dragging on a live terminal selects text: the split drops into
-    /// read-only scrollback (Ctrl+Space resumes) with a real selection
-    /// that the drag extends and Ctrl+C copies; a bare click still only
-    /// focuses the terminal. Set to `false` to make a drag on the live
-    /// grid inert again (default: true)
+    /// Dragging in a terminal selects text for Ctrl+C, switching to scrollback
+    /// (Ctrl+Space returns). A click only focuses. Default: true
     #[serde(default = "default_true")]
     pub mouse_drag_selects: bool,
 
-    /// When to forward mouse events to the program running inside the
-    /// terminal. `requested` (default) forwards button/drag events only
-    /// to programs that enabled mouse reporting (DECSET 1000/1002/1003),
-    /// buttonless motion only under all-motion (1003), and lets
-    /// Shift+drag bypass forwarding so text can always be selected;
-    /// wheel events additionally reach alternate-screen programs
-    /// (alternate-scroll arrow synthesis for pagers). `alt_screen` is
-    /// the legacy rule: every mouse event is forwarded to any
-    /// alternate-screen program, whether or not it asked for the mouse,
-    /// with no Shift bypass.
+    /// When programs in the terminal get mouse events. `requested` (default):
+    /// only programs that ask for the mouse (plus wheel for full-screen apps);
+    /// Shift+drag still selects. `alt_screen`: every full-screen program gets all events.
     #[serde(default)]
     pub mouse_forwarding: TerminalMouseForwarding,
 }
 
-/// Mouse-forwarding policy for programs running inside the terminal
-/// (see [`TerminalConfig::mouse_forwarding`]).
+/// When programs in the terminal get mouse events.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum TerminalMouseForwarding {
-    /// Forward only to programs that subscribed to mouse reporting;
-    /// Shift+drag bypasses so selection always stays available.
+    /// Only to programs that ask for the mouse; Shift+drag still selects.
     #[default]
     Requested,
-    /// Legacy: forward everything to any alternate-screen program.
+    /// Old behavior: all events to any full-screen program.
     AltScreen,
 }
 
@@ -2584,23 +2307,22 @@ impl Default for TerminalConfig {
     }
 }
 
-/// Explicit shell command + args for the integrated terminal.
+/// Shell command and arguments for the terminal.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct TerminalShellConfig {
-    /// Executable to launch (e.g. `/usr/bin/fish`, `bash`, or a wrapper
-    /// script). Resolved via `$PATH` when not absolute.
+    /// Program to run (e.g. `/usr/bin/fish`, `bash`, or a script). Looked up in
+    /// `$PATH` if not absolute.
     pub command: String,
 
-    /// Arguments passed before any user input.
+    /// Arguments for the shell.
     #[serde(default)]
     pub args: Vec<String>,
 }
 
-/// Warning notification configuration
+/// Warning notification settings.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct WarningsConfig {
-    /// Show warning/error indicators in the status bar (default: true)
-    /// When enabled, displays a colored indicator for LSP errors and other warnings
+    /// Show a colored status-bar indicator for errors and warnings (default: true).
     #[serde(default = "default_true")]
     pub show_status_indicator: bool,
 }
@@ -2613,10 +2335,10 @@ impl Default for WarningsConfig {
     }
 }
 
-/// Package manager configuration for plugins and themes
+/// Package manager settings for plugins and themes.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct PackagesConfig {
-    /// Registry sources (git repository URLs containing plugin/theme indices)
+    /// Git repository URLs of plugin/theme registries.
     /// Default: ["https://github.com/sinelaw/fresh-plugins-registry"]
     #[serde(default = "default_package_sources")]
     pub sources: Vec<String>,
@@ -2647,8 +2369,8 @@ impl Default for FileExplorerConfig {
             width: default_explorer_width(),
             preview_tabs: true,
             side: default_explorer_side(),
-            auto_open_on_last_buffer_close: true,
             follow_active_buffer: false,
+            auto_open_on_last_buffer_close: true,
             compact_directories: true,
             tree_indicator_collapsed: default_tree_indicator_collapsed(),
             tree_indicator_expanded: default_tree_indicator_expanded(),
@@ -2656,10 +2378,10 @@ impl Default for FileExplorerConfig {
     }
 }
 
-/// File browser configuration (for Open File dialog)
+/// Open File dialog settings.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct FileBrowserConfig {
-    /// Whether to show hidden files (starting with .) by default in Open File dialog
+    /// Show hidden files (starting with `.`) by default.
     #[serde(default = "default_false")]
     pub show_hidden: bool,
 }
@@ -2678,34 +2400,32 @@ pub struct KeyPress {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[schemars(extend("x-display-field" = "/action"))]
 pub struct Keybinding {
-    /// Key name (e.g., "a", "Enter", "F1") - for single-key bindings
+    /// Key name (e.g. "a", "Enter", "F1") for a single-key binding.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub key: String,
 
-    /// Modifiers (e.g., ["ctrl"], ["ctrl", "shift"]) - for single-key bindings
+    /// Modifiers (e.g. ["ctrl"], ["ctrl", "shift"]) for a single-key binding.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub modifiers: Vec<String>,
 
-    /// Key sequence for chord bindings (e.g., [{"key": "x", "modifiers": ["ctrl"]}, {"key": "s", "modifiers": ["ctrl"]}])
-    /// If present, takes precedence over key + modifiers
+    /// Key sequence for a chord, e.g. [{"key": "x", "modifiers": ["ctrl"]}, {"key": "s", "modifiers": ["ctrl"]}].
+    /// Overrides `key` + `modifiers`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub keys: Vec<KeyPress>,
 
-    /// The whole binding as one string — `"C-x"`, `"C-S-Left"`, `"C-x C-s"`.
-    /// An alternative to `key` + `modifiers` and `keys`, which take
-    /// precedence when present.
+    /// The whole binding as one string, e.g. `"C-x"`, `"C-S-Left"`, `"C-x C-s"`.
+    /// `key` + `modifiers` and `keys` win if set.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub chord: String,
 
-    /// Action to perform (e.g., "insert_char", "move_left"), or "unbind" to
-    /// remove the built-in binding for this key instead of binding anything.
+    /// Action to run (e.g. "move_left"), or "unbind" to remove the built-in binding for this key.
     pub action: String,
 
-    /// Optional arguments for the action
+    /// Arguments for the action (optional).
     #[serde(default)]
     pub args: HashMap<String, serde_json::Value>,
 
-    /// Optional condition (e.g., "mode == insert")
+    /// Condition for when the binding applies (optional, e.g. "mode == insert").
     #[serde(default)]
     pub when: Option<String>,
 }
@@ -2727,33 +2447,31 @@ impl Keybinding {
     }
 }
 
-/// Keymap configuration (for built-in and user-defined keymaps)
+/// A keymap (built-in or custom).
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[schemars(extend("x-display-field" = "/inherits"))]
 pub struct KeymapConfig {
-    /// Optional parent keymap to inherit from
+    /// Keymap to inherit from (optional).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub inherits: Option<String>,
 
-    /// Keybindings defined in this keymap
+    /// Keybindings in this keymap.
     #[serde(default)]
     pub bindings: Vec<Keybinding>,
 }
 
-/// Formatter configuration for a language
+/// Formatter for a language.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[schemars(extend("x-display-field" = "/command"))]
 pub struct FormatterConfig {
-    /// The formatter command to run (e.g., "rustfmt", "prettier")
+    /// Formatter command (e.g. "rustfmt", "prettier").
     pub command: String,
 
-    /// Arguments to pass to the formatter
-    /// Use "$FILE" to include the file path
+    /// Arguments for the formatter. "$FILE" is replaced by the file path.
     #[serde(default)]
     pub args: Vec<String>,
 
-    /// Whether to pass buffer content via stdin (default: true)
-    /// Most formatters read from stdin and write to stdout
+    /// Send the text on stdin and read the result from stdout (default: true).
     #[serde(default = "default_true")]
     pub stdin: bool,
 
@@ -2762,24 +2480,22 @@ pub struct FormatterConfig {
     pub timeout_ms: u64,
 }
 
-/// Action to run when a file is saved (for linters, etc.)
+/// Command to run when a file is saved (e.g. a linter).
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[schemars(extend("x-display-field" = "/command"))]
 pub struct OnSaveAction {
-    /// The shell command to run
-    /// The file path is available as $FILE or as an argument
+    /// Shell command to run. The file path is available as $FILE.
     pub command: String,
 
-    /// Arguments to pass to the command
-    /// Use "$FILE" to include the file path
+    /// Arguments for the command. "$FILE" is replaced by the file path.
     #[serde(default)]
     pub args: Vec<String>,
 
-    /// Working directory for the command (defaults to project root)
+    /// Working directory (default: project root).
     #[serde(default)]
     pub working_dir: Option<String>,
 
-    /// Whether to use the buffer content as stdin
+    /// Send the file's text on stdin.
     #[serde(default)]
     pub stdin: bool,
 
@@ -2787,8 +2503,7 @@ pub struct OnSaveAction {
     #[serde(default = "default_on_save_timeout")]
     pub timeout_ms: u64,
 
-    /// Whether this action is enabled (default: true)
-    /// Set to false to disable an action without removing it from config
+    /// Set to false to turn the action off without removing it (default: true).
     #[serde(default = "default_true")]
     pub enabled: bool,
 }
@@ -2801,184 +2516,129 @@ fn default_page_width() -> Option<usize> {
     Some(80)
 }
 
-/// Language-specific configuration
+/// Settings for one language.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[schemars(extend("x-display-field" = "/grammar"))]
 pub struct LanguageConfig {
-    /// File extensions for this language (e.g., ["rs"] for Rust)
+    /// File extensions (e.g. ["rs"] for Rust).
     #[serde(default)]
     pub extensions: Vec<String>,
 
-    /// Exact filenames for this language (e.g., ["Makefile", "GNUmakefile"])
+    /// Exact file names (e.g. ["Makefile", "GNUmakefile"]).
     #[serde(default)]
     pub filenames: Vec<String>,
 
-    /// Tree-sitter grammar name
+    /// Tree-sitter grammar name.
     #[serde(default)]
     pub grammar: String,
 
-    /// Comment prefix
+    /// Line comment prefix (e.g. "//").
     #[serde(default)]
     pub comment_prefix: Option<String>,
 
-    /// Whether to auto-indent
+    /// Auto-indent new lines.
     #[serde(default = "default_true")]
     pub auto_indent: bool,
 
-    /// Whether to auto-close brackets, parentheses, and quotes for this language.
-    /// If not specified (`null`), falls back to the global `editor.auto_close` setting.
+    /// Auto-close brackets and quotes. `null` uses `editor.auto_close`.
     #[serde(default)]
     pub auto_close: Option<bool>,
 
-    /// Whether to auto-surround selected text with matching pairs for this language.
-    /// If not specified (`null`), falls back to the global `editor.auto_surround` setting.
+    /// Wrap selections in typed brackets/quotes. `null` uses `editor.auto_surround`.
     #[serde(default)]
     pub auto_surround: Option<bool>,
 
-    /// Path to a custom grammar file for this language (optional).
-    /// Loaded into the grammar registry at startup and associated with this
-    /// language's `extensions`, so files matching them highlight with it.
-    /// Only Sublime Text `.sublime-syntax` grammars are supported —
-    /// TextMate `.tmLanguage` is a different format syntect cannot load.
+    /// Custom grammar file for files with this language's extensions (optional).
+    /// Must be a Sublime Text `.sublime-syntax` file; `.tmLanguage` is not supported.
     #[serde(default)]
     pub textmate_grammar: Option<std::path::PathBuf>,
 
-    /// Whether to show whitespace tab indicators (→) for this language
-    /// Defaults to true. Set to false for languages like Go that use tabs for indentation.
+    /// Show → for tabs (default: true). Turn off for tab-indented languages like Go.
     #[serde(default = "default_true")]
     pub show_whitespace_tabs: bool,
 
-    /// Whether to enable line wrapping for this language.
-    /// If not specified (`null`), falls back to the global `editor.line_wrap` setting.
-    /// Useful for prose-heavy languages like Markdown where wrapping is desirable
-    /// even if globally disabled.
+    /// Wrap long lines (e.g. for Markdown). `null` uses `editor.line_wrap`.
     #[serde(default)]
     pub line_wrap: Option<bool>,
 
-    /// Column at which to wrap lines for this language.
-    /// If not specified (`null`), falls back to the global `editor.wrap_column` setting.
-    /// A value of `0` is treated as not set at this language level (inherits the global).
+    /// Column to wrap lines at. `null` or `0` uses `editor.wrap_column`.
     #[serde(default)]
     pub wrap_column: Option<usize>,
 
-    /// Whether to automatically enable page view (compose mode) for this language.
-    /// Page view provides a document-style layout with centered content,
-    /// concealed formatting markers, and intelligent word wrapping.
-    /// If not specified (`null`), page view is not auto-activated.
+    /// Open in page view: centered text, hidden formatting marks, smart wrapping.
+    /// `null` means off.
     #[serde(default)]
     pub page_view: Option<bool>,
 
-    /// Width of the page in page view mode (in columns).
-    /// Controls the content width when page view is active, with centering margins.
-    /// If not specified (`null`), falls back to the global `editor.page_width` setting.
-    /// A value of `0` is treated as not set at this language level (inherits the global).
+    /// Text width in columns in page view. `null` or `0` uses `editor.page_width`.
     #[serde(default)]
     pub page_width: Option<usize>,
 
-    /// Whether pressing Tab should insert a tab character instead of spaces.
-    /// If not specified (`null`), falls back to the global `editor.use_tabs` setting.
-    /// Set to true for languages like Go and Makefile that require tabs.
+    /// Tab key inserts a tab character (e.g. for Go, Makefile). `null` uses `editor.use_tabs`.
     #[serde(default)]
     pub use_tabs: Option<bool>,
 
-    /// Tab size (number of spaces per tab) for this language.
-    /// If not specified, falls back to the global editor.tab_size setting.
-    /// A value of `0` is treated as not set at this language level (inherits the global).
+    /// Spaces per tab. `null` or `0` uses `editor.tab_size`.
     #[serde(default)]
     pub tab_size: Option<usize>,
 
-    /// The formatter for this language (used by format_buffer command)
+    /// Formatter used by the Format Buffer command.
     #[serde(default)]
     pub formatter: Option<FormatterConfig>,
 
-    /// Whether to automatically format on save (uses the formatter above)
+    /// Run the formatter on save.
     #[serde(default)]
     pub format_on_save: bool,
 
-    /// Actions to run when a file of this language is saved (linters, etc.)
-    /// Actions are run in order; if any fails (non-zero exit), subsequent actions don't run
-    /// Note: Use `formatter` + `format_on_save` for formatting, not on_save
+    /// Commands to run on save (e.g. linters), in order; stops at the first failure.
+    /// For formatting, use `formatter` + `format_on_save` instead.
     #[serde(default)]
     pub on_save: Vec<OnSaveAction>,
 
-    /// Extra characters (beyond alphanumeric and `_`) considered part of
-    /// identifiers for this language. Used by dabbrev and buffer-word
-    /// completion to correctly tokenise language-specific naming conventions.
-    ///
-    /// Examples:
-    /// - Lisp/Clojure/CSS: `"-"` (kebab-case identifiers)
-    /// - PHP/Bash: `"$"` (variable sigils)
-    /// - Ruby: `"?!"` (predicate/bang methods)
-    /// - Rust (default): `""` (standard alphanumeric + underscore)
+    /// Extra characters (besides letters, digits and `_`) that count as part of a
+    /// word for word completion, e.g. `"-"` for Lisp/CSS, `"$"` for PHP/Bash, `"?!"` for Ruby.
     #[serde(default)]
     pub word_characters: Option<String>,
 
-    /// Indentation rules for this language. Overrides (and, for unspecified
-    /// patterns, inherits from) the built-in rules. Lets you tune auto-indent —
-    /// or add it for a language Fresh doesn't know — without a tree-sitter
-    /// grammar. See `IndentRulesConfig`.
+    /// Custom auto-indent rules. Unset patterns keep the built-in ones. Works
+    /// without a tree-sitter grammar.
     #[serde(default)]
     pub indent: Option<IndentRulesConfig>,
 
-    /// Whether to render indentation guides for this language.
-    /// If not specified (`null`), follows the global `editor.indentation_guide`
-    /// setting — except for plain text (`text`), where guides default off:
-    /// they are a source-code aid and plain-text indentation rarely nests
-    /// meaningfully. Set `false` to suppress guides for a language even when
-    /// they are enabled globally, or `true` under `[languages.text]` to bring
-    /// them back for plain text.
+    /// Show indentation guides. `null` follows `editor.indentation_guide`,
+    /// except plain text, where guides are off unless set to `true`.
     #[serde(default)]
     pub indentation_guide: Option<bool>,
 }
 
-/// User-overridable auto-indentation rules for a language.
-///
-/// When you press Enter, Fresh looks at the line being split (the "reference
-/// line") and the text that moves down to the new line, and applies these rules
-/// to decide the new line's indent. Each field is a regular expression
-/// ([`regex` crate] syntax: no look-ahead/behind or back-references). A regex is
-/// matched against the line's **code view** — the text with comment and string
-/// spans blanked to spaces first — so a bracket or keyword inside a string or
-/// comment never triggers indentation.
-///
-/// Any field left unset inherits from the language's built-in rules, so you can
-/// override just one pattern. All patterns are optional.
-///
-/// [`regex` crate]: https://docs.rs/regex/latest/regex/#syntax
+/// Auto-indent rules used when you press Enter. Each is an optional regex (no
+/// look-around or back-references), matched with strings and comments ignored.
+/// Unset patterns keep the language's built-in rules.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct IndentRulesConfig {
-    /// If the reference line matches, the new line is indented one level deeper.
-    /// Example — a line ending with an opening bracket: `[\{\[\(]\s*$`.
-    /// Example — Python block headers ending in a colon: `:\s*$`.
+    /// If the current line matches, the new line is indented one level deeper.
+    /// E.g. `[\{\[\(]\s*$` (ends with an open bracket) or `:\s*$` (Python).
     #[serde(default)]
     pub increase_indent_pattern: Option<String>,
 
-    /// If the new line's leading text matches, that line is dedented one level.
-    /// Example — a line starting with a closing bracket: `^\s*[\}\]\)]`.
-    ///
-    /// Also fires live while typing: at the keystroke where the pattern first
-    /// matches the whole line, the line is re-indented one level shallower.
-    /// Include the statement's terminator in the pattern when the language has
-    /// one (e.g. Python's `:`), like VS Code's `decreaseIndentPattern`, so an
-    /// identifier starting with a keyword never triggers a transient dedent.
+    /// If a line matches, it is dedented one level, also while typing.
+    /// E.g. `^\s*[\}\]\)]` (starts with a closing bracket). Include terminators
+    /// like Python's `:` so words starting with a keyword don't dedent.
     #[serde(default)]
     pub decrease_indent_pattern: Option<String>,
 
-    /// Like `increase_indent_pattern`, but the extra level applies to the
-    /// immediately following line only (a one-shot indent that doesn't persist).
-    /// Example — a braceless control head: `^\s*(if|for|while)\b.*\)\s*$`.
+    /// Like `increase_indent_pattern`, but only for the next line.
+    /// E.g. `^\s*(if|for|while)\b.*\)\s*$` (an `if` without braces).
     #[serde(default)]
     pub indent_next_line_pattern: Option<String>,
 
-    /// If the reference line matches, the following line is dedented one level
-    /// (a one-shot dedent). Example — Python flow-exit statements:
-    /// `^\s*(return|pass|raise|break|continue)\b`.
+    /// If the current line matches, the next line is dedented one level.
+    /// E.g. `^\s*(return|pass|raise|break|continue)\b` (Python).
     #[serde(default)]
     pub dedent_next_line_pattern: Option<String>,
 
-    /// Cancels `increase_indent_pattern` when the reference line *also* closes
-    /// the block it opened, so one-liners don't over-indent. Example — Ruby
-    /// `\bend\b` matches `def f; end` and stops it from indenting the next line.
+    /// Cancels `increase_indent_pattern` when the line also closes its block,
+    /// e.g. Ruby `\bend\b` for `def f; end`.
     #[serde(default)]
     pub self_close_pattern: Option<String>,
 }
@@ -3315,6 +2975,7 @@ impl Default for Config {
             locale: LocaleName::default(),
             check_for_updates: true,
             self_update: true,
+            orchestrator_mode: true,
             editor: EditorConfig::default(),
             file_explorer: FileExplorerConfig::default(),
             sidebar: SidebarConfig::default(),
@@ -4923,33 +4584,6 @@ impl Config {
         );
 
         languages.insert(
-            "odin".to_string(),
-            LanguageConfig {
-                extensions: vec!["odin".to_string()],
-                filenames: vec![],
-                grammar: "odin".to_string(),
-                comment_prefix: Some("//".to_string()),
-                auto_indent: true,
-                auto_close: None,
-                auto_surround: None,
-                textmate_grammar: None,
-                show_whitespace_tabs: false,
-                line_wrap: None,
-                wrap_column: None,
-                page_view: None,
-                page_width: None,
-                use_tabs: Some(true),
-                tab_size: Some(8),
-                formatter: None,
-                format_on_save: false,
-                on_save: vec![],
-                word_characters: None,
-                indentation_guide: None,
-                indent: None,
-            },
-        );
-
-        languages.insert(
             "zig".to_string(),
             LanguageConfig {
                 extensions: vec!["zig".to_string(), "zon".to_string()],
@@ -4967,6 +4601,38 @@ impl Config {
                 page_width: None,
                 use_tabs: None,
                 tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        // Odin (https://odin-lang.org). Its own convention is tabs shown 8
+        // wide, which is what `odinfmt` and the compiler's own sources use —
+        // the same shape as the Go entry above, and the reason both set
+        // `show_whitespace_tabs: false`: a file that is *meant* to be tabs
+        // does not need every indent flagged.
+        languages.insert(
+            "odin".to_string(),
+            LanguageConfig {
+                extensions: vec!["odin".to_string()],
+                filenames: vec![],
+                grammar: "odin".to_string(),
+                comment_prefix: Some("//".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: false,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: Some(true),
+                tab_size: Some(8),
                 formatter: None,
                 format_on_save: false,
                 on_save: vec![],
@@ -7677,26 +7343,6 @@ impl Config {
             }]),
         );
 
-        // ols - Odin Language Server (https://github.com/DanielGavin/ols)
-        // Build from source: cd ols && ./build.sh (Linux/macOS) or ./build.bat (Windows)
-        lsp.insert(
-            "odin".to_string(),
-            LspLanguageConfig::Multi(vec![LspServerConfig {
-                command: "ols".to_string(),
-                args: Some(vec![]),
-                enabled: true,
-                auto_start: false,
-                process_limits: ProcessLimits::default(),
-                initialization_options: None,
-                env: Default::default(),
-                language_id_overrides: Default::default(),
-                name: None,
-                only_features: None,
-                except_features: None,
-                root_markers: Default::default(),
-            }]),
-        );
-
         // zls - Zig Language Server (https://github.com/zigtools/zls)
         // Install via package manager or download from releases
         lsp.insert(
@@ -7714,6 +7360,28 @@ impl Config {
                 only_features: None,
                 except_features: None,
                 root_markers: Default::default(),
+            }]),
+        );
+
+        // ols - Odin Language Server (https://github.com/DanielGavin/ols).
+        // Not auto-started: `ols` has no binary releases for most platforms
+        // and has to be built from source, so assuming it is on PATH would
+        // make every Odin file report a missing server.
+        lsp.insert(
+            "odin".to_string(),
+            LspLanguageConfig::Multi(vec![LspServerConfig {
+                command: "ols".to_string(),
+                args: Some(vec![]),
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
+                root_markers: vec!["ols.json".to_string(), ".git".to_string()],
             }]),
         );
 
@@ -8919,6 +8587,29 @@ mod tests {
             ExplorerWidth::Columns(ExplorerWidth::MIN_COLS + 1).to_cols(100),
             ExplorerWidth::MIN_COLS + 1
         );
+    }
+
+    /// `with_cols` inverts `to_cols` for the variant it was called on.
+    #[test]
+    fn test_with_cols_round_trips() {
+        for w in [0u16, 1, 37, 80, 100, 117, 200, 311] {
+            for cols in ExplorerWidth::MIN_COLS..=w {
+                let c = ExplorerWidth::Columns(9).with_cols(cols, w);
+                assert_eq!(c, ExplorerWidth::Columns(cols));
+                assert_eq!(c.to_cols(w), cols);
+                // A percent can only land within one percent-step of the
+                // target; below 100 columns a step is under one cell, so it
+                // is exact.
+                let p = ExplorerWidth::Percent(30).with_cols(cols, w);
+                assert!(matches!(p, ExplorerWidth::Percent(_)));
+                let step = (w as u32).div_ceil(100) as u16;
+                let got = p.to_cols(w);
+                assert!(
+                    got.abs_diff(cols) * 2 <= step,
+                    "w={w} cols={cols} got {got} ({p})"
+                );
+            }
+        }
     }
 
     /// On very narrow terminals the `MIN_COLS` floor can't fit; the

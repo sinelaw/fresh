@@ -10387,3 +10387,141 @@ fn test_no_hover_requests_while_modal_dialog_open() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+/// A language server asking Fresh to delete a file must not get its way.
+///
+/// `workspace/applyEdit` is server-initiated: it arrives with no user
+/// confirmation and names any URI the server likes. Fresh used to honour the
+/// `Delete` resource operation with `std::fs::remove_dir_all` /
+/// `remove_file` — permanently, bypassing the system trash the file explorer
+/// deletes through — so a buggy server could take a directory with it. The
+/// operation is now reported and ignored.
+#[test]
+fn test_lsp_delete_resource_op_is_refused() -> anyhow::Result<()> {
+    use lsp_types::{
+        DeleteFile, DeleteFileOptions, DocumentChangeOperation, DocumentChanges, ResourceOp,
+        WorkspaceEdit,
+    };
+
+    let mut harness = EditorTestHarness::new(80, 30)?;
+
+    let temp_dir = tempfile::tempdir()?;
+
+    // A file the server asks to unlink, and a directory it asks to remove
+    // recursively — the two shapes the old code handled.
+    let doomed_file = temp_dir.path().join("keep-me.rs");
+    std::fs::write(&doomed_file, "fn main() {}\n")?;
+
+    let doomed_dir = temp_dir.path().join("keep-me-too");
+    std::fs::create_dir(&doomed_dir)?;
+    std::fs::write(doomed_dir.join("nested.rs"), "fn nested() {}\n")?;
+
+    let file_uri = fresh_core::file_uri::path_to_lsp_uri(&doomed_file).unwrap();
+    let dir_uri = fresh_core::file_uri::path_to_lsp_uri(&doomed_dir).unwrap();
+
+    let workspace_edit = WorkspaceEdit {
+        changes: None,
+        document_changes: Some(DocumentChanges::Operations(vec![
+            DocumentChangeOperation::Op(ResourceOp::Delete(DeleteFile {
+                uri: file_uri,
+                options: None,
+            })),
+            DocumentChangeOperation::Op(ResourceOp::Delete(DeleteFile {
+                uri: dir_uri,
+                options: Some(DeleteFileOptions {
+                    recursive: Some(true),
+                    ignore_if_not_exists: Some(true),
+                    annotation_id: None,
+                }),
+            })),
+        ])),
+        change_annotations: None,
+    };
+
+    harness
+        .editor_mut()
+        .handle_rename_response(0, Ok(workspace_edit))?;
+    harness.render()?;
+
+    assert!(
+        doomed_file.exists(),
+        "a server-requested delete must leave the file on disk"
+    );
+    assert!(
+        doomed_dir.join("nested.rs").exists(),
+        "a server-requested recursive delete must leave the directory on disk"
+    );
+
+    Ok(())
+}
+
+/// A language server asking Fresh to overwrite a file must not get its way.
+///
+/// `Create` with `overwrite` truncates the existing file to empty, and
+/// `Rename` with `overwrite` clobbers the destination. Both arrive through a
+/// server-initiated `workspace/applyEdit` — no confirmation, no trash — so
+/// both are reported and ignored, like the `Delete` operation beside them.
+#[test]
+fn test_lsp_resource_ops_refuse_to_overwrite() -> anyhow::Result<()> {
+    use lsp_types::{
+        CreateFile, CreateFileOptions, DocumentChangeOperation, DocumentChanges, RenameFile,
+        RenameFileOptions, ResourceOp, WorkspaceEdit,
+    };
+
+    let mut harness = EditorTestHarness::new(80, 30)?;
+    let temp_dir = tempfile::tempdir()?;
+
+    let created_over = temp_dir.path().join("created-over.rs");
+    std::fs::write(&created_over, "fn keep_me() {}\n")?;
+
+    let rename_src = temp_dir.path().join("src.rs");
+    std::fs::write(&rename_src, "fn moved() {}\n")?;
+    let rename_dst = temp_dir.path().join("dst.rs");
+    std::fs::write(&rename_dst, "fn also_keep_me() {}\n")?;
+
+    let workspace_edit = WorkspaceEdit {
+        changes: None,
+        document_changes: Some(DocumentChanges::Operations(vec![
+            DocumentChangeOperation::Op(ResourceOp::Create(CreateFile {
+                uri: fresh_core::file_uri::path_to_lsp_uri(&created_over).unwrap(),
+                options: Some(CreateFileOptions {
+                    overwrite: Some(true),
+                    ignore_if_exists: None,
+                }),
+                annotation_id: None,
+            })),
+            DocumentChangeOperation::Op(ResourceOp::Rename(RenameFile {
+                old_uri: fresh_core::file_uri::path_to_lsp_uri(&rename_src).unwrap(),
+                new_uri: fresh_core::file_uri::path_to_lsp_uri(&rename_dst).unwrap(),
+                options: Some(RenameFileOptions {
+                    overwrite: Some(true),
+                    ignore_if_exists: None,
+                }),
+                annotation_id: None,
+            })),
+        ])),
+        change_annotations: None,
+    };
+
+    harness
+        .editor_mut()
+        .handle_rename_response(0, Ok(workspace_edit))?;
+    harness.render()?;
+
+    assert_eq!(
+        std::fs::read_to_string(&created_over)?,
+        "fn keep_me() {}\n",
+        "a server-requested create must not truncate an existing file"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&rename_dst)?,
+        "fn also_keep_me() {}\n",
+        "a server-requested rename must not clobber the destination"
+    );
+    assert!(
+        rename_src.exists(),
+        "the refused rename leaves the source where it was"
+    );
+
+    Ok(())
+}

@@ -21,7 +21,7 @@ pub(super) mod selection_sweep;
 pub(super) mod tail_fill;
 
 use super::base_tokens::build_base_tokens;
-use super::layout::{resolve_view_preferences, split_layout, SplitLayout};
+use super::layout::resolve_view_preferences;
 use super::EditorRenderConfig;
 use crate::app::BufferMetadata;
 use crate::model::buffer::Buffer;
@@ -54,14 +54,18 @@ pub(crate) enum RenderKind {
     /// the group tab) but skip buffer content — the group's inner leaves fill
     /// it instead.
     GroupTabBarOnly,
-    /// A leaf inside a Grouped subtree. `split_area` is already the content
-    /// rect for this inner leaf; no tab bar is rendered.
+    /// A leaf inside a Grouped subtree; no tab bar is rendered.
     InnerLeaf,
 }
 
 /// One visible split to render: `(tab_bar_owner_split, effective_leaf_id,
-/// buffer_id, split_area, kind)`.
-pub(crate) type VisibleBuffer = (LeafId, LeafId, BufferId, Rect, RenderKind);
+/// buffer_id, kind)`.
+///
+/// **No rectangle rides here.** It used to carry the pane's box, which every
+/// consumer then either ignored or re-derived a content rect from; the box and
+/// the content slot are both `ContentPass::rects`, keyed by the leaf, off the
+/// one layout that placed them.
+pub(crate) type VisibleBuffer = (LeafId, LeafId, BufferId, RenderKind);
 
 /// What every pane in a frame shares, resolved once before any of them paints.
 ///
@@ -73,8 +77,8 @@ pub(crate) struct ContentPass {
     pub visible: Vec<VisibleBuffer>,
     pub active_split_id: LeafId,
     /// Where the frame put every pane, off the one layout that placed them.
-    /// The rects in `visible` came from here, and [`paint_leaf`] checks the
-    /// content rect it carves against it.
+    /// The painter, the reconcile and the text pass all take their rectangles
+    /// from here and from nowhere else.
     pub rects: PaneRects,
 }
 
@@ -126,12 +130,12 @@ pub(crate) struct Stores<'a> {
 
 /// Resolve what every pane in this frame shares. See [`ContentPass`].
 ///
-/// `rects` is where the frame put every pane, and `base_visible` is the
-/// split manager's visible leaves at the boxes `rects` gives them — the
-/// caller reads both off the same layout, which is the whole point.
+/// `rects` is where the frame put every pane; `base_visible` is the split
+/// manager's visible leaves, and every rectangle any of them is painted,
+/// reconciled or formatted at comes out of `rects`.
 pub(crate) fn prepare_content(
     rects: PaneRects,
-    base_visible: &[(LeafId, BufferId, Rect)],
+    base_visible: &[(LeafId, BufferId)],
     split_manager: &SplitManager,
     split_view_states: Option<&mut HashMap<LeafId, crate::view::split::SplitViewState>>,
     grouped_subtrees: &HashMap<LeafId, crate::view::split::SplitNode>,
@@ -169,7 +173,7 @@ pub(crate) fn paint_leaf(
     // Unpacked into the names the body below uses. The body is the loop's,
     // moved without an edit inside it; the carriers are what replaced its
     // forty parameters.
-    let (main_split_id, split_id, buffer_id, split_area, kind) = pane;
+    let (main_split_id, split_id, buffer_id, kind) = pane;
     let FrameFacts {
         style,
         buffer_metadata,
@@ -228,24 +232,26 @@ pub(crate) fn paint_leaf(
         && !active_buf_is_terminal;
 
     let chrome = resolve_pane_chrome(pane, f);
-    // A pane whose content is pinned to its size: it earns no scrollbar,
-    // and its viewport does not scroll to follow the cursor either — the
-    // second is why this outlives the `PaneChrome` that swallowed the first.
-    // An inner leaf has no strip and no bottom bar, so its whole area is
-    // content but for the scrollbar column — which is what a
-    // `pane_interior` with those two flags off lays out. It used to be
-    // four rectangles written by hand right here.
-    let layout = split_layout(split_id, split_area, chrome);
-    // The content rect this carves is the one the tree's `content_key` node
-    // has: `pane_interior` is one statement laid out twice, at the pane's box
-    // here and inside the frame there. The clip below is a release safety
-    // net, not the contract — where the two ever differ, this says so.
-    if let Some(described) = pass.rects.content(split_id) {
-        debug_assert_eq!(
-            layout.content_rect, described,
-            "pane {split_id:?}: the content rect handed to the painter is not the tree's"
+    // **The content rect is the tree's, and only the tree's.** This used to
+    // lay `pane_interior` out a second time in a throwaway `Ui` at the pane's
+    // box, read four rectangles back by key, paint into *those*, and check the
+    // tree's answer against them in a `debug_assert` — so a release build
+    // painted into rectangles a discarded tree computed, one extra layout per
+    // pane per frame, and the instrument could not see it. The frame placed
+    // this pane's content slot; `PaneRects` is that slot, read off the one
+    // layout that placed it.
+    //
+    // A pane the tree did not place has no content slot and nothing to paint
+    // into. `BodyPainter::pane` already declines such a pane before it gets
+    // here (it needs the pane's box off the same read), so this is the same
+    // answer stated where the rectangle is used.
+    let Some(content_rect) = pass.rects.content(split_id) else {
+        debug_assert!(
+            matches!(kind, RenderKind::GroupTabBarOnly),
+            "pane {split_id:?}: painted without a content slot in the tree"
         );
-    }
+        return;
+    };
     // For GroupTabBarOnly entries we've already rendered the tab bar;
     // skip buffer content rendering so the group's inner leaves can
     // draw into the content rect without being overwritten.
@@ -271,7 +277,7 @@ pub(crate) fn paint_leaf(
         .get(&buffer_id)
         .is_some_and(|m| m.synthetic_placeholder);
     if is_synthetic_placeholder {
-        render_placeholder_hint(buf, layout.content_rect, theme);
+        render_placeholder_hint(buf, content_rect, theme);
         return;
     }
 
@@ -283,7 +289,7 @@ pub(crate) fn paint_leaf(
     {
         render_composite_split(
             buf,
-            &layout,
+            content_rect,
             split_id,
             buffer_id,
             buffers,
@@ -322,7 +328,7 @@ pub(crate) fn paint_leaf(
     draw_buffer_in_split(
         buf,
         content.layout,
-        layout.content_rect,
+        content_rect,
         theme,
         style.ansi_background,
         style.cfg.background_fade,
@@ -375,14 +381,15 @@ pub(crate) fn content_pass(
     let _span = tracing::trace_span!("content_pass").entered();
     let mut out = HashMap::new();
     for pane in pass.visible.iter().copied() {
-        let (_, split_id, _, split_area, _) = pane;
+        let (_, split_id, _, _) = pane;
         if !pane_has_text_pass(pane, f, s.buffers) {
             continue;
         }
-        let content_rect = pass.rects.content(split_id).unwrap_or_else(|| {
-            let chrome = resolve_pane_chrome(pane, f);
-            split_layout(split_id, split_area, chrome).content_rect
-        });
+        // The tree's content slot, or nothing: a pane the frame did not place
+        // has no slot, and `visible` gave it a zero box to match.
+        let Some(content_rect) = pass.rects.content(split_id) else {
+            continue;
+        };
         if let Some(c) = text_pane_content(pane, f, pass, s, content_rect) {
             out.insert(split_id, c);
         }
@@ -398,7 +405,7 @@ fn text_pane_content(
     s: &mut Stores<'_>,
     content_rect: Rect,
 ) -> Option<PaneContent> {
-    let (_, split_id, buffer_id, _, _) = pane;
+    let (_, split_id, buffer_id, _) = pane;
     let FrameFacts {
         style,
         buffer_metadata,
@@ -579,7 +586,7 @@ fn text_pane_content(
 /// for the same pane. Shared by the paint and the reconcile before it, so
 /// both lay the pane out at one content rect.
 fn resolve_pane_chrome(pane: VisibleBuffer, f: &FrameFacts<'_>) -> PaneChrome {
-    let (_, split_id, _, _, _) = pane;
+    let (_, split_id, _, _) = pane;
     f.pane_chrome.get(&split_id).copied().unwrap_or_default()
 }
 
@@ -592,7 +599,7 @@ fn pane_has_text_pass(
     f: &FrameFacts<'_>,
     buffers: &HashMap<BufferId, EditorState>,
 ) -> bool {
-    let (_, split_id, buffer_id, _, kind) = pane;
+    let (_, split_id, buffer_id, kind) = pane;
     if kind == RenderKind::GroupTabBarOnly {
         return false;
     }
@@ -622,16 +629,15 @@ pub(crate) fn reconcile_panes(pass: &ContentPass, f: &FrameFacts<'_>, s: &mut St
     let _span = tracing::trace_span!("reconcile_panes").entered();
     let show_horizontal_scrollbar = f.style.cfg.show_horizontal_scrollbar;
     for pane in pass.visible.iter().copied() {
-        let (_, split_id, buffer_id, split_area, _) = pane;
+        let (_, split_id, buffer_id, _) = pane;
         if !pane_has_text_pass(pane, f, s.buffers) {
             continue;
         }
-        // The content rect the tree placed the pane's text at; the painter
-        // carves the same one from the pane's box and asserts they agree.
-        let content_rect = pass.rects.content(split_id).unwrap_or_else(|| {
-            let chrome = resolve_pane_chrome(pane, f);
-            split_layout(split_id, split_area, chrome).content_rect
-        });
+        // The content rect the tree placed the pane's text at — the same one
+        // the painter draws it into, because there is only this one.
+        let Some(content_rect) = pass.rects.content(split_id) else {
+            continue;
+        };
         let Some(state) = s.buffers.get_mut(&buffer_id) else {
             continue;
         };
@@ -667,13 +673,13 @@ pub(crate) fn reconcile_panes(pass: &ContentPass, f: &FrameFacts<'_>, s: &mut St
 /// `rects` answers for it. This used to carve the outer pane's content rect
 /// and lay the group out again in a scratch grid inside it.
 fn expand_visible_buffers(
-    base_visible: &[(LeafId, BufferId, Rect)],
+    base_visible: &[(LeafId, BufferId)],
     mut split_view_states: Option<&mut HashMap<LeafId, crate::view::split::SplitViewState>>,
     grouped_subtrees: &HashMap<LeafId, crate::view::split::SplitNode>,
     rects: &PaneRects,
 ) -> Vec<VisibleBuffer> {
     let mut visible_buffers: Vec<VisibleBuffer> = Vec::new();
-    for (main_split_id, main_buffer_id, split_area) in base_visible {
+    for (main_split_id, main_buffer_id) in base_visible {
         let active_group = split_view_states
             .as_deref()
             .and_then(|svs| svs.get(main_split_id))
@@ -685,7 +691,6 @@ fn expand_visible_buffers(
                 *main_split_id,
                 *main_split_id,
                 *main_buffer_id,
-                *split_area,
                 RenderKind::Normal,
             ));
             continue;
@@ -697,7 +702,6 @@ fn expand_visible_buffers(
             *main_split_id,
             *main_split_id,
             *main_buffer_id,
-            *split_area,
             RenderKind::GroupTabBarOnly,
         ));
         for (inner_leaf, inner_buffer, inner_rect) in &inner_leaves {
@@ -712,7 +716,6 @@ fn expand_visible_buffers(
                 *main_split_id,
                 *inner_leaf,
                 *inner_buffer,
-                *inner_rect,
                 RenderKind::InnerLeaf,
             ));
         }
@@ -725,7 +728,7 @@ fn expand_visible_buffers(
 #[allow(clippy::too_many_arguments)]
 fn render_composite_split(
     buf: &mut ratatui::buffer::Buffer,
-    layout: &SplitLayout,
+    content_rect: Rect,
     split_id: LeafId,
     buffer_id: BufferId,
     buffers: &mut HashMap<BufferId, EditorState>,
@@ -754,12 +757,12 @@ fn render_composite_split(
     // cursor movement uses the correct viewport height after a resize.
     if let Some(svs) = split_view_states {
         if let Some(split_vs) = svs.get_mut(&split_id) {
-            if split_vs.viewport.width != layout.content_rect.width
-                || split_vs.viewport.height != layout.content_rect.height
+            if split_vs.viewport.width != content_rect.width
+                || split_vs.viewport.height != content_rect.height
             {
                 split_vs
                     .viewport
-                    .resize(layout.content_rect.width, layout.content_rect.height);
+                    .resize(content_rect.width, content_rect.height);
             }
         }
     }
@@ -787,7 +790,7 @@ fn render_composite_split(
             }
         });
         if let Some(row) = target_row {
-            let viewport_height = layout.content_rect.height.saturating_sub(1) as usize;
+            let viewport_height = content_rect.height.saturating_sub(1) as usize;
             let context_above = viewport_height / 3;
             view_state.cursor_row = row;
             view_state.scroll_row = row.saturating_sub(context_above);
@@ -796,7 +799,7 @@ fn render_composite_split(
 
     render_composite_buffer(
         buf,
-        layout.content_rect,
+        content_rect,
         composite,
         buffers,
         theme,

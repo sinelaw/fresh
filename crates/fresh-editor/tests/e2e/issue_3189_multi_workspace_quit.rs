@@ -91,11 +91,11 @@ fn quit_from_clean_workspace_prompts_for_dirty_background_workspace() {
         !harness.should_quit(),
         "quitting must not exit while another workspace holds unsaved changes"
     );
-    // Same prompt the single-workspace case shows, with the cross-workspace
+    // Same question the single-workspace case asks, with the cross-workspace
     // total in it.
     harness.assert_screen_contains("1 buffer has unsaved changes");
-    harness.assert_screen_contains("(s)ave and quit");
-    harness.assert_screen_contains("(q)uit (recoverable)");
+    harness.assert_screen_contains("Save and Quit");
+    harness.assert_screen_contains("Quit (recoverable)");
 }
 
 /// The count is a total across workspaces, not the active window's.
@@ -174,9 +174,6 @@ fn save_and_quit_writes_background_workspace_buffers_to_disk() {
     harness
         .send_key(KeyCode::Char('s'), KeyModifiers::NONE)
         .unwrap();
-    harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
-        .unwrap();
     harness.render().unwrap();
 
     assert!(
@@ -211,9 +208,6 @@ fn discard_and_quit_drops_background_workspace_recovery() {
     harness.render().unwrap();
     harness
         .send_key(KeyCode::Char('d'), KeyModifiers::NONE)
-        .unwrap();
-    harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
     harness.render().unwrap();
 

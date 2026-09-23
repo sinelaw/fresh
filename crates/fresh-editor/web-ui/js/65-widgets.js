@@ -474,6 +474,15 @@ function widgetEl(spec, ctx){
       }
       const t=document.createElement("span"); t.className="w-tree-text"; t.textContent=entryText(n.text||{});
       row.appendChild(t);
+      // The row's action button (TreeNode.action), the web twin of the TUI's
+      // `[ label ]` at the row's tail: its own target, so a press on it is the
+      // button's and not the row's select.
+      if(n.action){
+        const a=document.createElement("span"); a.className="w-tree-action"; a.textContent="[ "+n.action+" ]";
+        a.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); if(e.button===2) treeCtx(e);
+          else { routeTree(ctx,spec,"select",{index:i,key}); routeTree(ctx,spec,"action",{index:i,key}); } };
+        row.appendChild(a);
+      }
       // A click anywhere on a FOLDER row both selects it and toggles its
       // expansion — the disclosure glyph alone is a needle-thin target, and
       // "click a folder to fold it" is what every tree UI trains people to
@@ -669,7 +678,8 @@ function settingsEls(s){
   // left: category tree
   const cats=div("set-cats"+(s.focus==="categories"?" focus":""));
   for(const c of s.categories){ const r=div("set-cat"+(c.selected?" sel":""));
-    if(c.expandable){ const chev=document.createElement("span"); chev.className="set-cat-chev"; chev.textContent=c.expanded?"▼ ":"▶ "; chev.onmousedown=setHit("categoryDisclosure",c.index); r.appendChild(chev); } else r.appendChild(document.createTextNode("  "));
+    if(c.nested) r.appendChild(document.createTextNode("    "));
+    else if(c.expandable){ const chev=document.createElement("span"); chev.className="set-cat-chev"; chev.textContent=c.expanded?"▼ ":"▶ "; chev.onmousedown=setHit("categoryDisclosure",c.index); r.appendChild(chev); } else r.appendChild(document.createTextNode("  "));
     const nm=document.createElement("span"); nm.textContent=c.name; r.appendChild(nm);
     r.onmousedown=setHit("category",c.index); cats.appendChild(r);
     if(c.expanded){ c.sections.forEach((sec,si)=>{ const sr=div("set-cat-sec"); sr.textContent="   "+sec; sr.onmousedown=setHit("categorySection",c.index,si); cats.appendChild(sr); }); } }

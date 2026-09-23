@@ -850,11 +850,8 @@ fn test_file_explorer_focus_after_delete() {
         screen_prompt
     );
 
-    // Confirm deletion with 'y'
-    harness.type_text("y").unwrap();
-    harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
-        .unwrap();
+    // Confirm deletion with the Delete button's letter
+    harness.type_text("d").unwrap();
     harness.sleep(std::time::Duration::from_millis(100));
     harness.render().unwrap();
 
@@ -3802,6 +3799,60 @@ fn test_file_explorer_side_right() {
     );
 }
 
+/// With the explorer on the right, the resize grip sits on its LEFT wall —
+/// the one facing the editor — and dragging it left widens the column.
+#[test]
+fn test_file_explorer_side_right_border_drag_resizes() {
+    use fresh::config::{Config, ExplorerWidth, FileExplorerSide};
+
+    let mut config = Config::default();
+    config.file_explorer.side = FileExplorerSide::Right;
+    config.file_explorer.width = ExplorerWidth::Columns(30);
+
+    let mut harness = EditorTestHarness::with_temp_project_and_config(120, 40, config).unwrap();
+    let project_root = harness.project_dir().unwrap();
+    fs::write(project_root.join("test.txt"), "test").unwrap();
+
+    harness.editor_mut().focus_file_explorer();
+    harness.wait_for_file_explorer().unwrap();
+    harness.render().unwrap();
+
+    let right_col = find_explorer_border_col(&harness);
+    assert_eq!(
+        right_col, 119,
+        "explorer should be flush with the right edge"
+    );
+    let left_col = right_col - 29;
+    assert_eq!(
+        harness.get_row_text(15).chars().nth(left_col as usize),
+        Some('│'),
+        "expected the explorer's left wall at col {}.\nScreen:\n{}",
+        left_col,
+        harness.screen_to_string()
+    );
+
+    // Dragging the outer (terminal-edge) wall must do nothing.
+    harness
+        .mouse_drag(right_col, 15, right_col - 10, 15)
+        .unwrap();
+    assert_eq!(
+        harness.editor().active_window().file_explorer_width,
+        ExplorerWidth::Columns(30),
+        "the outer wall is not a grip.\nScreen:\n{}",
+        harness.screen_to_string()
+    );
+
+    // Dragging the inner wall toward the editor widens the column.
+    harness.mouse_drag(left_col, 15, left_col - 10, 15).unwrap();
+    assert_eq!(
+        harness.editor().active_window().file_explorer_width,
+        ExplorerWidth::Columns(40),
+        "dragging the inner wall left should widen the explorer.\nScreen:\n{}",
+        harness.screen_to_string()
+    );
+    assert_eq!(find_explorer_border_col(&harness), 119);
+}
+
 /// Test that workspace serialization correctly persists file explorer side
 #[test]
 fn test_file_explorer_side_workspace_serialization() {
@@ -4149,78 +4200,6 @@ fn test_file_explorer_duplicate_refreshes_git_decorations() {
                 .lines()
                 .any(|line| line.contains("alpha copy.txt") && line.contains('U'))
         })
-        .unwrap();
-}
-
-/// Test that with `file_explorer.follow_active_buffer = true`, switching tabs
-/// re-syncs the file explorer to the newly active buffer's path — moving the
-/// sidebar's *selection highlight* onto that file's row.
-///
-/// The highlight, rather than mere presence in the tree, is what this
-/// asserts, because presence cannot distinguish the two outcomes.
-/// `FileTree::expand_to_path` only ever expands ancestors and nothing on this
-/// path collapses one again, so a directory revealed once stays open for the
-/// rest of the session: "is `file_a.txt` in the tree?" answers yes from the
-/// moment file_a is first opened, whatever the tab bar does afterwards. The
-/// selection is the part that has to keep up with the active buffer.
-#[test]
-fn test_follow_active_buffer_syncs_explorer_on_tab_switch() {
-    let mut config = Config::default();
-    config.file_explorer.follow_active_buffer = true;
-
-    let mut harness = EditorTestHarness::with_temp_project_and_config(120, 40, config).unwrap();
-    let project_root = harness.project_dir().unwrap();
-
-    fs::create_dir_all(project_root.join("dir_a")).unwrap();
-    fs::create_dir_all(project_root.join("dir_b")).unwrap();
-    fs::write(project_root.join("dir_a/file_a.txt"), "content a").unwrap();
-    fs::write(project_root.join("dir_b/file_b.txt"), "content b").unwrap();
-
-    // Open the explorer but keep focus in the editor so the sync hook is
-    // eligible (it is gated on `key_context != FileExplorer`).
-    harness.editor_mut().toggle_file_explorer();
-    harness.editor_mut().active_window_mut().focus_editor();
-    // Wait for the tree itself, not just the panel title: the sidebar draws
-    // its border and title the moment it becomes visible, while the initial
-    // build is still running. Opening a file in that window would queue its
-    // follow request behind the build instead of driving a sync of its own.
-    harness
-        .wait_until(|h| explorer_tree_contains(h, "dir_a"))
-        .unwrap();
-
-    // Opening file_a replaces the initial `[No Name]` buffer in place;
-    // opening file_b creates a new buffer. Both change which *file* is
-    // active, so both sync the explorer, and the highlight lands on
-    // file_b.txt.
-    harness
-        .editor_mut()
-        .open_file(&project_root.join("dir_a/file_a.txt"))
-        .unwrap();
-    harness
-        .editor_mut()
-        .open_file(&project_root.join("dir_b/file_b.txt"))
-        .unwrap();
-    harness
-        .wait_until(|h| explorer_row_highlighted(h, "file_b.txt"))
-        .unwrap();
-
-    // Precondition: the highlight sits on file_b.txt, not on file_a.txt.
-    // That is what the tab switch has to change — unlike "file_a.txt is
-    // absent from the tree", which stops being true the moment opening
-    // file_a expands dir_a.
-    assert!(
-        !explorer_row_highlighted(&harness, "file_a.txt"),
-        "Precondition: the sidebar's selection highlight should still be on \
-         file_b.txt before the tab switch.\nScreen:\n{}",
-        harness.screen_to_string()
-    );
-
-    // Switch the active tab back to file_a. With the sync hook in place the
-    // highlight follows onto file_a.txt's row. Without it, it stays parked
-    // on file_b.txt and this wait never completes.
-    harness.editor_mut().prev_buffer();
-    harness
-        .wait_until(|h| explorer_row_highlighted(h, "file_a.txt"))
         .unwrap();
 }
 

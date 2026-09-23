@@ -12,6 +12,20 @@ use std::process::Stdio;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStderr, Command};
 
+/// How long the carrier handshake (spawn ssh, push the agent source, read the
+/// ready line) may take. Most failures end with ssh exiting and EOF, but a
+/// host that accepts the connection and then says nothing never does, so the
+/// wait needs a bound. Generous, because it bounds a hang, not a slow link.
+const HANDSHAKE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// `ConnectTimeout` for the carrier.
+const SSH_CONNECT_TIMEOUT_SECS: u32 = 10;
+
+/// `ServerAliveInterval` / `ServerAliveCountMax`: an established carrier that
+/// stops answering is dropped after about a minute.
+const SSH_ALIVE_INTERVAL_SECS: u32 = 15;
+const SSH_ALIVE_COUNT_MAX: u32 = 4;
+
 /// Error type for SSH connection
 #[derive(Debug, thiserror::Error)]
 pub enum SshError {
@@ -23,6 +37,12 @@ pub enum SshError {
 
     #[error("Protocol version mismatch: expected {expected}, got {got}")]
     VersionMismatch { expected: u32, got: u32 },
+
+    #[error(
+        "the machine accepted the connection but never finished the handshake within {0:?} \
+         (a host that answers the TCP connect and then goes silent); giving up"
+    )]
+    HandshakeTimeout(std::time::Duration),
 
     #[error("Connection closed")]
     ConnectionClosed,
@@ -167,24 +187,42 @@ impl SshConnection {
             agent_len = AGENT_SOURCE.len(),
             "ssh connect: sending agent bootstrap to stdin"
         );
-        if stdin.write_all(AGENT_SOURCE.as_bytes()).await.is_err() || stdin.flush().await.is_err() {
-            return Err(ssh_eof_error(&mut child, &params, stderr).await);
+        // Under the handshake deadline too: a write that never drains hangs
+        // like a read that never returns.
+        let deadline = tokio::time::Instant::now() + HANDSHAKE_TIMEOUT;
+        let sent = tokio::time::timeout_at(deadline, async {
+            stdin.write_all(AGENT_SOURCE.as_bytes()).await?;
+            stdin.flush().await
+        })
+        .await;
+        match sent {
+            Err(_elapsed) => {
+                kill_carrier_and_group(&mut child);
+                return Err(SshError::HandshakeTimeout(HANDSHAKE_TIMEOUT));
+            }
+            Ok(Err(_io)) => return Err(ssh_eof_error(&mut child, &params, stderr).await),
+            Ok(Ok(())) => {}
         }
 
         // Create buffered reader for stdout
         let mut reader = BufReader::new(stdout);
 
-        // Wait for ready message from agent
-        // No timeout needed - all failure modes (auth failure, network issues, etc.)
-        // result in SSH exiting and us getting EOF. User can Ctrl+C if needed.
+        // Wait for the agent's ready line, bounded by `HANDSHAKE_TIMEOUT`.
         tracing::debug!("ssh connect: awaiting agent ready line (blocks on handshake/auth)");
         let mut ready_line = String::new();
-        match reader.read_line(&mut ready_line).await {
-            Ok(0) => {
+        // Same deadline as the write: the bound is on the whole handshake.
+        let read = tokio::time::timeout_at(deadline, reader.read_line(&mut ready_line)).await;
+        match read {
+            // Wedged, not gone: kill the carrier and its group (a `ProxyCommand` may be stalled).
+            Err(_elapsed) => {
+                kill_carrier_and_group(&mut child);
+                return Err(SshError::HandshakeTimeout(HANDSHAKE_TIMEOUT));
+            }
+            Ok(Ok(0)) => {
                 return Err(ssh_eof_error(&mut child, &params, stderr).await);
             }
-            Ok(_) => {}
-            Err(e) => return Err(SshError::AgentStartFailed(format!("read error: {}", e))),
+            Ok(Ok(_)) => {}
+            Ok(Err(e)) => return Err(SshError::AgentStartFailed(format!("read error: {}", e))),
         }
         tracing::debug!("ssh connect: agent ready line received");
 
@@ -305,6 +343,16 @@ fn next_backoff(current: std::time::Duration, max: std::time::Duration) -> std::
     current.saturating_mul(2).min(max)
 }
 
+/// A freshly established carrier: the agent's stream ends and the process
+/// behind them. The process is spawned kill-on-drop, so whoever installs the
+/// stream ends must hold the process for as long as they are in use.
+pub struct Carrier {
+    pub reader: Box<dyn tokio::io::AsyncBufRead + Unpin + Send>,
+    pub writer: Box<dyn tokio::io::AsyncWrite + Unpin + Send>,
+    /// `None` only for an in-memory transport with no process, as the tests build.
+    pub process: Option<Child>,
+}
+
 /// Spawn a background task that automatically reconnects when the channel
 /// disconnects.
 ///
@@ -321,11 +369,12 @@ pub fn spawn_reconnect_task(
     let connect_fn = move || {
         let params = params.clone();
         async move {
-            let (reader, writer, _child) = establish_ssh_transport(&params).await?;
-            // Box the reader/writer so they have a uniform type
-            let reader: Box<dyn tokio::io::AsyncBufRead + Unpin + Send> = Box::new(reader);
-            let writer: Box<dyn tokio::io::AsyncWrite + Unpin + Send> = Box::new(writer);
-            Ok::<_, SshError>((reader, writer))
+            let (reader, writer, child) = establish_ssh_transport(&params).await?;
+            Ok::<_, SshError>(Carrier {
+                reader: Box::new(reader),
+                writer: Box::new(writer),
+                process: Some(child),
+            })
         }
     };
 
@@ -341,8 +390,10 @@ pub fn spawn_reconnect_task(
 ///
 /// This is the generic version used by both production (via `spawn_reconnect_task`)
 /// and tests (with a fake connection factory). The `connect_fn` is called each
-/// time a reconnection attempt is made. It should return a `(reader, writer)` pair
-/// on success.
+/// time a reconnection attempt is made. It should return a [`Carrier`].
+///
+/// The task owns the carrier it installs, in `installed`, for as long as its
+/// transport is the one in use: nothing else holds the process.
 pub fn spawn_reconnect_task_with<F, Fut>(
     channel: std::sync::Arc<AgentChannel>,
     connect_fn: F,
@@ -351,17 +402,10 @@ pub fn spawn_reconnect_task_with<F, Fut>(
 ) -> tokio::task::JoinHandle<()>
 where
     F: Fn() -> Fut + Send + 'static,
-    Fut: std::future::Future<
-            Output = Result<
-                (
-                    Box<dyn tokio::io::AsyncBufRead + Unpin + Send>,
-                    Box<dyn tokio::io::AsyncWrite + Unpin + Send>,
-                ),
-                SshError,
-            >,
-        > + Send,
+    Fut: std::future::Future<Output = Result<Carrier, SshError>> + Send,
 {
     tokio::spawn(async move {
+        let mut installed: Option<Child> = None;
         loop {
             // Wait until disconnected
             while channel.is_connected() {
@@ -386,9 +430,13 @@ where
                 }
 
                 match (connect_fn)().await {
-                    Ok((reader, writer)) => {
+                    Ok(carrier) => {
                         tracing::info!("{label}: reconnected successfully");
-                        channel.replace_transport(reader, writer).await;
+                        channel
+                            .replace_transport(carrier.reader, carrier.writer)
+                            .await;
+                        // After the swap, so the process let go of is the one no longer in use.
+                        installed = carrier.process;
                         break;
                     }
                     Err(e) => {
@@ -559,6 +607,14 @@ fn configure_agent_carrier_ssh(cmd: &mut Command, params: &ConnectionParams) {
         cmd.arg("-i").arg(identity);
     }
     cmd.args(&params.extra_args);
+    // After the machine's own options: ssh takes the first value for an option,
+    // so these are defaults the machine can override.
+    cmd.arg("-o")
+        .arg(format!("ConnectTimeout={SSH_CONNECT_TIMEOUT_SECS}"));
+    cmd.arg("-o")
+        .arg(format!("ServerAliveInterval={SSH_ALIVE_INTERVAL_SECS}"));
+    cmd.arg("-o")
+        .arg(format!("ServerAliveCountMax={SSH_ALIVE_COUNT_MAX}"));
     cmd.arg(params.ssh_target());
 
     // Bootstrap the agent with python itself so we need no shell utilities on
@@ -643,7 +699,11 @@ async fn establish_ssh_transport(
 
     cmd.stdin(Stdio::piped());
     cmd.stdout(Stdio::piped());
-    cmd.stderr(Stdio::null()); // No terminal for reconnection
+    // No terminal for reconnection.
+    cmd.stderr(Stdio::null());
+    // Kill-on-drop so an abandoned reconnect does not orphan the carrier; a
+    // successful child is then held by `Carrier`.
+    cmd.kill_on_drop(true);
     cmd.hide_window();
 
     // Reconnect happens while the editor TUI is live, so the carrier must not
@@ -661,22 +721,39 @@ async fn establish_ssh_transport(
         .take()
         .ok_or_else(|| SshError::AgentStartFailed("failed to get stdout".to_string()))?;
 
-    // Send the agent code
-    stdin.write_all(AGENT_SOURCE.as_bytes()).await?;
-    stdin.flush().await?;
+    // Send the agent code, under the handshake deadline.
+    let deadline = tokio::time::Instant::now() + HANDSHAKE_TIMEOUT;
+    let sent = tokio::time::timeout_at(deadline, async {
+        stdin.write_all(AGENT_SOURCE.as_bytes()).await?;
+        stdin.flush().await
+    })
+    .await;
+    match sent {
+        Err(_elapsed) => {
+            kill_carrier_and_group(&mut child);
+            return Err(SshError::HandshakeTimeout(HANDSHAKE_TIMEOUT));
+        }
+        Ok(Err(e)) => return Err(SshError::AgentStartFailed(format!("write error: {e}"))),
+        Ok(Ok(())) => {}
+    }
 
     let mut reader = BufReader::new(stdout);
 
-    // Wait for ready message
+    // Wait for the ready line, under the same deadline.
     let mut ready_line = String::new();
-    match reader.read_line(&mut ready_line).await {
-        Ok(0) => {
+    let read = tokio::time::timeout_at(deadline, reader.read_line(&mut ready_line)).await;
+    match read {
+        Err(_elapsed) => {
+            kill_carrier_and_group(&mut child);
+            return Err(SshError::HandshakeTimeout(HANDSHAKE_TIMEOUT));
+        }
+        Ok(Ok(0)) => {
             // Reconnect spawns with `stderr(Stdio::null())`, so there is no
             // captured stderr to attach here.
             return Err(ssh_eof_error(&mut child, params, None).await);
         }
-        Ok(_) => {}
-        Err(e) => return Err(SshError::AgentStartFailed(format!("read error: {}", e))),
+        Ok(Ok(_)) => {}
+        Ok(Err(e)) => return Err(SshError::AgentStartFailed(format!("read error: {}", e))),
     }
 
     let ready: AgentResponse = serde_json::from_str(&ready_line).map_err(|e| {

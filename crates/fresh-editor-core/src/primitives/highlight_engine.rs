@@ -2741,18 +2741,6 @@ impl HighlightEngine {
         Self::None
     }
 
-    /// Create a highlighting engine for a syntax by name.
-    ///
-    /// Thin wrapper around `from_entry` that performs the lookup via
-    /// `find_by_name`. The catalog entry already knows which tree-sitter
-    /// `Language` (if any) serves it, so no separate hint is needed.
-    pub fn for_syntax_name(name: &str, registry: &GrammarRegistry) -> Self {
-        if let Some(entry) = registry.find_by_name(name) {
-            return Self::from_entry(entry, registry);
-        }
-        Self::None
-    }
-
     /// Highlight the visible viewport
     ///
     /// `context_bytes` controls how far before/after the viewport to parse for accurate
@@ -3216,6 +3204,111 @@ mod tests {
             engine.category_at_position(content.find("2026-08-02").unwrap()),
             Some(HighlightCategory::Constant)
         );
+    }
+
+    /// An unspaced `<` before a string literal used to be read as the start of
+    /// a generic argument list, and the recovery rule ate the string's opening
+    /// quote on the way out. That inverted quote parity: the string body
+    /// rendered as code, the closing `");` opened a string, and every following
+    /// line was painted as a string literal until the next `"` flipped it back.
+    /// Regression test for issue #3325.
+    #[test]
+    fn test_rust_unspaced_less_than_before_string_literal() {
+        let registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
+
+        // `<` and `<=` with no surrounding spaces, plus the `>`/`>=`/spaced
+        // forms that always worked and must keep working.
+        for line in [
+            "fn a() { ensure!(x<M,\"one\"); }\n",
+            "fn a() { ensure!(x<=M,\"one\"); }\n",
+            "fn d() { plain(x<=M,\"four\"); }\n",
+            "fn a() { ensure!(x>M,\"one\"); }\n",
+            "fn a() { ensure!(x>=M,\"one\"); }\n",
+            "fn a() { ensure!(x <= M,\"one\"); }\n",
+        ] {
+            let mut engine = HighlightEngine::for_file(Path::new("lib.rs"), None, &registry);
+            assert_eq!(engine.backend_name(), "textmate");
+            let buffer = Buffer::from_str(line, 0, test_fs());
+            let theme = Theme::load_builtin(theme::THEME_LIGHT).unwrap();
+            engine.highlight_viewport(&buffer, 0, buffer.len(), &theme, 0);
+
+            // The quoted body is a string...
+            let body = line.find("one").or_else(|| line.find("four")).unwrap();
+            assert_eq!(
+                engine.category_at_position(body),
+                Some(HighlightCategory::String),
+                "string body should be a string literal in {line:?}"
+            );
+            // ...and the code after the closing quote is not.
+            let after = line.rfind("); }").unwrap() + 1;
+            assert_ne!(
+                engine.category_at_position(after),
+                Some(HighlightCategory::String),
+                "code after the closing quote must not be a string in {line:?}"
+            );
+            // The comparison is an operator, not the opening punctuation of a
+            // generic argument list. syntect's older bundled grammar scoped the
+            // `<` forms as `punctuation.definition.generic.begin`, which maps to
+            // no category and rendered as plain text.
+            let operator = line.find(['<', '>']).unwrap();
+            assert_eq!(
+                engine.category_at_position(operator),
+                Some(HighlightCategory::Operator),
+                "the comparison operator should be an operator in {line:?}"
+            );
+        }
+    }
+
+    /// The reporter's snippet from issue #3325, end to end: the two
+    /// `<=` comparisons must not leak string state into the lines below them.
+    #[test]
+    fn test_rust_unspaced_less_than_does_not_bleed_across_lines() {
+        let registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
+        let mut engine = HighlightEngine::for_file(Path::new("warc.rs"), None, &registry);
+        assert_eq!(engine.backend_name(), "textmate");
+
+        let content = concat!(
+            "use anyhow::{Result, bail, ensure};\n",
+            "use std::io::Read;\n",
+            "pub const MAX_OUTPUT:usize=256*1024*1024;\n",
+            "pub fn zlib(input:&[u8],limit:usize)->Result<Vec<u8>> {\n",
+            "    ensure!(limit<=MAX_OUTPUT,\"decompression limit exceeds safety cap\");\n",
+            "    let mut output=Vec::new();\n",
+            "    flate2::read::ZlibDecoder::new(input).take(limit as u64+1).read_to_end(&mut output)?;\n",
+            "    ensure!(output.len()<=limit,\"zlib output exceeds limit {limit}\"); Ok(output)\n",
+            "}\n",
+        );
+        let buffer = Buffer::from_str(content, 0, test_fs());
+        let theme = Theme::load_builtin(theme::THEME_LIGHT).unwrap();
+        engine.highlight_viewport(&buffer, 0, buffer.len(), &theme, 0);
+
+        // Both string bodies are strings.
+        for needle in ["decompression limit", "zlib output exceeds"] {
+            let position = content.find(needle).unwrap();
+            assert_eq!(
+                engine.category_at_position(position),
+                Some(HighlightCategory::String),
+                "{needle:?} should be highlighted as a string literal"
+            );
+        }
+
+        // The ordinary statements between and after them are not.
+        for needle in [
+            "let mut output",
+            "Vec::new",
+            "ZlibDecoder",
+            "read_to_end",
+            "Ok(output)",
+        ] {
+            let position = content.find(needle).unwrap();
+            assert_ne!(
+                engine.category_at_position(position),
+                Some(HighlightCategory::String),
+                "{needle:?} is ordinary code and must not be highlighted as a string"
+            );
+        }
     }
 
     /// A recognized Markdown fence language must be highlighted with that

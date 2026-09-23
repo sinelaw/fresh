@@ -591,6 +591,15 @@ export function treeNode(
      * Chars, not display columns: a plugin has the string, not the
      * terminal's width table. Out-of-range values resolve to the end. */
     windowAnchor?: { pinned?: number; start: number; len: number };
+    /** A button drawn at the row's tail, `[ label ]`, held against the
+     * panel's right edge: what this row is *for*, said on the row rather
+     * than only in a footer. A click on it fires `widget_event`
+     * `eventType: "action"` with `payload: { index, key }` and moves the
+     * selection to that row; the keyboard reaches the same thing through
+     * `activate`. The body is fitted to the columns the button leaves, so
+     * a row too wide for the panel slides under its button rather than
+     * pushing it off. Ignored on a bordered card. */
+    action?: string;
   },
 ): TreeNode {
   // `checked` is intentionally Optional<bool>, not a default-false
@@ -619,6 +628,9 @@ export function treeNode(
   }
   if (options?.extraLines && options.extraLines.length > 0) {
     node.extraLines = options.extraLines;
+  }
+  if (options?.action !== undefined) {
+    node.action = options.action;
   }
   return node;
 }
@@ -686,6 +698,10 @@ export function tree(options: {
    * `1` to spend those columns on the node text instead; the disclosure
    * glyph (or the blank standing in for one) still marks each level. */
   indentCols?: number;
+  /** When true, a click anywhere on a node with children toggles its
+   * expansion (and selects it), not only a click on the `▶`/`▼` glyph.
+   * The toggle fires `expand` with `payload: { index, key, expanded }`. */
+  toggleOnClick?: boolean;
   key?: string;
 }): WidgetSpec {
   return {
@@ -699,6 +715,7 @@ export function tree(options: {
     itemHeight: options.itemHeight ?? 1,
     cardBorders: options.cardBorders ?? false,
     indentCols: options.indentCols ?? 2,
+    toggleOnClick: options.toggleOnClick ?? false,
     key: options.key,
   };
 }
@@ -1523,4 +1540,12 @@ export function key(name: string): WidgetAction {
 let nextPanelId = 1;
 function allocatePanelId(): number {
   return nextPanelId++;
+}
+
+/** A `widget_event` as a panel-owning plugin receives it. */
+export interface WidgetEvt {
+  panel_id?: number;
+  event_type: string;
+  widget_key?: string;
+  payload?: unknown;
 }

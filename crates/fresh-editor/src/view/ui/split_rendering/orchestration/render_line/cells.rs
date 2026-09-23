@@ -289,8 +289,14 @@ impl CellPass<'_, '_, '_> {
 
     /// Style and emit one on-screen cell.
     fn render_visible_cell(&mut self, ch: char, byte_pos: Option<usize>, ansi_style: Style) {
-        // Is this view position the START of a tab expansion?
-        let is_tab_start = self.input.view_line.tab_starts.contains(&self.col_offset);
+        // `tab_starts` holds character indices, not columns. Probing it with
+        // `col_offset` put the tab marker on a CJK character instead of the
+        // tab, hiding that character (issue #3218).
+        let is_tab_start = self
+            .input
+            .view_line
+            .tab_starts
+            .contains(&self.display_char_idx);
         // A padding column of a tab expansion — a space the file does not
         // contain (issue #3077).
         let is_tab_padding = self.is_tab_padding(ch, byte_pos);

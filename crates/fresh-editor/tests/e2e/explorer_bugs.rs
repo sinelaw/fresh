@@ -214,14 +214,14 @@ impl FileSystem for FaultInjectingFileSystem {
     ) -> io::Result<Vec<fresh::model::filesystem::SearchMatch>> {
         fresh::model::filesystem::default_search_file(&*self.inner, path, pattern, opts, cursor)
     }
-    fn walk_files(
+    fn walk(
         &self,
         root: &Path,
-        skip_dirs: &[&str],
+        opts: &fresh_editor_core::model::filesystem::WalkOptions<'_>,
         cancel: &std::sync::atomic::AtomicBool,
-        on_file: &mut dyn FnMut(&Path, &str) -> bool,
-    ) -> io::Result<()> {
-        self.inner.walk_files(root, skip_dirs, cancel, on_file)
+        on_entry: &mut dyn FnMut(fresh_editor_core::model::filesystem::WalkEntry<'_>) -> bool,
+    ) -> std::io::Result<()> {
+        self.inner.walk(root, opts, cancel, on_entry)
     }
 }
 
@@ -535,10 +535,7 @@ fn test_delete_preserves_sibling_expansion_state() {
         .unwrap();
     harness.wait_for_prompt().unwrap();
     harness
-        .send_key(KeyCode::Char('y'), KeyModifiers::NONE)
-        .unwrap();
-    harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .send_key(KeyCode::Char('d'), KeyModifiers::NONE)
         .unwrap();
     harness.render().unwrap();
 
@@ -643,17 +640,16 @@ fn test_paste_success_status_is_distinct_from_clipboard_set() {
     assert!(project_root.join("dst/thing.txt").exists());
 }
 
-/// The multi-delete prompt used to say only "Delete 2 items? (y)es, (N)o" —
-/// no names. That's safer with: "Delete 2 items ('foo', 'bar')? ..." so
-/// the user can eyeball what they're actually about to drop. Check the
-/// minibuffer row specifically (the tree pane separately lists file names).
+/// The multi-delete confirmation used to say only "Delete 2 items?" — no
+/// names. That's safer with: "Delete 2 items ('foo', 'bar')?" so the user can
+/// eyeball what they're actually about to drop. Asserted on the dialog's own
+/// body row (the tree pane separately lists file names).
 #[test]
 fn test_multi_delete_prompt_names_the_items() {
     let mut harness = EditorTestHarness::with_temp_project(100, 30).unwrap();
     let project_root = harness.project_dir().unwrap();
-    // Use distinctive names that the tree cannot display alongside each other
-    // on the minibuffer row (bottom of screen) — we'll assert the prompt row
-    // mentions them.
+    // Use distinctive names, so the row of the dialog that names them cannot
+    // be confused with the tree's own listing of the same files.
     fs::write(project_root.join("tomato.md"), "a").unwrap();
     fs::write(project_root.join("zucchini.md"), "b").unwrap();
 
@@ -670,37 +666,29 @@ fn test_multi_delete_prompt_names_the_items() {
         .unwrap();
     harness.wait_for_prompt().unwrap();
 
-    // The minibuffer (last non-empty row of the rendered screen) shows the
-    // prompt text. Without the fix it reads "Delete 2 items? (y)es, (N)o"
-    // with no names. With the fix it should mention the names.
+    // Without the fix the question read "Delete 2 items?" with no names. One
+    // row of the dialog must carry the count and both names.
     let screen = harness.screen_to_string();
-    let prompt_row = screen
+    let question = screen
         .lines()
-        .rev()
-        .find(|l| !l.trim().is_empty())
+        .find(|l| l.contains("Delete") && l.contains("tomato"))
         .unwrap_or("");
     assert!(
-        prompt_row.contains("Delete")
-            && prompt_row.contains("tomato")
-            && prompt_row.contains("zucchini"),
-        "Multi-delete prompt should name the items being deleted. Prompt:\n{}",
-        prompt_row
+        question.contains("zucchini"),
+        "Multi-delete dialog should name the items being deleted. Screen:\n{screen}"
     );
 
     // Cancel.
     harness
-        .send_key(KeyCode::Char('n'), KeyModifiers::NONE)
-        .unwrap();
-    harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .send_key(KeyCode::Char('c'), KeyModifiers::NONE)
         .unwrap();
 }
 
-/// The conflict prompt advertises `(c)ancel` but used to accept *any*
-/// unrecognized input as a cancel — including typos. A typo loses the
-/// clipboard and the whole paste queue with no recovery. The prompt
-/// should re-prompt on unknown input and only cancel on the explicit
-/// `c` / Escape keys.
+/// The conflict prompt used to accept *any* unrecognized input as a cancel —
+/// including typos, which lose the clipboard and the whole paste queue with
+/// no recovery. As a modal dialog there is no unrecognized input to mistake
+/// for consent: a key that is nobody's accelerator does nothing at all, and
+/// only Escape or the Cancel button backs out.
 #[test]
 fn test_conflict_prompt_typo_re_prompts_does_not_cancel() {
     let mut harness = EditorTestHarness::with_temp_project(100, 30).unwrap();
@@ -726,21 +714,17 @@ fn test_conflict_prompt_typo_re_prompts_does_not_cancel() {
     harness.wait_for_prompt().unwrap();
     harness.assert_screen_contains("exists");
 
-    // Type a typo (not o / r / c) and submit. The prompt should stay
-    // open and re-prompt, rather than silently cancel.
-    if let Some(prompt) = harness.editor_mut().prompt_mut() {
-        prompt.clear();
-        prompt.insert_str("z");
-    }
+    // A key that is nobody's accelerator here (not o / r / c). The dialog
+    // must stay up rather than read it as a cancel.
     harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .send_key(KeyCode::Char('z'), KeyModifiers::NONE)
         .unwrap();
     harness.render().unwrap();
     let screen = harness.screen_to_string();
     assert!(
         screen.contains("exists"),
-        "Unknown input should not cancel the paste — the conflict prompt \
-         should re-ask. Screen:\n{}",
+        "Unknown input should not cancel the paste — the conflict dialog \
+         should stay up. Screen:\n{}",
         screen
     );
 
@@ -1380,10 +1364,7 @@ fn test_delete_closes_open_buffer_for_deleted_file() {
         .unwrap();
     harness.wait_for_prompt().unwrap();
     harness
-        .send_key(KeyCode::Char('y'), KeyModifiers::NONE)
-        .unwrap();
-    harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .send_key(KeyCode::Char('d'), KeyModifiers::NONE)
         .unwrap();
     harness.wait_for_prompt_closed().unwrap();
     harness.render().unwrap();

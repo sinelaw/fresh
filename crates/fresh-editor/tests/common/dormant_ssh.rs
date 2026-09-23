@@ -43,6 +43,17 @@ pub fn hanging_fake_ssh_on_path() -> PathPin {
     pin_shim_dir("tests/fixtures/fake-ssh-hang")
 }
 
+/// Like [`fake_ssh_on_path`], but the shim answers **only for the
+/// `~/.ssh/config` alias** (`tests/fixtures/fake-ssh-alias-only`) and refuses
+/// a destination the caller resolved itself. Makes "whose job is it to read
+/// `~/.ssh/config`" observable on screen with no network: ssh's, because the
+/// directives the plugin does not parse only apply when ssh is handed the
+/// alias.
+#[must_use = "the shim leaves $PATH as soon as the guard is dropped"]
+pub fn alias_only_ssh_on_path() -> PathPin {
+    pin_shim_dir("tests/fixtures/fake-ssh-alias-only")
+}
+
 /// Like [`fake_ssh_on_path`], but the shim **completes the connection slowly**
 /// (`tests/fixtures/fake-ssh-slow`): it bootstraps the real agent locally so
 /// file ops actually work, but throttles selected responses so the channel
@@ -58,6 +69,17 @@ pub fn hanging_fake_ssh_on_path() -> PathPin {
 #[must_use = "the shim leaves $PATH as soon as the guard is dropped"]
 pub fn slow_fake_ssh_on_path() -> PathPin {
     pin_shim_dir("tests/fixtures/fake-ssh-slow")
+}
+
+/// Like [`fake_ssh_on_path`], but the shim **runs the remote command here**
+/// (`tests/fixtures/fake-ssh-local`), in the pretend remote home named by
+/// `FAKE_SSH_REMOTE_HOME` (set it through [`PathPin::set_env`]). One-shot
+/// remote commands — probes, folder listings, clones — then work end to end
+/// with no network. It does not speak the remote-agent protocol, so a test
+/// using it must not open a remote workspace.
+#[must_use = "the shim leaves $PATH as soon as the guard is dropped"]
+pub fn local_shell_ssh_on_path() -> PathPin {
+    pin_shim_dir("tests/fixtures/fake-ssh-local")
 }
 
 fn pin_shim_dir(rel: &str) -> PathPin {
@@ -89,6 +111,7 @@ pub fn dead_ssh_spec(remote_path: &Path) -> SessionAuthoritySpec {
         window: true,
         label: Some("ssh-dead".to_string()),
         command: None,
+        adopt_window: None,
     })
 }
 

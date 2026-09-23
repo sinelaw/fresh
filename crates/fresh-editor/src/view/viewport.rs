@@ -194,6 +194,40 @@ fn previous_line_start(buffer: &mut Buffer, byte: usize) -> Option<usize> {
     buffer.prev_line_start_within(byte.saturating_sub(1), CLAMP_SCAN_BYTES)
 }
 
+/// The width of the line-number gutter for `buffer`.
+///
+/// Format: `"[indicator]{:>N} │ "` — a 1-char indicator column (space, or
+/// `●`/`✗`/`⚠`), N right-aligned digits, and a 3-char `" │ "` separator. Total
+/// `1 + N + 3`, with `MIN_LINE_NUMBER_DIGITS` the floor on N so a one-line
+/// buffer does not feel cramped, and the buffer's own line count deciding the
+/// rest — a small file does not pay for a four-digit column. In byte-offset
+/// mode (a buffer with no line count) the gutter shows byte offsets, so the
+/// file's length decides the digits.
+///
+/// **One statement, because everything that wraps text has to agree.** The
+/// renderer (`render_buffer`), the scrollbar's row count
+/// (`split_rendering::scrollbar`), the viewport's own wrap config and the
+/// scroll math (`app::scrollbar_math`) all build a `WrapConfig` around this
+/// number; a gutter one cell wider in one of them wraps at a different column
+/// than the renderer, and the scrollbar then points at a row the pane does not
+/// have. `app::scrollbar_math` kept its own copy of the formula — one that
+/// missed the byte-offset case — under a doc admitting exactly that risk.
+pub fn gutter_width(buffer: &Buffer) -> usize {
+    let byte_offset_mode = buffer.line_count().is_none();
+    let gutter_estimate = if byte_offset_mode {
+        // In byte offset mode, gutter shows byte offsets up to file size
+        buffer.len().max(1)
+    } else {
+        buffer.line_count().unwrap_or(1)
+    };
+    let digits = if gutter_estimate == 0 {
+        1
+    } else {
+        ((gutter_estimate as f64).log10().floor() as usize) + 1
+    };
+    1 + digits.max(crate::view::margin::MIN_LINE_NUMBER_DIGITS) + 3
+}
+
 impl Viewport {
     /// Byte the viewport starts at.
     ///
@@ -386,30 +420,11 @@ impl Viewport {
         self.height as usize
     }
 
-    /// Calculate the gutter width based on buffer length
-    /// Format: "[indicator]{:>N} │ " where N is the number of digits for line numbers
-    /// - Indicator column: 1 char (space, or symbols like ●/✗/⚠)
-    /// - Line numbers: N digits (min 2), right-aligned
-    /// - Separator: " │ " = 3 chars (space, box char, space)
-    ///
-    /// Total width = 1 + N + 3 = N + 4 (where N >= 2 minimum, so min 6 total).
-    /// The width adapts to the buffer's line count — small files don't waste
-    /// space on a 4-digit-wide column. `MIN_LINE_NUMBER_DIGITS` keeps it from
-    /// shrinking so much that a 1-line buffer feels cramped.
+    /// The gutter's width for `buffer` — see the free [`gutter_width`], which
+    /// is the one statement of it. This reads nothing off the viewport and is
+    /// kept for the callers that have one in hand.
     pub fn gutter_width(&self, buffer: &Buffer) -> usize {
-        let byte_offset_mode = buffer.line_count().is_none();
-        let gutter_estimate = if byte_offset_mode {
-            // In byte offset mode, gutter shows byte offsets up to file size
-            buffer.len().max(1)
-        } else {
-            buffer.line_count().unwrap_or(1)
-        };
-        let digits = if gutter_estimate == 0 {
-            1
-        } else {
-            ((gutter_estimate as f64).log10().floor() as usize) + 1
-        };
-        1 + digits.max(crate::view::margin::MIN_LINE_NUMBER_DIGITS) + 3
+        gutter_width(buffer)
     }
 
     /// Smallest read budget [`row_budget_bytes`](Self::row_budget_bytes) will
@@ -1269,47 +1284,6 @@ impl Viewport {
         positions[max_scroll_row]
     }
 
-    /// Scroll through ViewLines (view-transform aware)
-    ///
-    /// This method scrolls through display lines rather than source lines,
-    /// correctly handling view transforms that inject headers or other content.
-    ///
-    /// # Arguments
-    /// * `view_lines` - The current display lines (from ViewLineIterator)
-    /// * `line_offset` - Positive to scroll down, negative to scroll up
-    ///
-    /// # Returns
-    /// The new top_byte position after scrolling
-    pub fn scroll_view_lines(&mut self, view_lines: &[ViewLine], line_offset: isize) {
-        let viewport_height = self.visible_line_count();
-        if view_lines.is_empty() || viewport_height == 0 {
-            return;
-        }
-
-        // Find the current view line index that corresponds to top_byte
-        let current_idx = self.find_view_line_for_byte(view_lines, self.top_byte());
-
-        // Calculate target index
-        let target_idx = if line_offset >= 0 {
-            current_idx.saturating_add(line_offset as usize)
-        } else {
-            current_idx.saturating_sub(line_offset.unsigned_abs())
-        };
-
-        // Apply scroll limit: don't scroll past the point where viewport can't be filled
-        let max_top_idx = view_lines.len().saturating_sub(viewport_height);
-        let clamped_idx = target_idx.min(max_top_idx);
-
-        // Get the source byte for the target view line
-        if let Some(new_top_byte) = self.get_source_byte_for_view_line(view_lines, clamped_idx) {
-            tracing::trace!(
-                "scroll_view_lines: offset={}, current_idx={}, target_idx={}, clamped_idx={}, new_top_byte={}",
-                line_offset, current_idx, target_idx, clamped_idx, new_top_byte
-            );
-            self.set_top_byte(new_top_byte);
-        }
-    }
-
     /// Find the view line index that contains a source byte position
     /// Returns the line where the byte falls within its range, not just the first line
     /// starting at or after the byte.
@@ -1352,28 +1326,6 @@ impl Viewport {
         }
 
         best_match
-    }
-
-    /// Get the source byte position for a view line index
-    /// For injected lines (headers), walks forward to find the next source line
-    fn get_source_byte_for_view_line(&self, view_lines: &[ViewLine], idx: usize) -> Option<usize> {
-        // Start from the requested index and walk forward to find a line with source mapping
-        for line in view_lines.iter().skip(idx) {
-            if let Some(source_byte) = line.char_source_bytes.iter().find_map(|m| *m) {
-                return Some(source_byte);
-            }
-        }
-        // If all remaining lines are injected, try to get the last known source position
-        // by walking backwards
-        for line in view_lines.iter().take(idx).rev() {
-            if let Some(source_byte) = line.char_source_bytes.iter().find_map(|m| *m) {
-                // This is the last source position before our target
-                // We want to stay at that position
-                return Some(source_byte);
-            }
-        }
-        // No source bytes found at all - keep current position
-        Some(self.top_byte())
     }
 
     /// Ensure cursor is visible using view lines (Layout-aware)
@@ -1959,24 +1911,9 @@ impl Viewport {
         self.set_top_byte_with_limit(buffer, &[], &[], end);
     }
 
-    /// Mark viewport as needing synchronization with cursor positions
-    /// This defers the actual viewport update until sync_with_cursor is called
-    pub fn mark_needs_sync(&mut self) {
-        self.needs_sync = true;
-    }
-
     /// Check if viewport needs synchronization
     pub fn needs_sync(&self) -> bool {
         self.needs_sync
-    }
-
-    /// Synchronize viewport with cursor position (deferred ensure_visible)
-    /// This should be called before rendering to batch multiple cursor movements
-    pub fn sync_with_cursor(&mut self, buffer: &mut Buffer, cursor: &Cursor) {
-        if self.needs_sync {
-            self.ensure_visible(buffer, cursor, &[]);
-            self.needs_sync = false;
-        }
     }
 
     /// Low-level: ensure cursor is visible, scrolling if necessary.
@@ -2810,65 +2747,6 @@ impl Viewport {
             if self.left_column > max_left_column {
                 self.left_column = max_left_column;
             }
-        }
-    }
-
-    /// Ensure multiple cursors are visible (smart scroll for multi-cursor)
-    /// Prioritizes keeping the primary cursor visible
-    pub fn ensure_cursors_visible(
-        &mut self,
-        buffer: &mut Buffer,
-        cursors: &[(usize, &Cursor)], // (priority, cursor) - lower priority number = higher priority
-    ) {
-        if cursors.is_empty() {
-            return;
-        }
-
-        // Sort cursors by priority (primary cursor first)
-        let mut sorted_cursors: Vec<_> = cursors.to_vec();
-        sorted_cursors.sort_by_key(|(priority, _)| *priority);
-
-        // Get byte positions for all cursors (at line starts)
-        let cursor_line_bytes: Vec<usize> = sorted_cursors
-            .iter()
-            .map(|(_, cursor)| {
-                let iter = buffer.line_iterator(cursor.position, 80);
-                iter.current_position()
-            })
-            .collect();
-
-        // Count how many lines span between min and max cursors
-        let min_byte = *cursor_line_bytes.iter().min().unwrap();
-        let max_byte = *cursor_line_bytes.iter().max().unwrap();
-
-        // Count lines between min and max using iterator
-        let mut iter = buffer.line_iterator(min_byte, 80);
-        let mut line_span = 0;
-        while let Some((line_byte, _)) = iter.next_line() {
-            if line_byte >= max_byte {
-                break;
-            }
-            line_span += 1;
-        }
-
-        let visible_count = self.visible_line_count();
-
-        // If all cursors fit in the viewport, center them
-        if line_span < visible_count {
-            let lines_to_go_back = visible_count / 2;
-            let mut iter = buffer.line_iterator(min_byte, 80);
-            for _ in 0..lines_to_go_back {
-                if iter.prev().is_none() {
-                    break;
-                }
-            }
-            let position = iter.current_position();
-            // Cursor-positioning flow: no soft-break info available here.
-            self.set_top_byte_with_limit(buffer, &[], &[], position);
-        } else {
-            // Can't fit all cursors, ensure primary is visible
-            let primary_cursor = sorted_cursors[0].1;
-            self.ensure_visible(buffer, primary_cursor, &[]);
         }
     }
 

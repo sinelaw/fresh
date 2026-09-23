@@ -13,52 +13,8 @@ use crate::model::event::{BufferId, LeafId};
 /// Columns a single scroll step moves a split's tab strip, shared by the
 /// wheel and by a click on the bar's `<` / `>` indicators so both nudge the
 /// strip by the same amount.
-pub(crate) const TAB_SCROLL_STEP_COLUMNS: usize = 10;
 
 impl crate::app::window::Window {
-    /// Pan a split's tab strip by one scroll step: negative moves toward the
-    /// first tab, positive toward the last.
-    ///
-    /// Which split is the strip node's own — it is that pane's. The cell was
-    /// compared against every recorded `bar_area` in turn to recover it, which
-    /// is what a keyed node makes unnecessary. The wheel routing's ruling is
-    /// unchanged and lives with the surfaces: there is no "whatever has focus"
-    /// fallback, and chrome that owns no scrollable content drops the wheel
-    /// (sinelaw/fresh#2969, the base component's).
-    ///
-    /// Scrolling right stops at the last tab — whether anything is still
-    /// hidden off the right edge is the strip's layout's to say, so the offset
-    /// can't run out into empty space and leave the user wheeling back through
-    /// nothing. Which tab is *active* never changes: the wheel moves the view,
-    /// like every other wheel surface in the editor.
-    ///
-    /// `overflows_right` is whether the strip has tabs past its right edge —
-    /// a fact of the strip's layout, which the caller reads off the tree
-    /// (`Editor::scroll_pane_tab_strip`); stepping right stops there.
-    pub(crate) fn scroll_tab_strip(&mut self, split_id: LeafId, delta: i32, overflows_right: bool) {
-        if delta == 0 {
-            return;
-        }
-        if delta > 0 && !overflows_right {
-            return;
-        }
-        if let Some(view_state) = self
-            .split_view_states_mut()
-            .expect("active window must have a populated split layout")
-            .get_mut(&split_id)
-        {
-            view_state.tab_scroll_offset = if delta < 0 {
-                view_state
-                    .tab_scroll_offset
-                    .saturating_sub(TAB_SCROLL_STEP_COLUMNS)
-            } else {
-                view_state
-                    .tab_scroll_offset
-                    .saturating_add(TAB_SCROLL_STEP_COLUMNS)
-            };
-        }
-    }
-
     /// Fire the `mouse_scroll` plugin hook — plugins can react to the
     /// wheel for virtual buffers. Fired by every scroll-surface arm
     /// (splits, tab strips, the file explorer) before acting, exactly
@@ -76,23 +32,23 @@ impl crate::app::window::Window {
         );
     }
 
-    /// Scroll the file explorer's viewport. The wheel moves the view,
-    /// not the selection — moving the selected entry (and letting it
-    /// drag the viewport) is jumpy and surprising.
-    pub(super) fn scroll_file_explorer_view(&mut self, delta: i32) {
+    /// Put the file explorer's window at `offset` — where the library moved
+    /// it for a wheel or a bar drag, clamped to the model's own ceiling. The
+    /// wheel moves the view, not the selection: moving the selected entry
+    /// (and letting it drag the viewport) is jumpy and surprising.
+    ///
+    /// **The clamp is the model's, not the window's.** The window derives
+    /// its ceiling from the ancestors pinned at the offset it is *at*, and
+    /// only the model can say how many are pinned at the offset it is
+    /// moving *to* — `max_scroll_offset` walks the candidates. So the window
+    /// proposes and the model disposes; see `Scroll::At` in `fresh_ui`.
+    pub(super) fn scroll_file_explorer_to(&mut self, offset: usize) {
         if let Some(explorer) = self.file_explorer.as_mut() {
-            let count = explorer.visible_count();
-            if count == 0 {
+            if explorer.visible_count() == 0 {
                 return;
             }
             let max_scroll = explorer.max_scroll_offset();
-            let current_offset = explorer.get_scroll_offset();
-            let new_offset = if delta < 0 {
-                current_offset.saturating_sub(delta.unsigned_abs() as usize)
-            } else {
-                (current_offset + delta as usize).min(max_scroll)
-            };
-            explorer.set_scroll_offset(new_offset);
+            explorer.set_scroll_offset(offset.min(max_scroll));
         }
     }
 
@@ -258,7 +214,7 @@ impl crate::app::window::Window {
         // what the renderer uses or `max_scroll_row` ends up wrong on
         // wide terminals with `composeWidth` set (mouse-wheel /
         // scrollbar-drag stop short of the buffer's tail).
-        let (wrap_width, show_line_numbers, grid_cols) = self
+        let (wrap_width, grid_cols) = self
             .buffers
             .splits()
             .map(|(_, vs)| vs)
@@ -267,13 +223,12 @@ impl crate::app::window::Window {
             .map(|vs| {
                 (
                     vs.viewport.effective_width() as usize,
-                    vs.show_line_numbers,
                     // Terminal-grid wrap (fresh#2649): scroll-back rows
                     // break at the capture-time PTY width.
                     vs.viewport.grid_wrap.then(|| vs.viewport.grid_cols()),
                 )
             })
-            .unwrap_or((80, true, None));
+            .unwrap_or((80, None));
 
         // Snapshot config values up front so the mutable borrow on `self.buffers`
         // below doesn't conflict with `self.config()`.
@@ -306,7 +261,6 @@ impl crate::app::window::Window {
                         drag_start_view_line_offset,
                         viewport_height,
                         wrap_width,
-                        show_line_numbers,
                         grid_cols,
                         pipeline_inputs_ver,
                         fold_ranges.clone(),
@@ -474,7 +428,7 @@ impl crate::app::window::Window {
             .map(|vs| vs.viewport.line_wrap_enabled)
             .unwrap_or(false);
 
-        let (wrap_width, show_line_numbers, grid_cols) = self
+        let (wrap_width, grid_cols) = self
             .buffers
             .splits()
             .map(|(_, vs)| vs)
@@ -483,13 +437,12 @@ impl crate::app::window::Window {
             .map(|vs| {
                 (
                     vs.viewport.effective_width() as usize,
-                    vs.show_line_numbers,
                     // Terminal-grid wrap (fresh#2649): scroll-back rows
                     // break at the capture-time PTY width.
                     vs.viewport.grid_wrap.then(|| vs.viewport.grid_cols()),
                 )
             })
-            .unwrap_or((80, true, None));
+            .unwrap_or((80, None));
 
         // Snapshot config up front so the mutable borrow on `self.buffers`
         // below doesn't conflict with `self.config()`.
@@ -515,7 +468,6 @@ impl crate::app::window::Window {
                         ratio,
                         viewport_height,
                         wrap_width,
-                        show_line_numbers,
                         grid_cols,
                         pipeline_inputs_ver,
                         fold_ranges.clone(),

@@ -11,7 +11,6 @@ use super::schema::{parse_schema, SettingCategory, SettingSchema};
 use super::search::{search_settings, DeepMatch, SearchResult};
 use crate::config::Config;
 use crate::config_io::ConfigLayer;
-use crate::view::ui::ScrollablePanel;
 use std::collections::HashMap;
 
 /// Set a value at a JSON pointer path, creating intermediate objects as
@@ -238,9 +237,18 @@ pub struct SettingsState {
     /// tree view. Only categories with `sections.len() > 1` are eligible —
     /// a category with zero or one section stays flat.
     pub expanded_categories: std::collections::HashSet<usize>,
-    /// Scroll state for the categories panel itself, separate from the body's
-    /// window. Drives mouse-wheel + page-up/down on the left.
-    pub categories_scroll: ScrollablePanel,
+    /// How many rows a `PgUp` / `PgDn` moves the category cursor by: the
+    /// tree's own height, read off the box the tree placed
+    /// (`Editor::settle_modal_viewports`).
+    ///
+    /// **This is the whole of what the tree's old `ScrollablePanel` was still
+    /// doing.** Its offset and content height were written by
+    /// `ensure_focused_visible` walking `ScrollItem::height` over every row —
+    /// a second copy of the heights the list draws the rows with — and read by
+    /// nothing: the window is the list element's, so the wheel moves it and a
+    /// keyboard move reveals the selection, which is what `categories`
+    /// documents. A page is a number, not a panel.
+    pub tree_page_rows: u16,
     /// Cursor position inside the currently-selected category's tree row.
     /// `None` = cursor is on the category row itself (the category row
     /// shows the `>` indicator).
@@ -301,24 +309,22 @@ struct TextEditSnapshot {
 ///
 /// Sections only appear when their owning category is in
 /// `expanded_categories` AND has more than one section — single-section
-/// categories show their items flat without a tree node.
+/// categories show their items flat without a tree node. Likewise the pages
+/// nested under a category (a plugin's page under "Plugins") only appear
+/// while that category is expanded.
 #[derive(Debug, Clone, Copy)]
 pub enum TreeRow {
     Category {
         idx: usize,
         expandable: bool,
         expanded: bool,
+        /// Nested under another category's row (a plugin's page).
+        nested: bool,
     },
     Section {
         cat_idx: usize,
         section_idx: usize,
     },
-}
-
-impl crate::view::ui::ScrollItem for TreeRow {
-    fn height(&self, _width: u16) -> u16 {
-        1
-    }
 }
 
 impl SettingsState {
@@ -328,7 +334,7 @@ impl SettingsState {
     }
 
     /// Same as [`Self::new`], plus inject per-plugin config schemas as
-    /// subcategories of a "Plugin Settings" top-level category. Only
+    /// pages nested under the "Plugins" category. Only
     /// enabled plugins with a schema are rendered.
     pub fn new_with_plugin_schemas(
         schema_json: &str,
@@ -375,7 +381,7 @@ impl SettingsState {
             &theme_options,
         );
 
-        Ok(Self {
+        let mut state = Self {
             categories,
             pages,
             selected_category: 0,
@@ -415,7 +421,7 @@ impl SettingsState {
             pending_deletions: std::collections::HashSet::new(),
             item_style: super::items::ItemBoxStyle::default(),
             expanded_categories: std::collections::HashSet::new(),
-            categories_scroll: ScrollablePanel::new(),
+            tree_page_rows: 0,
             tree_cursor_section: None,
             cursor_drove_body: false,
             text_edit_snapshot: None,
@@ -424,7 +430,9 @@ impl SettingsState {
                 key: None,
             }),
             theme_options,
-        })
+        };
+        state.expand_parent_categories();
+        Ok(state)
     }
 
     /// Get the currently focused panel
@@ -683,10 +691,53 @@ impl SettingsState {
     /// Whether a category should render with a chevron + be expandable in
     /// the tree view. We require strictly more than one section, since one
     /// section adds no information beyond the category itself.
+    /// A nested page (a plugin's, under "Plugins") never is: the tree has
+    /// no room for a third level.
     pub fn is_category_expandable(&self, cat_idx: usize) -> bool {
-        self.pages
-            .get(cat_idx)
-            .is_some_and(|p| p.sections.len() > 1)
+        self.pages.get(cat_idx).is_some_and(|p| {
+            !self.is_nested(cat_idx) && (p.sections.len() > 1 || self.has_child_pages(&p.name))
+        })
+    }
+
+    /// Whether the page is listed under another category's row.
+    fn is_nested(&self, idx: usize) -> bool {
+        self.pages[idx].parent.as_deref().is_some_and(|parent| {
+            self.pages
+                .iter()
+                .any(|q| q.name == parent && q.parent.is_none())
+        })
+    }
+
+    /// Every page's index in the tree's order with everything expanded —
+    /// the order the narrow layout's strip lists them in.
+    pub fn tree_order(&self) -> Vec<usize> {
+        let mut order = Vec::with_capacity(self.pages.len());
+        for (idx, page) in self.pages.iter().enumerate() {
+            if self.is_nested(idx) {
+                continue;
+            }
+            order.push(idx);
+            order.extend((0..self.pages.len()).filter(|&c| {
+                self.is_nested(c) && self.pages[c].parent.as_deref() == Some(page.name.as_str())
+            }));
+        }
+        order
+    }
+
+    /// Whether any page is nested under the top-level page named `name`.
+    fn has_child_pages(&self, name: &str) -> bool {
+        self.pages.iter().any(|p| p.parent.as_deref() == Some(name))
+    }
+
+    /// Expand the categories whose nested pages should be on show when the
+    /// dialog opens ("Plugins", with a page per plugin under it).
+    fn expand_parent_categories(&mut self) {
+        let parents: Vec<usize> = (0..self.pages.len())
+            .filter(|&i| {
+                self.pages[i].parent.is_none() && self.has_child_pages(&self.pages[i].name)
+            })
+            .collect();
+        self.expanded_categories.extend(parents);
     }
 
     /// Move the cursor in the categories tree by `delta` rows (positive =
@@ -755,16 +806,9 @@ impl SettingsState {
             true => self.body_anchor.top_key(key),
             false => self.body_anchor.reveal_key(key),
         }
-        let new_rows = self.visible_tree();
-        let new_cur = self.tree_cursor_index(&new_rows);
-        // A tree row is one line tall whatever the width, so the tree's own
-        // column is the honest number to measure it against.
-        self.categories_scroll.ensure_focused_visible(
-            &new_rows,
-            new_cur,
-            None,
-            super::super::shell::settings::CATEGORY_COLS,
-        );
+        // The tree's window is the list element's and it reveals its own
+        // selection (`shell::settings::categories`), so there is nothing to
+        // scroll here.
     }
 
     /// Find the visible-tree index for the current selection. Prefers the
@@ -813,14 +857,32 @@ impl SettingsState {
         if self.is_category_expandable(idx) {
             self.expanded_categories.insert(idx);
         }
+        // A nested page is only in the tree while its parent is expanded.
+        if let Some(parent) = self.pages.get(idx).and_then(|p| p.parent.clone()) {
+            if let Some(p) = self.pages.iter().position(|q| q.name == parent) {
+                self.expanded_categories.insert(p);
+            }
+        }
     }
 
     pub fn toggle_category_expanded(&mut self, cat_idx: usize) {
         if !self.is_category_expandable(cat_idx) {
             return;
         }
-        if !self.expanded_categories.insert(cat_idx) {
-            self.expanded_categories.remove(&cat_idx);
+        if self.expanded_categories.insert(cat_idx) {
+            return;
+        }
+        self.expanded_categories.remove(&cat_idx);
+        // Collapsing hides the rows under it; a cursor on one of them moves
+        // up to the category, as Left does.
+        let parent = self.pages[cat_idx].name.clone();
+        if self.selected_category == cat_idx {
+            self.tree_cursor_section = None;
+        } else if self.pages[self.selected_category].parent.as_deref() == Some(parent.as_str()) {
+            self.selected_category = cat_idx;
+            self.selected_item = 0;
+            self.tree_cursor_section = None;
+            self.body_anchor.scroll_to(fresh_ui::Point::ZERO);
         }
     }
 
@@ -857,19 +919,46 @@ impl SettingsState {
     /// rendering, hit-testing, and Up/Down navigation in the tree.
     pub fn visible_tree(&self) -> Vec<TreeRow> {
         let mut rows = Vec::with_capacity(self.pages.len());
+        // A page whose parent is missing is listed at the top level rather
+        // than dropped.
+        let is_top = |p: &SettingsPage| {
+            p.parent.as_deref().is_none_or(|parent| {
+                !self
+                    .pages
+                    .iter()
+                    .any(|q| q.name == parent && q.parent.is_none())
+            })
+        };
         for (idx, page) in self.pages.iter().enumerate() {
-            let expandable = page.sections.len() > 1;
+            if !is_top(page) {
+                continue;
+            }
+            let expandable = self.is_category_expandable(idx);
             let expanded = expandable && self.expanded_categories.contains(&idx);
             rows.push(TreeRow::Category {
                 idx,
                 expandable,
                 expanded,
+                nested: false,
             });
-            if expanded {
+            if !expanded {
+                continue;
+            }
+            if page.sections.len() > 1 {
                 for section_idx in 0..page.sections.len() {
                     rows.push(TreeRow::Section {
                         cat_idx: idx,
                         section_idx,
+                    });
+                }
+            }
+            for (child, p) in self.pages.iter().enumerate() {
+                if page.parent.is_none() && p.parent.as_deref() == Some(page.name.as_str()) {
+                    rows.push(TreeRow::Category {
+                        idx: child,
+                        expandable: false,
+                        expanded: false,
+                        nested: true,
                     });
                 }
             }
@@ -989,25 +1078,6 @@ impl SettingsState {
         let page_size = self.body.height.max(1);
         for _ in 0..page_size {
             self.select_prev();
-        }
-    }
-
-    /// Toggle the visual style applied to every item.
-    ///
-    /// Style is cached per-item so the `ScrollItem::height(width)` trait impl
-    /// can compute the correct height without taking a style parameter; this
-    /// method propagates the change to every item across every page in one
-    /// pass. Recomputes the scroll panel content height too, since heights
-    /// just changed.
-    pub fn set_item_style(&mut self, style: super::items::ItemBoxStyle) {
-        if self.item_style == style {
-            return;
-        }
-        self.item_style = style;
-        for page in &mut self.pages {
-            for item in &mut page.items {
-                item.style = style;
-            }
         }
     }
 
@@ -1151,16 +1221,6 @@ impl SettingsState {
             .get(path)
             .copied()
             .unwrap_or(ConfigLayer::System)
-    }
-
-    /// Get a short label for a layer source (for UI display).
-    pub fn layer_source_label(layer: ConfigLayer) -> &'static str {
-        match layer {
-            ConfigLayer::System => "default",
-            ConfigLayer::User => "user",
-            ConfigLayer::Project => "project",
-            ConfigLayer::Session => "session",
-        }
     }
 
     /// Reset the current item by removing it from the target layer.
@@ -1384,13 +1444,6 @@ impl SettingsState {
         self.search_scroll_offset = 0;
     }
 
-    /// Update search query and refresh results
-    pub fn set_search_query(&mut self, query: String) {
-        self.search_input.set_value(&query);
-        self.search_input.move_end();
-        self.refresh_search_results();
-    }
-
     /// Recompute results after the query text changed and reset the
     /// results selection/scroll to the top.
     fn refresh_search_results(&mut self) {
@@ -1531,50 +1584,15 @@ impl SettingsState {
         }
     }
 
-    /// Get the currently selected search result
-    pub fn current_search_result(&self) -> Option<&SearchResult> {
-        self.search_results.get(self.selected_search_result)
-    }
-
     /// Show the unsaved changes confirmation dialog
     pub fn show_confirm_dialog(&mut self) {
         self.showing_confirm_dialog = true;
         self.confirm_dialog_selection = 0; // Default to "Save and Exit"
     }
 
-    /// Hide the confirmation dialog
-    pub fn hide_confirm_dialog(&mut self) {
-        self.showing_confirm_dialog = false;
-        self.confirm_dialog_selection = 0;
-    }
-
-    /// Move to next option in confirmation dialog
-    pub fn confirm_dialog_next(&mut self) {
-        self.confirm_dialog_selection = (self.confirm_dialog_selection + 1) % 3;
-    }
-
-    /// Move to previous option in confirmation dialog
-    pub fn confirm_dialog_prev(&mut self) {
-        self.confirm_dialog_selection = if self.confirm_dialog_selection == 0 {
-            2
-        } else {
-            self.confirm_dialog_selection - 1
-        };
-    }
-
     /// Toggle the help overlay
     pub fn toggle_help(&mut self) {
         self.showing_help = !self.showing_help;
-    }
-
-    /// Hide the help overlay
-    pub fn hide_help(&mut self) {
-        self.showing_help = false;
-    }
-
-    /// Check if the entry dialog is showing
-    pub fn showing_entry_dialog(&self) -> bool {
-        self.has_entry_dialog()
     }
 
     /// Open the entry dialog for the map entry at `entry_idx`.
@@ -2739,20 +2757,6 @@ impl SettingsState {
     pub fn stop_editing(&mut self) {
         self.leave_live_control();
     }
-    /// Check if the current item is editable (TextList, DualList, Text, Map, or Json)
-    pub fn is_editable_control(&self) -> bool {
-        self.current_item().is_some_and(|item| {
-            matches!(
-                item.control,
-                SettingControl::TextList { .. }
-                    | SettingControl::DualList { .. }
-                    | SettingControl::Text { .. }
-                    | SettingControl::Map { .. }
-                    | SettingControl::Json { .. }
-            )
-        })
-    }
-
     /// Whether the selected card's JSON editor is being edited.
     pub fn is_editing_json(&self) -> bool {
         self.live_control().is_some()
@@ -3079,6 +3083,118 @@ mod tests {
 
     fn test_config() -> Config {
         Config::default()
+    }
+
+    /// The shipped schema plus one enabled plugin ("demo") with a schema.
+    fn state_with_plugin_page() -> SettingsState {
+        let mut config = test_config();
+        config.plugins.insert(
+            "demo".to_string(),
+            crate::config::PluginConfig {
+                enabled: true,
+                path: None,
+                settings: serde_json::Value::Null,
+            },
+        );
+        let plugin_schemas = HashMap::from([(
+            "demo".to_string(),
+            serde_json::json!({
+                "type": "object",
+                "properties": { "flag": { "type": "boolean", "default": false } }
+            }),
+        )]);
+        SettingsState::new_with_plugin_schemas(
+            include_str!("../../../plugins/config-schema.json"),
+            &config,
+            &plugin_schemas,
+        )
+        .unwrap()
+    }
+
+    fn page_idx(state: &SettingsState, name: &str) -> usize {
+        state
+            .pages
+            .iter()
+            .position(|p| p.name == name)
+            .unwrap_or_else(|| panic!("no page {name:?}"))
+    }
+
+    fn category_rows(state: &SettingsState) -> Vec<(String, bool)> {
+        state
+            .visible_tree()
+            .iter()
+            .filter_map(|r| match *r {
+                TreeRow::Category { idx, nested, .. } => {
+                    Some((state.pages[idx].name.clone(), nested))
+                }
+                TreeRow::Section { .. } => None,
+            })
+            .collect()
+    }
+
+    /// `x-category` groups top-level settings onto their own pages without
+    /// moving them in the config: keybindings and languages/LSP leave General.
+    #[test]
+    fn x_category_moves_settings_off_general() {
+        let state = state_with_plugin_page();
+        let paths = |name: &str| -> Vec<String> {
+            state.pages[page_idx(&state, name)]
+                .items
+                .iter()
+                .map(|i| i.path.clone())
+                .collect()
+        };
+        let general = paths("General");
+        assert_eq!(
+            general.first().map(String::as_str),
+            Some("/orchestrator_mode")
+        );
+        for moved in ["/keybindings", "/languages", "/lsp", "/default_language"] {
+            assert!(
+                !general.iter().any(|p| p == moved),
+                "{moved} still in General"
+            );
+        }
+        assert_eq!(
+            paths("Keybindings"),
+            ["/active_keybinding_map", "/keybindings", "/keybinding_maps"]
+        );
+        assert_eq!(
+            paths("Syntax & Languages"),
+            [
+                "/languages",
+                "/default_language",
+                "/lsp_enabled",
+                "/lsp",
+                "/universal_lsp"
+            ]
+        );
+        let sections: Vec<&str> = state.pages[page_idx(&state, "Syntax & Languages")]
+            .sections
+            .iter()
+            .map(|s| s.name.as_str())
+            .collect();
+        assert_eq!(sections, ["Languages", "Language Servers"]);
+    }
+
+    /// A plugin's page is listed by its bare name under "Plugins", which
+    /// starts expanded; collapsing "Plugins" hides it, and visiting the
+    /// plugin's page (e.g. from search) expands "Plugins" again.
+    #[test]
+    fn plugin_pages_nest_under_plugins() {
+        let mut state = state_with_plugin_page();
+        let rows = category_rows(&state);
+        let plugins = rows.iter().position(|(n, _)| n == "Plugins").unwrap();
+        assert_eq!(rows[plugins + 1], ("demo".to_string(), true));
+        assert_eq!(rows.iter().filter(|(n, _)| n == "demo").count(), 1);
+
+        let plugins_idx = page_idx(&state, "Plugins");
+        state.toggle_category_expanded(plugins_idx);
+        assert!(!category_rows(&state).iter().any(|(n, _)| n == "demo"));
+
+        state.selected_category = page_idx(&state, "demo");
+        state.auto_expand_current_category();
+        assert!(category_rows(&state).iter().any(|(n, _)| n == "demo"));
     }
 
     #[test]

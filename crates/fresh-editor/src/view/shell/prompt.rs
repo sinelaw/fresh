@@ -21,7 +21,8 @@
 //! declaration order, which is placement rather than precedence. The status bar
 //! had already written that rule out by hand as `left_budget`. Two surfaces
 //! needing it is what made it a library concept instead of a second budget
-//! function here.
+//! function here — and the status bar uses it too now, so `left_budget` is
+//! gone and there is one statement of the rule for both.
 
 use std::rc::Rc;
 
@@ -1499,8 +1500,8 @@ mod tests {
     /// **Ledger finding A: the column yield order.** The name is sized before
     /// the description, so a row too narrow for both keeps the whole command
     /// name and truncates the description — never the other way round. This is
-    /// what `left_budget` says for the status bar and what `Node::priority`
-    /// replaced for both.
+    /// what the status bar's `yields_last` says for its two sides, and what
+    /// `Node::priority` replaced the hand-written budget with for both.
     #[test]
     fn the_description_yields_before_the_name() {
         let one = |w: u16| {

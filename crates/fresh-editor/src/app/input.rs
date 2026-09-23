@@ -490,7 +490,7 @@ impl Editor {
         };
         let non_modal = matches!(
             self.panel(slot).map(|f| f.placement),
-            Some(super::PanelPlacement::LeftDock { .. })
+            Some(super::PanelPlacement::LeftDock)
         ) || matches!(slot, super::PanelSlot::Sidebar(_));
         self.dispatch_widget_panel_key(&panel_key, Some(slot), non_modal, code, modifiers)
     }

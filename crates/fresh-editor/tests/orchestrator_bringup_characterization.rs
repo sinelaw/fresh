@@ -135,6 +135,7 @@ impl Scenario {
                 window: true,
                 label: Some(label.to_string()),
                 command: None,
+                adopt_window: None,
             },
         );
         let filename = format!(
@@ -174,6 +175,7 @@ impl Scenario {
             filesystem,
             None,
             None,
+            false,
             false,
             false,
         )
@@ -406,6 +408,7 @@ fn restore_previous_session_false_still_picks_window_but_skips_workspace() {
         filesystem,
         None,
         None,
+        false,
         false,
         false,
     )

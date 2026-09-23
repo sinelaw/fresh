@@ -149,22 +149,6 @@ impl LineMappingsBuilder {
         width
     }
 
-    /// Add a tab character with custom expansion
-    pub fn add_tab(&mut self, source_byte: Option<usize>) -> usize {
-        let width = tab_expansion_width(self.current_visual_col);
-        let char_idx = self.mappings.char_source_bytes.len();
-
-        self.mappings.char_source_bytes.push(source_byte);
-        self.mappings.char_visual_cols.push(self.current_visual_col);
-
-        for _ in 0..width {
-            self.mappings.visual_to_char.push(char_idx);
-        }
-
-        self.current_visual_col += width;
-        width
-    }
-
     /// Get the current visual column
     pub fn current_visual_col(&self) -> usize {
         self.current_visual_col

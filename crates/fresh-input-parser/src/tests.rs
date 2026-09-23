@@ -1834,3 +1834,48 @@ fn utf8_lead_bytes_above_rfc3629_are_not_starts() {
     let ev = p.parse(&[0xf5, b'a']);
     assert_eq!(keys(&ev), vec![(KeyCode::Char('a'), KeyModifiers::empty())]);
 }
+
+fn mouse(kind: crossterm::event::MouseEventKind, x: u16) -> Event {
+    Event::Mouse(crossterm::event::MouseEvent {
+        kind,
+        column: x,
+        row: 3,
+        modifiers: crossterm::event::KeyModifiers::NONE,
+    })
+}
+
+/// A burst of drag reports collapses to its last one; the press and the
+/// release around it, and a drag of another button, each survive.
+#[test]
+fn coalesce_motion_keeps_only_the_latest_of_each_drag_run() {
+    use crossterm::event::{MouseButton, MouseEventKind as K};
+    let events = vec![
+        mouse(K::Down(MouseButton::Left), 10),
+        mouse(K::Drag(MouseButton::Left), 11),
+        mouse(K::Drag(MouseButton::Left), 12),
+        mouse(K::Drag(MouseButton::Left), 13),
+        mouse(K::Drag(MouseButton::Right), 14),
+        mouse(K::Drag(MouseButton::Left), 15),
+        mouse(K::Up(MouseButton::Left), 15),
+        mouse(K::Moved, 16),
+        mouse(K::Moved, 17),
+    ];
+    let got: Vec<(K, u16)> = coalesce_motion(events)
+        .into_iter()
+        .map(|e| match e {
+            Event::Mouse(m) => (m.kind, m.column),
+            other => panic!("unexpected {other:?}"),
+        })
+        .collect();
+    assert_eq!(
+        got,
+        vec![
+            (K::Down(MouseButton::Left), 10),
+            (K::Drag(MouseButton::Left), 13),
+            (K::Drag(MouseButton::Right), 14),
+            (K::Drag(MouseButton::Left), 15),
+            (K::Up(MouseButton::Left), 15),
+            (K::Moved, 17),
+        ]
+    );
+}

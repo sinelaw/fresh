@@ -8,7 +8,6 @@ use crate::model::buffer::Buffer;
 use crate::model::cursor::Cursors;
 use crate::model::event::LeafId;
 use crate::state::{EditorState, ViewMode};
-use crate::view::shell::splits::PaneChrome;
 use crate::view::split::SplitViewState;
 use crate::view::ui::view_pipeline::ViewLine;
 use crate::view::viewport::Viewport;
@@ -28,18 +27,6 @@ pub(crate) struct ComposeLayout {
     pub right_pad: u16,
 }
 
-/// Rectangle partitioning for one split: tabs, content, vertical scrollbar,
-/// horizontal scrollbar — the model's answer, read for its content rect by
-/// the painter and whole by the parity tests in `view::shell::splits`, which
-/// pin the description to it.
-#[cfg_attr(not(test), allow(dead_code))]
-pub(crate) struct SplitLayout {
-    pub tabs_rect: Rect,
-    pub content_rect: Rect,
-    pub scrollbar_rect: Rect,
-    pub horizontal_scrollbar_rect: Rect,
-}
-
 /// View-level preferences resolved from `SplitViewState` (with fallback
 /// defaults).
 pub(super) struct ViewPreferences {
@@ -51,95 +38,6 @@ pub(super) struct ViewPreferences {
     pub show_line_numbers: bool,
     /// Per-split current line highlight visibility (from BufferViewState).
     pub highlight_current_line: bool,
-}
-
-/// Partition a split area into tabs / content / scrollbar rectangles.
-///
-/// **A read of the layout.** This was the arithmetic below — four rectangles
-/// derived by hand from three bools, with the horizontal bar's width the one
-/// part a reader would get wrong from the picture (it stops short of the
-/// vertical bar's column rather than running under it). It is
-/// `shell::splits::pane_interior` now, laid out at the pane's own size, so
-/// there is one statement of how a pane divides itself and the chrome that
-/// hangs off these rectangles can become nodes against the same description.
-pub(crate) fn split_layout(id: LeafId, split_area: Rect, chrome: PaneChrome) -> SplitLayout {
-    use crate::view::shell::splits::{
-        content_key, hscroll_key, pane_interior, tabs_key, vscroll_key, PaneSlots,
-    };
-    let mut ui: fresh_ui::Ui<()> = fresh_ui::Ui::new();
-    ui.frame(
-        pane_interior::<()>(id, chrome, PaneSlots::bare(id)),
-        fresh_ui::Size::new(split_area.width, split_area.height),
-    );
-    let at = |k: fresh_ui::Key| -> Rect {
-        let r = ui
-            .find_by_key(&k)
-            .map(|e| ui.rect_of(e))
-            .unwrap_or_default();
-        Rect::new(
-            split_area.x.saturating_add(r.x.max(0) as u16),
-            split_area.y.saturating_add(r.y.max(0) as u16),
-            r.w,
-            r.h,
-        )
-    };
-    SplitLayout {
-        tabs_rect: at(tabs_key(id)),
-        content_rect: at(content_key(id)),
-        scrollbar_rect: at(vscroll_key(id)),
-        horizontal_scrollbar_rect: at(hscroll_key(id)),
-    }
-}
-
-/// **The arithmetic the description replaced**, kept as what the swap is
-/// pinned against — see `shell::splits`'s parity tests.
-#[cfg(test)]
-pub(crate) fn reference_split_layout(
-    split_area: Rect,
-    tab_bar_visible: bool,
-    show_vertical_scrollbar: bool,
-    show_horizontal_scrollbar: bool,
-) -> SplitLayout {
-    let tabs_height = if tab_bar_visible { 1u16 } else { 0u16 };
-    let scrollbar_width = if show_vertical_scrollbar { 1u16 } else { 0u16 };
-    let hscrollbar_height = if show_horizontal_scrollbar {
-        1u16
-    } else {
-        0u16
-    };
-
-    let tabs_rect = Rect::new(split_area.x, split_area.y, split_area.width, tabs_height);
-    let content_rect = Rect::new(
-        split_area.x,
-        split_area.y + tabs_height,
-        split_area.width.saturating_sub(scrollbar_width),
-        split_area
-            .height
-            .saturating_sub(tabs_height)
-            .saturating_sub(hscrollbar_height),
-    );
-    let scrollbar_rect = Rect::new(
-        split_area.x + split_area.width.saturating_sub(scrollbar_width),
-        split_area.y + tabs_height,
-        scrollbar_width,
-        split_area
-            .height
-            .saturating_sub(tabs_height)
-            .saturating_sub(hscrollbar_height),
-    );
-    let horizontal_scrollbar_rect = Rect::new(
-        split_area.x,
-        split_area.y + split_area.height.saturating_sub(hscrollbar_height),
-        split_area.width.saturating_sub(scrollbar_width),
-        hscrollbar_height,
-    );
-
-    SplitLayout {
-        tabs_rect,
-        content_rect,
-        scrollbar_rect,
-        horizontal_scrollbar_rect,
-    }
 }
 
 /// Sync viewport width/height to `content_rect`, and ensure the primary

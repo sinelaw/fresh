@@ -91,6 +91,66 @@ fn test_git_grep_shows_results() {
     );
 }
 
+/// Git Grep folds case by default, and its **Case** toggle is how you say
+/// otherwise (issue #3212).
+///
+/// `git grep` matches case-sensitively; Fresh's search surfaces do not, so
+/// the plugin passes `-i` until the toggle is checked. The query is
+/// deliberately `CONFIG` in caps: the fixture spells it `config` and
+/// `Config` and never `CONFIG`, so folding is the *only* way to match it.
+/// A lowercase query would have matched under either setting — which is no
+/// test of case handling at all.
+///
+/// The toggle is only painted on a floating overlay (a bottom-row prompt
+/// has nowhere to put a toolbar), so the checkbox being on screen also
+/// pins that this prompt still is one.
+#[test]
+fn test_git_grep_folds_case_and_offers_a_toggle() {
+    let repo = GitTestRepo::new();
+    repo.setup_typical_project();
+    repo.setup_git_plugins();
+
+    let _guard = repo.change_to_repo_dir();
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    trigger_git_grep(&mut harness);
+
+    // The toolbar is there, and the toggle starts off.
+    harness.wait_for_screen_contains("[ ] Case").unwrap();
+
+    // Folding is the only thing that can find this.
+    harness.type_text("CONFIG").unwrap();
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            screen.contains(".rs:") || screen.contains(".yml:") || screen.contains(".md:")
+        })
+        .unwrap();
+
+    // Checking Case takes them all away again — the other half of the
+    // claim, and proof the toggle reaches `git grep`'s `-i`.
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Char(' '), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            screen.contains("[v] Case")
+                && !screen.contains(".rs:")
+                && !screen.contains(".yml:")
+                && !screen.contains(".md:")
+        })
+        .unwrap();
+}
+
 /// Test git grep interactive updates - results update as user types
 #[test]
 fn test_git_grep_interactive_updates() {

@@ -77,6 +77,23 @@ impl ReferenceHighlightOverlay {
         }
     }
 
+    /// When the armed debounce is due, so the event loop can wake for it.
+    ///
+    /// **A deferral has to ask for the frame it needs.** [`Self::update`] runs
+    /// inside a render and does nothing until the delay has elapsed, so
+    /// without this the highlight lands only on whatever frame some *other*
+    /// thing happens to cause. Sitting still after moving the cursor produces
+    /// no frames at all, so the update stayed armed and the word under the
+    /// cursor kept the previous word's highlight — until the next keystroke
+    /// forced a render and the highlight jumped, which is what reads as a
+    /// flicker while typing.
+    ///
+    /// `None` when nothing is armed: an idle editor with a settled highlight
+    /// asks for no frames, exactly as before.
+    pub fn next_deadline(&self) -> Option<Instant> {
+        self.target_changed_at.map(|at| at + self.debounce_delay)
+    }
+
     /// Update reference highlights based on cursor position and selection
     ///
     /// This should be called on each render. It will:
@@ -242,11 +259,6 @@ impl ReferenceHighlightOverlay {
         self.current_target = None;
         self.pending_target = None;
         self.target_changed_at = None;
-    }
-
-    /// Check if currently debouncing
-    pub fn is_debouncing(&self) -> bool {
-        self.target_changed_at.is_some()
     }
 
     /// Get the debounce delay

@@ -293,6 +293,14 @@ pub enum PluginResponse {
         request_id: u64,
         result: Result<u64, String>,
     },
+    /// `openMachine` resolved with `{id, platform, home, label}`. A response,
+    /// not a bare callback, so the runtime can record the handle against its
+    /// plugin and close it on unload.
+    MachineOpened {
+        request_id: u64,
+        #[ts(type = "unknown")]
+        info: JsonValue,
+    },
 }
 
 impl PluginResponse {
@@ -310,6 +318,7 @@ impl PluginResponse {
             | Self::SplitByLabel { request_id, .. }
             | Self::SplitWindowCreated { request_id, .. }
             | Self::SnapshotSynced { request_id }
+            | Self::MachineOpened { request_id, .. }
             | Self::WatchPathRegistered { request_id, .. } => *request_id,
         }
     }
@@ -493,6 +502,23 @@ pub struct RemoteBackendInfo {
     pub connected: bool,
 }
 
+/// A sidebar section's scope as a plugin asks for it. None set is the
+/// default: the window the mount came from. If more than one is set,
+/// `editor` wins over `buffer`, and `buffer` over `window`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct SectionScopeSpec {
+    /// Editor-wide: every window, always.
+    #[serde(default)]
+    pub editor: bool,
+    /// Scoped to this window.
+    #[serde(default)]
+    pub window: Option<u64>,
+    /// Scoped to this buffer, in whichever window owns it.
+    #[serde(default)]
+    pub buffer: Option<u64>,
+}
+
 /// Information about a buffer
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
@@ -500,6 +526,13 @@ pub struct BufferInfo {
     /// Buffer ID
     #[ts(type = "number")]
     pub id: BufferId,
+    /// The window this buffer belongs to. A buffer lives in exactly one
+    /// window — the same file open in two windows is two buffers with two
+    /// ids — so a plugin that keeps a buffer id keeps this with it, and
+    /// checks it against the window it is acting in.
+    #[ts(type = "number")]
+    #[serde(default)]
+    pub window_id: u64,
     /// File path (if any)
     #[serde(serialize_with = "serialize_path")]
     #[ts(type = "string")]
@@ -1623,6 +1656,19 @@ pub struct EditorStateSnapshot {
     /// after the restart that activation triggers.
     #[serde(default)]
     pub env_active: bool,
+    /// Launched by a bare `fresh` in Orchestrator mode. The launch, not the
+    /// `orchestrator_mode` preference, which stays on for `fresh FILE`.
+    #[serde(default)]
+    pub orchestrator_mode: bool,
+    /// The left dock slot is open: a panel is in it, or the host is holding
+    /// the column for one its manifest declared. The plugin mounts at
+    /// `ready` iff this is set. Read via `editor.dockOpen()`.
+    #[serde(default)]
+    pub dock_open: bool,
+    /// The dock column's width in cells, open or not; `0` when the terminal
+    /// is too narrow for a dock. Read via `editor.dockCols()`.
+    #[serde(default)]
+    pub dock_cols: u16,
     /// The environment core detected in the workspace, as a JSON string
     /// (`{"name","kind","snippet"}`) or empty when none is detected. The
     /// env-manager plugin reads this via `editor.detectedEnv()` instead of
@@ -1800,6 +1846,9 @@ impl EditorStateSnapshot {
             authority_label: String::new(),
             workspace_trust_level: String::new(),
             env_active: false,
+            orchestrator_mode: false,
+            dock_open: false,
+            dock_cols: 0,
             detected_env: String::new(),
             diagnostics: Arc::new(HashMap::new()),
             folding_ranges: Arc::new(HashMap::new()),
@@ -2146,6 +2195,20 @@ pub struct TreeNode {
     /// Out-of-range values are harmless — they resolve to the end of the text.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub window_anchor: Option<TextWindowAnchor>,
+    /// A button drawn at the row's tail: what this row is *for*, said on
+    /// the row itself rather than only in a footer the eye has to travel
+    /// to. `Some(label)` renders `[ label ]` against the panel's right
+    /// edge and emits a hit area over it that fires the `action` event
+    /// with the row's `index` and `key`; the keyboard reaches the same
+    /// thing through the tree's `activate`.
+    ///
+    /// The button is pinned like the indent is pinned: it sits outside the
+    /// window the body is fitted into, so a row too wide for the panel
+    /// slides *under* its button rather than pushing it off the edge.
+    /// Ignored on a bordered card (`card_borders` with `item_height > 1`),
+    /// whose chrome has nowhere to put one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub action: Option<String>,
 }
 
 /// How a row asks to be windowed when it is wider than the panel.
@@ -2809,6 +2872,11 @@ pub enum WidgetSpec {
         /// the disclosure glyph (or the blank standing in for one).
         #[serde(default = "default_tree_indent_cols")]
         indent_cols: u32,
+        /// When true, a click anywhere on a node with children toggles its
+        /// expansion (and selects it), not only a click on the disclosure
+        /// glyph. The toggle fires `expand` with `{ index, key, expanded }`.
+        #[serde(default)]
+        toggle_on_click: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         key: Option<String>,
     },
@@ -3562,6 +3630,17 @@ pub enum PluginCommand {
     /// Write a single setting to the runtime overlay for this session.
     /// `path` is dot-separated (e.g. "editor.tab_size"). Last write wins.
     SetSetting {
+        plugin_name: String,
+        path: String,
+        #[ts(type = "unknown")]
+        value: JsonValue,
+    },
+
+    /// Write a single setting to the user's config file, the way the
+    /// Settings UI does — the same shape as [`Self::SetSetting`], but it
+    /// outlives the session. The host validates the path before writing;
+    /// see `Editor::handle_save_setting`.
+    SaveSetting {
         plugin_name: String,
         path: String,
         #[ts(type = "unknown")]
@@ -5642,6 +5721,72 @@ pub enum PluginCommand {
     /// automatically when their buffer closes.
     ReleaseDiffBaseline { baseline_id: u64 },
 
+    /// Open a machine from a `setAuthority` payload, without attaching it to
+    /// a window. Resolves with `{id, platform, home, label}`. The handle stays
+    /// open until `closeMachine` or the plugin is unloaded.
+    OpenMachine {
+        #[ts(type = "unknown")]
+        payload: JsonValue,
+        callback_id: JsCallbackId,
+    },
+
+    /// Close a machine opened by `openMachine`. Idempotent. `callback_id` is
+    /// `None` when the runtime closes handles an unloaded plugin left behind.
+    CloseMachine {
+        machine: u64,
+        callback_id: Option<JsCallbackId>,
+    },
+
+    /// Read environment variables from the machine; only set names come back.
+    /// A remote machine is asked with `printenv` and is never answered from
+    /// this computer's environment. No `printenv` reports nothing.
+    MachineEnv {
+        machine: Option<u64>,
+        names: Vec<String>,
+        callback_id: JsCallbackId,
+    },
+
+    /// Walk a subtree in one call, off the editor thread. A remote machine
+    /// walks server-side.
+    WalkTree {
+        /// Which open machine to act on. `None` means the active window's.
+        machine: Option<u64>,
+        /// Directory to walk. A missing path is an empty walk, not an error.
+        root: String,
+        /// Directory basenames skipped at every depth.
+        skip_dirs: Vec<String>,
+        /// Report dot-prefixed entries. Off by default.
+        include_hidden: bool,
+        include_dirs: bool,
+        /// Maximum depth below `root`; depth 1 is a direct child.
+        max_depth: usize,
+        /// Stop after this many entries, reporting the walk as truncated.
+        max_entries: usize,
+        callback_id: JsCallbackId,
+    },
+
+    /// Read the first bytes of many files in one call. A failure is reported
+    /// per path, so one unreadable file does not lose the rest.
+    ReadFilePrefixes {
+        /// Which open machine to act on. `None` means the active window's.
+        machine: Option<u64>,
+        /// `(path, max_bytes)` pairs.
+        requests: Vec<(String, usize)>,
+        callback_id: JsCallbackId,
+    },
+
+    /// Run a command on the machine. Unlike `spawnHostProcess`, a remote
+    /// machine runs it there. A non-zero exit resolves with the code instead
+    /// of rejecting. Rejects on a machine opened read-only.
+    RunOnTarget {
+        /// Which open machine to act on. `None` means the active window's.
+        machine: Option<u64>,
+        program: String,
+        args: Vec<String>,
+        cwd: Option<String>,
+        callback_id: JsCallbackId,
+    },
+
     /// Project-wide grep search (async)
     /// Searches all project files via FileSystem trait, respecting .gitignore.
     /// For open buffers with dirty edits, searches the buffer's piece tree.
@@ -5722,11 +5867,9 @@ pub enum PluginCommand {
     /// `crates/fresh-editor/src/services/authority/mod.rs` for the
     /// canonical schema.
     ///
-    /// Fire-and-forget: the transition piggy-backs on the existing
-    /// editor restart flow, so the plugin that sent this command will
-    /// be re-loaded as part of the restart. Any follow-up work the
-    /// plugin wants to do after the switch belongs in its post-restart
-    /// init code, not in a callback here.
+    /// Fire-and-forget: returns before the backend is live. The sending
+    /// plugin is not reloaded, so follow-up work belongs in an
+    /// `authority_changed` handler.
     SetAuthority {
         #[ts(type = "unknown")]
         payload: JsonValue,
@@ -5979,6 +6122,12 @@ pub enum PluginCommand {
         /// section takes the keys, as a dock mount does.
         #[serde(default)]
         start_blurred: bool,
+        /// When the section is on screen. Nothing set: scoped to the window
+        /// the mount came from — the narrow default; editor-wide has to be
+        /// asked for. A buffer scope names the buffer; the host finds its
+        /// window.
+        #[serde(default)]
+        scope: SectionScopeSpec,
     },
 
     /// Replace the spec of the currently-mounted floating widget
@@ -6966,6 +7115,15 @@ pub struct PreparingWindowResult {
     /// The new workspace's durable identity (`ws-…`), stable across restarts.
     #[serde(default)]
     pub stable_id: String,
+    /// The placeholder's seed buffer. Mount a widget panel here
+    /// (`mountWidgetPanel`) to describe the page yourself: the plugin
+    /// building the workspace knows what it is waiting on, what failed and
+    /// what the user can do about it, so the page is its to write. The
+    /// editor's own page — name, state, one line of explanation — is only
+    /// the fallback for a window nothing has described.
+    #[serde(default)]
+    #[ts(type = "number")]
+    pub buffer_id: u64,
 }
 
 /// Result of `createWindowWithTerminal` — the ids of the new
@@ -8112,6 +8270,7 @@ mod tests {
             let mut snapshot = state_snapshot.write().unwrap();
             let buffer_info = BufferInfo {
                 id: BufferId(1),
+                window_id: 1,
                 path: Some(std::path::PathBuf::from("/test/file.txt")),
                 name: "file.txt".to_string(),
                 modified: true,
@@ -8162,6 +8321,7 @@ mod tests {
                 BufferId(1),
                 BufferInfo {
                     id: BufferId(1),
+                    window_id: 1,
                     path: Some(std::path::PathBuf::from("/file1.txt")),
                     name: "file1.txt".to_string(),
                     modified: false,
@@ -8182,6 +8342,7 @@ mod tests {
                 BufferId(2),
                 BufferInfo {
                     id: BufferId(2),
+                    window_id: 1,
                     path: Some(std::path::PathBuf::from("/file2.txt")),
                     name: "file2.txt".to_string(),
                     modified: true,
@@ -8202,6 +8363,7 @@ mod tests {
                 BufferId(3),
                 BufferInfo {
                     id: BufferId(3),
+                    window_id: 1,
                     path: None,
                     // A virtual buffer: no path, but it still has the name it
                     // was created with — which is the whole point of the field.

@@ -189,7 +189,16 @@ impl ClipboardSync {
 /// enabled, init.ts loaded, chrome drawn as a semantic model (not cells). Shared
 /// by `run()`, the `/reset` route (scenario isolation) and the parity test
 /// runner so all three drive an identical editor.
-pub fn build_editor(cols: u16, rows: u16, files: &[PathBuf]) -> Result<Editor> {
+/// Build the editor the bridge serves.
+///
+/// `fire_ready` is the startup lifecycle's second hook. A SERVED session wants
+/// it — it is where the Orchestrator opens its dock and the welcome screen
+/// opens itself. The harness entry points (`POST /reset`, the scene-parity
+/// runner) want it OFF: both exist to hand a test a known editor, and the
+/// hook's effects arrive asynchronously from the plugin thread, so firing it
+/// would let a dock or a welcome tab land on the buffer a tick or two after
+/// the reset returned — exactly the race the reset exists to remove.
+pub fn build_editor(cols: u16, rows: u16, files: &[PathBuf], fire_ready: bool) -> Result<Editor> {
     let dir_context = DirectoryContext::from_system()?;
     let working_dir = std::env::current_dir().unwrap_or_default();
     let mut cfg = config::Config::load_with_layers(&dir_context, &working_dir);
@@ -226,6 +235,19 @@ pub fn build_editor(cols: u16, rows: u16, files: &[PathBuf]) -> Result<Editor> {
         if let Err(e) = editor.open_file(f) {
             eprintln!("open_file {f:?} failed: {e}");
         }
+    }
+    // The second startup lifecycle hook, in the order main.rs and the daemon
+    // fire them: `plugins_loaded` once the registry and init.ts are in, then
+    // `ready` once the startup files are open. `ready` is the "we have
+    // finished starting up" signal — it is where the Orchestrator opens its
+    // dock and the welcome screen opens itself — so a bridge that fired only
+    // the first served a session with neither, while a directly-launched
+    // editor and `fresh -a` had both. Opening the files first is what lets a
+    // plugin branching on "is a real file open?" see them rather than race
+    // them.
+    if fire_ready {
+        editor.process_pending_file_opens();
+        editor.fire_ready_hook();
     }
     Ok(editor)
 }
@@ -411,14 +433,6 @@ impl WebBridge {
     /// How many browsers are connected.
     pub fn client_count(&self) -> usize {
         self.ws.len()
-    }
-
-    /// Re-seed the clipboard mirror against a freshly built editor — the daemon
-    /// rebuilds in place on an authority / working-directory change. Without
-    /// this the next scene would bump `seq` for a clipboard nobody touched and
-    /// the browser would paste stale text into its system clipboard.
-    pub fn rebound_editor(&mut self, editor: &Editor) {
-        self.clip = ClipboardSync::new(editor);
     }
 
     /// The grid size that fits every connected browser: the element-wise MIN of
@@ -621,7 +635,7 @@ impl WebBridge {
 /// so TUI clients can attach to the very same editor.
 pub fn run(addr: &str, files: &[PathBuf]) -> Result<()> {
     let (mut cols, mut rows) = DEFAULT_SIZE;
-    let mut editor = build_editor(cols, rows, files)?;
+    let mut editor = build_editor(cols, rows, files, true)?;
 
     // Bind the in-process control socket so a `fresh` run inside an embedded
     // terminal can forward opens *and* drive the command channel
@@ -974,7 +988,9 @@ fn handle_http(
         }
         ("POST", "/reset") => {
             (*cols, *rows) = DEFAULT_SIZE;
-            match build_editor(*cols, *rows, files) {
+            // No `ready`: a reset hands the harness a known editor, and the
+            // hook's effects would arrive asynchronously after it returned.
+            match build_editor(*cols, *rows, files, false) {
                 Ok(e) => *editor = e,
                 Err(err) => eprintln!("reset failed: {err}"),
             }
@@ -2032,6 +2048,11 @@ fn scene_json(editor: &mut Editor, cols: u16, rows: u16) -> Value {
             "menuBg": color_css(t.menu_bg),
             "menuFg": color_css(t.menu_fg),
             "menuHi": color_css(t.menu_highlight_bg),
+            // The ink the theme itself chose for its highlight fill. The
+            // frontend can only guess black or white from the fill; a theme
+            // that names this beats the guess, so send it and let the guess be
+            // the fallback for a theme that leaves it at terminal reset.
+            "menuHighlightFg": color_css(t.menu_highlight_fg),
             "popupBg": color_css(t.popup_bg),
             "popupFg": color_css(t.popup_text_fg),
             "border": color_css(t.popup_border_fg),
@@ -2077,6 +2098,16 @@ fn scene_json(editor: &mut Editor, cols: u16, rows: u16) -> Value {
     json!({ "w": w, "h": h, "windowId": window_id, "regions": regions, "theme": theme })
 }
 
+/// The digit a browser's physical `code` names — `"Digit1"` → `'1'`. Every
+/// other code (letters, punctuation, named keys) is left to the reported
+/// character, which already matches what a terminal sends.
+fn digit_row_char(code: &str) -> Option<char> {
+    let rest = code.strip_prefix("Digit")?;
+    let mut chars = rest.chars();
+    let d = chars.next()?;
+    (chars.next().is_none() && d.is_ascii_digit()).then_some(d)
+}
+
 /// Map a browser key to a crossterm key and run the real input path.
 fn apply_key(editor: &mut Editor, v: &Value) {
     let key = v.get("key").and_then(|k| k.as_str()).unwrap_or("");
@@ -2102,6 +2133,25 @@ fn apply_key(editor: &mut Editor, v: &Value) {
         s if s.chars().count() == 1 => KeyCode::Char(s.chars().next().unwrap()),
         _ => return,
     };
+    // A browser reports the SHIFTED character a key produces: Ctrl+Shift+1
+    // arrives as `{key:"!", code:"Digit1"}`. Keybindings — and the kitty-
+    // protocol events a terminal delivers — are written against the UNSHIFTED
+    // key plus a SHIFT modifier (`set_bookmark` is Ctrl+Shift+0..9), so
+    // forwarding '!' left all ten bookmark slots unreachable from a browser.
+    // With CONTROL held the character is not text being typed, so the physical
+    // `code` is the better witness, and it is what the terminal reports. Plain
+    // typing is untouched (no CONTROL), and ALT is excluded so AltGr layouts
+    // keep producing their own characters.
+    let digit_row = match ctrl && !alt {
+        true => v
+            .get("code")
+            .and_then(|c| c.as_str())
+            .and_then(digit_row_char),
+        false => None,
+    };
+    if let Some(d) = digit_row {
+        code = KeyCode::Char(d);
+    }
     let mut mods = KeyModifiers::empty();
     if ctrl {
         mods |= KeyModifiers::CONTROL;
@@ -2121,6 +2171,10 @@ fn apply_key(editor: &mut Editor, v: &Value) {
     // already baked into the character, so a bare symbol is what the terminal
     // sends (a spurious SHIFT would diverge and could break symbol input).
     let shift_is_meaningful = match code {
+        // A digit recovered from the physical key above is the UNSHIFTED
+        // character, so its SHIFT is real information (Ctrl+Shift+1 →
+        // `set_bookmark`), unlike the '!' the browser reported.
+        KeyCode::Char(_) if digit_row.is_some() => true,
         KeyCode::Char(c) => c.is_ascii_alphabetic(),
         _ => true,
     };
@@ -2306,7 +2360,27 @@ fn indexed_css(i: u8) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{host_only, origin_host_matches, try_parse_request, HTTP_REQUEST_CAP};
+    use super::{
+        digit_row_char, host_only, origin_host_matches, try_parse_request, HTTP_REQUEST_CAP,
+    };
+
+    #[test]
+    fn digit_row_is_recovered_from_the_physical_key() {
+        // Regression: a browser reports Ctrl+Shift+1 as `{key:"!",
+        // code:"Digit1"}`, and the ten `set_bookmark` bindings are written
+        // against the unshifted digit plus SHIFT, so the bridge reads the
+        // digit off the physical key.
+        assert_eq!(digit_row_char("Digit1"), Some('1'));
+        assert_eq!(digit_row_char("Digit0"), Some('0'));
+        assert_eq!(digit_row_char("Digit9"), Some('9'));
+        // Everything else keeps the character the browser reported.
+        assert_eq!(digit_row_char("KeyA"), None);
+        assert_eq!(digit_row_char("Numpad1"), None);
+        assert_eq!(digit_row_char("Digit"), None);
+        assert_eq!(digit_row_char("Digit12"), None);
+        assert_eq!(digit_row_char("Digitx"), None);
+        assert_eq!(digit_row_char(""), None);
+    }
 
     #[test]
     fn absurd_content_length_is_rejected_not_panicked() {

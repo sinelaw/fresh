@@ -695,6 +695,9 @@ pub enum Action {
     /// Cycle keyboard focus through the sidebar: the file explorer, then
     /// each plugin section under it in order, then back to the editor.
     FocusNextSidebarSection,
+    /// The same cycle the other way: the last plugin section first, then up
+    /// to the file explorer, then back to the editor.
+    FocusPrevSidebarSection,
     FileExplorerUp,
     FileExplorerDown,
     FileExplorerPageUp,
@@ -1207,6 +1210,7 @@ impl Action {
             "focus_editor" => FocusEditor,
             "toggle_dock_focus" => ToggleDockFocus,
             "focus_next_sidebar_section" => FocusNextSidebarSection,
+            "focus_prev_sidebar_section" => FocusPrevSidebarSection,
             "file_explorer_up" => FileExplorerUp,
             "file_explorer_down" => FileExplorerDown,
             "file_explorer_page_up" => FileExplorerPageUp,
@@ -2143,6 +2147,7 @@ impl KeybindingResolver {
                 | Action::OpenTerminalInDock
                 | Action::ToggleDockFocus
                 | Action::FocusNextSidebarSection
+                | Action::FocusPrevSidebarSection
                 | Action::OpenSettings
                 | Action::MenuActivate
                 | Action::MenuOpen(_)
@@ -2166,6 +2171,8 @@ impl KeybindingResolver {
                 | Action::SplitHorizontal
                 | Action::SplitVertical
                 | Action::CloseSplit
+                | Action::IncreaseSplitSize
+                | Action::DecreaseSplitSize
                 | Action::ToggleMaximizeSplit
                 | Action::NextBuffer
                 | Action::PrevBuffer
@@ -3120,6 +3127,7 @@ impl KeybindingResolver {
             Action::FocusEditor => t!("action.focus_editor"),
             Action::ToggleDockFocus => t!("action.toggle_dock_focus"),
             Action::FocusNextSidebarSection => t!("action.focus_next_sidebar_section"),
+            Action::FocusPrevSidebarSection => t!("action.focus_prev_sidebar_section"),
             Action::FileExplorerUp => t!("action.file_explorer_up"),
             Action::FileExplorerDown => t!("action.file_explorer_down"),
             Action::FileExplorerPageUp => t!("action.file_explorer_page_up"),
@@ -3675,6 +3683,34 @@ mod tests {
             Some(KeyCode::BackTab)
         );
         assert_eq!(KeybindingResolver::parse_key("a"), Some(KeyCode::Char('a')));
+        assert_eq!(KeybindingResolver::parse_key("ü"), Some(KeyCode::Char('ü')));
+        assert_eq!(KeybindingResolver::parse_key("ö"), Some(KeyCode::Char('ö')));
+        assert_eq!(KeybindingResolver::parse_key("ä"), Some(KeyCode::Char('ä')));
+        assert_eq!(KeybindingResolver::parse_key("Ü"), Some(KeyCode::Char('ü')));
+        assert_eq!(KeybindingResolver::parse_key("ab"), None);
+    }
+
+    /// A non-ASCII key must register from config, not merely parse: German
+    /// layouts bind Ctrl+ü, and the byte-length check dropped it at load.
+    #[test]
+    fn test_umlaut_key_from_config_resolves() {
+        let mut config = Config::default();
+        config.keybindings.push(crate::config::Keybinding {
+            key: "ü".to_string(),
+            modifiers: vec!["ctrl".to_string()],
+            keys: Vec::new(),
+            chord: String::new(),
+            action: "lsp_hover".to_string(),
+            args: HashMap::new(),
+            when: Some("normal".to_string()),
+        });
+        let resolver = KeybindingResolver::new(&config);
+        let event = KeyEvent::new(KeyCode::Char('ü'), KeyModifiers::CONTROL);
+        assert_eq!(
+            resolver.resolve(&event, KeyContext::Normal),
+            Action::LspHover,
+            "Ctrl+ü from config must resolve after parse_key accepts a Unicode scalar"
+        );
     }
 
     /// Issue #1128: the reporter wrote `"key": "asterisk"` (the X11
@@ -4318,6 +4354,48 @@ mod tests {
             Action::InsertChar('d'),
             "Plain 'd' must remain text input for explorer search-as-you-type"
         );
+    }
+
+    #[test]
+    fn test_split_resize_ui_fallthrough_preserves_context_precedence() {
+        let mut config = Config::default();
+        for (key, action, when) in [
+            ("l", "increase_split_size", "normal"),
+            ("k", "decrease_split_size", "normal"),
+            ("l", "file_explorer_down", "file_explorer"),
+            ("k", "next_buffer", "global"),
+        ] {
+            config.keybindings.push(crate::config::Keybinding {
+                key: key.to_string(),
+                modifiers: vec!["ctrl".into(), "shift".into(), "super".into()],
+                keys: Vec::new(),
+                chord: String::new(),
+                action: action.to_string(),
+                args: HashMap::new(),
+                when: Some(when.to_string()),
+            });
+        }
+        let modifiers = KeyModifiers::CONTROL | KeyModifiers::SHIFT | KeyModifiers::SUPER;
+        let increase = KeyEvent::new(KeyCode::Char('l'), modifiers);
+        let decrease = KeyEvent::new(KeyCode::Char('k'), modifiers);
+        let resolver = KeybindingResolver::new(&config);
+        assert_eq!(
+            resolver.resolve(&increase, KeyContext::FileExplorer),
+            Action::FileExplorerDown
+        );
+        assert_eq!(
+            resolver.resolve_terminal_ui_action(&decrease),
+            Action::NextBuffer
+        );
+        config.keybindings.truncate(2);
+        let resolver = KeybindingResolver::new(&config);
+        for (event, action) in [
+            (increase, Action::IncreaseSplitSize),
+            (decrease, Action::DecreaseSplitSize),
+        ] {
+            assert_eq!(resolver.resolve_terminal_ui_action(&event), action);
+            assert_eq!(resolver.resolve(&event, KeyContext::FileExplorer), action);
+        }
     }
 
     #[test]
@@ -5539,6 +5617,7 @@ mod tests {
             "live_grep_toggle_diagnostics",
             "live_grep_toggle_word",
             "live_grep_toggle_regex",
+            "live_grep_toggle_case",
             // Export current Live Grep results to the Quickfix dock panel
             // — handled by the live_grep plugin (Finder panel), dispatched
             // as a plugin action from the prompt context.

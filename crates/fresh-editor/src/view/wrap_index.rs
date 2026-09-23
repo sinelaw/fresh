@@ -728,10 +728,6 @@ impl WrapIndex {
         self.rows.total().max(1)
     }
 
-    pub fn rows_in_line(&self, line: usize) -> u32 {
-        self.lines.get(line).map_or(1, |l| l.total_rows())
-    }
-
     /// Absolute row index of `line`'s first row.
     /// One line's canonical wrap structure, for the render path's
     /// cursor-line expansion.

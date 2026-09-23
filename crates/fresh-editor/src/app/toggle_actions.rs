@@ -840,11 +840,6 @@ impl Editor {
         }
     }
 
-    /// Check if mouse hover is enabled
-    pub fn is_mouse_hover_enabled(&self) -> bool {
-        self.config.editor.mouse_hover_enabled
-    }
-
     /// Set GPM active flag (enables software mouse cursor rendering)
     ///
     /// When GPM is used for mouse input on Linux consoles, we need to draw
@@ -1095,26 +1090,39 @@ impl Editor {
                 return;
             }
         };
+        self.persist_config_pointer(key.pointer(), json);
+    }
+
+    /// Write one JSON pointer into whichever layer already defines it,
+    /// defaulting to the user layer.
+    ///
+    /// The body of [`Self::persist_config_change`], split out for the one
+    /// caller that cannot name a [`SettingKey`]: `handle_save_setting`,
+    /// which takes its path from a plugin at runtime and validates it for
+    /// itself. Everything inside the editor should go through the typed
+    /// key — the pointer is unchecked here, which is exactly what the key
+    /// exists to prevent.
+    pub(super) fn persist_config_pointer(&self, pointer: &str, json: serde_json::Value) {
         let resolver =
             ConfigResolver::new(self.dir_context.clone(), self.working_dir().to_path_buf());
         let layer = match resolver.get_layer_sources() {
-            Ok(sources) => match sources.get(key.pointer()) {
+            Ok(sources) => match sources.get(pointer) {
                 Some(ConfigLayer::Session) => ConfigLayer::Session,
                 Some(ConfigLayer::Project) => ConfigLayer::Project,
                 _ => ConfigLayer::User,
             },
             Err(e) => {
                 tracing::warn!(
-                    "Could not resolve the config layer defining {}: {e}; writing the user layer",
-                    key.pointer()
+                    "Could not resolve the config layer defining {pointer}: {e}; \
+                     writing the user layer"
                 );
                 ConfigLayer::User
             }
         };
-        let changes = std::collections::HashMap::from([(key.pointer().to_string(), json)]);
+        let changes = std::collections::HashMap::from([(pointer.to_string(), json)]);
         let deletions = std::collections::HashSet::new();
         if let Err(e) = resolver.save_changes_to_layer(&changes, &deletions, layer) {
-            tracing::error!("Failed to persist config change {}: {}", key.pointer(), e);
+            tracing::error!("Failed to persist config change {pointer}: {e}");
         }
     }
 }

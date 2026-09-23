@@ -1122,17 +1122,15 @@ impl Window {
     /// through `Authority::terminal_command`, so the new PTY runs on the remote
     /// backend by construction — never the local host.
     ///
-    /// Only terminals whose handle is missing or no longer alive are respawned;
-    /// a still-live terminal is left untouched (respawning it would orphan its
-    /// PTY). Terminal ids change on respawn — the manager allocates fresh ones —
+    /// `include_live` is `false` on a reconnect, where the PTYs died with the
+    /// carrier, and `true` on an authority change, where they are alive on the
+    /// machine the window just left. Terminal ids change on respawn,
     /// so every terminal-id-keyed entry (buffer→terminal binding, backing/log
     /// files, launch/resume commands, ephemeral marker) is remapped to the new
     /// id and the dead handle is torn down.
     ///
-    /// Returns the number of terminals actually revived (dead handles that were
-    /// respawned), so callers can tailor a status message and skip it when the
-    /// window had no terminals to restore.
-    pub fn respawn_terminals_through_authority(&mut self) -> usize {
+    /// Returns how many terminals were respawned.
+    pub fn respawn_terminals_through_authority(&mut self, include_live: bool) -> usize {
         // Snapshot the (buffer, old terminal id) pairs up front — the loop
         // mutates `terminal_buffers` as it remaps ids.
         let bindings: Vec<(BufferId, TerminalId)> = self
@@ -1143,9 +1141,8 @@ impl Window {
 
         let mut revived = 0usize;
         for (buffer_id, old_id) in bindings {
-            // Leave a still-live terminal alone; only revive the dead ones.
             let handle = self.terminal_manager.get(old_id);
-            if handle.is_some_and(|h| h.is_alive()) {
+            if !include_live && handle.is_some_and(|h| h.is_alive()) {
                 continue;
             }
 
@@ -1534,15 +1531,8 @@ impl Editor {
         };
         self.begin_self_update(terminal_id, window, buffer_id);
 
-        // Editor-wide: refresh the plugin-state snapshot and fire
-        // `buffer_activated`, matching `open_terminal`.
-        #[cfg(feature = "plugins")]
-        self.update_plugin_state_snapshot();
-        #[cfg(feature = "plugins")]
-        self.plugin_manager.read().unwrap().run_hook(
-            "buffer_activated",
-            crate::services::plugins::hooks::HookArgs::BufferActivated { buffer_id },
-        );
+        // Editor-wide: announce the focus change, matching `open_terminal`.
+        self.announce_focus();
     }
 
     /// Size the active window's visible terminal PTYs to their panes — as
@@ -1579,15 +1569,8 @@ impl Editor {
             return;
         };
 
-        // Editor-wide: refresh the plugin-state snapshot so plugin
-        // hooks see the new active buffer, then fire `buffer_activated`.
-        #[cfg(feature = "plugins")]
-        self.update_plugin_state_snapshot();
-        #[cfg(feature = "plugins")]
-        self.plugin_manager.read().unwrap().run_hook(
-            "buffer_activated",
-            crate::services::plugins::hooks::HookArgs::BufferActivated { buffer_id },
-        );
+        // Editor-wide: announce the focus change to plugins.
+        self.announce_focus();
 
         // Status bar with the terminal-mode exit key. Looked up here
         // (not in Window) because the keybinding resolver is shared
@@ -1694,15 +1677,8 @@ impl Editor {
         // single layout funnel so existing terminals fit their new panes.
         self.relayout();
 
-        // Editor-wide: refresh the plugin-state snapshot so plugin hooks see
-        // the new active buffer, then fire `buffer_activated`.
-        #[cfg(feature = "plugins")]
-        self.update_plugin_state_snapshot();
-        #[cfg(feature = "plugins")]
-        self.plugin_manager.read().unwrap().run_hook(
-            "buffer_activated",
-            crate::services::plugins::hooks::HookArgs::BufferActivated { buffer_id },
-        );
+        // Editor-wide: announce the focus change to plugins.
+        self.announce_focus();
 
         let exit_key = self
             .keybindings

@@ -21,17 +21,23 @@ pub mod local_control;
 pub mod protocol;
 
 #[cfg(test)]
-mod runner;
-#[cfg(test)]
 mod tests;
 
 pub use capture_backend::{terminal_setup_sequences, terminal_teardown_sequences, CaptureBackend};
 pub use daemon::{
     daemonize, is_process_running, read_pid_file, spawn_server_detached, write_pid_file,
+    DaemonSpawn,
 };
+
+/// The daemon every bare `fresh` shares when Orchestrator mode is on.
+///
+/// One fixed name rather than the usual per-working-directory keying, because
+/// the whole point of the mode is that `fresh` typed in *any* directory joins
+/// the editor you were already in. It shows up under this name in
+/// `fresh --cmd daemon list`, and `fresh -a orchestrator` attaches to it
+/// explicitly.
+pub const ORCHESTRATOR_DAEMON: &str = "orchestrator";
 pub use editor_server::{EditorServer, EditorServerConfig};
 pub use input_parser::InputParser;
 pub use ipc::{ServerListener, ServerLiveness, SocketPaths};
 pub use protocol::{ClientHello, ControlMessage, ServerHello, PROTOCOL_VERSION};
-#[cfg(test)]
-pub use runner::{Server, ServerConfig};

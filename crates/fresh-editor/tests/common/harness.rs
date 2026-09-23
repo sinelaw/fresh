@@ -97,12 +97,14 @@ pub fn copy_plugin(plugins_dir: &Path, plugin_name: &str) {
     fs::copy(&ts_src, &ts_dest)
         .unwrap_or_else(|e| panic!("Failed to copy {}.ts: {}", plugin_name, e));
 
-    // Copy the .i18n.json file if it exists
-    let i18n_src = source_dir.join(format!("{}.i18n.json", plugin_name));
-    if i18n_src.exists() {
-        let i18n_dest = plugins_dir.join(format!("{}.i18n.json", plugin_name));
-        fs::copy(&i18n_src, &i18n_dest)
-            .unwrap_or_else(|e| panic!("Failed to copy {}.i18n.json: {}", plugin_name, e));
+    // Copy the sidecars that exist.
+    for sidecar in ["i18n.json", "manifest.json"] {
+        let src = source_dir.join(format!("{plugin_name}.{sidecar}"));
+        if src.exists() {
+            let dest = plugins_dir.join(format!("{plugin_name}.{sidecar}"));
+            fs::copy(&src, &dest)
+                .unwrap_or_else(|e| panic!("Failed to copy {plugin_name}.{sidecar}: {e}"));
+        }
     }
 }
 
@@ -190,6 +192,13 @@ pub struct HarnessOptions {
     /// the #1722 regression test) need to override it to match
     /// production semantics. Defaults to false.
     pub force_embedded_plugins: bool,
+    /// Build the editor in Orchestrator mode (a bare `fresh`). Defaults to false.
+    pub orchestrator_mode: bool,
+    /// Keep the dock column the host holds open at startup for the plugin's
+    /// `ready` mount (`Editor::dock_reserved`). Off by default: the harness
+    /// fires no startup hooks, so the column would otherwise sit empty for
+    /// the test's whole life. A test that fires `ready` itself turns it on.
+    pub startup_chrome: bool,
     /// Per-test fake-devcontainer state. Set by [`HarnessOptions::with_fake_devcontainer`];
     /// moved into the harness on `create()` so the lock + tempdir live as long as the test.
     /// Unix-only: the fake CLI is a bash script that doesn't run on Windows.
@@ -213,6 +222,8 @@ impl HarnessOptions {
             preserve_keybinding_map: false,
             use_full_grammar_registry: false,
             force_embedded_plugins: false,
+            orchestrator_mode: false,
+            startup_chrome: false,
             #[cfg(unix)]
             fake_devcontainer: None,
         }
@@ -224,6 +235,18 @@ impl HarnessOptions {
     /// regression).
     pub fn with_forced_embedded_plugins(mut self) -> Self {
         self.force_embedded_plugins = true;
+        self
+    }
+
+    /// Build the editor in Orchestrator mode (a bare `fresh`).
+    pub fn with_orchestrator_mode(mut self) -> Self {
+        self.orchestrator_mode = true;
+        self
+    }
+
+    /// See [`HarnessOptions::startup_chrome`].
+    pub fn with_startup_chrome(mut self) -> Self {
+        self.startup_chrome = true;
         self
     }
 
@@ -757,9 +780,16 @@ impl EditorTestHarness {
             grammar_registry,
             enable_plugins_for_editor,
             enable_embedded_plugins,
+            options.orchestrator_mode,
         )?;
 
         t.phase("Editor::for_test");
+
+        // No `ready` fires unless the test fires it, so the startup column
+        // is handed back now unless the test asked to keep it.
+        if !options.startup_chrome {
+            editor.release_startup_dock_reservation();
+        }
 
         // Both config-derived globals are now written; let a waiting
         // `pin_config_globals` through.
@@ -1214,12 +1244,16 @@ impl EditorTestHarness {
     /// printable chars) with keys handled synchronously by a
     /// host-side bypass (e.g. `Shift+arrow`, `Ctrl+C/V`).
     ///
-    /// We need both:
+    /// We need all three:
     ///  (1) `pending_plugin_actions` to be empty — the plugin
-    ///      thread has finished every action queued by this
+    ///      thread has started every action queued by this
     ///      keypress and any follow-on dispatch the action
     ///      itself triggered.
-    ///  (2) the async bridge to be quiet for one extra
+    ///  (2) the plugin runtime to be at rest — see
+    ///      `Editor::sync_plugin_runtime`. (1) alone is not it:
+    ///      it only means the handler was called, not that it
+    ///      finished.
+    ///  (3) the async bridge to be quiet for one extra
     ///      iteration — to catch the `WidgetCommand` that a
     ///      completed plugin action just pushed.
     ///
@@ -1242,7 +1276,14 @@ impl EditorTestHarness {
     /// survives into a killed test's output. That is a loud, correct
     /// failure in place of a quiet, wrong assertion.
     ///
-    /// (2) keeps a short bound of its own, and that one is not a
+    /// (2) asks the plugin thread rather than sampling the channel. (3)
+    /// used to carry that on its own, and could not: two quiet iterations a
+    /// millisecond apart is a timer — the plugin thread had to turn a
+    /// round-trip around in 2 ms — and on a loaded runner it lost, so
+    /// `send_key` returned mid-handler and the test delivered the next key
+    /// into a half-applied state.
+    ///
+    /// (3) keeps a short bound of its own, and that one is not a
     /// timeout: legitimately continuous message sources — PTY output,
     /// timer-driven plugin polls — never go quiet, so it bounds a wait
     /// for silence that may never come rather than one for a state
@@ -1251,7 +1292,7 @@ impl EditorTestHarness {
         const SLEEP_PER_ITER: std::time::Duration = std::time::Duration::from_millis(1);
         /// How often an in-flight action reports itself while (1) waits.
         const STUCK_REPORT_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10);
-        /// Iterations of (2) to tolerate before concluding the source is
+        /// Iterations of (3) to tolerate before concluding the source is
         /// continuous rather than settling.
         const TAIL_ITERS: usize = 200;
         const QUIET_ITERS: usize = 2;
@@ -1261,7 +1302,7 @@ impl EditorTestHarness {
         let mut quiet_iters = 0;
         let mut tail_iters = 0;
         loop {
-            let had_messages = self.editor.process_async_messages();
+            let mut had_messages = self.editor.process_async_messages();
 
             if !self.editor.pending_plugin_actions_is_empty() {
                 quiet_iters = 0;
@@ -1288,6 +1329,14 @@ impl EditorTestHarness {
                 std::thread::sleep(SLEEP_PER_ITER);
                 continue;
             }
+
+            // (2) The pass above may have answered a host call the plugin
+            //     was waiting on; whatever its continuation asks for next
+            //     only arrives afterwards, so an empty command channel
+            //     right now means nothing. A handler parked on
+            //     `editor.getNextKey()` counts as at rest, so this never
+            //     waits for a key the test has not sent.
+            had_messages |= self.editor.sync_plugin_runtime();
 
             if had_messages {
                 // Messages are still flowing: keep draining at full
@@ -2020,11 +2069,6 @@ impl EditorTestHarness {
         self.editor.get_plugin_errors()
     }
 
-    /// Clear accumulated plugin errors (useful if testing error handling)
-    pub fn clear_plugin_errors(&mut self) {
-        self.editor.clear_plugin_errors();
-    }
-
     /// Get the buffer content (not screen, actual buffer text)
     /// Returns None for large files with unloaded regions (lazy loading)
     pub fn get_buffer_content(&self) -> Option<String> {
@@ -2095,6 +2139,7 @@ impl EditorTestHarness {
         if workspace_enabled {
             self.editor.save_workspace()?;
         }
+        self.editor.save_dock_chrome();
         Ok(())
     }
 
@@ -3061,6 +3106,34 @@ impl EditorTestHarness {
         self.render()?;
 
         Ok(())
+    }
+
+    /// With the settings dialog open and its category tree focused, walk the
+    /// tree down until the category row named `name` is under the cursor
+    /// (the row carrying the `>` marker a few columns before the name).
+    pub fn select_settings_category(&mut self, name: &str) -> anyhow::Result<()> {
+        // Look back from the name for the marker: a `>` further left on the
+        // line belongs to whatever is drawn behind the dialog.
+        let selected = |screen: &str| {
+            screen.lines().any(|l| {
+                l.find(name).is_some_and(|n| {
+                    l[..n]
+                        .rfind('>')
+                        .is_some_and(|m| l[m..n].chars().count() <= 8)
+                })
+            })
+        };
+        for _ in 0..60 {
+            if selected(&self.screen_to_string()) {
+                return Ok(());
+            }
+            self.send_key(KeyCode::Down, KeyModifiers::NONE)?;
+            self.render()?;
+        }
+        anyhow::bail!(
+            "settings category {name:?} never became selected. Screen:\n{}",
+            self.screen_to_string()
+        )
     }
 
     /// Wait for screen to contain specific text

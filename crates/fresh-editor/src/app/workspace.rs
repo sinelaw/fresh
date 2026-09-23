@@ -483,7 +483,7 @@ impl Editor {
         let mut workspace = win.capture_workspace();
         // The sidebar's sections are editor state (see `app::sidebar`), so
         // the window's snapshot does not know them; they ride in its file.
-        workspace.file_explorer.sections = self.sidebar_section_states();
+        workspace.file_explorer.sections = self.sidebar_section_states(id);
 
         // Refuse to overwrite a non-empty on-disk workspace with an
         // all-virtual snapshot (issue #2027). The protection is for
@@ -604,7 +604,7 @@ impl Editor {
             let (label, root2, authority, resources, tw, th, pstate) = (
                 old.label,
                 old.root,
-                old.authority,
+                old.connection,
                 old.resources,
                 old.terminal_width,
                 old.terminal_height,
@@ -620,12 +620,9 @@ impl Editor {
             self.windows.insert(id, built);
         }
 
-        // Active-window only, because the sections are editor-global (see
-        // `app::sidebar`): the active window's file is the one whose layout
-        // the column shows.
-        if id == self.active_window {
-            self.restore_sidebar_sections(&workspace.file_explorer.sections);
-        }
+        // The window's own sections come back scoped to it; the editor-wide
+        // ones to everyone (see `app::sidebar::SectionScope`).
+        self.restore_sidebar_sections(id, &workspace.file_explorer.sections);
 
         // Active-window only: the restored active buffer never went through a
         // focus path, so nothing has derived the terminal live/scrollback
@@ -651,16 +648,11 @@ impl Editor {
         if id == self.active_window {
             #[cfg(feature = "plugins")]
             {
-                let buffer_id = self.active_buffer();
-                self.update_plugin_state_snapshot();
                 tracing::debug!(
-                    "Firing buffer_activated for active buffer {:?} after workspace restore",
-                    buffer_id
+                    "Announcing focus for active buffer {:?} after workspace restore",
+                    self.active_buffer()
                 );
-                self.plugin_manager.read().unwrap().run_hook(
-                    "buffer_activated",
-                    crate::services::plugins::hooks::HookArgs::BufferActivated { buffer_id },
-                );
+                self.announce_focus();
             }
         }
 
@@ -1753,7 +1745,6 @@ impl crate::app::window::Window {
                 if let Some(active_buf_id) = active_buffer_id {
                     view_state.switch_buffer(active_buf_id);
                 }
-                view_state.tab_scroll_offset = split_state.tab_scroll_offset;
                 active_buffer_id
             })
             .flatten();
@@ -1769,11 +1760,26 @@ impl crate::app::window::Window {
         }
     }
 
-    fn restore_search_options(&mut self, opts: &SearchOptions) {
-        self.search_case_sensitive = opts.case_sensitive;
-        self.search_whole_word = opts.whole_word;
-        self.search_use_regex = opts.use_regex;
-        self.search_confirm_each = opts.confirm_each;
+    /// Apply a workspace's per-field search overrides on top of whatever
+    /// the window already holds.
+    ///
+    /// A `None` field is left alone deliberately: the window's flags are
+    /// what `Window::new` seeded from the `editor.search` preset, so
+    /// "no opinion" resolves to the preset without this needing to read
+    /// the config again.
+    fn apply_search_overrides(&mut self, o: &crate::workspace::SearchOverrides) {
+        if let Some(v) = o.case_sensitive {
+            self.search_case_sensitive = v;
+        }
+        if let Some(v) = o.whole_word {
+            self.search_whole_word = v;
+        }
+        if let Some(v) = o.use_regex {
+            self.search_use_regex = v;
+        }
+        if let Some(v) = o.confirm_each {
+            self.search_confirm_each = v;
+        }
     }
 
     fn restore_prompt_histories(&mut self, histories: &WorkspaceHistories) {
@@ -2552,6 +2558,15 @@ impl crate::app::window::Window {
             self.stable_id = id.clone();
         }
 
+        // Same reasoning for when it was last focused: the window continues
+        // the persisted workspace, so it inherits that workspace's place in
+        // the recency order rather than the "now" its construction seeded.
+        // A legacy snapshot without the field keeps the seed, which is the
+        // right answer too — it is being materialized, so it is current.
+        if let Some(focused) = workspace.last_focused_at {
+            self.last_focused_at = focused;
+        }
+
         // Window-local config override (the rest of the overrides mutate
         // the editor-global `Config` and are applied by the caller). Mouse
         // capture is a single global terminal property shared by every window
@@ -2563,7 +2578,15 @@ impl crate::app::window::Window {
                 .store(mouse_enabled, std::sync::atomic::Ordering::Relaxed);
         }
 
-        self.restore_search_options(&workspace.search_options);
+        // A workspace with nothing of its own to say keeps the window on
+        // the `editor.search` preset it was constructed with (issue
+        // #3212). An old file speaks through the superseded key instead,
+        // and only for the toggles it can prove the user set.
+        if let Some(overrides) = &workspace.search_overrides {
+            self.apply_search_overrides(overrides);
+        } else if let Some(legacy) = &workspace.legacy_search_options {
+            self.apply_search_overrides(&legacy.legacy_overrides());
+        }
         self.restore_prompt_histories(&workspace.histories);
         self.restore_file_explorer_settings(&workspace.file_explorer);
 
@@ -2621,11 +2644,11 @@ impl crate::app::window::Window {
         id: fresh_core::WindowId,
         label: impl Into<String>,
         root: PathBuf,
-        authority: crate::services::authority::Authority,
+        connection: std::sync::Arc<crate::services::authority::Connection>,
         resources: crate::app::window_resources::WindowResources,
         workspace: &Workspace,
     ) -> Self {
-        let mut window = Self::new(id, label, root, authority, resources);
+        let mut window = Self::new(id, label, root, connection, resources);
         window.seed_initial_layout();
         window.apply_workspace_layout(workspace, None);
         window
@@ -2877,12 +2900,25 @@ impl crate::app::window::Window {
             open_file: Vec::new(),
         };
 
-        let search_options = SearchOptions {
+        // Per field: each option that differs from the `editor.search`
+        // preset is this workspace's to remember, and each option that
+        // matches it has nothing to remember, so the preset keeps
+        // applying there. Writing all four the moment one of them
+        // diverges would freeze the other three against every future
+        // config change — silently, with nothing in the UI to explain it
+        // — which is the trap the superseded `search_options` key fell
+        // into. Query Replace setting `confirm_each` programmatically
+        // makes that easy to hit by accident, which is why the split
+        // matters rather than being a nicety.
+        let preset = &self.config().editor.search;
+        let live = SearchOptions {
             case_sensitive: self.search_case_sensitive,
             whole_word: self.search_whole_word,
             use_regex: self.search_use_regex,
             confirm_each: self.search_confirm_each,
         };
+        let overrides = crate::workspace::SearchOverrides::between(preset, &live);
+        let search_overrides = (!overrides.is_empty()).then_some(overrides);
 
         let bookmarks = serialize_bookmarks(&self.bookmarks, &self.buffer_metadata, &self.root);
 
@@ -2944,7 +2980,8 @@ impl crate::app::window::Window {
             config_overrides,
             file_explorer,
             histories,
-            search_options,
+            search_overrides,
+            legacy_search_options: None,
             bookmarks,
             terminals,
             external_files,
@@ -2955,6 +2992,12 @@ impl crate::app::window::Window {
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs(),
+            // Carried through from the window rather than stamped here: this
+            // records when the workspace was last *focused*, and a save is
+            // not a focus. At quit every materialized window is captured in
+            // the same instant, so stamping here would make them all equally
+            // recent and the "reopen where I was" pick meaningless.
+            last_focused_at: Some(self.last_focused_at),
             // Workspace identity (windows.json is gone — the per-dir
             // workspace file is the sole record).
             label: Some(self.label.clone()),
@@ -3334,7 +3377,6 @@ fn serialize_split_view_state(
         open_files,
         active_file_index,
         file_states,
-        tab_scroll_offset: view_state.tab_scroll_offset,
     }
 }
 

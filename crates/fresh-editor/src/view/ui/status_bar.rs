@@ -5,7 +5,7 @@ use std::path::Path;
 
 use crate::app::WarningLevel;
 use crate::config::{StatusBarElement, VirtualSpaceMode};
-use crate::primitives::display_width::{char_width, str_width};
+use crate::primitives::display_width::str_width;
 use crate::state::EditorState;
 use chrono::Timelike;
 use fresh_i18n::t;
@@ -552,36 +552,6 @@ pub fn truncate_path(path: &Path, max_len: usize) -> TruncatedPath {
         suffix,
         sep,
     }
-}
-
-/// Truncate a string to fit within `max_width` display columns, appending "..." if truncated.
-pub(crate) fn truncate_to_width(s: &str, max_width: usize) -> String {
-    let width = str_width(s);
-    if width <= max_width {
-        return s.to_string();
-    }
-    let truncate_at = max_width.saturating_sub(3);
-    if truncate_at == 0 {
-        return if max_width >= 3 {
-            "...".to_string()
-        } else {
-            s.chars().take(max_width).collect()
-        };
-    }
-    let mut w = 0;
-    let truncated: String = s
-        .chars()
-        .take_while(|ch| {
-            let cw = char_width(*ch);
-            if w + cw <= truncate_at {
-                w += cw;
-                true
-            } else {
-                false
-            }
-        })
-        .collect();
-    format!("{}...", truncated)
 }
 
 /// Minimum column-width to reserve for the column number portion of the

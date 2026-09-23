@@ -1,0 +1,9 @@
+#!/bin/sh
+# Fake `ssh` for tests: runs the remote command *here*, in a pretend remote
+# home (`$FAKE_SSH_REMOTE_HOME`), so the orchestrator's remote probes, folder
+# listings and clones work end to end with no network. Every option and the
+# destination are ignored; the remote command is the last argument, which is
+# how the plugin calls ssh for one-shot commands.
+for last; do :; done
+cd "$FAKE_SSH_REMOTE_HOME" || exit 255
+HOME="$FAKE_SSH_REMOTE_HOME" exec sh -c "$last" </dev/null

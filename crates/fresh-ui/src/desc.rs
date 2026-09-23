@@ -88,6 +88,11 @@ pub struct Node<M> {
     pub classes: Option<Rc<str>>,
     /// An owner's handle to this element, bound when it mounts.
     pub anchor: Option<Rc<crate::behavior::Anchor>>,
+    /// Told where the framework put a viewport's window — the reporting half
+    /// of a controlled offset. See [`Node::on_scroll`]. Carried on the node,
+    /// beside `anchor`, for the same reason: a handler is typed by the
+    /// message, and [`ViewportProps`] is not.
+    pub on_scroll: Option<Rc<dyn Fn(u32) -> M>>,
     pub desc: Desc<M>,
     pub children: Vec<Node<M>>,
 }
@@ -323,6 +328,21 @@ pub struct TextProps {
     /// text stays and takes the theme's background — so a styled run keeps its
     /// colours under a selection instead of being repainted in one.
     pub selection: Option<(std::ops::Range<usize>, crate::render::spec::ThemeKey)>,
+    /// A caret drawn as a washed *cell* rather than as the terminal's own
+    /// cursor: the byte it sits on, and the theme its cell takes.
+    ///
+    /// The companion of [`cursor`](Self::cursor) for a surface that cannot
+    /// use the hardware cursor — a panel whose caret must not move the
+    /// terminal's one, or one drawn inside a viewport the cursor would drag
+    /// along with it.
+    ///
+    /// **Not expressible as a one-byte [`selection`](Self::selection).** A
+    /// selection is the cells its bytes are *drawn* in, so a range covering a
+    /// byte no row shows — the `\n` a wrap dropped, or the end of the text —
+    /// covers no cells and paints nothing: a caret at the end of a line
+    /// simply disappeared. A caret is a point between cells, which is what
+    /// [`cell_of`](crate::render::prim::cell_of) answers and a range cannot.
+    pub block_caret: Option<(usize, crate::render::spec::ThemeKey)>,
 }
 
 /// One piece of a text run, and the theme it paints in.
@@ -409,10 +429,52 @@ pub enum ScrollMode {
     Items { count: u32, height: ItemHeight },
 }
 
+/// Who owns a viewport's offset.
+///
+/// **The same two facts a list's selection has** — see `Sel` in
+/// `widgets/list.rs`: the element keeps its own, or the owner holds it and is
+/// told when it should change. A window is always somewhere, so there is no
+/// third state the way a selection can be empty; what there is instead is the
+/// distinction between "the owner has no opinion" ([`Scroll::Own`], which
+/// starts at zero) and "the owner says zero" ([`Scroll::At`]`(0)`), which
+/// `(0, 0)` as a bare initial value could never make.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Scroll {
+    /// The framework's. The window starts here and is thereafter wherever the
+    /// wheel, the bar and the anchor commands put it; the description's value
+    /// is read once, at the first layout. The default, at `(0, 0)`.
+    Own { x: u16, y: u16 },
+    /// The owner's. The window is this far down — rows for a cell-scrolled
+    /// window, items for an index-scrolled one — at *every* layout. The
+    /// framework still moves its window for a wheel, a bar drag or an anchor
+    /// command, so that a run of notches between frames composes, but it
+    /// reports each move through [`Node::on_scroll`] and the owner's value
+    /// replaces its own at the next layout: the same value, if the owner took
+    /// the report, or wherever the owner clamped it to.
+    ///
+    /// **The owner's offset is never clamped.** Where the ceiling depends on
+    /// something only the owner can evaluate — which rows are pinned at an
+    /// offset the window is not at — the framework cannot know that an offset
+    /// past its own ceiling is wrong, and pulling it back would hide the last
+    /// rows of a tree whose pinned ancestors make room for them. So the
+    /// ceiling the bar and the wheel read is never below where the owner put
+    /// the window, and clamping is the owner's job.
+    At(u32),
+}
+
+impl Default for Scroll {
+    fn default() -> Self {
+        Scroll::Own { x: 0, y: 0 }
+    }
+}
+
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
 pub struct ViewportProps {
-    /// Framework-owned once mounted; this is the initial value only.
-    pub scroll: (u16, u16),
+    /// Where the window is, and whose that fact is. See [`Scroll`].
+    pub scroll: Scroll,
+    /// Items drawn at the top of the window whatever the offset, in order —
+    /// an index-scrolled window only. See [`Node::pinned`].
+    pub pinned: Rc<[u32]>,
     /// Mark the region as text-selectable in the display list. The library
     /// never interprets it — a backend that supports selection reads it, the
     /// same way it reads a theme name.
@@ -430,7 +492,18 @@ pub struct ViewportProps {
     pub overlay: bool,
     /// Appearance of the bar itself, named apart from the window's.
     pub bar_theme: Option<Rc<str>>,
+    /// Appearance of an overflow cap while the pointer is on it. See
+    /// [`Node::bar_hover_theme`].
+    pub bar_hover_theme: Option<Rc<str>>,
     pub mode: ScrollMode,
+    /// Which way this window scrolls. See [`Node::scroll_axis`].
+    pub axis: crate::event::Axis,
+    /// How far a press on an overflow cap moves the window, in the offset's
+    /// unit. `0` means one windowful. See [`Node::scroll_step`].
+    pub step: u16,
+    /// How wide one overflow cap is, in cells. `0` means one. See
+    /// [`Node::scroll_cap_width`].
+    pub cap: u16,
 }
 
 /// Whether a gesture region absorbs pointer hits that land on it.
@@ -985,6 +1058,7 @@ impl<M> Clone for Node<M> {
             theme: self.theme.clone(),
             classes: self.classes.clone(),
             anchor: self.anchor.clone(),
+            on_scroll: self.on_scroll.clone(),
             desc: self.desc.clone(),
             children: self.children.clone(),
         }
@@ -1094,6 +1168,7 @@ impl<M> Node<M> {
             theme: None,
             classes: None,
             anchor: None,
+            on_scroll: None,
             desc,
             children: Vec::new(),
         }
@@ -1112,6 +1187,7 @@ impl<M> Node<M> {
             theme: None,
             classes: None,
             anchor: None,
+            on_scroll: None,
             desc: Desc::Box(BoxProps::default()),
             children: Vec::new(),
         }
@@ -1166,6 +1242,7 @@ pub fn text<M>(s: impl AsRef<str>) -> Node<M> {
         elide: Elide::None,
         cursor: None,
         selection: None,
+        block_caret: None,
     }))
 }
 
@@ -1187,6 +1264,7 @@ pub fn text_runs<M>(runs: impl IntoIterator<Item = Run>) -> Node<M> {
         elide: Elide::None,
         cursor: None,
         selection: None,
+        block_caret: None,
     }))
 }
 
@@ -1280,13 +1358,6 @@ impl<M> Node<M> {
         }
     }
 
-    pub fn child_if_some<T>(self, v: Option<T>, f: impl FnOnce(T) -> Node<M>) -> Self {
-        match v {
-            Some(v) => self.child(f(v)),
-            None => self,
-        }
-    }
-
     /// Keep this node when `cond`, otherwise collapse it to [`Node::nil`].
     pub fn if_(self, cond: bool) -> Self {
         if cond {
@@ -1329,7 +1400,10 @@ impl<M> Node<M> {
     /// stable`.
     ///
     /// Implies [`scrollbar`](Node::scrollbar): a gutter is the bar's column,
-    /// so asking for one asks for the bar.
+    /// so asking for one asks for the bar. It composes with
+    /// [`scrollbar_revealed`](Node::scrollbar_revealed) — a reserved column
+    /// the bar is only drawn in on attention, which is what a window whose
+    /// content reaches its last column wants.
     pub fn scrollbar_gutter(mut self) -> Self {
         match &mut self.desc {
             Desc::Viewport(p) => {
@@ -1358,15 +1432,22 @@ impl<M> Node<M> {
     /// pressing the column it would have been in. And it takes **no gutter** —
     /// it floats over the window's last column rather than carving one out,
     /// which is what makes it an overlay and what keeps a bar that comes and
-    /// goes from reflowing the row being reached for. A window that would
-    /// rather give the bar a column of its own wants
-    /// [`scrollbar_gutter`](Node::scrollbar_gutter) and no reveal.
+    /// goes from reflowing the row being reached for.
+    ///
+    /// **Floating means covering.** A cell in that column is painted over
+    /// while the bar is up — fine when the column holds the padding a row
+    /// usually ends in, and not fine when it holds something the reader needs
+    /// (a button at the row's edge, the `…` that says the row was cut). A
+    /// window whose content reaches its last column asks for
+    /// [`scrollbar_gutter`](Node::scrollbar_gutter) as well: the two compose,
+    /// and the pair is the combination that neither covers nor reflows — the
+    /// column is reserved on every frame, and the bar appears in it on
+    /// attention. The cost is that column, whether or not there is ever a bar.
     pub fn scrollbar_revealed(mut self, shown: bool) -> Self {
         match &mut self.desc {
             Desc::Viewport(p) => {
                 p.scrollbar = true;
                 p.overlay = true;
-                p.stable_gutter = false;
                 p.bar_hidden = !shown;
             }
             _ => panic!("scrollbar_revealed() applies to Viewport nodes only"),
@@ -1424,11 +1505,78 @@ impl<M> Node<M> {
     }
 
     /// Where the window starts. The initial value only: from the first layout
-    /// on, the offset is framework-owned.
+    /// on, the offset is framework-owned. See [`Scroll::Own`].
     pub fn scroll_at(mut self, x: u16, y: u16) -> Self {
         match &mut self.desc {
-            Desc::Viewport(p) => p.scroll = (x, y),
+            Desc::Viewport(p) => p.scroll = Scroll::Own { x, y },
             _ => panic!("scroll_at() applies to Viewport nodes only"),
+        }
+        self
+    }
+
+    /// Controlled offset: the owner holds it and is told, through
+    /// [`Node::on_scroll`], when it should change. Omit this and the element
+    /// keeps its own. The same pattern as a list's `selected` / `on_select`;
+    /// see [`Scroll::At`] for what the framework does with a wheel meanwhile,
+    /// and for why the owner's value is never clamped.
+    ///
+    /// `offset` is in the unit the window counts: rows for a cell-scrolled
+    /// window, items for an index-scrolled one.
+    pub fn scroll(mut self, offset: u32) -> Self {
+        match &mut self.desc {
+            Desc::Viewport(p) => p.scroll = Scroll::At(offset),
+            _ => panic!("scroll() applies to Viewport nodes only"),
+        }
+        self
+    }
+
+    /// Be told where the framework put the window: after a wheel, a press or
+    /// drag on the bar, or an anchor command, with the new offset in the
+    /// window's unit. The reporting half of [`Node::scroll`], and useful
+    /// without it — an owner that only wants to know may listen without
+    /// holding the offset.
+    ///
+    /// The report is the move the framework made, before any clamp of the
+    /// owner's. For a controlled window the owner clamps and passes the value
+    /// back through [`Node::scroll`]; for a framework-owned one the offset is
+    /// already inside the window's own ceiling.
+    pub fn on_scroll(mut self, f: impl Fn(u32) -> M + 'static) -> Self {
+        match &self.desc {
+            Desc::Viewport(_) => self.on_scroll = Some(Rc::new(f)),
+            _ => panic!("on_scroll() applies to Viewport nodes only"),
+        }
+        self
+    }
+
+    /// Items held at the top of the window whatever the offset — sticky
+    /// group headers, a scrolled tree's expanded ancestors. An index-scrolled
+    /// window only; a cell-scrolled one has no items to pin.
+    ///
+    /// **The owner names them; the window makes room.** Only the application
+    /// knows what "the header of the group the first row is in" means, so the
+    /// indices come from it, and they are a function of the offset — the
+    /// owner recomputes them whenever it is told the window moved. What the
+    /// window does with them is arithmetic it can own: the pinned rows come
+    /// off the top of the window, the contiguous run starts under them, the
+    /// window it publishes to a [`layout_reader`] inside it is that run alone,
+    /// and the ceiling is the smallest offset that fills what is left —
+    /// `count - (rows - pinned)`, not `count - rows`. A bar that assumed the
+    /// naive ceiling parked its thumb at the end of the track while the tree
+    /// still had rows below.
+    ///
+    /// The builder inside draws the pinned rows itself, above the run the
+    /// window hands it, because it is the one that knows what they look like;
+    /// [`List`](crate::List) does exactly that for its own `pinned`. A pinned
+    /// row is an ordinary row for the pointer: it is where layout put it, and
+    /// its own handlers answer.
+    ///
+    /// Never the whole window: at most `rows - 1` are honoured, so that one
+    /// row of the run is always on screen and the offset still means
+    /// something.
+    pub fn pinned(mut self, indices: &[u32]) -> Self {
+        match &mut self.desc {
+            Desc::Viewport(p) => p.pinned = Rc::from(indices),
+            _ => panic!("pinned() applies to Viewport nodes only"),
         }
         self
     }
@@ -1692,6 +1840,24 @@ impl<M> Node<M> {
     /// The theme is named here rather than inherited because a wash in the
     /// run's own theme is a wash in the ground already under it, which is no
     /// selection at all.
+    /// Draw the caret at this byte as a washed cell in `theme`, instead of as
+    /// the terminal's cursor.
+    ///
+    /// See [`TextProps::block_caret`] for why this is not a one-byte
+    /// selection.
+    pub fn block_caret_byte(mut self, byte: usize, theme: impl AsRef<str>) -> Self {
+        match &mut self.desc {
+            Desc::TextRun(p) => {
+                p.block_caret = Some((
+                    byte,
+                    crate::render::spec::ThemeKey(Some(Rc::from(theme.as_ref()))),
+                ))
+            }
+            _ => panic!("block_caret_byte() applies to TextRun nodes only"),
+        }
+        self
+    }
+
     pub fn selection_bytes(
         mut self,
         bytes: std::ops::Range<usize>,
@@ -1712,6 +1878,72 @@ impl<M> Node<M> {
     /// Which end of this run survives a width it did not ask for.
     ///
     /// See [`Elide`]. A no-op on anything but a text run, and on a wrapped one.
+    /// Which way this window scrolls: the axis its offset counts along, its
+    /// affordance is drawn on, and its wheel and [`Anchor`](crate::behavior::Anchor)
+    /// commands move it in. Default [`Axis::Vertical`](crate::event::Axis).
+    ///
+    /// **The axis is the window's, not the command's.** `Anchor::reveal_key`
+    /// means "move the target's window so this is inside it", and which way
+    /// that is has exactly one right answer — the one the window scrolls. A
+    /// caller that had to say would be a caller that could say wrong, and
+    /// every command would need a second spelling.
+    ///
+    /// A horizontal window's affordance is not a bar. Its content is on the
+    /// rows a bar would need, so `scrollbar` emits [`Draw::Overflow`](crate::Draw)
+    /// caps over its first and last cell instead.
+    pub fn scroll_axis(mut self, a: crate::event::Axis) -> Self {
+        if let Desc::Viewport(p) = &mut self.desc {
+            p.axis = a;
+        }
+        self
+    }
+
+    /// What an overflow cap paints in while the pointer is on it. Falls back
+    /// to [`Node::scrollbar_theme`] when unset.
+    ///
+    /// A cap is a button, so it lights like one; and because the library is
+    /// what knows the pointer is on it (the cap is not a node — it exists
+    /// because the *window* knows there is more that way), the library is what
+    /// picks between the two names the surface gave it.
+    pub fn scrollbar_hover_theme(mut self, name: impl AsRef<str>) -> Self {
+        match &mut self.desc {
+            Desc::Viewport(p) => p.bar_hover_theme = Some(Rc::from(name.as_ref())),
+            _ => panic!("scrollbar_hover_theme() applies to Viewport nodes only"),
+        }
+        self
+    }
+
+    /// How far a press on an overflow cap moves the window, in the unit its
+    /// offset counts. Default: one windowful.
+    ///
+    /// **A policy, not a measurement.** A windowful is what pressing a
+    /// scrollbar's track means, and it is the right default for a window onto
+    /// a document. It is the wrong one for a strip of tabs, where the cap is a
+    /// nudge and a screenful skips past everything you were looking for — so
+    /// the surface that has an opinion states it, in cells it chose rather
+    /// than in cells it measured.
+    pub fn scroll_step(mut self, cells: u16) -> Self {
+        if let Desc::Viewport(p) = &mut self.desc {
+            p.step = cells;
+        }
+        self
+    }
+
+    /// How wide one overflow cap is, in cells. Default: one.
+    ///
+    /// **A cap is a button, and a button is as wide as the buttons beside
+    /// it.** One cell is enough to say "there is more this way", and it is
+    /// what a window whose neighbours are content wants. A window whose
+    /// neighbours are *buttons* — the tab strip, whose `+` is a padded label —
+    /// wants a cap the pointer meets at the same size, so it says so here and
+    /// the measure reserves that many cells at each end instead of one.
+    pub fn scroll_cap_width(mut self, cells: u16) -> Self {
+        if let Desc::Viewport(p) = &mut self.desc {
+            p.cap = cells;
+        }
+        self
+    }
+
     pub fn elide(mut self, e: Elide) -> Self {
         if let Desc::TextRun(t) = &mut self.desc {
             t.elide = e;
@@ -1767,10 +1999,6 @@ impl<M> Node<M> {
 
     pub fn on_click(self, f: impl Fn(&Event) -> M + 'static) -> Self {
         self.on(GestureKind::Click, Rc::new(move |e| Some(f(e))))
-    }
-
-    pub fn on_secondary_click(self, f: impl Fn(&Event) -> M + 'static) -> Self {
-        self.on(GestureKind::SecondaryClick, Rc::new(move |e| Some(f(e))))
     }
 
     /// The pointer entered this node. Fired on the node itself, not propagated —

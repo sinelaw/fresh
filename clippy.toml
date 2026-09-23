@@ -1,0 +1,28 @@
+# Tokio's `Handle` is `Clone + 'static` and keeps nothing alive, so "only
+# usable while that runtime is up" is invisible to the compiler and gets
+# reported at runtime instead: loudly, when `Handle::block_on` polls a timer on
+# a runtime that is shutting down (#3299), or quietly, when `Handle::spawn`
+# accepts a task onto a dead runtime and drops it on the floor, so the work
+# simply never happens.
+#
+# `services::runtime::LiveRuntime` carries the guarantee in the type — holding
+# one is what keeps the runtime up — so hold one of those anywhere a runtime
+# has to still be there later, which means every struct field.
+#
+# A borrowed `Handle` is still the right *parameter* for something whose own
+# lifetime the caller has already bounded: a task already running on that
+# runtime, or a closure on its blocking pool. Those few sites carry an
+# `#[allow]` naming what establishes it. `Handle::try_current` is not itself
+# disallowed — it answers "am I inside a runtime?", a question about the
+# caller — but naming the type to reach it still trips `disallowed_types`, so
+# those few probes carry the same `#[allow]`.
+
+disallowed-types = [
+    { path = "tokio::runtime::Handle", reason = "hold a services::runtime::LiveRuntime instead; a Handle does not keep its runtime alive" },
+]
+
+disallowed-methods = [
+    { path = "tokio::runtime::Handle::current", reason = "keeps nothing alive — take a services::runtime::LiveRuntime" },
+    { path = "tokio::runtime::Handle::block_on", reason = "panics if the runtime is shutting down — use LiveRuntime::block_on" },
+    { path = "tokio::runtime::Handle::spawn", reason = "silently drops the task if the runtime is gone — use LiveRuntime::spawn" },
+]

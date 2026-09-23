@@ -95,10 +95,6 @@ fn attach(harness: &mut EditorTestHarness) {
     let max_iters = 200;
     for _ in 0..max_iters {
         harness.tick_and_render().unwrap();
-        if let Some(auth) = harness.editor_mut().take_pending_authority() {
-            harness.editor_mut().set_boot_authority(auth);
-            return;
-        }
         if harness
             .editor()
             .authority()
@@ -926,10 +922,6 @@ fn shutdown_action_stop_container_must_stop_on_detach() {
     let max_iters = 200;
     for _ in 0..max_iters {
         harness.tick_and_render().unwrap();
-        if let Some(auth) = harness.editor_mut().take_pending_authority() {
-            harness.editor_mut().set_boot_authority(auth);
-            break;
-        }
         if !harness
             .editor()
             .authority()

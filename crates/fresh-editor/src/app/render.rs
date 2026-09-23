@@ -175,54 +175,6 @@ impl crate::view::shell::fold::ProvenanceSink for FoldProvenance {
 }
 
 impl Editor {
-    /// Render the topmost global popup at its computed area and register its
-    /// click region in `global_popup_areas`. Shared by the generic
-    /// global-popup slot and the workspace-trust modal band so the area math
-    /// lives in exactly one place.
-    fn cache_top_global_popup_area(&mut self) {
-        if self.global_popups.top().is_none() {
-            return;
-        }
-        let top_idx = self.global_popups.all().len() - 1;
-        // The tree's answer. The global top is the last entry the description
-        // carries — the buffer's stack, then this over it.
-        let (buffer_n, _) = self.popup_counts();
-        let popup_area = self
-            .popup_rects()
-            .get(buffer_n)
-            .copied()
-            .unwrap_or_default();
-        let popup = self.global_popups.top().expect("checked just above");
-        let desc_height = popup.description_height();
-        let inner_area = if popup.bordered {
-            ratatui::layout::Rect {
-                x: popup_area.x + 1,
-                y: popup_area.y + 1 + desc_height,
-                width: popup_area.width.saturating_sub(2),
-                height: popup_area.height.saturating_sub(2 + desc_height),
-            }
-        } else {
-            ratatui::layout::Rect {
-                x: popup_area.x,
-                y: popup_area.y + desc_height,
-                width: popup_area.width,
-                height: popup_area.height.saturating_sub(desc_height),
-            }
-        };
-        let num_items = match &popup.content {
-            crate::view::popup::PopupContent::List { items, .. } => items.len(),
-            _ => 0,
-        };
-        let scroll_offset = popup.scroll_offset;
-        self.active_chrome_mut().global_popup_areas.push((
-            top_idx,
-            popup_area,
-            inner_area,
-            scroll_offset,
-            num_items,
-        ));
-    }
-
     /// Ask for another frame because plugin work was deferred out of this one.
     /// The drawing itself never blocks on the plugin lock — every hook site
     /// inside the draw uses `try_read` and skips on contention — so anything
@@ -259,6 +211,9 @@ impl Editor {
         // above the old late `render_menu_bar` call, which is where the
         // description was built from.
         self.update_menu_context();
+        // Once per frame, so every path that moved the keyboard between the
+        // pane and the chrome is announced (`app::focus_announcer`).
+        self.announce_chrome_focus();
 
         // Carve a full-height left column for a docked floating panel
         // (e.g. the orchestrator dock) out of the screen *before* the
@@ -1105,6 +1060,7 @@ impl Editor {
                             crate::services::plugins::hooks::HookArgs::ViewportChanged {
                                 split_id: (*split_id).into(),
                                 buffer_id,
+                                window_id: self.active_window.0,
                                 top_byte: view_state.viewport.top_byte(),
                                 top_line,
                                 width: view_state.viewport.width,
@@ -1197,8 +1153,7 @@ impl Editor {
         self.drain_pending_vb_animations();
 
         // Initialize popup/suggestion layout state (rendered after status bar below)
-        self.active_chrome_mut().suggestions_area = None;
-        self.active_chrome_mut().suggestions_outer_area = None;
+        self.active_chrome_mut().suggestions_window = None;
 
         // Clone all immutable values before the mutable borrow
         let display_name = self
@@ -1221,10 +1176,6 @@ impl Editor {
         // so they overlay on top of both (fixes bottom border being overwritten by status bar)
         self.settle_prompt_suggestions();
 
-        // Cursor-anchored buffer popups (completion, hover, signature help):
-        // recompute their areas for hit-testing and paint them.
-        self.cache_buffer_popup_areas();
-
         // Render editor-level popups (e.g. plugin action popups) on top of any
         // buffer content so they stay visible across buffer switches and over
         // virtual buffers (Dashboard, diagnostics) that own the whole split.
@@ -1235,15 +1186,6 @@ impl Editor {
         // but only the top one renders & receives input. Deeper popups
         // surface as the top is resolved — the alternative (drawing all at
         // the same BottomRight slot) makes them illegible.
-        self.active_chrome_mut().global_popup_areas.clear();
-        // The workspace-trust prompt is a blocking modal: it renders later in
-        // the dedicated modal z-band (alongside settings / wizard) on a dimmed
-        // backdrop, so it can't be lost amongst dashboard/explorer chrome.
-        // Everything else on the global stack renders here, above buffer content.
-        let top_is_trust_modal = self.workspace_trust_on_top();
-        if !top_is_trust_modal {
-            self.cache_top_global_popup_area();
-        }
 
         // The full-screen modals (settings, calibration wizard, keybinding
         // editor, event-debug dialog) and the blocking workspace-trust prompt
@@ -1513,7 +1455,11 @@ impl Editor {
     fn prompt_row_description(&self) -> Option<crate::view::shell::prompt_line::PromptRow> {
         let win = self.active_window();
         let p = win.prompt.as_ref()?;
-        if p.overlay {
+        // An overlay prompt draws its own card; a confirmation draws its own
+        // modal. Either way the row has nothing to say — and for the
+        // confirmation that is the entire point of the change: the question
+        // used to be *only* here.
+        if p.overlay || p.is_confirm_dialog() {
             return None;
         }
         let dir = matches!(
@@ -1613,7 +1559,7 @@ impl Editor {
     /// The same rule `popup_descriptions` builds by, stated once so the two
     /// painters index the tree's answer the way the description filled it: the
     /// buffer's stack first, the top of the global one after.
-    fn popup_counts(&self) -> (usize, usize) {
+    pub(crate) fn popup_counts(&self) -> (usize, usize) {
         let buffer = match self.active_state().popups.is_visible() {
             true => self.active_state().popups.all().len(),
             false => 0,
@@ -1623,8 +1569,8 @@ impl Editor {
         (buffer, buffer + global)
     }
 
-    /// Where the tree put the popups.
-    fn popup_rects(&self) -> Vec<ratatui::layout::Rect> {
+    /// Where the tree put the popups: the box each one fills.
+    pub(crate) fn popup_rects(&self) -> Vec<ratatui::layout::Rect> {
         let (_, total) = self.popup_counts();
         match self.shell_ui.as_ref() {
             Some(ui) => crate::view::shell::popup::rects_of(ui, total),
@@ -1632,77 +1578,14 @@ impl Editor {
         }
     }
 
-    fn cache_buffer_popup_areas(&mut self) {
-        self.active_chrome_mut().popup_areas.clear();
-        if !self.active_state().popups.is_visible() {
-            return;
+    /// Where the tree put each popup's content slot — inside the frame, past
+    /// the description. Indexed the same way as [`Self::popup_rects`].
+    pub(crate) fn popup_content_rects(&self) -> Vec<ratatui::layout::Rect> {
+        let (_, total) = self.popup_counts();
+        match self.shell_ui.as_ref() {
+            Some(ui) => crate::view::shell::popup::inner_rects_of(ui, total),
+            None => vec![ratatui::layout::Rect::default(); total],
         }
-        // Where each one landed, read off the tree. This was the caret's
-        // screen position computed here and handed to `calculate_area`, which
-        // then said "clamp to the area's edges" six times; the caret is
-        // published to the tree now (`publish_popup_carets`) and the layer
-        // that names it has already been placed.
-        let rects = self.popup_rects();
-        let popup_info: Vec<_> = self
-            .active_state()
-            .popups
-            .all()
-            .iter()
-            .enumerate()
-            .map(|(popup_idx, popup)| {
-                let popup_area = rects.get(popup_idx).copied().unwrap_or_default();
-                // The rows a painter still owns, inside the frame the tree
-                // placed: the description occupies the top of them.
-                let desc_height = popup.description_height();
-                let inner_area = if popup.bordered {
-                    ratatui::layout::Rect {
-                        x: popup_area.x + 1,
-                        y: popup_area.y + 1 + desc_height,
-                        width: popup_area.width.saturating_sub(2),
-                        height: popup_area.height.saturating_sub(2 + desc_height),
-                    }
-                } else {
-                    ratatui::layout::Rect {
-                        x: popup_area.x,
-                        y: popup_area.y + desc_height,
-                        width: popup_area.width,
-                        height: popup_area.height.saturating_sub(desc_height),
-                    }
-                };
-                let num_items = match &popup.content {
-                    crate::view::popup::PopupContent::List { items, .. } => items.len(),
-                    _ => 0,
-                };
-                let total_lines = popup.item_count();
-                let visible_lines = inner_area.height as usize;
-                let scrollbar_rect = if total_lines > visible_lines && inner_area.width > 2 {
-                    Some(ratatui::layout::Rect {
-                        x: inner_area.x + inner_area.width - 1,
-                        y: inner_area.y,
-                        width: 1,
-                        height: inner_area.height,
-                    })
-                } else {
-                    None
-                };
-                (
-                    popup_idx,
-                    popup_area,
-                    inner_area,
-                    popup.scroll_offset,
-                    num_items,
-                    scrollbar_rect,
-                    total_lines,
-                )
-            })
-            .collect();
-
-        // Store popup areas for mouse hit testing
-        self.active_chrome_mut().popup_areas = popup_info.clone();
-
-        // Nothing is painted here any more: a popup is a layer in the shell's
-        // tree, and the overlay band draws it. What survives is the area cache
-        // above, which the not-yet-migrated hit-testing still reads.
     }
 
     /// Draw the software mouse cursor (GPM, which can't paint its own caret on
@@ -2476,6 +2359,7 @@ impl Editor {
                         idx,
                         expandable,
                         expanded,
+                        nested,
                     } => {
                         let page = &s.pages[idx];
                         st::CatRow::Category {
@@ -2485,11 +2369,10 @@ impl Editor {
                                 (true, true) => "▼",
                                 (true, false) => "▶",
                             },
-                            expandable,
                             dirty: s.page_has_pending_changes(idx),
                             icon: crate::view::settings::render::category_icon(&page.name, nerd),
                             label: page.name.clone(),
-                            elide: page.name.starts_with("Plugin: "),
+                            nested,
                         }
                     }
                     TreeRow::Section {
@@ -2547,10 +2430,12 @@ impl Editor {
         let strip = (!s.search_active).then(|| st::Strip {
             focused: s.focus_panel() == crate::view::settings::state::FocusPanel::Categories,
             hint: "←→: Switch category".into(),
+            // In the tree's order (a plugin's page right after "Plugins"),
+            // which is the order Up/Down walk.
             cats: s
-                .pages
-                .iter()
-                .enumerate()
+                .tree_order()
+                .into_iter()
+                .map(|idx| (idx, &s.pages[idx]))
                 .map(|(idx, page)| st::StripCat {
                     idx,
                     label: page.name.clone(),
@@ -3129,6 +3014,46 @@ impl Editor {
         None
     }
 
+    /// The confirmation modal's description, when the active prompt is a
+    /// question with buttons.
+    ///
+    /// The card's extent is app logic keyed on the frame — the same shape as
+    /// the trust prompt's, resolved before the description is built.
+    pub(crate) fn confirm_description(
+        &self,
+        size: ratatui::layout::Rect,
+    ) -> Option<crate::view::shell::confirm::Confirm> {
+        use crate::view::shell::confirm::{Button, Confirm};
+        let c = self.active_window().prompt.as_ref()?.confirm.as_ref()?;
+        Some(Confirm {
+            title: c.title.clone(),
+            body: c.body.clone(),
+            detail: c.detail.clone(),
+            buttons: c
+                .choices
+                .iter()
+                .enumerate()
+                .map(|(i, ch)| Button {
+                    label: ch.label.clone(),
+                    // Asked of the dialog: whether the loose match is safe
+                    // depends on the other choices' letters.
+                    mnemonic: c.mnemonic_span(i),
+                    destructive: ch.tone == crate::view::confirm::Tone::Destructive,
+                    hovered: c.hovered == Some(i),
+                })
+                .collect(),
+            selected: c.selected,
+            width: crate::view::shell::confirm::width_for(
+                &c.choices
+                    .iter()
+                    .map(|ch| ch.label.clone())
+                    .collect::<Vec<_>>(),
+                size.width,
+            ),
+            max_height: size.height.saturating_sub(2),
+        })
+    }
+
     pub(crate) fn trust_description(
         &self,
         size: ratatui::layout::Rect,
@@ -3372,13 +3297,15 @@ impl Editor {
         }
     }
 
-    /// Which viewport row the caret sits on, when the panel owns the keyboard.
+    /// The row the caret sits on, by display index, when the panel owns the
+    /// keyboard — `None` when the selection is scrolled out of the window,
+    /// where there is no row to carry it.
     fn explorer_caret_row(&self) -> Option<usize> {
         let view = self.file_explorer()?;
         let selected = view.get_selected_index()?;
         view.viewport_display_indices()
-            .iter()
-            .position(|&i| i == selected)
+            .contains(&selected)
+            .then_some(selected)
     }
 
     /// One row per visible tree node — or the loading placeholder while the
@@ -3401,6 +3328,18 @@ impl Editor {
         let viewport_rows = rows as usize;
         if let Some(view) = self.file_explorer_mut() {
             view.set_viewport_height(viewport_rows);
+            // **One offset for the rows and the window.** The tree can shrink
+            // under a deep offset — a collapse, a search that admits three
+            // files — and the model shows rows from wherever its offset
+            // lands, while the window is declared at the clamped one; the
+            // rows it asks for would then not be the rows described. Clamp
+            // through the owner, here, so the two are the same number. This
+            // is also what the window's bar used to disagree with the rows
+            // about.
+            let max = view.max_scroll_offset();
+            if view.get_scroll_offset() > max {
+                view.set_scroll_offset(max);
+            }
         }
         if self.file_explorer().is_none() {
             return (
@@ -3431,8 +3370,7 @@ impl Editor {
         let search = view.is_search_active();
         let rows: Vec<fe::Row> = indices
             .iter()
-            .enumerate()
-            .filter_map(|(row, &actual)| {
+            .filter_map(|&actual| {
                 let &(node_id, indent) = display.get(actual)?;
                 let matched = search.then(|| view.get_match_for_node(node_id)).flatten();
                 crate::view::ui::file_explorer::describe_row(
@@ -3440,7 +3378,7 @@ impl Editor {
                         view,
                         node_id,
                         indent,
-                        row,
+                        row: actual,
                         is_cursor: selected == Some(actual),
                         is_multi: multi.contains(&node_id),
                         focused,
@@ -3458,24 +3396,20 @@ impl Editor {
                 )
             })
             .collect();
-        // The bar's numbers, in tree rows: what the tree holds, what the panel
-        // shows, where the window sits, and how far it can go. `None` when the
-        // whole tree fits, which is the whole of "should there be a bar"
-        // (issue #2859). The ceiling is the model's own — pinned ancestors put
-        // it past `total - rows`, and a bar that assumed otherwise showed the
-        // thumb at the end while the wheel still moved the tree.
-        let scroll = (viewport_rows > 0 && display.len() > viewport_rows).then(|| {
-            let max_offset = view
-                .max_scroll_offset()
-                .min(display.len().saturating_sub(1));
-            fe::Scroll {
-                offset: view.get_scroll_offset().min(max_offset),
-                max_offset,
-                total: display.len(),
-                rows: viewport_rows,
-            }
-        });
-        (fe::Body::Rows(rows), scroll)
+        // The window, in tree rows, as the viewport is told it: what the
+        // tree holds, where the run starts, and which ancestors are pinned
+        // above it. Whether there is a bar is the viewport's answer (issue
+        // #2859: a tree that fits draws none). The ceiling it derives from
+        // the pins is the model's `max_scroll_offset` for this offset —
+        // pinned ancestors put it past `total - rows`, and a bar that assumed
+        // otherwise showed the thumb at the end while the wheel still moved
+        // the tree.
+        let scroll = fe::Scroll {
+            offset: view.get_scroll_offset(),
+            total: display.len(),
+            pinned: view.sticky_display_indices(),
+        };
+        (fe::Body::Rows(rows), Some(scroll))
     }
 
     /// Paths with unsaved changes, which a row's status slot reads.
@@ -3525,17 +3459,19 @@ impl Editor {
             // browser popup took the row. Nothing to record.
             return;
         }
-        // The retained tree and a fresh one must still lay the frame out
-        // alike: `render` goes through the `Ui` that persists across frames,
-        // while `status_bar_area_now` builds a throwaway one, and stale
-        // retained state skewing layout is exactly the failure a retained tree
-        // makes possible.
-        #[cfg(debug_assertions)]
-        debug_assert_eq!(
-            self.status_bar_area_now(),
-            Some(area),
-            "the retained tree and a fresh one must lay the frame out alike"
-        );
+        // **There is no second side to check here, and there must not be.**
+        // This used to assert `status_bar_area_now() == Some(area)` under the
+        // claim that "the retained tree and a fresh one must lay the frame out
+        // alike". Neither side was fresh: `area` is
+        // `frame::regions_of(ui, size)` on `self.shell_ui`, and
+        // `status_bar_area_now` resolves through `shell_region_now` to
+        // `frame::regions_of(ui, size)` on the same retained `Ui` — whose own
+        // doc forbids building a throwaway one. It compared one read of the
+        // tree against another read of the same tree.
+        //
+        // The property is real and worth holding; the place for it is a test,
+        // where laying the frame out twice is a fair question. See
+        // `frame::tests::a_retained_tree_lays_the_frame_out_like_a_fresh_one`.
 
         let Some(bar) = self.shell_frame_status_bar.clone() else {
             return;
@@ -3818,8 +3754,14 @@ impl Editor {
                 PromptType::OpenFile | PromptType::SwitchProject | PromptType::SaveFileAs
             )
         }) && win.file_open_state.is_some();
-        let prompt_row_visible =
-            (win.prompt_line_visible || win.prompt.is_some()) && !prompt_is_overlay;
+        // A confirmation does not *claim* the row — it has a card of its own —
+        // but it must not take one away either: a user who configured
+        // `show_prompt_line` keeps their row, empty, so the layout does not
+        // jump by a line each time a dialog opens.
+        let prompt_is_confirm = win.prompt.as_ref().is_some_and(|p| p.is_confirm_dialog());
+        let prompt_row_visible = (win.prompt_line_visible
+            || (win.prompt.is_some() && !prompt_is_confirm))
+            && !prompt_is_overlay;
         BottomRowFlags {
             prompt_is_overlay,
             has_suggestions,
@@ -3991,6 +3933,15 @@ impl Editor {
         // The menu, as content: its labels and the open chain. Where each
         // label sits and how wide each box is are the tree's to decide, and
         // the web reads them back off it (`menu_view`).
+        // Expand the config menus' dynamic submenus once per theme registry
+        // rather than per frame: `all_menus_expanded` reuses this cache, and
+        // without it every frame rescanned the themes directory and parsed
+        // every theme file for the "Copy with theme" submenu.
+        self.expanded_menus_cache.update(
+            &self.theme_registry,
+            &self.menus,
+            &self.menu_state.themes_dir,
+        );
         let (menu_bar_items, dropdowns) = match menu_bar_visible {
             true => self.menu_description(),
             false => Default::default(),
@@ -4095,6 +4046,13 @@ impl Editor {
             width: self.active_chrome().last_frame.width,
             height: self.active_chrome().last_frame.height,
         });
+        let confirm = self.confirm_description(ratatui::layout::Rect {
+            x: 0,
+            y: 0,
+            width: self.active_chrome().last_frame.width,
+            height: self.active_chrome().last_frame.height,
+        });
+        let confirm_is_up = confirm.is_some();
         let splits = match placeholder.is_some() {
             true => None,
             false => splits,
@@ -4114,6 +4072,9 @@ impl Editor {
                 Some(crate::app::types::HoverTarget::DockBorder)
             ),
             dock_focused: self.dock.as_ref().is_some_and(|d| d.focused),
+            // A column with no panel in it that the layout carved anyway:
+            // the tree, not the painter, owns every cell of it.
+            dock_reserved: self.dock_slot_reserved(),
             // Which workspace the window-owned half of the frame belongs to.
             // One retained tree, N windows: without this the two match each
             // other and window B's first pane inherits window A's element
@@ -4122,6 +4083,7 @@ impl Editor {
             theme_info,
             browser,
             trust,
+            confirm,
             event_debug: self.event_debug_description(),
             settings: self.settings_chrome_description(),
             settings_dialog: self.settings_dialog_description(),
@@ -4141,7 +4103,14 @@ impl Editor {
             // row's: the overlay form of the prompt draws no prompt row and
             // still owns every key. `chrome::Prompt::layers` asked
             // `is_prompting()` for exactly this and so does the layer.
-            prompt_keys: self.is_prompting(),
+            //
+            // **Except for a confirmation**, whose card is an
+            // `Modality::Exclusive` layer with its own claim inside it
+            // (`confirm::layer`). Declaring the prompt's `Modality::Focus`
+            // layer as well would leave two surfaces asserting the keyboard
+            // for one prompt; the exclusive one is the whole point, so the
+            // prompt's stands down.
+            prompt_keys: self.is_prompting() && !confirm_is_up,
             search_prompt: self.active_prompt_has_search_options(),
             // A focused panel is the keyboard's owner, which is what
             // `chrome::Dock::layers` and `chrome::FloatingModal::layers` say
@@ -4528,12 +4497,9 @@ impl Editor {
                 .collect(),
             selected: prompt.selected_suggestion,
             // Last frame's window, for the column widths only — see
-            // `Suggestions::window`. `suggestions_area` is where
-            // `record_suggestions_geometry` put it.
-            window: self
-                .active_chrome()
-                .suggestions_area
-                .map(|(_, first, visible, _)| (first, visible)),
+            // `Suggestions::window`. `record_suggestions_window` is where it
+            // came from.
+            window: self.active_chrome().suggestions_window,
             place,
             // The row the painter drew under the popup, now stacked in the
             // layer with it. `render_quick_open_hints` is what this replaces.
@@ -4723,6 +4689,22 @@ impl Editor {
     /// workspace isn't ready yet", and one look should mean one thing.
     fn placeholder_page(&self) -> Option<crate::view::shell::frame::Placeholder> {
         use crate::view::shell::frame::Placeholder;
+        // A plugin has described this page itself — it mounted a widget panel
+        // on the placeholder's seed buffer. Stand aside entirely: the panel
+        // renders through the ordinary pane path, with its own copy, its own
+        // controls and its own events, because the plugin building the
+        // workspace is the only thing that knows what it is waiting on and
+        // what the user can do about it. What is left here is the fallback
+        // for a window nothing has claimed — a dormant remote restored at
+        // boot, before any plugin has had a say.
+        let active_buffer = self.active_window().active_buffer();
+        if !self
+            .widget_registry
+            .panels_for_buffer(active_buffer)
+            .is_empty()
+        {
+            return None;
+        }
         let active_id = self.active_window;
         let window = self.windows.get(&active_id)?;
         let pane = window.buffers.splits().map(|(mgr, _)| {
@@ -4756,7 +4738,7 @@ impl Editor {
             } else {
                 (
                     "The workspace could not be loaded without its connection.",
-                    "Select it again in the dock (or use the status-bar indicator) to reconnect.",
+                    "Reconnect",
                 )
             };
             return Some(Placeholder {
@@ -4773,11 +4755,12 @@ impl Editor {
         } else {
             prep.label.clone()
         };
+        // `retry` is the button's label now, not an instruction pointing at
+        // the dock: this page is where the user is when it fails, so the
+        // thing to do about it is here. Nothing to press while it is still
+        // working.
         let (hint, retry) = if prep.failed {
-            (
-                "This workspace has not been created yet.",
-                "Select it again in the dock to retry, or delete it from the row menu.",
-            )
+            ("This workspace has not been created yet.", "Retry")
         } else {
             (
                 "The workspace will open as soon as it has been created.",
@@ -4804,12 +4787,13 @@ impl Editor {
         // height, read from the box the tree placed. It was
         // `categories_scroll.set_viewport(area.height)`, filed by the painter
         // as it drew the rows — so the page and the window it pages through
-        // came from two statements of the same rectangle.
+        // came from two statements of the same rectangle. The panel around it
+        // is gone; this number was all of it that anything read.
         if let (Some(r), Some(s)) = (
             self.panel_rect(&crate::view::shell::settings::categories_key()),
             self.settings_state.as_mut(),
         ) {
-            s.categories_scroll.scroll.viewport = r.height;
+            s.tree_page_rows = r.height;
         }
         // The calibration wizard is the tree's — box, bands, key list and all.
         // It was `apply_dimming` over the frame and four `Paragraph`s into
@@ -4889,6 +4873,10 @@ impl Editor {
                 self.update_plugin_state_snapshot();
             }
         }
+        // Every frame: the announcer's safety net (`app::focus_announcer`)
+        // and the placeholder grace count. Both return at once when idle.
+        self.announce_focus();
+        self.tick_sidebar_placeholders();
     }
 
     /// Ensure the active split's cursor is in view, then synchronise scroll-sync groups.
@@ -5169,7 +5157,7 @@ impl Editor {
                     prompt.ensure_selected_visible_within(visible);
                 }
             }
-            self.record_suggestions_geometry();
+            self.record_suggestions_window();
             return;
         }
 
@@ -5187,51 +5175,33 @@ impl Editor {
         // box (a themed box fills its own ground), the `y` arithmetic that had
         // to agree with a second copy in `chrome::Prompt::collect`, and the
         // quick-open hints row, which is now the layer's own last row.
-        self.record_suggestions_geometry();
+        self.record_suggestions_window();
     }
 
-    /// Copy the suggestion list's rectangles out of the shell tree.
+    /// Carry the suggestion list's window over to the next description.
     ///
-    /// A bridge, and it is meant to read like one. The click and hover walks
-    /// and the scrollbar drag are gestures in the tree now, and took the
-    /// scrollbar rect with them. What is left reads coordinates for reasons
-    /// that are not input routing: the web `Scene`, which draws from rects;
-    /// `cursor_obscured_by_overlay`, which asks whether the terminal caret is
-    /// under the box; and the column widths the next description is measured
-    /// against. Each of those is a separate migration. Until then they read
-    /// one answer, produced once, by the layout that actually placed the box —
-    /// which is already better than the painter's return value, because there
-    /// is no longer a second derivation to disagree with.
-    fn record_suggestions_geometry(&mut self) {
+    /// The rest of what this recorded is gone: the click and hover walks and
+    /// the scrollbar drag became gestures in the tree, and the two rectangles
+    /// that outlived them had one reader, the web `Scene`, which asks the
+    /// tree for them directly now. What is left is not a cache of anything —
+    /// it is *feedback*, the palette's next description measuring its columns
+    /// against the rows this layout put on screen, and the tree cannot answer
+    /// that while it is the thing being described.
+    ///
+    /// A list with no scrollbar reports no window, and then the window is the
+    /// whole list: every row it has room for, starting at the first.
+    fn record_suggestions_window(&mut self) {
         use crate::view::shell::prompt as p;
         let read = self.shell_ui.as_ref().map(|ui| {
             let spec = ui.spec();
-            (
-                p::suggestions_rect(spec),
-                p::suggestions_list_rect(spec),
-                p::suggestions_window(spec),
-            )
+            (p::suggestions_list_rect(spec), p::suggestions_window(spec))
         });
-        let Some((outer, list, window)) = read else {
+        let Some((list, window)) = read else {
             return;
         };
-        let total = self
-            .active_window()
-            .prompt
-            .as_ref()
-            .map(|p| p.suggestions.len())
-            .unwrap_or(0);
-        let to_rect = |r: fresh_ui::Rect| ratatui::layout::Rect {
-            x: r.x.max(0) as u16,
-            y: r.y.max(0) as u16,
-            width: r.w,
-            height: r.h,
-        };
-        let chrome = self.active_chrome_mut();
-        chrome.suggestions_outer_area = outer.map(to_rect);
-        chrome.suggestions_area = list.map(|r| {
+        self.active_chrome_mut().suggestions_window = list.map(|r| {
             let (first, visible) = window.unwrap_or((0, r.h as usize));
-            (to_rect(r), first, visible.max(r.h as usize), total)
+            (first, visible.max(r.h as usize))
         });
     }
 
@@ -5505,8 +5475,9 @@ impl Editor {
             })
             .unwrap_or(0);
 
-        // The overlay preview is used exclusively by the Live Grep
-        // floating overlay, so the prompt input IS the search query.
+        // The overlay preview serves whichever search overlay is up —
+        // Universal Search or Git Grep — and in both the prompt input IS
+        // the search query.
         // Highlight every occurrence in the visible region — previously
         // the match was only reachable via the (hidden) cursor, which is
         // near-invisible against the preview chrome. Capture the query and
@@ -5521,14 +5492,28 @@ impl Editor {
             let theme = self.theme.read().unwrap();
             (theme.search_match_fg, theme.search_match_bg)
         };
-        // Live Grep defaults to regex with smart-case (case-insensitive
-        // unless the query carries an uppercase letter) — mirror that so
-        // the highlight tracks what the search actually matched. A query
-        // that isn't valid regex falls back to a literal match.
+        // A search overlay folds case unless its Case toggle is on —
+        // mirror that so the highlight tracks what the search actually
+        // matched. The toggle's live value is read off the toolbar the
+        // plugin mounted rather than guessed: the plugin owns the setting,
+        // and the host's own copy of the rule would be one more thing to
+        // keep in step (this previously duplicated Live Grep's smart-case
+        // heuristic, and would have silently drifted when that became a
+        // toggle).
+        //
+        // Two keys because two plugins mount a toolbar here and name that
+        // toggle differently — Universal Search `mode_case`, Git Grep
+        // `git_grep_case`, kept distinct so their broadcast widget events
+        // cannot be mistaken for each other. Neither is present when some
+        // other overlay is up, which reads as "folds case" and is the
+        // right default. A query that isn't valid regex falls back to a
+        // literal match.
         let preview_regex = if query.is_empty() {
             None
         } else {
-            let case_insensitive = !query.chars().any(|c| c.is_uppercase());
+            let case_insensitive = !["mode_case", "git_grep_case"]
+                .iter()
+                .any(|k| self.prompt_toolbar_toggle_checked(k));
             regex::RegexBuilder::new(&query)
                 .case_insensitive(case_insensitive)
                 .build()
@@ -6052,10 +6037,17 @@ impl Editor {
         // `Frame::resolve_dock`, which is what the frame-parity test runs.
         // They were separate before, each with its own constants, so the test
         // could pass while this path disagreed with it.
-        let requested = match self.dock.as_ref().map(|f| f.placement) {
-            Some(super::PanelPlacement::LeftDock { width_cols }) => Some(width_cols),
-            _ => None,
-        };
+        // The slot is open with a panel in it, or held open for one on its
+        // way (`Editor::dock_reserved`); either way the column is the same
+        // width, from the same two facts: the explicit width if there is
+        // one, else the rule — re-read every frame, which is what makes the
+        // dock follow a resize.
+        let slot_open = self
+            .dock
+            .as_ref()
+            .is_some_and(|f| matches!(f.placement, super::PanelPlacement::LeftDock))
+            || self.dock_slot_reserved();
+        let requested = slot_open.then(|| self.requested_dock_width(size.width));
         let Some(width) = crate::view::shell::frame::dock_width(requested, size.width) else {
             return (None, size);
         };
@@ -6153,7 +6145,12 @@ impl Editor {
             }
             _ => None,
         };
-        self.active_window().pane_strips(chrome, hover)
+        let hover_plus = match &self.shell_hover {
+            Some(crate::app::types::HoverTarget::NewTabButton(pane)) => Some(*pane),
+            _ => None,
+        };
+        self.active_window()
+            .pane_strips(chrome, hover, hover_plus, self.shell_ui.as_ref())
     }
 
     /// Each visible pane's leaf handle, for the frame's description — the
@@ -6260,7 +6257,7 @@ impl Editor {
             hscroll: false,
         });
         let groups = win.pane_groups();
-        let strips = win.pane_strips(&chrome, None);
+        let strips = win.pane_strips(&chrome, None, None, None);
         let rowless: std::collections::HashSet<_> = groups.keys().copied().collect();
         let hosts = win.pane_hosts(&rowless);
         Some(std::rc::Rc::new(Splits {
@@ -6368,6 +6365,7 @@ impl Editor {
                     mode: mode.to_string(),
                     resolver: self.keybindings.clone(),
                     text_focused: self.panel_focused_widget_is_text(&key),
+                    multiline_focused: self.panel_focused_widget_is_multiline_text(&key),
                     chord: self.active_window().chord_state.clone(),
                 }),
             markdown: Some(self.markdown_ink()),
@@ -6470,13 +6468,14 @@ impl Editor {
             // it, and is gone otherwise — see `widgets::Ctx::scrollbar_reveal`
             // for why that is a fact handed down rather than a rule the tree
             // could apply itself.
-            scrollbar_reveal: matches!(panel.placement, super::PanelPlacement::LeftDock { .. })
-                .then(|| {
+            scrollbar_reveal: matches!(panel.placement, super::PanelPlacement::LeftDock).then(
+                || {
                     panel.scrollbar_zone_hovered
                         || panel
                             .scrollbar_flash_until
                             .is_some_and(|until| self.time_source().now() < until)
-                }),
+                },
+            ),
             // **The panel's keymap: the mode its plugin defined.** The one
             // it declared at mount, or else the active window's editor mode,
             // which is how a plugin that mounts a centred form declares one;
@@ -6491,6 +6490,7 @@ impl Editor {
                         mode,
                         resolver: self.keybindings.clone(),
                         text_focused: self.panel_focused_widget_is_text(&key),
+                        multiline_focused: self.panel_focused_widget_is_multiline_text(&key),
                         chord: self.active_window().chord_state.clone(),
                     }),
                 crate::app::PanelSlot::Sidebar(_) => None,
@@ -6526,8 +6526,9 @@ impl Editor {
             super::PanelPlacement::Anchored { x, y } => Spot::Anchored { x, y },
             // The dock panel's frame is the dock column's, not this box's —
             // and a sidebar section's is its column's.
-            super::PanelPlacement::LeftDock { .. }
-            | super::PanelPlacement::SidebarSection { .. } => return None,
+            super::PanelPlacement::LeftDock | super::PanelPlacement::SidebarSection { .. } => {
+                return None
+            }
         };
         Some(Panel {
             // **No interior means no panel**: a slot whose panel the registry
@@ -6604,65 +6605,36 @@ impl Editor {
                 + sep_w * right.len().saturating_sub(1);
             let left_min_target = available.saturating_mul(2).saturating_div(5).min(40);
             let right_budget = available.saturating_sub(left_min_target + 1);
-            if total_right > right_budget && right.len() > 1 {
+            // How many right elements are kept whatever happens. Normally one,
+            // so a user who configured any right-side status keeps some of it.
+            // On a bar too narrow to host both sides — `sb::BOTH_SIDES_MIN`,
+            // the boundary `render_status` drew and `left_budget` kept — it is
+            // none: the left side is what survives there, which is what
+            // "reserve nothing for the right" amounted to when the right was
+            // then clipped to whatever the left had not taken. Said as which
+            // elements are on the bar, because that is the decision it is.
+            let keep = usize::from(available >= sb::BOTH_SIDES_MIN);
+            if total_right > right_budget && right.len() > keep {
                 let mut current = total_right;
-                while current > right_budget && right.len() > 1 {
+                while current > right_budget && right.len() > keep {
                     let Some(dropped) = right.pop() else { break };
                     current = current.saturating_sub(dropped.1).saturating_sub(sep_w);
                 }
             }
 
-            // **And the other half of the budget: cap the left side.**
+            // **The left side is not pre-fitted here, and that is the
+            // point.** `render_status` reserved the right side, spent what was
+            // left on the left, truncated the element that straddled the
+            // boundary and dropped the rest; the migration ported that
+            // arithmetic into `sb::left_budget` and ran it over measured text
+            // before the description existed, which is a picture with a
+            // pre-fitted string in it.
             //
-            // `render_status` reserved the right side first and spent what was
-            // left on the left, truncating the element that did not fit and
-            // dropping the rest. Only the right-hand drop above was ported;
-            // this was not, and layout does not stand in for it — see
-            // `sb::left_budget`, which is the rule and where it is tested.
-            // Without it a long status message pushed `LSP (off)` and
-            // `Palette: Ctrl+P` off the edge, where before the message itself
-            // became `...`.
-            let right_width: usize = right.iter().map(|(_, w, _, _)| *w).sum::<usize>()
-                + sep_w * right.len().saturating_sub(1);
-            let widths: Vec<usize> = left.iter().map(|(_, w, _, _)| *w).collect();
-            let allowed = sb::left_budget(&widths, right_width, sep_w, available);
-            let left: Vec<_> = left
-                .into_iter()
-                .zip(allowed)
-                .map(|((spans, w, kind, token_key), cap)| {
-                    if w <= cap {
-                        return (spans, w, kind, token_key);
-                    }
-                    // The element that did not fit is truncated over its
-                    // concatenated text, as before. Its runs keep their own
-                    // themes rather than collapsing to one style — the only
-                    // difference from `render_status`, and invisible for a
-                    // single-run element like the message.
-                    let text: String = spans.iter().map(|s| s.content.as_ref()).collect();
-                    let cut = crate::view::ui::status_bar::truncate_to_width(&text, cap);
-                    let cut_w = crate::primitives::display_width::str_width(&cut);
-                    let mut budget = cut_w;
-                    let mut kept: Vec<ratatui::text::Span<'static>> = Vec::new();
-                    for sp in spans {
-                        if budget == 0 {
-                            break;
-                        }
-                        let w = crate::primitives::display_width::str_width(&sp.content);
-                        if w <= budget {
-                            budget -= w;
-                            kept.push(sp);
-                        } else {
-                            let part = crate::view::ui::status_bar::truncate_to_width(
-                                sp.content.as_ref(),
-                                budget,
-                            );
-                            budget = 0;
-                            kept.push(ratatui::text::Span::styled(part, sp.style));
-                        }
-                    }
-                    (kept, cut_w, kind, token_key)
-                })
-                .collect();
+            // The description states what is on the bar; who yields and where
+            // the cut falls are `Node::priority` and `Elide::Tail` — see
+            // `sb::yields_last`. The regression the budget existed for (a long
+            // message costing the right side its place) is the priority, and
+            // the cut is made at paint against the width layout settled on.
 
             let item = |(spans, _w, kind, token_key): (
                 Vec<ratatui::text::Span<'static>>,
@@ -6745,5 +6717,214 @@ impl Editor {
                 ),
             }
         })
+    }
+}
+
+// The startup decision needs plugin manifests and a plugin command, neither
+// of which exists in a plugin-less build.
+#[cfg(all(test, feature = "plugins"))]
+mod dock_reservation_tests {
+    //! The dock column held open at startup for the plugin that will fill
+    //! it — see [`Editor::dock_reserved`] and [`Editor::apply_startup_dock_chrome`].
+    use super::*;
+    use crate::config::{Config, PluginConfig};
+    use crate::config_io::DirectoryContext;
+    use crate::view::shell::frame::DockWidthRule;
+    use fresh_core::api::PluginCommand;
+    use std::sync::Arc;
+
+    const COLS: u16 = 120;
+    const ROWS: u16 = 40;
+    const DECLARES_DOCK: &str = r#"{"chrome":{"dock":{"open_setting":"autoOpenDock"}}}"#;
+
+    /// A home with `plugins/orchestrator.manifest.json` planted, so discovery
+    /// finds a declaration with no plugin code to run. Leaked for the
+    /// editor's lifetime, like the neighbouring test editors.
+    fn home(manifest: Option<&str>) -> DirectoryContext {
+        let temp = tempfile::tempdir().unwrap();
+        let dir_context = DirectoryContext::for_testing(temp.path());
+        if let Some(body) = manifest {
+            let plugins = dir_context.config_dir.join("plugins");
+            std::fs::create_dir_all(&plugins).unwrap();
+            std::fs::write(plugins.join("orchestrator.manifest.json"), body).unwrap();
+        }
+        std::mem::forget(temp);
+        dir_context
+    }
+
+    fn orchestrator_config(enabled: bool, settings: serde_json::Value) -> Config {
+        let mut config = Config::default();
+        config.plugins.insert(
+            "orchestrator".into(),
+            PluginConfig {
+                enabled,
+                path: None,
+                settings,
+            },
+        );
+        config
+    }
+
+    fn editor(dir_context: DirectoryContext, config: Config, orchestrator_mode: bool) -> Editor {
+        Editor::for_test(
+            config,
+            COLS,
+            ROWS,
+            None,
+            dir_context,
+            crate::view::color_support::ColorCapability::TrueColor,
+            Arc::new(crate::model::filesystem::StdFileSystem),
+            None,
+            None,
+            true,
+            false,
+            orchestrator_mode,
+        )
+        .unwrap()
+    }
+
+    fn frame() -> ratatui::layout::Rect {
+        ratatui::layout::Rect::new(0, 0, COLS, ROWS)
+    }
+
+    fn dock_width_of(editor: &Editor) -> Option<u16> {
+        editor.compute_dock_split(frame()).0.map(|d| d.width)
+    }
+
+    fn mount(editor: &mut Editor) {
+        editor
+            .handle_plugin_command(PluginCommand::MountFloatingWidget {
+                plugin: "orchestrator".into(),
+                panel_id: 7,
+                spec: fresh_core::api::WidgetSpec::Raw {
+                    entries: Vec::new(),
+                    key: None,
+                },
+                width_pct: 100,
+                height_pct: 100,
+                as_dock: true,
+                focus_marker: false,
+                title: None,
+                closable: false,
+                start_blurred: true,
+                mode: None,
+                label_align: fresh_core::api::LabelAlign::Left,
+            })
+            .unwrap();
+    }
+
+    fn unmount(editor: &mut Editor) {
+        editor
+            .handle_plugin_command(PluginCommand::UnmountFloatingWidget {
+                plugin: "orchestrator".into(),
+                panel_id: 7,
+            })
+            .unwrap();
+    }
+
+    fn hook_completed(editor: &mut Editor, hook_name: &str) {
+        editor
+            .handle_plugin_command(PluginCommand::HookCompleted {
+                hook_name: hook_name.to_string(),
+            })
+            .unwrap();
+    }
+
+    /// The startup decision: manifest, config and launch mode in, the width
+    /// carved on the first frame out — before any plugin has run.
+    #[test]
+    fn what_the_first_frame_carves() {
+        let rule = DockWidthRule::default().width(COLS);
+        let switched_off = orchestrator_config(true, serde_json::json!({ "autoOpenDock": false }));
+        let disabled = orchestrator_config(false, serde_json::Value::Null);
+        #[rustfmt::skip]
+        let cases: [(&str, Option<&str>, Config, bool, Option<u16>); 7] = [
+            ("a declared dock, at the rule's width", Some(DECLARES_DOCK), Config::default(), false, Some(rule)),
+            ("no manifest", None, Config::default(), false, None),
+            ("a manifest with no dock", Some(r#"{"chrome":{}}"#), Config::default(), false, None),
+            ("a declared width rule", Some(r#"{"chrome":{"dock":{"width":{"min":30,"max":30}}}}"#), Config::default(), false, Some(30)),
+            ("the named setting off", Some(DECLARES_DOCK), switched_off.clone(), false, None),
+            ("...except for a bare `fresh`", Some(DECLARES_DOCK), switched_off, true, Some(rule)),
+            ("a disabled plugin declares nothing", Some(DECLARES_DOCK), disabled, false, None),
+        ];
+        for (case, manifest, config, orchestrator_mode, want) in cases {
+            let editor = editor(home(manifest), config, orchestrator_mode);
+            assert_eq!(dock_width_of(&editor), want, "{case}");
+            let (_, chrome) = editor.compute_dock_split(frame());
+            let carved = want.unwrap_or(0);
+            assert_eq!((chrome.x, chrome.width), (carved, COLS - carved), "{case}");
+            if let Some(w) = want {
+                assert_eq!(
+                    editor.dock_cols_if_open(),
+                    w,
+                    "{case}: what the plugin is told"
+                );
+            }
+        }
+    }
+
+    /// What is remembered is the slot at quit: mounted comes back, closed
+    /// stays away (except for a bare `fresh`), a dragged width comes back
+    /// with it, and a plugin's transient close-and-reopen is not a decision.
+    #[test]
+    fn what_the_user_leaves_is_what_comes_back() {
+        let home = home(Some(DECLARES_DOCK));
+        let launch = |orchestrator_mode| editor(home.clone(), Config::default(), orchestrator_mode);
+
+        let mut e = launch(false);
+        assert!(e.dock_reserved, "held open on a first launch");
+        mount(&mut e);
+        assert!(!e.dock_reserved, "the mount fills the column");
+        assert!(dock_width_of(&e).is_some(), "...and the column stays");
+
+        // A transient: closed and reopened before the quit.
+        unmount(&mut e);
+        assert_eq!(dock_width_of(&e), None);
+        mount(&mut e);
+        e.save_dock_chrome();
+        assert!(
+            launch(false).dock_reserved,
+            "a close the plugin undid is not a decision"
+        );
+
+        // Closed at quit.
+        let mut e = launch(false);
+        mount(&mut e);
+        unmount(&mut e);
+        e.save_dock_chrome();
+        let e = launch(false);
+        assert!(!e.dock_reserved, "the user closed it");
+        assert_eq!(dock_width_of(&e), None);
+        assert!(launch(true).dock_reserved, "...unless it is a bare `fresh`");
+
+        // Open and dragged at quit: the width is written as the drag ends.
+        let mut e = launch(false);
+        mount(&mut e);
+        e.handle_dock_resize_drag(37); // the wall lands on column 37: width 38
+        e.persist_dock_width();
+        e.save_dock_chrome();
+        assert_eq!(
+            dock_width_of(&launch(false)),
+            Some(38),
+            "open, at the dragged width"
+        );
+    }
+
+    /// The `ready` hook's own sentinel releases a column nothing mounted
+    /// into (a manifest with no plugin behind it, here); another hook's
+    /// does not; and nothing is remembered, since it was not the user's doing.
+    #[test]
+    fn the_hooks_own_sentinel_releases_a_column_nothing_mounted_into() {
+        let mut e = editor(home(Some(DECLARES_DOCK)), Config::default(), false);
+        hook_completed(&mut e, "plugins_loaded");
+        assert!(
+            dock_width_of(&e).is_some(),
+            "another hook's sentinel is not `ready`'s"
+        );
+        hook_completed(&mut e, "ready");
+        let (dock, chrome) = e.compute_dock_split(frame());
+        assert!(dock.is_none(), "the column goes back to the editor");
+        assert_eq!(chrome.width, COLS);
+        assert!(editor(e.dir_context.clone(), Config::default(), false).dock_reserved);
     }
 }

@@ -182,62 +182,6 @@ impl TerminalHandle {
         }
     }
 
-    /// Send `signal` to the terminal's process group. Returns
-    /// `Ok(false)` when the terminal has no recorded pid
-    /// (Windows, or platforms where portable_pty didn't report
-    /// one) — caller can fall back to `shutdown()` (SIGKILL via
-    /// child_killer). The shell is always its own session
-    /// leader inside a pty, so `kill(-pid, …)` reaches the
-    /// shell *and* any subprocesses it forked.
-    ///
-    /// Recognised signal names: `"SIGTERM"`, `"SIGKILL"`,
-    /// `"SIGINT"`, `"SIGHUP"`. Unknown names return an Err
-    /// instead of dropping silently.
-    #[cfg(unix)]
-    pub fn signal(&self, signal_name: &str) -> Result<bool, String> {
-        let Some(pid) = self.pid else {
-            return Ok(false);
-        };
-        let sig = match signal_name {
-            "SIGTERM" => libc::SIGTERM,
-            "SIGKILL" => libc::SIGKILL,
-            "SIGINT" => libc::SIGINT,
-            "SIGHUP" => libc::SIGHUP,
-            other => return Err(format!("unsupported signal: {}", other)),
-        };
-        // `kill(-pid, sig)` targets the process group whose
-        // leader is `pid`. The pty puts the spawned shell at
-        // the head of its own session, so this catches
-        // sub-processes the shell or agent forked.
-        let rc = unsafe { libc::kill(-(pid as i32), sig) };
-        if rc == 0 {
-            Ok(true)
-        } else {
-            let err = std::io::Error::last_os_error();
-            // ESRCH = no such process group. Treat as
-            // "nothing to signal" rather than an error so the
-            // caller's stop flow stays idempotent.
-            if err.raw_os_error() == Some(libc::ESRCH) {
-                Ok(false)
-            } else {
-                Err(format!("kill(-{}, {}): {}", pid, signal_name, err))
-            }
-        }
-    }
-
-    /// Windows fallback: no real signal semantics. SIGKILL is
-    /// modelled as the existing `shutdown()` (which calls the
-    /// pty child killer); other signals are unsupported and
-    /// return Ok(false).
-    #[cfg(windows)]
-    pub fn signal(&self, signal_name: &str) -> Result<bool, String> {
-        if signal_name == "SIGKILL" {
-            self.shutdown();
-            return Ok(true);
-        }
-        Ok(false)
-    }
-
     /// Get current dimensions
     pub fn size(&self) -> (u16, u16) {
         (self.cols, self.rows)
@@ -557,22 +501,6 @@ impl TerminalManager {
         for (_, handle) in self.terminals.drain() {
             handle.shutdown();
         }
-    }
-
-    /// Clean up dead terminals
-    pub fn cleanup_dead(&mut self) -> Vec<TerminalId> {
-        let dead: Vec<TerminalId> = self
-            .terminals
-            .iter()
-            .filter(|(_, h)| !h.is_alive())
-            .map(|(id, _)| *id)
-            .collect();
-
-        for id in &dead {
-            self.terminals.remove(id);
-        }
-
-        dead
     }
 }
 

@@ -12,6 +12,7 @@ use crate::config_io::{ConfigLayer, ConfigResolver};
 use crate::input::keybindings::Action;
 use crate::primitives::path_utils::expand_tilde;
 use crate::services::plugins::hooks::HookArgs;
+use crate::view::confirm::{Choice, Confirm, Tone};
 use crate::view::prompt::PromptType;
 
 /// Result of handling a prompt confirmation.
@@ -429,6 +430,11 @@ impl Editor {
             PromptType::ConfirmQuit => {
                 self.handle_confirm_quit(&input);
             }
+            PromptType::ConfirmQuitDaemon => match input.trim() {
+                "detach" => self.should_detach = true,
+                "quit" => self.quit_with_prompts(false),
+                _ => self.set_status_message(t!("buffer.close_cancelled").to_string()),
+            },
             PromptType::LspRename {
                 original_text,
                 start_pos,
@@ -488,9 +494,11 @@ impl Editor {
                             &dst.file_name().unwrap_or_default().to_string_lossy(),
                             40,
                         );
-                        self.start_prompt(
-                            t!("explorer.paste_conflict", name = &name).to_string(),
+                        let confirm = crate::app::confirm_dialog::paste_conflict(&name);
+                        self.start_confirm_prompt(
+                            confirm.body.clone(),
                             PromptType::ConfirmPasteConflict { src, dst, is_cut },
+                            confirm,
                         );
                     }
                 }
@@ -506,13 +514,15 @@ impl Editor {
                 }
                 let new_dst = dst_dir.join(input.trim());
                 if self.authority().filesystem.exists(&new_dst) {
-                    self.start_prompt(
-                        t!("explorer.paste_conflict", name = input.trim()).to_string(),
+                    let confirm = crate::app::confirm_dialog::paste_conflict(input.trim());
+                    self.start_confirm_prompt(
+                        confirm.body.clone(),
                         PromptType::ConfirmPasteConflict {
                             src,
                             dst: new_dst,
                             is_cut,
                         },
+                        confirm,
                     );
                 } else {
                     self.perform_file_explorer_paste(src, new_dst, is_cut);
@@ -720,9 +730,25 @@ impl Editor {
                 .file_name()
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_else(|| full_path.display().to_string());
-            self.start_prompt(
-                t!("buffer.overwrite_confirm", name = &filename).to_string(),
+            let body = t!("buffer.overwrite_confirm", name = &filename).to_string();
+            let confirm = Confirm::new(
+                t!("dialog.title.file_exists").into_owned(),
+                body.clone(),
+                vec![
+                    Choice::new(
+                        t!("dialog.btn.overwrite").into_owned(),
+                        "o",
+                        Tone::Destructive,
+                    ),
+                    crate::app::confirm_dialog::cancel(),
+                ],
+            )
+            .detail(full_path.display().to_string())
+            .selecting(1);
+            self.start_confirm_prompt(
+                body,
                 PromptType::ConfirmOverwriteFile { path: full_path },
+                confirm,
             );
             return;
         }
@@ -735,9 +761,11 @@ impl Editor {
                     .unwrap_or(parent)
                     .display()
                     .to_string();
-                self.start_prompt(
-                    t!("buffer.create_directory_confirm", name = &dir_name).to_string(),
+                let confirm = crate::app::confirm_dialog::create_directory(&dir_name);
+                self.start_confirm_prompt(
+                    confirm.body.clone(),
                     PromptType::ConfirmCreateDirectory { path: full_path },
+                    confirm,
                 );
                 return;
             }
@@ -842,6 +870,7 @@ impl Editor {
                     "after_file_save",
                     crate::services::plugins::hooks::HookArgs::AfterFileSave {
                         buffer_id: self.active_buffer(),
+                        window_id: self.active_window.0,
                         path: full_path.clone(),
                     },
                 );
@@ -1156,24 +1185,17 @@ impl Editor {
 
                 if file_size >= threshold && enc.requires_full_file_load() {
                     // Show confirmation prompt for large file with non-resynchronizable encoding
-                    let size_mb = file_size as f64 / (1024.0 * 1024.0);
-                    let load_key = t!("file.large_encoding.key.load").to_string();
-                    let encoding_key = t!("file.large_encoding.key.encoding").to_string();
-                    let cancel_key = t!("file.large_encoding.key.cancel").to_string();
-                    let prompt_msg = t!(
-                        "file.large_encoding_prompt",
-                        encoding = enc.display_name(),
-                        size = format!("{:.0}", size_mb),
-                        load_key = load_key,
-                        encoding_key = encoding_key,
-                        cancel_key = cancel_key
-                    )
-                    .to_string();
-                    self.start_prompt(
-                        prompt_msg,
+                    let confirm = crate::app::confirm_dialog::large_file_encoding(
+                        enc.display_name(),
+                        file_size,
+                        path,
+                    );
+                    self.start_confirm_prompt(
+                        confirm.body.clone(),
                         PromptType::ConfirmLargeFileEncoding {
                             path: path.to_path_buf(),
                         },
+                        confirm,
                     );
                     return;
                 }
@@ -1734,10 +1756,7 @@ impl Editor {
                 // as Ctrl+G / Go to Line instead of silently clamping to
                 // line 1 and jumping to the wrong place (#2597).
                 if !self.active_buffer_has_line_index() {
-                    self.start_prompt(
-                        t!("goto.scan_confirm_prompt", yes = "y", no = "N").to_string(),
-                        PromptType::GotoLineScanConfirm,
-                    );
+                    self.start_goto_line_scan_confirm();
                     return PromptResult::Done;
                 }
                 let buffer_id = self.active_buffer();
@@ -1824,14 +1843,16 @@ impl Editor {
                 .to_string_lossy(),
             40,
         );
-        self.start_prompt(
-            t!("explorer.paste_conflict_multi", name = &name).to_string(),
+        let confirm = crate::app::confirm_dialog::multi_paste_conflict(&name);
+        self.start_confirm_prompt(
+            confirm.body.clone(),
             PromptType::ConfirmMultiPasteConflict {
                 safe,
                 confirmed,
                 pending,
                 is_cut,
             },
+            confirm,
         );
     }
 }

@@ -722,7 +722,7 @@ fn right_to_expand_does_not_jump_cursor_to_first_section() {
 
     // And the section rows in the tree should NOT be marked as the cursor.
     let any_section_has_cursor = screen.lines().any(|l| {
-        l.contains(">         ") // 9 spaces of indent before section name
+        l.contains(">      ") // 6 spaces of indent before section name
             && (l.contains("Bracket Matchi") || l.contains("Completion"))
     });
     assert!(
@@ -753,9 +753,7 @@ fn down_after_expand_walks_into_first_section() {
     harness.render().unwrap();
 
     let screen = harness.screen_to_string();
-    let on_first_section = screen
-        .lines()
-        .any(|l| l.contains(">         Bracket Matchi"));
+    let on_first_section = screen.lines().any(|l| l.contains(">      Bracket Matchi"));
     assert!(
         on_first_section,
         "After Down past an expanded category, cursor must land on the \
@@ -794,7 +792,7 @@ fn down_then_up_walks_every_visible_tree_row() {
         harness
             .screen_to_string()
             .lines()
-            .any(|l| l.contains(">         Diagnostics")),
+            .any(|l| l.contains(">      Diagnostics")),
         "After Editor + 3xDown, cursor should be on Diagnostics. Screen:\n{}",
         harness.screen_to_string()
     );
@@ -807,7 +805,7 @@ fn down_then_up_walks_every_visible_tree_row() {
         harness
             .screen_to_string()
             .lines()
-            .any(|l| l.contains(">         Bracket Matchi")),
+            .any(|l| l.contains(">      Bracket Matchi")),
         "After 2xUp, cursor should be back on Bracket Matchi. Screen:\n{}",
         harness.screen_to_string()
     );

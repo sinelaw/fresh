@@ -194,7 +194,10 @@ impl Editor {
         self.purge_buffer_state(id);
 
         if closing_active {
-            if created_empty_buffer && self.config.file_explorer.auto_open_on_last_buffer_close {
+            if created_empty_buffer
+                && self.fills_an_empty_workspace()
+                && self.config.file_explorer.auto_open_on_last_buffer_close
+            {
                 self.focus_file_explorer();
             }
             if let Some(group_leaf) = return_to_group {
@@ -213,8 +216,13 @@ impl Editor {
         // through the plugin's own close command).
         self.plugin_manager.read().unwrap().run_hook(
             "buffer_closed",
-            fresh_core::hooks::HookArgs::BufferClosed { buffer_id: id },
+            fresh_core::hooks::HookArgs::BufferClosed {
+                buffer_id: id,
+                window_id: self.active_window.0,
+            },
         );
+        // The sidebar sections scoped to this buffer go with it.
+        self.drop_sidebar_sections_for_buffer(id);
 
         Ok(())
     }
@@ -431,10 +439,11 @@ impl Editor {
                 // placeholder: hidden from tabs *and* skipped during pane
                 // rendering, so the workspace genuinely looks blank.
                 let new_id = self.new_buffer();
-                if !self
-                    .config
-                    .editor
-                    .auto_create_empty_buffer_on_last_buffer_close
+                if !(self.fills_an_empty_workspace()
+                    && self
+                        .config
+                        .editor
+                        .auto_create_empty_buffer_on_last_buffer_close)
                 {
                     if let Some(meta) = self.active_window_mut().buffer_metadata.get_mut(&new_id) {
                         meta.hidden_from_tabs = true;
@@ -638,19 +647,28 @@ impl Editor {
                 if state.buffer.is_modified() {
                     // Buffer has unsaved changes - prompt for confirmation
                     let name = self.get_buffer_display_name(buffer_id);
-                    let save_key = t!("prompt.key.save").to_string();
-                    let discard_key = t!("prompt.key.discard").to_string();
-                    let cancel_key = t!("prompt.key.cancel").to_string();
-                    self.start_prompt(
-                        t!(
-                            "prompt.buffer_modified",
-                            name = name,
-                            save_key = save_key,
-                            discard_key = discard_key,
-                            cancel_key = cancel_key
-                        )
-                        .to_string(),
+                    let body = t!("prompt.buffer_modified", name = name).to_string();
+                    let confirm = crate::view::confirm::Confirm::new(
+                        t!("dialog.title.unsaved_changes").into_owned(),
+                        body.clone(),
+                        vec![
+                            crate::view::confirm::Choice::new(
+                                t!("dialog.btn.save").into_owned(),
+                                t!("prompt.key.save").into_owned(),
+                                crate::view::confirm::Tone::Safe,
+                            ),
+                            crate::view::confirm::Choice::new(
+                                t!("dialog.btn.discard").into_owned(),
+                                t!("prompt.key.discard").into_owned(),
+                                crate::view::confirm::Tone::Destructive,
+                            ),
+                            crate::app::confirm_dialog::cancel(),
+                        ],
+                    );
+                    self.start_confirm_prompt(
+                        body,
                         PromptType::ConfirmCloseBuffer { buffer_id },
+                        confirm,
                     );
                     return false;
                 }
@@ -975,9 +993,8 @@ impl Editor {
         else {
             return;
         };
-        let tabs_width = self.active_window().split_tabs_width(split_id);
-        self.active_window_mut()
-            .ensure_active_tab_visible(split_id, active_buffer, tabs_width);
+        let _ = active_buffer;
+        self.active_window().reveal_active_tab(split_id);
     }
 
     /// Set status message for batch close operations

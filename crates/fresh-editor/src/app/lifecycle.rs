@@ -3,6 +3,7 @@
 //! piping, and the should_quit confirmation flow that walks modified buffers.
 
 use super::*;
+use crate::view::confirm::{Choice, Confirm, Tone};
 use fresh_core::WindowId;
 
 impl Editor {
@@ -35,11 +36,6 @@ impl Editor {
                 .active_custom_contexts
                 .remove(crate::types::context_keys::SESSION_MODE);
         }
-    }
-
-    /// Check if running in session mode
-    pub fn is_session_mode(&self) -> bool {
-        self.session_mode
     }
 
     /// Mark that the backend does not render a hardware cursor.
@@ -124,19 +120,6 @@ impl Editor {
         self.clipboard.take_pending_clipboard()
     }
 
-    /// Check if the editor should restart with a new working directory
-    pub fn should_restart(&self) -> bool {
-        self.restart_with_dir.is_some()
-    }
-
-    /// Take the restart directory, clearing the restart request
-    /// Returns the new working directory if a restart was requested
-    pub fn take_restart_dir(&mut self) -> Option<PathBuf> {
-        self.restart_with_dir.take()
-    }
-
-    /// Request the editor to restart with a new working directory
-    /// This triggers a clean shutdown and restart with the new project root
     /// Request a full hardware terminal clear and redraw on the next frame.
     /// Used after external commands have messed up the terminal state.
     pub fn request_full_redraw(&mut self) {
@@ -164,16 +147,6 @@ impl Editor {
         requested
     }
 
-    pub fn request_restart(&mut self, new_working_dir: PathBuf) {
-        tracing::info!(
-            "Restart requested with new working directory: {}",
-            new_working_dir.display()
-        );
-        self.restart_with_dir = Some(new_working_dir);
-        // Also signal quit so the event loop exits
-        self.should_quit = true;
-    }
-
     /// Get the active theme (read lock).
     pub fn theme(&self) -> std::sync::RwLockReadGuard<'_, crate::view::theme::Theme> {
         self.theme.read().unwrap()
@@ -186,117 +159,112 @@ impl Editor {
 
     /// Request the editor to quit
     pub fn quit(&mut self) {
+        // **In a daemon session, "quit" is ambiguous.** The user who presses
+        // Ctrl+Q in an attached client usually wants their terminal back, not
+        // the daemon — and every terminal and agent it hosts — gone. Ask which:
+        // Detach (the default, and the safe one), Quit, or Cancel. Choosing
+        // Quit continues into the ordinary quit path, unsaved-changes prompt
+        // included; the `confirm_quit` opt-in is skipped since this dialog
+        // already asked.
+        if self.session_mode {
+            let body = t!("prompt.quit_daemon").to_string();
+            let confirm = Confirm::new(
+                t!("dialog.title.quit_daemon").into_owned(),
+                body.clone(),
+                vec![
+                    Choice::new(t!("dialog.btn.detach").into_owned(), "detach", Tone::Safe),
+                    Choice::new(
+                        t!("dialog.btn.quit_daemon").into_owned(),
+                        "quit",
+                        Tone::Destructive,
+                    ),
+                    crate::app::confirm_dialog::cancel(),
+                ],
+            )
+            .selecting(0);
+            self.start_confirm_prompt(body, PromptType::ConfirmQuitDaemon, confirm);
+            return;
+        }
+        self.quit_with_prompts(self.config.editor.confirm_quit);
+    }
+
+    /// The quit path past the daemon's Detach/Quit question: prompt for
+    /// unsaved buffers, else (when `confirm_clean` asks for it) confirm the
+    /// clean quit, else quit.
+    pub(crate) fn quit_with_prompts(&mut self, confirm_clean: bool) {
         // Check for unsaved buffers (all are auto-persisted when hot_exit is enabled)
         let modified_count = self.count_modified_buffers_needing_prompt();
-        if modified_count == 0 && self.config.editor.confirm_quit {
+        if modified_count == 0 && confirm_clean {
             // No dirty buffers, but the user has opted into a
             // safety-net confirmation for a stray Ctrl+Q (issue #2030).
             let msg = t!("prompt.quit_confirm").to_string();
-            self.start_prompt(msg, PromptType::ConfirmQuit);
+            let confirm = Confirm::new(
+                t!("dialog.title.quit").into_owned(),
+                msg.clone(),
+                vec![
+                    Choice::new(
+                        t!("dialog.btn.quit").into_owned(),
+                        t!("prompt.key.quit").into_owned(),
+                        Tone::Safe,
+                    ),
+                    crate::app::confirm_dialog::cancel(),
+                ],
+            )
+            // `(y)es, (N)o` — the capital was the default, and this prompt
+            // exists precisely to catch a *stray* `Ctrl+Q` (issue #2030), so
+            // an armed Quit one stray Enter later would defeat it.
+            .selecting(1);
+            self.start_confirm_prompt(msg, PromptType::ConfirmQuit, confirm);
             return;
         }
         if modified_count > 0 {
-            let save_key = t!("prompt.key.save").to_string();
-            let cancel_key = t!("prompt.key.cancel").to_string();
-            let hot_exit = self.config.editor.hot_exit;
             // When some of the unsaved work is in a workspace the user is not
             // looking at, a bare count is the wrong thing to show: it says
             // there is something to lose without saying where, and the whole
             // failure this prompt exists to prevent is work going unnoticed in
             // a background workspace (issue #3189). Name the workspaces then.
             let where_clause = self.unsaved_workspace_summary();
-
-            let discard_key = t!("prompt.key.discard").to_string();
-            let msg = if let Some(ref where_clause) = where_clause {
-                if hot_exit {
-                    let quit_key = t!("prompt.key.quit").to_string();
-                    if modified_count == 1 {
-                        t!(
-                            "prompt.quit_modified_hot_one_where",
-                            where = where_clause,
-                            save_key = save_key,
-                            discard_key = discard_key,
-                            quit_key = quit_key,
-                            cancel_key = cancel_key
-                        )
-                        .to_string()
-                    } else {
-                        t!(
-                            "prompt.quit_modified_hot_many_where",
-                            count = modified_count,
-                            where = where_clause,
-                            save_key = save_key,
-                            discard_key = discard_key,
-                            quit_key = quit_key,
-                            cancel_key = cancel_key
-                        )
-                        .to_string()
-                    }
-                } else if modified_count == 1 {
-                    t!(
-                        "prompt.quit_modified_one_where",
-                        where = where_clause,
-                        save_key = save_key,
-                        discard_key = discard_key,
-                        cancel_key = cancel_key
-                    )
-                    .to_string()
-                } else {
-                    t!(
-                        "prompt.quit_modified_many_where",
-                        count = modified_count,
-                        where = where_clause,
-                        save_key = save_key,
-                        discard_key = discard_key,
-                        cancel_key = cancel_key
-                    )
-                    .to_string()
+            // **The outcomes are buttons now, not letters in the sentence.**
+            // That is what collapsed eight message strings into four: the
+            // hot-exit variants differed only in offering a third way out,
+            // which is one more `Choice` rather than another whole phrasing
+            // of the question.
+            let body = match (&where_clause, modified_count) {
+                (Some(w), 1) => t!("prompt.quit_modified_one_where", where = w).to_string(),
+                (Some(w), n) => {
+                    t!("prompt.quit_modified_many_where", count = n, where = w).to_string()
                 }
-            } else if hot_exit {
-                // With hot exit: offer save, discard, quit-without-saving (recoverable), or cancel
-                let quit_key = t!("prompt.key.quit").to_string();
-                if modified_count == 1 {
-                    t!(
-                        "prompt.quit_modified_hot_one",
-                        save_key = save_key,
-                        discard_key = discard_key,
-                        quit_key = quit_key,
-                        cancel_key = cancel_key
-                    )
-                    .to_string()
-                } else {
-                    t!(
-                        "prompt.quit_modified_hot_many",
-                        count = modified_count,
-                        save_key = save_key,
-                        discard_key = discard_key,
-                        quit_key = quit_key,
-                        cancel_key = cancel_key
-                    )
-                    .to_string()
-                }
-            } else {
-                // Without hot exit: offer save, discard, or cancel
-                if modified_count == 1 {
-                    t!(
-                        "prompt.quit_modified_one",
-                        save_key = save_key,
-                        discard_key = discard_key,
-                        cancel_key = cancel_key
-                    )
-                    .to_string()
-                } else {
-                    t!(
-                        "prompt.quit_modified_many",
-                        count = modified_count,
-                        save_key = save_key,
-                        discard_key = discard_key,
-                        cancel_key = cancel_key
-                    )
-                    .to_string()
-                }
+                (None, 1) => t!("prompt.quit_modified_one").to_string(),
+                (None, n) => t!("prompt.quit_modified_many", count = n).to_string(),
             };
-            self.start_prompt(msg, PromptType::ConfirmQuitWithModified);
+            let mut choices = vec![
+                Choice::new(
+                    t!("dialog.btn.save_and_quit").into_owned(),
+                    t!("prompt.key.save").into_owned(),
+                    Tone::Safe,
+                ),
+                Choice::new(
+                    t!("dialog.btn.discard_and_quit").into_owned(),
+                    t!("prompt.key.discard").into_owned(),
+                    Tone::Destructive,
+                ),
+            ];
+            if self.config.editor.hot_exit {
+                // Not destructive: hot exit is exactly the promise that this
+                // one gets the work back.
+                choices.push(Choice::new(
+                    t!("dialog.btn.quit_recoverable").into_owned(),
+                    t!("prompt.key.quit").into_owned(),
+                    Tone::Safe,
+                ));
+            }
+            choices.push(crate::app::confirm_dialog::cancel());
+            let confirm = Confirm::new(
+                t!("dialog.title.unsaved_changes").into_owned(),
+                body.clone(),
+                choices,
+            );
+            self.start_confirm_prompt(body, PromptType::ConfirmQuitWithModified, confirm);
         } else {
             self.should_quit = true;
         }
@@ -558,11 +526,10 @@ impl Editor {
 
     /// Fire the plugin `resize` hook and rerender mounted panels, but only
     /// when the content geometry plugins observe has actually changed since
-    /// the last notification. The dedupe is load-bearing: the orchestrator
-    /// reacts to `resize` by re-issuing the dock's `dock_width`, which loops
-    /// back through `relayout`; without the signature guard that would
-    /// re-fire every frame. Once the dock width settles the signature stops
-    /// changing and the cascade stops.
+    /// the last notification. The dedupe is load-bearing: a plugin that
+    /// answers `resize` with a layout change of its own loops back through
+    /// `relayout`, and without the signature guard that would re-fire every
+    /// frame.
     fn notify_layout_changed(&mut self) {
         let dock_cols = self.dock_cols();
         // File-explorer width of the active window, measured against the
@@ -710,8 +677,8 @@ impl crate::app::window::Window {
         // tab-scroll offset is never revisited. Use each split's real area
         // width (dock/explorer/split-aware), not the whole-window width, so
         // a half-width vertical split scrolls correctly too.
-        for (split_id, buffer_id, area) in visible {
-            self.ensure_active_tab_visible(split_id, buffer_id, area.width);
+        for (split_id, _buffer_id, _area) in visible {
+            self.reveal_active_tab(split_id);
         }
     }
 }

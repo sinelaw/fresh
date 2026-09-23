@@ -1,0 +1,108 @@
+#!/bin/bash
+# Run the whole test suite (unit, integration, e2e) under coverage, analyse the
+# result for dead code, and write the reports to target/coverage-report/:
+#
+#   coverage.html   single self-contained page (source view, dead code, …)
+#   analysis.json   dead code / untested plugin API / uncovered blocks
+#   report.txt      llvm-cov per-file table
+#   lcov.info, export.json, html/   raw llvm-cov output
+#
+#   scripts/coverage-full [--report-only] [-- EXTRA_NEXTEST_ARGS...]
+#
+# Needs cargo-llvm-cov, cargo-nextest, rustfilt and `rustup component add
+# llvm-tools-preview`. On Linux, run it under `xvfb-run` for the GUI tests, as
+# CI does; the SSH terminal test also needs sshd and a /run/sshd directory.
+#
+# Every process an instrumented binary starts writes its own ~4 MB .profraw,
+# and the e2e tests start the editor thousands of times: left alone, a full
+# run writes over 30 GB of profiles. A background job folds finished profiles
+# into one .profdata every 45 seconds and deletes them, which keeps the peak
+# to a few GB.
+
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$REPO_ROOT"
+TARGET="$REPO_ROOT/target/llvm-cov-target"
+OUT="$REPO_ROOT/target/coverage-report"
+PROFDATA="$OUT/merged.profdata"
+LLVM_BIN="$(rustc --print sysroot)/lib/rustlib/$(rustc -vV | sed -n 's/^host: //p')/bin"
+
+REPORT_ONLY=0
+EXTRA=()
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --report-only) REPORT_ONLY=1; shift ;;
+        -h|--help) sed -n '2,21p' "$0"; exit 0 ;;
+        --) shift; EXTRA=("$@"); break ;;
+        *) echo "unknown option: $1" >&2; exit 2 ;;
+    esac
+done
+
+# Fold every .profraw older than ~20s (so its writer has exited) into
+# $PROFDATA. A profile truncated by a crashed process is skipped, not fatal.
+fold_profiles() {
+    local batch=()
+    mapfile -t batch < <(find "$TARGET" -maxdepth 1 -name '*.profraw' -mmin +0.3 | head -1500)
+    [[ ${#batch[@]} -eq 0 ]] && return 1
+    local prev=()
+    [[ -f "$PROFDATA" ]] && prev=("$PROFDATA")
+    if "$LLVM_BIN/llvm-profdata" merge -sparse --failure-mode=warn \
+            -o "$PROFDATA.new" "${prev[@]}" "${batch[@]}" 2>>"$OUT/merge-warnings.txt"; then
+        mv "$PROFDATA.new" "$PROFDATA"
+    fi
+    rm -f "${batch[@]}"
+}
+
+if [[ $REPORT_ONLY -eq 0 ]]; then
+    rm -rf "$OUT"
+    mkdir -p "$OUT"
+    cargo llvm-cov clean --workspace
+
+    ( while true; do fold_profiles || sleep 45; [[ -f "$OUT/.stop" ]] && break; done ) &
+    FOLDER=$!
+    trap 'touch "$OUT/.stop"; kill $FOLDER 2>/dev/null || true' EXIT
+
+    set +e
+    cargo llvm-cov nextest --no-report --no-fail-fast --locked \
+        --all-features --all-targets "${EXTRA[@]}" 2>&1 | tee "$OUT/nextest.log"
+    TEST_STATUS=${PIPESTATUS[0]}
+    set -e
+
+    touch "$OUT/.stop"
+    wait $FOLDER 2>/dev/null || true
+    trap - EXIT
+    rm -f "$OUT/.stop"
+    # The last profiles are younger than the folder's age cutoff.
+    sleep 20
+    while fold_profiles; do :; done
+    [[ $TEST_STATUS -ne 0 ]] && echo "note: some tests failed (status $TEST_STATUS); reporting anyway"
+fi
+
+[[ -f "$PROFDATA" ]] || { echo "error: no $PROFDATA — run without --report-only" >&2; exit 1; }
+
+# Every instrumented executable of the build: test harnesses and the binaries
+# the e2e tests spawn.
+OBJECTS=()
+while IFS= read -r f; do OBJECTS+=(-object "$f"); done < <(
+    find "$TARGET/debug/deps" -maxdepth 1 -type f -executable ! -name '*.so' ! -name '*.d'
+    find "$TARGET/debug" -maxdepth 1 -type f -executable)
+OBJECTS=("${OBJECTS[@]:1}")  # llvm-cov takes the first object positionally
+
+IGNORE='/\.cargo/registry|/rustc/|/lib/rustlib/src/|/target/|crates/[^/]+/tests/|/tests\.rs$|_tests\.rs$|/benches/'
+COMMON=(--instr-profile="$PROFDATA" --ignore-filename-regex="$IGNORE")
+
+echo "==> generating reports in $OUT"
+"$LLVM_BIN/llvm-cov" report "${COMMON[@]}" "${OBJECTS[@]}" > "$OUT/report.txt" &
+"$LLVM_BIN/llvm-cov" export --format=text "${COMMON[@]}" "${OBJECTS[@]}" > "$OUT/export.json" &
+"$LLVM_BIN/llvm-cov" export --format=lcov "${COMMON[@]}" "${OBJECTS[@]}" > "$OUT/lcov.info" &
+"$LLVM_BIN/llvm-cov" show --format=html --output-dir="$OUT/html" \
+    --show-line-counts-or-regions "${COMMON[@]}" "${OBJECTS[@]}" &
+wait
+
+tail -1 "$OUT/report.txt"
+echo
+python3 "$REPO_ROOT/scripts/coverage-analyze.py" "$OUT"
+echo
+python3 "$REPO_ROOT/scripts/coverage-html.py" "$OUT" "$OUT/coverage.html"
+echo "Report: $OUT/coverage.html   (llvm-cov's own HTML: $OUT/html/index.html)"

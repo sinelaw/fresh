@@ -1054,7 +1054,7 @@ fn test_compose_mode_mouse_scroll_to_bottom() {
         .unwrap();
 
     // Scroll down aggressively with mouse wheel.
-    // README.md is ~278 lines; with compose wrapping at 80 cols it will be
+    // README.md is ~359 lines; with compose wrapping at 80 cols it will be
     // even more visual lines.  Each scroll event moves ~3 lines, so 200
     // scroll events should be more than enough to reach the bottom.
     let (content_start, content_end) = harness.content_area_rows();
@@ -1065,14 +1065,15 @@ fn test_compose_mode_mouse_scroll_to_bottom() {
 
     // Wait for the last line of the README to be visible after scrolling.
     harness
-        .wait_until_stable(|h| h.screen_to_string().contains("GPL-2.0"))
+        .wait_until_stable(|h| h.screen_to_string().contains("SPDX-License-Identifier"))
         .unwrap();
 
-    // The very last line of the README is "...GNU General Public License v2.0 (GPL-2.0)."
-    // It should be visible on screen after scrolling to the bottom.
+    // The very last line of the README is "SPDX-License-Identifier: GPL-3.0-or-later",
+    // and that marker appears nowhere else in the file.  It should be visible on
+    // screen after scrolling to the bottom.
     let screen = harness.screen_to_string();
     assert!(
-        screen.contains("GPL-2.0"),
+        screen.contains("SPDX-License-Identifier"),
         "After scrolling to the bottom, the last line of the README should be visible.\n\
          Screen:\n{}",
         screen,
@@ -5009,4 +5010,108 @@ fn test_compose_first_paint_when_commands_land_on_the_render_path() {
         // the screen, not on the clock.
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
+}
+
+/// A line edited at its very start must be re-offered to the plugin.
+///
+/// `adjust_seen_byte_ranges_for_edit` decides which of a buffer's already
+/// offered line ranges survive an edit. An *insertion* has `edit_end ==
+/// position`, so the "entirely after the edit, just shift it" branch —
+/// `start >= edit_end` — also caught the line the text was inserted at the
+/// **start** of, whose content plainly changed. That line kept a seen entry,
+/// shifted along, and the set was left holding a range no line has.
+///
+/// The damage lands later. Undo the insertion (or backspace it) and the shift
+/// runs in reverse: the stale entry maps exactly onto the restored line's
+/// range, the line reads as already seen, and `lines_changed` never fires for
+/// it. In compose that means the plugin never rebuilds the line's
+/// decorations — a heading keeps its text but loses its bold — until some
+/// unrelated edit on that line happens to offer it again, which is what makes
+/// typing appear to flicker the rendering back.
+///
+/// Asserted on the rendered cells, since the defect *is* a missing
+/// attribute: the heading's bold, before the round trip and after it.
+#[test]
+fn test_an_edit_at_a_line_start_reoffers_that_line() {
+    use crate::common::harness::{copy_plugin, copy_plugin_lib};
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project");
+    std::fs::create_dir(&project_root).unwrap();
+    let plugins_dir = project_root.join("plugins");
+    std::fs::create_dir(&plugins_dir).unwrap();
+    copy_plugin(&plugins_dir, "markdown_compose");
+    copy_plugin_lib(&plugins_dir);
+
+    let md_path = project_root.join("h.md");
+    std::fs::write(&md_path, "# Heading one\n\nplain text here\n").unwrap();
+
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(80, 24, Default::default(), project_root)
+            .unwrap();
+    harness.open_file(&md_path).unwrap();
+    harness.render().unwrap();
+    harness
+        .run_palette_command("Toggle Compose/Preview")
+        .unwrap();
+    harness
+        .wait_until_stable(|h| {
+            h.screen_to_string()
+                .lines()
+                .any(|l| l.trim_start().starts_with("plain text"))
+        })
+        .unwrap();
+
+    let row = harness.content_area_rows().0 as u16;
+    // Cells of the heading row carrying bold — the compose plugin's own
+    // emphasis overlay, and the thing that goes missing.
+    let bold_cells = |h: &EditorTestHarness| -> usize {
+        (0..40)
+            .filter(|c| {
+                h.get_cell_style(*c, row)
+                    .is_some_and(|s| s.add_modifier.contains(ratatui::style::Modifier::BOLD))
+            })
+            .count()
+    };
+
+    let before = bold_cells(&harness);
+    assert!(
+        before > 0,
+        "the heading must be bold to begin with, or this test proves nothing\n\
+         Screen:\n{}",
+        harness.screen_to_string()
+    );
+
+    // Insert at the very start of the heading line, then take it back out.
+    // The buffer ends where it started, so the rendering must too.
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Char('Z'), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until_stable(|h| h.screen_to_string().contains("Z# Heading one"))
+        .unwrap();
+    harness
+        .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+        .unwrap();
+    let mut prev = String::new();
+    harness
+        .wait_until_stable(|h| {
+            let s = h.screen_to_string();
+            let stable = s == prev;
+            prev = s;
+            stable
+        })
+        .unwrap();
+
+    let after = bold_cells(&harness);
+    assert_eq!(
+        after,
+        before,
+        "the heading lost its compose styling after an edit at the line's start \
+         was undone: the line was never re-offered to the plugin, so its \
+         decorations were never rebuilt\nScreen:\n{}",
+        harness.screen_to_string()
+    );
 }

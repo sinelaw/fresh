@@ -27,6 +27,7 @@ enum Msg {
     Chose(String),
     Number(i64),
     Opened(String),
+    Scrolled(usize),
 }
 
 fn click(ui: &mut Ui<Msg>, x: i32, y: i32) -> Vec<Msg> {
@@ -829,6 +830,71 @@ fn a_stable_gutter_reserves_its_column_with_no_bar_to_put_in_it() {
     assert_eq!(row_width(&short), frame.w - 1, "the gutter is not content");
 }
 
+/// **A revealed bar can have a column of its own.**
+///
+/// The two are separate answers: *when* the bar is drawn (on attention) and
+/// *where* it goes (over the rows, or in a column they never use). Asked for
+/// together they are the combination a window whose content reaches its last
+/// column needs — a row ending in a button, or in the `…` that says it was
+/// cut — because a floating bar covers whatever is under it, and a gutter
+/// that came and went would move the row being reached for.
+#[test]
+fn a_revealed_bar_with_a_gutter_neither_covers_the_rows_nor_moves_them() {
+    let list = |n: usize, shown: bool| -> Node<Msg> {
+        List::windowed(n, fresh_ui::Key::from, |i| {
+            fresh_ui::col()
+                .theme("list.row")
+                .child(fresh_ui::text(format!("row {i}")))
+        })
+        .scrollbar_gutter()
+        .scrollbar_revealed(shown)
+        .node()
+    };
+    let frame = Size::new(20, 5);
+    let ui_of = |n: usize, shown: bool| {
+        let mut ui: Ui<Msg> = Ui::new();
+        ui.frame(list(n, shown), frame);
+        ui
+    };
+    let row_width = |ui: &Ui<Msg>| {
+        ui.spec()
+            .items
+            .iter()
+            .filter(|i| matches!(i.draw, Draw::Fill))
+            .map(|i| i.rect.w)
+            .max()
+            .expect("rows paint their ground")
+    };
+
+    let (fits, hidden, shown) = (ui_of(3, false), ui_of(500, false), ui_of(500, true));
+    for (what, ui) in [("fits", &fits), ("hidden", &hidden), ("shown", &shown)] {
+        assert_eq!(
+            row_width(ui),
+            frame.w - 1,
+            "the gutter is the bar's column in every state, not the rows' ({what})"
+        );
+    }
+    assert!(
+        !hidden
+            .spec()
+            .items
+            .iter()
+            .any(|i| matches!(i.draw, Draw::Scrollbar { .. })),
+        "a bar that is not being revealed is still not drawn"
+    );
+    let bar = shown
+        .spec()
+        .items
+        .iter()
+        .find(|i| matches!(i.draw, Draw::Scrollbar { .. }))
+        .expect("revealed, and overflowing");
+    assert_eq!(
+        bar.rect.x,
+        frame.w as i32 - 1,
+        "and when it is drawn it lands in the column that was kept for it"
+    );
+}
+
 /// **An overlay bar: there, and not drawn.**
 ///
 /// A window whose bar comes and goes is answering a question the window
@@ -1445,4 +1511,116 @@ fn a_list_that_declines_focus_still_answers_a_click() {
     // left for whoever else is listening.
     let tab = ui.dispatch(Input::Key(KeyPress::new(KeyCode::Tab)));
     assert!(tab.claimed == false && tab.msgs.is_empty());
+}
+
+// -- pinned rows and controlled windows --------------------------------------
+
+/// Forty rows, the given ones pinned, the window held by the owner at `at`.
+fn pinned_list(pinned: &[usize], at: usize, selected: Option<usize>) -> Node<Msg> {
+    let mut l = List::windowed(40, fresh_ui::Key::from, |i| {
+        fresh_ui::text(format!("row {i}"))
+    })
+    .pinned(pinned)
+    .scroll(at)
+    .on_scroll(Msg::Scrolled)
+    .on_select(Msg::Selected)
+    .scrollbar();
+    if let Some(s) = selected {
+        l = l.selected(s);
+    }
+    l.node()
+}
+
+/// **A pinned row is an ordinary row for the pointer.** It is built by the
+/// same builder, keyed and themed the same way, and it is where layout put
+/// it — so a press on window row 1 names the pinned index that sits there,
+/// not `offset + 1`. This is the hit-testing pinning has to get right, and it
+/// gets it right by having no arithmetic to get wrong.
+#[test]
+fn a_list_draws_its_pinned_rows_above_the_run_and_they_answer_the_pointer() {
+    let mut ui: Ui<Msg> = Ui::new();
+    ui.frame(pinned_list(&[0, 3], 20, None), FRAME);
+    let shown = texts(&ui);
+    assert_eq!(
+        &shown[..4],
+        ["row 0", "row 3", "row 20", "row 21"],
+        "{shown:?}"
+    );
+    assert_eq!(shown.len(), 10 + 2, "ten rows plus the overscan");
+
+    assert_eq!(
+        click(&mut ui, 2, 1),
+        vec![Msg::Selected(3)],
+        "the pinned row"
+    );
+    assert_eq!(
+        click(&mut ui, 2, 2),
+        vec![Msg::Selected(20)],
+        "the first of the run"
+    );
+    assert_eq!(
+        click(&mut ui, 2, 9),
+        vec![Msg::Selected(27)],
+        "the last visible"
+    );
+}
+
+/// The controlled window: a wheel is reported and not kept, exactly as a
+/// controlled selection is.
+#[test]
+fn a_controlled_list_reports_the_wheel_and_keeps_its_owners_offset() {
+    let mut ui: Ui<Msg> = Ui::new();
+    ui.frame(pinned_list(&[], 4, None), FRAME);
+    let got = ui.dispatch(Input::Wheel {
+        pos: Point::new(2, 2),
+        delta: 3,
+        axis: Axis::Vertical,
+        mods: Mods::NONE,
+    });
+    assert_eq!(got.msgs, vec![Msg::Scrolled(7)]);
+    ui.frame(pinned_list(&[], 4, None), FRAME);
+    assert_eq!(
+        texts(&ui)[0],
+        "row 4",
+        "the owner kept 4, so the list shows 4"
+    );
+    ui.frame(pinned_list(&[], 7, None), FRAME);
+    assert_eq!(texts(&ui)[0], "row 7", "the owner took 7");
+}
+
+/// A selection the owner moves out of the window asks the window to follow,
+/// and for a controlled window that ask is a report — the owner is told
+/// where the window would have to be, and the window stays where the owner
+/// has it until the owner says otherwise.
+#[test]
+fn a_controlled_list_reports_the_window_a_selection_move_needs() {
+    let mut ui: Ui<Msg> = Ui::new();
+    ui.frame(pinned_list(&[], 0, Some(0)), FRAME);
+    assert!(ui.take_messages().is_empty());
+    ui.frame(pinned_list(&[], 0, Some(20)), FRAME);
+    assert_eq!(
+        ui.take_messages(),
+        vec![Msg::Scrolled(11)],
+        "the shortest move that shows row 20 in a ten-row window"
+    );
+    assert_eq!(texts(&ui)[0], "row 0", "held at 0 until the owner moves it");
+    ui.frame(pinned_list(&[], 11, Some(20)), FRAME);
+    assert_eq!(texts(&ui)[0], "row 11");
+    assert!(
+        ui.take_messages().is_empty(),
+        "revealed; nothing further to ask"
+    );
+}
+
+/// With rows pinned, "inside the window" means inside the run: a reveal
+/// counts the rows the pins left, not the box.
+#[test]
+fn a_reveal_in_a_pinned_list_counts_only_the_run() {
+    let mut ui: Ui<Msg> = Ui::new();
+    // Two pins in a ten-row box: an eight-row run from 10, showing 10..18.
+    ui.frame(pinned_list(&[0, 1], 10, Some(10)), FRAME);
+    ui.take_messages();
+    // Row 18 is the first past the run: one row of scroll, not none.
+    ui.frame(pinned_list(&[0, 1], 10, Some(18)), FRAME);
+    assert_eq!(ui.take_messages(), vec![Msg::Scrolled(11)]);
 }

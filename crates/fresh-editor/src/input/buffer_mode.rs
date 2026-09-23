@@ -112,19 +112,6 @@ impl ModeRegistry {
             .unwrap_or(false)
     }
 
-    /// Check if a mode inherits Normal-context bindings for unbound keys
-    pub fn inherits_normal_bindings(&self, mode_name: &str) -> bool {
-        self.modes
-            .get(mode_name)
-            .map(|m| m.inherit_normal_bindings)
-            .unwrap_or(false)
-    }
-
-    /// List all registered mode names
-    pub fn list_modes(&self) -> Vec<String> {
-        self.modes.keys().cloned().collect()
-    }
-
     /// Check if a mode exists
     pub fn has_mode(&self, name: &str) -> bool {
         self.modes.contains_key(name)

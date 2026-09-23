@@ -144,16 +144,22 @@ fn open_delete_confirmation(height: u16) -> (tempfile::TempDir, EditorTestHarnes
 
 /// A destructive confirmation is useless if the user can't see how to answer
 /// it. On a short terminal the centered panel must grow to fit its content
-/// instead of clipping the tail: both the warning and the Cancel / Confirm
-/// pair have to be on screen.
+/// instead of clipping the tail: both the consequence list and the Cancel /
+/// Confirm pair have to be on screen.
+///
+/// The anchor is a consequence line rather than the "uncommitted changes"
+/// warning because this session is the project row — in-place, no worktree —
+/// and deleting it removes no files, so the pane no longer carries a warning
+/// that would not be true of it. The buttons are what prove nothing is
+/// clipped: they render after everything else.
 #[test]
 fn dock_delete_confirmation_shows_its_buttons_on_a_short_terminal() {
     let (_tmp, h) = open_delete_confirmation(SHORT_HEIGHT);
 
     let screen = h.screen_to_string();
     assert!(
-        screen.contains("Uncommitted changes will be lost"),
-        "the delete warning was clipped off the confirmation.\nScreen:\n{screen}"
+        screen.contains("drop the workspace record"),
+        "the consequence list was clipped off the confirmation.\nScreen:\n{screen}"
     );
     assert!(
         screen.contains("[ Cancel ]"),
@@ -163,6 +169,45 @@ fn dock_delete_confirmation_shows_its_buttons_on_a_short_terminal() {
     assert!(
         screen.contains("[ Confirm Delete ]"),
         "the confirmation must show its Confirm button.\nScreen:\n{screen}"
+    );
+}
+
+/// The confirmation is one framed modal, not a box inside a box. It used to
+/// render the picker's `labeledSection` pane inside the popup's own frame, so
+/// a content-hugging "Confirm Delete" box sat in the top-left corner of a
+/// wider, empty one. The title now rides in the host frame's top border, and
+/// every content row is bounded by exactly that frame's two side borders.
+#[test]
+fn dock_delete_confirmation_is_a_single_frame() {
+    let (_tmp, h) = open_delete_confirmation(HEIGHT);
+
+    let screen = h.screen_to_string();
+    let header = screen
+        .lines()
+        .find(|l| l.contains("Delete workspace"))
+        .unwrap_or_else(|| panic!("no confirmation header.\nScreen:\n{screen}"));
+    // Only whitespace between the header and the frame's border — and no
+    // second border straight outside that one (`│ │ Delete workspace …` is the
+    // nested box). The dimmed dock may share the row, so this looks only at
+    // the run of borders adjacent to the header.
+    let left = &header[..header.find("Delete workspace").unwrap()];
+    let left = left.trim_end();
+    assert!(
+        left.ends_with('│'),
+        "the header must sit just inside the frame.\nScreen:\n{screen}"
+    );
+    let outside = left[..left.len() - '│'.len_utf8()].trim_end();
+    assert!(
+        !outside.ends_with('│'),
+        "the confirmation must be one frame, not a box inside a box.\nScreen:\n{screen}"
+    );
+    let title = screen
+        .lines()
+        .find(|l| l.contains("Confirm Delete") && !l.contains("[ Confirm Delete ]"))
+        .unwrap_or_else(|| panic!("no frame title.\nScreen:\n{screen}"));
+    assert!(
+        title.contains('─'),
+        "the title must ride in the frame's top border.\nScreen:\n{screen}"
     );
 }
 

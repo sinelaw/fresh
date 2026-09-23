@@ -4,7 +4,6 @@ use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness};
 use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::input::commands::Suggestion;
 use fresh::input::keybindings::Action;
-use fresh::services::live_grep_state::{GrepMatch, LiveGrepLastState};
 use fresh::view::prompt::PromptType;
 use std::fs;
 
@@ -183,6 +182,94 @@ fn test_live_grep_buffers_scope_finds_unmodified_open_buffer() {
     // `<file>:<line>` stays visible and only ever appears in a result row.
     harness
         .wait_until(|h| h.screen_to_string().contains("notes.txt:2"))
+        .unwrap();
+}
+
+/// Universal Search folds case by default, and its **Case** toggle is how
+/// you say otherwise (issue #3212).
+///
+/// The overlay used to decide this by smart-case — case-insensitive unless
+/// the query carried an uppercase letter — which is an unreachable setting:
+/// searching `Foo` could never find `foo`. Here the query is capitalised and
+/// the file spells the token in lower case, so the old rule would have found
+/// nothing. Drives the Buffers scope, which is pure JS (no rg/grep
+/// subprocess) and so deterministic on any host.
+#[test]
+fn live_grep_folds_case_until_the_case_toggle_says_otherwise() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().canonicalize().unwrap().join("project_root");
+    fs::create_dir(&project_root).unwrap();
+
+    let plugins_dir = project_root.join("plugins");
+    fs::create_dir(&plugins_dir).unwrap();
+    copy_plugin_lib(&plugins_dir);
+    copy_plugin(&plugins_dir, "live_grep");
+
+    let target = project_root.join("notes.txt");
+    fs::write(&target, "alpha\ncasetoken_9f1 here\ngamma\n").unwrap();
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        140,
+        30,
+        Default::default(),
+        project_root.clone(),
+    )
+    .unwrap();
+    harness.open_file(&target).unwrap();
+    harness.render().unwrap();
+
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text("Live Grep (Find").unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Live Grep"))
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Search in:"))
+        .unwrap();
+
+    // The toolbar offers the toggle, and it starts off.
+    let toolbar = harness.screen_to_string();
+    assert!(
+        toolbar.contains("[ ] Case"),
+        "the Match row should offer an unchecked Case toggle; got:\n{toolbar}"
+    );
+
+    // Buffers only: drop Files (Alt+L) and Terminals (Alt+T).
+    harness
+        .send_key(KeyCode::Char('l'), KeyModifiers::ALT)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Char('t'), KeyModifiers::ALT)
+        .unwrap();
+    harness.render().unwrap();
+
+    // A capitalised query finds the lowercase token, which smart-case
+    // could not.
+    harness.type_text("CaseToken_9f1").unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("notes.txt:2"))
+        .unwrap();
+
+    // Alt+C turns matching case-sensitive, and the row goes away.
+    //
+    // Checked is `[v]` here, not `[x]`: this is a plugin widget toolbar
+    // (`lib/widgets.ts`'s `toggle`), not the core search-options row the
+    // find prompt draws. Waiting on the wrong glyph is a hang, not a
+    // failure — the wait just never resolves.
+    harness
+        .send_key(KeyCode::Char('c'), KeyModifiers::ALT)
+        .unwrap();
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            screen.contains("[v] Case") && !screen.contains("notes.txt:2")
+        })
         .unwrap();
 }
 
@@ -754,136 +841,23 @@ fn test_live_grep_uses_working_dir() {
     );
 }
 
-/// Regression test for issue #1796 (capture side): cancelling the
-/// Live Grep prompt with no input and no streamed results must NOT
-/// populate the Resume cache. Pre-fix, `cancel_prompt` stored
-/// `Some(LiveGrepLastState { cached_results: Some(vec![]), .. })`,
-/// which combined with the Resume gate's `cached_results.is_some()`
-/// check caused Resume to open an empty static popup.
-#[test]
-fn test_resume_live_grep_capture_skips_empty_dismissal() {
-    let mut harness = EditorTestHarness::new(80, 24).unwrap();
-
-    harness
-        .editor_mut()
-        .start_prompt("Live grep: ".to_string(), PromptType::LiveGrep);
-    // Press Esc immediately — no input typed, no results seeded.
-    harness.editor_mut().cancel_prompt();
-
-    assert!(
-        harness.editor().live_grep_last_state_for_tests().is_none(),
-        "Cancelling Live Grep with empty input must not populate the Resume cache; \
-         pre-fix this stored Some(LiveGrepLastState {{ cached_results: Some(vec![]), .. }}) \
-         which made Resume open an empty popup."
-    );
-}
-
-/// Regression test for the bug surfaced after the initial fix shipped:
-/// pressing Enter on a Live Grep result jumps to the file but loses
-/// the Resume cache, so Alt+r returns the user to a fresh-empty popup
-/// instead of their match list. Pre-fix `confirm_prompt` had no
-/// caching for Live Grep prompts; only `cancel_prompt` did. Post-fix
-/// the confirm path mirrors the cancel path's gates.
-#[test]
-fn test_resume_live_grep_capture_on_confirm_with_results() {
-    let mut harness = EditorTestHarness::new(80, 24).unwrap();
-
-    harness
-        .editor_mut()
-        .start_prompt("Live grep: ".to_string(), PromptType::LiveGrep);
-    if let Some(prompt) = harness.editor_mut().prompt_mut() {
-        prompt.set_input_plain("needle".to_string());
-        prompt.set_cursor_byte(prompt.input_str().len());
-        let mut s = Suggestion::new("src/foo.rs:42".to_string());
-        s.description = Some("fn needle() {}".to_string());
-        s.value = Some("src/foo.rs:42:1".to_string());
-        prompt.suggestions = vec![s];
-        prompt.selected_suggestion = Some(0);
-    }
-    let _ = harness.editor_mut().confirm_prompt();
-
-    let cached = harness
-        .editor()
-        .live_grep_last_state_for_tests()
-        .expect("Confirming Live Grep on a real result must populate the Resume cache");
-    assert_eq!(cached.query, "needle");
-    assert_eq!(cached.selected_index, Some(0));
-    let results = cached
-        .cached_results
-        .as_ref()
-        .expect("cached_results must be Some after confirm");
-    assert_eq!(results.len(), 1);
-    assert_eq!(results[0].file, "src/foo.rs");
-    assert_eq!(results[0].line, 42);
-}
-
-/// Regression test for issue #1796 (replay side): even if a degenerate
-/// `Some(empty Vec)` cache is somehow present, `ResumeLiveGrep` must
-/// fall through to the fresh-start path rather than seeding an empty
-/// `PromptType::LiveGrep` overlay. Defends against any future code
-/// path that writes such a state, independent of the capture-side gate.
-#[test]
-fn test_resume_live_grep_replay_skips_empty_cache() {
-    let mut harness = EditorTestHarness::new(80, 24).unwrap();
-
-    harness
-        .editor_mut()
-        .set_live_grep_last_state_for_tests(Some(LiveGrepLastState {
-            query: String::new(),
-            selected_index: None,
-            cached_results: Some(Vec::<GrepMatch>::new()),
-            cached_at: None,
-            last_results_snapshot_id: None,
-        }));
-    harness
-        .editor_mut()
-        .dispatch_action_for_tests(Action::ResumeLiveGrep);
-
-    // Plugins aren't loaded in this minimal harness, so the fresh-start
-    // path can't create a plugin prompt. Pre-fix the replay branch would
-    // still seed a PromptType::LiveGrep overlay from the empty cache —
-    // post-fix the gate rejects empty results so no prompt opens.
-    let prompt_input = harness.editor().prompt_input();
-    assert!(
-        prompt_input.is_none(),
-        "Resume with an empty cached_results must fall through to the fresh-start \
-         path, not seed a PromptType::LiveGrep overlay from the empty cache. \
-         Got prompt_input = {:?}",
-        prompt_input
-    );
-}
-
 /// Resume runs the *same* flow as a fresh Live Grep (via the plugin's
 /// `resume_live_grep`), seeded with the last query — it no longer builds a
-/// bespoke core overlay from the Rust-side cache. In this minimal harness no
-/// plugins are loaded, so Resume opens no prompt even when a cache exists;
-/// that absence is the regression guard against the old bespoke path.
+/// bespoke core overlay. In this minimal harness no plugins are loaded, so
+/// Resume opens no prompt; that absence is the regression guard against the
+/// old core path.
 #[test]
-fn test_resume_live_grep_routes_through_plugin_not_core_cache() {
+fn test_resume_live_grep_routes_through_plugin() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
 
-    harness
-        .editor_mut()
-        .set_live_grep_last_state_for_tests(Some(LiveGrepLastState {
-            query: "cached_query".to_string(),
-            selected_index: Some(0),
-            cached_results: Some(vec![GrepMatch {
-                file: "src/foo.rs".to_string(),
-                line: 42,
-                column: 1,
-                content: "fn cached_query() {}".to_string(),
-            }]),
-            cached_at: None,
-            last_results_snapshot_id: None,
-        }));
     harness
         .editor_mut()
         .dispatch_action_for_tests(Action::ResumeLiveGrep);
     assert_eq!(
         harness.editor().prompt_input(),
         None,
-        "Resume must route through the plugin flow, not seed a bespoke core \
-         overlay from the Rust cache (no plugins loaded here, so no prompt opens)"
+        "Resume must route through the plugin flow, not open a core overlay \
+         (no plugins loaded here, so no prompt opens)"
     );
 }
 

@@ -901,11 +901,8 @@ async function effectiveLifecycleEnv(): Promise<Record<string, string>> {
 /// authority's spawner can apply it to every `docker exec` (including
 /// the LSP `command_exists` probe and the LSP server spawn itself).
 ///
-/// Why pre-restart, not post-restart: `setAuthority` rebuilds the
-/// editor in place; the next plugin instance can't influence the
-/// already-installed authority's spawner without a second restart.
-/// We have one shot, here, while we still hold the host-side spawner
-/// and know which container we're talking to.
+/// Why before the install: the spawner is built from this payload, and an
+/// installed authority cannot be amended without installing a second one.
 ///
 /// Why bash login-interactive: per the dev-container spec, the
 /// default `userEnvProbe` is `loginInteractiveShell`. `bash -lic env`
@@ -2377,14 +2374,10 @@ function writeAttachDecision(value: AttachDecision): void {
 /// real choice between "not now" and "stop asking forever".
 let attachDismissedThisSession = false;
 
-/// Breadcrumb written before calling `editor.setAuthority(payload)`
-/// — setAuthority restarts the editor, so there's no clean callback
-/// to hook once the new authority is live. If the post-restart plugin
-/// instance sees this key with no matching container authority
-/// installed, the attach round-tripped through setAuthority but the
-/// core failed to construct the authority (rare: a rejected
-/// AuthorityPayload). We surface that as FailedAttach so users aren't
-/// stuck wondering why Connecting silently became Local.
+/// Breadcrumb written before `editor.setAuthority(payload)`. If it is still
+/// here with no container authority installed, core failed to construct the
+/// authority (rare: a rejected AuthorityPayload), and `settleAttachAttempt`
+/// surfaces that as FailedAttach rather than a silent fall back to Local.
 ///
 /// The key carries the epoch-ms timestamp of the attempt so stale
 /// entries from long-dormant sessions don't bleed into a fresh
@@ -2408,6 +2401,31 @@ function readAttachAttemptMs(): number | null {
     return Number.isFinite(n) ? n : null;
   }
   return null;
+}
+
+/// Settle an outstanding attach attempt, and say whether it surfaced a failure.
+/// Called from `authority_changed`, and from init for a relaunch mid-attach or
+/// a container that failed before any authority changed. Idempotent: the
+/// breadcrumb is cleared either way, so the second caller finds nothing to do.
+function settleAttachAttempt(): boolean {
+  const attemptMs = readAttachAttemptMs();
+  if (attemptMs === null) return false;
+
+  // Stale breadcrumbs (> 30 min) are dropped.
+  const MAX_AGE_MS = 30 * 60 * 1000;
+  if (Date.now() - attemptMs > MAX_AGE_MS) {
+    clearAttachAttempt();
+    return false;
+  }
+  if (editor.getAuthorityLabel().length > 0) {
+    // A container authority came up.
+    clearAttachAttempt();
+    return false;
+  }
+  // No container landed. Surface it with the same popup as an in-flight failure.
+  enterFailedAttach(editor.t("indicator.error_restart_recovery"));
+  clearAttachAttempt();
+  return true;
 }
 
 function showAttachPrompt(): void {
@@ -2508,6 +2526,9 @@ editor.on("action_popup_result", (data) => {
 });
 editor.on("authority_changed", (data) => {
   registerCommands();
+  // Attaching does not restart the editor, so this is where an attach's
+  // outcome is learned.
+  settleAttachAttempt();
   const label = (data as { label?: string } | undefined)?.label ?? "";
   if (label.startsWith("Container:")) {
     void runAutoForwardSweep();
@@ -2517,8 +2538,8 @@ editor.on("authority_changed", (data) => {
 });
 
 /// Re-register state-gated commands when the authority transitions
-/// (local ↔ container). Without this, after `setAuthority` lands a
-/// container we'd still have `Attach` / `Cancel Startup` in the
+/// (local ↔ container). Attaching does not reload the plugin, so without this
+/// we'd still have `Attach` / `Cancel Startup` in the
 /// palette and `Detach` / `Show Logs` missing.
 ///
 /// Also runs the auto-forward port-detection sweep when entering
@@ -2626,9 +2647,8 @@ function registerCommands(): void {
   // unconditionally. Commands that are only meaningful in one
   // mode are gated below — `attach` / `cancel_attach` only when
   // not already attached, `detach` / `show_forwarded_ports_panel` /
-  // `show_logs` only when attached. The plugin reloads after
-  // `setAuthority` AND we listen for `authority_changed` so this
-  // function runs on every transition.
+  // `show_logs` only when attached. `authority_changed` runs this on every
+  // transition; attaching does not reload the plugin.
   const attached = editor.getAuthorityLabel().startsWith("Container:");
   // Drop any stale state-gated registrations from the previous
   // mode before re-registering. `editor.unregisterCommand` is a
@@ -2767,32 +2787,10 @@ if (findConfig()) {
     const authorityLabel = editor.getAuthorityLabel();
     const alreadyAttached = authorityLabel.length > 0;
 
-    // Post-restart recovery: clear or surface a FailedAttach for
-    // attempts that round-tripped through setAuthority without
-    // landing a container. Stale breadcrumbs (> 30 min) are
-    // quietly dropped so an old attempt can't poison a fresh
-    // session years later.
-    const attemptMs = readAttachAttemptMs();
-    if (attemptMs !== null) {
-      const ageMs = Date.now() - attemptMs;
-      const MAX_AGE_MS = 30 * 60 * 1000;
-      if (ageMs > MAX_AGE_MS) {
-        clearAttachAttempt();
-      } else if (alreadyAttached) {
-        // Matching container authority came up — success path.
-        clearAttachAttempt();
-      } else {
-        // No container landed but we just tried. Surface it with the
-        // same proactive popup as an in-flight failure so users see
-        // Retry / Reopen Locally without having to click the
-        // indicator.
-        enterFailedAttach(editor.t("indicator.error_restart_recovery"));
-        clearAttachAttempt();
-        // Do not also show the attach prompt — the failed-attach
-        // popup is the right next surface; stacking a second popup
-        // on top would bury it.
-        return;
-      }
+    // Surface a failed attach if `authority_changed` did not get to it first.
+    if (settleAttachAttempt()) {
+      // Not the attach prompt too; a second popup would bury the failure.
+      return;
     }
 
     if (alreadyAttached) {

@@ -103,20 +103,6 @@ impl Cursor {
         self.selection_mode == SelectionMode::Block && self.block_anchor.is_some()
     }
 
-    /// Get the block selection bounds (start_line, start_col, end_line, end_col)
-    /// Returns None if not in block selection mode
-    pub fn block_selection_bounds(&self) -> Option<(usize, usize, usize, usize)> {
-        if self.selection_mode != SelectionMode::Block {
-            return None;
-        }
-        self.block_anchor.map(|anchor| {
-            // We need current position as 2D coords, which requires buffer context
-            // For now, just return the anchor info
-            // The actual current position will be computed by the caller using the buffer
-            (anchor.line, anchor.column, anchor.line, anchor.column)
-        })
-    }
-
     /// Get the start of the selection (min of position and anchor)
     pub fn selection_start(&self) -> usize {
         self.anchor.map_or(self.position, |a| a.min(self.position))

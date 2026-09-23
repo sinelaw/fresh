@@ -136,6 +136,12 @@ struct Cli {
     #[arg(long, hide = true, value_name = "NAME")]
     session_name: Option<String>,
 
+    /// Boot the daemon in Orchestrator mode (internal, used by
+    /// spawn_server_detached). The client knows the launch was a bare
+    /// `fresh`; the daemon is a different process and cannot see that.
+    #[arg(long, hide = true)]
+    orchestrator_mode: bool,
+
     /// Remote SSH URL for server mode (internal, used by spawn_server_detached
     /// when the client was launched with `ssh://…` or `user@host:path`).  The
     /// server parses this, connects, and installs the result as
@@ -172,6 +178,15 @@ struct Cli {
     /// editor.
     #[cfg(feature = "web")]
     #[arg(long, value_name = "ADDR", num_args = 0..=1, default_missing_value = "127.0.0.1:8137")]
+    web: Option<String>,
+
+    /// Accepted but unavailable: this build was compiled without the `web`
+    /// feature. Hidden from `--help` (advertising a flag that cannot work
+    /// would be worse than not listing it) and taken only so `--web` fails
+    /// with `web_unavailable()`'s explanation of what is missing instead of
+    /// clap's bare "unexpected argument '--web' found".
+    #[cfg(not(feature = "web"))]
+    #[arg(long, value_name = "ADDR", num_args = 0..=1, default_missing_value = "127.0.0.1:8137", hide = true)]
     web: Option<String>,
 }
 
@@ -215,6 +230,10 @@ struct Args {
     /// when the client saw an `ssh://` / scp-style remote in
     /// `files`.  Populated only for the daemon side.
     ssh_url: Option<String>,
+    /// Forwarded to the detached daemon by `spawn_server_detached` when the
+    /// client was a bare `fresh` and `orchestrator_mode` was on.  Populated
+    /// only for the daemon side.
+    orchestrator_mode: bool,
     // Daemon-related fields (set via subcommands or -a shortcut)
     attach: bool,
     list_sessions: bool,
@@ -227,6 +246,10 @@ struct Args {
     gui: bool,
     /// Serve the web UI on this bind address (`--web [ADDR]`)
     #[cfg(feature = "web")]
+    web: Option<String>,
+    /// `--web [ADDR]` on a build without the web UI — carried only so the
+    /// failure can explain itself.
+    #[cfg(not(feature = "web"))]
     web: Option<String>,
 }
 
@@ -559,6 +582,7 @@ impl From<Cli> for Args {
             init,
             server: cli.server,
             ssh_url: cli.ssh_url,
+            orchestrator_mode: cli.orchestrator_mode,
             attach,
             list_sessions,
             session_name,
@@ -567,6 +591,8 @@ impl From<Cli> for Args {
             #[cfg(feature = "gui")]
             gui: cli.gui,
             #[cfg(feature = "web")]
+            web: cli.web,
+            #[cfg(not(feature = "web"))]
             web: cli.web,
         }
     }
@@ -615,7 +641,6 @@ enum ParsedLocation {
 struct IterationOutcome {
     loop_result: AnyhowResult<()>,
     update_result: Option<release_checker::ReleaseCheckResult>,
-    restart_dir: Option<PathBuf>,
 }
 
 struct SetupState {
@@ -777,10 +802,16 @@ fn take_stdin_pipe() -> AnyhowResult<std::fs::File> {
     Ok(unsafe { std::fs::File::from_raw_handle(duplicated.cast()) })
 }
 
-/// Check if stdin has data available (is a pipe or redirect, not a TTY)
-fn stdin_has_data() -> bool {
+/// Whether stdin is the terminal.
+///
+/// The only question anything here can actually answer. Its opposite is not
+/// "there is a pipe with data on it" — a redirect from a file, `/dev/null`,
+/// an inherited socket and a closed descriptor all answer the same way — so
+/// nothing downstream may assume more than "these bytes, whatever they are,
+/// are not keystrokes".
+fn stdin_is_terminal() -> bool {
     use std::io::IsTerminal;
-    !io::stdin().is_terminal()
+    io::stdin().is_terminal()
 }
 
 /// Reopen stdin from /dev/tty after reading piped content.
@@ -791,8 +822,23 @@ fn reopen_stdin_from_tty() -> AnyhowResult<()> {
     use std::fs::File;
     use std::os::unix::io::AsRawFd;
 
-    // Open /dev/tty - the controlling terminal
-    let tty = File::open("/dev/tty")?;
+    // Open /dev/tty - the controlling terminal. A process without one (a
+    // daemon, a `setsid` child, a cron job) cannot get keys from anywhere,
+    // so say which device is missing rather than coming up unusable.
+    let tty = File::open("/dev/tty").map_err(|e| {
+        anyhow::anyhow!("Failed to open /dev/tty (no controlling terminal to read keys from): {e}")
+    })?;
+
+    // With fd 0 closed on entry (`fresh file 0<&-`), the open above is handed
+    // fd 0 itself. `dup2(0, 0)` is then a no-op that *succeeds*, and dropping
+    // `tty` closes fd 0 again — leaving stdin closed while reporting success,
+    // which is the same dead descriptor this function exists to replace. There
+    // is nothing to duplicate in that case; the terminal is already fd 0 and
+    // only has to stop being owned by a `File` that will close it.
+    if tty.as_raw_fd() == libc::STDIN_FILENO {
+        std::mem::forget(tty);
+        return Ok(());
+    }
 
     // Duplicate /dev/tty to stdin (fd 0) using libc
     // SAFETY: dup2 is safe to call with valid file descriptors
@@ -861,9 +907,7 @@ fn handle_first_run_setup(
             .active_window_mut()
             .enable_event_streaming(log_path)?;
     }
-    // The warning-log channel and status-log path used to be wired up
-    // here from `tracing_handles`; that wiring now lives in the main
-    // loop so it survives editor restarts (e.g. devcontainer attach).
+    // The warning-log channel and status-log path are wired up in main.
 
     // If the user passed any file argument on the command line and the
     // `skip_session_restore_when_files_passed` option is on (default), treat
@@ -1710,37 +1754,66 @@ fn initialize_app(args: &Args) -> AnyhowResult<SetupState> {
         original_hook(panic);
     }));
 
-    // Check if we should read from stdin
-    // This can be triggered by --stdin flag or by using "-" as a file argument
-    let stdin_requested = args.stdin || args.files.iter().any(|f| f == "-");
-
-    // Start stdin streaming in background BEFORE entering raw mode
-    // This is critical - once raw mode is enabled, stdin is used for terminal events
-    // Background thread streams pipe → temp file while editor runs
-    let stdin_stream = if stdin_requested {
-        if stdin_has_data() {
-            tracing::info!("Starting background stdin streaming");
-            match start_stdin_streaming() {
-                Ok(stream_state) => {
-                    tracing::info!(
-                        "Stdin streaming started, spool: {:?}",
-                        stream_state.spool.path()
-                    );
-                    Some(stream_state)
-                }
-                Err(e) => {
-                    eprintln!("Error: Failed to start stdin streaming: {}", e);
-                    return Err(e);
-                }
-            }
-        } else {
+    // **Whatever is on stdin is input, never keystrokes.** `--stdin` and a
+    // `-` among the files ask for it explicitly; a bare `fresh` with stdin
+    // redirected means the same thing (#3252), since it is the only input
+    // there is. That launch used to fall between the cases — `fresh -` reads
+    // stdin, a bare `fresh` on a terminal goes to the orchestrator — and kept
+    // the redirect on fd 0: its bytes reached the key decoder as keystrokes,
+    // and once a pipe's writer closed, `poll` reported `POLLHUP` immediately
+    // and forever, without `POLLIN`, which `services::tty_input::poll_readable`
+    // reads as a timeout. The editor spun on a full core and never saw another
+    // key, Ctrl+Q included.
+    //
+    // File arguments say what to open, so they leave stdin unread — but that
+    // launch had the same dead fd 0 and spun the same way, so it still has to
+    // take the terminal; it just has no buffer to make of stdin. Replacing
+    // fd 0 drops the last read end, so a writer still filling the pipe gets
+    // SIGPIPE rather than blocking on a pipe nobody will read.
+    //
+    // Only "is stdin the terminal" is asked, so a redirect from a file or
+    // `/dev/null` counts too: each left the same unreadable fd 0, and none is
+    // a source of keys.
+    //
+    // All of this runs BEFORE raw mode is enabled: once it is, stdin is the
+    // editor's source of terminal events. The reading path streams stdin into
+    // the spool on a background thread, so the editor starts while data is
+    // still arriving.
+    let stdin_asked_for = args.stdin || args.files.iter().any(|f| f == "-");
+    let stdin_stream = if stdin_is_terminal() {
+        if stdin_asked_for {
             eprintln!("Error: --stdin or \"-\" specified but stdin is a terminal (no piped data)");
             anyhow::bail!(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "No data piped to stdin",
             ));
         }
+        None
+    } else if stdin_asked_for || args.files.is_empty() {
+        tracing::info!("Starting background stdin streaming");
+        match start_stdin_streaming() {
+            Ok(stream_state) => {
+                tracing::info!(
+                    "Stdin streaming started, spool: {:?}",
+                    stream_state.spool.path()
+                );
+                Some(stream_state)
+            }
+            Err(e) => {
+                eprintln!("Error: Failed to start stdin streaming: {}", e);
+                return Err(e);
+            }
+        }
     } else {
+        // Nothing reads stdin here, so it is simply replaced. This fails the
+        // launch exactly as the reading path does, and for the same reason:
+        // with no controlling terminal there is nowhere to read keys from.
+        // Reporting it here is what makes the failure legible — crossterm
+        // opens `/dev/tty` itself a moment later in `TerminalModes`, so a
+        // launch that carried on regardless still died, just with a bare
+        // "No such device or address" naming nothing.
+        reopen_stdin_from_tty()?;
+        tracing::info!("Reopened stdin from the terminal (file arguments given)");
         None
     };
 
@@ -2029,12 +2102,10 @@ fn run_editor_iteration(
     }
 
     let update_result = editor.get_update_result().cloned();
-    let restart_dir = editor.take_restart_dir();
 
     Ok(IterationOutcome {
         loop_result,
         update_result,
-        restart_dir,
     })
 }
 
@@ -3077,7 +3148,9 @@ fn run_server_command(args: &Args, web_addr: Option<String>) -> AnyhowResult<()>
     let session_keepalive: Option<Box<dyn std::any::Any + Send>> =
         remote_session.map(|rs| Box::new(rs) as Box<dyn std::any::Any + Send>);
     let startup_authority = if remote_info.is_some() {
-        Some(authority)
+        Some(std::sync::Arc::new(
+            fresh::services::authority::Connection::plain(authority),
+        ))
     } else {
         None
     };
@@ -3090,6 +3163,7 @@ fn run_server_command(args: &Args, web_addr: Option<String>) -> AnyhowResult<()>
         dir_context,
         plugins_enabled: !args.no_plugins,
         init_enabled: !args.no_init,
+        orchestrator_mode: args.orchestrator_mode,
         startup_authority,
         workspace_trust,
         env_provider,
@@ -3134,6 +3208,22 @@ fn run_server_command(args: &Args, web_addr: Option<String>) -> AnyhowResult<()>
 
     boot!("[server] Server shutting down");
     Ok(())
+}
+
+/// `fresh --web [ADDR]` on a build compiled without the `web` feature.
+///
+/// The web UI is opt-in at compile time (see the `web` feature in Cargo.toml),
+/// so a default build has no bridge to serve. Say that, and say how to get
+/// one, rather than letting clap reject `--web` as an unknown argument —
+/// nothing in that message hints a build feature is missing. Printed and
+/// exited like the "session already running" case in `run_web_command`: a
+/// user error deserves a clean line, not `real_main`'s backtrace.
+#[cfg(not(feature = "web"))]
+fn web_unavailable() -> ! {
+    eprintln!("this build of fresh was compiled without the web UI");
+    eprintln!("rebuild with: cargo build --release --features web");
+    eprintln!("(or install a package that ships it)");
+    std::process::exit(1);
 }
 
 /// `fresh --web [ADDR] [FILES…]` — run the session daemon in the foreground
@@ -3249,7 +3339,13 @@ fn run_open_files_command(
 
     // Start server if not running (like nvr does by default)
     let server_was_started = if !socket_paths.is_server_alive() {
-        let _pid = spawn_server_detached(session_name, ssh_url.as_deref(), locale, config)?;
+        let _pid = spawn_server_detached(&fresh::server::DaemonSpawn {
+            session_name,
+            ssh_url: ssh_url.as_deref(),
+            locale,
+            config,
+            ..Default::default()
+        })?;
 
         // Wait for server to be ready
         loop {
@@ -3288,7 +3384,7 @@ fn run_open_files_command(
         // the files have been queued.
         drop(conn);
         if std::io::IsTerminal::is_terminal(&std::io::stdin()) {
-            return run_attach(session_name, &[], locale, config);
+            return run_attach(session_name, &[], locale, config, false);
         } else {
             eprintln!(
                 "Started a new daemon and opened {} file(s). Attach with: fresh -a{}",
@@ -5026,7 +5122,77 @@ fn run_attach_command(args: &Args) -> AnyhowResult<()> {
         &args.files,
         args.locale.as_deref(),
         args.config.as_deref(),
+        false,
     )
+}
+
+/// A bare `fresh` — no files, no flags, nothing — with
+/// `orchestrator_mode` left on.
+///
+/// The whole launch is "attach to the shared daemon, starting it if it isn't
+/// up". That is deliberately the *entire* behaviour when the daemon already
+/// runs: no files to open, no working directory to impose, nothing to
+/// reconfigure — this terminal simply becomes another view onto the editor
+/// that is already there, showing whatever workspace it was left in.
+///
+/// The daemon it starts is told `--orchestrator-mode` because it is a
+/// separate process: the shape of *this* command line is the only evidence
+/// that orchestrator mode was chosen, and it does not survive the spawn on
+/// its own (see [`fresh::server::DaemonSpawn`]).
+fn run_orchestrator_launch() -> AnyhowResult<()> {
+    run_attach(
+        Some(fresh::server::ORCHESTRATOR_DAEMON),
+        &[],
+        None,
+        None,
+        true,
+    )
+}
+
+/// Whether a bare `fresh` should launch into Orchestrator mode.
+///
+/// Three conditions, and all of them are about *this* invocation rather than
+/// about the editor:
+///
+///   * the command line is empty (`argv.len() == 1`) — a file or a flag,
+///     any flag, means "just this, here", and is left alone;
+///   * stdin is a terminal — `fresh` under `$GIT_EDITOR`, in a pipe, or as
+///     a subprocess is not someone sitting down to work; and
+///   * we are not already *inside* a Fresh editor's embedded terminal.
+///
+/// That last one is not a nicety. Orchestrator mode attaches to the shared
+/// daemon, and a terminal buffer inside that very daemon is exactly where
+/// this can be typed: the daemon then renders one shared screen into a
+/// client that lives inside its own output, which is not a second editor
+/// but a feedback loop — the pane fills with shredded frames. Falling
+/// through here launches an ordinary inline editor in the terminal, which
+/// is what a nested `fresh` did before Orchestrator mode existed and which
+/// renders perfectly well. `FRESH_SESSION` is the signal because it is what
+/// every local embedded terminal advertises (see
+/// `server::local_control`); a stale or unreachable value costs nothing,
+/// since the fallback is the ordinary launch either way.
+///
+/// Only then is the config consulted, which is why this loads it rather than
+/// taking the one `initialize_app` builds: on this path we hand off to the
+/// daemon and never build an editor here at all, and on every other path
+/// this function has already answered `false` without reading anything. A
+/// config that cannot be read is not an error — it means the ordinary
+/// launch, which will report the problem properly.
+fn wants_orchestrator_launch() -> bool {
+    if std::env::args_os().count() != 1 {
+        return false;
+    }
+    if !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+        return false;
+    }
+    if std::env::var("FRESH_SESSION").is_ok_and(|s| !s.trim().is_empty()) {
+        return false;
+    }
+    let Ok(dir_context) = fresh::config_io::DirectoryContext::from_system() else {
+        return false;
+    };
+    let working_dir = std::env::current_dir().unwrap_or_default();
+    config::Config::load_with_layers(&dir_context, &working_dir).orchestrator_mode
 }
 
 /// `locale` and `config` are the client's own `--locale` and `--config`,
@@ -5040,6 +5206,7 @@ fn run_attach(
     files: &[String],
     locale: Option<&str>,
     config: Option<&Path>,
+    orchestrator_mode: bool,
 ) -> AnyhowResult<()> {
     use crossterm::terminal::enable_raw_mode;
     use fresh::server::protocol::{
@@ -5085,7 +5252,13 @@ fn run_attach(
         eprintln!("Starting daemon...");
 
         // Spawn server in background
-        let _pid = spawn_server_detached(session_name, ssh_url.as_deref(), locale, config)?;
+        let _pid = spawn_server_detached(&fresh::server::DaemonSpawn {
+            session_name,
+            ssh_url: ssh_url.as_deref(),
+            locale,
+            config,
+            orchestrator_mode,
+        })?;
         true
     } else {
         false
@@ -5462,6 +5635,10 @@ fn run_if_subcommand(
     if let Some(addr) = &args.web {
         return Some(run_web_command(args, addr));
     }
+    #[cfg(not(feature = "web"))]
+    if args.web.is_some() {
+        web_unavailable();
+    }
     #[cfg(feature = "gui")]
     if !console_available || args.gui {
         return Some(fresh::gui::run_gui(
@@ -5475,38 +5652,6 @@ fn run_if_subcommand(
         ));
     }
     None
-}
-
-/// Attempt workspace or hot-exit restore when the editor restarts into a new project.
-fn restore_editor_workspace(editor: &mut Editor, args: &Args) {
-    if args.force_restore || editor.config().editor.restore_previous_session {
-        // Shared restore flow (same as startup / the dock's
-        // `materialize_window`): applies the new project's persisted
-        // explorer visibility, or the fresh-session default when there is
-        // nothing to restore — so a project whose explorer was closed
-        // does not spring back open on a Switch Project restart.
-        match editor.restore_active_window_on_launch(false) {
-            Ok(true) => tracing::info!("Workspace restored successfully"),
-            Ok(false) => tracing::debug!("No previous workspace found"),
-            Err(e) => tracing::warn!("Failed to restore workspace: {}", e),
-        }
-    } else {
-        tracing::info!(
-            "Skipping workspace restore on restart: editor.restore_previous_session is disabled"
-        );
-        // Session restore opted out, but hot-exit content for the newly-switched
-        // project is still restored so in-progress work is not lost.
-        match editor.try_restore_hot_exit_buffers() {
-            Ok(n) if n > 0 => tracing::info!(
-                "Restored {} hot-exit buffer(s) on restart despite skipping session restore",
-                n
-            ),
-            Ok(_) => {}
-            Err(e) => tracing::warn!("Failed to restore hot-exit buffers on restart: {}", e),
-        }
-        // Nothing restored — apply the bare-directory explorer default.
-        editor.apply_active_window_explorer_default(false, false);
-    }
 }
 
 fn main() -> AnyhowResult<()> {
@@ -5783,6 +5928,14 @@ fn real_main() -> AnyhowResult<()> {
     // Print deprecation warnings for old flags
     print_deprecation_warnings(&cli);
 
+    // A bare `fresh` on a terminal, with `orchestrator_mode` on: hand the
+    // whole launch to the shared daemon and relay it. Checked here, after
+    // clap, so `--help` and `--version` still answer for themselves — both
+    // put something on the command line, so neither reaches this.
+    if wants_orchestrator_launch() {
+        return run_orchestrator_launch();
+    }
+
     // `--skill` is the shortcut an agent is told to run first: one short,
     // stable flag that resolves to whichever guide is currently the best
     // introduction, so the injected contract never has to name a topic.
@@ -5887,26 +6040,19 @@ fn real_main() -> AnyhowResult<()> {
     let (terminal_width, terminal_height) = terminal_size;
 
     // Track whether this is the first run (for session restore, file open, etc.)
-    let mut is_first_run = true;
-
-    // Track whether we should restore workspace on restart (for project switching)
-    let mut restore_workspace_on_restart = false;
 
     // Authority that will drive the next `Editor` constructed in the
     // loop. Starts from the startup authority (local or SSH); when a
     // plugin calls `editor.setAuthority(...)` the previous Editor
     // stashes the new authority in its `pending_authority` slot, which
     // we consume right before dropping it below.
-    let mut current_authority = startup_authority;
-
-    // Process-lifetime keepalive for a connection-backed authority.
-    // Seeded from the SSH startup session (if any); replaced when a
-    // plugin attaches a remote agent (K8s) mid-session via
-    // `attachRemoteAgent`. Held purely for its `Drop` — replacing it
-    // tears the previous connection down. Boxed opaquely so this loop
-    // never names a backend.
-    let mut current_keepalive: Option<Box<dyn std::any::Any + Send>> =
-        remote_session.map(|rs| Box::new(rs) as Box<dyn std::any::Any + Send>);
+    // The startup session's keepalive travels with its connection.
+    let mut current_authority = std::sync::Arc::new(fresh::services::authority::Connection {
+        authority: startup_authority,
+        keepalive: std::sync::Mutex::new(
+            remote_session.map(|rs| Box::new(rs) as Box<dyn std::any::Any + Send>),
+        ),
+    });
 
     // Status-message log path is just a clone-able path — capture it
     // once and re-bind to every restarted editor instance. Without
@@ -5935,10 +6081,9 @@ fn real_main() -> AnyhowResult<()> {
         tracing::warn!("Local control socket unavailable: {}", e);
     }
 
-    // Main editor loop - supports restarting with a new working directory
+    // One editor, built once; nothing rebuilds it.
     // Returns (loop_result, last_update_result) tuple
-    let (result, last_update_result) = loop {
-        let first_run = is_first_run;
+    let (result, last_update_result) = {
         let workspace_enabled = !args.no_session;
 
         // Detect terminal color capability
@@ -5964,16 +6109,18 @@ fn real_main() -> AnyhowResult<()> {
             // is what resolves a linked worktree to the repo that owns its
             // trust decision.
             let trust_owner = fresh::services::workspace_trust::trust_owner_root(
-                current_authority.filesystem.as_ref(),
+                current_authority.authority.filesystem.as_ref(),
                 &placeholder_root,
             );
-            let placeholder = fresh::services::authority::Authority::local_scoped(
-                fresh::services::authority::SessionScope::for_root(
-                    &placeholder_root,
-                    &dir_context.project_state_dir(&placeholder_root),
-                    &dir_context.project_state_dir(&trust_owner),
+            let placeholder = std::sync::Arc::new(fresh::services::authority::Connection::plain(
+                fresh::services::authority::Authority::local_scoped(
+                    fresh::services::authority::SessionScope::for_root(
+                        &placeholder_root,
+                        &dir_context.project_state_dir(&placeholder_root),
+                        &dir_context.project_state_dir(&trust_owner),
+                    ),
                 ),
-            );
+            ));
             std::mem::replace(&mut current_authority, placeholder)
         };
         let mut editor = Editor::with_working_dir_opts(
@@ -5986,7 +6133,12 @@ fn real_main() -> AnyhowResult<()> {
             color_capability,
             boot_authority,
             true, // defer_plugin_load: TUI startup; plugin loads run on the
-                  // plugin thread and arrive via AsyncBridge each tick.
+            // plugin thread and arrive via AsyncBridge each tick.
+            //
+            // Never orchestrator mode: a bare `fresh` with the setting on
+            // hands off to the daemon long before this loop, so an editor
+            // built here is by construction an ordinary in-terminal launch.
+            false,
         )
         .context("Failed to create editor instance")?;
         tracing::info!("Editor instance created");
@@ -6042,37 +6194,17 @@ fn real_main() -> AnyhowResult<()> {
             editor.set_warning_log(rx, p);
         }
 
-        if first_run {
-            tracing::info!("Running first-run setup...");
-            handle_first_run_setup(
-                &mut editor,
-                &args,
-                &file_locations,
-                show_file_explorer,
-                &mut stdin_stream,
-                workspace_enabled,
-            )
-            .context("Failed first run setup")?;
-            tracing::info!("First-run setup complete");
-        } else {
-            if restore_workspace_on_restart {
-                restore_editor_workspace(&mut editor, &args);
-            } else {
-                // Not restoring on this restart at all — still default the
-                // explorer for the freshly-entered directory.
-                editor.apply_active_window_explorer_default(false, false);
-            }
-            // Mid-session restart: reflow so the (possibly toggled) sidebar
-            // and the split/terminal viewports match the new visibility.
-            editor.relayout();
-            let path = current_working_dir
-                .as_ref()
-                .map(|p| p.display().to_string())
-                .unwrap_or_else(|| ".".to_string());
-            editor.set_status_message(
-                fresh_i18n::t!("file.switched_to_project", path = path).to_string(),
-            );
-        }
+        tracing::info!("Running first-run setup...");
+        handle_first_run_setup(
+            &mut editor,
+            &args,
+            &file_locations,
+            show_file_explorer,
+            &mut stdin_stream,
+            workspace_enabled,
+        )
+        .context("Failed first run setup")?;
+        tracing::info!("First-run setup complete");
 
         if let Err(e) = editor.start_recovery_session() {
             tracing::warn!("Failed to start recovery session: {}", e);
@@ -6110,7 +6242,6 @@ fn real_main() -> AnyhowResult<()> {
         .context("Editor iteration failed")?;
 
         let update_result = iteration.update_result;
-        let restart_dir = iteration.restart_dir;
         let loop_result = iteration.loop_result;
 
         // If a plugin called `editor.setAuthority(...)` (or cleared it)
@@ -6118,68 +6249,12 @@ fn real_main() -> AnyhowResult<()> {
         // `pending_authority` and triggered a restart. Move it into
         // the loop-local var *before* dropping the editor so the next
         // iteration builds against the new backend.
-        if let Some(new_authority) = editor.take_pending_authority() {
-            tracing::info!("Authority transition queued; restarting editor");
-            current_authority = new_authority;
-            // A connection-backed authority (remote agent / K8s) queues
-            // its keepalive alongside the authority. Adopt it here so the
-            // live carrier + reconnect/heartbeat tasks survive into the
-            // next iteration; the previous keepalive drops (tearing down
-            // the old connection). A plain local/docker transition
-            // carries no keepalive, leaving the slot — and any current
-            // remote session — untouched.
-            if let Some(new_keepalive) = editor.take_pending_keepalive() {
-                // Swap in the new session and drop the previous one,
-                // explicitly tearing the old connection down before the
-                // next iteration builds against the new backend.
-                let previous = current_keepalive.replace(new_keepalive);
-                drop(previous);
-            }
-        } else if restart_dir.is_some() {
-            // Non-transition restart (e.g. change-working-dir, config reload):
-            // carry the *active session's own backend* forward by moving it out
-            // of the editor we're about to drop, rather than booting the next
-            // iteration on the local placeholder. Without this a `fresh
-            // user@host` (or other CLI-remote) session would silently drop to
-            // local on restart — `Authority` is non-`Clone`, so it must be
-            // moved, not copied. Its `current_keepalive` (the carrier) is a
-            // loop-local and already survives the rebuild.
-            current_authority = editor.take_active_authority();
-        }
-
-        // Pluck the warning-log channel back out of the soon-to-be-
-        // dropped editor so the next iteration can re-bind it.
+        // Pluck the warning-log channel back out so the shutdown path can reach it.
         warning_log_slot = editor.take_warning_log();
-
-        // Persist every session before a restart rebuilds the editor from
-        // disk. Quit already saves (after the loop); the restart branch did
-        // not, so a session's per-window state — notably its backend
-        // `authority_spec` — would be lost across an `install_authority`
-        // restart and the session would come back local. Only needed when we
-        // are actually restarting; a real quit saves below.
-        if restart_dir.is_some() {
-            if let Err(e) = editor.save_all_windows_workspaces() {
-                tracing::warn!("Failed to save sessions before restart: {e}");
-            }
-        }
 
         drop(editor);
 
-        if let Some(new_dir) = restart_dir {
-            tracing::info!(
-                "Restarting editor with new working directory: {}",
-                new_dir.display()
-            );
-            current_working_dir = Some(new_dir);
-            is_first_run = false;
-            restore_workspace_on_restart = true; // Restore workspace for the new project
-            terminal
-                .clear()
-                .context("Failed to clear terminal for restart")?;
-            continue;
-        }
-
-        break (loop_result, update_result);
+        (loop_result, update_result)
     };
 
     // Restore terminal state
@@ -6525,6 +6600,7 @@ where
             // data dir (see `orchestrator_persistence`). Best-effort;
             // failures are logged inside, never block quit.
             editor.save_orchestrator_state();
+            editor.save_dock_chrome();
             break;
         }
 

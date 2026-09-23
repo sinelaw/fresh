@@ -16,21 +16,13 @@ use std::sync::atomic::AtomicBool;
 #[cfg(unix)]
 use std::sync::Arc;
 
-use crate::server::ipc::{ClientConnection, SocketPaths};
-use crate::server::protocol::{
-    ClientControl, ClientHello, ServerControl, TermSize, PROTOCOL_VERSION,
-};
+use crate::server::ipc::ClientConnection;
+use crate::server::protocol::TermSize;
+#[cfg(windows)]
+use crate::server::protocol::{ClientControl, ServerControl};
 
 #[cfg(unix)]
 mod relay_unix;
-
-/// Client configuration
-pub struct ClientConfig {
-    /// Socket paths for the session
-    pub socket_paths: SocketPaths,
-    /// Initial terminal size
-    pub term_size: TermSize,
-}
 
 /// Reason the client exited
 #[derive(Debug)]
@@ -43,71 +35,6 @@ pub enum ClientExitReason {
     VersionMismatch { server_version: String },
     /// Connection error
     Error(io::Error),
-}
-
-/// Run the client, connecting to an existing server
-///
-/// This function blocks until the connection is closed or an error occurs.
-/// It handles:
-/// - Handshake with version negotiation
-/// - Raw mode setup
-/// - Bidirectional byte relay
-/// - Resize events (via SIGWINCH on Unix)
-/// - Clean terminal restoration
-pub fn run_client(config: ClientConfig) -> io::Result<ClientExitReason> {
-    let conn = ClientConnection::connect(&config.socket_paths)?;
-    run_client_with_connection(config, conn)
-}
-
-/// Run the client with an already-established connection
-///
-/// This is useful when the caller has already established a connection
-/// (e.g., after retrying connection attempts). Performs handshake then relay.
-pub fn run_client_with_connection(
-    config: ClientConfig,
-    conn: ClientConnection,
-) -> io::Result<ClientExitReason> {
-    // Perform handshake
-    let hello = ClientHello::new(config.term_size);
-    let hello_json = serde_json::to_string(&ClientControl::Hello(hello))
-        .map_err(|e| io::Error::other(e.to_string()))?;
-    conn.write_control(&hello_json)?;
-
-    // Read server response
-    let response = conn
-        .read_control()?
-        .ok_or_else(|| io::Error::new(io::ErrorKind::UnexpectedEof, "Server closed connection"))?;
-
-    let server_msg: ServerControl =
-        serde_json::from_str(&response).map_err(|e| io::Error::other(e.to_string()))?;
-
-    match server_msg {
-        ServerControl::Hello(server_hello) => {
-            if server_hello.protocol_version != PROTOCOL_VERSION {
-                return Ok(ClientExitReason::VersionMismatch {
-                    server_version: server_hello.server_version,
-                });
-            }
-            tracing::info!(
-                "Connected to session '{}' (server {})",
-                server_hello.session_id,
-                server_hello.server_version
-            );
-        }
-        ServerControl::VersionMismatch(mismatch) => {
-            return Ok(ClientExitReason::VersionMismatch {
-                server_version: mismatch.server_version,
-            });
-        }
-        ServerControl::Error { message } => {
-            return Err(io::Error::other(format!("Server error: {}", message)));
-        }
-        _ => {
-            return Err(io::Error::other("Unexpected server response"));
-        }
-    }
-
-    run_client_relay(conn)
 }
 
 /// Run the relay loop with an already-handshaked connection

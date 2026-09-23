@@ -692,11 +692,9 @@ fn test_save_as_nested_path() {
     // use a wide terminal to avoid truncation of long macOS temp paths)
     harness.assert_screen_contains("does not exist");
 
-    // Confirm directory creation
-    harness.type_text("c").unwrap();
-    harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
-        .unwrap();
+    // Confirm directory creation with the Create Folder button's letter
+    // (`c` is Cancel)
+    harness.type_text("f").unwrap();
     harness.render().unwrap();
 
     // File should be saved successfully
@@ -753,16 +751,13 @@ fn test_save_as_overwrite_confirmation() {
         .unwrap();
     harness.render().unwrap();
 
-    // Should show the overwrite confirmation prompt
-    harness
-        .wait_for_screen_contains("exists. (o)verwrite, (C)ancel?")
-        .unwrap();
+    // Should show the overwrite confirmation dialog
+    harness.wait_for_screen_contains("File Exists").unwrap();
+    harness.wait_for_screen_contains("Overwrite").unwrap();
 
-    // Cancel the operation
-    harness.type_text("c").unwrap();
-    harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
-        .unwrap();
+    // Cancel the operation. The dialog acts on the accelerator directly —
+    // there is no line to press Enter on any more.
+    harness.type_text("C").unwrap();
     harness.render().unwrap();
 
     // Verify cancellation message
@@ -821,16 +816,11 @@ fn test_save_as_overwrite_confirmed() {
         .unwrap();
     harness.render().unwrap();
 
-    // Should show the overwrite confirmation prompt
-    harness
-        .wait_for_screen_contains("exists. (o)verwrite, (C)ancel?")
-        .unwrap();
+    // Should show the overwrite confirmation dialog
+    harness.wait_for_screen_contains("File Exists").unwrap();
 
     // Confirm overwrite with 'o'
     harness.type_text("o").unwrap();
-    harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
-        .unwrap();
     harness.render().unwrap();
 
     // Verify file was saved

@@ -329,18 +329,6 @@ impl InputHistory {
         &self.items
     }
 
-    /// Create a history from existing items
-    ///
-    /// Useful for session restoration.
-    pub fn from_items(items: Vec<String>) -> Self {
-        let mut history = Self::new();
-        // Add items respecting deduplication rules
-        for item in items {
-            history.push(item);
-        }
-        history
-    }
-
     // ========================================================================
     // Persistence methods
     // ========================================================================
@@ -395,16 +383,6 @@ pub use fresh_editor_core::data_dir::get_data_dir;
 /// `fresh_editor_core::data_dir::set_data_dir_override`.
 #[doc(hidden)]
 pub use fresh_editor_core::data_dir::set_data_dir_override;
-
-/// Get the path for search history file
-pub fn get_search_history_path() -> std::io::Result<std::path::PathBuf> {
-    Ok(get_data_dir()?.join("search_history.json"))
-}
-
-/// Get the path for replace history file
-pub fn get_replace_history_path() -> std::io::Result<std::path::PathBuf> {
-    Ok(get_data_dir()?.join("replace_history.json"))
-}
 
 impl Default for InputHistory {
     fn default() -> Self {

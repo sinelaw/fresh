@@ -707,6 +707,8 @@ pub struct PluginTrackedState {
     /// unload, so a hot-reload during plugin development doesn't leave the
     /// previous copy's timers ticking against the new one.
     pub timer_ids: Vec<u64>,
+    /// Machine handles from `editor.openMachine`, each holding a connection. Closed on unload.
+    pub machine_ids: Vec<u64>,
 }
 
 /// Type alias for the shared async resource owner map.
@@ -1031,18 +1033,6 @@ impl JsEditorApi {
             fresh_core::api::PluginPath::Authority { window, .. } => {
                 self.services.authority_filesystem(*window)
             }
-        }
-    }
-
-    /// Whether two plugin paths resolve to the same filesystem backend (so a
-    /// two-path op like rename/copy is well-defined). Cross-backend moves are
-    /// rejected rather than silently operating on one side.
-    fn same_backend(a: &fresh_core::api::PluginPath, b: &fresh_core::api::PluginPath) -> bool {
-        use fresh_core::api::PluginPath::{Authority, Local};
-        match (a, b) {
-            (Local(_), Local(_)) => true,
-            (Authority { window: wa, .. }, Authority { window: wb, .. }) => wa == wb,
-            _ => false,
         }
     }
 
@@ -1821,6 +1811,236 @@ impl JsEditorApi {
             .unwrap_or(0) as u32
     }
 
+    /// Open a machine without attaching it to a window. `spec` is the same
+    /// payload `setAuthority` takes. Resolves with `{id, platform, home, label}`.
+    /// The handle is closed when the plugin is unloaded.
+    #[plugin_api(
+        async_promise,
+        js_name = "_openMachineRaw",
+        ts_return = "{ id: number; platform: string; home: string; label: string }"
+    )]
+    #[qjs(rename = "_openMachineStart")]
+    pub fn open_machine_start<'js>(
+        &self,
+        ctx: rquickjs::Ctx<'js>,
+        #[plugin_api(ts_type = "unknown")] spec: rquickjs::Value<'js>,
+    ) -> rquickjs::Result<u64> {
+        let payload: serde_json::Value = rquickjs_serde::from_value(spec)
+            .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string()))?;
+        if !payload.is_object() {
+            return Err(throw_js(&ctx, "openMachine: spec must be an object"));
+        }
+        let id = self.alloc_request_id();
+        // Attributed to this plugin so the handle is closed on unload.
+        if let Ok(mut owners) = self.async_resource_owners.lock() {
+            owners.insert(id, self.plugin_name.clone());
+        }
+        let _ = self.command_sender.send(PluginCommand::OpenMachine {
+            payload,
+            callback_id: JsCallbackId::new(id),
+        });
+        Ok(id)
+    }
+
+    /// Close a machine opened by `openMachine`. Idempotent.
+    #[plugin_api(async_promise, js_name = "_closeMachineRaw", ts_return = "boolean")]
+    #[qjs(rename = "_closeMachineStart")]
+    pub fn close_machine_start(&self, _ctx: rquickjs::Ctx<'_>, machine: i64) -> u64 {
+        let id = self.alloc_request_id();
+        let _ = self.command_sender.send(PluginCommand::CloseMachine {
+            machine: machine.max(0) as u64,
+            callback_id: Some(JsCallbackId::new(id)),
+        });
+        id
+    }
+
+    /// Read environment variables from a machine; only set names come back.
+    /// A remote machine is asked with `printenv`; never this computer's values
+    /// for another machine. No `printenv` reports nothing.
+    #[plugin_api(
+        async_promise,
+        js_name = "_machineEnvOn",
+        ts_return = "Record<string, string>"
+    )]
+    #[qjs(rename = "_machineEnvStart")]
+    pub fn machine_env_start<'js>(
+        &self,
+        ctx: rquickjs::Ctx<'js>,
+        machine: i64,
+        #[plugin_api(ts_type = "string[]")] names: rquickjs::Value<'js>,
+    ) -> rquickjs::Result<u64> {
+        let parsed: serde_json::Value = rquickjs_serde::from_value(names)
+            .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string()))?;
+        let serde_json::Value::Array(items) = parsed else {
+            return Err(throw_js(&ctx, "machineEnv: `names` must be an array"));
+        };
+        let names = items
+            .iter()
+            .filter_map(|v| v.as_str().map(str::to_string))
+            .collect();
+
+        let id = self.alloc_request_id();
+        let _ = self.command_sender.send(PluginCommand::MachineEnv {
+            machine: (machine > 0).then_some(machine as u64),
+            names,
+            callback_id: JsCallbackId::new(id),
+        });
+        Ok(id)
+    }
+
+    /// Walk a directory tree on the machine. Resolves with `{entries, truncated}`;
+    /// each entry is `{path, rel, kind, mtime, size}`, `kind` one of `"file"`,
+    /// `"dir"`, `"symlink"`, `mtime` a unix timestamp. A missing root resolves
+    /// empty. `includeHidden` is off by default.
+    #[plugin_api(
+        async_promise,
+        js_name = "_walkTreeOn",
+        ts_return = "{ entries: { path: string; rel: string; kind: 'file' | 'dir' | 'symlink'; mtime: number; size: number }[]; truncated: boolean }"
+    )]
+    #[qjs(rename = "_walkTreeStart")]
+    pub fn walk_tree_start<'js>(
+        &self,
+        ctx: rquickjs::Ctx<'js>,
+        machine: i64,
+        root: String,
+        #[plugin_api(
+            ts_type = "{ skipDirs?: string[]; includeHidden?: boolean; includeDirs?: boolean; maxDepth?: number; maxEntries?: number }"
+        )]
+        options: rquickjs::Object<'js>,
+    ) -> rquickjs::Result<u64> {
+        let opts = parse_options(&ctx, "walkTree", &root, options)?;
+        validate_allowed_keys(
+            &ctx,
+            "walkTree",
+            &root,
+            &opts,
+            &[
+                "skipDirs",
+                "includeHidden",
+                "includeDirs",
+                "maxDepth",
+                "maxEntries",
+            ],
+        )?;
+        let skip_dirs = match opts.get("skipDirs") {
+            Some(serde_json::Value::Array(items)) => items
+                .iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect(),
+            _ => Vec::new(),
+        };
+        let flag = |key: &str| matches!(opts.get(key), Some(serde_json::Value::Bool(true)));
+        let count = |key: &str| {
+            opts.get(key)
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0) as usize
+        };
+
+        let id = self.alloc_request_id();
+        let _ = self.command_sender.send(PluginCommand::WalkTree {
+            machine: (machine > 0).then_some(machine as u64),
+            root,
+            skip_dirs,
+            include_hidden: flag("includeHidden"),
+            include_dirs: flag("includeDirs"),
+            // 0 reads as "no limit" on the editor side.
+            max_depth: count("maxDepth"),
+            max_entries: count("maxEntries"),
+            callback_id: JsCallbackId::new(id),
+        });
+        Ok(id)
+    }
+
+    /// Read the first bytes of many files in one call. Takes
+    /// `[{path, maxBytes}, …]` and resolves with one result per request, in
+    /// order: `{path, text}` on success, `{path, error}` on failure.
+    #[plugin_api(
+        async_promise,
+        js_name = "_readFilePrefixesOn",
+        ts_return = "{ path: string; text?: string; error?: string }[]"
+    )]
+    #[qjs(rename = "_readFilePrefixesStart")]
+    pub fn read_file_prefixes_start<'js>(
+        &self,
+        ctx: rquickjs::Ctx<'js>,
+        machine: i64,
+        #[plugin_api(ts_type = "{ path: string; maxBytes: number }[]")] requests: rquickjs::Value<
+            'js,
+        >,
+    ) -> rquickjs::Result<u64> {
+        let parsed: serde_json::Value = rquickjs_serde::from_value(requests)
+            .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string()))?;
+        let serde_json::Value::Array(items) = parsed else {
+            return Err(throw_js(
+                &ctx,
+                "readFilePrefixes: expected an array of { path, maxBytes }",
+            ));
+        };
+        let mut requests = Vec::with_capacity(items.len());
+        for item in items {
+            let Some(path) = item.get("path").and_then(serde_json::Value::as_str) else {
+                return Err(throw_js(
+                    &ctx,
+                    "readFilePrefixes: every entry needs a `path` string",
+                ));
+            };
+            let max_bytes = item
+                .get("maxBytes")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0) as usize;
+            requests.push((path.to_string(), max_bytes));
+        }
+
+        let id = self.alloc_request_id();
+        let _ = self.command_sender.send(PluginCommand::ReadFilePrefixes {
+            machine: (machine > 0).then_some(machine as u64),
+            requests,
+            callback_id: JsCallbackId::new(id),
+        });
+        Ok(id)
+    }
+
+    /// Run a command on the machine. Resolves with `{code, stdout, stderr}`; a
+    /// non-zero `code` resolves rather than rejecting. Unlike `spawnHostProcess`,
+    /// a remote machine runs it there. Rejects on a machine opened read-only.
+    #[plugin_api(
+        async_promise,
+        js_name = "_runOnTargetOn",
+        ts_return = "{ code: number; stdout: string; stderr: string }"
+    )]
+    #[qjs(rename = "_runOnTargetStart")]
+    pub fn run_on_target_start<'js>(
+        &self,
+        ctx: rquickjs::Ctx<'js>,
+        machine: i64,
+        program: String,
+        #[plugin_api(ts_type = "string[]")] args: rquickjs::Value<'js>,
+        cwd: String,
+    ) -> rquickjs::Result<u64> {
+        let parsed: serde_json::Value = rquickjs_serde::from_value(args)
+            .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string()))?;
+        let serde_json::Value::Array(items) = parsed else {
+            return Err(throw_js(&ctx, "runOnTarget: `args` must be an array"));
+        };
+        let args = items
+            .iter()
+            .map(|v| match v {
+                serde_json::Value::String(s) => s.clone(),
+                other => other.to_string(),
+            })
+            .collect();
+
+        let id = self.alloc_request_id();
+        let _ = self.command_sender.send(PluginCommand::RunOnTarget {
+            machine: (machine > 0).then_some(machine as u64),
+            program,
+            args,
+            cwd: (!cwd.is_empty()).then_some(cwd),
+            callback_id: JsCallbackId::new(id),
+        });
+        Ok(id)
+    }
+
     /// Get the byte offset of the start of a line (0-indexed line number)
     /// Returns null if the line number is out of range
     #[plugin_api(
@@ -2413,6 +2633,39 @@ impl JsEditorApi {
             .unwrap_or(false)
     }
 
+    /// Launched by a bare `fresh` in Orchestrator mode. Exposed to JS as
+    /// `editor.orchestratorMode()`. The launch, not the `orchestrator_mode`
+    /// preference, which stays on for `fresh FILE`. Plugins in the mode use
+    /// it to override their own settings.
+    pub fn orchestrator_mode(&self) -> bool {
+        self.state_snapshot
+            .read()
+            .map(|s| s.orchestrator_mode)
+            .unwrap_or(false)
+    }
+
+    /// Whether the left dock slot is open: a panel is in it, or the host is
+    /// holding the column for one its manifest declared. Exposed to JS as
+    /// `editor.dockOpen()`. The plugin that fills the dock mounts it at
+    /// `ready` iff this is true.
+    pub fn dock_open(&self) -> bool {
+        self.state_snapshot
+            .read()
+            .map(|s| s.dock_open)
+            .unwrap_or(false)
+    }
+
+    /// The dock column's width in cells, open or not; `0` when the terminal
+    /// is too narrow for a dock. Exposed to JS as `editor.dockCols()`. Lay
+    /// dock content out to this: the host owns the width and re-fits it on
+    /// resize.
+    pub fn dock_cols(&self) -> u32 {
+        self.state_snapshot
+            .read()
+            .map(|s| u32::from(s.dock_cols))
+            .unwrap_or(0)
+    }
+
     /// The environment core detected in the workspace, as a JSON string
     /// (`{name, kind, snippet}`) or empty when none. Exposed to JS as
     /// `editor.detectedEnv()`. Detection lives only in core; the env-manager
@@ -2592,8 +2845,9 @@ impl JsEditorApi {
             .and_then(|bytes| String::from_utf8(bytes).ok())
     }
 
-    /// Write file contents to the path's filesystem. Parent directories are
-    /// created as needed.
+    /// Write file contents to a NEW file on the path's filesystem. Parent
+    /// directories are created as needed. Returns false if the path already
+    /// exists — use `replaceFile` to replace a file deliberately.
     pub fn write_file(
         &self,
         #[plugin_api(ts_type = "string | LocalPath | WindowPath | AuthorityPath")]
@@ -2602,6 +2856,23 @@ impl JsEditorApi {
     ) -> bool {
         self.fs_for(&path)
             .write_file(Path::new(path.as_str()), content.as_bytes())
+    }
+
+    /// Write to a file, replacing it if it already exists.
+    ///
+    /// `writeFile` refuses an existing path, which is what its documentation
+    /// always promised and what stops a plugin destroying a user's file by
+    /// accident. Use this when replacing the file is the actual intent — a
+    /// plugin rewriting its own cache or state, or re-exporting a report the
+    /// user asked for again. The write is atomic.
+    pub fn replace_file(
+        &self,
+        #[plugin_api(ts_type = "string | LocalPath | WindowPath | AuthorityPath")]
+        path: fresh_core::api::PluginPath,
+        content: String,
+    ) -> bool {
+        self.fs_for(&path)
+            .replace_file(Path::new(path.as_str()), content.as_bytes())
     }
 
     /// Read directory contents (returns array of {name, is_file, is_dir})
@@ -2628,83 +2899,116 @@ impl JsEditorApi {
         self.fs_for(&path).create_dir_all(Path::new(path.as_str()))
     }
 
-    /// Permanently remove a file or directory on the path's filesystem
-    /// (recursively for directories). For safety, the path must be under the OS
-    /// temp directory or the Fresh config directory. Returns true on success.
-    pub fn remove_path(
-        &self,
-        #[plugin_api(ts_type = "string | LocalPath | WindowPath | AuthorityPath")]
-        path: fresh_core::api::PluginPath,
-    ) -> bool {
-        let fs = self.fs_for(&path);
-        let target = match fs.canonicalize(Path::new(path.as_str())) {
-            Some(p) => p,
-            None => return false, // path doesn't exist or can't be resolved
-        };
+    // `removePath`, `renamePath` and `copyPath` used to live here.
+    //
+    // All three took a path the plugin chose. `removePath` checked that the
+    // top-level target sat under the temp or config directory, but a symlink
+    // *inside* that target walked its recursive delete straight back out;
+    // `renamePath` had no such check at all and fell back to copy-then-delete,
+    // so anything `removePath` refused could be moved somewhere it allowed and
+    // deleted from there. `copyPath` overwrote its destination. Between them a
+    // plugin bug could destroy any file the editor could write, with no
+    // confirmation and nothing in the trash to recover from.
+    //
+    // What replaced them takes a name instead of a path — a staging token the
+    // editor issued, or a package kind and name, or a state namespace and key
+    // — and the editor resolves that to a path itself.
 
-        // Canonicalize allowed roots through the same backend so path prefix
-        // comparisons are consistent (e.g. Windows extended-length paths).
-        let temp_dir = fs
-            .canonicalize(&std::env::temp_dir())
-            .unwrap_or_else(std::env::temp_dir);
-        let config_dir = fs
-            .canonicalize(&self.services.config_dir())
-            .unwrap_or_else(|| self.services.config_dir());
-
-        // Verify the path is under an allowed root (temp or config dir)
-        let allowed = target.starts_with(&temp_dir) || target.starts_with(&config_dir);
-        if !allowed {
-            tracing::warn!(
-                "removePath refused: {:?} is not under temp dir ({:?}) or config dir ({:?})",
-                target,
-                temp_dir,
-                config_dir
-            );
-            return false;
-        }
-
-        // Don't allow removing the root directories themselves
-        if target == temp_dir || target == config_dir {
-            tracing::warn!(
-                "removePath refused: cannot remove root directory {:?}",
-                target
-            );
-            return false;
-        }
-
-        fs.remove_path(&target)
+    /// Create an editor-owned staging directory and return the opaque token
+    /// that names it. Write into it with the path `scratchPath` returns, then
+    /// either publish it with `installScratch` or drop it with
+    /// `scratchDiscard`. `label` only makes the directory recognisable to a
+    /// human; it does not decide where the directory goes.
+    pub fn scratch_create(&self, label: String) -> Option<String> {
+        self.services.scratch_create(&label)
     }
 
-    /// Rename/move a file or directory. Both paths must target the same
-    /// filesystem (a cross-backend move is rejected). Returns true on success.
-    pub fn rename_path(
-        &self,
-        #[plugin_api(ts_type = "string | LocalPath | WindowPath | AuthorityPath")]
-        from: fresh_core::api::PluginPath,
-        #[plugin_api(ts_type = "string | LocalPath | WindowPath | AuthorityPath")]
-        to: fresh_core::api::PluginPath,
-    ) -> bool {
-        if !Self::same_backend(&from, &to) {
-            return false;
-        }
-        self.fs_for(&from)
-            .rename(Path::new(from.as_str()), Path::new(to.as_str()))
+    /// The directory a staging token names, or `null` if the token is unknown
+    /// or already spent.
+    pub fn scratch_path(&self, token: String) -> Option<String> {
+        self.services
+            .scratch_path(&token)
+            .map(|p| p.to_string_lossy().to_string())
     }
 
-    /// Copy a file or directory recursively to a new location. Both paths must
-    /// target the same filesystem. Returns true on success.
-    pub fn copy_path(
+    /// Discard a staging directory. The path is looked up from the token, so
+    /// an unknown or spent token removes nothing.
+    pub fn scratch_discard(&self, token: String) -> bool {
+        self.services.scratch_discard(&token)
+    }
+
+    /// Publish a staging directory as the installed package `<kind>/<name>`,
+    /// where `kind` is one of `plugin`, `theme`, `language` or `bundle`. Any
+    /// existing install under that name goes to the system trash first, so an
+    /// upgrade is recoverable.
+    ///
+    /// `subpath` installs one directory out of the staging tree (a package in
+    /// a subdirectory of a cloned monorepo); pass `""` for the whole thing. It
+    /// chooses the source only — `kind` and `name` decide where the package
+    /// lands. Installing the whole tree spends the token; installing a subpath
+    /// leaves it live so the rest can be discarded.
+    pub fn install_scratch(
         &self,
-        #[plugin_api(ts_type = "string | LocalPath | WindowPath | AuthorityPath")]
-        from: fresh_core::api::PluginPath,
-        #[plugin_api(ts_type = "string | LocalPath | WindowPath | AuthorityPath")]
-        to: fresh_core::api::PluginPath,
+        token: String,
+        kind: String,
+        name: String,
+        subpath: String,
     ) -> bool {
-        if !Self::same_backend(&from, &to) {
-            return false;
-        }
-        self.fs_for(&from)
-            .copy(Path::new(from.as_str()), Path::new(to.as_str()))
+        self.services
+            .install_scratch(&token, &kind, &name, &subpath)
+    }
+
+    /// Create a staging directory holding a copy of `from`, and return the
+    /// token that names it — how a package installed from a local directory
+    /// reaches staging.
+    ///
+    /// `from` is a path on the editor host. Staging directories, installed
+    /// packages and plugin state all live there by design, so an install
+    /// survives the SSH session that started it going away; there is no
+    /// authority-path form of this call, so the argument is a plain path
+    /// rather than a `LocalPath | WindowPath | AuthorityPath` union with two
+    /// thirds of it rejected at runtime.
+    ///
+    /// Answers `null` if `from` is not a directory or could not be copied,
+    /// having discarded anything it had already staged — so there is never a
+    /// half-filled staging directory to clean up.
+    pub fn scratch_from_directory(&self, from: String) -> Option<String> {
+        self.services.scratch_from_directory(Path::new(&from))
+    }
+
+    /// Move an installed package to the system trash. Returns false if nothing
+    /// is installed under that kind and name.
+    pub fn uninstall_package(&self, kind: String, name: String) -> bool {
+        self.services.uninstall_package(&kind, &name)
+    }
+
+    /// Write a namespaced state entry, replacing any previous value. The
+    /// editor owns the on-disk layout; a plugin names the entry, not the file.
+    pub fn state_set(&self, namespace: String, key: String, value: String) -> bool {
+        self.services.state_set(&namespace, &key, &value)
+    }
+
+    /// Read a namespaced state entry, or `null` if it is unset.
+    pub fn state_get(&self, namespace: String, key: String) -> Option<String> {
+        self.services.state_get(&namespace, &key)
+    }
+
+    /// The keys set in a namespace, in no particular order.
+    #[plugin_api(ts_return = "string[]")]
+    pub fn state_keys<'js>(
+        &self,
+        ctx: rquickjs::Ctx<'js>,
+        namespace: String,
+    ) -> rquickjs::Result<Value<'js>> {
+        let keys = self.services.state_keys(&namespace);
+        rquickjs_serde::to_value(ctx, &keys)
+            .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string()))
+    }
+
+    /// Clear a namespaced state entry. Returns true if it is gone afterwards,
+    /// including when it was already unset.
+    pub fn state_delete(&self, namespace: String, key: String) -> bool {
+        self.services.state_delete(&namespace, &key)
     }
 
     /// Construct a `LocalPath` — a path that always resolves on the local
@@ -3244,6 +3548,40 @@ impl JsEditorApi {
             .is_ok())
     }
 
+    /// Persist a single core config setting to the user's config file.
+    ///
+    /// The durable counterpart to `setSetting`: `setSetting` patches the
+    /// running editor and is gone at exit, this writes `config.json` the way
+    /// the Settings UI does (same layer resolution, same comment-preserving
+    /// rewrite) *and* applies the value immediately, so a checkbox a plugin
+    /// draws can own a real setting.
+    ///
+    /// `path` is dot-separated (e.g. `"orchestrator_mode"`,
+    /// `"editor.tab_size"`). The host refuses a path that is not a real
+    /// config setting rather than writing a key that would be silently
+    /// dropped on the next load, and says so in the status bar.
+    ///
+    /// Returns `true` if the write was queued; it is applied asynchronously,
+    /// so a following `getConfig()` reflects it only after the editor
+    /// processes the command.
+    pub fn save_setting<'js>(
+        &self,
+        _ctx: rquickjs::Ctx<'js>,
+        path: String,
+        value: Value<'js>,
+    ) -> rquickjs::Result<bool> {
+        let json: serde_json::Value = rquickjs_serde::from_value(value)
+            .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string()))?;
+        Ok(self
+            .command_sender
+            .send(PluginCommand::SaveSetting {
+                plugin_name: self.plugin_name.clone(),
+                path,
+                value: json,
+            })
+            .is_ok())
+    }
+
     /// Reload theme registry from disk
     /// Call this after installing theme packages or saving new themes
     pub fn reload_themes(&self) {
@@ -3534,21 +3872,13 @@ impl JsEditorApi {
     }
 
     /// Delete a custom theme file (sync)
+    ///
+    /// The editor resolves the name to a path and moves the file to the system
+    /// trash: this used to unlink it, so a mis-click lost a hand-tuned theme
+    /// with nothing to recover from.
     #[qjs(rename = "_deleteThemeSync")]
     pub fn delete_theme_sync(&self, name: String) -> bool {
-        // Security: only allow deleting from the themes directory
-        let themes_dir = self.services.config_dir().join("themes");
-        let theme_path = themes_dir.join(format!("{}.json", name));
-
-        // Verify the file is actually in the themes directory (prevent path traversal)
-        if let Ok(canonical) = theme_path.canonicalize() {
-            if let Ok(themes_canonical) = themes_dir.canonicalize() {
-                if canonical.starts_with(&themes_canonical) {
-                    return std::fs::remove_file(&canonical).is_ok();
-                }
-            }
-        }
-        false
+        self.services.trash_theme(&name)
     }
 
     /// Delete a custom theme (alias for deleteThemeSync)
@@ -7168,7 +7498,9 @@ impl JsEditorApi {
         spec_obj: rquickjs::Value<'js>,
         title: String,
         rows: f64,
-        #[plugin_api(ts_type = "{ closable?: boolean; startBlurred?: boolean }")]
+        #[plugin_api(
+            ts_type = "{ closable?: boolean; startBlurred?: boolean; scope?: { buffer: number } | { window: number } | 'editor' }"
+        )]
         opts: rquickjs::function::Opt<rquickjs::Value<'js>>,
     ) -> rquickjs::Result<bool> {
         let json = js_to_json(&ctx, spec_obj);
@@ -7185,6 +7517,22 @@ impl JsEditorApi {
             .unwrap_or(serde_json::Value::Null);
         let flag =
             |name: &str, default: bool| opts.get(name).and_then(|v| v.as_bool()).unwrap_or(default);
+        // `scope`: `"editor"`, `{ window }`, `{ buffer }`, or absent for the
+        // window the mount came from.
+        let scope = match opts.get("scope") {
+            Some(serde_json::Value::String(s)) if s == "editor" => {
+                fresh_core::api::SectionScopeSpec {
+                    editor: true,
+                    ..Default::default()
+                }
+            }
+            Some(serde_json::Value::Object(o)) => fresh_core::api::SectionScopeSpec {
+                editor: false,
+                window: o.get("window").and_then(|v| v.as_u64()),
+                buffer: o.get("buffer").and_then(|v| v.as_u64()),
+            },
+            _ => fresh_core::api::SectionScopeSpec::default(),
+        };
         Ok(self
             .command_sender
             .send(PluginCommand::MountSidebarSection {
@@ -7195,6 +7543,7 @@ impl JsEditorApi {
                 rows: rows.clamp(0.0, u16::MAX as f64) as u16,
                 closable: flag("closable", true),
                 start_blurred: flag("startBlurred", false),
+                scope,
             })
             .is_ok())
     }
@@ -7237,9 +7586,11 @@ impl JsEditorApi {
     }
 
     /// Control a mounted floating panel's placement / focus without
-    /// re-sending its spec. `op`: "dock" (`arg` = width in columns),
-    /// "center", "focus", "blur", "fullscreen" (`arg != 0` makes a
-    /// centered panel cover the whole frame over the dock), "sidebar"
+    /// re-sending its spec. `op`: "dock" (re-anchor as the left dock and
+    /// focus; `arg` unused — the width is the editor's), "dock_width"
+    /// (`arg` = width in columns; sticks like a drag, across resizes and
+    /// launches), "center", "focus", "blur", "fullscreen" (`arg != 0` makes
+    /// a centered panel cover the whole frame over the dock), "sidebar"
     /// (`arg` = requested rows; re-anchors the panel as a sidebar section
     /// under the file explorer — "dock" / "center" re-anchor it back out),
     /// "sidebar_rows" (`arg` = requested rows for a section; a divider the
@@ -7385,9 +7736,9 @@ impl JsEditorApi {
     /// The payload is a JS object describing filesystem + spawner +
     /// terminal wrapper + display label. The canonical schema lives in
     /// the `AuthorityPayload` type in `fresh-editor`; plugins should
-    /// hand-build objects that match it. Fire-and-forget: the editor
-    /// restarts as part of the transition, so the plugin is reloaded
-    /// before any follow-up work can run on this call's return value.
+    /// hand-build objects that match it. Fire-and-forget: returns before the
+    /// authority is live and reloads nothing, so follow-up work belongs in an
+    /// `authority_changed` handler.
     #[plugin_api(js_name = "setAuthority")]
     pub fn set_authority(
         &self,
@@ -7401,7 +7752,7 @@ impl JsEditorApi {
         true
     }
 
-    /// Restore the default local authority. Same restart semantics as
+    /// Restore the default local authority on this window. Same semantics as
     /// `setAuthority`.
     #[plugin_api(js_name = "clearAuthority")]
     pub fn clear_authority(&self) {
@@ -7478,9 +7829,8 @@ impl JsEditorApi {
     /// ```
     ///
     /// The override sticks until replaced or cleared via
-    /// `clearRemoteIndicatorState`. Editor restart (e.g. on
-    /// `setAuthority`) resets it — plugins must reassert after a
-    /// post-restart init if they want the override to persist.
+    /// `clearRemoteIndicatorState`. It survives an authority change but not a
+    /// relaunch.
     #[plugin_api(js_name = "setRemoteIndicatorState")]
     pub fn set_remote_indicator_state(
         &self,
@@ -8792,6 +9142,52 @@ const EDITOR_PROMISE_BOOTSTRAP: &str = r#"
                 editor.listCommands = _wrapAsync("_listCommandsStart", "listCommands");
                 editor.prompt = _wrapAsync("_promptStart", "prompt");
                 editor.getNextKey = _wrapAsync("_getNextKeyStart", "getNextKey");
+                editor._walkTreeOn = _wrapAsync("_walkTreeStart", "walkTree");
+                editor._readFilePrefixesOn = _wrapAsync("_readFilePrefixesStart", "readFilePrefixes");
+                editor._runOnTargetOn = _wrapAsync("_runOnTargetStart", "runOnTarget");
+                editor._machineEnvOn = _wrapAsync("_machineEnvStart", "machineEnv");
+                editor._openMachineRaw = _wrapAsync("_openMachineStart", "openMachine");
+                editor._closeMachineRaw = _wrapAsync("_closeMachineStart", "closeMachine");
+
+                // Machine id 0 means the active window's authority.
+                editor.walkTree = function(root, options) {
+                    return editor._walkTreeOn(0, root, options || {});
+                };
+                editor.readFilePrefixes = function(requests) {
+                    return editor._readFilePrefixesOn(0, requests);
+                };
+                editor.runOnTarget = function(program, args, cwd) {
+                    return editor._runOnTargetOn(0, program, args || [], cwd || "");
+                };
+                editor.machineEnv = function(names) {
+                    return editor._machineEnvOn(0, names || []);
+                };
+                editor.openMachine = function(spec) {
+                    return editor._openMachineRaw(spec).then(function(info) {
+                        var id = info.id;
+                        return {
+                            id: id,
+                            platform: info.platform,
+                            home: info.home,
+                            label: info.label,
+                            walkTree: function(root, options) {
+                                return editor._walkTreeOn(id, root, options || {});
+                            },
+                            readFilePrefixes: function(requests) {
+                                return editor._readFilePrefixesOn(id, requests);
+                            },
+                            run: function(program, args, cwd) {
+                                return editor._runOnTargetOn(id, program, args || [], cwd || "");
+                            },
+                            env: function(names) {
+                                return editor._machineEnvOn(id, names || []);
+                            },
+                            close: function() {
+                                return editor._closeMachineRaw(id);
+                            },
+                        };
+                    });
+                };
                 editor.getLineStartPosition = _wrapAsync("_getLineStartPositionStart", "getLineStartPosition");
                 editor.getLineEndPosition = _wrapAsync("_getLineEndPositionStart", "getLineEndPosition");
                 editor.createTerminal = _wrapAsync("_createTerminalStart", "createTerminal");
@@ -9482,6 +9878,15 @@ impl QuickJsBackend {
                     timer_id: *timer_id,
                 });
             }
+
+            // Close the machines this plugin opened. No callback: the promise is
+            // in the heap being discarded. Closing twice is a no-op editor-side.
+            for machine in &tracked.machine_ids {
+                let _ = self.command_sender.send(PluginCommand::CloseMachine {
+                    machine: *machine,
+                    callback_id: None,
+                });
+            }
         }
 
         // Clean up any pending async resource owner entries for this plugin
@@ -10154,6 +10559,9 @@ mod tests {
             }
             std::fs::write(path, contents).is_ok()
         }
+        fn replace_file(&self, path: &Path, contents: &[u8]) -> bool {
+            self.write_file(path, contents)
+        }
         fn exists(&self, path: &Path) -> bool {
             path.exists()
         }
@@ -10175,19 +10583,6 @@ mod tests {
         }
         fn create_dir_all(&self, path: &Path) -> bool {
             path.is_dir() || std::fs::create_dir_all(path).is_ok()
-        }
-        fn remove_path(&self, path: &Path) -> bool {
-            if path.is_dir() {
-                std::fs::remove_dir_all(path).is_ok()
-            } else {
-                std::fs::remove_file(path).is_ok()
-            }
-        }
-        fn rename(&self, from: &Path, to: &Path) -> bool {
-            std::fs::rename(from, to).is_ok()
-        }
-        fn copy(&self, from: &Path, to: &Path) -> bool {
-            !from.is_dir() && std::fs::copy(from, to).is_ok()
         }
         fn stat(&self, path: &Path) -> Option<fresh_core::services::PluginFileStat> {
             let m = std::fs::metadata(path).ok()?;
@@ -12311,6 +12706,7 @@ mod tests {
                 BufferId(0),
                 BufferInfo {
                     id: BufferId(0),
+                    window_id: 1,
                     path: Some(PathBuf::from("/test1.txt")),
                     name: "test1.txt".to_string(),
                     modified: false,
@@ -12331,6 +12727,7 @@ mod tests {
                 BufferId(1),
                 BufferInfo {
                     id: BufferId(1),
+                    window_id: 1,
                     path: Some(PathBuf::from("/test2.txt")),
                     name: "test2.txt".to_string(),
                     modified: true,
@@ -12797,6 +13194,9 @@ mod tests {
             fn write_file(&self, _path: &Path, _contents: &[u8]) -> bool {
                 true
             }
+            fn replace_file(&self, _path: &Path, _contents: &[u8]) -> bool {
+                true
+            }
             fn exists(&self, _path: &Path) -> bool {
                 true
             }
@@ -12808,15 +13208,6 @@ mod tests {
                 }]
             }
             fn create_dir_all(&self, _path: &Path) -> bool {
-                true
-            }
-            fn remove_path(&self, _path: &Path) -> bool {
-                true
-            }
-            fn rename(&self, _from: &Path, _to: &Path) -> bool {
-                true
-            }
-            fn copy(&self, _from: &Path, _to: &Path) -> bool {
                 true
             }
             fn stat(&self, _path: &Path) -> Option<fresh_core::services::PluginFileStat> {

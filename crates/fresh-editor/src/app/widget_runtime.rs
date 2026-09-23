@@ -252,6 +252,7 @@ impl Editor {
             &panel_key.plugin,
             "widget_event",
             fresh_core::hooks::HookArgs::WidgetEvent {
+                window_id: self.active_window.0,
                 panel_id: panel_key.id,
                 widget_key,
                 event_type,
@@ -2287,27 +2288,6 @@ impl Editor {
             .find(|panel_key| self.panel_focused_widget_is_text(panel_key))
     }
 
-    /// The first panel rendering into `buffer_id` that has a focused widget
-    /// of *any* kind.
-    ///
-    /// [`Self::focused_text_widget_panel_for_buffer`] answers the narrower
-    /// question the clipboard path asks; this one is for a key addressed to
-    /// whatever holds focus — a `Tree`'s pan keys, where the whole point is
-    /// that focus is *not* on a text field.
-    pub(super) fn focused_widget_panel_for_buffer(
-        &self,
-        buffer_id: crate::model::event::BufferId,
-    ) -> Option<crate::widgets::PanelKey> {
-        self.widget_registry
-            .panels_for_buffer(buffer_id)
-            .into_iter()
-            .find(|k| {
-                self.widget_registry
-                    .get(k)
-                    .is_some_and(|p| !p.focus_key.is_empty())
-            })
-    }
-
     /// True when `panel_key`'s currently-focused widget is a `Text`
     /// field (so it can accept clipboard insertion). `false` when the
     /// panel is gone, has no focus, or focus rests on a non-text
@@ -2337,6 +2317,29 @@ impl Editor {
                 markdown: false,
                 ..
             })
+        )
+    }
+
+    /// Whether the panel's focused widget is an editable multi-line `Text`,
+    /// where a bare Enter inserts a newline.
+    pub(super) fn panel_focused_widget_is_multiline_text(
+        &self,
+        panel_key: &crate::widgets::PanelKey,
+    ) -> bool {
+        let Some(panel) = self.widget_registry.get(panel_key) else {
+            return false;
+        };
+        if panel.focus_key.is_empty() {
+            return false;
+        }
+        matches!(
+            crate::widgets::find_widget_by_key(&panel.spec, &panel.focus_key),
+            Some(fresh_core::api::WidgetSpec::Text {
+                read_only: false,
+                markdown: false,
+                rows,
+                ..
+            }) if *rows > 1
         )
     }
 
@@ -2652,7 +2655,7 @@ impl Editor {
         }
         let panel = self.panel(slot)?;
         let h = match panel.placement {
-            super::PanelPlacement::LeftDock { .. } => term_h,
+            super::PanelPlacement::LeftDock => term_h,
             _ => {
                 let pct = panel.height_pct.clamp(1, 100) as u32;
                 (term_h * pct) / 100
@@ -3136,7 +3139,7 @@ mod tests {
         let dir_context = DirectoryContext::for_testing(temp_dir.path());
         let fs: Arc<dyn crate::model::filesystem::FileSystem + Send + Sync> =
             Arc::new(crate::model::filesystem::StdFileSystem);
-        let editor = Editor::new(
+        let mut editor = Editor::new(
             Config::default(),
             80,
             24,
@@ -3145,6 +3148,8 @@ mod tests {
             fs,
         )
         .unwrap();
+        // Pin the dock to the 30 columns `frame_the_shell` hands the tree.
+        editor.dock_width = Some(30);
         (editor, temp_dir)
     }
 
@@ -3153,7 +3158,7 @@ mod tests {
             panel_key,
             width_pct: 30,
             height_pct: 100,
-            placement: crate::app::PanelPlacement::LeftDock { width_cols: 30 },
+            placement: crate::app::PanelPlacement::LeftDock,
             focused: true,
             mode: None,
             scrollbar_zone_hovered: false,
@@ -3423,6 +3428,80 @@ mod tests {
         assert_eq!(
             focused,
             Some(crate::view::shell::splits::content_key(active))
+        );
+    }
+
+    /// **A modal that blurred the dock on its way in does not hand the
+    /// keyboard back to it on its way out.**
+    ///
+    /// A centred panel mounting over a focused dock blurs it
+    /// (`handle_mount_floating_widget`), so the keyboard is the editor's
+    /// from that moment and stays the editor's when the modal closes. The
+    /// tree used to say otherwise: focus was inside the dock when the
+    /// modal's scope opened, so the settle that opened it recorded the dock
+    /// widget as the place to come back to, and closing the modal restored
+    /// focus there — to a panel that had given the keyboard up while the
+    /// modal was up. Every key after that resolved in the `Dock` context
+    /// and died: the Orchestrator's New-Workspace form (a centred modal
+    /// over the dock) left the workspace it had just created unable to
+    /// type, so a file opened in it never took the keyboard.
+    ///
+    /// Gated on `plugins`: it mounts and unmounts the modal through the
+    /// plugin command path (`handle_plugin_command`), which only exists
+    /// when the plugin runtime is compiled in — and the mount is the half
+    /// that blurs the dock, so driving it any other way would be modelling
+    /// the thing under test rather than running it.
+    #[cfg(feature = "plugins")]
+    #[test]
+    fn a_modal_that_blurred_the_dock_leaves_the_keyboard_with_the_editor() {
+        use crate::input::keybindings::KeyContext;
+        let (mut editor, _t) = make_editor();
+        let dock_key = crate::widgets::PanelKey::new("test-plugin", 1);
+        mount_list_panel(
+            &mut editor,
+            &dock_key,
+            crate::app::PanelSlot::Dock.buffer_id(),
+        );
+        editor.dock = Some(dock_panel(dock_key.clone()));
+        frame_the_shell(&mut editor);
+        assert_eq!(editor.get_key_context(), KeyContext::Dock);
+
+        // The form: a centred modal, which blurs the dock as it mounts.
+        editor
+            .handle_plugin_command(fresh_core::api::PluginCommand::MountFloatingWidget {
+                plugin: "test-plugin".to_string(),
+                panel_id: 2,
+                spec: list_of(3),
+                width_pct: 60,
+                height_pct: 60,
+                as_dock: false,
+                focus_marker: false,
+                label_align: Default::default(),
+                title: None,
+                closable: false,
+                start_blurred: false,
+                mode: None,
+            })
+            .unwrap();
+        frame_the_shell(&mut editor);
+        assert!(
+            !editor.is_dock_focused(),
+            "mounting a centred modal blurs the dock"
+        );
+
+        // Submitting it closes the form — and the dock stays blurred.
+        editor
+            .handle_plugin_command(fresh_core::api::PluginCommand::UnmountFloatingWidget {
+                plugin: "test-plugin".to_string(),
+                panel_id: 2,
+            })
+            .unwrap();
+        frame_the_shell(&mut editor);
+        assert!(!editor.is_dock_focused(), "the dock is still blurred");
+        assert_eq!(
+            editor.get_key_context(),
+            KeyContext::Normal,
+            "the keyboard is the editor's, not the blurred dock's"
         );
     }
 
@@ -3941,9 +4020,7 @@ mod tests {
         );
 
         // Widen the dock: the same bytes wrap into fewer rows.
-        if let Some(d) = editor.dock.as_mut() {
-            d.placement = crate::app::PanelPlacement::LeftDock { width_cols: 60 };
-        }
+        editor.dock_width = Some(60);
         editor.shell_description_stale = true;
         let dock = ratatui::layout::Rect::new(0, 0, 60, 24);
         let chrome = ratatui::layout::Rect::new(60, 0, 20, 24);
@@ -4115,6 +4192,7 @@ mod tests {
             indent_cols: 2,
             item_height: 2,
             card_borders: true,
+            toggle_on_click: false,
         };
         assert_eq!(
             Viewport::from_spec(&cards),
@@ -4147,6 +4225,7 @@ mod tests {
                 indent_cols,
                 item_height: 1,
                 card_borders: false,
+                toggle_on_click: false,
             },
             other => other,
         };

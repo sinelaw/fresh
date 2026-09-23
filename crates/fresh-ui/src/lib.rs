@@ -46,7 +46,7 @@ pub use desc::{
     node_type, resolve, row, shared_rc, stack, text, text_runs, viewport, Align, Anchor, BoxProps,
     ComponentExt, Desc, Dir, Dismiss, ElemType, Elide, Fit, FocusProps, GestureProps, Handler,
     HostId, HostSpec, ItemHeight, Justify, LayerProps, LayoutReaderProps, Listener, Modality, Node,
-    Pad, Place, PointerMode, Run, Scrim, ScrollMode, Sizing, TextProps, ViewportProps,
+    Pad, Place, PointerMode, Run, Scrim, Scroll, ScrollMode, Sizing, TextProps, ViewportProps,
 };
 pub use element::ElementId;
 pub use event::{
@@ -65,7 +65,9 @@ pub use render::object::{
     Band, FocusReg, Geom, Hit, HostLeaf, HostObject, LayerGeom, LayoutCx, LayoutInfo, PlainHost,
     RenderId, RenderObject, ScrollInfo,
 };
-pub use render::spec::{BorderStyle, CursorSpec, Draw, DrawList, Item, LayoutSpec, Mark, ThemeKey};
+pub use render::spec::{
+    BorderStyle, CursorSpec, Draw, DrawList, End, Item, LayoutSpec, Mark, ThemeKey,
+};
 pub use schedule::{BuildCx, DirtyCause, InitCx, NullRenderer, Renderer, Sched, Ui, Updater};
 pub use services::{GeomHandle, GeomSnapshot, Geometry, Job, Services};
 pub use widgets::{

@@ -207,7 +207,7 @@ impl Editor {
             )> = self
                 .windows
                 .iter()
-                .map(|(id, w)| (*id, std::sync::Arc::clone(&w.authority.filesystem)))
+                .map(|(id, w)| (*id, std::sync::Arc::clone(&w.authority().filesystem)))
                 .collect();
             registry.rebuild(active, entries);
         }
@@ -252,6 +252,11 @@ impl Editor {
             .as_str()
             .to_string();
         snapshot.env_active = self.authority().env_provider.is_active();
+        snapshot.orchestrator_mode = self.orchestrator_mode();
+        // The dock slot as the host sees it: the plugin mounts at `ready`
+        // iff `dock_open`, and lays its content out to `dock_cols`.
+        snapshot.dock_open = self.dock.is_some() || self.dock_slot_reserved();
+        snapshot.dock_cols = self.dock_cols_if_open();
 
         // Core is the *only* place that detects which environment a workspace
         // has. The env-manager plugin reads this resolved result via
@@ -332,11 +337,11 @@ impl Editor {
                     root: normalize_plugin_path(s.root.clone()),
                     project_path: normalize_plugin_path(project_path),
                     shared_worktree,
-                    // A parked keepalive is what distinguishes a live remote
+                    // A live connection is what distinguishes a live remote
                     // window from a dormant one's disconnected shell.
                     remote: s
                         .authority_spec
-                        .remote_backend_info(self.session_keepalives.contains_key(&s.id)),
+                        .remote_backend_info(self.window_connection_is_live(s.id)),
                 }
             })
             .collect();
@@ -830,8 +835,16 @@ impl Editor {
             PluginCommand::RefreshAllLines => {
                 self.handle_refresh_all_lines();
             }
-            PluginCommand::HookCompleted { .. } => {
-                // Sentinel processed in render loop; no-op if encountered elsewhere.
+            PluginCommand::HookCompleted { hook_name } => {
+                // Sentinel processed in render loop; no-op if encountered
+                // elsewhere — except `ready`'s, which releases the dock
+                // column held open at startup if nothing mounted into it
+                // (every mount the hook sent is ahead of it in the channel).
+                // Frames were painted with the column in them, so the
+                // reclaimed strip gets the full repaint hiding the dock gets.
+                if hook_name == "ready" && self.release_startup_dock_reservation() {
+                    self.request_full_redraw();
+                }
             }
             PluginCommand::SetLineIndicator {
                 buffer_id,
@@ -926,6 +939,9 @@ impl Editor {
             }
             PluginCommand::SetSetting { path, value, .. } => {
                 self.handle_set_setting(path, value);
+            }
+            PluginCommand::SaveSetting { path, value, .. } => {
+                self.handle_save_setting(path, value);
             }
             PluginCommand::AddPluginConfigField {
                 plugin_name,
@@ -1124,6 +1140,28 @@ impl Editor {
                         "DeleteWorkspace: could not forget workspace for {:?}: {e}",
                         root
                     );
+                }
+                // The terminal state for that root dies with it. It is keyed
+                // by the same path (`terminals/<encoded-root>/`) and holds
+                // scrollback for terminals that no longer exist, so leaving it
+                // accumulates one dead directory per deleted workspace — the
+                // user finds them later with no way to tell which are live.
+                // Best-effort for the same reason as the record above.
+                //
+                // To the trash rather than unlinked. Unlike the editor's
+                // other self-owned directories — staging areas, caches — this
+                // holds something the user typed and read: the scrollback of
+                // terminals they ran. Deleting the workspace is their
+                // decision, but it should not be the last word on output they
+                // may still want.
+                let terminals = self.dir_context().terminal_dir_for(&root);
+                if terminals.is_dir() {
+                    if let Err(e) = trash::delete(&terminals) {
+                        tracing::warn!(
+                            "DeleteWorkspace: could not move terminal state {:?} to the trash: {e}",
+                            terminals
+                        );
+                    }
                 }
             }
             PluginCommand::PrewarmWindow { id } => {
@@ -1907,6 +1945,68 @@ impl Editor {
                 self.handle_release_diff_baseline(baseline_id);
             }
 
+            PluginCommand::OpenMachine {
+                payload,
+                callback_id,
+            } => {
+                self.handle_open_machine(payload, callback_id);
+            }
+
+            PluginCommand::CloseMachine {
+                machine,
+                callback_id,
+            } => {
+                self.handle_close_machine(machine, callback_id);
+            }
+
+            PluginCommand::MachineEnv {
+                machine,
+                names,
+                callback_id,
+            } => {
+                self.handle_machine_env(machine, names, callback_id);
+            }
+
+            PluginCommand::WalkTree {
+                machine,
+                root,
+                skip_dirs,
+                include_hidden,
+                include_dirs,
+                max_depth,
+                max_entries,
+                callback_id,
+            } => {
+                self.handle_walk_tree(
+                    machine,
+                    root,
+                    skip_dirs,
+                    include_hidden,
+                    include_dirs,
+                    max_depth,
+                    max_entries,
+                    callback_id,
+                );
+            }
+
+            PluginCommand::ReadFilePrefixes {
+                machine,
+                requests,
+                callback_id,
+            } => {
+                self.handle_read_file_prefixes(machine, requests, callback_id);
+            }
+
+            PluginCommand::RunOnTarget {
+                machine,
+                program,
+                args,
+                cwd,
+                callback_id,
+            } => {
+                self.handle_run_on_target(machine, program, args, cwd, callback_id);
+            }
+
             PluginCommand::GrepProject {
                 plugin_name,
                 pattern,
@@ -2046,9 +2146,18 @@ impl Editor {
                 rows,
                 closable,
                 start_blurred,
+                scope,
             } => {
                 let key = crate::widgets::PanelKey::new(plugin, panel_id);
-                self.handle_mount_sidebar_section(key, spec, title, rows, closable, start_blurred);
+                self.handle_mount_sidebar_section(
+                    key,
+                    spec,
+                    title,
+                    rows,
+                    closable,
+                    start_blurred,
+                    scope,
+                );
             }
 
             PluginCommand::UpdateFloatingWidget {
@@ -2983,6 +3092,8 @@ impl Editor {
         end: usize,
         request_id: u64,
     ) {
+        // Says so when the id is another window's (see `plugin_buffer_guard`).
+        let _ = self.plugin_buffer_in_active_window(buffer_id, "getBufferText");
         let result = if let Some(state) = self
             .windows
             .get_mut(&self.active_window)
@@ -3762,7 +3873,23 @@ impl Editor {
                 // `background` buffer is already in the tab bar by now:
                 // `create_virtual_buffer` adds it and seeds its view state,
                 // and only this line makes it the one on screen.
-                if !hidden_from_tabs && !background {
+                //
+                // "Behind whatever is already there" has nothing to stand
+                // behind when the pane holds a synthetic placeholder: that
+                // buffer is the editor's "I must own at least one buffer"
+                // bookkeeping, hidden from the tab bar and painted as a bare
+                // hint. A background tab parked behind it leaves the reader
+                // looking at the hint with their page one keystroke away and
+                // no sign of it — which is what Orchestrator mode's empty
+                // workspace would show the welcome screen doing on a first
+                // run. Taking the pane here displaces nothing, because there
+                // was nothing to displace.
+                let pane_is_empty = self
+                    .active_window()
+                    .buffer_metadata
+                    .get(&self.active_buffer_id())
+                    .is_some_and(|m| m.synthetic_placeholder);
+                if !hidden_from_tabs && (!background || pane_is_empty) {
                     self.set_active_buffer(buffer_id);
                     tracing::debug!("Switched to virtual buffer {:?}", buffer_id);
                 }
@@ -4436,9 +4563,16 @@ impl Editor {
         self.relayout();
         #[cfg(feature = "plugins")]
         self.update_plugin_state_snapshot();
+        // The seed buffer, so the caller can describe the page itself.
+        let buffer_id = self
+            .windows
+            .get(&id)
+            .map(|w| w.active_buffer().0 as u64)
+            .unwrap_or_default();
         let api_result = fresh_core::api::PreparingWindowResult {
             window_id: id.0,
             stable_id,
+            buffer_id,
         };
         self.plugin_manager.read().unwrap().resolve_callback(
             callback_id,
@@ -4503,7 +4637,9 @@ impl Editor {
         // passes its connected authority. `resume` is the agent-resume argv
         // carried through to the new session's terminal. The new local
         // session gets its own per-session trust scoped to its root.
-        let new_authority = self.local_session_authority(&root);
+        let new_connection = std::sync::Arc::new(crate::services::authority::Connection::plain(
+            self.local_session_authority(&root),
+        ));
         // Only adopt an id that really is a placeholder: anything else would
         // mean silently tearing down a live workspace to reuse its number.
         let adopt = adopt_window.filter(|id| self.preparing_windows.contains_key(id));
@@ -4513,7 +4649,7 @@ impl Editor {
             cwd_buf,
             command,
             title,
-            new_authority,
+            new_connection,
             resume,
             env,
             allow_script,
@@ -4641,15 +4777,7 @@ impl Editor {
                 if is_active_target {
                     let new_active = self.active_window().active_buffer();
                     if prev_active != Some(new_active) {
-                        #[cfg(feature = "plugins")]
-                        self.update_plugin_state_snapshot();
-                        #[cfg(feature = "plugins")]
-                        self.plugin_manager.read().unwrap().run_hook(
-                            "buffer_activated",
-                            crate::services::plugins::hooks::HookArgs::BufferActivated {
-                                buffer_id: new_active,
-                            },
-                        );
+                        self.announce_focus();
                     }
                 }
                 let api_result = fresh_core::api::TerminalResult {
@@ -4885,8 +5013,10 @@ impl Editor {
                 {
                     Ok(auth) => {
                         tracing::info!("Plugin installed new authority");
-                        self.active_window_mut().authority_spec = spec;
-                        self.install_authority(auth);
+                        let landed = self.install_authority(auth);
+                        if let Some(w) = self.windows.get_mut(&landed) {
+                            w.authority_spec = spec;
+                        }
                     }
                     Err(e) => {
                         tracing::warn!("setAuthority: invalid payload: {}", e);
@@ -4910,10 +5040,10 @@ impl Editor {
     /// Idempotent: a reconnect already in flight for this window is a no-op.
     pub(crate) fn reconnect_dormant_session_if_needed(&mut self, window_id: fresh_core::WindowId) {
         // The *activate* path (diving into a session). A live session already
-        // holds its connection (keepalive), so leave it alone here — switching
-        // to an already-connected window must not tear down and rebuild it. A
-        // local session has nothing to reconnect.
-        if self.session_keepalives.contains_key(&window_id) {
+        // holds its connection, so leave it alone here — switching to an
+        // already-connected window must not tear down and rebuild it. A local
+        // session has nothing to reconnect.
+        if self.window_connection_is_live(window_id) {
             return;
         }
         // A session still descriptor-backed in `dormant_remote` (its window,
@@ -4967,7 +5097,7 @@ impl Editor {
                 if let Some(w) = self.windows.get_mut(&window_id) {
                     w.remote_reconnect_error = None;
                 }
-                self.start_remote_connect(agent_spec, Some(window_id), request_id);
+                self.start_remote_connect(agent_spec, Some(window_id), request_id, false);
             }
             crate::services::authority::SessionAuthoritySpec::Plugin(_) => {
                 // Container: only the owning plugin can rebuild the backend
@@ -4992,7 +5122,7 @@ impl Editor {
             };
         // A plugin attach: spawn a born-attached window or restart (per
         // `spec.window`), not a reconnect of an existing one.
-        self.start_remote_connect(spec, None, request_id);
+        self.start_remote_connect(spec, None, request_id, false);
     }
 
     /// Spawn the async remote connect (carrier + agent bootstrap) for `spec`
@@ -5001,11 +5131,15 @@ impl Editor {
     /// `reconnect_window = Some(id)` re-points *that dormant window's*
     /// authority on success (no new window / no restart); `None` follows
     /// `spec.window` (born-attached window vs. global restart).
+    ///
+    /// `for_machine` connects for a plugin's `openMachine` handle instead of a
+    /// window. Its authority gets `TrustLevel::Blocked`, so it cannot run anything.
     pub(crate) fn start_remote_connect(
         &mut self,
         spec: crate::services::authority::RemoteAgentSpec,
         reconnect_window: Option<fresh_core::WindowId>,
         request_id: u64,
+        for_machine: bool,
     ) {
         // Take owned handles up front so the immutable borrows of `self`
         // end before the mutable `set_status_message` / spawn below.
@@ -5028,6 +5162,8 @@ impl Editor {
         // is set the main loop spawns a born-attached new window instead of
         // restarting the whole editor.
         let window_mode = spec.window;
+        // The placeholder the Orchestrator already put the user in, if any.
+        let window_adopt = spec.adopt_window.map(fresh_core::WindowId);
         let window_label = spec.label.clone();
         let window_command = spec.command.clone();
         // A remote session gets its **own** fresh trust + env handles — never
@@ -5038,7 +5174,11 @@ impl Editor {
         // inactive (the remote's env rides the spawner's captured probe).
         let trust = std::sync::Arc::new(crate::services::workspace_trust::WorkspaceTrust::new(
             None,
-            self.authority().workspace_trust.level(),
+            if for_machine {
+                crate::services::workspace_trust::TrustLevel::Blocked
+            } else {
+                self.authority().workspace_trust.level()
+            },
         ));
         let env = std::sync::Arc::new(crate::services::env_provider::EnvProvider::inactive());
 
@@ -5055,12 +5195,15 @@ impl Editor {
         let session_spec =
             crate::services::authority::SessionAuthoritySpec::RemoteAgent(spec.clone());
         let mode_for = |label: &str| {
-            if let Some(window_id) = reconnect_window {
+            if for_machine {
+                crate::services::async_bridge::RemoteAttachMode::Machine
+            } else if let Some(window_id) = reconnect_window {
                 crate::services::async_bridge::RemoteAttachMode::Reconnect { window_id }
             } else if window_mode {
                 crate::services::async_bridge::RemoteAttachMode::Window {
                     label: window_label.clone().unwrap_or_else(|| label.to_string()),
                     command: window_command.clone(),
+                    adopt: window_adopt,
                 }
             } else {
                 crate::services::async_bridge::RemoteAttachMode::Restart
@@ -5794,12 +5937,10 @@ impl Editor {
         if !as_dock && self.dock.as_ref().is_some_and(|f| f.focused) {
             self.blur_floating_panel(super::PanelSlot::Dock);
         }
+        // A dock's width is the editor's (`dock_width` / `dock_width_rule`),
+        // not the panel's.
         let placement = if as_dock {
-            let width = self
-                .dock_width
-                .unwrap_or(32)
-                .clamp(10, self.terminal_width.max(20).saturating_sub(20).max(10));
-            super::PanelPlacement::LeftDock { width_cols: width }
+            super::PanelPlacement::LeftDock
         } else {
             super::PanelPlacement::Centered
         };
@@ -5876,6 +6017,7 @@ impl Editor {
         // viewports reflow to the post-dock width right away (a centered
         // panel leaves `dock_cols` at 0, so this is a cheap no-op there).
         if as_dock {
+            self.dock_reserved = false;
             self.relayout();
         }
     }
@@ -5893,14 +6035,36 @@ impl Editor {
         rows: u16,
         closable: bool,
         start_blurred: bool,
+        scope_spec: fresh_core::api::SectionScopeSpec,
     ) {
+        use crate::app::sidebar::SectionScope;
         // The description reads what this writes; see
         // `Editor::shell_description_stale`.
         self.shell_description_stale = true;
+        // The scope the plugin asked for, resolved: `editor` wins over
+        // `buffer`, `buffer` over `window`; nothing named is the window of
+        // the mount.
+        let scope = if scope_spec.editor {
+            SectionScope::Editor
+        } else if let Some(b) = scope_spec.buffer {
+            SectionScope::Buffer {
+                buffer: fresh_core::BufferId(b as usize),
+            }
+        } else if let Some(w) = scope_spec.window {
+            SectionScope::Window(fresh_core::WindowId(w))
+        } else {
+            SectionScope::Window(self.active_window)
+        };
         // One slot per identity: a dock or centred panel with this key
-        // moves into the section.
+        // moves into the section, and a parked section comes back. A
+        // remount of a live section (a new title, a new scope) takes only
+        // the panel and leaves the section where it is, rows and all —
+        // `place_panel_in_sidebar` finds it again by its key.
         let existing = match self.slot_of_panel(&panel_key) {
-            Some(super::PanelSlot::Sidebar(i)) => self.take_panel_from_sidebar(i),
+            Some(super::PanelSlot::Sidebar(i)) => self
+                .sidebar_sections
+                .get_mut(i)
+                .and_then(|s| s.panel.take()),
             Some(slot) => self.panel_opt_mut(slot).and_then(|o| o.take()),
             None => None,
         };
@@ -5922,7 +6086,7 @@ impl Editor {
             hovered_item_key: String::new(),
             hovered_popup_row: String::new(),
         });
-        let index = self.place_panel_in_sidebar(panel, title, rows, closable);
+        let index = self.place_panel_in_sidebar(panel, title, rows, closable, scope);
         let slot = super::PanelSlot::Sidebar(index);
         if let Some(p) = self.panel_mut(slot) {
             p.focused = false;
@@ -5951,14 +6115,20 @@ impl Editor {
             false,
             false,
         );
-        if !start_blurred {
-            self.focus_sidebar_section(index);
+        // A section mounted for a buffer that is not on screen parks at
+        // once — before any focus, which is for a section on screen.
+        self.reconcile_sidebar_scopes();
+        let live = self
+            .sidebar_sections
+            .iter()
+            .position(|s| s.panel_key() == Some(&panel_key));
+        if let Some(index) = live {
+            if !start_blurred {
+                self.focus_sidebar_section(index);
+            }
         }
         tracing::debug!(
-            "Mounted sidebar section {} for panel {} ({} rows)",
-            index,
-            panel_key,
-            rows
+            "Mounted sidebar section {panel_key} ({rows} rows, {scope:?}, live: {live:?})"
         );
     }
 
@@ -5970,7 +6140,7 @@ impl Editor {
         // The description reads what this writes; see
         // `Editor::shell_description_stale`.
         self.shell_description_stale = true;
-        if self.slot_of_panel(panel_key).is_none() {
+        if self.slot_of_panel(panel_key).is_none() && !self.section_exists(panel_key) {
             tracing::debug!(
                 "UpdateFloatingWidget for unknown / mismatched panel {} ignored",
                 panel_key
@@ -6006,6 +6176,12 @@ impl Editor {
     }
 
     fn handle_unmount_floating_widget(&mut self, panel_key: &crate::widgets::PanelKey) {
+        // A parked section is unmounted where it waits.
+        if self.take_parked_section(panel_key).is_some() {
+            let _ = self.widget_registry.unmount(panel_key);
+            self.shell_description_stale = true;
+            return;
+        }
         let Some(slot) = self.slot_of_panel(panel_key) else {
             tracing::debug!(
                 "UnmountFloatingWidget for unknown / mismatched panel {} ignored",
@@ -6074,6 +6250,17 @@ impl Editor {
             self.blur_floating_panel(slot);
             return;
         }
+        // `dock_width` sets the editor's dock width, not the panel's, so it
+        // is answered before the panel is borrowed. It sticks like a drag:
+        // across resizes and launches, until the next one.
+        if op == "dock_width" {
+            if slot == super::PanelSlot::Dock {
+                self.dock_width = Some(self.clamp_dock_width(arg.max(0.0) as u16));
+                self.persist_dock_width();
+                self.relayout();
+            }
+            return;
+        }
         // **The ops that move a panel between slots**, resolved before the
         // in-place ones below: a section is a different slot, so "sidebar"
         // on a dock or centred panel and "dock" / "center" on a section each
@@ -6089,8 +6276,15 @@ impl Editor {
                     .clone()
                     .unwrap_or_else(|| panel.panel_key.plugin.clone());
                 let closable = panel.closable;
-                let index =
-                    self.place_panel_in_sidebar(panel, title, arg.max(0.0) as u16, closable);
+                let index = self.place_panel_in_sidebar(
+                    panel,
+                    title,
+                    arg.max(0.0) as u16,
+                    closable,
+                    // Re-anchored from the dock or the centre: the window
+                    // the user did it in, the narrow default.
+                    crate::app::sidebar::SectionScope::Window(self.active_window),
+                );
                 if from == super::PanelSlot::Dock {
                     self.request_full_redraw();
                 }
@@ -6106,6 +6300,13 @@ impl Editor {
             // a bare `focused = true` never would.
             ("focus", super::PanelSlot::Sidebar(i)) => {
                 self.focus_sidebar_section(i);
+                return;
+            }
+            // Show the column and open the section, without the keyboard.
+            ("reveal", super::PanelSlot::Sidebar(i)) => {
+                self.reveal_sidebar();
+                self.reveal_sidebar_section(i);
+                self.relayout();
                 return;
             }
             ("sidebar_rows", super::PanelSlot::Sidebar(i)) => {
@@ -6141,43 +6342,24 @@ impl Editor {
                 if let Some(o) = self.panel_opt_mut(to) {
                     *o = Some(panel);
                 }
+                if to == super::PanelSlot::Dock {
+                    self.dock_reserved = false;
+                }
                 to
             }
             _ => slot,
         };
-        // Clamp the dock width relative to the terminal so it can never
-        // swallow the whole chrome. Read before the &mut borrow below.
-        // A user-dragged width (`dock_width`) overrides the plugin's
-        // default so the resize survives toggling the dock off/on.
-        let max_cols = self.terminal_width.max(20).saturating_sub(20).max(10);
-        let persisted = self.dock_width;
         let Some(fwp) = self.panel_mut(slot) else {
             return;
         };
         // Whether this op changed the chrome geometry (dock width/placement),
         // so we know to re-derive the layout once the `fwp` borrow ends.
         let geometry_changed = match op {
+            // `arg` is ignored: the width is the editor's; see `dock_width`.
             "dock" => {
-                let requested = persisted.unwrap_or(arg as u16);
-                let width_cols = requested.clamp(10, max_cols);
-                fwp.placement = super::PanelPlacement::LeftDock { width_cols };
+                fwp.placement = super::PanelPlacement::LeftDock;
                 fwp.focused = true;
                 true
-            }
-            // Update the dock's width WITHOUT touching focus — used by the
-            // plugin to make the dock responsive (re-issued on terminal
-            // resize). Unlike "dock" this never steals keyboard focus back
-            // from the editor, and it's a no-op unless the panel is already
-            // docked. A user-dragged width still wins (persisted override).
-            "dock_width" => {
-                if let super::PanelPlacement::LeftDock { .. } = fwp.placement {
-                    let requested = persisted.unwrap_or(arg as u16);
-                    let width_cols = requested.clamp(10, max_cols);
-                    fwp.placement = super::PanelPlacement::LeftDock { width_cols };
-                    true
-                } else {
-                    false
-                }
             }
             "center" => {
                 fwp.placement = super::PanelPlacement::Centered;
@@ -6840,6 +7022,7 @@ impl Window {
                 .collect();
             let buffer_info = BufferInfo {
                 id: *buffer_id,
+                window_id: self.id.0,
                 path: state.buffer.file_path().map(|p| p.to_path_buf()),
                 // The tab label. For a virtual buffer this is the `name` the
                 // creating plugin chose, which is the only stable way for it

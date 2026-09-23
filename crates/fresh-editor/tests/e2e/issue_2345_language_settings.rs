@@ -1,7 +1,7 @@
 //! E2E reproducers for issue #2345 — "html linewrap and broken settings".
 //!
 //! Two distinct, user-visible defects are triggered by editing a language's
-//! settings through **View → Settings → General → Languages → HTML**:
+//! settings through **View → Settings → Syntax & Languages → Languages → HTML**:
 //!
 //!   1. After enabling *Auto Surround* for HTML and saving, line-wrap can be
 //!      turned off but can never be turned back on for HTML buffers. The root
@@ -76,6 +76,9 @@ fn row_with(harness: &EditorTestHarness, needle: &str) -> String {
 /// Edit Value dialog. Leaves the dialog open with focus on its first field.
 fn open_html_language_dialog(harness: &mut EditorTestHarness) {
     harness.open_settings().unwrap();
+    harness
+        .select_settings_category("Syntax & Languages")
+        .unwrap();
     harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
     // Walk down until the (single) language map entry is the focused row — its

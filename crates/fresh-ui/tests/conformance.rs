@@ -2095,3 +2095,239 @@ fn the_rows_a_run_was_wrapped_into_are_readable_after_layout() {
     assert!(ui.text_rows(&boxed).is_none());
     assert!(ui.text_rows(&Key::Str("absent".into())).is_none());
 }
+
+// ── a window that scrolls across ────────────────────────────────────────────
+//
+// The axis is the window's, not the command's: `reveal_key` means "put this
+// inside", and which way that is has one right answer. These pin that, and the
+// affordance a horizontal window offers instead of a bar.
+
+/// Ten tabs of four cells in a window eight wide.
+fn strip(a: Rc<fresh_ui::behavior::anchor::Anchor>, keys: &[Key]) -> Node<()> {
+    let cells: Vec<Node<()>> = keys
+        .iter()
+        .map(|k| text("abcd".to_string()).key(k.clone()))
+        .collect();
+    viewport(fresh_ui::row().children(cells))
+        .scroll_axis(fresh_ui::Axis::Horizontal)
+        .scrollbar()
+        .anchor_to(a)
+        .w(Sizing::Cells(8))
+        .h(Sizing::Cells(1))
+}
+
+fn tab_keys(n: usize) -> Vec<Key> {
+    (0..n).map(|i| Key::Pair("tab".into(), i as u64)).collect()
+}
+
+/// **A horizontal window measures its content across, and reveals across.**
+///
+/// The content is forty cells of tabs in a window of eight. A vertical window
+/// would have clamped the row to its own width and had nothing to scroll; this
+/// one gives the row its natural width and keeps a window onto it. Revealing
+/// the last tab moves the window on `x` — with no axis named by the caller,
+/// because the window is what knows.
+#[test]
+fn a_horizontal_window_reveals_by_key_across() {
+    let keys = tab_keys(10);
+    let a = fresh_ui::behavior::anchor::Anchor::new();
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(strip(a.clone(), &keys), Size::new(20, 3));
+    let vp = ui.root().unwrap();
+    assert_eq!(ui.scroll(vp).0, Point::ZERO, "it starts at the first tab");
+
+    a.reveal_key(keys[9].clone());
+    ui.frame(strip(a.clone(), &keys), Size::new(20, 3));
+    let at = ui.scroll(vp).0;
+    assert!(at.x > 0, "the window moved across to the last tab: {at:?}");
+    assert_eq!(at.y, 0, "and not down");
+
+    // The shortest move, so the revealed tab is flush with the far edge. The
+    // content is 40 cells; the window is eight wide less the cell reserved at
+    // each end for a cap, so six; and the tenth tab ends the content.
+    assert_eq!(at.x, 40 - 6);
+
+    a.reveal_key(keys[0].clone());
+    ui.frame(strip(a.clone(), &keys), Size::new(20, 3));
+    assert_eq!(ui.scroll(vp).0.x, 0, "and back for the first");
+}
+
+/// **What it offers instead of a bar, and only where there is more.**
+///
+/// A one-row window has its content on the row a bar would need, so it caps
+/// the ends instead. A cap is drawn only on an edge with content behind it —
+/// so at the start there is only a `>` — and the cells are reserved whenever
+/// the content overflows, so the tabs do not shift by a column the moment the
+/// `<` appears.
+#[test]
+fn a_horizontal_window_caps_the_ends_that_have_more() {
+    let keys = tab_keys(10);
+    let a = fresh_ui::behavior::anchor::Anchor::new();
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(strip(a.clone(), &keys), Size::new(20, 3));
+
+    let caps = |ui: &Ui<()>| -> Vec<(i32, fresh_ui::End)> {
+        ui.spec()
+            .items
+            .iter()
+            .filter_map(|i| match i.draw {
+                Draw::Overflow { end, .. } => Some((i.rect.x, end)),
+                _ => None,
+            })
+            .collect()
+    };
+    assert_eq!(
+        caps(&ui),
+        vec![(7, fresh_ui::End::After)],
+        "at the start, only the far end has more"
+    );
+
+    a.reveal_key(keys[9].clone());
+    ui.frame(strip(a.clone(), &keys), Size::new(20, 3));
+    assert_eq!(
+        caps(&ui),
+        vec![(0, fresh_ui::End::Before)],
+        "at the end, only the near one"
+    );
+
+    // A window its content fits in offers nothing, and reserves nothing.
+    let few = tab_keys(1);
+    let b = fresh_ui::behavior::anchor::Anchor::new();
+    let mut ui2: Ui<()> = Ui::new();
+    ui2.frame(strip(b.clone(), &few), Size::new(20, 3));
+    assert!(caps(&ui2).is_empty(), "nothing overflows, so no caps");
+}
+
+/// **A press on a cap steps the window that way.**
+///
+/// The cap is the window's own affordance — it is drawn there *because* the
+/// window knows there is more behind that edge — so the move is the window's
+/// too, and the description says nothing about it.
+#[test]
+fn a_press_on_an_overflow_cap_steps_the_window() {
+    let keys = tab_keys(10);
+    let a = fresh_ui::behavior::anchor::Anchor::new();
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(strip(a.clone(), &keys), Size::new(20, 3));
+    let vp = ui.root().unwrap();
+
+    // The trailing cap is the window's last column.
+    press(&mut ui, 7, 0);
+    assert_eq!(
+        ui.scroll(vp).0.x,
+        6,
+        "one windowful across (8 less its caps)"
+    );
+
+    press(&mut ui, 0, 0);
+    assert_eq!(ui.scroll(vp).0.x, 0, "and the leading cap brings it back");
+
+    // The leading cell answers nothing while there is nothing behind it: the
+    // cap is not drawn there, so the press belongs to whatever is under it.
+    let before = ui.scroll(vp).0;
+    press(&mut ui, 0, 0);
+    assert_eq!(ui.scroll(vp).0, before);
+}
+
+/// **A cap is as wide as the window asked for, and the glyph sits in the
+/// middle of it.**
+///
+/// One cell says "there is more this way" perfectly well, and it is the
+/// default. But a cap is a button, and on a strip whose other buttons are
+/// padded labels — the tab strip's `+` is `" + "` — a one-cell arrow is the
+/// odd one out to the pointer as well as to the eye. So the window states the
+/// width, the measure reserves it at each end, and the backend centres the
+/// glyph in it.
+#[test]
+fn a_window_states_how_wide_its_caps_are() {
+    let keys = tab_keys(10);
+    let a = fresh_ui::behavior::anchor::Anchor::new();
+    let wide = |a: Rc<fresh_ui::behavior::anchor::Anchor>| {
+        viewport(
+            fresh_ui::row().children(
+                keys.iter()
+                    .map(|k| text("abcd".to_string()).key(k.clone()))
+                    .collect::<Vec<_>>(),
+            ),
+        )
+        .scroll_axis(fresh_ui::Axis::Horizontal)
+        .scrollbar()
+        .scroll_cap_width(3)
+        .anchor_to(a)
+        .w(Sizing::Cells(12))
+        .h(Sizing::Cells(1))
+    };
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(wide(a.clone()), Size::new(20, 3));
+    let vp = ui.root().unwrap();
+
+    let cap = ui
+        .spec()
+        .items
+        .iter()
+        .find_map(|i| match i.draw {
+            Draw::Overflow { .. } => Some(i.rect),
+            _ => None,
+        })
+        .expect("the content overflows, so the far end is capped");
+    assert_eq!(cap.w, 3, "the cap is the width the window asked for");
+    assert_eq!(cap.x, 12 - 3, "at the far edge, not one cell of it");
+
+    // Six cells of window between the two three-cell caps, so the shortest
+    // move that puts the last tab flush with the near edge of the far cap is
+    // the content less six.
+    a.reveal_key(keys[9].clone());
+    ui.frame(wide(a.clone()), Size::new(20, 3));
+    assert_eq!(ui.scroll(vp).0.x, 40 - 6);
+}
+
+/// **Moving onto a cap asks for a frame, whichever way the pointer came.**
+///
+/// A cap draws itself from where the pointer is, not from an `Enter`: it is
+/// cells its window reserved, not an element, so sliding sideways out of the
+/// content and onto it crosses no boundary and fires nothing. Left there, the
+/// cap lit only when the pointer happened to cross some *other* node's edge on
+/// its way in — entering from above worked and entering from beside it did
+/// not. The window is marked instead, by asking the cap the same question its
+/// press asks, before and after the move.
+#[test]
+fn moving_onto_a_cap_asks_for_a_frame() {
+    let keys = tab_keys(10);
+    let a = fresh_ui::behavior::anchor::Anchor::new();
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(strip(a.clone(), &keys), Size::new(20, 3));
+
+    let lit = |ui: &Ui<()>| {
+        ui.spec()
+            .items
+            .iter()
+            .any(|i| matches!(i.draw, Draw::Overflow { hovered, .. } if hovered))
+    };
+    let moved = |ui: &mut Ui<()>, x: i32| {
+        ui.dispatch(Input::Move {
+            pos: Point::new(x, 0),
+            mods: Mods::NONE,
+        });
+        let asked = ui.needs_frame();
+        ui.tick();
+        asked
+    };
+
+    // Inside the tabs, one cell short of the trailing cap. Nothing is lit and
+    // nothing is owed.
+    assert!(!moved(&mut ui, 3), "a move within the content is quiet");
+    assert!(!lit(&ui));
+
+    // Sideways onto the cap: no element boundary is crossed, and it still
+    // lights.
+    assert!(moved(&mut ui, 7), "arriving on the cap owes a frame");
+    assert!(lit(&ui), "and the cap is lit");
+
+    // Staying on it owes nothing.
+    assert!(!moved(&mut ui, 7), "resting on the cap is quiet");
+    assert!(lit(&ui));
+
+    // And sideways off it puts it out.
+    assert!(moved(&mut ui, 3), "leaving it owes a frame too");
+    assert!(!lit(&ui), "and it goes dark");
+}

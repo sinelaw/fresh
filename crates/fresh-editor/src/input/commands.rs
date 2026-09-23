@@ -168,14 +168,6 @@ impl Suggestion {
         self
     }
 
-    pub fn with_description_spans(
-        mut self,
-        spans: Option<Vec<fresh_core::api::StyledText>>,
-    ) -> Self {
-        self.description_spans = spans;
-        self
-    }
-
     pub fn with_value(mut self, value: String) -> Self {
         self.value = Some(value);
         self
@@ -973,6 +965,13 @@ static COMMAND_DEFS: &[CommandDef] = &[
         custom_contexts: &[],
     },
     CommandDef {
+        name_key: "cmd.focus_prev_sidebar_section",
+        desc_key: "cmd.focus_prev_sidebar_section_desc",
+        action: || Action::FocusPrevSidebarSection,
+        contexts: &[Normal, FileExplorer, Terminal, CompositeBuffer, Dock],
+        custom_contexts: &[],
+    },
+    CommandDef {
         name_key: "cmd.explorer_refresh",
         desc_key: "cmd.explorer_refresh_desc",
         action: || Action::FileExplorerRefresh,
@@ -1698,64 +1697,4 @@ pub fn get_all_commands() -> Vec<Command> {
             terminal_bypass: false,
         })
         .collect()
-}
-
-/// Filter commands by fuzzy matching the query, with context awareness
-pub fn filter_commands(
-    query: &str,
-    current_context: KeyContext,
-    keybinding_resolver: &crate::input::keybindings::KeybindingResolver,
-) -> Vec<Suggestion> {
-    let query_lower = query.to_lowercase();
-    let commands = get_all_commands();
-
-    // Helper function to check if command is available in current context
-    let is_available = |cmd: &Command| -> bool {
-        // Empty contexts means available in all contexts
-        cmd.contexts.is_empty() || cmd.contexts.contains(&current_context)
-    };
-
-    // Helper function for fuzzy matching
-    let matches_query = |cmd: &Command| -> bool {
-        if query.is_empty() {
-            return true;
-        }
-
-        let name_lower = cmd.name.to_lowercase();
-        let mut query_chars = query_lower.chars();
-        let mut current_char = query_chars.next();
-
-        for name_char in name_lower.chars() {
-            if let Some(qc) = current_char {
-                if qc == name_char {
-                    current_char = query_chars.next();
-                }
-            } else {
-                break;
-            }
-        }
-
-        current_char.is_none() // All query characters matched
-    };
-
-    // Filter and convert to suggestions
-    let current_context_ref = &current_context;
-    let mut suggestions: Vec<Suggestion> = commands
-        .into_iter()
-        .filter(|cmd| matches_query(cmd))
-        .map(|cmd| {
-            let available = is_available(&cmd);
-            let keybinding = keybinding_resolver
-                .get_keybinding_for_action(&cmd.action, current_context_ref.clone());
-            Suggestion::new(cmd.name.clone())
-                .with_description(cmd.description)
-                .set_disabled(!available)
-                .with_keybinding(keybinding)
-        })
-        .collect();
-
-    // Sort: available commands first, then disabled ones
-    suggestions.sort_by_key(|s| s.disabled);
-
-    suggestions
 }

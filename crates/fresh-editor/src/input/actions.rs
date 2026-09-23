@@ -1204,7 +1204,7 @@ fn handle_keyword_dedent(
     }
 
     let Some(target_indent) =
-        rules.on_type_dedent_target(&state.buffer, line_start, tab_size, |b| {
+        rules.on_type_dedent_target(&state.buffer, line_start, &after, tab_size, |b| {
             byte_is_code(state, b)
         })
     else {
@@ -3761,6 +3761,7 @@ pub fn action_to_events(
         | Action::FocusEditor
         | Action::ToggleDockFocus
         | Action::FocusNextSidebarSection
+        | Action::FocusPrevSidebarSection
         | Action::SetBackground
         | Action::SetBackgroundBlend
         | Action::FileExplorerUp

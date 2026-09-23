@@ -478,9 +478,27 @@ impl Editor {
     /// pipeline's suggestion-popup geometry. `None` unless a picker list (or a
     /// floating overlay) is showing. Single derivation shared by both frontends.
     pub fn palette_view(&self) -> Option<PaletteView> {
-        let chrome = self.active_chrome();
-        let sugg_outer = chrome.suggestions_outer_area;
-        let sugg_area = chrome.suggestions_area;
+        // The popup's own two rectangles, read off the tree that placed them
+        // — like the card's bands below, and unlike the pair of `ChromeLayout`
+        // fields this replaces, which were a copy of exactly this read.
+        let to_rect = |r: fresh_ui::Rect| ratatui::layout::Rect {
+            x: r.x.max(0) as u16,
+            y: r.y.max(0) as u16,
+            width: r.w,
+            height: r.h,
+        };
+        let (sugg_outer, sugg_list) = self
+            .shell_ui
+            .as_ref()
+            .map(|ui| {
+                let spec = ui.spec();
+                (
+                    crate::view::shell::prompt::suggestions_rect(spec).map(to_rect),
+                    crate::view::shell::prompt::suggestions_list_rect(spec).map(to_rect),
+                )
+            })
+            .unwrap_or((None, None));
+        let sugg_window = self.active_chrome().suggestions_window;
         let p = self.active_window().prompt.as_ref()?;
         // The overlay card's bands, read off the tree that placed them.
         let card_band = |r: crate::view::shell::overlay_prompt::CardRegion| {
@@ -506,11 +524,8 @@ impl Editor {
         // it the web shows no prompt at all while the editor waits for input.
         // Such prompts have no native suggestion list; the frontend renders
         // just the input bar (null `list_rect`/`outer_rect` below).
-        let (scroll_start, visible, total) = sugg_area.map(|(_, s, v, t)| (s, v, t)).unwrap_or((
-            p.scroll_offset,
-            p.suggestions.len(),
-            p.suggestions.len(),
-        ));
+        let total = p.suggestions.len();
+        let (scroll_start, visible) = sugg_window.unwrap_or((p.scroll_offset, p.suggestions.len()));
         // Search-option toggles: the row's own content — the same values the
         // TUI describes its toggles with — plus the cell spans the shell's
         // layout assigned them, READ BACK off the laid-out tree rather than
@@ -552,10 +567,7 @@ impl Editor {
             visible_count: visible,
             total,
             outer_rect: sugg_outer.map(RectView::from),
-            list_rect: sugg_area
-                .map(|(r, _, _, _)| r)
-                .or(prompt_results)
-                .map(RectView::from),
+            list_rect: sugg_list.or(prompt_results).map(RectView::from),
             // The preview pane's content: the band names the pane inside its
             // rule, so this is the rectangle as the tree placed it. Only
             // meaningful for overlay prompts.
@@ -600,6 +612,59 @@ pub struct PopupItemView {
     pub disabled: bool,
 }
 
+/// One run of like-styled text inside a popup line. Markdown popups (LSP
+/// hover, the theme inspector) carry syntax-highlighted code blocks and
+/// emphasis, and the terminal draws every one of those runs — so the
+/// projection keeps them instead of flattening the line to a `String`, and
+/// both renderers ink the same thing. The field names are the cell runs'
+/// (`t`/`fg`/`bg`/`b`/`i`/`u`/`r`, see `webui::cells_json`), so a frontend
+/// paints a popup run exactly the way it paints a buffer run.
+#[derive(Debug, Clone, Serialize)]
+pub struct PopupSpanView {
+    #[serde(rename = "t")]
+    pub text: String,
+    #[serde(rename = "fg", skip_serializing_if = "Option::is_none")]
+    pub fg: Option<String>,
+    #[serde(rename = "bg", skip_serializing_if = "Option::is_none")]
+    pub bg: Option<String>,
+    #[serde(rename = "b", skip_serializing_if = "std::ops::Not::not")]
+    pub bold: bool,
+    #[serde(rename = "i", skip_serializing_if = "std::ops::Not::not")]
+    pub italic: bool,
+    #[serde(rename = "u", skip_serializing_if = "std::ops::Not::not")]
+    pub underline: bool,
+    #[serde(rename = "r", skip_serializing_if = "std::ops::Not::not")]
+    pub reverse: bool,
+}
+
+impl PopupSpanView {
+    /// A run carrying no styling of its own — what a plain-text popup line is.
+    fn plain(text: String) -> Self {
+        Self {
+            text,
+            fg: None,
+            bg: None,
+            bold: false,
+            italic: false,
+            underline: false,
+            reverse: false,
+        }
+    }
+
+    fn styled(text: String, style: ratatui::style::Style) -> Self {
+        let m = style.add_modifier;
+        Self {
+            text,
+            fg: style.fg.and_then(css_color),
+            bg: style.bg.and_then(css_color),
+            bold: m.contains(ratatui::style::Modifier::BOLD),
+            italic: m.contains(ratatui::style::Modifier::ITALIC),
+            underline: m.contains(ratatui::style::Modifier::UNDERLINED),
+            reverse: m.contains(ratatui::style::Modifier::REVERSED),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum PopupContentView {
@@ -608,7 +673,9 @@ pub enum PopupContentView {
         selected: usize,
     },
     Lines {
-        lines: Vec<String>,
+        /// One entry per line, each a list of styled runs. A plain-text popup
+        /// line is a single unstyled run.
+        lines: Vec<Vec<PopupSpanView>>,
     },
 }
 
@@ -656,12 +723,20 @@ fn project_popup(
             selected: *selected,
         },
         PopupContent::Text(lines) => PopupContentView::Lines {
-            lines: lines.clone(),
+            lines: lines
+                .iter()
+                .map(|l| vec![PopupSpanView::plain(l.clone())])
+                .collect(),
         },
         PopupContent::Markdown(styled) => PopupContentView::Lines {
             lines: styled
                 .iter()
-                .map(|l| l.spans.iter().map(|s| s.text.as_str()).collect::<String>())
+                .map(|l| {
+                    l.spans
+                        .iter()
+                        .map(|s| PopupSpanView::styled(s.text.clone(), s.style))
+                        .collect()
+                })
                 .collect(),
         },
     };
@@ -679,21 +754,41 @@ fn project_popup(
 impl Editor {
     /// All visible popups across the per-buffer and global stacks, projected
     /// semantically. Single derivation shared by the web frontend (native HTML)
-    /// and available to the TUI compositor; geometry comes from the pipeline's
-    /// popup-area caches so clicks/scroll route through the existing hit-tester.
+    /// and available to the TUI compositor.
+    ///
+    /// **Geometry is the tree's, by key.** This read two caches that `render`
+    /// filled — `ChromeLayout::popup_areas` and `global_popup_areas`, the last
+    /// two members of the paint-recorded roster — each of which took the outer
+    /// rect off this very tree and then re-derived the content rect from it by
+    /// hand, in two copy-pasted blocks of border arithmetic. Both are keyed
+    /// nodes (`popup::rects_of`, `popup::inner_rects_of`), the popups' order in
+    /// the description is `Editor::popup_counts`' — the buffer's stack, then
+    /// the top of the global one — and the scroll offset was never geometry at
+    /// all: it is on the popup.
     pub fn popups_view(&self) -> Vec<ScenePopup> {
-        let chrome = self.active_chrome();
+        let (buffer_n, total) = self.popup_counts();
+        let outers = self.popup_rects();
+        let inners = self.popup_content_rects();
+        let at = |i: usize| -> (ratatui::layout::Rect, ratatui::layout::Rect) {
+            (
+                outers.get(i).copied().unwrap_or_default(),
+                inners.get(i).copied().unwrap_or_default(),
+            )
+        };
         let mut out = Vec::new();
-        let locals = self.active_state().popups.all();
-        for (idx, outer, inner, scroll, _n, _sb, _t) in &chrome.popup_areas {
-            if let Some(p) = locals.get(*idx) {
-                out.push(project_popup(p, *outer, *inner, *scroll));
+        for (idx, p) in self.active_state().popups.all().iter().enumerate() {
+            if idx >= buffer_n {
+                break;
             }
+            let (outer, inner) = at(idx);
+            out.push(project_popup(p, outer, inner, p.scroll_offset));
         }
-        let globals = self.global_popups.all();
-        for (idx, outer, inner, scroll, _n) in &chrome.global_popup_areas {
-            if let Some(p) = globals.get(*idx) {
-                out.push(project_popup(p, *outer, *inner, *scroll));
+        // The description carries at most the top of the global stack, after
+        // the buffer's — so it is the last entry, and only when there is one.
+        if total > buffer_n {
+            if let Some(p) = self.global_popups.top() {
+                let (outer, inner) = at(buffer_n);
+                out.push(project_popup(p, outer, inner, p.scroll_offset));
             }
         }
         out
@@ -1459,6 +1554,23 @@ impl Editor {
                     None,
                     false,
                 ),
+                // "There is more this way", as a kind the DOM can draw as it
+                // likes — a chevron, a fade at the edge. The glyph the
+                // terminal uses is not carried: unlike a rule, there is no
+                // single character this *is*.
+                Draw::Overflow { axis, end, .. } => {
+                    horizontal = matches!(axis, fresh_ui::Axis::Horizontal);
+                    (
+                        match end {
+                            fresh_ui::End::Before => "overflow-before",
+                            fresh_ui::End::After => "overflow-after",
+                        },
+                        None,
+                        None,
+                        None,
+                        false,
+                    )
+                }
                 Draw::Scrim(Scrim::Opaque) => ("scrim", None, None, None, false),
                 Draw::Scrim(Scrim::Dim) => ("scrim", None, None, None, true),
                 Draw::Lines(ls) => (
@@ -2011,6 +2123,9 @@ pub struct SettingsCategoryView {
     pub expandable: bool,
     pub expanded: bool,
     pub sections: Vec<String>,
+    /// Listed under another category's row (a plugin's page under
+    /// "Plugins"), so drawn indented and without a chevron.
+    pub nested: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -2259,17 +2374,34 @@ impl Editor {
             return None;
         }
 
+        // The rows the TUI's tree shows, in its order: nested pages appear
+        // only under an expanded parent, and a category lists its sections
+        // only when it has more than one.
         let categories = st
-            .pages
-            .iter()
-            .enumerate()
-            .map(|(i, p)| SettingsCategoryView {
-                index: i,
-                name: p.name.clone(),
-                selected: i == st.selected_category,
-                expandable: !p.subpages.is_empty() || p.sections.len() > 1,
-                expanded: st.expanded_categories.contains(&i),
-                sections: p.sections.iter().map(|s| s.name.clone()).collect(),
+            .visible_tree()
+            .into_iter()
+            .filter_map(|row| match row {
+                crate::view::settings::state::TreeRow::Category {
+                    idx,
+                    expandable,
+                    expanded,
+                    nested,
+                } => {
+                    let p = &st.pages[idx];
+                    Some(SettingsCategoryView {
+                        index: idx,
+                        name: p.name.clone(),
+                        selected: idx == st.selected_category,
+                        expandable,
+                        expanded,
+                        sections: match p.sections.len() > 1 {
+                            true => p.sections.iter().map(|s| s.name.clone()).collect(),
+                            false => Vec::new(),
+                        },
+                        nested,
+                    })
+                }
+                crate::view::settings::state::TreeRow::Section { .. } => None,
             })
             .collect();
 
@@ -2333,5 +2465,57 @@ impl Editor {
             showing_confirm: st.showing_confirm_dialog,
             showing_reset: st.showing_reset_dialog,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PopupSpanView;
+    use ratatui::style::{Color, Modifier, Style};
+
+    #[test]
+    fn a_popup_span_keeps_the_colour_and_emphasis_the_editor_gave_it() {
+        // Regression: the projection used to flatten a markdown popup's styled
+        // spans into one `String` per line, so an LSP hover reached the web UI
+        // with its syntax highlighting, bold and italics thrown away while the
+        // terminal drew all three.
+        let style = Style::default()
+            .fg(Color::Rgb(255, 255, 0))
+            .bg(Color::Rgb(40, 40, 40))
+            .add_modifier(Modifier::BOLD | Modifier::ITALIC);
+        let span = PopupSpanView::styled("greet".to_string(), style);
+        assert_eq!(span.fg.as_deref(), Some("#ffff00"));
+        assert_eq!(span.bg.as_deref(), Some("#282828"));
+        assert!(span.bold);
+        assert!(span.italic);
+        assert!(!span.underline);
+        assert!(!span.reverse);
+
+        // A plain-text popup line says nothing about colour, so the frontend
+        // inherits the popup's own.
+        let plain = PopupSpanView::plain("hello".to_string());
+        assert!(plain.fg.is_none() && plain.bg.is_none());
+        assert!(!plain.bold && !plain.italic && !plain.underline && !plain.reverse);
+    }
+
+    #[test]
+    fn a_popup_span_is_on_the_wire_in_the_cell_runs_shape() {
+        // The frontend paints a popup run with the code that paints a buffer
+        // run, so the field names have to stay identical — and a flag that is
+        // off must not be sent at all.
+        let span = PopupSpanView::styled(
+            "fn".to_string(),
+            Style::default()
+                .fg(Color::Rgb(0, 255, 255))
+                .add_modifier(Modifier::UNDERLINED | Modifier::REVERSED),
+        );
+        let json = serde_json::to_value(&span).expect("span serializes");
+        assert_eq!(json["t"], "fn");
+        assert_eq!(json["fg"], "#00ffff");
+        assert_eq!(json["u"], true);
+        assert_eq!(json["r"], true);
+        assert!(json.get("bg").is_none(), "unset colour is omitted");
+        assert!(json.get("b").is_none(), "an off flag is omitted");
+        assert!(json.get("i").is_none(), "an off flag is omitted");
     }
 }

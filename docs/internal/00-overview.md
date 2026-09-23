@@ -77,7 +77,7 @@ Entry runs through `main`, which wraps a fallible `real_main`. Startup sequence:
 4. Nested-launch forwarding — if launched from inside Fresh's own embedded terminal (detected by an environment marker), file/dir opens are forwarded to the parent editor instead of starting a second one.
 5. App initialization builds the terminal, config, tracing, key translator, terminal modes, and the startup `Authority` (local or SSH).
 6. The local-control listener binds this process's control socket so nested `fresh` launches can forward opens back here.
-7. The **restart loop** constructs an `Editor`, runs the event loop, and reconstructs on a restart request (Open-Folder context switch or a plugin's `setAuthority`). The `Authority` is single-owner and non-`Clone`, so it is moved into the editor and re-extracted on restart.
+7. One `Editor` is constructed and runs the event loop until it quits. This used to be a restart loop, rebuilding the editor on an Open-Folder context switch or a plugin's `setAuthority`; both now land in a window (see [remote-authority-trust.md](remote-authority-trust.md) §1.4), so there is nothing to reconstruct. The `Authority` is single-owner and non-`Clone`, and lives inside the `Connection` its window holds.
 
 The TUI loop is a shared `run_event_loop_common`, reached via one of three wrappers selected by `cfg`: Linux GPM mouse polling, a Windows VT-input reader thread, and the default crossterm poller. All three differ only in their event-poll closure.
 

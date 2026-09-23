@@ -81,9 +81,6 @@ pub struct KeybindingEditor {
     pub display_rows: Vec<DisplayRow>,
     /// Sections that are manually collapsed (by plugin name, None = builtin)
     pub collapsed_sections: HashSet<Option<String>>,
-
-    /// Mouse interaction state for the table scrollbar (press/drag/release).
-    pub scrollbar_mouse: crate::view::ui::scrollbar::ScrollbarMouse,
 }
 
 impl KeybindingEditor {
@@ -191,7 +188,6 @@ impl KeybindingEditor {
             mode_contexts,
             display_rows: Vec::new(),
             collapsed_sections,
-            scrollbar_mouse: crate::view::ui::scrollbar::ScrollbarMouse::default(),
         };
 
         editor.apply_filters();
@@ -683,14 +679,6 @@ impl KeybindingEditor {
         )
     }
 
-    /// Get the currently selected binding (None if a section header is selected)
-    pub fn selected_binding(&self) -> Option<&ResolvedBinding> {
-        match self.display_rows.get(self.selected) {
-            Some(DisplayRow::Binding(idx)) => self.bindings.get(*idx),
-            _ => None,
-        }
-    }
-
     /// Get the binding index in `self.bindings` for the current selection
     fn selected_binding_index(&self) -> Option<usize> {
         match self.display_rows.get(self.selected) {
@@ -839,11 +827,6 @@ impl KeybindingEditor {
                 &self.mode_contexts,
             ));
         }
-    }
-
-    /// Close the edit dialog
-    pub fn close_edit_dialog(&mut self) {
-        self.edit_dialog = None;
     }
 
     /// Delete the selected binding: it is gone, and the key falls through to

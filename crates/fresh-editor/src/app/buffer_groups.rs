@@ -637,7 +637,6 @@ impl super::Editor {
             .expect("active window must have a populated split layout")
             .values_mut()
         {
-            vs.layout_dirty = true;
             if let (Some(focused), Some(fallback)) = (vs.focused_group_leaf, fallback_leaf) {
                 if !visible_leaves.contains(&focused)
                     && existing_leaves.values().any(|l| *l == focused)
@@ -975,7 +974,6 @@ impl super::Editor {
             }
             // 2) Now flip the active pointer.
             vs.active_buffer = new_buffer_id;
-            vs.layout_dirty = true;
         }
 
         // Mark the new buffer as hidden from tabs (panel buffers

@@ -2,6 +2,7 @@ use anyhow::Result as AnyhowResult;
 use fresh_i18n::t;
 
 use super::*;
+use crate::app::path_utils::explorer_path_under_root;
 use crate::services::async_bridge::AsyncMessage;
 use crate::view::file_tree::TreeNode;
 use std::path::{Path, PathBuf};
@@ -79,6 +80,19 @@ fn get_parent_node_id(
     }
 }
 
+/// What `Window::sync_file_explorer_to_active_file` did, so the paths a user
+/// drives can say why the tree did not move.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RevealOutcome {
+    Revealed,
+    /// The sidebar is hidden; nothing to move.
+    Hidden,
+    /// The active buffer has no file behind it.
+    NoFile,
+    /// The active file is outside the window's root.
+    OutsideRoot(std::path::PathBuf),
+}
+
 impl Editor {
     pub fn file_explorer_visible(&self) -> bool {
         self.active_window().file_explorer_visible
@@ -120,8 +134,9 @@ impl Editor {
                 self.init_file_explorer();
             }
             self.take_focus_for_file_explorer();
-            self.set_status_message(t!("explorer.opened").to_string());
-            self.active_window_mut().sync_file_explorer_to_active_file();
+            self.set_status_message(t!("explorer.focused").to_string());
+            self.active_window_mut()
+                .sync_file_explorer_to_active_file_with_feedback();
         } else {
             self.active_window_mut().key_context = KeyContext::Normal;
             self.set_status_message(t!("explorer.closed").to_string());
@@ -153,7 +168,8 @@ impl Editor {
 
             self.take_focus_for_file_explorer();
             self.set_status_message(t!("explorer.focused").to_string());
-            self.active_window_mut().sync_file_explorer_to_active_file();
+            self.active_window_mut()
+                .sync_file_explorer_to_active_file_with_feedback();
         } else {
             self.toggle_file_explorer();
         }
@@ -628,9 +644,14 @@ impl Editor {
                 .to_string_lossy()
                 .to_string();
             let type_str = if is_dir { "directory" } else { "file" };
-            self.start_prompt(
+            let confirm = crate::app::confirm_dialog::delete(
                 t!("explorer.delete_confirm", "type" = type_str, name = &name).to_string(),
+            )
+            .detail(path.display().to_string());
+            self.start_confirm_prompt(
+                confirm.body.clone(),
                 PromptType::ConfirmDeleteFile { path, is_dir },
+                confirm,
             );
         } else {
             let count = paths.len();
@@ -639,14 +660,18 @@ impl Editor {
             // about to be deleted. Include '…' when there are more than
             // fit in the minibuffer budget.
             let names = format_path_preview_for_prompt(&all_paths, 3);
-            self.start_prompt(
+            let confirm = crate::app::confirm_dialog::delete(
                 t!(
                     "explorer.delete_multi_confirm",
                     count = count,
                     names = &names
                 )
                 .to_string(),
+            );
+            self.start_confirm_prompt(
+                confirm.body.clone(),
                 PromptType::ConfirmMultiDelete { paths: all_paths },
+                confirm,
             );
         }
     }
@@ -660,18 +685,7 @@ impl Editor {
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_default();
 
-        // For remote files, move to remote trash directory
-        // For local files, use system trash
-        let delete_result = if self
-            .authority()
-            .filesystem
-            .remote_connection_info()
-            .is_some()
-        {
-            self.move_to_remote_trash(&path)
-        } else {
-            trash::delete(&path).map_err(std::io::Error::other)
-        };
+        let delete_result = self.trash_path(&path);
 
         match delete_result {
             Ok(_) => {
@@ -758,6 +772,49 @@ impl Editor {
     }
 
     /// Move a file/directory to the remote trash directory (~/.local/share/fresh/trash/)
+    /// Remove one side of a cross-filesystem move: the source once its copy
+    /// has landed, or a half-written destination being rolled back.
+    ///
+    /// A file is unlinked through the authority filesystem, exactly as it
+    /// always was — one `unlink`, no tree to walk, and no way for a symlink
+    /// to lead it anywhere. A directory has no such operation any more, so it
+    /// goes to the trash instead: that is one move of the whole entry rather
+    /// than a walk, and it leaves the user able to undo a move that was not
+    /// what they meant.
+    ///
+    /// Keeping files on the filesystem handle also keeps them injectable,
+    /// which is what lets a test arm a removal failure and check that the
+    /// "copy landed but the original is still there" outcome is reported.
+    fn remove_moved_source(&self, path: &Path, is_dir: bool) -> std::io::Result<()> {
+        if is_dir {
+            self.trash_path(path)
+        } else {
+            self.authority().filesystem.remove_file(path)
+        }
+    }
+
+    /// Move a path to the trash — the system trash locally, a trash directory
+    /// under the remote home for a remote authority.
+    ///
+    /// This is the only removal the file explorer performs, and it is why
+    /// there is no recursive delete on the `FileSystem` trait any more. The
+    /// one that existed walked the tree itself, which meant it could be
+    /// pointed at a symlink and walk out of the tree it was asked to remove.
+    /// Nothing here walks anything: the entry is moved, whole, in one
+    /// operation, and the user can get it back.
+    fn trash_path(&self, path: &std::path::Path) -> std::io::Result<()> {
+        if self
+            .authority()
+            .filesystem
+            .remote_connection_info()
+            .is_some()
+        {
+            self.move_to_remote_trash(path)
+        } else {
+            trash::delete(path).map_err(std::io::Error::other)
+        }
+    }
+
     fn move_to_remote_trash(&self, path: &std::path::Path) -> std::io::Result<()> {
         // Get remote home directory
         let home = self.authority().filesystem.home_dir()?;
@@ -777,10 +834,35 @@ impl Editor {
             .map(|d| d.as_secs())
             .unwrap_or(0);
         let trash_name = format!("{}.{}", file_name.to_string_lossy(), timestamp);
-        let trash_path = trash_dir.join(trash_name);
+        let trash_path = trash_dir.join(&trash_name);
 
-        // Move to trash
-        self.authority().filesystem.rename(path, &trash_path)
+        match self.authority().filesystem.rename(path, &trash_path) {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                // A trash directory under the remote home only works for
+                // paths on the same filesystem as that home: a rename cannot
+                // cross a mount point. That is not a corner case here — the
+                // cut/paste fallback that calls this only runs *because* a
+                // rename already reported `CrossesDevices`, so a second mount
+                // is known to be in play.
+                //
+                // Fall back to a trash directory beside the entry itself,
+                // which is on its filesystem by construction. This is what
+                // the freedesktop spec does for the same reason, with its
+                // `.Trash-$uid` at the mount root; a sibling is simpler and
+                // has the same property.
+                let Some(parent) = path.parent() else {
+                    return Err(e);
+                };
+                let local_trash = parent.join(".fresh-trash");
+                if !self.authority().filesystem.exists(&local_trash) {
+                    self.authority().filesystem.create_dir_all(&local_trash)?;
+                }
+                self.authority()
+                    .filesystem
+                    .rename(path, &local_trash.join(&trash_name))
+            }
+        }
     }
 
     pub fn file_explorer_rename(&mut self) {
@@ -1086,13 +1168,15 @@ impl Editor {
 
             if self.authority().filesystem.exists(&dst_path) {
                 let name = truncate_name_for_prompt(&file_name.to_string_lossy(), 40);
-                self.start_prompt(
-                    t!("explorer.paste_conflict", name = &name).to_string(),
+                let confirm = crate::app::confirm_dialog::paste_conflict(&name);
+                self.start_confirm_prompt(
+                    confirm.body.clone(),
                     crate::view::prompt::PromptType::ConfirmPasteConflict {
                         src,
                         dst: dst_path,
                         is_cut,
                     },
+                    confirm,
                 );
             } else {
                 self.perform_file_explorer_paste(src, dst_path, is_cut);
@@ -1152,14 +1236,16 @@ impl Editor {
                         .to_string_lossy(),
                     40,
                 );
-                self.start_prompt(
-                    t!("explorer.paste_conflict_multi", name = &name).to_string(),
+                let confirm = crate::app::confirm_dialog::multi_paste_conflict(&name);
+                self.start_confirm_prompt(
+                    confirm.body.clone(),
                     crate::view::prompt::PromptType::ConfirmMultiPasteConflict {
                         safe,
                         confirmed: Vec::new(),
                         pending: conflicts,
                         is_cut,
                     },
+                    confirm,
                 );
             }
         }
@@ -1333,12 +1419,7 @@ impl Editor {
                             // distinct outcome — the user needs to know the
                             // copy is at `dst` AND the original is still at
                             // `src`, so they can decide what to do.
-                            let remove_result = if src_is_dir {
-                                self.authority().filesystem.remove_dir_all(src)
-                            } else {
-                                self.authority().filesystem.remove_file(src)
-                            };
-                            match remove_result {
+                            match self.remove_moved_source(src, src_is_dir) {
                                 Ok(()) => PasteOpOutcome::Ok,
                                 Err(remove_err) => PasteOpOutcome::SourceRemovalFailed {
                                     dst: dst.to_path_buf(),
@@ -1352,12 +1433,7 @@ impl Editor {
                             // the intact source. Cleanup errors are
                             // swallowed — the copy error is the interesting
                             // one to surface — but logged.
-                            let cleanup = if src_is_dir {
-                                self.authority().filesystem.remove_dir_all(dst)
-                            } else {
-                                self.authority().filesystem.remove_file(dst)
-                            };
-                            if let Err(cleanup_err) = cleanup {
+                            if let Err(cleanup_err) = self.remove_moved_source(dst, src_is_dir) {
                                 tracing::warn!(
                                     "Failed to roll back partial destination {:?} after copy \
                                      fallback failed: {}",
@@ -1787,7 +1863,7 @@ impl crate::app::window::Window {
         // ungated, so running it on top would drag the selection off the file
         // the deferred request was sent to.
         if !self.file_explorer_sync_in_progress && self.file_explorer_visible {
-            self.sync_file_explorer_to_active_file();
+            let _ = self.sync_file_explorer_to_active_file();
         }
     }
 
@@ -1830,11 +1906,11 @@ impl crate::app::window::Window {
     /// to reveal (issue #2988).
     ///
     /// The replay goes back through [`Window::follow_path_in_explorer`]
-    /// rather than straight to the spawn, because the gate it was queued
-    /// under can have gone false in the meantime: an expand takes seconds on
-    /// a remote filesystem, and the user is free to turn
-    /// `follow_active_buffer` off in Settings or take the keyboard into the
-    /// tree while it runs. Re-checking there keeps the gate at a single fork.
+    /// rather than straight to the spawn, because the conditions it was
+    /// queued under can have gone false in the meantime: an expand takes
+    /// seconds on a remote filesystem, and the user is free to take the
+    /// keyboard into the tree while it runs. Re-checking there keeps those
+    /// conditions at a single fork.
     fn resume_deferred_file_explorer_expand(&mut self) {
         let Some(target_path) = self.file_explorer_sync_deferred.take() else {
             return;
@@ -2075,49 +2151,42 @@ impl crate::app::window::Window {
         self.set_status_message(msg);
     }
 
-    /// Run the `file_explorer.follow_active_buffer` gate against whatever
-    /// file is active right now.
+    /// The single fork the tree-following conditions are enforced at.
     ///
-    /// Called from the two paths that switch which file the user is looking
-    /// at without going through the explorer itself: the buffer-switch path
-    /// ([`Window::set_active_buffer`]) and the file-open path that reuses the
-    /// active scratch buffer in place — which changes the active *file*
-    /// without changing the active *buffer*, so it never reaches
-    /// `set_active_buffer` at all (issue #2988).
+    /// Everything that follows the user around the tree — the active-buffer
+    /// change raised by [`Window::follow_file_explorer_to_active_file`], and
+    /// the deferred requests replayed by
+    /// [`Window::resume_deferred_file_explorer_expand`] — passes its
+    /// conditions here rather than re-deriving them, so a replay cannot slip
+    /// past a condition that has gone false since it was queued. An expand
+    /// takes seconds on a remote filesystem, and every one of the conditions
+    /// below is something the user can change while it runs: they can turn
+    /// the setting off, hide the sidebar, or take the keyboard into the tree.
+    /// The replay is therefore re-gated *here*, when it actually runs, not
+    /// only when it was raised.
     ///
-    /// Deliberately *not* a claim that every active-file change reaches here.
-    /// Two known ones do not, and their behaviour is unchanged: `Save As`
-    /// (`Editor::save_file_as_with_checks`) renames the active buffer's path
-    /// in place, and workspace restore opens files through
-    /// [`Window::open_file_no_focus`]. Adding either is a behaviour change,
-    /// not a refactor — check here before assuming the coverage is total.
-    pub(crate) fn follow_active_buffer_in_explorer(&mut self) {
-        let active_buf = self.active_buffer();
-        let Some(metadata) = self.buffer_metadata.get(&active_buf) else {
-            return;
-        };
-        let Some(target_path) = metadata.file_path().cloned() else {
-            return;
-        };
-        self.follow_path_in_explorer(target_path);
-    }
-
-    /// The single fork the `follow_active_buffer` gate is enforced at.
+    /// The conditions, and why each one is a condition:
     ///
-    /// Everything that follows the user around the tree — the live requests
-    /// from [`Window::follow_active_buffer_in_explorer`] and the deferred
-    /// ones replayed by [`Window::resume_deferred_file_explorer_expand`] —
-    /// passes its conditions here rather than re-deriving them, so a replay
-    /// cannot slip past a gate that has gone false since it was queued.
+    /// - **`file_explorer.follow_active_buffer` is on.** Following is opt-in;
+    ///   off by default.
+    /// - **The sidebar is showing.** There is no tree to move a highlight on.
+    /// - **The keyboard is not inside the tree.** The user is navigating it,
+    ///   and yanking the selection to the editor's file under them would
+    ///   fight their own cursor.
+    /// - **The file is under the project root.** The tree is rooted there and
+    ///   cannot reveal what it does not contain. Asked through
+    ///   [`explorer_path_under_root`], which tolerates the separator and
+    ///   extended-prefix spellings a path can arrive in.
     ///
-    /// Skipped while the explorer itself holds the keyboard: the user is
-    /// navigating the tree, and yanking the selection to the editor's file
-    /// under them would fight their own cursor.
+    /// The explicit "show me where I am" reveal that opening or focusing the
+    /// sidebar performs does *not* come through here — see
+    /// [`Window::sync_file_explorer_to_active_file`]. That one is deliberate
+    /// and runs regardless of the setting.
     fn follow_path_in_explorer(&mut self, target_path: PathBuf) {
-        if !self.file_explorer_visible
-            || !self.resources.config.file_explorer.follow_active_buffer
+        if !self.config().file_explorer.follow_active_buffer
+            || !self.file_explorer_visible
             || self.key_context == crate::input::keybindings::KeyContext::FileExplorer
-            || !target_path.starts_with(&self.root)
+            || !explorer_path_under_root(&target_path, &self.root)
         {
             tracing::trace!(
                 "follow_path_in_explorer: gate closed, not following {:?}",
@@ -2129,32 +2198,75 @@ impl crate::app::window::Window {
         self.expand_file_explorer_to_path(target_path);
     }
 
+    /// Follow the active buffer's file in the tree, if following is on.
+    ///
+    /// Raised where "which file the user is looking at" changes — see
+    /// [`Window::set_pane_buffer`]. Every condition, the setting included, is
+    /// checked in [`Window::follow_path_in_explorer`]; this only supplies the
+    /// path, and has none of its own to state beyond "the active buffer is a
+    /// file at all".
+    pub(crate) fn follow_file_explorer_to_active_file(&mut self) {
+        let active_buf = self.active_buffer();
+        let Some(file_path) = self
+            .buffer_metadata
+            .get(&active_buf)
+            .and_then(|metadata| metadata.file_path())
+            .cloned()
+        else {
+            return;
+        };
+        self.follow_path_in_explorer(file_path);
+    }
+
     /// Expand this window's file-explorer tree to the active buffer's file,
     /// *ungated*: this is the explicit "show me where I am" reveal that
     /// opening or focusing the sidebar performs (issue #1569), so it runs
-    /// even with `follow_active_buffer` off and with the tree focused.
+    /// even with the tree focused.
     ///
     /// No-op when the explorer isn't visible, the active buffer has no file
     /// behind it, or that file is outside the window's root.
-    pub fn sync_file_explorer_to_active_file(&mut self) {
+    pub fn sync_file_explorer_to_active_file(&mut self) -> RevealOutcome {
         if !self.file_explorer_visible {
-            return;
+            return RevealOutcome::Hidden;
         }
 
         let active_buf = self.active_buffer();
         let Some(metadata) = self.buffer_metadata.get(&active_buf) else {
-            return;
+            return RevealOutcome::NoFile;
         };
-        let Some(file_path) = metadata.file_path() else {
-            return;
+        // An unnamed buffer is file-backed with an empty path: no file yet.
+        let Some(file_path) = metadata.file_path().filter(|p| !p.as_os_str().is_empty()) else {
+            return RevealOutcome::NoFile;
         };
         let target_path = file_path.clone();
 
         if !target_path.starts_with(&self.root) {
-            return;
+            return RevealOutcome::OutsideRoot(target_path);
         }
 
         self.expand_file_explorer_to_path(target_path);
+        RevealOutcome::Revealed
+    }
+
+    /// The reveal a user asked for by opening or focusing the explorer, with
+    /// the reason said out loud when the tree cannot move: an unnamed buffer
+    /// has no file to find, and a file outside the project is not in the
+    /// tree. Before this the tree sat on its root row and the status said
+    /// only that the explorer was focused (sinelaw/fresh#3326, H).
+    pub fn sync_file_explorer_to_active_file_with_feedback(&mut self) {
+        match self.sync_file_explorer_to_active_file() {
+            RevealOutcome::NoFile => {
+                self.set_status_message(t!("explorer.nothing_to_reveal").to_string());
+            }
+            RevealOutcome::OutsideRoot(path) => {
+                let name = path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| path.display().to_string());
+                self.set_status_message(t!("explorer.outside_project", name = name).to_string());
+            }
+            RevealOutcome::Revealed | RevealOutcome::Hidden => {}
+        }
     }
 
     /// Spawn the async expand-to-path that reveals and selects `target_path`.
@@ -2193,14 +2305,10 @@ impl crate::app::window::Window {
             "expand_file_explorer_to_path: taking file_explorer for async expand to {:?}",
             target_path
         );
-        let runtime_handle = self
-            .resources
-            .tokio_runtime
-            .as_ref()
-            .map(|r| r.handle().clone());
+        let runtime = self.resources.tokio_runtime.clone();
         let sender = self.resources.async_bridge.as_ref().map(|b| b.sender());
         let window_id = self.id;
-        if let (Some(runtime), Some(sender)) = (runtime_handle, sender) {
+        if let (Some(runtime), Some(sender)) = (runtime, sender) {
             // Mark sync as in progress so render knows to keep the layout
             self.file_explorer_sync_in_progress = true;
 

@@ -7,7 +7,6 @@ use ratatui::style::Color;
 
 use super::{cache::insert_with_aliases, decorations::FileExplorerDecorationCache};
 
-pub const COMPATIBILITY_TRAILING_SLOT_HIT_WIDTH: u16 = 2;
 pub const DEFAULT_LEADING_SLOT_MIN_WIDTH: usize = 2;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -89,10 +88,6 @@ pub trait ExplorerLeadingSlotProvider {
 
 pub trait ExplorerTrailingSlotProvider {
     fn resolve(&self, context: &ExplorerSlotContext<'_>) -> ExplorerTrailingSlotResolution;
-
-    fn hit_test_width(&self) -> u16 {
-        COMPATIBILITY_TRAILING_SLOT_HIT_WIDTH
-    }
 }
 
 #[derive(Clone, Copy)]
@@ -135,10 +130,6 @@ impl<'a> ExplorerSlotResolver<'a> {
             trailing: trailing.payload,
             name_color_hint: trailing.name_color_hint,
         }
-    }
-
-    pub fn trailing_hit_test_width(&self) -> u16 {
-        self.trailing.hit_test_width()
     }
 }
 
@@ -551,10 +542,6 @@ impl ExplorerTrailingSlotProvider for DefaultTrailingSlotProvider {
                 None => compatibility.name_color_hint,
             },
         }
-    }
-
-    fn hit_test_width(&self) -> u16 {
-        COMPATIBILITY_TRAILING_SLOT_HIT_WIDTH
     }
 }
 

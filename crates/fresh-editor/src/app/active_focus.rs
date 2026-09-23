@@ -56,15 +56,10 @@ impl Editor {
         // the restored-terminal transition (re-enable editing, drop the
         // stale screen tail, resize the PTY) that only the Editor level can.
         self.complete_terminal_mode_side_effects();
-        // Plugin state snapshot reaches editor-wide state (clipboard,
-        // windows list, config cache) so it stays on Editor. Run it
-        // BEFORE the hook so the handler sees the new active buffer.
-        #[cfg(feature = "plugins")]
-        self.update_plugin_state_snapshot();
-        self.plugin_manager.read().unwrap().run_hook(
-            "buffer_activated",
-            crate::services::plugins::hooks::HookArgs::BufferActivated { buffer_id },
-        );
+        // The snapshot refresh and the `buffer_activated` hook are the
+        // announcer's (`app::focus_announcer`), which fires them off the
+        // change it observes rather than off this call.
+        self.announce_focus();
     }
 
     /// Focus a split and its buffer, handling all side effects including
@@ -162,13 +157,9 @@ impl Window {
             self.resize_visible_terminals();
         }
 
-        // Ensure the newly active tab is visible. Use the focused split's real
-        // pane width, not the whole-editor width, so vertical splits scroll
-        // correctly (issue #2650).
-        let tabs_width = self.split_tabs_width(active_split);
-        self.ensure_active_tab_visible(active_split, buffer_id, tabs_width);
-
-        self.follow_active_buffer_in_explorer();
+        // Ensure the newly active tab is visible. No width is needed and none
+        // is right: the strip is a window and it knows its own.
+        self.reveal_active_tab(active_split);
 
         true
     }

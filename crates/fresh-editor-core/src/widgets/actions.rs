@@ -379,6 +379,7 @@ mod tests {
             checked: None,
             extra_lines: Vec::new(),
             window_anchor: None,
+            action: None,
         }
     }
 
@@ -434,6 +435,7 @@ mod tests {
             checkable: false,
             item_height: 1,
             card_borders: false,
+            toggle_on_click: false,
             indent_cols: 2,
             key: Some("t".into()),
         };
@@ -473,6 +475,7 @@ mod tests {
             checkable: true,
             item_height: 1,
             card_borders: false,
+            toggle_on_click: false,
             indent_cols: 2,
             key: Some("t".into()),
         };
@@ -513,6 +516,7 @@ mod tests {
             checkable: true,
             item_height: 1,
             card_borders: false,
+            toggle_on_click: false,
             indent_cols: 2,
             key: Some("t".into()),
         };
@@ -542,6 +546,7 @@ mod tests {
             checkable: false,
             item_height: 1,
             card_borders: false,
+            toggle_on_click: false,
             indent_cols: 2,
             key: Some("real".into()),
         };

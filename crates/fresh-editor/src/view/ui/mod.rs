@@ -7,13 +7,11 @@
 //! - `status_bar` - Status bar and prompt/minibuffer display
 //! - `split_rendering` - Split pane layout and rendering
 //! - `file_explorer` - File tree explorer rendering
-//! - `scrollbar` - Reusable scrollbar widget
 //! - `scroll_panel` - Reusable scrollable panel for variable-height items
 
 // WASM-compatible modules (pure rendering, no runtime deps)
 pub mod layout;
 pub mod scroll_panel;
-pub mod scrollbar;
 pub mod view_pipeline;
 
 /// `TextEdit` lives in `crate::primitives::text_edit` now (shared
@@ -41,15 +39,12 @@ pub mod tabs;
 pub use crate::primitives::text_edit::TextEdit;
 #[cfg(feature = "runtime")]
 pub use expanded_menus_cache::ExpandedMenusCache;
-#[cfg(feature = "runtime")]
-pub use file_explorer::FileExplorerRenderer;
 pub use layout::point_in_rect;
 pub(crate) use menu::MenuRowStyle;
 #[cfg(feature = "runtime")]
 pub use menu::{context_keys, MenuContext, MenuState};
 #[cfg(feature = "runtime")]
-pub use scroll_panel::{FocusRegion, ScrollItem, ScrollState, ScrollablePanel};
-pub use scrollbar::{render_scrollbar, ScrollbarColors, ScrollbarState};
+pub use scroll_panel::ScrollState;
 #[cfg(feature = "runtime")]
 pub use split_rendering::{EditorRenderConfig, RenderStyle, SplitRenderer};
 #[cfg(feature = "runtime")]

@@ -82,20 +82,19 @@ pub mod context_keys {
     pub const KEYMAP_MACOS_GUI: &str = "keymap_macos_gui";
 }
 
-/// Configuration for process resource limits
+/// Resource limits for a process.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct ProcessLimits {
-    /// Maximum memory usage as percentage of total system memory (None = no limit)
-    /// Default is 50% of total system memory
+    /// Max memory as a percent of system memory (default: 50). `null` means no limit.
     #[serde(default)]
     pub max_memory_percent: Option<u32>,
 
-    /// Maximum CPU usage as percentage of total CPU (None = no limit)
-    /// For multi-core systems, 100% = 1 core, 200% = 2 cores, etc.
+    /// Max CPU as a percent, where 100 = one core, 200 = two cores. `null` means no limit.
     #[serde(default)]
     pub max_cpu_percent: Option<u32>,
 
-    /// Enable resource limiting (can be disabled per-platform)
+    /// Apply these limits. Default: true (the built-in config turns them on
+    /// only on Linux).
     #[serde(default = "default_true")]
     pub enabled: bool,
 }
@@ -133,32 +132,24 @@ impl ProcessLimits {
             enabled: false,
         }
     }
-
-    /// Get the default CPU limit (90% of total CPU)
-    pub fn default_cpu_limit_percent() -> u32 {
-        90
-    }
 }
 
-/// LSP features that can be routed to specific servers in a multi-server setup.
-///
-/// Features are classified as either "merged" (results from all servers are combined)
-/// or "exclusive" (first eligible server wins). This classification is used by the
-/// dispatch layer, not by this enum itself.
+/// Language server feature, for routing features to servers when a language has
+/// several. "Merged" features combine results from all servers; "exclusive" ones use the first.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum LspFeature {
-    /// Diagnostics (merged: combined from all servers)
+    /// Diagnostics (merged)
     Diagnostics,
-    /// Code completion (merged: combined from all servers)
+    /// Code completion (merged)
     Completion,
-    /// Code actions / quick fixes (merged: combined from all servers)
+    /// Code actions / quick fixes (merged)
     CodeAction,
-    /// Document symbols (merged: combined from all servers)
+    /// Document symbols (merged)
     DocumentSymbols,
-    /// Workspace symbols (merged: combined from all servers)
+    /// Workspace symbols (merged)
     WorkspaceSymbols,
-    /// Hover information (exclusive: first eligible server wins)
+    /// Hover information (exclusive)
     Hover,
     /// Go to definition, declaration, type definition (exclusive)
     Definition,
@@ -299,89 +290,73 @@ impl Default for LspLanguageConfig {
     }
 }
 
-/// LSP server configuration
+/// Language server settings.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 #[schemars(extend("x-display-field" = "/command"))]
 pub struct LspServerConfig {
-    /// Command to spawn the server.
-    /// Required when enabled=true, ignored when enabled=false.
+    /// Command that starts the server. Required when enabled.
     #[serde(default)]
     #[schemars(extend("x-order" = 1))]
     pub command: String,
 
-    /// Whether the server is enabled
+    /// Enable this server.
     #[serde(default = "default_true")]
     #[schemars(extend("x-order" = 2))]
     pub enabled: bool,
 
-    /// Display name for this server (e.g., "tsserver", "eslint").
-    /// Defaults to the command basename if not specified.
+    /// Display name (e.g. "tsserver"). Defaults to the command's file name.
     #[serde(default)]
     #[schemars(extend("x-order" = 3))]
     pub name: Option<String>,
 
-    /// Arguments to pass to the server.
-    ///
-    /// `None` (field omitted) inherits the default server's args, while an
-    /// explicit list — including an empty `[]` — replaces them. This lets a
-    /// user swap a default server that takes args (e.g. `marksman server`)
-    /// for one that takes none (e.g. `markdown-oxide`) by setting `"args": []`.
+    /// Arguments for the server. If omitted, the default server's arguments are
+    /// used; any list, even `[]`, replaces them.
     #[serde(default)]
     #[schemars(extend("x-order" = 4))]
     pub args: Option<Vec<String>>,
 
-    /// Whether to auto-start this LSP server when opening matching files.
-    /// Defaults to true: a server you configure is normally one you want
-    /// used, so it starts on the next matching file open. Set to false to
-    /// require a manual start via the command palette.
+    /// Start the server when a matching file opens (default: true). When off,
+    /// start it from the command palette.
     #[serde(default = "default_true")]
     #[schemars(extend("x-order" = 5))]
     pub auto_start: bool,
 
-    /// File/directory names to search for when detecting the workspace root.
-    /// The editor walks upward from the opened file's directory looking for
-    /// any of these markers. The first directory containing a match becomes
-    /// the workspace root sent to the LSP server.
-    ///
-    /// If empty, falls back to `[".git"]` as a universal marker.
-    /// If the walk reaches a filesystem boundary without a match, uses the
-    /// file's parent directory (never cwd or $HOME).
+    /// Files or folders that mark the project root: the nearest folder above the
+    /// file that contains one is used. Empty means `[".git"]`. With no match, the
+    /// file's own folder is used.
     #[serde(default)]
     #[schemars(extend("x-order" = 6))]
     pub root_markers: Vec<String>,
 
-    /// Environment variables to set for the LSP server process.
-    /// These are added to (or override) the inherited parent environment.
+    /// Extra environment variables for the server (override inherited ones).
     #[serde(default)]
     #[schemars(extend("x-section" = "Advanced", "x-order" = 10))]
     pub env: HashMap<String, String>,
 
-    /// Override the LSP languageId sent in textDocument/didOpen based on file extension.
-    /// Maps file extension (without dot) to LSP language ID string.
-    /// For example: `{"tsx": "typescriptreact", "jsx": "javascriptreact"}`
+    /// Language ID to send to the server per file extension (no dot),
+    /// e.g. `{"tsx": "typescriptreact"}`.
     #[serde(default)]
     #[schemars(extend("x-section" = "Advanced", "x-order" = 11))]
     pub language_id_overrides: HashMap<String, String>,
 
-    /// Custom initialization options to send to the server
-    /// These are passed in the `initializationOptions` field of the LSP Initialize request
+    /// Server-specific `initializationOptions` sent at startup.
     #[serde(default)]
     #[schemars(extend("x-section" = "Advanced", "x-order" = 12))]
     pub initialization_options: Option<serde_json::Value>,
 
-    /// Restrict this server to only handle the listed features.
-    /// Mutually exclusive with `except_features`. If neither is set, all features are handled.
+    /// Use this server only for these features. Don't combine with
+    /// `except_features`; if neither is set, it handles everything.
     #[serde(default)]
     #[schemars(extend("x-section" = "Advanced", "x-order" = 13))]
     pub only_features: Option<Vec<LspFeature>>,
 
-    /// Exclude the listed features from this server.
-    /// Mutually exclusive with `only_features`. If neither is set, all features are handled.
+    /// Use this server for everything except these features. Don't combine with
+    /// `only_features`.
     #[serde(default)]
     #[schemars(extend("x-section" = "Advanced", "x-order" = 14))]
     pub except_features: Option<Vec<LspFeature>>,
 
-    /// Process resource limits (memory and CPU)
+    /// Memory and CPU limits for the server.
     #[serde(default)]
     #[schemars(
         default = "process_limits_schema_default",

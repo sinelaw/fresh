@@ -14,6 +14,7 @@ use crate::common::blog_showcase::BlogShowcase;
 use crate::common::fixtures::TestFixture;
 use crate::common::git_test_helper::{git_command, GitTestRepo};
 use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness, HarnessOptions};
+use crate::common::launch_form::FORM_TITLE;
 use crossterm::event::{KeyCode, KeyModifiers};
 use lsp_types::FoldingRange;
 use std::fs;
@@ -1494,10 +1495,10 @@ fn blog_showcase_fresh_0_2_9_large_file_scanning() {
     snap(&mut h, &mut s, Some("Ctrl+G"), 500);
     hold(&mut h, &mut s, 3, 200);
 
-    // Type "y" to accept the scan
-    h.send_key(KeyCode::Char('y'), KeyModifiers::NONE).unwrap();
+    // Press the Scan button's letter to accept the scan
+    h.send_key(KeyCode::Char('s'), KeyModifiers::NONE).unwrap();
     h.render().unwrap();
-    snap(&mut h, &mut s, Some("y"), 300);
+    snap(&mut h, &mut s, Some("s"), 300);
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
     h.render().unwrap();
     snap(&mut h, &mut s, Some("Enter"), 400);
@@ -3355,20 +3356,24 @@ fn blog_showcase_fresh_0_4_0_ssh_session() {
     hold(&mut h, &mut s, 2, 60);
 
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
-    h.wait_until(|h| {
-        h.screen_to_string()
-            .contains("ORCHESTRATOR :: New Workspace")
-    })
-    .unwrap();
+    h.wait_until(|h| h.screen_to_string().contains(FORM_TITLE))
+        .unwrap();
+    crate::common::launch_form::choose_terminal_agent(&mut h);
     snap(&mut h, &mut s, Some("Enter"), 110);
     hold(&mut h, &mut s, 4, 75);
 
-    // --- Switch the Machine control to `Other host…`: Shift+Tab from the
-    //     Project Path onto it, then → to the next option (no ~/.ssh/config
-    //     and no saved machines on the demo box). -----------------------------
-    h.send_key(KeyCode::BackTab, KeyModifiers::NONE).unwrap();
-    h.render().unwrap();
-    snap(&mut h, &mut s, Some("⇧Tab"), 60);
+    // --- Switch the Machine control to `Other host…`: Tab down onto it, then
+    //     → to the next option (no ~/.ssh/config and no saved machines on the
+    //     demo box). ------------------------------------------------------------
+    while !h
+        .screen_to_string()
+        .lines()
+        .any(|l| l.contains('▸') && l.contains("Machine:"))
+    {
+        h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+        h.render().unwrap();
+        snap(&mut h, &mut s, Some("Tab"), 45);
+    }
     h.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
     h.wait_until(|h| h.screen_to_string().contains("Target:"))
         .unwrap();
@@ -3412,7 +3417,7 @@ fn blog_showcase_fresh_0_4_0_ssh_session() {
     h.render().unwrap();
     snap(&mut h, &mut s, None, 60);
 
-    // Project Path: where the session is rooted on the remote.
+    // Folder: where the session is rooted on the remote.
     h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     h.render().unwrap();
     snap(&mut h, &mut s, Some("Tab"), 45);
@@ -3420,19 +3425,13 @@ fn blog_showcase_fresh_0_4_0_ssh_session() {
     h.render().unwrap();
     snap(&mut h, &mut s, None, 60);
 
-    // Session name.
-    h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
-    h.render().unwrap();
-    snap(&mut h, &mut s, Some("Tab"), 45);
-    h.type_text("deploy-box").unwrap();
-    h.render().unwrap();
-    snap(&mut h, &mut s, None, 75);
     hold(&mut h, &mut s, 2, 60);
 
-    // --- Submit: click "Create Workspace" (focus follows into the remote). ----
+    // --- Submit: click "Launch" (focus follows into the remote). -------------
     let (create_col, create_row) = h
-        .find_text_on_screen("Create Workspace")
-        .expect("the form should offer a 'Create Workspace' button");
+        .find_text_on_screen("[   Launch")
+        .map(|(c, r)| (c + 4, r))
+        .expect("the form should offer a 'Launch' button");
     snap_mouse(&mut h, &mut s, None, (create_col, create_row), 80);
     h.mouse_click(create_col, create_row).unwrap();
     h.render().unwrap();
@@ -3448,7 +3447,7 @@ fn blog_showcase_fresh_0_4_0_ssh_session() {
     //     wait robust. -------------------------------------------------------
     h.wait_until(|h| {
         let screen = h.screen_to_string();
-        !screen.contains("ORCHESTRATOR :: New Workspace") || screen.contains("Error:")
+        !screen.contains(FORM_TITLE) || screen.contains("Error:")
     })
     .unwrap();
     let screen = h.screen_to_string();

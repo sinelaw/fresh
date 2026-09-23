@@ -127,6 +127,9 @@ pub enum PromptType {
     /// Issued only when no buffer is modified; otherwise
     /// `ConfirmQuitWithModified` runs instead.
     ConfirmQuit,
+    /// Quit from an attached daemon client: Detach, Quit (stopping the
+    /// daemon and everything it runs), or Cancel.
+    ConfirmQuitDaemon,
     /// File Explorer rename operation
     /// Stores the original path and name for the file/directory being renamed
     FileExplorerRename {
@@ -280,6 +283,18 @@ pub struct Prompt {
     /// `selected / total` count (e.g. "Searching…", "No matches"). Plugin-
     /// controlled via `editor.setPromptStatus(text)`; overlay-only.
     pub status: String,
+    /// The question this prompt is, when it is a confirmation rather than
+    /// something to type into.
+    ///
+    /// **`Some` moves the prompt off the bottom row entirely.** The renderer
+    /// draws a centred modal over a dimmed frame instead of the minibuffer
+    /// line (`view::shell::confirm`), and `dispatch_prompt_key` hands every
+    /// key to the dialog's own dispatcher rather than to the text editor
+    /// below. Confirming feeds the selected choice's `input` to
+    /// `Editor::confirm_prompt`, so the prompt type's existing handler is
+    /// reached by exactly the string the single-letter answer used to
+    /// produce. See [`crate::view::confirm`] for why.
+    pub confirm: Option<crate::view::confirm::Confirm>,
 }
 
 /// Maximum number of suggestion rows a bottom-anchored dropdown shows at once.
@@ -314,6 +329,7 @@ impl Prompt {
             footer: Vec::new(),
             toolbar: None,
             status: String::new(),
+            confirm: None,
         }
     }
 
@@ -347,6 +363,7 @@ impl Prompt {
             footer: Vec::new(),
             toolbar: None,
             status: String::new(),
+            confirm: None,
         }
     }
 
@@ -399,7 +416,15 @@ impl Prompt {
             footer: Vec::new(),
             toolbar: None,
             status: String::new(),
+            confirm: None,
         }
+    }
+
+    /// Whether this prompt is drawn as a modal dialog instead of the
+    /// bottom row. The one question three separate places have to agree on —
+    /// the frame's row budget, the row's content, and the keyboard.
+    pub fn is_confirm_dialog(&self) -> bool {
+        self.confirm.is_some()
     }
 
     /// Move cursor left (to previous grapheme cluster boundary)
@@ -534,57 +559,6 @@ impl Prompt {
         self.edit.move_end();
     }
 
-    /// Select next suggestion
-    pub fn select_next_suggestion(&mut self) {
-        if !self.suggestions.is_empty() {
-            // Keyboard navigation re-engages keep-selection-visible scrolling.
-            self.manual_scroll = false;
-            self.selected_suggestion = Some(match self.selected_suggestion {
-                Some(idx) if idx + 1 < self.suggestions.len() => idx + 1,
-                Some(_) => 0, // Wrap to start
-                None => 0,
-            });
-        }
-    }
-
-    /// Select previous suggestion
-    pub fn select_prev_suggestion(&mut self) {
-        if !self.suggestions.is_empty() {
-            self.manual_scroll = false;
-            self.selected_suggestion = Some(match self.selected_suggestion {
-                Some(0) => self.suggestions.len() - 1, // Wrap to end
-                Some(idx) => idx - 1,
-                None => 0,
-            });
-        }
-    }
-
-    /// Scroll the result list by `delta` rows without moving the selection
-    /// (mouse wheel over the Live Grep overlay results pane, issue #2119).
-    /// `visible` is the number of result rows currently on screen, used to
-    /// clamp the offset so it can't scroll past the end of the list.
-    pub fn scroll_results(&mut self, delta: i32, visible: usize) {
-        let total = self.suggestions.len();
-        if total == 0 {
-            return;
-        }
-        let max_offset = total.saturating_sub(visible.max(1));
-        let next = (self.scroll_offset as i32 + delta).clamp(0, max_offset as i32) as usize;
-        if next != self.scroll_offset {
-            self.scroll_offset = next;
-        }
-        // Latch manual scroll even when clamped at an edge, so a follow-up
-        // render doesn't immediately yank the offset back to the selection.
-        self.manual_scroll = true;
-    }
-
-    /// Get the currently selected suggestion value
-    pub fn selected_value(&self) -> Option<String> {
-        self.selected_suggestion
-            .and_then(|idx| self.suggestions.get(idx))
-            .map(|s| s.get_value().to_string())
-    }
-
     /// Get the final input (use selected suggestion if available, otherwise raw input)
     /// The query text. Accessor for the §4.5 state collapse: external
     /// readers go through this (not the field) so the storage can
@@ -631,10 +605,6 @@ impl Prompt {
             let a = anchor.min(self.input_str().len());
             self.edit.selection_anchor = Some((0, a));
         }
-    }
-
-    pub fn get_final_input(&self) -> String {
-        self.selected_value().unwrap_or_else(|| self.edit.value())
     }
 
     /// Apply fuzzy filtering to suggestions based on current input

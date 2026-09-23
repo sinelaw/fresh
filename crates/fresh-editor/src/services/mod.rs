@@ -16,7 +16,6 @@ pub mod fs;
 pub mod gpm;
 /// Outbound HTTP(S); the only place `ureq`/TLS is used (gated by `http`).
 pub mod http;
-pub mod live_grep_state;
 pub use fresh_editor_core::log_dirs;
 pub mod lsp;
 pub use fresh_editor_core::packages;
@@ -28,6 +27,8 @@ pub use fresh_editor_core::process_limits;
 pub mod recovery;
 pub mod release_checker;
 pub mod remote;
+/// Owning handles to a Tokio runtime (see [`runtime::LiveRuntime`]).
+pub mod runtime;
 pub mod signal_handler;
 pub mod status_log;
 pub mod stdin_spool;

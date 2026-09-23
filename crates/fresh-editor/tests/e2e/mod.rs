@@ -16,11 +16,13 @@ pub mod buffer_groups;
 pub mod buffer_lifecycle;
 pub mod buffer_settings_commands;
 pub mod capslock_shortcuts;
+pub mod caret_with_a_virtual_line_below;
 pub mod cargo_config_editing;
 pub mod code_tour_dock;
 pub mod command_palette;
 pub mod conceal_spanning_line_break;
 pub mod config_language_selector;
+pub mod confirm_dialog;
 pub mod copy_buffer_path;
 pub mod crash_repro;
 pub mod csharp_language_coherence;
@@ -28,6 +30,7 @@ pub mod csi_u_session_input;
 pub mod ctrl_slash_legacy_terminal;
 pub mod cursor_style_rendering;
 pub mod dabbrev_completion;
+pub mod daemon_quit_dialog;
 pub mod deno_lsp_plugin;
 pub mod dispatch_precedence;
 pub mod dock_create_terminal_resize;
@@ -46,14 +49,17 @@ pub mod explorer_bugs;
 pub mod explorer_context_menu;
 pub mod explorer_focus_terminal_keys;
 pub mod explorer_menu;
+pub mod explorer_reveal_feedback;
 pub mod external_file_save_as_tab;
 pub mod extract_tab_to_workspace;
 pub mod file_browser;
 pub mod file_explorer;
 pub mod file_explorer_compact_chain;
 pub mod file_explorer_cursor_under_modal;
+pub mod file_explorer_follow_active_buffer;
 pub mod file_explorer_open_focus;
 pub mod file_explorer_session_persist;
+pub mod file_explorer_window;
 pub mod file_permissions;
 pub mod flash;
 #[cfg(feature = "plugins")]
@@ -118,7 +124,6 @@ pub mod issue_2878_split_cursor_independence;
 pub mod issue_2893_replace_all_many_matches;
 pub mod issue_2953_search_replace_double_open;
 pub mod issue_2969_wheel_over_chrome;
-pub mod issue_2988_explorer_follow_tour;
 pub mod issue_3006_drag_beyond_text_area;
 pub mod issue_3006_shift_select_at_buffer_edges;
 pub mod issue_3021_diff_hunk_header_bg;
@@ -130,6 +135,7 @@ pub mod issue_3148_block_selection_tabs;
 pub mod issue_3150_block_selection_offset;
 pub mod issue_3189_multi_workspace_quit;
 pub mod issue_3192_scrollbar_drag_cursor;
+pub mod issue_3218_cjk_tab_marker;
 pub mod issue_623_prompt_dropdown_scrollbar;
 pub mod issue_722_inlay_hint_split_drift;
 pub mod issue_779_after_eof_shade;
@@ -138,12 +144,16 @@ pub mod language_dialog_esc_cancels_edit;
 pub mod language_dialog_tab_size;
 pub mod language_textmate_grammar;
 pub mod mouse_session_input;
+pub mod odin_language;
+pub mod pascal_indent;
 #[cfg(feature = "plugins")]
 pub mod placeholder_window_embed;
 pub mod suspend_process;
 
 pub mod close_buffer_shared_split_cursor;
 pub mod finder_preview;
+#[cfg(feature = "plugins")]
+pub mod focus_announcer;
 pub mod keybinding_editor;
 pub mod language_features_e2e;
 pub mod large_file_edit_bounded;
@@ -224,6 +234,8 @@ pub mod markdown_compose_table_structure;
 pub mod markdown_fenced_code_highlighting;
 #[cfg(feature = "plugins")]
 pub mod markdown_toc;
+#[cfg(feature = "plugins")]
+pub mod markdown_toc_chrome_focus;
 pub mod memory_scroll_leak;
 pub mod menu_bar;
 pub mod menu_cursor_bleed;
@@ -241,6 +253,8 @@ pub mod open_folder;
 pub mod orchestrator_dialog_trust_repro;
 pub mod orchestrator_dock;
 pub mod orchestrator_dock_settings;
+pub mod orchestrator_dock_startup;
+pub mod orchestrator_new_workspace_open_file;
 pub mod orchestrator_window_lsp;
 pub mod overlay_extend_to_line_end;
 pub mod pane_navigation;
@@ -290,6 +304,8 @@ pub mod search_replace;
 pub mod search_selection_on_punctuation;
 pub mod search_viewport_stall_after_wrap;
 pub mod selection;
+#[cfg(feature = "plugins")]
+pub mod send_key_settles_plugin_work;
 pub mod server_session_lifecycle;
 pub mod session_hot_exit;
 #[cfg(feature = "plugins")]
@@ -314,7 +330,12 @@ pub mod settings_widget_controls;
 pub mod shell_command;
 pub mod shift_backspace;
 #[cfg(feature = "plugins")]
+#[cfg(feature = "plugins")]
+pub mod sidebar_focus_cycle;
+#[cfg(feature = "plugins")]
 pub mod sidebar_sections;
+#[cfg(feature = "plugins")]
+pub mod sidebar_window_scope;
 pub mod slow_filesystem;
 pub mod smart_editing;
 pub mod smart_home;
@@ -375,5 +396,6 @@ pub mod warning_indicators;
 #[cfg(feature = "plugins")]
 pub mod widget_panel_ownership;
 pub mod window_switch_explorer_first_frame;
+pub mod word_drag_selection;
 #[cfg(feature = "plugins")]
 pub mod workspace;

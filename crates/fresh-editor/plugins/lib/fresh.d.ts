@@ -615,6 +615,13 @@ type BufferInfo = {
 	*/
 	id: number;
 	/**
+	* The window this buffer belongs to. A buffer lives in exactly one
+	* window — the same file open in two windows is two buffers with two
+	* ids — so a plugin that keeps a buffer id keeps this with it, and
+	* checks it against the window it is acting in.
+	*/
+	window_id: number;
+	/**
 	* File path (if any)
 	*/
 	path: string;
@@ -1221,6 +1228,15 @@ type PreparingWindowResult = {
 	* The new workspace's durable identity (`ws-…`), stable across restarts.
 	*/
 	stableId: string;
+	/**
+	* The placeholder's seed buffer. Mount a widget panel here
+	* (`mountWidgetPanel`) to describe the page yourself: the plugin
+	* building the workspace knows what it is waiting on, what failed and
+	* what the user can do about it, so the page is its to write. The
+	* editor's own page — name, state, one line of explanation — is only
+	* the fallback for a window nothing has described.
+	*/
+	bufferId: number;
 };
 type CreateTerminalOptions = {
 	/**
@@ -1530,6 +1546,21 @@ type TreeNode = {
 	* Out-of-range values are harmless — they resolve to the end of the text.
 	*/
 	windowAnchor?: TextWindowAnchor | null;
+	/**
+	* A button drawn at the row's tail: what this row is *for*, said on
+	* the row itself rather than only in a footer the eye has to travel
+	* to. `Some(label)` renders `[ label ]` against the panel's right
+	* edge and emits a hit area over it that fires the `action` event
+	* with the row's `index` and `key`; the keyboard reaches the same
+	* thing through the tree's `activate`.
+	*
+	* The button is pinned like the indent is pinned: it sits outside the
+	* window the body is fitted into, so a row too wide for the panel
+	* slides *under* its button rather than pushing it off the edge.
+	* Ignored on a bordered card (`card_borders` with `item_height > 1`),
+	* whose chrome has nowhere to put one.
+	*/
+	action?: string | null;
 };
 type TextWindowAnchor = {
 	/**
@@ -2016,6 +2047,12 @@ type WidgetSpec = {
 	* the disclosure glyph (or the blank standing in for one).
 	*/
 	indentCols: number;
+	/**
+	* When true, a click anywhere on a node with children toggles its
+	* expansion (and selects it), not only a click on the disclosure
+	* glyph. The toggle fires `expand` with `{ index, key, expanded }`.
+	*/
+	toggleOnClick: boolean;
 	key?: string | null;
 } | {
 	"kind": "text";
@@ -2915,15 +2952,25 @@ type RemoteAgentSpec = {
 	base_env?: [string, string][];
 	/**
 	* When true, attach as a NEW window (born-attached, coexisting with the
-	* existing windows) instead of the default global restart that replaces the
-	* whole editor's authority. The Orchestrator sets this so a cloud session is
-	* a real session row beside local ones.
+	* existing windows) rather than re-pointing the window showing the current
+	* project. The Orchestrator sets this so a cloud session is a real session
+	* row beside local ones.
 	*/
 	window?: boolean;
 	/** Window label (window mode only). Omit to use the transport's display. */
 	label?: string;
 	/** Optional agent argv for the new window's seed terminal (window mode). */
 	command?: string[];
+	/**
+	* Grow this *preparing* window (from `createPreparingWindow`) into the
+	* session instead of minting a new one — window mode only. The
+	* Orchestrator opens a placeholder the user lands in while the connect
+	* runs, so a remote workspace is somewhere to be from the moment it is
+	* asked for, and a connect that fails reports on that page rather than
+	* only in the dock. Ignored if the window is gone by the time the connect
+	* lands.
+	*/
+	adopt_window?: number;
 };
 type RemoteIndicatorStatePayload = {
 	kind: "local";
@@ -3476,6 +3523,27 @@ interface EditorAPI {
 	*/
 	envActive(): boolean;
 	/**
+	* Launched by a bare `fresh` in Orchestrator mode. Exposed to JS as
+	* `editor.orchestratorMode()`. The launch, not the `orchestrator_mode`
+	* preference, which stays on for `fresh FILE`. Plugins in the mode use
+	* it to override their own settings.
+	*/
+	orchestratorMode(): boolean;
+	/**
+	* Whether the left dock slot is open: a panel is in it, or the host is
+	* holding the column for one its manifest declared. Exposed to JS as
+	* `editor.dockOpen()`. The plugin that fills the dock mounts it at
+	* `ready` iff this is true.
+	*/
+	dockOpen(): boolean;
+	/**
+	* The dock column's width in cells, open or not; `0` when the terminal
+	* is too narrow for a dock. Exposed to JS as `editor.dockCols()`. Lay
+	* dock content out to this: the host owns the width and re-fits it on
+	* resize.
+	*/
+	dockCols(): number;
+	/**
 	* The environment core detected in the workspace, as a JSON string
 	* (`{name, kind, snippet}`) or empty when none. Exposed to JS as
 	* `editor.detectedEnv()`. Detection lives only in core; the env-manager
@@ -3556,10 +3624,21 @@ interface EditorAPI {
 	*/
 	readFile(path: string | LocalPath | WindowPath | AuthorityPath): string | null;
 	/**
-	* Write file contents to the path's filesystem. Parent directories are
-	* created as needed.
+	* Write file contents to a NEW file on the path's filesystem. Parent
+	* directories are created as needed. Returns false if the path already
+	* exists — use `replaceFile` to replace a file deliberately.
 	*/
 	writeFile(path: string | LocalPath | WindowPath | AuthorityPath, content: string): boolean;
+	/**
+	* Write to a file, replacing it if it already exists.
+	* 
+	* `writeFile` refuses an existing path, which is what its documentation
+	* always promised and what stops a plugin destroying a user's file by
+	* accident. Use this when replacing the file is the actual intent — a
+	* plugin rewriting its own cache or state, or re-exporting a report the
+	* user asked for again. The write is atomic.
+	*/
+	replaceFile(path: string | LocalPath | WindowPath | AuthorityPath, content: string): boolean;
 	/**
 	* Read directory contents (returns array of {name, is_file, is_dir})
 	*/
@@ -3571,21 +3650,76 @@ interface EditorAPI {
 	*/
 	createDir(path: string | LocalPath | WindowPath | AuthorityPath): boolean;
 	/**
-	* Permanently remove a file or directory on the path's filesystem
-	* (recursively for directories). For safety, the path must be under the OS
-	* temp directory or the Fresh config directory. Returns true on success.
+	* Create an editor-owned staging directory and return the opaque token
+	* that names it. Write into it with the path `scratchPath` returns, then
+	* either publish it with `installScratch` or drop it with
+	* `scratchDiscard`. `label` only makes the directory recognisable to a
+	* human; it does not decide where the directory goes.
 	*/
-	removePath(path: string | LocalPath | WindowPath | AuthorityPath): boolean;
+	scratchCreate(label: string): string | null;
 	/**
-	* Rename/move a file or directory. Both paths must target the same
-	* filesystem (a cross-backend move is rejected). Returns true on success.
+	* The directory a staging token names, or `null` if the token is unknown
+	* or already spent.
 	*/
-	renamePath(from: string | LocalPath | WindowPath | AuthorityPath, to: string | LocalPath | WindowPath | AuthorityPath): boolean;
+	scratchPath(token: string): string | null;
 	/**
-	* Copy a file or directory recursively to a new location. Both paths must
-	* target the same filesystem. Returns true on success.
+	* Discard a staging directory. The path is looked up from the token, so
+	* an unknown or spent token removes nothing.
 	*/
-	copyPath(from: string | LocalPath | WindowPath | AuthorityPath, to: string | LocalPath | WindowPath | AuthorityPath): boolean;
+	scratchDiscard(token: string): boolean;
+	/**
+	* Publish a staging directory as the installed package `<kind>/<name>`,
+	* where `kind` is one of `plugin`, `theme`, `language` or `bundle`. Any
+	* existing install under that name goes to the system trash first, so an
+	* upgrade is recoverable.
+	* 
+	* `subpath` installs one directory out of the staging tree (a package in
+	* a subdirectory of a cloned monorepo); pass `""` for the whole thing. It
+	* chooses the source only — `kind` and `name` decide where the package
+	* lands. Installing the whole tree spends the token; installing a subpath
+	* leaves it live so the rest can be discarded.
+	*/
+	installScratch(token: string, kind: string, name: string, subpath: string): boolean;
+	/**
+	* Create a staging directory holding a copy of `from`, and return the
+	* token that names it — how a package installed from a local directory
+	* reaches staging.
+	* 
+	* `from` is a path on the editor host. Staging directories, installed
+	* packages and plugin state all live there by design, so an install
+	* survives the SSH session that started it going away; there is no
+	* authority-path form of this call, so the argument is a plain path
+	* rather than a `LocalPath | WindowPath | AuthorityPath` union with two
+	* thirds of it rejected at runtime.
+	* 
+	* Answers `null` if `from` is not a directory or could not be copied,
+	* having discarded anything it had already staged — so there is never a
+	* half-filled staging directory to clean up.
+	*/
+	scratchFromDirectory(from: string): string | null;
+	/**
+	* Move an installed package to the system trash. Returns false if nothing
+	* is installed under that kind and name.
+	*/
+	uninstallPackage(kind: string, name: string): boolean;
+	/**
+	* Write a namespaced state entry, replacing any previous value. The
+	* editor owns the on-disk layout; a plugin names the entry, not the file.
+	*/
+	stateSet(namespace: string, key: string, value: string): boolean;
+	/**
+	* Read a namespaced state entry, or `null` if it is unset.
+	*/
+	stateGet(namespace: string, key: string): string | null;
+	/**
+	* The keys set in a namespace, in no particular order.
+	*/
+	stateKeys(namespace: string): string[];
+	/**
+	* Clear a namespaced state entry. Returns true if it is gone afterwards,
+	* including when it was already unset.
+	*/
+	stateDelete(namespace: string, key: string): boolean;
 	/**
 	* Construct a `LocalPath` — a path that always resolves on the local
 	* editor host, regardless of the active window's authority. Use for
@@ -3709,6 +3843,25 @@ interface EditorAPI {
 	* editor processes the command.
 	*/
 	setSetting(path: string, value: unknown): boolean;
+	/**
+	* Persist a single core config setting to the user's config file.
+	* 
+	* The durable counterpart to `setSetting`: `setSetting` patches the
+	* running editor and is gone at exit, this writes `config.json` the way
+	* the Settings UI does (same layer resolution, same comment-preserving
+	* rewrite) *and* applies the value immediately, so a checkbox a plugin
+	* draws can own a real setting.
+	* 
+	* `path` is dot-separated (e.g. `"orchestrator_mode"`,
+	* `"editor.tab_size"`). The host refuses a path that is not a real
+	* config setting rather than writing a key that would be silently
+	* dropped on the next load, and says so in the status bar.
+	* 
+	* Returns `true` if the write was queued; it is applied asynchronously,
+	* so a following `getConfig()` reflects it only after the editor
+	* processes the command.
+	*/
+	saveSetting(path: string, value: unknown): boolean;
 	/**
 	* Reload theme registry from disk
 	* Call this after installing theme packages or saving new themes
@@ -5003,6 +5156,11 @@ interface EditorAPI {
 	mountSidebarSection(panelId: number, specObj: unknown, title: string, rows: number, opts?: {
 		closable?: boolean;
 		startBlurred?: boolean;
+		scope?: {
+			buffer: number;
+		} | {
+			window: number;
+		} | "editor";
 	}): boolean;
 	/**
 	* Replace the spec of the currently-mounted floating widget panel.
@@ -5014,9 +5172,11 @@ interface EditorAPI {
 	unmountFloatingWidget(panelId: number): boolean;
 	/**
 	* Control a mounted floating panel's placement / focus without
-	* re-sending its spec. `op`: "dock" (`arg` = width in columns),
-	* "center", "focus", "blur", "fullscreen" (`arg != 0` makes a
-	* centered panel cover the whole frame over the dock), "sidebar"
+	* re-sending its spec. `op`: "dock" (re-anchor as the left dock and
+	* focus; `arg` unused — the width is the editor's), "dock_width"
+	* (`arg` = width in columns; sticks like a drag, across resizes and
+	* launches), "center", "focus", "blur", "fullscreen" (`arg != 0` makes
+	* a centered panel cover the whole frame over the dock), "sidebar"
 	* (`arg` = requested rows; re-anchors the panel as a sidebar section
 	* under the file explorer — "dock" / "center" re-anchor it back out),
 	* "sidebar_rows" (`arg` = requested rows for a section; a divider the
@@ -5067,13 +5227,13 @@ interface EditorAPI {
 	* The payload is a JS object describing filesystem + spawner +
 	* terminal wrapper + display label. The canonical schema lives in
 	* the `AuthorityPayload` type in `fresh-editor`; plugins should
-	* hand-build objects that match it. Fire-and-forget: the editor
-	* restarts as part of the transition, so the plugin is reloaded
-	* before any follow-up work can run on this call's return value.
+	* hand-build objects that match it. Fire-and-forget: returns before the
+	* authority is live and reloads nothing, so follow-up work belongs in an
+	* `authority_changed` handler.
 	*/
 	setAuthority(payload: AuthorityPayload): boolean;
 	/**
-	* Restore the default local authority. Same restart semantics as
+	* Restore the default local authority on this window. Same semantics as
 	* `setAuthority`.
 	*/
 	clearAuthority(): void;
@@ -5127,9 +5287,8 @@ interface EditorAPI {
 	* ```
 	* 
 	* The override sticks until replaced or cleared via
-	* `clearRemoteIndicatorState`. Editor restart (e.g. on
-	* `setAuthority`) resets it — plugins must reassert after a
-	* post-restart init if they want the override to persist.
+	* `clearRemoteIndicatorState`. It survives an authority change but not a
+	* relaunch.
 	*/
 	setRemoteIndicatorState(state: RemoteIndicatorStatePayload): boolean;
 	/**
@@ -5472,6 +5631,81 @@ interface EditorAPI {
 		plugin: string;
 	}>>;
 }
+/** A machine opened with `editor.openMachine`. Closed on `close()` or plugin unload. */
+interface FreshMachine {
+	id: number;
+	/** "linux" | "macos" | "windows" | "other", as the machine reports. */
+	platform: string;
+	home: string;
+	/** The authority's own label, empty for a plain local one. */
+	label: string;
+	walkTree(root: string, options?: WalkTreeOptions): Promise<WalkTreeResult>;
+	readFilePrefixes(requests: {
+		path: string;
+		maxBytes: number;
+	}[]): Promise<FilePrefix[]>;
+	run(program: string, args?: string[], cwd?: string): Promise<CommandResult>;
+	/** Environment variables, for the names that are set. A remote machine is
+	*  asked with `printenv`; never this computer's values for another machine. */
+	env(names: string[]): Promise<Record<string, string>>;
+	/** Idempotent: closing twice is not an error. */
+	close(): Promise<boolean>;
+}
+interface WalkTreeOptions {
+	/** Directory basenames skipped at every depth. */
+	skipDirs?: string[];
+	includeHidden?: boolean;
+	includeDirs?: boolean;
+	/** Depth below the root; 1 is a direct child. Omitted means unbounded. */
+	maxDepth?: number;
+	maxEntries?: number;
+}
+interface WalkTreeEntry {
+	path: string;
+	/** Path relative to the walk root, "/"-separated on every platform. */
+	rel: string;
+	kind: "file" | "dir" | "symlink";
+	/** Unix timestamp. */
+	mtime: number;
+	size: number;
+}
+interface WalkTreeResult {
+	entries: WalkTreeEntry[];
+	/** True when `maxEntries` stopped the walk early. */
+	truncated: boolean;
+}
+/** One result from `readFilePrefixes`: `text` on success, else `error`. */
+interface FilePrefix {
+	path: string;
+	text?: string;
+	error?: string;
+}
+/** A non-zero `code` resolves rather than rejecting. */
+interface CommandResult {
+	code: number;
+	stdout: string;
+	stderr: string;
+}
+/** Bare shapes bound to machine 0, the active window's own authority. */
+interface EditorAPI {
+	/** Open a machine to read without attaching it to a window.
+	*  `{ kind: "window", window?: number }` borrows a window's own authority.
+	*  `{ kind: "ssh" | "kubectl-exec", ... }` connects to a machine nothing is
+	*  attached to; it is read-only, so `run` rejects. Anything else is an
+	*  `AuthorityPayload`, as `setAuthority` takes. */
+	openMachine(spec: {
+		kind: "window";
+		window?: number;
+	} | RemoteAgentTransport | AuthorityPayload): Promise<FreshMachine>;
+	walkTree(root: string, options?: WalkTreeOptions): Promise<WalkTreeResult>;
+	readFilePrefixes(requests: {
+		path: string;
+		maxBytes: number;
+	}[]): Promise<FilePrefix[]>;
+	/** Unlike `spawnHostProcess`, a remote authority runs the command there. */
+	runOnTarget(program: string, args?: string[], cwd?: string): Promise<CommandResult>;
+	machineEnv(names: string[]): Promise<Record<string, string>>;
+}
 /**
 * Typed overload of `editor.getPluginApi`. When the caller passes a
 * key that some loaded plugin declared in `FreshPluginRegistry`, the
@@ -5548,12 +5782,15 @@ interface HookEventMap {
 	// ── buffer lifecycle ─────────────────────────────────────────────────────
 	buffer_activated: {
 		buffer_id: number;
+		window_id: number;
 	};
 	buffer_deactivated: {
 		buffer_id: number;
+		window_id: number;
 	};
 	buffer_closed: {
 		buffer_id: number;
+		window_id: number;
 	};
 	// ── file I/O ─────────────────────────────────────────────────────────────
 	before_file_open: {
@@ -5562,14 +5799,17 @@ interface HookEventMap {
 	after_file_open: {
 		path: string;
 		buffer_id: number;
+		window_id: number;
 	};
 	before_file_save: {
 		path: string;
 		buffer_id: number;
+		window_id: number;
 	};
 	after_file_save: {
 		path: string;
 		buffer_id: number;
+		window_id: number;
 	};
 	/**
 	* Fired after a buffer is reloaded from disk: auto-revert picked up an
@@ -5596,11 +5836,13 @@ interface HookEventMap {
 	// ── text edits ───────────────────────────────────────────────────────────
 	before_insert: {
 		buffer_id: number;
+		window_id: number;
 		position: number;
 		text: string;
 	};
 	after_insert: {
 		buffer_id: number;
+		window_id: number;
 		position: number;
 		text: string;
 		affected_start: number;
@@ -5611,11 +5853,13 @@ interface HookEventMap {
 	};
 	before_delete: {
 		buffer_id: number;
+		window_id: number;
 		start: number;
 		end: number;
 	};
 	after_delete: {
 		buffer_id: number;
+		window_id: number;
 		start: number;
 		end: number;
 		deleted_text: string;
@@ -5628,6 +5872,7 @@ interface HookEventMap {
 	// ── cursor & viewport ────────────────────────────────────────────────────
 	cursor_moved: {
 		buffer_id: number;
+		window_id: number;
 		cursor_id: number;
 		old_position: number;
 		new_position: number;
@@ -5637,6 +5882,7 @@ interface HookEventMap {
 	viewport_changed: {
 		split_id: number;
 		buffer_id: number;
+		window_id: number;
 		top_byte: number;
 		top_line: number | null;
 		width: number;
@@ -5870,6 +6116,38 @@ interface HookEventMap {
 		previous_id: number | null;
 		active_id: number;
 	};
+	/**
+	* What the user is looking at changed: the active buffer of the active
+	* window is a different `(window, buffer)` than before. The one hook to
+	* subscribe to for "the active buffer" — it fires for a tab switch, a
+	* split focus, an open, a window dive and a workspace restore alike,
+	* after `active_window_changed` / `buffer_activated` for the same change.
+	* `reason` is `"window"` (a window switch), `"buffer"` (a different
+	* buffer in the same window) or `"open"` (the same buffer re-pointed at
+	* another file in place).
+	*/
+	active_buffer_changed: {
+		window_id: number;
+		buffer_id: number;
+		previous: {
+			window_id: number;
+			buffer_id: number;
+		} | null;
+		reason: string;
+	};
+	/**
+	* Which chrome region holds the keyboard changed: `"editor"` (a pane),
+	* `"explorer"` (the file tree), `"dock"`, or `"section"` (a sidebar
+	* section, named by `plugin` and `panel_id`). Fires once per change, so
+	* a plugin can answer "does the pane have the keyboard?" without
+	* inferring it from its own focus events.
+	*/
+	chrome_focus_changed: {
+		window_id: number;
+		region: string;
+		plugin: string | null;
+		panel_id: number | null;
+	};
 	// ── widget runtime ───────────────────────────────────────────────────────
 	/**
 	* A widget mounted via `editor.mountWidgetPanel` emitted a
@@ -5889,6 +6167,7 @@ interface HookEventMap {
 	*   * Button: `event_type = "activate"`, `payload = {}`.
 	*/
 	widget_event: {
+		window_id: number;
 		panel_id: number;
 		widget_key: string;
 		event_type: string;

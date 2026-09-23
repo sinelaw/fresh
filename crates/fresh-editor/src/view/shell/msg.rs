@@ -58,7 +58,8 @@ impl UiFact {
                 | UiFact::CardPreviewScroll(_)
                 | UiFact::ExplorerResizeBegin { .. }
                 | UiFact::SectionResizeBegin { .. }
-                | UiFact::ExplorerScroll { .. }
+                | UiFact::ExplorerWheel { .. }
+                | UiFact::ExplorerScrollTo(_)
                 | UiFact::DockHover(_)
                 | UiFact::DockResizeBegin
                 | UiFact::GripDrag { .. }
@@ -255,11 +256,6 @@ pub enum UiFact {
     /// The pointer was released while a tab's name held it: the drop, if the
     /// drag ever passed its threshold.
     PaneTabDrop,
-    /// The `<` or `>` at a strip's edge: step the strip one notch.
-    PaneTabsScroll {
-        pane: LeafId,
-        delta: i32,
-    },
     /// The `+` after the last tab: the new-tab menu, just below it.
     PaneNewTab {
         pane: LeafId,
@@ -441,8 +437,9 @@ pub enum UiFact {
     CloseMenu,
 
     // -- file explorer -------------------------------------------------------
-    /// A left press on a tree row, named by its **viewport** index — the same
-    /// number `FileTreeView::get_display_node_at_viewport_row` takes.
+    /// A left press on a tree row, named by its index in the tree's display
+    /// order — the same number `FileTreeView::get_node_at_index` takes, and
+    /// the one the row's window counts in. A pinned ancestor names its own.
     ///
     /// One fact for what used to be two routes (single click and double
     /// click). `clicks` is which press of a run this is, straight off
@@ -561,13 +558,22 @@ pub enum UiFact {
     /// plugin section and does nothing otherwise; either way the press goes
     /// on. The dock's `DockBlur`, for the column.
     SidebarBlur,
-    /// The wheel over the panel. Positive is down, matching `Input::Wheel`.
-    /// Carries the pointer so the plugin `wheel` hook still gets a position.
-    ExplorerScroll {
+    /// The wheel turned over the panel. Positive is down, matching
+    /// `Input::Wheel`; carries the pointer so the plugin `mouse_scroll` hook
+    /// still gets a position. **It does not move the tree** — the window is
+    /// the library's to move, and `ExplorerScrollTo` is how it says where
+    /// to. What this carries is the hook and the transient-popup dismissal,
+    /// which are the panel's reactions to the wheel rather than the window's.
+    ExplorerWheel {
         delta: i32,
         x: u16,
         y: u16,
     },
+    /// The library moved the tree's window — a wheel, a press or drag on the
+    /// bar — and this is the offset it moved to, in tree rows. The window is
+    /// controlled: the model clamps it to its own ceiling and stores it, and
+    /// the next frame declares it back.
+    ExplorerScrollTo(usize),
     /// A left press landed on the dock's column and nothing in it answered.
     ///
     /// **A press on the column carries no cell, and there is nothing left to
@@ -667,6 +673,16 @@ pub enum UiFact {
     /// The secondary button — Cancel when the prompt was opened voluntarily,
     /// Quit for the mandatory gate at startup.
     TrustSecondary,
+    /// A button on the confirmation modal was clicked.
+    ///
+    /// **A button IS the consent**, unlike the trust prompt's radios: these
+    /// are already the outcome spelled out in full ("Discard and Quit"), not
+    /// a selection to be committed afterwards, and requiring a second click
+    /// on an `[ OK ]` would put two presses between the user and "Cancel".
+    ConfirmChoose(usize),
+    /// The pointer entered a button on the confirmation modal, or left the
+    /// one it was over. Lights the button; does not arm it.
+    ConfirmHover(Option<usize>),
     /// A press on a split divider: start the width drag on *this* container.
     ///
     /// The node knows which container it is, so nothing hit-tests a recorded
@@ -773,13 +789,11 @@ pub enum UiFact {
     /// painter filed one rectangle per visible row in `layout.categories` and
     /// `layout.sections`, and the arm behind them walked both lists.
     SettingsCategory(usize),
+    /// A press on a category in the narrow layout's strip, which has no tree
+    /// to open or shut: it only selects the page (and takes it to the top).
+    SettingsStripCategory(usize),
     /// A press on a section row under a category, by `(category, section)`.
     SettingsCategorySection(usize, usize),
-    /// A press on a category's `▶`/`▼`, which expands it rather than
-    /// selecting it. This was `layout.disclosures` — a one-column rectangle
-    /// per expandable row, filed so a chain of `point_in_rect` could tell the
-    /// chevron from the label beside it.
-    SettingsCategoryDisclosure(usize),
     /// **A key the category tree answered for itself.** The first of the
     /// settings dialog's keys to arrive as what it *means* rather than as
     /// `ModalKey` — "here is your key back, work out whose it was". The node

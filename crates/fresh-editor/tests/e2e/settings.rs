@@ -246,18 +246,6 @@ fn find_setting_label_and_chip(
     None
 }
 
-fn screen_contains_text_at_or_after_col(
-    harness: &EditorTestHarness,
-    text: &str,
-    min_col: u16,
-) -> bool {
-    harness.screen_to_string().lines().any(|line| {
-        line.find(text)
-            .map(|col| col as u16 >= min_col)
-            .unwrap_or(false)
-    })
-}
-
 #[test]
 fn test_settings_toggle_mouse_click_only_chip_changes_value() {
     let mut harness = EditorTestHarness::new(120, 40).unwrap();
@@ -343,7 +331,10 @@ fn test_plugin_toggle_mouse_click_chip_matches_visual_position() {
     harness.render().unwrap();
 
     assert!(
-        screen_contains_text_at_or_after_col(&harness, "Plugin: dashboard", 32),
+        harness.screen_to_string().lines().any(|l| {
+            let right: String = l.chars().skip(32).collect();
+            right.trim_start().starts_with("dashboard")
+        }),
         "plugin settings page should show its title in the right panel. Screen:\n{}",
         harness.screen_to_string()
     );
@@ -505,11 +496,11 @@ fn test_settings_selection_indicator() {
     harness.render().unwrap();
 
     // Settings panel should show focus indicator ">" on selected item
-    // General category has: Active Keybinding Map (first item)
+    // General category has: Orchestrator Mode (first item)
     // Format: ">  " (3-char indicator area: focus, modified, space)
     let screen = harness.screen_to_string();
     assert!(
-        screen.contains(">  Active Keybinding Map"),
+        screen.contains(">  Orchestrator Mode"),
         "Focus indicator '>' should appear before focused item in settings panel. Screen:\n{}",
         screen
     );
@@ -1979,6 +1970,60 @@ fn find_settings_explorer_border_col(harness: &EditorTestHarness) -> u16 {
     );
 }
 
+/// Whether the settings cursor is sitting on the row labelled `label`.
+///
+/// The dialog marks the row the keyboard is on with a `>` in the narrow
+/// gutter immediately left of its label — in the category tree while the tree
+/// has the keyboard, and in the body once the body does — so the marker is a
+/// rendered fact the test can read back, and the only one that says *which*
+/// row is current.
+///
+/// Only the cells just left of the label count. The dialog is drawn over the
+/// rest of the editor, so the same screen row can carry an unrelated `>` from
+/// behind it — a collapsed directory in the file explorer, for one. The window
+/// is wide enough for the widest gutter the dialog draws: the category tree
+/// puts four spaces and a category icon between its marker and the name.
+const SETTINGS_GUTTER_WIDTH: usize = 8;
+
+fn settings_cursor_is_on(harness: &EditorTestHarness, label: &str) -> bool {
+    (0..harness.buffer().area.height).any(|row| {
+        let text = harness.get_row_text(row);
+        match text.find(label) {
+            Some(at) => text[..at]
+                .chars()
+                .rev()
+                .take(SETTINGS_GUTTER_WIDTH)
+                .any(|c| c == '>'),
+            None => false,
+        }
+    })
+}
+
+/// Walk the settings cursor down until it is on the row labelled `label`.
+///
+/// **By name rather than by a count of Down presses.** The number of rows
+/// above a setting changes whenever a sibling setting is added, and a count
+/// left one short does not fail — it lands on the neighbouring row and
+/// toggles *that*, so the test goes on to assert about a setting it never
+/// touched. Reading the label back makes the navigation say what it means and
+/// fail loudly when the row is not there at all.
+fn select_settings_row(harness: &mut EditorTestHarness, label: &str) {
+    harness.render().unwrap();
+    // A bound rather than a loop: enough to cross any one page of settings,
+    // and a wrong label must end the test rather than spin.
+    for _ in 0..40 {
+        if settings_cursor_is_on(harness, label) {
+            return;
+        }
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+        harness.render().unwrap();
+    }
+    panic!(
+        "the settings cursor never reached a row labelled {label:?}.\nScreen:\n{}",
+        harness.screen_to_string()
+    );
+}
+
 /// Regression: toggling File Explorer → Show Hidden in the Settings UI and
 /// saving must update the live file explorer's IgnorePatterns, not just the
 /// config on disk. Width must also be propagated to the live explorer width.
@@ -2005,27 +2050,19 @@ fn test_settings_file_explorer_toggles_propagate_to_runtime() {
 
     harness.open_settings().unwrap();
 
-    // Navigate to File Explorer category. Order (from test_settings_percentage):
-    // General, Clipboard, Editor, Env, File Browser, File Explorer.
-    for _ in 0..5 {
-        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-    }
+    // Into the File Explorer category, across to the body, and onto each
+    // toggle by name — see `select_settings_row` for why by name.
+    select_settings_row(&mut harness, "File Explorer");
     harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
-    // File Explorer items (alphabetical): Auto Open On Last Buffer Close,
-    // Compact Directories, Custom Ignore Patterns, Follow Active Buffer,
-    // Preview Tabs, Respect Gitignore, Show Gitignored, Show Hidden,
-    // Side, Width.
-    // Land on Show Gitignored and toggle.
-    for _ in 0..6 {
-        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-    }
+    select_settings_row(&mut harness, "Show Gitignored");
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
-    // Move to Show Hidden and toggle.
-    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    select_settings_row(&mut harness, "Show Hidden");
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
@@ -2605,36 +2642,34 @@ fn test_ctrl_s_saves_settings() {
     );
 }
 
+/// Open settings, go to the Syntax & Languages page and walk its Languages
+/// map down to the first language entry (the row offering "[Enter to edit]").
+fn focus_first_language_entry(harness: &mut EditorTestHarness) {
+    harness.open_settings().unwrap();
+    harness
+        .select_settings_category("Syntax & Languages")
+        .unwrap();
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    for _ in 0..20 {
+        if harness.screen_to_string().contains("[Enter to edit]") {
+            return;
+        }
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+        harness.render().unwrap();
+    }
+    panic!(
+        "no language entry focused. Screen:\n{}",
+        harness.screen_to_string()
+    );
+}
+
 /// Test that entry dialog (Edit Value) shows focus indicator on focused field
 #[test]
 fn test_entry_dialog_focus_indicator() {
     let mut harness = EditorTestHarness::new(100, 40).unwrap();
 
-    // Open settings
-    harness.open_settings().unwrap();
-
-    // We're in General category. Tab to content panel
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
-    harness.render().unwrap();
-
-    // Navigate down to find a language entry in the Languages list
-    // Languages section is after Keybinding Maps and Keybindings sections
-    // Navigate down many times to reach Languages
-    for _ in 0..11 {
-        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-    }
-    harness.render().unwrap();
-
-    // Should see language items like "bash", "c", "rust", etc.
-    let screen = harness.screen_to_string();
-    // Find any language item that shows "[Enter to edit]" - that means we're on it
-    if !screen.contains("[Enter to edit]") {
-        // Navigate more to find language items
-        for _ in 0..5 {
-            harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-        }
-        harness.render().unwrap();
-    }
+    focus_first_language_entry(&mut harness);
 
     // Press Enter to open the Edit Value dialog on the current language
     harness
@@ -2682,15 +2717,7 @@ fn test_entry_dialog_focus_indicator() {
 fn test_entry_dialog_add_new_textlist_item() {
     let mut harness = EditorTestHarness::new(100, 40).unwrap();
 
-    // Open settings
-    harness.open_settings().unwrap();
-
-    // Navigate to Languages section - Tab to content, then down to a language
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
-    for _ in 0..10 {
-        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-    }
-    harness.render().unwrap();
+    focus_first_language_entry(&mut harness);
 
     // Open a language entry dialog
     harness
@@ -2756,15 +2783,7 @@ fn test_entry_dialog_add_new_textlist_item() {
 fn test_entry_dialog_delete_textlist_item() {
     let mut harness = EditorTestHarness::new(100, 40).unwrap();
 
-    // Open settings
-    harness.open_settings().unwrap();
-
-    // Navigate to Languages section - Tab to content, then down to a language
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
-    for _ in 0..10 {
-        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-    }
-    harness.render().unwrap();
+    focus_first_language_entry(&mut harness);
 
     // Open a language entry dialog
     harness
@@ -3696,36 +3715,19 @@ fn test_languages_map_has_add_new_button() {
     let mut harness = EditorTestHarness::new(120, 50).unwrap();
     harness.render().unwrap();
 
-    // Open settings via Ctrl+,
+    // The Languages map is the first card on the Syntax & Languages page.
     harness.open_settings().unwrap();
-
-    // Search for "languages" to navigate to the Languages section
     harness
-        .send_key(KeyCode::Char('/'), KeyModifiers::NONE)
+        .select_settings_category("Syntax & Languages")
         .unwrap();
-    harness.type_text("languages").unwrap();
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
-
-    // Press Enter to jump to the Languages map
-    harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
-        .unwrap();
-    harness.render().unwrap();
-
-    // Verify we're in the Languages section
     harness.assert_screen_contains("Languages");
 
-    // Check that the focus is on Languages (indicated by ">")
-    let screen = harness.screen_to_string();
-    assert!(
-        screen.contains(">  Languages"),
-        "Focus should be on Languages section. Screen:\n{}",
-        screen
-    );
-
     // Navigate down through the Languages entries to reach the "[+] Add new" row
-    // The Languages map has many built-in entries, so we need to scroll to see the add button
-    for _ in 0..30 {
+    // The Languages map has many built-in entries (100+), so walk them all
+    // to reach the add button; the loop stops as soon as it is on screen.
+    for _ in 0..300 {
         harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
         harness.render().unwrap();
 
@@ -3992,14 +3994,14 @@ fn test_usability_backtab_backward_navigation() {
     // Start in the tree. Tab enters the body at its selected card.
     harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
-    harness.assert_screen_contains(">  Active Keybinding Map");
+    harness.assert_screen_contains(">  Orchestrator Mode");
 
     // Shift+Tab from the first card goes back to the tree.
     harness
         .send_key(KeyCode::BackTab, KeyModifiers::SHIFT)
         .unwrap();
     harness.render().unwrap();
-    harness.assert_screen_not_contains(">  Active Keybinding Map");
+    harness.assert_screen_not_contains(">  Orchestrator Mode");
 
     // Shift+Tab from the tree wraps the ring to its last stop, Cancel, and
     // walks the footer backwards from there: Save, Reset, Layer, Edit.
@@ -4023,7 +4025,7 @@ fn test_usability_backtab_backward_navigation() {
         .unwrap();
     harness.render().unwrap();
     harness.assert_screen_not_contains(">[ Edit ]");
-    harness.assert_screen_contains(">  Active Keybinding Map");
+    harness.assert_screen_contains(">  Orchestrator Mode");
 
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
 }

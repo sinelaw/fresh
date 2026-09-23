@@ -212,6 +212,10 @@ pub struct Frame {
     /// Whether the dock has keyboard focus; its divider wears the accent then,
     /// the way the file explorer's border does.
     pub dock_focused: bool,
+    /// The column is held open for a dock not mounted yet (see
+    /// [`Editor::dock_reserved`](crate::app::Editor)): no interior, so the
+    /// tree paints the column's ground and divider and nothing else.
+    pub dock_reserved: bool,
     /// The sidebar's content, or `None` when it is hidden. Like the
     /// search-options row, content rather than a flag: the tree measures the
     /// panel's rows and reads their rectangles back. A column of sections,
@@ -254,6 +258,12 @@ pub struct Frame {
     /// The workspace-trust prompt. A blocking modal: it dims the whole frame
     /// and nothing outside it is interactive.
     pub trust: Option<super::trust::Trust>,
+    /// The confirmation modal, when a prompt is a question with buttons
+    /// rather than a line to type into. Like the trust prompt: it dims the
+    /// whole frame and nothing outside it is interactive. `prompt_row` is
+    /// `None` whenever this is `Some` — the question is in the card, not on
+    /// the row. See [`super::confirm`].
+    pub confirm: Option<super::confirm::Confirm>,
     /// The split grid, when there is one. Its *content* is the body's `Host`
     /// leaf still; what the tree carries is the panes' geometry and the
     /// dividers, which answer their own presses.
@@ -339,6 +349,7 @@ impl Default for Frame {
             dock_interior: None,
             dock_grip_hovered: false,
             dock_focused: false,
+            dock_reserved: false,
             sidebar: None,
             menu: None,
             dropdowns: Vec::new(),
@@ -350,6 +361,7 @@ impl Default for Frame {
             theme_info: None,
             browser: None,
             trust: None,
+            confirm: None,
             settings: None,
             settings_dialog: None,
             settings_entry: Vec::new(),
@@ -381,6 +393,55 @@ pub fn fixed_rows(menu_bar: bool, status_bar: bool, search_options: bool, prompt
 pub const EDITOR_MIN: u16 = 20;
 /// Narrower than this and a dock is not worth showing at all.
 pub const DOCK_MIN: u16 = 24;
+/// Wider than this and the dock is taking room it has no content for.
+pub const DOCK_MAX: u16 = 40;
+
+/// How wide the dock opens before any user drag: a share of the frame,
+/// clamped. Declared by the plugin's manifest (`chrome.dock.width`) and
+/// owned by the host from before the first frame.
+#[derive(Clone, Copy, Debug, PartialEq, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DockWidthRule {
+    /// The share of the frame width the dock asks for.
+    #[serde(default = "DockWidthRule::default_fraction")]
+    pub fraction: f32,
+    /// Never narrower than this, whatever the fraction says.
+    #[serde(default = "DockWidthRule::default_min")]
+    pub min: u16,
+    /// Never wider than this.
+    #[serde(default = "DockWidthRule::default_max")]
+    pub max: u16,
+}
+
+impl DockWidthRule {
+    fn default_fraction() -> f32 {
+        0.28
+    }
+    fn default_min() -> u16 {
+        DOCK_MIN
+    }
+    fn default_max() -> u16 {
+        DOCK_MAX
+    }
+
+    /// The width this rule gives a frame `frame_width` wide. A frame too
+    /// narrow for any dock is `dock_width`'s to refuse.
+    pub fn width(&self, frame_width: u16) -> u16 {
+        let target = (frame_width as f32 * self.fraction).round() as u16;
+        // A floor above the ceiling would make `clamp` panic; the floor wins.
+        target.clamp(self.min, self.max.max(self.min))
+    }
+}
+
+impl Default for DockWidthRule {
+    fn default() -> Self {
+        Self {
+            fraction: Self::default_fraction(),
+            min: Self::default_min(),
+            max: Self::default_max(),
+        }
+    }
+}
 
 /// How wide the dock actually gets, or `None` when it does not fit.
 ///
@@ -710,7 +771,12 @@ pub fn frame_tree(f: Frame) -> Node<UiMsg> {
         match f.dock {
             Some(w) => named(
                 HostRegion::Dock,
-                super::dock::dock(f.dock_interior.clone(), f.dock_grip_hovered, f.dock_focused),
+                super::dock::dock(
+                    f.dock_interior.clone(),
+                    f.dock_grip_hovered,
+                    f.dock_focused,
+                    f.dock_reserved,
+                ),
             )
             .w(Sizing::Cells(w)),
             None => region(HostRegion::Dock).w(Sizing::Cells(0)),
@@ -781,6 +847,15 @@ pub fn frame_tree(f: Frame) -> Node<UiMsg> {
     // The trust prompt, over everything the frame holds. It is drawn dead last
     // today for the same reason — it dims the *entire* frame, the dock
     // included, and centres in the whole window rather than beside the dock.
+    // The confirmation modal: the same statement as the trust prompt below —
+    // it dims the entire frame, the dock included, and centres in the whole
+    // window. Declared *before* the trust prompt so the trust prompt stays on
+    // top of it: that one is the open-time gate, and nothing may cover the
+    // question of whether this folder is allowed to run code.
+    let frame = match &f.confirm {
+        Some(c) => frame.child(super::confirm::layer(c)),
+        None => frame,
+    };
     let frame = match &f.trust {
         Some(t) => frame.child(super::trust::layer(t)),
         None => frame,
@@ -817,7 +892,10 @@ pub struct Placeholder {
     /// What it is doing — connecting, building, or why it could not.
     pub state: String,
     pub hint: String,
-    /// What to do about it, when there is something; empty otherwise.
+    /// What to do about it, when there is something; empty otherwise. Prose,
+    /// not a control: this is the editor's fallback page, drawn only for a
+    /// window no plugin has described. A plugin that mounts a panel on the
+    /// placeholder's buffer draws its own page, with its own buttons.
     pub retry: String,
     /// The window's active pane, whose content this page stands in for: the
     /// page is the base's focus holder and hands its keys to the editor as
@@ -839,11 +917,24 @@ fn placeholder_page(p: &Placeholder) -> Node<UiMsg> {
             false => text(s).theme(theme),
         }
     };
+    // The state line is the one that carries an error, and an error is a
+    // sentence, not a label: `SSH could not connect to <host>. Check that the
+    // host is reachable, the user is right…` ran off the pane and took the
+    // actionable half of itself with it. Wrapped, and held to a measure —
+    // centred prose at full terminal width is unreadable for the opposite
+    // reason.
+    let state = match p.state.is_empty() {
+        true => row().h(Sizing::Cells(1)),
+        false => text(&p.state)
+            .theme(plain.clone())
+            .wrap()
+            .w(Sizing::Cells(PLACEHOLDER_MEASURE)),
+    };
     let page = col().theme(plain.clone()).align(Align::Center).children([
         row().flex(1),
         line(&p.detail, attrs("editor.fg", "editor.bg", &["bold"])),
         row().h(Sizing::Cells(1)),
-        line(&p.state, plain),
+        state,
         row().h(Sizing::Cells(1)),
         line(&p.hint, dim.clone()),
         line(&p.retry, dim),
@@ -856,11 +947,18 @@ fn placeholder_page(p: &Placeholder) -> Node<UiMsg> {
             .autofocus()
             .on_key(move |e: &fresh_ui::Event| {
                 e.stop();
+                // Enter is the page's own key while it offers a retry: the
+                // page holds focus in the pane's stead, so without this the
+                // one control on screen could only be reached with a mouse.
                 Some(UiMsg::Ui(super::msg::UiFact::PaneKey { pane }))
             }),
         None => page,
     }
 }
+
+/// Width the placeholder page sets its prose to. Wide enough for an ssh
+/// error's first clause, narrow enough that centred text still scans.
+const PLACEHOLDER_MEASURE: u16 = 72;
 
 /// A region with nothing in it — a hidden row, an empty column — as a named
 /// node with no content, so its rectangle is still a layout query.
@@ -896,9 +994,11 @@ pub fn region_key(r: HostRegion) -> fresh_ui::Key {
 /// the display list instead would lose exactly the regions that paint nothing
 /// — a hidden row, a menu bar with no labels — and lose them silently.
 ///
-/// [`region_rects`] is the standalone form, for tests and for callers with no
-/// `Ui` of their own; this is the form `render` uses, so the frame is laid out
-/// once and both the rectangles and the painted output come from it.
+/// [`region_rects`] is the standalone form: it builds its own `Ui` and lays the
+/// frame out to answer. Nothing in the editor does that — `render` uses this
+/// form, so the frame is laid out once and both the rectangles and the painted
+/// output come from it. `region_rects` exists for tests, which have no laid-out
+/// `Ui` to ask.
 pub fn regions_of(
     ui: &fresh_ui::Ui<UiMsg>,
     size: ratatui::layout::Rect,
@@ -913,6 +1013,12 @@ pub fn regions_of(
         .collect()
 }
 
+/// Lay a `Frame` out in a throwaway `Ui` and report every region's rectangle.
+///
+/// **Tests only.** A second layout is exactly what
+/// *Geometry is produced by layout* forbids in the editor; it is a fair
+/// question for a test, which has no frame in flight to read. Production code
+/// wants [`regions_of`] on the `Ui` it already laid out.
 pub fn region_rects(
     f: Frame,
     size: ratatui::layout::Rect,
@@ -1010,6 +1116,59 @@ mod tests {
         let (a, b) = pane_across(one_pane_in(Some(1)), one_pane_in(Some(1)));
         assert!(a.is_some());
         assert_eq!(a, b, "same window, same element");
+    }
+
+    /// A frame with `n` of the optional rows, so a sequence of these makes the
+    /// retained tree add and drop regions between layouts.
+    fn frame_with(menu: bool, status: bool, prompt: bool, dock: Option<u16>) -> Frame {
+        Frame {
+            window: Some(1),
+            menu_bar: menu,
+            status_bar: status,
+            prompt_line: prompt,
+            dock,
+            ..one_pane_in(Some(1))
+        }
+    }
+
+    /// **The retained tree lays a frame out like a fresh one does.**
+    ///
+    /// `render` asserted this on the render path and could not: `area` came
+    /// from `frame::regions_of` on the retained `Ui`, and the "fresh" side —
+    /// `Editor::status_bar_area_now` — resolves through `shell_region_now` to
+    /// `frame::regions_of` on that *same* retained `Ui`, which its own doc
+    /// forbids replacing with a throwaway. One read of the tree was being
+    /// compared against another read of the tree.
+    ///
+    /// Here both sides exist. A single `Ui` is reconciled through a sequence
+    /// of frames that add and drop rows — which is what makes retained state
+    /// able to skew a layout at all — and its regions are compared against
+    /// [`region_rects`], which builds a `Ui` that has seen nothing else. A
+    /// second layout is a fair question for a test.
+    #[test]
+    fn a_retained_tree_lays_the_frame_out_like_a_fresh_one() {
+        let size = ratatui::layout::Rect::new(0, 0, 80, 24);
+        let history = [
+            frame_with(false, false, false, None),
+            frame_with(true, true, true, Some(20)),
+            frame_with(true, false, false, None),
+            frame_with(false, true, true, Some(30)),
+        ];
+        let mut ui: Ui<UiMsg> = Ui::new();
+        for f in &history {
+            ui.frame(frame_tree(f.clone()), Size::new(size.width, size.height));
+        }
+        for (i, f) in history.iter().enumerate() {
+            // Step the retained tree onto this frame, then ask a tree that has
+            // seen only this frame.
+            ui.frame(frame_tree(f.clone()), Size::new(size.width, size.height));
+            assert_eq!(
+                regions_of(&ui, size),
+                region_rects(f.clone(), size),
+                "frame {i} after the whole history: the retained tree and a \
+                 fresh one disagree"
+            );
+        }
     }
 
     /// The tree's scope name and the editor's `forget_window_ui_state` have to
@@ -1488,6 +1647,34 @@ mod tests {
         assert!(
             got.claimed,
             "the seam stops as it emits, so the tree reports the claim;              it is the host's `Option<bool>` verdict that overrides it"
+        );
+    }
+
+    /// The default rule: the fraction in the middle, both clamps at the ends.
+    #[test]
+    fn the_default_rule_is_a_clamped_fraction_of_the_frame() {
+        let rule = DockWidthRule::default();
+        assert_eq!(rule.width(120), 34, "0.28 of 120, rounded");
+        assert_eq!(rule.width(100), 28, "0.28 of 100");
+        assert_eq!(rule.width(80), DOCK_MIN, "0.28 of 80 is under the floor");
+        assert_eq!(rule.width(300), DOCK_MAX, "0.28 of 300 is over the ceiling");
+    }
+
+    /// A manifest states only what it changes; the rest is the default rule.
+    #[test]
+    fn a_declared_rule_fills_in_from_the_default() {
+        let rule: DockWidthRule = serde_json::from_str(r#"{"fraction": 0.5}"#).unwrap();
+        assert_eq!((rule.min, rule.max), (DOCK_MIN, DOCK_MAX));
+        assert_eq!(
+            rule.width(100),
+            DOCK_MAX,
+            "half of 100 clamps to the ceiling"
+        );
+        let rule: DockWidthRule = serde_json::from_str(r#"{"min": 30, "max": 30}"#).unwrap();
+        assert_eq!(rule.width(120), 30, "a fixed width");
+        assert!(
+            serde_json::from_str::<DockWidthRule>(r#"{"cols": 30}"#).is_err(),
+            "an unknown field is a typo"
         );
     }
 }

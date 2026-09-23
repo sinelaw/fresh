@@ -1,108 +1,14 @@
 //! Scroll-sync orchestrators on `Editor`.
 //!
-//! - `ensure_active_tab_visible` — adjusts a split's tab-bar scroll offset
-//!   so the active tab is on screen.
 //! - `sync_scroll_groups` — when splits share a scroll group (e.g. for
 //!   side-by-side diffs), keep their viewports in lockstep.
 //! - `pre_sync_ensure_visible` — pre-sync hook that ensures the active
 //!   split's cursor is on screen so the scroll-group sync uses a valid
 //!   anchor.
 
-use crate::model::event::{BufferId, LeafId, SplitId};
+use crate::model::event::{LeafId, SplitId};
 
 impl crate::app::window::Window {
-    /// Ensure the active tab in a split is visible by adjusting its
-    /// scroll offset. Pure window-state mutation: split tree +
-    /// view_states + buffer_metadata + composite_buffers + grouped_subtrees
-    /// all live on `Window`.
-    pub fn ensure_active_tab_visible(
-        &mut self,
-        split_id: LeafId,
-        active_buffer: BufferId,
-        available_width: u16,
-    ) {
-        tracing::debug!(
-            "ensure_active_tab_visible called: split={:?}, buffer={:?}, width={}",
-            split_id,
-            active_buffer,
-            available_width
-        );
-        let group_names: std::collections::HashMap<LeafId, String> = self
-            .grouped_subtrees
-            .iter()
-            .filter_map(|(leaf_id, node)| {
-                if let crate::view::split::SplitNode::Grouped { name, .. } = node {
-                    Some((*leaf_id, name.clone()))
-                } else {
-                    None
-                }
-            })
-            .collect();
-        let metadata = &self.buffer_metadata;
-        let composites = &self.composite_buffers;
-        let preview_buffer = self.preview.map(|(_, b)| b);
-
-        self.buffers.with_all_mut(|buffer_map, _mgr, vs_map| {
-            let Some(view_state) = vs_map.get_mut(&split_id) else {
-                return;
-            };
-            let split_buffers = view_state.open_buffers.clone();
-            let (tab_widths, rendered_targets) = crate::view::ui::tabs::calculate_tab_widths(
-                &split_buffers,
-                buffer_map,
-                metadata,
-                composites,
-                &group_names,
-                preview_buffer,
-                available_width as usize,
-            );
-
-            let total_tabs_width: usize = tab_widths.iter().sum();
-            // Reserve the pinned "+" button's column when the tabs overflow, so
-            // the active tab stays fully visible and never slips under it.
-            let max_visible_width = crate::view::ui::tabs::tabs_render_width(
-                total_tabs_width,
-                available_width as usize,
-            );
-
-            let active_target = view_state.active_target();
-            let active_target = if matches!(active_target, crate::view::split::TabTarget::Buffer(_))
-            {
-                crate::view::split::TabTarget::Buffer(active_buffer)
-            } else {
-                active_target
-            };
-
-            let active_tab_index = rendered_targets.iter().position(|t| *t == active_target);
-            let active_width_index =
-                active_tab_index.map(|buf_idx| if buf_idx == 0 { 0 } else { buf_idx * 2 });
-
-            let old_offset = view_state.tab_scroll_offset;
-            let new_scroll_offset = if let Some(idx) = active_width_index {
-                crate::view::ui::tabs::scroll_to_show_tab(
-                    &tab_widths,
-                    idx,
-                    view_state.tab_scroll_offset,
-                    max_visible_width,
-                )
-            } else {
-                view_state
-                    .tab_scroll_offset
-                    .min(total_tabs_width.saturating_sub(max_visible_width))
-            };
-
-            tracing::debug!(
-                "  -> offset: {} -> {} (idx={:?}, max_width={}, total={})",
-                old_offset,
-                new_scroll_offset,
-                active_width_index,
-                max_visible_width,
-                total_tabs_width
-            );
-            view_state.tab_scroll_offset = new_scroll_offset;
-        });
-    }
-
     /// Synchronize viewports for all scroll-sync groups in this window.
     ///
     /// For each registered group containing the active split, derive the

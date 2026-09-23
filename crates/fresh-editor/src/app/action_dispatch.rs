@@ -9,6 +9,7 @@
 //! separate from *doing what the action says*.
 
 use super::*;
+use crate::view::confirm::{Choice, Confirm, Tone};
 use anyhow::Result as AnyhowResult;
 use crossterm::event::KeyModifiers as KM;
 use fresh_i18n::t;
@@ -159,10 +160,27 @@ impl Editor {
                     self.init_file_open_state();
                 } else if self.check_save_conflict().is_some() {
                     // Check if file was modified externally since we opened/saved it
-                    self.start_prompt(
-                        t!("file.file_changed_prompt").to_string(),
-                        PromptType::ConfirmSaveConflict,
+                    let body = t!("file.file_changed_prompt").to_string();
+                    let confirm = Confirm::new(
+                        t!("dialog.title.file_changed").into_owned(),
+                        body.clone(),
+                        vec![
+                            Choice::new(
+                                t!("dialog.btn.overwrite").into_owned(),
+                                "o",
+                                Tone::Destructive,
+                            ),
+                            crate::app::confirm_dialog::cancel(),
+                        ],
+                    )
+                    .detail(
+                        self.active_state()
+                            .buffer
+                            .file_path()
+                            .map(|p| p.display().to_string())
+                            .unwrap_or_default(),
                     );
+                    self.start_confirm_prompt(body, PromptType::ConfirmSaveConflict, confirm);
                 } else if let Err(e) = self.save() {
                     let msg = format!("{}", e);
                     self.active_window_mut().status_message =
@@ -230,10 +248,7 @@ impl Editor {
                         PromptType::GotoLine,
                     );
                 } else {
-                    self.start_prompt(
-                        t!("goto.scan_confirm_prompt", yes = "y", no = "N").to_string(),
-                        PromptType::GotoLineScanConfirm,
-                    );
+                    self.start_goto_line_scan_confirm();
                 }
             }
             Action::ScanLineIndex => {
@@ -252,17 +267,29 @@ impl Editor {
             Action::Revert => {
                 // Check if buffer has unsaved changes - prompt for confirmation
                 if self.active_state().buffer.is_modified() {
-                    let revert_key = t!("prompt.key.revert").to_string();
-                    let cancel_key = t!("prompt.key.cancel").to_string();
-                    self.start_prompt(
-                        t!(
-                            "prompt.revert_confirm",
-                            revert_key = revert_key,
-                            cancel_key = cancel_key
-                        )
-                        .to_string(),
-                        PromptType::ConfirmRevert,
-                    );
+                    let body = t!("prompt.revert_confirm").to_string();
+                    let confirm = Confirm::new(
+                        t!("dialog.title.revert").into_owned(),
+                        body.clone(),
+                        vec![
+                            Choice::new(
+                                t!("dialog.btn.revert").into_owned(),
+                                t!("prompt.key.revert").into_owned(),
+                                Tone::Destructive,
+                            ),
+                            crate::app::confirm_dialog::cancel(),
+                        ],
+                    )
+                    .detail(
+                        self.active_state()
+                            .buffer
+                            .file_path()
+                            .map(|p| p.display().to_string())
+                            .unwrap_or_default(),
+                    )
+                    // A destructive lead opens on the retreat.
+                    .selecting(1);
+                    self.start_confirm_prompt(body, PromptType::ConfirmRevert, confirm);
                 } else {
                     // No local changes, just revert
                     if let Err(e) = self.revert_file() {
@@ -1022,16 +1049,11 @@ impl Editor {
                     .map(|(mgr, _)| mgr)
                     .expect("active window must have a populated split layout")
                     .active_split();
-                if let Some(view_state) = self
-                    .windows
-                    .get_mut(&self.active_window)
-                    .and_then(|w| w.split_view_states_mut())
-                    .expect("active window must have a populated split layout")
-                    .get_mut(&active_split_id)
-                {
-                    view_state.tab_scroll_offset = view_state.tab_scroll_offset.saturating_sub(5);
-                    self.set_status_message(t!("status.scrolled_tabs_left").to_string());
-                }
+                // A message to the pane's strip, which is a window and
+                // clamps itself. The editor kept the offset and this arm
+                // added five to it.
+                self.pan_pane_tab_strip(active_split_id, -1);
+                self.set_status_message(t!("status.scrolled_tabs_left").to_string());
             }
             Action::ScrollTabsRight => {
                 let active_split_id = self
@@ -1041,16 +1063,11 @@ impl Editor {
                     .map(|(mgr, _)| mgr)
                     .expect("active window must have a populated split layout")
                     .active_split();
-                if let Some(view_state) = self
-                    .windows
-                    .get_mut(&self.active_window)
-                    .and_then(|w| w.split_view_states_mut())
-                    .expect("active window must have a populated split layout")
-                    .get_mut(&active_split_id)
-                {
-                    view_state.tab_scroll_offset = view_state.tab_scroll_offset.saturating_add(5);
-                    self.set_status_message(t!("status.scrolled_tabs_right").to_string());
-                }
+                // A message to the pane's strip, which is a window and
+                // clamps itself. The editor kept the offset and this arm
+                // added five to it.
+                self.pan_pane_tab_strip(active_split_id, 1);
+                self.set_status_message(t!("status.scrolled_tabs_right").to_string());
             }
             Action::NavigateBack => self.navigate_back(),
             Action::NavigateForward => self.navigate_forward(),
@@ -1216,6 +1233,7 @@ impl Editor {
             Action::FocusFileExplorer => self.focus_file_explorer(),
             Action::FocusEditor => self.active_window_mut().focus_editor(),
             Action::FocusNextSidebarSection => self.focus_next_sidebar_section(),
+            Action::FocusPrevSidebarSection => self.focus_prev_sidebar_section(),
             Action::ToggleDockFocus => {
                 // Bounce keyboard focus between the editor/explorer area and
                 // the orchestrator dock. `dock` is `Some` whenever the dock is

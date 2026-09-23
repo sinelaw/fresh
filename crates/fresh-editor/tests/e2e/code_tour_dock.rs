@@ -2264,3 +2264,151 @@ fn test_tour_panel_relayouts_when_the_explorer_narrows_the_dock() {
          \nScreen:\n{screen}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// A click in the panel moves the keyboard there
+// ---------------------------------------------------------------------------
+
+/// Clicking the tour's prose has to take the keyboard away from the file
+/// beside it, not just move a caret.
+///
+/// The panel is mounted into a pane, and a press on its prose is answered by
+/// the prose run's own node, which calls `e.stop()`. Nothing else then moved
+/// the *editor's* focus to that pane: only the panel's own focus key moved,
+/// so the caret appeared in the prose while every keystroke kept going into
+/// the source file in the other split — including the ones the reader typed
+/// expecting the tour to take them.
+///
+/// Asserted on the file's rendered text, which is the thing that was being
+/// damaged: a keystroke after the click must not land in it. The first half
+/// types into the file on purpose, so the second half cannot pass merely
+/// because the click never gave the file focus to begin with.
+#[test]
+fn test_clicking_the_prose_takes_focus_from_the_file() {
+    let (_temp, project_root) = setup_tour_project();
+    let mut harness = harness_in(&project_root, 160, 40);
+
+    let manifest = project_root.join(".fresh-tour.json");
+    load_tour(
+        &mut harness,
+        &manifest.display().to_string(),
+        "*Tour: Pipeline Tour*",
+    );
+
+    // A line of the source file, outside the step's highlighted range.
+    const FILE_LINE: &str = "fn handle() {";
+    let file_row = row_of(&harness, FILE_LINE) as u16;
+    let file_col = {
+        let screen = harness.screen_to_string();
+        let line = screen.lines().nth(file_row as usize).expect("file row");
+        let byte = line.find(FILE_LINE).expect("the file line");
+        line[..byte].chars().count() as u16
+    };
+
+    // Focus the file and type into it, so the click below is answering a
+    // keyboard that really is somewhere else.
+    harness.mouse_click(file_col, file_row).unwrap();
+    harness
+        .send_key(KeyCode::Char('Z'), KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_async_quiescence(3).unwrap();
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains(&format!("Z{FILE_LINE}")),
+        "the file must have the keyboard before the click under test\nScreen:\n{screen}"
+    );
+    harness
+        .send_key(KeyCode::Char('z'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .wait_until(|h| !h.screen_to_string().contains(&format!("Z{FILE_LINE}")))
+        .unwrap();
+
+    // Now the prose. `prose_start_col` is the section's own border, so a few
+    // columns in is text rather than chrome.
+    let prose_row = row_of(&harness, "Where it starts") as u16;
+    let prose_col = prose_start_col(&harness) as u16 + 4;
+    harness.mouse_click(prose_col, prose_row).unwrap();
+    harness.wait_for_async_quiescence(3).unwrap();
+
+    harness
+        .send_key(KeyCode::Char('Z'), KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_async_quiescence(3).unwrap();
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen.contains(&format!("Z{FILE_LINE}")),
+        "a click on the tour's prose left the keyboard in the file: the \
+         keystroke after it was typed into the source\nScreen:\n{screen}"
+    );
+    assert!(
+        screen.contains(FILE_LINE),
+        "expected the source line to survive untouched\nScreen:\n{screen}"
+    );
+}
+
+/// The prose caret stays visible when it lands at the end of a line.
+///
+/// It was drawn as a one-byte *selection* — the range from the caret to the
+/// next character, washed reversed. A selection is the cells its bytes are
+/// drawn in, and the byte at the end of a rendered line is the `\n` the wrap
+/// dropped, which is drawn nowhere: the wash covered no cells and the caret
+/// simply disappeared. Clicking or dragging past the end of a line is exactly
+/// how a reader puts it there.
+///
+/// Read off the rendered cells rather than the text: the caret *is* a cell
+/// attribute. The first click pins down what a visible caret looks like, so
+/// the assertion cannot pass on a panel that never drew one.
+#[test]
+fn test_prose_caret_survives_the_end_of_a_line() {
+    let (_temp, project_root) = setup_tour_project();
+    let mut harness = harness_in(&project_root, 160, 40);
+
+    let manifest = project_root.join(".fresh-tour.json");
+    load_tour(
+        &mut harness,
+        &manifest.display().to_string(),
+        "*Tour: Pipeline Tour*",
+    );
+
+    let seam = prose_start_col(&harness) as u16;
+    let row = row_of(&harness, "Where it starts") as u16;
+    // Cells of the prose section on `row` carrying the caret's reversed ink.
+    let carets = |h: &EditorTestHarness| -> Vec<u16> {
+        (seam..seam + 60)
+            .filter(|col| {
+                h.get_cell_style(*col, row)
+                    .is_some_and(|s| s.add_modifier.contains(ratatui::style::Modifier::REVERSED))
+            })
+            .collect()
+    };
+
+    // A click on the heading's text: the caret is on a character, which even
+    // the one-byte wash could paint.
+    harness.mouse_click(seam + 4, row).unwrap();
+    harness.wait_for_async_quiescence(3).unwrap();
+    let on_text = carets(&harness);
+    assert_eq!(
+        on_text.len(),
+        1,
+        "expected exactly one caret cell on the clicked prose row\nScreen:\n{}",
+        harness.screen_to_string()
+    );
+
+    // A click past that line's text — still inside the prose column — puts
+    // the caret at the row's trailing edge, where it used to vanish.
+    harness.mouse_click(seam + 30, row).unwrap();
+    harness.wait_for_async_quiescence(3).unwrap();
+    let past_text = carets(&harness);
+    assert_eq!(
+        past_text.len(),
+        1,
+        "the caret must still be drawn when it sits at the end of a line\nScreen:\n{}",
+        harness.screen_to_string()
+    );
+    assert!(
+        past_text != on_text,
+        "the caret must have moved to the end of the line, not stayed put\nScreen:\n{}",
+        harness.screen_to_string()
+    );
+}

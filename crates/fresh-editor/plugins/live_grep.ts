@@ -78,6 +78,12 @@ export interface SearchOpts {
    *  `-F`, git-grep/grep `-F`). Custom providers should honour this so
    *  the query is interpreted consistently with the toolbar toggle. */
   regex?: boolean;
+  /** When true, match upper and lower case exactly; when false (the
+   *  default) fold case. Providers must decide this *explicitly* — a
+   *  smart-case flag left on would quietly re-derive it from the query
+   *  and disagree with the Case toggle on the toolbar. Built-ins pass
+   *  rg `--case-sensitive`/`--ignore-case`, git-grep/grep/ack `-i`. */
+  caseSensitive?: boolean;
 }
 
 /** A registered Live Grep backend. */
@@ -191,8 +197,17 @@ let lastResults: GrepMatch[] = [];
 // query is interpreted, and are threaded to every provider (and the
 // JS-side scopes) so each can escape/format it correctly. `regex` is
 // on by default (matches the historical rg/git-grep behaviour);
-// `wholeWord` is off.
-type ModeId = "word" | "regex";
+// `wholeWord` is off, and so is `case` — a search for `todo` finds
+// `TODO` until you say otherwise (issue #3212). The config preset
+// `editor.search.case_sensitive` seeds `case` at load; flipping the
+// toggle wins for the rest of the session.
+//
+// `case` replaces what used to be smart-case, where an uppercase
+// letter anywhere in the query silently turned matching
+// case-sensitive. Smart-case is a guess about intent that the user
+// cannot see, let alone turn off; a toggle on the toolbar is the same
+// decision, made visible and reversible.
+type ModeId = "word" | "case" | "regex";
 
 interface ModeDef {
   id: ModeId;
@@ -207,11 +222,23 @@ interface ModeDef {
 
 const MODES: ModeDef[] = [
   { id: "word", key: "mode_word", labelKey: "mode.word", action: "live_grep_toggle_word" },
+  { id: "case", key: "mode_case", labelKey: "mode.case", action: "live_grep_toggle_case" },
   { id: "regex", key: "mode_regex", labelKey: "mode.regex", action: "live_grep_toggle_regex" },
 ];
 
+/** The `editor.search.case_sensitive` preset, read once at load. A
+ *  missing or non-boolean value means "off", which is also the shipped
+ *  default — this overlay never starts case-sensitive by accident. */
+function configuredCaseSensitive(): boolean {
+  const cfg = editor.getConfig() as
+    | { editor?: { search?: { case_sensitive?: unknown } } }
+    | null;
+  return cfg?.editor?.search?.case_sensitive === true;
+}
+
 const searchModes: Record<ModeId, boolean> = {
   word: false,
+  case: configuredCaseSensitive(),
   regex: true,
 };
 
@@ -219,14 +246,15 @@ const searchModes: Record<ModeId, boolean> = {
  *  Returns the 1-based column of the first match on a line, or -1. */
 type LineMatcher = (line: string) => number;
 
-/** Build a line matcher honouring the current `searchModes`. Smart-case:
- *  case-insensitive unless the query has an uppercase letter. An invalid
- *  regex matches nothing (the provider scopes surface the rg/grep error;
- *  the JS scopes just contribute no rows). */
+/** Build a line matcher honouring the current `searchModes` — including
+ *  `case`, so the JS-side scopes (buffers, diagnostics) match exactly
+ *  what the toolbar says and exactly what the grep backends are told.
+ *  An invalid regex matches nothing (the provider scopes surface the
+ *  rg/grep error; the JS scopes just contribute no rows). */
 function buildLineMatcher(query: string): LineMatcher {
-  const smartCaseInsensitive = query === query.toLowerCase();
+  const foldCase = !searchModes.case;
   if (searchModes.regex) {
-    const flags = smartCaseInsensitive ? "i" : "";
+    const flags = foldCase ? "i" : "";
     const pattern = searchModes.word ? `\\b(?:${query})\\b` : query;
     let re: RegExp;
     try {
@@ -240,10 +268,10 @@ function buildLineMatcher(query: string): LineMatcher {
     };
   }
   // Literal (fixed-string) matching.
-  const needle = smartCaseInsensitive ? query.toLowerCase() : query;
+  const needle = foldCase ? query.toLowerCase() : query;
   const isWord = (ch: string) => /[A-Za-z0-9_]/.test(ch);
   return (line) => {
-    const hay = smartCaseInsensitive ? line.toLowerCase() : line;
+    const hay = foldCase ? line.toLowerCase() : line;
     let from = 0;
     for (;;) {
       const idx = hay.indexOf(needle, from);
@@ -441,13 +469,13 @@ registerProvider({
       return false;
     }
   },
-  search: async (query, { cwd, maxResults, includeIgnored, wholeWord, regex }) => {
+  search: async (query, { cwd, maxResults, includeIgnored, wholeWord, regex, caseSensitive }) => {
     const args = [
       "--line-number",
       "--column",
       "--no-heading",
       "--color=never",
-      "--smart-case",
+      caseSensitive ? "--case-sensitive" : "--ignore-case",
       `--max-count=${maxResults}`,
       // Always skip the VCS metadata dir — even with the Ignored scope
       // on, `.git` internals are never what the user is looking for.
@@ -484,13 +512,13 @@ registerProvider({
       return false;
     }
   },
-  search: async (query, { cwd, maxResults, wholeWord, regex }) => {
+  search: async (query, { cwd, maxResults, wholeWord, regex, caseSensitive }) => {
     const args = [
       "--column",
       "--numbers",
       "--nogroup",
       "--nocolor",
-      "--smart-case",
+      caseSensitive ? "--case-sensitive" : "--ignore-case",
       "--ignore", ".git",
       "--ignore", "node_modules",
       "--ignore", "target",
@@ -545,12 +573,13 @@ registerProvider({
       return false;
     }
   },
-  search: async (query, { cwd, maxResults, includeIgnored, wholeWord, regex }) => {
+  search: async (query, { cwd, maxResults, includeIgnored, wholeWord, regex, caseSensitive }) => {
     // Run in the same repo cwd isAvailable() confirmed. Null means the
     // context is no longer a repo — return empty rather than throwing.
     const gitCwd = await gitGrepCwd(cwd);
     if (!gitCwd) return [] as GrepMatch[];
     const args = ["grep", "-n", "--column", "-I"];
+    if (!caseSensitive) args.push("-i");
     // Default git-grep is basic regex; use extended when regex is on, or
     // fixed-strings when it's off so the query is matched literally.
     args.push(regex === false ? "-F" : "-E");
@@ -585,8 +614,9 @@ registerProvider({
       return false;
     }
   },
-  search: async (query, { cwd, maxResults, wholeWord, regex }) => {
-    const args = ["--nocolor", "--column", "--smart-case"];
+  search: async (query, { cwd, maxResults, wholeWord, regex, caseSensitive }) => {
+    const args = ["--nocolor", "--column"];
+    if (!caseSensitive) args.push("--ignore-case");
     if (regex === false) args.push("--literal");
     if (wholeWord) args.push("--word-regexp");
     args.push("--", query);
@@ -619,7 +649,7 @@ registerProvider({
       return false;
     }
   },
-  search: async (query, { cwd, maxResults, wholeWord, regex }) => {
+  search: async (query, { cwd, maxResults, wholeWord, regex, caseSensitive }) => {
     const args = [
       "-rn",
       "-I",
@@ -627,6 +657,7 @@ registerProvider({
       "--exclude-dir=node_modules",
       "--exclude-dir=target",
     ];
+    if (!caseSensitive) args.push("-i");
     args.push(regex === false ? "-F" : "-E");
     if (wholeWord) args.push("-w");
     args.push("--", query, ".");
@@ -848,7 +879,8 @@ async function searchTerminals(query: string, limit: number): Promise<GrepMatch[
   try {
     const rgArgs = [
       "--line-number", "--column", "--no-heading", "--color=never",
-      "--smart-case", "--text", `--max-count=${limit}`,
+      searchModes.case ? "--case-sensitive" : "--ignore-case",
+      "--text", `--max-count=${limit}`,
       // Only the rendered `.txt` backing files — not the raw `.log`
       // replay logs, which would double every hit.
       "-g", "*.txt",
@@ -863,6 +895,7 @@ async function searchTerminals(query: string, limit: number): Promise<GrepMatch[
       // rg missing or path error → fall back to grep (-a: treat the
       // ANSI-laden logs as text rather than skipping them as binary).
       const gArgs = ["-rn", "-a", "--include=*.txt"];
+      if (!searchModes.case) gArgs.push("-i");
       gArgs.push(searchModes.regex === false ? "-F" : "-E");
       if (searchModes.word) gArgs.push("-w");
       gArgs.push("--", query, dir);
@@ -966,6 +999,7 @@ async function searchFiles(query: string): Promise<GrepMatch[] | null> {
       includeIgnored: scopeEnabled.ignored,
       wholeWord: searchModes.word,
       regex: searchModes.regex,
+      caseSensitive: searchModes.case,
     });
     return results.map((m) => ({ ...m, source: "files" as const }));
   } catch (e) {

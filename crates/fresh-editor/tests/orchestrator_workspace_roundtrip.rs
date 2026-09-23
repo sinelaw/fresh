@@ -36,6 +36,7 @@ fn editor_in(project: &Path, dir_context: &DirectoryContext) -> fresh::app::Edit
         None,
         false,
         false,
+        false,
     )
     .unwrap()
 }
@@ -147,6 +148,7 @@ mod stable_id {
             filesystem,
             None,
             None,
+            false,
             false,
             false,
         )

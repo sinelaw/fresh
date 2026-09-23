@@ -11,6 +11,7 @@ mod spawner;
 mod transport;
 
 pub use channel::AgentChannel;
+pub use channel::ChannelError;
 /// Test-only global: microseconds to sleep per chunk in the consumer loop.
 /// Defaults to 0 (no delay). Set non-zero from tests to simulate slow consumers.
 #[doc(hidden)]
@@ -25,8 +26,8 @@ pub use connection::spawn_local_agent_transport;
 #[doc(hidden)]
 pub use connection::spawn_local_agent_with_capacity;
 pub use connection::{
-    spawn_heartbeat_task, spawn_reconnect_task, spawn_reconnect_task_with, ReconnectConfig,
-    DEFAULT_HEARTBEAT_INTERVAL,
+    spawn_heartbeat_task, spawn_reconnect_task, spawn_reconnect_task_with, Carrier,
+    ReconnectConfig, DEFAULT_HEARTBEAT_INTERVAL,
 };
 pub use connection::{ConnectionParams, SshConnection, SshError};
 pub use filesystem::RemoteFileSystem;

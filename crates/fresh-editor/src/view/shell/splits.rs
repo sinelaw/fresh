@@ -110,6 +110,9 @@ fn node_of<M: 'static>(n: &SplitNode) -> Node<M> {
 mod tests {
     use super::*;
     use crate::model::event::BufferId;
+    use crate::view::shell::rect_of;
+    #[allow(unused_imports)]
+    use crate::view::shell::screen_rect;
     use fresh_core::SplitId;
     use fresh_ui::{Size, Ui};
     use ratatui::layout::Rect;
@@ -156,19 +159,119 @@ mod tests {
         ]
     }
 
+    /// Where the tree put each of `root`'s leaves, in the model's order.
+    ///
+    /// **The model answers which, layout answers where** — `visible_leaves` is
+    /// the production API for the first half, and there is no second answer to
+    /// the other half to ask. A zero-area pane is kept rather than dropped, so
+    /// the shape of the answer matches what the painter gets.
     fn tree_rects(root: &SplitNode, at: Rect) -> Vec<(LeafId, Rect)> {
-        let mut ui: Ui<()> = Ui::new();
-        ui.frame(grid::<()>(root, None), Size::new(at.width, at.height));
-        let mut out: Vec<(LeafId, Rect)> = Vec::new();
-        for (id, _, _) in root.reference_leaves_with_rects(at) {
-            let e = ui.find_by_key(&leaf_key(id));
-            let r = e.map(|e| ui.rect_of(e)).unwrap_or_default();
-            out.push((
-                id,
-                Rect::new(at.x + r.x.max(0) as u16, at.y + r.y.max(0) as u16, r.w, r.h),
-            ));
+        let ui = laid_out(root, at);
+        root.visible_leaves()
+            .into_iter()
+            .map(|(id, _)| {
+                let r = ui
+                    .find_by_key(&leaf_key(id))
+                    .map(|e| ui.rect_of(e))
+                    .unwrap_or_default();
+                (
+                    id,
+                    Rect::new(at.x + r.x.max(0) as u16, at.y + r.y.max(0) as u16, r.w, r.h),
+                )
+            })
+            .collect()
+    }
+
+    /// The grid alone, laid out at `at`'s size.
+    fn laid_out(root: &SplitNode, at: Rect) -> Ui<UiMsg> {
+        let mut ui: Ui<UiMsg> = Ui::new();
+        ui.frame(grid::<UiMsg>(root, None), Size::new(at.width, at.height));
+        ui
+    }
+
+    /// Every divider the tree placed for `root`, as a rectangle — read with
+    /// `separator_rects_of`, which is the editor's own reader.
+    fn divider_rects(ui: &Ui<UiMsg>, root: &SplitNode, at: Rect) -> Vec<Rect> {
+        separator_rects_of(ui, root, std::iter::empty(), at)
+            .into_iter()
+            .map(|(_, dir, x, y, len)| match dir {
+                SplitDirection::Horizontal => Rect::new(x, y, len, 1),
+                SplitDirection::Vertical => Rect::new(x, y, 1, len),
+            })
+            .collect()
+    }
+
+    /// **A grid is a tiling.** Every cell of the box belongs to exactly one
+    /// pane or one divider, and nothing lands outside it.
+    ///
+    /// This is what the parity sweep against `reference_leaves_with_rects` was
+    /// really claiming, said as a property of the one layout rather than as
+    /// agreement between it and a second walk over `split_rect_ext`. A
+    /// structural mistake — a separator cell not reserved, a child given the
+    /// wrong remainder, two panes overlapping — breaks the cover; agreement
+    /// with a copy of the same recursion could only ever catch the copy
+    /// drifting.
+    fn assert_tiles(panes: &[(LeafId, Rect)], dividers: &[Rect], at: Rect, ctx: &str) {
+        let named: Vec<(String, Rect)> = panes
+            .iter()
+            .map(|(id, r)| (format!("pane {id:?}"), *r))
+            .chain(
+                dividers
+                    .iter()
+                    .enumerate()
+                    .map(|(i, r)| (format!("divider {i}"), *r)),
+            )
+            .collect();
+        for (i, r) in dividers.iter().enumerate() {
+            assert_eq!(
+                r.width.min(r.height),
+                1,
+                "{ctx}: divider {i} at {r:?} is not one cell thick"
+            );
         }
-        out
+        assert_disjoint(&named, at, true, ctx);
+    }
+
+    /// The half of [`assert_tiles`] that every laid-out box owes: nothing
+    /// outside it, and no cell claimed twice. `cover` adds the other half —
+    /// that nothing is left over — which a pane's own interior does not owe,
+    /// because the cell where the horizontal bar's row meets the vertical
+    /// bar's column belongs to neither.
+    fn assert_disjoint(parts: &[(String, Rect)], at: Rect, cover: bool, ctx: &str) {
+        let idx = |x: u16, y: u16| (y - at.y) as usize * at.width as usize + (x - at.x) as usize;
+        let mut owner: Vec<Option<&str>> = vec![None; at.width as usize * at.height as usize];
+        for (who, r) in parts {
+            if r.width == 0 || r.height == 0 {
+                continue;
+            }
+            assert!(
+                r.x >= at.x
+                    && r.y >= at.y
+                    && r.x + r.width <= at.x + at.width
+                    && r.y + r.height <= at.y + at.height,
+                "{ctx}: {who} at {r:?} is outside {at:?}"
+            );
+            for y in r.y..r.y + r.height {
+                for x in r.x..r.x + r.width {
+                    let cell = &mut owner[idx(x, y)];
+                    assert!(
+                        cell.is_none(),
+                        "{ctx}: ({x},{y}) is both {} and {who}",
+                        cell.unwrap_or("?")
+                    );
+                    *cell = Some(who.as_str());
+                }
+            }
+        }
+        if cover {
+            if let Some(i) = owner.iter().position(|c| c.is_none()) {
+                let (x, y) = (
+                    at.x + (i % at.width as usize) as u16,
+                    at.y + (i / at.width as usize) as u16,
+                );
+                panic!("{ctx}: ({x},{y}) belongs to nothing");
+            }
+        }
     }
 
     /// Every pane the fold reaches, and the rectangle it is handed — the
@@ -208,41 +311,55 @@ mod tests {
         out.0
     }
 
-    /// **The tree lays the grid out exactly as the model always did.**
+    /// **The grid tiles its box.** Every cell belongs to exactly one pane or
+    /// one divider, at every shape and every size.
     ///
-    /// This is the swap's whole safety argument: the model's walk
-    /// (`reference_leaves_with_rects`, the engine that was) is a layout
-    /// engine, and it was replaced by one. The two share the rule
-    /// (`split_rect_ext`), so a divergence here would be the *structure*
-    /// disagreeing — a reserved separator cell, or which child takes the
-    /// remainder.
+    /// This replaces a sweep that compared the tree against
+    /// `reference_leaves_with_rects` — the recursion the description was
+    /// derived from, kept under `cfg(test)` as the oracle. The two shared
+    /// `split_rect_ext`, so the only thing the comparison could catch was the
+    /// *structure* disagreeing: a separator cell not reserved, or a child
+    /// given the wrong remainder. Both of those break the cover, and a cover
+    /// needs no second implementation to state.
     #[test]
-    fn the_grid_places_every_pane_where_the_model_does() {
+    fn the_grid_tiles_its_box() {
         for (i, root) in shapes().iter().enumerate() {
             for (w, h) in [(80u16, 24u16), (200, 60), (40, 12), (31, 9), (120, 40)] {
                 let at = Rect::new(0, 0, w, h);
-                let want: Vec<(LeafId, Rect)> = root
-                    .reference_leaves_with_rects(at)
-                    .into_iter()
-                    .map(|(id, _, r)| (id, r))
-                    .collect();
-                assert_eq!(tree_rects(root, at), want, "shape {i} at {w}x{h}");
+                let ui = laid_out(root, at);
+                assert_tiles(
+                    &tree_rects(root, at),
+                    &divider_rects(&ui, root, at),
+                    at,
+                    &format!("shape {i} at {w}x{h}"),
+                );
             }
         }
     }
 
-    /// And at an offset: the model partitions the rectangle it is given, so
-    /// the tree's answer is its own rectangle plus the frame's origin.
+    /// And at an offset: the grid partitions the rectangle it is given, so
+    /// every pane and divider moves with the frame's origin and the box is
+    /// still covered exactly once.
     #[test]
     fn an_offset_box_moves_every_pane_with_it() {
         let root = split(SplitDirection::Vertical, leaf(0), leaf(1), 0.5, 10);
         let at = Rect::new(7, 3, 60, 20);
-        let want: Vec<(LeafId, Rect)> = root
-            .reference_leaves_with_rects(at)
-            .into_iter()
-            .map(|(id, _, r)| (id, r))
-            .collect();
-        assert_eq!(tree_rects(&root, at), want);
+        let panes = tree_rects(&root, at);
+        let ui = laid_out(&root, at);
+        // `separator_rects_of` offsets by the `size` it is given, the same way
+        // `tree_rects` does, so both answers are already in the frame's space.
+        let dividers = divider_rects(&ui, &root, at);
+        assert_tiles(&panes, &dividers, at, "an offset box");
+        assert_eq!(panes.len(), 2);
+        assert_eq!(panes[0].1.x, at.x, "the first pane starts at the origin");
+        assert_eq!(
+            panes[1].1.x,
+            panes[0].1.x + panes[0].1.width + 1,
+            "and the second starts past the divider's column"
+        );
+        for (_, r) in &panes {
+            assert_eq!((r.y, r.height), (at.y, at.height), "full height, at {r:?}");
+        }
     }
 
     /// A maximized pane is the whole box, and the separators go with it —
@@ -294,15 +411,79 @@ mod tests {
         assert!(per.as_millis() < 10, "a grid layout took {per:?}");
     }
 
-    /// **A pane divides itself exactly as the painter's arithmetic did.**
+    /// A `Splits` with one pane and nothing else set — the shape most of these
+    /// tests want before they override a field or two.
+    fn splits_of(root: SplitNode) -> Splits {
+        Splits {
+            root,
+            maximized: None,
+            active: None,
+            chrome: Default::default(),
+            controls: Default::default(),
+            groups: Default::default(),
+            interiors: Default::default(),
+            strips: Default::default(),
+            hover: None,
+            drop_zone: None,
+            hosts: Default::default(),
+        }
+    }
+
+    /// The four rectangles a pane divides itself into, read off the frame that
+    /// mounted it: strip, content, vertical bar, horizontal bar.
     ///
-    /// Every combination of the three flags, at sizes down to one that starves
-    /// the content entirely — the horizontal bar's width is the part a reader
-    /// gets wrong from the picture, since it stops short of the vertical
-    /// bar's column instead of running under it.
+    /// **Off the real mount, not a standalone one.** This was
+    /// `split_rendering::layout::split_layout`, which laid `pane_interior` out
+    /// again in a throwaway `Ui` — the second layout the painter used to run
+    /// per pane per frame, kept afterwards only so these tests had something
+    /// to call. The keys are the editor's own; a piece with no cells reports
+    /// an empty rectangle.
+    fn interior_rects(c: PaneChrome, at: Rect) -> [Rect; 4] {
+        let pane = LeafId(SplitId(9));
+        let s = Splits {
+            chrome: [(pane, c)].into_iter().collect(),
+            ..splits_of(leaf(9))
+        };
+        let mut ui: Ui<UiMsg> = Ui::new();
+        ui.frame(overlay(&s), Size::new(at.width, at.height));
+        // **The raw rectangle, not `rect_of`'s.** `rect_of` drops anything with
+        // no cells, which is right for its callers and wrong for this one: a
+        // pane too small to give a piece any room still *placed* that piece,
+        // and where it placed it is the whole question here — a content slot
+        // one row tall and no columns wide is at `y + 1` under the strip, and
+        // `rect_of` would hand back `Rect::ZERO` and say it is at the top.
+        // `rect_of`'s own doc names this case and points here.
+        let r = |k: fresh_ui::Key| {
+            ui.find_by_key(&k)
+                .map(|e| crate::view::shell::screen_rect(ui.rect_of(e), at))
+                .unwrap_or_default()
+        };
+        [
+            r(tabs_key(pane)),
+            r(content_key(pane)),
+            r(vscroll_key(pane)),
+            r(hscroll_key(pane)),
+        ]
+    }
+
+    /// **A pane divides itself into four pieces that never overlap, and the
+    /// bars go where the painter drew them.**
+    ///
+    /// This compared `pane_interior` against `reference_split_layout`, the
+    /// hand-derived arithmetic the description replaced — a frozen second
+    /// statement of the rule, kept under `cfg(test)` so the swap had an
+    /// oracle. The rule is stated here instead, which is what the oracle was
+    /// standing in for: the strip is the top row and spans the box, the
+    /// vertical bar is the last column beside the content, and the horizontal
+    /// bar stops short of that column rather than running under it — the part
+    /// a reader gets wrong from the picture.
+    ///
+    /// Sizes down to one that starves the content entirely. At 3x2 with all
+    /// three flags there is no room for the bottom bar, and the column starves
+    /// its last child rather than overlapping the strip; see
+    /// `a_starved_pane_does_not_draw_its_scrollbar_over_its_tabs`.
     #[test]
-    fn a_pane_divides_itself_the_way_the_painter_did() {
-        use crate::view::ui::split_rendering::layout::{reference_split_layout, split_layout};
+    fn a_pane_divides_itself_into_four_pieces_that_never_overlap() {
         for tabs in [true, false] {
             for vs in [true, false] {
                 for hs in [true, false] {
@@ -312,29 +493,75 @@ mod tests {
                         Rect::new(0, 0, 3, 2),
                         Rect::new(12, 5, 200, 60),
                     ] {
-                        let id = LeafId(SplitId(9));
                         let c = PaneChrome {
                             tabs,
                             vscroll: vs,
                             hscroll: hs,
                         };
-                        let got = split_layout(id, at, c);
-                        let want = reference_split_layout(at, tabs, vs, hs);
-                        assert_eq!(
-                            (
-                                got.tabs_rect,
-                                got.content_rect,
-                                got.scrollbar_rect,
-                                got.horizontal_scrollbar_rect
-                            ),
-                            (
-                                want.tabs_rect,
-                                want.content_rect,
-                                want.scrollbar_rect,
-                                want.horizontal_scrollbar_rect
-                            ),
-                            "tabs={tabs} vscroll={vs} hscroll={hs} at {at:?}"
+                        let [strip, content, vbar, hbar] = interior_rects(c, at);
+                        let ctx = format!("tabs={tabs} vscroll={vs} hscroll={hs} at {at:?}");
+                        assert_disjoint(
+                            &[
+                                ("the strip".into(), strip),
+                                ("the content".into(), content),
+                                ("the vertical bar".into(), vbar),
+                                ("the horizontal bar".into(), hbar),
+                            ],
+                            at,
+                            false,
+                            &ctx,
                         );
+                        assert!(strip.height <= 1, "{ctx}: the strip is one row at most");
+                        assert_eq!(
+                            strip.height > 0,
+                            tabs,
+                            "{ctx}: the strip is there iff the pane has tabs"
+                        );
+                        if strip.height > 0 {
+                            assert_eq!(
+                                (strip.x, strip.y, strip.width),
+                                (at.x, at.y, at.width),
+                                "{ctx}: the strip is the top row, full width"
+                            );
+                            assert_eq!(
+                                content.y,
+                                at.y + 1,
+                                "{ctx}: and the content starts under it"
+                            );
+                        } else {
+                            assert_eq!(content.y, at.y, "{ctx}: the content starts at the top");
+                        }
+                        assert!(vbar.width <= 1, "{ctx}: the bar is one column at most");
+                        if vbar.width > 0 {
+                            assert_eq!(
+                                (vbar.x, vbar.y, vbar.height),
+                                (at.x + at.width - 1, content.y, content.height),
+                                "{ctx}: the bar is the last column, beside the content"
+                            );
+                            assert_eq!(
+                                content.x + content.width,
+                                vbar.x,
+                                "{ctx}: and the content stops where it starts"
+                            );
+                        } else if content.width > 0 {
+                            assert_eq!(
+                                content.x + content.width,
+                                at.x + at.width,
+                                "{ctx}: with no bar the content reaches the edge"
+                            );
+                        }
+                        assert!(hbar.height <= 1, "{ctx}: the bottom bar is one row at most");
+                        if hbar.height > 0 {
+                            assert_eq!(
+                                (hbar.x, hbar.y),
+                                (at.x, content.y + content.height),
+                                "{ctx}: the bottom bar is under the content"
+                            );
+                            assert_eq!(
+                                hbar.width, content.width,
+                                "{ctx}: and it stops short of the vertical bar's column"
+                            );
+                        }
                     }
                 }
             }
@@ -349,8 +576,11 @@ mod tests {
     /// long after the main tree's became nodes, and a drag on one had to
     /// search that list to find which container it was. Mounted in the pane's
     /// content, they are ordinary dividers, at the cells the painter draws
-    /// them at: it derives those from `get_separators_with_ids(content_rect)`,
-    /// and the content node *is* that rectangle.
+    /// them at — and the content node *is* the rectangle they are derived
+    /// from, so the claim is that the group's grid tiles the pane's content
+    /// slot exactly. That used to be checked against
+    /// `SplitNode::get_separators_with_ids`, the walk that computed separator
+    /// positions from ratios; the cover says it without one.
     #[test]
     fn a_groups_dividers_land_where_its_separators_are_drawn() {
         let group = SplitNode::Grouped {
@@ -395,16 +625,16 @@ mod tests {
         let SplitNode::Grouped { layout, .. } = &group else {
             unreachable!()
         };
-        let want = layout.get_separators_with_ids(at);
-        assert_eq!(want.len(), 1, "one separator inside the group");
-        for (id, _dir, x, y, len) in want {
-            let r = ui.rect_of(ui.find_by_key(&divider_key(id)).expect("the divider"));
-            assert_eq!(
-                (r.x, r.y, r.h),
-                (x as i32, y as i32, len),
-                "{id:?} where the painter draws it"
-            );
-        }
+        // The group's panels and its divider, both read off this tree by key.
+        let frame = Rect::new(0, 0, w, h);
+        let panels: Vec<(LeafId, Rect)> = layout
+            .visible_leaves()
+            .into_iter()
+            .map(|(id, _)| (id, rect_of(&ui, &leaf_key(id), frame).unwrap_or_default()))
+            .collect();
+        let dividers = divider_rects(&ui, layout, frame);
+        assert_eq!(dividers.len(), 1, "one divider inside the group");
+        assert_tiles(&panels, &dividers, at, "a group inside its pane's content");
     }
 
     /// **Every pane paints into the rectangle layout gave it.**
@@ -433,12 +663,14 @@ mod tests {
                     drop_zone: None,
                     hosts: Default::default(),
                 };
-                let want: Vec<(LeafId, Rect)> = root
-                    .reference_leaves_with_rects(at)
-                    .into_iter()
-                    .map(|(id, _, r)| (id, r))
-                    .collect();
-                assert_eq!(panes_folded(&s, at), want, "shape {i} at {w}x{h}");
+                // **The fold's rectangle against layout's, not against a
+                // model walk.** That is the claim — the pane is painted where
+                // it was placed — and both halves are read off the one tree.
+                assert_eq!(
+                    panes_folded(&s, at),
+                    tree_rects(root, at),
+                    "shape {i} at {w}x{h}"
+                );
             }
         }
     }
@@ -478,7 +710,6 @@ mod tests {
     /// host for it to be.
     #[test]
     fn a_groups_panels_are_hosts_inside_their_panes() {
-        use crate::view::ui::split_rendering::layout::split_layout;
         let inner = split(SplitDirection::Vertical, leaf(20), leaf(21), 0.5, 30);
         let group = SplitNode::Grouped {
             split_id: LeafId(SplitId(50)),
@@ -507,14 +738,26 @@ mod tests {
             hosts: Default::default(),
         };
 
-        let content = split_layout(host_leaf, at, chrome).content_rect;
-        // An inner leaf with no chrome of its own is all content.
-        let want: Vec<(LeafId, Rect)> = inner
-            .reference_leaves_with_rects(content)
-            .into_iter()
-            .map(|(id, _, r)| (id, r))
-            .collect();
-        assert_eq!(panes_folded(&s, at), want);
+        let mut ui: Ui<UiMsg> = Ui::new();
+        ui.frame(overlay(&s), Size::new(at.width, at.height));
+        // The outer pane's content slot, read off the tree by key — this was
+        // `split_layout(host_leaf, at, chrome).content_rect`, a second layout
+        // of the same interior.
+        let content = rect_of(&ui, &content_key(host_leaf), at).expect("the content slot");
+        let folded = panes_folded(&s, at);
+        assert_eq!(
+            folded.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
+            inner
+                .visible_leaves()
+                .into_iter()
+                .map(|(id, _)| id)
+                .collect::<Vec<_>>(),
+            "the group's leaves are the hosts, and the outer pane is not one"
+        );
+        // An inner leaf has no chrome of its own, so the panels and their one
+        // divider fill the content slot exactly.
+        let dividers = divider_rects(&ui, &inner, at);
+        assert_tiles(&folded, &dividers, content, "a group's panels");
     }
 
     /// **The two strip buttons are where the painter draws their glyphs.**
@@ -527,7 +770,6 @@ mod tests {
     /// against them.
     #[test]
     fn the_strip_buttons_land_where_the_painter_draws_them() {
-        use crate::view::ui::split_rendering::layout::split_layout;
         use crate::view::ui::tabs::split_control_reserve;
         for (maximize, close) in [(true, true), (true, false), (false, true), (false, false)] {
             let controls = PaneControls { maximize, close };
@@ -562,8 +804,10 @@ mod tests {
                 let mut ui: Ui<UiMsg> = Ui::new();
                 ui.frame(overlay(&s), Size::new(at.width, at.height));
 
-                // The painter's own arithmetic, from `render_split_tab_bar`.
-                let strip = split_layout(pane, at, chrome).tabs_rect;
+                // The strip, read off the tree by key — the rectangle the
+                // painter's `render_split_tab_bar` walked with a running `cx`,
+                // and formerly a second layout of the pane's interior.
+                let strip = rect_of(&ui, &tabs_key(pane), at).expect("the strip");
                 let cluster_x = strip.x + strip.width.saturating_sub(controls.reserve());
                 // It skips the gap, then the reserved `>` column.
                 let mut cx = cluster_x + 2;
@@ -696,6 +940,7 @@ mod tests {
             hscroll: false,
         };
         let strip = |n: usize| Strip {
+            cap_names: false,
             tabs: vec![Tab {
                 target: TabTarget::Buffer(BufferId(n)),
                 name: format!("file_{n}.rs"),
@@ -706,7 +951,8 @@ mod tests {
             active: Some(TabTarget::Buffer(BufferId(n))),
             active_pane: n == 0,
             hover: None,
-            offset: 0,
+            hover_plus: false,
+            reveal: None,
             preview_label: String::new(),
         };
         let s = Splits {
@@ -914,103 +1160,105 @@ mod tests {
     /// `pane_interior` every other pane gets.
     #[test]
     fn an_inner_panel_is_a_pane_with_two_parts_off() {
-        use crate::view::ui::split_rendering::layout::split_layout;
         for vs in [true, false] {
             for at in [
                 Rect::new(0, 0, 80, 24),
                 Rect::new(7, 3, 40, 12),
                 Rect::new(0, 0, 1, 1),
             ] {
-                let got = split_layout(
-                    LeafId(SplitId(9)),
-                    at,
+                let [strip, content, vbar, hbar] = interior_rects(
                     PaneChrome {
                         tabs: false,
                         vscroll: vs,
                         hscroll: false,
                     },
+                    at,
                 );
                 let bar = at.width.min(vs as u16);
                 assert_eq!(
-                    got.content_rect,
+                    content,
                     Rect::new(at.x, at.y, at.width - bar, at.height),
                     "the panel's whole area but the bar's column, vscroll={vs} at {at:?}"
                 );
-                assert_eq!(
-                    got.scrollbar_rect,
-                    Rect::new(at.x + at.width - bar, at.y, bar, at.height),
-                    "and the bar beside it, vscroll={vs} at {at:?}"
-                );
-                assert_eq!(got.tabs_rect.height, 0, "no strip");
-                assert_eq!(got.horizontal_scrollbar_rect.height, 0, "no bottom bar");
+                if bar > 0 {
+                    assert_eq!(
+                        vbar,
+                        Rect::new(at.x + at.width - bar, at.y, bar, at.height),
+                        "and the bar beside it, vscroll={vs} at {at:?}"
+                    );
+                } else {
+                    assert_eq!(vbar.width, 0, "no bar, vscroll={vs} at {at:?}");
+                }
+                assert_eq!(strip.height, 0, "no strip");
+                assert_eq!(hbar.height, 0, "no bottom bar");
             }
         }
     }
 
-    /// **The one case where the arithmetic was wrong, and the layout is not.**
+    /// **The one case where the painter's arithmetic was wrong, and the
+    /// layout is not.**
     ///
     /// A pane one row tall with both a tab strip and a horizontal scrollbar
     /// wants two rows and has one. The painter derived the bar's `y` from the
     /// bottom — `y + height - 1` — without noticing the tabs had already taken
     /// that row, so it produced a rectangle *overlapping* the tab strip and
-    /// drew the bar over it. A column starves its last child instead: there is
-    /// no room, so the bar gets none.
+    /// drew the bar over it: `tabs_rect` was `(0, 0, 1, 1)` and the bar's was
+    /// `(0, 0, 0, 1)`, the same row. A column starves its last child instead:
+    /// there is no room, so the bar gets none.
     ///
-    /// Kept as a test rather than folded into the sweep above, because it is a
-    /// deliberate divergence and the sweep is a parity claim.
+    /// The old arithmetic is not here to be compared against any more — it was
+    /// `reference_split_layout`, deleted with the rest of the second layout —
+    /// so what is asserted is the live half, which is the half that is a
+    /// claim: the strip has the row and the bar has nothing. The overlap it
+    /// replaced is recorded above rather than recomputed.
     #[test]
-    fn a_starved_pane_no_longer_draws_its_scrollbar_over_its_tabs() {
-        use crate::view::ui::split_rendering::layout::{reference_split_layout, split_layout};
+    fn a_starved_pane_does_not_draw_its_scrollbar_over_its_tabs() {
         let at = Rect::new(0, 0, 1, 1);
-        let old = reference_split_layout(at, true, true, true);
-        let new = split_layout(
-            LeafId(SplitId(9)),
-            at,
+        let [strip, _content, _vbar, hbar] = interior_rects(
             PaneChrome {
                 tabs: true,
                 vscroll: true,
                 hscroll: true,
             },
+            at,
         );
+        assert_eq!(strip, Rect::new(0, 0, 1, 1), "the tabs take the row");
         assert_eq!(
-            old.tabs_rect,
-            Rect::new(0, 0, 1, 1),
-            "the tabs take the row"
-        );
-        assert_eq!(
-            old.horizontal_scrollbar_rect,
-            Rect::new(0, 0, 0, 1),
-            "and the old bar was on the same row"
-        );
-        assert_eq!(
-            new.horizontal_scrollbar_rect.height, 0,
-            "there is no room for it, so it has none"
+            hbar.height, 0,
+            "there is no room for the bar, so it has none"
         );
     }
 
-    /// The dividers land on the cells the model reserves for them.
+    /// **Every container has a divider, and it is the cells no pane covers.**
+    ///
+    /// This compared each divider against
+    /// `SplitNode::get_separators_with_ids`, the walk that computed separator
+    /// positions from the same ratios `split_rect_ext` does — a second
+    /// statement of where a separator goes, kept under `cfg(test)` as the
+    /// oracle. `the_grid_tiles_its_box` is where "the divider is the cell
+    /// between the two children" is now checked, because that is what a cover
+    /// with no gaps and no overlaps says. What is left here is the part the
+    /// cover cannot see: that every container the model has is actually
+    /// *in* the tree, rather than a box quietly tiled by its panes alone.
     #[test]
-    fn the_dividers_are_where_the_separators_are() {
+    fn every_container_has_a_divider() {
         for (i, root) in shapes().iter().enumerate() {
             for (w, h) in [(80u16, 24u16), (200, 60), (41, 13)] {
                 let at = Rect::new(0, 0, w, h);
-                let mut ui: Ui<()> = Ui::new();
-                ui.frame(grid::<()>(root, None), Size::new(w, h));
-                for (id, dir, x, y, len) in root.get_separators_with_ids(at) {
-                    let e = ui
-                        .find_by_key(&divider_key(id))
-                        .unwrap_or_else(|| panic!("shape {i}: no divider for {id:?}"));
-                    let r = ui.rect_of(e);
-                    let want = match dir {
-                        SplitDirection::Horizontal => (x, y, len, 1),
-                        SplitDirection::Vertical => (x, y, 1, len),
-                    };
-                    assert_eq!(
-                        (r.x as u16, r.y as u16, r.w, r.h),
-                        want,
-                        "shape {i} at {w}x{h}, divider {id:?}"
+                let ui = laid_out(root, at);
+                let mut ids = Vec::new();
+                container_ids(root, &mut ids);
+                for (id, _) in &ids {
+                    assert!(
+                        ui.find_by_key(&divider_key(*id)).is_some(),
+                        "shape {i} at {w}x{h}: no divider for {id:?}"
                     );
                 }
+                assert_eq!(
+                    divider_rects(&ui, root, at).len(),
+                    ids.len(),
+                    "shape {i} at {w}x{h}: one divider per container"
+                );
             }
         }
     }

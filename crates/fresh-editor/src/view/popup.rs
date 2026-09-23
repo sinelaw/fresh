@@ -76,10 +76,6 @@ pub enum PopupResolver {
     None,
     /// LSP completion popup. Confirm inserts the selected item's text.
     Completion,
-    /// "Start LSP server?" confirmation. Confirm dispatches the selected
-    /// row's `data` (e.g. "allow_once") through
-    /// `handle_lsp_confirmation_response`.
-    LspConfirm { language: String },
     /// LSP server-status / auto-prompt popup. Confirm dispatches the
     /// selected row's `data` through `handle_lsp_status_action`.
     LspStatus,
@@ -374,12 +370,6 @@ impl Popup {
         self
     }
 
-    /// Set the popup kind (determines input handling behavior)
-    pub fn with_kind(mut self, kind: PopupKind) -> Self {
-        self.kind = kind;
-        self
-    }
-
     /// Mark this popup as transient (will be dismissed on focus loss)
     pub fn with_transient(mut self, transient: bool) -> Self {
         self.transient = transient;
@@ -404,31 +394,11 @@ impl Popup {
         self
     }
 
-    /// Set border style
-    pub fn with_border_style(mut self, style: Style) -> Self {
-        self.border_style = style;
-        self
-    }
-
-    /// Attach the confirm/cancel resolver so this popup dispatches to
-    /// the right handler regardless of what other popups are on screen.
-    pub fn with_resolver(mut self, resolver: PopupResolver) -> Self {
-        self.resolver = resolver;
-        self
-    }
-
     /// Mark the popup as keyboard-focused (so popup-context bindings
     /// route through it). LSP popups stay unfocused on creation; the
     /// user toggles focus with the `popup_focus` action.
     pub fn with_focused(mut self, focused: bool) -> Self {
         self.focused = focused;
-        self
-    }
-
-    /// Pre-render the focus-key hint shown in the popup title when the
-    /// popup is unfocused.
-    pub fn with_focus_key_hint(mut self, hint: String) -> Self {
-        self.focus_key_hint = Some(hint);
         self
     }
 
@@ -768,13 +738,6 @@ impl Popup {
         self.item_count() > self.visible_height()
     }
 
-    /// Get scroll state for scrollbar rendering
-    pub fn scroll_state(&self) -> (usize, usize, usize) {
-        let total = self.item_count();
-        let visible = self.visible_height();
-        (total, visible, self.scroll_offset)
-    }
-
     /// Find the link URL at a given relative position within the popup content area.
     /// `relative_col` and `relative_row` are relative to the inner content area (after borders).
     /// Returns None if:
@@ -804,24 +767,6 @@ impl Popup {
 
         // Find the link at the column position
         line.link_at_column(relative_col).map(|s| s.to_string())
-    }
-
-    /// Get the height of the description area (including blank line separator)
-    /// Returns 0 if there is no description.
-    pub fn description_height(&self) -> u16 {
-        if let Some(desc) = &self.description {
-            let border_width = if self.bordered { 2 } else { 0 };
-            let scrollbar_reserved = 2;
-            let content_width = self
-                .width
-                .saturating_sub(border_width)
-                .saturating_sub(scrollbar_reserved) as usize;
-            let desc_vec = vec![desc.clone()];
-            let wrapped = wrap_text_lines(&desc_vec, content_width.saturating_sub(2));
-            wrapped.len() as u16 + 1 // +1 for blank line after description
-        } else {
-            0
-        }
     }
 
     /// Calculate the actual content height based on the popup content
@@ -963,27 +908,6 @@ impl PopupManager {
     /// Check if any popups are visible
     pub fn is_visible(&self) -> bool {
         !self.popups.is_empty()
-    }
-
-    /// Check if the topmost popup is a completion popup (supports type-to-filter)
-    pub fn is_completion_popup(&self) -> bool {
-        self.top()
-            .map(|p| p.kind == PopupKind::Completion)
-            .unwrap_or(false)
-    }
-
-    /// Check if the topmost popup is a hover popup
-    pub fn is_hover_popup(&self) -> bool {
-        self.top()
-            .map(|p| p.kind == PopupKind::Hover)
-            .unwrap_or(false)
-    }
-
-    /// Check if the topmost popup is an action popup
-    pub fn is_action_popup(&self) -> bool {
-        self.top()
-            .map(|p| p.kind == PopupKind::Action)
-            .unwrap_or(false)
     }
 
     /// Get all popups (for rendering)

@@ -230,6 +230,12 @@ pub struct List<M> {
     source: Source<M>,
     selection: Sel,
     on_select: Option<Rc<dyn Fn(usize) -> M>>,
+    /// The window's offset, when the owner holds it; `None` leaves it to the
+    /// viewport. Two states rather than `Sel`'s three: a window is always
+    /// somewhere, so "controlled and empty" has no meaning here.
+    scroll: Option<usize>,
+    on_scroll: Option<Rc<dyn Fn(usize) -> M>>,
+    pinned: Rc<[usize]>,
     on_activate: Option<Rc<dyn Fn(usize, &Event) -> Option<M>>>,
     activate_on: Activate,
     focusable: bool,
@@ -305,6 +311,9 @@ impl<M: 'static> List<M> {
             source,
             selection: Sel::Own,
             on_select: None,
+            scroll: None,
+            on_scroll: None,
+            pinned: Rc::from(Vec::new()),
             on_activate: None,
             activate_on: Activate::default(),
             focusable: true,
@@ -339,6 +348,44 @@ impl<M: 'static> List<M> {
 
     pub fn on_select(mut self, f: impl Fn(usize) -> M + 'static) -> Self {
         self.on_select = Some(Rc::new(f));
+        self
+    }
+
+    /// Controlled window: the owner holds the offset and is told, through
+    /// [`on_scroll`](Self::on_scroll), when it should change — the same
+    /// pattern as [`selected`](Self::selected) / [`on_select`](Self::on_select),
+    /// for the other fact a list keeps. Omit this and the viewport keeps its
+    /// own.
+    ///
+    /// The offset is the index of the first row of the run under any
+    /// [`pinned`](Self::pinned) rows. See [`Scroll::At`](crate::Scroll::At)
+    /// for what the framework does with a wheel meanwhile, and for why the
+    /// owner's value is never clamped.
+    pub fn scroll(mut self, offset: usize) -> Self {
+        self.scroll = Some(offset);
+        self
+    }
+
+    /// Be told where the framework put the window — after a wheel, a bar
+    /// drag, or a selection move that asked the window to follow. See
+    /// [`Node::on_scroll`](crate::Node::on_scroll).
+    pub fn on_scroll(mut self, f: impl Fn(usize) -> M + 'static) -> Self {
+        self.on_scroll = Some(Rc::new(f));
+        self
+    }
+
+    /// Rows held at the top of the window whatever the offset — sticky group
+    /// headers, a scrolled tree's expanded ancestors — in the order they are
+    /// drawn. The owner names them (they are a function of the offset, and of
+    /// what a "header" is, which only the owner knows) and the window makes
+    /// room: the run starts under them and the ceiling accounts for them. See
+    /// [`Node::pinned`](crate::Node::pinned).
+    ///
+    /// A pinned row is built by the same builder, in the same state, with the
+    /// same handlers as it would be in the run: clicking it selects it, and
+    /// hovering it tints it.
+    pub fn pinned(mut self, indices: &[usize]) -> Self {
+        self.pinned = Rc::from(indices);
         self
     }
 
@@ -423,10 +470,14 @@ impl<M: 'static> List<M> {
 
     /// An overlay bar, drawn only while the caller says to — see
     /// [`Node::scrollbar_revealed`](crate::Node::scrollbar_revealed).
+    ///
+    /// Composes with [`scrollbar_gutter`](Self::scrollbar_gutter): the pair is
+    /// a reserved column the bar is only drawn in on attention, which is what
+    /// a list whose rows reach their last column wants — an overlay bar alone
+    /// is painted over that column.
     pub fn scrollbar_revealed(mut self, shown: bool) -> Self {
         self.scrollbar = true;
         self.overlay = true;
-        self.stable_gutter = false;
         self.bar_hidden = !shown;
         self
     }
@@ -584,17 +635,29 @@ impl<M: 'static> Component<M> for List<M> {
         // builder below runs twice in the one layout pass.
         let measured = self.row_height == RowHeight::UniformMeasured;
         let declared = self.row_height.declared();
+        let pinned = self.pinned.clone();
         let reader = layout_reader(move |info| {
             let measuring = info.band == Some(Band::Measuring);
             let row_rows = match info.band {
                 Some(Band::Cells(h)) => h.max(1),
                 _ => declared,
             };
+            // The window the viewport published is the run under the pinned
+            // rows, already clamped to its ceiling — so the run starts where
+            // it says, and the pinned rows go above it: as many as the
+            // viewport said it made room for, which is fewer than were named
+            // when they would have taken the whole window.
             let win = info.scroll_window.unwrap_or_default();
             let visible = (win.h as usize).max(1);
-            let first = (win.y.max(0) as usize).min(n.saturating_sub(visible.min(n)));
+            let first = (win.y.max(0) as usize).min(n);
             let last = (first + visible + OVERSCAN).min(n);
-            let window = col().children((first..last).map(|i| {
+            let pins = (info.pinned as usize).min(pinned.len());
+            let indices = pinned[..pins]
+                .iter()
+                .copied()
+                .filter(|&i| i < n)
+                .chain(first..last);
+            let window = col().children(indices.map(|i| {
                 let state = if Some(i) == sel {
                     // A selected row reads as focused only when the list has
                     // focus; otherwise it is muted.
@@ -662,11 +725,30 @@ impl<M: 'static> Component<M> for List<M> {
             RowHeight::Cells(c) => body.item_rows(c),
             RowHeight::UniformMeasured => body.item_rows_measured(),
         };
+        if let Some(y) = self.scroll {
+            body = body.scroll(u32::try_from(y).unwrap_or(u32::MAX));
+        }
+        if let Some(f) = self.on_scroll.clone() {
+            body = body.on_scroll(move |y| f(y as usize));
+        }
+        if !self.pinned.is_empty() {
+            let pins: Vec<u32> = self
+                .pinned
+                .iter()
+                .map(|&i| u32::try_from(i).unwrap_or(u32::MAX))
+                .collect();
+            body = body.pinned(&pins);
+        }
         if let Some(a) = anchor.clone() {
             body = body.anchor_to(a);
         }
         if self.overlay {
             body = body.scrollbar_revealed(!self.bar_hidden);
+            // Asked for both: the column is reserved on every frame and the
+            // bar appears in it on attention.
+            if self.stable_gutter {
+                body = body.scrollbar_gutter();
+            }
         } else if self.stable_gutter {
             body = body.scrollbar_gutter();
         } else if self.scrollbar {

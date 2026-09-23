@@ -10,7 +10,6 @@
 //!
 //! | Feature | WASM Module | Runtime Module |
 //! |---------|-------------|----------------|
-//! | Syntax highlighting | `textmate_engine` | `highlight_engine` |
 //! | Auto-indentation | `indent_pattern` | `indent` |
 //! | Reference highlighting | `reference_highlight_text` | `reference_highlighter` |
 
@@ -60,14 +59,17 @@ pub mod highlight_types;
 // These provide pure-Rust implementations without tree-sitter
 #[cfg(any(feature = "runtime", feature = "wasm"))]
 pub mod indent_pattern;
+// Structural (stack-based) indentation for Pascal, whose nesting a
+// one-reference-line rule set cannot express. Reached through `indent_rules`,
+// which hands the `PascalLike` family over to it.
+#[cfg(any(feature = "runtime", feature = "wasm"))]
+pub mod indent_pascal;
 // Per-language regex indentation rules (VS Code style). Pure Rust; works with
 // or without tree-sitter. See docs/internal/indentation-rules-design.md.
 #[cfg(any(feature = "runtime", feature = "wasm"))]
 pub mod indent_rules;
 #[cfg(any(feature = "runtime", feature = "wasm"))]
 pub mod reference_highlight_text;
-#[cfg(any(feature = "runtime", feature = "wasm"))]
-pub mod textmate_engine;
 
 // Runtime-only modules (depend on tree-sitter)
 // These provide enhanced features using AST analysis

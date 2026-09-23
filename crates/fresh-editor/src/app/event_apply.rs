@@ -12,9 +12,8 @@
 //!   to plugins after an event applies.
 //!
 //! The "scroll/viewport event" handlers (handle_scroll_event,
-//! handle_set_viewport_event, handle_recenter_event) and the small
-//! `invalidate_layouts_for_buffer` helper now live on `impl Window`
-//! since they're entirely per-window concerns.
+//! handle_recenter_event) live on
+//! `impl Window` since they're entirely per-window concerns.
 
 use lsp_types::TextDocumentContentChangeEvent;
 
@@ -73,7 +72,26 @@ impl Editor {
             .filter_map(|&(start, end)| {
                 if end <= position {
                     Some((start, end))
-                } else if start >= edit_end {
+                } else if start >= edit_end && start > position {
+                    // **Entirely after the edit**, so only its coordinates
+                    // moved. `start > position` is the half an insertion needs:
+                    // it removes nothing, so `edit_end == position`, and
+                    // `start >= edit_end` alone also caught the line the text
+                    // was inserted at the *start* of — whose content plainly
+                    // changed. That line kept a seen entry, shifted along, and
+                    // the set was left holding a range no line has.
+                    //
+                    // Which bites when the edit is taken back. An undo or a
+                    // backspace runs the shift in reverse, the stale entry
+                    // lands exactly on the restored line's range, and the line
+                    // reads as already offered — so `lines_changed` never
+                    // fires for it and a per-line decoration plugin never
+                    // rebuilds it. In compose a heading kept its text and lost
+                    // its bold until an unrelated edit offered the line again.
+                    //
+                    // A deletion is unaffected: `removed > 0` makes `edit_end`
+                    // strictly greater than `position`, so the added test can
+                    // only be true where the first one already was.
                     Some(((start + inserted) - removed, (end + inserted) - removed))
                 } else {
                     None // overlaps the edit, so its content changed
@@ -94,11 +112,6 @@ impl Editor {
         match event {
             Event::Scroll { line_offset } => {
                 self.active_window_mut().handle_scroll_event(*line_offset);
-                return;
-            }
-            Event::SetViewport { top_line } => {
-                self.active_window_mut()
-                    .handle_set_viewport_event(*top_line);
                 return;
             }
             Event::Recenter => {
@@ -179,13 +192,12 @@ impl Editor {
                 .apply_event_to_keyed_buffer(active_buf, split_id, event);
         }
 
-        // 1c. Invalidate layouts for all views of this buffer after content changes
+        // 1c. Refresh the per-buffer derived state after content changes
         // Note: recovery_pending is set automatically by the buffer on edits
         match event {
             Event::Insert { .. } | Event::Delete { .. } | Event::BulkEdit { .. } => {
                 let buf = self.active_buffer();
                 let win = self.active_window_mut();
-                win.invalidate_layouts_for_buffer(buf);
                 win.prune_orphaned_folds(buf);
                 win.schedule_semantic_tokens_full_refresh(buf);
                 win.schedule_folding_ranges_refresh(buf);
@@ -197,7 +209,6 @@ impl Editor {
                 if has_edits {
                     let buf = self.active_buffer();
                     let win = self.active_window_mut();
-                    win.invalidate_layouts_for_buffer(buf);
                     win.prune_orphaned_folds(buf);
                     win.schedule_semantic_tokens_full_refresh(buf);
                     win.schedule_folding_ranges_refresh(buf);
@@ -682,10 +693,8 @@ impl Editor {
             displaced_markers,
         };
 
-        // Post-processing (layout invalidation, split cursor sync, etc.)
-        let buf = self.active_buffer();
+        // Post-processing (split cursor sync, etc.)
         let win = self.active_window_mut();
-        win.invalidate_layouts_for_buffer(buf);
         win.adjust_other_split_cursors_for_event(&bulk_edit);
         // Note: Do NOT clear search overlays - markers track through edits for F3/Shift+F3
 
@@ -743,6 +752,7 @@ impl Editor {
                     "after_insert",
                     crate::services::plugins::hooks::HookArgs::AfterInsert {
                         buffer_id,
+                        window_id: self.active_window.0,
                         position: *position,
                         text: text.clone(),
                         // Byte range of the affected area
@@ -774,6 +784,7 @@ impl Editor {
                     "after_delete",
                     crate::services::plugins::hooks::HookArgs::AfterDelete {
                         buffer_id,
+                        window_id: self.active_window.0,
                         start: range.start,
                         end: range.end,
                         deleted_text: deleted_text.clone(),
@@ -818,6 +829,7 @@ impl Editor {
                     "cursor_moved",
                     crate::services::plugins::hooks::HookArgs::CursorMoved {
                         buffer_id,
+                        window_id: self.active_window.0,
                         cursor_id: *cursor_id,
                         old_position: *old_position,
                         new_position: *new_position,

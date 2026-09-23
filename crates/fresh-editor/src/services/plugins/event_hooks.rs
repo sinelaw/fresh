@@ -11,14 +11,14 @@ use std::sync::RwLock;
 /// Trait for converting Events into Hook invocations
 pub trait EventHooks {
     /// Get the "before" hook args for this event (if any)
-    fn before_hook(&self, buffer_id: BufferId) -> Option<HookArgs>;
+    fn before_hook(&self, buffer_id: BufferId, window_id: u64) -> Option<HookArgs>;
 
     /// Get the "after" hook args for this event (if any)
-    fn after_hook(&self, buffer_id: BufferId) -> Option<HookArgs>;
+    fn after_hook(&self, buffer_id: BufferId, window_id: u64) -> Option<HookArgs>;
 }
 
 impl EventHooks for Event {
-    fn before_hook(&self, buffer_id: BufferId) -> Option<HookArgs> {
+    fn before_hook(&self, buffer_id: BufferId, window_id: u64) -> Option<HookArgs> {
         match self {
             Self::Insert {
                 position,
@@ -26,11 +26,13 @@ impl EventHooks for Event {
                 cursor_id: _,
             } => Some(HookArgs::BeforeInsert {
                 buffer_id,
+                window_id,
                 position: *position,
                 text: text.clone(),
             }),
             Self::Delete { range, .. } => Some(HookArgs::BeforeDelete {
                 buffer_id,
+                window_id,
                 start: range.start,
                 end: range.end,
             }),
@@ -38,7 +40,7 @@ impl EventHooks for Event {
         }
     }
 
-    fn after_hook(&self, buffer_id: BufferId) -> Option<HookArgs> {
+    fn after_hook(&self, buffer_id: BufferId, window_id: u64) -> Option<HookArgs> {
         match self {
             Self::Insert {
                 position,
@@ -46,6 +48,7 @@ impl EventHooks for Event {
                 cursor_id: _,
             } => Some(HookArgs::AfterInsert {
                 buffer_id,
+                window_id,
                 position: *position,
                 text: text.clone(),
                 affected_start: *position,
@@ -61,6 +64,7 @@ impl EventHooks for Event {
                 ..
             } => Some(HookArgs::AfterDelete {
                 buffer_id,
+                window_id,
                 start: range.start,
                 end: range.end,
                 deleted_text: deleted_text.clone(),
@@ -78,6 +82,7 @@ impl EventHooks for Event {
                 ..
             } => Some(HookArgs::CursorMoved {
                 buffer_id,
+                window_id,
                 cursor_id: *cursor_id,
                 old_position: *old_position,
                 new_position: *new_position,
@@ -96,10 +101,11 @@ pub fn apply_event_with_hooks(
     cursors: &mut crate::model::cursor::Cursors,
     event: &Event,
     buffer_id: BufferId,
+    window_id: u64,
     hook_registry: &RwLock<HookRegistry>,
 ) -> bool {
     // Run "before" hooks
-    if let Some(before_args) = event.before_hook(buffer_id) {
+    if let Some(before_args) = event.before_hook(buffer_id, window_id) {
         let registry = hook_registry.read().unwrap();
         let hook_name = match &before_args {
             HookArgs::BeforeInsert { .. } => "before_insert",
@@ -120,7 +126,7 @@ pub fn apply_event_with_hooks(
     state.apply(cursors, event);
 
     // Run "after" hooks
-    if let Some(mut after_args) = event.after_hook(buffer_id) {
+    if let Some(mut after_args) = event.after_hook(buffer_id, window_id) {
         // Fill in line number and text properties for CursorMoved events
         if let HookArgs::CursorMoved {
             new_position,
@@ -180,8 +186,8 @@ mod tests {
         let buffer_id = BufferId(1);
 
         // Should have both before and after hooks
-        assert!(event.before_hook(buffer_id).is_some());
-        assert!(event.after_hook(buffer_id).is_some());
+        assert!(event.before_hook(buffer_id, 1).is_some());
+        assert!(event.after_hook(buffer_id, 1).is_some());
     }
 
     #[test]
@@ -194,8 +200,8 @@ mod tests {
 
         let buffer_id = BufferId(1);
 
-        assert!(event.before_hook(buffer_id).is_some());
-        assert!(event.after_hook(buffer_id).is_some());
+        assert!(event.before_hook(buffer_id, 1).is_some());
+        assert!(event.after_hook(buffer_id, 1).is_some());
     }
 
     #[test]
@@ -213,8 +219,8 @@ mod tests {
         let buffer_id = BufferId(1);
 
         // Overlay events don't trigger hooks (they're visual only)
-        assert!(event.before_hook(buffer_id).is_none());
-        assert!(event.after_hook(buffer_id).is_none());
+        assert!(event.before_hook(buffer_id, 1).is_none());
+        assert!(event.after_hook(buffer_id, 1).is_none());
     }
 
     #[test]
@@ -244,8 +250,14 @@ mod tests {
 
         let buffer_id = BufferId(0);
         let mut cursors = crate::model::cursor::Cursors::new();
-        let was_applied =
-            apply_event_with_hooks(&mut state, &mut cursors, &event, buffer_id, &hook_registry);
+        let was_applied = apply_event_with_hooks(
+            &mut state,
+            &mut cursors,
+            &event,
+            buffer_id,
+            1,
+            &hook_registry,
+        );
 
         // Event should have been cancelled
         assert!(!was_applied);
@@ -279,8 +291,14 @@ mod tests {
 
         let buffer_id = BufferId(0);
         let mut cursors = crate::model::cursor::Cursors::new();
-        let was_applied =
-            apply_event_with_hooks(&mut state, &mut cursors, &event, buffer_id, &hook_registry);
+        let was_applied = apply_event_with_hooks(
+            &mut state,
+            &mut cursors,
+            &event,
+            buffer_id,
+            1,
+            &hook_registry,
+        );
 
         // Event should have been applied
         assert!(was_applied);

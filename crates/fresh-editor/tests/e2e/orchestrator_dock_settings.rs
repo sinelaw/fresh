@@ -1,6 +1,6 @@
 //! E2E coverage for the orchestrator dock's user-facing settings
 //! (`plugins.orchestrator.settings.*`, rendered by the Settings UI under
-//! "Plugin: orchestrator"):
+//! "orchestrator" under "Plugins"):
 //!
 //! * `autoOpenDock` — open the dock on the `ready` hook, unfocused;
 //! * `defaultView` — the density (`card` / `compact`) the dock opens at;
@@ -12,7 +12,7 @@
 //! which is what the settings buy; `orchestrator_dock.rs` already covers
 //! the toggles themselves.
 
-use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness};
+use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness, HarnessOptions};
 use crate::common::tracing::init_tracing_from_env;
 use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::config::{Config, PluginConfig};
@@ -52,6 +52,21 @@ fn setup(settings: serde_json::Value) -> (tempfile::TempDir, PathBuf, Config) {
     (temp_dir, root, config)
 }
 
+/// A harness with the host's startup chrome kept, so the `ready` the test
+/// fires opens the dock the way `main` would.
+fn launch(config: Config, root: PathBuf) -> EditorTestHarness {
+    EditorTestHarness::create(
+        120,
+        32,
+        HarnessOptions::new()
+            .with_config(config)
+            .with_working_dir(root)
+            .without_empty_plugins_dir()
+            .with_startup_chrome(),
+    )
+    .unwrap()
+}
+
 /// Toggle the dock open via the command palette and wait for it to render
 /// *and* take keyboard focus (mirrors `orchestrator_dock::open_dock`).
 fn open_dock(h: &mut EditorTestHarness) {
@@ -73,7 +88,7 @@ fn open_dock_menu(h: &mut EditorTestHarness) {
         .find_text_on_screen("⋯")
         .unwrap_or_else(|| panic!("screen missing '⋯':\n{}", h.screen_to_string()));
     h.mouse_click(mcol, mrow).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("Manage workspaces"))
+    h.wait_until(|h| h.screen_to_string().contains("Machines…"))
         .unwrap();
 }
 
@@ -145,7 +160,7 @@ fn filter_checkbox_settings_seed_the_dock() {
 #[test]
 fn auto_open_setting_shows_dock_unfocused_at_startup() {
     let (_tmp, root, config) = setup(serde_json::json!({ "autoOpenDock": true }));
-    let mut h = EditorTestHarness::with_config_and_working_dir(120, 32, config, root).unwrap();
+    let mut h = launch(config, root);
     h.render().unwrap();
     h.editor_mut().fire_ready_hook();
     h.wait_until(|h| h.screen_to_string().contains("+ New"))
@@ -161,7 +176,7 @@ fn auto_open_setting_shows_dock_unfocused_at_startup() {
 #[test]
 fn auto_open_defaults_on() {
     let (_tmp, root, config) = setup(serde_json::json!({}));
-    let mut h = EditorTestHarness::with_config_and_working_dir(120, 32, config, root).unwrap();
+    let mut h = launch(config, root);
     h.render().unwrap();
     h.editor_mut().fire_ready_hook();
     h.wait_until(|h| h.screen_to_string().contains("+ New"))
@@ -176,7 +191,7 @@ fn auto_open_defaults_on() {
 #[test]
 fn auto_open_can_be_switched_off() {
     let (_tmp, root, config) = setup(serde_json::json!({ "autoOpenDock": false }));
-    let mut h = EditorTestHarness::with_config_and_working_dir(120, 32, config, root).unwrap();
+    let mut h = launch(config, root);
     h.render().unwrap();
     h.editor_mut().fire_ready_hook();
     // Let the ready hook round-trip through the plugin thread with a
