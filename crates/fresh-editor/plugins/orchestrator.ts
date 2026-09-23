@@ -33,7 +33,6 @@ import {
   row,
   endRow,
   overlay,
-  popup,
   radio,
   spacer,
   styledRow,
@@ -832,8 +831,8 @@ interface OpenDialogState {
 // A transient dock toolbar dropdown. `index` is the keyboard cursor into
 // the menu's option list. `move` also carries the session being filed.
 type DockDropdown =
-  // `group` is the Menu group list the cursor is in.
-  | { kind: "main"; group: string; index: number }
+  // The Menu, a panel of its own (`mainMenuPanel`).
+  | { kind: "main" }
   | { kind: "move"; sessionId: number; index: number };
 let openDialog: OpenDialogState | null = null;
 let openPanel: FloatingWidgetPanel | null = null;
@@ -5506,8 +5505,7 @@ function buildDockSpec(): WidgetSpec {
 
   return col(
     dockTitleRow(),
-    {
-      ...row(
+    row(
       button(editor.t("dock.new"), { intent: "primary", key: "new-session" }),
       flexSpacer(),
       // `/ search`: the key and the word. Mouse-only — the keyboard has
@@ -5525,11 +5523,9 @@ function buildDockSpec(): WidgetSpec {
         bare: true,
         hoverStyle: { fg: "ui.help_key_fg" },
       }),
-      ),
-      key: DOCK_ACTION_ROW_KEY,
-    } as WidgetSpec,
-    // The project (scope) dropdown floats just under the action row; the
-    // Menu is declared further down (see `dockMainMenu`).
+    ),
+    // The project (scope) dropdown floats just under the action row. The
+    // Menu is a panel of its own (see `openMainMenu`).
     ...(openDialog.projectMenuOpen ? [dockProjectMenu()] : []),
     ...searchRow,
     ...attentionRow,
@@ -5558,10 +5554,6 @@ function buildDockSpec(): WidgetSpec {
       focusable: true,
       key: "sessions",
     }),
-    // The Menu comes after the tree so it paints over it (see
-    // `dockMainMenu`), and before the bottom rows so its zero-height slot is
-    // still inside the dock.
-    ...(openDialog.dockMenu?.kind === "main" ? [dockMainMenu()] : []),
     ...bottomPad,
     ...bottom,
   );
@@ -5617,10 +5609,8 @@ interface MenuOption {
 // The header's Menu, as groups: actions on the left (they open something),
 // the dock's settings on the right (they flip in place, marked as the
 // controls they are: `(•)` for the one view, `[✓]` for each switch), and
-// hiding the dock on its own below. Each group is its own list, so Tab moves
-// between groups and ↑/↓ within one.
+// hiding the dock on its own below.
 interface DockMenuGroup {
-  key: string; // the group's list key, `menu-pick-<name>`
   heading: string;
   side: "left" | "right" | "bottom";
   opts: MenuOption[];
@@ -5635,13 +5625,11 @@ function dockMainGroups(): DockMenuGroup[] {
   const check = (on: boolean): string => (on ? "[✓] " : "[ ] ");
   return [
     {
-      key: `${DOCK_MENU_KEY}-create`,
       heading: editor.t("dock.menu_h_create"),
       side: "left",
       opts: [{ key: "main:folder", label: editor.t("dock.new_menu_folder") }],
     },
     {
-      key: `${DOCK_MENU_KEY}-manage`,
       heading: editor.t("dock.menu_h_manage"),
       side: "left",
       opts: [
@@ -5650,7 +5638,6 @@ function dockMainGroups(): DockMenuGroup[] {
       ],
     },
     {
-      key: `${DOCK_MENU_KEY}-view`,
       heading: editor.t("dock.menu_h_view"),
       side: "right",
       opts: [
@@ -5659,7 +5646,6 @@ function dockMainGroups(): DockMenuGroup[] {
       ],
     },
     {
-      key: `${DOCK_MENU_KEY}-show`,
       heading: editor.t("dock.menu_h_show"),
       side: "right",
       opts: [
@@ -5668,13 +5654,11 @@ function dockMainGroups(): DockMenuGroup[] {
       ],
     },
     {
-      key: `${DOCK_MENU_KEY}-project`,
       heading: editor.t("dock.menu_h_project"),
       side: "right",
       opts: [{ key: "main:scope", label: `${projWord} ▾` }],
     },
     {
-      key: `${DOCK_MENU_KEY}-hide`,
       heading: "",
       side: "bottom",
       opts: [{ key: "main:hide", label: editor.t("dock.menu_hide") }],
@@ -5772,16 +5756,10 @@ function dockMenuBoxWidth(label: string, rows: string[]): number {
   return Math.max(widest, editor.stringWidth(label) + 4) + 2;
 }
 
-/** A dock menu box. `anchorRightAt` puts its right edge on that content
- *  column (the `Menu ▾` it drops from); omitted, the box stays where it is
- *  emitted. Rows are padded to the widest because a `list` does not widen
- *  its box and clips longer rows. */
-function dockDropdownOverlay(
-  label: string,
-  opts: MenuOption[],
-  cursor: number,
-  anchorRightAt?: number,
-): WidgetSpec {
+/** A dock dropdown (the Move menu): an overlaid `list` keyed
+ *  `DOCK_MENU_KEY`, titled by `label`. Rows are padded to the widest because
+ *  a `list` does not widen its box and clips longer rows. */
+function dockDropdownOverlay(label: string, opts: MenuOption[], cursor: number): WidgetSpec {
   const rows = opts.map((o) => (o.marked ? "● " : "  ") + o.label);
   const box = dockMenuBoxWidth(label, rows);
   const inner = box - 2;
@@ -5797,70 +5775,78 @@ function dockDropdownOverlay(
       key: DOCK_MENU_KEY,
     }),
   });
-  if (anchorRightAt === undefined) {
-    return overlay(menu, { key: DOCK_MENU_OVERLAY_KEY });
-  }
-  // An overlay hangs off a zero-height slot node; a leading spacer moves the
-  // slot. Clamped at 0 so a dock narrower than its menu still starts at the
-  // left edge.
-  return row(spacer(Math.max(0, anchorRightAt + 1 - box)), overlay(menu, {
-    key: DOCK_MENU_OVERLAY_KEY,
-  }));
+  return overlay(menu, { key: DOCK_MENU_OVERLAY_KEY });
 }
 
-// The Menu panel: two columns of groups, a rule, and Hide dock. Wider than
-// the dock, so it hangs off the dock's right edge over the editor; its
-// right edge is anchored under the Menu button.
-function dockMainMenu(): WidgetSpec {
+// The Menu: a small panel of its own, anchored under the dock's header and
+// wider than the dock, so it hangs over the editor. Two columns of groups —
+// actions on the left, settings on the right — a rule, and Hide dock. Every
+// entry is a bare full-width button, so the one with focus is the one lit,
+// and Tab / ↑↓ walk them in reading order.
+let mainMenuPanel: FloatingWidgetPanel | null = null;
+
+// Buttons are keyed `mm:<option key>`.
+const MAIN_MENU_PREFIX = "mm:";
+
+function buildMainMenuSpec(): WidgetSpec {
   const groups = dockMainGroups();
-  const m = openDialog?.dockMenu;
-  const cursorOf = (g: DockMenuGroup): number =>
-    m?.kind === "main" && m.group === g.key ? clampMenuIndex(m.index, g.opts.length) : 0;
   const colW = Math.max(
     ...groups.flatMap((g) => [editor.stringWidth(g.heading), ...g.opts.map((o) => editor.stringWidth(o.label))]),
   ) + 4;
-  const groupSpec = (g: DockMenuGroup): WidgetSpec[] => [
-    ...(g.heading ? [label(` ${g.heading.toUpperCase()}`, { style: SECTION_STYLE })] : []),
-    list({
-      items: g.opts.map((o) => ({ text: ` ${o.label}`.padEnd(colW) })),
-      itemKeys: g.opts.map((o) => `${DOCK_MENU_KEY}:${o.key}`),
-      selectedIndex: cursorOf(g),
-      visibleRows: g.opts.length,
-      key: g.key,
-    }),
-  ];
+  const heading = (t: string): WidgetSpec =>
+    ({ kind: "raw", entries: [styledRow([{ text: ` ${t.toUpperCase()}`.padEnd(colW), style: SECTION_STYLE }])] });
+  const item = (o: MenuOption): WidgetSpec =>
+    button(` ${o.label}`.padEnd(colW), { key: MAIN_MENU_PREFIX + o.key, bare: true });
   const side = (which: DockMenuGroup["side"]): WidgetSpec[] => {
     const out: WidgetSpec[] = [];
     groups.filter((g) => g.side === which).forEach((g, i) => {
-      if (i > 0) out.push(spacer(0));
-      out.push(...groupSpec(g));
+      if (i > 0) out.push(heading(""));
+      if (g.heading) out.push(heading(g.heading));
+      out.push(...g.opts.map(item));
     });
     return out;
   };
-  const box = colW * 2 + 5;
-  const menu = labeledSection({
-    label: editor.t("dock.title"),
-    widthCols: box,
-    child: col(
-      // Two columns, split evenly: actions on the left, settings on the right.
-      row(col(...side("left")), col(...side("right"))),
-      divider({ style: { fg: "ui.menu_disabled_fg" } }),
-      ...side("bottom"),
-    ),
-  });
-  // Declared late in the dock, so it paints over what the dock draws before
-  // it (the active card's tab included), and dropped from the action row,
-  // its right edge under the Menu button.
-  return popup(menu, {
-    key: DOCK_MENU_OVERLAY_KEY,
-    screenSpace: true,
-    anchorKey: DOCK_ACTION_ROW_KEY,
-    anchor: [0, Math.max(0, dockWidth() - box)],
-  });
+  // Each column is a titled box of its own width: a row of plain columns
+  // would split the whole panel between them and stretch it to the screen.
+  const box = (title: string, which: DockMenuGroup["side"]): WidgetSpec =>
+    labeledSection({ label: title, widthCols: colW + 4, child: col(...side(which)) });
+  return col(
+    row(box(editor.t("dock.menu_actions"), "left"), spacer(1), box(editor.t("dock.menu_settings"), "right")),
+    ...side("bottom"),
+  );
 }
 
-// The dock's `[ + New ] … Menu ▾` row, named so the Menu can hang off it.
-const DOCK_ACTION_ROW_KEY = "dock-actions";
+function openMainMenu(): void {
+  if (!openDialog) return;
+  openDialog.dockMenu = { kind: "main" };
+  if (!mainMenuPanel) mainMenuPanel = new FloatingWidgetPanel();
+  // Sizes to its content; the percentages are unused for an anchored panel.
+  mainMenuPanel.mount(buildMainMenuSpec(), { widthPct: 50, heightPct: 44 });
+  // Under the header: the dock's title row and action row are the first two.
+  editor.floatingPanelControl(mainMenuPanel.id(), "anchor", packCell(0, 2));
+  mainMenuPanel.setFocusKey(MAIN_MENU_PREFIX + "main:folder");
+}
+
+function renderMainMenu(): void {
+  if (mainMenuPanel) mainMenuPanel.update(buildMainMenuSpec());
+}
+
+// Close the Menu and hand the keyboard back to the dock's list.
+function closeMainMenu(): void {
+  if (mainMenuPanel) {
+    mainMenuPanel.unmount();
+    mainMenuPanel = null;
+  }
+  if (!openDialog) return;
+  openDialog.dockMenu = null;
+  if (openPanel && dockMode) {
+    dockBlurred = false;
+    dockFocus = "list";
+    editor.floatingPanelControl(openPanel.id(), "focus", 0);
+    openPanel.setFocusKey("sessions");
+    refreshOpenDialog();
+  }
+}
 
 function dockMoveMenu(): WidgetSpec {
   if (openDialog?.dockMenu?.kind !== "move") return col();
@@ -5877,10 +5863,11 @@ function openDockMenu(menu: DockDropdown): void {
   if (openDialog.projectMenuOpen) closeProjectMenu();
   openDialog.dockMenu = menu;
   openPanel.update(buildDockSpec());
-  focusDockControl(menu.kind === "main" ? menu.group : DOCK_MENU_KEY);
+  focusDockControl(DOCK_MENU_KEY);
 }
 
 function closeDockMenu(): void {
+  if (openDialog?.dockMenu?.kind === "main") return closeMainMenu();
   if (!openDialog || !openPanel) return;
   openDialog.dockMenu = null;
   openPanel.update(buildDockSpec());
@@ -5890,7 +5877,7 @@ function closeDockMenu(): void {
 // The list's cursor moved (↑/↓, or a click on a row): mirror it, and a
 // click runs the row outright, the way a menu row answers a click.
 function dockMenuSelected(index: number, click: boolean): void {
-  if (!openDialog || !openDialog.dockMenu) return;
+  if (openDialog?.dockMenu?.kind !== "move") return;
   const opts = dockMenuOptions();
   const at = clampMenuIndex(index, opts.length);
   openDialog.dockMenu = { ...openDialog.dockMenu, index: at };
@@ -5898,7 +5885,7 @@ function dockMenuSelected(index: number, click: boolean): void {
 }
 
 function acceptDockMenu(index?: number): void {
-  if (!openDialog || !openDialog.dockMenu) return;
+  if (openDialog?.dockMenu?.kind !== "move") return;
   const opts = dockMenuOptions();
   const opt = opts[clampMenuIndex(index ?? openDialog.dockMenu.index, opts.length)];
   if (opt) runDockMenuOption(opt.key);
@@ -5929,14 +5916,17 @@ function runDockMenuOption(optKey: string): void {
   // the published verb, so the menu and a script take the same path.
   if (optKey === "main:view:compact" || optKey === "main:view:card") {
     apiSetDockView(optKey === "main:view:card" ? "card" : "compact");
+    renderMainMenu();
     return;
   }
   if (optKey === "main:empty") {
     toggleHideTrivial();
+    renderMainMenu();
     return;
   }
   if (optKey === "main:worktrees") {
     toggleShowWorktrees();
+    renderMainMenu();
     return;
   }
   if (optKey === "main:scope") {
@@ -17396,6 +17386,23 @@ editor.on("widget_event", (e) => {
   // ---------------------------------------------------------------------
   // Dock session context menu (right-click): Visit / Archive / Delete.
   // ---------------------------------------------------------------------
+  // ---------------------------------------------------------------------
+  // The dock's Menu panel.
+  // ---------------------------------------------------------------------
+  if (mainMenuPanel && e.panel_id === mainMenuPanel.id()) {
+    if (e.event_type === "cancel") {
+      // Esc or a press outside: the host unmounted it already. A press on
+      // the Menu button itself dismissed it, and must not reopen it.
+      mainMenuPanel = null;
+      lastMenuDismissed = { key: MAIN_MENU_PREFIX, at: Date.now() };
+      closeMainMenu();
+      return;
+    }
+    if (e.event_type === "activate" && typeof e.widget_key === "string" && e.widget_key.startsWith(MAIN_MENU_PREFIX)) {
+      runDockMenuOption(e.widget_key.slice(MAIN_MENU_PREFIX.length));
+    }
+    return;
+  }
   if (dockMenuPanel && dockMenuState && e.panel_id === dockMenuPanel.id()) {
     const target = dockMenuState.target;
     if (e.event_type === "cancel") {
@@ -17901,7 +17908,7 @@ editor.on("widget_event", (e) => {
           openDialog.projectMenuOpen = false;
           openPanel?.update(buildDockSpec());
         }
-        if (openDialog.dockMenu !== null && !(e.widget_key ?? "").startsWith(DOCK_MENU_KEY)) {
+        if (openDialog.dockMenu?.kind === "move" && e.widget_key !== DOCK_MENU_KEY) {
           openDialog.dockMenu = null;
           openPanel?.update(buildDockSpec());
         }
@@ -18132,24 +18139,12 @@ editor.on("widget_event", (e) => {
     if (e.event_type === "activate" && e.widget_key === "dock-menu") {
       if (openDialog.dockMenu?.kind === "main") closeDockMenu();
       else if (
-        lastMenuDismissed.key !== DOCK_MENU_OVERLAY_KEY || Date.now() - lastMenuDismissed.at > 300
-      ) openDockMenu({ kind: "main", group: `${DOCK_MENU_KEY}-create`, index: 0 });
+        lastMenuDismissed.key !== MAIN_MENU_PREFIX || Date.now() - lastMenuDismissed.at > 300
+      ) openMainMenu();
       return;
     }
     // The `Menu ▾` / "Move to folder…" dropdown list: ↑/↓ move its
     // cursor, Enter runs the cursor's option, a click runs the clicked one.
-    // A Menu group's list: the same, within that group.
-    const group = openDialog.dockMenu?.kind === "main"
-      ? dockMainGroups().find((g) => isListEvent(e, g.key))
-      : undefined;
-    if (group) {
-      const payload = (e.payload ?? {}) as Record<string, unknown>;
-      const idx = clampMenuIndex(typeof payload.index === "number" ? payload.index : 0, group.opts.length);
-      openDialog.dockMenu = { kind: "main", group: group.key, index: idx };
-      const opt = group.opts[idx];
-      if (opt && (e.event_type === "activate" || payload.via === "click")) runDockMenuOption(opt.key);
-      return;
-    }
     if (isListEvent(e, DOCK_MENU_KEY)) {
       const payload = (e.payload ?? {}) as Record<string, unknown>;
       const idx = typeof payload.index === "number" ? payload.index : -1;

@@ -2498,7 +2498,7 @@ fn dock_new_folder_and_move_session_into_it() {
     // Pick "New Folder…" from the Menu — that opens the New Folder
     // dialog.
     open_dock_menu(&mut h);
-    let (fcol, frow) = pos_of(&h, "New Folder");
+    let (fcol, frow) = pos_of(&h, "New folder…");
     h.mouse_click(fcol, frow).unwrap();
 
     // The dialog opens with focus in the (empty) name field. Type the
@@ -2560,7 +2560,7 @@ fn dock_new_folder_dialog_enter_on_cancel_cancels() {
 
     // Open the New Folder dialog via the Menu.
     open_dock_menu(&mut h);
-    let (fcol, frow) = pos_of(&h, "New Folder");
+    let (fcol, frow) = pos_of(&h, "New folder…");
     h.mouse_click(fcol, frow).unwrap();
     h.wait_until(|h| h.screen_to_string().contains("Folder name"))
         .unwrap();
@@ -2773,7 +2773,7 @@ fn palette_move_command_opens_move_dropdown() {
     // The dropdown lists the top-level target plus "New Folder…".
     h.wait_until(|h| {
         let s = h.screen_to_string();
-        s.contains("Top level") && s.contains("New Folder")
+        s.contains("Top level") && s.contains("New folder…")
     })
     .unwrap();
 }
@@ -2792,7 +2792,7 @@ fn dock_folder_rename_uses_dialog() {
 
     // Create a folder "Docs" (empty — organize checkbox off).
     open_dock_menu(&mut h);
-    let (fcol, frow) = pos_of(&h, "New Folder");
+    let (fcol, frow) = pos_of(&h, "New folder…");
     h.mouse_click(fcol, frow).unwrap();
     h.wait_until(|h| h.screen_to_string().contains("Folder name"))
         .unwrap();
@@ -2907,7 +2907,7 @@ fn dock_hint_bar_stays_pinned_after_folder_collapse() {
     // "organize under this folder" checkbox ON so the launch session is
     // filed inside it (the folder then has a card to hide on collapse).
     open_dock_menu(&mut h);
-    let (fcol, frow) = pos_of(&h, "New Folder");
+    let (fcol, frow) = pos_of(&h, "New folder…");
     h.mouse_click(fcol, frow).unwrap();
     h.wait_until(|h| h.screen_to_string().contains("Folder name"))
         .unwrap();
@@ -3930,7 +3930,7 @@ fn moving_extracted_co_tenant_workspace_to_folder_leaves_original_unfiled() {
 
     // Create an empty folder "Docs" (organize checkbox off).
     open_dock_menu(&mut h);
-    let (fcol, frow) = pos_of(&h, "New Folder");
+    let (fcol, frow) = pos_of(&h, "New folder…");
     h.mouse_click(fcol, frow).unwrap();
     h.wait_until(|h| h.screen_to_string().contains("Folder name"))
         .unwrap();
@@ -4077,6 +4077,17 @@ fn box_border_cols(h: &EditorTestHarness, row: u16) -> (u16, u16) {
     (borders[0], borders[1])
 }
 
+/// Where a Menu entry's label starts and ends on its row, and the column of
+/// the Settings box's border — the right-hand limit for an Actions entry.
+fn menu_entry_bounds(h: &EditorTestHarness, label: &str) -> (u16, u16, u16) {
+    let (col, row) = pos_of(h, label);
+    let end = col + label.chars().count() as u16;
+    let limit = (end..h.screen_row_text(row).chars().count() as u16)
+        .find(|&c| h.get_cell(c, row).as_deref() == Some("│"))
+        .expect("the entry's box should close to its right");
+    (col, end, limit)
+}
+
 /// Open the dock's Menu and return the screen row of "Machines…", the
 /// first entry of its Manage group.
 fn open_create_dropdown(h: &mut EditorTestHarness) -> u16 {
@@ -4105,11 +4116,11 @@ fn dock_dropdown_hover_band_spans_the_menu_row() {
     // "Machines…" is the entry to hover: "New folder…" is the
     // keyboard cursor and already carries the focus band.
     let menu_row = open_create_dropdown(&mut h);
-    let (left, right) = box_border_cols(&h, menu_row);
+    let (label_start, label_end, limit) = menu_entry_bounds(&h, "Machines…");
 
     park_pointer(&mut h);
     let idle = row_bgs(&h, menu_row);
-    h.mouse_move(left + 4, menu_row).unwrap();
+    h.mouse_move(label_start + 1, menu_row).unwrap();
     let hovered = row_bgs(&h, menu_row);
 
     let (start, end) = band_span(&idle, &hovered).unwrap_or_else(|| {
@@ -4118,14 +4129,12 @@ fn dock_dropdown_hover_band_spans_the_menu_row() {
             h.screen_to_string()
         )
     });
-    // The Menu is two columns: the row's band runs from just inside the
-    // left border across its whole column — about half the box — not just
-    // the label, and stops short of the right column.
-    let mid = (left + right) / 2;
+    // The Menu is two boxes side by side: the band runs across the entry's
+    // whole column — well past its label — and stops inside its own box.
     assert!(
-        start <= left + 2 && end + 3 >= mid && end < right - 2,
-        "the hover band must span the menu column (borders at cols {left}/{right}), \
-         got cols {start}..{end}:\n{}",
+        start <= label_start && end >= label_end + 3 && end < limit,
+        "the hover band must span the menu column (label {label_start}..{label_end}, \
+         next box at {limit}), got cols {start}..{end}:\n{}",
         h.screen_to_string()
     );
 }
@@ -4145,22 +4154,21 @@ fn dock_dropdown_cursor_band_spans_the_menu_row() {
     open_create_dropdown(&mut h);
     let menu_row = row_of(&h, "Import sessions…") as u16;
     park_pointer(&mut h);
-    let (left, right) = box_border_cols(&h, menu_row);
+    let (label_start, label_end, limit) = menu_entry_bounds(&h, "Import sessions…");
     let idle = row_bgs(&h, menu_row);
 
-    // Tab moves from the Create group to Manage; ↓ moves its cursor from
-    // "Machines…" onto "Import sessions…".
+    // Focus opens on "New folder…"; Tab and ↓ walk the entries in reading
+    // order, onto "Machines…" and then "Import sessions…".
     h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     h.wait_until(|h| row_bgs(h, menu_row) != idle).unwrap();
     let selected = row_bgs(&h, menu_row);
 
     let (start, end) = band_span(&idle, &selected).expect("the cursor row must repaint");
-    let mid = (left + right) / 2;
     assert!(
-        start <= left + 2 && end + 3 >= mid && end < right - 2,
-        "the dropdown cursor band must span the menu column (borders at cols \
-         {left}/{right}), got cols {start}..{end}:\n{}",
+        start <= label_start && end >= label_end + 3 && end < limit,
+        "the focus band must span the menu column (label {label_start}..{label_end}, \
+         next box at {limit}), got cols {start}..{end}:\n{}",
         h.screen_to_string()
     );
 }

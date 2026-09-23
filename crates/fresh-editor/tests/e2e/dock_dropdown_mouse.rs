@@ -90,7 +90,7 @@ fn launch(root: PathBuf) -> EditorTestHarness {
 fn open_dock_menu(h: &mut EditorTestHarness) {
     let (mcol, mrow) = pos_of(h, "Menu ▾");
     h.mouse_click(mcol, mrow).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("New Folder"))
+    h.wait_until(|h| h.screen_to_string().contains("New folder…"))
         .unwrap();
 }
 
@@ -159,7 +159,7 @@ fn dock_menu_option_is_clickable() {
     let mut h = launch(root);
     open_dock_menu(&mut h);
 
-    let (fcol, frow) = pos_of(&h, "New Folder");
+    let (fcol, frow) = pos_of(&h, "New folder…");
     h.mouse_click(fcol, frow).unwrap();
 
     // "New Folder…" opens the folder-creation dialog.
@@ -219,24 +219,24 @@ fn dock_dropdown_swallows_clicks_on_its_own_frame() {
     );
 }
 
-/// **The dismissal does not eat the click.** A press outside a plugin-drawn
-/// menu closes it *and* goes on to what it was aimed at — here `+ New`,
-/// which opens the New Workspace form in the same gesture. A menu that
-/// charged the user a click to close would need two presses to get there.
+/// **A press outside the Menu closes it**, the way the right-click menu
+/// closes: the Menu is an anchored panel, and an anchored panel spends the
+/// outside press on its dismissal. The press on `+ New` closes the Menu; a
+/// second one opens the New Workspace form.
 #[test]
-fn dock_menu_dismissal_passes_the_click_through() {
+fn dock_menu_closes_on_a_press_outside() {
     let (_tmp, root) = setup_project("alphaproj");
     let mut h = launch(root);
     open_dock_menu(&mut h);
 
     let (ncol, nrow) = pos_of(&h, "+ New");
     h.mouse_click(ncol + 2, nrow).unwrap();
+    h.wait_until(|h| !h.screen_to_string().contains("New folder…"))
+        .unwrap();
 
-    h.wait_until(|h| {
-        let s = h.screen_to_string();
-        !s.contains("New Folder") && s.contains("Folder:")
-    })
-    .unwrap();
+    h.mouse_click(ncol + 2, nrow).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Folder:"))
+        .unwrap();
 }
 
 /// **`Menu ▾` with its menu up closes it, and leaves it closed.** The press
@@ -253,7 +253,7 @@ fn pressing_the_dock_menu_glyph_again_closes_the_menu() {
 
     h.wait_until(|h| {
         let s = h.screen_to_string();
-        !s.contains("New Folder") && s.contains("+ New")
+        !s.contains("New folder…") && s.contains("+ New")
     })
     .unwrap();
 }

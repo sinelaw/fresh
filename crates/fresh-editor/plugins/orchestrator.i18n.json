@@ -516,7 +516,9 @@
     "dock.menu_h_manage": "Управление",
     "dock.menu_h_view": "Изглед",
     "dock.menu_h_show": "Показване",
-    "dock.menu_h_project": "Проект"
+    "dock.menu_h_project": "Проект",
+    "dock.menu_actions": "Действия",
+    "dock.menu_settings": "Настройки"
   },
   "cs": {
     "backend.devcontainer": "Devcontainer",
@@ -1035,7 +1037,9 @@
     "dock.menu_h_manage": "Spravovat",
     "dock.menu_h_view": "Zobrazení",
     "dock.menu_h_show": "Zobrazit",
-    "dock.menu_h_project": "Projekt"
+    "dock.menu_h_project": "Projekt",
+    "dock.menu_actions": "Akce",
+    "dock.menu_settings": "Nastavení"
   },
   "de": {
     "backend.devcontainer": "Devcontainer",
@@ -1554,7 +1558,9 @@
     "dock.menu_h_manage": "Verwalten",
     "dock.menu_h_view": "Ansicht",
     "dock.menu_h_show": "Anzeigen",
-    "dock.menu_h_project": "Projekt"
+    "dock.menu_h_project": "Projekt",
+    "dock.menu_actions": "Aktionen",
+    "dock.menu_settings": "Einstellungen"
   },
   "en": {
     "backend.devcontainer": "Devcontainer",
@@ -2073,7 +2079,9 @@
     "dock.menu_h_manage": "Manage",
     "dock.menu_h_view": "View",
     "dock.menu_h_show": "Show",
-    "dock.menu_h_project": "Project"
+    "dock.menu_h_project": "Project",
+    "dock.menu_actions": "Actions",
+    "dock.menu_settings": "Settings"
   },
   "es": {
     "backend.devcontainer": "Devcontainer",
@@ -2592,7 +2600,9 @@
     "dock.menu_h_manage": "Gestionar",
     "dock.menu_h_view": "Vista",
     "dock.menu_h_show": "Mostrar",
-    "dock.menu_h_project": "Proyecto"
+    "dock.menu_h_project": "Proyecto",
+    "dock.menu_actions": "Acciones",
+    "dock.menu_settings": "Ajustes"
   },
   "fr": {
     "backend.devcontainer": "Devcontainer",
@@ -3111,7 +3121,9 @@
     "dock.menu_h_manage": "Gérer",
     "dock.menu_h_view": "Affichage",
     "dock.menu_h_show": "Afficher",
-    "dock.menu_h_project": "Projet"
+    "dock.menu_h_project": "Projet",
+    "dock.menu_actions": "Actions",
+    "dock.menu_settings": "Réglages"
   },
   "it": {
     "backend.devcontainer": "Devcontainer",
@@ -3630,7 +3642,9 @@
     "dock.menu_h_manage": "Gestisci",
     "dock.menu_h_view": "Vista",
     "dock.menu_h_show": "Mostra",
-    "dock.menu_h_project": "Progetto"
+    "dock.menu_h_project": "Progetto",
+    "dock.menu_actions": "Azioni",
+    "dock.menu_settings": "Impostazioni"
   },
   "ja": {
     "backend.devcontainer": "Devcontainer",
@@ -4149,7 +4163,9 @@
     "dock.menu_h_manage": "管理",
     "dock.menu_h_view": "表示",
     "dock.menu_h_show": "表示対象",
-    "dock.menu_h_project": "プロジェクト"
+    "dock.menu_h_project": "プロジェクト",
+    "dock.menu_actions": "操作",
+    "dock.menu_settings": "設定"
   },
   "ko": {
     "backend.devcontainer": "Devcontainer",
@@ -4668,7 +4684,9 @@
     "dock.menu_h_manage": "관리",
     "dock.menu_h_view": "보기",
     "dock.menu_h_show": "표시",
-    "dock.menu_h_project": "프로젝트"
+    "dock.menu_h_project": "프로젝트",
+    "dock.menu_actions": "작업",
+    "dock.menu_settings": "설정"
   },
   "pt-BR": {
     "backend.devcontainer": "Devcontainer",
@@ -5187,7 +5205,9 @@
     "dock.menu_h_manage": "Gerenciar",
     "dock.menu_h_view": "Visualização",
     "dock.menu_h_show": "Mostrar",
-    "dock.menu_h_project": "Projeto"
+    "dock.menu_h_project": "Projeto",
+    "dock.menu_actions": "Ações",
+    "dock.menu_settings": "Configurações"
   },
   "ru": {
     "backend.devcontainer": "Devcontainer",
@@ -5706,7 +5726,9 @@
     "dock.menu_h_manage": "Управление",
     "dock.menu_h_view": "Вид",
     "dock.menu_h_show": "Показывать",
-    "dock.menu_h_project": "Проект"
+    "dock.menu_h_project": "Проект",
+    "dock.menu_actions": "Действия",
+    "dock.menu_settings": "Настройки"
   },
   "th": {
     "backend.devcontainer": "Devcontainer",
@@ -6225,7 +6247,9 @@
     "dock.menu_h_manage": "จัดการ",
     "dock.menu_h_view": "มุมมอง",
     "dock.menu_h_show": "แสดง",
-    "dock.menu_h_project": "โปรเจกต์"
+    "dock.menu_h_project": "โปรเจกต์",
+    "dock.menu_actions": "การทำงาน",
+    "dock.menu_settings": "การตั้งค่า"
   },
   "uk": {
     "backend.devcontainer": "Devcontainer",
@@ -6744,7 +6768,9 @@
     "dock.menu_h_manage": "Керування",
     "dock.menu_h_view": "Вигляд",
     "dock.menu_h_show": "Показувати",
-    "dock.menu_h_project": "Проєкт"
+    "dock.menu_h_project": "Проєкт",
+    "dock.menu_actions": "Дії",
+    "dock.menu_settings": "Налаштування"
   },
   "vi": {
     "backend.devcontainer": "Devcontainer",
@@ -7263,7 +7289,9 @@
     "dock.menu_h_manage": "Quản lý",
     "dock.menu_h_view": "Chế độ xem",
     "dock.menu_h_show": "Hiển thị",
-    "dock.menu_h_project": "Dự án"
+    "dock.menu_h_project": "Dự án",
+    "dock.menu_actions": "Thao tác",
+    "dock.menu_settings": "Cài đặt"
   },
   "zh-CN": {
     "backend.devcontainer": "Devcontainer",
@@ -7782,6 +7810,8 @@
     "dock.menu_h_manage": "管理",
     "dock.menu_h_view": "视图",
     "dock.menu_h_show": "显示",
-    "dock.menu_h_project": "项目"
+    "dock.menu_h_project": "项目",
+    "dock.menu_actions": "操作",
+    "dock.menu_settings": "设置"
   }
 }

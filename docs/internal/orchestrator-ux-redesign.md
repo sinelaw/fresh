@@ -154,30 +154,32 @@ belong in a menu. Folder creation joins them. The dock's title row stays:
 `Orchestrator` names the panel the way the explorer's title names it, and
 its `×` is the mouse route to hiding the dock (`Alt+O` is the keyboard's).
 
-The button reads `Menu ▾` — a lone `⋯` was too easy to miss. The panel is
-wider than the dock and hangs over the editor (a screen-space popup,
-declared after the tree so it paints over the active card's tab). Actions
-are on the left, the dock's settings on the right as the controls they
-are — one `(•)` view, `[✓]` switches, the project scope — and hiding the
-dock sits alone below. Each group is its own list: Tab moves between
-groups, ↑/↓ within one, Enter runs an item; a setting flips in place and
-the menu stays up. The panel shows no shortcuts.
+The button reads `Menu ▾` — a lone `⋯` was too easy to miss. The Menu is
+a small panel of its own, anchored under the dock's header and sized to
+its content, so it is wider than the dock and hangs over the editor. Two
+titled boxes: Actions (Create, Manage) and Settings, shown as the controls
+they are — one `(•)` view, `[✓]` switches, the project scope — and Hide
+dock alone below. Every entry is a bare button, so the focused one is the
+one lit; Tab and ↑/↓ walk them in reading order, Enter runs one, and a
+setting flips in place with the Menu staying up. A press outside closes
+it, spent on the dismissal like the right-click menu. No shortcuts shown.
 
 ```
-╭─ Orchestrator ───────────────────────────────────╮
-│  CREATE                  VIEW                    │
-│  New folder…             (•) Compact             │
-│                          ( ) Cards               │
-│  MANAGE                                          │
-│  Machines…               SHOW                    │
-│  Import sessions…        [✓] Empty workspaces    │
-│                          [ ] All worktrees       │
-│                                                  │
-│                          PROJECT                 │
-│                          All projects ▾          │
-│ ──────────────────────────────────────────────── │
-│  Hide dock                                       │
-╰──────────────────────────────────────────────────╯
+┌─────────────────────────────────────────────────────────┐
+│╭─ Actions ────────────────╮ ╭─ Settings ───────────────╮│
+││  CREATE                  │ │  VIEW                    ││
+││  New folder…             │ │  (•) Compact             ││
+││                          │ │  ( ) Cards               ││
+││  MANAGE                  │ │                          ││
+││  Machines…               │ │  SHOW                    ││
+││  Import sessions…        │ │  [✓] Empty workspaces    ││
+││                          │ │  [ ] All worktrees       ││
+││                          │ │                          ││
+││                          │ │  PROJECT                 ││
+││                          │ │  All projects ▾          ││
+│╰──────────────────────────╯ ╰──────────────────────────╯│
+│ Hide dock                                               │
+└─────────────────────────────────────────────────────────┘
 ```
 
 ### 2.5 Search on demand
