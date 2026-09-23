@@ -289,40 +289,6 @@ impl SettingControl {
         }
     }
 
-    /// Calculate the height needed for this control (in lines)
-    pub fn control_height(&self) -> u16 {
-        match self {
-            // TextList: 1 label line + items + 1 add row
-            Self::TextList { items, .. } => (items.len() + 2) as u16,
-            // DualList: 1 label + 1 header + one body row per option it can
-            // show, plus the key-hint row it grows once it is reachable.
-            Self::DualList {
-                options, excluded, ..
-            } => {
-                3 + options
-                    .iter()
-                    .filter(|(v, _)| !excluded.contains(v))
-                    .count() as u16
-            }
-            // Map: 1 label + 1 header (if display_field) + entries + 1 add row (if allowed)
-            Self::Map {
-                entries,
-                display_field,
-                no_add,
-                ..
-            } => {
-                (1 + usize::from(display_field.is_some()) + entries.len() + usize::from(!no_add))
-                    as u16
-            }
-            // ObjectArray: 1 label + items + 1 add row
-            Self::ObjectArray { items, .. } => (items.len() + 2) as u16,
-            // Json: 1 label + its lines
-            Self::Json { text, .. } => 1 + text.lines().count().max(1) as u16,
-            // All other controls fit in 1 line
-            _ => 1,
-        }
-    }
-
     /// Whether the control's rows are a `List` the surface's cursor walks —
     /// a map or an object array. (A text list's rows are fields.)
     pub fn has_list_rows(&self) -> bool {
@@ -594,120 +560,11 @@ impl ItemBoxStyle {
             description_right_padding_cols: 2,
         }
     }
-
-    /// Width available for wrapped description text inside a card of the
-    /// given outer width (subtracting both borders, the focus gutter, and
-    /// the right padding).
-    pub fn inner_text_width(&self, card_outer_width: u16) -> u16 {
-        card_outer_width
-            .saturating_sub(2 * self.card_border_cols)
-            .saturating_sub(self.focus_indicator_cols)
-            .saturating_sub(self.description_right_padding_cols)
-    }
 }
 
 impl Default for ItemBoxStyle {
     fn default() -> Self {
         Self::cards()
-    }
-}
-
-/// Vertical layout descriptor for a single setting item.
-///
-/// Fields are named bands of rows; together they describe both the total
-/// height of the item and where each band lives along the y-axis. The render
-/// path uses these offsets directly instead of recomputing them inline.
-///
-/// All offsets are relative to the top of the area allocated to the item.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct ItemBox {
-    /// Section header band above the card (0 if not a section start).
-    pub section_header_rows: u16,
-    /// Top edge of the card.
-    pub top_border_rows: u16,
-    /// The control widget (toggle, dropdown, multi-row list, …).
-    pub control_rows: u16,
-    /// The wrapped description text below the control.
-    pub description_rows: u16,
-    /// Bottom edge of the card.
-    pub bottom_border_rows: u16,
-}
-
-impl ItemBox {
-    pub fn total_rows(&self) -> u16 {
-        self.section_header_rows
-            + self.top_border_rows
-            + self.control_rows
-            + self.description_rows
-            + self.bottom_border_rows
-    }
-
-    /// Y of the card's top border.
-    pub fn card_top_y(&self) -> u16 {
-        self.section_header_rows
-    }
-
-    /// Y of the first content row (the control).
-    pub fn control_y(&self) -> u16 {
-        self.card_top_y() + self.top_border_rows
-    }
-
-    /// Y of the first description row.
-    pub fn description_y(&self) -> u16 {
-        self.control_y() + self.control_rows
-    }
-
-    /// Y of the bottom border.
-    pub fn bottom_border_y(&self) -> u16 {
-        self.description_y() + self.description_rows
-    }
-
-    /// Total card height (top border + content + bottom border).
-    pub fn card_height(&self) -> u16 {
-        self.top_border_rows + self.control_rows + self.description_rows + self.bottom_border_rows
-    }
-
-    /// Card content rows (control + description, no borders).
-    pub fn content_rows(&self) -> u16 {
-        self.control_rows + self.description_rows
-    }
-}
-
-impl SettingItem {
-    /// Compute the visual layout of this item for a given outer width and
-    /// style. `width` is the full width allocated to the item (including the
-    /// card borders and the focus-indicator columns).
-    pub fn layout_box(&self, width: u16, style: &ItemBoxStyle) -> ItemBox {
-        ItemBox {
-            section_header_rows: if self.is_section_start {
-                style.section_header_rows
-            } else {
-                0
-            },
-            top_border_rows: style.card_border_rows,
-            control_rows: self.control.control_height(),
-            description_rows: self.description_rows_for(style.inner_text_width(width)),
-            bottom_border_rows: style.card_border_rows,
-        }
-    }
-
-    /// Rows needed for the description when wrapped to `inner_width` columns.
-    ///
-    /// The wrapping here is a byte-based approximation that overestimates
-    /// slightly compared to the word-wrap used at render time; that's fine —
-    /// the renderer clips to the available rows, never to fewer than the
-    /// number of wrapped lines it produces.
-    pub fn description_rows_for(&self, inner_width: u16) -> u16 {
-        let Some(desc) = self.description.as_deref() else {
-            return 0;
-        };
-        if desc.is_empty() {
-            return 0;
-        }
-        if inner_width == 0 {
-            return 1;
-        }
-        desc.len().div_ceil(inner_width as usize) as u16
     }
 }
 
@@ -755,13 +612,19 @@ pub fn clean_description(name: &str, description: Option<&str>) -> Option<String
     Some(desc.to_string())
 }
 
-// **`ScrollItem for SettingItem` is gone, and `ItemBox` with it.** Its
-// `height` re-derived what the painter drew each card with so
-// `ScrollablePanel` could bound the scroll, and its `focus_regions` walked
-// the same rows again so a sub-focus could be scrolled to. The cards are a
-// `col` in a `viewport` now: the column measures them, the window is asked
-// to hold a card by key (`Anchor::reveal_key`), and a sub-row names itself
-// through `SettingControl::sub_row_key`.
+// **The measurement half of this module is gone, and now so is what it
+// measured with.** `ScrollItem for SettingItem` re-derived what the painter
+// drew each card with so `ScrollablePanel` could bound the scroll, and its
+// `focus_regions` walked the same rows again so a sub-focus could be scrolled
+// to. `ItemBox`, `SettingItem::{layout_box, description_rows_for}`,
+// `ItemBoxStyle::inner_text_width` and `SettingControl::control_height` were
+// how it counted rows, and they outlived it — the note here said `ItemBox` had
+// gone when it had not. The cards are a `col` in a `viewport` now: the column
+// measures them, the window is asked to hold a card by key
+// (`Anchor::reveal_key`), and a sub-row names itself through
+// `SettingControl::sub_row_key`. What is left of `ItemBoxStyle` is the two
+// flags the description reads — whether a card has a section header and
+// whether it has a border.
 
 /// A page of settings (corresponds to a category)
 #[derive(Debug, Clone)]

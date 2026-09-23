@@ -46,7 +46,7 @@ pub(crate) use menu::MenuRowStyle;
 #[cfg(feature = "runtime")]
 pub use menu::{context_keys, MenuContext, MenuState};
 #[cfg(feature = "runtime")]
-pub use scroll_panel::{FocusRegion, ScrollItem, ScrollState, ScrollablePanel};
+pub use scroll_panel::ScrollState;
 #[cfg(feature = "runtime")]
 pub use split_rendering::{EditorRenderConfig, RenderStyle, SplitRenderer};
 #[cfg(feature = "runtime")]

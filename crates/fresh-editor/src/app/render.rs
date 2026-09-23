@@ -4790,12 +4790,13 @@ impl Editor {
         // height, read from the box the tree placed. It was
         // `categories_scroll.set_viewport(area.height)`, filed by the painter
         // as it drew the rows — so the page and the window it pages through
-        // came from two statements of the same rectangle.
+        // came from two statements of the same rectangle. The panel around it
+        // is gone; this number was all of it that anything read.
         if let (Some(r), Some(s)) = (
             self.panel_rect(&crate::view::shell::settings::categories_key()),
             self.settings_state.as_mut(),
         ) {
-            s.categories_scroll.scroll.viewport = r.height;
+            s.tree_page_rows = r.height;
         }
         // The calibration wizard is the tree's — box, bands, key list and all.
         // It was `apply_dimming` over the frame and four `Paragraph`s into

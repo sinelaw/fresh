@@ -11,7 +11,6 @@ use super::schema::{parse_schema, SettingCategory, SettingSchema};
 use super::search::{search_settings, DeepMatch, SearchResult};
 use crate::config::Config;
 use crate::config_io::ConfigLayer;
-use crate::view::ui::ScrollablePanel;
 use std::collections::HashMap;
 
 /// Set a value at a JSON pointer path, creating intermediate objects as
@@ -238,9 +237,18 @@ pub struct SettingsState {
     /// tree view. Only categories with `sections.len() > 1` are eligible —
     /// a category with zero or one section stays flat.
     pub expanded_categories: std::collections::HashSet<usize>,
-    /// Scroll state for the categories panel itself, separate from the body's
-    /// window. Drives mouse-wheel + page-up/down on the left.
-    pub categories_scroll: ScrollablePanel,
+    /// How many rows a `PgUp` / `PgDn` moves the category cursor by: the
+    /// tree's own height, read off the box the tree placed
+    /// (`Editor::settle_modal_viewports`).
+    ///
+    /// **This is the whole of what the tree's old `ScrollablePanel` was still
+    /// doing.** Its offset and content height were written by
+    /// `ensure_focused_visible` walking `ScrollItem::height` over every row —
+    /// a second copy of the heights the list draws the rows with — and read by
+    /// nothing: the window is the list element's, so the wheel moves it and a
+    /// keyboard move reveals the selection, which is what `categories`
+    /// documents. A page is a number, not a panel.
+    pub tree_page_rows: u16,
     /// Cursor position inside the currently-selected category's tree row.
     /// `None` = cursor is on the category row itself (the category row
     /// shows the `>` indicator).
@@ -317,12 +325,6 @@ pub enum TreeRow {
         cat_idx: usize,
         section_idx: usize,
     },
-}
-
-impl crate::view::ui::ScrollItem for TreeRow {
-    fn height(&self, _width: u16) -> u16 {
-        1
-    }
 }
 
 impl SettingsState {
@@ -419,7 +421,7 @@ impl SettingsState {
             pending_deletions: std::collections::HashSet::new(),
             item_style: super::items::ItemBoxStyle::default(),
             expanded_categories: std::collections::HashSet::new(),
-            categories_scroll: ScrollablePanel::new(),
+            tree_page_rows: 0,
             tree_cursor_section: None,
             cursor_drove_body: false,
             text_edit_snapshot: None,
@@ -804,16 +806,9 @@ impl SettingsState {
             true => self.body_anchor.top_key(key),
             false => self.body_anchor.reveal_key(key),
         }
-        let new_rows = self.visible_tree();
-        let new_cur = self.tree_cursor_index(&new_rows);
-        // A tree row is one line tall whatever the width, so the tree's own
-        // column is the honest number to measure it against.
-        self.categories_scroll.ensure_focused_visible(
-            &new_rows,
-            new_cur,
-            None,
-            super::super::shell::settings::CATEGORY_COLS,
-        );
+        // The tree's window is the list element's and it reveals its own
+        // selection (`shell::settings::categories`), so there is nothing to
+        // scroll here.
     }
 
     /// Find the visible-tree index for the current selection. Prefers the
