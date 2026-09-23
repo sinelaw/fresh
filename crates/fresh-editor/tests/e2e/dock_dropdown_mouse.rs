@@ -105,7 +105,9 @@ fn create_empty_folder(h: &mut EditorTestHarness, name: &str) {
     h.type_text(name).unwrap();
     h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     h.send_key(KeyCode::Char(' '), KeyModifiers::NONE).unwrap();
-    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    // Ctrl+Enter submits from anywhere in the dialog; a plain Enter here
+    // would be the focused checkbox's, toggling it back on.
+    h.send_key(KeyCode::Enter, KeyModifiers::CONTROL).unwrap();
     h.wait_until(|h| {
         let s = h.screen_to_string();
         !s.contains("Folder name") && s.contains(name)

@@ -100,8 +100,8 @@ fn open_dock_menu(h: &mut EditorTestHarness) {
         .unwrap();
 }
 
-/// Close an open Menu with Esc, which hands the keyboard back to the
-/// session list.
+/// Close an open Menu with Esc and go back to the session list (the host
+/// returns the keyboard to the Menu button that opened it).
 fn close_dock_menu(h: &mut EditorTestHarness) {
     h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
     // The Menu is its own panel: the host drops it at once, and the plugin
@@ -109,6 +109,10 @@ fn close_dock_menu(h: &mut EditorTestHarness) {
     // between would land nowhere.
     h.wait_until(|h| !h.screen_to_string().contains("Machines…") && h.editor().is_dock_focused())
         .unwrap();
+    // The keyboard comes back to the control that opened the Menu — the
+    // Menu button, first on the dock's ring — so one Shift+Tab wraps back
+    // to the session list the tests go on from.
+    h.send_key(KeyCode::BackTab, KeyModifiers::SHIFT).unwrap();
 }
 
 /// Put the dock in `want` ("card" or "compact") density through the
@@ -2550,7 +2554,9 @@ fn dock_new_folder_and_move_session_into_it() {
     h.type_text("Docs").unwrap();
     h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     h.send_key(KeyCode::Char(' '), KeyModifiers::NONE).unwrap();
-    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    // Ctrl+Enter submits from anywhere in the dialog; a plain Enter here
+    // would be the focused checkbox's, toggling it back on.
+    h.send_key(KeyCode::Enter, KeyModifiers::CONTROL).unwrap();
 
     // The dialog closes and the folder appears in the dock tree,
     // initially empty (no member count).
@@ -2838,7 +2844,9 @@ fn dock_folder_rename_uses_dialog() {
     h.type_text("Docs").unwrap();
     h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     h.send_key(KeyCode::Char(' '), KeyModifiers::NONE).unwrap();
-    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    // Ctrl+Enter submits from anywhere in the dialog; a plain Enter here
+    // would be the focused checkbox's, toggling it back on.
+    h.send_key(KeyCode::Enter, KeyModifiers::CONTROL).unwrap();
     h.wait_until(|h| {
         let s = h.screen_to_string();
         !s.contains("Folder name") && s.contains("Docs")
@@ -3978,7 +3986,9 @@ fn moving_extracted_co_tenant_workspace_to_folder_leaves_original_unfiled() {
     h.type_text("Docs").unwrap();
     h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     h.send_key(KeyCode::Char(' '), KeyModifiers::NONE).unwrap();
-    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    // Ctrl+Enter submits from anywhere in the dialog; a plain Enter here
+    // would be the focused checkbox's, toggling it back on.
+    h.send_key(KeyCode::Enter, KeyModifiers::CONTROL).unwrap();
     h.wait_until(|h| {
         let s = h.screen_to_string();
         !s.contains("Folder name") && s.contains("Docs")
