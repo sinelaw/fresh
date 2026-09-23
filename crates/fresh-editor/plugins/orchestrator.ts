@@ -12040,7 +12040,19 @@ function localBodyFields(): WidgetSpec[] {
 // What the workspace will be called: the typed name, or the auto-generated
 // default the Workspace Name field is showing as its placeholder.
 function plannedWorkspaceName(f: NewSessionForm): string {
-  return f.name.value.trim() || f.defaultSessionName;
+  return f.name.value.trim() || formDefaultSessionName(f);
+}
+
+// The auto-name an empty Workspace field launches with. The folder probe names
+// it from the local folder, which says nothing about a repository's clone on
+// another machine or one not cloned yet: those take the repository's name.
+function formDefaultSessionName(f: NewSessionForm): string {
+  const r = formRepo(f);
+  if (r && (f.backend !== "local" || formNeedsClone(f))) {
+    const n = ((editor.getGlobalState("orchestrator.session_counter") as number | undefined) ?? 0) + 1;
+    return `${sessionNameBaseFor(r.name)}-${n}`;
+  }
+  return f.defaultSessionName;
 }
 
 // The one line that says what `Create` will actually do to the repository.
@@ -12704,11 +12716,11 @@ function whereFields(f: NewSessionForm): WidgetSpec[] {
   if (f.detailsOpen) {
     out.push(...field(formLabel("form.workspace_short"), f.name, {
       key: "name",
-      placeholder: f.defaultSessionName || editor.t("form.auto_generating"),
+      placeholder: formDefaultSessionName(f) || editor.t("form.auto_generating"),
     }));
   } else {
     const plan = r && formNeedsClone(f)
-      ? { text: editor.t("form.plan_after_clone", { name: plannedWorkspaceName(f) || r.name }) }
+      ? { text: editor.t("form.plan_after_clone", { name: plannedWorkspaceName(f) }) }
       : gitPlanLine(f);
     if (plan) out.push(label(plan.text, { labelWidth: FORM_LABEL_W, style: plan.style ?? NOTE_STYLE }));
   }
@@ -13948,7 +13960,7 @@ function captureCreateSpec(f: NewSessionForm): CaptureResult {
         createWorktree: f.createWorktree,
         // The form has a third fallback the API has no equivalent for: the
         // auto-generated `<project>-N` shown as the Name field's placeholder.
-        displayLabel: sessionName || f.defaultSessionName,
+        displayLabel: sessionName || formDefaultSessionName(f),
       }),
     };
   }
@@ -13967,7 +13979,7 @@ function captureCreateSpec(f: NewSessionForm): CaptureResult {
         remotePath: f.sshPath.value.trim() || m.path,
         identity: m.identity,
         extraArgs: m.options ? m.options.split(/\s+/) : [],
-        worktree: remoteWorktreePlan(f, sessionName || f.defaultSessionName) ?? undefined,
+        worktree: remoteWorktreePlan(f, sessionName || formDefaultSessionName(f)) ?? undefined,
       });
     }
     if (m.pod.startsWith("-l")) return { ok: false, error: editor.t("machine.err_selector_launch") };
@@ -14014,12 +14026,12 @@ function captureCreateSpec(f: NewSessionForm): CaptureResult {
       // name at all — the very thing the label change is for — while the
       // worktree it created was named all along (the plan below uses the same
       // fallback).
-      name: sessionName || f.defaultSessionName,
+      name: sessionName || formDefaultSessionName(f),
       cmd,
       remotePath: f.sshPath.value.trim(),
       identity: other ? f.sshIdentity.value.trim() : "",
       extraArgs: options ? options.split(/\s+/) : [],
-      worktree: remoteWorktreePlan(f, sessionName || f.defaultSessionName) ?? undefined,
+      worktree: remoteWorktreePlan(f, sessionName || formDefaultSessionName(f)) ?? undefined,
     });
   }
 
@@ -14983,11 +14995,11 @@ async function submitForm(visit: boolean): Promise<void> {
   // Only when the user left Workspace Name blank, so the name in the spec is
   // the generated `<project>-N` rather than something they typed. A typed name
   // is theirs and says nothing about the counter — deriving a base to test
-  // against would not help either, since an ssh form's default name is
-  // generated from the *local* project probe, not the remote repository.
+  // against would not help either, since an ssh form's default name comes
+  // from the local folder, or from the repository when one is picked.
   if (
     captured.spec.backend === "ssh" && captured.spec.remoteWorktree &&
-    !form.name.value.trim() && captured.spec.remoteWorktree.name === form.defaultSessionName
+    !form.name.value.trim() && captured.spec.remoteWorktree.name === formDefaultSessionName(form)
   ) {
     claimAutoSessionName(captured.spec.remoteWorktree.name);
   }
