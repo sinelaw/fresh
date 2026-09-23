@@ -460,10 +460,12 @@ The same dialog with `Here` selected. There's no WHERE section. Switching
 to `New workspace` adds it above the footer; the prompt and agent carry
 over.
 
-### 4.11 Repositories
+### 4.11 Projects (was: Repositories)
 
-Opened from the palette (`Orchestrator: Repositories`), the dock's `⋯` menu,
-or `Manage repositories…` in the Project dropdown.
+Opened from the palette (`Orchestrator: Projects`), the dock's `⋯` menu,
+or `Manage projects…` in the Project dropdown. A project is a git
+repository or, since §4.16, a plain folder; a plain folder's section is
+`FOLDER` (one folder per machine, no remote, no `Clone new to`).
 
 ```
 ┌─ Repositories ──────────────────────────────────────────────────────────── × ─┐
@@ -523,7 +525,7 @@ The Machine dropdown shows each machine's state for this repository:
 **`+ Add machine…`** opens the existing Add Machine dialog. On Save it
 returns here with the new machine selected and an empty Path.
 
-### 4.12 Repositories, opened from New Workspace
+### 4.12 Projects, opened from New Workspace
 
 `Use an existing clone…` and `Change…` open the same dialog with **the
 repository selected, the Machine dropdown set to the launch dialog's
@@ -625,45 +627,73 @@ on `Clone`. Progress is inline and can be cancelled (a partial directory is
 removed). When it's done, the path is a valid main clone and
 `Use as main clone` is enabled.
 
-### 4.16 Add Repository
+### 4.16 Add Project
+
+One switch says what the project is added from; only that source's fields
+show, and the primary button names what it will do.
+
+**Git URL** — clone it, or point at a clone that is already there:
 
 ```
-┌─ Add Repository ────────────────────────────────────────────────────────── × ─┐
-│                                                                               │
-│    SOURCE ────────────────────────────────────────────────────────────────    │
-│                                                                               │
-│     URL or path   [ git@github.com:sinelaw/fresh.git█          ]              │
-│                   ✓ reachable · default branch master                         │
-│                   [ Browse for a local clone… ]                               │
-│                                                                               │
-│            Name   [ fresh                                      ]              │
-│    Clone new to   [ ~/src/<name>                               ]              │
-│                                                                               │
-│    MAIN CLONE ────────────────────────────────────────────────────────────    │
-│                                                                               │
-│         Machine   [ Local ▾             ]     + Add machine…                  │
-│            Path   [ ~/repos/fresh                        ]  Browse…           │
-│                   ✓ git repo · origin matches · master · clean                │
-│                   Other machines can be set later in Repositories.            │
-│                                                                               │
-│    ───────────────────────────────────────────────────────────────────────    │
-│                                                                               │
-│                                                  Cancel     [   Save   ]      │
-│                                                                               │
-└───────────────────────────────────────────────────────────────────────────────┘
+┌─ Add Project ──────────────────────────────────────────────────────────── × ─┐
+│                                                                              │
+│      Add from:  (•) Git URL    ( ) Folder on a machine                       │
+│                                                                              │
+│           URL:  [ git@github.com:acme/api.git                          ]     │
+│                 ✓ reachable · default branch main                            │
+│          Name:  [ api                                                  ]     │
+│                                                                              │
+│    MAIN CLONE ─────────────────────────────────────────────────────────      │
+│                                                                              │
+│       Machine:  [ Local        ▼ ]    [ + Add machine… ]                     │
+│          Path:  [ ~/src/api                            ]   [ Browse… ]       │
+│                 Not there yet: it will be cloned here.                       │
+│    ─────────────────────────────────────────────────────────────────────     │
+│                                        [ Cancel ]     [  Clone and add  ]    │
+└──────────────────────────────────────────────────────────────────────────────┘
 ```
 
-- **Paste a URL:** checked with `git ls-remote`; the name comes from the URL.
-- **A local clone:** type its path, or `Browse for a local clone…` (this
-  machine's folders; `⏎` on a git folder picks it). A folder inside a clone
-  resolves to the clone's top level. Its `origin` is shown and, by default,
-  becomes the remote — `[v] Use its origin as the remote (…)` unticked keeps
-  the repository local only (as does a clone with no origin). The name comes
-  from the origin, else the folder, and the clone fills in the Local main
-  clone.
-- MAIN CLONE works as in §4.11–4.15: a Machine dropdown with
-  `+ Add machine…`, a Path with `Browse…`, a check of that path only, and
-  `Clone here…` with confirmation for a path that doesn't exist.
+- The Name follows the URL and the Path follows the Name (`~/src/<name>`)
+  until either is typed.
+- A Path holding a clone of the URL reads `✓ existing clone · origin
+  matches …` and the button is `Add`. A folder that is something else is an
+  error and the button is disabled.
+- `Clone and add` is the confirmation: the label says it clones, so there is
+  no second question. The clone shows progress with a Cancel, and the project
+  is saved when it lands.
+- A path to a folder typed as the URL points at the other source.
+
+**Folder on a machine** — a folder that is already there, on any machine
+(Browse and the checks run over ssh for a remote one):
+
+```
+┌─ Add Project ──────────────────────────────────────────────────────────── × ─┐
+│                                                                              │
+│      Add from:  ( ) Git URL    (•) Folder on a machine                       │
+│                                                                              │
+│       Machine:  [ Local        ▼ ]    [ + Add machine… ]                     │
+│        Folder:  [ ~/work/site                          ]   [ Browse… ]       │
+│                 ✓ git repo · main · clean                                    │
+│                                                                              │
+│    ITS REMOTE ─────────────────────────────────────────────────────────      │
+│                                                                              │
+│                 This clone's origin is git@github.com:acme/site.git          │
+│        Remote:  (•) Use its origin    ( ) None (this machine only)           │
+│                                                                              │
+│          Name:  [ site                                                 ]     │
+│    ─────────────────────────────────────────────────────────────────────     │
+│                                        [ Cancel ]     [       Add       ]    │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
+
+- A folder inside a clone resolves to the clone's top folder.
+- A clone with no origin says it stays on this machine and offers
+  `[ Set a remote URL… ]`.
+- A folder that is not a git repository is added as a **plain folder**
+  project: `✓ folder · not a git repository`, and workspaces open in it
+  directly, without worktrees. Browse offers `✓ Use this folder` for it.
+- `Save as project` in New Workspace opens this source on the form's machine
+  and folder. `+ Add project` opens on whichever source was used last.
 
 ## 5. Parity with today
 
@@ -739,6 +769,13 @@ removed). When it's done, the path is a valid main clone and
   then a pending clone question, then the dialog.
 
 ## 7. Decisions
+
+- **Repositories are Projects.** The registry holds git repositories and
+  plain folders, so the dialog, the palette command and the Project dropdown
+  say "project". (The state namespace stays `repositories`.)
+- **Add Project picks its source first** (a switch: Git URL / Folder on a
+  machine) and shows only that source's fields. Folders may be on remote
+  machines, and need not be git.
 
 1. **Mode opens on whatever was used last.** `+ New`, Alt+N, `New Workspace`
    and `Run Agent…` all open the same dialog on the last-used mode

@@ -8754,7 +8754,8 @@ async function probeRemoteGit(argv: string[], path: string): Promise<RemoteGitPr
   // is from here. `symbolic-ref` is allowed to fail (a detached HEAD has no
   // branch name) without costing the rest.
   const remote = [
-    `cd ${shQuote(dir)} 2>/dev/null || exit 0`,
+    // `~/…` expands on the far side (a quoted `~` would not).
+    `cd ${remoteShellPath(dir)} 2>/dev/null || exit 0`,
     "root=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0",
     'printf "%s\\n" "$root"',
     "git symbolic-ref --short HEAD 2>/dev/null || true",
@@ -8805,7 +8806,7 @@ async function createRemoteWorktree(
     ...(plan.base ? [shQuote(plan.base)] : []),
   ].join(" ");
   const remote = [
-    `cd ${shQuote(plan.path)} || exit 1`,
+    `cd ${remoteShellPath(plan.path)} || exit 1`,
     "REPO=$(git rev-parse --show-toplevel) || exit 1",
     `ROOT="$HOME"/.fresh/worktrees/"$(basename "$REPO")"/${shQuote(plan.name)}`,
     `if [ ! -d "$ROOT" ]; then mkdir -p "$(dirname "$ROOT")" && ${add} >&2 || exit 1; fi`,
@@ -9327,6 +9328,9 @@ interface Repository {
   cloneNewTo: string;
   // Machine key (see `machineOptionKey`) → that machine's main clone.
   clones: Record<string, string>;
+  // A plain folder rather than a git repository: no remote, no worktrees —
+  // a workspace opens in the folder itself. Absent means git.
+  kind?: "folder";
 }
 
 const REPOS_NS = "repositories";
@@ -9352,6 +9356,7 @@ function parseRepository(raw: string): Repository | null {
       remote: typeof x.remote === "string" ? x.remote : "",
       cloneNewTo: typeof x.cloneNewTo === "string" && x.cloneNewTo ? x.cloneNewTo : DEFAULT_CLONE_NEW_TO,
       clones,
+      ...(x.kind === "folder" ? { kind: "folder" as const } : {}),
     };
   } catch {
     return null;
@@ -9420,7 +9425,8 @@ function sameRemote(a: string, b: string): boolean {
 
 // The remote as a row shows it: `github.com/sinelaw/fresh`, or `local only`.
 function repoRemoteLabel(r: Repository): string {
-  return r.remote ? remoteIdentity(r.remote) : editor.t("repo.local_only");
+  if (r.remote) return remoteIdentity(r.remote);
+  return r.kind === "folder" ? editor.t("repo.plain_folder") : editor.t("repo.local_only");
 }
 
 // A machine's key in `Repository.clones`: Local, a saved machine or an
@@ -9459,6 +9465,8 @@ interface ClonePathCheck {
   dirty: boolean;
   origin: string;
   error: string;
+  // The clone's top folder, when the path is inside one.
+  top?: string;
 }
 
 // Ask one machine about one path: does it exist, is it a repository, what is
@@ -9477,6 +9485,7 @@ async function checkClonePath(
     "echo GIT",
     "git remote get-url origin 2>/dev/null || echo",
     "git symbolic-ref --short HEAD 2>/dev/null || echo",
+    "git rev-parse --show-toplevel 2>/dev/null || echo",
     "git status --porcelain 2>/dev/null | head -1",
   ].join("; ");
   let r: SpawnResult;
@@ -9495,7 +9504,14 @@ async function checkClonePath(
   if (lines[0] === "MISSING") return { ...none, state: "missing" };
   if (lines[0] === "NOTGIT") return { ...none, state: "not_git" };
   const origin = (lines[1] || "").trim();
-  const out = { state: "ok" as ClonePathCheck["state"], branch: (lines[2] || "").trim(), dirty: !!(lines[3] || "").trim(), origin, error: "" };
+  const out: ClonePathCheck = {
+    state: "ok",
+    branch: (lines[2] || "").trim(),
+    top: (lines[3] || "").trim(),
+    dirty: !!(lines[4] || "").trim(),
+    origin,
+    error: "",
+  };
   if (remote && !sameRemote(remote, origin)) out.state = "wrong_remote";
   return out;
 }
@@ -9587,7 +9603,9 @@ function formMainClone(f: NewSessionForm): string {
 // A repository is picked but the machine has no main clone of it: Launch has
 // to clone first, and asks (§4.6).
 function formNeedsClone(f: NewSessionForm): boolean {
-  return !!formRepo(f) && !formMainClone(f);
+  // Only a project with a remote can be cloned; one without is blocked
+  // instead (`formRepoBlocker`).
+  return !!formRepo(f)?.remote && !formMainClone(f);
 }
 
 // What stops a repository launch outright: a machine that cannot hold a main
@@ -9597,7 +9615,10 @@ function formRepoBlocker(f: NewSessionForm): string {
   if (!r) return "";
   const key = formMachineKey(f);
   if (!key) return editor.t("form.repo_needs_saved_machine");
-  if (!r.clones[key] && !r.remote) return editor.t("form.repo_no_remote", { name: r.name, machine: machineKeyLabel(key) });
+  if (!r.clones[key] && !r.remote) {
+    // Nothing to clone: a plain folder, or a clone kept on its machine only.
+    return editor.t(r.kind === "folder" ? "form.folder_project_none" : "form.repo_no_remote", { name: r.name, machine: machineKeyLabel(key) });
+  }
   return "";
 }
 
@@ -10071,7 +10092,19 @@ interface RepoDialogState {
   // Add Repository's source fields.
   url: Field;
   name: Field;
-  urlCheck: { state: "idle" | "running" | "ok" | "fail" | "local"; text: string };
+  urlCheck: { state: "idle" | "running" | "ok" | "fail"; text: string };
+  // Add Project's switch: clone (or point at a clone of) a git URL, or add a
+  // folder that is already on a machine.
+  addFrom: "url" | "folder";
+  // Whether the user has typed these themselves; until then they follow the
+  // URL / the folder.
+  nameTouched: boolean;
+  pathTouched: boolean;
+  // A folder's git clone with no origin: the remote typed for it, once
+  // `Set a remote URL…` asked for one.
+  setRemote: Field | null;
+  // `Clone and add`: save once the clone lands.
+  saveAfterClone: boolean;
   urlToken: number;
   cloneNewTo: Field;
   // MAIN CLONE: the machine being looked at and its path.
@@ -10082,18 +10115,9 @@ interface RepoDialogState {
   checkToken: number;
   cloneConfirm: boolean;
   cloning: { handle: ProcessHandle<SpawnResult> } | null;
-  // `for`: which field a pick fills — the main clone's Path, or Add
-  // Repository's source (a local clone to add).
-  browse: {
-    dir: string;
-    entries: RepoBrowseEntry[];
-    loading: boolean;
-    error: string;
-    index: number;
-    for: "path" | "source";
-  } | null;
-  // Adding a local clone: whether its `origin` becomes the repository's
-  // remote, or it stays local only.
+  browse: { dir: string; entries: RepoBrowseEntry[]; loading: boolean; error: string; index: number } | null;
+  // Adding a folder that is a clone: whether its `origin` becomes the
+  // project's remote, or it stays on this machine only.
   useOrigin: boolean;
   error: string;
   focus: string;
@@ -10116,8 +10140,10 @@ function repoDialogRepo(): Repository | null {
 // being added.
 function repoDialogRemote(d: RepoDialogState): string {
   if (d.mode === "add") {
-    if (d.urlCheck.state !== "local") return d.url.value.trim();
-    return d.useOrigin ? d.urlCheck.text : "";
+    if (d.addFrom === "url") return d.url.value.trim();
+    if (d.check?.state !== "ok") return "";
+    if (d.check.origin) return d.useOrigin ? d.check.origin : "";
+    return d.setRemote?.value.trim() ?? "";
   }
   return repoById(d.repoId)?.remote ?? "";
 }
@@ -10126,7 +10152,7 @@ function openRepositoriesDialog(opts: {
   repoId?: string | null;
   machineKey?: string | null;
   returnTo?: "form" | null;
-  add?: { url: string; path: string } | null;
+  add?: { from: "url" | "folder"; path: string } | null;
 }): void {
   yieldDockToDialog();
   invalidateRepositories();
@@ -10134,14 +10160,19 @@ function openRepositoriesDialog(opts: {
   const repos = loadRepositories();
   const repoId = opts.repoId && repoById(opts.repoId) ? opts.repoId : repos[0]?.id ?? null;
   const machineKey = opts.machineKey ?? "local";
-  const add = opts.add ?? (repos.length === 0 ? { url: "", path: "" } : null);
+  const add = opts.add ?? (repos.length === 0 ? { from: lastAddFrom(), path: "" } : null);
   repoDialog = {
     returnTo: opts.returnTo ?? null,
     mode: add ? "add" : "manage",
     repoId: add ? null : repoId,
-    url: fieldOf(add?.url ?? ""),
-    name: fieldOf(add?.url ? repoNameFromRemote(add.url) : ""),
+    url: fieldOf(""),
+    name: fieldOf(""),
     urlCheck: { state: "idle", text: "" },
+    addFrom: add?.from ?? "url",
+    nameTouched: false,
+    pathTouched: !!add?.path,
+    setRemote: null,
+    saveAfterClone: false,
     urlToken: 0,
     cloneNewTo: fieldOf(add ? DEFAULT_CLONE_NEW_TO : repoById(repoId)?.cloneNewTo ?? DEFAULT_CLONE_NEW_TO),
     machineKey,
@@ -10158,8 +10189,33 @@ function openRepositoriesDialog(opts: {
     useOrigin: true,
   };
   mountRepoPanel();
-  if (add?.url) void checkRepoUrl();
   void recheckRepoPath();
+}
+
+// Git URL: until the user picks a Path, it is the default clone location
+// for the name (`~/src/<name>`).
+function urlPathFollowsName(d: RepoDialogState): void {
+  const name = d.name.value.trim();
+  d.path = fieldOf(name ? DEFAULT_CLONE_NEW_TO.replace(/<name>/g, name) : "");
+  repoPanel?.setValue("repo_path", d.path.value, d.path.cursor);
+  scheduleRepoPathCheck();
+}
+
+// Whether two spellings name the same folder on a machine (`~` expanded
+// locally; trailing slashes aside).
+function samePath(machineKey: string, a: string, b: string): boolean {
+  const norm = (x: string) => (machineKey === "local" ? expandHome(x) : x).replace(/\/+$/, "");
+  const [x, y] = [norm(a), norm(b)];
+  if (x === y) return true;
+  // A remote `~/…` cannot be expanded here; the machine answered with the
+  // absolute path, which ends the same way.
+  return machineKey !== "local" && x.startsWith("~/") && y.endsWith(x.slice(1));
+}
+
+// The Add Project switch opens where it was last left.
+const ADD_FROM_KEY = "orchestrator.last_add_from";
+function lastAddFrom(): "url" | "folder" {
+  return editor.getGlobalState(ADD_FROM_KEY) === "folder" ? "folder" : "url";
 }
 
 function mountRepoPanel(): void {
@@ -10178,7 +10234,7 @@ function mountRepoPanel(): void {
   editor.floatingPanelControl(repoPanel.id(), "fullscreen", 1);
   editor.setEditorMode(REPOS_MODE);
   const focus = d.mode === "add"
-    ? "repo_url"
+    ? (d.addFrom === "url" ? "repo_url" : d.path.value ? "repo_name" : "repo_path")
     : d.returnTo === "form" ? "repo_path" : "repo_list";
   repoPanel.setFocusKey(focus);
   d.focus = focus;
@@ -10211,9 +10267,11 @@ function openRepositoriesFromForm(repoId: string | null, machineKey: string | nu
   openRepositoriesDialog({ repoId, machineKey, returnTo: "form" });
 }
 
-function openAddRepositoryFromForm(url: string, path: string, machineKey: string | null): void {
+// `Save as project` on the form's folder: Add Project on that machine and
+// folder, as a folder.
+function openAddRepositoryFromForm(path: string, machineKey: string | null): void {
   suspendForm();
-  openRepositoriesDialog({ machineKey, returnTo: "form", add: { url, path } });
+  openRepositoriesDialog({ machineKey, returnTo: "form", add: { from: "folder", path } });
 }
 
 // Each machine a main clone can live on, marked with this repository's state
@@ -10254,8 +10312,10 @@ function repoPathStatusRows(d: RepoDialogState): WidgetSpec[] {
   }
   if (d.checking) return [at(editor.t("repo.checking"))];
   const c = d.check;
+  const plain = repoById(d.repoId)?.kind === "folder";
   if (!c || c.state === "empty") {
     if (d.mode === "add") return [];
+    if (plain) return [at(`⚠ ${editor.t("repo.no_folder_on", { machine })}`, WARN_STYLE)];
     return [
       at(`⚠ ${editor.t("repo.none_on", { machine })}`, WARN_STYLE),
       at(`  ${editor.t("repo.type_or_browse")}`, WARN_STYLE),
@@ -10269,6 +10329,7 @@ function repoPathStatusRows(d: RepoDialogState): WidgetSpec[] {
     case "wrong_remote":
       return [at(`✗ ${editor.t("repo.path_wrong_remote", { origin: c.origin ? remoteIdentity(c.origin) : editor.t("repo.no_origin") })}`, { fg: "diagnostic.error_fg" })];
     case "not_git":
+      if (plain) return [at(`✓ ${editor.t("repo.plain_folder_found")}`, { fg: "diagnostic.info_fg" })];
       return [at(`✗ ${editor.t("repo.path_not_git")}`, { fg: "diagnostic.error_fg" })];
     case "unreachable":
       return [at(`✗ ${editor.t("repo.path_unreachable", { machine, reason: c.error })}`, { fg: "diagnostic.error_fg" })];
@@ -10282,10 +10343,10 @@ function repoPathStatusRows(d: RepoDialogState): WidgetSpec[] {
 }
 
 // Browse… (§4.13): the folders of one directory on the selected machine.
-function repoBrowseRows(d: RepoDialogState, place: "path" | "source"): WidgetSpec[] {
+function repoBrowseRows(d: RepoDialogState): WidgetSpec[] {
   const b = d.browse;
-  if (!b || b.for !== place) return [];
-  const key = browseMachineKey(d);
+  if (!b) return [];
+  const key = d.machineKey;
   const title = `${machineKeyLabel(key)} : ${key === "local" ? tildePath(expandHome(b.dir)) : b.dir}`;
   let body: WidgetSpec;
   if (b.loading) {
@@ -10293,8 +10354,11 @@ function repoBrowseRows(d: RepoDialogState, place: "path" | "source"): WidgetSpe
   } else if (b.error) {
     body = label(`✗ ${b.error}`, { style: { fg: "diagnostic.error_fg" }, wrap: true });
   } else {
-    const items = ["..", ...b.entries.map((e) => `${e.name}/`)];
-    const tags = ["", ...b.entries.map((e) => (e.git ? "git" : ""))];
+    // Where a plain folder will do, the folder being shown can itself be
+    // picked: a row under `..` says so.
+    const here = browsePicksAnyFolder(d) ? [`✓ ${editor.t("repo.use_this_folder")}`] : [];
+    const items = ["..", ...here, ...b.entries.map((e) => `${e.name}/`)];
+    const tags = ["", ...here.map(() => ""), ...b.entries.map((e) => (e.git ? "git" : ""))];
     body = list({
       items: items.map((t, i) => ({ text: `${t.padEnd(40)} ${tags[i]}` })),
       selectedIndex: Math.min(b.index, items.length - 1),
@@ -10307,7 +10371,7 @@ function repoBrowseRows(d: RepoDialogState, place: "path" | "source"): WidgetSpe
   return [
     row(spacer(2), labeledSection({
       label: title,
-      child: col(body, label(editor.t("repo.browse_hint"), { style: NOTE_STYLE })),
+      child: col(body, label(editor.t(browsePicksAnyFolder(d) ? "repo.browse_hint_any" : "repo.browse_hint"), { style: NOTE_STYLE })),
     })),
   ];
 }
@@ -10345,82 +10409,23 @@ function buildRepoDialogSpec(): WidgetSpec {
         ...gap(),
         ...repoActionRows(d, r),
         ...gap(),
-        label(`${formLabel("repo.remote").padStart(FORM_LABEL_W)}: ${r.remote || editor.t("repo.local_only")}`),
-        ...field(formLabel("repo.clone_new_to"), d.cloneNewTo, { key: "repo_clone_new_to" }),
+        label(`${formLabel("repo.remote").padStart(FORM_LABEL_W)}: ${r.remote || (r.kind === "folder" ? editor.t("repo.remote_none_folder") : editor.t("repo.remote_none_local"))}`),
+        // Only a project with a remote is ever cloned somewhere new.
+        ...(r.remote ? field(formLabel("repo.clone_new_to"), d.cloneNewTo, { key: "repo_clone_new_to" }) : []),
         ...gap(),
       );
     }
   } else {
-    kids.push(
-      sectionHeader("repo.section_source"),
-      ...gap(),
-      ...field(formLabel("repo.url_or_path"), d.url, { key: "repo_url", placeholder: editor.t("repo.url_placeholder") }),
-    );
-    if (d.urlCheck.state !== "idle") {
-      const st = d.urlCheck.state;
-      kids.push(label(
-        st === "running" ? editor.t("repo.checking")
-          : st === "ok" ? `✓ ${d.urlCheck.text ? editor.t("repo.url_ok_branch", { branch: d.urlCheck.text }) : editor.t("repo.url_ok")}`
-          : st === "local" ? `✓ ${d.urlCheck.text ? editor.t("repo.url_local", { remote: d.urlCheck.text }) : editor.t("repo.url_local_no_origin")}`
-          : `✗ ${d.urlCheck.text}`,
-        { labelWidth: FORM_LABEL_W, style: st === "fail" ? { fg: "diagnostic.error_fg" } : NOTE_STYLE, wrap: true },
-      ));
-      // A local clone with an origin: that origin is the remote, unless the
-      // user wants this one kept local only.
-      if (st === "local" && d.urlCheck.text) {
-        kids.push(formToggle(
-          d.useOrigin,
-          editor.t("repo.use_origin", { remote: remoteIdentity(d.urlCheck.text) }),
-          "repo_use_origin",
-        ));
-      }
-    }
-    if (!d.browse || d.browse.for !== "source") {
-      kids.push(fieldColumnRow(actionButton(editor.t("repo.browse_local"), "repo_browse_source")));
-    }
-    kids.push(...repoBrowseRows(d, "source"));
-    kids.push(
-      ...gap(),
-      ...field(formLabel("repo.name"), d.name, { key: "repo_name" }),
-      ...field(formLabel("repo.clone_new_to"), d.cloneNewTo, { key: "repo_clone_new_to" }),
-      ...gap(),
-    );
+    kids.push(...addProjectRows(d));
   }
-  if (d.mode === "add" || repoById(d.repoId)) {
-    const opts = repoMachineOptions(d);
-    const idx = Math.max(0, opts.findIndex((o) => o.key === d.machineKey));
+  const managed = d.mode === "manage" ? repoById(d.repoId) : null;
+  if (managed) {
     kids.push(
-      sectionHeader("repo.section_main_clone"),
+      sectionHeader(managed.kind === "folder" ? "repo.section_folder" : "repo.section_main_clone"),
       ...gap(),
-      row(
-        dropdown(opts.map((o) => o.label), {
-          selectedIndex: idx,
-          label: formLabel("form.machine"),
-          labelWidth: FORM_LABEL_W,
-          key: "repo_machine",
-        }),
-        spacer(5),
-        actionButton(`+ ${editor.t("repo.add_machine")}`, "repo_add_machine"),
-      ),
-      row(
-        text({
-          value: d.path.value,
-          cursorByte: d.path.cursor,
-          label: formLabel("repo.path"),
-          labelWidth: FORM_LABEL_W,
-          fieldWidth: 44,
-          placeholder: d.mode === "add" ? editor.t("repo.path_placeholder_add") : "",
-          key: "repo_path",
-        }),
-        spacer(3),
-        actionButton(editor.t("repo.browse"), "repo_browse"),
-      ),
-      ...repoBrowseRows(d, "path"),
+      ...repoMachinePathRows(d, managed.kind === "folder" ? "repo.folder" : "repo.path"),
       ...repoPathStatusRows(d),
     );
-    if (d.mode === "add") {
-      kids.push(label(editor.t("repo.more_machines_later"), { labelWidth: FORM_LABEL_W, style: NOTE_STYLE }));
-    }
   }
   // Managing: nothing waits on a button, so say so once.
   if (d.mode === "manage" && repoById(d.repoId)) {
@@ -10432,11 +10437,174 @@ function buildRepoDialogSpec(): WidgetSpec {
   return col(...kids);
 }
 
-// A path the primary action may save: a matching clone, or nothing (which
-// forgets the machine's main clone). A missing path has to be cloned first.
+// The Machine row and the Path row under it — the same pair in Add Project's
+// two shapes and in a project's own section.
+function repoMachinePathRows(d: RepoDialogState, pathLabel: string): WidgetSpec[] {
+  const opts = repoMachineOptions(d);
+  const idx = Math.max(0, opts.findIndex((o) => o.key === d.machineKey));
+  return [
+    row(
+      dropdown(opts.map((o) => o.label), {
+        selectedIndex: idx,
+        label: formLabel("form.machine"),
+        labelWidth: FORM_LABEL_W,
+        key: "repo_machine",
+      }),
+      spacer(5),
+      actionButton(`+ ${editor.t("repo.add_machine")}`, "repo_add_machine"),
+    ),
+    row(
+      text({
+        value: d.path.value,
+        cursorByte: d.path.cursor,
+        label: formLabel(pathLabel),
+        labelWidth: FORM_LABEL_W,
+        fieldWidth: 44,
+        key: "repo_path",
+      }),
+      spacer(3),
+      actionButton(editor.t("repo.browse"), "repo_browse"),
+    ),
+    ...repoBrowseRows(d),
+  ];
+}
+
+// Add Project (§4.16): what it is added from, then only that source's fields.
+function addProjectRows(d: RepoDialogState): WidgetSpec[] {
+  const out: WidgetSpec[] = [
+    radio([editor.t("repo.from_url"), editor.t("repo.from_folder")], {
+      selectedIndex: d.addFrom === "url" ? 0 : 1,
+      label: editor.t("repo.add_from"),
+      labelWidth: FORM_LABEL_W,
+      key: "repo_add_from",
+    }),
+    ...gap(),
+  ];
+  const note = (txt: string, style: Partial<OverlayOptions> = NOTE_STYLE): WidgetSpec =>
+    label(txt, { labelWidth: FORM_LABEL_W, style, wrap: true });
+  if (d.addFrom === "url") {
+    out.push(...field(formLabel("repo.url"), d.url, { key: "repo_url", placeholder: editor.t("repo.url_placeholder") }));
+    const st = d.urlCheck.state;
+    if (st !== "idle") {
+      out.push(note(
+        st === "running" ? editor.t("repo.checking")
+          : st === "ok" ? `✓ ${d.urlCheck.text ? editor.t("repo.url_ok_branch", { branch: d.urlCheck.text }) : editor.t("repo.url_ok")}`
+          : `✗ ${d.urlCheck.text}`,
+        st === "fail" ? { fg: "diagnostic.error_fg" } : st === "ok" ? { fg: "diagnostic.info_fg" } : NOTE_STYLE,
+      ));
+    }
+    out.push(
+      ...field(formLabel("repo.name"), d.name, { key: "repo_name" }),
+      ...gap(),
+      sectionHeader("repo.section_main_clone"),
+      ...gap(),
+      ...repoMachinePathRows(d, "repo.path"),
+      ...addUrlPathRows(d, note),
+    );
+    return out;
+  }
+  out.push(...repoMachinePathRows(d, "repo.folder"), ...addFolderRows(d, note));
+  return out;
+}
+
+// Git URL: what the Path is, and so what the primary button will do there.
+function addUrlPathRows(d: RepoDialogState, note: (t: string, s?: Partial<OverlayOptions>) => WidgetSpec): WidgetSpec[] {
+  const machine = machineKeyLabel(d.machineKey);
+  if (d.cloning) {
+    return [note(editor.t("repo.cloning")), fieldColumnRow(actionButton(editor.t("form.btn_cancel_short"), "repo_clone_cancel"))];
+  }
+  if (d.checking) return [note(editor.t("repo.checking"))];
+  const c = d.check;
+  if (!c || c.state === "empty") return [];
+  const bad = { fg: "diagnostic.error_fg" };
+  switch (c.state) {
+    case "missing":
+      return [note(editor.t("repo.will_clone_here"))];
+    case "ok":
+      return [note(`✓ ${editor.t("repo.existing_clone", {
+        branch: c.branch || "HEAD",
+        state: c.dirty ? editor.t("repo.dirty") : editor.t("repo.clean"),
+      })}`, { fg: "diagnostic.info_fg" })];
+    case "wrong_remote":
+      return [note(`✗ ${editor.t("repo.path_wrong_remote", { origin: c.origin ? remoteIdentity(c.origin) : editor.t("repo.no_origin") })}`, bad)];
+    case "not_git":
+      return [note(`✗ ${editor.t("repo.path_taken")}`, bad)];
+    case "unreachable":
+      return [note(`✗ ${editor.t("repo.path_unreachable", { machine, reason: c.error })}`, bad)];
+  }
+  return [];
+}
+
+// Folder on a machine: what is there, and — for a clone — which remote the
+// project gets.
+function addFolderRows(d: RepoDialogState, note: (t: string, s?: Partial<OverlayOptions>) => WidgetSpec): WidgetSpec[] {
+  const machine = machineKeyLabel(d.machineKey);
+  const bad = { fg: "diagnostic.error_fg" };
+  const name = [...gap(), ...field(formLabel("repo.name"), d.name, { key: "repo_name" })];
+  if (d.checking) return [note(editor.t("repo.checking"))];
+  const c = d.check;
+  if (!c || c.state === "empty") return [];
+  switch (c.state) {
+    case "missing":
+      return [note(`✗ ${editor.t("repo.path_missing", { machine })}`, bad)];
+    case "unreachable":
+      return [note(`✗ ${editor.t("repo.path_unreachable", { machine, reason: c.error })}`, bad)];
+    case "not_git":
+      return [
+        note(`✓ ${editor.t("repo.plain_folder_found")}`, { fg: "diagnostic.info_fg" }),
+        note(editor.t("repo.plain_folder_means")),
+        ...name,
+      ];
+  }
+  // A git clone (a wrong remote cannot happen here: nothing is asked of it).
+  const out: WidgetSpec[] = [
+    note(`✓ ${editor.t("repo.path_ok_local", {
+      branch: c.branch || "HEAD",
+      state: c.dirty ? editor.t("repo.dirty") : editor.t("repo.clean"),
+    })}`, { fg: "diagnostic.info_fg" }),
+    ...gap(),
+    sectionHeader("repo.section_its_remote"),
+    ...gap(),
+  ];
+  if (c.origin) {
+    out.push(
+      note(editor.t("repo.origin_is", { remote: c.origin })),
+      radio([
+        editor.t("repo.use_origin_choice"),
+        editor.t("repo.keep_local_choice"),
+      ], {
+        selectedIndex: d.useOrigin ? 0 : 1,
+        label: editor.t("repo.remote_choice"),
+        labelWidth: FORM_LABEL_W,
+        key: "repo_remote_choice",
+      }),
+    );
+  } else if (d.setRemote) {
+    out.push(
+      note(editor.t("repo.no_origin_set")),
+      ...field(formLabel("repo.remote_url"), d.setRemote, { key: "repo_set_remote", placeholder: editor.t("repo.url_placeholder") }),
+    );
+  } else {
+    out.push(
+      note(editor.t("repo.no_origin_stays")),
+      fieldColumnRow(actionButton(editor.t("repo.set_remote"), "repo_set_remote_btn")),
+    );
+  }
+  out.push(...name);
+  return out;
+}
+
+// A path the primary action may save. Managing: a matching clone, a plain
+// folder's folder, or nothing (which forgets the machine's). Adding: what
+// the chosen source can take — a clone of the URL, or a folder that is there.
 function repoPathSavable(d: RepoDialogState): boolean {
   if (d.checking || d.cloning || d.cloneConfirm) return false;
   const c = d.check;
+  if (d.mode === "add") {
+    if (d.addFrom === "url") return d.urlCheck.state === "ok" && c?.state === "ok";
+    return c?.state === "ok" || c?.state === "not_git";
+  }
+  if (repoById(d.repoId)?.kind === "folder" && c?.state === "not_git") return true;
   return !c || c.state === "empty" || c.state === "ok";
 }
 
@@ -10479,7 +10647,8 @@ function autoSaveRepo(d: RepoDialogState): void {
   }
   const path = d.path.value.trim();
   const settled = !d.checking && !d.cloneConfirm && !d.cloning;
-  if (settled && path && d.check?.state === "ok" && r.clones[d.machineKey] !== path) {
+  const fits = d.check?.state === "ok" || (r.kind === "folder" && d.check?.state === "not_git");
+  if (settled && path && fits && r.clones[d.machineKey] !== path) {
     r.clones[d.machineKey] = path;
     changed = true;
   } else if (settled && !path && d.machineKey in r.clones) {
@@ -10492,12 +10661,20 @@ function autoSaveRepo(d: RepoDialogState): void {
 function repoFooterRow(d: RepoDialogState): WidgetSpec {
   const ok = repoPathSavable(d);
   if (d.mode === "add") {
-    const canClone = !!repoDialogRemote(d) && (!d.check || d.check.state === "missing" || d.check.state === "empty");
+    // A URL whose Path is not there yet is cloned by the primary button,
+    // and the button says so.
+    const cloneFirst = d.addFrom === "url" && !d.checking && !d.cloning && d.check?.state === "missing";
+    const primary = cloneFirst
+      ? button(`  ${editor.t("repo.btn_clone_add")}  `, {
+        intent: "primary",
+        key: "repo_clone_add",
+        disabled: d.urlCheck.state !== "ok" || !d.name.value.trim(),
+      })
+      : button(`  ${editor.t("repo.btn_add")}  `, { intent: "primary", key: "repo_save", disabled: !ok || !d.name.value.trim() });
     return endRow(
-      ...(canClone ? [actionButton(editor.t("repo.clone_now"), "repo_clone_now"), spacer(5)] : []),
       actionButton(editor.t("form.btn_cancel_short"), "repo_cancel"),
       spacer(5),
-      button(`  ${editor.t("repo.btn_save")}  `, { intent: "primary", key: "repo_save", disabled: !ok }),
+      primary,
       spacer(3),
     );
   }
@@ -10525,14 +10702,30 @@ async function recheckRepoPath(): Promise<void> {
   }
   d.checking = true;
   renderRepoDialog();
-  const c = await checkClonePath(d.machineKey, p, repoDialogRemote(d));
+  // Adding a folder asks only what is there; everything else checks the
+  // path against the project's remote.
+  const folder = d.mode === "add" && d.addFrom === "folder";
+  const c = await checkClonePath(d.machineKey, p, folder ? "" : repoDialogRemote(d));
   if (repoDialog !== d || d.checkToken !== token) return;
+  const originBefore = d.check?.origin ?? "";
   d.check = c;
   d.checking = false;
   autoSaveRepo(d);
-  // Adding from a local path: the clone's origin is the repository's remote.
-  if (d.mode === "add" && c.state !== "missing" && d.urlCheck.state === "local" && !d.urlCheck.text && c.origin) {
-    d.urlCheck = { state: "local", text: c.origin };
+  if (folder && c.state === "ok" && c.top && !samePath(d.machineKey, p, c.top)) {
+    // A folder inside a clone is that clone: the Folder becomes its top.
+    d.path = fieldOf(d.machineKey === "local" ? tildePath(c.top) : c.top);
+    repoPanel?.setValue("repo_path", d.path.value, d.path.cursor);
+  }
+  if (folder) {
+    // A clone's origin is offered as the remote; the name follows it, or
+    // the folder's own name, until the user types one.
+    if (c.origin !== originBefore) d.useOrigin = !!c.origin;
+    if (c.state !== "ok" || c.origin) d.setRemote = null;
+    if (!d.nameTouched && (c.state === "ok" || c.state === "not_git")) {
+      const n = c.origin ? repoNameFromRemote(c.origin) : editor.pathBasename(p.replace(/\/+$/, ""));
+      d.name = fieldOf(n);
+      repoPanel?.setValue("repo_name", d.name.value, d.name.cursor);
+    }
   }
   renderRepoDialog();
 }
@@ -10563,31 +10756,13 @@ async function checkRepoUrl(): Promise<void> {
     renderRepoDialog();
     return;
   }
-  // A path to a working tree is a local clone; any other path (a bare
-  // repository, say) is a remote like a URL, and is asked the same way.
+  // A path to a working tree is a folder on this machine — the other source;
+  // any other path (a bare repository, say) is a remote like a URL.
   const looksLocal = v.startsWith("/") || v.startsWith("~") || v.startsWith(".");
   const inside = looksLocal && (await pathIsInsideGitWorkTree(expandHome(v)));
   if (repoDialog !== d || d.urlToken !== token) return;
   if (inside) {
-    // A folder inside a clone is that clone: its top level is the path.
-    const top = await editor.spawnHostProcess("git", ["-C", expandHome(v), "rev-parse", "--show-toplevel"]);
-    if (repoDialog !== d || d.urlToken !== token) return;
-    const path = top.exit_code === 0 && (top.stdout || "").trim() ? (top.stdout || "").trim() : expandHome(v);
-    const o = await editor.spawnHostProcess("git", ["-C", path, "remote", "get-url", "origin"]);
-    if (repoDialog !== d || d.urlToken !== token) return;
-    const origin = o.exit_code === 0 ? (o.stdout || "").trim() : "";
-    d.urlCheck = { state: "local", text: origin };
-    d.useOrigin = !!origin;
-    // The name followed what was typed (`docs` for `~/work/site/docs`); the
-    // clone's own name replaces it unless the user typed one.
-    if (!d.name.value.trim() || d.name.value === repoNameFromRemote(v)) {
-      d.name = fieldOf(origin ? repoNameFromRemote(origin) : editor.pathBasename(path));
-      repoPanel?.setValue("repo_name", d.name.value, d.name.cursor);
-    }
-    d.machineKey = "local";
-    d.path = fieldOf(tildePath(path));
-    repoPanel?.setValue("repo_path", d.path.value, d.path.cursor);
-    void recheckRepoPath();
+    d.urlCheck = { state: "fail", text: editor.t("repo.url_is_folder") };
     renderRepoDialog();
     return;
   }
@@ -10655,14 +10830,14 @@ function parentDir(dir: string): string {
   return i <= 0 ? "/" : t.slice(0, i);
 }
 
-async function browseTo(dir: string, target: "path" | "source" = "path"): Promise<void> {
+async function browseTo(dir: string): Promise<void> {
   const d = repoDialog;
   if (!d) return;
-  d.browse = { dir, entries: [], loading: true, error: "", index: 0, for: target };
+  d.browse = { dir, entries: [], loading: true, error: "", index: 0 };
   renderRepoDialog();
-  const r = await listMachineDir(browseMachineKey(d), dir);
+  const r = await listMachineDir(d.machineKey, dir);
   if (repoDialog !== d || !d.browse || d.browse.dir !== dir) return;
-  d.browse = { dir, entries: r.entries, loading: false, error: r.error, index: 0, for: target };
+  d.browse = { dir, entries: r.entries, loading: false, error: r.error, index: 0 };
   renderRepoDialog();
   repoPanel?.setFocusKey("repo_browse_list");
   d.focus = "repo_browse_list";
@@ -10678,39 +10853,21 @@ function openBrowse(): void {
   const start = typed
     ? (d.check?.state === "missing" || d.check?.state === "ok" ? parentDir(typed) : typed)
     : "~";
-  void browseTo(start, "path");
+  void browseTo(start);
 }
 
-// Add Repository's `Browse for a local clone…`: this machine's folders, from
-// the typed path's parent when it is one, else home.
-function openSourceBrowse(): void {
-  const d = repoDialog;
-  if (!d) return;
-  const typed = d.url.value.trim();
-  const local = typed.startsWith("/") || typed.startsWith("~");
-  void browseTo(local ? parentDir(typed) : "~", "source");
+// Whether Browse can pick a folder that is not a clone: Add Project's
+// Folder source, and a plain-folder project's folder.
+function browsePicksAnyFolder(d: RepoDialogState): boolean {
+  if (d.mode === "add") return d.addFrom === "folder";
+  return repoById(d.repoId)?.kind === "folder";
 }
 
-// Which machine the browser lists: the source is always a clone here.
-function browseMachineKey(d: RepoDialogState): string {
-  return d.browse?.for === "source" ? "local" : d.machineKey;
-}
-
-// Put the browsed-to folder into Path and close the browser.
 function pickBrowsed(dir: string): void {
   const d = repoDialog;
   if (!d) return;
-  if (d.browse?.for === "source") {
-    d.browse = null;
-    d.url = fieldOf(dir);
-    repoPanel?.setValue("repo_url", d.url.value, d.url.cursor);
-    renderRepoDialog();
-    repoPanel?.setFocusKey("repo_url");
-    d.focus = "repo_url";
-    void checkRepoUrl();
-    return;
-  }
   d.browse = null;
+  d.pathTouched = true;
   d.path = fieldOf(dir);
   renderRepoDialog();
   repoPanel?.setValue("repo_path", d.path.value, d.path.cursor);
@@ -10724,15 +10881,20 @@ function browseActivate(index: number): void {
   const b = d?.browse;
   if (!d || !b || b.loading) return;
   if (index === 0) {
-    void browseTo(parentDir(b.dir), b.for);
+    void browseTo(parentDir(b.dir));
     return;
   }
-  const e = b.entries[index - 1];
+  const here = browsePicksAnyFolder(d);
+  if (here && index === 1) {
+    pickBrowsed(b.dir);
+    return;
+  }
+  const e = b.entries[index - (here ? 2 : 1)];
   if (!e) return;
   const next = b.dir === "/" ? `/${e.name}` : `${b.dir.replace(/\/+$/, "")}/${e.name}`;
   // A repository is what is being looked for: picking one ends the browse.
   if (e.git) pickBrowsed(next);
-  else void browseTo(next, b.for);
+  else void browseTo(next);
 }
 
 // ── Clone (§4.15) ────────────────────────────────────────────────────────────
@@ -10763,6 +10925,12 @@ async function runRepoClone(): Promise<void> {
     d.error = editor.t("form.clone_failed", { reason: lastErrorLine(res) || String(res.exit_code) });
   }
   await recheckRepoPath();
+  const thenSave = d.saveAfterClone;
+  d.saveAfterClone = false;
+  if (thenSave && repoDialog === d && d.check?.state === "ok") {
+    saveRepoDialog();
+    return;
+  }
   repoPanel?.setFocusKey("repo_save");
 }
 
@@ -10770,6 +10938,7 @@ async function cancelRepoClone(): Promise<void> {
   const d = repoDialog;
   if (!d) return;
   d.cloneConfirm = false;
+  d.saveAfterClone = false;
   const c = d.cloning;
   d.cloning = null;
   renderRepoDialog();
@@ -10804,11 +10973,12 @@ function saveRepoDialog(): void {
       renderRepoDialog();
       return;
     }
-    if (d.urlCheck.state === "fail" || (!remote && !path)) {
+    if (!path || (d.addFrom === "url" && d.urlCheck.state !== "ok")) {
       d.error = editor.t("repo.err_source");
       renderRepoDialog();
       return;
     }
+    const plain = d.addFrom === "folder" && d.check?.state === "not_git";
     const existing = remote ? loadRepositories().find((r) => sameRemote(r.remote, remote)) : null;
     // A name picks a repository in the Project list, so two cannot share one.
     if (loadRepositories().some((o) => o.name === name && o.id !== existing?.id)) {
@@ -10819,8 +10989,10 @@ function saveRepoDialog(): void {
     const r: Repository = existing ?? { id: newRepoId(), name, remote, cloneNewTo, clones: {} };
     r.name = name;
     r.cloneNewTo = cloneNewTo;
-    if (path) r.clones[d.machineKey] = path;
+    if (plain) r.kind = "folder";
+    r.clones[d.machineKey] = path;
     upsertRepository(r);
+    editor.setGlobalState(ADD_FROM_KEY, d.addFrom);
     if (d.returnTo === "form" && suspendedForm) {
       suspendedForm.repoId = r.id;
       closeRepoDialog();
@@ -10889,11 +11061,10 @@ registerHandler("orchestrator_repos_escape", () => {
   const d = repoDialog;
   if (!d || !repoPanel) return;
   if (d.browse) {
-    const back = d.browse.for === "source" ? "repo_browse_source" : "repo_browse";
     d.browse = null;
     renderRepoDialog();
-    repoPanel.setFocusKey(back);
-    d.focus = back;
+    repoPanel.setFocusKey("repo_browse");
+    d.focus = "repo_browse";
     return;
   }
   if (d.cloneConfirm || d.cloning) {
@@ -10911,7 +11082,7 @@ registerHandler("orchestrator_repos_backspace", () => {
   if (!d || !repoPanel) return;
   // In the browser, Backspace goes up a folder.
   if (d.browse && d.focus === "repo_browse_list") {
-    void browseTo(parentDir(d.browse.dir), d.browse.for);
+    void browseTo(parentDir(d.browse.dir));
     return;
   }
   repoPanel.command({ kind: "key", key: "Backspace" });
@@ -10949,10 +11120,23 @@ function handleRepoDialogEvent(e: WidgetEvt): void {
     if (e.event_type === "activate" && idx >= 0) browseActivate(idx);
     return;
   }
-  if (e.event_type === "toggle" && e.widget_key === "repo_use_origin") {
-    d.useOrigin = typeof payload.checked === "boolean" ? payload.checked : !d.useOrigin;
-    // The Path's check compares against the remote, which just changed.
-    void recheckRepoPath();
+  if (e.event_type === "change" && e.widget_key === "repo_add_from") {
+    const next = payload.index === 1 ? "folder" : "url";
+    if (next !== d.addFrom) {
+      // Each source keeps what was typed into it; the Path is re-read
+      // against the other source's rules.
+      d.addFrom = next;
+      editor.setGlobalState(ADD_FROM_KEY, next);
+      d.browse = null;
+      d.error = "";
+      if (next === "url" && !d.pathTouched) urlPathFollowsName(d);
+      renderRepoDialog();
+      void recheckRepoPath();
+    }
+    return;
+  }
+  if (e.event_type === "change" && e.widget_key === "repo_remote_choice") {
+    d.useOrigin = payload.index !== 1;
     renderRepoDialog();
     return;
   }
@@ -10960,10 +11144,20 @@ function handleRepoDialogEvent(e: WidgetEvt): void {
     const idx = payload.index;
     const opt = typeof idx === "number" ? repoMachineOptions(d)[idx] : undefined;
     if (opt && opt.key !== d.machineKey) {
-      repoDialogShow(d.mode === "add" ? null : d.repoId, opt.key);
       if (d.mode === "add") {
-        d.path = fieldOf("");
-        repoPanel?.setValue("repo_path", "", 0);
+        // Adding keeps what was typed; a URL's untouched Path stays the
+        // default location, now on the other machine, and a folder is
+        // looked for anew.
+        d.machineKey = opt.key;
+        d.browse = null;
+        if (d.addFrom === "folder") {
+          d.path = fieldOf("");
+          d.pathTouched = false;
+          repoPanel?.setValue("repo_path", "", 0);
+        }
+        void recheckRepoPath();
+      } else {
+        repoDialogShow(d.repoId, opt.key);
       }
       renderRepoDialog();
     }
@@ -10976,6 +11170,7 @@ function handleRepoDialogEvent(e: WidgetEvt): void {
       repo_name: d.name,
       repo_clone_new_to: d.cloneNewTo,
     };
+    if (d.setRemote) slots.repo_set_remote = d.setRemote;
     const slot = e.widget_key ? slots[e.widget_key] : undefined;
     if (!slot) return;
     const before = slot.value;
@@ -10983,20 +11178,28 @@ function handleRepoDialogEvent(e: WidgetEvt): void {
     if (slot.value === before) return;
     d.error = "";
     if (e.widget_key === "repo_path") {
+      d.pathTouched = true;
       d.cloneConfirm = false;
       scheduleRepoPathCheck();
       renderRepoDialog();
     } else if (e.widget_key === "repo_clone_new_to") {
       autoSaveRepo(d);
     } else if (e.widget_key === "repo_url") {
-      // The name follows the URL until the user types one of their own.
-      const prevName = repoNameFromRemote(before);
-      if (!d.name.value.trim() || d.name.value === prevName) {
+      // The name follows the URL, and the Path follows the name into the
+      // default clone location, until the user types their own.
+      if (!d.nameTouched) {
         d.name = fieldOf(repoNameFromRemote(d.url.value));
         repoPanel?.setValue("repo_name", d.name.value, d.name.cursor);
       }
+      if (!d.pathTouched) urlPathFollowsName(d);
       d.urlCheck = { state: "idle", text: "" };
       scheduleRepoUrlCheck();
+      renderRepoDialog();
+    } else if (e.widget_key === "repo_name") {
+      d.nameTouched = true;
+      if (d.addFrom === "url" && !d.pathTouched) urlPathFollowsName(d);
+      renderRepoDialog();
+    } else if (e.widget_key === "repo_set_remote") {
       renderRepoDialog();
     }
     return;
@@ -11009,11 +11212,16 @@ function handleRepoDialogEvent(e: WidgetEvt): void {
       d.url = fieldOf("");
       d.name = fieldOf("");
       d.urlCheck = { state: "idle", text: "" };
+      d.addFrom = lastAddFrom();
+      d.nameTouched = false;
+      d.pathTouched = false;
+      d.setRemote = null;
       d.useOrigin = true;
       d.cloneNewTo = fieldOf(DEFAULT_CLONE_NEW_TO);
       d.machineKey = "local";
       d.path = fieldOf("");
       d.check = null;
+      d.browse = null;
       d.error = "";
       mountRepoPanel();
       return;
@@ -11030,9 +11238,6 @@ function handleRepoDialogEvent(e: WidgetEvt): void {
     case "repo_browse":
       openBrowse();
       return;
-    case "repo_browse_source":
-      openSourceBrowse();
-      return;
     case "repo_clone_here":
       askRepoClone();
       return;
@@ -11044,16 +11249,19 @@ function handleRepoDialogEvent(e: WidgetEvt): void {
       askRepoClone();
       return;
     }
-    case "repo_clone_now": {
-      if (!d.path.value.trim()) {
-        d.path = fieldOf((d.cloneNewTo.value || DEFAULT_CLONE_NEW_TO).replace(/<name>/g, d.name.value.trim() || repoNameFromRemote(d.url.value)));
-        repoPanel?.setValue("repo_path", d.path.value, d.path.cursor);
-      }
-      askRepoClone();
-      return;
-    }
     case "repo_clone_yes":
       void runRepoClone();
+      return;
+    case "repo_clone_add":
+      // The button's label already says it clones: no second question.
+      d.saveAfterClone = true;
+      void runRepoClone();
+      return;
+    case "repo_set_remote_btn":
+      d.setRemote = fieldOf("");
+      renderRepoDialog();
+      repoPanel?.setFocusKey("repo_set_remote");
+      d.focus = "repo_set_remote";
       return;
     case "repo_clone_no":
     case "repo_clone_cancel":
@@ -12858,7 +13066,10 @@ function whereFields(f: NewSessionForm): WidgetSpec[] {
       placeholder: formDefaultSessionName(f) || editor.t("form.auto_generating"),
     }));
   } else {
-    const plan = r && formNeedsClone(f)
+    // A blocked project has no plan to show; its blocker says why.
+    const plan = r && formRepoBlocker(f)
+      ? null
+      : r && formNeedsClone(f)
       ? { text: editor.t("form.plan_after_clone", { name: plannedWorkspaceName(f) }) }
       : gitPlanLine(f);
     if (plan) out.push(label(plan.text, { labelWidth: FORM_LABEL_W, style: plan.style ?? NOTE_STYLE }));
@@ -12884,7 +13095,9 @@ function repoWhereRows(f: NewSessionForm, r: Repository): WidgetSpec[] {
   const key = formMachineKey(f);
   if (blocker) {
     const out: WidgetSpec[] = [label(`✗ ${blocker}`, { labelWidth: FORM_LABEL_W, style: { fg: "diagnostic.error_fg" }, wrap: true })];
-    if (key) out.push(fieldColumnRow(actionButton(editor.t("form.use_existing_clone"), "use_existing_clone")));
+    if (key) {
+      out.push(fieldColumnRow(actionButton(editor.t(r.kind === "folder" ? "form.set_folder" : "form.use_existing_clone"), "use_existing_clone")));
+    }
     return out;
   }
   const clone = formMainClone(f);
@@ -12902,10 +13115,11 @@ function repoWhereRows(f: NewSessionForm, r: Repository): WidgetSpec[] {
     ];
   }
   if (!f.detailsOpen) {
-    return [label(editor.t("form.main_clone_line", { path: tildePath(clone) }), { labelWidth: FORM_LABEL_W, style: NOTE_STYLE, wrap: true })];
+    const line = r.kind === "folder" ? "form.folder_line" : "form.main_clone_line";
+    return [label(editor.t(line, { path: tildePath(clone) }), { labelWidth: FORM_LABEL_W, style: NOTE_STYLE, wrap: true })];
   }
   return [
-    label(`${formLabel("form.main_clone").padStart(FORM_LABEL_W)}: ${tildePath(clone)}`),
+    label(`${formLabel(r.kind === "folder" ? "repo.folder" : "form.main_clone").padStart(FORM_LABEL_W)}: ${tildePath(clone)}`),
     fieldColumnRow(actionButton(editor.t("form.change_clone"), "change_clone")),
   ];
 }
@@ -17393,7 +17607,7 @@ editor.on("widget_event", (e) => {
           formPanel.setFocusKey("project");
         }
       } else if (e.widget_key === "save_repo") {
-        openAddRepositoryFromForm(form.folderOrigin, tildePath(formFolderPath(form)), formMachineKey(form));
+        openAddRepositoryFromForm(tildePath(formFolderPath(form)), formMachineKey(form));
       } else if (e.widget_key === "cancel") {
         cancelForm();
       }
