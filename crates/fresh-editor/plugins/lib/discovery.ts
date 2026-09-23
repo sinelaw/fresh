@@ -146,7 +146,7 @@ export function discoverVerbFor(
   const agent = session.agent ?? "";
   if (!agent && session.openable && session.cwd) return { kind: "open", argv: [] };
   if (!agent) return { kind: "none", why: t("discover.no_resume_none") };
-  // A row that records another tool's session (a Herdr pane running Claude)
+  // A row that records another tool's session (an Orca tab running Claude)
   // resumes that one; an empty id there means "the newest in the directory".
   const resume = resumeArgv(agent, session.agentSessionId ?? session.id);
   if (!resume && session.openable && session.cwd) return { kind: "open", argv: [] };
