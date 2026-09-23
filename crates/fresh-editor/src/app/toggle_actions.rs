@@ -840,11 +840,6 @@ impl Editor {
         }
     }
 
-    /// Check if mouse hover is enabled
-    pub fn is_mouse_hover_enabled(&self) -> bool {
-        self.config.editor.mouse_hover_enabled
-    }
-
     /// Set GPM active flag (enables software mouse cursor rendering)
     ///
     /// When GPM is used for mouse input on Linux consoles, we need to draw

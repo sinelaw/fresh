@@ -1,5 +1,4 @@
-//! Validation, default extraction, and merging for plugin-provided
-//! config schemas.
+//! Validation for plugin-provided config schemas.
 //!
 //! Plugins register config fields at load time by calling one of the
 //! strongly-typed `editor.defineConfigBoolean / Integer / Number /
@@ -21,7 +20,7 @@
 //! 3. No `x-enum-from` extension (would let a plugin point at host
 //!    config paths like `/languages` — explicit design decision).
 
-use serde_json::{Map, Value};
+use serde_json::Value;
 
 /// Validate a plugin-supplied JSON Schema. Returns `Ok(())` if safe to
 /// merge into the host's runtime schema tree; otherwise an error
@@ -70,50 +69,6 @@ fn check_no_forbidden_keys(value: &Value) -> Result<(), String> {
         _ => {}
     }
     Ok(())
-}
-
-/// Deep-merge `defaults` UNDER `target` — i.e. fill in keys that
-/// `target` does not already have. Used to seed
-/// `plugins.<name>.settings` from registered schema defaults without
-/// clobbering values the user has already saved.
-pub fn deep_merge_under(target: &mut Value, defaults: &Value) {
-    if target.is_null() {
-        *target = defaults.clone();
-        return;
-    }
-    let (Value::Object(t_map), Value::Object(d_map)) = (target, defaults) else {
-        return;
-    };
-    for (k, v) in d_map {
-        match t_map.get_mut(k) {
-            Some(existing) => deep_merge_under(existing, v),
-            None => {
-                t_map.insert(k.clone(), v.clone());
-            }
-        }
-    }
-}
-
-/// Extract default values from a schema recursively, walking
-/// `properties.<name>.default`. Returns an object with defaults filled
-/// in for every property that declares one.
-pub fn defaults_from_schema(schema: &Value) -> Value {
-    let mut out = Map::new();
-    if let Some(props) = schema.get("properties").and_then(|p| p.as_object()) {
-        for (k, prop) in props {
-            if let Some(d) = prop.get("default") {
-                out.insert(k.clone(), d.clone());
-            } else if let Some(t) = prop.get("type").and_then(|t| t.as_str()) {
-                if t == "object" {
-                    let nested = defaults_from_schema(prop);
-                    if !nested.as_object().map(|o| o.is_empty()).unwrap_or(true) {
-                        out.insert(k.clone(), nested);
-                    }
-                }
-            }
-        }
-    }
-    Value::Object(out)
 }
 
 #[cfg(test)]
@@ -167,19 +122,5 @@ mod tests {
     fn accepts_empty_properties() {
         let schema = json!({"type": "object", "properties": {}});
         assert!(validate_plugin_schema(&schema).is_ok());
-    }
-
-    #[test]
-    fn defaults_extraction() {
-        let schema = json!({
-            "type": "object",
-            "properties": {
-                "auto_enable": {"type": "boolean", "default": false},
-                "max_items": {"type": "integer", "minimum": 1, "default": 3},
-                "no_default": {"type": "string"}
-            }
-        });
-        let d = defaults_from_schema(&schema);
-        assert_eq!(d, json!({"auto_enable": false, "max_items": 3}));
     }
 }

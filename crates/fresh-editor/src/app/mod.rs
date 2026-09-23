@@ -266,8 +266,7 @@ use std::time::Instant;
 // Re-export BufferId from event module for backward compatibility
 pub use self::types::{BufferKind, BufferMetadata, HoverTarget};
 pub use self::warning_domains::{
-    GeneralWarningDomain, LspWarningDomain, WarningAction, WarningActionId, WarningDomain,
-    WarningDomainRegistry, WarningLevel, WarningPopupContent,
+    GeneralWarningDomain, LspWarningDomain, WarningDomain, WarningDomainRegistry, WarningLevel,
 };
 pub use crate::model::event::BufferId;
 

@@ -1981,13 +1981,6 @@ impl EditorState {
     pub fn clear_semantic_tokens(&mut self) {
         self.semantic_tokens = None;
     }
-
-    /// Get the server-provided semantic token result_id if available.
-    pub fn semantic_tokens_result_id(&self) -> Option<&str> {
-        self.semantic_tokens
-            .as_ref()
-            .and_then(|store| store.result_id.as_deref())
-    }
 }
 
 /// Implement DocumentModel trait for EditorState

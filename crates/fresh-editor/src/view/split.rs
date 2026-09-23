@@ -766,46 +766,6 @@ impl SplitNode {
         }
     }
 
-    /// Find the Grouped ancestor node that contains a given target id (by walking
-    /// into Grouped subtrees). Returns the Grouped node's own `split_id` if found.
-    pub fn grouped_ancestor_of(&self, target_id: SplitId) -> Option<LeafId> {
-        match self {
-            Self::Leaf { .. } => None,
-            Self::Split { first, second, .. } => first
-                .grouped_ancestor_of(target_id)
-                .or_else(|| second.grouped_ancestor_of(target_id)),
-            Self::Grouped {
-                split_id, layout, ..
-            } => {
-                if layout.find(target_id).is_some() {
-                    Some(*split_id)
-                } else {
-                    layout.grouped_ancestor_of(target_id)
-                }
-            }
-        }
-    }
-
-    /// Find the Grouped node whose `split_id` matches `target`. Returns
-    /// a reference to the Grouped node (or None).
-    pub fn find_grouped(&self, target: LeafId) -> Option<&Self> {
-        match self {
-            Self::Leaf { .. } => None,
-            Self::Split { first, second, .. } => first
-                .find_grouped(target)
-                .or_else(|| second.find_grouped(target)),
-            Self::Grouped {
-                split_id, layout, ..
-            } => {
-                if *split_id == target {
-                    Some(self)
-                } else {
-                    layout.find_grouped(target)
-                }
-            }
-        }
-    }
-
     /// The leaves this subtree shows, in the tree's order — first child before
     /// second, so left to right and top to bottom — without their rectangles.
     ///

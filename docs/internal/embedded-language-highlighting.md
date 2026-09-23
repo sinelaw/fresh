@@ -272,5 +272,3 @@ attribute value, and the engine does the rest.
   explicitly disabled and none of those languages currently host embedded
   regions; if one ever does, tree-sitter injection queries are the natural
   analogue there.
-- The WASM-reserved `textmate_engine.rs` mirror does not implement the
-  mechanism yet.

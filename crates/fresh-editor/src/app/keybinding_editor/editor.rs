@@ -679,14 +679,6 @@ impl KeybindingEditor {
         )
     }
 
-    /// Get the currently selected binding (None if a section header is selected)
-    pub fn selected_binding(&self) -> Option<&ResolvedBinding> {
-        match self.display_rows.get(self.selected) {
-            Some(DisplayRow::Binding(idx)) => self.bindings.get(*idx),
-            _ => None,
-        }
-    }
-
     /// Get the binding index in `self.bindings` for the current selection
     fn selected_binding_index(&self) -> Option<usize> {
         match self.display_rows.get(self.selected) {
@@ -835,11 +827,6 @@ impl KeybindingEditor {
                 &self.mode_contexts,
             ));
         }
-    }
-
-    /// Close the edit dialog
-    pub fn close_edit_dialog(&mut self) {
-        self.edit_dialog = None;
     }
 
     /// Delete the selected binding: it is gone, and the key falls through to

@@ -1132,21 +1132,6 @@ impl DirectoryContext {
         self.data_dir.join(format!("{}_history.json", safe_name))
     }
 
-    /// Get the search history file path (legacy, calls generic method)
-    pub fn search_history_path(&self) -> std::path::PathBuf {
-        self.prompt_history_path("search")
-    }
-
-    /// Get the replace history file path (legacy, calls generic method)
-    pub fn replace_history_path(&self) -> std::path::PathBuf {
-        self.prompt_history_path("replace")
-    }
-
-    /// Get the goto line history file path (legacy, calls generic method)
-    pub fn goto_line_history_path(&self) -> std::path::PathBuf {
-        self.prompt_history_path("goto_line")
-    }
-
     /// Get the terminals root directory
     pub fn terminals_dir(&self) -> std::path::PathBuf {
         self.data_dir.join("terminals")

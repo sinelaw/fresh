@@ -413,12 +413,6 @@ impl Editor {
     // `promote_current_preview`, `promote_preview_if_not_in_split`,
     // `is_buffer_preview`, `current_preview` moved to `impl Window`.
 
-    /// Number of open buffers (including hidden/virtual buffers).
-    /// Intended for tests that verify preview tabs don't accumulate.
-    pub fn open_buffer_count(&self) -> usize {
-        self.active_window().buffers.len()
-    }
-
     /// Whether the active buffer has a full line index available.
     ///
     /// Always true for normal files; false for large files opened in
@@ -750,14 +744,6 @@ impl Editor {
             .mouse_state
             .lsp_hover_state
             .map(|(pos, _, x, y, _)| (pos, x, y))
-    }
-
-    /// Check if a transient popup (hover/signature help) is currently visible
-    pub fn has_transient_popup(&self) -> bool {
-        self.active_state()
-            .popups
-            .top()
-            .is_some_and(|p| p.transient)
     }
 
     /// Force check the mouse hover timer (for testing)

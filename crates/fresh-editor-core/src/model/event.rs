@@ -753,12 +753,6 @@ impl EventLog {
         Ok(())
     }
 
-    /// Disable streaming (runtime only)
-    #[cfg(feature = "runtime")]
-    pub fn disable_streaming(&mut self) {
-        self.stream_file = None;
-    }
-
     /// Log rendering state (for debugging, runtime only)
     #[cfg(feature = "runtime")]
     pub fn log_render_state(
@@ -993,15 +987,6 @@ impl EventLog {
     /// Get events in a range
     pub fn range(&self, range: Range<usize>) -> &[LogEntry] {
         &self.entries[range]
-    }
-
-    /// Get the most recent event
-    pub fn last_event(&self) -> Option<&Event> {
-        if self.current_index > 0 {
-            Some(&self.entries[self.current_index - 1].event)
-        } else {
-            None
-        }
     }
 
     /// Clear all events (for testing or reset)

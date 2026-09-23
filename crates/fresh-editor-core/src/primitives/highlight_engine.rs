@@ -2741,18 +2741,6 @@ impl HighlightEngine {
         Self::None
     }
 
-    /// Create a highlighting engine for a syntax by name.
-    ///
-    /// Thin wrapper around `from_entry` that performs the lookup via
-    /// `find_by_name`. The catalog entry already knows which tree-sitter
-    /// `Language` (if any) serves it, so no separate hint is needed.
-    pub fn for_syntax_name(name: &str, registry: &GrammarRegistry) -> Self {
-        if let Some(entry) = registry.find_by_name(name) {
-            return Self::from_entry(entry, registry);
-        }
-        Self::None
-    }
-
     /// Highlight the visible viewport
     ///
     /// `context_bytes` controls how far before/after the viewport to parse for accurate

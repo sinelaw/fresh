@@ -430,17 +430,6 @@ impl crate::app::window::Window {
         self.sync_editor_cursor_from_composite(split_id, buffer_id);
         true
     }
-
-    /// Scroll a composite-buffer view to absolute row `row`, clamped.
-    pub fn composite_scroll_to(&mut self, split_id: LeafId, buffer_id: BufferId, row: usize) {
-        if let (Some(composite), Some(view_state)) = (
-            self.composite_buffers.get(&buffer_id),
-            self.composite_view_states.get_mut(&(split_id, buffer_id)),
-        ) {
-            let max_row = composite.row_count().saturating_sub(1);
-            view_state.set_scroll_row(row, max_row);
-        }
-    }
 }
 
 /// Fields of a `PluginCommand::CreateCompositeBuffer`, grouped so
@@ -507,34 +496,6 @@ impl Editor {
     // methods below stay on `impl Editor` because they read editor-global
     // state (`terminal_width`/`height`, plugin manager, status messages)
     // alongside their window-scoped work.
-
-    /// Get or create composite view state for a split
-    pub fn get_composite_view_state(
-        &mut self,
-        split_id: LeafId,
-        buffer_id: BufferId,
-    ) -> Option<&mut CompositeViewState> {
-        if !self
-            .active_window()
-            .composite_buffers
-            .contains_key(&buffer_id)
-        {
-            return None;
-        }
-
-        let pane_count = self
-            .active_window()
-            .composite_buffers
-            .get(&buffer_id)?
-            .pane_count();
-
-        Some(
-            self.active_window_mut()
-                .composite_view_states
-                .entry((split_id, buffer_id))
-                .or_insert_with(|| CompositeViewState::new(buffer_id, pane_count)),
-        )
-    }
 
     /// Create a new composite buffer
     ///

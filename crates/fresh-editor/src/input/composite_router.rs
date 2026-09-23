@@ -133,61 +133,6 @@ impl CompositeInputRouter {
             _ => RoutedEvent::Unhandled,
         }
     }
-
-    /// Convert display coordinates to source buffer coordinates
-    pub fn display_to_source(
-        composite: &CompositeBuffer,
-        _view_state: &CompositeViewState,
-        display_row: usize,
-        display_col: usize,
-        pane_index: usize,
-    ) -> Option<SourceCoordinate> {
-        let aligned_row = composite.alignment.get_row(display_row)?;
-        let source_ref = aligned_row.get_pane_line(pane_index)?;
-
-        Some(SourceCoordinate {
-            buffer_id: composite.sources.get(pane_index)?.buffer_id,
-            byte_offset: source_ref.byte_range.start + display_col,
-            line: source_ref.line,
-            column: display_col,
-        })
-    }
-
-    /// Determine which pane a click occurred in
-    pub fn click_to_pane(
-        view_state: &CompositeViewState,
-        click_x: u16,
-        area_x: u16,
-    ) -> Option<usize> {
-        let mut x = area_x;
-        for (i, &width) in view_state.pane_widths.iter().enumerate() {
-            if click_x >= x && click_x < x + width {
-                return Some(i);
-            }
-            x += width + 1; // +1 for separator
-        }
-        None
-    }
-
-    /// Navigate to the next or previous hunk
-    pub fn navigate_to_hunk(
-        composite: &CompositeBuffer,
-        view_state: &mut CompositeViewState,
-        direction: Direction,
-    ) -> bool {
-        let current_row = view_state.scroll_row;
-        let new_row = match direction {
-            Direction::Next => composite.alignment.next_hunk_row(current_row),
-            Direction::Prev => composite.alignment.prev_hunk_row(current_row),
-        };
-
-        if let Some(row) = new_row {
-            view_state.scroll_row = row;
-            true
-        } else {
-            false
-        }
-    }
 }
 
 /// Coordinates within a source buffer

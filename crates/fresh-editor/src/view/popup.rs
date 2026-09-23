@@ -76,10 +76,6 @@ pub enum PopupResolver {
     None,
     /// LSP completion popup. Confirm inserts the selected item's text.
     Completion,
-    /// "Start LSP server?" confirmation. Confirm dispatches the selected
-    /// row's `data` (e.g. "allow_once") through
-    /// `handle_lsp_confirmation_response`.
-    LspConfirm { language: String },
     /// LSP server-status / auto-prompt popup. Confirm dispatches the
     /// selected row's `data` through `handle_lsp_status_action`.
     LspStatus,

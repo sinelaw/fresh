@@ -3,7 +3,7 @@
 use crate::model::encoding;
 use crate::model::filesystem::{FileSearchOptions, FileSystem};
 use crate::model::piece_tree::{
-    BufferData, BufferLocation, Cursor, PieceInfo, PieceRangeIter, PieceTree, PieceView, Position,
+    BufferData, BufferLocation, Cursor, PieceRangeIter, PieceTree, PieceView, Position,
     StringBuffer, TreeStats,
 };
 use crate::model::piece_tree_diff::PieceTreeDiff;
@@ -287,11 +287,6 @@ impl TextBuffer {
     /// Get a reference to the filesystem implementation used by this buffer.
     pub fn filesystem(&self) -> &Arc<dyn FileSystem + Send + Sync> {
         self.persistence.fs()
-    }
-
-    /// Set the filesystem implementation for this buffer.
-    pub fn set_filesystem(&mut self, fs: Arc<dyn FileSystem + Send + Sync>) {
-        self.persistence.set_fs(fs);
     }
 
     #[inline]
@@ -2203,11 +2198,6 @@ impl TextBuffer {
         }
     }
 
-    /// Get a reference to the string buffers (for parallel scanning).
-    pub fn buffer_slice(&self) -> &[StringBuffer] {
-        &self.buffers
-    }
-
     /// Apply the results of an incremental line scan.
     pub fn apply_scan_updates(&mut self, updates: &[(usize, usize)]) {
         self.piece_tree.update_leaf_line_feeds(updates);
@@ -2593,11 +2583,6 @@ impl TextBuffer {
         Some(start)
     }
 
-    /// Get piece information at a byte offset
-    pub fn piece_info_at_offset(&self, offset: usize) -> Option<PieceInfo> {
-        self.piece_tree.find_by_offset(offset)
-    }
-
     /// Get tree statistics for debugging
     pub fn stats(&self) -> TreeStats {
         self.piece_tree.stats()
@@ -2856,77 +2841,6 @@ impl TextBuffer {
         }
 
         true
-    }
-
-    /// Find and replace the next occurrence of a pattern
-    pub fn replace_next(
-        &mut self,
-        pattern: &str,
-        replacement: &str,
-        start_pos: usize,
-        range: Option<Range<usize>>,
-    ) -> Option<usize> {
-        if let Some(pos) = self.find_next_in_range(pattern, start_pos, range.clone()) {
-            self.replace_range(pos..pos + pattern.len(), replacement);
-            Some(pos)
-        } else {
-            None
-        }
-    }
-
-    /// Replace all occurrences of a pattern with replacement text
-    pub fn replace_all(&mut self, pattern: &str, replacement: &str) -> usize {
-        if pattern.is_empty() {
-            return 0;
-        }
-
-        let mut count = 0;
-        let mut pos = 0;
-
-        // Keep searching and replacing
-        // Note: we search forward from last replacement to handle growth/shrinkage
-        // Find next occurrence (no wrap-around for replace_all)
-        while let Some(found_pos) = self.find_next_in_range(pattern, pos, Some(0..self.len())) {
-            self.replace_range(found_pos..found_pos + pattern.len(), replacement);
-            count += 1;
-
-            // Move past the replacement
-            pos = found_pos + replacement.len();
-
-            // If we're at or past the end, stop
-            if pos >= self.len() {
-                break;
-            }
-        }
-
-        count
-    }
-
-    /// Replace all occurrences of a regex pattern with replacement text
-    pub fn replace_all_regex(&mut self, regex: &Regex, replacement: &str) -> Result<usize> {
-        let mut count = 0;
-        let mut pos = 0;
-
-        while let Some(found_pos) = self.find_next_regex_in_range(regex, pos, Some(0..self.len())) {
-            // Get the match to find its length
-            let text = self
-                .get_text_range_mut(found_pos, self.len() - found_pos)
-                .context("Failed to read text for regex match")?;
-
-            if let Some(mat) = regex.find(&text) {
-                self.replace_range(found_pos..found_pos + mat.len(), replacement);
-                count += 1;
-                pos = found_pos + replacement.len();
-
-                if pos >= self.len() {
-                    break;
-                }
-            } else {
-                break;
-            }
-        }
-
-        Ok(count)
     }
 
     // LSP Support (UTF-16 conversions)
@@ -3222,78 +3136,6 @@ impl TextBuffer {
 
             return pos + new_rel_pos;
         }
-    }
-
-    /// Find the previous word boundary
-    pub fn prev_word_boundary(&self, pos: usize) -> usize {
-        if pos == 0 {
-            return 0;
-        }
-
-        // Get some text before pos
-        let start = pos.saturating_sub(256);
-        let Some(bytes) = self.get_text_range(start, pos - start) else {
-            // Data unloaded, return pos as fallback
-            return pos;
-        };
-        let text = String::from_utf8_lossy(&bytes);
-
-        let mut found_word_char = false;
-        let chars: Vec<char> = text.chars().collect();
-
-        for i in (0..chars.len()).rev() {
-            let ch = chars[i];
-            let is_word_char = ch.is_alphanumeric() || ch == '_';
-
-            if found_word_char && !is_word_char {
-                // We've transitioned from word to non-word
-                // Calculate the byte position
-                let byte_offset: usize = chars[0..=i].iter().map(|c| c.len_utf8()).sum();
-                return start + byte_offset;
-            }
-
-            if is_word_char {
-                found_word_char = true;
-            }
-        }
-
-        0
-    }
-
-    /// Find the next word boundary
-    pub fn next_word_boundary(&self, pos: usize) -> usize {
-        let len = self.len();
-        if pos >= len {
-            return len;
-        }
-
-        // Get some text after pos
-        let end = (pos + 256).min(len);
-        let Some(bytes) = self.get_text_range(pos, end - pos) else {
-            // Data unloaded, return pos as fallback
-            return pos;
-        };
-        let text = String::from_utf8_lossy(&bytes);
-
-        let mut found_word_char = false;
-        let mut byte_offset = 0;
-
-        for ch in text.chars() {
-            let is_word_char = ch.is_alphanumeric() || ch == '_';
-
-            if found_word_char && !is_word_char {
-                // We've transitioned from word to non-word
-                return pos + byte_offset;
-            }
-
-            if is_word_char {
-                found_word_char = true;
-            }
-
-            byte_offset += ch.len_utf8();
-        }
-
-        len
     }
 
     /// Fill in the piece tree's line-feed count for `view`, if it is unknown
@@ -3664,13 +3506,6 @@ impl TextBuffer {
     /// - **Small files**: `line_starts = Some(vec)` → returns exact line number from metadata
     /// - **Large files**: `line_starts = None` → returns estimated line number (byte_offset / estimated_line_length)
     ///
-    /// ## Legacy Line Cache Methods:
-    /// These methods are now no-ops and can be removed in a future cleanup:
-    /// - `invalidate_line_cache_from()` - No-op (piece tree updates automatically)
-    /// - `handle_line_cache_insertion()` - No-op (piece tree updates automatically)
-    /// - `handle_line_cache_deletion()` - No-op (piece tree updates automatically)
-    /// - `clear_line_cache()` - No-op (can't clear piece tree metadata)
-    ///
     /// ## Bug Fix (2025-11):
     /// Previously this method always returned `0`, causing line numbers in the margin
     /// to always show 1, 2, 3... regardless of scroll position. Now it correctly returns
@@ -3679,31 +3514,6 @@ impl TextBuffer {
         // No-op for cache population: LineIndex maintains all line starts automatically
         // But we need to return the actual line number at start_byte for rendering
         self.get_line_number(start_byte)
-    }
-
-    /// Get cached byte offset for line (compatibility method)
-    pub fn get_cached_byte_offset_for_line(&self, line_number: usize) -> Option<usize> {
-        self.line_start_offset(line_number)
-    }
-
-    /// Invalidate line cache from offset (no-op in new implementation)
-    pub fn invalidate_line_cache_from(&mut self, _byte_offset: usize) {
-        // No-op: LineIndex updates automatically
-    }
-
-    /// Handle line cache insertion (no-op in new implementation)
-    pub fn handle_line_cache_insertion(&mut self, _byte_offset: usize, _bytes_inserted: usize) {
-        // No-op: LineIndex updates automatically during insert
-    }
-
-    /// Handle line cache deletion (no-op in new implementation)
-    pub fn handle_line_cache_deletion(&mut self, _byte_offset: usize, _bytes_deleted: usize) {
-        // No-op: LineIndex updates automatically during delete
-    }
-
-    /// Clear line cache (no-op in new implementation)
-    pub fn clear_line_cache(&mut self) {
-        // No-op: LineIndex can't be cleared
     }
 
     // Test helper methods
@@ -3724,12 +3534,6 @@ impl TextBuffer {
             s.as_bytes().to_vec(),
             std::sync::Arc::new(crate::model::filesystem::StdFileSystem),
         )
-    }
-
-    /// Create a new empty buffer for testing
-    #[cfg(test)]
-    pub fn new_test() -> Self {
-        Self::empty(std::sync::Arc::new(crate::model::filesystem::StdFileSystem))
     }
 }
 

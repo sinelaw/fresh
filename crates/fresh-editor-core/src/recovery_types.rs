@@ -211,18 +211,6 @@ impl RecoveryMetadata {
             "Unknown buffer".to_string()
         }
     }
-
-    /// Get a format description for display
-    pub fn format_description(&self) -> String {
-        if self.original_file_size > 0 {
-            format!(
-                "{} chunks, {} bytes original",
-                self.chunk_count, self.original_file_size
-            )
-        } else {
-            format!("{} bytes", self.content_size)
-        }
-    }
 }
 
 /// Session information stored in the lock file
@@ -303,29 +291,6 @@ impl RecoveryEntry {
             }
         }
         false
-    }
-
-    /// Get the age of this recovery file in seconds
-    pub fn age_seconds(&self) -> u64 {
-        let now = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
-        now.saturating_sub(self.metadata.updated_at)
-    }
-
-    /// Format the age as a human-readable string
-    pub fn age_display(&self) -> String {
-        let secs = self.age_seconds();
-        if secs < 60 {
-            format!("{secs}s ago")
-        } else if secs < 3600 {
-            format!("{}m ago", secs / 60)
-        } else if secs < 86400 {
-            format!("{}h ago", secs / 3600)
-        } else {
-            format!("{}d ago", secs / 86400)
-        }
     }
 }
 

@@ -294,29 +294,9 @@ impl TerminalModes {
         let _ = stdout().flush();
     }
 
-    /// Returns true if raw mode is enabled.
-    pub fn raw_mode_enabled(&self) -> bool {
-        self.raw_mode
-    }
-
-    /// Returns true if keyboard enhancement is enabled.
-    pub fn keyboard_enhancement_enabled(&self) -> bool {
-        self.keyboard_enhancement
-    }
-
     /// Returns true if mouse capture is enabled.
     pub fn mouse_capture_enabled(&self) -> bool {
         self.mouse_capture
-    }
-
-    /// Returns true if bracketed paste is enabled.
-    pub fn bracketed_paste_enabled(&self) -> bool {
-        self.bracketed_paste
-    }
-
-    /// Returns true if alternate screen is enabled.
-    pub fn alternate_screen_enabled(&self) -> bool {
-        self.alternate_screen
     }
 }
 
