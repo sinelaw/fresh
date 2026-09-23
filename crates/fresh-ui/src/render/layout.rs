@@ -127,6 +127,8 @@ impl<M: 'static> LayoutCx for UiLayoutCx<'_, M> {
             n.data.content = info.content;
             n.data.scroll_max = info.max;
             n.data.scroll_axis = info.axis;
+            n.data.scroll_step = info.step;
+            n.data.scroll_cap = info.cap;
             n.data.translate = info.translate;
             moved
         };
@@ -774,13 +776,31 @@ impl<M: 'static> Ui<M> {
         // re-arranged between commands — so the children's rectangles are
         // still the ones the last arrange produced, and it is that offset they
         // have to be read against.
+        // **Past the caps, not past the box.** A horizontal window reserves a
+        // cap's width at each end and places its content past the leading one,
+        // so the content's origin is inside the node's rectangle, not on it —
+        // while `here` and `ceiling` in the command loop count from the
+        // content's own zero. Measuring from `rect.x` put every band a cap
+        // further along than it is, and every `reveal_key` that many columns
+        // off (`a_horizontal_window_reveals_by_key_across`). The reservation is
+        // whatever the window did not keep for its view, halved: it is
+        // symmetric by construction, and reading it back this way asks the
+        // layout that made it rather than re-deriving the condition it made it
+        // under.
+        let inset = match axis {
+            crate::event::Axis::Vertical => 0,
+            crate::event::Axis::Horizontal => {
+                let view = vp.data.window.map_or(vp.data.rect.w, |w| w.w);
+                (vp.data.rect.w.saturating_sub(view) / 2) as i32
+            }
+        };
         Some(match axis {
             crate::event::Axis::Vertical => (
                 child.data.rect.y - vp.data.rect.y + arranged_at.y,
                 child.data.rect.h as i32,
             ),
             crate::event::Axis::Horizontal => (
-                child.data.rect.x - vp.data.rect.x + arranged_at.x,
+                child.data.rect.x - vp.data.rect.x - inset + arranged_at.x,
                 child.data.rect.w as i32,
             ),
         })
@@ -961,8 +981,12 @@ impl<M: 'static> Ui<M> {
                     // A window whose offset the owner holds snaps back to
                     // the owner's value in the pass below; the report is
                     // how the command reaches the owner at all.
+                    // Along the axis the window counts on. The generalisation
+                    // stopped here: a horizontal window reported its `y`, which
+                    // is always `0`, so an owner holding the offset was told
+                    // the window had gone back to the start and put it there.
                     let mut told = Vec::new();
-                    self.report_scroll(r, next.y, &mut told);
+                    self.report_scroll(r, main(axis, next), &mut told);
                     self.pending_messages.extend(told);
                 }
             }

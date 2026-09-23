@@ -682,8 +682,8 @@ impl crate::app::window::Window {
         // tab-scroll offset is never revisited. Use each split's real area
         // width (dock/explorer/split-aware), not the whole-window width, so
         // a half-width vertical split scrolls correctly too.
-        for (split_id, buffer_id, area) in visible {
-            self.ensure_active_tab_visible(split_id, buffer_id, area.width);
+        for (split_id, _buffer_id, _area) in visible {
+            self.reveal_active_tab(split_id);
         }
     }
 }

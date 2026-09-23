@@ -4226,155 +4226,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_ensure_active_tab_visible_static_offset() {
-        let config = Config::default();
-        let (dir_context, _temp) = test_dir_context();
-        let mut editor = Editor::new(
-            config,
-            80,
-            24,
-            dir_context,
-            crate::view::color_support::ColorCapability::TrueColor,
-            test_filesystem(),
-        )
-        .unwrap();
-        let split_id = editor.split_manager().active_split();
-
-        // Create three buffers with long names to force scrolling.
-        let buf1 = editor.new_buffer();
-        editor
-            .buffers_mut()
-            .get_mut(&buf1)
-            .unwrap()
-            .buffer
-            .rename_file_path(std::path::PathBuf::from("aaa_long_name_01.txt"));
-        let buf2 = editor.new_buffer();
-        editor
-            .buffers_mut()
-            .get_mut(&buf2)
-            .unwrap()
-            .buffer
-            .rename_file_path(std::path::PathBuf::from("bbb_long_name_02.txt"));
-        let buf3 = editor.new_buffer();
-        editor
-            .buffers_mut()
-            .get_mut(&buf3)
-            .unwrap()
-            .buffer
-            .rename_file_path(std::path::PathBuf::from("ccc_long_name_03.txt"));
-
-        {
-            use crate::view::split::TabTarget;
-            let view_state = editor.split_view_states_mut().get_mut(&split_id).unwrap();
-            view_state.open_buffers = vec![
-                TabTarget::Buffer(buf1),
-                TabTarget::Buffer(buf2),
-                TabTarget::Buffer(buf3),
-            ];
-            view_state.tab_scroll_offset = 50;
-        }
-
-        // Force active buffer to first tab and ensure helper brings it into view.
-        // Note: available_width must be >= tab width (2 + name_len) for offset to be 0
-        // Tab width = 2 + 20 (name length) = 22, so we need at least 22
-        editor
-            .active_window_mut()
-            .ensure_active_tab_visible(split_id, buf1, 25);
-        assert_eq!(
-            editor
-                .split_view_states()
-                .get(&split_id)
-                .unwrap()
-                .tab_scroll_offset,
-            0
-        );
-
-        // Now make the last tab active and ensure offset moves forward but stays bounded.
-        editor
-            .active_window_mut()
-            .ensure_active_tab_visible(split_id, buf3, 25);
-        let view_state = editor.split_view_states().get(&split_id).unwrap();
-        assert!(view_state.tab_scroll_offset > 0);
-        let buffer_ids: Vec<_> = view_state.buffer_tab_ids_vec();
-        let total_width: usize = buffer_ids
-            .iter()
-            .enumerate()
-            .map(|(idx, id)| {
-                let state = editor.buffers().get(id).unwrap();
-                let name_len = state
-                    .buffer
-                    .file_path()
-                    .and_then(|p| p.file_name())
-                    .and_then(|n| n.to_str())
-                    .map(|s| s.chars().count())
-                    .unwrap_or(0);
-                let tab_width = 2 + name_len;
-                if idx < buffer_ids.len() - 1 {
-                    tab_width + 1 // separator
-                } else {
-                    tab_width
-                }
-            })
-            .sum();
-        assert!(view_state.tab_scroll_offset <= total_width);
-    }
-
-    /// Regression for sinelaw/fresh#2650 (Part 2).
-    ///
-    /// In a vertical split each pane's tab bar is only as wide as the pane,
-    /// but `ensure_active_tab_visible` used to be fed `effective_tabs_width`
-    /// (the whole editor width), so the scroll math ran against ~2x the real
-    /// width. `split_tabs_width` must report the focused split's real pane
-    /// width (minus the split-control button columns, which the tab bar
-    /// reserves) instead — roughly half the editor after a vertical split.
-    #[test]
-    fn split_tabs_width_reports_per_split_pane_width() {
-        let config = Config::default();
-        let (dir_context, _temp) = test_dir_context();
-        let mut editor = Editor::new(
-            config,
-            80,
-            24,
-            dir_context,
-            crate::view::color_support::ColorCapability::TrueColor,
-            test_filesystem(),
-        )
-        .unwrap();
-
-        let full_width = editor.active_window().effective_tabs_width();
-
-        // Split vertically into two side-by-side panes.
-        editor.split_pane_vertical();
-
-        // The panes as the split's relayout placed them.
-        let panes: Vec<(crate::model::event::LeafId, u16)> = editor
-            .active_window()
-            .visible_panes()
-            .into_iter()
-            .map(|(leaf, _buf, area)| (leaf, area.width))
-            .collect();
-        assert_eq!(panes.len(), 2, "vertical split should yield two panes");
-
-        // Two side-by-side splits show the maximize + close buttons, so the tab
-        // bar reserves those columns; split_tabs_width reflects that.
-        let reserve = crate::view::ui::tabs::split_control_reserve(true, true);
-        for (leaf, pane_width) in &panes {
-            let w = editor.active_window().split_tabs_width(*leaf);
-            assert_eq!(
-                w,
-                pane_width.saturating_sub(reserve),
-                "split_tabs_width must equal the pane's real width minus the control-button reserve"
-            );
-            assert!(
-                w < full_width,
-                "each pane width ({}) must be narrower than the whole editor ({})",
-                w,
-                full_width
-            );
-        }
-    }
-
     /// A pane created by an action is placed before the frame that would
     /// paint it: the split's relayout lays the frame out once and the
     /// window retains where the panes are, so the neighbour query — which
@@ -4611,6 +4462,11 @@ mod tests {
     /// scroll offset was carried over from the pre-close state, so the only
     /// remaining tab sat to the left of the viewport and the tab bar
     /// looked empty.
+    ///
+    /// **The offset is not the editor's any more**, so there is none to seed
+    /// or to assert: the strip is a window and `reveal_active_tab` asks it to
+    /// show the tab the pane is on. What is left to check is that the close
+    /// leaves the right tab active — the fact the reveal is made from.
     #[test]
     fn close_others_re_anchors_tab_scroll_to_surviving_tab() {
         let config = Config::default();
@@ -4644,9 +4500,8 @@ mod tests {
             buffers.push(id);
         }
 
-        // Make the last buffer the active one and seed a scrolled offset
-        // — what the renderer would have computed mid-session — then mark
-        // it as the surviving "keep" tab.
+        // Make the last buffer the active one, then mark it as the surviving
+        // "keep" tab.
         let keep = buffers[5];
         editor
             .active_window_mut()
@@ -4659,37 +4514,22 @@ mod tests {
                 .iter()
                 .map(|b| TabTarget::Buffer(*b))
                 .collect::<Vec<_>>();
-            view_state.tab_scroll_offset = 80;
         }
 
         editor.close_other_tabs_in_split(keep, split_id);
 
-        // Only the kept tab remains. Its visual range is [0, tab_width)
-        // and it must be inside the viewport — i.e. the offset must fit
-        // within the total tab strip width.
+        // Only the kept tab remains, which is what the strip is asked to
+        // reveal. Where that puts its window is the window's answer and is
+        // pinned in `shell::tabs`, not here.
         let view_state = editor.split_view_states().get(&split_id).unwrap();
-        let remaining_targets = view_state.buffer_tab_ids_vec();
         assert_eq!(
-            remaining_targets,
+            view_state.buffer_tab_ids_vec(),
             vec![keep],
             "Close Others should leave only the kept buffer"
         );
-        let name_len = editor
-            .buffers()
-            .get(&keep)
-            .unwrap()
-            .buffer
-            .file_path()
-            .and_then(|p| p.file_name())
-            .and_then(|n| n.to_str())
-            .map(|s| s.chars().count())
-            .unwrap_or(0);
-        let kept_tab_width = 2 + name_len;
-        assert!(
-            view_state.tab_scroll_offset < kept_tab_width,
-            "scroll offset {} must keep the {}-wide kept tab in view (without the fix it stays at 80)",
-            view_state.tab_scroll_offset,
-            kept_tab_width,
+        assert_eq!(
+            view_state.active_buffer, keep,
+            "and it is the tab the pane is on, so it is the tab revealed"
         );
     }
 }

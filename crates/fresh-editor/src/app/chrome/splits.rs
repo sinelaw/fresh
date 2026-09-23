@@ -733,20 +733,19 @@ impl Editor {
         )
     }
 
-    /// Whether `pane`'s tabs run past the strip's right edge — the marker the
-    /// strip's layout leaves in the tree when they do.
-    fn tab_strip_overflows(&self, pane: LeafId) -> bool {
-        self.shell_ui
-            .as_ref()
-            .and_then(|ui| ui.find_by_key(&crate::view::shell::tabs::overflow_key(pane)))
-            .is_some()
-    }
-
-    /// Step a pane's strip by `delta` notches, stopping at the last tab.
-    pub(crate) fn scroll_pane_tab_strip(&mut self, pane: LeafId, delta: i32) {
-        let overflows = self.tab_strip_overflows(pane);
-        self.active_window_mut()
-            .scroll_tab_strip(pane, delta, overflows);
+    /// Pan a pane's tab strip by `delta` notches.
+    ///
+    /// **A message to the window, not a number the editor keeps.** This used
+    /// to add to `SplitViewState::tab_scroll_offset` and clamp it against a
+    /// second measurement of every tab; the strip is a window now, so the
+    /// editor asks it to move and the window says how far it can. The wheel
+    /// is still the editor's — it dismisses the transient popups and fires
+    /// the plugin hook on its way — which is why it is a fact at all.
+    pub(crate) fn pan_pane_tab_strip(&mut self, pane: LeafId, delta: i32) {
+        let step = crate::view::shell::tabs::TAB_SCROLL_STEP_COLUMNS as i32;
+        self.active_window()
+            .tab_reveal_for(pane)
+            .scroll_by(delta.signum() * step);
     }
 
     /// A right press on a tab raises its context menu, just below the cell

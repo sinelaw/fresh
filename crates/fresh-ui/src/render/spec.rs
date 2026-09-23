@@ -252,6 +252,11 @@ pub enum Draw {
         /// Which edge this cap is on: the one the content came from, or the
         /// one it continues towards.
         end: End,
+        /// The pointer is on this cap. A cap is a button — it steps the
+        /// window — so it says so, and the theme it carries is already the
+        /// hovered one (see `Node::bar_hover_theme`); a backend that draws
+        /// hover for itself has the fact too.
+        hovered: bool,
     },
     /// A region whose text the backend may let the user select. The library
     /// holds no selection model; this only says where selecting is meaningful.

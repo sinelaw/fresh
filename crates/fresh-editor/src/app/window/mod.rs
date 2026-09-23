@@ -636,6 +636,16 @@ pub struct Window {
     /// handle per pane for as long as the pane exists, so the leaf is never
     /// replaced (design §3.7.1).
     pub(crate) panes: HashMap<LeafId, crate::view::shell::buffer_host::PaneHandle>,
+    /// One reveal handle per pane's tab strip, for as long as the pane
+    /// exists — an `Anchor` binds to its element on mount, so a fresh one
+    /// each frame would bind to nothing.
+    ///
+    /// This is what is left of `tab_scroll_offset` as a live mechanism: the
+    /// window's position is the window's, and the editor's only say is which
+    /// tab to show. `RefCell` because `pane_strips` builds the description
+    /// from `&self`, the same reason `Editor::prose_reveal` is one.
+    pub(crate) tab_reveal:
+        std::cell::RefCell<HashMap<LeafId, std::rc::Rc<fresh_ui::behavior::Anchor>>>,
 
     /// Per-window editor-chrome layout cache: status bar, menu,
     /// popups, prompt overlay, full-frame cell-theme map. Each
@@ -2423,6 +2433,7 @@ impl Window {
             composite_buffers: HashMap::new(),
             composite_view_states: HashMap::new(),
             panes: HashMap::new(),
+            tab_reveal: Default::default(),
             chrome_layout: ChromeLayout::default(),
             terminal_width: 80,
             terminal_height: 24,
@@ -2691,42 +2702,6 @@ impl Window {
         }
     }
 
-    /// Width of the tab bar for a *specific* split.
-    ///
-    /// [`effective_tabs_width`](Self::effective_tabs_width) returns the whole
-    /// editor-content width; but in a vertical split each pane's tab strip is
-    /// only as wide as that pane (`tabs_rect.width == split_area.width`).
-    /// Feeding the full width to the tab-scroll math makes a half-width split
-    /// scroll against ~2x its real width, so it under-scrolls and the ">"
-    /// overflow indicator disagrees with what's visible. This returns the
-    /// focused split's real pane width, falling back to
-    /// [`effective_tabs_width`](Self::effective_tabs_width) when the split
-    /// isn't in the current visible layout (e.g. hidden behind a maximized
-    /// sibling).
-    pub fn split_tabs_width(&self, split_id: LeafId) -> u16 {
-        match self.buffers.splits() {
-            Some((mgr, _)) => {
-                let visible = self.visible_panes();
-                let Some((_, _, area)) = visible.iter().find(|(id, _, _)| *id == split_id) else {
-                    return self.effective_tabs_width();
-                };
-                // The split-control (maximize / close) buttons are painted over
-                // the right edge of the tab row; reserve their columns here so
-                // the scroll math measures against the same width the tab bar
-                // actually lays tabs into (fresh#2768). Mirror the show-flags in
-                // `render_split_tab_bar`.
-                let has_multiple_splits = visible.len() > 1;
-                let is_maximized = mgr.is_maximized();
-                let show_maximize = has_multiple_splits || is_maximized;
-                let show_close = has_multiple_splits && !is_maximized;
-                let reserve =
-                    crate::view::ui::tabs::split_control_reserve(show_maximize, show_close);
-                area.width.saturating_sub(reserve)
-            }
-            None => self.effective_tabs_width(),
-        }
-    }
-
     /// Where the last layout put this window's panes. See the field.
     pub fn pane_rects(&self) -> &crate::view::shell::geometry::PaneRects {
         &self.pane_rects
@@ -2877,10 +2852,17 @@ impl Window {
     /// holds the group. `hover` is the tab under the pointer, by target,
     /// pane and whether it is the close button — the frame's, or none for a
     /// grid nothing points at.
+    /// `ui` is the frame before this one, and the only thing read off it is
+    /// each strip window's outer width — what decides whether the tabs fit
+    /// with their names whole. `None` (a window with no laid-out tree of its
+    /// own, such as one painted as an embed) shows whole names, which the
+    /// window can scroll across.
     pub(crate) fn pane_strips(
         &self,
         chrome: &HashMap<LeafId, crate::view::shell::splits::PaneChrome>,
         hover: Option<(crate::view::split::TabTarget, LeafId, bool)>,
+        hover_plus: Option<LeafId>,
+        ui: Option<&fresh_ui::Ui<crate::view::shell::msg::UiMsg>>,
     ) -> HashMap<LeafId, crate::view::shell::tabs::Strip> {
         use crate::view::shell::tabs::{Strip, Tab};
         use crate::view::split::TabTarget;
@@ -2903,15 +2885,10 @@ impl Window {
             if !chrome.get(&leaf).is_some_and(|c| c.tabs) {
                 continue;
             }
-            let (targets, offset, active) = match vs_map.get(&leaf) {
-                Some(vs) => (
-                    vs.open_buffers.clone(),
-                    vs.tab_scroll_offset,
-                    vs.active_target(),
-                ),
+            let (targets, active) = match vs_map.get(&leaf) {
+                Some(vs) => (vs.open_buffers.clone(), vs.active_target()),
                 None => (
                     vec![TabTarget::Buffer(buffer_id)],
-                    0,
                     TabTarget::Buffer(buffer_id),
                 ),
             };
@@ -2922,7 +2899,7 @@ impl Window {
                 &self.composite_buffers,
                 &group_names,
             );
-            let tabs = targets
+            let tabs: Vec<Tab> = targets
                 .iter()
                 .filter_map(|t| {
                     let name = names.get(t)?.clone();
@@ -2943,6 +2920,19 @@ impl Window {
                     })
                 })
                 .collect();
+            // The room the last frame gave this strip's window, against what
+            // these tabs measure uncapped. The window's *outer* width: it is
+            // what the strip row leaves after the control cluster, so it does
+            // not move with the names and the answer cannot feed itself.
+            let cap_names = ui
+                .and_then(|ui| {
+                    let k = crate::view::shell::tabs::tab_window_key(leaf);
+                    let w = ui.find_by_key(&k).map(|e| ui.rect_of(e).w)?;
+                    Some(
+                        crate::view::shell::tabs::natural_width(&tabs, &preview_label) > w as usize,
+                    )
+                })
+                .unwrap_or(false);
             out.insert(
                 leaf,
                 Strip {
@@ -2950,12 +2940,53 @@ impl Window {
                     active: Some(active),
                     active_pane: leaf == active_split,
                     hover: hover.and_then(|(t, pane, close)| (pane == leaf).then_some((t, close))),
-                    offset,
+                    hover_plus: hover_plus == Some(leaf),
+                    cap_names,
+                    reveal: Some(self.tab_reveal_for(leaf)),
                     preview_label: preview_label.clone(),
                 },
             );
         }
         out
+    }
+
+    /// The pane's tab-strip reveal handle, made on first sight of the pane
+    /// and kept for as long as it lives. See the field.
+    pub(crate) fn tab_reveal_for(&self, pane: LeafId) -> std::rc::Rc<fresh_ui::behavior::Anchor> {
+        self.tab_reveal
+            .borrow_mut()
+            .entry(pane)
+            .or_insert_with(fresh_ui::behavior::Anchor::new)
+            .clone()
+    }
+
+    /// Ask `pane`'s strip to show the tab it is now on.
+    ///
+    /// **The editor's whole say in where the strip sits.** This was
+    /// `ensure_active_tab_visible`, which resolved every tab's name, measured
+    /// every label, summed the widths, found the active tab's column and
+    /// moved an offset the editor kept — a second measurement of the strip,
+    /// run at a width the caller had to supply and get right (hence
+    /// `split_tabs_width`, and its comment about mirroring the painter's
+    /// show-flags). Which tab to show is a fact about the pane; where that
+    /// puts the window is the window's answer, and this asks for it.
+    pub(crate) fn reveal_active_tab(&self, pane: LeafId) {
+        let Some((_, vs_map)) = self.buffers.splits() else {
+            return;
+        };
+        let Some(vs) = vs_map.get(&pane) else { return };
+        let active = vs.active_target();
+        // **On the last tab, show the end of the strip.** The `+` follows the
+        // last tab, so revealing the tab alone would leave the button one cell
+        // past the window's edge — visible only after a nudge, on the very
+        // strip where "new tab" is what you reach for next. Revealing the
+        // button brings the tab with it: they are adjacent, and the window
+        // moves the shortest distance that holds what it was asked for.
+        let key = match vs.open_buffers.last() == Some(&active) {
+            true => crate::view::shell::tabs::new_tab_key(pane),
+            false => crate::view::shell::tabs::tab_span_key(pane, active),
+        };
+        self.tab_reveal_for(pane).reveal_key(key);
     }
 
     /// The pane's handle, made on first sight of the pane.
@@ -3007,8 +3038,13 @@ impl Window {
     }
 
     /// Drop the handles of panes that no longer exist.
+    ///
+    /// Both of them: a pane's strip-reveal `Anchor` is made on first sight of
+    /// the pane exactly as its `PaneHandle` is, so it goes when the pane does
+    /// rather than sitting in the map for the window's lifetime.
     pub(crate) fn retain_pane_handles(&mut self, live: impl Fn(LeafId) -> bool) {
         self.panes.retain(|pane, _| live(*pane));
+        self.tab_reveal.borrow_mut().retain(|pane, _| live(*pane));
     }
 
     /// Forget every pane's rows: a setting changed what a row shows, and the

@@ -492,9 +492,18 @@ pub struct ViewportProps {
     pub overlay: bool,
     /// Appearance of the bar itself, named apart from the window's.
     pub bar_theme: Option<Rc<str>>,
+    /// Appearance of an overflow cap while the pointer is on it. See
+    /// [`Node::bar_hover_theme`].
+    pub bar_hover_theme: Option<Rc<str>>,
     pub mode: ScrollMode,
     /// Which way this window scrolls. See [`Node::scroll_axis`].
     pub axis: crate::event::Axis,
+    /// How far a press on an overflow cap moves the window, in the offset's
+    /// unit. `0` means one windowful. See [`Node::scroll_step`].
+    pub step: u16,
+    /// How wide one overflow cap is, in cells. `0` means one. See
+    /// [`Node::scroll_cap_width`].
+    pub cap: u16,
 }
 
 /// Whether a gesture region absorbs pointer hits that land on it.
@@ -1892,6 +1901,52 @@ impl<M> Node<M> {
     pub fn scroll_axis(mut self, a: crate::event::Axis) -> Self {
         if let Desc::Viewport(p) = &mut self.desc {
             p.axis = a;
+        }
+        self
+    }
+
+    /// What an overflow cap paints in while the pointer is on it. Falls back
+    /// to [`Node::scrollbar_theme`] when unset.
+    ///
+    /// A cap is a button, so it lights like one; and because the library is
+    /// what knows the pointer is on it (the cap is not a node — it exists
+    /// because the *window* knows there is more that way), the library is what
+    /// picks between the two names the surface gave it.
+    pub fn scrollbar_hover_theme(mut self, name: impl AsRef<str>) -> Self {
+        match &mut self.desc {
+            Desc::Viewport(p) => p.bar_hover_theme = Some(Rc::from(name.as_ref())),
+            _ => panic!("scrollbar_hover_theme() applies to Viewport nodes only"),
+        }
+        self
+    }
+
+    /// How far a press on an overflow cap moves the window, in the unit its
+    /// offset counts. Default: one windowful.
+    ///
+    /// **A policy, not a measurement.** A windowful is what pressing a
+    /// scrollbar's track means, and it is the right default for a window onto
+    /// a document. It is the wrong one for a strip of tabs, where the cap is a
+    /// nudge and a screenful skips past everything you were looking for — so
+    /// the surface that has an opinion states it, in cells it chose rather
+    /// than in cells it measured.
+    pub fn scroll_step(mut self, cells: u16) -> Self {
+        if let Desc::Viewport(p) = &mut self.desc {
+            p.step = cells;
+        }
+        self
+    }
+
+    /// How wide one overflow cap is, in cells. Default: one.
+    ///
+    /// **A cap is a button, and a button is as wide as the buttons beside
+    /// it.** One cell is enough to say "there is more this way", and it is
+    /// what a window whose neighbours are content wants. A window whose
+    /// neighbours are *buttons* — the tab strip, whose `+` is a padded label —
+    /// wants a cap the pointer meets at the same size, so it says so here and
+    /// the measure reserves that many cells at each end instead of one.
+    pub fn scroll_cap_width(mut self, cells: u16) -> Self {
+        if let Desc::Viewport(p) = &mut self.desc {
+            p.cap = cells;
         }
         self
     }

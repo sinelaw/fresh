@@ -1546,7 +1546,7 @@ impl Editor {
                 // likes — a chevron, a fade at the edge. The glyph the
                 // terminal uses is not carried: unlike a rule, there is no
                 // single character this *is*.
-                Draw::Overflow { axis, end } => {
+                Draw::Overflow { axis, end, .. } => {
                     horizontal = matches!(axis, fresh_ui::Axis::Horizontal);
                     (
                         match end {

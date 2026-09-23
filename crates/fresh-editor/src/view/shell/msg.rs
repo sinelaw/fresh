@@ -256,11 +256,6 @@ pub enum UiFact {
     /// The pointer was released while a tab's name held it: the drop, if the
     /// drag ever passed its threshold.
     PaneTabDrop,
-    /// The `<` or `>` at a strip's edge: step the strip one notch.
-    PaneTabsScroll {
-        pane: LeafId,
-        delta: i32,
-    },
     /// The `+` after the last tab: the new-tab menu, just below it.
     PaneNewTab {
         pane: LeafId,

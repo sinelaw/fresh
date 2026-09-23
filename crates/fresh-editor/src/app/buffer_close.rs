@@ -993,9 +993,8 @@ impl Editor {
         else {
             return;
         };
-        let tabs_width = self.active_window().split_tabs_width(split_id);
-        self.active_window_mut()
-            .ensure_active_tab_visible(split_id, active_buffer, tabs_width);
+        let _ = active_buffer;
+        self.active_window().reveal_active_tab(split_id);
     }
 
     /// Set status message for batch close operations

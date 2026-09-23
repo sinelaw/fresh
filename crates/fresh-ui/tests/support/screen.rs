@@ -167,16 +167,19 @@ fn draw(s: &mut Screen, item: &Item, frame: Rect, fill_char: &impl Fn(&str) -> O
             }
         }
         // "There is more content this way", as the terminal draws it.
-        Draw::Overflow { axis, end } => {
+        Draw::Overflow { axis, end, .. } => {
             let g = match (axis, end) {
                 (fresh_ui::Axis::Horizontal, fresh_ui::End::Before) => "<",
                 (fresh_ui::Axis::Horizontal, fresh_ui::End::After) => ">",
                 (fresh_ui::Axis::Vertical, fresh_ui::End::Before) => "^",
                 (fresh_ui::Axis::Vertical, fresh_ui::End::After) => "v",
             };
+            // One glyph, centred on the cap's own cells — the terminal fold
+            // draws it the same way, and a cap can be wider than one cell.
             let clip = clip.intersect(r);
+            let x = r.x + (r.w.saturating_sub(1) / 2) as i32;
             for y in r.y..r.y + r.h as i32 {
-                s.put_symbol(r.x, y, g, 1, clip);
+                s.put_symbol(x, y, g, 1, clip);
             }
         }
         Draw::Scrim(Scrim::Opaque) => fill(s, frame, ' ', frame),

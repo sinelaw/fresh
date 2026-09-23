@@ -6166,7 +6166,12 @@ impl Editor {
             }
             _ => None,
         };
-        self.active_window().pane_strips(chrome, hover)
+        let hover_plus = match &self.shell_hover {
+            Some(crate::app::types::HoverTarget::NewTabButton(pane)) => Some(*pane),
+            _ => None,
+        };
+        self.active_window()
+            .pane_strips(chrome, hover, hover_plus, self.shell_ui.as_ref())
     }
 
     /// Each visible pane's leaf handle, for the frame's description — the
@@ -6273,7 +6278,7 @@ impl Editor {
             hscroll: false,
         });
         let groups = win.pane_groups();
-        let strips = win.pane_strips(&chrome, None);
+        let strips = win.pane_strips(&chrome, None, None, None);
         let rowless: std::collections::HashSet<_> = groups.keys().copied().collect();
         let hosts = win.pane_hosts(&rowless);
         Some(std::rc::Rc::new(Splits {

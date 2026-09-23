@@ -3471,12 +3471,13 @@
   <rect x="423" y="504" width="9" height="18" fill="#141414"/>
   <rect x="432" y="504" width="9" height="18" fill="#141414"/>
   <rect x="441" y="504" width="9" height="18" fill="#141414"/>
-  <text x="442" y="518" fill="#ffffff" class="terminal" style="">.</text>
+  <text x="442" y="518" fill="#ffffff" class="terminal" style="">A</text>
   <rect x="450" y="504" width="9" height="18" fill="#141414"/>
-  <text x="451" y="518" fill="#ffffff" class="terminal" style="">.</text>
+  <text x="451" y="518" fill="#ffffff" class="terminal" style="">d</text>
   <rect x="459" y="504" width="9" height="18" fill="#141414"/>
-  <text x="460" y="518" fill="#ffffff" class="terminal" style="">.</text>
+  <text x="460" y="518" fill="#ffffff" class="terminal" style="">d</text>
   <rect x="468" y="504" width="9" height="18" fill="#141414"/>
+  <text x="469" y="518" fill="#ffffff" class="terminal" style="">…</text>
   <rect x="477" y="504" width="9" height="18" fill="#141414"/>
   <rect x="486" y="504" width="9" height="18" fill="#141414"/>
   <text x="487" y="518" fill="#ffffff" class="terminal" style="">L</text>
