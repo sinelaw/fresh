@@ -7472,8 +7472,8 @@ function toggleSelectCurrent(): void {
   }
   const isBulk = selectedSessions().length >= 2;
   if (!wasBulk && isBulk) {
-    // Entering bulk mode — land focus on a bulk button (Up/Down from
-    // a button still drives the list, so navigation keeps working).
+    // Entering bulk mode — land focus on a bulk button (the list is
+    // one Shift+Tab or ↑/↓ walk away).
     openPanel.setFocusKey("bulk-archive");
   } else if (wasBulk && !isBulk) {
     // Back to single preview — restore focus to Visit.
@@ -17473,17 +17473,11 @@ editor.on("widget_event", (e) => {
             return;
           }
         }
-        // Up/Down on a focused action button (Stop / Archive /
-        // Delete / Details / +New Session) routes to the sessions
-        // list via the host's smart-key dispatch but leaves focus
-        // on the button. Snap focus back to Visit so the user can
-        // press Enter to open the newly-highlighted session — the
-        // dialog's whole reason for being. Idempotent when focus
-        // is already on Visit. Skipped in bulk mode and during a
-        // confirm, where "visit" isn't in the spec.
-        if (selectedSessions().length < 2 && !openDialog.pendingConfirm) {
-          openPanel.setFocusKey("visit");
-        }
+        // Focus stays where it is: the arrows reach the list by moving
+        // focus onto it (it is a focus stop of its own), and Enter on it
+        // opens the highlighted row as Visit does. (Snapping focus back to
+        // Visit here made every next ↓ start from Visit again, so the list
+        // could never move past one row.)
       }
       return;
     }

@@ -3498,11 +3498,14 @@ mod tests {
         select_theme_dropdown(&mut state);
         state.activate_control();
         let initial = dropdown_selected(&state);
-        press(&mut state, KeyCode::Down);
+        // The theme starts on the last option and the list's highlight is
+        // clamped at its ends, so the move is up.
+        assert!(initial > 0);
+        press(&mut state, KeyCode::Up);
 
         press(&mut state, KeyCode::Enter);
         assert!(!state.is_dropdown_open());
-        assert_eq!(dropdown_selected(&state), initial + 1);
+        assert_eq!(dropdown_selected(&state), initial - 1);
         assert!(state.has_changes());
     }
 
