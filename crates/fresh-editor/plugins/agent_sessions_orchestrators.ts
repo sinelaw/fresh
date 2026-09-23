@@ -1,18 +1,12 @@
 /// <reference path="./lib/fresh.d.ts" />
 
 /**
- * Orca, Superset and super.engineering scanners for the agent-sessions hub.
- * All three run agents in one git worktree per task and keep state under `$HOME`.
+ * Orca scanner for the agent-sessions hub. Orca runs agents in one git
+ * worktree per task and keeps its state under `$HOME`.
  *
  * Orca: user data at `$ORCA_USER_DATA`, else `$XDG_DATA_HOME/Orca`, else
  * `~/.orca`. One JSON file per profile with `worktreeMeta` keyed by worktree id.
  * `agent-hooks/` marks that Orca manages agents even when no state file parses.
- *
- * Superset: `~/.superset/sessions/<workspace>` (each its own git repo) and
- * `host/<org>/manifest.json` with the local host's endpoint and token. The
- * token is deliberately not read: a discovery pass must not use credentials.
- *
- * super.engineering: macOS only, read through `sc list --json`.
  */
 
 import {
@@ -21,7 +15,6 @@ import {
   readHeaders,
   registerScanner,
   type CollectedSession,
-  type ScanContext,
   type ScannerReport,
 } from "./lib/agent_scanner.ts";
 
@@ -93,6 +86,8 @@ registerScanner({
           id,
           title: meta.name ?? meta.branch ?? id,
           cwd: meta.path,
+          // A worktree Orca ran an agent in: Import opens a workspace on it.
+          openable: true,
           path: entry.path,
           mtime: entry.mtime,
           evidence: [
@@ -114,100 +109,4 @@ registerScanner({
   },
 });
 
-registerScanner({
-  id: "superset",
-  displayName: "Superset",
-
-  async scan(machine: FreshMachine): Promise<ScannerReport> {
-    const problems: string[] = [];
-    const root = joinPath(machine, machine.home, ".superset");
-
-    const walk = await machine.walkTree(root, {
-      includeHidden: true,
-      includeDirs: true,
-      maxDepth: 3,
-      maxEntries: 2000,
-    });
-    if (walk.entries.length === 0) {
-      return { sessions: [], installed: false, problems };
-    }
-
-    const sessions: CollectedSession[] = walk.entries
-      .filter((e) => e.kind === "dir" && /^sessions\/[^/]+$/.test(e.rel))
-      .map((entry) => ({
-        id: entry.rel.slice("sessions/".length),
-        title: entry.rel.slice("sessions/".length),
-        cwd: entry.path,
-        path: entry.path,
-        mtime: entry.mtime,
-        evidence: [
-          { locator: entry.path, saying: "Superset session workspace (its own git repo)" },
-        ],
-      }));
-
-    for (const manifest of walk.entries.filter((e) => e.rel.endsWith("manifest.json"))) {
-      problems.push(
-        `${manifest.path}: a Superset host manifest is present; its endpoint is not queried and its token is deliberately not read`,
-      );
-    }
-
-    return { sessions, installed: true, problems };
-  },
-});
-
-registerScanner({
-  id: "super-engineering",
-  displayName: "super.engineering",
-
-  async scan(machine: FreshMachine, ctx: ScanContext): Promise<ScannerReport> {
-    const problems: string[] = [];
-
-    // Off macOS this is unsupported, not "not installed".
-    if (machine.platform !== "macos" && machine.platform !== "") {
-      return { sessions: [], installed: false, unsupported: "ships for macOS only", problems };
-    }
-
-    // `sc list` is the only source: worktrees live in an app-support database.
-    if (!ctx.allowCommands) {
-      return { sessions: [], installed: false, problems };
-    }
-
-    const listed = await machine.run("sc", ["list", "--json"]);
-    if (listed.code !== 0) {
-      if (listed.stderr.trim()) problems.push(`sc list --json: ${listed.stderr.trim()}`);
-      return { sessions: [], installed: false, problems };
-    }
-
-    let rows: unknown;
-    try {
-      rows = JSON.parse(listed.stdout) as unknown;
-    } catch (e) {
-      problems.push(`sc list --json: ${e instanceof Error ? e.message : String(e)}`);
-      return { sessions: [], installed: true, problems };
-    }
-    if (!Array.isArray(rows)) {
-      problems.push("sc list --json did not return an array");
-      return { sessions: [], installed: true, problems };
-    }
-
-    const sessions: CollectedSession[] = [];
-    for (const row of rows as Record<string, unknown>[]) {
-      const id = typeof row["id"] === "string" ? row["id"] : undefined;
-      if (!id) continue;
-      // The worktree path key varies by build.
-      const cwd = ["worktree", "path", "directory"]
-        .map((key) => row[key])
-        .find((value): value is string => typeof value === "string" && value.length > 0);
-      sessions.push({
-        id,
-        title: typeof row["name"] === "string" ? row["name"] : id,
-        cwd,
-        evidence: [{ locator: "sc list --json", saying: `super.engineering session ${id}` }],
-      });
-    }
-
-    return { sessions, installed: true, problems };
-  },
-});
-
-editor.debug("agent-sessions: Orca, Superset and super.engineering scanners registered");
+editor.debug("agent-sessions: Orca scanner registered");

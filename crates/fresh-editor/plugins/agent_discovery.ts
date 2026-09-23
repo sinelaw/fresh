@@ -23,6 +23,9 @@ import {
   discoverVisibleRowCount,
   quoteForAgentCmd,
   DISCOVER_INDENT_COLS,
+  DISCOVER_TREE_GLYPH_COLS,
+  discoverColumnTitles,
+  discoverHeaderEntry,
   type DiscoverGrouping,
   type DiscoverVerb,
   type DiscoverRow,
@@ -84,13 +87,15 @@ function fieldNote(note: string): WidgetSpec {
 const DISCOVER_MODE = "agent-discovery";
 
 
+// The panel's share of the terminal width.
+const DISCOVER_WIDTH_PCT = 70;
 // The panel's share of the terminal height.
 const DISCOVER_HEIGHT_PCT = 90;
 // Rows the dialog spends on everything but the results: borders and title
 // (3), the top padding (1), machine and filter rows (2), the spacer under
-// them (1), the results' own frame (2), the footer's spacer, rule and spacer
+// them (1), the results' own frame (2) and column header (1), the footer's spacer, rule and spacer
 // (3), the close row (1) and a note with its spacer (2).
-const DISCOVER_CHROME_ROWS = 15;
+const DISCOVER_CHROME_ROWS = 16;
 // Fewest result rows shown, however small the terminal.
 const DISCOVER_MIN_TREE_ROWS = 8;
 
@@ -98,6 +103,16 @@ const DISCOVER_MIN_TREE_ROWS = 8;
  *  the scan found: as many as the panel has room for, so a modest answer
  *  opens up without scrolling. Sized off the whole terminal, which is what
  *  the centred panel's `heightPct` is a share of. */
+/** The row width the list has room for before its buttons: the panel, less
+ *  its frame, the list's indent and frame, the tree's fold glyph, and the
+ *  `[ Import ]` button with its gap. */
+function discoverRowRoom(): number {
+  const w = editor.getScreenSize().width;
+  const panel = Math.floor((w > 0 ? w : 120) * DISCOVER_WIDTH_PCT / 100);
+  const button = measure(`[ ${t("discover.btn_import")} ]`) + 2;
+  return panel - 2 - 2 - 4 - DISCOVER_TREE_GLYPH_COLS - button - 2;
+}
+
 function discoverTreeRows(): number {
   const h = editor.getScreenSize().height;
   const panel = Math.floor((h > 0 ? h : 30) * DISCOVER_HEIGHT_PCT / 100);
@@ -248,7 +263,10 @@ function buildDiscoverSpec(): WidgetSpec {
   } else {
     // Measured over every row, so the columns line up down the whole
     // answer rather than within each heading.
-    const layout = discoverLayout(rows, measure);
+    const layout = discoverLayout(rows, measure, discoverRowRoom());
+    // What the columns are: the heading says the rest.
+    const many = (st.scans?.length ?? 0) > 1;
+    results.push(raw([discoverHeaderEntry(discoverColumnTitles(st.grouping, many, t), layout, measure)]));
     // Headings start collapsed so hundreds of sessions fit one screen.
     // `visibleRows` must be given: an auto-sized tree draws nothing here.
     results.push(
@@ -354,7 +372,7 @@ function openDiscoverDialog(): void {
 function mountDiscoverPanel(): void {
   discoverPanel = new FloatingWidgetPanel();
   discoverPanel.mount(buildDiscoverSpec(), {
-    widthPct: 70,
+    widthPct: DISCOVER_WIDTH_PCT,
     heightPct: DISCOVER_HEIGHT_PCT,
     focusMarker: true,
     labelAlign: "right",

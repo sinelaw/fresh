@@ -12707,11 +12707,11 @@ function applyMachinePick(index: number): void {
 
 /** How `agent` rejoins session `id`, per the agent registry. `exact` is false
  *  for an agent with no id-addressed resume (codex `resume --last` takes the
- *  newest session in the directory). */
+ *  newest session in the directory), and when no id is known (empty). */
 function resumeArgv(agent: string, id: string): { argv: string[]; exact: boolean } | null {
   const entry = agentEntryForCmd(agent);
   if (!entry) return null;
-  if (entry.spec.provision) {
+  if (entry.spec.provision && id) {
     return {
       argv: [agent, ...entry.spec.provision.resumeArgs.map((a) => a.replace("{id}", id))],
       exact: true,

@@ -33,7 +33,13 @@
     "discover.btn_close": "Затваряне",
     "discover.status_prefix": "Оркестратор: %{msg}",
     "discover.add_machine": "Добавяне на машина…",
-    "discover.sessions": "Сесии"
+    "discover.sessions": "Сесии",
+    "discover.col_session": "Сесия",
+    "discover.col_tool": "Инструмент",
+    "discover.col_branch": "Клон",
+    "discover.col_project": "Проект",
+    "discover.col_directory": "Директория",
+    "discover.col_machine": "Машина"
   },
   "cs": {
     "discover.scanning": "Hledání relací agentů…",
@@ -69,7 +75,13 @@
     "discover.btn_close": "Zavřít",
     "discover.status_prefix": "Import relací: %{msg}",
     "discover.add_machine": "Přidat stroj…",
-    "discover.sessions": "Relace"
+    "discover.sessions": "Relace",
+    "discover.col_session": "Relace",
+    "discover.col_tool": "Nástroj",
+    "discover.col_branch": "Větev",
+    "discover.col_project": "Projekt",
+    "discover.col_directory": "Adresář",
+    "discover.col_machine": "Stroj"
   },
   "de": {
     "discover.scanning": "Suche nach Agent-Sitzungen…",
@@ -105,7 +117,13 @@
     "discover.btn_close": "Schließen",
     "discover.status_prefix": "Sitzungen importieren: %{msg}",
     "discover.add_machine": "Maschine hinzufügen…",
-    "discover.sessions": "Sitzungen"
+    "discover.sessions": "Sitzungen",
+    "discover.col_session": "Sitzung",
+    "discover.col_tool": "Werkzeug",
+    "discover.col_branch": "Branch",
+    "discover.col_project": "Projekt",
+    "discover.col_directory": "Verzeichnis",
+    "discover.col_machine": "Maschine"
   },
   "en": {
     "discover.scanning": "Scanning for agent sessions…",
@@ -141,7 +159,13 @@
     "discover.btn_close": "Close",
     "discover.status_prefix": "Import sessions: %{msg}",
     "discover.add_machine": "Add machine…",
-    "discover.sessions": "Sessions"
+    "discover.sessions": "Sessions",
+    "discover.col_session": "Session",
+    "discover.col_tool": "Tool",
+    "discover.col_branch": "Branch",
+    "discover.col_project": "Project",
+    "discover.col_directory": "Directory",
+    "discover.col_machine": "Machine"
   },
   "es": {
     "discover.scanning": "Buscando sesiones de agente…",
@@ -177,7 +201,13 @@
     "discover.btn_close": "Cerrar",
     "discover.status_prefix": "Importar sesiones: %{msg}",
     "discover.add_machine": "Añadir máquina…",
-    "discover.sessions": "Sesiones"
+    "discover.sessions": "Sesiones",
+    "discover.col_session": "Sesión",
+    "discover.col_tool": "Herramienta",
+    "discover.col_branch": "Rama",
+    "discover.col_project": "Proyecto",
+    "discover.col_directory": "Directorio",
+    "discover.col_machine": "Máquina"
   },
   "fr": {
     "discover.scanning": "Recherche de sessions d’agent…",
@@ -213,7 +243,13 @@
     "discover.btn_close": "Fermer",
     "discover.status_prefix": "Importer des sessions : %{msg}",
     "discover.add_machine": "Ajouter une machine…",
-    "discover.sessions": "Sessions"
+    "discover.sessions": "Sessions",
+    "discover.col_session": "Session",
+    "discover.col_tool": "Outil",
+    "discover.col_branch": "Branche",
+    "discover.col_project": "Projet",
+    "discover.col_directory": "Répertoire",
+    "discover.col_machine": "Machine"
   },
   "it": {
     "discover.scanning": "Ricerca di sessioni agente…",
@@ -249,7 +285,13 @@
     "discover.btn_close": "Chiudi",
     "discover.status_prefix": "Importa sessioni: %{msg}",
     "discover.add_machine": "Aggiungi macchina…",
-    "discover.sessions": "Sessioni"
+    "discover.sessions": "Sessioni",
+    "discover.col_session": "Sessione",
+    "discover.col_tool": "Strumento",
+    "discover.col_branch": "Branch",
+    "discover.col_project": "Progetto",
+    "discover.col_directory": "Directory",
+    "discover.col_machine": "Macchina"
   },
   "ja": {
     "discover.scanning": "エージェントセッションを検索中…",
@@ -285,7 +327,13 @@
     "discover.btn_close": "閉じる",
     "discover.status_prefix": "セッションをインポート: %{msg}",
     "discover.add_machine": "マシンを追加…",
-    "discover.sessions": "セッション"
+    "discover.sessions": "セッション",
+    "discover.col_session": "セッション",
+    "discover.col_tool": "ツール",
+    "discover.col_branch": "ブランチ",
+    "discover.col_project": "プロジェクト",
+    "discover.col_directory": "ディレクトリ",
+    "discover.col_machine": "マシン"
   },
   "ko": {
     "discover.scanning": "에이전트 세션을 검색하는 중…",
@@ -321,7 +369,13 @@
     "discover.btn_close": "닫기",
     "discover.status_prefix": "세션 가져오기: %{msg}",
     "discover.add_machine": "머신 추가…",
-    "discover.sessions": "세션"
+    "discover.sessions": "세션",
+    "discover.col_session": "세션",
+    "discover.col_tool": "도구",
+    "discover.col_branch": "브랜치",
+    "discover.col_project": "프로젝트",
+    "discover.col_directory": "디렉터리",
+    "discover.col_machine": "머신"
   },
   "pt-BR": {
     "discover.scanning": "Procurando sessões de agente…",
@@ -357,7 +411,13 @@
     "discover.btn_close": "Fechar",
     "discover.status_prefix": "Importar sessões: %{msg}",
     "discover.add_machine": "Adicionar máquina…",
-    "discover.sessions": "Sessões"
+    "discover.sessions": "Sessões",
+    "discover.col_session": "Sessão",
+    "discover.col_tool": "Ferramenta",
+    "discover.col_branch": "Branch",
+    "discover.col_project": "Projeto",
+    "discover.col_directory": "Diretório",
+    "discover.col_machine": "Máquina"
   },
   "ru": {
     "discover.scanning": "Поиск сессий агентов…",
@@ -393,7 +453,13 @@
     "discover.btn_close": "Закрыть",
     "discover.status_prefix": "Импорт сессий: %{msg}",
     "discover.add_machine": "Добавить машину…",
-    "discover.sessions": "Сессии"
+    "discover.sessions": "Сессии",
+    "discover.col_session": "Сессия",
+    "discover.col_tool": "Инструмент",
+    "discover.col_branch": "Ветка",
+    "discover.col_project": "Проект",
+    "discover.col_directory": "Каталог",
+    "discover.col_machine": "Машина"
   },
   "th": {
     "discover.scanning": "กำลังค้นหาเซสชันเอเจนต์…",
@@ -429,7 +495,13 @@
     "discover.btn_close": "ปิด",
     "discover.status_prefix": "นำเข้าเซสชัน: %{msg}",
     "discover.add_machine": "เพิ่มเครื่อง…",
-    "discover.sessions": "เซสชัน"
+    "discover.sessions": "เซสชัน",
+    "discover.col_session": "เซสชัน",
+    "discover.col_tool": "เครื่องมือ",
+    "discover.col_branch": "แบรนช์",
+    "discover.col_project": "โปรเจกต์",
+    "discover.col_directory": "ไดเรกทอรี",
+    "discover.col_machine": "เครื่อง"
   },
   "uk": {
     "discover.scanning": "Пошук сесій агентів…",
@@ -465,7 +537,13 @@
     "discover.btn_close": "Закрити",
     "discover.status_prefix": "Імпорт сеансів: %{msg}",
     "discover.add_machine": "Додати машину…",
-    "discover.sessions": "Сеанси"
+    "discover.sessions": "Сеанси",
+    "discover.col_session": "Сеанс",
+    "discover.col_tool": "Інструмент",
+    "discover.col_branch": "Гілка",
+    "discover.col_project": "Проєкт",
+    "discover.col_directory": "Каталог",
+    "discover.col_machine": "Машина"
   },
   "vi": {
     "discover.scanning": "Đang tìm phiên tác nhân…",
@@ -501,7 +579,13 @@
     "discover.btn_close": "Đóng",
     "discover.status_prefix": "Nhập phiên: %{msg}",
     "discover.add_machine": "Thêm máy…",
-    "discover.sessions": "Phiên"
+    "discover.sessions": "Phiên",
+    "discover.col_session": "Phiên",
+    "discover.col_tool": "Công cụ",
+    "discover.col_branch": "Nhánh",
+    "discover.col_project": "Dự án",
+    "discover.col_directory": "Thư mục",
+    "discover.col_machine": "Máy"
   },
   "zh-CN": {
     "discover.scanning": "正在查找代理会话…",
@@ -537,6 +621,12 @@
     "discover.btn_close": "关闭",
     "discover.status_prefix": "导入会话：%{msg}",
     "discover.add_machine": "添加机器…",
-    "discover.sessions": "会话"
+    "discover.sessions": "会话",
+    "discover.col_session": "会话",
+    "discover.col_tool": "工具",
+    "discover.col_branch": "分支",
+    "discover.col_project": "项目",
+    "discover.col_directory": "目录",
+    "discover.col_machine": "机器"
   }
 }

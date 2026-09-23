@@ -61,6 +61,18 @@ interface Snapshot {
   workspaces?: WorkspaceSnapshot[];
 }
 
+/** The command an agent Herdr names runs as (`claude`, `codex`, …): what the
+ *  orchestrator's resume registry keys on. */
+function herdrAgentCommand(name: string | undefined): string | undefined {
+  const n = (name ?? "").toLowerCase();
+  if (!n) return undefined;
+  if (n.includes("claude")) return "claude";
+  if (n.includes("codex")) return "codex";
+  if (n.includes("opencode")) return "opencode";
+  if (n.includes("aider")) return "aider";
+  return n.split(/[\s/]/)[0];
+}
+
 /** Panes in id order, from both the current and the legacy shape. */
 function panesOf(workspace: WorkspaceSnapshot): { id: string; pane: PaneSnapshot }[] {
   const out: { id: string; pane: PaneSnapshot }[] = [];
@@ -141,8 +153,12 @@ registerScanner({
               cwd: pane.cwd ?? workspace.identity_cwd,
               path: entry.path,
               mtime: entry.mtime,
-              // A `path` kind names a transcript, which the hub cannot key on.
-              agentSessionId: agent?.kind === "id" ? agent.value : undefined,
+              // The agent the pane runs, so Import can rejoin it: by its own
+              // session id when Herdr recorded one, else (empty id) the newest
+              // session in the pane's directory. A `path` kind names a
+              // transcript, which cannot be resumed by.
+              agent: herdrAgentCommand(agent?.agent ?? pane.managed_agent_kind ?? pane.agent_name),
+              agentSessionId: agent?.kind === "id" ? agent.value : "",
               evidence: [
                 {
                   locator: entry.path,

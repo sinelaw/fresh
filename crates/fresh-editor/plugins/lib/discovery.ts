@@ -114,6 +114,9 @@ export interface DiscoverScan {
 export type DiscoverVerb =
   | { kind: "attach"; argv: string[] }
   | { kind: "resume"; argv: string[]; exact: boolean }
+  /** A folder with no agent to rejoin (an Orca worktree): the form opens on
+   *  it and the agent is chosen there. */
+  | { kind: "open"; argv: string[] }
   | { kind: "none"; why: string };
 
 /** The problems heading's key; the filter's auto-expand leaves it alone. */
@@ -141,8 +144,11 @@ export function discoverVerbFor(
     return { kind: "attach", argv: [session.attach.program, ...session.attach.args] };
   }
   const agent = session.agent ?? "";
+  if (!agent && session.openable && session.cwd) return { kind: "open", argv: [] };
   if (!agent) return { kind: "none", why: t("discover.no_resume_none") };
-  const resume = resumeArgv(agent, session.id);
+  // A row that records another tool's session (a Herdr pane running Claude)
+  // resumes that one; an empty id there means "the newest in the directory".
+  const resume = resumeArgv(agent, session.agentSessionId ?? session.id);
   if (!resume) return { kind: "none", why: t("discover.no_resume_unknown", { agent }) };
   return { kind: "resume", argv: resume.argv, exact: resume.exact };
 }
@@ -388,6 +394,10 @@ export interface DiscoverLayout {
 export function discoverLayout(
   rows: DiscoverRow[],
   measure: (s: string) => number,
+  /** The row width the list has room for. A table wider than this is cut
+   *  by the list itself, at the row's end — on top of a path's own cut at
+   *  its start — so the columns are narrowed to fit instead. */
+  room = 140,
 ): DiscoverLayout {
   const widths = new Map<DiscoverFamily, number[]>();
   for (const r of rows) {
@@ -397,15 +407,61 @@ export function discoverLayout(
     });
     widths.set(r.family, w);
   }
+  const limit = Math.max(24, Math.min(140, room));
   let natural = 0;
   for (const [family, w] of widths) {
     // The tree draws the child indent, but it still costs the row width.
     const indent = family === "group" ? 0 : DISCOVER_INDENT_COLS;
     const gaps = Math.max(0, w.length - 1) * DISCOVER_COL_GAP;
-    natural = Math.max(natural, indent + gaps + w.reduce((a, b) => a + b, 0));
+    const used = (): number => indent + gaps + w.reduce((a, b) => a + b, 0);
+    // Too wide: the widest column gives a column at a time, so the long
+    // path goes before the short name and branch do.
+    while (used() > limit) {
+      const widest = w.indexOf(Math.max(...w));
+      if (w[widest] <= DISCOVER_COL_MIN) break;
+      w[widest] -= 1;
+    }
+    natural = Math.max(natural, used());
   }
-  return { widths, total: Math.max(48, Math.min(140, natural)) };
+  return { widths, total: Math.max(Math.min(48, limit), Math.min(limit, natural)) };
 }
+
+/** The narrowest a column is squeezed to when the table must fit. */
+export const DISCOVER_COL_MIN = 8;
+
+/** What each column of a session row holds, for the header over the list:
+ *  the heading already says the rest. */
+export function discoverColumnTitles(grouping: DiscoverGrouping, manyMachines: boolean, t: Translate): string[] {
+  const titles = [t("discover.col_session")];
+  if (grouping === "project") titles.push(t("discover.col_tool"), t("discover.col_branch"));
+  else if (grouping === "branch") titles.push(t("discover.col_project"), t("discover.col_tool"));
+  else titles.push(t("discover.col_directory"), t("discover.col_branch"));
+  if (manyMachines) titles.push(t("discover.col_machine"));
+  return titles;
+}
+
+/** The header row: each title over its column of session rows, where the
+ *  tree draws those rows (past its fold glyph and the child indent, and the
+ *  row's two-column mark). */
+export function discoverHeaderEntry(
+  titles: string[],
+  layout: DiscoverLayout,
+  measure: (s: string) => number,
+): TextPropertyEntry {
+  const widths = layout.widths.get("session") ?? [];
+  const style = { fg: "ui.menu_disabled_fg", bold: true };
+  const segments: StyledSegment[] = [{ text: " ".repeat(DISCOVER_TREE_GLYPH_COLS + DISCOVER_INDENT_COLS + 2) }];
+  titles.forEach((title, i) => {
+    const width = Math.max(0, (widths[i] ?? measure(title)) - (i === 0 ? 2 : 0));
+    const text = discoverElide(title, width, "head", measure);
+    const last = i === titles.length - 1;
+    segments.push({ text: last ? text : text + " ".repeat(Math.max(0, width - measure(text)) + DISCOVER_COL_GAP), style });
+  });
+  return styledRow(segments);
+}
+
+/** Columns the tree spends on its fold glyph (`▶ `) before a row's text. */
+export const DISCOVER_TREE_GLYPH_COLS = 2;
 
 /** `text` cut to `width` columns, with `…` marking the cut. Which end goes
  *  is the cell's: a path keeps its tail, a name its head. */
@@ -446,7 +502,7 @@ export function discoverRowEntry(
 ): TextPropertyEntry {
   const dim = { fg: "ui.menu_disabled_fg" };
   const group = discoverIsGroup(r);
-  const inert = !group && (!r.session || r.verb?.kind !== "attach" && r.verb?.kind !== "resume");
+  const inert = !group && (!r.session || !r.verb || r.verb.kind === "none");
   const widths = layout.widths.get(r.family) ?? [];
   const indent = group ? 0 : DISCOVER_INDENT_COLS;
   const segments: StyledSegment[] = [];
@@ -480,7 +536,7 @@ export function discoverRowEntry(
 export function discoverRowAction(r: DiscoverRow, t: Translate): string | null {
   if (discoverIsGroup(r) || !r.session) return null;
   const kind = r.verb?.kind;
-  return kind === "attach" || kind === "resume" ? t("discover.btn_import") : null;
+  return kind && kind !== "none" ? t("discover.btn_import") : null;
 }
 
 /** Quote one argv element for the form's command field. `splitAgentCmd` has
