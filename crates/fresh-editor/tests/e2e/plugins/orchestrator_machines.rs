@@ -265,3 +265,74 @@ fn import_sessions_survives_a_cancelled_add() {
             )
         });
 }
+
+/// **The selected machine gets a section of its own, and Remove asks first.**
+/// Cancel keeps the machine; Remove forgets it.
+#[test]
+fn removing_a_machine_asks_first() {
+    let data_home = tempfile::tempdir().unwrap();
+    crate::common::launch_form::plant_saved_ssh_machine(
+        &data_home.path().join("data"),
+        "m-gpu",
+        "gpubox",
+        "noam@10.4.2.19",
+    );
+    let mut harness = editor_with_ssh_config(&data_home, "");
+    open_machines_dialog(&mut harness);
+    harness
+        .wait_until(|h| h.screen_to_string().contains("gpubox"))
+        .unwrap();
+    // Local is first; the saved machine follows it.
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("GPUBOX"))
+        .unwrap_or_else(|_| {
+            panic!(
+                "the selected machine should head its own section. Screen:\n{}",
+                harness.screen_to_string()
+            )
+        });
+    harness.assert_screen_contains("noam@10.4.2.19");
+
+    focus_stop(&mut harness, "▸ [ Remove…");
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| {
+            h.screen_to_string()
+                .contains("Remove gpubox from Machines?")
+        })
+        .unwrap();
+    // Focus lands on Cancel, so a stray Enter keeps the machine.
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| {
+            !h.screen_to_string()
+                .contains("Remove gpubox from Machines?")
+        })
+        .unwrap();
+    harness.assert_screen_contains("gpubox");
+
+    focus_stop(&mut harness, "▸ [ Remove…");
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    focus_stop(&mut harness, "▸ [ Remove ]");
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("┌ Machines") && !s.contains("gpubox")
+        })
+        .unwrap_or_else(|_| {
+            panic!(
+                "Remove should forget the machine. Screen:\n{}",
+                harness.screen_to_string()
+            )
+        });
+}

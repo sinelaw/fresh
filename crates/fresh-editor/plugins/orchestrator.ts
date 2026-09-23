@@ -11764,7 +11764,14 @@ registerHandler("orchestrator_repositories", () => openRepositoriesDialog({}));
 
 const MACHINES_MODE = "orchestrator-machines";
 let machinesPanel: FloatingWidgetPanel | null = null;
-let machinesState: { index: number; focus: string } | null = null;
+// `confirmRemove`: the selected machine's Remove… was pressed and waits for a
+// yes. `testing`: the row key whose connection test is still running.
+let machinesState: {
+  index: number;
+  focus: string;
+  confirmRemove: boolean;
+  testing: string | null;
+} | null = null;
 
 /** A machine picked for the next form to open on. `undefined` = nobody
  *  asked, so the last one used applies. */
@@ -11969,12 +11976,19 @@ function openMachinesDialog(): void {
   invalidateMachines();
   yieldDockToDialog();
   const idx = machinesState?.index ?? 0;
-  machinesState = { index: Math.min(idx, machinesRows().length - 1), focus: "machines" };
+  machinesState = {
+    index: Math.min(idx, machinesRows().length - 1),
+    focus: "machines",
+    confirmRemove: false,
+    testing: null,
+  };
   machinesPanel = new FloatingWidgetPanel();
+  // The Projects dialog's frame and grid, so the two managers read alike.
   machinesPanel.mount(buildMachinesSpec(), {
-    widthPct: 70,
+    widthPct: FORM_WIDTH_PCT,
     heightPct: 70,
     focusMarker: true,
+    labelAlign: "right",
     title: editor.t("machine.list_title"),
     closable: true,
   });
@@ -12022,54 +12036,143 @@ function machinesRowEntry(r: MachinesRow): TextPropertyEntry {
     ? { text: pad(editor.t("machine.test_ok"), 12), style: { fg: "ui.help_key_fg" } }
     : { text: pad(`✗ ${agoText(m.lastTest.at)}`, 12), style: { fg: "diagnostic.error_fg" } };
   const n = machineWorkspaceCount(m);
-  const tail = r.host
-    ? editor.t("machine.host_not_added")
-    : n > 0
-    ? editor.t("machine.workspaces", { n: String(n) })
-    : "—";
+  // A config host is not a machine yet: that, not a test result, is its state.
+  const state = r.host
+    ? { text: pad(editor.t("machine.not_added"), 12), style: { fg: "diagnostic.warning_fg" } }
+    : test;
   return styledRow([
     { text: pad(m.name, 13) },
     { text: pad(machineKindTag(m), 5), style: dim },
     { text: pad(r.host ? sshResolvedTarget(r.host) : machineSummary(m), 30), style: dim },
-    test,
-    { text: tail, style: dim },
+    state,
+    { text: !r.host && n > 0 ? editor.t("machine.workspaces", { n: String(n) }) : "", style: dim },
   ]);
 }
 
+// Laid out like the Projects dialog: `+ Add machine…`, the list in its own
+// box, then the selected machine under its name with what can be done to it
+// and what is known about it, and one `Close` to leave.
 function buildMachinesSpec(): WidgetSpec {
   const st = machinesState!;
   const rows = machinesRows();
-  const sel = rows[st.index];
-  const editable = !!sel?.machine;
-  const testable = !!sel?.machine || !!sel?.host;
-  const removable = !!sel?.machine;
-  // On a config host the one thing to do is add it; a workspace comes after.
-  const primary = sel?.host
-    ? button(editor.t("machine.btn_add_host"), { intent: "primary", key: "machines-add-host" })
-    : button(editor.t("machine.btn_new_here"), { intent: "primary", key: "machines-new" });
-  return col(
-    list({
-      items: rows.map(machinesRowEntry),
-      itemKeys: rows.map((r) => r.key),
-      selectedIndex: st.index,
-      visibleRows: Math.min(8, rows.length),
-      key: "machines",
-    }),
-    spacer(0),
-    button(`+ ${editor.t("machine.add")}`, { key: "machines-add" }),
-    spacer(0),
+  const sel = rows[st.index] ?? null;
+  const kids: WidgetSpec[] = [
+    ...gap(),
+    row(spacer(2), actionButton(`+ ${editor.t("machine.add")}`, "machines-add")),
+    ...gap(),
+    row(spacer(2), labeledSection({
+      label: editor.t("machine.list_count", { count: String(rows.length) }),
+      child: list({
+        items: rows.map(machinesRowEntry),
+        itemKeys: rows.map((r) => r.key),
+        selectedIndex: st.index,
+        visibleRows: Math.min(8, rows.length),
+        key: "machines",
+      }),
+    })),
+    ...gap(),
+  ];
+  if (sel) kids.push(...machineDetailRows(st, sel), ...gap());
+  kids.push(
+    footerRule(),
+    ...gap(),
     endRow(
-      withAccel(primary, "⏎"),
-      spacer(2),
-      button(editor.t("machine.btn_edit"), { key: "machines-edit", disabled: !editable }),
-      spacer(2),
-      button(editor.t("machine.btn_test"), { key: "machines-test", disabled: !testable }),
-      spacer(2),
-      button(editor.t("machine.btn_remove"), { intent: "danger", key: "machines-remove", disabled: !removable }),
-      spacer(2),
-      withAccel(button(editor.t("machine.btn_close"), { key: "machines-close" }), "Esc"),
+      withAccel(button(`  ${editor.t("machine.btn_close")}  `, { intent: "primary", key: "machines-close" }), "Esc"),
+      spacer(3),
     ),
+    ...gap(),
   );
+  return col(...kids);
+}
+
+// The selected row's section: its actions, then its facts.
+function machineDetailRows(
+  st: NonNullable<typeof machinesState>,
+  r: MachinesRow,
+): WidgetSpec[] {
+  const name = r.machine?.name ?? r.host?.alias ?? editor.t("machine.local");
+  const out: WidgetSpec[] = [
+    label(`  ${name.toUpperCase()} ${"─".repeat(400)}`, { style: SECTION_STYLE }),
+    ...gap(),
+  ];
+  const fact = (key: string, value: string): WidgetSpec =>
+    label(`${formLabel(key).padStart(FORM_LABEL_W)}: ${value}`, { wrap: true });
+  // The actions start at the section's indent, not the field column: four
+  // buttons do not fit after a label gutter in a normal-width panel.
+  const actions = (...kids: WidgetSpec[]): WidgetSpec => row(spacer(4), ...kids);
+
+  if (st.confirmRemove && r.machine) {
+    out.push(
+      label(`    ⚠ ${editor.t("machine.remove_confirm", { name })}`, { style: WARN_STYLE, wrap: true }),
+      actions(
+        actionButton(editor.t("form.btn_cancel_short"), "machines-remove-no"),
+        spacer(3),
+        button(editor.t("machine.btn_remove"), { intent: "danger", key: "machines-remove-yes" }),
+      ),
+    );
+    return out;
+  }
+
+  if (r.host) {
+    // A config host: the one thing to do is add it; testing first is fine.
+    out.push(
+      actions(
+        actionButton(editor.t("machine.btn_add_host"), "machines-add-host"),
+        spacer(3),
+        actionButton(editor.t("machine.btn_test"), "machines-test"),
+      ),
+      ...gap(),
+      label(editor.t("machine.not_added_note"), { labelWidth: FORM_LABEL_W, style: NOTE_STYLE, wrap: true }),
+      fact("machine.resolves_to", sshResolvedTarget(r.host)),
+      machineTestFact(st, r, machineForHost(r.host)),
+    );
+    return out;
+  }
+
+  if (!r.machine) {
+    out.push(
+      fact("machine.where", editor.t("machine.local_summary")),
+      fact("machine.workspaces_label", String(localWorkspaceCount())),
+    );
+    return out;
+  }
+
+  const m = r.machine;
+  out.push(
+    actions(
+      actionButton(editor.t("machine.btn_edit_more"), "machines-edit"),
+      spacer(3),
+      actionButton(editor.t("machine.btn_test"), "machines-test"),
+      spacer(3),
+      actionButton(editor.t("machine.btn_remove_more"), "machines-remove"),
+    ),
+    ...gap(),
+    fact(m.kind === "ssh" ? "machine.target" : "form.ro_pod", machineSummary(m)),
+  );
+  if (m.path) out.push(fact("machine.path", m.path));
+  out.push(
+    machineTestFact(st, r, m),
+    fact("machine.workspaces_label", String(machineWorkspaceCount(m))),
+  );
+  return out;
+}
+
+// `Last test: ✓ connected · Linux · 2m ago`, or that it is running, or never ran.
+function machineTestFact(
+  st: NonNullable<typeof machinesState>,
+  r: MachinesRow,
+  m: Machine,
+): WidgetSpec {
+  const lbl = label(`${formLabel("machine.last_test").padStart(FORM_LABEL_W)}:`);
+  const value = (text: string, style: Partial<OverlayOptions>): WidgetSpec =>
+    row(lbl, label(text, { style, wrap: true }));
+  if (st.testing === r.key) return value(`… ${editor.t("machine.testing")}`, NOTE_STYLE);
+  const t = m.lastTest;
+  if (!t) return value(editor.t("machine.never_tested"), NOTE_STYLE);
+  const when = agoText(t.at);
+  return t.ok
+    ? value(`✓ ${editor.t("machine.connected")} · ${t.summary} · ${when}`, { fg: "ui.help_key_fg" })
+    : value(`✗ ${t.summary} · ${when}`, { fg: "diagnostic.error_fg" });
 }
 
 function renderMachinesDialog(): void {
@@ -12083,14 +12186,14 @@ function machinesSelected(): MachinesRow | null {
   return machinesState ? machinesRows()[machinesState.index] ?? null : null;
 }
 
-function newWorkspaceOnSelected(): void {
+// Enter on a row: its first action. A config host is added, a saved machine
+// edited; Local has nothing to do.
+function openSelectedMachine(): void {
   const row = machinesSelected();
-  if (!row) return;
-  if (row.host) return addSelectedHost();
-  pendingFormMachine = { kind: "option", key: row.machine ? row.machine.id : "local" };
-  closeMachinesDialog();
-  dockBlurred = true;
-  openForm({ fromPicker: true });
+  if (row?.host) return addSelectedHost();
+  if (!row?.machine) return;
+  closeMachinesDialogKeepDock();
+  openMachineDialog(row.machine, "machines");
 }
 
 // Save the selected config host as a machine: Add Machine, seeded from it.
@@ -12103,23 +12206,30 @@ function addSelectedHost(): void {
 
 function testSelectedMachine(): void {
   const row = machinesSelected();
-  if (!row) return;
+  const st = machinesState;
+  if (!row || !st || (!row.host && !row.machine)) return;
+  st.testing = row.key;
+  renderMachinesDialog();
+  const done = (): void => {
+    if (machinesState && machinesState.testing === row.key) machinesState.testing = null;
+    renderMachinesDialog();
+  };
   if (row.host) {
     const alias = row.host.alias;
     void testMachine(machineForHost(row.host)).then((r) => {
       sshHostTests.set(alias, { ok: r.ok, at: Date.now(), summary: r.summary });
-      renderMachinesDialog();
+      done();
     });
     return;
   }
-  if (!row.machine) return;
-  const m = row.machine;
+  const m = row.machine!;
   void testMachine(m).then((r) => {
     const cur = machineById(m.id);
-    if (!cur) return;
-    cur.lastTest = { ok: r.ok, at: Date.now(), summary: r.summary };
-    upsertMachine(cur);
-    renderMachinesDialog();
+    if (cur) {
+      cur.lastTest = { ok: r.ok, at: Date.now(), summary: r.summary };
+      upsertMachine(cur);
+    }
+    done();
   });
 }
 
@@ -12130,7 +12240,7 @@ editor.defineMode(MACHINES_MODE, MACHINES_MODE_BINDINGS, true, true);
 
 registerHandler("orchestrator_machines_enter", () => {
   if (!machinesPanel || !machinesState) return;
-  if (machinesState.focus === "machines" || machinesState.focus === "") return newWorkspaceOnSelected();
+  if (machinesState.focus === "machines" || machinesState.focus === "") return openSelectedMachine();
   machinesPanel.command(activate());
 });
 
@@ -12151,10 +12261,13 @@ function handleMachinesEvent(e: WidgetEvt): void {
     if (e.event_type === "select" && idx >= 0) {
       const changed = idx !== st.index;
       st.index = idx;
-      if (changed) renderMachinesDialog();
+      if (changed) {
+        st.confirmRemove = false;
+        renderMachinesDialog();
+      }
     } else if (e.event_type === "activate") {
       if (idx >= 0) st.index = idx;
-      newWorkspaceOnSelected();
+      openSelectedMachine();
     }
     return;
   }
@@ -12178,18 +12291,28 @@ function handleMachinesEvent(e: WidgetEvt): void {
     case "machines-test":
       testSelectedMachine();
       return;
-    case "machines-remove": {
+    case "machines-remove":
+      if (!machinesSelected()?.machine) return;
+      st.confirmRemove = true;
+      renderMachinesDialog();
+      machinesPanel?.setFocusKey("machines-remove-no");
+      return;
+    case "machines-remove-no":
+      st.confirmRemove = false;
+      renderMachinesDialog();
+      machinesPanel?.setFocusKey("machines");
+      return;
+    case "machines-remove-yes": {
       const row = machinesSelected();
+      st.confirmRemove = false;
       if (row?.machine) {
         removeMachine(row.machine.id);
         st.index = Math.min(st.index, machinesRows().length - 1);
-        renderMachinesDialog();
       }
+      renderMachinesDialog();
+      machinesPanel?.setFocusKey("machines");
       return;
     }
-    case "machines-new":
-      newWorkspaceOnSelected();
-      return;
     case "machines-close":
       closeMachinesDialog();
       return;
