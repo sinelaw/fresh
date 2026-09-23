@@ -218,7 +218,7 @@ impl<'a> BodyPainter<'a> {
                 prepared.unwrap_or_else(|| {
                     // The panes at the boxes the tree placed them in —
                     // not a second layout of the grid.
-                    let base_visible = rects.visible(&mgr.visible_leaves());
+                    let base_visible = mgr.visible_leaves();
                     let pass = prepare_content(
                         rects,
                         &base_visible,
@@ -260,23 +260,22 @@ impl<'a> BodyPainter<'a> {
         // A pane the tree mounts and the pass does not list: the window's
         // splits changed under the description. It paints nothing rather than
         // painting a stale leaf's buffer.
-        let Some(mut pane) = pass.visible.iter().copied().find(|(_, id, ..)| *id == leaf) else {
+        let Some(pane) = pass.visible.iter().copied().find(|(_, id, ..)| *id == leaf) else {
             return;
         };
-        // **The fold's rect is the content leaf's.** The pane's box — the
-        // strip and the bars the painter still fills beside the content — is
-        // read off the same tree the leaf was placed in (`PaneRects`), so the
-        // two are one layout's answers; the content rect the pass carves from
-        // that box is asserted equal to this one in `paint_leaf`.
+        // **The fold's rect is the content leaf's.** The pane's box and its
+        // content slot are both read off the tree the leaf was placed in
+        // (`PaneRects`), so they are one layout's two answers, and `paint_leaf`
+        // takes the content slot from the same read rather than carving one of
+        // its own. This says the fold agrees with what it will paint into.
         debug_assert_eq!(
             self.rects.content(leaf),
             Some(rect),
             "pane {leaf:?}: the fold's rect is not the content slot the tree placed"
         );
-        let Some(pane_box) = self.rects.pane(leaf) else {
+        if self.rects.pane(leaf).is_none() {
             return;
-        };
-        pane.3 = pane_box;
+        }
         let state = self.state;
         let window = self.window;
         let contents = &mut self.contents;
@@ -296,7 +295,7 @@ impl<'a> BodyPainter<'a> {
         // grid over the mirror the text pass drew, or — for text — the fade
         // at the pane's scrolled edges. Per pane, inside the host's callback,
         // so the fold is the frame's one paint (design §3.3).
-        let (_, _, buffer_id, _, _) = pane;
+        let (_, _, buffer_id, _) = pane;
         let live_terminal = !self.scrollback.contains(&leaf)
             && self
                 .editor
@@ -586,7 +585,7 @@ pub fn reconcile_body(
         pane_chrome,
         &described_panes,
         |facts, stores, mgr| {
-            let base_visible = rects.visible(&mgr.visible_leaves());
+            let base_visible = mgr.visible_leaves();
             let pass = prepare_content(
                 rects,
                 &base_visible,
