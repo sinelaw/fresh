@@ -254,6 +254,7 @@ impl WidgetImpl for Text {
             completions,
             completion_scroll_offset,
             completion_navigated,
+            completion_selected_index,
             ..
         }) = panel.instance_states.get_mut(widget_key)
         {
@@ -268,6 +269,13 @@ impl WidgetImpl for Text {
                 let max_scroll = total.saturating_sub(visible.min(total));
                 let next = (*completion_scroll_offset as i32 + delta).clamp(0, max_scroll as i32);
                 *completion_scroll_offset = next as u32;
+                // The window follows the highlight on every layout
+                // (`popup_list::window`), so the highlight rides along with
+                // the wheel — kept inside the rows now shown — or the next
+                // layout would pull the window straight back to it.
+                let last = (next as u32 + visible.min(total)).saturating_sub(1) as usize;
+                *completion_selected_index =
+                    (*completion_selected_index).clamp(next as usize, last);
                 return true;
             }
         }
