@@ -847,6 +847,7 @@ fn mouse_click_on_dock_new_button_opens_form() {
     h.mouse_click(4, new_row).unwrap();
     h.wait_until(|h| h.screen_to_string().contains(launch_form::FORM_TITLE))
         .unwrap();
+    launch_form::choose_terminal_agent(&mut h);
     h.assert_screen_contains("New Workspace");
     // The dock and the centered form occupy disjoint slots, so opening
     // the form must NOT tear down the dock — its header stays painted in
@@ -875,6 +876,7 @@ fn dock_alt_n_opens_form_keyboard_and_dock_stays() {
     h.send_key(KeyCode::Char('n'), KeyModifiers::ALT).unwrap();
     h.wait_until(|h| h.screen_to_string().contains(launch_form::FORM_TITLE))
         .unwrap();
+    launch_form::choose_terminal_agent(&mut h);
     h.assert_screen_contains("New Workspace");
     h.assert_screen_contains("+ New");
 
@@ -920,6 +922,7 @@ fn dock_enter_on_focused_button_runs_button_action() {
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
     h.wait_until(|h| h.screen_to_string().contains(launch_form::FORM_TITLE))
         .unwrap();
+    launch_form::choose_terminal_agent(&mut h);
     h.assert_screen_contains("New Workspace");
 }
 
@@ -1410,6 +1413,7 @@ fn new_session_form_swallows_doubleclick_no_buffer_leak() {
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
     h.wait_until(|h| h.screen_to_string().contains(launch_form::FORM_TITLE))
         .unwrap();
+    launch_form::choose_terminal_agent(&mut h);
 
     // "hello world" stays visible above the vertically-centered form. Find
     // "world" there and double-click it (two clicks at one spot; the test
@@ -1786,6 +1790,7 @@ fn dock_new_session_in_uncommitted_repo_surfaces_real_git_error() {
     h.send_key(KeyCode::Char('n'), KeyModifiers::ALT).unwrap();
     h.wait_until(|h| h.screen_to_string().contains(launch_form::FORM_TITLE))
         .unwrap();
+    launch_form::choose_terminal_agent(&mut h);
 
     // Tab forward until the "Launch" button is the focused control —
     // its line carries the `▸` focus marker right before it (the form reserves
@@ -1953,6 +1958,7 @@ fn dock_new_session_name_is_rooted_in_the_project() {
     h.send_key(KeyCode::Char('n'), KeyModifiers::ALT).unwrap();
     h.wait_until(|h| h.screen_to_string().contains(launch_form::FORM_TITLE))
         .unwrap();
+    launch_form::choose_terminal_agent(&mut h);
 
     // The auto-generated workspace name carries the project basename and a
     // numeric suffix ("alphaproj-…"); the plan line under WHERE names it
@@ -2000,6 +2006,7 @@ fn dock_form_tab_accepting_directory_completion_closes_dropdown() {
     h.send_key(KeyCode::Char('n'), KeyModifiers::ALT).unwrap();
     h.wait_until(|h| h.screen_to_string().contains(launch_form::FORM_TITLE))
         .unwrap();
+    launch_form::choose_terminal_agent(&mut h);
     // The form opens with the Details row visible under the Folder field.
     assert!(
         h.screen_to_string().contains("Details"),
@@ -2136,6 +2143,7 @@ fn creating_workspace_lists_it_without_stealing_focus() {
     h.send_key(KeyCode::Char('n'), KeyModifiers::ALT).unwrap();
     h.wait_until(|h| h.screen_to_string().contains(launch_form::FORM_TITLE))
         .unwrap();
+    launch_form::choose_terminal_agent(&mut h);
     launch_form::focus_stop(&mut h, "Folder:");
     h.type_text(&plain.display().to_string()).unwrap();
     // The typed path lands in the field (its last segment is visible).
@@ -2201,6 +2209,7 @@ fn create_and_visit_dives_into_the_new_workspace() {
     h.send_key(KeyCode::Char('n'), KeyModifiers::ALT).unwrap();
     h.wait_until(|h| h.screen_to_string().contains(launch_form::FORM_TITLE))
         .unwrap();
+    launch_form::choose_terminal_agent(&mut h);
     launch_form::focus_stop(&mut h, "Folder:");
     h.type_text(&plain.display().to_string()).unwrap();
     h.wait_until(|h| h.screen_to_string().contains("plainwork"))

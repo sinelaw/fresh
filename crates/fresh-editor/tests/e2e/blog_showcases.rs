@@ -3358,6 +3358,7 @@ fn blog_showcase_fresh_0_4_0_ssh_session() {
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
     h.wait_until(|h| h.screen_to_string().contains(FORM_TITLE))
         .unwrap();
+    crate::common::launch_form::choose_terminal_agent(&mut h);
     snap(&mut h, &mut s, Some("Enter"), 110);
     hold(&mut h, &mut s, 4, 75);
 

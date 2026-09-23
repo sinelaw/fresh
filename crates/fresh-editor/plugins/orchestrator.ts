@@ -528,6 +528,10 @@ interface NewSessionForm {
   // and keeps it revealed while the user types a command that happens to
   // spell a preset, so the field they are typing in does not vanish.
   agentCustom: boolean;
+  // No agent chosen yet: a first launch, with no last-used agent to fall
+  // back on. The selector shows `Choose an agent…` and nothing launches
+  // until one is picked — the terminal is a choice, not a silent default.
+  agentUnset: boolean;
   // Whether to create a new git worktree under
   // `<XDG>/orchestrator/<slug>/<session>/` (true) or run the
   // session directly inside `projectPath` (false). Enabled
@@ -7946,9 +7950,14 @@ interface AgentPreset {
   key: string;
   resumes: boolean;
   custom?: boolean;
+  // The `Choose an agent…` placeholder, listed only until a choice is made.
+  unset?: boolean;
 }
 function agentPresets(): AgentPreset[] {
   const presets: AgentPreset[] = [
+    ...(form?.agentUnset
+      ? [{ label: editor.t("form.agent_choose"), cmd: "", key: "agent-preset-unset", resumes: false, unset: true }]
+      : []),
     { label: editor.t("form.agent_terminal"), cmd: "", key: "agent-preset-terminal", resumes: false },
   ];
   for (const e of AGENT_REGISTRY) {
@@ -7973,6 +7982,7 @@ function agentPresets(): AgentPreset[] {
 // known agent / the empty shell, else "custom…" (covers a typed command or an
 // agent with extra args). Drives the dropdown's active highlight.
 function activeAgentPresetKey(): string {
+  if (form?.agentUnset) return "agent-preset-unset";
   if (form?.agentCustom) return "agent-preset-custom";
   const current = form ? form.cmd.value.trim() : "";
   const match = agentPresets().find((p) => !p.custom && p.cmd === current);
@@ -13273,6 +13283,7 @@ function buildConnectingView(): WidgetSpec {
 // guards the submit paths so an empty form can't be submitted via Enter.
 function formIsSubmittable(): boolean {
   if (!form) return false;
+  if (form.agentUnset) return false;
   // Running in the current workspace needs no input at all — worst case it
   // opens a bare terminal here, which is always possible.
   if (form.target === "current") return true;
@@ -13368,6 +13379,9 @@ function launchModeRow(): WidgetSpec {
 // every agent so nothing moves when the agent changes; for one that takes no
 // prompt it is read-only and out of the Tab cycle.
 function promptApplies(): boolean {
+  // Before an agent is chosen the prompt can already be written: most
+  // agents take one, and the choice comes next.
+  if (form?.agentUnset) return true;
   return !!activeAgentEntry()?.prompt;
 }
 
@@ -13399,6 +13413,9 @@ function agentRowFields(f: NewSessionForm): WidgetSpec[] {
     kids.push(spacer(4), toggle(f.teachFreshCli, editor.t("form.teach_short"), { key: "teach_fresh_cli" }));
   }
   const out: WidgetSpec[] = [kids.length > 1 ? row(...kids) : kids[0]];
+  if (f.agentUnset) {
+    out.push(label(`⚠ ${editor.t("form.agent_choose_note")}`, { labelWidth: FORM_LABEL_W, style: WARN_STYLE }));
+  }
   if (cmdVisible()) out.push(...cmdField(f));
   return out;
 }
@@ -13606,7 +13623,7 @@ function formFooterRows(creating: boolean): WidgetSpec[] {
     : endRow(
       button(editor.t("form.btn_cancel_short"), { key: "cancel" }),
       spacer(5),
-      button(`  ${editor.t("run_agent.btn_run")}  `, { intent: "primary", key: "create-visit" }),
+      button(`  ${editor.t("run_agent.btn_run")}  `, { intent: "primary", key: "create-visit", disabled: !ok }),
       spacer(3),
     );
   const hints = creating
@@ -13793,8 +13810,8 @@ function openForm(options?: { fromPicker?: boolean; target?: RunAgentTarget }): 
   // saved machines, so re-read them rather than offer this session's cached
   // list — a machine added in another window is otherwise unreachable here.
   invalidateMachines();
-  const lastCmd =
-    (editor.getGlobalState("orchestrator.last_cmd") as string | undefined) ?? "";
+  const storedCmd = editor.getGlobalState("orchestrator.last_cmd") as string | undefined;
+  const lastCmd = storedCmd ?? "";
   form = {
     // Defaults to creating a workspace; "Run Agent…" opens the same form
     // pre-switched to the current one.
@@ -13835,7 +13852,8 @@ function openForm(options?: { fromPicker?: boolean; target?: RunAgentTarget }): 
     teachFreshCli: true,
     branch: { value: "", cursor: 0 },
     newBranch: { value: "", cursor: 0 },
-    agentCustom: !agentPresets().some((p) => !p.custom && p.cmd === lastCmd.trim()),
+    agentCustom: storedCmd !== undefined && !agentPresets().some((p) => !p.custom && !p.unset && p.cmd === lastCmd.trim()),
+    agentUnset: storedCmd === undefined,
     // Default checkbox state is `true` (the historical behaviour
     // of "always create a worktree"); the renderer demotes this
     // to `false` automatically when the resolved Project Path is
@@ -13934,7 +13952,7 @@ function mountFormPanel(focusKey?: string): void {
   // switch must not fling focus away from the control just used, or the next
   // ←/→ silently lands on whatever inherited focus instead.
   // The prompt, when the agent takes one — typing it is the whole flow.
-  const field = focusKey ?? (promptApplies() ? "start_prompt" : "agent_dropdown");
+  const field = focusKey ?? (!form.agentUnset && promptApplies() ? "start_prompt" : "agent_dropdown");
   formPanel.setFocusKey(field);
   snapFormFocusTo(field);
 }
@@ -15271,7 +15289,9 @@ async function runLocalCreate(id: number): Promise<void> {
     return;
   }
 
-  if (cmd) editor.setGlobalState("orchestrator.last_cmd", cmd);
+  // Remembered even when empty: the terminal is a choice too, and a stored
+  // choice is what spares the next launch from asking (`agentUnset`).
+  editor.setGlobalState("orchestrator.last_cmd", cmd);
 
   // Attach-to-existing-worktree classification for the no-worktree path
   // (a linked worktree the user pointed at directly).
@@ -15854,7 +15874,7 @@ async function launchAgentInCurrentWorkspace(
     prompt: opts.prompt,
     systemPrompt: teach ? FRESH_CLI_SYSTEM_PROMPT : undefined,
   });
-  if (trimmedCmd) editor.setGlobalState("orchestrator.last_cmd", trimmedCmd);
+  editor.setGlobalState("orchestrator.last_cmd", trimmedCmd);
   try {
     const created = await editor.createTerminal({
       cwd,
@@ -17762,9 +17782,16 @@ editor.on("widget_event", (e) => {
       if (typeof index === "number") {
         const presets = agentPresets();
         const preset = presets[index];
-        if (preset) {
+        if (preset && !preset.unset) {
+          const wasUnset = form.agentUnset;
+          form.agentUnset = false;
           applyAgentPreset(preset);
           rebuildFormFocusCycle();
+          // The placeholder left the list, so every option moved up one.
+          if (wasUnset) {
+            renderForm();
+            formPanel.setDropdown("agent_dropdown", agentPresets().findIndex((p) => p.key === preset.key));
+          }
         }
       }
       return;

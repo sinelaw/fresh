@@ -113,22 +113,10 @@ fn set_details(harness: &mut EditorTestHarness, open: bool) {
         .unwrap();
 }
 
-/// Open the form and leave focus where the form puts it.
+/// Open the form with `terminal` picked (a first launch has no agent), focus
+/// on the agent selector.
 fn open_new_session_form_unfocused(harness: &mut EditorTestHarness) {
-    harness
-        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.wait_for_prompt().unwrap();
-    harness.type_text("Orchestrator: New Workspace").unwrap();
-    harness
-        .wait_until(|h| h.screen_to_string().contains("Orchestrator: New Workspace"))
-        .unwrap();
-    harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
-        .unwrap();
-    harness
-        .wait_until(|h| h.screen_to_string().contains(FORM_TITLE))
-        .unwrap();
+    crate::common::launch_form::open_new_workspace_form(harness);
 }
 
 /// Tab until the focused control's line contains `needle`.
@@ -1223,6 +1211,75 @@ fn ctrl_enter_submits_from_a_text_field() {
         .unwrap();
     harness
         .wait_until(|h| !h.screen_to_string().contains("Machine:"))
+        .unwrap();
+}
+
+/// A first launch has no agent chosen: the selector reads `Choose an
+/// agent…` with a note that Launch waits for one. Picking an agent clears
+/// the note, and Launch then goes.
+#[test]
+fn a_first_launch_asks_for_an_agent_before_it_launches() {
+    use portable_pty::{native_pty_system, PtySize};
+    let pty_ok = native_pty_system()
+        .openpty(PtySize {
+            rows: 1,
+            cols: 1,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .is_ok();
+    if !pty_ok {
+        eprintln!("Skipping first-launch agent test: PTY not available");
+        return;
+    }
+
+    let (_temp, workspace) = set_up_workspace();
+    // A data home of its own, so no earlier launch has remembered an agent.
+    let data_home = tempfile::TempDir::new().unwrap();
+    let dir_context = fresh::config_io::DirectoryContext::for_testing(data_home.path());
+    let mut harness = EditorTestHarness::create(
+        160,
+        50,
+        crate::common::harness::HarnessOptions::new()
+            .with_working_dir(workspace)
+            .with_shared_dir_context(dir_context),
+    )
+    .unwrap();
+    harness.tick_and_render().unwrap();
+    wait_for_new_session_command(&mut harness);
+
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("Orchestrator: New Workspace").unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Orchestrator: New Workspace"))
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains(FORM_TITLE))
+        .unwrap();
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("Agent: [Choose an agent…"),
+        "a first launch has no agent chosen. Screen:\n{screen}",
+    );
+    assert!(
+        screen.contains("Choose which agent to run — Launch waits for it."),
+        "the form says Launch waits for an agent. Screen:\n{screen}",
+    );
+
+    crate::common::launch_form::choose_terminal_agent(&mut harness);
+    harness.assert_screen_not_contains("Launch waits for it");
+
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .wait_until(|h| !h.screen_to_string().contains(FORM_TITLE))
         .unwrap();
 }
 

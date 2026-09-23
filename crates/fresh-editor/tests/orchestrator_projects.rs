@@ -27,7 +27,9 @@
 use crate::common::dormant_ssh::local_shell_ssh_on_path;
 use crate::common::global_state::{isolated_dir_context, PathPin};
 use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness, HarnessOptions};
-use crate::common::launch_form::{focus_stop, open_new_workspace_form, FORM_TITLE};
+use crate::common::launch_form::{
+    choose_terminal_agent, focus_stop, open_new_workspace_form, FORM_TITLE,
+};
 use crossterm::event::{KeyCode, KeyModifiers};
 use portable_pty::{native_pty_system, PtySize};
 use std::fs;
@@ -257,6 +259,7 @@ fn save_as_project_adds_the_forms_folder_and_picks_it() {
 
     press(&mut w.h, "[   Add");
     wait_for(&mut w.h, FORM_TITLE);
+    choose_terminal_agent(&mut w.h);
     wait_for(&mut w.h, "at ~/code/app");
     assert!(screen(&w.h).contains("Project: [app"), "the new project is picked:\n{}", screen(&w.h));
 }
@@ -343,6 +346,7 @@ fn plain_folder_project_lists_its_path_and_opens_in_place() {
 
     press(&mut w.h, "[ New workspace here");
     wait_for(&mut w.h, FORM_TITLE);
+    choose_terminal_agent(&mut w.h);
     wait_for(&mut w.h, "at ~/notes");
     wait_for(&mut w.h, "plain folder");
     if !pty_available() {
@@ -364,6 +368,7 @@ fn launch_asks_where_the_project_is_and_clones_it() {
     forget_local(&mut w.h);
     press(&mut w.h, "[ New workspace here");
     wait_for(&mut w.h, FORM_TITLE);
+    choose_terminal_agent(&mut w.h);
     wait_for(&mut w.h, "isn't on Local yet — Launch will ask");
 
     press(&mut w.h, "[   Launch");
@@ -410,6 +415,7 @@ fn launch_asks_and_uses_a_folder_that_is_already_there() {
     forget_local(&mut w.h);
     press(&mut w.h, "[ New workspace here");
     wait_for(&mut w.h, FORM_TITLE);
+    choose_terminal_agent(&mut w.h);
     press(&mut w.h, "[   Launch");
     wait_for(&mut w.h, "Where is it?");
     stop(&mut w.h, "Where:");
@@ -542,6 +548,7 @@ fn a_typed_host_cannot_hold_a_project() {
     add_by_url(&mut w);
     press(&mut w.h, "[ New workspace here");
     wait_for(&mut w.h, FORM_TITLE);
+    choose_terminal_agent(&mut w.h);
     stop(&mut w.h, "Machine:");
     key(&mut w.h, KeyCode::Enter);
     wait_for(&mut w.h, "Other host…");
@@ -571,6 +578,7 @@ fn a_remote_clone_under_home_reads_as_a_repository() {
     // New workspace on it, on gpu: the form reads the clone as a repository.
     press(&mut w.h, "[ New workspace here");
     wait_for(&mut w.h, FORM_TITLE);
+    choose_terminal_agent(&mut w.h);
     wait_for(&mut w.h, "at ~/src/api");
     wait_for(&mut w.h, "new worktree");
     assert!(!screen(&w.h).contains("plain folder"), "{}", screen(&w.h));

@@ -41,7 +41,8 @@ pub fn focus_stop(harness: &mut EditorTestHarness, needle: &str) {
 }
 
 /// Open the launch form from the command palette and wait for its frame.
-/// Leaves focus where the form puts it.
+/// A first launch has no agent chosen yet, so this picks `terminal` (see
+/// [`choose_terminal_agent`]); focus is then on the agent selector.
 pub fn open_new_workspace_form(harness: &mut EditorTestHarness) {
     harness
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
@@ -56,5 +57,29 @@ pub fn open_new_workspace_form(harness: &mut EditorTestHarness) {
         .unwrap();
     harness
         .wait_until(|h| h.screen_to_string().contains(FORM_TITLE))
+        .unwrap();
+    choose_terminal_agent(harness);
+}
+
+/// A first launch has no agent chosen (`Choose an agent…`), and Launch waits
+/// for one. Pick `terminal` — the list's first real entry, under the
+/// placeholder — so a test that launches can. A no-op once an agent is set.
+pub fn choose_terminal_agent(harness: &mut EditorTestHarness) {
+    if !harness.screen_to_string().contains("[Choose an agent…") {
+        return;
+    }
+    focus_stop(harness, "▸ Agent:");
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("│ terminal"))
+        .unwrap();
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Agent: [terminal"))
         .unwrap();
 }
