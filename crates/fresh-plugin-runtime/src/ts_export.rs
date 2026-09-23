@@ -975,6 +975,9 @@ interface HookEventMap {
     widget_key: string;
     event_type: string;
     payload: Record<string, unknown>;
+    /** The widget that holds the panel's focus now, after the event
+     *  (`""` for none) — the host's fact; see `getPanelFocusKey`. */
+    focus_key: string;
   };
 }
 
@@ -1686,6 +1689,7 @@ mod tests {
             "defineMode",
             "setEditorMode",
             "getEditorMode",
+            "getPanelFocusKey",
             "closeSplit",
             "setSplitBuffer",
             "focusSplit",

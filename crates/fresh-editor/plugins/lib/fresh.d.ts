@@ -4488,6 +4488,16 @@ interface EditorAPI {
 	*/
 	setEditorMode(mode: string | null): boolean;
 	/**
+	* Which widget holds focus in one of this plugin's mounted panels —
+	* its key, or `""` when nothing is focused or the panel is not mounted.
+	* 
+	* The host owns a panel's focus: Tab, a click, a control's own move and
+	* `setFocusKey` all write the one fact this reads. Read it rather than
+	* mirroring focus from `focus` events — every `widget_event` also carries
+	* it, as `focus_key`.
+	*/
+	getPanelFocusKey(panelId: number): string;
+	/**
 	* Get the current editor mode
 	*/
 	getEditorMode(): string | null;
@@ -6144,6 +6154,9 @@ interface HookEventMap {
 		widget_key: string;
 		event_type: string;
 		payload: Record<string, unknown>;
+		/** The widget that holds the panel's focus now, after the event
+		*  (`""` for none) — the host's fact; see `getPanelFocusKey`. */
+		focus_key: string;
 	};
 }
 /**

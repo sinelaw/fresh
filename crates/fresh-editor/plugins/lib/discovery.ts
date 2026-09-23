@@ -30,11 +30,8 @@ export interface DiscoveryHost {
   /** Open the New Workspace form on `seed`, with these fields filled. */
   openWorkspaceForm(seed: FormSeed, prefill: { projectPath: string; cmd: string }): void;
   /** Open Add Machine; `done` gets the saved machine's id, or null after a
-   *  cancel. The dock stays handed over throughout. */
+   *  cancel. */
   addMachine(done: (savedKey: string | null) => void): void;
-  /** Hand the dock's focus to a dialog, and take it back. */
-  yieldDock(): void;
-  restoreDock(): void;
 }
 
 /** One column of a row, and which end of it survives a cut. A path keeps

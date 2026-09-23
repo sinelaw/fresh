@@ -351,7 +351,6 @@ function refreshDiscoverDialog(): void {
 }
 
 function openDiscoverDialog(): void {
-  host()?.yieldDock();
   discoverState = {
     machineIndex: 0,
     scanning: false,
@@ -426,7 +425,6 @@ function closeDiscoverDialog(): void {
   }
   discoverState = null;
   editor.setEditorMode(null);
-  host()?.restoreDock();
 }
 
 // Scan the selected machine through the `agent-sessions` hub. A machine with

@@ -1731,6 +1731,16 @@ pub struct EditorStateSnapshot {
     /// When set, this mode's keybindings take precedence over normal key handling
     pub editor_mode: Option<String>,
 
+    /// Which widget holds each mounted panel's focus, per owning plugin:
+    /// plugin name → panel id → widget key (`""` for none). The host's
+    /// fact (`WidgetRegistry::decide_focus`), published before every
+    /// `widget_event` and every plugin action runs, so
+    /// `editor.getPanelFocusKey` answers what the host decided rather than
+    /// a copy the plugin keeps and has to keep in step.
+    #[serde(skip)]
+    #[ts(skip)]
+    pub panel_focus: HashMap<String, HashMap<u64, String>>,
+
     /// Plugin-managed per-buffer view state for the active split.
     /// Updated from BufferViewState.plugin_state during snapshot updates.
     /// Also written directly by JS plugins via setViewState for immediate read-back.
@@ -1857,6 +1867,7 @@ impl EditorStateSnapshot {
             available_grammars: Vec::new(),
             last_grammar_gen: 0,
             editor_mode: None,
+            panel_focus: HashMap::new(),
             plugin_view_states: HashMap::new(),
             plugin_view_states_split: 0,
             plugin_markers: HashMap::new(),
