@@ -124,11 +124,17 @@ impl WidgetImpl for Dropdown {
                 set_open(spec, widget_key, panel, now_open, &mut fx.key);
                 super::PointerDisposition::Consumed
             }
+            // A press on a row (or a surface that picks by index, open or
+            // not — Settings' web side) chooses that row: the value is the
+            // index named, not whatever the list had highlighted.
             "dropdown_select" => {
-                if let Some(idx) = payload.get("index").and_then(|v| v.as_i64()) {
-                    set_highlight(widget_key, panel, idx as i32);
+                match payload.get("index").and_then(|v| v.as_i64()) {
+                    Some(idx) => {
+                        set_selection(spec, widget_key, panel, idx as i32, &mut fx.key);
+                        set_open(spec, widget_key, panel, false, &mut fx.key);
+                    }
+                    None => commit(spec, widget_key, panel, &mut fx.key),
                 }
-                commit(spec, widget_key, panel, &mut fx.key);
                 super::PointerDisposition::Consumed
             }
             _ => super::PointerDisposition::Default,

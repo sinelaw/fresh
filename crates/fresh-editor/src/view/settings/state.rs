@@ -3466,6 +3466,8 @@ mod tests {
         );
     }
 
+    /// The shared dropdown contract (R3): an open list's arrows move only its
+    /// highlight, and Esc closes it with the value where it was.
     #[test]
     fn escape_puts_a_dropdown_back_where_it_opened() {
         let config = test_config();
@@ -3475,12 +3477,12 @@ mod tests {
         let initial = dropdown_selected(&state);
 
         press(&mut state, KeyCode::Down);
-        assert_ne!(
+        assert_eq!(
             dropdown_selected(&state),
             initial,
-            "the selection moves live"
+            "an arrow in the open list moves its highlight, not the value"
         );
-        assert!(state.has_changes(), "and is recorded as it moves");
+        assert!(!state.has_changes(), "so nothing is recorded yet");
 
         state.dropdown_cancel();
         assert!(!state.is_dropdown_open());
@@ -3488,18 +3490,19 @@ mod tests {
         assert!(!state.has_changes(), "back where it was is not a change");
     }
 
+    /// Enter commits the highlighted row as the value.
     #[test]
     fn enter_keeps_a_dropdowns_moved_selection() {
         let config = test_config();
         let mut state = SettingsState::new(TEST_SCHEMA_CONTROLS, &config).unwrap();
         select_theme_dropdown(&mut state);
         state.activate_control();
+        let initial = dropdown_selected(&state);
         press(&mut state, KeyCode::Down);
-        let moved = dropdown_selected(&state);
 
         press(&mut state, KeyCode::Enter);
         assert!(!state.is_dropdown_open());
-        assert_eq!(dropdown_selected(&state), moved);
+        assert_eq!(dropdown_selected(&state), initial + 1);
         assert!(state.has_changes());
     }
 
