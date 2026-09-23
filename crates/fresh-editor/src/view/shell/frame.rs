@@ -1118,6 +1118,59 @@ mod tests {
         assert_eq!(a, b, "same window, same element");
     }
 
+    /// A frame with `n` of the optional rows, so a sequence of these makes the
+    /// retained tree add and drop regions between layouts.
+    fn frame_with(menu: bool, status: bool, prompt: bool, dock: Option<u16>) -> Frame {
+        Frame {
+            window: Some(1),
+            menu_bar: menu,
+            status_bar: status,
+            prompt_line: prompt,
+            dock,
+            ..one_pane_in(Some(1))
+        }
+    }
+
+    /// **The retained tree lays a frame out like a fresh one does.**
+    ///
+    /// `render` asserted this on the render path and could not: `area` came
+    /// from `frame::regions_of` on the retained `Ui`, and the "fresh" side —
+    /// `Editor::status_bar_area_now` — resolves through `shell_region_now` to
+    /// `frame::regions_of` on that *same* retained `Ui`, which its own doc
+    /// forbids replacing with a throwaway. One read of the tree was being
+    /// compared against another read of the tree.
+    ///
+    /// Here both sides exist. A single `Ui` is reconciled through a sequence
+    /// of frames that add and drop rows — which is what makes retained state
+    /// able to skew a layout at all — and its regions are compared against
+    /// [`region_rects`], which builds a `Ui` that has seen nothing else. A
+    /// second layout is a fair question for a test.
+    #[test]
+    fn a_retained_tree_lays_the_frame_out_like_a_fresh_one() {
+        let size = ratatui::layout::Rect::new(0, 0, 80, 24);
+        let history = [
+            frame_with(false, false, false, None),
+            frame_with(true, true, true, Some(20)),
+            frame_with(true, false, false, None),
+            frame_with(false, true, true, Some(30)),
+        ];
+        let mut ui: Ui<UiMsg> = Ui::new();
+        for f in &history {
+            ui.frame(frame_tree(f.clone()), Size::new(size.width, size.height));
+        }
+        for (i, f) in history.iter().enumerate() {
+            // Step the retained tree onto this frame, then ask a tree that has
+            // seen only this frame.
+            ui.frame(frame_tree(f.clone()), Size::new(size.width, size.height));
+            assert_eq!(
+                regions_of(&ui, size),
+                region_rects(f.clone(), size),
+                "frame {i} after the whole history: the retained tree and a \
+                 fresh one disagree"
+            );
+        }
+    }
+
     /// The tree's scope name and the editor's `forget_window_ui_state` have to
     /// agree, and neither can check the other — so the shared spelling is
     /// pinned here. If this changes, every closed window's values leak and
