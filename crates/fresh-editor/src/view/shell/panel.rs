@@ -95,6 +95,12 @@ pub struct Keymap {
     /// binds Space, `/` or a digit binds them for the controls, and a
     /// field with the keyboard still types them.
     pub text_focused: bool,
+    /// The focused field is a multi-line one, where a bare Enter is a new
+    /// line. It takes Enter ahead of the mode the way any field takes a
+    /// printable key: a mode that bound Enter got it through the plugin
+    /// round trip while the characters typed after it went straight to the
+    /// field, so a fast `line one⏎line two` landed the newline last.
+    pub multiline_focused: bool,
     /// The window's pending chord prefix. Shared rather than per-panel: a
     /// panel's mode is its buffer's mode.
     pub chord: Vec<(crossterm::event::KeyCode, crossterm::event::KeyModifiers)>,
@@ -124,6 +130,12 @@ impl Keymap {
         let printable = matches!(k.code, fresh_ui::KeyCode::Char(_))
             && (k.mods == fresh_ui::Mods::NONE || k.mods == fresh_ui::Mods::SHIFT);
         if self.text_focused && printable {
+            return Bound::None;
+        }
+        if self.multiline_focused
+            && k.code == fresh_ui::KeyCode::Enter
+            && k.mods == fresh_ui::Mods::NONE
+        {
             return Bound::None;
         }
         let Some(ev) = super::input::crossterm_key_event(k) else {
@@ -755,6 +767,15 @@ fn body(p: &Panel) -> Node<UiMsg> {
     // node was given. The alternative is the caller computing the percentage
     // itself, which is the second layout this migration exists to remove.
     let rests_empty = i.keyboard && i.focus_key.is_empty();
+    // **A dialog's right margin mirrors its left.** A panel that reserves the
+    // `▸ ` gutter starts every control two columns in from the ring; without
+    // the same two on the right, full-width fields and section rules ran
+    // flush into the border. Only a centred dialog: an anchored panel hugs
+    // its content, and there is no ring-side margin to keep.
+    let right_gutter = match (&p.spot, i.marker_gutter) {
+        (Spot::Centered { .. }, true) => 2,
+        _ => 0,
+    };
     let inner = fresh_ui::layout_reader(move |info: fresh_ui::LayoutInfo| {
         super::widgets::node(
             &i.spec,
@@ -786,7 +807,12 @@ fn body(p: &Panel) -> Node<UiMsg> {
     // element, and `rests_empty` marks it), so its keymap and its fallback
     // answer for it exactly as they do for one full of controls.
     let inner = interior(super::widgets::Slot::Floating, keymap, rests_empty, inner);
-    area.child(inner)
+    if right_gutter == 0 {
+        return area.child(inner);
+    }
+    // Clipped, so a rule drawn as a long label stops at the margin too.
+    area.child(row().w(Sizing::Flex(1)).clip(true).child(inner))
+        .child(row().w(Sizing::Cells(right_gutter)))
 }
 
 #[cfg(test)]
@@ -1088,6 +1114,7 @@ mod tests {
             mode: "form".into(),
             resolver: resolver.clone(),
             text_focused: false,
+            multiline_focused: false,
             chord: Vec::new(),
         }));
         let got = ui.dispatch(enter);
@@ -1137,6 +1164,7 @@ mod tests {
             mode: "review".into(),
             resolver: resolver.clone(),
             text_focused: false,
+            multiline_focused: false,
             chord,
         };
         let press = |c| fresh_ui::KeyPress::with(fresh_ui::KeyCode::Char(c), Mods::NONE);
@@ -1195,6 +1223,7 @@ mod tests {
             mode: "review".into(),
             resolver,
             text_focused: false,
+            multiline_focused: false,
             chord: prefix,
         };
         assert_eq!(
@@ -1253,6 +1282,7 @@ mod tests {
             mode: "form".into(),
             resolver,
             text_focused: true,
+            multiline_focused: false,
             chord: Vec::new(),
         };
         let space = fresh_ui::KeyPress::with(fresh_ui::KeyCode::Char(' '), Mods::NONE);
@@ -1268,6 +1298,15 @@ mod tests {
             km.action(enter),
             Bound::Run(Action::Save),
             "Enter is the mode's"
+        );
+        let multiline = Keymap {
+            multiline_focused: true,
+            ..km.clone()
+        };
+        assert_eq!(
+            multiline.action(enter),
+            Bound::None,
+            "a multi-line field's Enter is a newline"
         );
         let km = Keymap {
             text_focused: false,

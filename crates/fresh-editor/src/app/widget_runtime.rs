@@ -2341,6 +2341,29 @@ impl Editor {
         )
     }
 
+    /// Whether the panel's focused widget is an editable multi-line `Text`,
+    /// where a bare Enter inserts a newline.
+    pub(super) fn panel_focused_widget_is_multiline_text(
+        &self,
+        panel_key: &crate::widgets::PanelKey,
+    ) -> bool {
+        let Some(panel) = self.widget_registry.get(panel_key) else {
+            return false;
+        };
+        if panel.focus_key.is_empty() {
+            return false;
+        }
+        matches!(
+            crate::widgets::find_widget_by_key(&panel.spec, &panel.focus_key),
+            Some(fresh_core::api::WidgetSpec::Text {
+                read_only: false,
+                markdown: false,
+                rows,
+                ..
+            }) if *rows > 1
+        )
+    }
+
     /// Read the currently-selected text from the focused `Text`
     /// widget on the given panel, or `None` when nothing is
     /// selected (no anchor, or anchor == cursor). Used by the

@@ -819,6 +819,7 @@ pub fn single_line(
             ov.end += marker_bytes;
         }
         cursor_in_row = cursor_in_row.map(|c| c + marker_bytes);
+        crate::widgets::render::hug_focus_marker(&mut entry.text);
     }
     if let Some(byte_in_row) = cursor_in_row {
         // Modal surfaces paint the caret as a REVERSED cell in the

@@ -194,23 +194,9 @@ fn ensure_worktrees_shown(harness: &mut EditorTestHarness) {
 }
 
 fn open_new_session_form(harness: &mut EditorTestHarness) {
-    harness
-        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.wait_for_prompt().unwrap();
-    harness.type_text("Orchestrator: New Workspace").unwrap();
-    harness
-        .wait_until(|h| h.screen_to_string().contains("Orchestrator: New Workspace"))
-        .unwrap();
-    harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
-        .unwrap();
-    harness
-        .wait_until(|h| {
-            h.screen_to_string()
-                .contains("ORCHESTRATOR :: New Workspace")
-        })
-        .unwrap();
+    crate::common::launch_form::open_new_workspace_form(harness);
+    // The form opens on the agent; these tests type into its Folder field.
+    crate::common::launch_form::focus_stop(harness, "Folder:");
 }
 
 /// Move the list highlight down onto the discovered on-disk worktree
@@ -367,7 +353,7 @@ fn diving_discovered_worktree_attaches_managed_session() {
     );
 }
 
-/// Pointing the New Workspace form's Project Path at an existing linked
+/// Pointing the New Workspace form's Folder field at an existing linked
 /// worktree surfaces the "existing worktree" attach hint.
 #[test]
 fn new_session_form_hints_existing_worktree() {
@@ -378,13 +364,13 @@ fn new_session_form_hints_existing_worktree() {
 
     open_new_session_form(&mut harness);
 
-    // Type the worktree path into the focused Project Path field. The
+    // Type the worktree path into the focused Folder field field. The
     // debounced probe classifies it as a linked worktree and renders
     // the attach hint.
     harness.type_text(wt.to_str().unwrap()).unwrap();
 
     // Typing an existing directory opens the path-completion popup, whose
-    // candidate rows overlay the lines directly under Project Path — where the
+    // candidate rows overlay the lines directly under Folder field — where the
     // attach hint now sits. Wait until either the hint is already visible OR
     // the popup is up (its dim `┄` separator), THEN close the popup. Gating the
     // Esc on the popup actually being open is load-bearing: pressing Esc before
@@ -406,7 +392,7 @@ fn new_session_form_hints_existing_worktree() {
         .wait_until(|h| h.screen_to_string().contains("existing worktree"))
         .unwrap_or_else(|_| {
             panic!(
-                "New Workspace form should hint that Project Path is an existing \
+                "New Workspace form should hint that Folder field is an existing \
                  worktree.\nScreen:\n{}",
                 harness.screen_to_string()
             )

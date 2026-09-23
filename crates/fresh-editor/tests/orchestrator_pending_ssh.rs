@@ -15,6 +15,7 @@
 #![cfg(all(target_os = "linux", feature = "plugins"))]
 
 use crate::common::dormant_ssh::{hanging_fake_ssh_on_path, isolated_dir_context};
+use crate::common::launch_form;
 use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness, HarnessOptions};
 use crossterm::event::{KeyCode, KeyModifiers};
 
@@ -51,18 +52,9 @@ fn ssh_submit_is_non_blocking_and_shows_connecting_row() {
     .unwrap();
 
     // Open the form.
-    h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
-        .unwrap();
-    h.wait_for_prompt().unwrap();
-    h.type_text("Orchestrator: New Workspace").unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("Orchestrator: New Workspace"))
-        .unwrap();
-    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
-    h.wait_until(|h| {
-        h.screen_to_string()
-            .contains("ORCHESTRATOR :: New Workspace")
-    })
-    .unwrap();
+    launch_form::open_new_workspace_form(&mut h);
+    // The form opens on the agent; the Folder field is a few stops on.
+    launch_form::focus_stop(&mut h, "Folder:");
 
     // Switch the Machine control from Local to `Other host…` (Shift+Tab
     // lands focus on it, → advances one option and fills the connection
@@ -82,7 +74,7 @@ fn ssh_submit_is_non_blocking_and_shows_connecting_row() {
         .unwrap();
     let s = h.screen_to_string();
     assert!(
-        !s.contains("ORCHESTRATOR :: New Workspace") && !s.contains("press Cancel to abort"),
+        !s.contains(launch_form::FORM_TITLE) && !s.contains("press Cancel to abort"),
         "SSH submit must be non-blocking (a dock row, not a modal Cancel dialog). Screen:\n{s}",
     );
     // Identified by the machine it is connecting to, on the same row as the
