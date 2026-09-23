@@ -357,19 +357,6 @@ impl LspClientState {
     pub fn can_initialize(&self) -> bool {
         matches!(self, Self::Initial | Self::Starting | Self::Stopped)
     }
-
-    /// Convert to LspServerStatus for UI reporting
-    pub fn to_server_status(&self) -> LspServerStatus {
-        match self {
-            Self::Initial => LspServerStatus::Starting,
-            Self::Starting => LspServerStatus::Starting,
-            Self::Initializing => LspServerStatus::Initializing,
-            Self::Running => LspServerStatus::Running,
-            Self::Stopping => LspServerStatus::Shutdown,
-            Self::Stopped => LspServerStatus::Shutdown,
-            Self::Error => LspServerStatus::Error,
-        }
-    }
 }
 
 /// Create common LSP client capabilities with workDoneProgress support

@@ -38,11 +38,6 @@ impl Editor {
         }
     }
 
-    /// Check if running in session mode
-    pub fn is_session_mode(&self) -> bool {
-        self.session_mode
-    }
-
     /// Mark that the backend does not render a hardware cursor.
     /// When set, the renderer always draws a software cursor indicator.
     pub fn set_software_cursor_only(&mut self, enabled: bool) {

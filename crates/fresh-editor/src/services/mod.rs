@@ -16,7 +16,6 @@ pub mod fs;
 pub mod gpm;
 /// Outbound HTTP(S); the only place `ureq`/TLS is used (gated by `http`).
 pub mod http;
-pub mod live_grep_state;
 pub use fresh_editor_core::log_dirs;
 pub mod lsp;
 pub use fresh_editor_core::packages;

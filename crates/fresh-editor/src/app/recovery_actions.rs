@@ -349,13 +349,6 @@ impl Editor {
             .should_offer_recovery()?)
     }
 
-    /// Get list of recoverable files
-    pub fn list_recoverable_files(
-        &self,
-    ) -> AnyhowResult<Vec<crate::services::recovery::RecoveryEntry>> {
-        Ok(self.recovery_service.lock().unwrap().list_recoverable()?)
-    }
-
     /// Recover buffers left by a crash into the workspace they came from.
     ///
     /// The startup half of the per-workspace scheme: the foreground workspace

@@ -93,10 +93,6 @@ impl Persistence {
         &self.fs
     }
 
-    pub fn set_fs(&mut self, fs: Arc<dyn FileSystem + Send + Sync>) {
-        self.fs = fs;
-    }
-
     pub fn file_path(&self) -> Option<&Path> {
         self.file_path.as_deref()
     }

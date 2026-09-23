@@ -119,11 +119,6 @@ impl Editor {
     // `take_pending_semantic_token_range_request` live on `impl Window`
     // — call them via `self.active_window_mut()`.
 
-    /// Get all keybindings as (key, action) pairs
-    pub fn get_all_keybindings(&self) -> Vec<(String, String)> {
-        self.keybindings.read().unwrap().get_all_bindings()
-    }
-
     /// Get the formatted keybinding for a specific action (for display in messages)
     /// Returns None if no keybinding is found for the action
     pub fn get_keybinding_for_action(&self, action_name: &str) -> Option<String> {
@@ -131,27 +126,6 @@ impl Editor {
             .read()
             .unwrap()
             .find_keybinding_for_action(action_name, self.active_window().key_context.clone())
-    }
-
-    /// Raw-event counterpart: return the `(KeyCode, KeyModifiers)` currently
-    /// bound to `action` in `context`. Intended for callers that need to
-    /// simulate the user pressing the bound key (e2e tests, some hotkey-
-    /// chaining code) without hardcoding a default that a user's rebind
-    /// would invalidate.
-    pub fn keybinding_event_for_action(
-        &self,
-        action: &crate::input::keybindings::Action,
-        context: crate::input::keybindings::KeyContext,
-    ) -> Option<(crossterm::event::KeyCode, crossterm::event::KeyModifiers)> {
-        self.keybindings
-            .read()
-            .unwrap()
-            .get_keybinding_event_for_action(action, context)
-    }
-
-    /// Get mutable access to the mode registry
-    pub fn mode_registry_mut(&mut self) -> &mut ModeRegistry {
-        &mut self.mode_registry
     }
 
     /// Get immutable access to the mode registry
@@ -1409,11 +1383,6 @@ impl Editor {
                 format!("{} (Disconnected)", conn)
             }
         })
-    }
-
-    /// Get the status log path
-    pub fn get_status_log_path(&self) -> Option<&PathBuf> {
-        self.status_log_path.as_ref()
     }
 
     /// Open the status log file (user clicked on status message)

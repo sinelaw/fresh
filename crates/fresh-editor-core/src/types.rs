@@ -132,11 +132,6 @@ impl ProcessLimits {
             enabled: false,
         }
     }
-
-    /// Get the default CPU limit (90% of total CPU)
-    pub fn default_cpu_limit_percent() -> u32 {
-        90
-    }
 }
 
 /// Language server feature, for routing features to servers when a language has

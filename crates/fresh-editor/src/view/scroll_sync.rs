@@ -134,7 +134,7 @@ impl ScrollSyncGroup {
         true
     }
 
-    /// Set scroll position directly (used for SetViewport events)
+    /// Set scroll position directly
     /// The line number should be in left buffer space
     pub fn set_scroll_line(&mut self, line: usize) {
         self.scroll_line = line;

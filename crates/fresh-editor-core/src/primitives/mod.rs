@@ -10,7 +10,6 @@
 //!
 //! | Feature | WASM Module | Runtime Module |
 //! |---------|-------------|----------------|
-//! | Syntax highlighting | `textmate_engine` | `highlight_engine` |
 //! | Auto-indentation | `indent_pattern` | `indent` |
 //! | Reference highlighting | `reference_highlight_text` | `reference_highlighter` |
 
@@ -71,8 +70,6 @@ pub mod indent_pascal;
 pub mod indent_rules;
 #[cfg(any(feature = "runtime", feature = "wasm"))]
 pub mod reference_highlight_text;
-#[cfg(any(feature = "runtime", feature = "wasm"))]
-pub mod textmate_engine;
 
 // Runtime-only modules (depend on tree-sitter)
 // These provide enhanced features using AST analysis

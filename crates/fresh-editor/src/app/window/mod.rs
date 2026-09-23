@@ -801,10 +801,6 @@ pub struct Window {
     /// (e.g. after the user picks a hit in the search overlay).
     pub pending_search_range: Option<std::ops::Range<usize>>,
 
-    /// Last live-grep panel state (cached so re-opening the panel
-    /// preserves the user's query / scroll / selection).
-    pub live_grep_last_state: Option<crate::services::live_grep_state::LiveGrepLastState>,
-
     /// Overlay-preview state used by the floating-prompt preview pane
     /// when it's showing a buffer view.
     pub overlay_preview_state: Option<crate::app::types::OverlayPreviewState>,
@@ -2092,27 +2088,6 @@ impl Window {
             });
     }
 
-    /// Configure `leaf_id`'s viewport for a terminal-buffer
-    /// scrollback view: enable grid wrap (exact-column rows at the PTY
-    /// width, fresh#2649), clear any pending skip-ensure-visible flag,
-    /// then scroll so the buffer's primary cursor (positioned at
-    /// end-of-buffer when entering scrollback) is visible. No-op if the
-    /// buffer or split is missing.
-    pub fn enter_terminal_scrollback_view(&mut self, buffer_id: BufferId, leaf_id: LeafId) {
-        let grid_cols = self.terminal_grid_cols(buffer_id);
-        self.buffers
-            .with_buffer_and_split(buffer_id, leaf_id, |state, view_state| {
-                view_state.viewport.line_wrap_enabled = true;
-                view_state.viewport.grid_wrap = true;
-                view_state.viewport.wrap_indent = false;
-                if let Some(cols) = grid_cols {
-                    view_state.viewport.wrap_column = Some(cols);
-                }
-                view_state.viewport.clear_skip_ensure_visible();
-                view_state.ensure_cursor_visible(&mut state.buffer, &state.marker_list);
-            });
-    }
-
     /// Install a freshly-loaded `EditorState` for a terminal buffer:
     /// replace the slot's state, push every per-split cursor showing
     /// the buffer to end-of-buffer (scrollback start), clear the
@@ -2465,7 +2440,6 @@ impl Window {
                 "search".to_string(),
             ),
             pending_search_range: None,
-            live_grep_last_state: None,
             overlay_preview_state: None,
             file_rapid_change_counts: HashMap::new(),
             goto_line_preview: None,
@@ -2683,23 +2657,6 @@ impl Window {
     pub fn active_buffer(&self) -> BufferId {
         let (_, buf) = self.effective_active_pair();
         buf
-    }
-
-    /// Width available for tabs in this window. When the file explorer is
-    /// visible the tabs row only spans the editor area; otherwise it spans
-    /// the full terminal width.
-    pub fn effective_tabs_width(&self) -> u16 {
-        // Start from the chrome left after the editor-global dock, then
-        // subtract the file explorer — same carve-out order as the
-        // renderer and `editor_content_area`, so tab-scroll math matches
-        // the width the tabs actually paint into when the dock is shown.
-        let chrome = self.terminal_width.saturating_sub(self.dock_cols);
-        if self.file_explorer_visible && self.file_explorer.is_some() {
-            let explorer = self.file_explorer_width.to_cols(chrome);
-            chrome.saturating_sub(explorer)
-        } else {
-            chrome
-        }
     }
 
     /// Where the last layout put this window's panes. See the field.
@@ -4957,69 +4914,6 @@ impl Window {
                             line_offset.unsigned_abs(),
                         );
                     }
-                    view_state.viewport.set_skip_ensure_visible();
-                });
-        }
-    }
-
-    /// Handle a `SetViewport` event using the active split's viewport.
-    pub(crate) fn handle_set_viewport_event(&mut self, top_line: usize) {
-        let Some((mgr, _)) = self.buffers.splits() else {
-            return;
-        };
-        let active_split = mgr.active_split();
-
-        if self
-            .scroll_sync_manager
-            .is_split_synced(active_split.into())
-        {
-            if let Some(group) = self
-                .scroll_sync_manager
-                .find_group_for_split_mut(active_split.into())
-            {
-                let scroll_line = if group.is_left_split(active_split.into()) {
-                    top_line
-                } else {
-                    group.right_to_left_line(top_line)
-                };
-                group.set_scroll_line(scroll_line);
-            }
-
-            let (left, right) = match self
-                .scroll_sync_manager
-                .find_group_for_split(active_split.into())
-            {
-                Some(group) => (group.left_split, group.right_split),
-                None => return,
-            };
-            if let Some(vs_map) = self.split_view_states_mut() {
-                if let Some(vs) = vs_map.get_mut(&LeafId(left)) {
-                    vs.viewport.set_skip_ensure_visible();
-                }
-                if let Some(vs) = vs_map.get_mut(&LeafId(right)) {
-                    vs.viewport.set_skip_ensure_visible();
-                }
-            }
-            return;
-        }
-
-        let (mgr, vs_map) = self.buffers.splits().expect("splits checked above");
-        let sync_group = vs_map.get(&active_split).and_then(|vs| vs.sync_group);
-        let splits_to_scroll = if let Some(group_id) = sync_group {
-            mgr.get_splits_in_group(group_id, vs_map)
-        } else {
-            vec![active_split]
-        };
-
-        for split_id in splits_to_scroll {
-            let (mgr, _) = self.buffers.splits().expect("splits checked above");
-            let Some(buffer_id) = mgr.buffer_for_split(split_id) else {
-                continue;
-            };
-
-            self.buffers
-                .with_buffer_and_split(buffer_id, split_id, |state, view_state| {
-                    view_state.viewport.scroll_to(&mut state.buffer, top_line);
                     view_state.viewport.set_skip_ensure_visible();
                 });
         }

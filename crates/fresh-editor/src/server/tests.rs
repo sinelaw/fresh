@@ -11,7 +11,6 @@ mod integration_tests {
     use crate::server::protocol::{
         ClientControl, ClientHello, ServerControl, ServerHello, TermSize, PROTOCOL_VERSION,
     };
-    use crate::server::runner::{Server, ServerConfig};
 
     /// Read from the client data pipe until the accumulated output contains `needle`.
     /// Appends to `output` so callers can accumulate across multiple calls.
@@ -45,102 +44,132 @@ mod integration_tests {
         )
     }
 
+    /// Config for an `EditorServer` with plugins and init.ts off, rooted at
+    /// `temp_dir`. Tests that need a variation build their own.
+    fn editor_server_config(
+        temp_dir: &std::path::Path,
+        session_name: &str,
+        idle_timeout: Option<Duration>,
+    ) -> crate::server::editor_server::EditorServerConfig {
+        crate::server::editor_server::EditorServerConfig {
+            working_dir: temp_dir.to_path_buf(),
+            session_name: Some(session_name.to_string()),
+            idle_timeout,
+            editor_config: crate::config::Config::default(),
+            dir_context: crate::config_io::DirectoryContext::for_testing(temp_dir),
+            plugins_enabled: false,
+            init_enabled: false,
+            orchestrator_mode: false,
+            startup_authority: None,
+            workspace_trust: std::sync::Arc::new(
+                crate::services::workspace_trust::WorkspaceTrust::permissive(),
+            ),
+            env_provider: std::sync::Arc::new(
+                crate::services::env_provider::EnvProvider::inactive(),
+            ),
+            session_keepalive: None,
+            startup_files: Vec::new(),
+            #[cfg(feature = "web")]
+            web_addr: None,
+        }
+    }
+
+    type ServerThread = thread::JoinHandle<std::io::Result<()>>;
+
+    /// Start an `EditorServer` on its own thread (the editor is not `Send`, so
+    /// it has to be built there). Returns once the server has bound its
+    /// sockets and written its PID file, which `EditorServer::new` does.
+    fn spawn_editor_server(
+        temp_dir: &std::path::Path,
+        session_name: &str,
+        idle_timeout: Option<Duration>,
+    ) -> (
+        SocketPaths,
+        std::sync::Arc<std::sync::atomic::AtomicBool>,
+        ServerThread,
+    ) {
+        use crate::server::editor_server::EditorServer;
+
+        let config = editor_server_config(temp_dir, session_name, idle_timeout);
+        let (tx, rx) = std::sync::mpsc::channel();
+        let handle = thread::spawn(move || {
+            let mut server = EditorServer::new(config).unwrap();
+            tx.send((server.socket_paths().clone(), server.shutdown_handle()))
+                .unwrap();
+            server.run()
+        });
+        let (paths, shutdown) = rx.recv().unwrap();
+        (paths, shutdown, handle)
+    }
+
+    /// Send the client hello and return the server's reply.
+    fn client_hello(conn: &ClientConnection) -> ServerControl {
+        let hello = ClientHello::new(TermSize::new(80, 24));
+        conn.write_control(&serde_json::to_string(&ClientControl::Hello(hello)).unwrap())
+            .unwrap();
+        let response = conn.read_control().unwrap().unwrap();
+        serde_json::from_str(&response).unwrap()
+    }
+
+    fn test_temp_dir(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(unique_session_name(&format!("fresh-test-{tag}")));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
     /// Test basic server startup and shutdown
     #[test]
     fn test_server_creates_sockets_on_bind() {
-        let temp_dir = std::env::temp_dir().join(format!("fresh-test-{}", std::process::id()));
-        std::fs::create_dir_all(&temp_dir).unwrap();
-
-        let config = ServerConfig {
-            working_dir: temp_dir.clone(),
-            session_name: Some(unique_session_name("lifecycle")),
-            idle_timeout: Some(Duration::from_millis(100)),
-            mouse_hover_enabled: true,
-        };
-
-        let mut server = Server::new(config).unwrap();
-        let shutdown = server.shutdown_handle();
+        let temp_dir = test_temp_dir("lifecycle");
+        let (paths, shutdown, handle) =
+            spawn_editor_server(&temp_dir, &unique_session_name("lifecycle"), None);
 
         // Sockets should exist after bind
-        let paths = server.socket_paths();
         assert!(paths.data.exists());
         assert!(paths.control.exists());
 
         shutdown.store(true, Ordering::SeqCst);
-        drop(server.run());
-
+        drop(handle.join());
+        drop(paths.cleanup());
         std::fs::remove_dir_all(&temp_dir).ok();
     }
 
     /// Test client-server handshake protocol
     #[test]
     fn test_handshake_exchanges_protocol_version() {
-        let temp_dir = std::env::temp_dir().join(format!("fresh-test-hs-{}", std::process::id()));
-        std::fs::create_dir_all(&temp_dir).unwrap();
-
+        let temp_dir = test_temp_dir("handshake");
         let session_name = unique_session_name("handshake");
+        let (paths, _shutdown, handle) =
+            spawn_editor_server(&temp_dir, &session_name, Some(Duration::from_secs(5)));
 
-        let config = ServerConfig {
-            working_dir: temp_dir.clone(),
-            session_name: Some(session_name.clone()),
-            idle_timeout: Some(Duration::from_secs(5)),
-            mouse_hover_enabled: true,
-        };
-
-        let mut server = Server::new(config).unwrap();
-        let socket_paths = server.socket_paths().clone();
-        let server_handle = thread::spawn(move || server.run());
-
-        thread::sleep(Duration::from_millis(50));
-
-        let conn = ClientConnection::connect(&socket_paths).unwrap();
-
-        // Send hello
-        let hello = ClientHello::new(TermSize::new(80, 24));
-        let hello_json = serde_json::to_string(&ClientControl::Hello(hello)).unwrap();
-        conn.write_control(&hello_json).unwrap();
+        let conn = ClientConnection::connect(&paths).unwrap();
 
         // Verify server responds with matching protocol version
-        let response = conn.read_control().unwrap().unwrap();
-        let server_msg: ServerControl = serde_json::from_str(&response).unwrap();
-
-        match server_msg {
+        match client_hello(&conn) {
             ServerControl::Hello(server_hello) => {
                 assert_eq!(server_hello.protocol_version, PROTOCOL_VERSION);
                 assert_eq!(server_hello.session_id, session_name);
             }
-            _ => panic!("Expected Hello response"),
+            other => panic!("Expected Hello response, got {:?}", other),
         }
 
-        thread::sleep(Duration::from_millis(100));
         drop(conn.write_control(&serde_json::to_string(&ClientControl::Quit).unwrap()));
-
-        drop(server_handle.join());
+        drop(handle.join());
+        drop(paths.cleanup());
         std::fs::remove_dir_all(&temp_dir).ok();
     }
 
     /// Test server rejects clients with incompatible protocol version
     #[test]
     fn test_version_mismatch_rejected() {
-        let temp_dir = std::env::temp_dir().join(format!("fresh-test-ver-{}", std::process::id()));
-        std::fs::create_dir_all(&temp_dir).unwrap();
+        let temp_dir = test_temp_dir("version");
+        let (paths, shutdown, handle) = spawn_editor_server(
+            &temp_dir,
+            &unique_session_name("version"),
+            Some(Duration::from_secs(5)),
+        );
 
-        let config = ServerConfig {
-            working_dir: temp_dir.clone(),
-            session_name: Some(unique_session_name("version")),
-            idle_timeout: Some(Duration::from_secs(5)),
-            mouse_hover_enabled: true,
-        };
-
-        let mut server = Server::new(config).unwrap();
-        let shutdown = server.shutdown_handle();
-        let socket_paths = server.socket_paths().clone();
-
-        let server_handle = thread::spawn(move || server.run());
-
-        thread::sleep(Duration::from_millis(50));
-
-        let conn = ClientConnection::connect(&socket_paths).unwrap();
+        let conn = ClientConnection::connect(&paths).unwrap();
 
         // Send hello with incompatible version
         let hello_json = serde_json::json!({
@@ -158,29 +187,26 @@ mod integration_tests {
         assert!(matches!(server_msg, ServerControl::VersionMismatch(_)));
 
         shutdown.store(true, Ordering::SeqCst);
-        drop(server_handle.join());
+        drop(handle.join());
+        drop(paths.cleanup());
         std::fs::remove_dir_all(&temp_dir).ok();
     }
 
     /// Test idle timeout causes server shutdown
     #[test]
     fn test_idle_timeout_triggers_shutdown() {
-        let temp_dir = std::env::temp_dir().join(format!("fresh-test-idle-{}", std::process::id()));
-        std::fs::create_dir_all(&temp_dir).unwrap();
-
-        let config = ServerConfig {
-            working_dir: temp_dir.clone(),
-            session_name: Some(unique_session_name("idle")),
-            idle_timeout: Some(Duration::from_millis(50)), // Very short timeout
-            mouse_hover_enabled: true,
-        };
-
-        let mut server = Server::new(config).unwrap();
+        let temp_dir = test_temp_dir("idle");
+        let (paths, _shutdown, handle) = spawn_editor_server(
+            &temp_dir,
+            &unique_session_name("idle"),
+            Some(Duration::from_millis(50)), // Very short timeout
+        );
 
         // Without any client connections, server should exit due to idle timeout
-        let result = server.run();
+        let result = handle.join().unwrap();
         assert!(result.is_ok());
 
+        drop(paths.cleanup());
         std::fs::remove_dir_all(&temp_dir).ok();
     }
 
@@ -191,44 +217,36 @@ mod integration_tests {
         ignore = "Windows named pipe handling needs further investigation for sustained connections"
     )]
     fn test_ping_pong_keepalive() {
-        let temp_dir = std::env::temp_dir().join(format!("fresh-test-ping-{}", std::process::id()));
-        std::fs::create_dir_all(&temp_dir).unwrap();
+        let temp_dir = test_temp_dir("ping");
+        let (paths, _shutdown, handle) = spawn_editor_server(
+            &temp_dir,
+            &unique_session_name("ping"),
+            Some(Duration::from_secs(5)),
+        );
 
-        let config = ServerConfig {
-            working_dir: temp_dir.clone(),
-            session_name: Some(unique_session_name("ping")),
-            idle_timeout: Some(Duration::from_secs(5)),
-            mouse_hover_enabled: true,
-        };
+        let conn = ClientConnection::connect(&paths).unwrap();
+        assert!(matches!(client_hello(&conn), ServerControl::Hello(_)));
 
-        let mut server = Server::new(config).unwrap();
-        let socket_paths = server.socket_paths().clone();
-        let server_handle = thread::spawn(move || server.run());
-
-        thread::sleep(Duration::from_millis(50));
-
-        let conn = ClientConnection::connect(&socket_paths).unwrap();
-
-        // Handshake
-        let hello = ClientHello::new(TermSize::new(80, 24));
-        conn.write_control(&serde_json::to_string(&ClientControl::Hello(hello)).unwrap())
-            .unwrap();
-        let _ = conn.read_control().unwrap();
-
-        thread::sleep(Duration::from_millis(100));
-
-        // Send ping
         conn.write_control(&serde_json::to_string(&ClientControl::Ping).unwrap())
             .unwrap();
 
-        // Should receive pong
-        thread::sleep(Duration::from_millis(50));
-
-        // Due to non-blocking reads, we need to handle the response carefully
-        // The server processes ping and sends pong
+        // The server may send other control messages first; skip to the pong.
+        loop {
+            let line = conn
+                .read_control()
+                .unwrap()
+                .expect("server closed the control channel before answering the ping");
+            if matches!(
+                serde_json::from_str::<ServerControl>(&line),
+                Ok(ServerControl::Pong)
+            ) {
+                break;
+            }
+        }
 
         drop(conn.write_control(&serde_json::to_string(&ClientControl::Quit).unwrap()));
-        drop(server_handle.join());
+        drop(handle.join());
+        drop(paths.cleanup());
         std::fs::remove_dir_all(&temp_dir).ok();
     }
 
@@ -239,40 +257,23 @@ mod integration_tests {
         ignore = "Windows named pipe handling needs further investigation for sustained connections"
     )]
     fn test_quit_command_shuts_down_server() {
-        let temp_dir = std::env::temp_dir().join(format!("fresh-test-quit-{}", std::process::id()));
-        std::fs::create_dir_all(&temp_dir).unwrap();
+        let temp_dir = test_temp_dir("quit");
+        // No idle timeout: only the quit can end the server.
+        let (paths, _shutdown, handle) =
+            spawn_editor_server(&temp_dir, &unique_session_name("quit"), None);
 
-        let config = ServerConfig {
-            working_dir: temp_dir.clone(),
-            session_name: Some(unique_session_name("quit")),
-            idle_timeout: None, // No idle timeout
-            mouse_hover_enabled: true,
-        };
-
-        let mut server = Server::new(config).unwrap();
-        let socket_paths = server.socket_paths().clone();
-
-        let server_handle = thread::spawn(move || server.run());
-        thread::sleep(Duration::from_millis(50));
-
-        let conn = ClientConnection::connect(&socket_paths).unwrap();
-
-        // Handshake
-        let hello = ClientHello::new(TermSize::new(80, 24));
-        conn.write_control(&serde_json::to_string(&ClientControl::Hello(hello)).unwrap())
-            .unwrap();
-        let _ = conn.read_control().unwrap();
-
-        thread::sleep(Duration::from_millis(100));
+        let conn = ClientConnection::connect(&paths).unwrap();
+        assert!(matches!(client_hello(&conn), ServerControl::Hello(_)));
 
         // Send quit - server should shutdown
         conn.write_control(&serde_json::to_string(&ClientControl::Quit).unwrap())
             .unwrap();
 
         // Server should exit
-        let result = server_handle.join().unwrap();
+        let result = handle.join().unwrap();
         assert!(result.is_ok());
 
+        drop(paths.cleanup());
         std::fs::remove_dir_all(&temp_dir).ok();
     }
 
@@ -286,74 +287,40 @@ mod integration_tests {
     /// No arbitrary sleeps - uses semantic signaling via PID file.
     #[test]
     fn test_pid_file_signals_server_readiness() {
-        let temp_dir = std::env::temp_dir().join(format!("fresh-test-pid-{}", std::process::id()));
-        std::fs::create_dir_all(&temp_dir).unwrap();
-
-        let session_name = unique_session_name("pid-ready");
-
-        // Start server in background thread and get socket paths from it
-        let config = ServerConfig {
-            working_dir: temp_dir.clone(),
-            session_name: Some(session_name.clone()),
-            idle_timeout: Some(Duration::from_secs(5)),
-            mouse_hover_enabled: true,
-        };
-
-        // Use channel to get socket paths from server thread
-        let (paths_tx, paths_rx) = std::sync::mpsc::channel();
-
-        let server_handle = thread::spawn(move || {
-            let mut server = Server::new(config).unwrap();
-            let socket_paths = server.socket_paths().clone();
-            // Write PID file after bind (simulating EditorServer behavior)
-            socket_paths.write_pid(std::process::id()).unwrap();
-            // Send paths to waiting client
-            paths_tx.send(socket_paths).unwrap();
-            server.run()
-        });
-
-        // Get socket paths from server (this blocks until server sends them)
-        let socket_paths = paths_rx.recv().unwrap();
+        let temp_dir = test_temp_dir("pid");
+        let (paths, _shutdown, handle) = spawn_editor_server(
+            &temp_dir,
+            &unique_session_name("pid-ready"),
+            Some(Duration::from_secs(5)),
+        );
 
         // PID file exists with valid running PID - server is ready
-        let pid = socket_paths.read_pid().unwrap().unwrap();
+        let pid = paths.read_pid().unwrap().unwrap();
         assert!(
             is_process_running(pid),
             "PID file should contain running process ID"
         );
 
         // Now we can connect reliably
-        let conn = ClientConnection::connect(&socket_paths);
+        let conn = ClientConnection::connect(&paths);
         assert!(
             conn.is_ok(),
             "Connection should succeed after PID file is ready: {:?}",
             conn.err()
         );
-
         let conn = conn.unwrap();
 
-        // Perform handshake
-        let hello = ClientHello::new(TermSize::new(80, 24));
-        conn.write_control(&serde_json::to_string(&ClientControl::Hello(hello)).unwrap())
-            .unwrap();
-
-        let response = conn.read_control().unwrap().unwrap();
-        let server_msg: ServerControl = serde_json::from_str(&response).unwrap();
-
-        match server_msg {
+        match client_hello(&conn) {
             ServerControl::Hello(server_hello) => {
                 assert_eq!(server_hello.protocol_version, PROTOCOL_VERSION);
             }
             other => panic!("Expected Hello, got {:?}", other),
         }
 
-        // Give server time to process the handshake
-        thread::sleep(Duration::from_millis(50));
-
         // Clean shutdown
         drop(conn.write_control(&serde_json::to_string(&ClientControl::Quit).unwrap()));
-
-        drop(server_handle.join());
+        drop(handle.join());
+        drop(paths.cleanup());
         std::fs::remove_dir_all(&temp_dir).ok();
     }
 
@@ -529,18 +496,12 @@ mod integration_tests {
         // Give waiter thread time to start waiting
         thread::yield_now();
 
-        // Now start server (after waiter is already waiting)
-        let config = ServerConfig {
-            working_dir: temp_dir.clone(),
-            session_name: Some(session_name.clone()),
-            idle_timeout: Some(Duration::from_secs(5)),
-            mouse_hover_enabled: true,
-        };
-
+        // Now start server (after waiter is already waiting). EditorServer
+        // writes the PID file as soon as it has bound its sockets.
+        let config = editor_server_config(&temp_dir, &session_name, Some(Duration::from_secs(5)));
         let paths_for_cleanup = socket_paths.clone();
         let server_handle = thread::spawn(move || {
-            let mut server = Server::new(config).unwrap();
-            server.socket_paths().write_pid(std::process::id()).unwrap();
+            let mut server = crate::server::editor_server::EditorServer::new(config).unwrap();
             server.run()
         });
 
@@ -945,9 +906,7 @@ mod integration_tests {
         SocketPaths,
         std::path::PathBuf,
     ) {
-        use crate::config::Config;
-        use crate::config_io::DirectoryContext;
-        use crate::server::editor_server::{EditorServer, EditorServerConfig};
+        use crate::server::editor_server::EditorServer;
         use std::sync::mpsc;
 
         let temp_dir =
@@ -955,30 +914,8 @@ mod integration_tests {
         std::fs::create_dir_all(&temp_dir).unwrap();
 
         let session_name = unique_session_name(test_name);
-        let config = Config::default();
-        let dir_context = DirectoryContext::for_testing(&temp_dir);
-
-        let server_config = EditorServerConfig {
-            working_dir: temp_dir.clone(),
-            session_name: Some(session_name),
-            idle_timeout: Some(Duration::from_secs(30)),
-            editor_config: config,
-            dir_context,
-            plugins_enabled: false,
-            init_enabled: false,
-            orchestrator_mode: false,
-            startup_authority: None,
-            workspace_trust: std::sync::Arc::new(
-                crate::services::workspace_trust::WorkspaceTrust::permissive(),
-            ),
-            env_provider: std::sync::Arc::new(
-                crate::services::env_provider::EnvProvider::inactive(),
-            ),
-            session_keepalive: None,
-            startup_files: Vec::new(),
-            #[cfg(feature = "web")]
-            web_addr: None,
-        };
+        let server_config =
+            editor_server_config(&temp_dir, &session_name, Some(Duration::from_secs(30)));
 
         let (paths_tx, paths_rx) = mpsc::channel();
         let (shutdown_tx, shutdown_rx) = mpsc::channel();

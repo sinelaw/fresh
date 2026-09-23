@@ -1178,16 +1178,6 @@ pub fn find_workspace_file_by_root(working_dir: &Path) -> io::Result<Option<Path
     Ok(best.map(|b| b.path))
 }
 
-/// The retired daemon-scoped workspace directory.
-///
-/// Workspaces are one set now, shared by direct mode and every daemon, so
-/// nothing writes here any more. The path survives only so boot migration can
-/// find pre-existing snapshots and fold them into the real store — see
-/// `orchestrator_persistence::migrate_session_workspaces_into_store`.
-pub fn get_session_workspaces_dir() -> io::Result<PathBuf> {
-    Ok(get_data_dir()?.join("session-workspaces"))
-}
-
 /// Workspace error types
 #[derive(Debug)]
 pub enum WorkspaceError {

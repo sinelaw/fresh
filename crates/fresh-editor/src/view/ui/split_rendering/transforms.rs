@@ -26,6 +26,8 @@ use std::collections::{HashMap, HashSet};
 /// A thin driver over [`WrapMachine`], which owns the wrap rule. Splitting the
 /// decision (there) from the token splicing (here) is what lets the row index
 /// read the same run for its boundaries — see the `wrap_machine` module docs.
+/// Production code calls [`apply_wrapping_transform_from`] directly.
+#[cfg(test)]
 pub(crate) fn apply_wrapping_transform(
     tokens: Vec<ViewTokenWire>,
     content_width: usize,

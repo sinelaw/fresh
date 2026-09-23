@@ -1284,47 +1284,6 @@ impl Viewport {
         positions[max_scroll_row]
     }
 
-    /// Scroll through ViewLines (view-transform aware)
-    ///
-    /// This method scrolls through display lines rather than source lines,
-    /// correctly handling view transforms that inject headers or other content.
-    ///
-    /// # Arguments
-    /// * `view_lines` - The current display lines (from ViewLineIterator)
-    /// * `line_offset` - Positive to scroll down, negative to scroll up
-    ///
-    /// # Returns
-    /// The new top_byte position after scrolling
-    pub fn scroll_view_lines(&mut self, view_lines: &[ViewLine], line_offset: isize) {
-        let viewport_height = self.visible_line_count();
-        if view_lines.is_empty() || viewport_height == 0 {
-            return;
-        }
-
-        // Find the current view line index that corresponds to top_byte
-        let current_idx = self.find_view_line_for_byte(view_lines, self.top_byte());
-
-        // Calculate target index
-        let target_idx = if line_offset >= 0 {
-            current_idx.saturating_add(line_offset as usize)
-        } else {
-            current_idx.saturating_sub(line_offset.unsigned_abs())
-        };
-
-        // Apply scroll limit: don't scroll past the point where viewport can't be filled
-        let max_top_idx = view_lines.len().saturating_sub(viewport_height);
-        let clamped_idx = target_idx.min(max_top_idx);
-
-        // Get the source byte for the target view line
-        if let Some(new_top_byte) = self.get_source_byte_for_view_line(view_lines, clamped_idx) {
-            tracing::trace!(
-                "scroll_view_lines: offset={}, current_idx={}, target_idx={}, clamped_idx={}, new_top_byte={}",
-                line_offset, current_idx, target_idx, clamped_idx, new_top_byte
-            );
-            self.set_top_byte(new_top_byte);
-        }
-    }
-
     /// Find the view line index that contains a source byte position
     /// Returns the line where the byte falls within its range, not just the first line
     /// starting at or after the byte.
@@ -1367,28 +1326,6 @@ impl Viewport {
         }
 
         best_match
-    }
-
-    /// Get the source byte position for a view line index
-    /// For injected lines (headers), walks forward to find the next source line
-    fn get_source_byte_for_view_line(&self, view_lines: &[ViewLine], idx: usize) -> Option<usize> {
-        // Start from the requested index and walk forward to find a line with source mapping
-        for line in view_lines.iter().skip(idx) {
-            if let Some(source_byte) = line.char_source_bytes.iter().find_map(|m| *m) {
-                return Some(source_byte);
-            }
-        }
-        // If all remaining lines are injected, try to get the last known source position
-        // by walking backwards
-        for line in view_lines.iter().take(idx).rev() {
-            if let Some(source_byte) = line.char_source_bytes.iter().find_map(|m| *m) {
-                // This is the last source position before our target
-                // We want to stay at that position
-                return Some(source_byte);
-            }
-        }
-        // No source bytes found at all - keep current position
-        Some(self.top_byte())
     }
 
     /// Ensure cursor is visible using view lines (Layout-aware)

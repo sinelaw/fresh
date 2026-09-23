@@ -651,16 +651,6 @@ impl AsyncBridge {
 
         messages
     }
-
-    /// Check if there are pending messages (non-blocking)
-    pub fn has_messages(&self) -> bool {
-        // Note: This is racy but safe - only used for optimization
-        if let Ok(receiver) = self.receiver.lock() {
-            receiver.try_recv().is_ok()
-        } else {
-            false
-        }
-    }
 }
 
 impl Default for AsyncBridge {

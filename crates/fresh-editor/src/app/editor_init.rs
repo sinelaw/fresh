@@ -2268,23 +2268,6 @@ impl Editor {
         self.keybindings.clone()
     }
 
-    /// Test-only accessor for the Live Grep Resume cache (issue #1796).
-    #[doc(hidden)]
-    pub fn live_grep_last_state_for_tests(
-        &self,
-    ) -> Option<&crate::services::live_grep_state::LiveGrepLastState> {
-        self.active_window().live_grep_last_state.as_ref()
-    }
-
-    /// Test-only setter for the Live Grep Resume cache.
-    #[doc(hidden)]
-    pub fn set_live_grep_last_state_for_tests(
-        &mut self,
-        state: Option<crate::services::live_grep_state::LiveGrepLastState>,
-    ) {
-        self.active_window_mut().live_grep_last_state = state;
-    }
-
     /// Test-only accessor for the split tree, so layout-shape
     /// regression tests can assert on the structure directly.
     #[doc(hidden)]

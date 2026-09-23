@@ -435,20 +435,6 @@ impl Editor {
         Ok(())
     }
 
-    /// Navigate settings up
-    pub fn settings_navigate_up(&mut self) {
-        if let Some(ref mut state) = self.settings_state {
-            state.select_prev();
-        }
-    }
-
-    /// Navigate settings down
-    pub fn settings_navigate_down(&mut self) {
-        if let Some(ref mut state) = self.settings_state {
-            state.select_next();
-        }
-    }
-
     /// Activate/toggle the currently selected setting
     pub fn settings_activate_current(&mut self) {
         use crate::view::settings::FocusPanel;

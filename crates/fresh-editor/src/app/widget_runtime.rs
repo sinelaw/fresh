@@ -2288,27 +2288,6 @@ impl Editor {
             .find(|panel_key| self.panel_focused_widget_is_text(panel_key))
     }
 
-    /// The first panel rendering into `buffer_id` that has a focused widget
-    /// of *any* kind.
-    ///
-    /// [`Self::focused_text_widget_panel_for_buffer`] answers the narrower
-    /// question the clipboard path asks; this one is for a key addressed to
-    /// whatever holds focus — a `Tree`'s pan keys, where the whole point is
-    /// that focus is *not* on a text field.
-    pub(super) fn focused_widget_panel_for_buffer(
-        &self,
-        buffer_id: crate::model::event::BufferId,
-    ) -> Option<crate::widgets::PanelKey> {
-        self.widget_registry
-            .panels_for_buffer(buffer_id)
-            .into_iter()
-            .find(|k| {
-                self.widget_registry
-                    .get(k)
-                    .is_some_and(|p| !p.focus_key.is_empty())
-            })
-    }
-
     /// True when `panel_key`'s currently-focused widget is a `Text`
     /// field (so it can accept clipboard insertion). `false` when the
     /// panel is gone, has no focus, or focus rests on a non-text

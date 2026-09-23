@@ -147,11 +147,6 @@ impl SlowFileSystem {
         }
     }
 
-    /// Create with uniform delay for all operations
-    pub fn with_uniform_delay(inner: Arc<dyn FileSystem>, delay: Duration) -> Self {
-        Self::new(inner, SlowFsConfig::uniform(delay))
-    }
-
     /// Get a reference to the metrics
     pub fn metrics(&self) -> &Arc<BackendMetrics> {
         &self.metrics

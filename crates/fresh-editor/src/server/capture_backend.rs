@@ -44,11 +44,6 @@ impl CaptureBackend {
         std::mem::take(&mut self.buffer)
     }
 
-    /// Get a reference to the captured output
-    pub fn get_buffer(&self) -> &[u8] {
-        &self.buffer
-    }
-
     /// Clear the buffer without returning it
     pub fn clear_buffer(&mut self) {
         self.buffer.clear();

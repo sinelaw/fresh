@@ -104,35 +104,6 @@ impl<'a> CellThemeRecorder<'a> {
             region: Cow::Borrowed(region),
         });
     }
-
-    /// The same, for keys that are not literals.
-    ///
-    /// A painter names the key it paints with in its own source, so `run`'s
-    /// `&'static str` fits it exactly and every existing caller keeps working.
-    /// A *description* does not: its key arrives as data — through
-    /// `shell_theme`'s grammar, or from a plugin that chose the string — so
-    /// the fold needs this one.
-    pub fn run_owned(
-        &mut self,
-        x: u16,
-        y: u16,
-        w: u16,
-        fg_key: Option<Cow<'static, str>>,
-        bg_key: Option<Cow<'static, str>>,
-        region: Cow<'static, str>,
-    ) {
-        if w == 0 || (fg_key.is_none() && bg_key.is_none()) {
-            return;
-        }
-        self.runs.push(ThemeRun {
-            x,
-            y,
-            w,
-            fg_key,
-            bg_key,
-            region,
-        });
-    }
 }
 
 /// Information about which theme key(s) style a specific screen position.

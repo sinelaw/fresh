@@ -259,18 +259,6 @@ impl TtyReader {
         }
         Ok(self.next_buffered().or_else(|| self.take_resize()))
     }
-
-    /// Non-blocking peek at the next event: drains stdin once if data is already
-    /// pending. Used by mouse-move coalescing to look ahead without blocking.
-    pub fn try_next(&mut self) -> Option<InputEvent> {
-        if let Some(ev) = self.next_buffered() {
-            return Some(ev);
-        }
-        if poll_readable(self.stdin_fd, Duration::ZERO) {
-            self.drain_stdin();
-        }
-        self.next_buffered().or_else(|| self.take_resize())
-    }
 }
 
 impl Drop for TtyReader {
