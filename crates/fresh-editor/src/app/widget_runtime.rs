@@ -244,11 +244,21 @@ impl Editor {
         event_type: String,
         payload: serde_json::Value,
     ) {
-        let pm = self.plugin_manager.read().unwrap();
-        if !pm.has_hook_handlers("widget_event") {
+        if !self
+            .plugin_manager
+            .read()
+            .unwrap()
+            .has_hook_handlers("widget_event")
+        {
             return;
         }
-        pm.run_hook_for_plugin(
+        self.publish_panel_focus();
+        let focus_key = self
+            .widget_registry
+            .focus_key(panel_key)
+            .map(str::to_string)
+            .unwrap_or_default();
+        self.plugin_manager.read().unwrap().run_hook_for_plugin(
             &panel_key.plugin,
             "widget_event",
             fresh_core::hooks::HookArgs::WidgetEvent {
@@ -257,8 +267,36 @@ impl Editor {
                 widget_key,
                 event_type,
                 payload,
+                focus_key,
             },
         );
+    }
+
+    /// Publish every mounted panel's focus fact to the plugins' state
+    /// snapshot, where `editor.getPanelFocusKey` reads it.
+    ///
+    /// Cheap and targeted rather than a full snapshot refresh, because it
+    /// runs ahead of every `widget_event` and every plugin action: those are
+    /// the moments plugin code runs in answer to the user, and what it reads
+    /// about focus then must be what the host decided a moment ago.
+    pub(crate) fn publish_panel_focus(&self) {
+        #[cfg(feature = "plugins")]
+        {
+            let Some(handle) = self.plugin_manager.read().unwrap().state_snapshot_handle() else {
+                return;
+            };
+            let Ok(mut snapshot) = handle.write() else {
+                return;
+            };
+            snapshot.panel_focus.clear();
+            for (key, focus) in self.widget_registry.focus_keys() {
+                snapshot
+                    .panel_focus
+                    .entry(key.plugin.clone())
+                    .or_default()
+                    .insert(key.id, focus.to_string());
+            }
+        }
     }
 
     /// Mark every view of `buffer_id` as non-horizontally-scrollable.
@@ -3157,6 +3195,44 @@ impl Editor {
             *o = None;
         }
         let _ = self.widget_registry.unmount(&panel_key);
+        if slot == super::PanelSlot::Floating {
+            self.floating_slot_closed();
+        }
+    }
+
+    /// **Focus returns to what opened the panel.** The floating slot just
+    /// emptied; if a dock widget held the keyboard when it mounted
+    /// (`Editor::floating_opener`), the dock takes the keyboard back and
+    /// its focus returns to that widget — or stays where it is, if the
+    /// widget is gone from the dock's spec by now.
+    ///
+    /// Deliberately the host's, and the one path for every way a panel
+    /// closes — Esc, a press outside an anchored menu, the plugin's own
+    /// unmount: each plugin used to hand the keyboard back itself, and
+    /// each of its closing paths had to remember to.
+    pub(super) fn floating_slot_closed(&mut self) {
+        // The slot must really be empty: a panel mounted in the same breath
+        // (a dialog replacing a dialog) keeps the keyboard, and the opener
+        // waits for the last of them.
+        if self.floating_widget_panel.is_some() {
+            return;
+        }
+        let Some((dock_key, widget)) = self.floating_opener.take() else {
+            return;
+        };
+        // The dock that opened it must still be the dock.
+        if self.dock.as_ref().map(|f| &f.panel_key) != Some(&dock_key) {
+            return;
+        }
+        let still_there = !widget.is_empty()
+            && self
+                .widget_registry
+                .get(&dock_key)
+                .is_some_and(|p| crate::widgets::find_widget_by_key(&p.spec, &widget).is_some());
+        if still_there {
+            self.set_panel_focus_and_notify(&dock_key, widget);
+        }
+        self.refocus_floating_panel(super::PanelSlot::Dock);
     }
 }
 
@@ -4588,6 +4664,67 @@ mod tests {
             )),
             "the dropdown owns the keyboard, so ↑/↓ drive it and not the list"
         );
+    }
+
+    /// **Focus returns to what opened the panel.** A centred panel mounted
+    /// over a focused dock records the dock's focused widget; when the
+    /// floating slot empties, the dock takes the keyboard back on exactly
+    /// that widget — not wherever a plugin would have guessed.
+    #[test]
+    fn closing_a_floating_panel_returns_focus_to_the_dock_widget_that_opened_it() {
+        let (mut editor, _t) = make_editor();
+        let dock_key = crate::widgets::PanelKey::new("test-plugin", 1);
+        let spec = WidgetSpec::Col {
+            children: vec![button("list"), button("menu")],
+            key: None,
+        };
+        let out = crate::widgets::resolve_panel(&spec, &Default::default(), "", true, None);
+        editor.widget_registry.mount(
+            dock_key.clone(),
+            crate::app::PanelSlot::Dock.buffer_id(),
+            spec,
+            out.instance_states,
+            out.focus_key,
+            true,
+            false,
+            false,
+        );
+        let mut dock = dock_panel(dock_key.clone());
+        dock.focused = false;
+        editor.dock = Some(dock);
+        // The Menu button opened a panel, which then moved the dock's focus.
+        editor.floating_opener = Some((dock_key.clone(), "menu".to_string()));
+        editor
+            .widget_registry
+            .decide_focus(&dock_key, "list".to_string());
+
+        editor.floating_slot_closed();
+
+        assert_eq!(editor.widget_registry.focus_key(&dock_key), Some("menu"));
+        assert!(
+            editor.dock.as_ref().is_some_and(|d| d.focused),
+            "the dock has the keyboard"
+        );
+        assert!(editor.floating_opener.is_none(), "the opener is spent");
+    }
+
+    /// A panel replaced by another in the same breath keeps the keyboard: the
+    /// slot is not empty, so the opener waits for the last one to close.
+    #[test]
+    fn a_floating_panel_still_up_keeps_the_keyboard() {
+        let (mut editor, _t) = make_editor();
+        let dock_key = crate::widgets::PanelKey::new("test-plugin", 1);
+        let mut dock = dock_panel(dock_key.clone());
+        dock.focused = false;
+        editor.dock = Some(dock);
+        editor.floating_widget_panel =
+            Some(dock_panel(crate::widgets::PanelKey::new("test-plugin", 2)));
+        editor.floating_opener = Some((dock_key, "menu".to_string()));
+
+        editor.floating_slot_closed();
+
+        assert!(editor.dock.as_ref().is_some_and(|d| !d.focused));
+        assert!(editor.floating_opener.is_some(), "the opener waits");
     }
 }
 

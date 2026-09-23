@@ -1543,6 +1543,10 @@ impl Editor {
                 // Use non-blocking version to avoid deadlock with async plugin ops
                 #[cfg(feature = "plugins")]
                 {
+                    // A mode binding's handler reads which control has focus
+                    // (`getPanelFocusKey`); it must read the host's answer as
+                    // of this key, not the last full snapshot's.
+                    self.publish_panel_focus();
                     let result = self.plugin_manager.read().unwrap().execute_action_async(
                         &action_name,
                         None,

@@ -69,10 +69,38 @@ select and `/` focus the filter from anywhere, the tour's Space/Backspace step
 the tour — the binding is declared a shortcut, keeping its old precedence
 explicitly rather than by accident.
 
+### R2 — plugins hold no interaction state
+
+Focus, open/closed, highlight, scroll and caret are the host's. Plugins had
+been keeping copies — the form's focus ring mirror, the dock's
+`pickerFocusKey` and `dockFocus`, the Add Machine, New Folder, Repositories
+and Machines dialogs' focus keys, the form's open-dropdown mirror — each
+maintained from `focus` events and patched by hand wherever the plugin moved
+focus itself, and each able to drift.
+
+- **Every `widget_event` carries `focus_key`**: the panel's focused widget
+  after the event, read from the registry at the moment the event fires.
+- **`editor.getPanelFocusKey(panelId)` / `panel.focusKey()`** read the same
+  fact from the plugins' state snapshot. It is published ahead of every
+  `widget_event` and every plugin action (`Editor::publish_panel_focus`), so a
+  mode binding's handler reads the focus as of its key; a plugin's own
+  `setFocusKey` writes through, so a read right after it agrees.
+- **Focus returns to what opened a panel.** When a centred or anchored panel
+  mounts over a focused dock, the host records the dock widget that had the
+  keyboard (`Editor::floating_opener`); when the floating slot empties — Esc,
+  a press outside, the plugin's own unmount — the dock takes the keyboard back
+  on that widget (`Editor::floating_slot_closed`). The plugin's
+  `closeMainMenu` / `closeCreateFolderDialog` / `restoreDockAfterDialog` /
+  `restoreDockAfterForm` refocus code and the `yieldDock` / `restoreDock`
+  discovery hooks are gone. A dialog opened while the editor had the keyboard
+  closes back to the editor, not to a dock the user was not in.
+- "`change` means a value was accepted" is a dropdown contract, and lands
+  with R3.
+
 ## Checklist
 
 - [x] R1 — controls get keys first; declared dialog-wide shortcuts.
-- [ ] R2 — the focus key in every `widget_event`, a getter, focus returns to
+- [x] R2 — the focus key in every `widget_event`, a getter, focus returns to
       the opener; plugin state copies deleted.
 - [ ] R3 — one shared pop-up; the dropdown and combo-box contracts.
 - [ ] R3 — the text area keeps its caret in view on every layout; `minRows` /

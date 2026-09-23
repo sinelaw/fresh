@@ -380,6 +380,18 @@ impl Editor {
                 entry.entry(key.clone()).or_insert_with(|| value.clone());
             }
         }
+
+        // Every mounted panel's focus fact (`getPanelFocusKey`); also
+        // published ahead of each `widget_event` and plugin action
+        // (`Editor::publish_panel_focus`).
+        snapshot.panel_focus.clear();
+        for (key, focus) in self.widget_registry.focus_keys() {
+            snapshot
+                .panel_focus
+                .entry(key.plugin.clone())
+                .or_default()
+                .insert(key.id, focus.to_string());
+        }
     }
 
     /// Dispatch one plugin command, timing the handler and reporting any that
@@ -5930,7 +5942,20 @@ impl Editor {
         // modal deferred to its own mode bindings, stranding the modal
         // open. Fires the dock's `blur` widget_event so the owning plugin
         // can mirror the state. Does nothing when the dock isn't focused.
+        //
+        // The dock's focused widget is remembered as the panel's opener, and
+        // gets the keyboard back when the floating slot empties
+        // (`Editor::floating_slot_closed`). A panel mounted over another
+        // keeps the opener the first one recorded.
         if !as_dock && self.dock.as_ref().is_some_and(|f| f.focused) {
+            if let Some(dock_key) = self.dock.as_ref().map(|f| f.panel_key.clone()) {
+                let widget = self
+                    .widget_registry
+                    .focus_key(&dock_key)
+                    .map(str::to_string)
+                    .unwrap_or_default();
+                self.floating_opener = Some((dock_key, widget));
+            }
             self.blur_floating_panel(super::PanelSlot::Dock);
         }
         // A dock's width is the editor's (`dock_width` / `dock_width_rule`),
@@ -6193,6 +6218,9 @@ impl Editor {
             *o = None;
         }
         let _ = self.widget_registry.unmount(panel_key);
+        if slot == super::PanelSlot::Floating {
+            self.floating_slot_closed();
+        }
         // Hiding the left dock frees its full-height column. The next
         // frame's `compute_dock_split` already lays the chrome back out
         // full-width (and the early command drain in `render` makes that

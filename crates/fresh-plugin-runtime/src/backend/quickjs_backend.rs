@@ -5607,6 +5607,26 @@ impl JsEditorApi {
             .is_ok()
     }
 
+    /// Which widget holds focus in one of this plugin's mounted panels —
+    /// its key, or `""` when nothing is focused or the panel is not mounted.
+    ///
+    /// The host owns a panel's focus: Tab, a click, a control's own move and
+    /// `setFocusKey` all write the one fact this reads. Read it rather than
+    /// mirroring focus from `focus` events — every `widget_event` also carries
+    /// it, as `focus_key`.
+    pub fn get_panel_focus_key(&self, panel_id: u32) -> String {
+        self.state_snapshot
+            .read()
+            .ok()
+            .and_then(|s| {
+                s.panel_focus
+                    .get(&self.plugin_name)
+                    .and_then(|m| m.get(&(panel_id as u64)))
+                    .cloned()
+            })
+            .unwrap_or_default()
+    }
+
     /// Get the current editor mode
     pub fn get_editor_mode(&self) -> Option<String> {
         self.state_snapshot
@@ -7385,6 +7405,18 @@ impl JsEditorApi {
                 return Ok(false);
             }
         };
+        // Write-through, the way `setViewState` does: the host applies the
+        // focus a moment later, but a `getPanelFocusKey` right after this
+        // call must already read the focus this plugin just decided.
+        if let fresh_core::api::WidgetMutation::SetFocusKey { widget_key } = &mutation {
+            if let Ok(mut snapshot) = self.state_snapshot.write() {
+                snapshot
+                    .panel_focus
+                    .entry(self.plugin_name.clone())
+                    .or_default()
+                    .insert(panel_id as u64, widget_key.clone());
+            }
+        }
         Ok(self
             .command_sender
             .send(PluginCommand::WidgetMutate {

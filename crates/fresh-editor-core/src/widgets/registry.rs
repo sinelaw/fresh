@@ -723,6 +723,12 @@ impl WidgetRegistry {
         self.panels.get(panel_key).map(|s| s.focus_key.as_str())
     }
 
+    /// Every mounted panel with the widget that holds its focus (`""` for
+    /// none) — what the plugins' `getPanelFocusKey` is published from.
+    pub fn focus_keys(&self) -> impl Iterator<Item = (&PanelKey, &str)> {
+        self.panels.iter().map(|(k, s)| (k, s.focus_key.as_str()))
+    }
+
     /// Decide which widget holds this panel's focus.
     ///
     /// **The one writer of the fact, for every decision.** Two callers, each

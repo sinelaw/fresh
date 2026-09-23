@@ -1489,6 +1489,14 @@ pub struct Editor {
     /// (`dock`) so the two can coexist (a modal opens *over* the editor
     /// while the dock stays visible). Routing is by `PanelSlot`.
     pub(crate) floating_widget_panel: Option<FloatingWidgetState>,
+    /// **What opened the centred panel** — the dock panel and the widget in
+    /// it that held the keyboard when a floating panel mounted over it and
+    /// took the keyboard away. When the floating slot empties again (Esc,
+    /// a click outside, the plugin's own unmount), the host gives the
+    /// keyboard back to exactly that widget: a menu or a dialog closes back
+    /// onto the control that opened it, and no plugin has to say so.
+    /// `None` when the editor, not the dock, had the keyboard.
+    pub(crate) floating_opener: Option<(crate::widgets::PanelKey, String)>,
 
     /// The editor-global left **dock** panel (`PanelSlot::Dock`), if
     /// shown. Independent of `floating_widget_panel` so the dock persists

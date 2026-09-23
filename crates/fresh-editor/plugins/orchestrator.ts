@@ -899,11 +899,6 @@ function dockWidth(): number {
 function dockContentCols(dockWidth: number): number {
   return Math.max(8, dockWidth - 2);
 }
-// Which dock zone has keyboard focus: the session list (default) or the
-// filter input. Tracked from the host's `focus` widget_event. The host
-// (dispatch_floating_widget_key) reads the panel focus directly to route
-// Enter/Esc/Space//'; this mirror is informational for the plugin.
-let dockFocus: "list" | "filter" = "list";
 // Set just before the dock blurs *because the user picked a workspace*
 // (a row click, Enter on the list, or attaching a discovered worktree
 // with `dive`). The `blur` handler clears the search filter so a stale
@@ -914,15 +909,11 @@ let dockFocus: "list" | "filter" = "list";
 // `blur`; also reset on `focus` so an unconsumed flag can't leak into a
 // later, unrelated blur.
 let dockDiveBlur = false;
-// Full focused-widget mirror for the open dialog (both dock and
-// centered-picker modes). Updated from every `focus` widget_event.
-// Used by `toggleSelectCurrent` so a Space keypress while focus is
-// on a filter checkbox toggles *that* checkbox rather than the list
-// — see the OPEN_MODE `["Space", "orchestrator_toggle_select"]`
-// binding below for why the mode binding can't be made conditional
-// upstream (it has to swallow Space unconditionally to keep it out
-// of the filter text-input).
-let pickerFocusKey: string = "sessions";
+// Which control holds the open dialog's focus (dock or centred picker) —
+// the host's fact, read when a binding needs it.
+function pickerFocusKey(): string {
+  return openPanel?.focusKey() ?? "";
+}
 // Scope is remembered across opens of the picker (module state
 // survives dialog close). Defaults to "all" so the picker opens
 // showing every session; flipping it with the Project control / Alt+P
@@ -5091,15 +5082,10 @@ function openControlRoom(
   // (↑↓ switch, Enter blurs to editor). The modal lands on Visit.
   const initialFocus = asDock ? "sessions" : "visit";
   openPanel.setFocusKey(initialFocus);
-  // Seed the `pickerFocusKey` mirror — `setFocusKey` only fires the
-  // `focus` widget_event when the inner key actually *changes*, so on
-  // a fresh mount it may not fire (no previous focus to differ from).
-  pickerFocusKey = initialFocus;
   if (asDock) {
     // The dock has no editor mode — its keys are handled at the host
     // floating-panel layer (mode bindings would be shadowed by the
     // active session's buffer mode).
-    dockFocus = "list";
     editor.setEditorMode(null);
   } else {
     editor.setEditorMode(OPEN_MODE);
@@ -5125,7 +5111,6 @@ function restoreDockBehindPicker(): boolean {
   dockPanel = null;
   dockMode = true;
   dockBlurred = false;
-  dockFocus = "list";
   if (openDialog) {
     openDialog.filter = { value: "", cursor: 0 };
     const activeId = editor.activeWindow();
@@ -5834,7 +5819,8 @@ function renderMainMenu(): void {
   if (mainMenuPanel) mainMenuPanel.update(buildMainMenuSpec());
 }
 
-// Close the Menu and hand the keyboard back to the dock's list.
+// Close the Menu. The host hands the keyboard back to the dock control
+// that opened it.
 function closeMainMenu(): void {
   if (mainMenuPanel) {
     mainMenuPanel.unmount();
@@ -5842,15 +5828,7 @@ function closeMainMenu(): void {
   }
   if (!openDialog) return;
   openDialog.dockMenu = null;
-  if (openPanel && dockMode) {
-    dockBlurred = false;
-    dockFocus = "list";
-    editor.floatingPanelControl(openPanel.id(), "focus", 0);
-    // Through the mirror too: it still names the Menu button the click
-    // focused, and Enter on the list reads it to pick what to run.
-    focusDockControl("sessions");
-    refreshOpenDialog();
-  }
+  if (openPanel && dockMode) refreshOpenDialog();
 }
 
 function dockMoveMenu(): WidgetSpec {
@@ -6187,7 +6165,8 @@ function submitCreateFolder(): void {
   closeCreateFolderDialog();
 }
 
-// Tear down the dialog and hand keyboard focus back to the dock.
+// Tear down the dialog. The host hands the keyboard back to whatever
+// opened it.
 function closeCreateFolderDialog(): void {
   if (createFolderPanel) {
     createFolderPanel.unmount();
@@ -6195,12 +6174,6 @@ function closeCreateFolderDialog(): void {
   }
   createFolderDialog = null;
   editor.setEditorMode(null);
-  if (openPanel && dockMode) {
-    dockBlurred = false;
-    editor.floatingPanelControl(openPanel.id(), "focus", 0);
-    focusDockControl("sessions");
-    refreshOpenDialog();
-  }
 }
 
 // Flip one folder's expansion in the persisted set and push it to the
@@ -6512,19 +6485,6 @@ function closeDockContextMenu(): void {
     dockMenuPanel = null;
   }
   dockMenuState = null;
-}
-
-// Tear down the menu and hand keyboard focus back to the dock (whose
-// keys were blurred when the popup mounted). Mirrors `restoreDockAfterForm`.
-function closeDockContextMenuAndRestoreDock(): void {
-  closeDockContextMenu();
-  if (openPanel && dockMode) {
-    dockBlurred = false;
-    dockFocus = "list";
-    editor.floatingPanelControl(openPanel.id(), "focus", 0);
-    focusDockControl("sessions");
-    refreshOpenDialog();
-  }
 }
 
 // Commit the highlighted session as the active window after a short
@@ -7465,7 +7425,6 @@ registerHandler("orchestrator_focus_filter", () => {
   if (!openDialog || !openPanel) return;
   if (dockMode) {
     openDockSearch();
-    dockFocus = "filter";
     return;
   }
   openPanel.setFocusKey("filter");
@@ -7492,7 +7451,7 @@ function toggleSelectCurrent(): void {
   // (sessions list, Visit button, +New, the filter input itself) fall
   // through to the list multi-select — preserving today's behaviour
   // for widgets that don't expose a natural toggle.
-  switch (pickerFocusKey) {
+  switch (pickerFocusKey()) {
     case "worktree-show":
       toggleShowWorktrees();
       return;
@@ -7588,51 +7547,10 @@ type HistoryField = "project_path" | "name" | "cmd" | "branch";
 const HISTORY_FIELDS: HistoryField[] = ["project_path", "name", "cmd", "branch"];
 const HISTORY_CAP = 100;
 
-/// Plugin-side focus tracker for the new-session form. The host
-/// owns the actual focus key, but doesn't expose a "what's
-/// focused right now?" query to plugins, and doesn't fire focus-
-/// change events. So we mirror the cycle ourselves: openForm
-/// resets to the first tabbable, Tab / S-Tab advance / retreat,
-/// `change` events on a known widget snap focus to that widget
-/// (covers mouse clicks too).
-///
-/// The mirror is "best-effort" — it can drift if the host
-/// reorders focus in ways we don't intercept (e.g. an explicit
-/// `focusAdvance` action we issued ourselves), but for the
-/// keys this form actually binds it stays in sync.
-let formFocusCycle: string[] = [];
-let formFocusIndex = 0;
-// Which of the form's dropdowns has its option pop-over open (`null` for
-// none), mirrored from the host's `dropdown_open` event: an open pop-over
-// swallows Enter/Escape into the list, a closed one lets them act on the
-// dialog.
-let openFormDropdown: string | null = null;
-
-function rebuildFormFocusCycle(): void {
-  if (!form) {
-    formFocusCycle = [];
-    formFocusIndex = 0;
-    return;
-  }
-  // Mirrors `buildFormSpec`'s render order exactly (the host's tabbable set);
-  // see `formFocusKeys`. Focus follows its *key* across the rebuild: rows come
-  // and go above the focused control (Teach Fresh CLI is Local-only), and an
-  // index kept across that names a different control than the one the host
-  // still has focused.
-  const was = formFocusCycle[formFocusIndex];
-  formFocusCycle = formFocusKeys(form);
-  const at = was ? formFocusCycle.indexOf(was) : -1;
-  if (at >= 0) formFocusIndex = at;
-  else if (formFocusIndex >= formFocusCycle.length) formFocusIndex = 0;
-}
-
+/// Which of the form's controls holds the keyboard — the host's fact,
+/// read when a binding needs it (the history arrows).
 function formFocusedKey(): string {
-  return formFocusCycle[formFocusIndex] ?? "";
-}
-
-function snapFormFocusTo(key: string): void {
-  const idx = formFocusCycle.indexOf(key);
-  if (idx >= 0) formFocusIndex = idx;
+  return formPanel?.focusKey() ?? "";
 }
 
 function historyKey(field: HistoryField): string {
@@ -8045,7 +7963,6 @@ function applyAgentPreset(p: AgentPreset): void {
     // before it can be focused, and re-mounting the spec resets host focus.
     renderForm();
     formPanel?.setFocusKey("cmd");
-    snapFormFocusTo("cmd");
     return;
   }
   form.agentCustom = false;
@@ -9066,7 +8983,6 @@ function settleHostKey(trust: boolean, unmount: boolean): void {
   hostKeyPanel = null;
   hostKeyState = null;
   editor.setEditorMode(null);
-  restoreDockAfterDialog();
   if (st) st.settle(trust);
 }
 
@@ -9075,7 +8991,6 @@ function askHostKeyTrust(offer: HostKeyOffer): Promise<boolean> {
   // creates are serialised (`pumpRemoteQueue`), so this is belt-and-braces.
   if (hostKeyState) settleHostKey(false, true);
   return new Promise<boolean>((resolve) => {
-    yieldDockToDialog();
     hostKeyState = { offer, settle: resolve };
     hostKeyPanel = new FloatingWidgetPanel();
     hostKeyPanel.mount(buildHostKeySpec(offer), {
@@ -9309,24 +9224,6 @@ function applyTextChange(slot: Field, payload: unknown): void {
 
 function fieldOf(value: string): Field {
   return { value, cursor: utf8Len(value) };
-}
-
-// Blur the dock while a machine dialog owns the keyboard, and hand it back
-// after (mirrors the folder dialog).
-function yieldDockToDialog(): void {
-  if (openPanel && dockMode) {
-    dockBlurred = true;
-    editor.floatingPanelControl(openPanel.id(), "blur", 0);
-  }
-}
-
-function restoreDockAfterDialog(): void {
-  if (openPanel && dockMode) {
-    dockBlurred = false;
-    editor.floatingPanelControl(openPanel.id(), "focus", 0);
-    focusDockControl("sessions");
-    refreshOpenDialog();
-  }
 }
 
 // =============================================================================
@@ -9731,7 +9628,6 @@ type MachineDialogReturn = "machines" | "form" | "repos" | "discover" | null;
 const MACHINE_DIALOG_MODE = "orchestrator-machine-dialog";
 let machineDialog: MachineDialogState | null = null;
 let machinePanel: FloatingWidgetPanel | null = null;
-let machineFocusKey = "machine-target";
 const MACHINE_DIALOG_WIDTH_PCT = 60;
 
 /** Open Add Machine (`existing` null) or Edit Machine. `fromHost` seeds it
@@ -9744,7 +9640,6 @@ function openMachineDialog(
   template?: Partial<Machine>,
   onDone?: (savedKey: string | null) => void,
 ): void {
-  yieldDockToDialog();
   const m = existing ?? (template ? { ...blankMachine(), ...template } : null);
   machineDialog = {
     id: existing?.id ?? null,
@@ -9787,7 +9682,6 @@ function openMachineDialog(
   // Straight to what the machine reaches; for a new ssh machine the Host
   // field opens with the config hosts to pick from.
   const first = machineDialog.kind === "ssh" ? "machine-target" : "machine-context";
-  machineFocusKey = first;
   machinePanel.setFocusKey(first);
   suggestMachineHosts();
 }
@@ -9840,14 +9734,12 @@ function closeMachineDialog(reopen: boolean): void {
     // used. Nothing is launched.
     if (savedKey === null && pendingFormPrefill) {
       pendingFormPrefill = null;
-      restoreDockAfterDialog();
       return;
     }
     dockBlurred = true;
     openForm({ fromPicker: true });
     return;
   }
-  restoreDockAfterDialog();
 }
 
 // A machine is named by what it reaches: the ssh host (a config alias as
@@ -10062,7 +9954,7 @@ editor.defineMode(MACHINE_DIALOG_MODE, MACHINE_DIALOG_MODE_BINDINGS, true, true)
 // their own Enter before this binding is asked.
 registerHandler("orchestrator_machine_enter", () => {
   if (!machineDialog || !machinePanel) return;
-  if (machineFocusKey === "machine-kind") return;
+  if (machinePanel.focusKey() === "machine-kind") return;
   if (machineDialog.confirmRemove) return;
   saveMachineDialog();
 });
@@ -10074,9 +9966,7 @@ function askRemoveMachine(ask: boolean): void {
   if (!d || d.id === null) return;
   d.confirmRemove = ask;
   renderMachineDialog();
-  // Moving focus from here fires no focus event, so the mirror is set too.
-  machineFocusKey = ask ? "machine-remove-no" : "machine-remove";
-  machinePanel?.setFocusKey(machineFocusKey);
+  machinePanel?.setFocusKey(ask ? "machine-remove-no" : "machine-remove");
 }
 
 // Forget the machine and go back to the list; nothing on the machine changes.
@@ -10133,7 +10023,6 @@ function browseIdentityFile(): void {
   d.browse = b;
   void browserGo(b, typed ? parentDir(typed) : "~/.ssh", () => renderMachineDialog()).then(() => {
     if (machineDialog !== d || d.browse !== b) return;
-    machineFocusKey = "machine-browse-list";
     machinePanel?.setFocusKey("machine-browse-list");
   });
 }
@@ -10147,7 +10036,6 @@ function handleMachineDialogEvent(e: WidgetEvt): void {
     return;
   }
   if (e.event_type === "focus") {
-    if (typeof e.widget_key === "string" && e.widget_key.length > 0) machineFocusKey = e.widget_key;
     if (e.widget_key === "machine-target") suggestMachineHosts();
     else setMachineHostSuggestions([]);
     return;
@@ -10176,7 +10064,6 @@ function handleMachineDialogEvent(e: WidgetEvt): void {
         d.identity = fieldOf(tildePath(picked));
         renderMachineDialog();
         machinePanel?.setValue("machine-identity", d.identity.value, d.identity.cursor);
-        machineFocusKey = "machine-identity";
         machinePanel?.setFocusKey("machine-identity");
       }
     }
@@ -10706,7 +10593,6 @@ interface RepoDialogState {
   // project's remote, or it stays on this machine only.
   useOrigin: boolean;
   error: string;
-  focus: string;
   // `Remove…` pressed: the repository's row asks before it goes.
   confirmRemove: boolean;
   // The advanced per-machine rows are open, and the one being answered.
@@ -10745,7 +10631,6 @@ function openRepositoriesDialog(opts: {
   returnTo?: "form" | null;
   add?: { from: "url" | "folder"; path: string } | null;
 }): void {
-  yieldDockToDialog();
   invalidateRepositories();
   invalidateMachines();
   const repos = loadRepositories();
@@ -10775,7 +10660,6 @@ function openRepositoriesDialog(opts: {
     cloning: null,
     browse: null,
     error: "",
-    focus: "",
     confirmRemove: false,
     useOrigin: true,
     machinesOpen: false,
@@ -10791,7 +10675,6 @@ function openRepositoriesDialog(opts: {
   mountRepoPanel();
   if (repoDialog.place) {
     repoPanel?.setFocusKey("place_folder");
-    repoDialog.focus = "place_folder";
     void placeRecheck(repoDialog.place, repoPlaceHost(repoDialog));
   } else {
     void recheckRepoPath();
@@ -10843,7 +10726,6 @@ function mountRepoPanel(): void {
     ? (d.addFrom === "url" ? "repo_url" : d.path.value ? "repo_name" : "repo_path")
     : "repo_list";
   repoPanel.setFocusKey(focus);
-  d.focus = focus;
 }
 
 function renderRepoDialog(): void {
@@ -10864,7 +10746,6 @@ function closeRepoDialog(): void {
   repoDialog = null;
   editor.setEditorMode(null);
   if (d?.returnTo === "form" && resumeSuspendedForm()) return;
-  restoreDockAfterDialog();
 }
 
 // Opened from the launch form: keep the form, come back to it.
@@ -11404,7 +11285,6 @@ async function browseTo(dir: string): Promise<void> {
   await browserGo(b, dir, () => renderRepoDialog());
   if (repoDialog !== d || d.browse !== b || b.dir !== dir) return;
   repoPanel?.setFocusKey("repo_browse_list");
-  d.focus = "repo_browse_list";
 }
 
 function openBrowse(): void {
@@ -11436,7 +11316,6 @@ function pickBrowsed(dir: string): void {
   renderRepoDialog();
   repoPanel?.setValue("repo_path", d.path.value, d.path.cursor);
   repoPanel?.setFocusKey("repo_path");
-  d.focus = "repo_path";
   void recheckRepoPath();
 }
 
@@ -11591,21 +11470,22 @@ registerHandler("orchestrator_repos_save", () => {
 registerHandler("orchestrator_repos_enter", () => {
   const d = repoDialog;
   if (!d || !repoPanel) return;
+  const focus = repoPanel.focusKey();
   // In a machine row's question, Enter on its text answers it.
-  if (d.place && (d.focus === "place_folder" || d.focus === "place_clone_path")) {
+  if (d.place && (focus === "place_folder" || focus === "place_clone_path")) {
     void placeGo(d.place, repoPlaceHost(d));
     return;
   }
   // Enter on a text field saves (Add Repository) or checks the path now
   // (managing, which saves once the check passes). A button, the dropdown
   // and a list row answered their own Enter before this binding.
-  if (["repo_path", "repo_url", "repo_name", "repo_clone_new_to"].includes(d.focus)) {
-    if (d.focus === "repo_url") {
+  if (["repo_path", "repo_url", "repo_name", "repo_clone_new_to"].includes(focus)) {
+    if (focus === "repo_url") {
       void checkRepoUrl();
       return;
     }
     if (d.mode === "manage") {
-      if (d.focus === "repo_path") void recheckRepoPath();
+      if (focus === "repo_path") void recheckRepoPath();
       return;
     }
     saveRepoDialog();
@@ -11628,7 +11508,6 @@ registerHandler("orchestrator_repos_escape", () => {
     d.browse = null;
     renderRepoDialog();
     repoPanel.setFocusKey("repo_browse");
-    d.focus = "repo_browse";
     return;
   }
   if (d.cloneConfirm || d.cloning) {
@@ -11641,11 +11520,12 @@ registerHandler("orchestrator_repos_backspace", () => {
   const d = repoDialog;
   if (!d || !repoPanel) return;
   // In a browser, Backspace goes up a folder.
-  if (d.place?.browse && d.focus === "place_browse_list") {
+  const focus = repoPanel.focusKey();
+  if (d.place?.browse && focus === "place_browse_list") {
     void browserGo(d.place.browse, parentDir(d.place.browse.dir), () => renderRepoDialog());
     return;
   }
-  if (d.browse && d.focus === "repo_browse_list") {
+  if (d.browse && focus === "repo_browse_list") {
     void browseTo(parentDir(d.browse.dir));
   }
 });
@@ -11659,7 +11539,6 @@ function handleRepoDialogEvent(e: WidgetEvt): void {
     return;
   }
   if (e.event_type === "focus") {
-    if (typeof e.widget_key === "string") d.focus = e.widget_key;
     return;
   }
   if (d.place && handlePlaceEvent(d.place, repoPlaceHost(d), e)) return;
@@ -11681,7 +11560,6 @@ function handleRepoDialogEvent(e: WidgetEvt): void {
     renderRepoDialog();
     const first = d.place.how === "clone" ? "place_clone_path" : "place_folder";
     repoPanel?.setFocusKey(first);
-    d.focus = first;
     if (d.place.how === "existing" && d.place.folder.value) void placeRecheck(d.place, repoPlaceHost(d));
     return;
   }
@@ -11844,7 +11722,6 @@ function handleRepoDialogEvent(e: WidgetEvt): void {
       d.setRemote = fieldOf("");
       renderRepoDialog();
       repoPanel?.setFocusKey("repo_set_remote");
-      d.focus = "repo_set_remote";
       return;
     case "repo_clone_cancel":
       void cancelRepoClone();
@@ -11866,13 +11743,11 @@ function handleRepoDialogEvent(e: WidgetEvt): void {
       d.confirmRemove = true;
       renderRepoDialog();
       repoPanel?.setFocusKey("repo_remove_no");
-      d.focus = "repo_remove_no";
       return;
     case "repo_remove_no":
       d.confirmRemove = false;
       renderRepoDialog();
       repoPanel?.setFocusKey("repo_remove");
-      d.focus = "repo_remove";
       return;
     case "repo_remove_yes": {
       if (!d.repoId) return;
@@ -11930,7 +11805,6 @@ function resumeRepoDialogAfterMachine(savedKey: string | null): void {
   }
   mountRepoPanel();
   repoPanel?.setFocusKey("repo_path");
-  d.focus = "repo_path";
   void recheckRepoPath();
 }
 
@@ -11940,7 +11814,7 @@ registerHandler("orchestrator_repositories", () => openRepositoriesDialog({}));
 
 const MACHINES_MODE = "orchestrator-machines";
 let machinesPanel: FloatingWidgetPanel | null = null;
-let machinesState: { index: number; focus: string } | null = null;
+let machinesState: { index: number } | null = null;
 
 /** A machine picked for the next form to open on. `undefined` = nobody
  *  asked, so the last one used applies. */
@@ -12142,9 +12016,8 @@ function openMachinesDialog(): void {
   // Another `fresh` may have added, edited or removed a machine since this
   // session last read them. Re-read before the list goes on screen.
   invalidateMachines();
-  yieldDockToDialog();
   const idx = machinesState?.index ?? 0;
-  machinesState = { index: Math.max(0, Math.min(idx, machinesRows().length - 1)), focus: "machines" };
+  machinesState = { index: Math.max(0, Math.min(idx, machinesRows().length - 1)) };
   machinesPanel = new FloatingWidgetPanel();
   // The Projects dialog's frame and grid, so the two managers read alike.
   machinesPanel.mount(buildMachinesSpec(), {
@@ -12168,7 +12041,6 @@ function closeMachinesDialog(): void {
   }
   machinesState = null;
   editor.setEditorMode(null);
-  restoreDockAfterDialog();
 }
 
 // The list's columns, sized to what they hold: the longest name and the
@@ -12309,7 +12181,8 @@ editor.defineMode(MACHINES_MODE, MACHINES_MODE_BINDINGS, true, true);
 
 registerHandler("orchestrator_machines_enter", () => {
   if (!machinesPanel || !machinesState) return;
-  if (machinesState.focus === "machines" || machinesState.focus === "") openSelectedMachine();
+  const focus = machinesPanel.focusKey();
+  if (focus === "machines" || focus === "") openSelectedMachine();
 });
 
 function handleMachinesEvent(e: WidgetEvt): void {
@@ -12317,10 +12190,6 @@ function handleMachinesEvent(e: WidgetEvt): void {
   if (e.event_type === "cancel") {
     machinesPanel = null;
     closeMachinesDialog();
-    return;
-  }
-  if (e.event_type === "focus") {
-    if (typeof e.widget_key === "string") st.focus = e.widget_key;
     return;
   }
   if (isListEvent(e as { event_type: string; widget_key?: string; payload?: unknown }, "machines")) {
@@ -13650,14 +13519,12 @@ function formPlaceHost(f: NewSessionForm): PlaceHost {
     panel: () => (form === f ? formPanel : null),
     render: () => {
       if (form !== f) return;
-      rebuildFormFocusCycle();
       renderForm();
     },
     done: (saved) => {
       const visit = f.place?.visit ?? true;
       f.place = null;
       if (form !== f) return;
-      rebuildFormFocusCycle();
       renderForm();
       if (!saved) {
         formPanel?.setFocusKey("create-visit");
@@ -13669,7 +13536,6 @@ function formPlaceHost(f: NewSessionForm): PlaceHost {
         if (f.backend === "local") await probeProjectPathDefaults();
         else if (f.backend === "ssh") await probeRemoteProjectDefaults();
         if (form !== f) return;
-        rebuildFormFocusCycle();
         renderForm();
         await submitForm(visit);
       })();
@@ -13705,27 +13571,6 @@ function buildFormSpec(): WidgetSpec {
   return col(...kids);
 }
 
-// The Tab cycle: the keyed, focusable widgets of the spec as built, in
-// render order — the host's own tabbable set, read off the same tree it gets,
-// so the mirror cannot drift from what is on screen.
-const FOCUSABLE_KINDS = new Set(["text", "dropdown", "radio", "toggle", "number", "button", "list", "tree", "dualList"]);
-
-function collectFocusKeys(spec: WidgetSpec, out: string[] = []): string[] {
-  const w = spec as unknown as Record<string, unknown>;
-  const key = typeof w.key === "string" ? w.key : "";
-  if (key && FOCUSABLE_KINDS.has(w.kind as string)) {
-    const off = w.kind === "button" && (w.disabled === true || w.focusable === false);
-    if (!off) out.push(key);
-  }
-  if (Array.isArray(w.children)) for (const c of w.children as WidgetSpec[]) collectFocusKeys(c, out);
-  if (w.child) collectFocusKeys(w.child as WidgetSpec, out);
-  return out;
-}
-
-function formFocusKeys(_f: NewSessionForm): string[] {
-  return collectFocusKeys(buildFormSpec());
-}
-
 // Derive a "my_org/project_name" style label from the current
 // working directory's tail. Orchestrator never opens this dialog
 // outside of a workspace; if the cwd has fewer than two
@@ -13740,12 +13585,6 @@ function deriveProjectLabel(): string {
 
 function renderForm(): void {
   if (!form || !formPanel) return;
-  // Keep the focus mirror in step with the spec's tabbable set
-  // (worktree may toggle disabled, branch may go inert) on every
-  // render, BEFORE we ship the spec — `rebuildFormFocusCycle`
-  // clamps the index if the previously focused entry has
-  // disappeared.
-  rebuildFormFocusCycle();
   formPanel.update(buildFormSpec());
 }
 
@@ -13912,7 +13751,6 @@ function mountFormPanel(focusKey?: string): void {
   // Mirror the host's focus cycle so Up/Down route to the right field's
   // history. Without an explicit focus the form would open on the Launch-in
   // switch and typing would go nowhere, so focus lands on the first input.
-  rebuildFormFocusCycle();
   // Land on the first thing the user actually wants to set: the agent when
   // running here (there is nothing else to fill in), the backend's first
   // input when creating a workspace. A caller that re-mounts mid-edit passes
@@ -13922,7 +13760,6 @@ function mountFormPanel(focusKey?: string): void {
   // The prompt, when the agent takes one — typing it is the whole flow.
   const field = focusKey ?? (!form.agentUnset && promptApplies() ? "start_prompt" : "agent_dropdown");
   formPanel.setFocusKey(field);
-  snapFormFocusTo(field);
 }
 
 /// The local directory a brand-new *local* workspace should default to.
@@ -14332,22 +14169,14 @@ function closeForm(): void {
     formPanel = null;
   }
   form = null;
-  openFormDropdown = null;
   editor.setEditorMode(null);
 }
 
-// When the New-Session form was opened on top of a still-mounted dock,
-// closing the form returns keyboard focus to the dock (rather than
-// reopening a centered picker). Returns true when it handled the
-// restore — i.e. the dock is live.
-function restoreDockAfterForm(): boolean {
-  if (!openPanel || !dockMode) return false;
-  dockBlurred = false;
-  dockFocus = "list";
-  editor.floatingPanelControl(openPanel.id(), "focus", 0);
-  focusDockControl("sessions");
-  refreshOpenDialog();
-  return true;
+// Whether the New-Session form was opened over a still-mounted dock: closing
+// it then goes back to the dock (the host returns the keyboard to the control
+// that opened the form) rather than reopening a centered picker.
+function dockUnderForm(): boolean {
+  return !!openPanel && dockMode;
 }
 
 // Cancel path: tear down the form, and if it was reached via the
@@ -14366,7 +14195,7 @@ function cancelForm(): void {
     editor.cancelRemoteAgent();
   }
   closeForm();
-  if (restoreDockAfterForm()) return;
+  if (dockUnderForm()) return;
   if (wasFromPicker) {
     openControlRoom();
   }
@@ -15608,11 +15437,9 @@ async function submitForm(visit: boolean): Promise<void> {
     const key = formMachineKey(form);
     if (formRepoBlocker(form) || !r || !key) return;
     form.place = { ...newPlaceAsk(r, key), visit };
-    rebuildFormFocusCycle();
     renderForm();
     const first = form.place.how === "clone" ? "place_go" : "place_folder";
     formPanel?.setFocusKey(first);
-    snapFormFocusTo(first);
     return;
   }
   // The next open lands on the mode and project used now (§7: last used wins).
@@ -16849,8 +16676,6 @@ editor.exportPluginApi("orchestrator", {
   openWorkspaceForm,
   addMachine: (done: (savedKey: string | null) => void) =>
     openMachineDialog(null, "discover", undefined, undefined, done),
-  yieldDock: yieldDockToDialog,
-  restoreDock: restoreDockAfterDialog,
   runAgent,
   newWorkspace,
   listWorkspaces,
@@ -16976,17 +16801,14 @@ function dockOpenMenu(): "project" | "menu" | null {
 }
 
 function dockOnSessions(): boolean {
-  return pickerFocusKey === "sessions" || pickerFocusKey === "";
+  const focus = pickerFocusKey();
+  return focus === "sessions" || focus === "";
 }
 
-// Move the dock's focus to `key`, and say so now. The host's `focus`
-// event confirms it a round-trip later; the mirror the handlers below
-// read must not lag behind a decision the plugin itself just made, or
-// two keys in a row (Enter out of the filter, then Esc) would read the
-// first one's focus and act on the wrong control.
+// Move the dock's focus to `key`. The host applies it; `focusKey()` reads
+// it back at once (the write goes through).
 function focusDockControl(key: string): void {
   if (!openPanel) return;
-  pickerFocusKey = key;
   openPanel.setFocusKey(key);
 }
 
@@ -17021,7 +16843,7 @@ registerHandler("orchestrator_dock_escape", () => {
   const menu = dockOpenMenu();
   if (menu === "menu") return closeDockMenu();
   if (menu === "project") return closeProjectMenu();
-  if (pickerFocusKey === "filter") return leaveDockSearch();
+  if (pickerFocusKey() === "filter") return leaveDockSearch();
   editor.floatingPanelControl(openPanel.id(), "blur", 0);
 });
 
@@ -17030,7 +16852,7 @@ registerHandler("orchestrator_dock_escape", () => {
 // tree and the buttons take their own Enter.)
 registerHandler("orchestrator_dock_enter", () => {
   if (!dockMode || !openPanel) return;
-  if (pickerFocusKey === "filter") focusDockControl("sessions");
+  if (pickerFocusKey() === "filter") focusDockControl("sessions");
 });
 
 // F2 / the Menu key on the tree — the highlighted node's context menu, the
@@ -17103,10 +16925,8 @@ function toggleFormDetails(): void {
   if (!form || !formPanel) return;
   form.detailsOpen = !form.detailsOpen;
   editor.setGlobalState(LAUNCH_DETAILS_KEY, form.detailsOpen);
-  rebuildFormFocusCycle();
   renderForm();
   formPanel.setFocusKey("details");
-  snapFormFocusTo("details");
 }
 
 registerHandler("orchestrator_form_key_escape", () => {
@@ -17116,7 +16936,6 @@ registerHandler("orchestrator_form_key_escape", () => {
     // Esc closes the folder browser first, then drops the question.
     if (form.place.browse) {
       form.place.browse = null;
-      rebuildFormFocusCycle();
       renderForm();
       formPanel?.setFocusKey("place_browse");
       return;
@@ -17273,17 +17092,11 @@ editor.on("widget_event", (e) => {
   if (createFolderPanel && createFolderDialog && e.panel_id === createFolderPanel.id()) {
     const d = createFolderDialog;
     if (e.event_type === "cancel") {
-      // Esc / click-outside: the host already unmounted the panel, so
-      // just drop our handle and refocus the dock.
+      // Esc / click-outside: the host already unmounted the panel (and
+      // gave the keyboard back to what opened it), so drop our handle.
       createFolderPanel = null;
       createFolderDialog = null;
       editor.setEditorMode(null);
-      if (openPanel && dockMode) {
-        dockBlurred = false;
-        editor.floatingPanelControl(openPanel.id(), "focus", 0);
-        focusDockControl("sessions");
-        refreshOpenDialog();
-      }
       return;
     }
     if (e.event_type === "change" && e.widget_key === "folder-name") {
@@ -17354,17 +17167,10 @@ editor.on("widget_event", (e) => {
     const target = dockMenuState.target;
     if (e.event_type === "cancel") {
       // Esc or a click outside dismissed the popup — the host already
-      // unmounted the panel, so just drop our handle (don't unmount it
-      // again) and hand keyboard focus back to the dock.
+      // unmounted the panel and gave the keyboard back to what opened it,
+      // so just drop our handle (don't unmount it again).
       dockMenuPanel = null;
       dockMenuState = null;
-      if (openPanel && dockMode) {
-        dockBlurred = false;
-        dockFocus = "list";
-        editor.floatingPanelControl(openPanel.id(), "focus", 0);
-        focusDockControl("sessions");
-        refreshOpenDialog();
-      }
       return;
     }
     // The confirm pane's "also remove the worktree" checkbox. Handled before
@@ -17386,30 +17192,30 @@ editor.on("widget_event", (e) => {
           // Same centered dialog UX as "New Folder" (was: a bottom
           // minibuffer prompt, inconsistent and label/value ran
           // together). The dialog blurs the dock itself.
-          closeDockContextMenuAndRestoreDock();
+          closeDockContextMenu();
           openRenameFolderDialog(target.id);
           return;
         }
         if (e.widget_key === "ctx-new-subfolder") {
-          closeDockContextMenuAndRestoreDock();
+          closeDockContextMenu();
           openCreateFolderDialog(target.id);
           return;
         }
         if (e.widget_key === "ctx-delete-folder") {
           apiDeleteFolder(target.id);
-          closeDockContextMenuAndRestoreDock();
+          closeDockContextMenu();
           return;
         }
         return;
       }
       const id = target.id;
       if (e.widget_key === "ctx-retry") {
-        closeDockContextMenuAndRestoreDock();
+        closeDockContextMenu();
         retryPending(id);
         return;
       }
       if (e.widget_key === "ctx-dismiss") {
-        closeDockContextMenuAndRestoreDock();
+        closeDockContextMenu();
         dismissPending(id);
         return;
       }
@@ -17421,7 +17227,7 @@ editor.on("widget_event", (e) => {
       }
       if (e.widget_key === "ctx-rename-session") {
         // Same centered dialog as folder rename; it blurs the dock itself.
-        closeDockContextMenuAndRestoreDock();
+        closeDockContextMenu();
         openRenameWorkspaceDialog(id);
         return;
       }
@@ -17430,10 +17236,6 @@ editor.on("widget_event", (e) => {
         // the dock toolbar (so it shares the keyboard-navigable menu
         // path and the folder list).
         closeDockContextMenu();
-        if (openPanel && dockMode) {
-          dockBlurred = false;
-          editor.floatingPanelControl(openPanel.id(), "focus", 0);
-        }
         openDockMenu({ kind: "move", sessionId: id, index: 0 });
         return;
       }
@@ -17459,7 +17261,7 @@ editor.on("widget_event", (e) => {
       }
       if (e.widget_key === "confirm-archive" || e.widget_key === "confirm-delete") {
         const action = e.widget_key === "confirm-archive" ? "archive" : "delete";
-        closeDockContextMenuAndRestoreDock();
+        closeDockContextMenu();
         void runConfirmedAction(action, [id]);
         return;
       }
@@ -17474,28 +17276,15 @@ editor.on("widget_event", (e) => {
     // The launch-time "where is it?" question owns its own widgets.
     if (form.place && e.event_type !== "focus" && handlePlaceEvent(form.place, formPlaceHost(form), e as WidgetEvt)) return;
     if (e.event_type === "focus") {
-      // Host fires this whenever the panel's focused widget
-      // changes — key-driven (Tab / Shift-Tab / Enter focus-
-      // advance), click-driven, or any other host-side focus
-      // mutation. The plugin keeps a local `formFocusIndex`
-      // mirror so handlers like Up/Down can look up the right
-      // history field without first asking the host; we snap
-      // that mirror from the authoritative signal here so the
-      // plugin never has to predict host-side focus rules.
-      snapFormFocusTo(e.widget_key);
       // Leaving a field (Shift+Tab, a click) closes its suggestions.
       if (form.completion.field !== null && form.completion.field !== e.widget_key) {
         closeCompletion();
       }
-      // Leaving a dropdown (Tab / click elsewhere) closes its pop-over
-      // host-side; keep the local mirror honest.
-      if (e.widget_key !== openFormDropdown) openFormDropdown = null;
       return;
     }
     if (e.event_type === "dropdown_open") {
       // Host-authoritative open/closed signal for a dropdown's pop-over.
       const payload = (e.payload ?? {}) as Record<string, unknown>;
-      openFormDropdown = payload.open === true ? e.widget_key : null;
       if (payload.open !== true && e.widget_key === "project" && projectManageArmed) {
         projectManageArmed = false;
         formPanel.setDropdown("project", projectPickIndex(form));
@@ -17511,7 +17300,6 @@ editor.on("widget_event", (e) => {
       if (typeof index === "number" && index !== form.machinePick) {
         applyMachinePick(index);
         syncRepoPath();
-        rebuildFormFocusCycle();
         renderForm();
       }
       return;
@@ -17551,7 +17339,6 @@ editor.on("widget_event", (e) => {
       }
       projectManageArmed = false;
       form.lastError = null;
-      rebuildFormFocusCycle();
       renderForm();
       return;
     }
@@ -17560,7 +17347,6 @@ editor.on("widget_event", (e) => {
       const index = ((e.payload ?? {}) as Record<string, unknown>).index;
       if (typeof index === "number") {
         form.createWorktree = index === 0;
-        rebuildFormFocusCycle();
         renderForm();
       }
       return;
@@ -17579,7 +17365,6 @@ editor.on("widget_event", (e) => {
           const wasUnset = form.agentUnset;
           form.agentUnset = false;
           applyAgentPreset(preset);
-          rebuildFormFocusCycle();
           // The placeholder left the list, so every option moved up one.
           if (wasUnset) {
             renderForm();
@@ -17624,7 +17409,6 @@ editor.on("widget_event", (e) => {
         // Snap our focus mirror to wherever the change just
         // landed — covers mouse-click focus changes (no Tab key
         // for us to intercept).
-        snapFormFocusTo(field);
       }
       if (field === "start_prompt" && promptRows(form) !== promptRowsBefore) renderForm();
       if (field === "project_path") {
@@ -17652,7 +17436,6 @@ editor.on("widget_event", (e) => {
           // Typing a command is `custom…` by definition — keep the field
           // even if what was typed happens to spell a preset.
           form.agentCustom = true;
-          rebuildFormFocusCycle();
           renderForm();
         }
         // The remaining Create-gating fields: re-render so the disabled
@@ -17738,7 +17521,6 @@ editor.on("widget_event", (e) => {
         if (known) {
           form.repoId = known.id;
           syncRepoPath();
-          rebuildFormFocusCycle();
           renderForm();
           // The dropdown's pick is host-owned after the first render.
           formPanel.setDropdown("project", projectPickIndex(form));
@@ -17752,7 +17534,6 @@ editor.on("widget_event", (e) => {
           upsertRepository(known);
           form.repoId = known.id;
           syncRepoPath();
-          rebuildFormFocusCycle();
           renderForm();
           formPanel.setDropdown("project", projectPickIndex(form));
           formPanel.setFocusKey("project");
@@ -17782,7 +17563,7 @@ editor.on("widget_event", (e) => {
       form = null;
       formPanel = null;
       editor.setEditorMode(null);
-      if (restoreDockAfterForm()) return;
+      if (dockUnderForm()) return;
       if (wasFromPicker) {
         openControlRoom();
       }
@@ -17826,7 +17607,6 @@ editor.on("widget_event", (e) => {
         // search without retyping it. Esc/editor-click still clear, so
         // the one-key escape from a stale filter is unchanged.
         if (!wasDive && openDialog.filter.value !== "") {
-          dockFocus = "list";
           // Clearing goes through the shared path, which also pushes the
           // empty value back into the (controlled) text box — without that
           // the list would show every session while the box still read
@@ -17849,11 +17629,7 @@ editor.on("widget_event", (e) => {
       // Focus (re-)entered the dock / picker — a mouse click on a
       // row/filter, a host-driven focus move, or the symmetric
       // refocus_floating_panel notification fired by the host's
-      // un-dive mouse handler. Track the zone (dockFocus) and the
-      // exact focused widget (pickerFocusKey); mark the dock active.
-      if (typeof e.widget_key === "string" && e.widget_key.length > 0) {
-        pickerFocusKey = e.widget_key;
-      }
+      // un-dive mouse handler. Mark the dock active.
       if (dockMode) {
         // A dropdown is a menu: focus leaving its list (Tab, a click
         // elsewhere) dismisses it, the way any menu goes away when you
@@ -17873,7 +17649,6 @@ editor.on("widget_event", (e) => {
         dockDiveBlur = false;
         const wasBlurred = dockBlurred;
         dockBlurred = false;
-        dockFocus = e.widget_key === "filter" ? "filter" : "list";
         // Re-render so the keyboard hints reappear now the dock holds
         // focus again.
         if (wasBlurred) openPanel?.update(buildDockSpec());
@@ -18619,7 +18394,6 @@ function closeExplainPopup(): void {
   explainPanel = null;
   explainShowing = null;
   editor.setEditorMode(null);
-  restoreDockAfterDialog();
 }
 
 // What the popup is showing, so a resize can rebuild it: the host wraps
@@ -18670,7 +18444,6 @@ function renderExplainPopup(): void {
 
 function openExplainPopup(s: AgentSession, ex: StateExplanation): void {
   closeExplainPopup();
-  yieldDockToDialog();
   explainShowing = { s, ex };
   explainPanel = new FloatingWidgetPanel();
   explainPanel.mount(buildExplainSpec(s, ex), {
@@ -18694,7 +18467,6 @@ function handleExplainEvent(e: WidgetEvt): void {
     explainPanel = null;
     explainShowing = null;
     editor.setEditorMode(null);
-    restoreDockAfterDialog();
     return;
   }
   if (e.event_type === "activate" && e.widget_key === "explain-close") closeExplainPopup();

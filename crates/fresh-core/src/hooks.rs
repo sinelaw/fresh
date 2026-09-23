@@ -627,6 +627,12 @@ pub enum HookArgs {
         /// Event-specific JSON payload.
         #[serde(default)]
         payload: serde_json::Value,
+        /// The key of the widget that holds the panel's focus *now*, after
+        /// whatever the event did (`""` when nothing is focused). The
+        /// host's fact — a plugin reads it here instead of mirroring focus
+        /// from `focus` events and guessing at the moves it was not told of.
+        #[serde(default)]
+        focus_key: String,
     },
 }
 

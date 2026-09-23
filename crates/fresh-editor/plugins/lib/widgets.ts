@@ -1283,6 +1283,16 @@ export class WidgetPanel {
   setFocusKey(widgetKey: string): boolean {
     return this.mutate({ kind: "setFocusKey", widgetKey });
   }
+
+  /** The key of the widget that holds this panel's focus, `""` for none.
+   * The host owns focus — Tab, a click, a control's own move and
+   * `setFocusKey` all write the one fact this reads — so read it here
+   * rather than keeping a copy in step from `focus` events. Every
+   * `widget_event` carries the same answer as `focus_key`. */
+  focusKey(): string {
+    // deno-lint-ignore no-explicit-any
+    return (globalThis as any).editor.getPanelFocusKey(this.panelId);
+  }
 }
 
 // =============================================================================
@@ -1483,6 +1493,16 @@ export class FloatingWidgetPanel {
   setFocusKey(widgetKey: string): boolean {
     return this.mutate({ kind: "setFocusKey", widgetKey });
   }
+
+  /** The key of the widget that holds this panel's focus, `""` for none.
+   * The host owns focus — Tab, a click, a control's own move and
+   * `setFocusKey` all write the one fact this reads — so read it here
+   * rather than keeping a copy in step from `focus` events. Every
+   * `widget_event` carries the same answer as `focus_key`. */
+  focusKey(): string {
+    // deno-lint-ignore no-explicit-any
+    return (globalThis as any).editor.getPanelFocusKey(this.panelId);
+  }
 }
 
 // =============================================================================
@@ -1555,4 +1575,8 @@ export interface WidgetEvt {
   event_type: string;
   widget_key?: string;
   payload?: unknown;
+  /** The widget that holds the panel's focus now, after the event (`""`
+   * for none). The host's fact — read it (or `panel.focusKey()`) instead of
+   * keeping a copy of focus in step with `focus` events. */
+  focus_key?: string;
 }
