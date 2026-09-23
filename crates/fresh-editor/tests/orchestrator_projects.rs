@@ -190,6 +190,18 @@ fn retype(h: &mut EditorTestHarness, text: &str) {
     h.tick_and_render().unwrap();
 }
 
+/// Wait until a launch has landed: the form is gone and the new workspace's
+/// terminal is on screen. The form closes before the workspace opens, and
+/// the workspace takes the keyboard when it does — a key sent in between can
+/// land in its shell.
+fn launched(h: &mut EditorTestHarness) {
+    h.wait_until(|h| {
+        let s = h.screen_to_string();
+        !s.contains(FORM_TITLE) && s.contains("Terminal 0")
+    })
+    .unwrap();
+}
+
 fn open_projects(h: &mut EditorTestHarness) {
     h.run_palette_command("Orchestrator: Projects").unwrap();
     h.wait_until(|h| {
@@ -353,7 +365,7 @@ fn plain_folder_project_lists_its_path_and_opens_in_place() {
         return;
     }
     press(&mut w.h, "[   Launch");
-    w.h.wait_until(|h| !h.screen_to_string().contains(FORM_TITLE)).unwrap();
+    launched(&mut w.h);
 }
 
 // --- Launching where the project isn't yet --------------------------------
@@ -389,7 +401,7 @@ fn launch_asks_where_the_project_is_and_clones_it() {
         return;
     }
     press(&mut w.h, "[   Clone and launch");
-    w.h.wait_until(|h| !h.screen_to_string().contains(FORM_TITLE)).unwrap();
+    launched(&mut w.h);
 
     // The answer was kept: Local now has the clone it made.
     open_projects(&mut w.h);
@@ -442,7 +454,7 @@ fn launch_asks_and_uses_a_folder_that_is_already_there() {
     w.h.type_text("~/src/app").unwrap();
     wait_for(&mut w.h, "origin matches");
     press(&mut w.h, "[   Use it and launch");
-    w.h.wait_until(|h| !h.screen_to_string().contains(FORM_TITLE)).unwrap();
+    launched(&mut w.h);
 }
 
 // --- Projects dialog ---------------------------------------------------------
