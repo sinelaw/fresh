@@ -609,6 +609,27 @@ pub struct WorkspaceHistories {
     pub open_file: Vec<String>,
 }
 
+impl WorkspaceHistories {
+    /// `newer` layered over `self`: each list keeps this one's entries as
+    /// the older ones and `newer`'s as the most recent, an entry in both
+    /// appearing once, in its `newer` position. Capped like the live rings.
+    pub fn merged_with(&self, newer: &WorkspaceHistories) -> WorkspaceHistories {
+        fn merge(older: &[String], newer: &[String]) -> Vec<String> {
+            let mut ring = crate::input::input_history::InputHistory::new();
+            ring.merge_newer(older);
+            ring.merge_newer(newer);
+            ring.items().to_vec()
+        }
+        WorkspaceHistories {
+            search: merge(&self.search, &newer.search),
+            replace: merge(&self.replace, &newer.replace),
+            command_palette: merge(&self.command_palette, &newer.command_palette),
+            goto_line: merge(&self.goto_line, &newer.goto_line),
+            open_file: merge(&self.open_file, &newer.open_file),
+        }
+    }
+}
+
 /// Search options that persist across searches within a workspace
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SearchOptions {

@@ -5959,30 +5959,6 @@ impl Editor {
         self.last_window_title = Some(new_title);
     }
 
-    /// Save all prompt histories to disk
-    /// Called on shutdown to persist history across sessions
-    pub fn save_histories(&self) {
-        // Ensure data directory exists
-        if let Err(e) = self
-            .authority()
-            .filesystem
-            .create_dir_all(&self.dir_context.data_dir)
-        {
-            tracing::warn!("Failed to create data directory: {}", e);
-            return;
-        }
-
-        // Save all prompt histories
-        for (key, history) in &self.active_window().prompt_histories {
-            let path = self.dir_context.prompt_history_path(key);
-            if let Err(e) = history.save_to_file(&path) {
-                tracing::warn!("Failed to save {} history: {}", key, e);
-            } else {
-                tracing::debug!("Saved {} history to {:?}", key, path);
-            }
-        }
-    }
-
     /// Resolve a plugin-supplied [`OverlayOptions`] to a ratatui
     /// [`Style`] against the active theme. RGB colours pass through;
     /// theme keys (e.g. `"ui.help_key_fg"`) are looked up via

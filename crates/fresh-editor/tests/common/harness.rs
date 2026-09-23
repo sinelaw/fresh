@@ -2127,20 +2127,11 @@ impl EditorTestHarness {
     // in main.rs so tests exercise the actual production code paths.
     // =========================================================================
 
-    /// Perform a clean shutdown, mirroring `run_event_loop_common` exit path.
-    ///
-    /// Calls auto-save (if enabled), `end_recovery_session`, and `save_workspace`
-    /// in the same order as the production shutdown code.
+    /// Perform a clean shutdown through [`Editor::persist_on_exit`] — the
+    /// same call the `run_event_loop_common` quit path makes, so the harness
+    /// cannot drift from production.
     pub fn shutdown(&mut self, workspace_enabled: bool) -> anyhow::Result<()> {
-        if self.editor.config().editor.auto_save_enabled {
-            self.editor.save_all_on_exit()?;
-        }
-        self.editor.end_recovery_session()?;
-        if workspace_enabled {
-            self.editor.save_workspace()?;
-        }
-        self.editor.save_dock_chrome();
-        Ok(())
+        self.editor.persist_on_exit(workspace_enabled)
     }
 
     /// Perform startup, mirroring `handle_first_run_setup` in main.rs.
