@@ -194,6 +194,40 @@ fn previous_line_start(buffer: &mut Buffer, byte: usize) -> Option<usize> {
     buffer.prev_line_start_within(byte.saturating_sub(1), CLAMP_SCAN_BYTES)
 }
 
+/// The width of the line-number gutter for `buffer`.
+///
+/// Format: `"[indicator]{:>N} │ "` — a 1-char indicator column (space, or
+/// `●`/`✗`/`⚠`), N right-aligned digits, and a 3-char `" │ "` separator. Total
+/// `1 + N + 3`, with `MIN_LINE_NUMBER_DIGITS` the floor on N so a one-line
+/// buffer does not feel cramped, and the buffer's own line count deciding the
+/// rest — a small file does not pay for a four-digit column. In byte-offset
+/// mode (a buffer with no line count) the gutter shows byte offsets, so the
+/// file's length decides the digits.
+///
+/// **One statement, because everything that wraps text has to agree.** The
+/// renderer (`render_buffer`), the scrollbar's row count
+/// (`split_rendering::scrollbar`), the viewport's own wrap config and the
+/// scroll math (`app::scrollbar_math`) all build a `WrapConfig` around this
+/// number; a gutter one cell wider in one of them wraps at a different column
+/// than the renderer, and the scrollbar then points at a row the pane does not
+/// have. `app::scrollbar_math` kept its own copy of the formula — one that
+/// missed the byte-offset case — under a doc admitting exactly that risk.
+pub fn gutter_width(buffer: &Buffer) -> usize {
+    let byte_offset_mode = buffer.line_count().is_none();
+    let gutter_estimate = if byte_offset_mode {
+        // In byte offset mode, gutter shows byte offsets up to file size
+        buffer.len().max(1)
+    } else {
+        buffer.line_count().unwrap_or(1)
+    };
+    let digits = if gutter_estimate == 0 {
+        1
+    } else {
+        ((gutter_estimate as f64).log10().floor() as usize) + 1
+    };
+    1 + digits.max(crate::view::margin::MIN_LINE_NUMBER_DIGITS) + 3
+}
+
 impl Viewport {
     /// Byte the viewport starts at.
     ///
@@ -386,30 +420,11 @@ impl Viewport {
         self.height as usize
     }
 
-    /// Calculate the gutter width based on buffer length
-    /// Format: "[indicator]{:>N} │ " where N is the number of digits for line numbers
-    /// - Indicator column: 1 char (space, or symbols like ●/✗/⚠)
-    /// - Line numbers: N digits (min 2), right-aligned
-    /// - Separator: " │ " = 3 chars (space, box char, space)
-    ///
-    /// Total width = 1 + N + 3 = N + 4 (where N >= 2 minimum, so min 6 total).
-    /// The width adapts to the buffer's line count — small files don't waste
-    /// space on a 4-digit-wide column. `MIN_LINE_NUMBER_DIGITS` keeps it from
-    /// shrinking so much that a 1-line buffer feels cramped.
+    /// The gutter's width for `buffer` — see the free [`gutter_width`], which
+    /// is the one statement of it. This reads nothing off the viewport and is
+    /// kept for the callers that have one in hand.
     pub fn gutter_width(&self, buffer: &Buffer) -> usize {
-        let byte_offset_mode = buffer.line_count().is_none();
-        let gutter_estimate = if byte_offset_mode {
-            // In byte offset mode, gutter shows byte offsets up to file size
-            buffer.len().max(1)
-        } else {
-            buffer.line_count().unwrap_or(1)
-        };
-        let digits = if gutter_estimate == 0 {
-            1
-        } else {
-            ((gutter_estimate as f64).log10().floor() as usize) + 1
-        };
-        1 + digits.max(crate::view::margin::MIN_LINE_NUMBER_DIGITS) + 3
+        gutter_width(buffer)
     }
 
     /// Smallest read budget [`row_budget_bytes`](Self::row_budget_bytes) will
