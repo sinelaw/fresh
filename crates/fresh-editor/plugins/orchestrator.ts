@@ -13335,9 +13335,37 @@ function formIsSubmittable(): boolean {
 // fold, a typed host, a warning). There is no row reservation: a section is
 // as tall as what it shows.
 
-// Rows of the prompt box. Two on a short terminal (see `formRoomy`).
+// Rows of the prompt box when it is short: two on a short terminal (see
+// `formRoomy`). A longer prompt grows the box, up to `promptMaxRows`, and
+// scrolls past that.
 const PROMPT_ROWS = 3;
 const PROMPT_ROWS_SHORT = 2;
+
+// The most rows the prompt box grows to: a quarter of the terminal, so the
+// sections under it stay on screen.
+function promptMaxRows(): number {
+  const h = editor.getScreenSize().height;
+  return Math.max(formRoomy() ? PROMPT_ROWS : PROMPT_ROWS_SHORT, Math.floor((h > 0 ? h : 40) / 4));
+}
+
+// Rows the prompt's text takes, wrapped at the box's width: the panel, less
+// its frame and the box's inset and frame.
+function promptTextRows(value: string): number {
+  const w = editor.getScreenSize().width;
+  const panel = Math.floor((w > 0 ? w : 120) * FORM_WIDTH_PCT / 100);
+  const width = Math.max(10, panel - 2 - 2 - 4 - 2);
+  let rows = 0;
+  for (const line of value.split("\n")) {
+    rows += Math.max(1, Math.ceil(editor.stringWidth(line) / width));
+  }
+  return rows;
+}
+
+// The prompt box's height: its text's, between the resting size and the cap.
+function promptRows(f: NewSessionForm): number {
+  const min = formRoomy() ? PROMPT_ROWS : PROMPT_ROWS_SHORT;
+  return Math.min(promptMaxRows(), Math.max(min, promptTextRows(f.startPrompt.value)));
+}
 
 const SECTION_STYLE = { fg: "ui.menu_disabled_fg", bold: true } as const;
 const WARN_STYLE = { fg: "diagnostic.warning_fg" } as const;
@@ -13398,7 +13426,7 @@ function promptBox(f: NewSessionForm): WidgetSpec {
   const spec = text({
     value: takes ? f.startPrompt.value : "",
     cursorByte: f.startPrompt.cursor,
-    rows: formRoomy() ? PROMPT_ROWS : PROMPT_ROWS_SHORT,
+    rows: promptRows(f),
     fullWidth: true,
     placeholder: takes ? editor.t("form.prompt_placeholder") : editor.t("form.prompt_none"),
     readOnly: !takes,
@@ -17798,6 +17826,8 @@ editor.on("widget_event", (e) => {
         : field === "k8s_workspace"
         ? form.k8sWorkspace
         : null;
+      // The prompt box grows with its text: re-lay-out when its height moves.
+      const promptRowsBefore = field === "start_prompt" ? promptRows(form) : 0;
       if (slot) {
         slot.value = value;
         if (typeof cursor === "number") slot.cursor = cursor;
@@ -17810,6 +17840,7 @@ editor.on("widget_event", (e) => {
         // for us to intercept).
         snapFormFocusTo(field);
       }
+      if (field === "start_prompt" && promptRows(form) !== promptRowsBefore) renderForm();
       if (field === "project_path") {
         scheduleProjectPathReprobe();
         scheduleCompletionRefresh("project_path");
