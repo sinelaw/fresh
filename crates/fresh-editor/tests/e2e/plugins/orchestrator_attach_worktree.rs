@@ -200,16 +200,19 @@ fn open_new_session_form(harness: &mut EditorTestHarness) {
 }
 
 /// Move the list highlight down onto the discovered on-disk worktree
-/// row (which now sorts after the live sessions). Down routes to the
-/// list via the host's smart-key dispatch even though focus sits on a
-/// button. Stops once the on-disk preview pane is showing.
+/// row (which now sorts after the live sessions). ↓ first walks focus
+/// down the picker's controls to the Filter field (an arrow a control does
+/// not use moves focus by position), and from the filter it moves the
+/// list. Each ↓ is let settle before the next is judged, so a slow
+/// re-render cannot make the walk overshoot the row. Stops once the
+/// on-disk preview pane is showing.
 fn navigate_to_discovered_row(harness: &mut EditorTestHarness) {
     for _ in 0..12 {
         if harness.screen_to_string().contains("On-disk worktree") {
             return;
         }
         harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-        harness.tick_and_render().ok();
+        harness.wait_until_stable(|_| true).unwrap();
     }
     harness
         .wait_until(|h| h.screen_to_string().contains("On-disk worktree"))

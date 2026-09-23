@@ -10402,7 +10402,7 @@ function handlePlaceEvent(a: PlaceAsk, host: PlaceHost, e: WidgetEvt): boolean {
     return true;
   }
   if (e.event_type !== "activate") return true;
-  if (key === "place_go") {  } else if (key === "place_go") {
+  if (key === "place_go") {
     void placeGo(a, host);
   } else if (key === "place_cancel") {
     void placeCancel(a, host);
