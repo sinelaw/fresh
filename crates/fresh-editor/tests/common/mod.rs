@@ -8,6 +8,9 @@ pub mod blog_showcase;
 pub mod dormant_ssh;
 #[cfg(test)]
 #[allow(dead_code)]
+pub mod explorer;
+#[cfg(test)]
+#[allow(dead_code)]
 pub mod fake_lsp;
 #[cfg(test)]
 #[allow(dead_code)]
