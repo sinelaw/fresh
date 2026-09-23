@@ -31,10 +31,11 @@ over its multi-line prompt too, and forwarded about twenty of them.
 
 The order is now, for every described panel (dock, floating, pane-mounted):
 
-1. **The focused control**, in its own vocabulary: the kind's `on_key` for a
-   key, `on_text` for a character. A key the router would have to *mask* to put
-   it in the vocabulary (Ctrl+Enter is not Enter to a text area) is not offered.
-   Esc is offered too — an open pop-up closes before the dialog does.
+1. **The focused control**, with every key exactly as typed: the kind's
+   `on_text` for a character, `on_key` for anything else — Esc (an open pop-up
+   closes before the dialog does) and chords (a read-only document copies on
+   Ctrl+C) included. A key is never handed over with a modifier masked off:
+   Ctrl+Enter is not Enter to a text area.
    `Consumed` ends the key. `Pass` and `PassAfter` (the control acted, e.g.
    closed a suggestion list it had not been stepped into, and the key should
    still act beneath) go on.
@@ -57,8 +58,8 @@ non-checkable `Tree`'s Space still activates, but its `activate` carries
 `via: "space"` so a plugin whose Enter "opens" a row can leave Space inert.
 
 Plugins migrated: the New Workspace form (only Ctrl+Enter / Alt+Enter as
-shortcuts, Enter kept inert on single-line fields, Esc and the history
-arrows), the dock (Enter on the tree is the tree's `activate`; Space no longer
+shortcuts; Enter on a single-line field is the host's — it moves on; Esc and
+the history arrows stay bound), the dock (Enter on the tree is the tree's `activate`; Space no longer
 bound), Add Machine and New Folder (Enter is just "save" / "create" — buttons,
 lists and a highlighted suggestion answer their own), Repositories, Machines,
 code-tour, search/replace and the review filter (forwarders deleted). Where a

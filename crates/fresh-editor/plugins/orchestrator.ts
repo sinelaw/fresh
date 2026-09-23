@@ -16876,12 +16876,13 @@ editor.exportPluginApi("orchestrator", {
 // types and moves its caret, the prompt box takes Enter and the arrows, a
 // dropdown opens and walks its list, a suggestion list accepts on Tab/Enter
 // once stepped into, Esc closes a pop-up — and these commands get only what
-// it leaves. Tab / Shift+Tab are the host's ring. Ctrl+Enter and Alt+Enter
-// are dialog-wide shortcuts: they run ahead of any control.
+// it leaves. Tab / Shift+Tab are the host's ring, and Enter on a
+// single-line field is the host's too: it moves on to the next control.
+// Ctrl+Enter and Alt+Enter are dialog-wide shortcuts: they run ahead of any
+// control.
 const FORM_MODE_BINDINGS: string[][] = [
   ["C-Enter", "orchestrator_form_submit", "shortcut"],
   ["M-Enter", "orchestrator_form_submit_bg", "shortcut"],
-  ["Enter", "orchestrator_form_key_enter"],
   ["Escape", "orchestrator_form_key_escape"],
   ["Up", "orchestrator_form_key_up"],
   ["Down", "orchestrator_form_key_down"],
@@ -17108,10 +17109,6 @@ function toggleFormDetails(): void {
   snapFormFocusTo("details");
 }
 
-// Enter that no control used: a single-line field's. The form's Enter
-// neither advances (Tab does) nor submits (Ctrl+Enter does), so it is bound
-// to keep the host's single-line default — advance focus — from applying.
-registerHandler("orchestrator_form_key_enter", () => {});
 registerHandler("orchestrator_form_key_escape", () => {
   // An open suggestion list or dropdown took the first Esc already (the
   // focused control answers before this binding); this is the dialog's.
