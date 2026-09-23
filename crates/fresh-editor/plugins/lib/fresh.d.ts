@@ -37,6 +37,8 @@ declare function registerHandler(name: string, fn: Function): void;
 interface ProcessHandle<T> extends PromiseLike<T> {
 	/** Promise that resolves to the result when complete */
 	readonly result: Promise<T>;
+	/** Id of the spawned process (the `process_id` in onProcessStdout/onProcessStderr payloads) */
+	readonly processId: number;
 	/** Cancel/kill the operation. Returns true if cancelled, false if already completed */
 	kill(): Promise<boolean>;
 }
@@ -3930,7 +3932,9 @@ interface EditorAPI {
 	*/
 	fileStat(path: string | LocalPath | WindowPath | AuthorityPath): unknown;
 	/**
-	* Check if a background process is still running
+	* Check if a background process is still running: true from
+	* `spawnBackgroundProcess` until its result promise settles or it is
+	* killed.
 	*/
 	isProcessRunning(processId: number): boolean;
 	/**

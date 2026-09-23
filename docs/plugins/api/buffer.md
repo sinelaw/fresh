@@ -165,7 +165,8 @@ getAllCursorPositions(): number[]
 
 ### `isProcessRunning`
 
-Check if a background process is still running
+Check if a background process is still running: true from
+spawnBackgroundProcess until its promise settles or it is killed.
 
 ```typescript
 isProcessRunning(process_id: number): boolean
@@ -857,12 +858,16 @@ openFileInSplit(split_id: number, path: string, line: number, column: number): b
 
 Spawn a long-running background process
 Unlike spawnProcess which waits for completion, this starts a process
-in the background and returns immediately with a process ID.
-Use killProcess(id) to terminate the process later.
+in the background and returns immediately with a handle whose
+`processId` identifies it (the same id `onProcessStdout`/`onProcessStderr`
+payloads carry). The handle is also a promise that settles with the
+`BackgroundProcessResult` once the process exits.
+Use `handle.kill()` or killProcess(id) to terminate the process later;
+the promise then settles with `exit_code` -1.
 Use isProcessRunning(id) to check if it's still running.
 
 ```typescript
-spawnBackgroundProcess(command: string, args: string[], cwd?: string | null): Promise<BackgroundProcessResult>
+spawnBackgroundProcess(command: string, args: string[], cwd?: string | null): ProcessHandle<BackgroundProcessResult>
 ```
 
 **Parameters:**
@@ -876,26 +881,29 @@ spawnBackgroundProcess(command: string, args: string[], cwd?: string | null): Pr
 **Example:**
 
 ```typescript
-const proc = await editor.spawnBackgroundProcess("asciinema", ["rec", "output.cast"]);
+const proc = editor.spawnBackgroundProcess("asciinema", ["rec", "output.cast"]);
 // Later...
-await editor.killProcess(proc.process_id);
+if (editor.isProcessRunning(proc.processId)) {
+  await proc.kill(); // or editor.killProcess(proc.processId)
+}
 ```
 
 #### `killProcess`
 
-Kill a background or cancellable process by ID
-Sends SIGTERM to gracefully terminate the process.
-Returns true if the process was found and killed, false if not found.
+Kill a background process by ID
+Forcibly terminates the process (SIGKILL on Unix); its
+spawnBackgroundProcess promise then settles with `exit_code` -1.
+Returns true once the kill request has been sent.
 
 ```typescript
-killProcess(process_id: number): Promise<boolean>
+killProcess(process_id: number): boolean
 ```
 
 **Parameters:**
 
 | Name | Type | Description |
 |------|------|-------------|
-| `process_id` | `number` | ID returned from spawnBackgroundProcess or spawnProcessStart |
+| `process_id` | `number` | `processId` of a spawnBackgroundProcess handle |
 
 #### `spawnProcessWait`
 

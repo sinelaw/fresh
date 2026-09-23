@@ -3678,9 +3678,16 @@ impl Editor {
             let sender_stderr = sender.clone();
             let callback_id_u64 = callback_id.as_u64();
 
+            // Kill handle, same shape as `spawnHostProcess`: firing (or
+            // dropping, e.g. on editor shutdown) the sender makes the task
+            // below kill and reap the child, then report `ProcessExit` so
+            // the plugin's promise settles.
+            let (kill_tx, mut kill_rx) = tokio::sync::oneshot::channel::<()>();
+            self.background_process_handles.insert(process_id, kill_tx);
+
             // Receiver may be dropped if editor is shutting down
             #[allow(clippy::let_underscore_must_use)]
-            let handle = runtime.spawn(async move {
+            runtime.spawn(async move {
                 use crate::services::process_hidden::HideWindow;
                 let mut child = match TokioCommand::new(&command)
                     .args(&args)
@@ -3688,6 +3695,9 @@ impl Editor {
                     .stdout(std::process::Stdio::piped())
                     .stderr(std::process::Stdio::piped())
                     .hide_window()
+                    // Safety net: if the task itself is dropped (runtime
+                    // shutdown) the child must not outlive it.
+                    .kill_on_drop(true)
                     .spawn()
                 {
                     Ok(child) => child,
@@ -3745,11 +3755,17 @@ impl Editor {
                     });
                 }
 
-                // Wait for process to complete
-                let exit_code = match child.wait().await {
-                    Ok(status) => status.code().unwrap_or(-1),
-                    Err(_) => -1,
+                // Wait for the process to exit or for a kill request. The
+                // reader tasks end on their own once the pipes close.
+                let status = tokio::select! {
+                    status = child.wait() => status,
+                    _ = &mut kill_rx => {
+                        let _ = child.start_kill();
+                        child.wait().await
+                    }
                 };
+                // A signal-terminated process has no exit code: report -1.
+                let exit_code = status.ok().and_then(|s| s.code()).unwrap_or(-1);
 
                 let _ = sender.send(crate::services::async_bridge::AsyncMessage::Plugin(
                     fresh_core::api::PluginAsyncMessage::ProcessExit {
@@ -3759,10 +3775,6 @@ impl Editor {
                     },
                 ));
             });
-
-            // Store abort handle for potential kill
-            self.background_process_handles
-                .insert(process_id, handle.abort_handle());
         } else {
             // No runtime - reject immediately
             self.plugin_manager
@@ -5400,9 +5412,13 @@ impl Editor {
     }
 
     fn handle_kill_background_process(&mut self, process_id: u64) {
-        if let Some(handle) = self.background_process_handles.remove(&process_id) {
-            handle.abort();
-            tracing::debug!("Killed background process {}", process_id);
+        // The spawn task kills and reaps the child, then sends
+        // `ProcessExit`, which settles the plugin's promise. Unknown ids
+        // are a silent no-op: the process may have already exited.
+        if let Some(tx) = self.background_process_handles.remove(&process_id) {
+            #[allow(clippy::let_underscore_must_use)]
+            let _ = tx.send(());
+            tracing::debug!("Sent kill for background process {}", process_id);
         }
     }
 

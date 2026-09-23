@@ -689,7 +689,10 @@ pub struct PluginTrackedState {
     /// Context names set by the plugin
     pub contexts_set: Vec<String>,
     // --- Phase 3: Resource cleanup ---
-    /// Background process IDs spawned by this plugin
+    /// Background process IDs spawned by this plugin that are still live:
+    /// added when `spawnBackgroundProcess` issues the id, removed when the
+    /// process's result callback settles or a kill is requested. Backs
+    /// `isProcessRunning` and the kill-on-unload cleanup.
     pub background_process_ids: Vec<u64>,
     /// Scroll sync group IDs created by this plugin
     pub scroll_sync_group_ids: Vec<u32>,
@@ -709,6 +712,19 @@ pub struct PluginTrackedState {
     pub timer_ids: Vec<u64>,
     /// Machine handles from `editor.openMachine`, each holding a connection. Closed on unload.
     pub machine_ids: Vec<u64>,
+}
+
+/// Forget a background process id (it exited or a kill was requested), so
+/// `isProcessRunning` reports it as gone and unload doesn't kill it again.
+/// Ids come from the backend-wide request counter, so searching every
+/// plugin is unambiguous.
+fn forget_background_process(
+    tracked: &RefCell<HashMap<String, PluginTrackedState>>,
+    process_id: u64,
+) {
+    for state in tracked.borrow_mut().values_mut() {
+        state.background_process_ids.retain(|&id| id != process_id);
+    }
 }
 
 /// Type alias for the shared async resource owner map.
@@ -3934,18 +3950,19 @@ impl JsEditorApi {
 
     // === Process Management ===
 
-    /// Check if a background process is still running
-    pub fn is_process_running(&self, _process_id: u64) -> bool {
-        // This would need to check against tracked processes
-        // For now, return false - proper implementation needs process tracking
-        false
+    /// Check if a background process is still running: true from
+    /// `spawnBackgroundProcess` until its result promise settles or it is
+    /// killed.
+    pub fn is_process_running(&self, process_id: u64) -> bool {
+        self.plugin_tracked_state
+            .borrow()
+            .values()
+            .any(|state| state.background_process_ids.contains(&process_id))
     }
 
     /// Kill a process by ID (alias for killBackgroundProcess)
     pub fn kill_process(&self, process_id: u64) -> bool {
-        self.command_sender
-            .send(PluginCommand::KillBackgroundProcess { process_id })
-            .is_ok()
+        self.kill_background_process(process_id)
     }
 
     // === Translation ===
@@ -8435,6 +8452,7 @@ impl JsEditorApi {
 
     /// Kill a background process
     pub fn kill_background_process(&self, process_id: u64) -> bool {
+        forget_background_process(&self.plugin_tracked_state, process_id);
         self.command_sender
             .send(PluginCommand::KillBackgroundProcess { process_id })
             .is_ok()
@@ -9025,6 +9043,7 @@ const EDITOR_PROMISE_BOOTSTRAP: &str = r#"
                         globalThis._pendingCallbacks.set(callbackId, { resolve, reject });
                     });
                     return {
+                        processId: callbackId,
                         get result() { return resultPromise; },
                         // `kill()` cancels a still-running spawn. The
                         // dispatcher stores a oneshot keyed by callbackId;
@@ -9092,7 +9111,29 @@ const EDITOR_PROMISE_BOOTSTRAP: &str = r#"
                 editor.createVirtualBufferInExistingSplit = _wrapAsync("_createVirtualBufferInExistingSplitStart", "createVirtualBufferInExistingSplit");
                 editor.createBufferGroup = _wrapAsync("_createBufferGroupStart", "createBufferGroup");
                 editor.sendLspRequest = _wrapAsync("_sendLspRequestStart", "sendLspRequest");
-                editor.spawnBackgroundProcess = _wrapAsyncThenable("_spawnBackgroundProcessStart", "spawnBackgroundProcess");
+                // spawnBackgroundProcess also gets a bespoke wrapper so its
+                // `ProcessHandle` carries `processId` (the id the
+                // onProcessStdout/Stderr hooks report) and a real `kill()`.
+                editor.spawnBackgroundProcess = function(...args) {
+                    if (typeof editor._spawnBackgroundProcessStart !== 'function') {
+                        throw new Error('editor.spawnBackgroundProcess is not implemented (missing _spawnBackgroundProcessStart)');
+                    }
+                    const processId = editor._spawnBackgroundProcessStart(...args);
+                    const resultPromise = new Promise(function(resolve, reject) {
+                        globalThis._pendingCallbacks.set(processId, { resolve: resolve, reject: reject });
+                    });
+                    return {
+                        processId: processId,
+                        get result() { return resultPromise; },
+                        then: function(f, r) { return resultPromise.then(f, r); },
+                        catch: function(r) { return resultPromise.catch(r); },
+                        // Resolves true when the kill was enqueued; the
+                        // result promise then settles with exit_code -1.
+                        kill: function() {
+                            return Promise.resolve(editor.killBackgroundProcess(processId));
+                        }
+                    };
+                };
                 editor.httpFetch = _wrapAsyncThenable("_httpFetchStart", "httpFetch");
                 editor.spawnProcessWait = _wrapAsync("_spawnProcessWaitStart", "spawnProcessWait");
                 editor.watchPath = _wrapAsync("_watchPathStart", "watchPath");
@@ -10317,6 +10358,10 @@ impl QuickJsBackend {
             return;
         };
 
+        // A background process's id is its callback id; its callback
+        // settling means the process has exited.
+        forget_background_process(&self.plugin_tracked_state, id);
+
         // Record a virtual buffer against the plugin that asked for it, so
         // unload can close it.
         //
@@ -10429,6 +10474,8 @@ impl QuickJsBackend {
             tracing::warn!("reject_callback: No plugin found for callback_id={}", id);
             return;
         };
+
+        forget_background_process(&self.plugin_tracked_state, id);
 
         let plugin_contexts = self.plugin_contexts.borrow();
         let Some(context) = plugin_contexts.get(&name) else {
