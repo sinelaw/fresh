@@ -322,7 +322,6 @@ impl Editor {
 
             if let Some((_, view_states)) = window.buffers.splits_mut() {
                 for view_state in view_states.values_mut() {
-                    view_state.invalidate_layout();
                     for buffer_view_state in view_state.keyed_states.values_mut() {
                         buffer_view_state.viewport.wrap_row_cache.clear();
                     }

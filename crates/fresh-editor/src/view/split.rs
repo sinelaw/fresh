@@ -29,7 +29,6 @@ use crate::model::event::{BufferId, ContainerId, LeafId, SplitDirection, SplitId
 use crate::model::marker::MarkerList;
 use crate::state::ViewMode;
 use crate::view::folding::FoldManager;
-use crate::view::ui::view_pipeline::Layout;
 use crate::view::viewport::Viewport;
 use ratatui::layout::Rect;
 use serde::{Deserialize, Serialize};
@@ -428,13 +427,6 @@ pub struct SplitViewState {
     /// Horizontal scroll offset for the tabs in this split
     pub tab_scroll_offset: usize,
 
-    /// Computed layout for this view
-    /// This is View state - each split has its own Layout
-    pub layout: Option<Layout>,
-
-    /// Whether the layout needs to be rebuilt (buffer changed, transform changed, etc.)
-    pub layout_dirty: bool,
-
     /// Focus history stack for this split (most recent at end).
     /// Tracks both buffer tabs and group tabs so that "Switch to Previous
     /// Tab" and close-buffer replacement both work across tab types.
@@ -493,8 +485,6 @@ impl SplitViewState {
             keyed_states,
             open_buffers: vec![TabTarget::Buffer(buffer_id)],
             tab_scroll_offset: 0,
-            layout: None,
-            layout_dirty: true,
             focus_history: Vec::new(),
             sync_group: None,
             composite_view: None,
@@ -537,8 +527,6 @@ impl SplitViewState {
                 .insert(new_buffer_id, BufferViewState::new(width, height));
         }
         self.active_buffer = new_buffer_id;
-        // Invalidate layout since we're now showing different buffer content
-        self.layout_dirty = true;
     }
 
     /// Get the view state for a specific buffer (if it exists)
@@ -567,40 +555,6 @@ impl SplitViewState {
     pub fn remove_buffer_state(&mut self, buffer_id: BufferId) {
         if buffer_id != self.active_buffer {
             self.keyed_states.remove(&buffer_id);
-        }
-    }
-
-    /// Mark layout as needing rebuild (call after buffer changes)
-    pub fn invalidate_layout(&mut self) {
-        self.layout_dirty = true;
-    }
-
-    /// Ensure layout is valid, rebuilding if needed.
-    /// Returns the Layout - never returns None. Following VSCode's ViewModel pattern.
-    ///
-    /// # Arguments
-    /// * `tokens` - ViewTokenWire array built from the buffer
-    /// * `source_range` - The byte range this layout covers
-    /// * `tab_size` - Tab width for rendering
-    pub fn ensure_layout(
-        &mut self,
-        tokens: &[fresh_core::api::ViewTokenWire],
-        source_range: std::ops::Range<usize>,
-        tab_size: usize,
-    ) -> &Layout {
-        if self.layout.is_none() || self.layout_dirty {
-            self.layout = Some(Layout::from_tokens(tokens, source_range, tab_size));
-            self.layout_dirty = false;
-        }
-        self.layout.as_ref().unwrap()
-    }
-
-    /// Get the current layout if it exists and is valid
-    pub fn get_layout(&self) -> Option<&Layout> {
-        if self.layout_dirty {
-            None
-        } else {
-            self.layout.as_ref()
         }
     }
 
@@ -965,65 +919,17 @@ impl SplitNode {
         }
     }
 
-    /// Walk the tree using an "active group" predicate. For each Grouped node
-    /// encountered, the predicate is called with the Grouped node's split_id;
-    /// if it returns `true`, the node's layout is recursed into (with the
-    /// Grouped node's rect). If `false`, the Grouped node and its subtree are
-    /// skipped entirely (not rendered).
-    pub fn get_visible_leaves_with_rects<F>(
-        &self,
-        rect: Rect,
-        is_group_active: &F,
-    ) -> Vec<(LeafId, BufferId, Rect)>
-    where
-        F: Fn(LeafId) -> bool,
-    {
-        match self {
-            Self::Leaf {
-                buffer_id,
-                split_id,
-                ..
-            } => {
-                vec![(*split_id, *buffer_id, rect)]
-            }
-            Self::Split {
-                direction,
-                first,
-                second,
-                ratio,
-                fixed_first,
-                fixed_second,
-                ..
-            } => {
-                let (first_rect, second_rect) =
-                    split_rect_ext(rect, *direction, *ratio, *fixed_first, *fixed_second);
-                let mut leaves = first.get_visible_leaves_with_rects(first_rect, is_group_active);
-                leaves.extend(second.get_visible_leaves_with_rects(second_rect, is_group_active));
-                leaves
-            }
-            Self::Grouped {
-                split_id, layout, ..
-            } => {
-                if is_group_active(*split_id) {
-                    layout.get_visible_leaves_with_rects(rect, is_group_active)
-                } else {
-                    Vec::new()
-                }
-            }
-        }
-    }
-
-    /// Get all split separator lines (for rendering borders)
-    /// Returns (direction, x, y, length) tuples
-    pub fn get_separators(&self, rect: Rect) -> Vec<(SplitDirection, u16, u16, u16)> {
-        self.get_separators_with_ids(rect)
-            .into_iter()
-            .map(|(_, dir, x, y, len)| (dir, x, y, len))
-            .collect()
-    }
-
-    /// Get all split separator lines with their split IDs (for mouse hit testing)
-    /// Returns (split_id, direction, x, y, length) tuples
+    /// Where this subtree's separators are, computed from the model.
+    ///
+    /// **Not the editor's answer** — the shell tree places the dividers and
+    /// `view::shell::splits::separator_rects_of` reads them back, so this is a
+    /// second derivation of the same rectangles and using it in the editor
+    /// would be the thing *Geometry is produced by layout* forbids. It is
+    /// compiled for tests only, where being a second derivation is the one job
+    /// it is good for: `the_dividers_are_where_the_separators_are` and
+    /// `a_groups_dividers_land_where_its_separators_are_drawn` check the
+    /// tree's dividers against it.
+    #[cfg(test)]
     pub fn get_separators_with_ids(
         &self,
         rect: Rect,
@@ -1707,36 +1613,6 @@ impl SplitManager {
             }
         }
         self.root.visible_leaves()
-    }
-
-    /// Get all split separator positions for rendering borders
-    /// Returns (direction, x, y, length) tuples
-    pub fn get_separators(&self, viewport_rect: Rect) -> Vec<(SplitDirection, u16, u16, u16)> {
-        // No separators when a split is maximized
-        if self.maximized_split.is_some() {
-            return vec![];
-        }
-        self.root.get_separators(viewport_rect)
-    }
-
-    /// Where the separators are, computed from the model.
-    ///
-    /// **Not the editor's answer any more** — the shell tree places the
-    /// dividers and `view::shell::splits::separator_rects` reads them back, so
-    /// this is a second derivation of the same rectangles and using it would
-    /// be the thing goal 5 forbids. It is kept because
-    /// `the_dividers_are_where_the_separators_are` uses it as the oracle the
-    /// tree is checked against, which is the one job a second derivation is
-    /// good for.
-    pub fn get_separators_with_ids(
-        &self,
-        viewport_rect: Rect,
-    ) -> Vec<(ContainerId, SplitDirection, u16, u16, u16)> {
-        // No separators when a split is maximized
-        if self.maximized_split.is_some() {
-            return vec![];
-        }
-        self.root.get_separators_with_ids(viewport_rect)
     }
 
     /// Get the current ratio of a split container

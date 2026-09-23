@@ -4518,9 +4518,6 @@ impl Editor {
                     event_log.mark_saved();
                 }
             }
-            self.active_window_mut()
-                .invalidate_layouts_for_buffer(buffer_id);
-
             // Notify LSP with full document content (bulk edits collapse
             // incremental ranges).
             let full_content_change = self
