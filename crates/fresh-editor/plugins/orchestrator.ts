@@ -5935,8 +5935,13 @@ function runDockMenuOption(optKey: string): void {
     return;
   }
   if (optKey === "main:hide") {
-    closeDockMenu();
+    // The dock first, then the Menu that hangs off it: the other way round,
+    // closing the Menu refocuses the dock it is about to lose.
+    const menuPanel = mainMenuPanel;
+    mainMenuPanel = null;
+    openDialog.dockMenu = null;
     closeOpenDialog();
+    menuPanel?.unmount();
     return;
   }
   if (optKey.startsWith("move:") && menu?.kind === "move") {
@@ -17855,6 +17860,13 @@ editor.on("widget_event", (e) => {
         // clicking away from a menu dismisses it.
         openDialog.projectMenuOpen = false;
         openDialog.dockMenu = null;
+        // The Menu panel too, and without handing focus back: the press
+        // that blurred the dock is also dismissing it.
+        if (mainMenuPanel) {
+          const menuPanel = mainMenuPanel;
+          mainMenuPanel = null;
+          menuPanel.unmount();
+        }
         // The search row goes with them — unless a needle keeps it (a
         // dive keeps the filter, see below), which the render decides.
         openDialog.searchOpen = false;

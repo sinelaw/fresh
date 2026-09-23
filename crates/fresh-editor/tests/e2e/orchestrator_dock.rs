@@ -1143,26 +1143,28 @@ fn dock_alt_t_toggles_worktrees_without_blurring() {
             .unwrap();
     h.render().unwrap();
     open_dock(&mut h);
-    // The worktree switch lives in the Menu — open it so its mark is
-    // visible (Alt+T flips the flag either way, and the menu stays up).
-    open_dock_menu(&mut h);
-    let off = |h: &EditorTestHarness| {
-        let s = h.screen_to_string();
-        s.contains("[ ] All worktrees")
+    // The worktree switch's mark is in the Menu, a panel of its own that
+    // takes the keyboard while it is up: read it there, then close it, so
+    // Alt+T lands on the dock.
+    let menu_shows = |h: &mut EditorTestHarness, mark: &str| {
+        open_dock_menu(h);
+        let mark = mark.to_string();
+        h.wait_until(move |h| h.screen_to_string().contains(&mark))
+            .unwrap();
+        close_dock_menu(h);
     };
 
     // The dock's worktree filter starts off.
-    h.wait_until(|h| off(h)).unwrap();
+    menu_shows(&mut h, "[ ] All worktrees");
 
     // Alt+T flips it on. Without the fix the chord blurs the dock and the
-    // switch stays off, so this wait would time out.
+    // switch stays off.
     h.send_key(KeyCode::Char('t'), KeyModifiers::ALT).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("[✓] All worktrees"))
-        .unwrap();
+    menu_shows(&mut h, "[✓] All worktrees");
 
     // Alt+T again flips it back off (proves it stays wired, not one-shot).
     h.send_key(KeyCode::Char('t'), KeyModifiers::ALT).unwrap();
-    h.wait_until(|h| off(h)).unwrap();
+    menu_shows(&mut h, "[ ] All worktrees");
 
     // And the dock kept keyboard focus throughout — it never blurred.
     assert!(
