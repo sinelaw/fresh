@@ -13,52 +13,8 @@ use crate::model::event::{BufferId, LeafId};
 /// Columns a single scroll step moves a split's tab strip, shared by the
 /// wheel and by a click on the bar's `<` / `>` indicators so both nudge the
 /// strip by the same amount.
-pub(crate) const TAB_SCROLL_STEP_COLUMNS: usize = 10;
 
 impl crate::app::window::Window {
-    /// Pan a split's tab strip by one scroll step: negative moves toward the
-    /// first tab, positive toward the last.
-    ///
-    /// Which split is the strip node's own — it is that pane's. The cell was
-    /// compared against every recorded `bar_area` in turn to recover it, which
-    /// is what a keyed node makes unnecessary. The wheel routing's ruling is
-    /// unchanged and lives with the surfaces: there is no "whatever has focus"
-    /// fallback, and chrome that owns no scrollable content drops the wheel
-    /// (sinelaw/fresh#2969, the base component's).
-    ///
-    /// Scrolling right stops at the last tab — whether anything is still
-    /// hidden off the right edge is the strip's layout's to say, so the offset
-    /// can't run out into empty space and leave the user wheeling back through
-    /// nothing. Which tab is *active* never changes: the wheel moves the view,
-    /// like every other wheel surface in the editor.
-    ///
-    /// `overflows_right` is whether the strip has tabs past its right edge —
-    /// a fact of the strip's layout, which the caller reads off the tree
-    /// (`Editor::scroll_pane_tab_strip`); stepping right stops there.
-    pub(crate) fn scroll_tab_strip(&mut self, split_id: LeafId, delta: i32, overflows_right: bool) {
-        if delta == 0 {
-            return;
-        }
-        if delta > 0 && !overflows_right {
-            return;
-        }
-        if let Some(view_state) = self
-            .split_view_states_mut()
-            .expect("active window must have a populated split layout")
-            .get_mut(&split_id)
-        {
-            view_state.tab_scroll_offset = if delta < 0 {
-                view_state
-                    .tab_scroll_offset
-                    .saturating_sub(TAB_SCROLL_STEP_COLUMNS)
-            } else {
-                view_state
-                    .tab_scroll_offset
-                    .saturating_add(TAB_SCROLL_STEP_COLUMNS)
-            };
-        }
-    }
-
     /// Fire the `mouse_scroll` plugin hook — plugins can react to the
     /// wheel for virtual buffers. Fired by every scroll-surface arm
     /// (splits, tab strips, the file explorer) before acting, exactly

@@ -157,11 +157,9 @@ impl Window {
             self.resize_visible_terminals();
         }
 
-        // Ensure the newly active tab is visible. Use the focused split's real
-        // pane width, not the whole-editor width, so vertical splits scroll
-        // correctly (issue #2650).
-        let tabs_width = self.split_tabs_width(active_split);
-        self.ensure_active_tab_visible(active_split, buffer_id, tabs_width);
+        // Ensure the newly active tab is visible. No width is needed and none
+        // is right: the strip is a window and it knows its own.
+        self.reveal_active_tab(active_split);
 
         true
     }

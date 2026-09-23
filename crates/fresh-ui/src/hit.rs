@@ -147,6 +147,28 @@ impl<M: 'static> Ui<M> {
                 // press. Routing it to that element would send a click on
                 // one pane to the pane pressed before it, forever.
                 self.captured = None;
+                // Dismissal happens for any button; it *claims* only for the
+                // primary one.
+                //
+                // A left click outside a menu is spent closing it — that is
+                // the whole gesture. A right click outside is not: every
+                // platform closes the open menu and opens the new one from
+                // that same press, so consuming it would cost the user a
+                // click. Same rule a viewport applies to the wheel: act, and
+                // claim only when the act was the whole of it.
+                // Whether anything was dismissed, and whether any of it was
+                // spent on the dismissal.
+                //
+                // **Ahead of the window's own affordances, not behind them.**
+                // A press is a press wherever it lands: a transient surface a
+                // pointer press dismisses — an LSP hover tooltip, signature
+                // help — must go whether the press was spent on a button, on a
+                // scrollbar, on an overflow cap or on nothing at all. Both
+                // branches below return early, so with the dismissal after
+                // them a click on a cap or a bar left the tooltip up, which is
+                // not what the arrows and bars those replaced did.
+                let (dismissed, spent) = self.dismiss_for_pointer(pos, out);
+                let dismiss_claims = spent && button == MouseButton::Left;
                 // A press on a viewport's scrollbar gutter drives its scroll
                 // directly — click to jump, then drag to follow. The only
                 // message it produces is the window's own report of where it
@@ -169,19 +191,6 @@ impl<M: 'static> Ui<M> {
                         return true;
                     }
                 }
-                // Dismissal happens for any button; it *claims* only for the
-                // primary one.
-                //
-                // A left click outside a menu is spent closing it — that is
-                // the whole gesture. A right click outside is not: every
-                // platform closes the open menu and opens the new one from
-                // that same press, so consuming it would cost the user a
-                // click. Same rule a viewport applies to the wheel: act, and
-                // claim only when the act was the whole of it.
-                // Whether anything was dismissed, and whether any of it was
-                // spent on the dismissal.
-                let (dismissed, spent) = self.dismiss_for_pointer(pos, out);
-                let dismiss_claims = spent && button == MouseButton::Left;
                 let paths = self.route(pos);
                 // Every stacked path's target, so a click is derived per path:
                 // a transparent overlay and what is behind it were both
@@ -687,6 +696,25 @@ impl<M: 'static> Ui<M> {
                 }
             }
         }
+        // Where it is, for the affordances a node draws for itself.
+        //
+        // **A node that draws from the pointer is repainted when the pointer
+        // moves onto or off it.** Enter and Leave are the tree's own answer to
+        // "the pointer arrived", and they fire only when it crosses an
+        // element's boundary — but an overflow cap is not an element, it is
+        // cells its window reserved, and sliding sideways from the tabs onto
+        // the `<` crosses nothing. So the cap is asked the same question its
+        // press asks, before and after the move, and the window is marked
+        // dirty when the answer changes: no frame for a pointer wandering
+        // inside one element, a frame the moment a cap lights or goes out.
+        let cap_was = self.pointer.and_then(|p| self.overflow_cap_hit(p));
+        self.pointer = Some(pos);
+        let cap_now = self.overflow_cap_hit(pos);
+        if cap_was != cap_now {
+            for (r, _) in cap_was.into_iter().chain(cap_now) {
+                self.mark_render_dirty(r);
+            }
+        }
         let old = std::mem::take(&mut self.hover);
         let left: Vec<ElementId> = old.iter().copied().filter(|e| !now.contains(e)).collect();
         let entered: Vec<ElementId> = now.iter().copied().filter(|e| !old.contains(e)).collect();
@@ -761,8 +789,16 @@ impl<M: 'static> Ui<M> {
     /// the review diff's file sidebar it read as a second, stale selection.
     /// The next `Move` re-establishes it.
     pub fn clear_hover(&mut self) -> bool {
+        // A cap draws itself from the pointer rather than from an Enter, so
+        // forgetting where the pointer is has to put it out the same way a
+        // move off it would.
+        let lit = self.pointer.and_then(|p| self.overflow_cap_hit(p));
+        self.pointer = None;
+        if let Some((r, _)) = lit {
+            self.mark_render_dirty(r);
+        }
         if self.hover.is_empty() {
-            return false;
+            return lit.is_some();
         }
         let left = std::mem::take(&mut self.hover);
         let mut out = Vec::new();
@@ -819,15 +855,22 @@ impl<M: 'static> Ui<M> {
                 {
                     continue;
                 }
-                let rect = n.data.rect;
-                if pos.y < rect.y || pos.y >= rect.bottom() {
-                    continue;
-                }
-                let off = n.data.scroll.x;
-                if pos.x == rect.x && off > 0 {
-                    found = Some((r, -1));
-                } else if pos.x == rect.right() - 1 && off < n.data.scroll_max.x {
-                    found = Some((r, 1));
+                let caps = crate::render::object::overflow_caps(
+                    n.data.rect,
+                    n.data.scroll.x as i64,
+                    n.data.scroll_max.x as i64,
+                    n.data.scroll_cap,
+                );
+                for (end, more, rect) in caps {
+                    if more && rect.contains(pos) {
+                        found = Some((
+                            r,
+                            match end {
+                                crate::End::Before => -1,
+                                crate::End::After => 1,
+                            },
+                        ));
+                    }
                 }
             }
             if found.is_some() {
@@ -839,15 +882,19 @@ impl<M: 'static> Ui<M> {
 
     /// Move a window one windowful along the axis it scrolls.
     ///
-    /// A page, not a fixed number of cells: the cap says "there is more this
-    /// way", and the answer to pressing it is the next screenful of it. It is
-    /// the same move clicking a scrollbar's track makes, for the same reason.
+    /// A windowful by default — the move clicking a scrollbar's track makes —
+    /// or whatever the window asked for with `Node::scroll_step`, for a
+    /// surface where a screenful is the wrong nudge.
     fn step_window(&mut self, r: RenderId, dir: i32, out: &mut Vec<M>) {
         let (was, max, page) = {
             let Some(n) = self.render.get(r) else { return };
-            let page = match n.data.scroll_axis {
-                crate::event::Axis::Vertical => n.data.window.map_or(n.data.rect.h, |w| w.h),
-                crate::event::Axis::Horizontal => n.data.window.map_or(n.data.rect.w, |w| w.w),
+            // The window's own step, or a windowful when it has no opinion.
+            let page = match n.data.scroll_step {
+                0 => match n.data.scroll_axis {
+                    crate::event::Axis::Vertical => n.data.window.map_or(n.data.rect.h, |w| w.h),
+                    crate::event::Axis::Horizontal => n.data.window.map_or(n.data.rect.w, |w| w.w),
+                },
+                s => s,
             };
             let (was, max) = match n.data.scroll_axis {
                 crate::event::Axis::Vertical => (n.data.scroll.y, n.data.scroll_max.y),

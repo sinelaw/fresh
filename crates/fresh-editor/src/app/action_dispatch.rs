@@ -1049,16 +1049,11 @@ impl Editor {
                     .map(|(mgr, _)| mgr)
                     .expect("active window must have a populated split layout")
                     .active_split();
-                if let Some(view_state) = self
-                    .windows
-                    .get_mut(&self.active_window)
-                    .and_then(|w| w.split_view_states_mut())
-                    .expect("active window must have a populated split layout")
-                    .get_mut(&active_split_id)
-                {
-                    view_state.tab_scroll_offset = view_state.tab_scroll_offset.saturating_sub(5);
-                    self.set_status_message(t!("status.scrolled_tabs_left").to_string());
-                }
+                // A message to the pane's strip, which is a window and
+                // clamps itself. The editor kept the offset and this arm
+                // added five to it.
+                self.pan_pane_tab_strip(active_split_id, -1);
+                self.set_status_message(t!("status.scrolled_tabs_left").to_string());
             }
             Action::ScrollTabsRight => {
                 let active_split_id = self
@@ -1068,16 +1063,11 @@ impl Editor {
                     .map(|(mgr, _)| mgr)
                     .expect("active window must have a populated split layout")
                     .active_split();
-                if let Some(view_state) = self
-                    .windows
-                    .get_mut(&self.active_window)
-                    .and_then(|w| w.split_view_states_mut())
-                    .expect("active window must have a populated split layout")
-                    .get_mut(&active_split_id)
-                {
-                    view_state.tab_scroll_offset = view_state.tab_scroll_offset.saturating_add(5);
-                    self.set_status_message(t!("status.scrolled_tabs_right").to_string());
-                }
+                // A message to the pane's strip, which is a window and
+                // clamps itself. The editor kept the offset and this arm
+                // added five to it.
+                self.pan_pane_tab_strip(active_split_id, 1);
+                self.set_status_message(t!("status.scrolled_tabs_right").to_string());
             }
             Action::NavigateBack => self.navigate_back(),
             Action::NavigateForward => self.navigate_forward(),

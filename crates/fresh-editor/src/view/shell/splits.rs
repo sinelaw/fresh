@@ -940,6 +940,7 @@ mod tests {
             hscroll: false,
         };
         let strip = |n: usize| Strip {
+            cap_names: false,
             tabs: vec![Tab {
                 target: TabTarget::Buffer(BufferId(n)),
                 name: format!("file_{n}.rs"),
@@ -950,7 +951,8 @@ mod tests {
             active: Some(TabTarget::Buffer(BufferId(n))),
             active_pane: n == 0,
             hover: None,
-            offset: 0,
+            hover_plus: false,
+            reveal: None,
             preview_label: String::new(),
         };
         let s = Splits {

@@ -424,9 +424,6 @@ pub struct SplitViewState {
     /// (for group tabs).
     pub open_buffers: Vec<TabTarget>,
 
-    /// Horizontal scroll offset for the tabs in this split
-    pub tab_scroll_offset: usize,
-
     /// Focus history stack for this split (most recent at end).
     /// Tracks both buffer tabs and group tabs so that "Switch to Previous
     /// Tab" and close-buffer replacement both work across tab types.
@@ -484,7 +481,6 @@ impl SplitViewState {
             active_buffer: buffer_id,
             keyed_states,
             open_buffers: vec![TabTarget::Buffer(buffer_id)],
-            tab_scroll_offset: 0,
             focus_history: Vec::new(),
             sync_group: None,
             composite_view: None,

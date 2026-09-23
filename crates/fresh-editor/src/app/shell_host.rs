@@ -2685,7 +2685,6 @@ impl Editor {
                 }
             }
             UiFact::PaneTabDrop => self.finish_tab_drag(),
-            UiFact::PaneTabsScroll { pane, delta } => self.scroll_pane_tab_strip(pane, delta),
             UiFact::PaneNewTab { pane, x, y } => self.new_tab_button(pane, x, y),
             // The two strip buttons. They carry no coordinates: each is a node
             // that knows its pane, so what used to be a scan of two recorded
@@ -2695,9 +2694,9 @@ impl Editor {
             UiFact::PaneTabsWheel { pane, x, y, delta } => {
                 self.dismiss_transient_popups();
                 self.active_window().wheel_plugin_hook(x, y, delta);
-                self.scroll_pane_tab_strip(pane, delta);
+                self.pan_pane_tab_strip(pane, delta);
             }
-            UiFact::PaneTabsPan { pane, delta } => self.scroll_pane_tab_strip(pane, delta),
+            UiFact::PaneTabsPan { pane, delta } => self.pan_pane_tab_strip(pane, delta),
             UiFact::PaneContentPress {
                 pane,
                 byte,

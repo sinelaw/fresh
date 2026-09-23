@@ -1745,7 +1745,6 @@ impl crate::app::window::Window {
                 if let Some(active_buf_id) = active_buffer_id {
                     view_state.switch_buffer(active_buf_id);
                 }
-                view_state.tab_scroll_offset = split_state.tab_scroll_offset;
                 active_buffer_id
             })
             .flatten();
@@ -3378,7 +3377,6 @@ fn serialize_split_view_state(
         open_files,
         active_file_index,
         file_states,
-        tab_scroll_offset: view_state.tab_scroll_offset,
     }
 }
 

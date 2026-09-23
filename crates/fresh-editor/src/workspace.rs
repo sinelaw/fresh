@@ -327,10 +327,6 @@ pub struct SerializedSplitViewState {
     /// Per-file cursor and scroll state
     #[serde(default)]
     pub file_states: HashMap<PathBuf, SerializedFileState>,
-
-    /// Tab scroll offset
-    #[serde(default)]
-    pub tab_scroll_offset: usize,
 }
 
 // **A split has no view mode and no compose width.** Both were written here
@@ -1980,7 +1976,6 @@ mod tests {
                 open_files: vec![PathBuf::from("README.md"), PathBuf::from("src/lib.rs")],
                 active_file_index: 0,
                 file_states: HashMap::new(),
-                tab_scroll_offset: 0,
             },
         );
 

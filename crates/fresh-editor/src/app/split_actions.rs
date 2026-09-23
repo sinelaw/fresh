@@ -339,10 +339,7 @@ impl Editor {
         // away is commitment. Matches the rule applied in `focus_split`.
         self.active_window_mut()
             .promote_preview_if_not_in_split(split_id);
-        let buffer = self.active_buffer();
-        let tabs_width = self.active_window().split_tabs_width(split_id);
-        self.active_window_mut()
-            .ensure_active_tab_visible(split_id, buffer, tabs_width);
+        self.active_window().reveal_active_tab(split_id);
 
         // Bring terminal mode in line with the newly focused split: a
         // terminal resumes the live/scrollback mode it remembers, a
@@ -646,9 +643,7 @@ impl Editor {
 
         // Keep the newly active tab scrolled into view within its split,
         // matching `switch_split` and `set_active_buffer`.
-        let tabs_width = self.active_window().split_tabs_width(next_split);
-        self.active_window_mut()
-            .ensure_active_tab_visible(next_split, next_buf, tabs_width);
+        self.active_window().reveal_active_tab(next_split);
 
         // Snapshot first, then the hook — see the note at the other
         // split-focus site above.

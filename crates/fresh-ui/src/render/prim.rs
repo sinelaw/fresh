@@ -1484,6 +1484,8 @@ impl ViewportRender {
             // An index-scrolled window counts items down; there is no
             // horizontal form of it.
             axis: crate::event::Axis::Vertical,
+            step: 0,
+            cap: 0,
         });
         let probe = Constraints::new(w, w, 0, u16::MAX);
         let mut cells = 0u16;
@@ -1561,6 +1563,8 @@ impl RenderObject for ViewportRender {
                     band: None,
                     pinned: 0,
                     axis: self.props.axis,
+                    step: self.props.step,
+                    cap: self.props.cap,
                 });
                 // **The scrolled axis is measured loose; the other is the
                 // window's.** A window exists to show part of something
@@ -1611,10 +1615,13 @@ impl RenderObject for ViewportRender {
                 // glyphs come and go inside them, so the content does not jump
                 // by a column the moment you scroll off the start.
                 if horizontal {
-                    let caps = u16::from(
-                        self.props.scrollbar && (self.props.stable_gutter || content.w > own.w),
-                    );
-                    let view_w = own.w.saturating_sub(caps * 2);
+                    let caps = match self.props.scrollbar
+                        && (self.props.stable_gutter || content.w > own.w)
+                    {
+                        true => self.props.cap.max(1),
+                        false => 0,
+                    };
+                    let view_w = own.w.saturating_sub(caps.saturating_mul(2));
                     // The content does not reflow when the window narrows —
                     // its width is its own — so there is no second measure
                     // here, only a re-place past the leading cap.
@@ -1636,6 +1643,8 @@ impl RenderObject for ViewportRender {
                         band: None,
                         pinned: 0,
                         axis: self.props.axis,
+                        step: self.props.step,
+                        cap: self.props.cap,
                     });
                     return own;
                 }
@@ -1674,6 +1683,8 @@ impl RenderObject for ViewportRender {
                     band: None,
                     pinned: 0,
                     axis: self.props.axis,
+                    step: self.props.step,
+                    cap: self.props.cap,
                 });
             }
             ScrollMode::Items {
@@ -1802,6 +1813,8 @@ impl RenderObject for ViewportRender {
                     band: Some(crate::render::object::Band::Cells(height)),
                     pinned: pinned_of(rows) as u16,
                     axis: crate::event::Axis::Vertical,
+                    step: 0,
+                    cap: 0,
                 });
                 let inner = Constraints::new(inner_w, inner_w, 0, own.h);
                 for k in cx.children() {
@@ -1852,24 +1865,33 @@ impl RenderObject for ViewportRender {
                 return;
             }
             let offset = self.window.x.max(0) as i64;
-            let caps = [
-                (crate::End::Before, offset > 0, g.rect.x),
-                (
-                    crate::End::After,
-                    offset < self.ceiling as i64,
-                    g.rect.right() - 1,
-                ),
-            ];
-            for (end, more, x) in caps {
+            let caps = crate::render::object::overflow_caps(
+                g.rect,
+                offset,
+                self.ceiling as i64,
+                self.props.cap,
+            );
+            for (end, more, rect) in caps {
                 if !more {
                     continue;
                 }
+                // The same rectangle a press hit-tests, so the cap lights
+                // exactly where it acts.
+                let hovered = g.pointer.is_some_and(|p| rect.contains(p));
                 let draw = Draw::Overflow {
                     axis: crate::event::Axis::Horizontal,
                     end,
+                    hovered,
                 };
-                let rect = Rect::new(x, g.rect.y, 1, g.rect.h);
-                match &self.props.bar_theme {
+                let ink = match hovered {
+                    true => self
+                        .props
+                        .bar_hover_theme
+                        .as_ref()
+                        .or(self.props.bar_theme.as_ref()),
+                    false => self.props.bar_theme.as_ref(),
+                };
+                match ink {
                     Some(t) => {
                         out.push_themed(draw, rect, g.clip, crate::ThemeKey(Some(t.clone())))
                     }

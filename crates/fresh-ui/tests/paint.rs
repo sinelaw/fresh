@@ -18,7 +18,12 @@ fn snapshot(spec: &fresh_ui::LayoutSpec) -> String {
             Draw::Rule(g) => format!("rule:{g}"),
             Draw::Border(bs) => format!("border:{bs:?}"),
             Draw::Selectable => "selectable".to_string(),
-            Draw::Overflow { axis, end } => format!("overflow:{axis:?}:{end:?}"),
+            Draw::Overflow { axis, end, hovered } => {
+                format!(
+                    "overflow:{axis:?}:{end:?}{}",
+                    if *hovered { ":hover" } else { "" }
+                )
+            }
             Draw::Scrim(s) => format!("scrim {s:?}"),
             Draw::Lines(l) => format!(
                 "text {:?}",

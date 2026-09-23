@@ -480,41 +480,123 @@ definition. It re-runs the one description through the one layout engine; it
 does not restate any rule. `split_rect` is a `cfg(test)` alias that passes two
 `None`s to the production `split_rect_ext`.
 
-### The tab strip is measured twice, and the fix is blocked
+### The tab strip is measured twice
 
-**Open, and not on the old plan at all.** `view::shell::tabs::lay_out` does not
-use the layout engine. It measures every piece with `str_width`, computes the
-available width, decides whether the `<` and `>` arrows appear, slices each
-label by column, and emits fixed `Sizing::Cells` nodes — the tree receives a
-finished picture, which is *A surface is done when the tree measures it*
-failing on the most-looked-at row in the editor.
+**Closed, and the library grew the axis it needed.**
+`view::shell::tabs::lay_out` did not use the layout engine: it took the
+strip's width from a `layout_reader`, measured every piece with `str_width`,
+decided a name cap from the total, worked out whether the `<` and `>` arrows
+appeared, sliced each label by column against a scroll offset the editor held,
+and emitted fixed `Sizing::Cells` nodes — a finished picture handed to a tree
+with nothing left to lay out, on the most-looked-at row in the editor.
 
-Because layout never decides the widths, the scroll offset cannot come from it
-either, so a second full measurement runs in `view::ui::tabs`
-(`calculate_tab_widths`, `tab_name_cap`, `full_tab_label_width`,
-`tabs_render_width`, `scroll_to_show_tab`), driven by
-`Window::ensure_active_tab_visible` from five call sites. A third copy of the
-same decision is `Window::split_tabs_width`, whose comment says to "Mirror the
-show-flags in `render_split_tab_bar`". Both sides format the same
-`" {name}{mod}{preview}{bin} "` and measure it; comments reading "or widths
-drift" and "stay in lockstep" are what holds them together.
+Because layout never decided the widths, the offset could not come from it, so
+a second full measurement ran in `view::ui::tabs` (`calculate_tab_widths`,
+`tab_name_cap`, `full_tab_label_width`, `tabs_render_width`,
+`scroll_to_show_tab`) behind `Window::ensure_active_tab_visible` and its five
+call sites, and a third partial one in `Window::split_tabs_width`, whose
+comment said to "Mirror the show-flags in `render_split_tab_bar`". All of it is
+deleted, along with `SplitViewState::tab_scroll_offset` and its persistence.
 
-**The intended fix does not work yet, and the reason is in the library.** The
-shape is obvious — make the strip a scrollable viewport that names the active
-tab as its reveal target, and layout produces the offset — and
-`Anchor::reveal_key` ships. But `fresh-ui`'s viewport scrolls vertically only:
-`Scroll::At` is a single number, every `Anchor` command preserves `scroll.x`
-and changes only `y`, and `ScrollMode::Items` is documented as scrolling "only
-down". A horizontal offset is honoured in layout and nothing can move it. So
-this needs a horizontal axis in the library first — `Scroll::At` with an `x`,
-horizontal reveal commands, a wheel and a bar that move it — which is a
-library change with a design of its own, not a use of a primitive that already
-ships.
+**What the library was missing was narrower than it looked.** `RenderData`'s
+`scroll` and `scroll_max` were already `Point`s, the clamp was already
+per-axis, the cell viewport already computed `max.x`, and `arrange` already
+translated by `sc.x`. What did not exist was any way to move a window across
+*by reference to its content*: every `Anchor` command wrote
+`Point::new(scroll.x, …)`, so the only horizontal API was `scroll_to`, which
+asks the caller for the number the window is there to compute.
 
-What already works and must keep working: hit testing, hover, the drag drop
-zone and the web all read tab rectangles off the tree by key
-(`chrome::splits::tab_rects`, `scene::tab_bar_view`). The genuine model
-helpers, `resolve_tab_names` and `elided_tab_name`, were never paint.
+The axis is now the window's (`Node::scroll_axis`, published on `ScrollInfo`),
+not the command's — `reveal_key` means "put this inside", and which way that is
+has one right answer. Every command became axis-correct at once, with no new
+public command and no second spelling of any of them.
+
+**And the affordance is the window's too.** A one-row horizontal window has its
+content on the rows a bar would need, so it caps its ends instead:
+`Draw::Overflow { axis, end }`, one cell at an edge that still has content
+behind it. It is a draw kind for the reason `Draw::Rule` gives — whether there
+is more depends on the offset layout settled on, and a description that decided
+it would have to know the offset to be built and be built to produce the
+offset. The cells are reserved whenever the content overflows, *not* per end,
+or the reservation would depend on the offset that depends on it; the glyphs
+come and go inside them, so the tabs no longer shift by a column the moment the
+`<` appears, which the painter's strip did. The terminal draws `<` and `>`
+there, as it always did, because the glyph is the backend's.
+
+The editor's whole remaining say is `Window::reveal_active_tab`: which tab to
+show is a fact about the pane, and where that puts the window is the window's
+answer. The wheel is still a fact (it dismisses transient popups and fires the
+plugin hook on its way) but it moves the window rather than an offset.
+
+**The `+` and the caps are the same kind of button.** The `+` rides in the
+window after the last tab, where the painter put it when the tabs fitted; the
+painter *pinned* it to the right edge when they did not, which is a placement
+that depends on the overflow the window now owns. Revealing the strip's end
+rather than the tab is what keeps it beside the last tab there too: `+` follows
+the last tab, so on the last tab the window is asked for the button and brings
+the tab with it. All three of `+`, `×` and the caps light on hover, in one
+pair of theme names.
+
+Hover on a cap is the library's, for the same reason the press is: a cap is
+drawn because the *window* knows there is more that way, so the window is what
+knows when the pointer is on it. `Geom::pointer` carries where the pointer is
+into paint, and `Node::scrollbar_hover_theme` is the second name the surface
+gives it.
+
+**A node that draws from the pointer needs a frame when the pointer moves.**
+Reading `Geom::pointer` at paint says what the cap looks like; it does not say
+when to look again. `Enter` and `Leave` are the tree's answer to "the pointer
+arrived", and they fire when it crosses an *element's* boundary — but a cap is
+not an element, it is cells the window reserved, so sliding sideways out of the
+tabs and onto the `<` crosses nothing. The cap lit only when the pointer
+happened to cross some other node's edge on the way in: entering from above the
+strip worked, entering from beside it did not. So `update_hover` asks the cap
+the same question the press asks — `overflow_cap_hit`, before the move and
+after it — and marks the window when the answer changes. A pointer wandering
+inside one element still costs nothing; a cap lighting or going out costs the
+frame it needs. `Ui::needs_frame` counts `layout_dirty` for this, which it did
+not: every change that is not an element's had been invisible to the host loop
+asking whether a frame was owed.
+
+A cap's geometry has one statement of it, `render::object::overflow_caps`,
+which both the paint and the hit walk read — a button that lights where it
+cannot be pressed is not a button.
+
+**And a cap is as wide as the buttons beside it.** One cell is enough to say
+"there is more this way" and stays the default, but on this strip the `+` is a
+padded `" + "` and a one-cell arrow is the odd one out to the pointer as much
+as to the eye. `Node::scroll_cap_width` is the window's say in it: the measure
+reserves that many cells at each end and the backend centres the glyph in them.
+The strip asks for `NEW_TAB_BUTTON_WIDTH` and gives the caps the `+`'s own two
+theme pairs, so `<`, `>` and `+` are one kind of thing and nothing about
+meeting one tells you which it was.
+
+One deliberate change, from removing a dependency on the offset: a name is
+capped at `TAB_NAME_MAX_COLS` always, where the cap used to be lifted when
+every label fitted — that was a measurement of the whole strip made before the
+description existed, and a window can show what does not fit, so the cap is a
+rule about tab names rather than about the room they have.
+
+**Checked against the installed 0.5.1 release**, driven side by side in tmux:
+identical cell for cell at every width tried, for the initial scroll, the
+`<`/`>` steps, the wheel, tab activation and a vertical split — but for the
+intended differences. The caps are three cells at each edge rather than one
+arrow beside the content, reserved whenever the content overflows so the tabs
+do not jump when the `<` appears (the release's do), which moves the strip
+left; they wear the `+`'s ground rather than the separator's; and the status
+bar writes `…` where the release wrote `...`, so one more character of the
+message fits.
+
+It also fixes one thing. After a vertical split the release leaves the active
+tab cut off under the pinned `+` — `hotel_indexer.` with its `rs ×` missing —
+because the offset was computed against a width that did not match what the
+strip laid out, which is the defect `split_tabs_width` was added to paper over.
+The window has one width and the tab is whole.
+
+**Still true, and untouched:** hit testing, hover, the drag drop zone and the
+web all read tab rectangles off the tree by key (`chrome::splits::tab_rects`,
+`scene::tab_bar_view`), and `resolve_tab_names` and `elided_tab_name` were
+never paint.
 
 ### Composite buffer panes never migrated
 
@@ -828,9 +910,9 @@ Not re-argued:
   six unused variants.
 - **A surface is done when the tree measures it.** Cell-identical output and
   pointer parity are necessary and not sufficient; a description with a rect, a
-  width or a pre-fitted string is still a picture. The status bar was the live
-  example and is closed; *The tab strip is measured twice* is the one left, and
-  it is blocked on the library rather than on the surface.
+  width or a pre-fitted string is still a picture. The status bar and the tab
+  strip were the two live examples and both are closed; *Composite buffer panes
+  never migrated* is the surface left, and it never had a description at all.
 - **Assert the tree's focus, not the registry's.** Every focus failure this arc
   had came with a registry that agreed with itself.
 - **Send two events before rendering** when the property is about ordering.

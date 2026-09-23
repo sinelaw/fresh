@@ -35,6 +35,8 @@ pub enum HoverTarget {
     TabName(crate::view::split::TabTarget, LeafId),
     /// Hovering over a tab close button (target, split_id)
     TabCloseButton(crate::view::split::TabTarget, LeafId),
+    /// Hovering over a pane's `+` new-tab button (split_id)
+    NewTabButton(LeafId),
     /// Hovering over a close split button (split_id)
     CloseSplitButton(LeafId),
     /// Hovering over a maximize/unmaximize split button (split_id)
