@@ -36,9 +36,9 @@ import {
   button,
   col,
   dropdown,
-  endRow,
   flexSpacer,
   label,
+  labeledSection,
   raw,
   row,
   spacer,
@@ -88,9 +88,10 @@ const DISCOVER_MODE = "agent-discovery";
 // The panel's share of the terminal height.
 const DISCOVER_HEIGHT_PCT = 90;
 // Rows the dialog spends on everything but the results: borders and title
-// (3), machine and filter rows (2), the spacers around the results (2), the
-// close row (1) and a note with its spacer (2).
-const DISCOVER_CHROME_ROWS = 10;
+// (3), the top padding (1), machine and filter rows (2), the spacer under
+// them (1), the results' own frame (2), the footer's spacer, rule and spacer
+// (3), the close row (1) and a note with its spacer (2).
+const DISCOVER_CHROME_ROWS = 15;
 // Fewest result rows shown, however small the terminal.
 const DISCOVER_MIN_TREE_ROWS = 8;
 
@@ -173,7 +174,11 @@ function buildDiscoverSpec(): WidgetSpec {
   const cached = selected ? discoverCache.get(selected.key) : undefined;
   const treeRows = discoverTreeRows();
 
+  // The forms' shape: a padded label column (right-aligned by the panel),
+  // `+ Add machine…` right beside the Machine control, the results in a
+  // framed list, and a footer rule over Close.
   const body: WidgetSpec[] = [
+    spacer(0),
     row(
       dropdown(
         targets.map((t) => t.label),
@@ -185,6 +190,8 @@ function buildDiscoverSpec(): WidgetSpec {
         },
       ),
       spacer(2),
+      button(`+ ${editor.t("discover.add_machine")}`, { key: "discover-add-machine" }),
+      spacer(3),
       withAccel(
         button(editor.t("discover.btn_scan"), {
           intent: "primary",
@@ -193,8 +200,6 @@ function buildDiscoverSpec(): WidgetSpec {
         }),
         "⏎",
       ),
-      spacer(2),
-      button(`+ ${editor.t("discover.add_machine")}`, { key: "discover-add-machine" }),
     ),
     row(
       text({
@@ -227,26 +232,27 @@ function buildDiscoverSpec(): WidgetSpec {
   if (note) body.push(fieldNote(note), spacer(0));
 
   // Every state below fills the same `treeRows`, so the dialog keeps one
-  // shape.
+  // shape. They go in a frame, the way the other dialogs show a list.
+  const results: WidgetSpec[] = [];
   const filled = (...kids: WidgetSpec[]): WidgetSpec[] => [
     ...kids,
     raw(Array.from({ length: Math.max(0, treeRows - kids.length) }, () => ({ text: "" }))),
   ];
   if (st.scanning) {
-    body.push(...filled(label(editor.t("discover.scanning"))));
+    results.push(...filled(label(editor.t("discover.scanning"))));
   } else if (st.rows === null) {
-    body.push(
+    results.push(
       ...filled(label(editor.t("discover.hint"), { style: { fg: "ui.menu_disabled_fg" } })),
     );
   } else if (rows.length === 0) {
-    body.push(...filled(label(editor.t("discover.empty"))));
+    results.push(...filled(label(editor.t("discover.empty"))));
   } else {
     // Measured over every row, so the columns line up down the whole
     // answer rather than within each heading.
     const layout = discoverLayout(rows, measure);
     // Headings start collapsed so hundreds of sessions fit one screen.
     // `visibleRows` must be given: an auto-sized tree draws nothing here.
-    body.push(
+    results.push(
       tree({
         nodes: rows.map((r) => {
           const action = discoverRowAction(r, t);
@@ -277,9 +283,16 @@ function buildDiscoverSpec(): WidgetSpec {
     );
   }
 
+  body.push(row(spacer(2), labeledSection({ label: editor.t("discover.sessions"), child: col(...results) })));
   body.push(
     spacer(0),
-    endRow(withAccel(button(editor.t("discover.btn_close"), { key: "discover-close" }), "Esc")),
+    label(`  ${"─".repeat(400)}`, { style: { fg: "ui.menu_disabled_fg" } }),
+    spacer(0),
+    row(
+      flexSpacer(),
+      withAccel(button(editor.t("discover.btn_close"), { key: "discover-close" }), "Esc"),
+      spacer(2),
+    ),
   );
   return col(...body);
 }
@@ -345,6 +358,7 @@ function mountDiscoverPanel(): void {
     widthPct: 70,
     heightPct: DISCOVER_HEIGHT_PCT,
     focusMarker: true,
+    labelAlign: "right",
     title: editor.t("discover.title"),
     closable: true,
   });

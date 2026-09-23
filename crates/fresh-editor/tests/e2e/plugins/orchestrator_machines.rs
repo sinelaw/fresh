@@ -84,11 +84,30 @@ fn fill_and_save_new_machine(harness: &mut EditorTestHarness, name: &str, target
         .unwrap();
 }
 
-/// **The Machines dialog lists a config host that is not saved, as such.**
-/// It reads the editor's resolved home, not the process's `$HOME`: this
-/// harness redirects home, so a `$HOME` read would find no host at all.
+/// Click `+ Add machine…` in the Machines dialog and wait for the form.
+fn add_from_machines_dialog(harness: &mut EditorTestHarness) {
+    let screen = harness.screen_to_string();
+    let (col, row) = screen
+        .lines()
+        .enumerate()
+        .find_map(|(r, l)| {
+            l.find("[ + Add machine")
+                .map(|b| (l[..b].chars().count() as u16 + 3, r as u16))
+        })
+        .unwrap_or_else(|| panic!("no + Add machine… button:\n{screen}"));
+    harness.mouse_click(col, row).unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("┌ Add Machine"))
+        .unwrap();
+}
+
+/// **A config host that is not saved is counted, not listed.** The list is
+/// the machines; a hint under it says how many `~/.ssh/config` hosts are
+/// waiting and how to add one. It reads the editor's resolved home, not the
+/// process's `$HOME`: this harness redirects home, so a `$HOME` read would
+/// find no host at all.
 #[test]
-fn a_config_host_is_listed_as_not_added() {
+fn a_config_host_is_counted_under_the_list_not_listed() {
     let data_home = tempfile::tempdir().unwrap();
     let mut harness = editor_with_ssh_config(
         &data_home,
@@ -96,16 +115,17 @@ fn a_config_host_is_listed_as_not_added() {
     );
     open_machines_dialog(&mut harness);
     harness
-        .wait_until(|h| h.screen_to_string().contains("plantedbox"))
+        .wait_until(|h| {
+            h.screen_to_string()
+                .contains("1 SSH host(s) in ~/.ssh/config not added")
+        })
         .unwrap_or_else(|_| {
             panic!(
-                "the host from the editor's own `~/.ssh/config` should be listed. Screen:\n{}",
+                "the host from the editor's own `~/.ssh/config` should be counted. Screen:\n{}",
                 harness.screen_to_string()
             )
         });
-    // It resolves the entry, not just the alias, and says it is not a machine.
-    harness.assert_screen_contains("deploy@10.0.0.9");
-    harness.assert_screen_contains("not added");
+    harness.assert_screen_not_contains("plantedbox");
 }
 
 /// **An IPv6 literal is all colons, so a bare `host:port` is ambiguous.**
@@ -113,7 +133,8 @@ fn a_config_host_is_listed_as_not_added() {
 /// `::1` and `22` gives `::1:22` — and `parseSshTarget`, reading the port as
 /// whatever follows the last colon, then took the host to be `::1:` with port
 /// `22`. The resolved target brackets the literal, which is the form `ssh`
-/// itself takes and the form `parseSshTarget` can split unambiguously.
+/// itself takes and the form `parseSshTarget` can split unambiguously. The
+/// Add Machine form shows it once the Host names the alias.
 #[test]
 fn an_ipv6_config_host_is_bracketed_so_its_port_survives() {
     let data_home = tempfile::tempdir().unwrap();
@@ -122,47 +143,34 @@ fn an_ipv6_config_host_is_bracketed_so_its_port_survives() {
         "Host v6box\n  HostName 2001:db8::1\n  User deploy\n  Port 2222\n",
     );
     open_machines_dialog(&mut harness);
+    add_from_machines_dialog(&mut harness);
+    harness.type_text("v6").unwrap();
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness.type_text("v6box").unwrap();
     harness
-        .wait_until(|h| h.screen_to_string().contains("v6box"))
+        .wait_until(|h| h.screen_to_string().contains("deploy@[2001:db8::1]:2222"))
         .unwrap();
-    harness.assert_screen_contains("deploy@[2001:db8::1]:2222");
 }
 
-/// **On a config host the action is to set it up.** The footer's open button
-/// reads `Set up…`; Enter opens the machine form prefilled from the entry,
-/// and Add turns the row into a saved machine.
+/// **A config host is added through `+ Add machine…`.** Naming its alias as
+/// the Host shows what it resolves to; saving makes it a machine, which is
+/// then listed, and the hint no longer counts it.
 #[test]
-fn enter_on_a_config_host_adds_it_as_a_machine() {
+fn a_config_host_is_added_through_add_machine() {
     let data_home = tempfile::tempdir().unwrap();
     let mut harness = editor_with_ssh_config(
         &data_home,
         "Host plantedbox\n  HostName 10.0.0.9\n  User deploy\n",
     );
     open_machines_dialog(&mut harness);
-    // Local is not listed: the config host is the first row.
-    harness
-        .wait_until(|h| h.screen_to_string().contains("[ Set up… ]"))
-        .unwrap_or_else(|_| {
-            panic!(
-                "a config host's open button reads Set up…. Screen:\n{}",
-                harness.screen_to_string()
-            )
-        });
     harness.assert_screen_not_contains("this computer");
-
+    add_from_machines_dialog(&mut harness);
+    harness.type_text("planted").unwrap();
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness.type_text("plantedbox").unwrap();
     harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .wait_until(|h| h.screen_to_string().contains("deploy@10.0.0.9"))
         .unwrap();
-    harness
-        .wait_until(|h| {
-            h.screen_to_string()
-                .contains("┌ Set up machine · plantedbox")
-        })
-        .unwrap();
-    // Name and Host come from the alias, and what it resolves to is shown.
-    harness.assert_screen_contains("[plantedbox");
-    harness.assert_screen_contains("deploy@10.0.0.9");
-    harness.assert_screen_contains("[ Add ]");
     harness
         .send_key(KeyCode::Enter, KeyModifiers::CONTROL)
         .unwrap();
@@ -170,7 +178,7 @@ fn enter_on_a_config_host_adds_it_as_a_machine() {
     harness
         .wait_until(|h| {
             let s = h.screen_to_string();
-            s.contains("┌ Machines") && s.contains("plantedbox") && !s.contains("not added")
+            s.contains("┌ Machines") && s.contains("planted") && !s.contains("not added")
         })
         .unwrap_or_else(|_| {
             panic!(

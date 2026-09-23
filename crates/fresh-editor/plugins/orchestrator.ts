@@ -5142,7 +5142,7 @@ function restoreDockBehindPicker(): boolean {
   editor.setEditorMode(null);
   refreshOpenDialog();
   editor.floatingPanelControl(openPanel.id(), "focus", 0);
-  openPanel.setFocusKey("sessions");
+  focusDockControl("sessions");
   return true;
 }
 
@@ -5776,6 +5776,9 @@ let mainMenuPanel: FloatingWidgetPanel | null = null;
 const MAIN_MENU_PREFIX = "mm:";
 // The Menu's project dropdown.
 const MAIN_MENU_PROJECT_KEY = "mm-project";
+// Whether its list is up, and the option the list's selection sits on.
+let mainMenuProjectOpen = false;
+let mainMenuProjectPick: number | null = null;
 
 function buildMainMenuSpec(): WidgetSpec {
   const groups = dockMainGroups();
@@ -5825,6 +5828,8 @@ function openMainMenu(): void {
   openDialog.dockMenu = { kind: "main" };
   if (!mainMenuPanel) mainMenuPanel = new FloatingWidgetPanel();
   // Sizes to its content; the percentages are unused for an anchored panel.
+  mainMenuProjectOpen = false;
+  mainMenuProjectPick = null;
   mainMenuPanel.mount(buildMainMenuSpec(), { widthPct: 50, heightPct: 44 });
   // Under the title strip, which is its button.
   editor.floatingPanelControl(mainMenuPanel.id(), "anchor", packCell(0, 1));
@@ -5847,7 +5852,9 @@ function closeMainMenu(): void {
     dockBlurred = false;
     dockFocus = "list";
     editor.floatingPanelControl(openPanel.id(), "focus", 0);
-    openPanel.setFocusKey("sessions");
+    // Through the mirror too: it still names the Menu button the click
+    // focused, and Enter on the list reads it to pick what to run.
+    focusDockControl("sessions");
     refreshOpenDialog();
   }
 }
@@ -6142,6 +6149,7 @@ function buildCreateFolderSpec(): WidgetSpec {
       ),
       spacer(2),
     ),
+    spacer(0),
   );
   // The dialog's title + border come from the native modal-frame chrome
   // (see `mountFolderDialog`), so the spec is just the content column.
@@ -6197,7 +6205,7 @@ function closeCreateFolderDialog(): void {
   if (openPanel && dockMode) {
     dockBlurred = false;
     editor.floatingPanelControl(openPanel.id(), "focus", 0);
-    openPanel.setFocusKey("sessions");
+    focusDockControl("sessions");
     refreshOpenDialog();
   }
 }
@@ -6521,7 +6529,7 @@ function closeDockContextMenuAndRestoreDock(): void {
     dockBlurred = false;
     dockFocus = "list";
     editor.floatingPanelControl(openPanel.id(), "focus", 0);
-    openPanel.setFocusKey("sessions");
+    focusDockControl("sessions");
     refreshOpenDialog();
   }
 }
@@ -9339,7 +9347,7 @@ function restoreDockAfterDialog(): void {
   if (openPanel && dockMode) {
     dockBlurred = false;
     editor.floatingPanelControl(openPanel.id(), "focus", 0);
-    openPanel.setFocusKey("sessions");
+    focusDockControl("sessions");
     refreshOpenDialog();
   }
 }
@@ -11896,14 +11904,14 @@ function machineCoversHost(m: Machine, h: SshConfigHost): boolean {
 
 function machinesRows(): MachinesRow[] {
   const saved = loadMachines();
-  const rows: MachinesRow[] = [
-    ...saved.map((m) => ({ key: m.id, machine: m })),
-  ];
-  for (const h of sshConfigHosts()) {
-    if (saved.some((m) => machineCoversHost(m, h))) continue;
-    rows.push({ key: `host:${h.alias}`, machine: null, host: h });
-  }
-  return rows;
+  return saved.map((m) => ({ key: m.id, machine: m }));
+}
+
+// The `~/.ssh/config` hosts no saved machine covers. They are not listed —
+// the list is the machines — only counted in a hint under it.
+function unaddedSshHosts(): SshConfigHost[] {
+  const saved = loadMachines();
+  return sshConfigHosts().filter((h) => !saved.some((m) => machineCoversHost(m, h)));
 }
 
 // The machine a config host stands for, for a test: ssh
@@ -12169,6 +12177,7 @@ function buildMachinesSpec(): WidgetSpec {
         key: "machines",
       }),
     })),
+    ...machinesHint(),
     spacer(0),
     footerRule(),
     spacer(0),
@@ -12191,6 +12200,14 @@ function buildMachinesSpec(): WidgetSpec {
     ),
     spacer(0),
   );
+}
+
+// Under the list, in the list's inner column: how many config hosts are
+// waiting to be added, and how.
+function machinesHint(): WidgetSpec[] {
+  const n = unaddedSshHosts().length;
+  if (n === 0) return [];
+  return [label(`  ${editor.t("machine.hosts_not_added", { count: String(n) })}`, { style: NOTE_STYLE })];
 }
 
 function renderMachinesDialog(): void {
@@ -14242,7 +14259,7 @@ function restoreDockAfterForm(): boolean {
   dockBlurred = false;
   dockFocus = "list";
   editor.floatingPanelControl(openPanel.id(), "focus", 0);
-  openPanel.setFocusKey("sessions");
+  focusDockControl("sessions");
   refreshOpenDialog();
   return true;
 }
@@ -17341,7 +17358,7 @@ editor.on("widget_event", (e) => {
       if (openPanel && dockMode) {
         dockBlurred = false;
         editor.floatingPanelControl(openPanel.id(), "focus", 0);
-        openPanel.setFocusKey("sessions");
+        focusDockControl("sessions");
         refreshOpenDialog();
       }
       return;
@@ -17399,9 +17416,23 @@ editor.on("widget_event", (e) => {
       closeMainMenu();
       return;
     }
+    // The project dropdown walks its list live, but the filter only moves
+    // once a value is accepted: the list closes on a click or Enter (Esc
+    // first puts the selection back). A change while it is closed is an
+    // accept in itself.
+    if (e.event_type === "dropdown_open" && e.widget_key === MAIN_MENU_PROJECT_KEY) {
+      mainMenuProjectOpen = ((e.payload ?? {}) as Record<string, unknown>).open === true;
+      if (!mainMenuProjectOpen && mainMenuProjectPick !== null) {
+        const pick = mainMenuProjectPick;
+        mainMenuProjectPick = null;
+        applyProjectFilter(projectMenuKeys()[pick] ?? "");
+      }
+      return;
+    }
     if (e.event_type === "change" && e.widget_key === MAIN_MENU_PROJECT_KEY) {
       const index = Number(((e.payload ?? {}) as Record<string, unknown>).index ?? 0);
-      applyProjectFilter(projectMenuKeys()[index] ?? "");
+      if (mainMenuProjectOpen) mainMenuProjectPick = index;
+      else applyProjectFilter(projectMenuKeys()[index] ?? "");
       return;
     }
     if (e.event_type === "activate" && typeof e.widget_key === "string" && e.widget_key.startsWith(MAIN_MENU_PREFIX)) {
@@ -17421,7 +17452,7 @@ editor.on("widget_event", (e) => {
         dockBlurred = false;
         dockFocus = "list";
         editor.floatingPanelControl(openPanel.id(), "focus", 0);
-        openPanel.setFocusKey("sessions");
+        focusDockControl("sessions");
         refreshOpenDialog();
       }
       return;

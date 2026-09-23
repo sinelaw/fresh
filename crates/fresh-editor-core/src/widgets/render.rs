@@ -1929,8 +1929,11 @@ pub fn render_dropdown(
     // window never runs past the end.
     let mut option_rows = Vec::new();
     let visible = options.len().min(DROPDOWN_VISIBLE_OPTIONS);
-    let max_scroll = options.len().saturating_sub(visible);
-    let scroll = (scroll_offset as usize).min(max_scroll);
+    let scroll = crate::widgets::kinds::dropdown::follow_scroll(
+        options.len(),
+        selected_index,
+        scroll_offset as usize,
+    );
     if open {
         // Align the option column under the button's value cell using DISPLAY
         // width, never byte length: the focus marker `▸ ` is 4 bytes but only

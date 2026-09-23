@@ -242,8 +242,7 @@ fn alt_o_toggles_dock_focus_with_visible_indicator() {
     // border can shadow it, then sample its colour on a content row. The
     // default width is responsive, so scan for the glyph rather than
     // hard-coding a column.
-    // Below the Menu, which hangs over the top of the dock.
-    const ROW: u16 = 24;
+    const ROW: u16 = 6;
     let border_col = |h: &EditorTestHarness| -> u16 {
         let cols = h.screen_row_text(0).chars().count() as u16;
         (0..cols)
@@ -291,8 +290,9 @@ fn editor_click_blurs_dock_when_a_header_widget_is_focused() {
     open_dock(&mut h); // dock mounts focused on the list
 
     // The divider on a content row reflects panel focus (accent when
-    // focused, muted when blurred) — same probe as the Alt+O focus test.
-    const ROW: u16 = 6;
+    // focused, muted when blurred) — same probe as the Alt+O focus test,
+    // on a row below the Menu, which hangs over the top of the dock.
+    const ROW: u16 = 24;
     let border_col = |h: &EditorTestHarness| -> u16 {
         let cols = h.screen_row_text(0).chars().count() as u16;
         (0..cols)
@@ -304,19 +304,13 @@ fn editor_click_blurs_dock_when_a_header_widget_is_focused() {
 
     // Move keyboard focus off the list onto a header control: Tab from the
     // list wraps to the title strip, which is the Menu. Enter opens it — the
-    // user's exact sequence. Focus must stay in the dock, and the subsequent
-    // editor click must still blur.
+    // user's exact sequence — and the Menu takes the keyboard; the
+    // subsequent editor click must still leave the dock blurred.
     h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     h.render().unwrap();
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
     h.wait_until(|h| h.screen_to_string().contains("Machines…"))
         .unwrap();
-    // Still focused (on a header widget): the divider keeps its accent colour.
-    assert_eq!(
-        divider_fg(&h),
-        focused_fg,
-        "the dock should remain focused after Tab + Enter on a filter widget"
-    );
 
     // Click the editor area (well to the right of the dock column). The Menu
     // is an anchored panel, and like the right-click menu it spends the
@@ -2068,7 +2062,7 @@ fn dock_project_dropdown_is_keyboard_navigable() {
 
     // The scope starts unfiltered: the Menu's scope row reads "All".
     open_dock_menu(&mut h);
-    h.assert_screen_contains("[All projects ▼]");
+    h.assert_screen_contains("[All projects ");
     close_dock_menu(&mut h);
 
     // Alt+P opens the dropdown; it lists "All projects" plus this project.
@@ -2089,7 +2083,7 @@ fn dock_project_dropdown_is_keyboard_navigable() {
     // reads the project basename, no longer "All".
     open_dock_menu(&mut h);
     h.assert_screen_contains("▼]");
-    h.assert_screen_not_contains("[All projects ▼]");
+    h.assert_screen_not_contains("[All projects ");
 }
 
 /// The Menu's project filter is a dropdown in place: a click drops its list
@@ -2104,9 +2098,11 @@ fn dock_menu_project_dropdown_picks_in_place() {
     open_dock(&mut h);
     open_dock_menu(&mut h);
 
-    let (col, row) = pos_of(&h, "[All projects ▼]");
+    let (col, row) = pos_of(&h, "[All projects ");
     h.mouse_click(col + 2, row).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("All projects ▲"))
+    // The trigger is as wide as its longest option, so its arrow sits at
+    // the far end.
+    h.wait_until(|h| h.screen_to_string().contains("▲]"))
         .unwrap();
     // The list hangs under the control, starting with "All projects".
     let below = h.screen_row_text(row + 2);
@@ -2150,7 +2146,7 @@ fn dock_project_dropdown_esc_cancels_without_filtering() {
     h.wait_until(|h| !h.screen_to_string().contains("All projects"))
         .unwrap();
     open_dock_menu(&mut h);
-    h.assert_screen_contains("[All projects ▼]");
+    h.assert_screen_contains("[All projects ");
     close_dock_menu(&mut h);
 
     // The dock still owns the keyboard: Alt+P re-opens the dropdown.
@@ -3804,7 +3800,8 @@ fn dock_title_close_hides_the_dock() {
     close_dock_menu(&mut h);
 
     let close_col = title.find('×').map(|b| title[..b].chars().count()).unwrap();
-    h.mouse_click(close_col as u16, (action_row - 1) as u16).unwrap();
+    h.mouse_click(close_col as u16, (action_row - 1) as u16)
+        .unwrap();
     h.wait_until(|h| !h.screen_to_string().contains("+ New"))
         .unwrap();
     h.assert_screen_not_contains("Menu ▾");

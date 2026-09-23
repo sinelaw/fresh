@@ -228,8 +228,9 @@ pub fn popup_of(
     use fresh_core::text_property::{InlineOverlay, OffsetUnit, TextPropertyEntry};
 
     let visible = options.len().min(crate::widgets::DROPDOWN_VISIBLE_OPTIONS);
-    let max_scroll = options.len().saturating_sub(visible);
-    let scroll = (scroll_offset as usize).min(max_scroll);
+    let scroll = follow_scroll(options.len(), selected_index, scroll_offset as usize);
+    // A list longer than its window carries a scrollbar in its last column.
+    let bar = scrollbar_cells(options.len(), visible, scroll);
     let cell_cols = options
         .iter()
         .map(|o| crate::primitives::display_width::str_width(o))
@@ -237,9 +238,30 @@ pub fn popup_of(
         .unwrap_or(0);
     let mut entries = Vec::new();
     let mut row_indices = Vec::new();
-    for (idx, opt) in options.iter().enumerate().skip(scroll).take(visible) {
+    for (row, (idx, opt)) in options
+        .iter()
+        .enumerate()
+        .skip(scroll)
+        .take(visible)
+        .enumerate()
+    {
         let text = format!(" {} ", crate::widgets::render::cell(opt, cell_cols));
         let mut e = TextPropertyEntry::text(&text);
+        if let Some(bar) = &bar {
+            let start = e.text.len();
+            e.text.push(if bar[row] { '█' } else { '│' });
+            let end = e.text.len();
+            e.inline_overlays.push(InlineOverlay {
+                start,
+                end,
+                style: OverlayOptions {
+                    fg: Some(OverlayColorSpec::theme_key(KEY_COMPLETION_FG)),
+                    ..Default::default()
+                },
+                properties: Default::default(),
+                unit: OffsetUnit::Byte,
+            });
+        }
         let selected = idx == selected_index as usize;
         // The row under the pointer, which the tree reports because the
         // runtime's own hover probe cannot see a pop-over's rows. Selected
@@ -278,6 +300,41 @@ pub fn popup_of(
         entries,
         row_indices,
     }
+}
+
+/// The first option row the list shows: the spec's offset, moved just
+/// enough to keep the selection in the window, and clamped so the window
+/// never runs past the end. Without the follow, ↓ past the last visible row
+/// walked the selection out of sight while the list stood still.
+pub fn follow_scroll(len: usize, selected_index: i32, scroll_offset: usize) -> usize {
+    let visible = len.min(crate::widgets::DROPDOWN_VISIBLE_OPTIONS);
+    let max_scroll = len.saturating_sub(visible);
+    let mut scroll = scroll_offset.min(max_scroll);
+    if visible > 0 && selected_index >= 0 {
+        let sel = (selected_index as usize).min(len.saturating_sub(1));
+        if sel < scroll {
+            scroll = sel;
+        } else if sel >= scroll + visible {
+            scroll = sel + 1 - visible;
+        }
+    }
+    scroll.min(max_scroll)
+}
+
+/// Which of the window's rows the scrollbar's thumb covers, or `None` when
+/// the whole list fits and there is nothing to scroll.
+fn scrollbar_cells(len: usize, visible: usize, scroll: usize) -> Option<Vec<bool>> {
+    if visible == 0 || len <= visible {
+        return None;
+    }
+    let thumb = (visible * visible / len).max(1);
+    let max_scroll = len - visible;
+    let start = (scroll * (visible - thumb) + max_scroll / 2) / max_scroll;
+    Some(
+        (0..visible)
+            .map(|r| r >= start && r < start + thumb)
+            .collect(),
+    )
 }
 
 /// **Which keyed `Dropdown` in this spec has its option list up**, as a walk
@@ -510,5 +567,44 @@ pub fn set_index_state(
         open,
         // A plugin's set is the value now: nothing older to go back to.
         restore: None,
+    }
+}
+
+#[cfg(test)]
+mod scroll_tests {
+    use super::*;
+
+    fn opts(n: usize) -> Vec<String> {
+        (0..n).map(|i| format!("option {i}")).collect()
+    }
+
+    /// ↓ past the last visible row scrolls the list with it.
+    #[test]
+    fn the_window_follows_the_selection() {
+        let v = crate::widgets::DROPDOWN_VISIBLE_OPTIONS;
+        assert_eq!(follow_scroll(20, 0, 0), 0);
+        assert_eq!(follow_scroll(20, v as i32 - 1, 0), 0);
+        assert_eq!(follow_scroll(20, v as i32, 0), 1);
+        assert_eq!(follow_scroll(20, 19, 0), 20 - v);
+        assert_eq!(follow_scroll(20, 2, 10), 2);
+        assert_eq!(follow_scroll(3, 2, 0), 0);
+    }
+
+    /// The popup shows the selected row, and a scrollbar when it scrolls.
+    #[test]
+    fn a_long_list_shows_the_selection_and_a_scrollbar() {
+        let o = opts(20);
+        let p = popup_of(&o, 15, 0, "", "k", 0);
+        assert!(p.row_indices.contains(&15));
+        assert!(p
+            .entries
+            .iter()
+            .all(|e| e.text.ends_with('█') || e.text.ends_with('│')));
+        assert!(p.entries.iter().any(|e| e.text.ends_with('█')));
+        let short = popup_of(&opts(3), 0, 0, "", "k", 0);
+        assert!(short
+            .entries
+            .iter()
+            .all(|e| !e.text.ends_with('█') && !e.text.ends_with('│')));
     }
 }

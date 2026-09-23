@@ -515,7 +515,8 @@
     "dock.menu_h_manage": "Управление",
     "dock.menu_h_view": "Изглед",
     "dock.menu_h_show": "Показване",
-    "dock.menu_h_project": "Проект"
+    "dock.menu_h_project": "Проект",
+    "machine.hosts_not_added": "SSH хостове в ~/.ssh/config, които не са добавени: %{count}. Добавете с „+ Добавяне на машина…“."
   },
   "cs": {
     "backend.devcontainer": "Devcontainer",
@@ -1033,7 +1034,8 @@
     "dock.menu_h_manage": "Spravovat",
     "dock.menu_h_view": "Zobrazení",
     "dock.menu_h_show": "Zobrazit",
-    "dock.menu_h_project": "Projekt"
+    "dock.menu_h_project": "Projekt",
+    "machine.hosts_not_added": "Hostitelé SSH z ~/.ssh/config, kteří nejsou přidáni: %{count}. Přidejte je přes „+ Přidat stroj…“."
   },
   "de": {
     "backend.devcontainer": "Devcontainer",
@@ -1551,7 +1553,8 @@
     "dock.menu_h_manage": "Verwalten",
     "dock.menu_h_view": "Ansicht",
     "dock.menu_h_show": "Anzeigen",
-    "dock.menu_h_project": "Projekt"
+    "dock.menu_h_project": "Projekt",
+    "machine.hosts_not_added": "Nicht hinzugefügte SSH-Hosts aus ~/.ssh/config: %{count}. Mit „+ Maschine hinzufügen…“ hinzufügen."
   },
   "en": {
     "backend.devcontainer": "Devcontainer",
@@ -2069,7 +2072,8 @@
     "dock.menu_h_manage": "Manage",
     "dock.menu_h_view": "View",
     "dock.menu_h_show": "Show",
-    "dock.menu_h_project": "Project"
+    "dock.menu_h_project": "Project",
+    "machine.hosts_not_added": "%{count} SSH host(s) in ~/.ssh/config not added yet. Use + Add machine… to add one."
   },
   "es": {
     "backend.devcontainer": "Devcontainer",
@@ -2587,7 +2591,8 @@
     "dock.menu_h_manage": "Gestionar",
     "dock.menu_h_view": "Vista",
     "dock.menu_h_show": "Mostrar",
-    "dock.menu_h_project": "Proyecto"
+    "dock.menu_h_project": "Proyecto",
+    "machine.hosts_not_added": "Hosts SSH de ~/.ssh/config sin añadir: %{count}. Usa «+ Añadir máquina…» para añadirlos."
   },
   "fr": {
     "backend.devcontainer": "Devcontainer",
@@ -3105,7 +3110,8 @@
     "dock.menu_h_manage": "Gérer",
     "dock.menu_h_view": "Affichage",
     "dock.menu_h_show": "Afficher",
-    "dock.menu_h_project": "Projet"
+    "dock.menu_h_project": "Projet",
+    "machine.hosts_not_added": "Hôtes SSH de ~/.ssh/config non ajoutés : %{count}. Utilisez « + Ajouter une machine… »."
   },
   "it": {
     "backend.devcontainer": "Devcontainer",
@@ -3623,7 +3629,8 @@
     "dock.menu_h_manage": "Gestisci",
     "dock.menu_h_view": "Vista",
     "dock.menu_h_show": "Mostra",
-    "dock.menu_h_project": "Progetto"
+    "dock.menu_h_project": "Progetto",
+    "machine.hosts_not_added": "Host SSH in ~/.ssh/config non aggiunti: %{count}. Usa «+ Aggiungi macchina…» per aggiungerli."
   },
   "ja": {
     "backend.devcontainer": "Devcontainer",
@@ -4141,7 +4148,8 @@
     "dock.menu_h_manage": "管理",
     "dock.menu_h_view": "表示",
     "dock.menu_h_show": "表示対象",
-    "dock.menu_h_project": "プロジェクト"
+    "dock.menu_h_project": "プロジェクト",
+    "machine.hosts_not_added": "~/.ssh/config に未追加の SSH ホストが %{count} 件あります。「+ マシンを追加…」で追加できます。"
   },
   "ko": {
     "backend.devcontainer": "Devcontainer",
@@ -4659,7 +4667,8 @@
     "dock.menu_h_manage": "관리",
     "dock.menu_h_view": "보기",
     "dock.menu_h_show": "표시",
-    "dock.menu_h_project": "프로젝트"
+    "dock.menu_h_project": "프로젝트",
+    "machine.hosts_not_added": "~/.ssh/config에 아직 추가되지 않은 SSH 호스트 %{count}개. \"+ 머신 추가…\"로 추가하세요."
   },
   "pt-BR": {
     "backend.devcontainer": "Devcontainer",
@@ -5177,7 +5186,8 @@
     "dock.menu_h_manage": "Gerenciar",
     "dock.menu_h_view": "Visualização",
     "dock.menu_h_show": "Mostrar",
-    "dock.menu_h_project": "Projeto"
+    "dock.menu_h_project": "Projeto",
+    "machine.hosts_not_added": "Hosts SSH do ~/.ssh/config não adicionados: %{count}. Use \"+ Adicionar máquina…\" para adicionar."
   },
   "ru": {
     "backend.devcontainer": "Devcontainer",
@@ -5695,7 +5705,8 @@
     "dock.menu_h_manage": "Управление",
     "dock.menu_h_view": "Вид",
     "dock.menu_h_show": "Показывать",
-    "dock.menu_h_project": "Проект"
+    "dock.menu_h_project": "Проект",
+    "machine.hosts_not_added": "SSH-хосты из ~/.ssh/config, не добавленные: %{count}. Добавьте через «+ Добавить машину…»."
   },
   "th": {
     "backend.devcontainer": "Devcontainer",
@@ -6213,7 +6224,8 @@
     "dock.menu_h_manage": "จัดการ",
     "dock.menu_h_view": "มุมมอง",
     "dock.menu_h_show": "แสดง",
-    "dock.menu_h_project": "โปรเจกต์"
+    "dock.menu_h_project": "โปรเจกต์",
+    "machine.hosts_not_added": "โฮสต์ SSH ใน ~/.ssh/config ที่ยังไม่ได้เพิ่ม: %{count} ใช้ \"+ เพิ่มเครื่อง…\" เพื่อเพิ่ม"
   },
   "uk": {
     "backend.devcontainer": "Devcontainer",
@@ -6731,7 +6743,8 @@
     "dock.menu_h_manage": "Керування",
     "dock.menu_h_view": "Вигляд",
     "dock.menu_h_show": "Показувати",
-    "dock.menu_h_project": "Проєкт"
+    "dock.menu_h_project": "Проєкт",
+    "machine.hosts_not_added": "SSH-хости з ~/.ssh/config, не додані: %{count}. Додайте через «+ Додати машину…»."
   },
   "vi": {
     "backend.devcontainer": "Devcontainer",
@@ -7249,7 +7262,8 @@
     "dock.menu_h_manage": "Quản lý",
     "dock.menu_h_view": "Chế độ xem",
     "dock.menu_h_show": "Hiển thị",
-    "dock.menu_h_project": "Dự án"
+    "dock.menu_h_project": "Dự án",
+    "machine.hosts_not_added": "Có %{count} máy SSH trong ~/.ssh/config chưa được thêm. Dùng \"+ Thêm máy…\" để thêm."
   },
   "zh-CN": {
     "backend.devcontainer": "Devcontainer",
@@ -7767,6 +7781,7 @@
     "dock.menu_h_manage": "管理",
     "dock.menu_h_view": "视图",
     "dock.menu_h_show": "显示",
-    "dock.menu_h_project": "项目"
+    "dock.menu_h_project": "项目",
+    "machine.hosts_not_added": "~/.ssh/config 中有 %{count} 个 SSH 主机尚未添加。使用“+ 添加机器…”来添加。"
   }
 }
