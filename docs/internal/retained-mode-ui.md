@@ -251,7 +251,7 @@ Its remaining members are listed under *Smaller residue*.
 | Surface | Owner |
 |---|---|
 | Menu bar and dropdown chain | `view::shell::menu` — content model, layers, shortcuts |
-| Status bar | `view::shell::status_bar` — but see *The status bar does layout by hand* |
+| Status bar | `view::shell::status_bar` — content model, yield order, and the reads back off the row |
 | Prompt row, suggestions, overlay card | `view::shell::prompt`, `prompt_line`, `overlay_prompt` |
 | Sidebar / file explorer sections | `view::shell::sidebar`, `file_explorer` |
 | Dock, floating and pane-mounted panels | `view::shell::panel` — one `Interior` for all placements |
@@ -486,16 +486,47 @@ left and wants its own change.
 
 ### The status bar does layout by hand
 
-`Editor::status_bar_description` measures element widths, drops right-hand
-elements until the rest fits, computes a left budget through
-`view::shell::status_bar::left_budget`, and truncates strings — **all before the
-description is built**. That is the migration's own failure criterion: a
+**Closed.** `Editor::status_bar_description` measured element widths, computed
+a left budget through `view::shell::status_bar::left_budget`, truncated the
+element that straddled it and dropped the ones past it — all before the
+description was built, which is the migration's own failure criterion: a
 description with a pre-fitted string is still a picture the old renderer drew.
+`Node::priority` ("higher yields last") had landed for exactly this and its doc
+names this bar as the case it was built for; only the prompt's suggestion
+columns had switched.
 
-The primitive that replaces it already ships. `Node::priority` ("higher yields
-last") landed and the prompt's suggestion columns use it. The status bar — the
-surface that motivated the primitive — never switched. This is the smallest
-open item and it closes a stated done-criterion.
+`shell::status_bar::yields_last` is the whole of what `left_max_width =
+available - right_width - 1` computed: the right side and one spacing cell are
+sized first, the left takes the remainder, and the row still paints left to
+right. The cut is `Elide::Tail`, made at paint against the width layout settled
+on — which also retires the hand-rolled truncation loop that walked spans to
+keep their colours, and `view::ui::status_bar::truncate_to_width`, whose `...`
+the tree writes as `…`.
+
+Two things worth knowing, because both are places the mechanism does not map
+one-for-one:
+
+- **Priority is read off a row's direct children.** A clickable element's is
+  the gesture wrapper, not the runs inside it, so a priority set on the runs is
+  read by nobody and the right side quietly stops being reserved.
+  `a_clickable_right_element_is_reserved_too` is the guard; the older
+  regression test happened to use inert elements and would not have caught it.
+- **The narrow-bar boundary changed shape.** `render_status` reserved nothing
+  for the right below 15 cells, and `left_budget` kept that verbatim on the
+  grounds that a boundary is behaviour. There is no width budget to switch off
+  any more — the reservation is the yield order and applies at every width — so
+  the boundary is now a statement about *which elements are on the bar*, which
+  is the decision the editor already makes for the right-hand drop: below
+  `BOTH_SIDES_MIN`, a right side that will not fit beside the left is not on
+  the bar, rather than being kept and clipped to a few cells of itself. What
+  was behaviour — the left side surviving on a bar too narrow for both — is
+  preserved. What is not is one cell: where the right side alone overflows the
+  row, the left used to be given a single column and is now given none.
+
+What stays app-side is unchanged and is not geometry: which right-hand elements
+appear at all is a content decision made from measured text, because a
+description that listed elements layout would then silently discard would be
+lying about what is on the bar.
 
 ### The keyed geometry index
 
@@ -687,8 +718,9 @@ Recorded so the corrections are not re-derived:
 
 - **The markdown document view was listed as needing nothing and unlocking
   nothing.** It is the only open item that unblocks others.
-- **Flex yield order was listed as owed.** The library half landed and has a
-  consumer; only the status bar never switched.
+- **Flex yield order was listed as owed.** The library half landed with one
+  consumer, the prompt's suggestion columns; the status bar — the surface that
+  motivated the primitive — switched later. Both use it now.
 - **"Delete `app/chrome/`" was misstated.** What is there now is message
   handlers, not a duplicate chrome system. The item is *move these beside their
   surfaces*, which is placement, not deletion of a second authority.
@@ -747,8 +779,9 @@ Not re-argued:
   six unused variants.
 - **A surface is done when the tree measures it.** Cell-identical output and
   pointer parity are necessary and not sufficient; a description with a rect, a
-  width or a pre-fitted string is still a picture — *The status bar does layout
-  by hand* is the live example.
+  width or a pre-fitted string is still a picture. The status bar was the live
+  example and is closed; *The tab strip is measured twice* is the one left, and
+  it is blocked on the library rather than on the surface.
 - **Assert the tree's focus, not the registry's.** Every focus failure this arc
   had came with a registry that agreed with itself.
 - **Send two events before rendering** when the property is about ordering.

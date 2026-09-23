@@ -18,14 +18,26 @@
 //! **What stays app-side, and why it is not geometry.** Which right-hand
 //! elements appear at all is a *content* decision the bar makes from measured
 //! text: when the right side would crowd the left below its budget, the
-//! lowest-priority right elements are dropped. That is the same rule as
-//! before and it still lives in the editor — a description that listed
-//! elements layout would then silently discard would be lying about what is
-//! on the bar. What moved here is where the surviving elements land.
+//! lowest-priority right elements are dropped, and below [`BOTH_SIDES_MIN`]
+//! the last of them may go too. That is the same rule as before and it still
+//! lives in the editor — a description that listed elements layout would then
+//! silently discard would be lying about what is on the bar. What moved here
+//! is where the surviving elements land.
+//!
+//! **And every width is layout's, including the cut.** `Editor::status_bar_description`
+//! used to finish the job the painter had started: it reserved the right side,
+//! spent the remainder on the left through `left_budget`, truncated the
+//! element that straddled the boundary and dropped the ones past it — over
+//! measured text, before any node existed. A description carrying a pre-fitted
+//! string is still a picture, which is this project's own stated failure
+//! criterion, and the status bar was the surface it was stated about. The
+//! reservation is [`yields_last`] (`Node::priority`, whose doc names this bar
+//! as the case it was built for) and the cut is `Elide::Tail`, applied at
+//! paint to the width layout settled on.
 
 use std::rc::Rc;
 
-use fresh_ui::{gesture, row, text_runs, Event, GestureKind, Key, Node, Run, Sizing};
+use fresh_ui::{gesture, row, text_runs, Elide, Event, GestureKind, Key, Node, Run, Sizing};
 
 use super::rect_of;
 use crate::app::types::HoverTarget;
@@ -101,14 +113,30 @@ pub fn item_key(side: Side, index: usize) -> Key {
     Key::Pair(tag.into(), index as u64)
 }
 
-fn element(bar: &StatusBar, it: &Item, key: Key) -> Node<UiMsg> {
+fn element(bar: &StatusBar, it: &Item, key: Key, side: Side) -> Node<UiMsg> {
     let runs = text_runs(
         it.runs
             .iter()
             .map(|(t, theme)| Run::themed(t.clone(), theme.clone())),
     )
     .h(Sizing::Cells(1))
-    .key(key);
+    .key(key)
+    // The left side is what shrinks, so it is what marks its cut. The right
+    // side is sized first and clips rather than eliding, as it always did: a
+    // right element too wide for the whole row is not a truncation decision,
+    // it is a bar with nothing to show.
+    .elide(match side {
+        Side::Left => Elide::Tail,
+        Side::Right => Elide::None,
+    });
+    // **On whatever the row's child turns out to be.** A row reads `priority`
+    // off its direct children, and a clickable element's is the gesture
+    // wrapper — priority set on the runs inside it would be read by nobody and
+    // the right side would quietly stop being reserved.
+    let prio = match side {
+        Side::Left => yields_last::LEFT,
+        Side::Right => yields_last::RIGHT,
+    };
     let _ = bar;
     // What a press on this element means: a built-in indicator names its id, a
     // plugin token names its registry key, and anything else is inert — still
@@ -117,7 +145,7 @@ fn element(bar: &StatusBar, it: &Item, key: Key) -> Node<UiMsg> {
     let fact = match (it.clickable, it.token_key.clone()) {
         (Some(id), _) => UiFact::StatusBarClicked(id),
         (None, Some(key)) => UiFact::StatusBarTokenClicked(key),
-        (None, None) => return runs,
+        (None, None) => return runs.priority(prio),
     };
     let hover = it.clickable.map(HoverTarget::StatusBarClickable);
     gesture(runs)
@@ -140,72 +168,83 @@ fn element(bar: &StatusBar, it: &Item, key: Key) -> Node<UiMsg> {
         )
         .on_enter(hover_msg(hover))
         .on_leave(hover_msg(None))
+        .priority(prio)
 }
 
 fn hover_msg(t: Option<HoverTarget>) -> fresh_ui::Handler<UiMsg> {
     Rc::new(move |_: &Event| Some(UiMsg::Ui(UiFact::Hover(t.clone()))))
 }
 
-/// How much of each left-hand element survives once the right side is
-/// reserved — the rule `render_status` spelled `left_max_width`.
+/// Who keeps its width when the row runs out, for [`Node::priority`]:
+/// **higher yields last.**
 ///
-/// Returns one width per *surviving* left element, in order: each is the
-/// element's natural width except possibly the last, which is the truncated
-/// remainder. Elements past the end of the returned slice do not fit at all.
+/// This is the whole of what `left_max_width` computed by hand.
+/// `render_status` measured the right side, subtracted it and a spacing cell
+/// from the row, and spent the remainder on the left — truncating the element
+/// that straddled the boundary and dropping the ones past it. The migration
+/// ported that arithmetic into `left_budget` and ran it over measured text
+/// *before the description was built*, which is a pre-fitted picture and the
+/// project's own stated failure criterion.
 ///
-/// **Why this is not layout's job.** The flex gap places the right side
-/// against the edge, but placement is not priority: `prim.rs` resolves
-/// children in order against `avail - fixed_used`, so the left side (first)
-/// takes its natural width and the right side gets what is left, down to
-/// zero. Deciding *who yields* is a content decision, and it is made here
-/// from measured text, before any node exists.
+/// `priority` is the concept that was missing, and this surface is the one its
+/// doc names: a row sizes its non-flex children in descending priority against
+/// what is left, and still paints them in declaration order. So the right side
+/// is sized first — reserved, without anyone measuring backwards from the edge
+/// — the spacing cell with it, and the left takes the remainder. An element
+/// past the remainder is sized to zero, which is what dropping it looked like.
 ///
-/// Ported from the deleted `render_status`, boundaries included: below 15
-/// cells nothing is reserved, and an element that cannot fit ends the side.
-pub fn left_budget(
-    left_widths: &[usize],
-    right_width: usize,
-    sep_w: usize,
-    available: usize,
-) -> Vec<usize> {
-    let left_max = if available < 15 {
-        available
-    } else if available > right_width + 1 {
-        available - right_width - 1
-    } else {
-        1
-    };
-    let mut out = Vec::with_capacity(left_widths.len());
-    let mut used = 0usize;
-    for (idx, &w) in left_widths.iter().enumerate() {
-        let sep = if idx == 0 { 0 } else { sep_w };
-        if used + sep >= left_max {
-            break;
-        }
-        used += sep;
-        let remaining = left_max - used;
-        if w <= remaining {
-            used += w;
-            out.push(w);
-        } else {
-            out.push(remaining);
-            break;
-        }
-    }
-    out
+/// The cut itself is layout's too: `Elide::Tail` is applied at paint, to the
+/// width layout settled on, and walks fragments whole so a styled element keeps
+/// its pieces' colours. The hand-rolled loop that did that — and appended
+/// `...` where the tree writes `…` — is gone with the budget.
+/// The narrowest bar that hosts both sides.
+///
+/// `render_status` spelled this as "below 15 cells reserve nothing for the
+/// right", which gave the left side the whole row — and `left_budget` kept the
+/// boundary verbatim, because a boundary is behaviour. It is not a width
+/// budget any more: [`yields_last`] reserves the right side at every width, so
+/// what the boundary says now is a decision about *which elements are on the
+/// bar*, which is the editor's (`Editor::status_bar_description`) and is made
+/// from measured text like the rest of the right-hand drop rule. Below this,
+/// a right side that will not fit beside the left is not on the bar at all,
+/// rather than being kept and clipped to a few cells of itself.
+pub const BOTH_SIDES_MIN: usize = 15;
+
+mod yields_last {
+    /// The right side. Sized first, so the right half of the bar survives a
+    /// long message on the left — which is the regression the budget existed
+    /// for.
+    pub const RIGHT: u8 = 1;
+    /// The left side: it absorbs the squeeze and elides. Default, stated for
+    /// symmetry with the above.
+    pub const LEFT: u8 = 0;
 }
 
-fn separator(bar: &StatusBar) -> Node<UiMsg> {
-    text_runs([Run::themed(bar.separator.clone(), bar.sep_theme.clone())]).h(Sizing::Cells(1))
+/// The glyph between two elements on the same side. It yields with the side
+/// it belongs to, or a right-hand separator would be sized after the left and
+/// come out narrower than the gap it fills.
+fn separator(bar: &StatusBar, side: Side) -> Node<UiMsg> {
+    text_runs([Run::themed(bar.separator.clone(), bar.sep_theme.clone())])
+        .h(Sizing::Cells(1))
+        .priority(match side {
+            Side::Left => yields_last::LEFT,
+            Side::Right => yields_last::RIGHT,
+        })
 }
 
 /// The bar's row.
 ///
-/// Left elements, then a flexible gap, then right elements. The gap is the
-/// whole of what `left_max_width = available - right_width - 1` used to
-/// compute: layout gives the fixed elements their width and the gap whatever
-/// is left, so the right side sits against the edge without anyone measuring
-/// backwards from it.
+/// Left elements, then a flexible gap, then right elements. The gap is what
+/// puts the right side against the edge, and `yields_last` is what decides who
+/// gives way when there is not enough room for both.
+///
+/// **There is no reserved cell between the sides, and there was one here
+/// briefly.** `left_max_width = available - right_width - 1` had a `- 1`, and
+/// turning that into a child of its own looked like the faithful reading. It
+/// is not: the bar's rule is that *the gap closes before anything is dropped*
+/// (`a_narrow_bar_closes_the_gap_first`), so on a width that fits both sides
+/// exactly they meet — and a cell that outranked the left side kept a blank
+/// column alive by eliding a character out of the filename instead.
 ///
 /// **Memoised on the bar itself.** The status bar is rebuilt on every frame —
 /// which, in this editor, means on every terminal tick — and changes on very
@@ -222,20 +261,17 @@ fn build(bar: &StatusBar) -> Node<UiMsg> {
     let mut kids: Vec<Node<UiMsg>> = Vec::new();
     for (i, it) in bar.left.iter().enumerate() {
         if i > 0 {
-            kids.push(separator(bar));
+            kids.push(separator(bar, Side::Left));
         }
-        kids.push(element(bar, it, item_key(Side::Left, i)));
+        kids.push(element(bar, it, item_key(Side::Left, i), Side::Left));
     }
-    // The gap. It takes no minimum: on a bar too narrow for both sides it
-    // closes completely, and the elements themselves are what layout then
-    // clamps — which is the behaviour the old `left_max_width` produced by
-    // arithmetic.
+    // The gap, which closes completely on a bar too narrow for both sides.
     kids.push(row().flex(1));
     for (i, it) in bar.right.iter().enumerate() {
         if i > 0 {
-            kids.push(separator(bar));
+            kids.push(separator(bar, Side::Right));
         }
-        kids.push(element(bar, it, item_key(Side::Right, i)));
+        kids.push(element(bar, it, item_key(Side::Right, i), Side::Right));
     }
     // **The row claims its own gaps.** Every element answers its own press,
     // and between them is the flexible gap and the padding either side of a
@@ -355,51 +391,150 @@ mod tests {
     use ratatui::buffer::Buffer;
     use ratatui::layout::Rect;
 
-    /// **The regression this rule exists for.** A long message must not cost
-    /// the right side its place.
+    /// An element `n` cells wide, so a width is stated once per test rather
+    /// than counted out of a string literal.
+    fn wide(n: usize, name: &'static str) -> Item {
+        plain(&"x".repeat(n), name)
+    }
+
+    /// What each side's elements were actually given, in order. Zero for an
+    /// element layout had no room left for — which is what "dropped" looked
+    /// like when the editor computed a budget and stopped early.
+    fn fitted(bar: &StatusBar, w: u16) -> (Vec<u16>, Vec<u16>) {
+        let ui = laid_out(bar.clone(), w, 4);
+        let size = Rect::new(0, 0, w, 4);
+        let side = |s: Side, n: usize| -> Vec<u16> {
+            (0..n)
+                .map(|i| {
+                    rect_of(&ui, &item_key(s, i), size)
+                        .map(|r| r.width)
+                        .unwrap_or(0)
+                })
+                .collect()
+        };
+        (
+            side(Side::Left, bar.left.len()),
+            side(Side::Right, bar.right.len()),
+        )
+    }
+
+    /// **The regression the budget existed for, now the yield order's.** A
+    /// long message must not cost the right side its place.
     ///
     /// `visual_comprehensive_a` caught it as a snapshot diff: the message
     /// rendered in full and `LSP (off)  Palette: Ctrl+P` was pushed off the
-    /// edge, where the old bar truncated the message to `...` instead. The
-    /// assertion is the *right side's* survival, not the message's width —
-    /// asserting the latter is what let this through, because a bar that
+    /// edge. The assertion is the *right side's* survival, not the message's
+    /// width — asserting the latter is what let it through, because a bar that
     /// drops its right half also "renders the message correctly".
+    ///
+    /// Asked of the tree rather than of an arithmetic helper: `yields_last`
+    /// sizes the right side first and the left elides into the remainder, so
+    /// this is now a property of the widths layout settled on.
     #[test]
     fn a_long_message_yields_to_the_right_side() {
         // 100 cells; right side wants 30; a 60-cell message on the left.
-        let got = left_budget(&[8, 60], 30, 2, 100);
-        let total: usize = got.iter().sum::<usize>() + 2 * got.len().saturating_sub(1);
-        assert!(
-            total + 30 < 100,
-            "left {got:?} (total {total}) must leave room for the right side's 30"
+        let bar = bar_of(
+            vec![wide(8, "short"), wide(60, "message")],
+            vec![wide(30, "right")],
         );
-        assert_eq!(got[0], 8, "the short element keeps its width");
-        assert!(got[1] < 60, "the message is the one that yields");
+        let (left, right) = fitted(&bar, 100);
+        assert_eq!(right, vec![30], "the right side keeps its width");
+        assert_eq!(left[0], 8, "the short element keeps its width");
+        assert!(left[1] < 60, "the message is the one that yields: {left:?}");
     }
 
-    /// The partner: when both sides fit, nobody is truncated.
+    /// The partner: when both sides fit, nobody is cut.
     #[test]
     fn a_bar_with_room_truncates_nothing() {
-        assert_eq!(left_budget(&[8, 12], 30, 2, 100), vec![8, 12]);
+        let bar = bar_of(
+            vec![wide(8, "short"), wide(12, "other")],
+            vec![wide(30, "right")],
+        );
+        assert_eq!(fitted(&bar, 100), (vec![8, 12], vec![30]));
     }
 
-    /// An element that cannot fit at all ends the side — the rest are dropped
-    /// rather than being squeezed to nothing.
+    /// An element with no room left gets none — the side ends there rather
+    /// than every element being squeezed a little.
     #[test]
-    fn an_element_that_cannot_fit_ends_the_side() {
-        let got = left_budget(&[40, 40, 40], 30, 2, 100);
-        assert_eq!(got.len(), 2, "the third does not fit: {got:?}");
-        assert_eq!(got[0], 40);
-        assert!(got[1] < 40, "the second is truncated to the remainder");
+    fn an_element_that_cannot_fit_gets_nothing() {
+        let bar = bar_of(
+            vec![wide(40, "a"), wide(40, "b"), wide(40, "c")],
+            vec![wide(30, "right")],
+        );
+        let (left, right) = fitted(&bar, 100);
+        assert_eq!(right, vec![30], "the right side is still reserved");
+        assert_eq!(left[0], 40, "the first element is untouched");
+        assert!(left[1] < 40, "the second takes the remainder: {left:?}");
+        assert_eq!(left[2], 0, "the third has nothing left: {left:?}");
     }
 
-    /// Below 15 cells the old bar reserved nothing and gave the left side the
-    /// whole row. Kept verbatim: a boundary is behaviour.
+    /// **The narrow-bar boundary, kept but restated.**
+    ///
+    /// `render_status` reserved nothing for the right below 15 cells, which
+    /// gave the left side the row and left the right whatever the left had not
+    /// taken — a few cells of a clipped indicator. `left_budget` ported that
+    /// verbatim. The reservation is `yields_last` now and applies at every
+    /// width, so what the boundary says is which elements are on the bar:
+    /// below `BOTH_SIDES_MIN` a right side that will not fit beside the left
+    /// is not on it. The left surviving is the part that was behaviour.
+    ///
+    /// This is the tree's half — a bar with no right side gives the left the
+    /// row, spacing cell included. `Editor::status_bar_description` is what
+    /// decides the right side is not there; see `keep` beside the drop loop.
     #[test]
-    fn a_very_narrow_bar_reserves_nothing() {
-        assert_eq!(left_budget(&[10], 30, 2, 14), vec![10]);
-        // …and at 15 the reservation switches on.
-        assert_eq!(left_budget(&[10], 30, 2, 15), vec![1]);
+    fn a_bar_with_no_right_side_gives_the_left_the_row() {
+        let bar = bar_of(vec![wide(10, "left")], Vec::new());
+        assert_eq!(fitted(&bar, 14), (vec![10], Vec::new()));
+    }
+
+    /// **A clickable right element is reserved like any other.**
+    ///
+    /// The bug this exists for: a row reads `priority` off its *direct*
+    /// children, and a clickable element's direct child is the gesture wrapper
+    /// `element` puts around its runs. Set on the runs instead, the priority
+    /// is read by nobody, the right side stops being reserved and a long
+    /// message walks over the encoding and line-ending indicators — the exact
+    /// regression `a_long_message_yields_to_the_right_side` guards, but only
+    /// for the inert elements it happens to use.
+    #[test]
+    fn a_clickable_right_element_is_reserved_too() {
+        let bar = bar_of(
+            vec![wide(120, "message")],
+            vec![clicky(&"x".repeat(20), StatusBarClickable::Encoding)],
+        );
+        let (left, right) = fitted(&bar, 100);
+        assert_eq!(right, vec![20], "the clickable element keeps its width");
+        assert_eq!(left, vec![80], "and the message takes exactly the rest");
+    }
+
+    /// And the reservation itself: the right side keeps its width and the left
+    /// gives way, meeting it exactly.
+    ///
+    /// **This asserted that the sides never touch, and that was wrong.** It
+    /// was written alongside a spacing cell that outranked the left side, on
+    /// the reading that the old `left_max_width`'s `- 1` was a column of its
+    /// own. The bar's older and stated rule is the opposite — the gap closes
+    /// before anything is dropped — and a bar squeezed to exactly both sides
+    /// has no column left to spare. What is actually guaranteed is that the
+    /// squeeze lands on the left.
+    #[test]
+    fn the_left_gives_way_and_the_right_keeps_its_width() {
+        let bar = bar_of(vec![wide(60, "message")], vec![wide(30, "right")]);
+        let w = 50u16;
+        let ui = laid_out(bar.clone(), w, 4);
+        let size = Rect::new(0, 0, w, 4);
+        let l = rect_of(&ui, &item_key(Side::Left, 0), size).expect("the left element");
+        let r = rect_of(&ui, &item_key(Side::Right, 0), size).expect("the right element");
+        assert_eq!(
+            r.width, 30,
+            "the right side keeps every column it asked for"
+        );
+        assert_eq!(r.x + r.width, w, "and sits against the edge");
+        assert_eq!(
+            l.x + l.width,
+            r.x,
+            "the left takes the rest and stops where the right begins"
+        );
     }
 
     fn plain(text: &str, name: &'static str) -> Item {
