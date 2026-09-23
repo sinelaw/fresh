@@ -33,50 +33,46 @@ impl WidgetImpl for Text {
             return Pass;
         };
         let bare = key.mods().is_empty();
-        // The completion popup claims its keys first, and only while
-        // showing.
+        // **The combo box** (`docs/internal/widget-controls-own-interaction.md`
+        // R3): while the suggestion list is up it claims its keys first.
+        // ↓ steps into the list (the first press highlights the top row, and
+        // nothing is highlighted before it); ↑/↓ and PgUp/PgDn then move the
+        // highlight — the shared pop-up list's arithmetic. Enter or Tab on a
+        // highlighted row accepts it: the host puts it in the field, closes
+        // the list, and reports `change` and `completion_accept`. Enter or Tab
+        // with nothing highlighted closes the list and goes on to act on the
+        // dialog. Esc closes the list, and only a second Esc reaches the
+        // dialog.
         if bare
             && matches!(
                 key.code(),
-                KeyCode::Tab | KeyCode::Up | KeyCode::Down | KeyCode::Enter | KeyCode::Esc
+                KeyCode::Tab
+                    | KeyCode::Up
+                    | KeyCode::Down
+                    | KeyCode::PageUp
+                    | KeyCode::PageDown
+                    | KeyCode::Enter
+                    | KeyCode::Esc
             )
             && completions_open(widget_key, panel)
         {
+            if let Some(nav) = super::popup_list::nav_of(key) {
+                move_completion_index(spec, widget_key, panel, nav);
+                return Consumed;
+            }
             return match key.code() {
-                KeyCode::Up => {
-                    move_completion_index(spec, widget_key, panel, -1);
-                    Consumed
-                }
-                KeyCode::Down => {
-                    move_completion_index(spec, widget_key, panel, 1);
-                    Consumed
-                }
                 KeyCode::Esc => {
-                    // First Esc only closes the popup — the form stays
-                    // open. (A second Esc, with no popup, cancels.)
                     dismiss_completions(widget_key, panel, fx);
                     Consumed
                 }
                 KeyCode::Enter | KeyCode::Tab => {
                     if completion_navigated(widget_key, panel) {
-                        // The user stepped into the dropdown (↑/↓/wheel)
-                        // so a row is highlighted — accept it. The host
-                        // does NOT close the popup: directory-descent
-                        // flows (the orchestrator's Project Path
-                        // accepting `/foo/` re-fetches children) keep it
-                        // alive; plugins that want one-shot accept close
-                        // it via `setCompletions(key, [])`.
-                        if let Some(value) = selected_completion_value(widget_key, panel) {
-                            fx.events.push((
-                                "completion_accept".into(),
-                                serde_json::json!({ "value": value }),
-                            ));
-                        }
+                        accept_completion(spec, widget_key, panel, fx);
                         return Consumed;
                     }
-                    // Not navigated: the popup must not swallow the key.
-                    // Close it, then let Enter act on the form (submit /
-                    // advance) and Tab advance focus.
+                    // Nothing highlighted: the list must not swallow the key.
+                    // Close it, then let Enter act on the dialog and Tab move
+                    // focus on.
                     dismiss_completions(widget_key, panel, fx);
                     PassAfter
                 }
@@ -392,16 +388,16 @@ pub fn completion_popup(
     };
     let popup_total = (panel_width as usize).saturating_add(4); // re-add section chrome
     let total = completions.len() as u32;
-    let visible = visible_rows.max(1).min(total);
-    let sel = selected_idx as u32;
-    let mut scroll = prev_scroll;
-    if sel >= scroll + visible {
-        scroll = sel + 1 - visible;
-    }
-    let max_scroll = total.saturating_sub(visible);
-    if scroll > max_scroll {
-        scroll = max_scroll;
-    }
+    // The shared pop-up list's window, from the highlight, every layout —
+    // both ways, so a highlight above the window pulls it back up as surely
+    // as one below pushes it down.
+    let (scroll, visible) = super::popup_list::window(
+        completions.len(),
+        visible_rows as usize,
+        navigated.then_some(selected_idx),
+        prev_scroll as usize,
+    );
+    let (scroll, visible) = (scroll as u32, visible as u32);
 
     let mut rows = Vec::with_capacity(visible as usize + 2);
     rows.push(render_completion_dim_separator_overlay(popup_total));
@@ -1108,34 +1104,27 @@ fn completion_navigated(widget_key: &str, panel: &crate::widgets::WidgetPanelSta
     )
 }
 
-/// Move the completion selection by `delta` (clamped, no wraparound —
-/// wrap on a popup picker reads as jarring while comparing rows). The
-/// first ↑/↓ *enters* the dropdown: it flips `navigated` and selects
-/// the current (top) row without moving. Keyboard moves also pull the
-/// scroll window back so the selection stays visible (forward-pull is
-/// the renderer's job).
+/// Move the suggestion list's highlight — the shared pop-up list's
+/// arithmetic ([`super::popup_list::step`]). The first move *enters* the
+/// list: it highlights the current (top) row without moving. The window that
+/// shows the highlight is not kept here: the description computes it from the
+/// highlight on every layout (`completion_popup`, `popup_list::window`).
 fn move_completion_index(
     spec: &WidgetSpec,
     widget_key: &str,
     panel: &mut crate::widgets::WidgetPanelState,
-    delta: i32,
+    nav: super::popup_list::Nav,
 ) {
-    let spec_visible_rows = match spec {
+    let page = match spec {
         WidgetSpec::Text {
             completions_visible_rows,
             ..
-        } => *completions_visible_rows,
-        _ => 0,
-    };
-    let visible = if spec_visible_rows == 0 {
-        5u32
-    } else {
-        spec_visible_rows
+        } if *completions_visible_rows > 0 => *completions_visible_rows as usize,
+        _ => 5,
     };
     if let Some(WidgetInstanceState::Text {
         completions,
         completion_selected_index,
-        completion_scroll_offset,
         completion_navigated,
         ..
     }) = panel.instance_states.get_mut(widget_key)
@@ -1147,17 +1136,57 @@ fn move_completion_index(
             *completion_navigated = true;
             return;
         }
-        let max = (completions.len() - 1) as i32;
-        let cur = *completion_selected_index as i32;
-        let next = (cur + delta).clamp(0, max);
-        *completion_selected_index = next as usize;
-        let next_u = next as u32;
-        if next_u < *completion_scroll_offset {
-            *completion_scroll_offset = next_u;
-        } else if next_u >= *completion_scroll_offset + visible {
-            *completion_scroll_offset = next_u + 1 - visible;
-        }
+        *completion_selected_index =
+            super::popup_list::step(completions.len(), *completion_selected_index, nav, page);
     }
+}
+
+/// Accept the highlighted suggestion: it becomes the field's value with the
+/// caret at its end, the list closes, and the plugin hears `change` (the new
+/// value — what every other edit reports) and then `completion_accept`. A
+/// plugin that wants the list back — a path that descends into a folder —
+/// pushes new suggestions from the `change`; there is nothing to copy back.
+fn accept_completion(
+    spec: &WidgetSpec,
+    widget_key: &str,
+    panel: &mut crate::widgets::WidgetPanelState,
+    fx: &mut super::KeyFx,
+) {
+    let Some(value) = selected_completion_value(widget_key, panel) else {
+        return;
+    };
+    apply_edit(spec, widget_key, panel, fx, |editor| {
+        editor.set_value(&value);
+        editor.move_end();
+    });
+    if let Some(WidgetInstanceState::Text {
+        completions,
+        completion_selected_index,
+        completion_navigated,
+        ..
+    }) = panel.instance_states.get_mut(widget_key)
+    {
+        completions.clear();
+        *completion_selected_index = 0;
+        *completion_navigated = false;
+    }
+    fx.events.push((
+        "completion_accept".into(),
+        serde_json::json!({ "value": value }),
+    ));
+}
+
+/// Close the suggestion list from outside the kind — a press that landed
+/// elsewhere (the pop-up's dismissal rule, the same as a dropdown's). Queues
+/// `completion_dismiss` like Esc does. Returns whether a list was up.
+pub fn dismiss_completion_list(
+    widget_key: &str,
+    panel: &mut crate::widgets::WidgetPanelState,
+    fx: &mut super::KeyFx,
+) -> bool {
+    let open = completions_open(widget_key, panel);
+    dismiss_completions(widget_key, panel, fx);
+    open
 }
 
 /// Close the popup and queue `completion_dismiss` so the plugin can
@@ -1324,6 +1353,91 @@ mod key_contract_tests {
         for k in ["Enter", "Up", "Down", "PageDown"] {
             assert_eq!(key(&spec, &mut panel, k), KeyDisposition::Consumed, "{k}");
         }
+    }
+
+    fn with_suggestions(spec: &WidgetSpec, items: &[&str]) -> WidgetPanelState {
+        let mut panel = WidgetPanelState::surface(spec.clone());
+        panel.focus_key = "t".into();
+        assert!(super::ensure_text_state(spec, "t", &mut panel));
+        if let Some(crate::widgets::WidgetInstanceState::Text { completions, .. }) =
+            panel.instance_states.get_mut("t")
+        {
+            *completions = items
+                .iter()
+                .map(|v| fresh_core::api::CompletionItem {
+                    value: (*v).to_string(),
+                    kind: None,
+                })
+                .collect();
+        }
+        panel
+    }
+
+    fn key_fx(spec: &WidgetSpec, panel: &mut WidgetPanelState, k: &str) -> (KeyDisposition, KeyFx) {
+        let mut fx = KeyFx::default();
+        let seq: crate::keys::KeySeq = k.parse().expect("test key name parses");
+        let d = behavior(spec).on_key(spec, "t", panel, Default::default(), &seq, &mut fx);
+        (d, fx)
+    }
+
+    fn value_of(panel: &WidgetPanelState) -> String {
+        match panel.instance_states.get("t") {
+            Some(crate::widgets::WidgetInstanceState::Text { editor, .. }) => editor.value(),
+            _ => String::new(),
+        }
+    }
+
+    /// The combo box: ↓ steps into the list, and Enter (or Tab) on the
+    /// highlighted row puts it in the field, closes the list and reports
+    /// both `change` and `completion_accept`.
+    #[test]
+    fn enter_on_a_highlighted_suggestion_accepts_it_host_side() {
+        let spec = field(1, false, false);
+        let mut panel = with_suggestions(&spec, &["alpha", "beta"]);
+        assert_eq!(
+            key_fx(&spec, &mut panel, "Down").0,
+            KeyDisposition::Consumed
+        );
+        assert_eq!(
+            key_fx(&spec, &mut panel, "Down").0,
+            KeyDisposition::Consumed
+        );
+        let (d, fx) = key_fx(&spec, &mut panel, "Enter");
+        assert_eq!(d, KeyDisposition::Consumed);
+        assert_eq!(value_of(&panel), "beta");
+        assert!(!super::completions_open("t", &panel), "the list closed");
+        let kinds: Vec<&str> = fx.events.iter().map(|(t, _)| t.as_str()).collect();
+        assert_eq!(kinds, vec!["change", "completion_accept"]);
+    }
+
+    #[test]
+    fn tab_accepts_a_highlighted_suggestion_too() {
+        let spec = field(1, false, false);
+        let mut panel = with_suggestions(&spec, &["alpha", "beta"]);
+        key_fx(&spec, &mut panel, "Down");
+        let (d, _) = key_fx(&spec, &mut panel, "Tab");
+        assert_eq!(d, KeyDisposition::Consumed);
+        assert_eq!(value_of(&panel), "alpha");
+    }
+
+    /// With nothing highlighted the list does not swallow the key: it closes
+    /// and the key goes on to the dialog (Enter) or the ring (Tab).
+    #[test]
+    fn enter_with_nothing_highlighted_closes_the_list_and_passes_on() {
+        let spec = field(1, false, false);
+        let mut panel = with_suggestions(&spec, &["alpha"]);
+        let (d, _) = key_fx(&spec, &mut panel, "Enter");
+        assert_eq!(d, KeyDisposition::PassAfter);
+        assert!(!super::completions_open("t", &panel));
+        assert_eq!(value_of(&panel), "abc", "the typed text stands");
+    }
+
+    #[test]
+    fn escape_closes_the_list_first_and_only_then_passes() {
+        let spec = field(1, false, false);
+        let mut panel = with_suggestions(&spec, &["alpha"]);
+        assert_eq!(key_fx(&spec, &mut panel, "Esc").0, KeyDisposition::Consumed);
+        assert_eq!(key_fx(&spec, &mut panel, "Esc").0, KeyDisposition::Pass);
     }
 
     #[test]

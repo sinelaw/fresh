@@ -2468,10 +2468,13 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
             if !st.open {
                 return trigger;
             }
+            // The list shows its *highlight*, which is not the value until
+            // it is committed; the shared pop-up list's window follows it on
+            // every layout (`popup_list::window`, inside `popup_of`).
             let popup = dd::popup_of(
                 options,
-                st.selected,
-                rendered.scroll_offset as u32,
+                st.highlight,
+                *scroll_offset,
                 &cx.hovered_popup_row,
                 &widget_key,
                 crate::widgets::kinds::dropdown::anchor_col(
@@ -2674,10 +2677,8 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
             // one frame — and its side walls and its scrollbar column live in
             // the row text itself (`render_completion_item_overlay`), not in a
             // `Draw::Border`. Wrapping it in a bordered box would draw a
-            // second frame around a frame. Nor does it take
-            // `Dismiss::OUTSIDE_POINTER`: a completion list is closed by
-            // Escape (`Text::on_key`) or by the plugin sending an empty list,
-            // never by a press landing elsewhere.
+            // second frame around a frame. Its placement and dismissal are
+            // the shared pop-up's, though — see the layer below.
             //
             // The rows are `panel_width + 4` wide because they re-add the
             // section chrome they paint over, so the float starts `escape`
@@ -2701,15 +2702,22 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
             // Wrapped separately rather than around the `stack`: the box is a
             // layer's child and is hit on a path of its own.
             let wheel_key = key.unwrap_or_default();
+            let slot = cx.slot;
             fresh_ui::stack().children([
                 wheel_to_widget(field, cx.slot, wheel_key),
+                // **The shared pop-up's placement and dismissal** — the same
+                // as a dropdown's list (`popup_layer`): directly under the
+                // field, where the section's bottom border is, or above it
+                // when the frame has no room below; and a press outside the
+                // list closes it (`UiFact::WidgetPopupDismiss`), as Escape
+                // does from the keyboard.
                 fresh_ui::layer()
                     .anchor(fresh_ui::Anchor::Parent)
-                    .place(fresh_ui::Place::Over)
-                    // Row 1 of the sub-render: directly under the input, where
-                    // the section's bottom border is.
-                    .offset(-(site.escape as i16), 1)
-                    .fit(fresh_ui::Fit::CLAMP)
+                    .place(fresh_ui::Place::Below)
+                    .offset(-(site.escape as i16), 0)
+                    .fit(fresh_ui::Fit::FLIP.or(fresh_ui::Fit::CLAMP))
+                    .dismiss(fresh_ui::Dismiss::OUTSIDE_POINTER)
+                    .on_dismiss(move |_| UiMsg::Ui(super::msg::UiFact::WidgetPopupDismiss { slot }))
                     .child(float_route(
                         wheel_to_widget(col().children(box_rows), cx.slot, wheel_key),
                         cx.slot,

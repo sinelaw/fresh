@@ -260,12 +260,20 @@ export function number(
 }
 
 /** Single-select dropdown, rendered as `label: [option ▼]`.
- * Enter/Space (or a click on the button) opens the option list
- * inline below the button; Up/Down move the live selection,
- * Enter/Space/Esc close it. The selected index is host-owned
- * instance state after first render (the spec `selectedIndex` is a
- * seed); each change fires `widget_event { event_type: "change",
- * payload: { index, value } }`. Push a new selection with
+ *
+ * Closed: ↑/↓ are not the dropdown's — they move focus on; ←/→ step the
+ * value in place; Enter, Space, Alt+↓ or a click open the list.
+ * Open: ↑/↓, PgUp/PgDn and Home/End move a highlight, and typing jumps
+ * to a matching option — none of that is a value change, and nothing
+ * fires. Enter, Space or a click commits the highlighted option; Tab
+ * commits and moves on; Esc or a press outside closes the list with no
+ * event.
+ *
+ * `change` (`payload: { index, value }`) therefore means a value was
+ * accepted, once per commit and only when it differs. `dropdown_open`
+ * (`payload: { open }`) reports the list opening and closing. The
+ * selected index is host-owned instance state after first render (the
+ * spec `selectedIndex` is a seed). Push a new selection with
  * `WidgetPanel.setDropdown(key, index)`.
  *
  * `labelWidth` pads the label so a column of controls aligns. */
@@ -1208,11 +1216,17 @@ export class WidgetPanel {
     return this.mutate({ kind: "setDualIncluded", widgetKey, included });
   }
 
-  /** Update a Text widget's completion popup candidates. Empty
-   * `items` closes the popup; non-empty opens it and resets the
-   * host-managed selection to index 0. The host repaints the
-   * popup on its own; the plugin doesn't need to follow up with
-   * an `update(spec)` call. */
+  /** Update a Text widget's suggestion list (a combo box). Empty
+   * `items` closes it; non-empty opens it with nothing highlighted.
+   *
+   * The field owns the list's keys: ↓ steps into it, ↑/↓ and PgUp/PgDn
+   * move the highlight, Enter or Tab on a highlighted row accepts it,
+   * and Esc (or a press outside) closes it before a second Esc reaches
+   * the dialog. On accept the host puts the value in the field, closes
+   * the list and fires `change` (the new value) then `completion_accept`
+   * — push new items from the `change` if the list should come back.
+   * Enter or Tab with nothing highlighted closes the list and goes on to
+   * the dialog / the next control. */
   setCompletions(
     widgetKey: string,
     items: Array<string | { value: string; kind?: string }>,
@@ -1461,9 +1475,17 @@ export class FloatingWidgetPanel {
     return this.mutate({ kind: "setDualIncluded", widgetKey, included });
   }
 
-  /** Update a Text widget's completion popup candidates. Empty
-   * `items` closes the popup; non-empty opens it and resets the
-   * host-managed selection to index 0. */
+  /** Update a Text widget's suggestion list (a combo box). Empty
+   * `items` closes it; non-empty opens it with nothing highlighted.
+   *
+   * The field owns the list's keys: ↓ steps into it, ↑/↓ and PgUp/PgDn
+   * move the highlight, Enter or Tab on a highlighted row accepts it,
+   * and Esc (or a press outside) closes it before a second Esc reaches
+   * the dialog. On accept the host puts the value in the field, closes
+   * the list and fires `change` (the new value) then `completion_accept`
+   * — push new items from the `change` if the list should come back.
+   * Enter or Tab with nothing highlighted closes the list and goes on to
+   * the dialog / the next control. */
   setCompletions(
     widgetKey: string,
     items: Array<string | { value: string; kind?: string }>,

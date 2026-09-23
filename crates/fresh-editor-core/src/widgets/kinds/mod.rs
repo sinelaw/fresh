@@ -27,6 +27,7 @@ mod label;
 pub mod list;
 pub mod number;
 mod popup;
+pub mod popup_list;
 pub mod radio;
 mod raw;
 mod spacer;

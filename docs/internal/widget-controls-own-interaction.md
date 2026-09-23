@@ -97,12 +97,54 @@ focus itself, and each able to drift.
 - "`change` means a value was accepted" is a dropdown contract, and lands
   with R3.
 
+### R3 — every control behaves the same everywhere
+
+Each control's keyboard behaviour is defined once, in its kind file, with its
+contract tests beside it (`kinds::dropdown::contract_tests`,
+`kinds::text::key_contract_tests`).
+
+**The shared pop-up list** (`kinds::popup_list`). A dropdown's option list and
+a field's suggestion list were two implementations of one thing — one wrapped
+its highlight, one clamped; one followed its window both ways at render time,
+the other forward at render time and backward only on a key. There is now one
+copy of each rule: which keys move a highlight (↑/↓, PgUp/PgDn a window with a
+row of overlap, Home/End), the clamp, type-to-jump, the scrollbar, and the
+window that keeps the highlight in view — computed from the highlight on every
+layout, so nothing that moves it (a key, a list that shrank) can leave it off
+screen. Both lists drop below their control and flip above it when the frame
+has no room, and both close on a press outside them as well as on Esc.
+
+**Dropdown.** Closed, ↑/↓ are not its keys — they pass, and move focus on;
+←/→ step the value in place; Enter, Space and Alt+↓ open. Open, the keys move
+a *highlight* (`WidgetInstanceState::Dropdown::highlight`) and fire nothing;
+typing jumps to a match. Enter, Space, Alt+↑ or a click commit — one `change`,
+and only if the value differs; Tab commits and moves on; Esc, a press outside
+or focus leaving closes with no event. `change` means a value was accepted.
+The Menu's project dropdown no longer needs `mainMenuProjectOpen` /
+`mainMenuProjectPick` to hold back the filter until the list closed, and the
+form's `Manage repositories…` no longer needs to be "armed".
+
+**Text with suggestions (combo box).** ↓ enters the list; Enter or Tab on the
+highlighted row accepts it — the host writes the value (caret at its end),
+closes the list and fires `change` then `completion_accept`; with nothing
+highlighted, Enter and Tab close the list and go on. Esc closes the list
+first. Plugins stopped copying the accepted value back into the field
+(`applyAcceptedCompletion`, the Add Machine Host field's accept) and stopped
+mirroring whether a list is up (`machineHostSuggesting`).
+
+**What stays two renderers.** The two lists still draw their own chrome: the
+option list is a bordered box, and the suggestion list paints over its
+section's bottom border so field and list read as one frame. Their model,
+window, scrollbar, placement and dismissal are shared; the anchored context
+menus and the Menu panel are panels, not lists, and get their placement from
+the anchored layer and their focus return from R2.
+
 ## Checklist
 
 - [x] R1 — controls get keys first; declared dialog-wide shortcuts.
 - [x] R2 — the focus key in every `widget_event`, a getter, focus returns to
       the opener; plugin state copies deleted.
-- [ ] R3 — one shared pop-up; the dropdown and combo-box contracts.
+- [x] R3 — one shared pop-up; the dropdown and combo-box contracts.
 - [ ] R3 — the text area keeps its caret in view on every layout; `minRows` /
       `maxRows`.
 - [ ] R4 — unconsumed arrows move focus by screen position.
