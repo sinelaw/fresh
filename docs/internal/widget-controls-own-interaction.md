@@ -217,6 +217,27 @@ Import sessions now passes cells and column titles; `discoverRowRoom`,
 `DISCOVER_COL_GAP` and `DISCOVER_TREE_GLYPH_COLS` — the plugin's own copy of
 column measuring, fitting, eliding and padding — are deleted.
 
+### R6 — shared composites live in `plugins/lib`
+
+`lib/pickers.ts` holds the two composites dialogs kept building by hand:
+
+- **`PathPicker`**: a text field, `Browse…` beside it, and a browser of one
+  machine's folders under them. It owns the browser's state, its rows, its list
+  events (walk, go in, pick), Backspace up, Esc to close (focus back on
+  `Browse…`), and the pick's write-back (the field shows the pick and takes
+  focus). The dialog keeps the field's value and says where the browser starts
+  and what it may pick. `Browse…` pressed again closes the browser everywhere
+  (before, only the Machine dialog's did). The orchestrator's three copies — a
+  project's Path, a machine row's Folder, an ssh identity file — use it; their
+  `FolderBrowser` / `browserRows` / `browserGo` / `browserActivate`,
+  `browseIdentityFile`, `browseTo` / `openBrowse` / `pickBrowsed` /
+  `browseActivate` and the per-dialog list and Esc handling are deleted.
+- **`machinePicker`**: the Machine dropdown with `+ Add machine…` beside it,
+  one gap and one label in the New Workspace form and the Projects dialog
+  (they had used different gaps and translation keys).
+
+Tests: `plugins/tests/pickers.test.ts` (run with `plugins/tests/run.sh`).
+
 ## Checklist
 
 - [x] R1 — controls get keys first; declared dialog-wide shortcuts.
@@ -227,4 +248,4 @@ column measuring, fitting, eliding and padding — are deleted.
       `maxRows`.
 - [x] R4 — unconsumed arrows move focus by screen position.
 - [x] R5 — sizes from layout: fill-the-row `Text`, the table widget.
-- [ ] R6 — shared composites (path picker, Machine picker) in `plugins/lib`.
+- [x] R6 — shared composites (path picker, Machine picker) in `plugins/lib`.

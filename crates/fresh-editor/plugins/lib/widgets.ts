@@ -16,6 +16,10 @@
  *     string format used by today's plugin i18n bundles into
  *     `HintEntry[]`.
  *
+ * Composites built from these — the path picker (a field, `Browse…` and a
+ * folder browser) and the Machine picker — are in `./pickers.ts`; use them
+ * rather than assembling the pieces in a dialog.
+ *
  * See `docs/internal/plugin-widget-library-design.md`.
  *
  * @example
