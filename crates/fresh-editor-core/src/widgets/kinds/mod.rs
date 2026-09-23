@@ -368,15 +368,6 @@ pub trait WidgetImpl: Sync {
         None
     }
 
-    /// CAPABILITY: panel-level Up/Down lands on a focused widget of
-    /// this kind that has no vertical axis of its own — advance focus
-    /// instead (arrows walk the controls like Tab, the dock's
-    /// button-only context menus). Declared by Button/Toggle; the
-    /// panel key router asks this instead of matching kinds.
-    fn arrows_advance_focus(&self) -> bool {
-        false
-    }
-
     /// CAPABILITY: how panel-level Up/Down treats this kind when it is
     /// the panel's scrollable picker target. `Peek` moves this
     /// widget's selection while the typing widget keeps focus (List:

@@ -1667,6 +1667,12 @@ pub struct KeybindingResolver {
     /// anywhere" is the model case.
     mode_shortcuts: HashMap<String, std::collections::HashSet<(KeyCode, KeyModifiers)>>,
 
+    /// Per plugin mode, bindings `defineMode` scoped to named controls (a
+    /// binding's third element `"on:a,b"`): the binding applies only while
+    /// one of those widgets holds the panel's focus, and every other control
+    /// leaves the key to the panel's defaults as if it were unbound.
+    mode_binding_scopes: HashMap<String, HashMap<(KeyCode, KeyModifiers), Vec<String>>>,
+
     /// Mirror of `editor.menu_bar_mnemonics`. When false, the menu-bar
     /// mnemonic bindings (`Alt+letter → menu_open`) are suppressed at
     /// *resolution* time — they neither fire nor consume the key — so
@@ -1745,6 +1751,7 @@ impl KeybindingResolver {
             removed_chords: std::collections::HashSet::new(),
             inheriting_modes: std::collections::HashSet::new(),
             mode_shortcuts: HashMap::new(),
+            mode_binding_scopes: HashMap::new(),
             menu_mnemonics_enabled: config.editor.menu_bar_mnemonics,
         };
 
@@ -1781,6 +1788,7 @@ impl KeybindingResolver {
         rebuilt.plugin_chord_defaults = std::mem::take(&mut self.plugin_chord_defaults);
         rebuilt.inheriting_modes = std::mem::take(&mut self.inheriting_modes);
         rebuilt.mode_shortcuts = std::mem::take(&mut self.mode_shortcuts);
+        rebuilt.mode_binding_scopes = std::mem::take(&mut self.mode_binding_scopes);
         // The carried-over plugin bindings were filtered against the *old*
         // config's removals; apply the new one's `unbind` entries to them.
         rebuilt.prune_removed_plugin_bindings();
@@ -2073,6 +2081,31 @@ impl KeybindingResolver {
         self.plugin_chord_defaults.remove(&context);
         self.inheriting_modes.remove(mode_name);
         self.mode_shortcuts.remove(mode_name);
+        self.mode_binding_scopes.remove(mode_name);
+    }
+
+    /// Scope a binding of plugin mode `mode_name` to the controls named
+    /// `widgets`. See [`Self::mode_binding_scope`].
+    pub fn set_mode_binding_scope(
+        &mut self,
+        mode_name: &str,
+        key_code: KeyCode,
+        modifiers: KeyModifiers,
+        widgets: Vec<String>,
+    ) {
+        self.mode_binding_scopes
+            .entry(mode_name.to_string())
+            .or_default()
+            .insert(normalize_key(key_code, modifiers), widgets);
+    }
+
+    /// The controls a binding of `mode_name` is scoped to, when it is: the
+    /// binding applies only while one of them holds the panel's focus.
+    pub fn mode_binding_scope(&self, mode_name: &str, event: &KeyEvent) -> Option<&[String]> {
+        self.mode_binding_scopes
+            .get(mode_name)
+            .and_then(|m| m.get(&normalize_key(event.code, event.modifiers)))
+            .map(Vec::as_slice)
     }
 
     /// Declare `(key_code, modifiers)` a dialog-wide shortcut of plugin mode

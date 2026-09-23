@@ -588,7 +588,23 @@ impl Editor {
         // interior's capture leg took them ahead of the control.)
         if let Some(keymap) = self.panel_keymap(&panel_key) {
             use crate::view::shell::panel::Bound;
-            match keymap.resolve(&crossterm::event::KeyEvent::new(code, modifiers)) {
+            let ev = crossterm::event::KeyEvent::new(code, modifiers);
+            // A binding scoped to named controls (`"on:a,b"`) is the mode's
+            // only while one of them has focus; otherwise the key is unbound.
+            let focus_now = self
+                .widget_registry
+                .focus_key(&panel_key)
+                .map(str::to_string)
+                .unwrap_or_default();
+            let out_of_scope = self.keybindings.read().ok().is_some_and(|kb| {
+                kb.mode_binding_scope(&keymap.mode, &ev)
+                    .is_some_and(|w| !w.iter().any(|x| *x == focus_now))
+            });
+            let bound = match out_of_scope {
+                true => Bound::None,
+                false => keymap.resolve(&ev),
+            };
+            match bound {
                 Bound::Run(action) => {
                     self.active_window_mut().chord_state.clear();
                     if let Err(e) = self.handle_action(action) {

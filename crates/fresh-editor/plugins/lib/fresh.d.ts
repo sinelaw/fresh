@@ -4495,6 +4495,14 @@ interface EditorAPI {
 	* `["C-Enter", "submit", "shortcut"]` — is a **dialog-wide shortcut**
 	* instead: it runs ahead of any control, wherever focus is. Keep that
 	* list short and made of chords no control uses.
+	* 
+	* A binding whose third element is `"on:a,b"` —
+	* `["Up", "history_prev", "on:name,cmd"]` — belongs to the controls
+	* named: it applies only while one of those widgets holds the panel's
+	* focus, and on any other control the key is left to the panel's
+	* defaults (↑/↓ move focus to the control above or below). Use it for a
+	* command that is about one field, rather than binding the key for the
+	* whole dialog and forwarding it back.
 	*/
 	defineMode(name: string, bindingsArr: string[][], readOnly?: boolean, allowTextInput?: boolean, inheritNormalBindings?: boolean): boolean;
 	/**

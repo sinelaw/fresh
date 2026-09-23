@@ -165,6 +165,28 @@ would have re-triggered it never reached the box.
   (`kinds::text::text_area_height`). The New Workspace prompt uses it; the
   plugin's `promptRows` / `promptTextRows` width guess is gone.
 
+### R4 — unconsumed arrows move focus by screen position
+
+An arrow the focused control passed and the panel's mode did not bind now goes
+to the nearest focusable in its direction, measured from the rectangles layout
+gave them (`fresh_ui::focus::spatial::nearest`, reached through
+`Ui::spatial_neighbour`): only controls wholly past this one's edge that way,
+those in its "beam" (overlapping across the arrow's axis) first, then the
+smallest gap, then the nearest centre. Tab stays reading order. ←/→ join ↑/↓ —
+a button row's neighbours are to its sides. The typed-filter panel keeps its
+one special case: ↑/↓ from its single-line filter field reach the picker (a
+List moves its selection, a Tree takes focus). The `arrows_advance_focus`
+capability (Button/Toggle/Radio walking the Tab ring on ↑/↓) is gone.
+
+**Bindings scoped to a control.** A binding whose third element is
+`"on:a,b"` applies only while one of the named widgets has focus; on any
+other control the key is unbound, so the panel's defaults — the spatial move —
+answer it. The New Workspace form's history arrows are bound
+`on:project_path,branch,name,cmd`, and its "walk the form" fallback (forwarding
+↑/↓ back to the host on every other control) is deleted; search/replace's
+history arrows are bound `on:searchField`, and its `lastFocusedWidget` guess
+at where focus was is gone.
+
 ## Checklist
 
 - [x] R1 — controls get keys first; declared dialog-wide shortcuts.
@@ -173,6 +195,6 @@ would have re-triggered it never reached the box.
 - [x] R3 — one shared pop-up; the dropdown and combo-box contracts.
 - [x] R3 — the text area keeps its caret in view on every layout; `minRows` /
       `maxRows`.
-- [ ] R4 — unconsumed arrows move focus by screen position.
+- [x] R4 — unconsumed arrows move focus by screen position.
 - [ ] R5 — sizes from layout: fill-the-row `Text`, the table widget.
 - [ ] R6 — shared composites (path picker, Machine picker) in `plugins/lib`.

@@ -5542,6 +5542,14 @@ impl JsEditorApi {
     /// `["C-Enter", "submit", "shortcut"]` — is a **dialog-wide shortcut**
     /// instead: it runs ahead of any control, wherever focus is. Keep that
     /// list short and made of chords no control uses.
+    ///
+    /// A binding whose third element is `"on:a,b"` —
+    /// `["Up", "history_prev", "on:name,cmd"]` — belongs to the controls
+    /// named: it applies only while one of those widgets holds the panel's
+    /// focus, and on any other control the key is left to the panel's
+    /// defaults (↑/↓ move focus to the control above or below). Use it for a
+    /// command that is about one field, rather than binding the key for the
+    /// whole dialog and forwarding it back.
     pub fn define_mode(
         &self,
         name: String,
@@ -5557,6 +5565,22 @@ impl JsEditorApi {
             .iter()
             .filter(|arr| arr.len() >= 3 && arr[2] == "shortcut")
             .map(|arr| arr[0].clone())
+            .collect();
+        // `"on:a,b"` scopes a binding to the controls named: it applies only
+        // while one of them holds the panel's focus.
+        let scoped: Vec<(String, Vec<String>)> = bindings_arr
+            .iter()
+            .filter_map(|arr| {
+                let widgets = arr.get(2)?.strip_prefix("on:")?;
+                Some((
+                    arr[0].clone(),
+                    widgets
+                        .split(',')
+                        .map(|w| w.trim().to_string())
+                        .filter(|w| !w.is_empty())
+                        .collect(),
+                ))
+            })
             .collect();
         let bindings: Vec<(String, String)> = bindings_arr
             .into_iter()
@@ -5613,6 +5637,7 @@ impl JsEditorApi {
                 inherit_normal_bindings: inherit_normal_bindings.0.unwrap_or(false),
                 plugin_name: Some(self.plugin_name.clone()),
                 shortcuts,
+                scoped,
             })
             .is_ok()
     }
