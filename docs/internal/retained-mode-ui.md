@@ -431,6 +431,55 @@ opposite of alarming.
   code did not have. `view::viewport::gutter_width` is the one statement; the
   flag had no reader and is gone from the call chain.
 
+### The oracles the migration was checked against
+
+**Closed.** Four second implementations of layout survived under `cfg(test)`,
+each kept because a replacement is only as trustworthy as what it was checked
+against:
+
+- `SplitNode::reference_leaves_with_rects` — the recursion the pane grid was
+  before the description was.
+- `SplitNode::get_separators_with_ids` — the walk that computed separator
+  positions from the ratios.
+- `split_rendering::layout::reference_split_layout` — the hand-derived
+  arithmetic for a pane's four rectangles.
+- `split_rendering::layout::split_layout` and `SplitLayout` — not a second
+  *implementation* but a second *layout*: `pane_interior` in a throwaway `Ui`,
+  kept after the painter stopped calling it so the tests had something to ask.
+
+They are deleted, and the tests they served say what they were really claiming:
+
+- **A grid is a tiling.** `the_grid_tiles_its_box` checks that every cell of
+  the box belongs to exactly one pane or one divider, at every shape and size.
+  The old sweep compared the tree against `reference_leaves_with_rects`, and
+  since both called `split_rect_ext` the only thing it could catch was the
+  *structure* disagreeing — a separator cell not reserved, a child given the
+  wrong remainder. Both break the cover, and a cover needs no second
+  implementation. `every_container_has_a_divider` adds the part a cover cannot
+  see: that a container the model has is actually in the tree, rather than its
+  box being quietly tiled by panes alone.
+- **A pane's interior is stated, not compared.** The strip is the top row and
+  spans the box, the vertical bar is the last column beside the content, and
+  the horizontal bar stops short of that column rather than running under it —
+  which was the one part a reader got wrong from the picture, and the reason
+  the frozen arithmetic was kept. The four pieces are read off the real mount
+  by key (`tabs_key`, `content_key`, `vscroll_key`, `hscroll_key`), not laid
+  out again.
+- **Fold against layout, not against a model.** `the_fold_reaches_every_pane_at_its_own_rect`
+  now compares the rectangle the fold hands each pane against the rectangle
+  layout gave it. That was always the claim; the model walk was standing in the
+  middle of it.
+- **The hand-written rects were always the real assertion.**
+  `shell::geometry`'s tests already spelled every rectangle out *and* compared
+  against the oracles. The spellings stay and the oracles go.
+
+What is left, and why it is not the same thing: `frame::region_rects` builds a
+`Ui` of its own, and `a_retained_tree_lays_the_frame_out_like_a_fresh_one`
+cannot be written without it — a fresh tree is that test's second side by
+definition. It re-runs the one description through the one layout engine; it
+does not restate any rule. `split_rect` is a `cfg(test)` alias that passes two
+`None`s to the production `split_rect_ext`.
+
 ### The tab strip is measured twice, and the fix is blocked
 
 **Open, and not on the old plan at all.** `view::shell::tabs::lay_out` does not

@@ -849,50 +849,6 @@ impl SplitNode {
         }
     }
 
-    /// Get all leaf nodes (buffer views) with their rectangles.
-    ///
-    /// Where each leaf of this subtree sits inside `rect`, by the model's own
-    /// walk: recurse over the ratios, reserving a cell per separator. Grouped
-    /// nodes always recurse into their inner layout — the layout's leaves get
-    /// the full rect that would have been given to the Grouped node.
-    /// Visibility (which group is "active") is applied elsewhere.
-    ///
-    /// **The engine the description replaced**, kept as the thing the swap is
-    /// pinned against. `view::shell::splits::grid` is the layout now, and the
-    /// editor reads where the panes are off the tree it laid out
-    /// (`view::shell::geometry::PaneRects`); a replacement is only as
-    /// trustworthy as what it was checked against, so the original walk stays
-    /// here as the oracle of the parity tests in `shell::splits` and
-    /// `shell::geometry`, and nothing else compiles it.
-    #[cfg(test)]
-    pub fn reference_leaves_with_rects(&self, rect: Rect) -> Vec<(LeafId, BufferId, Rect)> {
-        match self {
-            Self::Leaf {
-                buffer_id,
-                split_id,
-                ..
-            } => {
-                vec![(*split_id, *buffer_id, rect)]
-            }
-            Self::Split {
-                direction,
-                first,
-                second,
-                ratio,
-                fixed_first,
-                fixed_second,
-                ..
-            } => {
-                let (first_rect, second_rect) =
-                    split_rect_ext(rect, *direction, *ratio, *fixed_first, *fixed_second);
-                let mut leaves = first.reference_leaves_with_rects(first_rect);
-                leaves.extend(second.reference_leaves_with_rects(second_rect));
-                leaves
-            }
-            Self::Grouped { layout, .. } => layout.reference_leaves_with_rects(rect),
-        }
-    }
-
     /// The leaves this subtree shows, in the tree's order — first child before
     /// second, so left to right and top to bottom — without their rectangles.
     ///
@@ -916,71 +872,6 @@ impl SplitNode {
                 out
             }
             Self::Grouped { layout, .. } => layout.visible_leaves(),
-        }
-    }
-
-    /// Where this subtree's separators are, computed from the model.
-    ///
-    /// **Not the editor's answer** — the shell tree places the dividers and
-    /// `view::shell::splits::separator_rects_of` reads them back, so this is a
-    /// second derivation of the same rectangles and using it in the editor
-    /// would be the thing *Geometry is produced by layout* forbids. It is
-    /// compiled for tests only, where being a second derivation is the one job
-    /// it is good for: `the_dividers_are_where_the_separators_are` and
-    /// `a_groups_dividers_land_where_its_separators_are_drawn` check the
-    /// tree's dividers against it.
-    #[cfg(test)]
-    pub fn get_separators_with_ids(
-        &self,
-        rect: Rect,
-    ) -> Vec<(ContainerId, SplitDirection, u16, u16, u16)> {
-        match self {
-            Self::Leaf { .. } => vec![],
-            Self::Grouped { layout, .. } => layout.get_separators_with_ids(rect),
-            Self::Split {
-                direction,
-                first,
-                second,
-                ratio,
-                split_id,
-                fixed_first,
-                fixed_second,
-            } => {
-                let (first_rect, second_rect) =
-                    split_rect_ext(rect, *direction, *ratio, *fixed_first, *fixed_second);
-                let mut separators = Vec::new();
-
-                // Add separator for this split (in the 1-char gap between first and second)
-                match direction {
-                    SplitDirection::Horizontal => {
-                        // Horizontal split: separator line is between first and second
-                        // y position is at the end of first rect (the gap line)
-                        separators.push((
-                            *split_id,
-                            SplitDirection::Horizontal,
-                            rect.x,
-                            first_rect.y + first_rect.height,
-                            rect.width,
-                        ));
-                    }
-                    SplitDirection::Vertical => {
-                        // Vertical split: separator line is between first and second
-                        // x position is at the end of first rect (the gap column)
-                        separators.push((
-                            *split_id,
-                            SplitDirection::Vertical,
-                            first_rect.x + first_rect.width,
-                            rect.y,
-                            rect.height,
-                        ));
-                    }
-                }
-
-                // Recursively get separators from children
-                separators.extend(first.get_separators_with_ids(first_rect));
-                separators.extend(second.get_separators_with_ids(second_rect));
-                separators
-            }
         }
     }
 
