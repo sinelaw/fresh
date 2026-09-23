@@ -53,13 +53,6 @@ impl TabTarget {
             Self::Group(_) => None,
         }
     }
-
-    pub fn as_group(self) -> Option<LeafId> {
-        match self {
-            Self::Buffer(_) => None,
-            Self::Group(id) => Some(id),
-        }
-    }
 }
 
 /// Role tag for special-purpose leaves in the split tree.
@@ -547,13 +540,6 @@ impl SplitViewState {
             .or_insert_with(|| BufferViewState::new(width, height))
     }
 
-    /// Remove keyed state for a buffer (when buffer is closed from this split)
-    pub fn remove_buffer_state(&mut self, buffer_id: BufferId) {
-        if buffer_id != self.active_buffer {
-            self.keyed_states.remove(&buffer_id);
-        }
-    }
-
     /// Add a buffer to this split's tabs (if not already present)
     pub fn add_buffer(&mut self, buffer_id: BufferId) {
         if !self.has_buffer(buffer_id) {
@@ -615,14 +601,6 @@ impl SplitViewState {
         self.buffer_tab_ids().collect()
     }
 
-    /// Count only buffer tabs (ignoring group tabs).
-    pub fn buffer_tab_count(&self) -> usize {
-        self.open_buffers
-            .iter()
-            .filter(|t| matches!(t, TabTarget::Buffer(_)))
-            .count()
-    }
-
     /// Return the effective active tab target for this split.
     /// If a group tab is marked active, returns `TabTarget::Group`. Otherwise
     /// returns `TabTarget::Buffer(active_buffer)`.
@@ -631,14 +609,6 @@ impl SplitViewState {
             Some(leaf_id) => TabTarget::Group(leaf_id),
             None => TabTarget::Buffer(self.active_buffer),
         }
-    }
-
-    /// Switch the active tab to a regular buffer target. Clears any
-    /// active group tab marker.
-    pub fn set_active_buffer_tab(&mut self, buffer_id: BufferId) {
-        self.active_group_tab = None;
-        self.focused_group_leaf = None;
-        self.switch_buffer(buffer_id);
     }
 
     /// Switch the active tab to a group target.
@@ -681,15 +651,6 @@ impl SplitNode {
             buffer_id,
             split_id: LeafId(split_id),
             role: None,
-        }
-    }
-
-    /// Create a new leaf node with a role tag.
-    pub fn leaf_with_role(buffer_id: BufferId, split_id: SplitId, role: SplitRole) -> Self {
-        Self::Leaf {
-            buffer_id,
-            split_id: LeafId(split_id),
-            role: Some(role),
         }
     }
 
@@ -911,33 +872,6 @@ impl SplitNode {
             Self::Grouped { layout, .. } => layout.count_leaves(),
         }
     }
-
-    /// Collect display names for all Grouped nodes in the tree, keyed by
-    /// their LeafId (which is what `TabTarget::Group` points to).
-    pub fn collect_group_names(&self) -> HashMap<LeafId, String> {
-        let mut map = HashMap::new();
-        self.collect_group_names_into(&mut map);
-        map
-    }
-
-    fn collect_group_names_into(&self, map: &mut HashMap<LeafId, String>) {
-        match self {
-            Self::Leaf { .. } => {}
-            Self::Split { first, second, .. } => {
-                first.collect_group_names_into(map);
-                second.collect_group_names_into(map);
-            }
-            Self::Grouped {
-                split_id,
-                name,
-                layout,
-                ..
-            } => {
-                map.insert(*split_id, name.clone());
-                layout.collect_group_names_into(map);
-            }
-        }
-    }
 }
 
 /// Minimum usable pane width, in columns.
@@ -1119,18 +1053,6 @@ impl SplitManager {
         id
     }
 
-    /// Replace the root split tree. The new tree must have unique IDs
-    /// (allocated via `allocate_split_id`). The caller must also provide
-    /// the new active leaf ID.
-    pub fn replace_root(&mut self, new_root: SplitNode, new_active: LeafId) {
-        self.root = new_root;
-        self.active_split = new_active;
-        // None of the previously-tracked focus-history ids exist in
-        // the new tree. Reseed with just the new active.
-        self.focus_history.clear();
-        self.focus_history.push(new_active);
-    }
-
     /// Get the currently active split ID
     pub fn active_split(&self) -> LeafId {
         self.active_split
@@ -1232,17 +1154,6 @@ impl SplitManager {
         ratio: f32,
     ) -> Result<LeafId, String> {
         self.split_active_positioned(direction, new_buffer_id, ratio, false)
-    }
-
-    /// Split the active pane, placing the new buffer before (left/top) the existing content.
-    /// `ratio` still controls the first child's proportion of space.
-    pub fn split_active_before(
-        &mut self,
-        direction: SplitDirection,
-        new_buffer_id: BufferId,
-        ratio: f32,
-    ) -> Result<LeafId, String> {
-        self.split_active_positioned(direction, new_buffer_id, ratio, true)
     }
 
     pub fn split_active_positioned(
@@ -1430,26 +1341,6 @@ impl SplitManager {
         }
     }
 
-    /// Remove a Grouped node from the tree by its split_id. Unlike
-    /// `close_split` which requires a leaf, this removes a whole Grouped
-    /// subtree (tab) from the split structure. The Grouped node is
-    /// replaced with... well, nothing — so this can only succeed if the
-    /// Grouped is inside a Split (so we can replace the Split with its
-    /// sibling) or if the root itself is the Grouped (which we can't
-    /// remove without a replacement).
-    pub fn remove_grouped(&mut self, target: LeafId) -> Result<(), String> {
-        let target_id: SplitId = target.into();
-        if self.root.id() == target_id {
-            return Err("Cannot remove root Grouped node".to_string());
-        }
-        let result = Self::remove_child_static(&mut self.root, target_id);
-        if result.is_ok() {
-            // Same invariant as `close_split` (#2415).
-            self.clear_root_leaf_role();
-        }
-        result
-    }
-
     /// Adjust the split ratio of a container
     pub fn adjust_ratio(&mut self, container_id: ContainerId, delta: f32) {
         match self.root.find_mut(container_id.into()) {
@@ -1529,25 +1420,6 @@ impl SplitManager {
             true
         } else {
             false
-        }
-    }
-
-    /// Set a fixed size on a split container's first or second child.
-    /// When set, the child gets exactly this many rows/cols instead of using the ratio.
-    pub fn set_fixed_size(
-        &mut self,
-        container_id: ContainerId,
-        first: Option<u16>,
-        second: Option<u16>,
-    ) {
-        if let Some(SplitNode::Split {
-            fixed_first,
-            fixed_second,
-            ..
-        }) = self.root.find_mut(container_id.into())
-        {
-            *fixed_first = first;
-            *fixed_second = second;
         }
     }
 

@@ -106,26 +106,6 @@ pub struct LineWrapKey {
     pub cursor_sig: u64,
 }
 
-/// Fold the cursor positions that can affect a line's activation rules
-/// into a compact signature for [`LineWrapKey::cursor_sig`].
-///
-/// A cursor at byte `p` matters to line `[line_start, line_end)` when
-/// `line_start <= p <= line_end` — the inclusive upper bound covers
-/// plugin scopes that extend one past the line end (a cursor sitting at
-/// the start of the next line can still reveal this line's markup).
-/// Returns 0 when no cursor is in range, matching the cursor-blind
-/// convention.
-pub fn cursor_sig_for_line(cursors: &[usize], line_start: usize, line_end: usize) -> u64 {
-    let mut sig: u64 = 0;
-    for &p in cursors {
-        if p >= line_start && p <= line_end {
-            let rel = (p - line_start + 1) as u64;
-            sig = sig.wrapping_mul(0x100_0000_01b3).wrapping_add(rel);
-        }
-    }
-    sig
-}
-
 /// The versions of everything that feeds line layout, kept apart.
 ///
 /// This replaces a packed-XOR `u64`: equality still answers "is anything
@@ -424,66 +404,6 @@ pub fn byte_position_in_layout(layout: &[ViewLine], byte_in_line: usize) -> (usi
         }
     }
     (row_idx, col)
-}
-
-/// Given a logical line's layout and a character position within the
-/// LOGICAL line (not the ViewLine), return `(segment_idx,
-/// col_in_segment)` — the index of the `ViewLine` the character falls
-/// into, and the visual column within that `ViewLine`.
-///
-/// Replaces `primitives::line_wrapping::char_position_to_segment` for
-/// callers that have a cached `Vec<ViewLine>`.
-///
-/// The trick: continuation `ViewLine`s can carry hanging-indent
-/// characters at their start whose `source_offset` is `None` (they
-/// don't correspond to any source byte).  Those chars must NOT count
-/// toward the source-character position we're walking past.  So we
-/// sum *source* characters per row (char_source_bytes entries that
-/// are `Some(_)`) to find the row containing `char_pos_in_line`, and
-/// within that row we locate the specific char whose source_offset
-/// matches.
-///
-/// If `layout` is empty, returns `(0, 0)`.  If the position is past
-/// the end of the last row, returns the last row with the last
-/// visual column of that row.
-pub fn char_position_in_layout(layout: &[ViewLine], char_pos_in_line: usize) -> (usize, usize) {
-    if layout.is_empty() {
-        return (0, 0);
-    }
-    let mut source_chars_consumed = 0usize;
-    for (i, line) in layout.iter().enumerate() {
-        let source_chars_in_row = line
-            .char_source_bytes
-            .iter()
-            .filter(|b| b.is_some())
-            .count();
-        if char_pos_in_line < source_chars_consumed + source_chars_in_row {
-            // The target source-char is in this row.  Find the
-            // `char_idx` whose position-among-source-chars equals
-            // the within-row offset, then convert to visual column.
-            let within_row = char_pos_in_line - source_chars_consumed;
-            let mut source_count = 0usize;
-            for (char_idx, byte) in line.char_source_bytes.iter().enumerate() {
-                if byte.is_some() {
-                    if source_count == within_row {
-                        return (i, line.visual_col_at_char(char_idx));
-                    }
-                    source_count += 1;
-                }
-            }
-            // Fallback: shouldn't happen given the length check above,
-            // but don't return garbage if it does.
-            return (i, line.visual_width().saturating_sub(1));
-        }
-        source_chars_consumed += source_chars_in_row;
-    }
-    // Past the end: return the last row's last visual column.  (A
-    // cursor one past the last source char on the last row lands
-    // here.)
-    let last_idx = layout.len() - 1;
-    let last = &layout[last_idx];
-    let last_col = last.visual_width().saturating_sub(1);
-    (last_idx, last_col)
 }
 
 /// Geometry + view config inputs to the wrap pipeline that aren't carried

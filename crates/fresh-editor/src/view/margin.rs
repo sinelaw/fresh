@@ -46,21 +46,6 @@ impl LineIndicator {
             marker_id: MarkerId(0), // Placeholder, set by MarginManager
         }
     }
-
-    /// Create a line indicator with a specific marker ID
-    pub fn with_marker(
-        symbol: impl Into<String>,
-        color: Color,
-        priority: i32,
-        marker_id: MarkerId,
-    ) -> Self {
-        Self {
-            symbol: symbol.into(),
-            color,
-            priority,
-            marker_id,
-        }
-    }
 }
 
 /// Content type for a margin at a specific line
@@ -578,19 +563,6 @@ impl MarginManager {
         self.right_annotations.clear();
     }
 
-    /// Get all annotations at a specific line
-    pub fn get_at_line(
-        &self,
-        line: usize,
-        position: MarginPosition,
-    ) -> Option<&[MarginAnnotation]> {
-        let annotations = match position {
-            MarginPosition::Left => &self.left_annotations,
-            MarginPosition::Right => &self.right_annotations,
-        };
-        annotations.get(&line).map(|v| v.as_slice())
-    }
-
     /// Get the content to render for a specific line in a margin.
     /// If `show_line_numbers` is true and position is Left, includes line number.
     pub fn render_line(
@@ -658,11 +630,6 @@ impl MarginManager {
     /// The separator includes the diagnostic indicator when present
     pub fn left_total_width(&self) -> usize {
         self.left_config.total_width()
-    }
-
-    /// Get the total width of the right margin (including separator)
-    pub fn right_total_width(&self) -> usize {
-        self.right_config.total_width()
     }
 
     /// Configure left margin layout for line number visibility.

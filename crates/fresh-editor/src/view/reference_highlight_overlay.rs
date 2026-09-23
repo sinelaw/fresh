@@ -261,11 +261,6 @@ impl ReferenceHighlightOverlay {
         self.target_changed_at = None;
     }
 
-    /// Check if currently debouncing
-    pub fn is_debouncing(&self) -> bool {
-        self.target_changed_at.is_some()
-    }
-
     /// Get the debounce delay
     pub fn debounce_delay(&self) -> Duration {
         self.debounce_delay

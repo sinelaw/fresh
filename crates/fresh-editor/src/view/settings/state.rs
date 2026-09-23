@@ -1081,25 +1081,6 @@ impl SettingsState {
         }
     }
 
-    /// Toggle the visual style applied to every item.
-    ///
-    /// Style is cached per-item so the `ScrollItem::height(width)` trait impl
-    /// can compute the correct height without taking a style parameter; this
-    /// method propagates the change to every item across every page in one
-    /// pass. Recomputes the scroll panel content height too, since heights
-    /// just changed.
-    pub fn set_item_style(&mut self, style: super::items::ItemBoxStyle) {
-        if self.item_style == style {
-            return;
-        }
-        self.item_style = style;
-        for page in &mut self.pages {
-            for item in &mut page.items {
-                item.style = style;
-            }
-        }
-    }
-
     /// Ensure the selected item is visible in the viewport.
     pub fn ensure_visible(&mut self) {
         if self.focus_panel() != FocusPanel::Settings {
@@ -1240,16 +1221,6 @@ impl SettingsState {
             .get(path)
             .copied()
             .unwrap_or(ConfigLayer::System)
-    }
-
-    /// Get a short label for a layer source (for UI display).
-    pub fn layer_source_label(layer: ConfigLayer) -> &'static str {
-        match layer {
-            ConfigLayer::System => "default",
-            ConfigLayer::User => "user",
-            ConfigLayer::Project => "project",
-            ConfigLayer::Session => "session",
-        }
     }
 
     /// Reset the current item by removing it from the target layer.
@@ -1473,13 +1444,6 @@ impl SettingsState {
         self.search_scroll_offset = 0;
     }
 
-    /// Update search query and refresh results
-    pub fn set_search_query(&mut self, query: String) {
-        self.search_input.set_value(&query);
-        self.search_input.move_end();
-        self.refresh_search_results();
-    }
-
     /// Recompute results after the query text changed and reset the
     /// results selection/scroll to the top.
     fn refresh_search_results(&mut self) {
@@ -1620,50 +1584,15 @@ impl SettingsState {
         }
     }
 
-    /// Get the currently selected search result
-    pub fn current_search_result(&self) -> Option<&SearchResult> {
-        self.search_results.get(self.selected_search_result)
-    }
-
     /// Show the unsaved changes confirmation dialog
     pub fn show_confirm_dialog(&mut self) {
         self.showing_confirm_dialog = true;
         self.confirm_dialog_selection = 0; // Default to "Save and Exit"
     }
 
-    /// Hide the confirmation dialog
-    pub fn hide_confirm_dialog(&mut self) {
-        self.showing_confirm_dialog = false;
-        self.confirm_dialog_selection = 0;
-    }
-
-    /// Move to next option in confirmation dialog
-    pub fn confirm_dialog_next(&mut self) {
-        self.confirm_dialog_selection = (self.confirm_dialog_selection + 1) % 3;
-    }
-
-    /// Move to previous option in confirmation dialog
-    pub fn confirm_dialog_prev(&mut self) {
-        self.confirm_dialog_selection = if self.confirm_dialog_selection == 0 {
-            2
-        } else {
-            self.confirm_dialog_selection - 1
-        };
-    }
-
     /// Toggle the help overlay
     pub fn toggle_help(&mut self) {
         self.showing_help = !self.showing_help;
-    }
-
-    /// Hide the help overlay
-    pub fn hide_help(&mut self) {
-        self.showing_help = false;
-    }
-
-    /// Check if the entry dialog is showing
-    pub fn showing_entry_dialog(&self) -> bool {
-        self.has_entry_dialog()
     }
 
     /// Open the entry dialog for the map entry at `entry_idx`.
@@ -2828,20 +2757,6 @@ impl SettingsState {
     pub fn stop_editing(&mut self) {
         self.leave_live_control();
     }
-    /// Check if the current item is editable (TextList, DualList, Text, Map, or Json)
-    pub fn is_editable_control(&self) -> bool {
-        self.current_item().is_some_and(|item| {
-            matches!(
-                item.control,
-                SettingControl::TextList { .. }
-                    | SettingControl::DualList { .. }
-                    | SettingControl::Text { .. }
-                    | SettingControl::Map { .. }
-                    | SettingControl::Json { .. }
-            )
-        })
-    }
-
     /// Whether the selected card's JSON editor is being edited.
     pub fn is_editing_json(&self) -> bool {
         self.live_control().is_some()

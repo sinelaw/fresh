@@ -916,37 +916,6 @@ impl VirtualTextManager {
 
         results
     }
-
-    /// Build a lookup map for virtual LINES, keyed by the line's anchor byte position
-    ///
-    /// For each source line, the renderer can quickly check if there are
-    /// LineAbove or LineBelow virtual texts anchored to positions within that line.
-    pub fn build_lines_lookup(
-        &self,
-        marker_list: &MarkerList,
-        start: usize,
-        end: usize,
-    ) -> HashMap<usize, Vec<&VirtualText>> {
-        let mut lookup: HashMap<usize, Vec<&VirtualText>> = HashMap::new();
-
-        for vtext in self.texts.values() {
-            if !vtext.position.is_line() {
-                continue;
-            }
-            if let Some(pos) = marker_list.get_position(vtext.marker_id) {
-                if pos >= start && pos < end {
-                    lookup.entry(pos).or_default().push(vtext);
-                }
-            }
-        }
-
-        // Sort each position's texts by priority
-        for texts in lookup.values_mut() {
-            texts.sort_by_key(|vt| vt.priority);
-        }
-
-        lookup
-    }
 }
 
 impl Default for VirtualTextManager {

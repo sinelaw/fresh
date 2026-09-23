@@ -333,12 +333,6 @@ impl Overlay {
         self
     }
 
-    /// Set the namespace
-    pub fn with_namespace_value(mut self, namespace: OverlayNamespace) -> Self {
-        self.namespace = Some(namespace);
-        self
-    }
-
     /// Set whether to extend the overlay to the end of the visual line
     pub fn with_extend_to_line_end(mut self, extend: bool) -> Self {
         self.extend_to_line_end = extend;
@@ -840,16 +834,6 @@ impl OverlayManager {
             .collect()
     }
 
-    /// Get overlay by handle
-    pub fn get_by_handle(&self, handle: &OverlayHandle) -> Option<&Overlay> {
-        self.overlays.iter().find(|o| &o.handle == handle)
-    }
-
-    /// Get mutable overlay by handle
-    pub fn get_by_handle_mut(&mut self, handle: &OverlayHandle) -> Option<&mut Overlay> {
-        self.overlays.iter_mut().find(|o| &o.handle == handle)
-    }
-
     /// Get total number of overlays
     pub fn len(&self) -> usize {
         self.overlays.len()
@@ -1071,20 +1055,6 @@ impl Overlay {
             -10, // Very low priority so it's under other overlays
         );
         overlay.theme_key = Some("editor.selection_bg");
-        overlay
-    }
-
-    /// Create a search result highlight overlay
-    pub fn search_match(marker_list: &mut MarkerList, range: Range<usize>) -> Self {
-        let mut overlay = Self::with_priority(
-            marker_list,
-            range,
-            OverlayFace::Background {
-                color: Color::Rgb(72, 72, 0), // Yellow-ish highlight
-            },
-            -5, // Low priority
-        );
-        overlay.theme_key = Some("search.match_bg");
         overlay
     }
 }

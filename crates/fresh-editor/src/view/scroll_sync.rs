@@ -149,15 +149,6 @@ impl ScrollSyncGroup {
     pub fn right_scroll_line(&self) -> usize {
         self.left_to_right_line(self.scroll_line)
     }
-
-    /// Get the scroll line for a specific split
-    pub fn scroll_line_for_split(&self, split_id: SplitId) -> usize {
-        if split_id == self.left_split {
-            self.left_scroll_line()
-        } else {
-            self.right_scroll_line()
-        }
-    }
 }
 
 /// Manager for scroll sync groups
@@ -165,27 +156,12 @@ impl ScrollSyncGroup {
 pub struct ScrollSyncManager {
     /// Active scroll sync groups
     groups: Vec<ScrollSyncGroup>,
-    /// Next group ID to assign
-    next_id: ScrollSyncGroupId,
 }
 
 impl ScrollSyncManager {
     /// Create a new scroll sync manager
     pub fn new() -> Self {
-        Self {
-            groups: Vec::new(),
-            next_id: 1,
-        }
-    }
-
-    /// Create a new scroll sync group and return its ID
-    pub fn create_group(&mut self, left_split: SplitId, right_split: SplitId) -> ScrollSyncGroupId {
-        let id = self.next_id;
-        self.next_id += 1;
-
-        let group = ScrollSyncGroup::new(id, left_split, right_split);
-        self.groups.push(group);
-        id
+        Self { groups: Vec::new() }
     }
 
     /// Create a scroll sync group with a plugin-provided ID
@@ -216,19 +192,9 @@ impl ScrollSyncManager {
         }
     }
 
-    /// Remove all scroll sync groups containing a specific split
-    pub fn remove_groups_for_split(&mut self, split_id: SplitId) {
-        self.groups.retain(|g| !g.contains_split(split_id));
-    }
-
     /// Get a mutable reference to a group by ID
     pub fn get_group_mut(&mut self, id: ScrollSyncGroupId) -> Option<&mut ScrollSyncGroup> {
         self.groups.iter_mut().find(|g| g.id == id)
-    }
-
-    /// Get a reference to a group by ID
-    pub fn get_group(&self, id: ScrollSyncGroupId) -> Option<&ScrollSyncGroup> {
-        self.groups.iter().find(|g| g.id == id)
     }
 
     /// Find the group containing a specific split

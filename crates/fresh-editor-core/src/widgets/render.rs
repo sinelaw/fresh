@@ -387,22 +387,6 @@ fn collect_tabbable(spec: &WidgetSpec, out: &mut Vec<String>) {
     }
 }
 
-/// Blank full-height-padding row used to pad a List to its
-/// advertised height. Padding rows aren't clickable.
-pub fn blank_list_row() -> TextPropertyEntry {
-    let mut padding = TextPropertyEntry {
-        text: String::new(),
-        properties: Default::default(),
-        style: None,
-        inline_overlays: Vec::new(),
-        segments: Vec::new(),
-        pad_to_chars: None,
-        truncate_to_chars: None,
-    };
-    ensure_trailing_newline(&mut padding);
-    padding
-}
-
 /// Style one row of a selected *card* so selection reads in any
 /// theme — even when colours are too subtle: a *heavy* box border
 /// (colour-independent marker), bold, and an accent fg on the
@@ -524,69 +508,6 @@ fn ratatui_color_to_spec(c: ratatui::style::Color) -> Option<OverlayColorSpec> {
 // =========================================================================
 // LabeledSection helpers.
 // =========================================================================
-
-pub const LEFT_BORDER_PREFIX: &str = "│ ";
-const RIGHT_BORDER_SUFFIX: &str = " │";
-
-/// Build the top border row for a `LabeledSection`.
-///
-/// Output (with label "Session name", total_cols = 30):
-///
-/// ```text
-/// ╭─ Session name ─────────────╮
-/// ```
-///
-/// When `label` is empty the legend separators collapse and the
-/// border is one unbroken `─` run.
-pub fn render_section_top_border(label: &str, total_cols: usize) -> TextPropertyEntry {
-    let mut text = String::new();
-    let mut overlays: Vec<InlineOverlay> = Vec::new();
-    text.push('╭');
-    if label.is_empty() {
-        for _ in 0..total_cols.saturating_sub(2) {
-            text.push('─');
-        }
-    } else {
-        // `╭─ label ─...─╮`. Capture the byte range of `label`
-        // (after the leading `─ ` and before the trailing ` `)
-        // so the renderer can paint it in a distinct fg, marking
-        // it as the section caption rather than border chrome.
-        let label_cols = label.chars().count();
-        let used = 1 + 1 + 1 + label_cols + 1; // ╭ ─ ` ` label ` `
-        text.push('─');
-        text.push(' ');
-        let label_byte_start = text.len();
-        text.push_str(label);
-        let label_byte_end = text.len();
-        text.push(' ');
-        let remaining = total_cols.saturating_sub(used + 1); // -1 for `╮`
-        for _ in 0..remaining {
-            text.push('─');
-        }
-        overlays.push(InlineOverlay {
-            start: label_byte_start,
-            end: label_byte_end,
-            style: OverlayOptions {
-                fg: Some(OverlayColorSpec::theme_key(KEY_SECTION_LABEL_FG)),
-                bold: true,
-                ..Default::default()
-            },
-            properties: Default::default(),
-            unit: OffsetUnit::Byte,
-        });
-    }
-    text.push('╮');
-    text.push('\n');
-    TextPropertyEntry {
-        text,
-        properties: Default::default(),
-        style: None,
-        inline_overlays: overlays,
-        segments: Vec::new(),
-        pad_to_chars: None,
-        truncate_to_chars: None,
-    }
-}
 
 /// Dim-separator overlay row for the completion popup. Unlike
 /// `render_completion_dim_separator` (which targets a child of
@@ -1040,14 +961,6 @@ pub fn completion_scrollbar_glyph(
     } else {
         None
     }
-}
-
-/// Wrap a single child row with `│ ... │` and pad / truncate the
-/// child text to fit exactly `inner_width` display columns.
-/// Inline overlays are byte-shifted by the left-prefix length so
-/// they keep aligning with the right characters.
-pub fn wrap_in_side_border(child: TextPropertyEntry, inner_width: usize) -> TextPropertyEntry {
-    wrap_entry_between(child, inner_width, LEFT_BORDER_PREFIX, RIGHT_BORDER_SUFFIX)
 }
 
 /// Pad/truncate `child` to `inner_width` display columns and sandwich it
@@ -4171,22 +4084,6 @@ pub mod tests {
     // -------------------------------------------------------------
     // List
     // -------------------------------------------------------------
-
-    pub fn make_list(selected: i32, visible: u32, total: usize, key: Option<&str>) -> WidgetSpec {
-        let items = (0..total)
-            .map(|i| TextPropertyEntry::text(format!("row{}", i)))
-            .collect();
-        let item_keys = (0..total).map(|i| format!("k{}", i)).collect();
-        WidgetSpec::List {
-            items,
-            item_specs: vec![],
-            item_keys,
-            selected_index: selected,
-            visible_rows: Some(visible),
-            focusable: true,
-            key: key.map(|s| s.to_string()),
-        }
-    }
 
     // -------------------------------------------------------------
     // TextInput
