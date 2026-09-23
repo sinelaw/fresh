@@ -1658,6 +1658,8 @@ mod wave_dismiss_tests {
             full_width: true,
             completions: Vec::new(),
             completions_visible_rows: 0,
+            min_rows: 0,
+            max_rows: 0,
             block_caret: false,
             sel_start: -1,
             sel_end: -1,

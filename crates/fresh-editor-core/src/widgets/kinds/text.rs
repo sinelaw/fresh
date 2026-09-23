@@ -675,6 +675,26 @@ pub fn resolve(
     st
 }
 
+/// **How many editing rows a multi-line field shows.**
+///
+/// `rows` as the plugin said — unless the field grows with its text
+/// (`max_rows > 0`), when it is as many rows as its value wraps to, never
+/// fewer than `min_rows` (or `rows` when that is `0`) and never more than
+/// `max_rows`, past which it scrolls. `wrapped` is the value's row count at
+/// the width layout gave the box, so a plugin never has to guess a width to
+/// size a box by.
+pub fn text_area_height(rows: u32, min_rows: u32, max_rows: u32, wrapped: u32) -> u32 {
+    if max_rows == 0 {
+        return rows.max(1);
+    }
+    let floor = match min_rows {
+        0 => rows,
+        m => m,
+    }
+    .max(1);
+    wrapped.clamp(floor, max_rows.max(floor))
+}
+
 /// The byte range the selection band paints over, or `None`.
 ///
 /// Only meaningful for the focused widget — `None` otherwise keeps the
@@ -1316,6 +1336,8 @@ mod key_contract_tests {
             full_width: false,
             completions: Vec::new(),
             completions_visible_rows: 0,
+            min_rows: 0,
+            max_rows: 0,
             read_only,
             markdown,
             key: Some("t".into()),
@@ -1344,6 +1366,18 @@ mod key_contract_tests {
         for k in ["Enter", "Up", "Down", "Esc", "Tab"] {
             assert_eq!(key(&spec, &mut panel, k), KeyDisposition::Pass, "{k}");
         }
+    }
+
+    #[test]
+    fn a_growing_text_area_is_as_tall_as_its_text_within_its_bounds() {
+        use super::text_area_height;
+        // Fixed: the plugin's rows, whatever the text.
+        assert_eq!(text_area_height(4, 0, 0, 40), 4);
+        // Growing: between min and max.
+        assert_eq!(text_area_height(3, 0, 10, 1), 3, "never below rows");
+        assert_eq!(text_area_height(3, 0, 10, 6), 6);
+        assert_eq!(text_area_height(3, 0, 10, 40), 10, "scrolls past max");
+        assert_eq!(text_area_height(3, 2, 10, 1), 2, "min_rows wins over rows");
     }
 
     #[test]

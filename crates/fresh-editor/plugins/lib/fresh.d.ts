@@ -2097,6 +2097,20 @@ type WidgetSpec = {
 	*/
 	completionsVisibleRows: number;
 	/**
+	* A multi-line field that **grows with its text**: the smallest
+	* number of editing rows it shows (`rows` when `0`). Only read when
+	* `max_rows` is set.
+	*/
+	minRows: number;
+	/**
+	* A multi-line field that **grows with its text**: when `> 0`, the
+	* editing region is as tall as its value wraps to — at the width
+	* layout actually gives it — between `min_rows` and this, and
+	* scrolls (keeping its caret in view) past it. `0` (default): the
+	* region is `rows` tall, as before.
+	*/
+	maxRows: number;
+	/**
 	* Paint the caret as a REVERSED block cell inside the row
 	* (in addition to publishing the hardware-cursor position).
 	* Modal form surfaces (e.g. Settings) use this — a hardware

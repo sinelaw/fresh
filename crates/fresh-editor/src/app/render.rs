@@ -2284,6 +2284,8 @@ impl Editor {
                         full_width: false,
                         completions: Vec::new(),
                         completions_visible_rows: 0,
+                        min_rows: 0,
+                        max_rows: 0,
                         block_caret: true,
                         sel_start,
                         sel_end,

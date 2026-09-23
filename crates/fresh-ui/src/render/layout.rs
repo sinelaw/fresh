@@ -858,7 +858,13 @@ impl<M: 'static> Ui<M> {
                 .and_then(|r| self.render.get(r))
                 .map(|n| n.data.scroll)
                 .unwrap_or_default();
-            for cmd in a.take() {
+            // A standing follow is a reveal asked again on every layout, after
+            // whatever this frame's commands did.
+            let mut cmds = a.take();
+            if let Some(i) = a.following() {
+                cmds.push(Command::Reveal(i));
+            }
+            for cmd in cmds {
                 let Some(r) = self.render_for(id) else {
                     continue;
                 };

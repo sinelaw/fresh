@@ -764,6 +764,13 @@ export function text(
     /** Number of visible rows of editing region. `1` (default) =
      * single-line behaviour; `>= 2` = multi-line behaviour. */
     rows?: number;
+    /** A multi-line box that **grows with its text**: when set, the box is
+     * as tall as its value wraps to — at the width layout gives it, so no
+     * plugin guesses a width — between `minRows` (default `rows`) and this,
+     * and scrolls past it. The caret is always kept in view. */
+    maxRows?: number;
+    /** The fewest rows a growing box (`maxRows`) shows. Default `rows`. */
+    minRows?: number;
     /** Visible column width. `0` (default) = auto-fit (single-line)
      * or panel width (multi-line). */
     fieldWidth?: number;
@@ -817,6 +824,8 @@ export function text(
     label: options.label ?? "",
     placeholder: options.placeholder,
     rows: options.rows ?? 1,
+    minRows: options.minRows ?? 0,
+    maxRows: options.maxRows ?? 0,
     fieldWidth: options.fieldWidth ?? 0,
     maxVisibleChars: options.maxVisibleChars ?? 0,
     fullWidth: options.fullWidth ?? false,
@@ -842,8 +851,11 @@ export function textArea(
     focused?: boolean;
     label?: string;
     placeholder?: string;
-    /** Visible rows of editing area; default 5. */
+    /** Visible rows of editing area; default 5. With `maxRows`, the
+     * fewest rows the box shows. */
     rows?: number;
+    /** Grow with the text up to this many rows, then scroll. */
+    maxRows?: number;
     /** Visible column width; `0` = use panel width. */
     fieldWidth?: number;
     fullWidth?: boolean;
