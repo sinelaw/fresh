@@ -24,7 +24,7 @@ pub use slots::{
     default_slot_providers, ExplorerLeadingSlotPayload, ExplorerSlotContext, ExplorerSlotProviders,
     ExplorerSlotResolution, ExplorerSlotResolver, ExplorerTooltipSummary,
     ExplorerTrailingSlotPayload, ExplorerTrailingSlotResolution, FileExplorerSlotOverrideCache,
-    COMPATIBILITY_TRAILING_SLOT_HIT_WIDTH, DEFAULT_LEADING_SLOT_MIN_WIDTH,
+    DEFAULT_LEADING_SLOT_MIN_WIDTH,
 };
 pub use tree::FileTree;
 pub use view::{FileTreeView, SortMode};

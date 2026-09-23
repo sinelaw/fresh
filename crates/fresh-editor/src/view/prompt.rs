@@ -559,31 +559,6 @@ impl Prompt {
         self.edit.move_end();
     }
 
-    /// Select next suggestion
-    pub fn select_next_suggestion(&mut self) {
-        if !self.suggestions.is_empty() {
-            // Keyboard navigation re-engages keep-selection-visible scrolling.
-            self.manual_scroll = false;
-            self.selected_suggestion = Some(match self.selected_suggestion {
-                Some(idx) if idx + 1 < self.suggestions.len() => idx + 1,
-                Some(_) => 0, // Wrap to start
-                None => 0,
-            });
-        }
-    }
-
-    /// Select previous suggestion
-    pub fn select_prev_suggestion(&mut self) {
-        if !self.suggestions.is_empty() {
-            self.manual_scroll = false;
-            self.selected_suggestion = Some(match self.selected_suggestion {
-                Some(0) => self.suggestions.len() - 1, // Wrap to end
-                Some(idx) => idx - 1,
-                None => 0,
-            });
-        }
-    }
-
     /// Scroll the result list by `delta` rows without moving the selection
     /// (mouse wheel over the Live Grep overlay results pane, issue #2119).
     /// `visible` is the number of result rows currently on screen, used to
@@ -656,10 +631,6 @@ impl Prompt {
             let a = anchor.min(self.input_str().len());
             self.edit.selection_anchor = Some((0, a));
         }
-    }
-
-    pub fn get_final_input(&self) -> String {
-        self.selected_value().unwrap_or_else(|| self.edit.value())
     }
 
     /// Apply fuzzy filtering to suggestions based on current input

@@ -39,8 +39,6 @@ pub mod tabs;
 pub use crate::primitives::text_edit::TextEdit;
 #[cfg(feature = "runtime")]
 pub use expanded_menus_cache::ExpandedMenusCache;
-#[cfg(feature = "runtime")]
-pub use file_explorer::FileExplorerRenderer;
 pub use layout::point_in_rect;
 pub(crate) use menu::MenuRowStyle;
 #[cfg(feature = "runtime")]

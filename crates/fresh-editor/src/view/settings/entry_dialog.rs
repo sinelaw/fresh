@@ -43,32 +43,6 @@ fn is_simple_field_control(control: &SettingControl) -> bool {
     live::kind_edited(control)
 }
 
-/// Lay out right-aligned per-field action buttons against `right_edge`
-/// (exclusive). Returns `(action, x, width)` left to right, with a one-column
-/// gap between buttons and a one-column margin at the right edge. Shared by the
-/// renderer and the click hit-tester so their geometry can't drift.
-pub fn layout_field_action_buttons(
-    buttons: &[(FieldAction, String)],
-    right_edge: u16,
-) -> Vec<(FieldAction, u16, u16)> {
-    if buttons.is_empty() {
-        return Vec::new();
-    }
-    let widths: Vec<u16> = buttons
-        .iter()
-        .map(|(_, label)| label.chars().count() as u16)
-        .collect();
-    let gaps = buttons.len().saturating_sub(1) as u16;
-    let total: u16 = widths.iter().sum::<u16>() + gaps + 1;
-    let mut x = right_edge.saturating_sub(total);
-    let mut out = Vec::with_capacity(buttons.len());
-    for ((action, _), w) in buttons.iter().zip(widths) {
-        out.push((*action, x, w));
-        x = x.saturating_add(w + 1);
-    }
-    out
-}
-
 /// State for the entry detail dialog
 #[derive(Debug, Clone)]
 pub struct EntryDialogState {

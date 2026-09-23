@@ -830,6 +830,19 @@ becomes theme-file data. Nothing depends on either.
   The rest were sugar with no user: `Event::is_key`, `Node::on_secondary_click`
   (the gesture kind stays — it is the context menu's), `Node::child_if_some`,
   `InitCx::geometry_of`, `GeomHandle::rect_of_key`, `Commands::is_bound`.
+- **And the surfaces that migrated left their measuring behind.** Each of
+  these was the *other half* of something already deleted, kept alive by
+  nothing: `ExplorerTrailingSlotProvider::hit_test_width`, its two overrides
+  and `COMPATIBILITY_TRAILING_SLOT_HIT_WIDTH` — the trailing slot is a node,
+  and how wide it is to the pointer is its rectangle;
+  `entry_dialog::layout_field_action_buttons`, whose comment said it was
+  "shared by the renderer and the click hit-tester so their geometry can't
+  drift" when neither had existed for some time; `Popup::scroll_state` (for
+  "scrollbar rendering" the window does now) and `Popup::description_height`;
+  the prompt's own `select_next_suggestion`, `select_prev_suggestion` and
+  `get_final_input`. `FileExplorerRenderer` went too — the type was a
+  namespace around one predicate about paths, which now sits beside the row
+  that asks it.
 - The pointer's legacy walk (see *The one asymmetry*), whose members are now
   the terminal's own mouse and the multi-click detector; the markdown drag was
   its last grab and is the run's own capture.

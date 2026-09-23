@@ -768,13 +768,6 @@ impl Popup {
         self.item_count() > self.visible_height()
     }
 
-    /// Get scroll state for scrollbar rendering
-    pub fn scroll_state(&self) -> (usize, usize, usize) {
-        let total = self.item_count();
-        let visible = self.visible_height();
-        (total, visible, self.scroll_offset)
-    }
-
     /// Find the link URL at a given relative position within the popup content area.
     /// `relative_col` and `relative_row` are relative to the inner content area (after borders).
     /// Returns None if:
@@ -804,24 +797,6 @@ impl Popup {
 
         // Find the link at the column position
         line.link_at_column(relative_col).map(|s| s.to_string())
-    }
-
-    /// Get the height of the description area (including blank line separator)
-    /// Returns 0 if there is no description.
-    pub fn description_height(&self) -> u16 {
-        if let Some(desc) = &self.description {
-            let border_width = if self.bordered { 2 } else { 0 };
-            let scrollbar_reserved = 2;
-            let content_width = self
-                .width
-                .saturating_sub(border_width)
-                .saturating_sub(scrollbar_reserved) as usize;
-            let desc_vec = vec![desc.clone()];
-            let wrapped = wrap_text_lines(&desc_vec, content_width.saturating_sub(2));
-            wrapped.len() as u16 + 1 // +1 for blank line after description
-        } else {
-            0
-        }
     }
 
     /// Calculate the actual content height based on the popup content
