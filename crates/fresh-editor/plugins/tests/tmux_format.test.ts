@@ -26,6 +26,13 @@ eq(
   "plain separators split",
 );
 
+// tmux 3.7c prints the separator as the raw byte, not as `\037`.
+eq(
+  splitEscapedFields("$3\x1ftmux-claude\x1f1790193471\x1f0\x1f/home/u/clips"),
+  ["$3", "tmux-claude", "1790193471", "0", "/home/u/clips"],
+  "a raw separator byte splits",
+);
+
 // tmux doubles a literal backslash; splitting on the escape as a substring shifts fields.
 eq(
   splitEscapedFields(
