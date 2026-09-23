@@ -139,13 +139,39 @@ window, scrollbar, placement and dismissal are shared; the anchored context
 menus and the Menu panel are panels, not lists, and get their placement from
 the anchored layer and their focus return from R2.
 
+### R3 — the text area keeps its caret in view
+
+A multi-line `Text` is a `fresh_ui::List` of its wrapped rows whose selection
+is the caret's row. `List` revealed a selection through a memo that fired only
+when the selected row *changed*, once, on the build that carried it. Anything
+that left the row index alone but changed the geometry — content re-wrapping
+under an unmoved caret row, the box changing height a round trip later (the
+prompt grew itself from the plugin's `promptTextRows`), focus arriving by
+mouse with the row already "revealed" — left that one-shot answer stale, and
+the plugin's dialog-level ↑/↓ bindings (gone with R1) meant the arrow keys that
+would have re-triggered it never reached the box.
+
+- `Anchor::follow` (fresh-ui) is a **standing** reveal: it is re-applied on
+  every layout against the window's real height, and a wheel over the window
+  clears it — the reader chose where to look.
+- `List::follow_selection(token)` arms it whenever the selection or the
+  owner's token changes. The text area passes the caret's byte and the
+  document's length, so a key, typing or a paste re-arms it and a wheel wins
+  until then.
+- The text area is built in a `layout_reader` and wraps at the width layout
+  actually gives it, not the width the description arithmetic handed down.
+- `minRows` / `maxRows`: a box that grows with its text is as tall as its value
+  wraps to at that width, between the two, and scrolls past `maxRows`
+  (`kinds::text::text_area_height`). The New Workspace prompt uses it; the
+  plugin's `promptRows` / `promptTextRows` width guess is gone.
+
 ## Checklist
 
 - [x] R1 — controls get keys first; declared dialog-wide shortcuts.
 - [x] R2 — the focus key in every `widget_event`, a getter, focus returns to
       the opener; plugin state copies deleted.
 - [x] R3 — one shared pop-up; the dropdown and combo-box contracts.
-- [ ] R3 — the text area keeps its caret in view on every layout; `minRows` /
+- [x] R3 — the text area keeps its caret in view on every layout; `minRows` /
       `maxRows`.
 - [ ] R4 — unconsumed arrows move focus by screen position.
 - [ ] R5 — sizes from layout: fill-the-row `Text`, the table widget.

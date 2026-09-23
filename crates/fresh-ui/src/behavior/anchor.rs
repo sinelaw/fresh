@@ -45,6 +45,9 @@ pub(crate) enum Command {
 pub struct Anchor {
     bound: Cell<Option<ElementId>>,
     queue: RefCell<Vec<Command>>,
+    /// A standing [`Anchor::follow`] request: the index the window keeps in
+    /// view on every layout until the reader scrolls it away.
+    follow: Cell<Option<u32>>,
 }
 
 impl Anchor {
@@ -86,6 +89,31 @@ impl Anchor {
     /// distance. Nothing happens if it already is.
     pub fn reveal(&self, index: u32) {
         self.queue.borrow_mut().push(Command::Reveal(index));
+    }
+
+    /// **Keep** `index` inside the target's window — a [`Anchor::reveal`]
+    /// that is re-applied on every layout, against the window's real height,
+    /// until the reader scrolls the window themselves (a wheel over it clears
+    /// the request) or the owner asks again.
+    ///
+    /// For a caret: a one-shot reveal answers the frame it is asked on, and a
+    /// window that changes height a frame later (a box that grows with its
+    /// text) or content that re-wraps under an unchanged row can leave the
+    /// caret out of sight. Standing, the request is answered by whichever
+    /// layout is current. A wheel is the reader saying where they want to look,
+    /// so it wins until the owner's next request — the caret's next move.
+    pub fn follow(&self, index: u32) {
+        self.follow.set(Some(index));
+    }
+
+    /// Drop a standing [`Anchor::follow`] request.
+    pub fn unfollow(&self) {
+        self.follow.set(None);
+    }
+
+    /// The standing follow request, if any.
+    pub(crate) fn following(&self) -> Option<u32> {
+        self.follow.get()
     }
 
     /// Move the target's window so that the descendant carrying `key` is

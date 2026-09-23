@@ -1095,6 +1095,11 @@ impl<M: 'static> Ui<M> {
             };
             let next = (at + wheel.delta).clamp(0, limit.max(0));
             if next != at {
+                // The reader is choosing where to look: a standing follow
+                // (`Anchor::follow`) gives way until its owner asks again.
+                if let Some(a) = self.arena.get(n).and_then(|e| e.desc.anchor.clone()) {
+                    a.unfollow();
+                }
                 if let Some(node) = self.render.get_mut(r) {
                     match axis {
                         Axis::Vertical => node.data.scroll.y = next,

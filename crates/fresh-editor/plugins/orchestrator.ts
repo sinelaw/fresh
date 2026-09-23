@@ -13158,25 +13158,6 @@ function promptMaxRows(): number {
   return Math.max(formRoomy() ? PROMPT_ROWS : PROMPT_ROWS_SHORT, Math.floor((h > 0 ? h : 40) / 4));
 }
 
-// Rows the prompt's text takes, wrapped at the box's width: the panel, less
-// its frame and the box's inset and frame.
-function promptTextRows(value: string): number {
-  const w = editor.getScreenSize().width;
-  const panel = Math.floor((w > 0 ? w : 120) * FORM_WIDTH_PCT / 100);
-  const width = Math.max(10, panel - 2 - 2 - 4 - 2);
-  let rows = 0;
-  for (const line of value.split("\n")) {
-    rows += Math.max(1, Math.ceil(editor.stringWidth(line) / width));
-  }
-  return rows;
-}
-
-// The prompt box's height: its text's, between the resting size and the cap.
-function promptRows(f: NewSessionForm): number {
-  const min = formRoomy() ? PROMPT_ROWS : PROMPT_ROWS_SHORT;
-  return Math.min(promptMaxRows(), Math.max(min, promptTextRows(f.startPrompt.value)));
-}
-
 const SECTION_STYLE = { fg: "ui.menu_disabled_fg", bold: true } as const;
 const WARN_STYLE = { fg: "diagnostic.warning_fg" } as const;
 
@@ -13236,7 +13217,10 @@ function promptBox(f: NewSessionForm): WidgetSpec {
   const spec = text({
     value: takes ? f.startPrompt.value : "",
     cursorByte: f.startPrompt.cursor,
-    rows: promptRows(f),
+    // Grows with the text — the host wraps it at the box's real width — from
+    // the resting size to the cap, and scrolls (caret in view) past that.
+    rows: formRoomy() ? PROMPT_ROWS : PROMPT_ROWS_SHORT,
+    maxRows: promptMaxRows(),
     fullWidth: true,
     placeholder: takes ? editor.t("form.prompt_placeholder") : editor.t("form.prompt_none"),
     readOnly: !takes,
@@ -17322,8 +17306,6 @@ editor.on("widget_event", (e) => {
         : field === "k8s_workspace"
         ? form.k8sWorkspace
         : null;
-      // The prompt box grows with its text: re-lay-out when its height moves.
-      const promptRowsBefore = field === "start_prompt" ? promptRows(form) : 0;
       if (slot) {
         slot.value = value;
         if (typeof cursor === "number") slot.cursor = cursor;
@@ -17335,7 +17317,6 @@ editor.on("widget_event", (e) => {
         // landed — covers mouse-click focus changes (no Tab key
         // for us to intercept).
       }
-      if (field === "start_prompt" && promptRows(form) !== promptRowsBefore) renderForm();
       if (field === "project_path") {
         scheduleProjectPathReprobe();
         scheduleCompletionRefresh("project_path");

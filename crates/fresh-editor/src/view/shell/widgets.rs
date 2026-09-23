@@ -2117,6 +2117,8 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
         // it away would be a different field.
         WidgetSpec::Text {
             rows,
+            min_rows,
+            max_rows,
             label,
             value,
             key,
@@ -2151,101 +2153,136 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                 true => st.editor.flat_cursor_byte() as i32,
                 false => -1,
             };
-            let geom = std::rc::Rc::new(fmt::text_area_geom(
-                &doc,
-                caret_byte,
-                tx::selection_of(&st.editor, is_focused, (*sel_start, *sel_end)),
-                is_focused,
-                placeholder.as_deref(),
-                // A multi-line field takes the plugin's `field_width`
-                // verbatim — the rows fill the panel width themselves — and
-                // its label is its own row, so neither the form-column rule
-                // nor the gutter reserve applies. Called rather than restated
-                // for the same reason as everything else here.
-                tx::effective_text_field_width(
-                    *full_width,
-                    true,
-                    label,
+            let selection = tx::selection_of(&st.editor, is_focused, (*sel_start, *sel_end));
+            // **Wrapped at the width layout gives the box, every layout.** The
+            // rows are a fold of the value at a width, and the only width that
+            // is real is the one this node is laid out at — not the one the
+            // description arithmetic handed down, which a row sharing its
+            // width with a button, or a scrollbar gutter, makes a guess. So
+            // the block is built in a layout reader from its constraints; the
+            // description's `width` is only the fallback for an unbounded
+            // measure.
+            let (placeholder, label) = (placeholder.clone(), label.clone());
+            let (fw, fullw, gutter) = (*field_width, *full_width, cx.marker_gutter);
+            let (rows, min_rows, max_rows) = (*rows, *min_rows, *max_rows);
+            let widget_key = k.unwrap_or("").to_string();
+            let (slot, surface) = (cx.slot, cx.surface.clone());
+            let places = places_cursor(cx);
+            let block_caret = *block_caret;
+            let bar = cx.scrollbar_reveal;
+            let state_key = spec_state_key(spec);
+            let fallback_width = width;
+            fresh_ui::layout_reader(move |info: fresh_ui::LayoutInfo| {
+                let max_w = info.constraints.max_w;
+                let width = match max_w > 0 && max_w < u16::MAX {
+                    true => max_w,
+                    false => fallback_width,
+                };
+                let geom = std::rc::Rc::new(fmt::text_area_geom(
+                    &doc,
+                    caret_byte,
+                    selection,
+                    is_focused,
+                    placeholder.as_deref(),
+                    // A multi-line field takes the plugin's `field_width`
+                    // verbatim — the rows fill the panel width themselves —
+                    // and its label is its own row, so neither the
+                    // form-column rule nor the gutter reserve applies.
+                    tx::effective_text_field_width(fullw, true, &label, width as u32, fw, gutter),
                     width as u32,
-                    *field_width,
-                    cx.marker_gutter,
-                ),
-                width as u32,
-            ));
-            // **The window is padded out, because the editing region is a
-            // block.** A field asked for six rows and given a two-line
-            // document draws four blank rows under them — `text_area_row`
-            // answers for a line past the end with a padded blank, which is
-            // what keeps the focused input-bg rectangle rectangular rather
-            // than the shape of the text in it.
-            let n = geom.rows().max(*rows as usize);
-            let head = usize::from(!label.is_empty());
-            // "Selected" here means "the line the caret is on", which is what
-            // the list reveals when it moves. That is the whole of the
-            // auto-clamp the collector did by hand with a stored offset.
-            let sel = is_focused.then(|| geom.cursor_line());
-            let list = fresh_ui::List::windowed(n, |i| fresh_ui::Key::Str(i.to_string().into()), {
-                let (doc, geom) = (doc.clone(), geom.clone());
-                let widget_key = k.unwrap_or("").to_string();
-                let (slot, surface) = (cx.slot, cx.surface.clone());
-                let places = places_cursor(cx);
-                let block_caret = *block_caret;
-                move |i| {
-                    let (mut e, caret) = fmt::text_area_row(&doc, &geom, i);
-                    // A modal surface paints the caret as a reversed cell in
-                    // the row itself — there is no hardware cursor over a
-                    // modal — and the tree's own marker still goes where
-                    // `row_pieces` puts it, which is what a non-modal
-                    // surface's cursor follows.
-                    if block_caret {
-                        if let Some(b) = caret {
-                            tx::push_block_caret_overlay(&mut e, b);
+                ));
+                // **How tall the editing region is.** `rows`, as the plugin
+                // said — or, for a box that grows with its text, as many rows
+                // as the value wraps to at this width, between `min_rows` and
+                // `max_rows`, past which it scrolls.
+                let height = tx::text_area_height(rows, min_rows, max_rows, geom.rows() as u32);
+                // **The window is padded out, because the editing region is a
+                // block.** A field asked for six rows and given a two-line
+                // document draws four blank rows under them — `text_area_row`
+                // answers for a line past the end with a padded blank, which
+                // is what keeps the focused input-bg rectangle rectangular
+                // rather than the shape of the text in it.
+                let n = geom.rows().max(height as usize);
+                // "Selected" here means "the row the caret is on". The list
+                // keeps it in view on *every* layout, not just the one after it
+                // moved (`List::follow_selection`) — at this width and this
+                // height, whichever frame they arrive on — and a wheel over the
+                // box wins until the caret next moves: the token is the caret's
+                // byte and the document's length, so typing, a paste or a caret
+                // key re-arms it.
+                let sel = is_focused.then(|| geom.cursor_line());
+                let token = ((caret_byte.max(0) as u64) << 32) ^ doc.len() as u64;
+                let list =
+                    fresh_ui::List::windowed(n, |i| fresh_ui::Key::Str(i.to_string().into()), {
+                        let (doc, geom) = (doc.clone(), geom.clone());
+                        let widget_key = widget_key.clone();
+                        let surface = surface.clone();
+                        move |i| {
+                            let (mut e, caret) = fmt::text_area_row(&doc, &geom, i);
+                            // A modal surface paints the caret as a reversed
+                            // cell in the row itself — there is no hardware
+                            // cursor over a modal — and the tree's own marker
+                            // still goes where `row_pieces` puts it, which is
+                            // what a non-modal surface's cursor follows.
+                            if block_caret {
+                                if let Some(b) = caret {
+                                    tx::push_block_caret_overlay(&mut e, b);
+                                }
+                            }
+                            // Clicking any row of the editing region focuses
+                            // the field — one hit per row, stated where the
+                            // row is.
+                            let mine: Vec<((usize, usize), crate::widgets::WidgetEvent)> =
+                                match widget_key.is_empty() {
+                                    true => Vec::new(),
+                                    false => vec![(
+                                        (0, e.text.len()),
+                                        crate::widgets::WidgetEvent {
+                                            row_target: false,
+                                            context_click: false,
+                                            widget_key: widget_key.clone(),
+                                            widget_kind: "text",
+                                            payload: serde_json::json!({}),
+                                            event_type: "focus",
+                                            owner_key: None,
+                                        },
+                                    )],
+                                };
+                            match mine.is_empty() && caret.is_none() {
+                                true => entry_row(&e, &surface),
+                                false => row_pieces(
+                                    &e,
+                                    slot,
+                                    &surface,
+                                    &mine,
+                                    caret,
+                                    Fill::ToRowEnd,
+                                    places,
+                                ),
+                            }
                         }
-                    }
-                    // Clicking any row of the editing region focuses the
-                    // field — the collector's one hit per row, stated where
-                    // the row is.
-                    let mine: Vec<((usize, usize), crate::widgets::WidgetEvent)> =
-                        match widget_key.is_empty() {
-                            true => Vec::new(),
-                            false => vec![(
-                                (0, e.text.len()),
-                                crate::widgets::WidgetEvent {
-                                    row_target: false,
-                                    context_click: false,
-                                    widget_key: widget_key.clone(),
-                                    widget_kind: "text",
-                                    payload: serde_json::json!({}),
-                                    event_type: "focus",
-                                    owner_key: None,
-                                },
-                            )],
-                        };
-                    match mine.is_empty() && caret.is_none() {
-                        true => entry_row(&e, &surface),
-                        false => {
-                            row_pieces(&e, slot, &surface, &mine, caret, Fill::ToRowEnd, places)
-                        }
+                    })
+                    .focusable(false)
+                    .scrollbar_when(bar)
+                    .scrollbar_theme(bar_ink())
+                    // The rows carry their own colours — a focused field paints
+                    // its own background band per row — so the list's row states
+                    // must not paint over them.
+                    .row_theme({
+                        let plain = surface.to_string();
+                        move |_, _| plain.clone()
+                    })
+                    .selection(sel)
+                    .follow_selection(token);
+                let body = keyed(fresh_ui::ComponentExt::node(list), state_key.clone())
+                    .h(Sizing::Cells(height as u16));
+                match label.is_empty() {
+                    true => body,
+                    false => {
+                        col().children([entry_row(&fmt::text_area_label(&label), &surface), body])
                     }
                 }
             })
-            .focusable(false)
-            .scrollbar_when(cx.scrollbar_reveal)
-            .scrollbar_theme(bar_ink())
-            // The rows carry their own colours — a focused field paints its
-            // own background band per row — so the list's row states must not
-            // paint over them.
-            .row_theme({
-                let plain = cx.surface.to_string();
-                move |_, _| plain.clone()
-            });
-            let list = list.selection(sel);
-            let body = keyed(fresh_ui::ComponentExt::node(list), spec_state_key(spec))
-                .h(Sizing::Cells(*rows as u16));
-            match head {
-                0 => body,
-                _ => col().children([entry_row(&fmt::text_area_label(label), &cx.surface), body]),
-            }
         }
         // **A markdown document is a wrapped run in a viewport.** The whole
         // rendered document is one logical string (`markdown_document`, the
@@ -2538,6 +2575,8 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
             full_width,
             completions: _,
             completions_visible_rows,
+            min_rows: _,
+            max_rows: _,
             block_caret,
             sel_start,
             sel_end,
@@ -4172,6 +4211,8 @@ pub(crate) mod tests {
             full_width: false,
             completions: Vec::new(),
             completions_visible_rows: 0,
+            min_rows: 0,
+            max_rows: 0,
             block_caret: false,
             sel_start: -1,
             sel_end: -1,
@@ -4808,6 +4849,8 @@ pub(crate) mod tests {
             full_width: false,
             completions: Vec::new(),
             completions_visible_rows: 0,
+            min_rows: 0,
+            max_rows: 0,
             block_caret: false,
             sel_start: -1,
             sel_end: -1,
@@ -6518,6 +6561,8 @@ pub(crate) mod tests {
             full_width: false,
             completions: Vec::new(),
             completions_visible_rows: 0,
+            min_rows: 0,
+            max_rows: 0,
             block_caret: false,
             sel_start: -1,
             sel_end: -1,
@@ -6938,6 +6983,8 @@ pub(crate) mod tests {
             full_width: false,
             completions: Vec::new(),
             completions_visible_rows: 0,
+            min_rows: 0,
+            max_rows: 0,
             block_caret: false,
             sel_start: -1,
             sel_end: -1,
@@ -6971,6 +7018,8 @@ pub(crate) mod tests {
             full_width: false,
             completions: Vec::new(),
             completions_visible_rows: 0,
+            min_rows: 0,
+            max_rows: 0,
             block_caret: false,
             sel_start: -1,
             sel_end: -1,

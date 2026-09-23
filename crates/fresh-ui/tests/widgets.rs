@@ -1624,3 +1624,49 @@ fn a_reveal_in_a_pinned_list_counts_only_the_run() {
     ui.frame(pinned_list(&[0, 1], 10, Some(18)), FRAME);
     assert_eq!(ui.take_messages(), vec![Msg::Scrolled(11)]);
 }
+
+/// **A following list keeps its selection in view on every layout** — not
+/// only on the build that moved it. The window here shrinks a frame after the
+/// selection arrived (a box resized by its owner a beat later), which a
+/// one-shot reveal answered against the old height and then forgot. A wheel is
+/// the reader choosing where to look, and wins until the owner's token moves.
+#[test]
+fn a_following_list_keeps_its_selection_in_view_as_its_window_changes() {
+    let list = |sel: usize, token: u64, h: u16| -> Node<Msg> {
+        List::windowed(40, fresh_ui::Key::from, |i| {
+            col().child(fresh_ui::text(format!("row {i:02}")))
+        })
+        .focusable(false)
+        .selection(Some(sel))
+        .follow_selection(token)
+        .node()
+        .h(Sizing::Cells(h))
+    };
+    let frame = Size::new(20, 12);
+    let mut ui: Ui<Msg> = Ui::new();
+    let shows = |ui: &mut Ui<Msg>, sel: usize, token: u64, h: u16| {
+        let spec = ui.frame(list(sel, token, h), frame);
+        support::screen::render(spec).contains("row 20")
+    };
+
+    assert!(shows(&mut ui, 20, 1, 10), "the selection is in view");
+    // The window shrinks under an unmoved selection.
+    assert!(
+        shows(&mut ui, 20, 1, 4),
+        "and stays in view at the new height"
+    );
+    assert!(shows(&mut ui, 20, 1, 4));
+
+    // The reader wheels away: the window is theirs until the caret moves.
+    ui.dispatch(Input::Wheel {
+        pos: Point::new(2, 1),
+        delta: -10,
+        axis: Axis::Vertical,
+        mods: Mods::NONE,
+    });
+    assert!(!shows(&mut ui, 20, 1, 4), "a wheel is not fought");
+    assert!(
+        shows(&mut ui, 20, 2, 4),
+        "a move of the caret follows again"
+    );
+}
