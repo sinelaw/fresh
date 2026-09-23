@@ -560,29 +560,25 @@ impl Editor {
             ?outcome,
             "dispatch_widget_panel_key: decision"
         );
-        // **1. The focused control.** It is offered the key in its own
-        // vocabulary — exactly the key, never one the router masked a
-        // modifier off (Ctrl+Enter is not Enter to a text area) — and Esc,
-        // which closes a control's own pop-up before it closes the panel.
-        // `Consumed` ends the key here; `Pass` and `PassAfter` go on.
+        // **1. The focused control.** It is offered every key exactly as
+        // typed — never one the router masked a modifier off (Ctrl+Enter is
+        // not Enter to a text area) — a printable character as text, and
+        // anything else as the key itself: Esc, which closes a control's own
+        // pop-up before it closes the panel, and a chord like Ctrl+C, which a
+        // read-only document copies with. `Consumed` ends the key here;
+        // `Pass` and `PassAfter` go on.
         use crate::widgets::kinds::KeyDisposition;
-        use crossterm::event::{KeyCode, KeyModifiers};
-        let esc = code == KeyCode::Esc && modifiers.is_empty();
+        let exact = crate::input::keybindings::KeySeq::one(crate::input::keybindings::Key::new(
+            code, modifiers,
+        ));
         let offered = match &outcome {
-            WidgetKeyOutcome::SmartKey(k) if router::widget_key_is_exact(k, code, modifiers) => {
-                Some(self.widget_control_key(&panel_key, k))
-            }
             WidgetKeyOutcome::TextChar(ch) => {
                 Some(self.handle_widget_text_char(&panel_key, &ch.to_string()))
             }
-            _ if esc => Some(self.widget_control_key(
-                &panel_key,
-                &crate::input::keybindings::KeySeq::one(crate::input::keybindings::Key::new(
-                    KeyCode::Esc,
-                    KeyModifiers::NONE,
-                )),
-            )),
-            _ => None,
+            WidgetKeyOutcome::SmartKey(k) if router::widget_key_is_exact(k, code, modifiers) => {
+                Some(self.widget_control_key(&panel_key, k))
+            }
+            _ => Some(self.widget_control_key(&panel_key, &exact)),
         };
         if offered == Some(KeyDisposition::Consumed) {
             return true;
@@ -610,7 +606,9 @@ impl Editor {
         // **3. The panel's own defaults.** What the control already had its
         // turn at is not offered to it again.
         match outcome {
-            WidgetKeyOutcome::SmartKey(key) if offered.is_some() => {
+            WidgetKeyOutcome::SmartKey(key)
+                if router::widget_key_is_exact(&key, code, modifiers) =>
+            {
                 self.widget_panel_default_key(&panel_key, &key);
                 true
             }
