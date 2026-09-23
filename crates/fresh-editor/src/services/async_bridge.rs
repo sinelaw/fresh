@@ -447,6 +447,16 @@ pub enum AsyncMessage {
         params: Option<Value>,
     },
 
+    /// LSP server notification (server -> client) whose method the editor
+    /// does not handle itself (e.g. clangd's `textDocument/clangd.fileStatus`).
+    /// Forwarded to plugins via the `lsp/custom_notification` hook.
+    LspCustomNotification {
+        language: String,
+        server_name: String,
+        method: String,
+        params: Option<Value>,
+    },
+
     /// Response for a plugin-initiated LSP request
     PluginLspResponse {
         language: String,

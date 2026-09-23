@@ -74,3 +74,19 @@ for the full window model.
 | `terminal_output` | `{ terminal_id, data }` | A terminal produced output. Useful for plugins watching agent activity in background sessions. |
 | `terminal_exit` | `{ terminal_id, exit_code }` | A terminal's child process exited. `exit_code` may be `null` on signal-terminated processes. |
 | `path_changed` | `{ handle, path, kind }` | A path watched via `editor.watchPath(...)` changed. `kind` is `"create"`, `"modify"`, or `"remove"`. |
+
+## LSP events
+
+| Event | Payload | When it fires |
+|-------|---------|---------------|
+| `lsp_server_request` | `{ language, method, server_command, params }` | A language server sent a request (server -> client) with a method the editor does not handle itself. `params` is a JSON **string** (or `null`); the editor answers the server with `null`. |
+| `lsp/custom_notification` | `{ language, server_name, method, params }` | A language server sent a notification with a method the editor does not handle itself, e.g. clangd's `textDocument/clangd.fileStatus` or `$/memoryUsage`. `params` is the parsed JSON value (object, array, or `null`). `server_name` distinguishes several servers configured for one language. |
+
+```typescript
+globalThis.onLspNotification = (e) => {
+  if (e.method === "textDocument/clangd.fileStatus" && e.params) {
+    editor.setStatus(`clangd: ${e.params.status}`);
+  }
+};
+editor.on("lsp/custom_notification", "onLspNotification");
+```

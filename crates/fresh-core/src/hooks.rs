@@ -360,6 +360,22 @@ pub enum HookArgs {
         params: Option<String>,
     },
 
+    /// LSP server notification (server -> client) with a method the editor
+    /// does not handle itself, e.g. `textDocument/clangd.fileStatus` or
+    /// `$/memoryUsage`. Fired as the `lsp/custom_notification` hook.
+    LspCustomNotification {
+        /// The language of the server that sent the notification
+        language: String,
+        /// The name of the server that sent it (disambiguates multiple
+        /// servers configured for one language)
+        server_name: String,
+        /// The JSON-RPC method name
+        method: String,
+        /// The notification parameters as a JSON value (not a string);
+        /// `null` when the server sent none
+        params: Option<serde_json::Value>,
+    },
+
     /// Viewport changed (scrolled or resized)
     ViewportChanged {
         split_id: SplitId,
@@ -895,6 +911,33 @@ mod tests {
         .unwrap();
         assert_eq!(json["uri"], "file:///x.rs");
         assert_eq!(json["count"], 7);
+    }
+
+    /// Custom LSP notification params reach plugins as a JSON object (so
+    /// `payload.params.status` works), not as a pre-serialized string like
+    /// `LspServerRequest` uses; absent params become `null`.
+    #[test]
+    fn hook_args_to_json_lsp_custom_notification_params_are_an_object() {
+        let json = hook_args_to_json(&HookArgs::LspCustomNotification {
+            language: "cpp".into(),
+            server_name: "clangd".into(),
+            method: "textDocument/clangd.fileStatus".into(),
+            params: Some(serde_json::json!({"uri": "file:///a.cpp", "status": "ready"})),
+        })
+        .unwrap();
+        assert_eq!(json["language"], "cpp");
+        assert_eq!(json["server_name"], "clangd");
+        assert_eq!(json["method"], "textDocument/clangd.fileStatus");
+        assert_eq!(json["params"]["status"], "ready");
+
+        let json = hook_args_to_json(&HookArgs::LspCustomNotification {
+            language: "cpp".into(),
+            server_name: "clangd".into(),
+            method: "$/memoryUsage".into(),
+            params: None,
+        })
+        .unwrap();
+        assert!(json["params"].is_null());
     }
 
     #[test]
