@@ -6,27 +6,24 @@ use crate::view::theme::Theme;
 use std::collections::HashSet;
 use std::path::PathBuf;
 
-/// What is left of the old renderer: one predicate `describe_row` needs.
+/// Whether anything unsaved lives under this folder.
 ///
-/// `render`, `render_loading`, `panel_title`, `panel_chrome_styles`,
+/// All that is left of `FileExplorerRenderer`, whose `render`,
+/// `render_loading`, `panel_title`, `panel_chrome_styles`,
 /// `render_close_button`, `build_node_line` and `trailing_slot_screen_bounds`
-/// are all gone — the panel is a native region in the shell's tree, and the
-/// loading placeholder is `Body::Loading` in the same description rather than
-/// a second copy of the chrome kept in step by hand.
-pub struct FileExplorerRenderer;
-
-impl FileExplorerRenderer {
-    pub(crate) fn folder_has_modified_files(
-        folder_path: &PathBuf,
-        files_with_unsaved_changes: &HashSet<PathBuf>,
-    ) -> bool {
-        for modified_file in files_with_unsaved_changes {
-            if modified_file.starts_with(folder_path) {
-                return true;
-            }
+/// went when the panel became a native region in the shell's tree. The type
+/// outlived them as a namespace around this one predicate, which is a
+/// function about paths and belongs beside the row that asks it.
+fn folder_has_modified_files(
+    folder_path: &PathBuf,
+    files_with_unsaved_changes: &HashSet<PathBuf>,
+) -> bool {
+    for modified_file in files_with_unsaved_changes {
+        if modified_file.starts_with(folder_path) {
+            return true;
         }
-        false
     }
+    false
 }
 
 /// Everything one row needs to describe itself.
@@ -89,7 +86,7 @@ pub fn describe_row(d: RowDesc<'_>) -> Option<crate::view::shell::file_explorer:
     };
 
     let has_unsaved = if node.is_dir() {
-        FileExplorerRenderer::folder_has_modified_files(&node.entry.path, d.unsaved)
+        folder_has_modified_files(&node.entry.path, d.unsaved)
     } else {
         d.unsaved.contains(&node.entry.path)
     };
