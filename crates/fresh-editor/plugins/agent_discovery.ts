@@ -193,6 +193,8 @@ function buildDiscoverSpec(): WidgetSpec {
         }),
         "⏎",
       ),
+      spacer(2),
+      button(`+ ${editor.t("discover.add_machine")}`, { key: "discover-add-machine" }),
     ),
     row(
       text({
@@ -332,6 +334,12 @@ function openDiscoverDialog(): void {
     grouping: "project",
     scans: null,
   };
+  mountDiscoverPanel();
+  discoverPanel!.setFocusKey("discover-scan");
+  loadDiscoverCache();
+}
+
+function mountDiscoverPanel(): void {
   discoverPanel = new FloatingWidgetPanel();
   discoverPanel.mount(buildDiscoverSpec(), {
     widthPct: 70,
@@ -345,8 +353,36 @@ function openDiscoverDialog(): void {
   // and centred there. The panel keeps its own size.
   editor.floatingPanelControl(discoverPanel.id(), "fullscreen", 1);
   editor.setEditorMode(DISCOVER_MODE);
-  discoverPanel.setFocusKey("discover-scan");
-  loadDiscoverCache();
+}
+
+// `+ Add machine`: set the dialog aside for Add Machine and come back to it,
+// on the new machine when one was saved.
+function addMachineFromDiscover(): void {
+  const h = host();
+  const st = discoverState;
+  if (!h || !st) return;
+  if (st.scanning) {
+    discoverStop?.();
+    discoverStop = null;
+    st.scanning = false;
+    st.scanToken = null;
+  }
+  discoverPanel?.unmount();
+  discoverPanel = null;
+  editor.setEditorMode(null);
+  h.addMachine((savedKey) => {
+    if (discoverState !== st) return;
+    mountDiscoverPanel();
+    const at = savedKey === null
+      ? -1
+      : scanTargets().findIndex((t) => t.key === `machine:${savedKey}`);
+    if (at >= 0) {
+      st.machineIndex = at;
+      st.note = "";
+    }
+    discoverPanel!.setFocusKey(at >= 0 ? "discover-scan" : "discover-add-machine");
+    loadDiscoverCache();
+  });
 }
 
 function closeDiscoverDialog(): void {
@@ -628,6 +664,10 @@ function handleDiscoverEvent(e: WidgetEvt): void {
     }
     if (e.widget_key === "discover-scan") {
       void runDiscoverScan();
+      return;
+    }
+    if (e.widget_key === "discover-add-machine") {
+      addMachineFromDiscover();
       return;
     }
     if (e.widget_key === "discover-close") {

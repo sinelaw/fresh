@@ -29,6 +29,9 @@ export interface DiscoveryHost {
   resumeArgv(agent: string, id: string): { argv: string[]; exact: boolean } | null;
   /** Open the New Workspace form on `seed`, with these fields filled. */
   openWorkspaceForm(seed: FormSeed, prefill: { projectPath: string; cmd: string }): void;
+  /** Open Add Machine; `done` gets the saved machine's id, or null after a
+   *  cancel. The dock stays handed over throughout. */
+  addMachine(done: (savedKey: string | null) => void): void;
   /** Hand the dock's focus to a dialog, and take it back. */
   yieldDock(): void;
   restoreDock(): void;

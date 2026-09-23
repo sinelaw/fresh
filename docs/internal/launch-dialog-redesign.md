@@ -411,6 +411,11 @@ Pod for `Kubernetes…`) go directly under the dropdowns, followed by
 `Remember this machine`. A saved machine or `~/.ssh/config` host shows no
 connection rows.
 
+**Superseded** by orchestrator-ux-redesign.md §5.5: the Machine control now
+lists only Local, the saved machines and Devcontainer, so there are no
+connection rows and no `Remember this machine`. A `+ Add machine…` button
+under the control opens Add Machine instead.
+
 ### 4.9 Agent variants
 
 ```

@@ -894,6 +894,33 @@ Three routes reach a configured machine: `+ New` with the Machine dropdown
 defaulting to the last one used, `⋯ ▸ Machines…` then `⏎` on a row, or
 typing the machine's name into the Machine field, which filters.
 
+### 5.5 Only saved machines (supersedes parts of §3.8, §4, §5.1–5.2)
+
+Every machine picker used to build its own list: the Machines dialog showed
+saved machines and `~/.ssh/config` hosts, New Workspace added `Other host…`
+and `Kubernetes…`, the clone picker added config hosts, and Import sessions
+showed only saved machines and open windows. A host visible in one dialog
+was missing from the next.
+
+One rule now: **a workspace runs only on a saved machine, and the Machines
+dialog is where a machine is added.**
+
+- The Machines dialog still lists the `~/.ssh/config` hosts that are not
+  saved, marked `~/.ssh/config · not added`. On such a row the primary
+  action is `Add as machine` (Add Machine, prefilled from the entry, target
+  = the alias so ssh keeps applying the whole `Host` block); `Test` works,
+  `New workspace here` does not.
+- Every other machine picker (New Workspace, Repositories, Import sessions)
+  lists Local, the saved machines and (New Workspace only) the
+  devcontainer. There is no `Other host…`, no `Kubernetes…` and no
+  `Remember this machine`.
+- Each of those pickers has a `+ Add machine…` button beside it. It opens
+  Add Machine over the dialog, and Save comes back to the dialog with the
+  new machine picked.
+- Rejoining a discovered session whose window is on a host that is not a
+  saved machine opens Add Machine prefilled with that host or pod first;
+  cancelling it launches nothing.
+
 ---
 
 ## 6. Naming
@@ -1011,11 +1038,12 @@ dialog is one fixed size: each section is reserved at its tallest shape
 and padded, so changing `Launch in`, `Machine` or the agent never moves
 a row.
 
-SSH host picker (§4): `Host` is a dropdown over the aliases of
-`~/.ssh/config` (multi-alias `Host` lines, `Include` followed,
+SSH host picker (§4): `Add Machine`'s `Host` is a dropdown over the
+aliases of `~/.ssh/config` (multi-alias `Host` lines, `Include` followed,
 wildcard patterns dropped, first value wins) with the resolved
 `user@hostname:port` as its hint, and `Other host…` last to reveal the
-manual fields; with no config the manual fields show alone.
+manual fields; with no config the manual fields show alone. New Workspace
+no longer reads the config itself (§5.5).
 
 Machines (§5): a registry at `<data dir>/orchestrator/machines.json`
 (never `~/.ssh/config`); `Add Machine` / `Edit Machine` with a `Kind`
@@ -1023,10 +1051,9 @@ radio, `[ Test ]` (ssh `BatchMode` with an 8 s timeout, or `kubectl
 get pods`) whose result is a `✓ connected · uname · git · cores` or
 `✗ …` label with a hint, and `[ Save anyway ]` after a failure; the
 `Machines` list with `[ Add ] [ New workspace ] [ Edit ] [ Test ]
-[ Remove ]`, which also lists the hosts `~/.ssh/config` names (launch
-on one, test it, or save it as a machine of its own; not removable —
-the file is not Fresh's); `Add Machine` offers those hosts in a `Host`
-picker that fills Name and Target from the alias; and the dialogs'
-`Machine` control (Local, saved machines, ssh-config hosts, `Other
-host…`, `Kubernetes…`, Devcontainer, `Add machine…`) carries
-`[v] Remember this machine as [ name ]` under a manual host.
+[ Remove ]`, which also lists the hosts `~/.ssh/config` names that are
+not saved yet (test one, or `Add as machine`; not removable — the file
+is not Fresh's); `Add Machine` offers those hosts in a `Host` picker that
+fills Name and Target from the alias; and every dialog's `Machine` control
+lists only Local and the saved machines (plus Devcontainer in New
+Workspace), with `+ Add machine…` beside it (§5.5).

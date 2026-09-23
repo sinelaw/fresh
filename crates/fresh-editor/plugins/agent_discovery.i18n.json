@@ -33,7 +33,8 @@
     "discover.btn_close": "Затваряне",
     "discover.status_prefix": "Оркестратор: %{msg}",
     "discover.absent": "Няма на тази машина (%{count})",
-    "discover.not_installed": "не е инсталиран"
+    "discover.not_installed": "не е инсталиран",
+    "discover.add_machine": "Добавяне на машина…"
   },
   "cs": {
     "discover.scanning": "Hledání relací agentů…",
@@ -69,7 +70,8 @@
     "discover.btn_close": "Zavřít",
     "discover.status_prefix": "Import relací: %{msg}",
     "discover.absent": "Není na tomto stroji (%{count})",
-    "discover.not_installed": "není nainstalováno"
+    "discover.not_installed": "není nainstalováno",
+    "discover.add_machine": "Přidat stroj…"
   },
   "de": {
     "discover.scanning": "Suche nach Agent-Sitzungen…",
@@ -105,7 +107,8 @@
     "discover.btn_close": "Schließen",
     "discover.status_prefix": "Sitzungen importieren: %{msg}",
     "discover.absent": "Nicht auf dieser Maschine (%{count})",
-    "discover.not_installed": "nicht installiert"
+    "discover.not_installed": "nicht installiert",
+    "discover.add_machine": "Maschine hinzufügen…"
   },
   "en": {
     "discover.scanning": "Scanning for agent sessions…",
@@ -141,7 +144,8 @@
     "discover.btn_close": "Close",
     "discover.status_prefix": "Import sessions: %{msg}",
     "discover.absent": "Not on this machine (%{count})",
-    "discover.not_installed": "not installed"
+    "discover.not_installed": "not installed",
+    "discover.add_machine": "Add machine…"
   },
   "es": {
     "discover.scanning": "Buscando sesiones de agente…",
@@ -177,7 +181,8 @@
     "discover.btn_close": "Cerrar",
     "discover.status_prefix": "Importar sesiones: %{msg}",
     "discover.absent": "No está en esta máquina (%{count})",
-    "discover.not_installed": "no instalado"
+    "discover.not_installed": "no instalado",
+    "discover.add_machine": "Añadir máquina…"
   },
   "fr": {
     "discover.scanning": "Recherche de sessions d’agent…",
@@ -213,7 +218,8 @@
     "discover.btn_close": "Fermer",
     "discover.status_prefix": "Importer des sessions : %{msg}",
     "discover.absent": "Absent de cette machine (%{count})",
-    "discover.not_installed": "non installé"
+    "discover.not_installed": "non installé",
+    "discover.add_machine": "Ajouter une machine…"
   },
   "it": {
     "discover.scanning": "Ricerca di sessioni agente…",
@@ -249,7 +255,8 @@
     "discover.btn_close": "Chiudi",
     "discover.status_prefix": "Importa sessioni: %{msg}",
     "discover.absent": "Non su questa macchina (%{count})",
-    "discover.not_installed": "non installato"
+    "discover.not_installed": "non installato",
+    "discover.add_machine": "Aggiungi macchina…"
   },
   "ja": {
     "discover.scanning": "エージェントセッションを検索中…",
@@ -285,7 +292,8 @@
     "discover.btn_close": "閉じる",
     "discover.status_prefix": "セッションをインポート: %{msg}",
     "discover.absent": "このマシンにはありません (%{count})",
-    "discover.not_installed": "未インストール"
+    "discover.not_installed": "未インストール",
+    "discover.add_machine": "マシンを追加…"
   },
   "ko": {
     "discover.scanning": "에이전트 세션을 검색하는 중…",
@@ -321,7 +329,8 @@
     "discover.btn_close": "닫기",
     "discover.status_prefix": "세션 가져오기: %{msg}",
     "discover.absent": "이 머신에 없음 (%{count})",
-    "discover.not_installed": "설치되지 않음"
+    "discover.not_installed": "설치되지 않음",
+    "discover.add_machine": "머신 추가…"
   },
   "pt-BR": {
     "discover.scanning": "Procurando sessões de agente…",
@@ -357,7 +366,8 @@
     "discover.btn_close": "Fechar",
     "discover.status_prefix": "Importar sessões: %{msg}",
     "discover.absent": "Não está nesta máquina (%{count})",
-    "discover.not_installed": "não instalado"
+    "discover.not_installed": "não instalado",
+    "discover.add_machine": "Adicionar máquina…"
   },
   "ru": {
     "discover.scanning": "Поиск сессий агентов…",
@@ -393,7 +403,8 @@
     "discover.btn_close": "Закрыть",
     "discover.status_prefix": "Импорт сессий: %{msg}",
     "discover.absent": "Нет на этой машине (%{count})",
-    "discover.not_installed": "не установлен"
+    "discover.not_installed": "не установлен",
+    "discover.add_machine": "Добавить машину…"
   },
   "th": {
     "discover.scanning": "กำลังค้นหาเซสชันเอเจนต์…",
@@ -429,7 +440,8 @@
     "discover.btn_close": "ปิด",
     "discover.status_prefix": "นำเข้าเซสชัน: %{msg}",
     "discover.absent": "ไม่มีในเครื่องนี้ (%{count})",
-    "discover.not_installed": "ไม่ได้ติดตั้ง"
+    "discover.not_installed": "ไม่ได้ติดตั้ง",
+    "discover.add_machine": "เพิ่มเครื่อง…"
   },
   "uk": {
     "discover.scanning": "Пошук сесій агентів…",
@@ -465,7 +477,8 @@
     "discover.btn_close": "Закрити",
     "discover.status_prefix": "Імпорт сеансів: %{msg}",
     "discover.absent": "Немає на цій машині (%{count})",
-    "discover.not_installed": "не встановлено"
+    "discover.not_installed": "не встановлено",
+    "discover.add_machine": "Додати машину…"
   },
   "vi": {
     "discover.scanning": "Đang tìm phiên tác nhân…",
@@ -501,7 +514,8 @@
     "discover.btn_close": "Đóng",
     "discover.status_prefix": "Nhập phiên: %{msg}",
     "discover.absent": "Không có trên máy này (%{count})",
-    "discover.not_installed": "chưa cài đặt"
+    "discover.not_installed": "chưa cài đặt",
+    "discover.add_machine": "Thêm máy…"
   },
   "zh-CN": {
     "discover.scanning": "正在查找代理会话…",
@@ -537,6 +551,7 @@
     "discover.btn_close": "关闭",
     "discover.status_prefix": "导入会话：%{msg}",
     "discover.absent": "此机器上没有 (%{count})",
-    "discover.not_installed": "未安装"
+    "discover.not_installed": "未安装",
+    "discover.add_machine": "添加机器…"
   }
 }

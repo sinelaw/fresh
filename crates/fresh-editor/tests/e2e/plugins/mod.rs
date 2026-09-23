@@ -55,6 +55,7 @@ pub mod lsp_navigation;
 pub mod markdown_source;
 pub mod orchestrator_attach_worktree;
 pub mod orchestrator_discover_sessions;
+pub mod orchestrator_machines;
 pub mod orchestrator_new_dialog;
 pub mod orchestrator_new_session_renders;
 pub mod orchestrator_open_cross_project;
