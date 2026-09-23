@@ -434,6 +434,14 @@ fn toolbar_band(c: &Card) -> Node<UiMsg> {
         .key(region_key(CardRegion::Toolbar))
         .h(Sizing::Cells(c.title_row as u16));
     };
+    // **An open dropdown's list keeps the arrows.** Up/Down on a focused
+    // toolbar control step the results, except while that control is a
+    // dropdown with its option list up: there they move through the list,
+    // as they do in any panel.
+    let list_open = matches!(
+        i.states.get(&i.focus_key),
+        Some(crate::widgets::WidgetInstanceState::Dropdown { open: true, .. })
+    );
     let body = fresh_ui::layout_reader(move |info: fresh_ui::LayoutInfo| {
         let inner_w = info.constraints.max_w.max(1);
         super::widgets::node(
@@ -459,13 +467,13 @@ fn toolbar_band(c: &Card) -> Node<UiMsg> {
         )
         .w(Sizing::Cells(inner_w))
     });
-    let to_input: super::panel::Capture = Rc::new(|e: &Event| {
+    let to_input: super::panel::Capture = Rc::new(move |e: &Event| {
         let k = e.key?;
         let input_key = match k.code {
             fresh_ui::KeyCode::Up
             | fresh_ui::KeyCode::Down
             | fresh_ui::KeyCode::PageUp
-            | fresh_ui::KeyCode::PageDown => true,
+            | fresh_ui::KeyCode::PageDown => !list_open,
             // Space activates the focused control; every other character
             // types into the query.
             fresh_ui::KeyCode::Char(ch) => ch != ' ',
@@ -594,6 +602,7 @@ mod tests {
                 indeterminate: false,
                 label_first: false,
                 label_width: 0,
+                mnemonic: None,
                 key: Some(format!("t{i}")),
             })
             .collect();

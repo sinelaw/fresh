@@ -160,7 +160,7 @@ fn test_live_grep_buffers_scope_finds_unmodified_open_buffer() {
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
     harness
-        .wait_until(|h| h.screen_to_string().contains("Search in:"))
+        .wait_until(|h| h.screen_to_string().contains("Scope "))
         .unwrap();
 
     // Narrow to Buffers only: turn off Files (Alt+L) and Terminals (Alt+T),
@@ -230,7 +230,7 @@ fn live_grep_folds_case_until_the_case_toggle_says_otherwise() {
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
     harness
-        .wait_until(|h| h.screen_to_string().contains("Search in:"))
+        .wait_until(|h| h.screen_to_string().contains("Scope "))
         .unwrap();
 
     // The toolbar offers the toggle, and it starts off.
@@ -320,7 +320,7 @@ fn test_live_grep_preview_highlights_query_matches() {
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
     harness
-        .wait_until(|h| h.screen_to_string().contains("Search in:"))
+        .wait_until(|h| h.screen_to_string().contains("Scope "))
         .unwrap();
 
     // Buffers only: drop Files (Alt+L) and Terminals (Alt+T).
@@ -1370,7 +1370,7 @@ fn test_live_grep_toolbar_is_on_the_prompts_ring() {
     // The plugin sets the toolbar after the prompt opens; wait for the
     // described band to show its first row.
     harness
-        .wait_until(|h| h.screen_to_string().contains("Search in:"))
+        .wait_until(|h| h.screen_to_string().contains("Scope "))
         .unwrap();
 
     // The `Files` toggle is the first control on the ring. Sample its label
@@ -1417,4 +1417,78 @@ fn test_live_grep_toolbar_is_on_the_prompts_ring() {
     harness
         .wait_until(|h| h.screen_to_string().contains("Live grep: hel"))
         .expect("typing after Down edits the query");
+}
+
+/// The provider dropdown in the toolbar: while its option list is up the
+/// arrows stay with the list (rather than stepping the results, which is
+/// what they do on any other toolbar control), and Esc closes only the list
+/// — the overlay stays open until a second Esc.
+#[test]
+fn test_live_grep_provider_dropdown_keeps_its_keys_while_open() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project_root");
+    fs::create_dir(&project_root).unwrap();
+    let plugins_dir = project_root.join("plugins");
+    fs::create_dir(&plugins_dir).unwrap();
+    copy_plugin_lib(&plugins_dir);
+    copy_plugin(&plugins_dir, "live_grep");
+    let file = project_root.join("buf.txt");
+    fs::write(&file, "hello world\n").unwrap();
+
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(120, 30, Default::default(), project_root)
+            .unwrap();
+    harness.open_file(&file).unwrap();
+    harness.render().unwrap();
+
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text("Live Grep").unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Live Grep"))
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| {
+            h.screen_to_string().contains("Provider ") && h.screen_to_string().contains("▼]")
+        })
+        .expect("the provider dropdown is in the toolbar");
+
+    // Shift+Tab from the input walks the ring backwards onto its last
+    // control, the dropdown; Enter opens the list.
+    harness
+        .send_key(KeyCode::BackTab, KeyModifiers::SHIFT)
+        .unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("▲]"))
+        .expect("Enter opens the provider list");
+
+    // Down moves within the list; it does not hand the keyboard back to the
+    // input (which would close the list).
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    assert!(
+        harness.screen_to_string().contains("▲]"),
+        "Down keeps the list open; screen:\n{}",
+        harness.screen_to_string()
+    );
+
+    // Esc closes the list and nothing else.
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("▼]"))
+        .expect("Esc closes the provider list");
+    assert!(
+        harness.screen_to_string().contains("Scope "),
+        "the overlay stays open after the first Esc; screen:\n{}",
+        harness.screen_to_string()
+    );
 }

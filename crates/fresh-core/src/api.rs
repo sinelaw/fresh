@@ -2430,6 +2430,12 @@ pub enum WidgetSpec {
         /// before this field was read on that path it stayed flush left.
         #[serde(default)]
         label_width: u32,
+        /// The keyboard accelerator's letter, underlined where it first
+        /// appears in `label` (case-insensitively) — the classic menu-bar
+        /// mnemonic, so `Alt+L` reads as the `l` in `Files`. Absent, or a
+        /// letter the label does not contain, underlines nothing.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        mnemonic: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         key: Option<String>,
     },

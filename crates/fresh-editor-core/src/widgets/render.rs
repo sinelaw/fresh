@@ -1236,6 +1236,41 @@ pub fn render_toggle(
     }
 }
 
+/// Underline a control's accelerator letter inside its rendered `entry`.
+///
+/// `label` must be the entry's trailing text (a chip-first toggle ends in
+/// its label); the first case-insensitive occurrence of `mnemonic` there is
+/// underlined and, unless the control is focused (whose band already sets
+/// the colours), drawn in the keybinding-hint colour. A letter the label
+/// does not contain leaves the entry untouched.
+pub fn apply_mnemonic(entry: &mut TextPropertyEntry, label: &str, mnemonic: &str, focused: bool) {
+    let Some(want) = mnemonic.chars().next() else {
+        return;
+    };
+    if !entry.text.ends_with(label) {
+        return;
+    }
+    let label_start = entry.text.len() - label.len();
+    let Some((at, ch)) = label
+        .char_indices()
+        .find(|(_, c)| c.to_lowercase().eq(want.to_lowercase()))
+    else {
+        return;
+    };
+    let start = label_start + at;
+    entry.inline_overlays.push(InlineOverlay {
+        start,
+        end: start + ch.len_utf8(),
+        style: OverlayOptions {
+            fg: (!focused).then(|| OverlayColorSpec::theme_key(KEY_HELP_KEY_FG)),
+            underline: true,
+            ..Default::default()
+        },
+        properties: Default::default(),
+        unit: OffsetUnit::Byte,
+    });
+}
+
 /// Format a `Number` widget's value for display.
 ///
 /// `integer` truncates to a whole number; `percent` shows
@@ -4171,6 +4206,35 @@ pub mod tests {
         assert!(entry.inline_overlays[1].style.bold);
     }
 
+    #[test]
+    fn mnemonic_underlines_first_matching_letter_of_label() {
+        let mut entry = render_toggle(false, "Files", false, false, 0, 40);
+        apply_mnemonic(&mut entry, "Files", "l", false);
+        let o = entry.inline_overlays.last().expect("mnemonic overlay");
+        assert_eq!(&entry.text[o.start..o.end], "l");
+        assert!(o.style.underline);
+        assert!(
+            o.style.fg.is_some(),
+            "unfocused mnemonic takes the hint colour"
+        );
+
+        // Case-insensitive, and the focused band's colours are left alone.
+        let mut entry = render_toggle(true, "Ignored", true, false, 0, 40);
+        let before = entry.inline_overlays.len();
+        apply_mnemonic(&mut entry, "Ignored", "i", true);
+        assert_eq!(entry.inline_overlays.len(), before + 1);
+        let o = entry.inline_overlays.last().unwrap();
+        assert_eq!(&entry.text[o.start..o.end], "I");
+        assert!(o.style.fg.is_none());
+    }
+
+    #[test]
+    fn mnemonic_absent_from_label_underlines_nothing() {
+        let mut entry = render_toggle(false, "Ignored", false, false, 0, 40);
+        apply_mnemonic(&mut entry, "Ignored", "h", false);
+        assert!(entry.inline_overlays.is_empty());
+    }
+
     // -------------------------------------------------------------
     // Hit-area tests
     // -------------------------------------------------------------
@@ -4911,6 +4975,7 @@ pub mod tests {
                     indeterminate: false,
                     label_first: false,
                     label_width: 0,
+                    mnemonic: None,
                     checked: false,
                     label: "T".into(),
                     focused: false,
@@ -4997,6 +5062,7 @@ pub mod tests {
                     indeterminate: false,
                     label_first: false,
                     label_width: 0,
+                    mnemonic: None,
                     checked: false,
                     label: "T".into(),
                     focused: false,

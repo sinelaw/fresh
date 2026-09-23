@@ -1611,6 +1611,13 @@ type WidgetSpec = {
 	* before this field was read on that path it stayed flush left.
 	*/
 	labelWidth: number;
+	/**
+	* The keyboard accelerator's letter, underlined where it first
+	* appears in `label` (case-insensitively) — the classic menu-bar
+	* mnemonic, so `Alt+L` reads as the `l` in `Files`. Absent, or a
+	* letter the label does not contain, underlines nothing.
+	*/
+	mnemonic?: string | null;
 	key?: string | null;
 } | {
 	"kind": "number";
