@@ -16,6 +16,10 @@
  *     string format used by today's plugin i18n bundles into
  *     `HintEntry[]`.
  *
+ * Composites built from these — the path picker (a field, `Browse…` and a
+ * folder browser) and the Machine picker — are in `./pickers.ts`; use them
+ * rather than assembling the pieces in a dialog.
+ *
  * See `docs/internal/plugin-widget-library-design.md`.
  *
  * @example
@@ -196,7 +200,9 @@ export function styledRow(
  * (chip after the label, and only the chip is clickable);
  * `labelWidth` pads the label so a column of controls aligns.
  * `indeterminate: true` renders a neutral `[-]` chip for an
- * unset/inherited value. */
+ * unset/inherited value. `mnemonic` names the accelerator letter
+ * (`"l"` for `Alt+L`) to underline where it first appears in the
+ * label; a letter the label lacks underlines nothing. */
 export function toggle(
   checked: boolean,
   label: string,
@@ -205,10 +211,11 @@ export function toggle(
     indeterminate?: boolean;
     labelFirst?: boolean;
     labelWidth?: number;
+    mnemonic?: string;
     key?: string;
   },
 ): WidgetSpec {
-  return {
+  const spec: WidgetSpec = {
     kind: "toggle",
     checked,
     label,
@@ -218,6 +225,9 @@ export function toggle(
     labelWidth: options?.labelWidth ?? 0,
     key: options?.key,
   };
+  // Omit rather than pass `undefined` (the bridge would send `null`).
+  if (options?.mnemonic !== undefined) spec.mnemonic = options.mnemonic;
+  return spec;
 }
 
 /** Numeric field, rendered as `label: [ 42 ]`. Press Left/Down
@@ -260,12 +270,20 @@ export function number(
 }
 
 /** Single-select dropdown, rendered as `label: [option ▼]`.
- * Enter/Space (or a click on the button) opens the option list
- * inline below the button; Up/Down move the live selection,
- * Enter/Space/Esc close it. The selected index is host-owned
- * instance state after first render (the spec `selectedIndex` is a
- * seed); each change fires `widget_event { event_type: "change",
- * payload: { index, value } }`. Push a new selection with
+ *
+ * Closed: ↑/↓ are not the dropdown's — they move focus on; ←/→ step the
+ * value in place; Enter, Space, Alt+↓ or a click open the list.
+ * Open: ↑/↓, PgUp/PgDn and Home/End move a highlight, and typing jumps
+ * to a matching option — none of that is a value change, and nothing
+ * fires. Enter, Space or a click commits the highlighted option; Tab
+ * commits and moves on; Esc or a press outside closes the list with no
+ * event.
+ *
+ * `change` (`payload: { index, value }`) therefore means a value was
+ * accepted, once per commit and only when it differs. `dropdown_open`
+ * (`payload: { open }`) reports the list opening and closing. The
+ * selected index is host-owned instance state after first render (the
+ * spec `selectedIndex` is a seed). Push a new selection with
  * `WidgetPanel.setDropdown(key, index)`.
  *
  * `labelWidth` pads the label so a column of controls aligns. */
@@ -542,6 +560,12 @@ export function list(options: {
    * skipping the list in the Tab cycle keeps focus jumping
    * straight between filter and action buttons. */
   focusable?: boolean;
+  /** Typing jumps to the next item starting with what was typed (the
+   * listbox pattern). Off by default — leave it off for a list whose mode
+   * binds single letters (`q` to quit), since the focused list is asked
+   * first. Turn it on for a list of names to find, such as a file
+   * browser. */
+  typeAhead?: boolean;
   key?: string;
 }): WidgetSpec {
   return {
@@ -552,6 +576,7 @@ export function list(options: {
     selectedIndex: options.selectedIndex ?? -1,
     visibleRows: options.visibleRows,
     focusable: options.focusable ?? true,
+    typeAhead: options.typeAhead ?? false,
     key: options.key,
   };
 }
@@ -600,6 +625,12 @@ export function treeNode(
      * a row too wide for the panel slides under its button rather than
      * pushing it off. Ignored on a bordered card. */
     action?: string;
+    /** A table row: one cell per column of a `tree({ columns })`. The host
+     * fits the columns to the width the tree is laid out at and elides each
+     * cell at its column's end; the row is drawn from these instead of
+     * `text`. A node without cells in a table (a group heading) is drawn
+     * from `text` across the whole row. */
+    cells?: Array<string | { text: string; style?: Partial<OverlayOptions> }>;
   },
 ): TreeNode {
   // `checked` is intentionally Optional<bool>, not a default-false
@@ -631,6 +662,9 @@ export function treeNode(
   }
   if (options?.action !== undefined) {
     node.action = options.action;
+  }
+  if (options?.cells && options.cells.length > 0) {
+    node.cells = options.cells.map((c) => (typeof c === "string" ? { text: c } : c));
   }
   return node;
 }
@@ -698,6 +732,17 @@ export function tree(options: {
    * `1` to spend those columns on the node text instead; the disclosure
    * glyph (or the blank standing in for one) still marks each level. */
   indentCols?: number;
+  /** When true, a click anywhere on a node with children toggles its
+   * expansion (and selects it), not only a click on the `▶`/`▼` glyph.
+   * The toggle fires `expand` with `payload: { index, key, expanded }`. */
+  toggleOnClick?: boolean;
+  /** **A table**: the columns of the rows that carry `cells`. The host
+   * measures the cells, fits the columns to the width layout gives the
+   * tree (the widest column gives first), elides each cell at its
+   * column's end — `elide: "head"` keeps a path's tail, the default keeps
+   * a name's head — and draws a header row of the titles above the rows.
+   * Nothing about widths is the plugin's to compute. */
+  columns?: Array<{ title: string; elide?: "none" | "head" | "tail"; maxWidth?: number }>;
   key?: string;
 }): WidgetSpec {
   return {
@@ -711,6 +756,12 @@ export function tree(options: {
     itemHeight: options.itemHeight ?? 1,
     cardBorders: options.cardBorders ?? false,
     indentCols: options.indentCols ?? 2,
+    toggleOnClick: options.toggleOnClick ?? false,
+    columns: (options.columns ?? []).map((c) => ({
+      title: c.title,
+      elide: c.elide ?? "tail",
+      maxWidth: c.maxWidth ?? 0,
+    })),
     key: options.key,
   };
 }
@@ -751,6 +802,13 @@ export function text(
     /** Number of visible rows of editing region. `1` (default) =
      * single-line behaviour; `>= 2` = multi-line behaviour. */
     rows?: number;
+    /** A multi-line box that **grows with its text**: when set, the box is
+     * as tall as its value wraps to — at the width layout gives it, so no
+     * plugin guesses a width — between `minRows` (default `rows`) and this,
+     * and scrolls past it. The caret is always kept in view. */
+    maxRows?: number;
+    /** The fewest rows a growing box (`maxRows`) shows. Default `rows`. */
+    minRows?: number;
     /** Visible column width. `0` (default) = auto-fit (single-line)
      * or panel width (multi-line). */
     fieldWidth?: number;
@@ -793,6 +851,13 @@ export function text(
      * word-wraps to the widget's width. Forcibly read-only; the caret,
      * selection, and Copy operate on the rendered plain text. */
     markdown?: boolean;
+    /** A single-line field that offers a list (its `completions`) as
+     * well as free text — a combo box. Drawn with a `▼` inside its `]`
+     * (`▲` while the list is open), so the field says it has a list
+     * before it is focused. With the list closed, ↓ / Alt+↓ or a click
+     * on the arrow fires `completion_request`: answer it with
+     * `setCompletions`. Don't open the list on focus. */
+    combo?: boolean;
     key?: string;
   } = {},
 ): WidgetSpec {
@@ -804,6 +869,8 @@ export function text(
     label: options.label ?? "",
     placeholder: options.placeholder,
     rows: options.rows ?? 1,
+    minRows: options.minRows ?? 0,
+    maxRows: options.maxRows ?? 0,
     fieldWidth: options.fieldWidth ?? 0,
     maxVisibleChars: options.maxVisibleChars ?? 0,
     fullWidth: options.fullWidth ?? false,
@@ -814,6 +881,7 @@ export function text(
     labelWidth: options.labelWidth ?? 0,
     readOnly: options.readOnly ?? false,
     markdown: options.markdown ?? false,
+    combo: options.combo ?? false,
     key: options.key,
   };
 }
@@ -829,8 +897,11 @@ export function textArea(
     focused?: boolean;
     label?: string;
     placeholder?: string;
-    /** Visible rows of editing area; default 5. */
+    /** Visible rows of editing area; default 5. With `maxRows`, the
+     * fewest rows the box shows. */
     rows?: number;
+    /** Grow with the text up to this many rows, then scroll. */
+    maxRows?: number;
     /** Visible column width; `0` = use panel width. */
     fieldWidth?: number;
     fullWidth?: boolean;
@@ -860,6 +931,8 @@ export function textInput(
     fieldWidth?: number;
     /** See `text({ fullWidth })`. */
     fullWidth?: boolean;
+    /** See `text({ combo })`. */
+    combo?: boolean;
     key?: string;
   },
 ): WidgetSpec {
@@ -873,6 +946,7 @@ export function textInput(
     fieldWidth: options?.fieldWidth,
     maxVisibleChars: options?.maxVisibleChars,
     fullWidth: options?.fullWidth,
+    combo: options?.combo,
     key: options?.key,
   });
 }
@@ -1203,11 +1277,17 @@ export class WidgetPanel {
     return this.mutate({ kind: "setDualIncluded", widgetKey, included });
   }
 
-  /** Update a Text widget's completion popup candidates. Empty
-   * `items` closes the popup; non-empty opens it and resets the
-   * host-managed selection to index 0. The host repaints the
-   * popup on its own; the plugin doesn't need to follow up with
-   * an `update(spec)` call. */
+  /** Update a Text widget's suggestion list (a combo box). Empty
+   * `items` closes it; non-empty opens it with nothing highlighted.
+   *
+   * The field owns the list's keys: ↓ steps into it, ↑/↓ and PgUp/PgDn
+   * move the highlight, Enter or Tab on a highlighted row accepts it,
+   * and Esc (or a press outside) closes it before a second Esc reaches
+   * the dialog. On accept the host puts the value in the field, closes
+   * the list and fires `change` (the new value) then `completion_accept`
+   * — push new items from the `change` if the list should come back.
+   * Enter or Tab with nothing highlighted closes the list and goes on to
+   * the dialog / the next control. */
   setCompletions(
     widgetKey: string,
     items: Array<string | { value: string; kind?: string }>,
@@ -1278,6 +1358,16 @@ export class WidgetPanel {
   setFocusKey(widgetKey: string): boolean {
     return this.mutate({ kind: "setFocusKey", widgetKey });
   }
+
+  /** The key of the widget that holds this panel's focus, `""` for none.
+   * The host owns focus — Tab, a click, a control's own move and
+   * `setFocusKey` all write the one fact this reads — so read it here
+   * rather than keeping a copy in step from `focus` events. Every
+   * `widget_event` carries the same answer as `focus_key`. */
+  focusKey(): string {
+    // deno-lint-ignore no-explicit-any
+    return (globalThis as any).editor.getPanelFocusKey(this.panelId);
+  }
 }
 
 // =============================================================================
@@ -1342,10 +1432,17 @@ export class FloatingWidgetPanel {
        * across frames, so a follow-up blur can land a tick late).
        * Default false: mounting focuses the panel. */
       startBlurred?: boolean;
-      /** The plugin mode (`defineMode`) whose bindings this panel's keys
-       * resolve against first — the panel's own keymap, ahead of the
-       * widget that holds focus. A dock declares its chords here rather
-       * than through the window's editor mode. */
+      /** The plugin mode (`defineMode`) whose bindings are this panel's
+       * keymap. **The focused control answers a key first** — a field
+       * types and moves its caret, an open list takes the arrows and Enter,
+       * a button takes Enter/Space, Esc closes a pop-up — and the mode's
+       * bindings get only what it leaves; then the panel's own defaults
+       * (Tab walks the controls). A binding declared `"shortcut"`
+       * (`["C-Enter", "submit", "shortcut"]`) is dialog-wide and runs
+       * ahead of any control; one declared `"on:a,b"` applies only while
+       * one of the named widgets has focus. An arrow nothing uses moves
+       * focus to the nearest control on screen that way. A dock declares
+       * its chords here rather than through the window's editor mode. */
       mode?: string;
       /** How the panel's form controls (`text` / `dropdown` / `toggle` /
        * `number` / `radio` with a `labelWidth`) align their labels in the shared
@@ -1441,9 +1538,17 @@ export class FloatingWidgetPanel {
     return this.mutate({ kind: "setDualIncluded", widgetKey, included });
   }
 
-  /** Update a Text widget's completion popup candidates. Empty
-   * `items` closes the popup; non-empty opens it and resets the
-   * host-managed selection to index 0. */
+  /** Update a Text widget's suggestion list (a combo box). Empty
+   * `items` closes it; non-empty opens it with nothing highlighted.
+   *
+   * The field owns the list's keys: ↓ steps into it, ↑/↓ and PgUp/PgDn
+   * move the highlight, Enter or Tab on a highlighted row accepts it,
+   * and Esc (or a press outside) closes it before a second Esc reaches
+   * the dialog. On accept the host puts the value in the field, closes
+   * the list and fires `change` (the new value) then `completion_accept`
+   * — push new items from the `change` if the list should come back.
+   * Enter or Tab with nothing highlighted closes the list and goes on to
+   * the dialog / the next control. */
   setCompletions(
     widgetKey: string,
     items: Array<string | { value: string; kind?: string }>,
@@ -1472,6 +1577,16 @@ export class FloatingWidgetPanel {
    * the first tabbable. */
   setFocusKey(widgetKey: string): boolean {
     return this.mutate({ kind: "setFocusKey", widgetKey });
+  }
+
+  /** The key of the widget that holds this panel's focus, `""` for none.
+   * The host owns focus — Tab, a click, a control's own move and
+   * `setFocusKey` all write the one fact this reads — so read it here
+   * rather than keeping a copy in step from `focus` events. Every
+   * `widget_event` carries the same answer as `focus_key`. */
+  focusKey(): string {
+    // deno-lint-ignore no-explicit-any
+    return (globalThis as any).editor.getPanelFocusKey(this.panelId);
   }
 }
 
@@ -1514,11 +1629,13 @@ export function textInputChar(text: string): WidgetAction {
   return { kind: "textInputChar", text };
 }
 
-/** Smart-key dispatch — routes the keystroke to the right widget
- * action based on the focused widget's kind. Plugin's mode bindings
- * use this rather than picking the right action themselves: bind
- * Tab/Shift+Tab/Enter/Space/Backspace/Delete/Left/Right/Up/Down/
- * Home/End all to one handler that calls `panel.command(key("Tab"))`.
+/** Smart-key dispatch — hands the keystroke to the focused widget and
+ * then the panel's own defaults, as if it had been typed.
+ *
+ * A panel's keys already reach its focused control before the mode's
+ * bindings, so a binding never needs to forward a control's own key
+ * (Tab, Enter, the arrows, editing keys) back to it — leave those
+ * unbound. This is for a key the plugin synthesises for its own reasons.
  *
  * See `WidgetAction::Key` (Rust) for the full dispatch table. */
 export function key(name: string): WidgetAction {
@@ -1543,4 +1660,8 @@ export interface WidgetEvt {
   event_type: string;
   widget_key?: string;
   payload?: unknown;
+  /** The widget that holds the panel's focus now, after the event (`""`
+   * for none). The host's fact — read it (or `panel.focusKey()`) instead of
+   * keeping a copy of focus in step with `focus` events. */
+  focus_key?: string;
 }

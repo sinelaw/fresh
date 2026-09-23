@@ -147,19 +147,6 @@ impl<M: 'static> Ui<M> {
                 // press. Routing it to that element would send a click on
                 // one pane to the pane pressed before it, forever.
                 self.captured = None;
-                // A press on a viewport's scrollbar gutter drives its scroll
-                // directly — click to jump, then drag to follow. The only
-                // message it produces is the window's own report of where it
-                // went (`Node::on_scroll`), for an owner that holds the
-                // offset.
-                if button == MouseButton::Left {
-                    if let Some(r) = self.scrollbar_hit(pos) {
-                        self.scrollbar_drag = Some(r);
-                        self.scrollbar_grab = self.grab_within_thumb(r, pos.y);
-                        self.scroll_to_pointer(r, pos.y, out);
-                        return true;
-                    }
-                }
                 // Dismissal happens for any button; it *claims* only for the
                 // primary one.
                 //
@@ -171,8 +158,39 @@ impl<M: 'static> Ui<M> {
                 // claim only when the act was the whole of it.
                 // Whether anything was dismissed, and whether any of it was
                 // spent on the dismissal.
+                //
+                // **Ahead of the window's own affordances, not behind them.**
+                // A press is a press wherever it lands: a transient surface a
+                // pointer press dismisses — an LSP hover tooltip, signature
+                // help — must go whether the press was spent on a button, on a
+                // scrollbar, on an overflow cap or on nothing at all. Both
+                // branches below return early, so with the dismissal after
+                // them a click on a cap or a bar left the tooltip up, which is
+                // not what the arrows and bars those replaced did.
                 let (dismissed, spent) = self.dismiss_for_pointer(pos, out);
                 let dismiss_claims = spent && button == MouseButton::Left;
+                // A press on a viewport's scrollbar gutter drives its scroll
+                // directly — click to jump, then drag to follow. The only
+                // message it produces is the window's own report of where it
+                // went (`Node::on_scroll`), for an owner that holds the
+                // offset.
+                // A press on a horizontal window's overflow cap steps it
+                // that way. The cap is the window's own affordance — it knows
+                // whether there is more behind that edge, which is why it is
+                // the thing drawn there — so the move is the window's too, and
+                // produces no message beyond its own report.
+                if button == MouseButton::Left {
+                    if let Some((r, dir)) = self.overflow_cap_hit(pos) {
+                        self.step_window(r, dir, out);
+                        return true;
+                    }
+                    if let Some(r) = self.scrollbar_hit(pos) {
+                        self.scrollbar_drag = Some(r);
+                        self.scrollbar_grab = self.grab_within_thumb(r, pos.y);
+                        self.scroll_to_pointer(r, pos.y, out);
+                        return true;
+                    }
+                }
                 let paths = self.route(pos);
                 // Every stacked path's target, so a click is derived per path:
                 // a transparent overlay and what is behind it were both
@@ -611,9 +629,6 @@ impl<M: 'static> Ui<M> {
         if let Some(c) = ctl.capture_request.take() {
             self.captured = Some(c);
         }
-        if ctl.release_request.take() {
-            self.captured = None;
-        }
         if let Some((id, sel)) = ctl.focus_request.take() {
             self.focus_element(id, sel, out);
         }
@@ -676,6 +691,25 @@ impl<M: 'static> Ui<M> {
                 if !now.contains(e) {
                     now.push(*e);
                 }
+            }
+        }
+        // Where it is, for the affordances a node draws for itself.
+        //
+        // **A node that draws from the pointer is repainted when the pointer
+        // moves onto or off it.** Enter and Leave are the tree's own answer to
+        // "the pointer arrived", and they fire only when it crosses an
+        // element's boundary — but an overflow cap is not an element, it is
+        // cells its window reserved, and sliding sideways from the tabs onto
+        // the `<` crosses nothing. So the cap is asked the same question its
+        // press asks, before and after the move, and the window is marked
+        // dirty when the answer changes: no frame for a pointer wandering
+        // inside one element, a frame the moment a cap lights or goes out.
+        let cap_was = self.pointer.and_then(|p| self.overflow_cap_hit(p));
+        self.pointer = Some(pos);
+        let cap_now = self.overflow_cap_hit(pos);
+        if cap_was != cap_now {
+            for (r, _) in cap_was.into_iter().chain(cap_now) {
+                self.mark_render_dirty(r);
             }
         }
         let old = std::mem::take(&mut self.hover);
@@ -752,8 +786,16 @@ impl<M: 'static> Ui<M> {
     /// the review diff's file sidebar it read as a second, stale selection.
     /// The next `Move` re-establishes it.
     pub fn clear_hover(&mut self) -> bool {
+        // A cap draws itself from the pointer rather than from an Enter, so
+        // forgetting where the pointer is has to put it out the same way a
+        // move off it would.
+        let lit = self.pointer.and_then(|p| self.overflow_cap_hit(p));
+        self.pointer = None;
+        if let Some((r, _)) = lit {
+            self.mark_render_dirty(r);
+        }
         if self.hover.is_empty() {
-            return false;
+            return lit.is_some();
         }
         let left = std::mem::take(&mut self.hover);
         let mut out = Vec::new();
@@ -785,6 +827,92 @@ impl<M: 'static> Ui<M> {
     /// over a window — a strip carrying a popup's title — is exactly the case
     /// that produces a second path, and the gutter is on the second one. The
     /// deepest match within a path wins, which is the innermost window.
+    /// The horizontal window whose overflow cap is under this point, and the
+    /// direction that cap points.
+    ///
+    /// **Only an end with content behind it answers.** The cells are reserved
+    /// whenever the content overflows, but a cap is drawn in one only while
+    /// there is more that way — so at the start of the strip the leading cell
+    /// carries no glyph, and a press there belongs to whatever is under it
+    /// rather than to a button that is not being offered.
+    fn overflow_cap_hit(&self, pos: Point) -> Option<(RenderId, i32)> {
+        for path in self.hit_paths(pos) {
+            let mut found = None;
+            for e in path {
+                let Some(r) = self.arena.get(e).and_then(|el| el.render) else {
+                    continue;
+                };
+                let Some(n) = self.render.get(r) else {
+                    continue;
+                };
+                if !n.scrollbar
+                    || !n.clips
+                    || n.data.scroll_axis != crate::event::Axis::Horizontal
+                    || n.data.scroll_max.x <= 0
+                {
+                    continue;
+                }
+                let caps = crate::render::object::overflow_caps(
+                    n.data.rect,
+                    n.data.scroll.x as i64,
+                    n.data.scroll_max.x as i64,
+                    n.data.scroll_cap,
+                );
+                for (end, more, rect) in caps {
+                    if more && rect.contains(pos) {
+                        found = Some((
+                            r,
+                            match end {
+                                crate::End::Before => -1,
+                                crate::End::After => 1,
+                            },
+                        ));
+                    }
+                }
+            }
+            if found.is_some() {
+                return found;
+            }
+        }
+        None
+    }
+
+    /// Move a window one windowful along the axis it scrolls.
+    ///
+    /// A windowful by default — the move clicking a scrollbar's track makes —
+    /// or whatever the window asked for with `Node::scroll_step`, for a
+    /// surface where a screenful is the wrong nudge.
+    fn step_window(&mut self, r: RenderId, dir: i32, out: &mut Vec<M>) {
+        let (was, max, page) = {
+            let Some(n) = self.render.get(r) else { return };
+            // The window's own step, or a windowful when it has no opinion.
+            let page = match n.data.scroll_step {
+                0 => match n.data.scroll_axis {
+                    crate::event::Axis::Vertical => n.data.window.map_or(n.data.rect.h, |w| w.h),
+                    crate::event::Axis::Horizontal => n.data.window.map_or(n.data.rect.w, |w| w.w),
+                },
+                s => s,
+            };
+            let (was, max) = match n.data.scroll_axis {
+                crate::event::Axis::Vertical => (n.data.scroll.y, n.data.scroll_max.y),
+                crate::event::Axis::Horizontal => (n.data.scroll.x, n.data.scroll_max.x),
+            };
+            (was, max, page.max(1) as i32)
+        };
+        let off = (was + dir * page).clamp(0, max.max(0));
+        if off == was {
+            return;
+        }
+        if let Some(n) = self.render.get_mut(r) {
+            match n.data.scroll_axis {
+                crate::event::Axis::Vertical => n.data.scroll.y = off,
+                crate::event::Axis::Horizontal => n.data.scroll.x = off,
+            }
+        }
+        self.mark_render_dirty(r);
+        self.report_scroll(r, off, out);
+    }
+
     fn scrollbar_hit(&self, pos: Point) -> Option<RenderId> {
         for path in self.hit_paths(pos) {
             let mut found = None;
@@ -933,7 +1061,7 @@ impl<M: 'static> Ui<M> {
             let Some(r) = self.render_for(n) else {
                 continue;
             };
-            let (scroll, max, clips, floating) = {
+            let (scroll, max, clips, floating, own_axis) = {
                 let Some(node) = self.render.get(r) else {
                     continue;
                 };
@@ -942,6 +1070,7 @@ impl<M: 'static> Ui<M> {
                     node.data.scroll_max,
                     node.clips,
                     node.out_of_flow,
+                    node.data.scroll_axis,
                 )
             };
             if floating {
@@ -950,20 +1079,38 @@ impl<M: 'static> Ui<M> {
             if !clips {
                 continue;
             }
-            let (at, limit) = match wheel.axis {
+            // **A plain wheel moves a window the way that window scrolls.**
+            // The bare wheel is "scroll this", not "scroll downwards": over a
+            // tab strip it means along the strip, which is the only direction
+            // there is. A wheel that names the other axis explicitly — a
+            // trackpad's sideways gesture, shift and the wheel — still means
+            // that axis, so a vertical list can be panned across.
+            let axis = match wheel.axis {
+                Axis::Vertical => own_axis,
+                Axis::Horizontal => Axis::Horizontal,
+            };
+            let (at, limit) = match axis {
                 Axis::Vertical => (scroll.y, max.y),
                 Axis::Horizontal => (scroll.x, max.x),
             };
             let next = (at + wheel.delta).clamp(0, limit.max(0));
             if next != at {
+                // The reader is choosing where to look: a standing follow
+                // (`Anchor::follow`) gives way until its owner asks again.
+                if let Some(a) = self.arena.get(n).and_then(|e| e.desc.anchor.clone()) {
+                    a.unfollow();
+                }
                 if let Some(node) = self.render.get_mut(r) {
-                    match wheel.axis {
+                    match axis {
                         Axis::Vertical => node.data.scroll.y = next,
                         Axis::Horizontal => node.data.scroll.x = next,
                     }
                 }
                 self.mark_render_dirty(r);
-                if wheel.axis == Axis::Vertical {
+                // The owner holds one offset, which is the one along the
+                // window's own axis; a pan across a vertical list is the
+                // framework's alone and is not reported.
+                if axis == own_axis {
                     self.report_scroll(r, next, out);
                 }
                 return Chain::Scrolled;

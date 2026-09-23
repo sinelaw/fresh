@@ -44,6 +44,9 @@ pub struct ListState {
     pub(crate) anchor: Option<Rc<crate::behavior::Anchor>>,
     /// The selection the window was last asked to show.
     pub(crate) revealed: crate::behavior::Cache<usize, ()>,
+    /// The `(selection, token)` a standing follow was last armed for — see
+    /// [`List::follow_selection`].
+    pub(crate) followed: crate::behavior::Cache<(usize, u64), ()>,
 }
 
 /// Which click in a run activates a row.
@@ -226,6 +229,9 @@ enum Sel {
     Empty,
 }
 
+/// What a row's activation sends: its index and the event that activated it.
+pub type ActivateHandler<M> = Rc<dyn Fn(usize, &Event) -> Option<M>>;
+
 pub struct List<M> {
     source: Source<M>,
     selection: Sel,
@@ -236,7 +242,7 @@ pub struct List<M> {
     scroll: Option<usize>,
     on_scroll: Option<Rc<dyn Fn(usize) -> M>>,
     pinned: Rc<[usize]>,
-    on_activate: Option<Rc<dyn Fn(usize, &Event) -> Option<M>>>,
+    on_activate: Option<ActivateHandler<M>>,
     activate_on: Activate,
     focusable: bool,
     autofocus: bool,
@@ -248,6 +254,9 @@ pub struct List<M> {
     #[allow(clippy::type_complexity)]
     row_theme: Option<Rc<dyn Fn(usize, RowState) -> String>>,
     row_height: RowHeight,
+    /// Keep the selection in the window on every layout, re-armed whenever
+    /// the selection or this token changes. See [`List::follow_selection`].
+    follow: Option<u64>,
 }
 
 impl<M: 'static> List<M> {
@@ -325,6 +334,7 @@ impl<M: 'static> List<M> {
             bar_theme: None,
             row_theme: None,
             row_height: RowHeight::default(),
+            follow: None,
         }
     }
 
@@ -343,6 +353,24 @@ impl<M: 'static> List<M> {
             Some(i) => Sel::At(i),
             None => Sel::Empty,
         };
+        self
+    }
+
+    /// **Keep the selection in view on every layout**, not only when it moves.
+    ///
+    /// By default the window follows a selection *move* — once, on the build
+    /// that carries it — so a wheel that scrolls away is not fought. A caret is
+    /// different: the row it sits on can stay the same while what is around it
+    /// re-wraps, and the window can change height a frame after the move (a
+    /// box that grows with its text), and either leaves a one-shot reveal
+    /// answered against a layout that no longer holds. With this, the window
+    /// keeps the selection in it on every layout
+    /// ([`Anchor::follow`](crate::behavior::anchor::Anchor::follow)); a wheel
+    /// over it wins until the request is armed again, which happens when the
+    /// selection or `token` changes — pass something that changes whenever
+    /// the caret moves (its byte, say). A `None` selection stops following.
+    pub fn follow_selection(mut self, token: u64) -> Self {
+        self.follow = Some(token);
         self
     }
 
@@ -409,7 +437,7 @@ impl<M: 'static> List<M> {
     /// Keyboard activation passes the key press, so a handler that reads
     /// `clicks` sees zero there — which is the honest answer for an activation
     /// no mouse made.
-    pub fn on_activate_handler(mut self, f: Rc<dyn Fn(usize, &Event) -> Option<M>>) -> Self {
+    pub fn on_activate_handler(mut self, f: ActivateHandler<M>) -> Self {
         self.on_activate = Some(f);
         self
     }
@@ -552,9 +580,21 @@ impl<M: 'static> Component<M> for List<M> {
         // fight the wheel, which is a statement about the window rather than
         // about the selection; the memo is what distinguishes the two, and its
         // write is an idempotent function of the build inputs.
-        if let (Some(a), Some(sel)) = (&anchor, sel) {
-            let a = a.clone();
-            s.revealed.get_or(sel, move || a.reveal(sel as u32));
+        match (self.follow, &anchor, sel) {
+            // A standing follow, re-armed when the selection or the owner's
+            // token moves — so a wheel since then is not fought, and a layout
+            // since then is still answered.
+            (Some(token), Some(a), Some(sel)) => {
+                let a = a.clone();
+                s.followed
+                    .get_or((sel, token), move || a.follow(sel as u32));
+            }
+            (Some(_), Some(a), None) => a.unfollow(),
+            (None, Some(a), Some(sel)) => {
+                let a = a.clone();
+                s.revealed.get_or(sel, move || a.reveal(sel as u32));
+            }
+            _ => {}
         }
 
         let source = self.source.clone();

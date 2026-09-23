@@ -751,6 +751,7 @@ impl Editor {
                             result_id: decoded.result_id,
                             data: decoded.raw_data,
                             tokens: decoded.spans,
+                            stale: false,
                         });
                     }
                 }
@@ -771,6 +772,12 @@ impl Editor {
                 match result {
                     Err(_) => {
                         // Error already logged by the generic LSP response handler.
+                        // The server may not know our `previousResultId` (e.g. it
+                        // restarted); forget it so the next request is a plain
+                        // `full` instead of repeating the failing delta forever.
+                        if let Some(store) = state.semantic_tokens.as_mut() {
+                            store.result_id = None;
+                        }
                     }
                     Ok(tokens_opt) => {
                         let existing_store = state.semantic_tokens.as_ref();
@@ -862,6 +869,7 @@ impl Editor {
                             result_id: decoded.result_id,
                             data: decoded.raw_data,
                             tokens: spans,
+                            stale: false,
                         });
                     }
                 }
@@ -984,6 +992,8 @@ impl Editor {
             "LSP ({}) semantic-tokens refresh requested, re-pulling semantic tokens",
             language
         );
+        // Same server, so its `resultId`s stay valid: keep delta requests.
+        self.invalidate_semantic_tokens_for_language(&language, false);
         self.request_semantic_tokens_for_language(&language);
     }
 
@@ -1022,6 +1032,14 @@ impl Editor {
         // Only re-issue requests on a net-new capability; an unregister or a
         // no-op registration should not trigger a fresh round of requests.
         if changed && register {
+            // A newly registered semantic-tokens provider may be a different
+            // server than the one whose tokens (and `resultId`) we hold.
+            if registrations
+                .iter()
+                .any(|(method, _)| method.starts_with("textDocument/semanticTokens"))
+            {
+                self.invalidate_semantic_tokens_for_language(&language, true);
+            }
             self.request_semantic_tokens_for_language(&language);
             self.request_folding_ranges_for_language(&language);
             self.request_inlay_hints_for_language(&language);
@@ -1334,21 +1352,37 @@ impl Editor {
         );
     }
 
-    /// Handle custom LSP notification
-    #[allow(dead_code)] // Prepared for future use when AsyncMessage::LspCustomNotification is added
+    /// Handle a server -> client LSP notification the editor does not handle
+    /// itself (e.g. clangd's `textDocument/clangd.fileStatus`) by forwarding
+    /// it to plugins subscribed with `editor.on("lsp/custom_notification", ..)`.
     pub(super) fn handle_custom_notification(
         &mut self,
         language: String,
+        server_name: String,
         method: String,
         params: Option<Value>,
     ) {
-        tracing::debug!("Custom LSP notification {} from {}", method, language);
-        let payload = serde_json::json!({
-            "language": language,
-            "method": method,
-            "params": params,
-        });
-        self.emit_event("lsp/custom_notification", payload);
+        tracing::debug!(
+            "Custom LSP notification {} from {} ({})",
+            method,
+            language,
+            server_name
+        );
+        let plugin_manager = self.plugin_manager.read().unwrap();
+        // Chatty servers can send these often; skip the plugin-thread
+        // round trip when nothing is listening.
+        if !plugin_manager.has_subscribers("lsp/custom_notification") {
+            return;
+        }
+        plugin_manager.run_hook(
+            "lsp/custom_notification",
+            crate::services::plugins::hooks::HookArgs::LspCustomNotification {
+                language,
+                server_name,
+                method,
+                params,
+            },
+        );
     }
 
     /// Handle LSP server request (server -> client)
@@ -1794,6 +1828,50 @@ impl Editor {
         true
     }
 
+    /// Wait until the plugin runtime is at rest, servicing its command
+    /// channel throughout. Returns whether that servicing processed
+    /// anything.
+    ///
+    /// Not the same as `pending_plugin_actions` being empty: that only
+    /// means the handler was *called*, which for an `async` handler is its
+    /// first `await`. The rest runs a host round-trip at a time, and
+    /// between an answer going out and the next command coming back the
+    /// command channel is quiet for reasons unrelated to being finished.
+    ///
+    /// Test-harness helper. The editor's own loop pumps this pipeline every
+    /// frame and has nowhere to be in between.
+    #[cfg(feature = "plugins")]
+    #[doc(hidden)]
+    pub fn sync_plugin_runtime(&mut self) -> bool {
+        use fresh_plugin_runtime::thread::oneshot::TryRecvError;
+
+        let Some(rx) = self.plugin_manager.read().unwrap().sync_runtime() else {
+            return false;
+        };
+        let mut had_messages = false;
+        loop {
+            match rx.try_recv() {
+                Ok(()) => break,
+                Err(TryRecvError::Empty) => {
+                    // Keep answering: the plugin thread may be parked on a
+                    // host round-trip queued ahead of the sync request.
+                    had_messages |= self.process_async_messages();
+                    std::thread::yield_now();
+                }
+                Err(TryRecvError::Disconnected) => break,
+            }
+        }
+        // Pick up the commands those continuations queued.
+        had_messages | self.process_async_messages()
+    }
+
+    /// Stub for builds without plugin support.
+    #[cfg(not(feature = "plugins"))]
+    #[doc(hidden)]
+    pub fn sync_plugin_runtime(&mut self) -> bool {
+        false
+    }
+
     /// Process pending LSP server restarts (with exponential backoff)
     pub(super) fn process_pending_lsp_restarts(&mut self) {
         let __active_id = self.active_window;
@@ -1883,6 +1961,25 @@ impl Editor {
                     }
                 }
             }
+        }
+    }
+
+    /// Mark the semantic tokens of every open buffer of `language` as stale
+    /// (see `Window::invalidate_semantic_tokens`), so the next scheduled
+    /// request is sent even for buffers that have not been edited.
+    pub(super) fn invalidate_semantic_tokens_for_language(
+        &mut self,
+        language: &str,
+        forget_result_id: bool,
+    ) {
+        let buffer_ids: Vec<_> = self
+            .buffers_for_language(language)
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect();
+        for buffer_id in buffer_ids {
+            self.active_window_mut()
+                .invalidate_semantic_tokens(buffer_id, forget_result_id);
         }
     }
 

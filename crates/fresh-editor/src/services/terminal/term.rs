@@ -533,6 +533,12 @@ impl TerminalState {
             // down to `scrollback_lines` itself so the emulator never evicts a
             // row out from under the sync pointer. See SCROLLBACK_DRAIN_MARGIN.
             scrolling_history: scrollback_lines.saturating_add(SCROLLBACK_DRAIN_MARGIN),
+            // Answer the kitty keyboard protocol's query and track the flags a
+            // child pushes, so a TUI can ask for Shift+Enter and friends in
+            // CSI-u form (see `kitty_disambiguates_keys`). Not on Windows:
+            // there the child sits behind ConPTY, whose handling of CSI-u
+            // input is unverified.
+            kitty_keyboard: cfg!(not(windows)),
             ..Default::default()
         };
         let listener = PtyWriteListener::new();
@@ -740,6 +746,7 @@ impl TerminalState {
     }
 
     /// Mark as clean after rendering
+    #[cfg(test)]
     pub fn mark_clean(&mut self) {
         self.dirty = false;
     }
@@ -858,50 +865,6 @@ impl TerminalState {
         result
     }
 
-    /// Get all content including scrollback history as a string
-    /// Lines are in chronological order (oldest first)
-    ///
-    /// WARNING: This is O(total_history) and should NOT be used in hot paths.
-    /// For mode switching, use the incremental streaming architecture instead:
-    /// - `flush_new_scrollback()` during PTY reads
-    /// - `append_visible_screen()` on mode exit
-    #[allow(dead_code)]
-    pub fn full_content_string(&self) -> String {
-        use alacritty_terminal::grid::Dimensions;
-        use alacritty_terminal::index::{Column, Line};
-
-        let grid = self.term.grid();
-        let history_size = grid.history_size();
-        let mut result = String::new();
-
-        // First, add scrollback history (negative line indices)
-        // History lines go from -(history_size) to -1
-        for i in (1..=history_size).rev() {
-            let line = Line(-(i as i32));
-            let row_data = &grid[line];
-            let mut line_str = String::new();
-            for col in 0..self.cols as usize {
-                line_str.push(row_data[Column(col)].c);
-            }
-            let trimmed = line_str.trim_end();
-            result.push_str(trimmed);
-            result.push('\n');
-        }
-
-        // Then add visible screen content (line indices 0 to rows-1)
-        for row in 0..self.rows {
-            let line = self.get_line(row);
-            let line_str: String = line.iter().map(|c| c.c).collect();
-            let trimmed = line_str.trim_end();
-            result.push_str(trimmed);
-            if row < self.rows - 1 {
-                result.push('\n');
-            }
-        }
-
-        result
-    }
-
     /// Get the number of scrollback history lines
     pub fn history_size(&self) -> usize {
         use alacritty_terminal::grid::Dimensions;
@@ -911,11 +874,6 @@ impl TerminalState {
     /// Get the title (if set by escape sequence)
     pub fn title(&self) -> &str {
         &self.terminal_title
-    }
-
-    /// Set the terminal title (called when escape sequence is received)
-    pub fn set_title(&mut self, title: String) {
-        self.terminal_title = title;
     }
 
     /// Scroll to the bottom of the terminal (display offset = 0)
@@ -967,6 +925,15 @@ impl TerminalState {
     /// send `\x1bOA` (SS3) instead of `\x1b[A` (CSI).
     pub fn is_app_cursor(&self) -> bool {
         self.term.mode().contains(TermMode::APP_CURSOR)
+    }
+
+    /// Check if the child enabled the kitty keyboard protocol at a level that
+    /// wants modified keys in CSI-u form ("disambiguate escape codes", or
+    /// "report all keys as escape codes").
+    pub fn kitty_disambiguates_keys(&self) -> bool {
+        self.term
+            .mode()
+            .intersects(TermMode::DISAMBIGUATE_ESC_CODES | TermMode::REPORT_ALL_KEYS_AS_ESC)
     }
 
     /// Check if the child asked for bracketed paste (DECSET 2004).
@@ -1273,6 +1240,17 @@ impl TerminalState {
 
         for col in 0..self.cols as usize {
             let cell = &row_data[Column(col)];
+            // A wide character fills two columns, and the second is a spacer
+            // cell holding a blank. So is the last column of a row whose next
+            // character was too wide to fit and wrapped. Neither is text:
+            // written out, every CJK character in the scrollback gained a
+            // space after it (sinelaw/fresh#3235).
+            if cell
+                .flags
+                .intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER)
+            {
+                continue;
+            }
             let fg = color_to_rgb(&cell.fg);
             let bg = color_to_rgb(&cell.bg);
             let flags = cell.flags;
@@ -1406,6 +1384,7 @@ impl TerminalState {
     }
 
     /// Reset sync state (e.g., when starting fresh or after truncation).
+    #[cfg(test)]
     pub fn reset_sync_state(&mut self) {
         self.synced_history_lines = 0;
         self.synced_logical_lines = 0;
@@ -1747,6 +1726,30 @@ mod tests {
             max = max.max(c);
         }
         (min, max)
+    }
+
+    /// Wide (CJK) characters are written to the scrollback as themselves, not
+    /// followed by the blank spacer cell that fills their second column —
+    /// including one wrapped to the next row because it did not fit in the
+    /// last column (sinelaw/fresh#3235).
+    #[test]
+    fn test_wide_chars_stored_without_spacer_cells() {
+        let mut state = TerminalState::new(9, 24);
+        // `ab你好世` is 8 columns, so `界` (2 wide) cannot fit in the 9th and
+        // wraps, leaving a leading spacer at the end of the first row.
+        state.process_output("你好世界test\r\nab你好世界x\r\n".as_bytes());
+        for _ in 0..24 {
+            state.process_output(b"y\r\n");
+        }
+        let mut sink: Vec<u8> = Vec::new();
+        state.flush_new_scrollback(&mut sink).unwrap();
+        let text = String::from_utf8_lossy(&sink);
+        let lines: Vec<&str> = text.lines().take(2).collect();
+        assert_eq!(
+            lines,
+            ["你好世界test", "ab你好世界x"],
+            "scrollback:\n{text}"
+        );
     }
 
     /// A wrapped line is stored as ONE unwrapped logical line in the backing

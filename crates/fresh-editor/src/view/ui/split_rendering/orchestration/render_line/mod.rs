@@ -1409,6 +1409,7 @@ fn place_line_end_cursor(
 /// cursor drew a phantom cursor at the top of the new viewport).
 ///
 /// Returns the x of the last visible cell, if any.
+#[allow(clippy::too_many_arguments)]
 fn locate_cursor_in_view_map(
     line_view_map: &[Option<usize>],
     primary_cursor_position: usize,

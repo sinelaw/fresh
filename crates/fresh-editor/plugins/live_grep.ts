@@ -33,7 +33,7 @@ import { gitCwdCandidate } from "./lib/git_repo.ts";
  */
 
 import { Finder, parseGrepOutput } from "./lib/finder.ts";
-import { button, col, raw, row, spacer, styledRow, toggle, wrappingRow } from "./lib/widgets.ts";
+import { col, dropdown, raw, row, spacer, styledRow, toggle, wrappingRow } from "./lib/widgets.ts";
 
 const editor = getEditor();
 
@@ -78,6 +78,12 @@ export interface SearchOpts {
    *  `-F`, git-grep/grep `-F`). Custom providers should honour this so
    *  the query is interpreted consistently with the toolbar toggle. */
   regex?: boolean;
+  /** When true, match upper and lower case exactly; when false (the
+   *  default) fold case. Providers must decide this *explicitly* — a
+   *  smart-case flag left on would quietly re-derive it from the query
+   *  and disagree with the Case toggle on the toolbar. Built-ins pass
+   *  rg `--case-sensitive`/`--ignore-case`, git-grep/grep/ack `-i`. */
+  caseSensitive?: boolean;
 }
 
 /** A registered Live Grep backend. */
@@ -191,8 +197,17 @@ let lastResults: GrepMatch[] = [];
 // query is interpreted, and are threaded to every provider (and the
 // JS-side scopes) so each can escape/format it correctly. `regex` is
 // on by default (matches the historical rg/git-grep behaviour);
-// `wholeWord` is off.
-type ModeId = "word" | "regex";
+// `wholeWord` is off, and so is `case` — a search for `todo` finds
+// `TODO` until you say otherwise (issue #3212). The config preset
+// `editor.search.case_sensitive` seeds `case` at load; flipping the
+// toggle wins for the rest of the session.
+//
+// `case` replaces what used to be smart-case, where an uppercase
+// letter anywhere in the query silently turned matching
+// case-sensitive. Smart-case is a guess about intent that the user
+// cannot see, let alone turn off; a toggle on the toolbar is the same
+// decision, made visible and reversible.
+type ModeId = "word" | "case" | "regex";
 
 interface ModeDef {
   id: ModeId;
@@ -207,11 +222,23 @@ interface ModeDef {
 
 const MODES: ModeDef[] = [
   { id: "word", key: "mode_word", labelKey: "mode.word", action: "live_grep_toggle_word" },
+  { id: "case", key: "mode_case", labelKey: "mode.case", action: "live_grep_toggle_case" },
   { id: "regex", key: "mode_regex", labelKey: "mode.regex", action: "live_grep_toggle_regex" },
 ];
 
+/** The `editor.search.case_sensitive` preset, read once at load. A
+ *  missing or non-boolean value means "off", which is also the shipped
+ *  default — this overlay never starts case-sensitive by accident. */
+function configuredCaseSensitive(): boolean {
+  const cfg = editor.getConfig() as
+    | { editor?: { search?: { case_sensitive?: unknown } } }
+    | null;
+  return cfg?.editor?.search?.case_sensitive === true;
+}
+
 const searchModes: Record<ModeId, boolean> = {
   word: false,
+  case: configuredCaseSensitive(),
   regex: true,
 };
 
@@ -219,14 +246,15 @@ const searchModes: Record<ModeId, boolean> = {
  *  Returns the 1-based column of the first match on a line, or -1. */
 type LineMatcher = (line: string) => number;
 
-/** Build a line matcher honouring the current `searchModes`. Smart-case:
- *  case-insensitive unless the query has an uppercase letter. An invalid
- *  regex matches nothing (the provider scopes surface the rg/grep error;
- *  the JS scopes just contribute no rows). */
+/** Build a line matcher honouring the current `searchModes` — including
+ *  `case`, so the JS-side scopes (buffers, diagnostics) match exactly
+ *  what the toolbar says and exactly what the grep backends are told.
+ *  An invalid regex matches nothing (the provider scopes surface the
+ *  rg/grep error; the JS scopes just contribute no rows). */
 function buildLineMatcher(query: string): LineMatcher {
-  const smartCaseInsensitive = query === query.toLowerCase();
+  const foldCase = !searchModes.case;
   if (searchModes.regex) {
-    const flags = smartCaseInsensitive ? "i" : "";
+    const flags = foldCase ? "i" : "";
     const pattern = searchModes.word ? `\\b(?:${query})\\b` : query;
     let re: RegExp;
     try {
@@ -240,10 +268,10 @@ function buildLineMatcher(query: string): LineMatcher {
     };
   }
   // Literal (fixed-string) matching.
-  const needle = smartCaseInsensitive ? query.toLowerCase() : query;
+  const needle = foldCase ? query.toLowerCase() : query;
   const isWord = (ch: string) => /[A-Za-z0-9_]/.test(ch);
   return (line) => {
-    const hay = smartCaseInsensitive ? line.toLowerCase() : line;
+    const hay = foldCase ? line.toLowerCase() : line;
     let from = 0;
     for (;;) {
       const idx = hay.indexOf(needle, from);
@@ -307,102 +335,218 @@ function unregisterProvider(name: string): boolean {
   return removed;
 }
 
-// Build the scope toolbar as real `Toggle` widgets (themed + clickable),
-// each keyed to the plugin action it fires on click — the host maps a click
-// straight to that action, the same one the Alt+… binding triggers. The
-// per-control accelerator (`⌥L` etc.) is rendered right after its toggle in
-// the keybinding-hint colour, so the affordance sits at the control rather
-// than in a footer list.
+// Build the toolbar as real widgets (themed, clickable, focusable), laid out
+// as a small form: a label column (`Scope` / `Match` / `Provider`) and, beside
+// it, the controls. Each toggle underlines its accelerator letter (the `l` of
+// `Files` for Alt+L) instead of spelling `Alt+L` after it; a letter the label
+// lacks (a rebound key, a translation) falls back to the spelled-out hint.
+//
+// The toggles sit in a `wrappingRow`, so a wide terminal gets one line per
+// section and a narrow one reflows — and because that wrapping row is the
+// second child of a row whose first child is the label column, continuation
+// lines stay in the control column rather than returning to the edge.
+
+/** The letter an `Alt+X`-style accelerator label names, lowercased; null
+ *  for chords that are not a single modified letter. */
+function accelLetter(accel: string | null): string | null {
+  const m = accel?.match(/^Alt\+(\p{L}|\p{N})$/u);
+  return m ? m[1].toLowerCase() : null;
+}
+
+/** `Match: ` → `Match` — translations carry their own trailing
+ *  colon and spacing for the old inline layout; the column adds its own. */
+function sectionName(key: string): string {
+  return editor.t(key).replace(/[\s:：]+$/u, "");
+}
+
+/** The label column: every section label padded to the widest one (by
+ *  display width, so CJK labels align too), plus a gutter. `underline`
+ *  marks the label's own accelerator letter (Provider's `P`). */
+function sectionLabel(text: string, width: number, underline?: string | null): WidgetSpec {
+  const segs: StyledText[] = [{ text: "  " }];
+  const at = underline ? text.toLowerCase().indexOf(underline) : -1;
+  if (at >= 0) {
+    const ch = [...text.slice(at)][0];
+    segs.push(
+      { text: text.slice(0, at), style: { fg: "ui.suggestion_fg" } },
+      { text: ch, style: { fg: "ui.help_key_fg", underline: true } },
+      { text: text.slice(at + ch.length), style: { fg: "ui.suggestion_fg" } },
+    );
+  } else {
+    segs.push({ text, style: { fg: "ui.suggestion_fg" } });
+  }
+  segs.push({ text: " ".repeat(width - editor.stringWidth(text) + 3) });
+  return raw([styledRow(segs)]);
+}
+
+/** One toggle plus, only when its accelerator letter is not in the label,
+ *  the spelled-out `Alt+X` after it. Kept as one non-wrapping unit so the
+ *  wrapping parent never separates a toggle from its hint. */
+function toolbarToggle(checked: boolean, text: string, key: string, action: string): WidgetSpec {
+  const accel = editor.getKeybindingLabel(action, "prompt");
+  const letter = accelLetter(accel);
+  if (letter && text.toLowerCase().includes(letter)) {
+    return toggle(checked, text, { key, mnemonic: letter });
+  }
+  const parts: WidgetSpec[] = [toggle(checked, text, { key })];
+  if (accel) {
+    parts.push(raw([styledRow([{ text: ` ${accel}`, style: { fg: "ui.help_key_fg" } }])]));
+  }
+  return row(...parts);
+}
+
+/** The label column's width: the widest section label, the query row's
+ *  `Search` included, so the query field lines up with the controls. */
+function labelColumnWidth(): number {
+  return Math.max(
+    ...["label.search", "label.scope", "label.match", "label.provider"].map((k) =>
+      editor.stringWidth(sectionName(k))
+    ),
+  );
+}
+
+/** The query row's prompt text: `Search` in the label column, padded the
+ *  way `sectionLabel` pads the toolbar's labels, so the field starts in
+ *  the same column as the toggles below it. The card's title already
+ *  names the feature, so the row does not repeat it. */
+function queryLabel(): string {
+  const name = sectionName("label.search");
+  return `  ${name}${" ".repeat(labelColumnWidth() - editor.stringWidth(name) + 3)}`;
+}
+
 function buildToolbarSpec(provider: LiveGrepProvider | null): WidgetSpec {
-  // Three stacked rows: the search *sources* ("Search in: …"), the search
-  // *modes* ("Match: …"), and a *meta* row (active provider, match-count,
-  // provider-cycle / save hints). Each toggle is a nested non-wrapping row —
-  // an atomic group of `toggle + accelerator` — so the wrapping parent never
-  // splits a label from its `Alt+…` hint across lines.
-  const prefix = (text: string): WidgetSpec =>
-    raw([styledRow([{ text, style: { fg: "ui.suggestion_fg" } }])]);
+  const scopeName = sectionName("label.scope");
+  const matchName = sectionName("label.match");
+  const providerName = sectionName("label.provider");
+  const width = labelColumnWidth();
 
-  const sources: WidgetSpec[] = [spacer(1), prefix(editor.t("label.search_in"))];
-  SCOPES.forEach((s) => {
-    sources.push(spacer(2));
-    const parts: WidgetSpec[] = [
-      toggle(scopeEnabled[s.id], editor.t(s.labelKey), { key: s.id }),
-    ];
-    const accel = editor.getKeybindingLabel(s.action, "prompt");
-    if (accel) {
-      parts.push(raw([styledRow([{ text: ` ${accel}`, style: { fg: "ui.help_key_fg" } }])]));
-    }
-    sources.push(row(...parts));
-  });
+  // The space between controls rides at the end of each one rather than as
+  // a child of its own: a separate spacer that did not fit would wrap to the
+  // start of the next line and push that line's first control off the column.
+  const section = (name: string, controls: WidgetSpec[]): WidgetSpec => {
+    const items = controls.map((c, i) => (i < controls.length - 1 ? row(c, spacer(2)) : c));
+    return row(sectionLabel(name, width), wrappingRow(...items));
+  };
 
-  const modes: WidgetSpec[] = [spacer(1), prefix(editor.t("label.match"))];
-  MODES.forEach((m) => {
-    modes.push(spacer(2));
-    const parts: WidgetSpec[] = [
-      toggle(searchModes[m.id], editor.t(m.labelKey), { key: m.key }),
-    ];
-    const accel = editor.getKeybindingLabel(m.action, "prompt");
-    if (accel) {
-      parts.push(raw([styledRow([{ text: ` ${accel}`, style: { fg: "ui.help_key_fg" } }])]));
-    }
-    modes.push(row(...parts));
-  });
+  const matchSection = section(
+    matchName,
+    MODES.map((m) => toolbarToggle(searchModes[m.id], editor.t(m.labelKey), m.key, m.action)),
+  );
 
-  const rows: WidgetSpec[] = [wrappingRow(...sources), wrappingRow(...modes)];
-  const metaRow = buildMetaRow(provider);
-  if (metaRow) rows.push(metaRow);
+  // Provider dropdown — only when a file-backed scope is on (irrelevant
+  // when searching only buffers/terminals/diagnostics). Picking an entry
+  // fires `change`; Alt+P still cycles without opening the list.
+  //
+  // It shares a wrapping row with the Match section: beside it when the
+  // card is wide enough, otherwise on the line below, where its own label
+  // lands in the label column. The gap rides at the end of the Match unit
+  // (see `section`) so a wrapped Provider starts flush with the column.
+  let lastRow: WidgetSpec = matchSection;
+  const choices = providerChoices();
+  if (choices.length > 0 && (scopeEnabled.files || scopeEnabled.ignored)) {
+    const options = choices.map((p) => p.name);
+    const selectedIndex = Math.max(0, provider ? choices.indexOf(provider) : 0);
+    const pLetter = accelLetter(editor.getKeybindingLabel("cycle_live_grep_provider", "prompt"));
+    lastRow = wrappingRow(
+      row(matchSection, spacer(2)),
+      row(
+        sectionLabel(providerName, width, pLetter),
+        dropdown(options, { selectedIndex, key: "provider" }),
+      ),
+    );
+  }
+  const rows: WidgetSpec[] = [
+    section(
+      scopeName,
+      SCOPES.map((s) => toolbarToggle(scopeEnabled[s.id], editor.t(s.labelKey), s.id, s.action)),
+    ),
+    spacer(1),
+    lastRow,
+  ];
   return col(...rows);
 }
 
-// Meta row (beneath the toggles): the active provider as a focusable/clickable
-// button (cycles backends) with its Alt+P accelerator inline, plus the
-// truncation indicator and the save-matches hint as text. Returns null when
-// there's nothing to show.
-function buildMetaRow(provider: LiveGrepProvider | null): WidgetSpec | null {
+/** The footer: the truncation indicator when the last result set was
+ *  clipped, the save shortcut, and how the underlined letters work — in
+ *  that order, so a narrow card clips the hint the underlines already
+ *  suggest rather than the one nothing else on screen says. */
+function buildFooter(): StyledText[] {
   const hintStyle = { fg: "ui.help_key_fg" };
   const sepStyle = { fg: "ui.popup_border_fg" };
-  const labelStyle = { fg: "ui.suggestion_fg" };
-  const parts: WidgetSpec[] = [];
-
-  // Provider button — only when a file-backed scope is on (irrelevant when
-  // searching only buffers/terminals/diagnostics). The button is keyed
-  // "provider"; activating it (click / Space / Alt+P) cycles the backend.
-  if (provider && (scopeEnabled.files || scopeEnabled.ignored)) {
-    parts.push(raw([styledRow([{ text: "Provider: ", style: labelStyle }])]));
-    parts.push(button(provider.name, { key: "provider" }));
-    const pAccel = editor.getKeybindingLabel("cycle_live_grep_provider", "prompt");
-    if (pAccel) {
-      parts.push(raw([styledRow([{ text: ` ${pAccel}`, style: hintStyle }])]));
-    }
-  }
-
-  // Trailing text: truncation indicator + save-matches hint.
-  const tail: StyledText[] = [];
-  if (lastSearchTruncated) {
-    tail.push({ text: `${MAX_RESULTS}+ matches` });
-  }
+  const parts: StyledText[][] = [];
+  if (lastSearchTruncated) parts.push([{ text: `${MAX_RESULTS}+ matches` }]);
   const saveKey = editor.getKeybindingLabel("live_grep_export_quickfix", "prompt");
   if (saveKey) {
-    if (tail.length > 0) tail.push({ text: " · ", style: sepStyle });
-    tail.push({ text: saveKey, style: hintStyle }, { text: " save matches" });
+    parts.push([{ text: saveKey, style: hintStyle }, { text: ` ${editor.t("hint.save_matches")}` }]);
   }
-  if (tail.length > 0) {
-    if (parts.length > 0) tail.unshift({ text: " · ", style: sepStyle });
-    parts.push(raw([styledRow(tail)]));
-  }
-
-  return parts.length > 0 ? row(...parts) : null;
+  parts.push([{ text: editor.t("hint.mnemonics") }]);
+  return parts.flatMap((p, i) => (i > 0 ? [{ text: "  ·  ", style: sepStyle }, ...p] : p));
 }
 
-// Refresh the overlay chrome: the scope toolbar (header band) and the footer
-// hints. Name kept as `updateOverlayTitle` for its many call sites; it no
-// longer sets a styled-text title — the widget toolbar replaces it.
+// Refresh the overlay chrome: the card title, the toolbar (header band) and
+// the footer hints. Name kept as `updateOverlayTitle` for its many call sites.
 function updateOverlayTitle(provider: LiveGrepProvider | null): void {
-  // The provider/meta line lives in the header band (third toolbar row). The
-  // footer is left for the Finder's search-status line ("Searching…",
-  // "Found N matches", …), which is shown inside the overlay rather than the
-  // easy-to-miss editor status bar — so don't touch it here.
+  editor.setPromptTitle([{ text: sectionName("prompt.live_grep") }]);
   editor.setPromptToolbar(buildToolbarSpec(provider));
+  editor.setPromptFooter(buildFooter());
+}
+
+// Last known `isAvailable()` answer per provider, so the dropdown can leave
+// out the ones that cannot run. Filled by `probeProviders` (all of them, in the
+// background, once per overlay) and by every probe `selectProvider` and
+// `cycleProvider` make on their own.
+const providerAvailable = new Map<string, boolean>();
+
+async function probeProvider(p: LiveGrepProvider): Promise<boolean> {
+  let ok = false;
+  try {
+    ok = await Promise.resolve(p.isAvailable());
+  } catch (e) {
+    editor.debug(`[live-grep] ${p.name}.isAvailable threw: ${e}`);
+  }
+  providerAvailable.set(p.name, ok);
+  return ok;
+}
+
+async function probeProviders(): Promise<void> {
+  const before = providers.map((p) => providerAvailable.get(p.name)).join();
+  await Promise.all(providers.map(probeProvider));
+  const after = providers.map((p) => providerAvailable.get(p.name)).join();
+  if (overlayActive && before !== after) updateOverlayTitle(cachedSelected ?? null);
+}
+
+/** The providers the dropdown offers: every one not known to be unable to
+ *  run. Listing an unavailable one would be a trap — the list's selection
+ *  is live, so arrowing past it would try (and fail) to switch to it. */
+function providerChoices(): LiveGrepProvider[] {
+  return providers.filter((p) => providerAvailable.get(p.name) !== false);
+}
+
+/** Point the dropdown at `provider` without firing `change` — for when the
+ *  selection moved some other way (Alt+P, a fallback). The toolbar is this
+ *  plugin's widget panel 0. */
+function syncProviderDropdown(provider: LiveGrepProvider | null): void {
+  const index = provider ? providerChoices().indexOf(provider) : -1;
+  if (index >= 0) {
+    editor.widgetMutate(0, { kind: "setDropdown", widgetKey: "provider", index });
+  }
+}
+
+/** The dropdown's `change`: switch to the picked provider, or — if it
+ *  turns out it cannot run (not probed yet when the list was built) —
+ *  drop it from the list, put the dropdown back and say why. */
+async function pickProvider(index: number): Promise<void> {
+  const candidate = providerChoices()[index];
+  if (!candidate || candidate === cachedSelected) return;
+  if (!(await probeProvider(candidate))) {
+    updateOverlayTitle(cachedSelected ?? null);
+    syncProviderDropdown(cachedSelected ?? null);
+    editor.setStatus(`Live Grep: ${candidate.name} is not available`);
+    return;
+  }
+  cachedSelected = candidate;
+  await finder.refresh();
+  editor.setStatus(`Live Grep: switched to ${candidate.name}`);
 }
 
 async function selectProvider(): Promise<LiveGrepProvider | null> {
@@ -411,16 +555,11 @@ async function selectProvider(): Promise<LiveGrepProvider | null> {
     return cachedSelected;
   }
   for (const p of providers) {
-    try {
-      const ok = await Promise.resolve(p.isAvailable());
-      if (ok) {
-        cachedSelected = p;
-        editor.debug(`[live-grep] selected provider: ${p.name}`);
-        updateOverlayTitle(p);
-        return p;
-      }
-    } catch (e) {
-      editor.debug(`[live-grep] ${p.name}.isAvailable threw: ${e}`);
+    if (await probeProvider(p)) {
+      cachedSelected = p;
+      editor.debug(`[live-grep] selected provider: ${p.name}`);
+      updateOverlayTitle(p);
+      return p;
     }
   }
   cachedSelected = null;
@@ -441,13 +580,13 @@ registerProvider({
       return false;
     }
   },
-  search: async (query, { cwd, maxResults, includeIgnored, wholeWord, regex }) => {
+  search: async (query, { cwd, maxResults, includeIgnored, wholeWord, regex, caseSensitive }) => {
     const args = [
       "--line-number",
       "--column",
       "--no-heading",
       "--color=never",
-      "--smart-case",
+      caseSensitive ? "--case-sensitive" : "--ignore-case",
       `--max-count=${maxResults}`,
       // Always skip the VCS metadata dir — even with the Ignored scope
       // on, `.git` internals are never what the user is looking for.
@@ -484,13 +623,13 @@ registerProvider({
       return false;
     }
   },
-  search: async (query, { cwd, maxResults, wholeWord, regex }) => {
+  search: async (query, { cwd, maxResults, wholeWord, regex, caseSensitive }) => {
     const args = [
       "--column",
       "--numbers",
       "--nogroup",
       "--nocolor",
-      "--smart-case",
+      caseSensitive ? "--case-sensitive" : "--ignore-case",
       "--ignore", ".git",
       "--ignore", "node_modules",
       "--ignore", "target",
@@ -545,12 +684,13 @@ registerProvider({
       return false;
     }
   },
-  search: async (query, { cwd, maxResults, includeIgnored, wholeWord, regex }) => {
+  search: async (query, { cwd, maxResults, includeIgnored, wholeWord, regex, caseSensitive }) => {
     // Run in the same repo cwd isAvailable() confirmed. Null means the
     // context is no longer a repo — return empty rather than throwing.
     const gitCwd = await gitGrepCwd(cwd);
     if (!gitCwd) return [] as GrepMatch[];
     const args = ["grep", "-n", "--column", "-I"];
+    if (!caseSensitive) args.push("-i");
     // Default git-grep is basic regex; use extended when regex is on, or
     // fixed-strings when it's off so the query is matched literally.
     args.push(regex === false ? "-F" : "-E");
@@ -585,8 +725,9 @@ registerProvider({
       return false;
     }
   },
-  search: async (query, { cwd, maxResults, wholeWord, regex }) => {
-    const args = ["--nocolor", "--column", "--smart-case"];
+  search: async (query, { cwd, maxResults, wholeWord, regex, caseSensitive }) => {
+    const args = ["--nocolor", "--column"];
+    if (!caseSensitive) args.push("--ignore-case");
     if (regex === false) args.push("--literal");
     if (wholeWord) args.push("--word-regexp");
     args.push("--", query);
@@ -619,7 +760,7 @@ registerProvider({
       return false;
     }
   },
-  search: async (query, { cwd, maxResults, wholeWord, regex }) => {
+  search: async (query, { cwd, maxResults, wholeWord, regex, caseSensitive }) => {
     const args = [
       "-rn",
       "-I",
@@ -627,6 +768,7 @@ registerProvider({
       "--exclude-dir=node_modules",
       "--exclude-dir=target",
     ];
+    if (!caseSensitive) args.push("-i");
     args.push(regex === false ? "-F" : "-E");
     if (wholeWord) args.push("-w");
     args.push("--", query, ".");
@@ -780,17 +922,13 @@ async function cycleProvider(): Promise<void> {
       );
       return;
     }
-    let ok = false;
-    try {
-      ok = await Promise.resolve(candidate.isAvailable());
-    } catch (e) {
-      editor.debug(`[live-grep] ${candidate.name}.isAvailable threw: ${e}`);
-    }
-    if (!ok) continue;
+    if (!(await probeProvider(candidate))) continue;
     cachedSelected = candidate;
-    // Reflect the new provider in the overlay's title bar
-    // immediately — the status row gets clobbered by the search
-    // result count, but the title stays put.
+    // Reflect the new provider in the toolbar's dropdown immediately —
+    // the status row gets clobbered by the search result count, but the
+    // dropdown stays put. The dropdown's selection is host-owned once
+    // shown, so it is set directly rather than re-seeded from the spec.
+    syncProviderDropdown(candidate);
     updateOverlayTitle(candidate);
     // Re-run the current query through the new provider so the
     // result list updates without the user having to type a
@@ -848,7 +986,8 @@ async function searchTerminals(query: string, limit: number): Promise<GrepMatch[
   try {
     const rgArgs = [
       "--line-number", "--column", "--no-heading", "--color=never",
-      "--smart-case", "--text", `--max-count=${limit}`,
+      searchModes.case ? "--case-sensitive" : "--ignore-case",
+      "--text", `--max-count=${limit}`,
       // Only the rendered `.txt` backing files — not the raw `.log`
       // replay logs, which would double every hit.
       "-g", "*.txt",
@@ -863,6 +1002,7 @@ async function searchTerminals(query: string, limit: number): Promise<GrepMatch[
       // rg missing or path error → fall back to grep (-a: treat the
       // ANSI-laden logs as text rather than skipping them as binary).
       const gArgs = ["-rn", "-a", "--include=*.txt"];
+      if (!searchModes.case) gArgs.push("-i");
       gArgs.push(searchModes.regex === false ? "-F" : "-E");
       if (searchModes.word) gArgs.push("-w");
       gArgs.push("--", query, dir);
@@ -966,6 +1106,7 @@ async function searchFiles(query: string): Promise<GrepMatch[] | null> {
       includeIgnored: scopeEnabled.ignored,
       wholeWord: searchModes.word,
       regex: searchModes.regex,
+      caseSensitive: searchModes.case,
     });
     return results.map((m) => ({ ...m, source: "files" as const }));
   } catch (e) {
@@ -1026,12 +1167,13 @@ async function search(query: string): Promise<GrepMatch[]> {
 // Scope/mode toggling is host-owned: the host flips the toggle's checked
 // state (on click, Space on the focused toggle, or the Alt+… shortcuts) and
 // emits a `widget_event`; we react here by syncing the scope/mode set,
-// refreshing the meta row, and re-running the search.
+// refreshing the toolbar, and re-running the search.
 editor.on("widget_event", (args) => {
   if (!overlayActive) return;
-  // The provider button (click / Space / Alt+P) cycles the search backend.
-  if (args.event_type === "activate" && args.widget_key === "provider") {
-    void cycleProvider();
+  // The provider dropdown (click / Enter / arrows) picks the search backend.
+  if (args.event_type === "change" && args.widget_key === "provider") {
+    const payload = args.payload as { index?: number } | undefined;
+    if (typeof payload?.index === "number") void pickProvider(payload.index);
     return;
   }
   if (args.event_type !== "toggle") return;
@@ -1051,8 +1193,7 @@ editor.on("widget_event", (args) => {
   } else {
     return;
   }
-  // Rebuild the toolbar so the meta row's provider line tracks the file
-  // scopes. The host already flipped the toggle visual, but scopeEnabled/
+  // Rebuild the toolbar so the provider row tracks the file scopes. The host already flipped the toggle visual, but scopeEnabled/
   // searchModes were just synced above, so the rebuilt spec keeps the same
   // checked state (and toolbar_focus persists across setPromptToolbar).
   updateOverlayTitle(cachedSelected ?? null);
@@ -1084,7 +1225,7 @@ for (const m of MODES) {
 function openLiveGrep(initialQuery: string): void {
   overlayActive = true;
   finder.prompt({
-    title: editor.t("prompt.live_grep"),
+    title: queryLabel(),
     source: {
       mode: "search",
       search,
@@ -1094,10 +1235,16 @@ function openLiveGrep(initialQuery: string): void {
     floatingOverlay: true,
     ...(initialQuery ? { initialQuery } : {}),
   });
+  // Results, preview and toolbar all want the room: size the card on the
+  // whole screen (90%, over the dock), the way Settings is.
+  editor.setPromptFullscreen(true);
   // Pre-populate the overlay's frame title with the cached
   // provider name (if any) before the user types — avoids the
   // brief "Live Grep" → "Live Grep · rg" flash when the
   // first search resolves selectProvider().
+  // Probe every provider in the background so the dropdown can leave out
+  // the ones that cannot run.
+  void probeProviders();
   if (cachedSelected) {
     updateOverlayTitle(cachedSelected);
   } else {

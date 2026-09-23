@@ -20,6 +20,15 @@ use crate::model::event::{BufferId, Event};
 use crate::primitives::word_navigation::{find_word_end, find_word_start};
 use crate::view::prompt::{Prompt, PromptType};
 
+/// What applying a `WorkspaceEdit` actually did.
+pub(crate) struct AppliedEdit {
+    /// Text edits and resource operations that changed something.
+    pub changes: usize,
+    /// Resource operations refused because they would have destroyed a file.
+    /// Each has already reported itself on the status line.
+    pub refused: usize,
+}
+
 use crate::services::lsp::async_handler::LspHandle;
 use crate::services::lsp::manager::detect_language;
 use crate::types::LspFeature;
@@ -204,7 +213,11 @@ impl Editor {
                 None => return Ok(()),
             };
 
-            let language = match detect_language(path, &self.config.languages) {
+            let language = match detect_language(
+                path,
+                &self.config.languages,
+                state.buffer.filesystem().as_ref(),
+            ) {
                 Some(language) => language,
                 None => return Ok(()),
             };
@@ -679,13 +692,7 @@ impl Editor {
                 new_sticky_column: None,
             };
 
-            let split_id = self
-                .windows
-                .get(&self.active_window)
-                .and_then(|w| w.buffers.splits())
-                .map(|(mgr, _)| mgr)
-                .expect("active window must have a populated split layout")
-                .active_split();
+            let split_id = self.active_window().split_manager().active_split();
             self.active_window_mut()
                 .apply_event_to_buffer(buffer_id, split_id, &event);
             // Without this the cursor lands at the definition but the
@@ -2550,9 +2557,18 @@ impl Editor {
         // Apply workspace edit if present
         if let Some(edit) = ca.edit {
             match self.apply_workspace_edit(edit) {
-                Ok(n) => {
+                // A refused operation has already named the file it was
+                // about; leave that message in place rather than reporting
+                // the action as applied.
+                Ok(applied) if applied.refused > 0 => {}
+                Ok(applied) => {
                     self.set_status_message(
-                        t!("lsp.code_action_applied", title = &title, count = n).to_string(),
+                        t!(
+                            "lsp.code_action_applied",
+                            title = &title,
+                            count = applied.changes
+                        )
+                        .to_string(),
                     );
                 }
                 Err(e) => {
@@ -2976,23 +2992,14 @@ impl Editor {
         // Get cursor_id for this buffer from split view state
         let cursor_id = {
             let split_id = self
+                .active_window_mut()
                 .split_manager_mut()
                 .splits_for_buffer(buffer_id)
                 .into_iter()
                 .next()
-                .unwrap_or_else(|| {
-                    self.windows
-                        .get(&self.active_window)
-                        .and_then(|w| w.buffers.splits())
-                        .map(|(mgr, _)| mgr)
-                        .expect("active window must have a populated split layout")
-                        .active_split()
-                });
-            self.windows
-                .get(&self.active_window)
-                .and_then(|w| w.buffers.splits())
-                .map(|(_, vs)| vs)
-                .expect("active window must have a populated split layout")
+                .unwrap_or_else(|| self.active_window().split_manager().active_split());
+            self.active_window()
+                .split_view_states()
                 .get(&split_id)
                 .map(|vs| vs.cursors.primary_id())
                 .unwrap_or_else(|| self.active_cursors().primary_id())
@@ -3157,7 +3164,11 @@ impl Editor {
     }
 
     /// Apply a resource operation (CreateFile, RenameFile, DeleteFile) from a workspace edit.
-    fn apply_resource_operation(&mut self, op: lsp_types::ResourceOp) -> AnyhowResult<()> {
+    /// Apply one resource operation, answering whether it changed the
+    /// filesystem. A refused operation answers `false`: it must not be
+    /// counted as a change, and the message it left on the status line must
+    /// not be replaced by a caller reporting success.
+    fn apply_resource_operation(&mut self, op: lsp_types::ResourceOp) -> AnyhowResult<bool> {
         // Each URI in a resource operation is wire-side and must be
         // translated back to the host before we touch the host
         // filesystem. Wrapping in [`LspUri`] and calling
@@ -3185,12 +3196,30 @@ impl Editor {
                 if path.exists() {
                     if ignore_if_exists {
                         tracing::debug!("CreateFile: {:?} already exists, ignoring", path);
-                        return Ok(());
+                        return Ok(false);
                     }
-                    if !overwrite {
+                    // `overwrite` is the server asking us to truncate a file
+                    // that already exists — the write below is `""`, so
+                    // honouring it destroys the contents. Same objection as
+                    // the delete arm: server-initiated, unconfirmed, and no
+                    // trash to recover from. The request is reported and the
+                    // file left alone whatever the flag says.
+                    if overwrite {
+                        tracing::warn!(
+                            "CreateFile refused: {:?} exists and the server asked to overwrite it",
+                            path
+                        );
+                        let name = path
+                            .file_name()
+                            .map(|n| n.to_string_lossy().to_string())
+                            .unwrap_or_else(|| path.display().to_string());
+                        self.set_status_message(
+                            t!("lsp.overwrite_refused", name = &name).to_string(),
+                        );
+                    } else {
                         tracing::warn!("CreateFile: {:?} already exists and overwrite=false", path);
-                        return Ok(());
                     }
+                    return Ok(false);
                 }
 
                 // Create parent directories if needed
@@ -3204,6 +3233,7 @@ impl Editor {
                 if let Err(e) = self.open_file(&path) {
                     tracing::warn!("CreateFile: failed to open created file {:?}: {}", path, e);
                 }
+                Ok(true)
             }
             lsp_types::ResourceOp::Rename(rename) => {
                 let old_path = to_host(&rename.old_uri);
@@ -3222,15 +3252,32 @@ impl Editor {
                 if new_path.exists() {
                     if ignore_if_exists {
                         tracing::debug!("RenameFile: {:?} already exists, ignoring", new_path);
-                        return Ok(());
+                        return Ok(false);
                     }
-                    if !overwrite {
+                    // `overwrite` here means renaming *onto* an existing
+                    // file, which destroys it. Refused for the same reason
+                    // the delete and create arms are: nothing about a
+                    // server-initiated edit was confirmed by the user, and
+                    // `rename(2)` leaves nothing to recover.
+                    if overwrite {
+                        tracing::warn!(
+                            "RenameFile refused: {:?} exists and the server asked to overwrite it",
+                            new_path
+                        );
+                        let name = new_path
+                            .file_name()
+                            .map(|n| n.to_string_lossy().to_string())
+                            .unwrap_or_else(|| new_path.display().to_string());
+                        self.set_status_message(
+                            t!("lsp.overwrite_refused", name = &name).to_string(),
+                        );
+                    } else {
                         tracing::warn!(
                             "RenameFile: {:?} already exists and overwrite=false",
                             new_path
                         );
-                        return Ok(());
                     }
+                    return Ok(false);
                 }
 
                 // Create parent directories if needed
@@ -3239,47 +3286,45 @@ impl Editor {
                 }
                 std::fs::rename(&old_path, &new_path)?;
                 tracing::info!("RenameFile: {:?} -> {:?}", old_path, new_path);
+                Ok(true)
             }
             lsp_types::ResourceOp::Delete(delete) => {
+                // Fresh does not delete files because a language server asked.
+                //
+                // A server-initiated `workspace/applyEdit` carries no user
+                // confirmation, is not bounded to the workspace, and — unlike
+                // the file explorer's delete, which moves to the system trash —
+                // unlinked whatever URI it named with no way back. One bad
+                // server (or one bad code action from a good one) was enough to
+                // lose a directory. The request is reported and ignored; a user
+                // who agrees with the server can delete the file themselves.
                 let path = to_host(&delete.uri);
-                let recursive = delete
-                    .options
-                    .as_ref()
-                    .and_then(|o| o.recursive)
-                    .unwrap_or(false);
-                let ignore_if_not_exists = delete
-                    .options
-                    .as_ref()
-                    .and_then(|o| o.ignore_if_not_exists)
-                    .unwrap_or(false);
-
-                if !path.exists() {
-                    if ignore_if_not_exists {
-                        tracing::debug!("DeleteFile: {:?} does not exist, ignoring", path);
-                        return Ok(());
-                    }
-                    tracing::warn!("DeleteFile: {:?} does not exist", path);
-                    return Ok(());
-                }
-
-                if path.is_dir() && recursive {
-                    std::fs::remove_dir_all(&path)?;
-                } else if path.is_file() {
-                    std::fs::remove_file(&path)?;
-                }
-                tracing::info!("DeleteFile: deleted {:?}", path);
+                tracing::warn!("DeleteFile refused (server-requested delete): {:?}", path);
+                let name = path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| path.display().to_string());
+                self.set_status_message(t!("lsp.delete_refused", name = &name).to_string());
+                Ok(false)
             }
         }
-        Ok(())
     }
 
     /// Apply an LSP WorkspaceEdit (used by rename, code actions, etc.).
     ///
     /// Returns the total number of text changes applied.
+    /// Apply an LSP `WorkspaceEdit`.
+    ///
+    /// Returns what it did: how many changes landed, and how many resource
+    /// operations were refused because they would have deleted or overwritten
+    /// a file. A caller that reports success must check `refused` first — the
+    /// refusal has already put a message naming the file on the status line,
+    /// and overwriting it with "renamed 3 occurrences" would hide the fact
+    /// that the server asked for something Fresh declined to do.
     pub(crate) fn apply_workspace_edit(
         &mut self,
         workspace_edit: lsp_types::WorkspaceEdit,
-    ) -> AnyhowResult<usize> {
+    ) -> AnyhowResult<AppliedEdit> {
         tracing::debug!(
             "Applying WorkspaceEdit: changes={:?}, document_changes={:?}",
             workspace_edit.changes.as_ref().map(|c| c.len()),
@@ -3290,6 +3335,7 @@ impl Editor {
         );
 
         let mut total_changes = 0;
+        let mut refused = 0;
 
         // Applying edits to a file opens it via `open_file`, which focuses
         // it in the active split. For a cross-file edit (e.g. a rename
@@ -3321,7 +3367,10 @@ impl Editor {
                                         .to_string(),
                                 );
                             }
-                            return Ok(0);
+                            return Ok(AppliedEdit {
+                                changes: 0,
+                                refused: 0,
+                            });
                         }
                     };
                     total_changes += self.apply_lsp_text_edits(buffer_id, edits)?;
@@ -3348,8 +3397,11 @@ impl Editor {
                                 total_changes += self.apply_text_document_edit(text_doc_edit)?;
                             }
                             lsp_types::DocumentChangeOperation::Op(resource_op) => {
-                                self.apply_resource_operation(resource_op)?;
-                                total_changes += 1;
+                                if self.apply_resource_operation(resource_op)? {
+                                    total_changes += 1;
+                                } else {
+                                    refused += 1;
+                                }
                             }
                         }
                     }
@@ -3367,7 +3419,10 @@ impl Editor {
             self.set_active_buffer(original_active);
         }
 
-        Ok(total_changes)
+        Ok(AppliedEdit {
+            changes: total_changes,
+            refused,
+        })
     }
 
     /// Handle rename response from LSP
@@ -3378,9 +3433,14 @@ impl Editor {
     ) -> AnyhowResult<()> {
         match result {
             Ok(workspace_edit) => {
-                let total_changes = self.apply_workspace_edit(workspace_edit)?;
-                self.active_window_mut().status_message =
-                    Some(t!("lsp.renamed", count = total_changes).to_string());
+                let applied = self.apply_workspace_edit(workspace_edit)?;
+                // A refusal has already said which file it was about; saying
+                // "renamed N occurrences" over the top of it would bury the
+                // one thing the user needs to know.
+                if applied.refused == 0 {
+                    self.active_window_mut().status_message =
+                        Some(t!("lsp.renamed", count = applied.changes).to_string());
+                }
             }
             Err(error) => {
                 // Per LSP spec: ContentModified errors (-32801) should NOT be shown to user
@@ -3432,24 +3492,15 @@ impl Editor {
         // Capture old cursor states from split view state
         // Find a split that has this buffer in its keyed_states
         let split_id_for_cursors = self
+            .active_window_mut()
             .split_manager_mut()
             .splits_for_buffer(buffer_id)
             .into_iter()
             .next()
-            .unwrap_or_else(|| {
-                self.windows
-                    .get(&self.active_window)
-                    .and_then(|w| w.buffers.splits())
-                    .map(|(mgr, _)| mgr)
-                    .expect("active window must have a populated split layout")
-                    .active_split()
-            });
+            .unwrap_or_else(|| self.active_window().split_manager().active_split());
         let old_cursors: Vec<(CursorId, usize, Option<usize>)> = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(_, vs)| vs)
-            .expect("active window must have a populated split layout")
+            .active_window()
+            .split_view_states()
             .get(&split_id_for_cursors)
             .and_then(|vs| vs.keyed_states.get(&buffer_id))
             .map(|bvs| {
@@ -4028,7 +4079,13 @@ impl Editor {
             .map(|state| {
                 (
                     state.buffer.version(),
-                    state.semantic_tokens.as_ref().map(|s| s.version),
+                    // A stale store (server asked for a refresh) is never
+                    // "already up to date", whatever its version.
+                    state
+                        .semantic_tokens
+                        .as_ref()
+                        .filter(|s| !s.stale)
+                        .map(|s| s.version),
                     state
                         .semantic_tokens
                         .as_ref()

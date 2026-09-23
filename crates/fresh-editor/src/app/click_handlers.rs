@@ -53,11 +53,8 @@ impl Editor {
                 .expect("active window present")
                 .get(buffer_id)?;
             let headers = self
-                .windows
-                .get(&self.active_window)
-                .and_then(|w| w.buffers.splits())
-                .map(|(_, vs)| vs)
-                .expect("active window must have a populated split layout")
+                .active_window()
+                .split_view_states()
                 .get(split_id)
                 .map(|vs| {
                     vs.folds
@@ -72,20 +69,14 @@ impl Editor {
             .pane_view(*split_id)
             .map(|v| v.rows.clone());
         let fallback = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(_, vs)| vs)
-            .expect("active window must have a populated split layout")
+            .active_window()
+            .split_view_states()
             .get(split_id)
             .map(|vs| vs.viewport.top_byte())
             .unwrap_or(0);
         let compose_width = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(_, vs)| vs)
-            .expect("active window must have a populated split layout")
+            .active_window()
+            .split_view_states()
             .get(split_id)
             .and_then(|vs| vs.compose_width);
 
@@ -110,11 +101,8 @@ impl Editor {
             .expect("active window present")
             .get(buffer_id)?;
         let fold_indicators_visible = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(_, vs)| vs)
-            .expect("active window must have a populated split layout")
+            .active_window()
+            .split_view_states()
             .get(split_id)
             .map(|vs| vs.fold_indicators_visible())
             .unwrap_or(true);
@@ -298,8 +286,13 @@ impl Editor {
             // inert under drags: the click still focuses (above), no
             // selection origin is recorded.
             if self.config.terminal.mouse_drag_selects {
-                self.active_window_mut().mouse_state.terminal_drag_pending =
-                    Some((split_id, buffer_id, col, row));
+                self.active_window_mut().mouse_state.drag =
+                    Some(crate::app::types::PointerDrag::TerminalPress {
+                        pane: split_id,
+                        buffer: buffer_id,
+                        col,
+                        row,
+                    });
             }
             return Ok(());
         }
@@ -319,11 +312,8 @@ impl Editor {
 
         // Get compose width for this split (adjusts content rect for centered layout)
         let compose_width = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(_, vs)| vs)
-            .expect("active window must have a populated split layout")
+            .active_window()
+            .split_view_states()
             .get(&split_id)
             .and_then(|vs| vs.compose_width);
 
@@ -372,11 +362,8 @@ impl Editor {
                 super::click_geometry::adjust_content_rect_for_compose(content_rect, compose_width);
             let content_col = col.saturating_sub(adjusted_rect.x);
             let collapsed_header_bytes = self
-                .windows
-                .get(&self.active_window)
-                .and_then(|w| w.buffers.splits())
-                .map(|(_, vs)| vs)
-                .expect("active window must have a populated split layout")
+                .active_window()
+                .split_view_states()
                 .get(&split_id)
                 .map(|vs| {
                     vs.folds
@@ -384,11 +371,8 @@ impl Editor {
                 })
                 .unwrap_or_default();
             let fold_indicators_visible = self
-                .windows
-                .get(&self.active_window)
-                .and_then(|w| w.buffers.splits())
-                .map(|(_, vs)| vs)
-                .expect("active window must have a populated split layout")
+                .active_window()
+                .split_view_states()
                 .get(&split_id)
                 .map(|vs| vs.fold_indicators_visible())
                 .unwrap_or(true);
@@ -402,11 +386,8 @@ impl Editor {
             );
 
             let cursor_snapshot = self
-                .windows
-                .get(&self.active_window)
-                .and_then(|w| w.buffers.splits())
-                .map(|(_, vs)| vs)
-                .expect("active window must have a populated split layout")
+                .active_window()
+                .split_view_states()
                 .get(&split_id)
                 .map(|vs| {
                     // A plain click ends multi-cursor editing: every other
@@ -559,11 +540,8 @@ impl Editor {
         // buffer end the line is empty, so the clicked column is measured
         // from the line start (viewport column + horizontal scroll).
         let left_col = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(_, vs)| vs)
-            .expect("active window must have a populated split layout")
+            .active_window()
+            .split_view_states()
             .get(&split_id)
             .map(|vs| vs.viewport.left_column)
             .unwrap_or(0);
@@ -634,10 +612,13 @@ impl Editor {
         }
 
         // Start text selection drag for potential mouse drag
-        self.active_window_mut().mouse_state.dragging_text_selection = true;
-        self.active_window_mut().mouse_state.drag_selection_split = Some(split_id);
-        self.active_window_mut().mouse_state.drag_selection_anchor =
-            Some(new_anchor.unwrap_or(target_position));
+        self.active_window_mut().mouse_state.drag = Some(
+            crate::app::types::PointerDrag::Selection(crate::app::types::SelectionDrag {
+                pane: split_id,
+                anchor: Some(new_anchor.unwrap_or(target_position)),
+                word_end: None,
+            }),
+        );
 
         Ok(())
     }

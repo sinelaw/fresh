@@ -5,16 +5,9 @@ use anyhow::Result as AnyhowResult;
 
 use super::Editor;
 
-/// Behavior owned by this component (moved from mouse_input.rs —
-/// the handlers its arms dispatch to).
 impl Editor {
-    /// Map a click on a status-bar segment to its editor `Action`. This is the
-    /// single id→action table for the generic click rail. The roster is
-    /// enforced by exhaustiveness at BOTH ends, not by this comment: a new
-    /// `StatusBarClickable` variant fails to compile here (no wildcard arm),
-    /// and a new `ElementKind` fails to compile in
-    /// `StatusBarRenderer::clickable_for_kind` (whose non-clickable kinds are
-    /// an explicit list, also wildcard-free).
+    /// Map a click on a status-bar segment to its editor `Action`. A new
+    /// `StatusBarClickable` variant fails to compile here (no wildcard arm).
     ///
     /// Most segments dismiss any open menu-style popup first (the #1941
     /// follow-up: otherwise a stale popup overlaps the new prompt). The LSP,
@@ -70,9 +63,7 @@ impl Editor {
     ///
     /// The registry key is `"<plugin>:<token>"` — how
     /// `register_status_bar_element` builds it — so it splits on the first
-    /// colon. Reached from the tree now: the token is a keyed element that
-    /// answers its own press, rather than a rectangle a click rail searched
-    /// for after missing every built-in indicator.
+    /// colon. The token is a keyed element that answers its own press.
     pub(crate) fn fire_status_bar_token_click(&mut self, key: &str) {
         let (plugin_name, token_name) = match key.split_once(':') {
             Some((p, t)) => (p.to_string(), t.to_string()),

@@ -9,9 +9,9 @@ use super::items::{control_to_value, SettingControl, SettingItem, SettingsPage};
 use super::live;
 use super::schema::{parse_schema, SettingCategory, SettingSchema};
 use super::search::{search_settings, DeepMatch, SearchResult};
+use super::surface::SettingsSurface;
 use crate::config::Config;
 use crate::config_io::ConfigLayer;
-use crate::view::ui::ScrollablePanel;
 use std::collections::HashMap;
 
 /// Set a value at a JSON pointer path, creating intermediate objects as
@@ -238,9 +238,18 @@ pub struct SettingsState {
     /// tree view. Only categories with `sections.len() > 1` are eligible —
     /// a category with zero or one section stays flat.
     pub expanded_categories: std::collections::HashSet<usize>,
-    /// Scroll state for the categories panel itself, separate from the body's
-    /// window. Drives mouse-wheel + page-up/down on the left.
-    pub categories_scroll: ScrollablePanel,
+    /// How many rows a `PgUp` / `PgDn` moves the category cursor by: the
+    /// tree's own height, read off the box the tree placed
+    /// (`Editor::settle_modal_viewports`).
+    ///
+    /// **This is the whole of what the tree's old `ScrollablePanel` was still
+    /// doing.** Its offset and content height were written by
+    /// `ensure_focused_visible` walking `ScrollItem::height` over every row —
+    /// a second copy of the heights the list draws the rows with — and read by
+    /// nothing: the window is the list element's, so the wheel moves it and a
+    /// keyboard move reveals the selection, which is what `categories`
+    /// documents. A page is a number, not a panel.
+    pub tree_page_rows: u16,
     /// Cursor position inside the currently-selected category's tree row.
     /// `None` = cursor is on the category row itself (the category row
     /// shows the `>` indicator).
@@ -301,13 +310,17 @@ struct TextEditSnapshot {
 ///
 /// Sections only appear when their owning category is in
 /// `expanded_categories` AND has more than one section — single-section
-/// categories show their items flat without a tree node.
+/// categories show their items flat without a tree node. Likewise the pages
+/// nested under a category (a plugin's page under "Plugins") only appear
+/// while that category is expanded.
 #[derive(Debug, Clone, Copy)]
 pub enum TreeRow {
     Category {
         idx: usize,
         expandable: bool,
         expanded: bool,
+        /// Nested under another category's row (a plugin's page).
+        nested: bool,
     },
     Section {
         cat_idx: usize,
@@ -315,9 +328,33 @@ pub enum TreeRow {
     },
 }
 
-impl crate::view::ui::ScrollItem for TreeRow {
-    fn height(&self, _width: u16) -> u16 {
-        1
+impl SettingsSurface for SettingsState {
+    fn controls(&self) -> &crate::widgets::WidgetPanelState {
+        &self.controls
+    }
+    fn controls_mut(&mut self) -> &mut crate::widgets::WidgetPanelState {
+        &mut self.controls
+    }
+    fn current_item(&self) -> Option<&SettingItem> {
+        SettingsState::current_item(self)
+    }
+    fn current_item_mut(&mut self) -> Option<&mut SettingItem> {
+        SettingsState::current_item_mut(self)
+    }
+    /// The keyboard is on the category list or the footer instead while
+    /// either is focused.
+    fn items_have_keyboard(&self) -> bool {
+        self.focus_panel == FocusPanel::Settings
+    }
+    fn absorb(&mut self, key: &str, events: &[(String, serde_json::Value)]) {
+        SettingsState::absorb(self, key, events)
+    }
+    /// The change is recorded against the target layer as pending.
+    fn value_changed(&mut self) {
+        self.on_value_changed();
+    }
+    fn edit_list_row(&mut self, row: Option<usize>) {
+        SettingsState::edit_list_row(self, row)
     }
 }
 
@@ -328,7 +365,7 @@ impl SettingsState {
     }
 
     /// Same as [`Self::new`], plus inject per-plugin config schemas as
-    /// subcategories of a "Plugin Settings" top-level category. Only
+    /// pages nested under the "Plugins" category. Only
     /// enabled plugins with a schema are rendered.
     pub fn new_with_plugin_schemas(
         schema_json: &str,
@@ -375,7 +412,7 @@ impl SettingsState {
             &theme_options,
         );
 
-        Ok(Self {
+        let mut state = Self {
             categories,
             pages,
             selected_category: 0,
@@ -415,7 +452,7 @@ impl SettingsState {
             pending_deletions: std::collections::HashSet::new(),
             item_style: super::items::ItemBoxStyle::default(),
             expanded_categories: std::collections::HashSet::new(),
-            categories_scroll: ScrollablePanel::new(),
+            tree_page_rows: 0,
             tree_cursor_section: None,
             cursor_drove_body: false,
             text_edit_snapshot: None,
@@ -424,7 +461,9 @@ impl SettingsState {
                 key: None,
             }),
             theme_options,
-        })
+        };
+        state.expand_parent_categories();
+        Ok(state)
     }
 
     /// Get the currently focused panel
@@ -683,10 +722,53 @@ impl SettingsState {
     /// Whether a category should render with a chevron + be expandable in
     /// the tree view. We require strictly more than one section, since one
     /// section adds no information beyond the category itself.
+    /// A nested page (a plugin's, under "Plugins") never is: the tree has
+    /// no room for a third level.
     pub fn is_category_expandable(&self, cat_idx: usize) -> bool {
-        self.pages
-            .get(cat_idx)
-            .is_some_and(|p| p.sections.len() > 1)
+        self.pages.get(cat_idx).is_some_and(|p| {
+            !self.is_nested(cat_idx) && (p.sections.len() > 1 || self.has_child_pages(&p.name))
+        })
+    }
+
+    /// Whether the page is listed under another category's row.
+    fn is_nested(&self, idx: usize) -> bool {
+        self.pages[idx].parent.as_deref().is_some_and(|parent| {
+            self.pages
+                .iter()
+                .any(|q| q.name == parent && q.parent.is_none())
+        })
+    }
+
+    /// Every page's index in the tree's order with everything expanded —
+    /// the order the narrow layout's strip lists them in.
+    pub fn tree_order(&self) -> Vec<usize> {
+        let mut order = Vec::with_capacity(self.pages.len());
+        for (idx, page) in self.pages.iter().enumerate() {
+            if self.is_nested(idx) {
+                continue;
+            }
+            order.push(idx);
+            order.extend((0..self.pages.len()).filter(|&c| {
+                self.is_nested(c) && self.pages[c].parent.as_deref() == Some(page.name.as_str())
+            }));
+        }
+        order
+    }
+
+    /// Whether any page is nested under the top-level page named `name`.
+    fn has_child_pages(&self, name: &str) -> bool {
+        self.pages.iter().any(|p| p.parent.as_deref() == Some(name))
+    }
+
+    /// Expand the categories whose nested pages should be on show when the
+    /// dialog opens ("Plugins", with a page per plugin under it).
+    fn expand_parent_categories(&mut self) {
+        let parents: Vec<usize> = (0..self.pages.len())
+            .filter(|&i| {
+                self.pages[i].parent.is_none() && self.has_child_pages(&self.pages[i].name)
+            })
+            .collect();
+        self.expanded_categories.extend(parents);
     }
 
     /// Move the cursor in the categories tree by `delta` rows (positive =
@@ -755,16 +837,9 @@ impl SettingsState {
             true => self.body_anchor.top_key(key),
             false => self.body_anchor.reveal_key(key),
         }
-        let new_rows = self.visible_tree();
-        let new_cur = self.tree_cursor_index(&new_rows);
-        // A tree row is one line tall whatever the width, so the tree's own
-        // column is the honest number to measure it against.
-        self.categories_scroll.ensure_focused_visible(
-            &new_rows,
-            new_cur,
-            None,
-            super::super::shell::settings::CATEGORY_COLS,
-        );
+        // The tree's window is the list element's and it reveals its own
+        // selection (`shell::settings::categories`), so there is nothing to
+        // scroll here.
     }
 
     /// Find the visible-tree index for the current selection. Prefers the
@@ -813,14 +888,32 @@ impl SettingsState {
         if self.is_category_expandable(idx) {
             self.expanded_categories.insert(idx);
         }
+        // A nested page is only in the tree while its parent is expanded.
+        if let Some(parent) = self.pages.get(idx).and_then(|p| p.parent.clone()) {
+            if let Some(p) = self.pages.iter().position(|q| q.name == parent) {
+                self.expanded_categories.insert(p);
+            }
+        }
     }
 
     pub fn toggle_category_expanded(&mut self, cat_idx: usize) {
         if !self.is_category_expandable(cat_idx) {
             return;
         }
-        if !self.expanded_categories.insert(cat_idx) {
-            self.expanded_categories.remove(&cat_idx);
+        if self.expanded_categories.insert(cat_idx) {
+            return;
+        }
+        self.expanded_categories.remove(&cat_idx);
+        // Collapsing hides the rows under it; a cursor on one of them moves
+        // up to the category, as Left does.
+        let parent = self.pages[cat_idx].name.clone();
+        if self.selected_category == cat_idx {
+            self.tree_cursor_section = None;
+        } else if self.pages[self.selected_category].parent.as_deref() == Some(parent.as_str()) {
+            self.selected_category = cat_idx;
+            self.selected_item = 0;
+            self.tree_cursor_section = None;
+            self.body_anchor.scroll_to(fresh_ui::Point::ZERO);
         }
     }
 
@@ -857,19 +950,46 @@ impl SettingsState {
     /// rendering, hit-testing, and Up/Down navigation in the tree.
     pub fn visible_tree(&self) -> Vec<TreeRow> {
         let mut rows = Vec::with_capacity(self.pages.len());
+        // A page whose parent is missing is listed at the top level rather
+        // than dropped.
+        let is_top = |p: &SettingsPage| {
+            p.parent.as_deref().is_none_or(|parent| {
+                !self
+                    .pages
+                    .iter()
+                    .any(|q| q.name == parent && q.parent.is_none())
+            })
+        };
         for (idx, page) in self.pages.iter().enumerate() {
-            let expandable = page.sections.len() > 1;
+            if !is_top(page) {
+                continue;
+            }
+            let expandable = self.is_category_expandable(idx);
             let expanded = expandable && self.expanded_categories.contains(&idx);
             rows.push(TreeRow::Category {
                 idx,
                 expandable,
                 expanded,
+                nested: false,
             });
-            if expanded {
+            if !expanded {
+                continue;
+            }
+            if page.sections.len() > 1 {
                 for section_idx in 0..page.sections.len() {
                     rows.push(TreeRow::Section {
                         cat_idx: idx,
                         section_idx,
+                    });
+                }
+            }
+            for (child, p) in self.pages.iter().enumerate() {
+                if page.parent.is_none() && p.parent.as_deref() == Some(page.name.as_str()) {
+                    rows.push(TreeRow::Category {
+                        idx: child,
+                        expandable: false,
+                        expanded: false,
+                        nested: true,
                     });
                 }
             }
@@ -992,25 +1112,6 @@ impl SettingsState {
         }
     }
 
-    /// Toggle the visual style applied to every item.
-    ///
-    /// Style is cached per-item so the `ScrollItem::height(width)` trait impl
-    /// can compute the correct height without taking a style parameter; this
-    /// method propagates the change to every item across every page in one
-    /// pass. Recomputes the scroll panel content height too, since heights
-    /// just changed.
-    pub fn set_item_style(&mut self, style: super::items::ItemBoxStyle) {
-        if self.item_style == style {
-            return;
-        }
-        self.item_style = style;
-        for page in &mut self.pages {
-            for item in &mut page.items {
-                item.style = style;
-            }
-        }
-    }
-
     /// Ensure the selected item is visible in the viewport.
     pub fn ensure_visible(&mut self) {
         if self.focus_panel() != FocusPanel::Settings {
@@ -1092,6 +1193,7 @@ impl SettingsState {
     }
 
     /// Set the target layer for saving changes.
+    #[cfg(test)]
     pub fn set_target_layer(&mut self, layer: ConfigLayer) {
         if layer != ConfigLayer::System {
             // Cannot target System layer (read-only)
@@ -1151,16 +1253,6 @@ impl SettingsState {
             .get(path)
             .copied()
             .unwrap_or(ConfigLayer::System)
-    }
-
-    /// Get a short label for a layer source (for UI display).
-    pub fn layer_source_label(layer: ConfigLayer) -> &'static str {
-        match layer {
-            ConfigLayer::System => "default",
-            ConfigLayer::User => "user",
-            ConfigLayer::Project => "project",
-            ConfigLayer::Session => "session",
-        }
     }
 
     /// Reset the current item by removing it from the target layer.
@@ -1384,13 +1476,6 @@ impl SettingsState {
         self.search_scroll_offset = 0;
     }
 
-    /// Update search query and refresh results
-    pub fn set_search_query(&mut self, query: String) {
-        self.search_input.set_value(&query);
-        self.search_input.move_end();
-        self.refresh_search_results();
-    }
-
     /// Recompute results after the query text changed and reset the
     /// results selection/scroll to the top.
     fn refresh_search_results(&mut self) {
@@ -1531,50 +1616,15 @@ impl SettingsState {
         }
     }
 
-    /// Get the currently selected search result
-    pub fn current_search_result(&self) -> Option<&SearchResult> {
-        self.search_results.get(self.selected_search_result)
-    }
-
     /// Show the unsaved changes confirmation dialog
     pub fn show_confirm_dialog(&mut self) {
         self.showing_confirm_dialog = true;
         self.confirm_dialog_selection = 0; // Default to "Save and Exit"
     }
 
-    /// Hide the confirmation dialog
-    pub fn hide_confirm_dialog(&mut self) {
-        self.showing_confirm_dialog = false;
-        self.confirm_dialog_selection = 0;
-    }
-
-    /// Move to next option in confirmation dialog
-    pub fn confirm_dialog_next(&mut self) {
-        self.confirm_dialog_selection = (self.confirm_dialog_selection + 1) % 3;
-    }
-
-    /// Move to previous option in confirmation dialog
-    pub fn confirm_dialog_prev(&mut self) {
-        self.confirm_dialog_selection = if self.confirm_dialog_selection == 0 {
-            2
-        } else {
-            self.confirm_dialog_selection - 1
-        };
-    }
-
     /// Toggle the help overlay
     pub fn toggle_help(&mut self) {
         self.showing_help = !self.showing_help;
-    }
-
-    /// Hide the help overlay
-    pub fn hide_help(&mut self) {
-        self.showing_help = false;
-    }
-
-    /// Check if the entry dialog is showing
-    pub fn showing_entry_dialog(&self) -> bool {
-        self.has_entry_dialog()
     }
 
     /// Open the entry dialog for the map entry at `entry_idx`.
@@ -1891,18 +1941,35 @@ impl SettingsState {
         let is_new = dialog.is_new;
         let key_changed = !is_new && key != original_key;
 
-        // Update the map control with the new value
-        if let Some(item) = self.current_item_mut() {
-            if let SettingControl::Map { entries, .. } = &mut item.control {
-                // If key was changed, remove old entry first
-                if key_changed {
-                    if let Some(idx) = entries.iter().position(|(k, _)| k == &original_key) {
-                        entries.remove(idx);
-                    }
-                }
-                // Find or add the entry with the (possibly new) key
-                super::items::map_set(entries, key.clone(), value.clone());
+        // The map the entry belongs to: a field of the dialog below this
+        // one, or the page's own item. A nested entry is the parent's to
+        // write — its save carries the whole value — so only a page-level
+        // entry records pending changes here.
+        let item_path = self
+            .entry_dialog_stack
+            .last()
+            .map(|parent| Self::parent_item_path(parent, &map_path));
+        let nested = item_path.is_some();
+        let item = match item_path {
+            Some(item_path) => self.entry_dialog_stack.last_mut().and_then(|parent| {
+                let item = parent.items.iter_mut().find(|i| i.path == item_path)?;
+                // The parent's title flips to `• modified`: its save still
+                // owes the change.
+                parent.user_edited = true;
+                Some(item)
+            }),
+            None => self.current_item_mut(),
+        };
+        if let Some(SettingControl::Map { entries, .. }) = item.map(|i| &mut i.control) {
+            // If key was changed, remove old entry first
+            if key_changed {
+                entries.retain(|(k, _)| k != &original_key);
             }
+            // Find or add the entry with the (possibly new) key
+            super::items::map_set(entries, key.clone(), value.clone());
+        }
+        if nested {
+            return;
         }
 
         // Record deletion of old key if key was changed
@@ -1915,6 +1982,24 @@ impl SettingsState {
         // Record the pending change
         let path = format!("{}/{}", map_path, key);
         self.set_pending_change(&path, value);
+    }
+
+    /// The path, within `parent`, of the field a nested dialog at
+    /// `nested_path` edits: the nested path less the parent's entry path.
+    /// For an is_single_value parent (e.g. a quicklsp entry whose value
+    /// schema is an array) the field is the entry's value at
+    /// `SINGLE_VALUE_PATH` and the nested dialog lives exactly at the entry
+    /// path, so nothing is left and the path names that item.
+    fn parent_item_path(parent: &EntryDialogState, nested_path: &str) -> String {
+        let parent_entry_path = parent.entry_path();
+        match nested_path
+            .strip_prefix(parent_entry_path.as_str())
+            .unwrap_or(nested_path)
+            .trim_end_matches('/')
+        {
+            "" => super::entry_dialog::SINGLE_VALUE_PATH.to_string(),
+            rest => rest.to_string(),
+        }
     }
 
     /// Save an ObjectArray item dialog
@@ -1935,26 +2020,11 @@ impl SettingsState {
 
         if is_nested {
             // Nested dialog - update the parent dialog's ObjectArray item.
-            // Extract the item path within the parent dialog by stripping the
-            // parent's full entry path (map_path + "/" + entry_key) from the
-            // nested dialog's array path. For an is_single_value parent (e.g.
-            // a quicklsp entry whose value schema is an array), the inner
-            // ObjectArray item is the entry's value at `SINGLE_VALUE_PATH`
-            // and the nested dialog lives exactly at the entry path, so the
-            // stripped path is empty and names that item.
-            let parent_entry_path = self
+            let item_path = self
                 .entry_dialog_stack
                 .last()
-                .map(|p| p.entry_path())
+                .map(|p| Self::parent_item_path(p, &array_path))
                 .unwrap_or_default();
-            let item_path = match array_path
-                .strip_prefix(parent_entry_path.as_str())
-                .unwrap_or(&array_path)
-                .trim_end_matches('/')
-            {
-                "" => super::entry_dialog::SINGLE_VALUE_PATH.to_string(),
-                rest => rest.to_string(),
-            };
 
             // Find and update the ObjectArray in the parent dialog. Mark
             // the parent dirty so its title flips to `• modified` —
@@ -2114,61 +2184,6 @@ impl SettingsState {
         self.activate_control();
     }
 
-    /// The selected card's control as its kind sees it, keyed by its path.
-    fn current_spec(&self) -> Option<(String, fresh_core::api::WidgetSpec)> {
-        let item = self.current_item()?;
-        Some((item.path.clone(), self.spec_for(&item.path)?))
-    }
-
-    /// The node of the selected card's description that carries `key`: the
-    /// control's own, or one of a text list's rows.
-    fn spec_for(&self, key: &str) -> Option<fresh_core::api::WidgetSpec> {
-        let item = self.current_item()?;
-        Some(super::widget_map::live_widget(
-            &item.path,
-            &item.control,
-            key,
-        ))
-    }
-
-    /// The key of the live control: the selected card's, or one of its
-    /// rows', when the store's focus names it.
-    pub fn live_control(&self) -> Option<String> {
-        let item = self.current_item()?;
-        (self.focus_panel == FocusPanel::Settings
-            && live::kind_edited(&item.control)
-            && self.focus_key_of(item).is_some())
-        .then(|| self.controls.focus_key.clone())
-    }
-
-    /// The store's focus key when it names `item`'s control or one of its
-    /// rows — what the card paints as focused.
-    pub fn focus_key_of(&self, item: &SettingItem) -> Option<&str> {
-        let key = self.controls.focus_key.as_str();
-        (key == item.path
-            || key
-                .strip_prefix(&item.path)
-                .is_some_and(|r| r.starts_with("::")))
-        .then_some(key)
-    }
-
-    /// The row the selected card's list cursor is on, while the list has
-    /// the keyboard: a map's or an object array's entry, or its add row
-    /// (`SettingControl::add_row`).
-    pub fn composite_cursor(&self) -> Option<usize> {
-        let item = self.current_item()?;
-        self.composite_cursor_of(item)
-    }
-
-    /// [`composite_cursor`](Self::composite_cursor) for any card.
-    pub fn composite_cursor_of(&self, item: &SettingItem) -> Option<usize> {
-        if !item.control.has_list_rows() || self.controls.focus_key != item.path {
-            return None;
-        }
-        let spec = super::widget_map::live_widget(&item.path, &item.control, &item.path);
-        live::list_row(&self.controls, &spec, &item.path)
-    }
-
     /// The tree key of the row the keyboard is on inside the selected card:
     /// a map's or an object array's cursor row, or a text list's live field.
     /// `None` when the card is the finest thing to reveal.
@@ -2181,14 +2196,6 @@ impl SettingsState {
             _ => self.composite_cursor()?,
         };
         Some(item.control.row_tree_key(&item.path, row))
-    }
-
-    /// Whether the selected card's dropdown has its list up.
-    pub fn is_dropdown_open(&self) -> bool {
-        self.current_item().is_some_and(|item| {
-            matches!(item.control, SettingControl::Dropdown { .. })
-                && crate::widgets::kinds::dropdown::is_open(&item.path, &self.controls)
-        })
     }
 
     /// Whether the selected card's number has a draft open.
@@ -2334,29 +2341,6 @@ impl SettingsState {
 
     // =========== Lists: a map's or an object array's rows ===========
 
-    /// A press on a row of the selected card's list: the list takes the
-    /// keyboard with its cursor on the row.
-    pub fn select_list_row(&mut self, row: usize) {
-        let Some((path, spec)) = self.current_spec() else {
-            return;
-        };
-        if !self
-            .current_item()
-            .is_some_and(|i| i.control.has_list_rows())
-        {
-            return;
-        }
-        self.controls.focus_key = path.clone();
-        let o = live::pointer(
-            &mut self.controls,
-            &spec,
-            &path,
-            "select",
-            &serde_json::json!({ "index": row }),
-        );
-        self.absorb(&path, &o.fx.events);
-    }
-
     /// The list's cursor row was activated: an entry's dialog opens, or
     /// the add row's.
     fn composite_activate(&mut self, index: usize) {
@@ -2377,13 +2361,6 @@ impl SettingsState {
 
     // =========== Text lists: rows as fields ===========
 
-    /// The row of the selected text list whose field is live: `Some(i)`
-    /// an item's, `None` the add row's.
-    pub fn live_list_row(&self) -> Option<Option<usize>> {
-        let item = self.current_item()?;
-        live::text_list::live_row(&self.controls, &item.path)
-    }
-
     /// Open a row of the selected text list for editing — an item's field,
     /// or the add row's for `None` — the caret at the end. A draft in the
     /// add row becomes an item first.
@@ -2402,59 +2379,6 @@ impl SettingsState {
         self.ensure_visible();
     }
 
-    /// The add row's draft becomes an item. Returns whether one did.
-    fn commit_list_draft(&mut self) -> bool {
-        let Some(item) = self.current_item() else {
-            return false;
-        };
-        let path = item.path.clone();
-        let Some(text) = live::text_list::take_draft(&mut self.controls, &path) else {
-            return false;
-        };
-        if let Some(SettingControl::TextList { items, .. }) =
-            self.current_item_mut().map(|i| &mut i.control)
-        {
-            items.push(text);
-        }
-        self.on_value_changed();
-        true
-    }
-
-    /// Up or Down in a live text list field: the adjacent row's field
-    /// opens — the add row's after the last item. Returns whether the
-    /// keyboard moved; at either end it stays.
-    pub fn list_row_step(&mut self, delta: i32) -> bool {
-        let Some(live) = self.live_list_row() else {
-            return false;
-        };
-        // A draft in the add row becomes an item first, so the row above
-        // the add row is the one just typed.
-        if live.is_none() {
-            self.commit_list_draft();
-        }
-        let Some(SettingControl::TextList { items, .. }) = self.current_item().map(|i| &i.control)
-        else {
-            return false;
-        };
-        let n = items.len();
-        let cur = live.unwrap_or(n) as i32;
-        let target = (cur + delta).clamp(0, n as i32) as usize;
-        if target == cur as usize {
-            return false;
-        }
-        self.edit_list_row((target < n).then_some(target));
-        true
-    }
-
-    /// Enter in a live text list field: the add row's draft becomes an
-    /// item and the add row stays open for the next; an item's field keeps
-    /// the keyboard.
-    pub fn list_row_enter(&mut self) {
-        if self.live_list_row() == Some(None) && self.commit_list_draft() {
-            self.edit_list_row(None);
-        }
-    }
-
     /// Leave the live text list field: the add row's draft becomes an item
     /// when `commit` (Tab), and is dropped otherwise (Escape).
     pub fn leave_list_row(&mut self, commit: bool) {
@@ -2464,35 +2388,6 @@ impl SettingsState {
         if let Some(item) = self.current_item() {
             let path = item.path.clone();
             live::text_list::leave(&mut self.controls, &path);
-        }
-    }
-
-    /// Remove item `i` of the selected text list. A field live on it moves
-    /// to the row that takes its place.
-    pub fn remove_list_row(&mut self, i: usize) {
-        let live = self.live_list_row();
-        let Some(SettingControl::TextList { items, .. }) =
-            self.current_item_mut().map(|it| &mut it.control)
-        else {
-            return;
-        };
-        if i >= items.len() {
-            return;
-        }
-        items.remove(i);
-        let n = items.len();
-        self.on_value_changed();
-        if let Some(row) = live {
-            if let Some(item) = self.current_item() {
-                let path = item.path.clone();
-                live::text_list::leave(&mut self.controls, &path);
-            }
-            let row = match row {
-                Some(r) if r > i => Some(r - 1),
-                Some(r) if r == i => (r < n).then_some(r),
-                other => other,
-            };
-            self.edit_list_row(row);
         }
     }
 
@@ -2548,19 +2443,6 @@ impl SettingsState {
         // cursor row after an arrow, as it holds the card after a step off it.
         self.ensure_visible();
         Some(outcome)
-    }
-
-    /// Type into the live control: a paste.
-    fn live_text(&mut self, text: &str) -> bool {
-        let Some(key) = self.live_control() else {
-            return false;
-        };
-        let Some(spec) = self.spec_for(&key) else {
-            return false;
-        };
-        let outcome = live::text(&mut self.controls, &spec, &key, text);
-        self.absorb(&key, &outcome.fx.events);
-        true
     }
 
     /// Escape on the live text field or JSON editor: what was typed is
@@ -2738,40 +2620,6 @@ impl SettingsState {
     /// land here and keep what was typed: a text field's value is recorded.
     pub fn stop_editing(&mut self) {
         self.leave_live_control();
-    }
-    /// Check if the current item is editable (TextList, DualList, Text, Map, or Json)
-    pub fn is_editable_control(&self) -> bool {
-        self.current_item().is_some_and(|item| {
-            matches!(
-                item.control,
-                SettingControl::TextList { .. }
-                    | SettingControl::DualList { .. }
-                    | SettingControl::Text { .. }
-                    | SettingControl::Map { .. }
-                    | SettingControl::Json { .. }
-            )
-        })
-    }
-
-    /// Whether the selected card's JSON editor is being edited.
-    pub fn is_editing_json(&self) -> bool {
-        self.live_control().is_some()
-            && matches!(
-                self.current_item().map(|i| &i.control),
-                Some(SettingControl::Json { .. })
-            )
-    }
-
-    /// Move the live text field's caret to a byte of its value — a press
-    /// (#2573). No-op unless a text edit is open.
-    pub fn position_text_cursor(&mut self, byte: usize) {
-        let Some(path) = self.live_control() else {
-            return;
-        };
-        if let Some(editor) = live::text_editor(&mut self.controls, &path) {
-            editor.clear_selection();
-            editor.set_cursor_from_flat(byte);
-        }
     }
     /// Paste into whatever is being edited: the live control's kind, or the
     /// entry dialog's field. Returns whether the text landed anywhere.
@@ -3081,6 +2929,118 @@ mod tests {
         Config::default()
     }
 
+    /// The shipped schema plus one enabled plugin ("demo") with a schema.
+    fn state_with_plugin_page() -> SettingsState {
+        let mut config = test_config();
+        config.plugins.insert(
+            "demo".to_string(),
+            crate::config::PluginConfig {
+                enabled: true,
+                path: None,
+                settings: serde_json::Value::Null,
+            },
+        );
+        let plugin_schemas = HashMap::from([(
+            "demo".to_string(),
+            serde_json::json!({
+                "type": "object",
+                "properties": { "flag": { "type": "boolean", "default": false } }
+            }),
+        )]);
+        SettingsState::new_with_plugin_schemas(
+            include_str!("../../../plugins/config-schema.json"),
+            &config,
+            &plugin_schemas,
+        )
+        .unwrap()
+    }
+
+    fn page_idx(state: &SettingsState, name: &str) -> usize {
+        state
+            .pages
+            .iter()
+            .position(|p| p.name == name)
+            .unwrap_or_else(|| panic!("no page {name:?}"))
+    }
+
+    fn category_rows(state: &SettingsState) -> Vec<(String, bool)> {
+        state
+            .visible_tree()
+            .iter()
+            .filter_map(|r| match *r {
+                TreeRow::Category { idx, nested, .. } => {
+                    Some((state.pages[idx].name.clone(), nested))
+                }
+                TreeRow::Section { .. } => None,
+            })
+            .collect()
+    }
+
+    /// `x-category` groups top-level settings onto their own pages without
+    /// moving them in the config: keybindings and languages/LSP leave General.
+    #[test]
+    fn x_category_moves_settings_off_general() {
+        let state = state_with_plugin_page();
+        let paths = |name: &str| -> Vec<String> {
+            state.pages[page_idx(&state, name)]
+                .items
+                .iter()
+                .map(|i| i.path.clone())
+                .collect()
+        };
+        let general = paths("General");
+        assert_eq!(
+            general.first().map(String::as_str),
+            Some("/orchestrator_mode")
+        );
+        for moved in ["/keybindings", "/languages", "/lsp", "/default_language"] {
+            assert!(
+                !general.iter().any(|p| p == moved),
+                "{moved} still in General"
+            );
+        }
+        assert_eq!(
+            paths("Keybindings"),
+            ["/active_keybinding_map", "/keybindings", "/keybinding_maps"]
+        );
+        assert_eq!(
+            paths("Syntax & Languages"),
+            [
+                "/languages",
+                "/default_language",
+                "/lsp_enabled",
+                "/lsp",
+                "/universal_lsp"
+            ]
+        );
+        let sections: Vec<&str> = state.pages[page_idx(&state, "Syntax & Languages")]
+            .sections
+            .iter()
+            .map(|s| s.name.as_str())
+            .collect();
+        assert_eq!(sections, ["Languages", "Language Servers"]);
+    }
+
+    /// A plugin's page is listed by its bare name under "Plugins", which
+    /// starts expanded; collapsing "Plugins" hides it, and visiting the
+    /// plugin's page (e.g. from search) expands "Plugins" again.
+    #[test]
+    fn plugin_pages_nest_under_plugins() {
+        let mut state = state_with_plugin_page();
+        let rows = category_rows(&state);
+        let plugins = rows.iter().position(|(n, _)| n == "Plugins").unwrap();
+        assert_eq!(rows[plugins + 1], ("demo".to_string(), true));
+        assert_eq!(rows.iter().filter(|(n, _)| n == "demo").count(), 1);
+
+        let plugins_idx = page_idx(&state, "Plugins");
+        state.toggle_category_expanded(plugins_idx);
+        assert!(!category_rows(&state).iter().any(|(n, _)| n == "demo"));
+
+        state.selected_category = page_idx(&state, "demo");
+        state.auto_expand_current_category();
+        assert!(category_rows(&state).iter().any(|(n, _)| n == "demo"));
+    }
+
     #[test]
     fn test_settings_state_creation() {
         let config = test_config();
@@ -3350,6 +3310,8 @@ mod tests {
         );
     }
 
+    /// The shared dropdown contract (R3): an open list's arrows move only its
+    /// highlight, and Esc closes it with the value where it was.
     #[test]
     fn escape_puts_a_dropdown_back_where_it_opened() {
         let config = test_config();
@@ -3359,12 +3321,12 @@ mod tests {
         let initial = dropdown_selected(&state);
 
         press(&mut state, KeyCode::Down);
-        assert_ne!(
+        assert_eq!(
             dropdown_selected(&state),
             initial,
-            "the selection moves live"
+            "an arrow in the open list moves its highlight, not the value"
         );
-        assert!(state.has_changes(), "and is recorded as it moves");
+        assert!(!state.has_changes(), "so nothing is recorded yet");
 
         state.dropdown_cancel();
         assert!(!state.is_dropdown_open());
@@ -3372,18 +3334,22 @@ mod tests {
         assert!(!state.has_changes(), "back where it was is not a change");
     }
 
+    /// Enter commits the highlighted row as the value.
     #[test]
     fn enter_keeps_a_dropdowns_moved_selection() {
         let config = test_config();
         let mut state = SettingsState::new(TEST_SCHEMA_CONTROLS, &config).unwrap();
         select_theme_dropdown(&mut state);
         state.activate_control();
-        press(&mut state, KeyCode::Down);
-        let moved = dropdown_selected(&state);
+        let initial = dropdown_selected(&state);
+        // The theme starts on the last option and the list's highlight is
+        // clamped at its ends, so the move is up.
+        assert!(initial > 0);
+        press(&mut state, KeyCode::Up);
 
         press(&mut state, KeyCode::Enter);
         assert!(!state.is_dropdown_open());
-        assert_eq!(dropdown_selected(&state), moved);
+        assert_eq!(dropdown_selected(&state), initial - 1);
         assert!(state.has_changes());
     }
 
@@ -3691,6 +3657,83 @@ mod tests {
                 .contains_key("/universal_lsp/quicklsp"),
             "expected pending change at /universal_lsp/quicklsp, got {:?}",
             state.pending_changes.keys().collect::<Vec<_>>()
+        );
+    }
+
+    /// A map inside an entry dialog (an LSP server's `env`) takes the
+    /// entry its nested dialog saves. It used to land in the settings
+    /// page's own item instead — a stray server beside `rust`, with the
+    /// `env` field left empty and a pending change at a path nobody asked
+    /// for.
+    #[test]
+    fn nested_map_save_updates_the_parent_dialog() {
+        use crate::view::settings::schema::SettingType;
+
+        let field = |path: &str, setting_type| SettingSchema {
+            path: path.to_string(),
+            name: path.trim_start_matches('/').to_string(),
+            description: None,
+            setting_type,
+            default: None,
+            read_only: false,
+            section: None,
+            order: None,
+            nullable: false,
+            enum_from: None,
+            dual_list_sibling: None,
+            dynamically_extendable_status_bar_elements: false,
+        };
+        let server = field(
+            "",
+            SettingType::Object {
+                properties: vec![field(
+                    "/env",
+                    SettingType::Map {
+                        value_schema: Box::new(field("", SettingType::String)),
+                        display_field: None,
+                        no_add: false,
+                    },
+                )],
+            },
+        );
+
+        let config = test_config();
+        let mut state = SettingsState::new(TEST_SCHEMA, &config).unwrap();
+        let pending_before = state.pending_changes.clone();
+        state.entry_dialog_stack.push(EntryDialogState::from_schema(
+            "rust".to_string(),
+            &serde_json::json!({ "env": {} }),
+            &server,
+            "/lsp",
+            false,
+            false,
+            &HashMap::new(),
+        ));
+
+        // The server's one field, `env`, is focused on its add row.
+        state.open_nested_entry_dialog();
+        assert_eq!(state.entry_dialog_stack.len(), 2);
+        let nested = state.entry_dialog_stack.last_mut().unwrap();
+        for item in nested.items.iter_mut() {
+            match &mut item.control {
+                SettingControl::Text { value, .. } if item.path == "__key__" => {
+                    *value = "FOO".to_string()
+                }
+                SettingControl::Text { value, .. } => *value = "bar".to_string(),
+                _ => {}
+            }
+        }
+        state.save_entry_dialog();
+
+        let parent = state.entry_dialog_stack.last().unwrap();
+        assert!(parent.user_edited, "the parent owes the change a save");
+        assert_eq!(
+            parent.to_value(),
+            serde_json::json!({ "env": { "FOO": "bar" } })
+        );
+        assert_eq!(
+            state.pending_changes, pending_before,
+            "the parent's save records the entry, not the nested one"
         );
     }
 

@@ -29,7 +29,21 @@ impl Editor {
     }
 
     /// Start the recovery session (call on editor startup after recovery check)
+    ///
+    /// Also clears out what interrupted in-place saves left in the top-level
+    /// recovery directory and no longer need, whether or not recovery is on:
+    /// saves stage there regardless (see
+    /// [`crate::model::buffer::save::clean_up_inplace_write_recoveries`]).
+    /// That directory is on this host, so it is swept through the local
+    /// filesystem even when editing a remote one.
     pub fn start_recovery_session(&mut self) -> AnyhowResult<()> {
+        let removed = crate::model::buffer::save::clean_up_inplace_write_recoveries(
+            &*self.local_filesystem,
+            &self.dir_context.recovery_dir(),
+        );
+        if removed > 0 {
+            tracing::info!("Removed {removed} leftover in-place save file(s)");
+        }
         Ok(self.recovery_service.lock().unwrap().start_session()?)
     }
 
@@ -347,13 +361,6 @@ impl Editor {
             .lock()
             .unwrap()
             .should_offer_recovery()?)
-    }
-
-    /// Get list of recoverable files
-    pub fn list_recoverable_files(
-        &self,
-    ) -> AnyhowResult<Vec<crate::services::recovery::RecoveryEntry>> {
-        Ok(self.recovery_service.lock().unwrap().list_recoverable()?)
     }
 
     /// Recover buffers left by a crash into the workspace they came from.

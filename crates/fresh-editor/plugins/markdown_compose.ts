@@ -628,6 +628,13 @@ async function prescanHeadingMarkers(bufferId: number): Promise<void> {
   let text: string;
   try {
     text = await editor.getBufferText(bufferId, 0, limit + 1);
+    // The caller turned compose on with `setViewMode`, which is queued. The
+    // host answers the read above from inside the same drain — before it
+    // republishes the snapshot `getBufferInfo` reads — so without this the
+    // gate below races that republish and can still see compose off, and the
+    // scan is skipped for a document that is composing. `flush` is what makes
+    // a read observe the caller's own writes.
+    await editor.flush();
   } catch (e) {
     editor.debug(`Heading pre-scan skipped for buffer ${bufferId}: ${e}`);
     return;
@@ -636,7 +643,7 @@ async function prescanHeadingMarkers(bufferId: number): Promise<void> {
     editor.debug(`Heading pre-scan skipped for buffer ${bufferId}: over ${limit} bytes`);
     return;
   }
-  // The await gave the user time to toggle compose off (or close the buffer);
+  // The awaits gave the user time to toggle compose off (or close the buffer);
   // publishing now would strand marks the disable path has already cleared.
   if (!isComposingInAnySplit(bufferId)) return;
 

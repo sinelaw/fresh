@@ -163,10 +163,6 @@ impl<C: 'static> Controller<C> {
         }
     }
 
-    pub fn is_bound(&self) -> bool {
-        self.sink.borrow().is_some()
-    }
-
     /// Send a command. It reaches the target's state through that target's own
     /// `set_state`, so it lands between frames like any other update.
     pub fn send(&self, c: C) {

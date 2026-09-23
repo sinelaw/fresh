@@ -650,6 +650,11 @@ pub struct EditorColors {
     /// Bracket match highlight color (used when rainbow is disabled)
     #[serde(default = "default_bracket_match_fg")]
     pub bracket_match_fg: ColorDef,
+    /// Text attributes that mark the matched bracket pair when rainbow
+    /// brackets are on. The pair keeps its depth color there, so the match
+    /// is shown by these attributes instead. Default `["bold", "underlined"]`.
+    #[serde(default = "default_bracket_rainbow_match_modifier")]
+    pub bracket_rainbow_match_modifier: ModifierDef,
     /// Rainbow bracket color (nesting level 1)
     #[serde(default = "default_bracket_rainbow_1")]
     pub bracket_rainbow_1: ColorDef,
@@ -720,6 +725,9 @@ fn default_whitespace_indicator_fg() -> ColorDef {
 }
 fn default_bracket_match_fg() -> ColorDef {
     ColorDef::Rgb(255, 215, 0) // Gold
+}
+fn default_bracket_rainbow_match_modifier() -> ModifierDef {
+    ModifierDef::from(Modifier::BOLD | Modifier::UNDERLINED)
 }
 fn default_bracket_rainbow_1() -> ColorDef {
     ColorDef::Rgb(255, 215, 0) // Gold
@@ -1499,6 +1507,8 @@ pub struct Theme {
 
     // Bracket matching colors
     pub bracket_match_fg: Color,
+    /// The attributes that mark the matched pair with rainbow brackets on.
+    pub bracket_rainbow_match_modifier: Modifier,
     pub bracket_rainbow_1: Color,
     pub bracket_rainbow_2: Color,
     pub bracket_rainbow_3: Color,
@@ -1745,6 +1755,9 @@ impl From<ThemeFile> for Theme {
                     )
                 }),
             bracket_match_fg: file.editor.bracket_match_fg.into(),
+            bracket_rainbow_match_modifier: Modifier::from(
+                &file.editor.bracket_rainbow_match_modifier,
+            ),
             bracket_rainbow_1: file.editor.bracket_rainbow_1.into(),
             bracket_rainbow_2: file.editor.bracket_rainbow_2.into(),
             bracket_rainbow_3: file.editor.bracket_rainbow_3.into(),
@@ -2023,6 +2036,7 @@ impl From<Theme> for ThemeFile {
                     theme.whitespace_indicator_selected_fg.into(),
                 ),
                 bracket_match_fg: theme.bracket_match_fg.into(),
+                bracket_rainbow_match_modifier: theme.bracket_rainbow_match_modifier.into(),
                 bracket_rainbow_1: theme.bracket_rainbow_1.into(),
                 bracket_rainbow_2: theme.bracket_rainbow_2.into(),
                 bracket_rainbow_3: theme.bracket_rainbow_3.into(),
@@ -2255,6 +2269,13 @@ fn apply_theme_overrides(theme: &mut Theme, theme_file: &ThemeFile, raw: &serde_
                 continue;
             }
             let key = format!("{}.{}", section, field);
+            // A key that is only text attributes takes a modifier list.
+            if let Some(slot) = theme.resolve_modifier_only_key_mut(&key) {
+                if let Ok(def) = serde_json::from_value::<ModifierDef>(value.clone()) {
+                    *slot = Modifier::from(&def);
+                }
+                continue;
+            }
             // A value is a bare color or a `{color, modifier}` bundle; the
             // richer form also accepts a bare color (empty modifier). The
             // whole value defines the style, so a bare color clears any
@@ -2362,6 +2383,21 @@ impl Theme {
         let mut theme = resolve_base_theme(&theme_file, &raw)?;
         apply_theme_overrides(&mut theme, &theme_file, &raw);
         Ok(theme)
+    }
+
+    /// The slot for a key that names text attributes alone, with no color
+    /// of its own (`editor.selection_modifier`, …). The color table cannot
+    /// hold these, so an override of one in a theme with a base is applied
+    /// through here.
+    pub fn resolve_modifier_only_key_mut(&mut self, key: &str) -> Option<&mut Modifier> {
+        match key {
+            "editor.selection_modifier" => Some(&mut self.selection_modifier),
+            "ui.semantic_highlight_modifier" => Some(&mut self.semantic_highlight_modifier),
+            "editor.bracket_rainbow_match_modifier" => {
+                Some(&mut self.bracket_rainbow_match_modifier)
+            }
+            _ => None,
+        }
     }
 
     /// SGR text-attribute modifier associated with a bg theme key.

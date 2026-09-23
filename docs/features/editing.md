@@ -269,7 +269,7 @@ The `markdown_toc` plugin adds a **Contents** section to the sidebar, under the 
 
 The panel works the same way in source and compose mode: compose conceals the markers and re-flows the text but does not move it, so the rows, the highlight and the jump target are identical in both.
 
-Settings live under *Plugin Settings → markdown_toc* (`plugins.markdown_toc.settings` in `config.json`):
+Settings live under *Plugins → markdown_toc* (`plugins.markdown_toc.settings` in `config.json`):
 
 | Setting | Default | Meaning |
 |---------|---------|---------|

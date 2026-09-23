@@ -24,34 +24,33 @@ pub fn category_icon(name: &str, nerd_fonts: bool) -> &'static str {
     let name = name.to_lowercase();
     if nerd_fonts {
         return match name.as_str() {
-            "general" => "\u{f013} ",       //
-            "editor" => "\u{f044} ",        //
-            "clipboard" => "\u{f328} ",     //
-            "file browser" => "\u{f07b} ",  //
-            "file explorer" => "\u{f07c} ", //
-            "packages" => "\u{f487} ",      //
-            "plugins" => "\u{f1e6} ",       //
-            "terminal" => "\u{f120} ",      //
-            "warnings" => "\u{f071} ",      //
-            "keybindings" => "\u{f11c} ",   //
-            _ => "\u{f111} ",               //  (dot circle as fallback)
+            "general" => "\u{f013} ",            //
+            "editor" => "\u{f044} ",             //
+            "clipboard" => "\u{f328} ",          //
+            "file browser" => "\u{f07b} ",       //
+            "file explorer" => "\u{f07c} ",      //
+            "packages" => "\u{f487} ",           //
+            "plugins" => "\u{f1e6} ",            //
+            "terminal" => "\u{f120} ",           //
+            "warnings" => "\u{f071} ",           //
+            "keybindings" => "\u{f11c} ",        //
+            "syntax & languages" => "\u{f121} ", //
+            _ => "\u{f111} ",                    //  (dot circle as fallback)
         };
     }
-    if name.starts_with("plugin: ") {
-        return "\u{271a} "; // ✚ heavy plus (add-on)
-    }
     match name.as_str() {
-        "general" => "\u{2699} ",       // ⚙ gear
-        "editor" => "\u{270e} ",        // ✎ pencil
-        "clipboard" => "\u{2702} ",     // ✂ scissors (cut/copy)
-        "file browser" => "\u{25a4} ",  // ▤ square with lines (document)
-        "file explorer" => "\u{25a6} ", // ▦ square with grid (tree)
-        "packages" => "\u{25c6} ",      // ◆ diamond
-        "plugins" => "\u{271a} ",       // ✚ heavy plus (add-on)
-        "terminal" => "\u{00bb} ",      // » prompt chevron
-        "warnings" => "\u{26a0} ",      // ⚠ warning sign
-        "keybindings" => "\u{2328} ",   // ⌨ keyboard
-        _ => "\u{2022} ",               // • bullet as fallback
+        "general" => "\u{2699} ",            // ⚙ gear
+        "editor" => "\u{270e} ",             // ✎ pencil
+        "clipboard" => "\u{2702} ",          // ✂ scissors (cut/copy)
+        "file browser" => "\u{25a4} ",       // ▤ square with lines (document)
+        "file explorer" => "\u{25a6} ",      // ▦ square with grid (tree)
+        "packages" => "\u{25c6} ",           // ◆ diamond
+        "plugins" => "\u{271a} ",            // ✚ heavy plus (add-on)
+        "terminal" => "\u{00bb} ",           // » prompt chevron
+        "warnings" => "\u{26a0} ",           // ⚠ warning sign
+        "keybindings" => "\u{2328} ",        // ⌨ keyboard
+        "syntax & languages" => "\u{00b6} ", // ¶ pilcrow (text)
+        _ => "\u{2022} ",                    // • bullet as fallback
     }
 }
 

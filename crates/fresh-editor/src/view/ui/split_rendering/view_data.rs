@@ -98,12 +98,10 @@ fn effective_wrap_width(
         // the non-wrapped exit frame always has.
         return viewport.grid_cols();
     }
-    let base = if let Some(col) = viewport.wrap_column {
-        col.min(content_width)
-    } else {
-        content_width
-    };
-    base.saturating_sub(1).max(1)
+    viewport
+        .wrap_area_width(content_width)
+        .saturating_sub(1)
+        .max(1)
 }
 
 /// Character budget for [`build_base_tokens`], or `None` to bound the read by
@@ -258,8 +256,7 @@ pub(super) fn build_view_data(
         content_width
             .max(1)
             .saturating_mul(2)
-            .min(MAX_SAFE_LINE_WIDTH)
-            .max(1)
+            .clamp(1, MAX_SAFE_LINE_WIDTH)
     } else if line_wrap_enabled {
         effective_width
     } else {

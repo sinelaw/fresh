@@ -994,9 +994,11 @@ pub fn region_key(r: HostRegion) -> fresh_ui::Key {
 /// the display list instead would lose exactly the regions that paint nothing
 /// — a hidden row, a menu bar with no labels — and lose them silently.
 ///
-/// [`region_rects`] is the standalone form, for tests and for callers with no
-/// `Ui` of their own; this is the form `render` uses, so the frame is laid out
-/// once and both the rectangles and the painted output come from it.
+/// [`region_rects`] is the standalone form: it builds its own `Ui` and lays the
+/// frame out to answer. Nothing in the editor does that — `render` uses this
+/// form, so the frame is laid out once and both the rectangles and the painted
+/// output come from it. `region_rects` exists for tests, which have no laid-out
+/// `Ui` to ask.
 pub fn regions_of(
     ui: &fresh_ui::Ui<UiMsg>,
     size: ratatui::layout::Rect,
@@ -1011,6 +1013,12 @@ pub fn regions_of(
         .collect()
 }
 
+/// Lay a `Frame` out in a throwaway `Ui` and report every region's rectangle.
+///
+/// **Tests only.** A second layout is exactly what
+/// *Geometry is produced by layout* forbids in the editor; it is a fair
+/// question for a test, which has no frame in flight to read. Production code
+/// wants [`regions_of`] on the `Ui` it already laid out.
 pub fn region_rects(
     f: Frame,
     size: ratatui::layout::Rect,
@@ -1020,6 +1028,79 @@ pub fn region_rects(
     let mut ui: Ui<UiMsg> = Ui::new();
     ui.frame(frame_tree(f), Size::new(size.width, size.height));
     regions_of(&ui, size)
+}
+
+/// **Which keyboard vocabulary a focused element is under**, read off a
+/// key on its focus chain.
+///
+/// Every surface with a key section of its own puts a key on the node that
+/// holds focus while it has the keyboard — the settings box, a modal's seam,
+/// a popup's keyboard seam, the prompt's sink, a panel's interior or sink —
+/// and this is the one table from those keys to the `KeyContext` the keymap
+/// resolves against. `Editor::get_key_context` walks the chain from the
+/// focused element outward and takes the first answer; a chain with none is
+/// the editor's own content, whose context is the window's.
+///
+/// This replaced a ranked stack of layer declarations (`app::overlay`'s
+/// `Layer`, `LayerKind` and `chrome::layer_rank`) that each surface had to
+/// keep in step with the tree by hand: which surface has the keyboard is
+/// where focus is, and the tree already knows.
+///
+/// A surface with a custom dispatcher — the keybinding editor, the
+/// calibration wizard, the workspace-trust prompt, event debug — answers
+/// nothing and the walk continues outward, exactly as its `key_context:
+/// None` layer was skipped. A pane-mounted panel is the buffer's, and
+/// answers nothing for the same reason its keys are the buffer's mode's.
+pub fn key_context_of(k: &fresh_ui::Key) -> Option<crate::input::keybindings::KeyContext> {
+    use crate::input::keybindings::KeyContext as C;
+    use fresh_ui::Key;
+    let named = |s: &str| match s {
+        "keys:settings" => Some(C::Settings),
+        "keys:prompt" => Some(C::Prompt),
+        "keys:search_prompt" => Some(C::SearchPrompt),
+        "keys:popup" => Some(C::Popup),
+        "keys:completion" => Some(C::Completion),
+        "keys:dock" => Some(C::Dock),
+        "keys:floating_panel" => Some(C::Normal),
+        _ => None,
+    };
+    match k {
+        Key::Str(s) => {
+            if let Some(c) = named(s) {
+                return Some(c);
+            }
+            if *k == super::settings::key() || *k == super::settings::dialog_key() {
+                return Some(C::Settings);
+            }
+            None
+        }
+        Key::Pair(name, _) => match &**name {
+            "settings_entry" => Some(C::Settings),
+            "menu_dropdown" => Some(C::Menu),
+            "explorer_header" => Some(C::FileExplorer),
+            "keys:sidebar" | "sidebar_header" => Some(C::Dock),
+            "panel_interior" => {
+                if *k == super::panel::interior_key(super::widgets::Slot::Dock) {
+                    Some(C::Dock)
+                } else if *k == super::panel::interior_key(super::widgets::Slot::Floating) {
+                    Some(C::Normal)
+                } else if *k == super::panel::interior_key(super::widgets::Slot::Settings)
+                    || *k == super::panel::interior_key(super::widgets::Slot::SettingsEntry)
+                {
+                    Some(C::Settings)
+                } else if *k == super::panel::interior_key(super::widgets::Slot::PromptToolbar) {
+                    // A focused toolbar control is still the prompt's
+                    // keyboard: the toolbar sits on the prompt's ring.
+                    Some(C::Prompt)
+                } else {
+                    // A sidebar section's interior.
+                    Some(C::Dock)
+                }
+            }
+            _ => None,
+        },
+        Key::Int(_) => None,
+    }
 }
 
 #[cfg(test)]
@@ -1108,6 +1189,59 @@ mod tests {
         let (a, b) = pane_across(one_pane_in(Some(1)), one_pane_in(Some(1)));
         assert!(a.is_some());
         assert_eq!(a, b, "same window, same element");
+    }
+
+    /// A frame with `n` of the optional rows, so a sequence of these makes the
+    /// retained tree add and drop regions between layouts.
+    fn frame_with(menu: bool, status: bool, prompt: bool, dock: Option<u16>) -> Frame {
+        Frame {
+            window: Some(1),
+            menu_bar: menu,
+            status_bar: status,
+            prompt_line: prompt,
+            dock,
+            ..one_pane_in(Some(1))
+        }
+    }
+
+    /// **The retained tree lays a frame out like a fresh one does.**
+    ///
+    /// `render` asserted this on the render path and could not: `area` came
+    /// from `frame::regions_of` on the retained `Ui`, and the "fresh" side —
+    /// `Editor::status_bar_area_now` — resolves through `shell_region_now` to
+    /// `frame::regions_of` on that *same* retained `Ui`, which its own doc
+    /// forbids replacing with a throwaway. One read of the tree was being
+    /// compared against another read of the tree.
+    ///
+    /// Here both sides exist. A single `Ui` is reconciled through a sequence
+    /// of frames that add and drop rows — which is what makes retained state
+    /// able to skew a layout at all — and its regions are compared against
+    /// [`region_rects`], which builds a `Ui` that has seen nothing else. A
+    /// second layout is a fair question for a test.
+    #[test]
+    fn a_retained_tree_lays_the_frame_out_like_a_fresh_one() {
+        let size = ratatui::layout::Rect::new(0, 0, 80, 24);
+        let history = [
+            frame_with(false, false, false, None),
+            frame_with(true, true, true, Some(20)),
+            frame_with(true, false, false, None),
+            frame_with(false, true, true, Some(30)),
+        ];
+        let mut ui: Ui<UiMsg> = Ui::new();
+        for f in &history {
+            ui.frame(frame_tree(f.clone()), Size::new(size.width, size.height));
+        }
+        for (i, f) in history.iter().enumerate() {
+            // Step the retained tree onto this frame, then ask a tree that has
+            // seen only this frame.
+            ui.frame(frame_tree(f.clone()), Size::new(size.width, size.height));
+            assert_eq!(
+                regions_of(&ui, size),
+                region_rects(f.clone(), size),
+                "frame {i} after the whole history: the retained tree and a \
+                 fresh one disagree"
+            );
+        }
     }
 
     /// The tree's scope name and the editor's `forget_window_ui_state` have to
@@ -1615,78 +1749,5 @@ mod tests {
             serde_json::from_str::<DockWidthRule>(r#"{"cols": 30}"#).is_err(),
             "an unknown field is a typo"
         );
-    }
-}
-
-/// **Which keyboard vocabulary a focused element is under**, read off a
-/// key on its focus chain.
-///
-/// Every surface with a key section of its own puts a key on the node that
-/// holds focus while it has the keyboard — the settings box, a modal's seam,
-/// a popup's keyboard seam, the prompt's sink, a panel's interior or sink —
-/// and this is the one table from those keys to the `KeyContext` the keymap
-/// resolves against. `Editor::get_key_context` walks the chain from the
-/// focused element outward and takes the first answer; a chain with none is
-/// the editor's own content, whose context is the window's.
-///
-/// This replaced a ranked stack of layer declarations (`app::overlay`'s
-/// `Layer`, `LayerKind` and `chrome::layer_rank`) that each surface had to
-/// keep in step with the tree by hand: which surface has the keyboard is
-/// where focus is, and the tree already knows.
-///
-/// A surface with a custom dispatcher — the keybinding editor, the
-/// calibration wizard, the workspace-trust prompt, event debug — answers
-/// nothing and the walk continues outward, exactly as its `key_context:
-/// None` layer was skipped. A pane-mounted panel is the buffer's, and
-/// answers nothing for the same reason its keys are the buffer's mode's.
-pub fn key_context_of(k: &fresh_ui::Key) -> Option<crate::input::keybindings::KeyContext> {
-    use crate::input::keybindings::KeyContext as C;
-    use fresh_ui::Key;
-    let named = |s: &str| match s {
-        "keys:settings" => Some(C::Settings),
-        "keys:prompt" => Some(C::Prompt),
-        "keys:search_prompt" => Some(C::SearchPrompt),
-        "keys:popup" => Some(C::Popup),
-        "keys:completion" => Some(C::Completion),
-        "keys:dock" => Some(C::Dock),
-        "keys:floating_panel" => Some(C::Normal),
-        _ => None,
-    };
-    match k {
-        Key::Str(s) => {
-            if let Some(c) = named(s) {
-                return Some(c);
-            }
-            if *k == super::settings::key() || *k == super::settings::dialog_key() {
-                return Some(C::Settings);
-            }
-            None
-        }
-        Key::Pair(name, _) => match &**name {
-            "settings_entry" => Some(C::Settings),
-            "menu_dropdown" => Some(C::Menu),
-            "explorer_header" => Some(C::FileExplorer),
-            "keys:sidebar" | "sidebar_header" => Some(C::Dock),
-            "panel_interior" => {
-                if *k == super::panel::interior_key(super::widgets::Slot::Dock) {
-                    Some(C::Dock)
-                } else if *k == super::panel::interior_key(super::widgets::Slot::Floating) {
-                    Some(C::Normal)
-                } else if *k == super::panel::interior_key(super::widgets::Slot::Settings)
-                    || *k == super::panel::interior_key(super::widgets::Slot::SettingsEntry)
-                {
-                    Some(C::Settings)
-                } else if *k == super::panel::interior_key(super::widgets::Slot::PromptToolbar) {
-                    // A focused toolbar control is still the prompt's
-                    // keyboard: the toolbar sits on the prompt's ring.
-                    Some(C::Prompt)
-                } else {
-                    // A sidebar section's interior.
-                    Some(C::Dock)
-                }
-            }
-            _ => None,
-        },
-        Key::Int(_) => None,
     }
 }

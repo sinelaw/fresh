@@ -3013,7 +3013,7 @@ mod property_tests {
 
             // Sort edits by position descending (required by apply_bulk_edits)
             let mut ops = ops;
-            ops.sort_by(|a, b| b.position.cmp(&a.position));
+            ops.sort_by_key(|op| std::cmp::Reverse(op.position));
 
             // Pre-allocate all buffers
             let texts: Vec<String> = ops.iter().map(|op| op.insert_text.clone()).collect();
@@ -3057,7 +3057,7 @@ mod property_tests {
 
             // Sort edits by position descending
             let mut ops = ops;
-            ops.sort_by(|a, b| b.position.cmp(&a.position));
+            ops.sort_by_key(|op| std::cmp::Reverse(op.position));
 
             // Pre-allocate all buffers
             let texts: Vec<String> = ops.iter().map(|op| op.insert_text.clone()).collect();
@@ -3143,7 +3143,7 @@ mod property_tests {
 
             // Sort by position descending
             let mut ops = ops;
-            ops.sort_by(|a, b| b.0.cmp(&a.0));
+            ops.sort_by_key(|op| std::cmp::Reverse(op.0));
 
             // Remove overlapping deletes
             let mut edits: Vec<(usize, usize, &str)> = Vec::new();

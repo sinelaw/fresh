@@ -8,6 +8,7 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
+use super::shell_command::shell_command;
 use super::Editor;
 use crate::config::{FormatterConfig, OnSaveAction};
 use crate::model::event::Event;
@@ -48,7 +49,8 @@ impl Editor {
 
         // If whitespace cleanup made changes, re-save
         if ran_any_action {
-            if let Err(e) = self.active_state_mut().buffer.save() {
+            let recovery_dir = self.dir_context.recovery_dir();
+            if let Err(e) = self.active_state_mut().buffer.save(&recovery_dir) {
                 return Err(format!("Failed to re-save after whitespace cleanup: {}", e));
             }
             self.active_event_log_mut().mark_saved();
@@ -75,7 +77,8 @@ impl Editor {
                     ActionResult::Success(output) => {
                         self.replace_buffer_with_output(&output)?;
                         // Re-save after formatting
-                        if let Err(e) = self.active_state_mut().buffer.save() {
+                        let recovery_dir = self.dir_context.recovery_dir();
+                        if let Err(e) = self.active_state_mut().buffer.save(&recovery_dir) {
                             return Err(format!("Failed to re-save after format: {}", e));
                         }
                         self.active_event_log_mut().mark_saved();
@@ -219,9 +222,8 @@ impl Editor {
             .unwrap_or_else(|_| file_path.parent().unwrap_or(Path::new(".")).to_path_buf());
 
         // Set up the command
-        let mut cmd = Command::new(&shell);
-        cmd.args(["-c", &full_command])
-            .current_dir(&project_root)
+        let mut cmd = shell_command(&shell, &full_command);
+        cmd.current_dir(&project_root)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .hide_window();
@@ -404,9 +406,8 @@ impl Editor {
             .unwrap_or_else(|| project_root.to_path_buf());
 
         // Set up the command
-        let mut cmd = Command::new(&shell);
-        cmd.args(["-c", &full_command])
-            .current_dir(&working_dir)
+        let mut cmd = shell_command(&shell, &full_command);
+        cmd.current_dir(&working_dir)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .hide_window();

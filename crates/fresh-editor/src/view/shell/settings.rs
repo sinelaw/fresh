@@ -429,27 +429,20 @@ pub fn categories(c: &Categories) -> Node<UiMsg> {
     let rows = Rc::new(c.rows.clone());
     let focused = c.focused;
     let n = rows.len();
-    let list = fresh_ui::List::windowed(
+    // Stateful rows: a highlighted or hovered row paints every one of its
+    // cells in the band's ink, the icon and dirty dot included — a stamped
+    // row theme only shows through the cells that name no ink of their own.
+    let list = fresh_ui::List::windowed_stateful(
         n,
         |i| fresh_ui::Key::Pair("settings_cat".into(), i as u64),
         {
             let rows = rows.clone();
             let selected = c.selected;
-            move |i| cat_row(&rows[i], selected == Some(i), focused)
+            move |i, st| cat_row(&rows[i], selected == Some(i), focused, st)
         },
     )
     .scrollbar()
-    .row_theme(move |_, st| match (st, focused) {
-        (
-            fresh_ui::widgets::RowState::Selected | fresh_ui::widgets::RowState::SelectedBlur,
-            true,
-        ) => pair("ui.menu_highlight_fg", "ui.menu_highlight_bg"),
-        (
-            fresh_ui::widgets::RowState::Selected | fresh_ui::widgets::RowState::SelectedBlur,
-            false,
-        ) => pair("ui.menu_fg", "editor.selection_bg"),
-        _ => ink(),
-    })
+    .row_theme(move |_, st| tree_band(st, focused).unwrap_or_else(ink))
     .on_select({
         let rows = rows.clone();
         move |i| match &rows[i] {
@@ -537,18 +530,19 @@ pub fn clear_key() -> fresh_ui::Key {
     fresh_ui::Key::Str("settings_clear_category".into())
 }
 
-/// The band the settings themselves are painted into.
-///
-/// The painter derived it by counting the header rows it had just drawn —
-/// `header_height = y - header_start_y`, then `available_height = area.height
-/// - header_height`. The header is a description now, so the band under it is
-/// layout's answer and this is the key to read it back by.
 /// One entry dialog's field window, re-exported so the host reads both
 /// windows through one module.
 pub fn entry_items_key(level: usize) -> fresh_ui::Key {
     super::entry::items_key(level)
 }
 
+/// The band the settings themselves are painted into.
+///
+/// The painter derived it by counting the header rows it had just drawn
+/// (`header_height = y - header_start_y`, then
+/// `available_height = area.height - header_height`). The header is a
+/// description now, so the band under it is layout's answer and this is the
+/// key to read it back by.
 pub fn items_key() -> fresh_ui::Key {
     fresh_ui::Key::Str("settings_items".into())
 }
@@ -689,7 +683,7 @@ fn strip_band(s: &Strip) -> Node<UiMsg> {
                         return None;
                     }
                     e.stop();
-                    Some(UiMsg::Ui(UiFact::SettingsCategory(idx)))
+                    Some(UiMsg::Ui(UiFact::SettingsStripCategory(idx)))
                 }),
             ),
         );
@@ -1090,9 +1084,40 @@ fn inherit(idx: usize, i: &Inherit, band: &str) -> Node<UiMsg> {
     ])
 }
 
+/// The ink a selected tree row is banded in (muted when the tree does not
+/// have the keyboard), or `None` for any other row. The tree shows one band
+/// at a time: a hovered row is marked on its label instead (see `cat_row`).
+fn tree_band(st: fresh_ui::widgets::RowState, focused: bool) -> Option<String> {
+    use fresh_ui::widgets::RowState;
+    match (st, focused) {
+        (RowState::Selected | RowState::SelectedBlur, true) => {
+            Some(pair("ui.menu_highlight_fg", "ui.menu_highlight_bg"))
+        }
+        (RowState::Selected | RowState::SelectedBlur, false) => {
+            Some(pair("ui.menu_fg", "editor.selection_bg"))
+        }
+        (RowState::Hover | RowState::Normal, _) => None,
+    }
+}
+
 /// One row: the cursor's `>`, the indent, the chevron, the dirty dot, the
-/// icon and the label — the painter's own span order.
-fn cat_row(r: &CatRow, selected: bool, focused: bool) -> Node<UiMsg> {
+/// icon and the label — the painter's own span order. A selected row's band
+/// covers every cell in place of its own ink; a hovered row's label is bold,
+/// on the plain ground.
+fn cat_row(
+    r: &CatRow,
+    selected: bool,
+    focused: bool,
+    st: fresh_ui::widgets::RowState,
+) -> Node<UiMsg> {
+    let band = tree_band(st, focused);
+    let label_ink = (st == fresh_ui::widgets::RowState::Hover)
+        .then(|| attrs("ui.popup_text_fg", "ui.popup_bg", &["bold"]));
+    let paint = |n: Node<UiMsg>, own: Option<String>| match (&band, own) {
+        (Some(b), _) => n.theme(b.clone()),
+        (None, Some(t)) => n.theme(t),
+        (None, None) => n,
+    };
     // The row's own theme comes from `row_theme`; a run that differs from it
     // says so, and only two do.
     let marker = match selected && focused {
@@ -1100,61 +1125,48 @@ fn cat_row(r: &CatRow, selected: bool, focused: bool) -> Node<UiMsg> {
         false => " ",
     };
     match r {
+        // The whole row is one target — the list's click, which selects the
+        // category or, on the one already selected, opens or shuts it. The
+        // chevron is only a picture of that state.
         CatRow::Category {
-            idx,
             chevron,
-            expandable,
             dirty,
             icon,
             label,
-            elide,
+            nested,
+            ..
         } => {
-            // The chevron is its own target: the painter recorded a
-            // one-column rectangle for it so a click there expanded the
-            // category instead of selecting it.
-            let idx = *idx;
-            let chev = text(format!("{chevron} "));
-            let chev = match expandable {
-                true => gesture(chev).on(
-                    GestureKind::Press,
-                    Rc::new(move |e: &Event| {
-                        if e.button != MouseButton::Left {
-                            return None;
-                        }
-                        e.stop();
-                        Some(UiMsg::Ui(UiFact::SettingsCategoryDisclosure(idx)))
-                    }),
-                ),
-                false => chev,
-            };
-            let mut kids: Vec<Node<UiMsg>> = vec![text(marker), chev];
+            let mut kids: Vec<Node<UiMsg>> = vec![paint(text(marker), None)];
+            kids.push(paint(
+                match nested {
+                    // Indented past the parent's chevron, dot and icon, so the
+                    // label lines up with the parent's section rows.
+                    true => text("    "),
+                    false => text(chevron),
+                },
+                None,
+            ));
             kids.push(match dirty {
-                true => text("● ").theme(pair("ui.menu_highlight_fg", "ui.popup_bg")),
-                false => text("  "),
+                true => paint(text("●"), Some(pair("ui.menu_highlight_fg", "ui.popup_bg"))),
+                false => paint(text(" "), None),
             });
-            kids.push(text(icon.to_string()).theme(pair("ui.popup_border_fg", "ui.popup_bg")));
-            // A plugin page's name is longer than the tree is wide, so the
-            // painter clipped it with an ellipsis. `Sizing::Flex` gives the
-            // label the rest of the row and the fold clips it; the ellipsis
-            // is what the two do not share, and it stays in the description.
-            kids.push(match elide {
-                true => text(label.clone()).flex(1),
-                false => text(label.clone()),
+            kids.push(match nested {
+                true => paint(text(" "), None),
+                false => paint(text(icon), Some(pair("ui.popup_border_fg", "ui.popup_bg"))),
             });
+            // A name longer than the tree is wide is clipped: `Sizing::Flex`
+            // gives the label the rest of the row and the fold clips it.
+            kids.push(paint(text(label.clone()), label_ink.clone()).flex(1));
             row().h(Sizing::Cells(1)).children(kids)
         }
+        // Indented two columns past the category labels (which start after
+        // the chevron, the dirty dot and the two-column icon), so a section
+        // reads as the category's child without spending the tree's narrow
+        // width on blank columns.
         CatRow::Section { label, .. } => row().h(Sizing::Cells(1)).children([
-            text(marker),
-            // Four columns of indent, then the chevron column the category
-            // rows spend on their arrow.
-            text("     "),
-            // The dirty dot's two columns, and the icon's two. A category
-            // row's icon is a wide glyph — `⚙`, `✎` — so it occupies two
-            // cells, and a section that reserved one for it sat a column to
-            // the left of every category label instead of indented past them.
-            text("  "),
-            text("  "),
-            text(label.clone()),
+            paint(text(marker), None),
+            paint(text("      "), None),
+            paint(text(label.clone()), label_ink.clone()).flex(1),
         ]),
     }
 }
@@ -1434,13 +1446,13 @@ pub enum CatRow {
         idx: usize,
         /// `▼`, `▶` or a space — the painter's own three states.
         chevron: &'static str,
-        expandable: bool,
         /// A dot beside a category with unsaved changes in it.
         dirty: bool,
         icon: &'static str,
         label: String,
-        /// A plugin's page has a long name and the painter elided it.
-        elide: bool,
+        /// A page nested under another category's row (a plugin's page
+        /// under "Plugins"): indented like a section, with no icon.
+        nested: bool,
     },
     Section {
         cat: usize,
@@ -1629,9 +1641,9 @@ fn keyhints(text_: &str) -> Vec<Node<UiMsg>> {
         match seg.find(':') {
             Some(at) => {
                 out.push(text(format!(" {} ", &seg[..at])).theme(key.clone()));
-                out.push(text(seg[at + 1..].to_string()).theme(desc.clone()));
+                out.push(text(&seg[at + 1..]).theme(desc.clone()));
             }
-            None => out.push(text(seg.to_string()).theme(desc.clone())),
+            None => out.push(text(seg).theme(desc.clone())),
         }
     }
     out
@@ -2033,11 +2045,10 @@ mod tests {
                 CatRow::Category {
                     idx: 0,
                     chevron: "▼",
-                    expandable: true,
                     dirty: true,
                     icon: "⚙",
                     label: "General".into(),
-                    elide: false,
+                    nested: false,
                 },
                 CatRow::Section {
                     cat: 0,
@@ -2052,11 +2063,10 @@ mod tests {
                 CatRow::Category {
                     idx: 1,
                     chevron: " ",
-                    expandable: false,
                     dirty: false,
                     icon: "✂",
                     label: "Clipboard".into(),
-                    elide: false,
+                    nested: false,
                 },
             ],
             selected: Some(0),
@@ -2081,12 +2091,15 @@ mod tests {
                     full_width: false,
                     completions: Vec::new(),
                     completions_visible_rows: 0,
+                    min_rows: 0,
+                    max_rows: 0,
                     block_caret: true,
                     sel_start: -1,
                     sel_end: -1,
                     label_width: 0,
                     read_only: false,
                     markdown: false,
+                    combo: false,
                     key: None,
                 }),
                 suffix: vec![Span::new(
@@ -2761,25 +2774,35 @@ mod tests {
         }
     }
 
-    /// **The chevron is its own target.** The painter recorded a one-column
-    /// rectangle for it so a click there expanded the category instead of
-    /// selecting it; here it is a node beside the label that stops the press.
+    /// **The chevron is part of its row.** A click on it is the row's click
+    /// — the host toggles an already-selected category — rather than a
+    /// target of its own that fired on the press while the row's selection
+    /// fired on the release and undid it.
     #[test]
-    fn a_press_on_the_chevron_expands_rather_than_selects() {
+    fn a_click_on_the_chevron_is_the_rows_click() {
         let mut ui = laid_out(200, 60, None);
         let at = ui.rect_of(
             ui.find_by_key(&fresh_ui::Key::Pair("settings_cat".into(), 0u64))
                 .expect("the first row"),
         );
         // Column 0 is the cursor marker; the chevron is the one after it.
-        let got = facts(ui.dispatch(fresh_ui::Input::press(
-            fresh_ui::Point::new(at.x + 1, at.y),
+        let p = fresh_ui::Point::new(at.x + 1, at.y);
+        let mut got = facts(ui.dispatch(fresh_ui::Input::press(
+            p,
             fresh_ui::MouseButton::Left,
             fresh_ui::Mods::NONE,
         )));
-        assert!(
-            got.contains(&UiFact::SettingsCategoryDisclosure(0)),
-            "the chevron toggles, got {got:?}"
+        got.extend(facts(ui.dispatch(fresh_ui::Input::release(
+            p,
+            fresh_ui::MouseButton::Left,
+            fresh_ui::Mods::NONE,
+        ))));
+        assert_eq!(
+            got.iter()
+                .filter(|f| matches!(f, UiFact::SettingsCategory(_)))
+                .collect::<Vec<_>>(),
+            vec![&UiFact::SettingsCategory(0)],
+            "one click, one category fact, got {got:?}"
         );
     }
 

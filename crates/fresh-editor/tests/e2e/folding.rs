@@ -59,7 +59,10 @@ fn set_top_line(harness: &mut EditorTestHarness, line: usize) {
             .line_start_offset(line)
             .unwrap_or_else(|| buffer.len())
     };
-    let viewport = harness.editor_mut().active_viewport_mut();
+    let viewport = harness
+        .editor_mut()
+        .active_window_mut()
+        .active_viewport_mut();
     viewport.set_top_byte(top_byte);
     viewport.set_top_view_line_offset(0);
 
@@ -435,7 +438,10 @@ fn test_folded_viewport_inside_range_fills_lines() {
                 .line_start_offset(header_line + 20)
                 .unwrap_or_else(|| buffer.len())
         };
-        let viewport = harness.editor_mut().active_viewport_mut();
+        let viewport = harness
+            .editor_mut()
+            .active_window_mut()
+            .active_viewport_mut();
         viewport.set_top_byte(top_byte);
         viewport.set_top_view_line_offset(0);
         viewport.set_skip_ensure_visible();
@@ -688,13 +694,16 @@ fn test_unfold_works_after_folding_ranges_cleared() {
 /// Same for scrolling back up.
 #[test]
 fn test_scroll_margin_identical_with_and_without_fold() {
+    /// `(cursor_screen_row_in_content, top_visible_line)` per key press.
+    type ScrollTrace = Vec<(usize, usize)>;
+
     /// Record (cursor_screen_row_in_content, top_visible_line) after each
     /// Down / Up key press.
     fn collect_scroll_trace(
         harness: &mut EditorTestHarness,
         steps_down: usize,
         steps_up: usize,
-    ) -> (Vec<(usize, usize)>, Vec<(usize, usize)>) {
+    ) -> (ScrollTrace, ScrollTrace) {
         let mut down = Vec::new();
         let mut up = Vec::new();
         let (start_row, _) = harness.content_area_rows();
@@ -945,7 +954,7 @@ fn test_gutter_click_folds_correct_block_in_large_file_mode() {
         content.push_str(&format!("    a{i}\n")); // lines 1..11
     }
     content.push_str("}\n"); // line 12
-    content.push_str("\n"); // line 13 (blank)
+    content.push('\n'); // line 13 (blank)
 
     let beta_byte = content.len();
     content.push_str("fn beta() {\n"); // line 14
@@ -953,7 +962,7 @@ fn test_gutter_click_folds_correct_block_in_large_file_mode() {
         content.push_str(&format!("    b{i}\n")); // lines 15..17
     }
     content.push_str("}\n"); // line 18
-    content.push_str("\n"); // line 19 (blank)
+    content.push('\n'); // line 19 (blank)
     content.push_str("fn gamma() {\n"); // line 20
     for i in 1..=3 {
         content.push_str(&format!("    g{i}\n")); // lines 21..23
@@ -1133,7 +1142,10 @@ fn test_gutter_highlight_correct_at_end_of_large_file() {
     let cursors = harness.editor_mut().active_cursors_mut();
     cursors.primary_mut().position = target_byte;
     cursors.primary_mut().anchor = None;
-    let viewport = harness.editor_mut().active_viewport_mut();
+    let viewport = harness
+        .editor_mut()
+        .active_window_mut()
+        .active_viewport_mut();
     viewport.set_top_byte(target_byte);
     viewport.set_top_view_line_offset(0);
 

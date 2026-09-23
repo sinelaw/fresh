@@ -197,6 +197,7 @@ impl Editor {
     /// The dock column's width as the host would carve it now, mounted or
     /// not; `0` when the terminal is too narrow for one. What the plugin
     /// lays its content out to.
+    #[cfg(feature = "plugins")]
     pub(crate) fn dock_cols_if_open(&self) -> u16 {
         let requested = self.requested_dock_width(self.terminal_width);
         crate::view::shell::frame::dock_width(Some(requested), self.terminal_width).unwrap_or(0)

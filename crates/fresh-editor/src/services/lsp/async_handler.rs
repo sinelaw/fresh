@@ -44,6 +44,9 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{ChildStdin, ChildStdout};
 use tokio::sync::{mpsc, oneshot};
 
+/// An LSP range as `((start_line, start_char), (end_line, end_char))`.
+type LspRange = ((u32, u32), (u32, u32));
+
 /// Maps an in-flight LSP request id to the request method and the channel
 /// awaiting its response. The method is retained so error responses can be
 /// classified per-method (see `log_response_error`).
@@ -356,19 +359,6 @@ impl LspClientState {
     /// Check if the client can accept initialization
     pub fn can_initialize(&self) -> bool {
         matches!(self, Self::Initial | Self::Starting | Self::Stopped)
-    }
-
-    /// Convert to LspServerStatus for UI reporting
-    pub fn to_server_status(&self) -> LspServerStatus {
-        match self {
-            Self::Initial => LspServerStatus::Starting,
-            Self::Starting => LspServerStatus::Starting,
-            Self::Initializing => LspServerStatus::Initializing,
-            Self::Running => LspServerStatus::Running,
-            Self::Stopping => LspServerStatus::Shutdown,
-            Self::Stopped => LspServerStatus::Shutdown,
-            Self::Error => LspServerStatus::Error,
-        }
     }
 }
 
@@ -2024,7 +2014,7 @@ impl LspState {
     /// that routine outcome from surfacing as an ERROR-level parse
     /// failure. An empty `contents` string means the same and is reported
     /// as no-hover.
-    fn parse_hover_response(result: Value) -> (String, bool, Option<((u32, u32), (u32, u32))>) {
+    fn parse_hover_response(result: Value) -> (String, bool, Option<LspRange>) {
         let no_contents = result
             .as_object()
             .is_some_and(|obj| !obj.contains_key("contents"));
@@ -4782,7 +4772,20 @@ async fn handle_notification_dispatch(
             }
         }
         _ => {
-            tracing::debug!("Unhandled notification: {}", notification.method);
+            // Non-standard / server-specific notification (clangd's
+            // `textDocument/clangd.fileStatus`, `$/memoryUsage`, ...): hand it
+            // to plugins, which subscribe via `lsp/custom_notification`.
+            tracing::debug!(
+                "LSP ({}) notification for plugins: {}",
+                language,
+                notification.method
+            );
+            let _ = async_tx.send(AsyncMessage::LspCustomNotification {
+                language: language.to_string(),
+                server_name: server_name.to_string(),
+                method: notification.method,
+                params: notification.params,
+            });
         }
     }
 

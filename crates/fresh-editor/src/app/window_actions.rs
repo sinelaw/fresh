@@ -58,6 +58,7 @@ impl crate::app::Editor {
             )),
             local_filesystem: std::sync::Arc::clone(&self.local_filesystem),
             buffer_id_alloc: self.buffer_id_alloc.clone(),
+            terminal_id_alloc: self.terminal_id_alloc.clone(),
             time_source: std::sync::Arc::clone(&self.time_source),
             dir_context: self.dir_context.clone(),
             tokio_runtime: self.tokio_runtime.clone(),
@@ -578,16 +579,6 @@ impl crate::app::Editor {
             target.record_terminal_script_token(terminal_id, &terminal_env);
         }
 
-        // The switch has now committed (the spawn succeeded and the active
-        // pointer stays on the new window). This path wrote `active_window`
-        // directly above, bypassing `set_active_window` — so mirror its
-        // guard here, or a panel-scoped mode set on the window we switched
-        // away from (e.g. the New-Session form's `orchestrator-new-form`,
-        // still mounted during a born-attached SSH/K8s attach) is left
-        // stranded and silently swallows all of that window's buffer input.
-        // See #2237 / #2234 item 4.
-        self.clear_panel_scoped_mode_on_switch_away(previous_id);
-
         // Adopt the new active window's authority into the editor-wide
         // caches (`self.authority`, quick-open, the `authority_changed`
         // hook). This path writes `active_window` directly and bypasses
@@ -659,40 +650,6 @@ impl crate::app::Editor {
         Ok((id, terminal_id, buffer_id))
     }
 
-    /// Clear a floating-panel-scoped editor mode on the window we are
-    /// switching *away* from.
-    ///
-    /// A plugin-defined editor mode (`editor.setEditorMode`) tied to a mounted
-    /// floating widget panel — the Orchestrator picker (`orchestrator-open`) or
-    /// new-session form (`orchestrator-new-form`) — is transient UI state that
-    /// belongs to the *panel*, not to the window it was opened over.
-    /// `setEditorMode` writes to whatever window is active when the plugin
-    /// calls it, so a plugin that switches the active window while its panel is
-    /// still mounted (the orchestrator "dive": `setActiveWindow(target)` first,
-    /// then `closeOpenDialog()` / `closeForm()` which runs
-    /// `setEditorMode(null)`) lands the clear on the *incoming* window and
-    /// leaves the *outgoing* one stuck in the panel's mode. That stuck mode
-    /// stays masked while the window sits in terminal mode, then silently
-    /// swallows every printable key the moment the user leaves terminal mode
-    /// (e.g. opens a file via quick-open) — the buffer ignores all keyboard
-    /// input until the user switches sessions.
-    ///
-    /// Both window-switch paths must call this before moving the active
-    /// pointer: the ordinary `set_active_window` dive *and* the born-attached
-    /// remote session creation (`create_window_with_terminal`), which writes
-    /// the active pointer directly and so never reaches `set_active_window`'s
-    /// own guard. See #2237 / #2234 item 4.
-    ///
-    /// vi-mode and other persistent per-window modes are unaffected: they never
-    /// have a floating panel mounted during a window switch.
-    fn clear_panel_scoped_mode_on_switch_away(&mut self, previous_id: WindowId) {
-        if self.floating_widget_panel.is_some() {
-            if let Some(win) = self.windows.get_mut(&previous_id) {
-                win.editor_mode = None;
-            }
-        }
-    }
-
     /// Switch the active window to `id`.
     ///
     /// Pointer write: every per-window field
@@ -731,10 +688,11 @@ impl crate::app::Editor {
         // the `authority_changed` hook.
         let previous_authority_label = self.authority().display_label.clone();
 
-        // Clear any panel-scoped editor mode on the window we're leaving so
-        // it can never outlive the switch (see
-        // `clear_panel_scoped_mode_on_switch_away`).
-        self.clear_panel_scoped_mode_on_switch_away(previous_id);
+        // The outgoing window keeps its editor mode, floating panel or not:
+        // that slot is its buffer's (vi keeps "vi-normal" there), and a
+        // mounted panel's keymap is the mode it was mounted with
+        // (`FloatingWidgetState::mode`), which is editor-wide and goes
+        // wherever the panel does.
 
         // Lazy materialization: if this window's saved workspace hasn't
         // been restored yet, restore it now (before seeding) so the
@@ -1174,7 +1132,7 @@ impl crate::app::Editor {
 
     /// Move every piece of per-terminal state for `buffer_id`'s terminal
     /// from the active window to `target`: the PTY handle (adopted under a
-    /// fresh id, since terminal ids are per-window), the backing/log file
+    /// fresh editor-wide id and re-tagged with its new window), the backing/log file
     /// bindings, launch/resume argv, the ephemeral flag, title/fg-name
     /// caches, and the process-group registration. Mirrors the remap loop
     /// in `respawn_terminals_through_authority`, which is the same
@@ -1292,20 +1250,15 @@ impl crate::app::Editor {
         // so it doesn't surface as a stray tab — the target
         // session owns it.
         let leaf_ids: Vec<_> = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(_, vs)| vs)
-            .expect("active window must have a populated split layout")
+            .active_window()
+            .split_view_states()
             .keys()
             .copied()
             .collect();
         for leaf_id in leaf_ids {
             if let Some(view_state) = self
-                .windows
-                .get_mut(&self.active_window)
-                .and_then(|w| w.split_view_states_mut())
-                .expect("active window must have a populated split layout")
+                .active_window_mut()
+                .split_view_states_mut()
                 .get_mut(&leaf_id)
             {
                 view_state.remove_buffer(buffer_id);
@@ -1522,10 +1475,12 @@ impl crate::app::Editor {
                 );
             }
         }
-        // The sections about its buffers go with the buffers, the ones about
-        // the window with the window.
+        // The sections and diff baselines about its buffers go with the
+        // buffers, the ones about the window with the window.
         for buffer_id in closed.buffers.ids() {
             self.drop_sidebar_sections_for_buffer(buffer_id);
+            #[cfg(feature = "plugins")]
+            self.diff_baselines.drop_for_buffer(buffer_id);
         }
         drop(closed);
         self.drop_sidebar_sections_for_window(id);
@@ -1620,6 +1575,7 @@ impl crate::app::Editor {
     /// only a `dormant_remote` descriptor (no authority). The active window is
     /// left unchanged until the connection lands, so the editor never shows a
     /// window without its real backend.
+    #[cfg(feature = "plugins")]
     pub(crate) fn bring_dormant_remote_online(&mut self, id: WindowId) {
         let Some(descriptor) = self.dormant_remote.get(&id) else {
             return;

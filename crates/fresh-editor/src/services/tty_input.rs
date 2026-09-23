@@ -28,7 +28,6 @@ use std::os::unix::io::{AsRawFd, BorrowedFd, RawFd};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use crossterm::event::MouseEventKind;
 use fresh_input_parser::{Event as InputEvent, InputParser};
 
 /// How long a buffered lone `ESC` waits for a continuation before it is
@@ -105,6 +104,9 @@ pub struct TtyReader {
 
 impl TtyReader {
     /// Install the `SIGWINCH` handler and take ownership of stdin input.
+    ///
+    /// Not `Default`: constructing one has process-wide side effects.
+    #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
         install_sigwinch_handler();
         RAW_INPUT_ACTIVE.store(true, Ordering::Relaxed);
@@ -215,17 +217,9 @@ impl TtyReader {
     /// presses, releases and wheel notches each mean something at the moment
     /// they happened, so they always queue.
     fn push_coalesced(&mut self, ev: InputEvent) {
-        if let InputEvent::Mouse(m) = &ev {
-            if matches!(m.kind, MouseEventKind::Moved | MouseEventKind::Drag(_)) {
-                if let Some(InputEvent::Mouse(last)) = self.queue.back() {
-                    if last.kind == m.kind && last.modifiers == m.modifiers {
-                        *self.queue.back_mut().expect("back() was Some") = ev;
-                        return;
-                    }
-                }
-            }
+        if let Some(ev) = fresh_input_parser::coalesce_motion_into(self.queue.back_mut(), ev) {
+            self.queue.push_back(ev);
         }
-        self.queue.push_back(ev);
     }
 
     /// Queue an event that did not come from stdin, through the same motion
@@ -267,18 +261,6 @@ impl TtyReader {
             self.flush_pending_escape();
         }
         Ok(self.next_buffered().or_else(|| self.take_resize()))
-    }
-
-    /// Non-blocking peek at the next event: drains stdin once if data is already
-    /// pending. Used by mouse-move coalescing to look ahead without blocking.
-    pub fn try_next(&mut self) -> Option<InputEvent> {
-        if let Some(ev) = self.next_buffered() {
-            return Some(ev);
-        }
-        if poll_readable(self.stdin_fd, Duration::ZERO) {
-            self.drain_stdin();
-        }
-        self.next_buffered().or_else(|| self.take_resize())
     }
 }
 

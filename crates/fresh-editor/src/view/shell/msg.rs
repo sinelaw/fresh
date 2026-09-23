@@ -256,11 +256,6 @@ pub enum UiFact {
     /// The pointer was released while a tab's name held it: the drop, if the
     /// drag ever passed its threshold.
     PaneTabDrop,
-    /// The `<` or `>` at a strip's edge: step the strip one notch.
-    PaneTabsScroll {
-        pane: LeafId,
-        delta: i32,
-    },
     /// The `+` after the last tab: the new-tab menu, just below it.
     PaneNewTab {
         pane: LeafId,
@@ -625,10 +620,10 @@ pub enum UiFact {
     ///
     /// **The grip captured the pointer on its press**, so this arrives
     /// wherever the pointer has travelled to — which is the whole of what
-    /// `chrome::PointerGrab` and its ladder were arranging by hand. It fires
-    /// on a bare hover over the grip too; whether a drag is actually in
-    /// progress is state the applier holds, and it is the applier that says
-    /// so.
+    /// `chrome::PointerGrab` and its ladder were arranging by hand. Only a
+    /// captured move is reported — a bare hover over the grip is not a
+    /// drag — and the applier reads the gesture's own state for where it
+    /// started.
     GripDrag {
         which: Grip,
         x: u16,
@@ -641,6 +636,13 @@ pub enum UiFact {
     /// A left press landed outside the dock column. Blurs a focused dock and
     /// does nothing to one already blurred; either way the press goes on.
     DockBlur,
+    /// The tree's focus entered (`held`) or left a panel's interior. While the
+    /// panel keeps its keyboard layer that is a layer above it opening or
+    /// closing — see `Editor::panel_keyboard_changed`.
+    PanelKeyboard {
+        slot: super::widgets::Slot,
+        held: bool,
+    },
     /// A press outside the theme inspector, or any key while it is up. Both
     /// dismiss it and both go on to what they were aimed at.
     ThemeInfoDismiss,
@@ -794,13 +796,11 @@ pub enum UiFact {
     /// painter filed one rectangle per visible row in `layout.categories` and
     /// `layout.sections`, and the arm behind them walked both lists.
     SettingsCategory(usize),
+    /// A press on a category in the narrow layout's strip, which has no tree
+    /// to open or shut: it only selects the page (and takes it to the top).
+    SettingsStripCategory(usize),
     /// A press on a section row under a category, by `(category, section)`.
     SettingsCategorySection(usize, usize),
-    /// A press on a category's `▶`/`▼`, which expands it rather than
-    /// selecting it. This was `layout.disclosures` — a one-column rectangle
-    /// per expandable row, filed so a chain of `point_in_rect` could tell the
-    /// chevron from the label beside it.
-    SettingsCategoryDisclosure(usize),
     /// **A key the category tree answered for itself.** The first of the
     /// settings dialog's keys to arrive as what it *means* rather than as
     /// `ModalKey` — "here is your key back, work out whose it was". The node

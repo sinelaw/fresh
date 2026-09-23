@@ -224,6 +224,7 @@ impl ReferenceHighlighter {
     }
 
     /// Set the minimum word length
+    #[cfg(test)]
     pub fn with_min_length(mut self, length: usize) -> Self {
         self.min_word_length = length;
         self
@@ -233,102 +234,103 @@ impl ReferenceHighlighter {
     ///
     /// This enables syntax-aware identifier matching for the given language.
     /// If the language is not supported or parsing fails, falls back to text matching.
-    pub fn set_language(&mut self, language: &Language) {
+    #[cfg(not(feature = "tree-sitter"))]
+    pub fn set_language(&mut self, _language: &Language) {
         // Without tree-sitter grammars there is no parser to build; reset to
         // text-matching mode so reference highlighting still works via the
         // pure-Rust `TextReferenceHighlighter` fallback path.
-        #[cfg(not(feature = "tree-sitter"))]
-        {
-            let _ = language;
-            self.parser = None;
-            self.identifier_query = None;
-            self.locals_query = None;
-            self.locals_captures = LocalsCaptures::default();
-            return;
-        }
-        #[cfg(feature = "tree-sitter")]
-        {
-            // Centralized accessor: `None` when the grammar isn't compiled into
-            // this build (most languages now), in which case reference
-            // highlighting uses the pure-Rust text-matching fallback.
-            let ts_language = match language.ts_language() {
-                Some(l) => l,
-                None => {
-                    self.parser = None;
-                    self.identifier_query = None;
-                    self.locals_query = None;
-                    self.locals_captures = LocalsCaptures::default();
-                    return;
-                }
-            };
+        self.parser = None;
+        self.identifier_query = None;
+        self.locals_query = None;
+        self.locals_captures = LocalsCaptures::default();
+    }
 
-            // Create parser
-            let mut parser = Parser::new();
-            if parser.set_language(&ts_language).is_err() {
-                tracing::warn!("Failed to set language for semantic highlighting parser");
+    /// Set the language for tree-sitter based highlighting
+    ///
+    /// This enables syntax-aware identifier matching for the given language.
+    /// If the language is not supported or parsing fails, falls back to text matching.
+    #[cfg(feature = "tree-sitter")]
+    pub fn set_language(&mut self, language: &Language) {
+        // Centralized accessor: `None` when the grammar isn't compiled into
+        // this build (most languages now), in which case reference
+        // highlighting uses the pure-Rust text-matching fallback.
+        let ts_language = match language.ts_language() {
+            Some(l) => l,
+            None => {
                 self.parser = None;
                 self.identifier_query = None;
                 self.locals_query = None;
                 self.locals_captures = LocalsCaptures::default();
                 return;
             }
+        };
 
-            // Try to create locals query for scope-aware highlighting
-            if let Some(locals_source) = get_locals_query(language) {
-                match Query::new(&ts_language, locals_source) {
-                    Ok(query) => {
-                        // Extract capture indices
-                        let mut captures = LocalsCaptures::default();
-                        for (i, name) in query.capture_names().iter().enumerate() {
-                            match *name {
-                                "local.scope" => captures.scope = Some(i as u32),
-                                "local.definition" => captures.definition = Some(i as u32),
-                                "local.reference" => captures.reference = Some(i as u32),
-                                _ => {}
-                            }
-                        }
+        // Create parser
+        let mut parser = Parser::new();
+        if parser.set_language(&ts_language).is_err() {
+            tracing::warn!("Failed to set language for semantic highlighting parser");
+            self.parser = None;
+            self.identifier_query = None;
+            self.locals_query = None;
+            self.locals_captures = LocalsCaptures::default();
+            return;
+        }
 
-                        self.locals_query = Some(query);
-                        self.locals_captures = captures;
-                        tracing::debug!(
-                            "Locals query enabled for {:?} (scope-aware highlighting)",
-                            language
-                        );
-                    }
-                    Err(e) => {
-                        tracing::debug!(
-                            "Locals query failed for {:?}, falling back to identifier matching: {}",
-                            language,
-                            e
-                        );
-                        self.locals_query = None;
-                        self.locals_captures = LocalsCaptures::default();
-                    }
-                }
-            } else {
-                self.locals_query = None;
-                self.locals_captures = LocalsCaptures::default();
-            }
-
-            // Create identifier query as fallback
-            match Query::new(&ts_language, IDENTIFIER_QUERY) {
+        // Try to create locals query for scope-aware highlighting
+        if let Some(locals_source) = get_locals_query(language) {
+            match Query::new(&ts_language, locals_source) {
                 Ok(query) => {
-                    self.parser = Some(parser);
-                    self.identifier_query = Some(query);
+                    // Extract capture indices
+                    let mut captures = LocalsCaptures::default();
+                    for (i, name) in query.capture_names().iter().enumerate() {
+                        match *name {
+                            "local.scope" => captures.scope = Some(i as u32),
+                            "local.definition" => captures.definition = Some(i as u32),
+                            "local.reference" => captures.reference = Some(i as u32),
+                            _ => {}
+                        }
+                    }
+
+                    self.locals_query = Some(query);
+                    self.locals_captures = captures;
                     tracing::debug!(
-                        "Tree-sitter semantic highlighting enabled for {:?}",
+                        "Locals query enabled for {:?} (scope-aware highlighting)",
                         language
                     );
                 }
                 Err(e) => {
                     tracing::debug!(
-                        "Identifier query not supported for {:?}, using text matching: {}",
+                        "Locals query failed for {:?}, falling back to identifier matching: {}",
                         language,
                         e
                     );
-                    self.parser = None;
-                    self.identifier_query = None;
+                    self.locals_query = None;
+                    self.locals_captures = LocalsCaptures::default();
                 }
+            }
+        } else {
+            self.locals_query = None;
+            self.locals_captures = LocalsCaptures::default();
+        }
+
+        // Create identifier query as fallback
+        match Query::new(&ts_language, IDENTIFIER_QUERY) {
+            Ok(query) => {
+                self.parser = Some(parser);
+                self.identifier_query = Some(query);
+                tracing::debug!(
+                    "Tree-sitter semantic highlighting enabled for {:?}",
+                    language
+                );
+            }
+            Err(e) => {
+                tracing::debug!(
+                    "Identifier query not supported for {:?}, using text matching: {}",
+                    language,
+                    e
+                );
+                self.parser = None;
+                self.identifier_query = None;
             }
         }
     }

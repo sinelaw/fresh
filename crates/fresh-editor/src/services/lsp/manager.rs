@@ -551,11 +551,6 @@ impl LspManager {
         runtime.block_on(spawner.command_exists(command))
     }
 
-    /// Check if a language has been manually enabled (allowing spawn even if auto_start=false)
-    pub fn is_language_allowed(&self, language: &str) -> bool {
-        self.allowed_languages.contains(language)
-    }
-
     /// Allow a language to spawn LSP server (used by manual start command)
     pub fn allow_language(&mut self, language: &str) {
         self.allowed_languages.insert(language.to_string());
@@ -639,14 +634,6 @@ impl LspManager {
         self.get_handles(language).iter().any(|sh| {
             sh.feature_filter.allows(LspFeature::SemanticTokens)
                 && sh.capabilities.semantic_tokens_full
-        })
-    }
-
-    /// Check if any eligible server for the language supports full semantic token deltas.
-    pub fn semantic_tokens_full_delta_supported(&self, language: &str) -> bool {
-        self.get_handles(language).iter().any(|sh| {
-            sh.feature_filter.allows(LspFeature::SemanticTokens)
-                && sh.capabilities.semantic_tokens_full_delta
         })
     }
 
@@ -851,30 +838,12 @@ impl LspManager {
         self.config.insert(language, configs);
     }
 
-    /// Append additional server configs to an existing language entry.
-    pub fn append_language_configs(&mut self, language: String, configs: Vec<LspServerConfig>) {
-        self.config.entry(language).or_default().extend(configs);
-    }
-
     /// Set universal (global) LSP server configs.
     ///
     /// Universal servers are spawned once per project and shared across all
     /// languages, rather than being duplicated into each language's config list.
     pub fn set_universal_configs(&mut self, configs: Vec<LspServerConfig>) {
         self.universal_configs = configs;
-    }
-
-    /// Return the list of currently configured language keys.
-    pub fn configured_languages(&self) -> Vec<String> {
-        self.config.keys().cloned().collect()
-    }
-
-    /// Set a new root URI for the workspace
-    ///
-    /// This should be called after shutting down all servers when switching projects.
-    /// Servers spawned after this will use the new root URI.
-    pub fn set_root_uri(&mut self, root_uri: Option<Uri>) {
-        self.root_uri = root_uri;
     }
 
     /// Set a language-specific root URI
@@ -941,38 +910,6 @@ impl LspManager {
 
         // 3. No file path available — use the global root_uri
         self.root_uri.clone()
-    }
-
-    /// Get the effective root URI for a language (legacy, without file-based detection)
-    ///
-    /// Returns the language-specific root if set, otherwise the default root.
-    pub fn get_effective_root_uri(&self, language: &str) -> Option<Uri> {
-        self.resolve_root_uri(language, None)
-    }
-
-    /// Reset the manager for a new project
-    ///
-    /// This shuts down all servers and clears state, preparing for a fresh start.
-    /// The configuration is preserved but servers will need to be respawned.
-    pub fn reset_for_new_project(&mut self, new_root_uri: Option<Uri>) {
-        // Shutdown all servers
-        self.shutdown_all();
-
-        // Update root URI
-        self.root_uri = new_root_uri;
-
-        // Clear restart tracking state (fresh start)
-        self.restart_attempts.clear();
-        self.restart_cooldown.clear();
-        self.pending_restarts.clear();
-
-        // Keep allowed_languages and disabled_languages as user preferences
-        // Keep config as it's not project-specific
-
-        tracing::info!(
-            "LSP manager reset for new project: {:?}",
-            self.root_uri.as_ref().map(|u| u.as_str())
-        );
     }
 
     /// Get the primary (first) existing LSP handle for a language (no spawning).
@@ -1617,11 +1554,6 @@ impl LspManager {
         results
     }
 
-    /// Check if a language server is in restart cooldown
-    pub fn is_in_cooldown(&self, language: &str) -> bool {
-        self.restart_cooldown.contains(language)
-    }
-
     /// Check if a language server has a pending restart
     pub fn has_pending_restart(&self, language: &str) -> bool {
         self.pending_restarts.contains_key(language)
@@ -1818,21 +1750,6 @@ impl LspManager {
         }
     }
 
-    /// Get the number of recent restart attempts for a language
-    pub fn restart_attempt_count(&self, language: &str) -> usize {
-        let now = Instant::now();
-        let window = Duration::from_secs(RESTART_WINDOW_SECS);
-        self.restart_attempts
-            .get(language)
-            .map(|attempts| {
-                attempts
-                    .iter()
-                    .filter(|t| now.duration_since(**t) < window)
-                    .count()
-            })
-            .unwrap_or(0)
-    }
-
     /// Get a list of currently running LSP server language labels (deduplicated).
     pub fn running_servers(&self) -> Vec<String> {
         let mut labels: Vec<String> = self
@@ -1964,6 +1881,7 @@ pub use fresh_editor_core::language_detect::detect_language;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::filesystem::StdFileSystem;
     use std::path::Path;
 
     #[test]
@@ -2248,33 +2166,48 @@ mod tests {
 
         // Test configured languages
         assert_eq!(
-            detect_language(Path::new("main.rs"), &languages),
+            detect_language(Path::new("main.rs"), &languages, &StdFileSystem),
             Some("rust".to_string())
         );
         assert_eq!(
-            detect_language(Path::new("index.js"), &languages),
+            detect_language(Path::new("index.js"), &languages, &StdFileSystem),
             Some("javascript".to_string())
         );
         assert_eq!(
-            detect_language(Path::new("App.jsx"), &languages),
+            detect_language(Path::new("App.jsx"), &languages, &StdFileSystem),
             Some("javascript".to_string())
         );
         assert_eq!(
-            detect_language(Path::new("Program.cs"), &languages),
+            detect_language(Path::new("Program.cs"), &languages, &StdFileSystem),
             Some("csharp".to_string())
         );
 
         // Test unconfigured extensions return None
-        assert_eq!(detect_language(Path::new("main.py"), &languages), None);
-        assert_eq!(detect_language(Path::new("file.xyz"), &languages), None);
-        assert_eq!(detect_language(Path::new("file"), &languages), None);
+        assert_eq!(
+            detect_language(Path::new("main.py"), &languages, &StdFileSystem),
+            None
+        );
+        assert_eq!(
+            detect_language(Path::new("file.xyz"), &languages, &StdFileSystem),
+            None
+        );
+        assert_eq!(
+            detect_language(Path::new("file"), &languages, &StdFileSystem),
+            None
+        );
     }
 
     #[test]
     fn test_detect_language_no_extension() {
         let languages = test_languages();
-        assert_eq!(detect_language(Path::new("README"), &languages), None);
-        assert_eq!(detect_language(Path::new("Makefile"), &languages), None);
+        assert_eq!(
+            detect_language(Path::new("README"), &languages, &StdFileSystem),
+            None
+        );
+        assert_eq!(
+            detect_language(Path::new("Makefile"), &languages, &StdFileSystem),
+            None
+        );
     }
 
     #[test]
@@ -2309,19 +2242,22 @@ mod tests {
 
         // Path glob: /etc/**/rc.* should match
         assert_eq!(
-            detect_language(Path::new("/etc/rc.conf"), &languages),
+            detect_language(Path::new("/etc/rc.conf"), &languages, &StdFileSystem),
             Some("shell".to_string())
         );
         assert_eq!(
-            detect_language(Path::new("/etc/init/rc.local"), &languages),
+            detect_language(Path::new("/etc/init/rc.local"), &languages, &StdFileSystem),
             Some("shell".to_string())
         );
         // Path glob should NOT match different root
-        assert_eq!(detect_language(Path::new("/var/rc.conf"), &languages), None);
+        assert_eq!(
+            detect_language(Path::new("/var/rc.conf"), &languages, &StdFileSystem),
+            None
+        );
 
         // Filename glob: *rc should still work
         assert_eq!(
-            detect_language(Path::new("lfrc"), &languages),
+            detect_language(Path::new("lfrc"), &languages, &StdFileSystem),
             Some("shell".to_string())
         );
     }
@@ -2455,7 +2391,7 @@ mod tests {
         // default-config answer (`c`) survives.
         let languages = c_cpp_languages();
         assert_eq!(
-            detect_language(Path::new("foo.h"), &languages),
+            detect_language(Path::new("foo.h"), &languages, &StdFileSystem),
             Some("c".to_string())
         );
     }
@@ -2472,7 +2408,7 @@ mod tests {
 
         let languages = c_cpp_languages();
         assert_eq!(
-            detect_language(&header, &languages),
+            detect_language(&header, &languages, &StdFileSystem),
             Some("cpp".to_string())
         );
     }
@@ -2489,7 +2425,7 @@ mod tests {
 
         let languages = c_cpp_languages();
         assert_eq!(
-            detect_language(&header, &languages),
+            detect_language(&header, &languages, &StdFileSystem),
             Some("cpp".to_string())
         );
     }
@@ -2512,7 +2448,7 @@ mod tests {
 
         let languages = c_cpp_languages();
         assert_eq!(
-            detect_language(&header, &languages),
+            detect_language(&header, &languages, &StdFileSystem),
             Some("cpp".to_string())
         );
     }
@@ -2534,7 +2470,10 @@ mod tests {
         std::fs::write(&header, "").unwrap();
 
         let languages = c_cpp_languages();
-        assert_eq!(detect_language(&header, &languages), Some("c".to_string()));
+        assert_eq!(
+            detect_language(&header, &languages, &StdFileSystem),
+            Some("c".to_string())
+        );
     }
 
     #[test]
@@ -2548,7 +2487,10 @@ mod tests {
         std::fs::write(project.join("lib.c"), "").unwrap();
 
         let languages = c_cpp_languages();
-        assert_eq!(detect_language(&header, &languages), Some("c".to_string()));
+        assert_eq!(
+            detect_language(&header, &languages, &StdFileSystem),
+            Some("c".to_string())
+        );
     }
 
     #[test]
@@ -2563,7 +2505,10 @@ mod tests {
         std::fs::write(&header, "").unwrap();
 
         let languages = c_cpp_languages();
-        assert_eq!(detect_language(&header, &languages), Some("c".to_string()));
+        assert_eq!(
+            detect_language(&header, &languages, &StdFileSystem),
+            Some("c".to_string())
+        );
     }
 
     #[test]
@@ -2586,7 +2531,7 @@ mod tests {
 
         let languages = c_cpp_languages();
         assert_eq!(
-            detect_language(&header, &languages),
+            detect_language(&header, &languages, &StdFileSystem),
             Some("cpp".to_string())
         );
     }
@@ -2602,7 +2547,10 @@ mod tests {
         std::fs::write(project.join("main.cpp"), "").unwrap();
 
         let languages = c_cpp_languages();
-        assert_eq!(detect_language(&source, &languages), Some("c".to_string()));
+        assert_eq!(
+            detect_language(&source, &languages, &StdFileSystem),
+            Some("c".to_string())
+        );
     }
 
     #[test]
@@ -2618,7 +2566,10 @@ mod tests {
 
         let mut languages = c_cpp_languages();
         languages.remove("cpp");
-        assert_eq!(detect_language(&header, &languages), Some("c".to_string()));
+        assert_eq!(
+            detect_language(&header, &languages, &StdFileSystem),
+            Some("c".to_string())
+        );
     }
 
     // These two use POSIX-absolute inputs (`/tmp/...`). On Windows such a path
@@ -2662,6 +2613,36 @@ mod tests {
         // Unix `test_path_to_uri_with_spaces` provides on that platform).
         let spaced = path_to_uri(Path::new(r"C:\my project\src")).unwrap();
         assert_eq!(spaced.as_str(), "file:///C:/my%20project/src");
+    }
+
+    /// Regression test for issue #3280: after session restore on Windows the
+    /// first spawn resolves its root from the restored buffer's path, which
+    /// carries the `\\?\` verbatim prefix. That path goes through
+    /// `resolve_root_uri` -> `path_to_uri` (the auto-restart instead passes no
+    /// file and falls back to the global `root_uri`, which is why the retry
+    /// always got the drive right). The verbatim drive must survive.
+    #[cfg(windows)]
+    #[test]
+    fn resolve_root_uri_keeps_drive_of_verbatim_file_path() {
+        let manager = LspManager::new(fresh_core::WindowId(1), None);
+        let file = Path::new(r"\\?\D:\Code\temp\test_fresh\main.py");
+        let uri = manager.resolve_root_uri("python", Some(file)).unwrap();
+        assert_eq!(uri.as_str(), "file:///D:/Code/temp/test_fresh");
+    }
+
+    /// The file-path branch of `resolve_root_uri` (the one the first spawn
+    /// after restore takes) must produce the same URI as the global-root
+    /// fallback the auto-restart takes, for the same directory (#3280).
+    #[test]
+    fn resolve_root_uri_from_file_matches_global_root_fallback() {
+        let dir = std::env::current_dir().unwrap().join("some project");
+        let global = path_to_uri(&dir).unwrap();
+        let manager = LspManager::new(fresh_core::WindowId(1), Some(global.clone()));
+        let from_file = manager
+            .resolve_root_uri("python", Some(&dir.join("main.py")))
+            .unwrap();
+        assert_eq!(from_file, global);
+        assert_eq!(manager.resolve_root_uri("python", None), Some(global));
     }
 
     #[test]

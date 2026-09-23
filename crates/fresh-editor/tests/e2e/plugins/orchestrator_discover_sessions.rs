@@ -1,4 +1,4 @@
-//! The Everything dialog scans through the agent-sessions plugin hub.
+//! The Import sessions dialog scans through the agent-sessions plugin hub.
 //!
 //! Covers the chain from palette command to rendered rows. What a scan finds
 //! depends on the home directory the test runs against, so the assertions are
@@ -27,10 +27,10 @@ fn run_palette(harness: &mut EditorTestHarness, command_name: &str) {
 fn discover_dialog_scans_through_the_plugin_hub() {
     let mut harness = EditorTestHarness::with_temp_project(WIDTH, HEIGHT).unwrap();
 
-    run_palette(&mut harness, "Everything");
+    run_palette(&mut harness, "Import sessions");
     let opened = harness.screen_to_string();
     assert!(
-        opened.contains("Everything"),
+        opened.contains("Import sessions"),
         "the dialog opens; screen was:\n{opened}"
     );
     assert!(
@@ -62,7 +62,7 @@ fn discover_dialog_scans_through_the_plugin_hub() {
         "the scan settled rather than hanging on the pending line"
     );
     assert!(
-        settled.contains("Everything"),
+        settled.contains("Import sessions"),
         "the dialog is still up with its answer; screen was:\n{settled}"
     );
     // A missing hub, a rejected `openMachine` spec or a throw in the chain surfaces here.

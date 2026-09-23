@@ -1451,27 +1451,6 @@
       "when": "settings"
     },
     {
-      "key": "Up",
-      "modifiers": [],
-      "action": "move_up",
-      "args": {},
-      "when": "settings"
-    },
-    {
-      "key": "Down",
-      "modifiers": [],
-      "action": "move_down",
-      "args": {},
-      "when": "settings"
-    },
-    {
-      "key": "Tab",
-      "modifiers": [],
-      "action": "settings_toggle_focus",
-      "args": {},
-      "when": "settings"
-    },
-    {
       "key": "Enter",
       "modifiers": [],
       "action": "settings_activate",
@@ -1489,20 +1468,6 @@
       "key": "?",
       "modifiers": [],
       "action": "settings_help",
-      "args": {},
-      "when": "settings"
-    },
-    {
-      "key": "Right",
-      "modifiers": [],
-      "action": "settings_increment",
-      "args": {},
-      "when": "settings"
-    },
-    {
-      "key": "Left",
-      "modifiers": [],
-      "action": "settings_decrement",
       "args": {},
       "when": "settings"
     },
@@ -1987,8 +1952,8 @@
       "when": "prompt"
     },
     {
-      "comment": "Universal Search overlay — toggle the 'Ignored & hidden files' scope (off by default). Mnemonic: 'h' for Hidden ('i' is taken by toggle_search_confirm_each).",
-      "key": "h",
+      "comment": "Universal Search overlay — toggle the 'Ignored & hidden files' scope (off by default). Mnemonic: 'i' for Ignored, the letter the toolbar underlines. The search/replace prompt's own Alt+I (toggle_search_confirm_each) is bound in `searchPrompt`, which is consulted before `prompt`, so the two never collide.",
+      "key": "i",
       "modifiers": ["alt"],
       "action": "live_grep_toggle_ignored",
       "args": {},
@@ -2031,6 +1996,14 @@
       "key": "g",
       "modifiers": ["alt"],
       "action": "live_grep_toggle_regex",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "comment": "Universal Search overlay — toggle the 'Case' match mode (off by default: a search for 'todo' finds 'TODO'). Alt+C in the *narrower* searchPrompt context is the find prompt's own toggle_search_case_sensitive, which wins there, so one chord means 'flip case sensitivity' in both search UIs.",
+      "key": "c",
+      "modifiers": ["alt"],
+      "action": "live_grep_toggle_case",
       "args": {},
       "when": "prompt"
     }

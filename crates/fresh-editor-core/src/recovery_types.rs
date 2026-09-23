@@ -11,8 +11,10 @@
 //! For small files or new buffers, there's typically a single chunk containing
 //! the full content. For large files, only modified regions are stored as chunks.
 
+use crate::model::filesystem::FileSystem;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::io;
+use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 /// Maximum chunk size for chunked recovery (1 MB)
@@ -160,6 +162,7 @@ impl RecoveryMetadata {
     pub const FORMAT_VERSION: u32 = 2;
 
     /// Create new metadata
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         original_path: Option<PathBuf>,
         buffer_name: Option<String>,
@@ -209,18 +212,6 @@ impl RecoveryMetadata {
             name.clone()
         } else {
             "Unknown buffer".to_string()
-        }
-    }
-
-    /// Get a format description for display
-    pub fn format_description(&self) -> String {
-        if self.original_file_size > 0 {
-            format!(
-                "{} chunks, {} bytes original",
-                self.chunk_count, self.original_file_size
-            )
-        } else {
-            format!("{} bytes", self.content_size)
         }
     }
 }
@@ -304,29 +295,6 @@ impl RecoveryEntry {
         }
         false
     }
-
-    /// Get the age of this recovery file in seconds
-    pub fn age_seconds(&self) -> u64 {
-        let now = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
-        now.saturating_sub(self.metadata.updated_at)
-    }
-
-    /// Format the age as a human-readable string
-    pub fn age_display(&self) -> String {
-        let secs = self.age_seconds();
-        if secs < 60 {
-            format!("{secs}s ago")
-        } else if secs < 3600 {
-            format!("{}m ago", secs / 60)
-        } else if secs < 86400 {
-            format!("{}h ago", secs / 3600)
-        } else {
-            format!("{}d ago", secs / 86400)
-        }
-    }
 }
 
 /// Result of a recovery operation
@@ -353,7 +321,7 @@ pub enum RecoveryResult {
 
 /// Check if a process with the given PID is running
 #[cfg(unix)]
-fn is_process_running(pid: u32) -> bool {
+pub fn is_process_running(pid: u32) -> bool {
     // On Unix, we can use kill with signal 0 to check if process exists
     // Returns 0 if process exists and we can signal it
     // Returns -1 with EPERM if process exists but we can't signal it
@@ -368,7 +336,7 @@ fn is_process_running(pid: u32) -> bool {
 }
 
 #[cfg(windows)]
-fn is_process_running(pid: u32) -> bool {
+pub fn is_process_running(pid: u32) -> bool {
     use windows_sys::Win32::Foundation::{CloseHandle, STILL_ACTIVE};
     use windows_sys::Win32::System::Threading::{
         GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
@@ -387,7 +355,7 @@ fn is_process_running(pid: u32) -> bool {
 }
 
 #[cfg(not(any(unix, windows)))]
-fn is_process_running(_pid: u32) -> bool {
+pub fn is_process_running(_pid: u32) -> bool {
     // On other platforms, assume not running (safer for recovery)
     false
 }
@@ -467,6 +435,69 @@ impl InplaceWriteRecovery {
     pub fn is_in_progress(&self) -> bool {
         is_process_running(self.pid)
     }
+
+    /// Where the recovery metadata of an in-place write to `dest_path` is
+    /// kept in `recovery_dir`: `<path hash>.inplace.json`, so there is at
+    /// most one per destination.
+    pub fn meta_path(recovery_dir: &Path, dest_path: &Path) -> PathBuf {
+        recovery_dir.join(format!("{}{}", path_hash(dest_path), Self::META_SUFFIX))
+    }
+
+    const META_SUFFIX: &'static str = ".inplace.json";
+
+    /// Every in-place write recovery whose metadata is in `recovery_dir`,
+    /// with the path of that metadata, oldest first. Metadata that can't be
+    /// read or parsed is skipped; a directory that can't be listed has none.
+    pub fn scan(fs: &dyn FileSystem, recovery_dir: &Path) -> Vec<(PathBuf, Self)> {
+        let Ok(entries) = fs.read_dir(recovery_dir) else {
+            return Vec::new();
+        };
+        let mut found: Vec<(PathBuf, Self)> = entries
+            .into_iter()
+            .filter(|entry| entry.is_file() && entry.name.ends_with(Self::META_SUFFIX))
+            .filter_map(|entry| {
+                let json = fs.read_file(&entry.path).ok()?;
+                let recovery = serde_json::from_slice::<Self>(&json).ok()?;
+                Some((entry.path, recovery))
+            })
+            .collect();
+        found.sort_by_key(|(_, recovery)| recovery.started_at);
+        found
+    }
+}
+
+/// Remove the temp files that writes-then-renames into `dir` left behind
+/// when their process died between the two steps — names
+/// [`crate::model::filesystem::sibling_temp_path`] makes, whose pid is no
+/// longer running. Nothing else ever deletes them. A temp file of a process
+/// still running (another editor sharing the directory, mid-write) and
+/// anything that isn't such a temp file — including the `.inplace-*.tmp`
+/// copies in-place saves stage, which are recovery data themselves — is
+/// left alone. Returns how many were removed.
+pub fn remove_orphaned_temp_files(fs: &dyn FileSystem, dir: &Path) -> io::Result<usize> {
+    let entries = match fs.read_dir(dir) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(0),
+        Err(e) => return Err(e),
+    };
+    let mut removed = 0;
+    for entry in entries {
+        let Some(pid) = crate::model::filesystem::sibling_temp_pid(&entry.name) else {
+            continue;
+        };
+        if is_process_running(pid) {
+            continue;
+        }
+        match fs.remove_file(&entry.path) {
+            Ok(()) => removed += 1,
+            Err(e) => tracing::debug!(
+                "Failed to remove orphaned temp file {}: {}",
+                entry.path.display(),
+                e
+            ),
+        }
+    }
+    Ok(removed)
 }
 
 #[cfg(test)]

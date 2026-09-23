@@ -151,6 +151,56 @@ impl Event {
     }
 }
 
+/// **The one motion-coalescing rule, for every input path.**
+///
+/// Offer `ev` to the event queued just before it: when both are pointer
+/// motion of the same kind (`Moved`, or `Drag` with the same button) and the
+/// same modifiers, `ev` replaces `last` and `None` comes back; otherwise `ev`
+/// comes back to be queued.
+///
+/// A terminal sends a report for every cell the pointer crosses, and each one
+/// an editor handles costs a relayout (a divider drag reflows every pane and
+/// resizes every visible PTY) — so a burst that lands while a frame is being
+/// painted has to come out as the one report that is still true, or the
+/// divider falls further behind the pointer the farther it is pulled. Only a
+/// run of the *same* motion collapses: `Drag(Left)` never swallows
+/// `Drag(Right)`, a modifier change ends the run, and presses, releases,
+/// wheel notches and keys are never touched — each means something at the
+/// moment it happened.
+///
+/// The direct terminal reader and the session server both queue through
+/// this, so a drag behaves the same whichever one the input came in by.
+pub fn coalesce_motion_into(last: Option<&mut Event>, ev: Event) -> Option<Event> {
+    fn run(ev: &Event) -> Option<(MouseEventKind, KeyModifiers)> {
+        match ev {
+            Event::Mouse(m)
+                if matches!(m.kind, MouseEventKind::Moved | MouseEventKind::Drag(_)) =>
+            {
+                Some((m.kind, m.modifiers))
+            }
+            _ => None,
+        }
+    }
+    match last {
+        Some(last) if run(&ev).is_some() && run(last) == run(&ev) => {
+            *last = ev;
+            None
+        }
+        _ => Some(ev),
+    }
+}
+
+/// [`coalesce_motion_into`] over a whole batch.
+pub fn coalesce_motion(events: Vec<Event>) -> Vec<Event> {
+    let mut out: Vec<Event> = Vec::with_capacity(events.len());
+    for ev in events {
+        if let Some(ev) = coalesce_motion_into(out.last_mut(), ev) {
+            out.push(ev);
+        }
+    }
+    out
+}
+
 impl From<crossterm::event::Event> for Event {
     fn from(event: crossterm::event::Event) -> Self {
         use crossterm::event::Event as C;
@@ -1343,13 +1393,14 @@ fn utf8_char_width(first_byte: u8) -> usize {
     }
 }
 
-/// CONTROL for C0 control characters — except Tab, LF, CR and Esc, which are
-/// their own keys and carry no modifier.
+/// CONTROL for C0 control characters — except Tab, CR and Esc, which are
+/// their own keys and carry no modifier. LF is Ctrl+J: a terminal in raw mode
+/// sends CR for Enter, and LF only for Ctrl+J.
 ///
 /// Shared by the ground-state mapping and the `ESC <byte>` (Alt+key) mapping so
 /// both agree that `0x10` is Ctrl+P.
 fn c0_control_modifier(byte: u8) -> KeyModifiers {
-    if byte < 32 && byte != 9 && byte != 10 && byte != 13 && byte != 27 {
+    if byte < 32 && byte != 9 && byte != 13 && byte != 27 {
         KeyModifiers::CONTROL
     } else {
         KeyModifiers::empty()
@@ -1357,8 +1408,7 @@ fn c0_control_modifier(byte: u8) -> KeyModifiers {
 }
 
 /// Convert a single ground-state byte to a key event, attaching CONTROL for
-/// C0 control characters (except Tab, LF, CR and Esc, which are their own
-/// keys).
+/// C0 control characters (except Tab, CR and Esc, which are their own keys).
 fn byte_to_event(byte: u8) -> Event {
     Event::key(KeyEvent::new(
         byte_to_keycode(byte),
@@ -1371,7 +1421,10 @@ fn byte_to_keycode(byte: u8) -> KeyCode {
     match byte {
         0 => KeyCode::Char('@'), // Ctrl+@
         9 => KeyCode::Tab,
-        10 | 13 => KeyCode::Enter,                          // LF or CR
+        // Only CR is Enter. LF is Ctrl+J (the `1..=26` arm), which programs in
+        // the integrated terminal tell apart from Enter — e.g. to insert a
+        // newline rather than submit (sinelaw/fresh#3169).
+        13 => KeyCode::Enter,
         1..=26 => KeyCode::Char((b'a' + byte - 1) as char), // Ctrl+A..Ctrl+Z
         27 => KeyCode::Esc,
         28..=30 => KeyCode::Char((b'\\' + byte - 28) as char), // Ctrl+\, Ctrl+], Ctrl+^

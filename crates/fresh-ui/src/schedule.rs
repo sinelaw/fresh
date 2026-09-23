@@ -312,12 +312,6 @@ impl<'a, M: 'static> InitCx<'a, M> {
         crate::services::GeomHandle::new(self.geom_store.clone(), self.sched.clone(), self.id)
     }
 
-    /// A handle to another element's geometry, addressed by the element id an
-    /// owner already holds.
-    pub fn geometry_of(&mut self, id: ElementId) -> crate::services::GeomHandle {
-        crate::services::GeomHandle::new(self.geom_store.clone(), self.sched.clone(), id)
-    }
-
     /// Read an ambient as a snapshot. This does **not** create a dependency:
     /// caching the result in a field and using it later is the stale-output
     /// case, and it is reported by a debug assertion if the value ever changes.
@@ -498,6 +492,9 @@ pub struct Ui<M> {
 
     /// Pointer state.
     pub(crate) hover: Vec<ElementId>,
+    /// Where the pointer last was, or `None` once it has left. Read at paint
+    /// by nodes that draw their own affordance — see [`Geom::pointer`].
+    pub(crate) pointer: Option<Point>,
     pub(crate) captured: Option<ElementId>,
     /// The elements a press landed on, which button it was, and which press
     /// of a run it was — the last so the `Click` it completes can report it.
@@ -583,6 +580,7 @@ impl<M: 'static> Ui<M> {
             pending_layers: Vec::new(),
             spec: LayoutSpec::default(),
             hover: Vec::new(),
+            pointer: None,
             captured: None,
             press: None,
             focus: None,
@@ -719,15 +717,26 @@ impl<M: 'static> Ui<M> {
     }
 
     /// Whether a `frame` or `tick` would change anything: a dirty element, a
-    /// state mutation waiting to apply, a message produced out of band, or a
-    /// behavior with something to deliver or a ticker running.
+    /// re-layout waiting to run, a state mutation waiting to apply, a message
+    /// produced out of band, or a behavior with something to deliver or a
+    /// ticker running.
     ///
     /// This surfaces the mark-and-flush state the scheduler already keeps; it
     /// is a whole-frame yes/no, not per-cell damage tracking. A host loop reads
     /// it to skip quiet frames entirely — compute and paint — instead of
     /// redrawing at a fixed rate.
+    ///
+    /// **`layout_dirty` counts, and used not to.** Not every change goes
+    /// through an element: a pointer landing on an overflow cap, a wheel
+    /// moving a window, anything that marks retained geometry rather than a
+    /// description. `flush_layout_dirt` has always treated that queue as work
+    /// to do; a host asking whether a frame is owed was told "no" and the cap
+    /// stayed dark until something else happened to ask for one.
     pub fn needs_frame(&self) -> bool {
-        if self.sched.borrow().has_pending() || !self.pending_messages.is_empty() {
+        if self.sched.borrow().has_pending()
+            || !self.pending_messages.is_empty()
+            || !self.layout_dirty.is_empty()
+        {
             return true;
         }
         self.behaviour_hosts.iter().any(|id| {

@@ -1,15 +1,14 @@
 /// <reference path="./lib/fresh.d.ts" />
 
 /**
- * The Everything dialog: finds agent sessions other tools are running, on any
- * machine, and rejoins them. State, rendering, scan and cache live here; the
+ * The Import sessions dialog: finds agent sessions other tools are running, on
+ * any machine, and rejoins them. State, rendering, scan and cache live here; the
  * row model is `lib/discovery.ts`. The orchestrator is reached through
  * `DiscoveryHost`, looked up when the dialog opens so load order does not matter.
  */
 
 import { hub, type CollectedSession, type ScanResult } from "./lib/agent_scanner.ts";
 import {
-  DISCOVER_ABSENT_KEY,
   DISCOVER_ALL_KEY,
   DISCOVER_GROUPINGS,
   DISCOVER_PROBLEMS_KEY,
@@ -17,9 +16,10 @@ import {
   discoverGroupOf,
   discoverMatches,
   discoverIsGroup,
-  discoverLayout,
   discoverRowAction,
-  discoverRowEntry,
+  discoverColumns,
+  discoverRowCells,
+  discoverRowText,
   discoverRowsFrom,
   discoverVisibleRowCount,
   quoteForAgentCmd,
@@ -36,9 +36,9 @@ import {
   button,
   col,
   dropdown,
-  endRow,
   flexSpacer,
   label,
+  labeledSection,
   raw,
   row,
   spacer,
@@ -53,7 +53,6 @@ const editor = getEditor();
 
 // Editor methods need their receiver; the row model takes plain functions.
 const t = (key: string, params?: Record<string, string>): string => editor.t(key, params);
-const measure = (s: string): number => editor.stringWidth(s);
 
 /** The orchestrator's side of the contract, or null when it is not loaded. */
 function host(): DiscoveryHost | null {
@@ -82,12 +81,34 @@ function fieldNote(note: string): WidgetSpec {
   return label(`↳ ${note}`, { labelWidth: FORM_LABEL_W, style: NOTE_STYLE });
 }
 
+// The dialog's keymap rides on its panel (the `mount` option `mode`), never
+// on the window's editor mode: that is one slot per window, shared with every
+// plugin — vi_mode keeps "vi-normal" there — so taking it on open and
+// emptying it on close left vi off after the dialog (issue #3305).
 const DISCOVER_MODE = "agent-discovery";
 
 
-// Rows the results area always occupies, so the buttons stay put whatever
-// the scan found. Fits a collapsed answer without scrolling.
-const DISCOVER_TREE_ROWS = 14;
+// The panel's share of the terminal width.
+const DISCOVER_WIDTH_PCT = 70;
+// The panel's share of the terminal height.
+const DISCOVER_HEIGHT_PCT = 90;
+// Rows the dialog spends on everything but the results: borders and title
+// (3), the top padding (1), machine and filter rows (2), the spacer under
+// them (1), the results' own frame (2) and column header (1), the footer's spacer, rule and spacer
+// (3), the close row (1) and a note with its spacer (2).
+const DISCOVER_CHROME_ROWS = 16;
+// Fewest result rows shown, however small the terminal.
+const DISCOVER_MIN_TREE_ROWS = 8;
+
+/** Rows the results area always occupies, so the buttons stay put whatever
+ *  the scan found: as many as the panel has room for, so a modest answer
+ *  opens up without scrolling. Sized off the whole terminal, which is what
+ *  the centred panel's `heightPct` is a share of. */
+function discoverTreeRows(): number {
+  const h = editor.getScreenSize().height;
+  const panel = Math.floor((h > 0 ? h : 30) * DISCOVER_HEIGHT_PCT / 100);
+  return Math.max(DISCOVER_MIN_TREE_ROWS, panel - DISCOVER_CHROME_ROWS);
+}
 
 let discoverPanel: FloatingWidgetPanel | null = null;
 
@@ -137,10 +158,10 @@ function discoverExpandedKeys(): string[] {
   const st = discoverState;
   if (!st) return [];
   if (st.filter.value === "") return [...st.expanded];
-  // The problems and absent groups are not filtered, so they stay folded.
+  // The problems group is not filtered, so it stays folded.
   return (st.rows ?? [])
     .filter((r) =>
-      discoverIsGroup(r) && r.key !== DISCOVER_PROBLEMS_KEY && r.key !== DISCOVER_ABSENT_KEY
+      discoverIsGroup(r) && r.key !== DISCOVER_PROBLEMS_KEY
     )
     .map((r) => r.key);
 }
@@ -156,8 +177,13 @@ function buildDiscoverSpec(): WidgetSpec {
   const unreachable = selected !== null && !selected.all && selected.spec === null;
   const rows = st.rows ?? [];
   const cached = selected ? discoverCache.get(selected.key) : undefined;
+  const treeRows = discoverTreeRows();
 
+  // The forms' shape: a padded label column (right-aligned by the panel),
+  // `+ Add machine…` right beside the Machine control, the results in a
+  // framed list, and a footer rule over Close.
   const body: WidgetSpec[] = [
+    spacer(0),
     row(
       dropdown(
         targets.map((t) => t.label),
@@ -169,6 +195,8 @@ function buildDiscoverSpec(): WidgetSpec {
         },
       ),
       spacer(2),
+      button(`+ ${editor.t("discover.add_machine")}`, { key: "discover-add-machine" }),
+      spacer(3),
       withAccel(
         button(editor.t("discover.btn_scan"), {
           intent: "primary",
@@ -208,40 +236,46 @@ function buildDiscoverSpec(): WidgetSpec {
     : st.note;
   if (note) body.push(fieldNote(note), spacer(0));
 
-  // Every state below fills the same `DISCOVER_TREE_ROWS`, so the dialog keeps
-  // one shape.
+  // Every state below fills the same `treeRows`, so the dialog keeps one
+  // shape. They go in a frame, the way the other dialogs show a list.
+  const results: WidgetSpec[] = [];
   const filled = (...kids: WidgetSpec[]): WidgetSpec[] => [
     ...kids,
-    raw(Array.from({ length: Math.max(0, DISCOVER_TREE_ROWS - kids.length) }, () => ({ text: "" }))),
+    raw(Array.from({ length: Math.max(0, treeRows - kids.length) }, () => ({ text: "" }))),
   ];
   if (st.scanning) {
-    body.push(...filled(label(editor.t("discover.scanning"))));
+    results.push(...filled(label(editor.t("discover.scanning"))));
   } else if (st.rows === null) {
-    body.push(
+    results.push(
       ...filled(label(editor.t("discover.hint"), { style: { fg: "ui.menu_disabled_fg" } })),
     );
   } else if (rows.length === 0) {
-    body.push(...filled(label(editor.t("discover.empty"))));
+    results.push(...filled(label(editor.t("discover.empty"))));
   } else {
-    // Measured over every row, so the columns line up down the whole
-    // answer rather than within each heading.
-    const layout = discoverLayout(rows, measure);
+    // The columns are the host's to size: it measures the cells and fits
+    // them to the width it lays the list out at, with a header over them.
+    const many = (st.scans?.length ?? 0) > 1;
     // Headings start collapsed so hundreds of sessions fit one screen.
     // `visibleRows` must be given: an auto-sized tree draws nothing here.
-    body.push(
+    results.push(
       tree({
+        columns: discoverColumns(rows, st.grouping, many, t),
         nodes: rows.map((r) => {
           const action = discoverRowAction(r, t);
-          return treeNode(discoverRowEntry(r, layout, measure), {
+          const inColumns = r.family === "session";
+          return treeNode(inColumns ? { text: "" } : discoverRowText(r), {
             depth: discoverIsGroup(r) ? 0 : 1,
             hasChildren: discoverIsGroup(r),
+            ...(inColumns ? { cells: discoverRowCells(r) } : {}),
             ...(action === null ? {} : { action }),
           });
         }),
         itemKeys: rows.map((r) => r.key),
         selectedIndex: Math.min(st.index, rows.length - 1),
-        visibleRows: DISCOVER_TREE_ROWS,
+        visibleRows: treeRows,
         indentCols: DISCOVER_INDENT_COLS,
+        // A heading folds from a click anywhere on its row, not only its glyph.
+        toggleOnClick: true,
         // Read on the first frame only; `refreshDiscoverDialog` pushes later
         // fold sets with `setExpandedKeys`.
         expandedKeys: discoverExpandedKeys(),
@@ -251,15 +285,22 @@ function buildDiscoverSpec(): WidgetSpec {
       // window is padded or the dialog shrinks after a scan.
       ...(() => {
         const drawn = discoverVisibleRowCount(rows, new Set(discoverExpandedKeys()));
-        const pad = Math.max(0, DISCOVER_TREE_ROWS - Math.min(drawn, DISCOVER_TREE_ROWS));
+        const pad = Math.max(0, treeRows - Math.min(drawn, treeRows));
         return pad > 0 ? [raw(Array.from({ length: pad }, () => ({ text: "" })))] : [];
       })(),
     );
   }
 
+  body.push(row(spacer(2), labeledSection({ label: editor.t("discover.sessions"), child: col(...results) })));
   body.push(
     spacer(0),
-    endRow(withAccel(button(editor.t("discover.btn_close"), { key: "discover-close" }), "Esc")),
+    label("─".repeat(400), { style: { fg: "ui.menu_disabled_fg" } }),
+    spacer(0),
+    row(
+      flexSpacer(),
+      withAccel(button(editor.t("discover.btn_close"), { key: "discover-close" }), "Esc"),
+      spacer(2),
+    ),
   );
   return col(...body);
 }
@@ -301,7 +342,6 @@ function refreshDiscoverDialog(): void {
 }
 
 function openDiscoverDialog(): void {
-  host()?.yieldDock();
   discoverState = {
     machineIndex: 0,
     scanning: false,
@@ -314,21 +354,55 @@ function openDiscoverDialog(): void {
     grouping: "project",
     scans: null,
   };
+  mountDiscoverPanel();
+  discoverPanel!.setFocusKey("discover-scan");
+  loadDiscoverCache();
+}
+
+function mountDiscoverPanel(): void {
   discoverPanel = new FloatingWidgetPanel();
   discoverPanel.mount(buildDiscoverSpec(), {
-    widthPct: 70,
-    heightPct: 70,
+    widthPct: DISCOVER_WIDTH_PCT,
+    heightPct: DISCOVER_HEIGHT_PCT,
     focusMarker: true,
+    labelAlign: "right",
     title: editor.t("discover.title"),
     closable: true,
+    mode: DISCOVER_MODE,
   });
   // Widen the panel's layer to the whole frame so it is centred on the
   // screen. Otherwise a centred panel is clipped to the area beside the dock
   // and centred there. The panel keeps its own size.
   editor.floatingPanelControl(discoverPanel.id(), "fullscreen", 1);
-  editor.setEditorMode(DISCOVER_MODE);
-  discoverPanel.setFocusKey("discover-scan");
-  loadDiscoverCache();
+}
+
+// `+ Add machine`: set the dialog aside for Add Machine and come back to it,
+// on the new machine when one was saved.
+function addMachineFromDiscover(): void {
+  const h = host();
+  const st = discoverState;
+  if (!h || !st) return;
+  if (st.scanning) {
+    discoverStop?.();
+    discoverStop = null;
+    st.scanning = false;
+    st.scanToken = null;
+  }
+  discoverPanel?.unmount();
+  discoverPanel = null;
+  h.addMachine((savedKey) => {
+    if (discoverState !== st) return;
+    mountDiscoverPanel();
+    const at = savedKey === null
+      ? -1
+      : scanTargets().findIndex((t) => t.key === `machine:${savedKey}`);
+    if (at >= 0) {
+      st.machineIndex = at;
+      st.note = "";
+    }
+    discoverPanel!.setFocusKey(at >= 0 ? "discover-scan" : "discover-add-machine");
+    loadDiscoverCache();
+  });
 }
 
 function closeDiscoverDialog(): void {
@@ -340,8 +414,6 @@ function closeDiscoverDialog(): void {
     discoverPanel = null;
   }
   discoverState = null;
-  editor.setEditorMode(null);
-  host()?.restoreDock();
 }
 
 // Scan the selected machine through the `agent-sessions` hub. A machine with
@@ -585,6 +657,13 @@ function handleDiscoverEvent(e: WidgetEvt): void {
     const idx = payload.index;
     if (typeof idx === "number") st.index = idx;
     if (e.event_type === "expand") {
+      // Every group is open while the filter is on, and the reader's own
+      // folds are kept for when it clears: a click on a heading must not
+      // change them. Re-render so the host's flip is undone.
+      if (st.filter.value !== "") {
+        refreshDiscoverDialog();
+        return;
+      }
       const key = payload.key;
       if (typeof key === "string" && key !== "") {
         if (payload.expanded === true) st.expanded.add(key);
@@ -605,6 +684,10 @@ function handleDiscoverEvent(e: WidgetEvt): void {
       void runDiscoverScan();
       return;
     }
+    if (e.widget_key === "discover-add-machine") {
+      addMachineFromDiscover();
+      return;
+    }
     if (e.widget_key === "discover-close") {
       closeDiscoverDialog();
       return;
@@ -622,11 +705,17 @@ editor.on("widget_event", (e) => {
   }
 });
 
+// The results area is sized off the terminal, so a resize re-derives it; the
+// host re-fits the panel itself but only the spec knows the row count.
+editor.on("resize", () => {
+  refreshDiscoverDialog();
+});
+
 registerHandler("agent_discovery_open", openAgentDiscovery);
-editor.registerCommand("%cmd.everything", "%cmd.everything_desc", "agent_discovery_open", null, {
+editor.registerCommand("%cmd.import_sessions", "%cmd.import_sessions_desc", "agent_discovery_open", null, {
   terminalBypass: true,
 });
 
 editor.exportPluginApi("agent-discovery", { open: openAgentDiscovery });
 
-editor.debug("agent-discovery: Everything dialog registered");
+editor.debug("agent-discovery: Import sessions dialog registered");

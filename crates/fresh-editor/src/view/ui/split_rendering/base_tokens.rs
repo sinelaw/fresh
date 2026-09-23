@@ -592,6 +592,76 @@ fn is_control_char(ch: char) -> bool {
     b < 0x20 || b == 0x7F
 }
 
+/// Base tokens for exactly one logical line, without its terminating newline.
+///
+/// This is what feeds [`crate::view::wrap_index::WrapIndex`]. It goes through
+/// the same tokenizer the renderer uses rather than wrapping raw line text in a
+/// synthetic `Text` token: the count-only helpers that did the latter never
+/// produced `Space` tokens, so the space-overflow back-up (issue #1363) could
+/// not fire in them and their row counts could disagree with what was drawn.
+/// [`build_line_tokens`], but starting at `from_byte` instead of the line's
+/// start.
+///
+/// Repair needs only the tail from its resume row, and reading the prefix to
+/// throw it away is the difference between O(rows) and O(line): on a 500 KB
+/// single-line file the untargeted version tokenised and allocated the whole
+/// line for every character typed. `from_byte` must be a visual-row start the
+/// caller got from the index, which is what makes skipping the backward scan
+/// sound.
+pub(crate) fn build_line_tokens_from(
+    buffer: &mut Buffer,
+    line: usize,
+    line_ending: LineEnding,
+    fold_skip: &[std::ops::Range<usize>],
+    from_byte: Option<usize>,
+) -> Vec<ViewTokenWire> {
+    use crate::primitives::line_iterator::MAX_LINE_BYTES;
+
+    let line_start = buffer.line_start_offset(line).unwrap_or(0);
+    let buffer_len = buffer.len();
+    let line_end = buffer
+        .line_start_offset(line + 1)
+        .unwrap_or(buffer_len)
+        .min(buffer_len);
+    let estimated = buffer.estimated_line_length().max(1);
+
+    // The whole line, however long: this feeds the wrap index, and an index
+    // that has seen only part of a line reports a row count for the part. A
+    // scrollbar reading that maps the whole track onto the prefix.
+    //
+    // `build_base_tokens`'s budget counts *units*, and a single long line
+    // spends one per `MAX_LINE_BYTES` piece the reader yields. The second term
+    // is left over from a forced break the character loop used to inject every
+    // `MAX_SAFE_LINE_WIDTH` characters; it stays because over-asking is free
+    // here and under-asking truncates a line the index is about to measure.
+    let start = from_byte.filter(|b| *b > line_start && *b < line_end);
+    let read_from = start.unwrap_or(line_start);
+    let line_bytes = line_end.saturating_sub(read_from);
+    let units = line_bytes / MAX_SAFE_LINE_WIDTH + line_bytes / MAX_LINE_BYTES + 2;
+    let mut tokens = build_base_tokens(
+        buffer,
+        read_from,
+        estimated,
+        units,
+        false,
+        line_ending,
+        fold_skip,
+        None,
+        None,
+        start.is_some(),
+    );
+    // The read runs past the line end; keep only this line, and drop its
+    // terminator — a newline belongs to the line break, not to a row.
+    tokens.retain(|t| t.source_offset.is_none_or(|o| o < line_end));
+    while matches!(
+        tokens.last().map(|t| &t.kind),
+        Some(ViewTokenWireKind::Newline)
+    ) {
+        tokens.pop();
+    }
+    tokens
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -770,74 +840,4 @@ mod tests {
             );
         }
     }
-}
-
-/// Base tokens for exactly one logical line, without its terminating newline.
-///
-/// This is what feeds [`crate::view::wrap_index::WrapIndex`]. It goes through
-/// the same tokenizer the renderer uses rather than wrapping raw line text in a
-/// synthetic `Text` token: the count-only helpers that did the latter never
-/// produced `Space` tokens, so the space-overflow back-up (issue #1363) could
-/// not fire in them and their row counts could disagree with what was drawn.
-/// [`build_line_tokens`], but starting at `from_byte` instead of the line's
-/// start.
-///
-/// Repair needs only the tail from its resume row, and reading the prefix to
-/// throw it away is the difference between O(rows) and O(line): on a 500 KB
-/// single-line file the untargeted version tokenised and allocated the whole
-/// line for every character typed. `from_byte` must be a visual-row start the
-/// caller got from the index, which is what makes skipping the backward scan
-/// sound.
-pub(crate) fn build_line_tokens_from(
-    buffer: &mut Buffer,
-    line: usize,
-    line_ending: LineEnding,
-    fold_skip: &[std::ops::Range<usize>],
-    from_byte: Option<usize>,
-) -> Vec<ViewTokenWire> {
-    use crate::primitives::line_iterator::MAX_LINE_BYTES;
-
-    let line_start = buffer.line_start_offset(line).unwrap_or(0);
-    let buffer_len = buffer.len();
-    let line_end = buffer
-        .line_start_offset(line + 1)
-        .unwrap_or(buffer_len)
-        .min(buffer_len);
-    let estimated = buffer.estimated_line_length().max(1);
-
-    // The whole line, however long: this feeds the wrap index, and an index
-    // that has seen only part of a line reports a row count for the part. A
-    // scrollbar reading that maps the whole track onto the prefix.
-    //
-    // `build_base_tokens`'s budget counts *units*, and a single long line
-    // spends one per `MAX_LINE_BYTES` piece the reader yields. The second term
-    // is left over from a forced break the character loop used to inject every
-    // `MAX_SAFE_LINE_WIDTH` characters; it stays because over-asking is free
-    // here and under-asking truncates a line the index is about to measure.
-    let start = from_byte.filter(|b| *b > line_start && *b < line_end);
-    let read_from = start.unwrap_or(line_start);
-    let line_bytes = line_end.saturating_sub(read_from);
-    let units = line_bytes / MAX_SAFE_LINE_WIDTH + line_bytes / MAX_LINE_BYTES + 2;
-    let mut tokens = build_base_tokens(
-        buffer,
-        read_from,
-        estimated,
-        units,
-        false,
-        line_ending,
-        fold_skip,
-        None,
-        None,
-        start.is_some(),
-    );
-    // The read runs past the line end; keep only this line, and drop its
-    // terminator — a newline belongs to the line break, not to a row.
-    tokens.retain(|t| t.source_offset.is_none_or(|o| o < line_end));
-    while matches!(
-        tokens.last().map(|t| &t.kind),
-        Some(ViewTokenWireKind::Newline)
-    ) {
-        tokens.pop();
-    }
-    tokens
 }

@@ -366,31 +366,42 @@ if (webDockPanels) {
   }
 
   console.log('\n[dock clicks are cells routed over the tree]');
-  // The "show empty" toggle: its row's marker changes state when clicked, and
-  // again when clicked once more. It lives behind the header's `⋯` since the
-  // dock collapsed four header controls to two (`+ New` and `⋯`), so each
-  // click needs the menu opened first — the menu closes on activation, which
-  // is itself the plugin reacting to a cell click.
+  // The "Empty workspaces" toggle: its row's marker changes state when
+  // clicked, and again when clicked once more. It lives in the menu the
+  // header's `Menu ▾` button opens, which is an anchored layer over the
+  // editor (a `floating` surface), not rows inside the dock column. A
+  // settings row leaves the menu open, so both clicks land on the same menu.
+  const DOCK_MENU = /Menu ▾/;
   const openDockMenu = async () => {
-    const dots = findLine(await treeOf(), 'dock', /⋯/);
-    if (dots) await clickLine(dots);
-    await waitTree((t, lines) => lines('dock').some(l => /empty/i.test(l)), null, 5000);
+    const trigger = findLine(await treeOf(), 'dock', DOCK_MENU);
+    if (trigger) await clickLine(trigger);
+    await waitTree((t, lines) => lines('floating').some(l => /empty/i.test(l)), null, 5000);
   };
-  const toggleText = async () => { const it = findLine(await treeOf(), 'dock', /empty/i); return it ? it.text : null; };
+  const toggleLine = async () => findLine(await treeOf(), 'floating', /empty/i);
+  const toggleText = async () => { const it = await toggleLine(); return it ? it.text : null; };
+  // The toggle's own row, within the menu's text: the item is the whole menu.
+  const clickToggle = async () => {
+    const it = await toggleLine();
+    if (!it) return;
+    // The menu is two columns side by side: click the label's own cell.
+    const rows = it.text.split('\n');
+    const row = rows.findIndex(l => /empty/i.test(l));
+    await clickCell(it.x + rows[row].search(/empty/i), it.y + row);
+  };
   await openDockMenu();
   const t0 = await toggleText();
-  let tg = findLine(await treeOf(), 'dock', /empty/i); if (tg) await clickLine(tg);
-  await waitTree((t, lines, v0) => lines('dock').some(l => /empty/i.test(l) && l !== v0), t0, 5000);
+  await clickToggle();
+  await waitTree((t, lines, v0) => lines('floating').some(l => /empty/i.test(l) && l !== v0), t0, 5000);
   const t1 = await toggleText();
   check('dock toggle click flips real plugin state', t1 !== null && t1 !== t0, `${JSON.stringify(t0)} -> ${JSON.stringify(t1)}`);
-  tg = findLine(await treeOf(), 'dock', /empty/i); if (tg) await clickLine(tg);
-  await waitTree((t, lines, v1) => lines('dock').some(l => /empty/i.test(l) && l !== v1), t1, 5000);
+  await clickToggle();
+  await waitTree((t, lines, v1) => lines('floating').some(l => /empty/i.test(l) && l !== v1), t1, 5000);
   const t2 = await toggleText();
   check('a second click flips it back (the frame the click landed on was rebuilt)', t2 === t0, `${JSON.stringify(t1)} -> ${JSON.stringify(t2)}`);
-  // A settings row leaves the menu open (unlike an action row, which closes
-  // it); Esc puts the dock back to its plain state for what follows.
+  // Esc closes the menu and puts the dock back to its plain state for what
+  // follows.
   await page.keyboard.press('Escape');
-  await waitTree((t, lines) => !lines('dock').some(l => /Manage workspaces/i.test(l)), null, 5000);
+  await waitTree((t) => !t.surfaces.some(s => s.kind === 'floating'), null, 5000);
 
   console.log('\n[dock right-click = plugin context menu (anchored popup, like the TUI)]');
   // Right-click on a session row fires the plugin's `context` event exactly as
@@ -444,26 +455,23 @@ if (webDockPanels) {
     await page.keyboard.press('Escape'); await page.waitForTimeout(200);
   }
 
-  console.log('\n[dock dropdowns are layers over the column]');
-  // The header's `⋯` opens the dock's menu as a layer inside the dock's own
-  // subtree; its rows are display-list items below the trigger. (It replaced
-  // the old "New Task… ▾" dropdown when the header collapsed to two controls:
-  // `+ New` now goes straight to the dialog, and every setting moved here.)
-  const dotsTrigger = findLine(await treeOf(), 'dock', /⋯/);
-  if (dotsTrigger) await clickLine(dotsTrigger);
-  await waitTree((t, lines) => lines('dock').some(l => /Manage workspaces/i.test(l)), null, 5000);
-  const opened = await treeOf();
-  const option = treeLines(opened, 'dock').find(i => /Manage workspaces/i.test(i.text));
-  check('dock menu rows are items below the trigger', !!option && !!dotsTrigger && option.y > dotsTrigger.y, JSON.stringify({ trigger: dotsTrigger && dotsTrigger.y, option: option && option.y }));
+  console.log('\n[the dock menu is an anchored layer under its trigger]');
+  // The header's `Menu ▾` opens the dock's menu as a floating layer anchored
+  // to the button; its rows are display-list items below the trigger.
+  const menuTrigger = findLine(await treeOf(), 'dock', DOCK_MENU);
+  if (menuTrigger) await clickLine(menuTrigger);
+  await waitTree((t, lines) => lines('floating').some(l => /Import sessions/i.test(l)), null, 5000);
+  const option = findLine(await treeOf(), 'floating', /Import sessions/i);
+  const optionRow = option ? option.y + option.text.split('\n').findIndex(l => /Import sessions/i.test(l)) : null;
+  check('dock menu rows are items below the trigger', !!option && !!menuTrigger && optionRow > menuTrigger.y, JSON.stringify({ trigger: menuTrigger && menuTrigger.y, option: optionRow }));
   // One row is checked for the clipping a `list` inside a narrow column
   // silently does: it came back as "Discover agent ses" until the rows were
-  // padded to the widest, which is what makes the list ask for the width it
-  // needs. "Manage workspaces…" because it is long enough to have been
-  // clipped at the ~20 columns the dock gave, and its wording is not in play.
-  check('⋯ menu rows are not clipped by the dock column',
-    !!option && /Manage workspaces…/.test(option.text), JSON.stringify(option && option.text));
+  // padded to the widest. "Import sessions…" because it is long enough to
+  // have been clipped, and its wording is not in play.
+  check('dock menu rows are not clipped',
+    !!option && /Import sessions…/.test(option.text), JSON.stringify(option && option.text));
   await page.keyboard.press('Escape');
-  await waitTree((t, lines, n) => lines('dock').length <= n, treeLines(opened, 'dock').length - 1, 5000);
+  await waitTree((t) => !t.surfaces.some(s => s.kind === 'floating'), null, 5000);
   await page.keyboard.press('Escape'); await page.waitForTimeout(150);
 } else {
   skip('the dock panel sections (clicks, context menu, text field, dropdowns)');
@@ -495,6 +503,16 @@ check('Add-binding dialog renders natively (fields)', (await page.locator('.kbed
 await page.screenshot({ path: `${SHOTS}/29-native-keybindings.png` });
 await page.keyboard.press('Escape'); await page.waitForTimeout(150); await page.keyboard.press('Escape'); await page.waitForTimeout(200);
 
+// Select a Settings category by clicking its row in the tree.
+async function openSettingsCategory(name) {
+  await page.locator('.settings-modal .set-cat', { hasText: name }).first().click();
+  await page.waitForFunction(n => {
+    const s = window.fresh.scene.regions.settings;
+    return s && s.categories.some(c => c.selected && c.name === n);
+  }, name, { timeout: 5000 }).catch(() => {});
+  await page.waitForTimeout(150);
+}
+
 console.log('\n[Settings = full native modal incl. entry dialog]');
 await page.keyboard.press('Escape'); await page.waitForTimeout(120);
 await page.request.post(URL + '/action', { data: { action: 'open_settings' } });
@@ -502,6 +520,8 @@ await page.waitForFunction(() => !!window.fresh.scene.regions.settings, { timeou
 await page.waitForTimeout(300);
 check('Settings is a native modal (categories+items)', (await page.locator('.settings-modal .set-cat').count()) >= 5 && (await page.locator('.settings-modal .set-item').count()) >= 3);
 check('NO svg/cells in the settings modal', (await page.locator('.settings-modal svg').count()) === 0);
+// The Languages map lives on the "Syntax & Languages" page.
+await openSettingsCategory('Syntax & Languages');
 await page.keyboard.press('Tab'); await page.waitForTimeout(120);
 for (let i = 0; i < 4; i++) { await page.keyboard.press('ArrowDown'); await page.waitForTimeout(80); }
 await page.keyboard.press('Enter');
@@ -570,6 +590,7 @@ console.log('\n[Settings map entry rows: mouse + keyboard, TUI-parity interactio
 await page.request.post(URL + '/action', { data: { action: 'open_settings' } });
 await page.waitForFunction(() => !!window.fresh.scene.regions.settings, { timeout: 8000 }).catch(() => {});
 await page.waitForTimeout(250);
+await openSettingsCategory('Syntax & Languages');
 const langIdx = await page.evaluate(() => [...document.querySelectorAll('.set-items > .set-item')]
   .findIndex(r => (r.querySelector('.set-name') || {}).textContent === 'Languages'));
 const langRowsLoc = page.locator('.set-items > .set-item').nth(langIdx).locator('.set-list-row:not(.set-list-head)');
@@ -1358,6 +1379,7 @@ await page.keyboard.press('Escape'); await page.waitForTimeout(200);
 await page.request.post(URL + '/action', { data: { action: 'open_settings' } });
 await page.waitForFunction(() => !!window.fresh.scene.regions.settings, { timeout: 8000 }).catch(() => {});
 await page.waitForTimeout(300);
+await openSettingsCategory('Syntax & Languages');
 const langPill = page.locator('.settings-modal .set-item', { hasText: 'Default Language' }).locator('.set-pill');
 await langPill.scrollIntoViewIfNeeded().catch(() => {});
 const lpBox = await langPill.boundingBox();

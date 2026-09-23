@@ -140,8 +140,10 @@ fn caret_position(harness: &mut EditorTestHarness) -> (u16, u16) {
     let mut previous = None;
     for _ in 0..40 {
         let seen = harness.render_observing_cursor().unwrap();
-        if seen.is_some() && seen == previous {
-            return seen.expect("checked above");
+        if let Some(pos) = seen {
+            if seen == previous {
+                return pos;
+            }
         }
         previous = seen;
         harness.wait_for_async_quiescence(1).unwrap();
@@ -938,6 +940,43 @@ fn walking_down_the_page_does_not_get_stuck_in_the_finder() {
         !field.contains('z'),
         "two Downs left the caret inside the finder: it is still taking \
          what is typed. Field row: {field:?}\nScreen:\n{screen}"
+    );
+}
+
+/// **The cursor is drawn where the finder types** (issue #3234). The page
+/// seats its reading caret on a control's first cell when the control takes
+/// focus, and that caret was painted over the field's own, so the terminal
+/// cursor sat on the cell before `find` while the typed text went in between
+/// the brackets.
+#[test]
+fn the_cursor_sits_at_the_finders_insertion_point() {
+    let (mut harness, _tmp) = harness_with_welcome();
+    open_welcome(&mut harness);
+    put_the_caret_in_the_finder(&mut harness);
+
+    let (col, row) = harness
+        .find_text_on_screen("find [")
+        .expect("the finder field is on screen");
+    let inside = col + "find [".len() as u16;
+    assert_eq!(
+        caret_position(&mut harness),
+        (inside, row),
+        "an empty focused field puts the cursor just inside its bracket. Screen:\n{}",
+        harness.screen_to_string()
+    );
+
+    harness.type_text("abc").unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("find [abc"))
+        .expect("the field takes what is typed");
+    let (col, row) = harness
+        .find_text_on_screen("find [abc")
+        .expect("the finder field is on screen");
+    assert_eq!(
+        caret_position(&mut harness),
+        (col + "find [abc".len() as u16, row),
+        "after typing, the cursor follows the text. Screen:\n{}",
+        harness.screen_to_string()
     );
 }
 

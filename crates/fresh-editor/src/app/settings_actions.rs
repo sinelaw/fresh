@@ -188,7 +188,7 @@ impl Editor {
         for view_state in self
             .windows
             .get_mut(&self.active_window)
-            .and_then(|w| w.split_view_states_mut())
+            .and_then(|w| w.buffers.split_view_states_mut())
             .expect("active window must have a populated split layout")
             .values_mut()
         {
@@ -322,7 +322,6 @@ impl Editor {
 
             if let Some((_, view_states)) = window.buffers.splits_mut() {
                 for view_state in view_states.values_mut() {
-                    view_state.invalidate_layout();
                     for buffer_view_state in view_state.keyed_states.values_mut() {
                         buffer_view_state.viewport.wrap_row_cache.clear();
                     }
@@ -434,20 +433,6 @@ impl Editor {
         }
 
         Ok(())
-    }
-
-    /// Navigate settings up
-    pub fn settings_navigate_up(&mut self) {
-        if let Some(ref mut state) = self.settings_state {
-            state.select_prev();
-        }
-    }
-
-    /// Navigate settings down
-    pub fn settings_navigate_down(&mut self) {
-        if let Some(ref mut state) = self.settings_state {
-            state.select_next();
-        }
     }
 
     /// Activate/toggle the currently selected setting

@@ -477,6 +477,41 @@ All settings can be changed via the Settings UI (run **Open Settings** from the 
 | Tab size | Spaces per indent level | 4 |
 | Use tabs | Indent with tabs instead of spaces | off |
 
+### Search
+
+The state a search starts on. These are defaults, not a lock: the toggles
+stay live in every search UI, and whatever you flip last holds for the rest
+of the session. The Find prompt saves a choice with the workspace, per
+option and only where it differs from the setting here — so changing one of
+these later still reaches every workspace that never had an opinion about
+that particular option.
+
+| Setting | Description | Default | Applies to |
+|---------|-------------|---------|------------|
+| Case sensitive | Match upper and lower case exactly. When off, `todo` finds `TODO` | off | every search UI |
+| Whole word | Match whole words only | off | Find/Replace prompt, Search & Replace panel |
+| Regex | Read the query as a regular expression | off | Find/Replace prompt, Search & Replace panel |
+| Confirm each | Ask before each replacement | off | Replace prompts |
+
+Universal Search keeps its own Word and Regex defaults (regex **on**, matching
+what `rg` and `git grep` do); Git Grep has no word or regex toggle. Case
+sensitivity is the one option all four surfaces take from here.
+
+```json
+{
+  "editor": {
+    "search": {
+      "case_sensitive": true
+    }
+  }
+}
+```
+
+`Alt+C` toggles case sensitivity in the Find/Replace prompt, in Universal
+Search and in the Search & Replace panel. Git Grep shows a **Case** checkbox on
+its prompt toolbar (click it, or Tab to it and press Space); bind
+`git_grep_toggle_case` if you want a chord for it.
+
 ### UI
 
 | Setting | Description | Default |

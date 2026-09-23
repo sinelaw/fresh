@@ -73,7 +73,7 @@ use std::rc::Rc;
 
 use fresh_ui::{
     col, gesture, layout_reader, row, stack, text, text_runs, viewport, Event, GestureKind, Key,
-    Node, Run, Sizing,
+    Node, PointerMode, Run, Sizing,
 };
 
 use crate::app::shell_host::shell_theme::{attrs, pair};
@@ -250,10 +250,14 @@ fn build_rows(e: &Explorer) -> Node<UiMsg> {
             .iter()
             .copied()
             .chain(first..first.saturating_add(u32::from(win.h)).min(total));
-        col().children(indices.map(|i| match by_index.get(&(i as usize)) {
-            Some(r) => node_row(caret_row, r),
-            None => row().h(Sizing::Cells(1)),
-        }))
+        // Clip hit targets as well as ink to the content lane. A long row's
+        // status slot can otherwise answer hover beneath the scrollbar.
+        col()
+            .clip(true)
+            .children(indices.map(|i| match by_index.get(&(i as usize)) {
+                Some(r) => node_row(caret_row, r),
+                None => row().h(Sizing::Cells(1)),
+            }))
     });
     // A gesture around the window rather than a listener on each row: the
     // wheel is the window's, wherever over it the pointer is — the rows, the
@@ -402,10 +406,14 @@ fn node_row(caret_row: Option<usize>, r: &Row) -> Node<UiMsg> {
     let body = if caret {
         stack().h(Sizing::Cells(1)).children([
             body,
-            row().h(Sizing::Cells(1)).children([text("▌")
-                .theme(caret_ink(&r.theme))
-                .w(Sizing::Cells(1))
-                .cursor_byte(0)]),
+            row()
+                .h(Sizing::Cells(1))
+                .pointer_mode(PointerMode::Transparent)
+                .children([text("▌")
+                    .theme(caret_ink(&r.theme))
+                    .w(Sizing::Cells(1))
+                    .cursor_byte(0)
+                    .pointer_mode(PointerMode::Transparent)]),
         ])
     } else {
         body
@@ -547,7 +555,7 @@ mod tests {
     use super::*;
     use crate::view::shell::fold::{fold_native, Band};
     use crate::view::shell::frame::{frame_tree, Frame};
-    use crate::view::shell::sidebar::{close_key, grip_key, Sidebar};
+    use crate::view::shell::sidebar::{close_key, grip_key, SectionKind, Sidebar};
     use fresh_ui::{Input, Mods, MouseButton, Point, Size, Ui};
     use ratatui::buffer::Buffer;
     use ratatui::layout::Rect;
@@ -1008,6 +1016,57 @@ mod tests {
         // that would hit-test.
         let ui = laid_out(panel_of(vec![row_of(0, "a-file", None)], 20), 20, 4);
         assert!(slot_rect(&ui, 0, size).is_none());
+    }
+
+    #[test]
+    fn a_scrollbar_keeps_the_status_slot_hittable_beside_it() {
+        let mut e = panel_of(vec![row_of(0, "a-file", Some("M"))], 20);
+        let SectionKind::Explorer(explorer) = &mut e.sections[0].kind else {
+            panic!("the fixture's first section must be the Explorer");
+        };
+        explorer.scroll = Some(Scroll {
+            offset: 0,
+            total: 40,
+            pinned: Vec::new(),
+        });
+        // The caret is a paint-only overlay. It must not turn the selected
+        // row into one opaque hit target and hide the status gesture below.
+        explorer.caret_row = Some(0);
+        let mut ui = laid_out(e, 20, 4);
+        let size = Rect::new(0, 0, 20, 4);
+        let slot = slot_rect(&ui, 0, size).expect("the slot");
+        assert_eq!((slot.x, slot.y, slot.width), (17, 1, 1));
+
+        let got = ui.dispatch(Input::Move {
+            pos: Point::new(slot.x as i32, slot.y as i32),
+            mods: Mods::NONE,
+        });
+        assert!(
+            got.msgs.iter().any(|m| matches!(
+                m,
+                UiMsg::Ui(UiFact::Hover(Some(
+                    HoverTarget::FileExplorerStatusIndicator(path)
+                ))) if path == std::path::Path::new("a-file")
+            )),
+            "got {:?}",
+            got.msgs
+        );
+
+        // The bar's own column answers nothing: the row is clipped to its lane.
+        let bar = ui.dispatch(Input::Move {
+            pos: Point::new(slot.x as i32 + 1, slot.y as i32),
+            mods: Mods::NONE,
+        });
+        assert!(
+            !bar.msgs.iter().any(|m| matches!(
+                m,
+                UiMsg::Ui(UiFact::Hover(Some(
+                    HoverTarget::FileExplorerStatusIndicator(_)
+                )))
+            )),
+            "the scrollbar column claimed a status marker: {:?}",
+            bar.msgs
+        );
     }
 
     /// A press on a row names the row and carries the run count the host

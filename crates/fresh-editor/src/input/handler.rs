@@ -61,12 +61,7 @@ pub enum InputResult {
     Ignored,
 }
 
-impl InputResult {
-    /// Returns true if the input was consumed.
-    pub fn is_consumed(self) -> bool {
-        self == InputResult::Consumed
-    }
-}
+impl InputResult {}
 
 /// Context passed to input handlers, providing access to shared state.
 #[derive(Default)]
@@ -219,12 +214,6 @@ pub trait InputHandler {
 mod tests {
     use super::*;
     use crossterm::event::{KeyCode, KeyModifiers};
-
-    #[test]
-    fn test_is_consumed() {
-        assert!(InputResult::Consumed.is_consumed());
-        assert!(!InputResult::Ignored.is_consumed());
-    }
 
     /// Test handler that tracks what it returns
     struct TestModalHandler {

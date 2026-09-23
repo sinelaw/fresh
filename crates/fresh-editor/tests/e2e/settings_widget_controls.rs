@@ -229,6 +229,9 @@ fn language_entry_text_field_aligns_with_toggles() {
     let mut harness = EditorTestHarness::with_config(120, 40, config).unwrap();
     harness.render().unwrap();
     harness.open_settings().unwrap();
+    harness
+        .select_settings_category("Syntax & Languages")
+        .unwrap();
     harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
     // Walk to the language map row (its `[Enter to edit]` affordance) and

@@ -314,6 +314,7 @@ mod tests {
             indeterminate: false,
             label_first: false,
             label_width: 0,
+            mnemonic: None,
             checked: false,
             label: "T".into(),
             focused: false,
@@ -379,6 +380,7 @@ mod tests {
             checked: None,
             extra_lines: Vec::new(),
             window_anchor: None,
+            cells: Vec::new(),
             action: None,
         }
     }
@@ -435,6 +437,8 @@ mod tests {
             checkable: false,
             item_height: 1,
             card_borders: false,
+            toggle_on_click: false,
+            columns: Vec::new(),
             indent_cols: 2,
             key: Some("t".into()),
         };
@@ -474,6 +478,8 @@ mod tests {
             checkable: true,
             item_height: 1,
             card_borders: false,
+            toggle_on_click: false,
+            columns: Vec::new(),
             indent_cols: 2,
             key: Some("t".into()),
         };
@@ -514,6 +520,8 @@ mod tests {
             checkable: true,
             item_height: 1,
             card_borders: false,
+            toggle_on_click: false,
+            columns: Vec::new(),
             indent_cols: 2,
             key: Some("t".into()),
         };
@@ -543,6 +551,8 @@ mod tests {
             checkable: false,
             item_height: 1,
             card_borders: false,
+            toggle_on_click: false,
+            columns: Vec::new(),
             indent_cols: 2,
             key: Some("real".into()),
         };

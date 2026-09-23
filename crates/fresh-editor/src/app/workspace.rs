@@ -25,7 +25,6 @@
 use fresh_i18n::t;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::time::Instant;
 
 use crate::state::EditorState;
 
@@ -43,6 +42,30 @@ use crate::workspace::{
 
 use super::bookmarks::{Bookmark, BookmarkState};
 use super::Editor;
+
+/// The prompt histories kept in the global `<data_dir>/<name>_history.json`
+/// files: loaded into the active window at startup, saved on exit.
+pub(super) const GLOBAL_PROMPT_HISTORIES: [&str; 3] = ["search", "replace", "goto_line"];
+
+/// The on-disk workspace a window with this `root` and durable id restores
+/// from — the one lookup both restore and the unrestored-save history merge
+/// use, so they agree on which file is "this window's".
+///
+/// One store, whatever launched this editor — see `save_workspace_for`.
+fn load_window_workspace(
+    root: &Path,
+    stable_id: &str,
+) -> Result<Option<Workspace>, WorkspaceError> {
+    if stable_id.is_empty() {
+        // No durable id yet (a brand-new window): fall back to the
+        // freshest file for the root.
+        Workspace::load(root)
+    } else {
+        // THIS window's own identity, not merely the freshest file for the
+        // root — several co-tenant workspaces may share the root.
+        Workspace::load_by_id(root, stable_id)
+    }
+}
 
 /// Resolve a saved fold's header_line against the current buffer, using
 /// `header_text` to detect drift from external edits (issue #1568).
@@ -118,10 +141,6 @@ fn resolve_fold_header_line(
 pub struct WorkspaceTracker {
     /// Whether workspace has unsaved changes
     dirty: bool,
-    /// Last save time
-    last_save: Instant,
-    /// Minimum interval between saves (debounce)
-    save_interval: std::time::Duration,
     /// Whether workspace persistence is enabled
     enabled: bool,
 }
@@ -131,8 +150,6 @@ impl WorkspaceTracker {
     pub fn new(enabled: bool) -> Self {
         Self {
             dirty: false,
-            last_save: Instant::now(),
-            save_interval: std::time::Duration::from_secs(5),
             enabled,
         }
     }
@@ -147,17 +164,6 @@ impl WorkspaceTracker {
         if self.enabled {
             self.dirty = true;
         }
-    }
-
-    /// Check if a save is needed and enough time has passed
-    pub fn should_save(&self) -> bool {
-        self.enabled && self.dirty && self.last_save.elapsed() >= self.save_interval
-    }
-
-    /// Record that a save was performed
-    pub fn record_save(&mut self) {
-        self.dirty = false;
-        self.last_save = Instant::now();
     }
 
     /// Check if there are unsaved changes (for shutdown)
@@ -198,8 +204,20 @@ impl Editor {
     /// Set to `false` for a `--no-restore` run: the flag means "this session
     /// neither reads nor writes workspace state", so quit-time saves and
     /// mid-session checkpoints are suppressed alike (#2735).
+    ///
+    /// That covers the global prompt-history rings too: they were already
+    /// read from disk when the editor was built, so disabling persistence
+    /// (which happens at startup) forgets them again rather than offering
+    /// history this session will never save back.
     pub fn set_workspace_persistence(&mut self, enabled: bool) {
         self.workspace_persistence_enabled = enabled;
+        if !enabled {
+            for window in self.windows.values_mut() {
+                for history in window.prompt_histories.values_mut() {
+                    history.clear();
+                }
+            }
+        }
     }
 
     /// Try to load and apply a workspace for the active window. Thin
@@ -485,6 +503,17 @@ impl Editor {
         // the window's snapshot does not know them; they ride in its file.
         workspace.file_explorer.sections = self.sidebar_section_states(id);
 
+        // The snapshot records the prompt-history rings wholesale, but a
+        // window that never restored its workspace (`fresh file.rs` skips
+        // the restore by default) started without the project's stored
+        // history — writing its rings as they are would erase what earlier
+        // sessions saved. Keep the stored entries beneath this session's.
+        if !win.workspace_restored {
+            if let Ok(Some(stored)) = load_window_workspace(&win.root, &win.stable_id) {
+                workspace.histories = stored.histories.merged_with(&workspace.histories);
+            }
+        }
+
         // Refuse to overwrite a non-empty on-disk workspace with an
         // all-virtual snapshot (issue #2027). The protection is for
         // FILE/unnamed content only — terminals are live runtime state, so
@@ -547,17 +576,7 @@ impl Editor {
             return Ok(false);
         };
 
-        // One store, whatever launched this editor — see `save_workspace_for`.
-        let workspace = if stable_id.is_empty() {
-            // No durable id yet (a brand-new window): fall back to the
-            // freshest file for the root.
-            Workspace::load(&root)?
-        } else {
-            // Restore THIS window's own identity, not merely the freshest file
-            // for the root — several co-tenant workspaces may share the root.
-            Workspace::load_by_id(&root, &stable_id)?
-        };
-        let Some(workspace) = workspace else {
+        let Some(workspace) = load_window_workspace(&root, &stable_id)? else {
             tracing::debug!("No workspace found for {:?}", root);
             return Ok(false);
         };
@@ -695,6 +714,112 @@ impl Editor {
         }
     }
 
+    /// Everything the editor persists when it quits, in order: auto-save
+    /// ([`Self::auto_save_on_exit`]), end the recovery session (flushes dirty
+    /// buffers and assigns the recovery ids the workspace then records), the
+    /// workspaces, the global prompt histories, editor-global plugin state
+    /// and the dock chrome.
+    ///
+    /// The one exit path shared by the terminal event loop (`main.rs`), the
+    /// GUI, the daemon and the test harness, so no front end — and no test —
+    /// can drift from the others by dropping a step; the prompt-history save
+    /// went missing from all of them exactly that way.
+    ///
+    /// It owns the auto-save on exit, whatever ended the session: a quit, a
+    /// Force Quit, the GUI window closing, the daemon shutting down. A quit
+    /// the user confirms runs that same save first
+    /// (`Editor::quit_after_auto_save`), while a buffer it can't write can
+    /// still hold the quit; what it wrote is no longer modified, so the run
+    /// here only meets what the user chose to leave unsaved.
+    ///
+    /// `save_workspaces` is the front end's own gate on the per-window
+    /// workspace files; `--no-restore` is honoured separately, inside every
+    /// write, through `workspace_persistence_enabled`. Best-effort: every
+    /// step runs even when an earlier one failed, each failure is logged and
+    /// the first is returned.
+    pub fn persist_on_exit(&mut self, save_workspaces: bool) -> anyhow::Result<()> {
+        let mut first_err: Option<anyhow::Error> = None;
+        let mut record = |what: &str, result: anyhow::Result<()>| {
+            if let Err(e) = result {
+                tracing::warn!("Failed to {what} on exit: {e}");
+                first_err.get_or_insert(e);
+            }
+        };
+
+        let saved = self.auto_save_on_exit();
+        record("auto-save", saved);
+        let ended = self.end_recovery_session();
+        record("end recovery session", ended);
+        if save_workspaces {
+            // Every window, not just the active one, so an Orchestrator
+            // restart paints each session's preview without diving in.
+            let saved = self.save_all_windows_workspaces().map_err(Into::into);
+            record("save workspaces", saved);
+        }
+        self.save_histories();
+        self.save_orchestrator_state();
+        self.save_dock_chrome();
+
+        first_err.map_or(Ok(()), Err)
+    }
+
+    /// The auto-save on exit: with `auto_save_enabled`, carry out the exit
+    /// save plan ([`Self::save_all_on_exit`]) and log what it did. Nothing
+    /// otherwise. Owned by [`Self::persist_on_exit`].
+    pub(crate) fn auto_save_on_exit(&mut self) -> anyhow::Result<()> {
+        if !self.config().editor.auto_save_enabled {
+            return Ok(());
+        }
+        let outcome = self.save_all_on_exit()?;
+        if outcome.saved > 0 {
+            tracing::info!("Auto-saved {} buffer(s) on exit", outcome.saved);
+        }
+        if !outcome.changed_on_disk.is_empty() {
+            tracing::warn!(
+                "Not auto-saved on exit, changed on disk: {:?}",
+                outcome.changed_on_disk
+            );
+        }
+        Ok(())
+    }
+
+    /// Save the prompt-history rings (search / replace / goto-line) to the
+    /// global `<data_dir>/<name>_history.json` files that every launch loads
+    /// at startup — the history a launch that does not restore its workspace
+    /// starts from.
+    ///
+    /// Each window keeps its own rings, so all of them are folded in, least
+    /// recently focused first and the active window on top. And the result
+    /// is merged into the file rather than overwriting it: another editor
+    /// may have quit since this one loaded it, and its entries stay (beneath
+    /// this session's). Skipped when workspace persistence is off
+    /// (`--no-restore`).
+    pub fn save_histories(&self) {
+        if !self.workspace_persistence_enabled {
+            return;
+        }
+        let mut windows: Vec<&crate::app::window::Window> = self.windows.values().collect();
+        windows.sort_by_key(|w| (w.id == self.active_window, w.last_focused_at));
+        for key in GLOBAL_PROMPT_HISTORIES {
+            let path = self.dir_context.prompt_history_path(key);
+            let mut merged = crate::input::input_history::InputHistory::load_from_file(&path)
+                .unwrap_or_else(|e| {
+                    tracing::warn!("Failed to read {} history, rewriting it: {}", key, e);
+                    crate::input::input_history::InputHistory::new()
+                });
+            for window in &windows {
+                if let Some(history) = window.prompt_histories.get(key) {
+                    merged.merge_newer(history.items());
+                }
+            }
+            if let Err(e) = merged.save_to_file(&path) {
+                tracing::warn!("Failed to save {} history: {}", key, e);
+            } else {
+                tracing::debug!("Saved {} history to {:?}", key, path);
+            }
+        }
+    }
+
     /// Persist a single window's workspace *now*, as a crash-safety checkpoint
     /// outside the quit path.
     ///
@@ -822,10 +947,7 @@ impl crate::app::window::Window {
     /// split after the workspace has been applied.
     fn clean_orphaned_buffers(&mut self) {
         let referenced: HashSet<BufferId> = self
-            .buffers
-            .splits()
-            .map(|(_, vs)| vs)
-            .expect("active window must have a populated split layout")
+            .split_view_states()
             .values()
             .flat_map(|vs| vs.buffer_tab_ids())
             .collect();
@@ -852,11 +974,7 @@ impl crate::app::window::Window {
     fn log_restore_summary(&mut self, session_name: Option<&str>) {
         tracing::debug!(
             "Workspace restore complete: {} splits, {} buffers",
-            self.buffers
-                .splits()
-                .map(|(_, vs)| vs)
-                .expect("active window must have a populated split layout")
-                .len(),
+            self.split_view_states().len(),
             self.buffers.len()
         );
         let restored_count = self.buffers.count_where(|id, _| {
@@ -1191,21 +1309,12 @@ impl crate::app::window::Window {
 
                 let current_leaf_id = if is_first_leaf {
                     // First leaf reuses the existing split
-                    let leaf_id = self
-                        .buffers
-                        .splits()
-                        .map(|(mgr, _)| mgr)
-                        .expect("active window must have a populated split layout")
-                        .active_split();
+                    let leaf_id = self.split_manager().active_split();
                     self.set_pane_buffer(leaf_id, buffer_id);
                     leaf_id
                 } else {
                     // Non-first leaves use the active split (created by split_active)
-                    self.buffers
-                        .splits()
-                        .map(|(mgr, _)| mgr)
-                        .expect("active window must have a populated split layout")
-                        .active_split()
+                    self.split_manager().active_split()
                 };
 
                 // Map old split ID to new one
@@ -1213,22 +1322,15 @@ impl crate::app::window::Window {
 
                 // Restore label if present
                 if let Some(label) = label {
-                    self.buffers
-                        .split_manager_mut()
-                        .expect("active window must have a populated split layout")
+                    self.split_manager_mut()
                         .set_label(current_leaf_id, label.clone());
                 }
 
                 // Restore role tag if present (clearing any prior holder
                 // first to preserve the at-most-one-leaf-per-role invariant).
                 if let Some(role) = role {
-                    self.buffers
-                        .split_manager_mut()
-                        .expect("active window must have a populated split layout")
-                        .clear_role(*role);
-                    self.buffers
-                        .split_manager_mut()
-                        .expect("active window must have a populated split layout")
+                    self.split_manager_mut().clear_role(*role);
+                    self.split_manager_mut()
                         .set_leaf_role(current_leaf_id, Some(*role));
                 }
 
@@ -1254,48 +1356,30 @@ impl crate::app::window::Window {
                     .unwrap_or(self.active_buffer());
 
                 let current_leaf_id = if is_first_leaf {
-                    let leaf_id = self
-                        .buffers
-                        .splits()
-                        .map(|(mgr, _)| mgr)
-                        .expect("active window must have a populated split layout")
-                        .active_split();
+                    let leaf_id = self.split_manager().active_split();
                     self.set_pane_buffer(leaf_id, buffer_id);
                     leaf_id
                 } else {
-                    self.buffers
-                        .splits()
-                        .map(|(mgr, _)| mgr)
-                        .expect("active window must have a populated split layout")
-                        .active_split()
+                    self.split_manager().active_split()
                 };
 
                 split_id_map.insert(*split_id, current_leaf_id.into());
 
                 // Restore label if present
                 if let Some(label) = label {
-                    self.buffers
-                        .split_manager_mut()
-                        .expect("active window must have a populated split layout")
+                    self.split_manager_mut()
                         .set_label(current_leaf_id, label.clone());
                 }
 
                 // Restore role tag for terminal leaves (same one-per-role
                 // invariant as the file-leaf branch above).
                 if let Some(role) = role {
-                    self.buffers
-                        .split_manager_mut()
-                        .expect("active window must have a populated split layout")
-                        .clear_role(*role);
-                    self.buffers
-                        .split_manager_mut()
-                        .expect("active window must have a populated split layout")
+                    self.split_manager_mut().clear_role(*role);
+                    self.split_manager_mut()
                         .set_leaf_role(current_leaf_id, Some(*role));
                 }
 
-                self.buffers
-                    .split_manager_mut()
-                    .expect("active window must have a populated split layout")
+                self.split_manager_mut()
                     .set_split_buffer(current_leaf_id, buffer_id);
 
                 self.restore_split_view_state(
@@ -1341,12 +1425,11 @@ impl crate::app::window::Window {
                 };
 
                 // Create the split for the second child
-                match self
-                    .buffers
-                    .split_manager_mut()
-                    .expect("active window must have a populated split layout")
-                    .split_active(split_direction, second_buffer_id, *ratio)
-                {
+                match self.split_manager_mut().split_active(
+                    split_direction,
+                    second_buffer_id,
+                    *ratio,
+                ) {
                     Ok(new_leaf_id) => {
                         // Create view state for the new split
                         let mut view_state = SplitViewState::with_buffer(
@@ -1367,10 +1450,7 @@ impl crate::app::window::Window {
                             rulers: self.resources.config.editor.rulers.clone(),
                             scroll_offset: self.resources.config.editor.scroll_offset,
                         });
-                        self.buffers
-                            .split_view_states_mut()
-                            .expect("active window must have a populated split layout")
-                            .insert(new_leaf_id, view_state);
+                        self.split_view_states_mut().insert(new_leaf_id, view_state);
 
                         // Map the container split ID (though we mainly care about leaves)
                         split_id_map.insert(*split_id, new_leaf_id.into());
@@ -1413,11 +1493,7 @@ impl crate::app::window::Window {
         // Resolve the split-manager-assigned buffer before taking the
         // &mut borrow on windows so the borrow stays disjoint from
         // any subsequent reads.
-        let split_buf_for_current = self
-            .buffers
-            .split_manager()
-            .expect("active window must have a populated split layout")
-            .buffer_for_split(current_split_id);
+        let split_buf_for_current = self.split_manager().buffer_for_split(current_split_id);
         let active_buffer_id = self
             .buffers
             .with_all_mut(|__buffers_mut, _mgr, vs_map| {
@@ -1745,7 +1821,6 @@ impl crate::app::window::Window {
                 if let Some(active_buf_id) = active_buffer_id {
                     view_state.switch_buffer(active_buf_id);
                 }
-                view_state.tab_scroll_offset = split_state.tab_scroll_offset;
                 active_buffer_id
             })
             .flatten();
@@ -1754,18 +1829,31 @@ impl crate::app::window::Window {
         // hook). Done after the view_state borrow ends so we can take a
         // second &mut borrow on self.windows for the split manager.
         if let Some(active_buf_id) = active_buffer_id {
-            self.buffers
-                .split_manager_mut()
-                .expect("active window must have a populated split layout")
+            self.split_manager_mut()
                 .set_split_buffer(current_split_id, active_buf_id);
         }
     }
 
-    fn restore_search_options(&mut self, opts: &SearchOptions) {
-        self.search_case_sensitive = opts.case_sensitive;
-        self.search_whole_word = opts.whole_word;
-        self.search_use_regex = opts.use_regex;
-        self.search_confirm_each = opts.confirm_each;
+    /// Apply a workspace's per-field search overrides on top of whatever
+    /// the window already holds.
+    ///
+    /// A `None` field is left alone deliberately: the window's flags are
+    /// what `Window::new` seeded from the `editor.search` preset, so
+    /// "no opinion" resolves to the preset without this needing to read
+    /// the config again.
+    fn apply_search_overrides(&mut self, o: &crate::workspace::SearchOverrides) {
+        if let Some(v) = o.case_sensitive {
+            self.search_case_sensitive = v;
+        }
+        if let Some(v) = o.whole_word {
+            self.search_whole_word = v;
+        }
+        if let Some(v) = o.use_regex {
+            self.search_use_regex = v;
+        }
+        if let Some(v) = o.confirm_each {
+            self.search_confirm_each = v;
+        }
     }
 
     fn restore_prompt_histories(&mut self, histories: &WorkspaceHistories) {
@@ -1775,23 +1863,18 @@ impl crate::app::window::Window {
             histories.replace.len(),
             histories.goto_line.len()
         );
-        for item in &histories.search {
+        // The rings already hold the global history loaded at startup, which
+        // is saved from these same rings on quit — so the two overlap, and a
+        // plain push would repeat the shared entries on every launch.
+        for (key, items) in [
+            ("search", &histories.search),
+            ("replace", &histories.replace),
+            ("goto_line", &histories.goto_line),
+        ] {
             self.prompt_histories
-                .entry("search".to_string())
+                .entry(key.to_string())
                 .or_default()
-                .push(item.clone());
-        }
-        for item in &histories.replace {
-            self.prompt_histories
-                .entry("replace".to_string())
-                .or_default()
-                .push(item.clone());
-        }
-        for item in &histories.goto_line {
-            self.prompt_histories
-                .entry("goto_line".to_string())
-                .or_default()
-                .push(item.clone());
+                .merge_newer(items);
         }
     }
 
@@ -1872,6 +1955,7 @@ impl crate::app::window::Window {
                 &self.resources.grammar_registry,
                 &self.resources.config.languages,
                 self.resources.config.default_language.as_deref(),
+                buffer.filesystem().as_ref(),
             );
         let mut state = EditorState::from_buffer_with_language(buffer, detected);
         state
@@ -2564,7 +2648,15 @@ impl crate::app::window::Window {
                 .store(mouse_enabled, std::sync::atomic::Ordering::Relaxed);
         }
 
-        self.restore_search_options(&workspace.search_options);
+        // A workspace with nothing of its own to say keeps the window on
+        // the `editor.search` preset it was constructed with (issue
+        // #3212). An old file speaks through the superseded key instead,
+        // and only for the toggles it can prove the user set.
+        if let Some(overrides) = &workspace.search_overrides {
+            self.apply_search_overrides(overrides);
+        } else if let Some(legacy) = &workspace.legacy_search_options {
+            self.apply_search_overrides(&legacy.legacy_overrides());
+        }
         self.restore_prompt_histories(&workspace.histories);
         self.restore_file_explorer_settings(&workspace.file_explorer);
 
@@ -2878,12 +2970,25 @@ impl crate::app::window::Window {
             open_file: Vec::new(),
         };
 
-        let search_options = SearchOptions {
+        // Per field: each option that differs from the `editor.search`
+        // preset is this workspace's to remember, and each option that
+        // matches it has nothing to remember, so the preset keeps
+        // applying there. Writing all four the moment one of them
+        // diverges would freeze the other three against every future
+        // config change — silently, with nothing in the UI to explain it
+        // — which is the trap the superseded `search_options` key fell
+        // into. Query Replace setting `confirm_each` programmatically
+        // makes that easy to hit by accident, which is why the split
+        // matters rather than being a nicety.
+        let preset = &self.config().editor.search;
+        let live = SearchOptions {
             case_sensitive: self.search_case_sensitive,
             whole_word: self.search_whole_word,
             use_regex: self.search_use_regex,
             confirm_each: self.search_confirm_each,
         };
+        let overrides = crate::workspace::SearchOverrides::between(preset, &live);
+        let search_overrides = (!overrides.is_empty()).then_some(overrides);
 
         let bookmarks = serialize_bookmarks(&self.bookmarks, &self.buffer_metadata, &self.root);
 
@@ -2945,7 +3050,8 @@ impl crate::app::window::Window {
             config_overrides,
             file_explorer,
             histories,
-            search_options,
+            search_overrides,
+            legacy_search_options: None,
             bookmarks,
             terminals,
             external_files,
@@ -3341,7 +3447,6 @@ fn serialize_split_view_state(
         open_files,
         active_file_index,
         file_states,
-        tab_scroll_offset: view_state.tab_scroll_offset,
     }
 }
 

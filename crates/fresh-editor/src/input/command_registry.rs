@@ -435,6 +435,7 @@ impl CommandRegistry {
     }
 
     /// Get count of total commands (built-in + plugin)
+    #[cfg(test)]
     pub fn total_command_count(&self) -> usize {
         self.builtin_commands.len() + self.plugin_command_count()
     }

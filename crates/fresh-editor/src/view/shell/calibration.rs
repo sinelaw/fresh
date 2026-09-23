@@ -310,7 +310,7 @@ fn controls_row(controls: &[Control], ink: &str) -> Node<UiMsg> {
     let mut kids: Vec<Node<UiMsg>> = Vec::with_capacity(controls.len() * 2);
     for c in controls {
         kids.push(text(format!("[{}]", c.key)).theme(pair(&c.key_theme, "ui.popup_bg")));
-        kids.push(text(format!(" {} ", c.label)).theme(ink.to_string()));
+        kids.push(text(format!(" {} ", c.label)).theme(ink));
     }
     row().h(Sizing::Cells(1)).children(kids)
 }

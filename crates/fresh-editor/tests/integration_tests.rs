@@ -1023,14 +1023,6 @@ mod event_inverse_tests {
     }
 
     #[test]
-    fn test_set_viewport_no_inverse() {
-        let event = Event::SetViewport { top_line: 10 };
-
-        // SetViewport doesn't have inverse because we don't store the old top_line
-        assert!(event.inverse().is_none());
-    }
-
-    #[test]
     fn test_change_mode_no_inverse() {
         let event = Event::ChangeMode {
             mode: "insert".to_string(),
@@ -1116,7 +1108,9 @@ mod event_inverse_tests {
                     text: "a".to_string(),
                     cursor_id: CursorId(0),
                 },
-                Event::SetViewport { top_line: 10 }, // Not invertible
+                Event::ChangeMode {
+                    mode: "insert".to_string(),
+                }, // Not invertible
             ],
             description: "Mixed batch".to_string(),
         };

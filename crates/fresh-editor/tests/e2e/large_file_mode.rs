@@ -548,7 +548,7 @@ fn test_large_file_save_preserves_unloaded_regions() {
     buffer.insert_bytes(0, b"EDITED: ".to_vec());
 
     // Save the file
-    buffer.save().unwrap();
+    buffer.save(&temp_dir.path().join("recovery")).unwrap();
 
     // Read back and verify
     let saved_content = fs::read_to_string(&file_path).unwrap();
@@ -661,7 +661,7 @@ fn test_large_file_edits_beginning_middle_end() {
         .unwrap();
     harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
     harness.type_text("END_EDIT").unwrap();
-    expected_lines.push(format!("END_EDIT"));
+    expected_lines.push("END_EDIT".to_string());
 
     // Save
     harness

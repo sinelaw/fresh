@@ -123,6 +123,10 @@
           215,
           0
         ],
+        "bracket_rainbow_match_modifier": [
+          "bold",
+          "underlined"
+        ],
         "bracket_rainbow_1": [
           255,
           215,
@@ -801,6 +805,14 @@
             255,
             215,
             0
+          ]
+        },
+        "bracket_rainbow_match_modifier": {
+          "description": "Text attributes that mark the matched bracket pair when rainbow\nbrackets are on. The pair keeps its depth color there, so the match\nis shown by these attributes instead. Default `[\"bold\", \"underlined\"]`.",
+          "$ref": "#/$defs/ModifierDef",
+          "default": [
+            "bold",
+            "underlined"
           ]
         },
         "bracket_rainbow_1": {

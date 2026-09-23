@@ -13,12 +13,13 @@ Fresh is now licensed **GPL-3.0-or-later**, up from GPL-2.0-only (#3328).
 * **Orchestrator mode** - a bare `fresh`, with no file or flags, reopens the workspace you were last in, dock and all, running as a background daemon. On by default, toggle it in Settings (#3306)
 * **New CLI commands** - `workspace list`, and `agent list` / `get` / `explain` / `wait` / `start`, for scripting Orchestrator workspaces and agents without reading the dock
 * **Confirmations are a modal dialog now, not a line on the bottom row** - a centred card with each outcome spelled out as its own button, answering to arrows, Tab, Enter, Esc, the mouse and the letter underlined in the label; an outcome that loses work is in the error colour and never opens armed (#3320)
-* **Find and rejoin the agent sessions other tools are running** - `Orchestrator: Everything` scans any machine you can reach for tmux, Claude Code, Codex, screen and zellij sessions, groups them by project, and rejoins one on Enter (#3332)
+* **Find and rejoin the agent sessions other tools are running** - `Orchestrator: Import sessions` scans any machine you can reach for tmux, Claude Code, Codex, screen and zellij sessions, groups them by project, and rejoins one on Enter (#3332)
 * **Tokyo Night and Gruvbox ship as built-in themes**, which the homepage already promised (#3107, reported by @sgon00)
 * **Alt+Shift+N / Alt+Shift+P cycle the keyboard through the sidebar**, so a plugin panel like the Markdown outline is reachable without the palette (#3326)
 
 ### Bug Fixes
 
+* **`echo 123 | fresh` opens the pipe instead of hanging** - piping into `fresh` with no file and no `-` brought up an editor that took no input at all, spun on a full CPU core, and could not even be quit with Ctrl+Q. Stdin with nothing else to open now means `fresh -`; with a file to open it is left unread, but the keyboard works either way. Any redirect counts, not just a pipe - `fresh < file` and `fresh < /dev/null` hung the same way (#3252)
 * **Orchestrator dock polish** - the welcome screen and dock could fail to appear in a daemon session, a context menu could close itself too fast, and a workspace just created from the dock could end up not taking keyboard input (#3306, #3275)
 * **The workspace dock is there from the first frame** - the editor used to come up full width and the dock shoved it aside a moment later, once the plugins had loaded. The column is now laid out before any plugin runs. The dock also **remembers whether you left it open and how wide you dragged it** across launches; `autoOpenDock: false` keeps it closed until you open it, and a bare `fresh` always opens it (#3321)
 * **A nested `fresh` in the editor's own terminal no longer shreds the pane** - and a terminal in a daemon session advertises `FRESH_SESSION` again, so `fresh FILE` there hands the file to the editor you are already in (#3318)
@@ -31,6 +32,7 @@ Fresh is now licensed **GPL-3.0-or-later**, up from GPL-2.0-only (#3328).
 * **Markdown compose: a heading no longer flickers while you type in it**, and backspacing a list item no longer throws the caret two rows down (#3318)
 * **The occurrence highlight keeps up with the cursor** - it used to wait for your next keystroke to repaint, and in a daemon session every other time-driven repaint was stranded with it (#3318)
 * **Code tour: clicking the prose takes the keyboard**, and its caret stays visible past the end of a line (#3318)
+* **A tab after CJK text no longer eats the character before it** - the tab marker was placed by visual column against an index counted in characters, so a double-width glyph put it one character early and the `→` took that glyph's place: `你好⇥world` drew as `你→    world`. The file was never touched (#3218, reported by @sgon00)
 * **Highlighted lines** (diff view, code tour) no longer hide inlay hints at the end of the line (#3314)
 * **`editor.scroll_offset` fixed** for files under 5000 lines with line wrap off (#3248)
 * **Markdown code block borders** no longer break while you type inside them (#3247)
@@ -42,12 +44,21 @@ Fresh is now licensed **GPL-3.0-or-later**, up from GPL-2.0-only (#3328).
 * **Vi `.` no longer drops the insert it replays** when typed quickly after Esc
 * **Fixed stale LSP diagnostics after vi-mode edits**, and Save All sending the wrong file's content to language servers (#3258)
 * **The homepage's demo player paints again on Chrome/Linux** instead of showing a black box (#3106, reported by @sgon00)
+* **A language server can no longer delete your files.** A server-initiated `workspace/applyEdit` arrived with no confirmation and was applied as-is, including its "delete this file (recursively)" operation — permanently, bypassing the system trash the file explorer deletes through. Fresh now reports the request and ignores it
+* **Uninstalling a package, replacing one on upgrade, and deleting a theme all go to the system trash**, instead of being unlinked outright. A mis-click is recoverable now
+* **Deleting a folder that contains a symlink no longer empties what the link points at.** The recursive delete treated a link to a directory as a directory and descended into it, so deleting a folder holding a link to, say, `~/Documents` deleted the contents of `~/Documents` — then reported a failure, after the fact. Links are unlinked now, never followed (reachable from the file explorer when cutting and pasting between filesystems)
+* **A language server can no longer overwrite a file either.** `Create` and `Rename` resource operations honoured an `overwrite` flag from the server, truncating or clobbering an existing file with no confirmation. Both are now reported and ignored
+* **The install script refuses to replace a directory that is not a Fresh install.** `FRESH_INSTALL_DIR` is removed wholesale during an install, and the only guards were against `""`, `/` and `$HOME` — so `FRESH_INSTALL_DIR=$HOME/.local` wiped it without a prompt. An existing directory now has to be empty or hold a Fresh binary, receipt or file manifest
+* **Rust highlighting is on a current grammar now** - an unspaced `<` before a string, as in `ensure!(limit<=MAX_OUTPUT,"...")`, used to be read as the start of a generic argument list; recovering from it ate the string's opening quote, so the string body rendered as code and every line after it was painted as a string literal until the next quote. The Rust grammar bundled inside syntect was years out of date, so Fresh now ships its own copy of the current upstream one - which also brings better type, constant and macro colouring across Rust files (#3325, reported by @asukaminato0721)
 
 ### Internals
 
 * Minor performance and dependency updates, including a security fix for a TLS library (RUSTSEC-2026-0285)
 * **Less allocation churn on the render path** - a new memory-profiling harness found two hot spots copying and regrowing tens of MB over a two-minute editing session, and a large batch of explorer decorations no longer re-resolves the project root once per path (#3266, #3103)
 * Scrollbars are one implementation in the shared UI library now, so they behave the same on every surface
+* **Plugins can no longer delete, move, or overwrite a path they name.** `removePath`, `renamePath` and `copyPath` are gone from the plugin API. `removePath` checked that its target sat under the temp or config directory, but only the top-level argument — a symlink inside the target walked its recursive delete back out of the fence — and `renamePath` had no fence at all and fell back to copy-then-delete, so anything `removePath` refused could be moved somewhere it allowed and deleted from there. What replaced them names a *thing* rather than a path: `scratchCreate`/`scratchPath`/`scratchDiscard` for staging directories the editor issues and takes back, `scratchFromDirectory`/`installScratch`/`uninstallPackage` for packages by kind and name, and `stateSet`/`stateGet`/`stateKeys`/`stateDelete` for namespaced storage whose layout the editor owns. Third-party plugins using the old calls will need updating
+* **`writeFile` refuses to overwrite an existing file, as it always claimed to.** The docs said it "fails if the file already exists to prevent plugins from accidentally overwriting user data"; the implementation wrote a temp file and renamed it over whatever was there, so a plugin trusting the documentation destroyed the file. Replacing one is now `replaceFile`, asked for by name
+* **The orchestrator's saved machines moved into the editor-owned state store** and are imported from the old directory on first load. The old files are left in place — a plugin can no longer delete a path it names — and are inert
 
 ## 0.5.1
 
@@ -197,6 +208,7 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 * **Rendering**: the 256-color contrast pass no longer stalls large terminal windows or the Settings dialog, and a dimmed dialog no longer paints a fixed dark gray instead of following the active theme (#2982).
 * **Terminals**: a focused terminal keeps `Ctrl+B`/`Ctrl+E` for the shell instead of them toggling/focusing the File Explorer, and File Explorer keys (like Enter) no longer leak into a terminal's PTY sitting behind it.
 * **File Explorer**: the sidebar caret no longer blinks through modal dialogs. With `file_explorer.follow_active_buffer` on, the tree now also follows the first file a session opens — previously a code tour's opening step (or any first open into the empty `[No Name]` buffer) left the explorer parked at the root — and a follow request no longer gets thrown away when it arrives while the tree is still expanding for the previous one (#2988).
+* **File Explorer**: the scrollbar no longer steals a row's hit targets — hovering the bar could pop the tooltip of the file behind it, and the selection caret covered its own row so that row's status marker answered nothing (#2859, reported by @asukaminato0721).
 * **Review Diff**: `PageDown`/`PageUp` no longer stalls with the cursor off-screen while paging over a collapsed file (#3029); a panel like the git-log commit view now word-wraps correctly no matter which split shows it.
 * **Editing near a fold, concealed span, or virtual line** no longer corrupts the rendered layout (wrong hidden text, row count, or scrollbar position) after certain edit sequences, or leaves it stuck stale after a file reload or undo past a bulk edit.
 * **Whitespace indicators**

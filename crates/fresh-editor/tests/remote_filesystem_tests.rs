@@ -83,6 +83,90 @@ fn test_read_file_content() {
     );
 }
 
+/// `find_up` is served by the agent in one request, so this exercises the
+/// override and `cmd_find_up` together: the nearest match must come first,
+/// and an outer marker must still be reported so a caller that has to look
+/// inside each candidate can keep climbing.
+#[test]
+fn test_find_up_reports_matching_ancestors_nearest_first() {
+    let Some((fs, temp_dir, _rt)) = create_test_filesystem() else {
+        eprintln!("Skipping test: could not create test filesystem");
+        return;
+    };
+
+    // The agent canonicalizes every path it is handed (`validate_path` ->
+    // `os.path.realpath`), so compare against canonical paths. On macOS the
+    // temp dir is `/var/folders/...`, a symlink to `/private/var/folders/...`,
+    // and unresolved expectations never match what comes back.
+    let root = std::fs::canonicalize(temp_dir.path()).unwrap();
+    let nested = root.join("proj/include/detail");
+    std::fs::create_dir_all(&nested).unwrap();
+    std::fs::write(root.join("proj/compile_commands.json"), b"[]").unwrap();
+    std::fs::write(root.join("proj/include/compile_commands.json"), b"[]").unwrap();
+
+    let found = fs
+        .find_up(&nested, &["compile_commands.json"], Some(11))
+        .unwrap();
+
+    assert_eq!(
+        found,
+        vec![root.join("proj/include"), root.join("proj")],
+        "both ancestors carrying the marker, nearest first"
+    );
+}
+
+/// A marker that is nowhere up the tree is an empty answer, not an error —
+/// the probe treats "could not see it" and "not there" alike.
+#[test]
+fn test_find_up_without_a_match_is_empty() {
+    let Some((fs, temp_dir, _rt)) = create_test_filesystem() else {
+        eprintln!("Skipping test: could not create test filesystem");
+        return;
+    };
+
+    let nested = std::fs::canonicalize(temp_dir.path()).unwrap().join("a/b");
+    std::fs::create_dir_all(&nested).unwrap();
+    std::fs::write(nested.join("present.json"), b"").unwrap();
+
+    let found = fs.find_up(&nested, &["nothing-here.json"], Some(4)).unwrap();
+    assert!(found.is_empty(), "no marker anywhere means no directories");
+
+    // Positive control, same tree and budget: an empty answer has to mean
+    // "searched and found nothing", not "the search never happened".
+    let found = fs.find_up(&nested, &["present.json"], Some(4)).unwrap();
+    assert_eq!(found, vec![nested], "the marker that does exist is reported");
+}
+
+/// `max_dirs` counts the starting directory itself, so a budget of 1 can
+/// only ever report the directory the search began in.
+#[test]
+fn test_find_up_respects_max_dirs() {
+    let Some((fs, temp_dir, _rt)) = create_test_filesystem() else {
+        eprintln!("Skipping test: could not create test filesystem");
+        return;
+    };
+
+    let root = std::fs::canonicalize(temp_dir.path()).unwrap();
+    let nested = root.join("proj/include");
+    std::fs::create_dir_all(&nested).unwrap();
+    std::fs::write(root.join("proj/marker.txt"), b"").unwrap();
+
+    let found = fs.find_up(&nested, &["marker.txt"], Some(1)).unwrap();
+    assert!(
+        found.is_empty(),
+        "a budget of one directory must not reach the parent that holds the marker"
+    );
+
+    // Positive control: one more directory of budget reaches it. Without
+    // this the assertion above would also hold if the search did nothing.
+    let found = fs.find_up(&nested, &["marker.txt"], Some(2)).unwrap();
+    assert_eq!(
+        found,
+        vec![root.join("proj")],
+        "a budget of two reaches the parent"
+    );
+}
+
 #[test]
 fn test_write_and_read_roundtrip() {
     let Some((fs, temp_dir, _rt)) = create_test_filesystem() else {
@@ -580,7 +664,7 @@ fn test_buffer_save_new_file_through_remote() {
     let mut buffer = TextBuffer::from_bytes(b"Hello, World!\nLine 2\n".to_vec(), fs);
 
     // Save to new file
-    buffer.save_to_file(&file_path).unwrap();
+    buffer.save_to_file(&file_path, &temp_dir.path().join("recovery")).unwrap();
 
     // Verify file content
     let content = std::fs::read(&file_path).unwrap();
@@ -607,7 +691,7 @@ fn test_buffer_save_edited_file_through_remote() {
     buffer.insert_bytes(3, b"XXX".to_vec()); // Insert "XXX"
 
     // Save back
-    buffer.save_to_file(&file_path).unwrap();
+    buffer.save_to_file(&file_path, &temp_dir.path().join("recovery")).unwrap();
 
     // Verify
     let content = std::fs::read(&file_path).unwrap();
@@ -637,7 +721,7 @@ fn test_buffer_save_with_copy_ops_through_remote() {
     buffer.insert_bytes(edit_pos, b"EDITED".to_vec());
 
     // Save back
-    buffer.save_to_file(&file_path).unwrap();
+    buffer.save_to_file(&file_path, &temp_dir.path().join("recovery")).unwrap();
 
     // Verify content
     let content = std::fs::read(&file_path).unwrap();
@@ -673,7 +757,7 @@ fn test_buffer_save_as_different_path_through_remote() {
     buffer.insert_bytes(0, b"Modified: ".to_vec());
 
     // Save to different path
-    buffer.save_to_file(&new_path).unwrap();
+    buffer.save_to_file(&new_path, &temp_dir.path().join("recovery")).unwrap();
 
     // Verify new file has modified content
     let new_content = std::fs::read(&new_path).unwrap();
@@ -706,7 +790,7 @@ fn test_buffer_save_with_line_ending_conversion_through_remote() {
     buffer.set_line_ending(LineEnding::LF);
 
     // Save back
-    buffer.save_to_file(&file_path).unwrap();
+    buffer.save_to_file(&file_path, &temp_dir.path().join("recovery")).unwrap();
 
     // Verify LF line endings (no CR)
     let content = std::fs::read(&file_path).unwrap();
@@ -727,7 +811,7 @@ fn test_buffer_save_empty_file_through_remote() {
     let mut buffer = TextBuffer::from_bytes(Vec::new(), fs);
 
     // Save to file
-    buffer.save_to_file(&file_path).unwrap();
+    buffer.save_to_file(&file_path, &temp_dir.path().join("recovery")).unwrap();
 
     // Verify empty file
     let content = std::fs::read(&file_path).unwrap();
@@ -771,7 +855,7 @@ fn test_buffer_multiple_edits_then_save_through_remote() {
     // Now: "The slow red fox jumps over the energetic dog."
 
     // Save back
-    buffer.save_to_file(&file_path).unwrap();
+    buffer.save_to_file(&file_path, &temp_dir.path().join("recovery")).unwrap();
 
     // Verify
     let content = std::fs::read(&file_path).unwrap();
@@ -801,7 +885,7 @@ fn test_buffer_save_large_file_with_small_edit_through_remote() {
     buffer.insert_bytes(edit_pos, b"END".to_vec());
 
     // Save back
-    buffer.save_to_file(&file_path).unwrap();
+    buffer.save_to_file(&file_path, &temp_dir.path().join("recovery")).unwrap();
 
     // Verify
     let content = std::fs::read(&file_path).unwrap();
@@ -859,7 +943,7 @@ fn test_buffer_large_file_edits_at_beginning_middle_and_end_through_remote() {
     // Define the edits we'll make
     // We need to work backwards (end -> middle -> beginning) to avoid offset shifts
     // affecting subsequent edit positions
-    let mut expected_lines = Vec::from(original_lines);
+    let mut expected_lines = original_lines;
 
     let steps = 4;
     let mut offset = 0;
@@ -879,7 +963,7 @@ fn test_buffer_large_file_edits_at_beginning_middle_and_end_through_remote() {
     }
 
     // Save back through remote filesystem
-    buffer.save_to_file(&file_path).unwrap();
+    buffer.save_to_file(&file_path, &temp_dir.path().join("recovery")).unwrap();
 
     // Read back the saved file
     let content = std::fs::read(&file_path).unwrap();
@@ -966,7 +1050,7 @@ fn test_buffer_large_file_multiple_scattered_edits_through_remote() {
     }
 
     // Save
-    buffer.save_to_file(&file_path).unwrap();
+    buffer.save_to_file(&file_path, &temp_dir.path().join("recovery")).unwrap();
 
     // Build expected content
     let mut expected = Vec::with_capacity(size + 200);
@@ -1073,7 +1157,7 @@ fn test_buffer_huge_file_multi_save_cycle_through_remote() {
     let threshold = 1024 * 1024;
     let mut buffer = TextBuffer::load_from_file(&file_path, threshold, fs).unwrap();
 
-    for target_line in vec![5000, 3] {
+    for target_line in [5000, 3] {
         let edit_text = format!("ITER_{}_", target_line);
         let byte_pos = line_starts[target_line];
 
@@ -1081,7 +1165,7 @@ fn test_buffer_huge_file_multi_save_cycle_through_remote() {
         expected_lines[target_line] = format!("{}{}", edit_text, expected_lines[target_line]);
 
         // Save
-        buffer.save_to_file(&file_path).unwrap();
+        buffer.save_to_file(&file_path, &temp_dir.path().join("recovery")).unwrap();
 
         // Verify
         let content = std::fs::read(&file_path).unwrap();
@@ -1218,7 +1302,7 @@ fn test_buffer_shadow_random_ops_through_remote() {
         // Periodic save-and-verify cycle
         if (op_idx + 1) % SAVE_EVERY == 0 {
             // Save through remote filesystem
-            buffer.save_to_file(&file_path).unwrap();
+            buffer.save_to_file(&file_path, &temp_dir.path().join("recovery")).unwrap();
 
             // Read back directly from disk
             let on_disk = std::fs::read(&file_path).unwrap();
@@ -1274,7 +1358,7 @@ fn test_buffer_shadow_random_ops_through_remote() {
     }
 
     // Final save and verify
-    buffer.save_to_file(&file_path).unwrap();
+    buffer.save_to_file(&file_path, &temp_dir.path().join("recovery")).unwrap();
     let final_content = std::fs::read(&file_path).unwrap();
     assert_eq!(
         final_content.len(),
@@ -1352,7 +1436,7 @@ fn test_regression_1059_streaming_read_backpressure() {
     let insert_pos = 50_000 * LINE_LEN;
     let insert_data = b"INSERTED LINE\n".to_vec();
     buffer.insert_bytes(insert_pos, insert_data.clone());
-    buffer.save_to_file(&file_path).unwrap();
+    buffer.save_to_file(&file_path, &temp_dir.path().join("recovery")).unwrap();
 
     let saved = std::fs::read(&file_path).unwrap();
     let mut expected = original.clone();
@@ -1400,7 +1484,7 @@ fn test_concurrent_count_lf_requests() {
     let num_lines = 10_000; // 1MB file
     let mut content = Vec::with_capacity(line_len * num_lines);
     for _ in 0..num_lines {
-        content.extend(std::iter::repeat(b'A').take(line_len - 1));
+        content.extend(std::iter::repeat_n(b'A', line_len - 1));
         content.push(b'\n');
     }
     let file_path = temp_dir.path().join("concurrent_lf.bin");
@@ -1505,9 +1589,11 @@ fn test_concurrent_mixed_requests() {
         ReadRange { idx: usize, expected: Vec<u8> },
     }
 
+    /// One request's outcome: its index, the bytes read, the LF count.
+    type Outcome = std::io::Result<(usize, Vec<u8>, usize)>;
+
     let (expectations, results): (Vec<Expected>, Vec<std::io::Result<()>>) = rt.block_on(async {
-        let mut handles: Vec<tokio::task::JoinHandle<std::io::Result<(usize, Vec<u8>, usize)>>> =
-            Vec::new();
+        let mut handles: Vec<tokio::task::JoinHandle<Outcome>> = Vec::new();
         let mut expectations = Vec::new();
 
         for i in 0..num_each {
@@ -1558,8 +1644,7 @@ fn test_concurrent_mixed_requests() {
             match (exp, result) {
                 (Expected::CountLf { idx, expected }, Ok((_i, _data, count))) => {
                     if count != expected {
-                        results.push(Err(std::io::Error::new(
-                            std::io::ErrorKind::Other,
+                        results.push(Err(std::io::Error::other(
                             format!(
                                 "count_lf chunk {}: got {}, expected {}",
                                 idx, count, expected
@@ -1571,8 +1656,7 @@ fn test_concurrent_mixed_requests() {
                 }
                 (Expected::ReadRange { idx, expected }, Ok((_i, data, _count))) => {
                     if data != expected {
-                        results.push(Err(std::io::Error::new(
-                            std::io::ErrorKind::Other,
+                        results.push(Err(std::io::Error::other(
                             format!(
                                 "read_range chunk {}: got {} bytes, expected {} bytes",
                                 idx,
@@ -1585,8 +1669,7 @@ fn test_concurrent_mixed_requests() {
                     }
                 }
                 (_, Err(e)) => {
-                    results.push(Err(std::io::Error::new(
-                        std::io::ErrorKind::Other,
+                    results.push(Err(std::io::Error::other(
                         format!("request failed: {}", e),
                     )));
                 }

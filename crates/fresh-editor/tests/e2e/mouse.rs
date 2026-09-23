@@ -817,10 +817,7 @@ fn test_hovering_a_split_separator_names_it() {
     harness.mouse_move(sep_x + sep_length / 2, sep_y).unwrap();
     assert_eq!(
         harness.editor().hovered(),
-        Some(fresh::app::HoverTarget::SplitSeparator(
-            split_id.into(),
-            direction
-        )),
+        Some(fresh::app::HoverTarget::SplitSeparator(split_id, direction)),
         "the pointer is on the separator"
     );
 
@@ -828,10 +825,7 @@ fn test_hovering_a_split_separator_names_it() {
     harness.mouse_move(sep_x + sep_length / 2, 1).unwrap();
     assert_ne!(
         harness.editor().hovered(),
-        Some(fresh::app::HoverTarget::SplitSeparator(
-            split_id.into(),
-            direction
-        )),
+        Some(fresh::app::HoverTarget::SplitSeparator(split_id, direction)),
         "and off it, it is not"
     );
 }
@@ -2330,4 +2324,189 @@ fn test_scrollbar_track_hover_then_click_clears_highlight() {
         "After clicking, cell at row {} should not show track hover highlight (got: {:?})",
         click_row, post_click_style.bg
     );
+}
+
+/// A harness with unwrapped lines far wider than the pane and the
+/// horizontal scrollbar on. Each line starts `Line {i}:` and ends `TAIL`.
+fn horizontal_scroll_harness() -> (EditorTestHarness, TestFixture) {
+    let mut config = fresh::config::Config::default();
+    config.editor.line_wrap = false;
+    config.editor.show_horizontal_scrollbar = true;
+    let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
+    let content: String = (0..10)
+        .map(|i| {
+            let prefix = format!("Line {i}: ");
+            format!("{prefix}{}TAIL\n", "x".repeat(300 - prefix.len() - 4))
+        })
+        .collect();
+    let fixture = harness.load_buffer_from_text(&content).unwrap();
+    harness.render().unwrap();
+    (harness, fixture)
+}
+
+/// The horizontal scrollbar's row and the columns its thumb covers, read off
+/// the screen: the row near the bottom of the content area with the most
+/// scrollbar cells (the vertical bar crosses every row in one cell).
+fn horizontal_scrollbar(harness: &EditorTestHarness) -> (u16, std::ops::RangeInclusive<u16>) {
+    let (_, last) = harness.content_area_rows();
+    let width = harness.buffer().area.width;
+    let cells = |row: u16| {
+        (0..width)
+            .filter(|&c| {
+                harness.is_scrollbar_thumb_at(c, row) || harness.is_scrollbar_track_at(c, row)
+            })
+            .count()
+    };
+    let row = [last as u16, last as u16 + 1]
+        .into_iter()
+        .max_by_key(|&r| cells(r))
+        .unwrap();
+    assert!(cells(row) > 10, "a horizontal scrollbar is drawn");
+    let thumb: Vec<u16> = (0..width - 1)
+        .filter(|&c| harness.is_scrollbar_thumb_at(c, row))
+        .collect();
+    (row, *thumb.first().unwrap()..=*thumb.last().unwrap())
+}
+
+/// A press on the horizontal scrollbar's track jumps the view there: at the
+/// far end of the track the lines' ends are on screen and their starts are
+/// not.
+#[test]
+fn test_horizontal_scrollbar_track_click_jumps() {
+    let (mut harness, _fixture) = horizontal_scroll_harness();
+    harness.assert_screen_contains("Line 0:");
+    harness.assert_screen_not_contains("TAIL");
+
+    let (row, thumb) = horizontal_scrollbar(&harness);
+    // The last track cell left of the vertical bar's column.
+    let end = harness.buffer().area.width - 2;
+    assert!(
+        end > *thumb.end(),
+        "the press lands on the track, not the thumb"
+    );
+    harness.mouse_click(end, row).unwrap();
+    harness.render().unwrap();
+
+    harness.assert_screen_contains("TAIL");
+    harness.assert_screen_not_contains("Line 0:");
+    let (_, moved) = horizontal_scrollbar(&harness);
+    assert!(
+        moved.start() > thumb.start(),
+        "the thumb follows the view: {thumb:?} -> {moved:?}"
+    );
+}
+
+/// Dragging the horizontal scrollbar's thumb scrolls by how far it moved,
+/// not to where the pointer is: ten columns of drag leave the view part of
+/// the way along, and the thumb moves with the pointer.
+#[test]
+fn test_horizontal_scrollbar_thumb_drag_scrolls() {
+    let (mut harness, _fixture) = horizontal_scroll_harness();
+    let (row, thumb) = horizontal_scrollbar(&harness);
+    let grab = *thumb.start() + 1;
+    harness.mouse_drag(grab, row, grab + 10, row).unwrap();
+
+    harness.assert_screen_not_contains("Line 0:");
+    harness.assert_screen_not_contains("TAIL");
+    let (_, moved) = horizontal_scrollbar(&harness);
+    // The scroll is rounded to whole columns and the thumb back to whole
+    // cells, so it may land a cell either side of the pointer.
+    assert!(
+        moved.start().abs_diff(thumb.start() + 10) <= 1,
+        "the thumb tracks the pointer: {thumb:?} -> {moved:?}"
+    );
+}
+
+/// A finished separator drag leaves nothing armed: moving the pointer back
+/// and forth across the divider afterwards, with no button held, is a hover
+/// and does not resize the split.
+#[test]
+fn test_split_separator_hover_after_drag_does_not_resize() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.type_text("split vert").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    let (split_id, _, sep_x, sep_y, sep_length) = harness.editor().get_separator_areas()[0];
+    let row = sep_y + sep_length / 2;
+    harness.mouse_drag(sep_x, row, sep_x + 10, row).unwrap();
+    let dragged = harness.editor().get_split_ratio(split_id.into()).unwrap();
+
+    let (_, _, sep_x, _, _) = harness.editor().get_separator_areas()[0];
+    for col in [sep_x, sep_x + 5, sep_x, sep_x - 5, sep_x] {
+        harness.mouse_move(col, row).unwrap();
+    }
+
+    assert_eq!(
+        harness.editor().get_split_ratio(split_id.into()).unwrap(),
+        dragged,
+        "a hover across the divider must not move it"
+    );
+}
+
+/// A click in the second pane of a composite laid out without a separator
+/// lands on the column it was aimed at.
+///
+/// The click used to walk the painted pane widths adding one separator
+/// column per pane whatever the layout drew, so without a separator every
+/// pane after the first was hit one column to the right of the pointer,
+/// and the cursor was drawn one cell left of it.
+#[test]
+fn test_composite_click_without_separator_lands_on_the_clicked_column() {
+    use fresh::model::composite_buffer::{CompositeLayout, LineAlignment, SourcePane};
+    use fresh::primitives::text_property::TextPropertyEntry;
+
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    {
+        let editor = harness.editor_mut();
+        let mut source = |label: &str, text: &str| {
+            let id = editor.active_window_mut().create_virtual_buffer(
+                label.to_string(),
+                "text".to_string(),
+                true,
+            );
+            editor
+                .set_virtual_buffer_content(id, vec![TextPropertyEntry::text(text)])
+                .unwrap();
+            SourcePane::new(id, label, false)
+        };
+        let sources = vec![
+            source("LEFT", "leftleftleft\n"),
+            source("RIGHT", "0123456789abcdefghij\n"),
+        ];
+        let composite = editor.create_composite_buffer(
+            "no-separator".to_string(),
+            "text".to_string(),
+            CompositeLayout::SideBySide {
+                ratios: vec![0.5, 0.5],
+                show_separator: false,
+            },
+            sources,
+        );
+        editor
+            .active_window_mut()
+            .set_composite_alignment(composite, LineAlignment::from_hunks(&[], 1, 1));
+        editor.switch_buffer(composite);
+    }
+    harness.render().unwrap();
+
+    let (x, y) = harness
+        .find_text_on_screen("abcdefghij")
+        .expect("the right pane's text is on screen");
+    harness.mouse_click(x, y).unwrap();
+    harness.render().unwrap();
+
+    let cursor_bg = harness.editor().theme().editor_fg;
+    let bg_at = |col: u16| harness.get_cell_style(col, y).and_then(|s| s.bg);
+    assert_eq!(
+        bg_at(x),
+        Some(cursor_bg),
+        "the cursor is drawn on the clicked cell ('a' at column {x})"
+    );
+    assert_ne!(bg_at(x - 1), Some(cursor_bg), "and not one to its left");
 }

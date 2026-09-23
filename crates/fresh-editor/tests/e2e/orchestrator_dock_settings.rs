@@ -1,6 +1,6 @@
 //! E2E coverage for the orchestrator dock's user-facing settings
 //! (`plugins.orchestrator.settings.*`, rendered by the Settings UI under
-//! "Plugin: orchestrator"):
+//! "orchestrator" under "Plugins"):
 //!
 //! * `autoOpenDock` — open the dock on the `ready` hook, unfocused;
 //! * `defaultView` — the density (`card` / `compact`) the dock opens at;
@@ -81,14 +81,14 @@ fn open_dock(h: &mut EditorTestHarness) {
         .unwrap();
 }
 
-/// Open the dock header's `⋯` menu, which holds the density rows and the
+/// Open the dock header's Menu, which holds the density rows and the
 /// two show switches (the applied ones wear a `●`).
 fn open_dock_menu(h: &mut EditorTestHarness) {
     let (mcol, mrow) = h
-        .find_text_on_screen("⋯")
-        .unwrap_or_else(|| panic!("screen missing '⋯':\n{}", h.screen_to_string()));
+        .find_text_on_screen("Menu ▾")
+        .unwrap_or_else(|| panic!("screen missing 'Menu ▾':\n{}", h.screen_to_string()));
     h.mouse_click(mcol, mrow).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("Manage workspaces"))
+    h.wait_until(|h| h.screen_to_string().contains("Machines…"))
         .unwrap();
 }
 
@@ -102,9 +102,9 @@ fn default_view_setting_opens_dock_compact() {
     h.render().unwrap();
     open_dock(&mut h);
     open_dock_menu(&mut h);
-    h.wait_until(|h| h.screen_to_string().contains("● compact view"))
+    h.wait_until(|h| h.screen_to_string().contains("(•) Compact"))
         .unwrap();
-    h.assert_screen_not_contains("● card view");
+    h.assert_screen_not_contains("(•) Cards");
 }
 
 /// No setting ⇒ compact density. The dock is a switcher first, and one line
@@ -118,9 +118,9 @@ fn default_view_setting_absent_opens_dock_compact() {
     h.render().unwrap();
     open_dock(&mut h);
     open_dock_menu(&mut h);
-    h.wait_until(|h| h.screen_to_string().contains("● compact view"))
+    h.wait_until(|h| h.screen_to_string().contains("(•) Compact"))
         .unwrap();
-    h.assert_screen_not_contains("● card view");
+    h.assert_screen_not_contains("(•) Cards");
 }
 
 #[test]
@@ -130,7 +130,7 @@ fn default_view_setting_card_opens_dock_card() {
     h.render().unwrap();
     open_dock(&mut h);
     open_dock_menu(&mut h);
-    h.wait_until(|h| h.screen_to_string().contains("● card view"))
+    h.wait_until(|h| h.screen_to_string().contains("(•) Cards"))
         .unwrap();
 }
 
@@ -149,7 +149,7 @@ fn filter_checkbox_settings_seed_the_dock() {
     open_dock_menu(&mut h);
     h.wait_until(|h| {
         let s = h.screen_to_string();
-        s.contains("● all worktrees") && s.contains("show empty") && !s.contains("● show empty")
+        s.contains("[✓] All worktrees") && s.contains("[ ] Empty workspaces")
     })
     .unwrap();
 }

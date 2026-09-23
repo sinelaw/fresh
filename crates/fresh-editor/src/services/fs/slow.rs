@@ -6,7 +6,7 @@
 //! drives, slow disks, etc.).
 
 use crate::model::filesystem::{
-    DirEntry, FileMetadata, FilePermissions, FileReader, FileSystem, FileWriter,
+    DirEntry, FileMetadata, FilePermissions, FileReader, FileSystem, FileWriter, ReplaceError,
 };
 use std::io;
 use std::path::{Path, PathBuf};
@@ -147,19 +147,9 @@ impl SlowFileSystem {
         }
     }
 
-    /// Create with uniform delay for all operations
-    pub fn with_uniform_delay(inner: Arc<dyn FileSystem>, delay: Duration) -> Self {
-        Self::new(inner, SlowFsConfig::uniform(delay))
-    }
-
     /// Get a reference to the metrics
     pub fn metrics(&self) -> &Arc<BackendMetrics> {
         &self.metrics
-    }
-
-    /// Reset metrics to zero
-    pub fn reset_metrics(&self) {
-        self.metrics.reset();
     }
 
     /// Add delay
@@ -189,10 +179,32 @@ impl FileSystem for SlowFileSystem {
         self.inner.write_file(path, data)
     }
 
+    fn replace_file_preserving_identity(
+        &self,
+        path: &Path,
+        data: &[u8],
+    ) -> Result<(), ReplaceError> {
+        self.add_delay(self.config.write_file_delay);
+        self.metrics.write_file_calls.fetch_add(1, Ordering::SeqCst);
+        self.inner.replace_file_preserving_identity(path, data)
+    }
+
     fn create_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
         self.add_delay(self.config.write_file_delay);
         self.metrics.write_file_calls.fetch_add(1, Ordering::SeqCst);
         self.inner.create_file(path)
+    }
+
+    fn create_new_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
+        self.add_delay(self.config.write_file_delay);
+        self.metrics.write_file_calls.fetch_add(1, Ordering::SeqCst);
+        self.inner.create_new_file(path)
+    }
+
+    fn create_new_private_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
+        self.add_delay(self.config.write_file_delay);
+        self.metrics.write_file_calls.fetch_add(1, Ordering::SeqCst);
+        self.inner.create_new_private_file(path)
     }
 
     fn open_file(&self, path: &Path) -> io::Result<Box<dyn FileReader>> {
@@ -388,28 +400,6 @@ mod tests {
         assert_eq!(slow.metrics().metadata_calls.load(Ordering::SeqCst), 1);
         assert_eq!(slow.metrics().other_calls.load(Ordering::SeqCst), 1);
         assert_eq!(slow.metrics().total_calls(), 3);
-    }
-
-    #[test]
-    fn test_reset_metrics() {
-        let temp_dir = TempDir::new().unwrap();
-        let temp_path = temp_dir.path();
-
-        let inner = Arc::new(StdFileSystem);
-        let slow = SlowFileSystem::new(inner, SlowFsConfig::none());
-
-        // Perform some operations
-        drop(slow.read_dir(temp_path));
-        drop(slow.metadata(temp_path));
-
-        // Verify metrics are non-zero
-        assert!(slow.metrics().total_calls() > 0);
-
-        // Reset
-        slow.reset_metrics();
-
-        // Verify metrics are zero
-        assert_eq!(slow.metrics().total_calls(), 0);
     }
 
     #[test]

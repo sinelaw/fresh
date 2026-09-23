@@ -4,9 +4,8 @@
 //! This ensures hooks are triggered consistently whenever state changes occur.
 
 use crate::model::event::Event;
-use crate::services::plugins::hooks::{HookArgs, HookRegistry};
+use crate::services::plugins::hooks::HookArgs;
 use fresh_core::BufferId;
-use std::sync::RwLock;
 
 /// Trait for converting Events into Hook invocations
 pub trait EventHooks {
@@ -95,84 +94,10 @@ impl EventHooks for Event {
     }
 }
 
-/// Apply an event with automatic hook invocations
-pub fn apply_event_with_hooks(
-    state: &mut crate::state::EditorState,
-    cursors: &mut crate::model::cursor::Cursors,
-    event: &Event,
-    buffer_id: BufferId,
-    window_id: u64,
-    hook_registry: &RwLock<HookRegistry>,
-) -> bool {
-    // Run "before" hooks
-    if let Some(before_args) = event.before_hook(buffer_id, window_id) {
-        let registry = hook_registry.read().unwrap();
-        let hook_name = match &before_args {
-            HookArgs::BeforeInsert { .. } => "before_insert",
-            HookArgs::BeforeDelete { .. } => "before_delete",
-            _ => "",
-        };
-
-        if !hook_name.is_empty() {
-            let should_continue = registry.run_hooks(hook_name, &before_args);
-            if !should_continue {
-                // Hook cancelled the operation
-                return false;
-            }
-        }
-    }
-
-    // Apply the event
-    state.apply(cursors, event);
-
-    // Run "after" hooks
-    if let Some(mut after_args) = event.after_hook(buffer_id, window_id) {
-        // Fill in line number and text properties for CursorMoved events
-        if let HookArgs::CursorMoved {
-            new_position,
-            ref mut line,
-            ref mut text_properties,
-            ..
-        } = after_args
-        {
-            // Compute 1-indexed line number from byte position
-            // get_line_number returns 0-indexed, so add 1
-            *line = state.buffer.get_line_number(new_position) + 1;
-            // Include text properties at cursor position
-            *text_properties = state
-                .text_properties
-                .get_at(new_position)
-                .into_iter()
-                .map(|tp| tp.properties.clone())
-                .collect();
-        }
-
-        let registry = hook_registry.read().unwrap();
-        let hook_name = match &after_args {
-            HookArgs::AfterInsert { .. } => "after_insert",
-            HookArgs::AfterDelete { .. } => "after_delete",
-            HookArgs::CursorMoved { .. } => "cursor_moved",
-            _ => "",
-        };
-
-        if !hook_name.is_empty() {
-            registry.run_hooks(hook_name, &after_args);
-        }
-    }
-
-    true // Event was applied
-}
-
 #[cfg(test)]
 mod tests {
-    use crate::model::filesystem::StdFileSystem;
-    use std::sync::Arc;
 
-    fn test_fs() -> Arc<dyn crate::model::filesystem::FileSystem + Send + Sync> {
-        Arc::new(StdFileSystem)
-    }
     use super::*;
-    use crate::services::plugins::hooks::HookRegistry;
     use fresh_core::CursorId;
 
     #[test]
@@ -221,87 +146,5 @@ mod tests {
         // Overlay events don't trigger hooks (they're visual only)
         assert!(event.before_hook(buffer_id, 1).is_none());
         assert!(event.after_hook(buffer_id, 1).is_none());
-    }
-
-    #[test]
-    fn test_hooks_can_cancel() {
-        use crate::state::EditorState;
-        use std::sync::RwLock;
-
-        let mut state = EditorState::new(
-            80,
-            24,
-            crate::config::LARGE_FILE_THRESHOLD_BYTES as usize,
-            test_fs(),
-        );
-        let hook_registry = RwLock::new(HookRegistry::new());
-
-        // Register a hook that cancels the operation
-        {
-            let mut registry = hook_registry.write().unwrap();
-            registry.add_hook("before_insert", Box::new(|_| false)); // Return false to cancel
-        }
-
-        let event = Event::Insert {
-            position: 0,
-            text: "test".to_string(),
-            cursor_id: CursorId(0),
-        };
-
-        let buffer_id = BufferId(0);
-        let mut cursors = crate::model::cursor::Cursors::new();
-        let was_applied = apply_event_with_hooks(
-            &mut state,
-            &mut cursors,
-            &event,
-            buffer_id,
-            1,
-            &hook_registry,
-        );
-
-        // Event should have been cancelled
-        assert!(!was_applied);
-        assert_eq!(state.buffer.len(), 0); // Buffer should still be empty
-    }
-
-    #[test]
-    fn test_hooks_allow_event() {
-        use crate::state::EditorState;
-        use std::sync::RwLock;
-
-        let mut state = EditorState::new(
-            80,
-            24,
-            crate::config::LARGE_FILE_THRESHOLD_BYTES as usize,
-            test_fs(),
-        );
-        let hook_registry = RwLock::new(HookRegistry::new());
-
-        // Register a hook that allows the operation
-        {
-            let mut registry = hook_registry.write().unwrap();
-            registry.add_hook("before_insert", Box::new(|_| true)); // Return true to allow
-        }
-
-        let event = Event::Insert {
-            position: 0,
-            text: "test".to_string(),
-            cursor_id: CursorId(0),
-        };
-
-        let buffer_id = BufferId(0);
-        let mut cursors = crate::model::cursor::Cursors::new();
-        let was_applied = apply_event_with_hooks(
-            &mut state,
-            &mut cursors,
-            &event,
-            buffer_id,
-            1,
-            &hook_registry,
-        );
-
-        // Event should have been applied
-        assert!(was_applied);
-        assert_eq!(state.buffer.to_string().unwrap(), "test");
     }
 }

@@ -12,9 +12,8 @@
 //!   to plugins after an event applies.
 //!
 //! The "scroll/viewport event" handlers (handle_scroll_event,
-//! handle_set_viewport_event, handle_recenter_event) and the small
-//! `invalidate_layouts_for_buffer` helper now live on `impl Window`
-//! since they're entirely per-window concerns.
+//! handle_recenter_event) live on
+//! `impl Window` since they're entirely per-window concerns.
 
 use lsp_types::TextDocumentContentChangeEvent;
 
@@ -115,11 +114,6 @@ impl Editor {
                 self.active_window_mut().handle_scroll_event(*line_offset);
                 return;
             }
-            Event::SetViewport { top_line } => {
-                self.active_window_mut()
-                    .handle_set_viewport_event(*top_line);
-                return;
-            }
             Event::Recenter => {
                 self.active_window_mut().handle_recenter_event();
                 return;
@@ -181,11 +175,8 @@ impl Editor {
             let split_id = self.effective_active_split();
             let active_buf = self.active_buffer();
             debug_assert!(
-                self.windows
-                    .get(&self.active_window)
-                    .and_then(|w| w.buffers.splits())
-                    .map(|(_, vs)| vs)
-                    .expect("active window must have a populated split layout")
+                self.active_window()
+                    .split_view_states()
                     .get(&split_id)
                     .is_some_and(|vs| vs.keyed_states.contains_key(&active_buf)),
                 "pane-buffer invariant violated: split {:?} resolves to buffer {:?} \
@@ -198,13 +189,12 @@ impl Editor {
                 .apply_event_to_keyed_buffer(active_buf, split_id, event);
         }
 
-        // 1c. Invalidate layouts for all views of this buffer after content changes
+        // 1c. Refresh the per-buffer derived state after content changes
         // Note: recovery_pending is set automatically by the buffer on edits
         match event {
             Event::Insert { .. } | Event::Delete { .. } | Event::BulkEdit { .. } => {
                 let buf = self.active_buffer();
                 let win = self.active_window_mut();
-                win.invalidate_layouts_for_buffer(buf);
                 win.prune_orphaned_folds(buf);
                 win.schedule_semantic_tokens_full_refresh(buf);
                 win.schedule_folding_ranges_refresh(buf);
@@ -216,7 +206,6 @@ impl Editor {
                 if has_edits {
                     let buf = self.active_buffer();
                     let win = self.active_window_mut();
-                    win.invalidate_layouts_for_buffer(buf);
                     win.prune_orphaned_folds(buf);
                     win.schedule_semantic_tokens_full_refresh(buf);
                     win.schedule_folding_ranges_refresh(buf);
@@ -413,11 +402,8 @@ impl Editor {
 
         // Capture old cursor states from SplitViewState (sole source of truth)
         let old_cursors: Vec<(CursorId, usize, Option<usize>)> = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(_, vs)| vs)
-            .expect("active window must have a populated split layout")
+            .active_window()
+            .split_view_states()
             .get(&split_id)
             .unwrap()
             .keyed_states
@@ -641,6 +627,7 @@ impl Editor {
         // Update cursors in SplitViewState (sole source of truth)
         let primary_position = {
             let cursors = &mut self
+                .active_window_mut()
                 .split_view_states_mut()
                 .get_mut(&split_id)
                 .unwrap()
@@ -701,10 +688,8 @@ impl Editor {
             displaced_markers,
         };
 
-        // Post-processing (layout invalidation, split cursor sync, etc.)
-        let buf = self.active_buffer();
+        // Post-processing (split cursor sync, etc.)
         let win = self.active_window_mut();
-        win.invalidate_layouts_for_buffer(buf);
         win.adjust_other_split_cursors_for_event(&bulk_edit);
         // Note: Do NOT clear search overlays - markers track through edits for F3/Shift+F3
 

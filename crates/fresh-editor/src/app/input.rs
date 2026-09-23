@@ -120,14 +120,27 @@ impl Editor {
     pub fn handle_key_press(&mut self, press: fresh_input_parser::KeyPress) -> AnyhowResult<()> {
         // The decision is the router's ([`router::layout_reading`]); this
         // shell only supplies the keymap and the current context.
-        let layout = {
-            let context = self.get_key_context();
-            self.keybindings
-                .read()
-                .ok()
-                .and_then(|kb| router::layout_reading(&press, &kb, context))
-        };
+        let context = self.get_key_context();
+        let layout = self
+            .keybindings
+            .read()
+            .ok()
+            .and_then(|kb| router::layout_reading(&press, &kb, context.clone()));
         let (code, modifiers) = layout.unwrap_or((press.code, press.modifiers));
+        // An unbound Ctrl+J is Enter outside the terminal — see
+        // [`router::ctrl_j_reading`]. The modes it asks about are those the
+        // focused surface resolves keys against.
+        let modes = self.focused_modes();
+        let modes: Vec<&str> = modes.iter().map(String::as_str).collect();
+        let chord_pending = !self.active_window().chord_state.is_empty();
+        let (code, modifiers) = self
+            .keybindings
+            .read()
+            .ok()
+            .and_then(|kb| {
+                router::ctrl_j_reading(code, modifiers, &kb, &context, chord_pending, &modes)
+            })
+            .unwrap_or((code, modifiers));
         self.handle_key(code, modifiers)
     }
 
@@ -238,10 +251,8 @@ impl Editor {
         // scrolling the viewport.
         let active_split = self.effective_active_split();
         if let Some(view_state) = self
-            .windows
-            .get_mut(&self.active_window)
-            .and_then(|w| w.split_view_states_mut())
-            .expect("active window must have a populated split layout")
+            .active_window_mut()
+            .split_view_states_mut()
             .get_mut(&active_split)
         {
             view_state.viewport.clear_skip_ensure_visible();
@@ -507,10 +518,42 @@ impl Editor {
         code: crossterm::event::KeyCode,
         modifiers: crossterm::event::KeyModifiers,
     ) -> bool {
-        match self.prompt_toolbar_key() {
-            Some(pk) => self.dispatch_widget_panel_key(&pk, None, true, code, modifiers),
-            None => false,
+        let Some(pk) = self.prompt_toolbar_key() else {
+            return false;
+        };
+        // Esc on a dropdown whose list is up closes the list (restoring the
+        // selection it opened on); only a second Esc reaches the prompt and
+        // closes the overlay.
+        if code == crossterm::event::KeyCode::Esc && self.prompt_toolbar_list_open(&pk) {
+            self.handle_widget_command(
+                &pk,
+                fresh_core::api::WidgetAction::Key {
+                    key: crate::input::keybindings::KeySeq::one(
+                        crate::input::keybindings::Key::new(
+                            code,
+                            crossterm::event::KeyModifiers::NONE,
+                        ),
+                    )
+                    .to_string(),
+                },
+            );
+            return true;
         }
+        self.dispatch_widget_panel_key(&pk, None, true, code, modifiers)
+    }
+
+    /// Whether the toolbar's focused control is a dropdown with its option
+    /// list open.
+    fn prompt_toolbar_list_open(&self, pk: &crate::widgets::PanelKey) -> bool {
+        let Some(focus) = self.widget_registry.focus_key(pk).filter(|f| !f.is_empty()) else {
+            return false;
+        };
+        matches!(
+            self.widget_registry
+                .instance_states(pk)
+                .and_then(|s| s.get(focus)),
+            Some(crate::widgets::WidgetInstanceState::Dropdown { open: true, .. })
+        )
     }
 
     pub(super) fn dispatch_pane_panel_key(
@@ -560,7 +603,76 @@ impl Editor {
             ?outcome,
             "dispatch_widget_panel_key: decision"
         );
+        // **1. The focused control.** It is offered every key exactly as
+        // typed — never one the router masked a modifier off (Ctrl+Enter is
+        // not Enter to a text area) — a printable character as text, and
+        // anything else as the key itself: Esc, which closes a control's own
+        // pop-up before it closes the panel, and a chord like Ctrl+C, which a
+        // read-only document copies with. `Consumed` ends the key here;
+        // `Pass` and `PassAfter` go on.
+        use crate::widgets::kinds::KeyDisposition;
+        let exact = crate::input::keybindings::KeySeq::one(crate::input::keybindings::Key::new(
+            code, modifiers,
+        ));
+        let offered = match &outcome {
+            WidgetKeyOutcome::TextChar(ch) => {
+                Some(self.handle_widget_text_char(&panel_key, &ch.to_string()))
+            }
+            WidgetKeyOutcome::SmartKey(k) if router::widget_key_is_exact(k, code, modifiers) => {
+                Some(self.widget_control_key(&panel_key, k))
+            }
+            _ => Some(self.widget_control_key(&panel_key, &exact)),
+        };
+        if offered == Some(KeyDisposition::Consumed) {
+            return true;
+        }
+        // **2. The panel's mode** — the plugin's commands, for a key the
+        // control left. (Its declared shortcuts never get here: the
+        // interior's capture leg took them ahead of the control.)
+        if let Some(keymap) = self.panel_keymap(&panel_key) {
+            use crate::view::shell::panel::Bound;
+            let ev = crossterm::event::KeyEvent::new(code, modifiers);
+            // A binding scoped to named controls (`"on:a,b"`) is the mode's
+            // only while one of them has focus; otherwise the key is unbound.
+            let focus_now = self
+                .widget_registry
+                .focus_key(&panel_key)
+                .map(str::to_string)
+                .unwrap_or_default();
+            let out_of_scope = self.keybindings.read().ok().is_some_and(|kb| {
+                kb.mode_binding_scope(&keymap.mode, &ev)
+                    .is_some_and(|w| !w.contains(&focus_now))
+            });
+            let bound = match out_of_scope {
+                true => Bound::None,
+                false => keymap.resolve(&ev),
+            };
+            match bound {
+                Bound::Run(action) => {
+                    self.active_window_mut().chord_state.clear();
+                    if let Err(e) = self.handle_action(action) {
+                        tracing::warn!("panel mode action failed: {e}");
+                    }
+                    return true;
+                }
+                Bound::Pending => {
+                    self.active_window_mut().chord_state.push((code, modifiers));
+                    return true;
+                }
+                Bound::None => self.active_window_mut().chord_state.clear(),
+            }
+        }
+        // **3. The panel's own defaults.** What the control already had its
+        // turn at is not offered to it again.
         match outcome {
+            WidgetKeyOutcome::SmartKey(key)
+                if router::widget_key_is_exact(&key, code, modifiers) =>
+            {
+                self.widget_panel_default_key(&panel_key, &key);
+                true
+            }
+            // The field declined the character and no binding wanted it.
+            WidgetKeyOutcome::TextChar(_) => true,
             WidgetKeyOutcome::FallThrough => false,
             WidgetKeyOutcome::Blur => {
                 if let Some(slot) = slot {
@@ -600,15 +712,6 @@ impl Editor {
                     &panel_key,
                     fresh_core::api::WidgetAction::Key {
                         key: key.to_string(),
-                    },
-                );
-                true
-            }
-            WidgetKeyOutcome::TextChar(ch) => {
-                self.handle_widget_command(
-                    &panel_key,
-                    fresh_core::api::WidgetAction::TextInputChar {
-                        text: ch.to_string(),
                     },
                 );
                 true

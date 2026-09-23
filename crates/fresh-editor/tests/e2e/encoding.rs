@@ -404,7 +404,7 @@ proptest! {
         let normalized_buffer = buffer_content.replace("\r\n", "\n").replace('\r', "\n");
 
         prop_assert!(
-            normalized_buffer.contains(&normalized_text.trim()),
+            normalized_buffer.contains(normalized_text.trim()),
             "Buffer should contain the text. Expected: {:?}, Got: {:?}",
             normalized_text,
             normalized_buffer

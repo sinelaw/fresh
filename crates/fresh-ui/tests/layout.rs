@@ -602,7 +602,7 @@ fn a_stale_boundary_is_re_measured_even_when_the_root_is_too() {
         // something in between, the root's own re-measure would reach the
         // boundary by accident and the bug would not show.
         let base = col().children([col().flex(1).children([
-            row().h(Sizing::Cells(1)).children([text(msg.to_string())]),
+            row().h(Sizing::Cells(1)).children([text(msg)]),
             text("body").flex(1),
         ])]);
         if overlay {
@@ -1616,4 +1616,65 @@ fn an_owned_pinned_window_scrolls_to_the_pinned_ceiling() {
     ui.tick();
     assert_eq!(ui.scroll(vp).0.y, 34, "count - (rows - pinned)");
     assert_eq!(lines(&ui).last().map(String::as_str), Some("row 39"));
+}
+
+// -- columns -----------------------------------------------------------------
+
+/// **Too wide, the widest column gives first**, a cell at a time, and none
+/// goes below the floor — so a long path is cut before a short name is.
+#[test]
+fn columns_fit_by_taking_from_the_widest() {
+    let c = fresh_ui::Columns::new(vec![10, 40, 8], 6);
+    assert_eq!(c.fit(58), vec![10, 40, 8], "room enough: natural widths");
+    assert_eq!(c.fit(46), vec![10, 28, 8], "the widest gives");
+    assert_eq!(
+        c.fit(20),
+        vec![6, 7, 7],
+        "until it fits, ties from the left"
+    );
+    assert_eq!(c.fit(10), vec![6, 6, 6], "and never below the floor");
+    assert_eq!(
+        fresh_ui::Columns::new(vec![4, 30], 6).fit(12),
+        vec![4, 8],
+        "a column narrower than the floor is left as it is"
+    );
+}
+
+/// **Rows that share columns line their cells up**, whatever each cell's own
+/// text is, and a cell too wide for its column is cut the way its text says.
+#[test]
+fn rows_sharing_columns_line_their_cells_up() {
+    use fresh_ui::{Columns, Elide};
+    use std::rc::Rc;
+    let cols = Rc::new(Columns::new(vec![6, 12], 3));
+    let r = |a: (&'static str, &'static str), b: (&'static str, &'static str)| {
+        row()
+            .h(Sizing::Cells(1))
+            .gap(2)
+            .columns(cols.clone())
+            .children([text(a.1).key(a.0), text(b.1).elide(Elide::Head).key(b.0)])
+    };
+    let mut ui = ui();
+    ui.frame(
+        col().w(Sizing::Cells(16)).children([
+            r(("xa", "ab"), ("xb", "/p")),
+            r(("ya", "abcdef"), ("yb", "/src/project")),
+        ]),
+        FRAME,
+    );
+    let rect = |k: &'static str| ui.rect_of(ui.find_by_key(&Key::from(k)).unwrap());
+    // 16 cells less one gap of 2 is 14 for 6 + 12: the path column gives 4.
+    assert_eq!((rect("xa").x, rect("xa").w), (0, 6));
+    assert_eq!((rect("xb").x, rect("xb").w), (8, 8));
+    assert_eq!(
+        (rect("ya").x, rect("ya").w),
+        (0, 6),
+        "the same column on every row"
+    );
+    assert_eq!((rect("yb").x, rect("yb").w), (8, 8));
+    let painted = format!("{:?}", ui.spec().items);
+    assert!(
+        painted.contains("…project"),
+        "a path keeps its tail: {painted}"
+    );
 }

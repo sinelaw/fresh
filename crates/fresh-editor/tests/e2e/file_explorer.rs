@@ -3799,6 +3799,60 @@ fn test_file_explorer_side_right() {
     );
 }
 
+/// With the explorer on the right, the resize grip sits on its LEFT wall —
+/// the one facing the editor — and dragging it left widens the column.
+#[test]
+fn test_file_explorer_side_right_border_drag_resizes() {
+    use fresh::config::{Config, ExplorerWidth, FileExplorerSide};
+
+    let mut config = Config::default();
+    config.file_explorer.side = FileExplorerSide::Right;
+    config.file_explorer.width = ExplorerWidth::Columns(30);
+
+    let mut harness = EditorTestHarness::with_temp_project_and_config(120, 40, config).unwrap();
+    let project_root = harness.project_dir().unwrap();
+    fs::write(project_root.join("test.txt"), "test").unwrap();
+
+    harness.editor_mut().focus_file_explorer();
+    harness.wait_for_file_explorer().unwrap();
+    harness.render().unwrap();
+
+    let right_col = find_explorer_border_col(&harness);
+    assert_eq!(
+        right_col, 119,
+        "explorer should be flush with the right edge"
+    );
+    let left_col = right_col - 29;
+    assert_eq!(
+        harness.get_row_text(15).chars().nth(left_col as usize),
+        Some('│'),
+        "expected the explorer's left wall at col {}.\nScreen:\n{}",
+        left_col,
+        harness.screen_to_string()
+    );
+
+    // Dragging the outer (terminal-edge) wall must do nothing.
+    harness
+        .mouse_drag(right_col, 15, right_col - 10, 15)
+        .unwrap();
+    assert_eq!(
+        harness.editor().active_window().file_explorer_width,
+        ExplorerWidth::Columns(30),
+        "the outer wall is not a grip.\nScreen:\n{}",
+        harness.screen_to_string()
+    );
+
+    // Dragging the inner wall toward the editor widens the column.
+    harness.mouse_drag(left_col, 15, left_col - 10, 15).unwrap();
+    assert_eq!(
+        harness.editor().active_window().file_explorer_width,
+        ExplorerWidth::Columns(40),
+        "dragging the inner wall left should widen the explorer.\nScreen:\n{}",
+        harness.screen_to_string()
+    );
+    assert_eq!(find_explorer_border_col(&harness), 119);
+}
+
 /// Test that workspace serialization correctly persists file explorer side
 #[test]
 fn test_file_explorer_side_workspace_serialization() {
@@ -4147,16 +4201,6 @@ fn test_file_explorer_duplicate_refreshes_git_decorations() {
                 .any(|line| line.contains("alpha copy.txt") && line.contains('U'))
         })
         .unwrap();
-}
-
-/// Returns `true` when `name` appears on a screen line that also contains a
-/// tree connector, matching the existing `wait_for_file_explorer_item`
-/// heuristic. Reads only rendered output.
-fn explorer_tree_contains(harness: &EditorTestHarness, name: &str) -> bool {
-    harness
-        .screen_to_string()
-        .lines()
-        .any(|line| line.contains(name) && line.contains('│'))
 }
 
 /// The file-explorer sidebar's content rectangle, located from the panel's

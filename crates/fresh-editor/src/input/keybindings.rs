@@ -1615,6 +1615,9 @@ pub enum ChordResolution {
     NoMatch,
 }
 
+/// Multi-key chords, per context: the key sequence and what it runs.
+type ChordBindings = HashMap<KeyContext, HashMap<Vec<(KeyCode, KeyModifiers)>, Action>>;
+
 /// Resolves key events to actions based on configuration
 #[derive(Clone)]
 pub struct KeybindingResolver {
@@ -1631,13 +1634,13 @@ pub struct KeybindingResolver {
 
     /// Chord bindings (multi-key sequences)
     /// Maps context -> sequence -> action
-    chord_bindings: HashMap<KeyContext, HashMap<Vec<(KeyCode, KeyModifiers)>, Action>>,
+    chord_bindings: ChordBindings,
 
     /// Default chord bindings for each context
-    default_chord_bindings: HashMap<KeyContext, HashMap<Vec<(KeyCode, KeyModifiers)>, Action>>,
+    default_chord_bindings: ChordBindings,
 
     /// Plugin default chord bindings (for mode chord bindings from defineMode)
-    plugin_chord_defaults: HashMap<KeyContext, HashMap<Vec<(KeyCode, KeyModifiers)>, Action>>,
+    plugin_chord_defaults: ChordBindings,
 
     /// Entries of `default_bindings` that were not written by the keymap
     /// itself but synthesized by [`terminal_key_equivalents`] (e.g. the
@@ -1658,6 +1661,20 @@ pub struct KeybindingResolver {
     /// bindings (motion, selection, copy). Populated by `defineMode` when
     /// `inheritNormalBindings: true`.
     inheriting_modes: std::collections::HashSet<String>,
+
+    /// Per plugin mode, the keys `defineMode` declared as **dialog-wide
+    /// shortcuts** (a binding's third element, `"shortcut"`). A panel's
+    /// focused control handles a key before the panel's mode does; these few
+    /// are the exception, resolved on the panel's capture leg ahead of any
+    /// control (`view::shell::panel::Keymap`). Ctrl+Enter "submit from
+    /// anywhere" is the model case.
+    mode_shortcuts: HashMap<String, std::collections::HashSet<(KeyCode, KeyModifiers)>>,
+
+    /// Per plugin mode, bindings `defineMode` scoped to named controls (a
+    /// binding's third element `"on:a,b"`): the binding applies only while
+    /// one of those widgets holds the panel's focus, and every other control
+    /// leaves the key to the panel's defaults as if it were unbound.
+    mode_binding_scopes: HashMap<String, HashMap<(KeyCode, KeyModifiers), Vec<String>>>,
 
     /// Mirror of `editor.menu_bar_mnemonics`. When false, the menu-bar
     /// mnemonic bindings (`Alt+letter → menu_open`) are suppressed at
@@ -1736,6 +1753,8 @@ impl KeybindingResolver {
             removed_bindings: std::collections::HashSet::new(),
             removed_chords: std::collections::HashSet::new(),
             inheriting_modes: std::collections::HashSet::new(),
+            mode_shortcuts: HashMap::new(),
+            mode_binding_scopes: HashMap::new(),
             menu_mnemonics_enabled: config.editor.menu_bar_mnemonics,
         };
 
@@ -1771,6 +1790,8 @@ impl KeybindingResolver {
         rebuilt.plugin_defaults = std::mem::take(&mut self.plugin_defaults);
         rebuilt.plugin_chord_defaults = std::mem::take(&mut self.plugin_chord_defaults);
         rebuilt.inheriting_modes = std::mem::take(&mut self.inheriting_modes);
+        rebuilt.mode_shortcuts = std::mem::take(&mut self.mode_shortcuts);
+        rebuilt.mode_binding_scopes = std::mem::take(&mut self.mode_binding_scopes);
         // The carried-over plugin bindings were filtered against the *old*
         // config's removals; apply the new one's `unbind` entries to them.
         rebuilt.prune_removed_plugin_bindings();
@@ -2062,6 +2083,56 @@ impl KeybindingResolver {
         self.plugin_defaults.remove(&context);
         self.plugin_chord_defaults.remove(&context);
         self.inheriting_modes.remove(mode_name);
+        self.mode_shortcuts.remove(mode_name);
+        self.mode_binding_scopes.remove(mode_name);
+    }
+
+    /// Scope a binding of plugin mode `mode_name` to the controls named
+    /// `widgets`. See [`Self::mode_binding_scope`].
+    pub fn set_mode_binding_scope(
+        &mut self,
+        mode_name: &str,
+        key_code: KeyCode,
+        modifiers: KeyModifiers,
+        widgets: Vec<String>,
+    ) {
+        self.mode_binding_scopes
+            .entry(mode_name.to_string())
+            .or_default()
+            .insert(normalize_key(key_code, modifiers), widgets);
+    }
+
+    /// The controls a binding of `mode_name` is scoped to, when it is: the
+    /// binding applies only while one of them holds the panel's focus.
+    pub fn mode_binding_scope(&self, mode_name: &str, event: &KeyEvent) -> Option<&[String]> {
+        self.mode_binding_scopes
+            .get(mode_name)
+            .and_then(|m| m.get(&normalize_key(event.code, event.modifiers)))
+            .map(Vec::as_slice)
+    }
+
+    /// Declare `(key_code, modifiers)` a dialog-wide shortcut of plugin mode
+    /// `mode_name`: it runs ahead of the focused control. See
+    /// [`Self::is_mode_shortcut`].
+    pub fn set_mode_shortcut(
+        &mut self,
+        mode_name: &str,
+        key_code: KeyCode,
+        modifiers: KeyModifiers,
+    ) {
+        self.mode_shortcuts
+            .entry(mode_name.to_string())
+            .or_default()
+            .insert(normalize_key(key_code, modifiers));
+    }
+
+    /// Whether `mode_name` declared this key a dialog-wide shortcut — one the
+    /// panel's keymap takes before the widget holding focus sees it. Every
+    /// other binding of the mode gets only what the focused control leaves.
+    pub fn is_mode_shortcut(&self, mode_name: &str, event: &KeyEvent) -> bool {
+        self.mode_shortcuts
+            .get(mode_name)
+            .is_some_and(|keys| keys.contains(&normalize_key(event.code, event.modifiers)))
     }
 
     /// Mark (or unmark) a plugin mode as inheriting Normal-context bindings
@@ -2278,10 +2349,7 @@ impl KeybindingResolver {
         }
     }
 
-    fn chord_map(
-        &self,
-        source: BindingSource,
-    ) -> &HashMap<KeyContext, HashMap<Vec<(KeyCode, KeyModifiers)>, Action>> {
+    fn chord_map(&self, source: BindingSource) -> &ChordBindings {
         match source {
             BindingSource::Custom => &self.chord_bindings,
             BindingSource::Default => &self.default_chord_bindings,
@@ -2568,6 +2636,7 @@ impl KeybindingResolver {
     /// "did someone *explicitly* claim this key for this mode"
     /// check used by `dispatch_floating_widget_key` to decide
     /// whether to let mode dispatch override its smart-key defaults.
+    #[cfg(test)]
     pub fn has_explicit_binding(&self, event: &KeyEvent, context: &KeyContext) -> bool {
         self.explicit_binding(event, context).is_some()
     }
@@ -2591,6 +2660,36 @@ impl KeybindingResolver {
         .find_map(|table| table.get(context).and_then(|b| b.get(&norm)).cloned())
     }
 
+    /// Whether anything in `context` binds `event` for itself: a binding
+    /// that resolves to an action, a `noop` that disables the key there, or a
+    /// live chord the key starts. [`Self::resolve`] alone answers
+    /// `Action::None` for both "unbound" and `noop`, and never looks at
+    /// chords.
+    ///
+    /// The resolver's "nothing bound, just type it" answer
+    /// ([`Action::InsertChar`] for a character with
+    /// [`is_text_input_modifier`] modifiers in a text context) does not
+    /// count. That answer includes Ctrl+Alt+<char> on Windows, where it is
+    /// how AltGr arrives from crossterm and the GUI. A key the VT input
+    /// parser reported as Ctrl+Alt+<char> is ESC plus a control byte instead
+    /// — there AltGr text arrives as the character it types — so for such a
+    /// key the question is only whether something binds it.
+    pub fn binds_key(&self, event: &KeyEvent, context: &KeyContext) -> bool {
+        let norm = normalize_key(event.code, event.modifiers);
+        let resolved = !matches!(
+            self.resolve(event, context.clone()),
+            Action::None | Action::InsertChar(_)
+        );
+        resolved
+            || self.probe_order(context).iter().any(|(source, ctx)| {
+                self.single_key_map(*source)
+                    .get(ctx)
+                    .and_then(|bindings| bindings.get(&norm))
+                    .is_some_and(|action| !self.is_suppressed(&norm, action))
+            })
+            || self.resolve_chord(&[], event, context.clone()) != ChordResolution::NoMatch
+    }
+
     /// Resolve a key event to a UI action for terminal mode.
     /// Only returns actions the terminal yields to the editor
     /// ([`Self::is_terminal_ui_action`]).
@@ -2603,16 +2702,25 @@ impl KeybindingResolver {
             event.modifiers
         );
 
-        // Check Terminal context bindings first (highest priority for terminal mode)
-        for bindings in [&self.bindings, &self.default_bindings] {
-            if let Some(terminal_bindings) = bindings.get(&KeyContext::Terminal) {
-                if let Some(action) = terminal_bindings.get(&norm) {
-                    if Self::is_terminal_ui_action(action) {
-                        tracing::trace!("  -> Found UI action in terminal bindings: {:?}", action);
-                        return action.clone();
-                    }
-                }
+        // Check Terminal context bindings first (highest priority for terminal
+        // mode). A key bound in the Terminal context itself ends the lookup:
+        // the user's binding first, then the keymap's. One that is not a UI
+        // action — notably a `noop` override — leaves the key to the PTY
+        // rather than falling through to a Global/Normal binding (issue
+        // #3270: `noop` on Ctrl+Q in `terminal` still quit the editor).
+        if let Some(action) = [&self.bindings, &self.default_bindings]
+            .into_iter()
+            .find_map(|bindings| bindings.get(&KeyContext::Terminal)?.get(&norm))
+        {
+            if Self::is_terminal_ui_action(action) {
+                tracing::trace!("  -> Found UI action in terminal bindings: {:?}", action);
+                return action.clone();
             }
+            tracing::trace!(
+                "  -> Terminal binding {:?} leaves the key to the PTY",
+                action
+            );
+            return Action::None;
         }
 
         // Check Global bindings (work in all contexts)
@@ -4715,8 +4823,10 @@ mod tests {
         // keymap, which deliberately binds Alt+F to word movement in Normal —
         // that context-specific binding outranks the File mnemonic there, so
         // the mnemonic assertions below only hold on the default keymap.
-        let mut baseline = Config::default();
-        baseline.active_keybinding_map = "default".into();
+        let baseline = Config {
+            active_keybinding_map: "default".into(),
+            ..Default::default()
+        };
 
         // Baseline: with no user override, Alt+H is the Help menu mnemonic
         // (a default *global* binding).
@@ -4833,8 +4943,10 @@ mod tests {
     fn test_chord_prefix_user_single_key_outranks_keymap() {
         use crate::config::Keybinding;
 
-        let mut baseline = Config::default();
-        baseline.active_keybinding_map = "emacs".into();
+        let baseline = Config {
+            active_keybinding_map: "emacs".into(),
+            ..Default::default()
+        };
         let alt_g = KeyEvent::new(KeyCode::Char('g'), KeyModifiers::ALT);
         let alt_g_single = |action: &str, when: &str| -> Keybinding {
             serde_json::from_value(serde_json::json!({
@@ -4917,8 +5029,10 @@ mod tests {
     fn test_chord_prefix_released_by_noop_override() {
         use crate::config::Keybinding;
 
-        let mut baseline = Config::default();
-        baseline.active_keybinding_map = "emacs".into();
+        let baseline = Config {
+            active_keybinding_map: "emacs".into(),
+            ..Default::default()
+        };
         let alt_g = KeyEvent::new(KeyCode::Char('g'), KeyModifiers::ALT);
         let g = KeyEvent::new(KeyCode::Char('g'), KeyModifiers::NONE);
         let alt_g_state = [(KeyCode::Char('g'), KeyModifiers::ALT)];
@@ -5034,8 +5148,10 @@ mod tests {
     fn test_unbind_removes_keymap_chord_and_releases_prefix() {
         use crate::config::Keybinding;
 
-        let mut config = Config::default();
-        config.active_keybinding_map = "emacs".into();
+        let mut config = Config {
+            active_keybinding_map: "emacs".into(),
+            ..Default::default()
+        };
         let alt_g = KeyEvent::new(KeyCode::Char('g'), KeyModifiers::ALT);
         let g = KeyEvent::new(KeyCode::Char('g'), KeyModifiers::NONE);
         let alt_g_state = [(KeyCode::Char('g'), KeyModifiers::ALT)];
@@ -5083,8 +5199,10 @@ mod tests {
     /// firing from the terminal's own spelling of it.
     #[test]
     fn test_unbind_takes_terminal_aliases_along() {
-        let mut config = Config::default();
-        config.active_keybinding_map = "default".into();
+        let mut config = Config {
+            active_keybinding_map: "default".into(),
+            ..Default::default()
+        };
         let ctrl_slash = KeyEvent::new(KeyCode::Char('/'), KeyModifiers::CONTROL);
         let ctrl_7 = KeyEvent::new(KeyCode::Char('7'), KeyModifiers::CONTROL);
 
@@ -5120,8 +5238,10 @@ mod tests {
     fn test_unbind_outlives_plugin_registration_and_reload() {
         let ctx = KeyContext::Mode("nav".to_string());
         let j = KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE);
-        let mut removed = Config::default();
-        removed.active_keybinding_map = "default".into();
+        let mut removed = Config {
+            active_keybinding_map: "default".into(),
+            ..Default::default()
+        };
         removed.keybindings.push(
             serde_json::from_value(serde_json::json!({
                 "key": "j", "action": "unbind", "when": "mode:nav"
@@ -5136,8 +5256,10 @@ mod tests {
             "a plugin must not re-register a removed key"
         );
 
-        let mut pristine = Config::default();
-        pristine.active_keybinding_map = "default".into();
+        let pristine = Config {
+            active_keybinding_map: "default".into(),
+            ..Default::default()
+        };
         let mut resolver = KeybindingResolver::new(&pristine);
         resolver.load_plugin_default(ctx.clone(), j.code, j.modifiers, Action::MoveDown);
         assert!(resolver.has_explicit_binding(&j, &ctx));
@@ -5157,8 +5279,10 @@ mod tests {
     fn test_default_prompt_bindings_outrank_menu_mnemonics() {
         // Pin the keymap so the assertions don't depend on the host OS
         // (macOS defaults to the macos keymap).
-        let mut config = Config::default();
-        config.active_keybinding_map = "default".into();
+        let config = Config {
+            active_keybinding_map: "default".into(),
+            ..Default::default()
+        };
         let resolver = KeybindingResolver::new(&config);
 
         // Alt+G: `live_grep_toggle_regex` (prompt) vs `menu_open Go` (global).
@@ -5203,8 +5327,10 @@ mod tests {
         // Pin the keymap: on macOS `Config::default()` selects the macos
         // keymap, whose own `normal` Alt+F word-movement binding would
         // resolve here (correctly) instead of Action::None.
-        let mut baseline = Config::default();
-        baseline.active_keybinding_map = "default".into();
+        let mut baseline = Config {
+            active_keybinding_map: "default".into(),
+            ..Default::default()
+        };
         baseline.editor.menu_bar_mnemonics = false;
 
         let resolver = KeybindingResolver::new(&baseline);
@@ -5543,8 +5669,10 @@ mod tests {
     #[test]
     fn test_builtin_keymap_bindings_are_reachable() {
         for map_name in crate::config::KeybindingMapName::BUILTIN_OPTIONS {
-            let mut config = Config::default();
-            config.active_keybinding_map = (*map_name).into();
+            let config = Config {
+                active_keybinding_map: (*map_name).into(),
+                ..Default::default()
+            };
             let resolver = KeybindingResolver::new(&config);
 
             for (context, bindings) in &resolver.default_bindings {
@@ -5617,6 +5745,7 @@ mod tests {
             "live_grep_toggle_diagnostics",
             "live_grep_toggle_word",
             "live_grep_toggle_regex",
+            "live_grep_toggle_case",
             // Export current Live Grep results to the Quickfix dock panel
             // — handled by the live_grep plugin (Finder panel), dispatched
             // as a plugin action from the prompt context.
@@ -6138,5 +6267,27 @@ mod tests {
         {
             assert_eq!(name, &name.to_lowercase(), "{name:?} is not lowercase");
         }
+    }
+
+    /// Only a binding, a `noop` or a chord binds a key; typing it doesn't.
+    /// On Windows, Ctrl+Alt+<char> is typed (AltGr), yet an unbound
+    /// Ctrl+Alt+J — ESC LF, from the input parser — must still be free to
+    /// read as Alt+Enter (`router::ctrl_j_reading`).
+    #[test]
+    fn typing_a_key_does_not_bind_it() {
+        let config = Config {
+            active_keybinding_map: "default".into(),
+            ..Config::default()
+        };
+        let resolver = KeybindingResolver::new(&config);
+        let typed = KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE);
+        assert!(!resolver.binds_key(&typed, &KeyContext::Normal));
+        let ctrl_alt_j = KeyEvent::new(
+            KeyCode::Char('j'),
+            KeyModifiers::CONTROL | KeyModifiers::ALT,
+        );
+        assert!(!resolver.binds_key(&ctrl_alt_j, &KeyContext::Normal));
+        let bound = KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL);
+        assert!(resolver.binds_key(&bound, &KeyContext::Normal));
     }
 }

@@ -18,7 +18,7 @@
 //! ### Mutation Operations
 //! - `insert_bytes(offset, text: Vec<u8>)` - Insert bytes at position
 //! - `delete_bytes(offset, bytes: usize)` - Delete bytes starting at position
-//! - `save_to_file(path)` - Persist buffer to disk
+//! - `save_to_file(path, recovery_dir)` - Persist buffer to disk
 //! - `load_from_file(path)` - Load buffer from disk
 //!
 //! ### Query Operations
@@ -90,8 +90,22 @@ impl FileSystem for ConfigurableFileSystem {
         self.inner.write_file(path, data)
     }
 
+    fn replace_file_preserving_identity(
+        &self,
+        path: &Path,
+        data: &[u8],
+    ) -> Result<(), fresh::model::filesystem::ReplaceError> {
+        self.inner.replace_file_preserving_identity(path, data)
+    }
+
     fn create_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
         self.inner.create_file(path)
+    }
+    fn create_new_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
+        self.inner.create_new_file(path)
+    }
+    fn create_new_private_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
+        self.inner.create_new_private_file(path)
     }
 
     fn open_file(&self, path: &Path) -> io::Result<Box<dyn FileReader>> {
@@ -388,8 +402,12 @@ impl TextBufferSUT {
         self.buffer.replace_content(content);
     }
 
-    fn save_to_file(&mut self, path: &std::path::Path) -> anyhow::Result<()> {
-        self.buffer.save_to_file(path)
+    fn save_to_file(
+        &mut self,
+        path: &std::path::Path,
+        recovery_dir: &std::path::Path,
+    ) -> anyhow::Result<()> {
+        self.buffer.save_to_file(path, recovery_dir)
     }
 
     fn content_string(&self) -> String {
@@ -480,6 +498,8 @@ struct TestContext {
     model: ShadowModel,
     sut: TextBufferSUT,
     fs: Arc<ConfigurableFileSystem>,
+    /// Where saves of a file we don't own stage (in `_temp_dir`).
+    recovery_dir: PathBuf,
     _temp_dir: TempDir,
     save_path: PathBuf,
     step: usize,
@@ -516,6 +536,7 @@ impl TestContext {
     ) -> Self {
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
         let save_path = temp_dir.path().join("buffer.txt");
+        let recovery_dir = temp_dir.path().join("recovery");
         let fs = Arc::new(ConfigurableFileSystem::new(simulate_owner));
 
         let (model, sut) = if content.is_empty() {
@@ -531,6 +552,7 @@ impl TestContext {
             model,
             sut,
             fs,
+            recovery_dir,
             _temp_dir: temp_dir,
             save_path,
             step: 0,
@@ -581,7 +603,7 @@ impl TestContext {
                     // Create file as owner first
                     self.fs.set_owner(true);
                     self.sut
-                        .save_to_file(&self.save_path)
+                        .save_to_file(&self.save_path, &self.recovery_dir)
                         .map_err(|e| format!("Initial save failed: {}", e))?;
                     self.file_exists = true;
 
@@ -606,7 +628,7 @@ impl TestContext {
                         was_owner, self.file_exists, is_large
                     ));
                     self.sut
-                        .save_to_file(&self.save_path)
+                        .save_to_file(&self.save_path, &self.recovery_dir)
                         .map_err(|e| format!("Save failed: {}", e))?;
                     self.file_exists = true;
 
@@ -1082,7 +1104,8 @@ fn test_large_file_mode_with_edits() {
     assert_eq!(content, b"STARTAAABBBCCC");
 
     // Save the file
-    sut.save_to_file(&file_path).expect("Save should succeed");
+    sut.save_to_file(&file_path, &temp_dir.path().join("recovery"))
+        .expect("Save should succeed");
 
     // Verify saved content
     let saved = std::fs::read(&file_path).unwrap();
@@ -1129,7 +1152,7 @@ fn test_large_file_inplace_write() {
 
     // Save - this uses in-place write because we don't "own" the file
     // The bug would cause this to corrupt the file by truncating before reading Copy chunks
-    sut.save_to_file(&file_path)
+    sut.save_to_file(&file_path, &temp_dir.path().join("recovery"))
         .expect("Save should succeed without corruption");
 
     // Verify the saved content is correct

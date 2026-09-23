@@ -5,6 +5,7 @@
 
 use super::items::SettingControl;
 use super::state::{FocusPanel, FocusTarget, SettingsState};
+use super::surface::SettingsSurface;
 use crate::input::handler::{DeferredAction, InputContext, InputHandler, InputResult};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
@@ -640,11 +641,11 @@ impl SettingsState {
             T::Next => self.select_next(),
             // Page up and down in the tree scroll by viewport height.
             T::PageUp => {
-                let viewport = self.categories_scroll.scroll.viewport.max(1) as i32;
+                let viewport = self.tree_page_rows.max(1) as i32;
                 self.tree_step(-viewport);
             }
             T::PageDown => {
-                let viewport = self.categories_scroll.scroll.viewport.max(1) as i32;
+                let viewport = self.tree_page_rows.max(1) as i32;
                 self.tree_step(viewport);
             }
             T::First => {

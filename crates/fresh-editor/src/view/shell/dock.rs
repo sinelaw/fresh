@@ -712,8 +712,10 @@ mod tests {
     /// reachable.
     ///
     /// The layer names the interior as its scope now. This asserts both halves:
-    /// the ring is the panel's widgets, and Tab moves along it rather than
-    /// being claimed by a sink.
+    /// the ring is the panel's widgets, and Tab reaches the runtime — where the
+    /// focused control answers it first (a field accepting a suggestion) and
+    /// what it leaves moves focus along that ring with `Ui::move_focus`
+    /// (`Editor::advance_panel_focus_in_tree`).
     #[test]
     fn tab_in_a_focused_dock_steps_along_the_widgets() {
         let mut ui = described_with_buttons();
@@ -731,21 +733,27 @@ mod tests {
             "the ring is the panel's two buttons, not a sink: {ring:?}"
         );
 
-        // Focus lands inside the scope, and Tab moves it to the other control
-        // rather than being swallowed.
         let first = ui.focused().expect("the scope took focus");
         let got = ui.dispatch(fresh_ui::Input::Key(fresh_ui::KeyPress {
             code: fresh_ui::KeyCode::Tab,
             mods: fresh_ui::Mods::NONE,
         }));
-        assert_ne!(ui.focused(), Some(first), "Tab moved focus");
         assert!(
-            !got.msgs.iter().any(|m| matches!(
+            got.msgs.iter().any(|m| matches!(
                 m,
                 UiMsg::Ui(UiFact::PanelKey(super::super::widgets::Slot::Dock))
             )),
-            "Tab was resolved by the tree, not handed to the runtime: {:?}",
+            "Tab is handed to the runtime, the focused control's first: {:?}",
             got.msgs
+        );
+        assert!(
+            ui.move_focus(fresh_ui::FocusDir::Next),
+            "the ring has a next stop"
+        );
+        assert_ne!(
+            ui.focused(),
+            Some(first),
+            "and the runtime's move reaches it"
         );
     }
 
@@ -805,11 +813,19 @@ mod tests {
     fn an_imperative_move_reports_the_new_holder() {
         let mut ui = described_with_buttons();
         // The interior names no focused widget, so the frame rested focus on
-        // the scope itself and said nothing — "nothing focused" is a state
-        // the description carries, not a gain the registry is told about.
+        // the scope itself and named no widget — "nothing focused" is a state
+        // the description carries, not a gain the registry is told about. The
+        // one thing it does say is that the dock's keyboard is where the keys
+        // go now (focus entered the interior).
         let settled = ui.take_messages();
         assert!(
-            settled.is_empty(),
+            matches!(
+                settled.as_slice(),
+                [UiMsg::Ui(UiFact::PanelKeyboard {
+                    slot: super::super::widgets::Slot::Dock,
+                    held: true,
+                })]
+            ),
             "nothing named, nothing gained: the frame rested on the scope"
         );
         let first = ui.focused().expect("the scope took focus");
@@ -833,11 +849,10 @@ mod tests {
             .take_messages()
             .into_iter()
             .filter_map(|m| match m {
-                UiMsg::Ui(UiFact::WidgetFocus { slot, widget })
-                    if slot == super::super::widgets::Slot::Dock =>
-                {
-                    Some(widget)
-                }
+                UiMsg::Ui(UiFact::WidgetFocus {
+                    slot: super::super::widgets::Slot::Dock,
+                    widget,
+                }) => Some(widget),
                 _ => None,
             })
             .collect();

@@ -6,6 +6,10 @@ pub mod agent_dev_loop;
 pub mod asm_lsp_config;
 pub mod audit_mode;
 pub mod authority_snapshot;
+#[cfg(unix)]
+pub mod background_process_kill;
+#[cfg(unix)]
+pub mod background_process_running;
 pub mod buffer_info_splits;
 pub mod command_keybinding_editor;
 pub mod config_changed_adoption;
@@ -55,6 +59,7 @@ pub mod lsp_navigation;
 pub mod markdown_source;
 pub mod orchestrator_attach_worktree;
 pub mod orchestrator_discover_sessions;
+pub mod orchestrator_machines;
 pub mod orchestrator_new_dialog;
 pub mod orchestrator_new_session_renders;
 pub mod orchestrator_open_cross_project;

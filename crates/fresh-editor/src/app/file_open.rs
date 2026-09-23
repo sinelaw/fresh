@@ -503,12 +503,6 @@ impl FileOpenState {
         self.sort_entries();
     }
 
-    /// Toggle hidden files visibility
-    pub fn toggle_hidden(&mut self) {
-        self.show_hidden = !self.show_hidden;
-        // Need to reload directory to apply this change
-    }
-
     /// Toggle encoding detection mode
     pub fn toggle_detect_encoding(&mut self) {
         self.detect_encoding = !self.detect_encoding;
@@ -605,27 +599,10 @@ impl FileOpenState {
         }
     }
 
-    /// Switch between navigation and files sections
-    pub fn switch_section(&mut self) {
-        self.active_section = match self.active_section {
-            FileOpenSection::Navigation => FileOpenSection::Files,
-            FileOpenSection::Files => FileOpenSection::Navigation,
-        };
-    }
-
     /// Get the currently selected entry (file or directory)
     pub fn selected_entry(&self) -> Option<&FileOpenEntry> {
         if self.active_section == FileOpenSection::Files {
             self.selected_index.and_then(|idx| self.entries.get(idx))
-        } else {
-            None
-        }
-    }
-
-    /// Get the currently selected shortcut
-    pub fn selected_shortcut_entry(&self) -> Option<&NavigationShortcut> {
-        if self.active_section == FileOpenSection::Navigation {
-            self.shortcuts.get(self.selected_shortcut)
         } else {
             None
         }
@@ -658,6 +635,7 @@ impl FileOpenState {
     }
 
     /// Count matching entries
+    #[cfg(test)]
     pub fn matching_count(&self) -> usize {
         self.entries.iter().filter(|e| e.matches_filter).count()
     }

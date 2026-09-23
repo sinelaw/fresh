@@ -406,13 +406,7 @@ impl Editor {
         }
 
         let buffer_id = self.active_buffer();
-        let split_id = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(mgr, _)| mgr)
-            .expect("active window must have a populated split layout")
-            .active_split();
+        let split_id = self.active_window().split_manager().active_split();
         let (cursor_id, position, anchor, sticky_column) = {
             let cursors = self.active_cursors();
             let primary = cursors.primary();
@@ -424,7 +418,7 @@ impl Editor {
             )
         };
         let (viewport_top_byte, viewport_top_view_line_offset, viewport_left_column) = {
-            let vp = self.active_viewport();
+            let vp = self.active_window().active_viewport();
             (vp.top_byte(), vp.top_view_line_offset(), vp.left_column)
         };
 
@@ -461,14 +455,7 @@ impl Editor {
         // If the active buffer/split has changed (shouldn't happen during a
         // quick-open prompt, but be defensive), just drop the snapshot.
         if self.active_buffer() != snap.buffer_id
-            || self
-                .windows
-                .get(&self.active_window)
-                .and_then(|w| w.buffers.splits())
-                .map(|(mgr, _)| mgr)
-                .expect("active window must have a populated split layout")
-                .active_split()
-                != snap.split_id
+            || self.active_window().split_manager().active_split() != snap.split_id
         {
             return;
         }
@@ -497,9 +484,7 @@ impl Editor {
 
         if let Some(view_state) = self
             .active_window_mut()
-            .buffers
             .splits_mut()
-            .expect("active window must have a populated split layout")
             .1
             .get_mut(&snap.split_id)
         {
@@ -824,47 +809,6 @@ impl Editor {
         }
     }
 
-    /// Snapshot the current prompt's suggestions as a list of
-    /// `GrepMatch` records, so Resume can re-display them without
-    /// re-running ripgrep and Quickfix export can hand them to the
-    /// Utility Dock. Parses each suggestion's text as
-    /// `path:line[:col]` (the format the live_grep finder emits).
-    pub(crate) fn snapshot_prompt_results_for_grep(
-        &self,
-        prompt: &crate::view::prompt::Prompt,
-    ) -> Vec<crate::services::live_grep_state::GrepMatch> {
-        use crate::input::quick_open::parse_path_line_col;
-        // Suggestions emitted by the Finder library use `value` as an
-        // opaque index (`"0"`, `"1"`, …) and put `path:line[:col]` in
-        // `text`. Parse `text` first; fall back to `value` only if
-        // `text` lacks a path-shaped segment (a Resume-replay where
-        // we previously stored `path:line:col` in `value` directly).
-        prompt
-            .suggestions
-            .iter()
-            .filter(|s| !s.disabled)
-            .filter_map(|s| {
-                let from_text = parse_path_line_col(&s.text);
-                let (file, line, column) = if !from_text.0.is_empty() && from_text.1.is_some() {
-                    from_text
-                } else if let Some(v) = s.value.as_deref() {
-                    parse_path_line_col(v)
-                } else {
-                    from_text
-                };
-                if file.is_empty() {
-                    return None;
-                }
-                Some(crate::services::live_grep_state::GrepMatch {
-                    file,
-                    line: line.unwrap_or(1),
-                    column: column.unwrap_or(1),
-                    content: s.description.clone().unwrap_or_default(),
-                })
-            })
-            .collect()
-    }
-
     /// Cancel the current prompt and return to normal mode
     pub fn cancel_prompt(&mut self) {
         // Extract theme to restore if this is a SelectTheme prompt
@@ -880,7 +824,7 @@ impl Editor {
 
         // Determine prompt type and reset appropriate history navigation.
         // Clone the prompt so subsequent self.X mutations (history,
-        // plugin hooks, file_open_state, live_grep_last_state) don't
+        // plugin hooks, file_open_state) don't
         // conflict with the borrow on self.active_window().prompt.
         let prompt_clone = self.active_window().prompt.clone();
         if let Some(prompt) = prompt_clone {
@@ -905,45 +849,6 @@ impl Editor {
                             input: prompt.input_str().to_string(),
                         },
                     );
-                    // Capture Live Grep state on cancel for Resume
-                    // (Action::ResumeLiveGrep) — reads from
-                    // editor.live_grep_last_state. Detection by
-                    // custom_type rather than dedicated PromptType
-                    // because the live_grep plugin drives the prompt.
-                    if custom_type == "live-grep" {
-                        let cached = self.snapshot_prompt_results_for_grep(prompt);
-                        // Only cache when there's something useful to
-                        // resume — dismissing the prompt before
-                        // typing or before any results streamed in
-                        // shouldn't mark the cache as "valid", or
-                        // Resume sees `cached_results.is_some()`
-                        // (empty Vec) and enters the restore branch
-                        // with zero entries, producing an empty
-                        // popup.
-                        if !prompt.input_str().is_empty() && !cached.is_empty() {
-                            self.active_window_mut().live_grep_last_state =
-                                Some(crate::services::live_grep_state::LiveGrepLastState {
-                                    query: prompt.input_str().to_string(),
-                                    selected_index: prompt.selected_suggestion,
-                                    cached_results: Some(cached),
-                                    cached_at: Some(std::time::Instant::now()),
-                                    last_results_snapshot_id: None,
-                                });
-                        }
-                    }
-                }
-                PromptType::LiveGrep => {
-                    let cached = self.snapshot_prompt_results_for_grep(prompt);
-                    if !prompt.input_str().is_empty() && !cached.is_empty() {
-                        self.active_window_mut().live_grep_last_state =
-                            Some(crate::services::live_grep_state::LiveGrepLastState {
-                                query: prompt.input_str().to_string(),
-                                selected_index: prompt.selected_suggestion,
-                                cached_results: Some(cached),
-                                cached_at: Some(std::time::Instant::now()),
-                                last_results_snapshot_id: None,
-                            });
-                    }
                 }
                 PromptType::LspRename { overlay_handle, .. } => {
                     // Remove the rename overlay when cancelling
@@ -1040,52 +945,12 @@ impl Editor {
         }
     }
 
-    /// Handle mouse wheel scroll over a prompt's suggestion list (command
-    /// palette, Select Locale, quick open, every other bottom-anchored
-    /// dropdown).
-    ///
-    /// The wheel scrolls the **view only** — it never moves the selection.
-    /// That is the editor-wide rule (and what VS Code does): the highlighted
-    /// entry may scroll out of sight, and pressing Enter still commits it.
-    /// Wheeling used to walk `selected_suggestion` instead, which also
-    /// rewrote the prompt input under the user and — once the scrollbar
-    /// could latch the offset — made the list jump, because the wheel
-    /// released the latch and the renderer snapped the view back to a
-    /// selection that had never visibly moved.
-    ///
-    /// Returns true if scroll was handled, false if no prompt is active or has no suggestions.
-
     /// Get the confirmed input and prompt type, consuming the prompt
     /// For command palette, returns the selected suggestion if available, otherwise the raw input
     /// Returns (input, prompt_type, selected_index)
     /// Returns None if trying to confirm a disabled command
     pub fn confirm_prompt(&mut self) -> Option<(String, PromptType, Option<usize>)> {
         if let Some(prompt) = self.drop_prompt() {
-            // Capture Live Grep state on confirm too (issue #1796).
-            // `cancel_prompt` already does this; without it here,
-            // pressing Enter on a result jumps to the file but loses
-            // the Resume cache, so `Action::ResumeLiveGrep` then opens
-            // a fresh-empty popup instead of returning the user to
-            // their match list. Same gates as cancel: only cache when
-            // query and snapshot are both non-empty.
-            let is_live_grep = match &prompt.prompt_type {
-                PromptType::LiveGrep => true,
-                PromptType::Plugin { custom_type } => custom_type == "live-grep",
-                _ => false,
-            };
-            if is_live_grep {
-                let cached = self.snapshot_prompt_results_for_grep(&prompt);
-                if !prompt.input_str().is_empty() && !cached.is_empty() {
-                    self.active_window_mut().live_grep_last_state =
-                        Some(crate::services::live_grep_state::LiveGrepLastState {
-                            query: prompt.input_str().to_string(),
-                            selected_index: prompt.selected_suggestion,
-                            cached_results: Some(cached),
-                            cached_at: Some(std::time::Instant::now()),
-                            last_results_snapshot_id: None,
-                        });
-                }
-            }
             // Tear down the floating-overlay preview state on
             // confirm too — the user is committing to a result and
             // navigating to it, so the preview-only buffers should
@@ -1325,11 +1190,6 @@ impl Editor {
     /// Returns all error messages that were detected in plugin status messages
     pub fn get_plugin_errors(&self) -> &[String] {
         &self.active_window().plugin_errors
-    }
-
-    /// Clear accumulated plugin errors
-    pub fn clear_plugin_errors(&mut self) {
-        self.active_window_mut().plugin_errors.clear();
     }
 
     /// Update prompt suggestions based on current input

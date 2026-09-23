@@ -15,6 +15,47 @@ pub struct ViewAnchor {
     pub row_offset: isize,
 }
 
+/// Whether the next placement brings the cursor into view.
+///
+/// One value, so a full hold and a row hold cannot both be pending: the last
+/// thing to scroll the view decides. The transitions are the viewport's
+/// `set_skip_ensure_visible` (→ `Hold`), `hold_rows_while_head_at`
+/// (→ `HoldRows`), `clear_skip_ensure_visible` (→ `Follow`), and
+/// `spend_row_hold`, which a placement runs to drop a row hold whose head the
+/// cursor has left. Everything else only asks.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+enum EnsureVisible {
+    /// Rows and columns follow the cursor.
+    #[default]
+    Follow,
+    /// Leave the view where a scroll put it (the wheel, the scrollbar,
+    /// Ctrl+Up/Down, a recenter), until a key or a jump moves the cursor.
+    Hold,
+    /// The rows stay where they are while the cursor is at `head`, and the
+    /// columns still follow it. Set by a drag-select level with the text
+    /// rows, whose head is on a row already on screen but may be in a column
+    /// scrolled out of view.
+    ///
+    /// Keyed to the head so it ends with the drag: once anything else moves
+    /// the cursor — a paste, a plugin's or LSP's jump — the next placement
+    /// drops it and places the rows as usual. Ending it on release instead
+    /// would apply the scroll-off margin to a head left on an edge row, and
+    /// the view would jump as the button came up.
+    HoldRows { head: usize },
+}
+
+impl EnsureVisible {
+    /// Nothing moves, rows or columns.
+    fn holds_all(self) -> bool {
+        self == Self::Hold
+    }
+
+    /// The rows stay put for a cursor at `cursor_byte`.
+    fn holds_rows_at(self, cursor_byte: usize) -> bool {
+        self == Self::HoldRows { head: cursor_byte }
+    }
+}
+
 /// The viewport - what portion of the buffer is visible
 #[derive(Debug, Clone)]
 pub struct Viewport {
@@ -116,10 +157,9 @@ pub struct Viewport {
     /// from being overwritten by ensure_visible during the first render
     skip_resize_sync: bool,
 
-    /// Whether to skip ensure_visible on next render
-    /// This is set after scroll actions (Ctrl+Up/Down) to prevent the scroll
-    /// from being immediately undone by ensure_visible
-    skip_ensure_visible: bool,
+    /// Whether the next placement brings the cursor into view — see
+    /// [`EnsureVisible`].
+    ensure_visible: EnsureVisible,
 
     /// Maximum line length encountered so far (in display columns).
     /// Updated incrementally as visible lines are rendered, avoiding full-file scans.
@@ -194,6 +234,40 @@ fn previous_line_start(buffer: &mut Buffer, byte: usize) -> Option<usize> {
     buffer.prev_line_start_within(byte.saturating_sub(1), CLAMP_SCAN_BYTES)
 }
 
+/// The width of the line-number gutter for `buffer`.
+///
+/// Format: `"[indicator]{:>N} │ "` — a 1-char indicator column (space, or
+/// `●`/`✗`/`⚠`), N right-aligned digits, and a 3-char `" │ "` separator. Total
+/// `1 + N + 3`, with `MIN_LINE_NUMBER_DIGITS` the floor on N so a one-line
+/// buffer does not feel cramped, and the buffer's own line count deciding the
+/// rest — a small file does not pay for a four-digit column. In byte-offset
+/// mode (a buffer with no line count) the gutter shows byte offsets, so the
+/// file's length decides the digits.
+///
+/// **One statement, because everything that wraps text has to agree.** The
+/// renderer (`render_buffer`), the scrollbar's row count
+/// (`split_rendering::scrollbar`), the viewport's own wrap config and the
+/// scroll math (`app::scrollbar_math`) all build a `WrapConfig` around this
+/// number; a gutter one cell wider in one of them wraps at a different column
+/// than the renderer, and the scrollbar then points at a row the pane does not
+/// have. `app::scrollbar_math` kept its own copy of the formula — one that
+/// missed the byte-offset case — under a doc admitting exactly that risk.
+pub fn gutter_width(buffer: &Buffer) -> usize {
+    let byte_offset_mode = buffer.line_count().is_none();
+    let gutter_estimate = if byte_offset_mode {
+        // In byte offset mode, gutter shows byte offsets up to file size
+        buffer.len().max(1)
+    } else {
+        buffer.line_count().unwrap_or(1)
+    };
+    let digits = if gutter_estimate == 0 {
+        1
+    } else {
+        ((gutter_estimate as f64).log10().floor() as usize) + 1
+    };
+    1 + digits.max(crate::view::margin::MIN_LINE_NUMBER_DIGITS) + 3
+}
+
 impl Viewport {
     /// Byte the viewport starts at.
     ///
@@ -240,7 +314,7 @@ impl Viewport {
             show_line_numbers: true,
             needs_sync: false,
             skip_resize_sync: false,
-            skip_ensure_visible: false,
+            ensure_visible: EnsureVisible::Follow,
             max_line_length_seen: 0,
             sync_scroll_to_end: false,
             // The scroll hot paths only ever touch a handful of nearby
@@ -341,20 +415,38 @@ impl Viewport {
     /// Mark viewport to skip ensure_visible on next render
     /// This is used after scroll actions to prevent the scroll from being undone
     pub fn set_skip_ensure_visible(&mut self) {
-        tracing::trace!("set_skip_ensure_visible: setting flag to true");
-        self.skip_ensure_visible = true;
+        tracing::trace!("set_skip_ensure_visible: holding the view");
+        self.ensure_visible = EnsureVisible::Hold;
     }
 
     /// Check if ensure_visible should be skipped (does NOT consume the flag)
     /// Returns true if ensure_visible should be skipped
     pub fn should_skip_ensure_visible(&self) -> bool {
-        self.skip_ensure_visible
+        self.ensure_visible.holds_all()
     }
 
-    /// Clear the skip_ensure_visible flag
-    /// This should be called after all ensure_visible calls in a render pass
+    /// Hold the rows while the cursor stays at `head`, but let the
+    /// horizontal scroll follow it (see [`EnsureVisible::HoldRows`]).
+    /// Replaces a full hold.
+    pub fn hold_rows_while_head_at(&mut self, head: usize) {
+        self.ensure_visible = EnsureVisible::HoldRows { head };
+    }
+
+    /// End a row hold the cursor has left: the drag that set it is over, and
+    /// something else moved the cursor. Run by a placement before it asks
+    /// whether the rows are held.
+    fn spend_row_hold(&mut self, cursor_byte: usize) {
+        if let EnsureVisible::HoldRows { head } = self.ensure_visible {
+            if head != cursor_byte {
+                self.ensure_visible = EnsureVisible::Follow;
+            }
+        }
+    }
+
+    /// Let the next placement bring the cursor into view again: a key press
+    /// or a jump is new intent, which no earlier scroll may suppress.
     pub fn clear_skip_ensure_visible(&mut self) {
-        self.skip_ensure_visible = false;
+        self.ensure_visible = EnsureVisible::Follow;
     }
 
     /// Set the scroll offset
@@ -373,11 +465,34 @@ impl Viewport {
     /// renderer wraps at this width; scroll math must match or
     /// `max_scroll_row` ends up wrong on wide viewports with a narrow
     /// page width.
+    ///
+    /// Also capped at `wrap_column`, as the renderer caps it — see
+    /// [`Self::wrap_area_width`].
     #[inline]
     pub fn effective_width(&self) -> u16 {
-        match self.compose_width {
+        let width = match self.compose_width {
             Some(cw) => cw.min(self.width).max(1),
             None => self.width,
+        };
+        self.wrap_area_width(width as usize) as u16
+    }
+
+    /// The width a wrapped row is laid out in, gutter included, for a pane
+    /// `width` columns wide: `width` capped at `wrap_column`.
+    ///
+    /// The one statement of what `wrap_column` does to the wrap. The
+    /// renderer (`view_data::effective_wrap_width`) and every scroll and
+    /// visibility count (`make_wrap_config`, the wrap index geometry, the
+    /// scrollbar) go through here; when the renderer honoured `wrap_column`
+    /// and the scroll math did not, a line that wrapped on screen counted as
+    /// one row, and the cursor walked off the bottom of the view (issue
+    /// #3294). Terminal-grid wrap keeps its grid width in `wrap_column` and
+    /// reads it through [`Self::grid_cols`] instead, so it is not capped here.
+    #[inline]
+    pub fn wrap_area_width(&self, width: usize) -> usize {
+        match self.wrap_column {
+            Some(col) if !self.grid_wrap => col.min(width),
+            _ => width,
         }
     }
 
@@ -386,30 +501,11 @@ impl Viewport {
         self.height as usize
     }
 
-    /// Calculate the gutter width based on buffer length
-    /// Format: "[indicator]{:>N} │ " where N is the number of digits for line numbers
-    /// - Indicator column: 1 char (space, or symbols like ●/✗/⚠)
-    /// - Line numbers: N digits (min 2), right-aligned
-    /// - Separator: " │ " = 3 chars (space, box char, space)
-    ///
-    /// Total width = 1 + N + 3 = N + 4 (where N >= 2 minimum, so min 6 total).
-    /// The width adapts to the buffer's line count — small files don't waste
-    /// space on a 4-digit-wide column. `MIN_LINE_NUMBER_DIGITS` keeps it from
-    /// shrinking so much that a 1-line buffer feels cramped.
+    /// The gutter's width for `buffer` — see the free [`gutter_width`], which
+    /// is the one statement of it. This reads nothing off the viewport and is
+    /// kept for the callers that have one in hand.
     pub fn gutter_width(&self, buffer: &Buffer) -> usize {
-        let byte_offset_mode = buffer.line_count().is_none();
-        let gutter_estimate = if byte_offset_mode {
-            // In byte offset mode, gutter shows byte offsets up to file size
-            buffer.len().max(1)
-        } else {
-            buffer.line_count().unwrap_or(1)
-        };
-        let digits = if gutter_estimate == 0 {
-            1
-        } else {
-            ((gutter_estimate as f64).log10().floor() as usize) + 1
-        };
-        1 + digits.max(crate::view::margin::MIN_LINE_NUMBER_DIGITS) + 3
+        gutter_width(buffer)
     }
 
     /// Smallest read budget [`row_budget_bytes`](Self::row_budget_bytes) will
@@ -1269,47 +1365,6 @@ impl Viewport {
         positions[max_scroll_row]
     }
 
-    /// Scroll through ViewLines (view-transform aware)
-    ///
-    /// This method scrolls through display lines rather than source lines,
-    /// correctly handling view transforms that inject headers or other content.
-    ///
-    /// # Arguments
-    /// * `view_lines` - The current display lines (from ViewLineIterator)
-    /// * `line_offset` - Positive to scroll down, negative to scroll up
-    ///
-    /// # Returns
-    /// The new top_byte position after scrolling
-    pub fn scroll_view_lines(&mut self, view_lines: &[ViewLine], line_offset: isize) {
-        let viewport_height = self.visible_line_count();
-        if view_lines.is_empty() || viewport_height == 0 {
-            return;
-        }
-
-        // Find the current view line index that corresponds to top_byte
-        let current_idx = self.find_view_line_for_byte(view_lines, self.top_byte());
-
-        // Calculate target index
-        let target_idx = if line_offset >= 0 {
-            current_idx.saturating_add(line_offset as usize)
-        } else {
-            current_idx.saturating_sub(line_offset.unsigned_abs())
-        };
-
-        // Apply scroll limit: don't scroll past the point where viewport can't be filled
-        let max_top_idx = view_lines.len().saturating_sub(viewport_height);
-        let clamped_idx = target_idx.min(max_top_idx);
-
-        // Get the source byte for the target view line
-        if let Some(new_top_byte) = self.get_source_byte_for_view_line(view_lines, clamped_idx) {
-            tracing::trace!(
-                "scroll_view_lines: offset={}, current_idx={}, target_idx={}, clamped_idx={}, new_top_byte={}",
-                line_offset, current_idx, target_idx, clamped_idx, new_top_byte
-            );
-            self.set_top_byte(new_top_byte);
-        }
-    }
-
     /// Find the view line index that contains a source byte position
     /// Returns the line where the byte falls within its range, not just the first line
     /// starting at or after the byte.
@@ -1352,28 +1407,6 @@ impl Viewport {
         }
 
         best_match
-    }
-
-    /// Get the source byte position for a view line index
-    /// For injected lines (headers), walks forward to find the next source line
-    fn get_source_byte_for_view_line(&self, view_lines: &[ViewLine], idx: usize) -> Option<usize> {
-        // Start from the requested index and walk forward to find a line with source mapping
-        for line in view_lines.iter().skip(idx) {
-            if let Some(source_byte) = line.char_source_bytes.iter().find_map(|m| *m) {
-                return Some(source_byte);
-            }
-        }
-        // If all remaining lines are injected, try to get the last known source position
-        // by walking backwards
-        for line in view_lines.iter().take(idx).rev() {
-            if let Some(source_byte) = line.char_source_bytes.iter().find_map(|m| *m) {
-                // This is the last source position before our target
-                // We want to stay at that position
-                return Some(source_byte);
-            }
-        }
-        // No source bytes found at all - keep current position
-        Some(self.top_byte())
     }
 
     /// Ensure cursor is visible using view lines (Layout-aware)
@@ -1419,6 +1452,10 @@ impl Viewport {
         expansion: Option<&CursorLineExpansion>,
     ) -> bool {
         if self.should_skip_resize_sync() || self.should_skip_ensure_visible() {
+            return false;
+        }
+        self.spend_row_hold(cursor_byte);
+        if self.ensure_visible.holds_rows_at(cursor_byte) {
             return false;
         }
         let viewport_height = self.visible_line_count();
@@ -1559,7 +1596,7 @@ impl Viewport {
     ) -> usize {
         // A restored session keeps its scroll position for one frame, and a
         // scroll action keeps its own (Ctrl+Up/Down); neither is undone here.
-        if self.skip_resize_sync || self.skip_ensure_visible {
+        if self.skip_resize_sync || self.ensure_visible.holds_all() {
             tracing::trace!("layout_column_scroll: SKIPPING (skip flag set)");
             return self.left_column;
         }
@@ -1959,24 +1996,9 @@ impl Viewport {
         self.set_top_byte_with_limit(buffer, &[], &[], end);
     }
 
-    /// Mark viewport as needing synchronization with cursor positions
-    /// This defers the actual viewport update until sync_with_cursor is called
-    pub fn mark_needs_sync(&mut self) {
-        self.needs_sync = true;
-    }
-
     /// Check if viewport needs synchronization
     pub fn needs_sync(&self) -> bool {
         self.needs_sync
-    }
-
-    /// Synchronize viewport with cursor position (deferred ensure_visible)
-    /// This should be called before rendering to batch multiple cursor movements
-    pub fn sync_with_cursor(&mut self, buffer: &mut Buffer, cursor: &Cursor) {
-        if self.needs_sync {
-            self.ensure_visible(buffer, cursor, &[]);
-            self.needs_sync = false;
-        }
     }
 
     /// Low-level: ensure cursor is visible, scrolling if necessary.
@@ -2048,10 +2070,12 @@ impl Viewport {
             return;
         }
         tracing::trace!(
-            "ensure_visible: NOT skipping, skip_ensure_visible={}",
-            self.skip_ensure_visible
+            "ensure_visible: NOT skipping, ensure_visible={:?}",
+            self.ensure_visible
         );
 
+        self.spend_row_hold(cursor.position);
+        let rows_held = self.ensure_visible.holds_rows_at(cursor.position);
         let viewport_lines = self.visible_line_count().max(1);
         tracing::trace!(
             "ensure_visible: cursor={}, top_byte={}, viewport_lines={}, line_wrap={}",
@@ -2071,7 +2095,9 @@ impl Viewport {
         if !self.row_pass_owns_placement
             && crate::view::row_walk::addresses_rows_by_byte(buffer, self.line_wrap_enabled)
         {
-            self.ensure_visible_anchored(buffer, cursor, hidden_ranges);
+            if !rows_held {
+                self.ensure_visible_anchored(buffer, cursor, hidden_ranges);
+            }
             self.left_column = 0;
             return;
         }
@@ -2098,10 +2124,11 @@ impl Viewport {
             .unwrap_or(0);
         let effective_offset = self.scroll_offset.min(viewport_lines / 2);
 
-        let (cursor_is_visible, cursor_near_top) = if self.row_pass_owns_placement {
-            // Vertical placement belongs to the row pass; claiming the cursor
-            // is visible short-circuits every scroll below while the
-            // horizontal handling further down still runs.
+        let (cursor_is_visible, cursor_near_top) = if self.row_pass_owns_placement || rows_held {
+            // Vertical placement belongs to the row pass (or the rows are
+            // held); claiming the cursor is visible short-circuits every
+            // scroll below while the horizontal handling further down still
+            // runs.
             (true, false)
         } else if cursor_line_start < self.top_byte() {
             (false, true)
@@ -2693,63 +2720,6 @@ impl Viewport {
         self.set_top_view_line_offset(0);
     }
 
-    /// Ensure a line is visible with scroll offset applied
-    /// This is a legacy method kept for backward compatibility with tests
-    /// In practice, use ensure_visible() which works directly with cursors and bytes
-    pub fn ensure_line_visible(&mut self, buffer: &mut Buffer, line: usize) {
-        // Seek to the target line to get its byte position
-        let mut seek_iter = buffer.line_iterator(0, 80);
-        let mut current_line = 0;
-        let mut target_line_byte = 0;
-
-        while current_line < line {
-            if let Some((line_start, _)) = seek_iter.next_line() {
-                if current_line + 1 == line {
-                    target_line_byte = line_start;
-                    break;
-                }
-                current_line += 1;
-            } else {
-                // Reached end of buffer before target line
-                return;
-            }
-        }
-
-        // Check if the line is already visible by iterating from top_byte
-        let visible_count = self.visible_line_count();
-        let mut iter = buffer.line_iterator(self.top_byte(), 80);
-        let mut lines_from_top = 0;
-        let mut target_is_visible = false;
-
-        while let Some((line_byte, _)) = iter.next_line() {
-            if line_byte == target_line_byte {
-                target_is_visible = lines_from_top < visible_count;
-                break;
-            }
-            lines_from_top += 1;
-            if lines_from_top >= visible_count {
-                break;
-            }
-        }
-
-        // If not visible, scroll to show it with scroll offset
-        if !target_is_visible {
-            let effective_offset = self.scroll_offset.min(visible_count / 2);
-            let target_line_from_top = effective_offset;
-
-            // Move backwards from target to find new top_byte
-            let mut iter = buffer.line_iterator(target_line_byte, 80);
-            for _ in 0..target_line_from_top {
-                if iter.prev().is_none() {
-                    break;
-                }
-            }
-            let position = iter.current_position();
-            // Cursor-positioning flow: no soft-break info available here.
-            self.set_top_byte_with_limit(buffer, &[], &[], position);
-        }
-    }
-
     /// Ensure a column is visible with horizontal scroll offset applied
     ///
     /// # Arguments
@@ -2810,65 +2780,6 @@ impl Viewport {
             if self.left_column > max_left_column {
                 self.left_column = max_left_column;
             }
-        }
-    }
-
-    /// Ensure multiple cursors are visible (smart scroll for multi-cursor)
-    /// Prioritizes keeping the primary cursor visible
-    pub fn ensure_cursors_visible(
-        &mut self,
-        buffer: &mut Buffer,
-        cursors: &[(usize, &Cursor)], // (priority, cursor) - lower priority number = higher priority
-    ) {
-        if cursors.is_empty() {
-            return;
-        }
-
-        // Sort cursors by priority (primary cursor first)
-        let mut sorted_cursors: Vec<_> = cursors.to_vec();
-        sorted_cursors.sort_by_key(|(priority, _)| *priority);
-
-        // Get byte positions for all cursors (at line starts)
-        let cursor_line_bytes: Vec<usize> = sorted_cursors
-            .iter()
-            .map(|(_, cursor)| {
-                let iter = buffer.line_iterator(cursor.position, 80);
-                iter.current_position()
-            })
-            .collect();
-
-        // Count how many lines span between min and max cursors
-        let min_byte = *cursor_line_bytes.iter().min().unwrap();
-        let max_byte = *cursor_line_bytes.iter().max().unwrap();
-
-        // Count lines between min and max using iterator
-        let mut iter = buffer.line_iterator(min_byte, 80);
-        let mut line_span = 0;
-        while let Some((line_byte, _)) = iter.next_line() {
-            if line_byte >= max_byte {
-                break;
-            }
-            line_span += 1;
-        }
-
-        let visible_count = self.visible_line_count();
-
-        // If all cursors fit in the viewport, center them
-        if line_span < visible_count {
-            let lines_to_go_back = visible_count / 2;
-            let mut iter = buffer.line_iterator(min_byte, 80);
-            for _ in 0..lines_to_go_back {
-                if iter.prev().is_none() {
-                    break;
-                }
-            }
-            let position = iter.current_position();
-            // Cursor-positioning flow: no soft-break info available here.
-            self.set_top_byte_with_limit(buffer, &[], &[], position);
-        } else {
-            // Can't fit all cursors, ensure primary is visible
-            let primary_cursor = sorted_cursors[0].1;
-            self.ensure_visible(buffer, primary_cursor, &[]);
         }
     }
 
@@ -2963,6 +2874,42 @@ mod tests {
     use super::*;
     use crate::model::buffer::Buffer;
     use crate::model::cursor::Cursor;
+
+    /// One value says what the next placement does about the cursor: the
+    /// last thing to scroll the view decides, and a row hold ends when the
+    /// cursor leaves its head — not before, and not by being asked about.
+    #[test]
+    fn ensure_visible_is_one_value_with_its_transitions_in_one_place() {
+        let mut vp = Viewport::new(80, 24);
+        assert_eq!(vp.ensure_visible, EnsureVisible::Follow);
+
+        vp.hold_rows_while_head_at(7);
+        vp.set_skip_ensure_visible();
+        assert!(
+            vp.should_skip_ensure_visible(),
+            "a scroll after a drag holds all"
+        );
+        vp.hold_rows_while_head_at(7);
+        assert!(
+            !vp.should_skip_ensure_visible(),
+            "a drag after a scroll holds only the rows"
+        );
+
+        assert!(vp.ensure_visible.holds_rows_at(7));
+        assert!(!vp.ensure_visible.holds_rows_at(8));
+        assert!(vp.ensure_visible.holds_rows_at(7), "asking spends nothing");
+        vp.spend_row_hold(7);
+        assert!(
+            vp.ensure_visible.holds_rows_at(7),
+            "the cursor is still at the head"
+        );
+        vp.spend_row_hold(8);
+        assert_eq!(vp.ensure_visible, EnsureVisible::Follow);
+
+        vp.set_skip_ensure_visible();
+        vp.clear_skip_ensure_visible();
+        assert_eq!(vp.ensure_visible, EnsureVisible::Follow);
+    }
 
     /// The scroll clamp leaves the viewport where it was pointed when it
     /// cannot finish counting the rows below.
@@ -3281,32 +3228,6 @@ mod tests {
             vp.top_view_line_offset() > 0,
             "top should be partway down the wrapped line's visual rows"
         );
-    }
-
-    #[test]
-    fn test_ensure_line_visible() {
-        let mut buffer = Buffer::from_str_test("line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10\nline11\nline12\nline13\nline14\nline15\nline16\nline17\nline18\nline19\nline20\nline21\nline22\nline23\nline24\nline25\nline26\nline27\nline28\nline29\nline30\nline31\nline32\nline33\nline34\nline35\nline36\nline37\nline38\nline39\nline40\nline41\nline42\nline43\nline44\nline45\nline46\nline47\nline48\nline49\nline50\nline51");
-        let mut vp = Viewport::new(80, 24);
-        vp.scroll_offset = 3;
-
-        // Line within scroll offset should adjust viewport
-        vp.ensure_line_visible(&mut buffer, 2);
-        // top_byte should be close to the beginning since line 2 is near the top
-        assert!(vp.top_byte() < 100);
-
-        // Line far below should scroll down
-        vp.ensure_line_visible(&mut buffer, 50);
-        assert!(vp.top_byte() > 0);
-        // Verify the line is now visible by checking we can iterate to it
-        let mut iter = buffer.line_iterator(vp.top_byte(), 80);
-        let mut found = false;
-        for _ in 0..vp.visible_line_count() {
-            if iter.next_line().is_none() {
-                break;
-            }
-            found = true;
-        }
-        assert!(found);
     }
 
     #[test]

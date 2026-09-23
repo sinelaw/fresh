@@ -651,6 +651,16 @@ pub struct Window {
     /// handle per pane for as long as the pane exists, so the leaf is never
     /// replaced (design §3.7.1).
     pub(crate) panes: HashMap<LeafId, crate::view::shell::buffer_host::PaneHandle>,
+    /// One reveal handle per pane's tab strip, for as long as the pane
+    /// exists — an `Anchor` binds to its element on mount, so a fresh one
+    /// each frame would bind to nothing.
+    ///
+    /// This is what is left of `tab_scroll_offset` as a live mechanism: the
+    /// window's position is the window's, and the editor's only say is which
+    /// tab to show. `RefCell` because `pane_strips` builds the description
+    /// from `&self`, the same reason `Editor::prose_reveal` is one.
+    pub(crate) tab_reveal:
+        std::cell::RefCell<HashMap<LeafId, std::rc::Rc<fresh_ui::behavior::Anchor>>>,
 
     /// Per-window editor-chrome layout cache: status bar, menu,
     /// popups, prompt overlay, full-frame cell-theme map. Each
@@ -805,10 +815,6 @@ pub struct Window {
     /// Range that should be reused when the next search is confirmed
     /// (e.g. after the user picks a hit in the search overlay).
     pub pending_search_range: Option<std::ops::Range<usize>>,
-
-    /// Last live-grep panel state (cached so re-opening the panel
-    /// preserves the user's query / scroll / selection).
-    pub live_grep_last_state: Option<crate::services::live_grep_state::LiveGrepLastState>,
 
     /// Overlay-preview state used by the floating-prompt preview pane
     /// when it's showing a buffer view.
@@ -1107,6 +1113,10 @@ pub struct Window {
     /// in this window.
     pub last_auto_recovery_save: std::time::Instant,
     pub last_persistent_auto_save: std::time::Instant,
+    /// The files the last persistent auto-save left unsaved because they
+    /// changed on disk, as reported in the status bar; it's only reported
+    /// again once that changes, rather than every interval.
+    pub auto_save_changed_on_disk: Vec<std::path::PathBuf>,
 
     /// Warning domain registry for this window's status indicator.
     pub warning_domains: crate::app::warning_domains::WarningDomainRegistry,
@@ -2105,27 +2115,6 @@ impl Window {
             });
     }
 
-    /// Configure `leaf_id`'s viewport for a terminal-buffer
-    /// scrollback view: enable grid wrap (exact-column rows at the PTY
-    /// width, fresh#2649), clear any pending skip-ensure-visible flag,
-    /// then scroll so the buffer's primary cursor (positioned at
-    /// end-of-buffer when entering scrollback) is visible. No-op if the
-    /// buffer or split is missing.
-    pub fn enter_terminal_scrollback_view(&mut self, buffer_id: BufferId, leaf_id: LeafId) {
-        let grid_cols = self.terminal_grid_cols(buffer_id);
-        self.buffers
-            .with_buffer_and_split(buffer_id, leaf_id, |state, view_state| {
-                view_state.viewport.line_wrap_enabled = true;
-                view_state.viewport.grid_wrap = true;
-                view_state.viewport.wrap_indent = false;
-                if let Some(cols) = grid_cols {
-                    view_state.viewport.wrap_column = Some(cols);
-                }
-                view_state.viewport.clear_skip_ensure_visible();
-                view_state.ensure_cursor_visible(&mut state.buffer, &state.marker_list);
-            });
-    }
-
     /// Install a freshly-loaded `EditorState` for a terminal buffer:
     /// replace the slot's state, push every per-split cursor showing
     /// the buffer to end-of-buffer (scrollback start), clear the
@@ -2316,26 +2305,53 @@ impl Window {
             });
     }
 
-    /// Mutable handle to this window's split tree (or `None` when
-    /// the layout hasn't been seeded yet). Useful at sites where
-    /// the caller already has a `&mut Window` from a direct
-    /// `self.windows.get_mut(&id)` and wants the split layout
-    /// without going back through Editor's accessor.
-    pub fn split_manager_mut(&mut self) -> Option<&mut SplitManager> {
-        self.buffers.split_manager_mut()
+    /// This window's split tree.
+    ///
+    /// Panics if the layout hasn't been seeded. A window in use always
+    /// has one: `set_active_window` seeds it on first dive and editor init
+    /// hands the base window its initial layout. Code that has to handle a
+    /// window without one asks `self.buffers`, whose accessors return
+    /// `Option`.
+    pub fn split_manager(&self) -> &SplitManager {
+        self.splits().0
     }
 
-    /// Mutable handle to this window's per-leaf view state map.
-    pub fn split_view_states_mut(&mut self) -> Option<&mut HashMap<LeafId, SplitViewState>> {
-        self.buffers.split_view_states_mut()
+    /// Mutable handle to this window's split tree. Panics as
+    /// [`Self::split_manager`] does.
+    pub fn split_manager_mut(&mut self) -> &mut SplitManager {
+        self.splits_mut().0
     }
 
-    /// Both halves of the split layout at once. Returns `None` if
-    /// the layout hasn't been seeded yet.
-    pub fn splits_mut(
-        &mut self,
-    ) -> Option<(&mut SplitManager, &mut HashMap<LeafId, SplitViewState>)> {
-        self.buffers.splits_mut().map(|(m, vs)| (m, vs))
+    /// This window's per-leaf view state map. Panics as
+    /// [`Self::split_manager`] does.
+    pub fn split_view_states(&self) -> &HashMap<LeafId, SplitViewState> {
+        self.splits().1
+    }
+
+    /// Mutable handle to this window's per-leaf view state map. Panics as
+    /// [`Self::split_manager`] does.
+    pub fn split_view_states_mut(&mut self) -> &mut HashMap<LeafId, SplitViewState> {
+        self.splits_mut().1
+    }
+
+    /// Both halves of the split layout at once. Panics as
+    /// [`Self::split_manager`] does.
+    pub fn splits(&self) -> (&SplitManager, &HashMap<LeafId, SplitViewState>) {
+        let (m, vs) = self
+            .buffers
+            .splits()
+            .expect("active window must have a populated split layout");
+        (m, vs)
+    }
+
+    /// Both halves of the split layout at once, mutably. Panics as
+    /// [`Self::split_manager`] does.
+    pub fn splits_mut(&mut self) -> (&mut SplitManager, &mut HashMap<LeafId, SplitViewState>) {
+        let (m, vs) = self
+            .buffers
+            .splits_mut()
+            .expect("active window must have a populated split layout");
+        (m, vs)
     }
 
     /// Construct a window.
@@ -2373,6 +2389,9 @@ impl Window {
         // are borrowed here, then moved into the struct below.
         let bridge = crate::services::async_bridge::AsyncBridge::new();
         let lsp = build_window_lsp(id, &root, &connection.authority, &resources, &bridge);
+        // The match toggles a search starts on, before any workspace
+        // restore has a say.
+        let search_defaults = resources.config.editor.search.clone();
         Self {
             id,
             label,
@@ -2396,7 +2415,10 @@ impl Window {
             buffers: WindowBuffers::new(),
             buffer_metadata: HashMap::new(),
             pending_content_load: Vec::new(),
-            terminal_manager: crate::services::terminal::TerminalManager::new(id),
+            terminal_manager: crate::services::terminal::TerminalManager::new(
+                id,
+                resources.terminal_id_alloc.clone(),
+            ),
             terminal_buffers: HashMap::new(),
             terminal_backing_files: HashMap::new(),
             terminal_log_files: HashMap::new(),
@@ -2446,6 +2468,7 @@ impl Window {
             composite_buffers: HashMap::new(),
             composite_view_states: HashMap::new(),
             panes: HashMap::new(),
+            tab_reveal: Default::default(),
             chrome_layout: ChromeLayout::default(),
             terminal_width: 80,
             terminal_height: 24,
@@ -2477,17 +2500,21 @@ impl Window {
                 "search".to_string(),
             ),
             pending_search_range: None,
-            live_grep_last_state: None,
             overlay_preview_state: None,
             file_rapid_change_counts: HashMap::new(),
             goto_line_preview: None,
             pending_async_prompt_callback: None,
             pending_file_pick_callback: None,
             pending_quit_unnamed_save: Vec::new(),
-            search_case_sensitive: true,
-            search_whole_word: false,
-            search_use_regex: false,
-            search_confirm_each: false,
+            // Seeded from `editor.search` (issue #3212): the config
+            // preset is what a window starts on, and a workspace that
+            // saved its own choice overwrites these on restore via
+            // `restore_search_options`. Case sensitivity defaults to
+            // *off* — `todo` finds `TODO` until the user says otherwise.
+            search_case_sensitive: search_defaults.case_sensitive,
+            search_whole_word: search_defaults.whole_word,
+            search_use_regex: search_defaults.regex,
+            search_confirm_each: search_defaults.confirm_each,
             scheduled_diagnostic_pull: None,
             scheduled_inlay_hints_request: None,
             user_dismissed_lsp_languages: std::collections::HashSet::new(),
@@ -2539,6 +2566,7 @@ impl Window {
             prompt_line_visible: resources.config.editor.show_prompt_line,
             last_auto_recovery_save: now,
             last_persistent_auto_save: now,
+            auto_save_changed_on_disk: Vec::new(),
             warning_domains: crate::app::warning_domains::WarningDomainRegistry::default(),
             tab_context_menu: None,
             new_tab_menu: None,
@@ -2623,10 +2651,7 @@ impl Window {
     /// focused but any of those invariants doesn't hold for the inner
     /// leaf. Mirrors `Editor::effective_active_pair`.
     pub fn effective_active_pair(&self) -> (LeafId, BufferId) {
-        let (mgr, vs_map) = self
-            .buffers
-            .splits()
-            .expect("active window must have a populated split layout");
+        let (mgr, vs_map) = self.splits();
         let active_split = mgr.active_split();
         if let Some(vs) = vs_map.get(&active_split) {
             if vs.active_group_tab.is_some() {
@@ -2690,59 +2715,6 @@ impl Window {
     pub fn active_buffer(&self) -> BufferId {
         let (_, buf) = self.effective_active_pair();
         buf
-    }
-
-    /// Width available for tabs in this window. When the file explorer is
-    /// visible the tabs row only spans the editor area; otherwise it spans
-    /// the full terminal width.
-    pub fn effective_tabs_width(&self) -> u16 {
-        // Start from the chrome left after the editor-global dock, then
-        // subtract the file explorer — same carve-out order as the
-        // renderer and `editor_content_area`, so tab-scroll math matches
-        // the width the tabs actually paint into when the dock is shown.
-        let chrome = self.terminal_width.saturating_sub(self.dock_cols);
-        if self.file_explorer_visible && self.file_explorer.is_some() {
-            let explorer = self.file_explorer_width.to_cols(chrome);
-            chrome.saturating_sub(explorer)
-        } else {
-            chrome
-        }
-    }
-
-    /// Width of the tab bar for a *specific* split.
-    ///
-    /// [`effective_tabs_width`](Self::effective_tabs_width) returns the whole
-    /// editor-content width; but in a vertical split each pane's tab strip is
-    /// only as wide as that pane (`tabs_rect.width == split_area.width`).
-    /// Feeding the full width to the tab-scroll math makes a half-width split
-    /// scroll against ~2x its real width, so it under-scrolls and the ">"
-    /// overflow indicator disagrees with what's visible. This returns the
-    /// focused split's real pane width, falling back to
-    /// [`effective_tabs_width`](Self::effective_tabs_width) when the split
-    /// isn't in the current visible layout (e.g. hidden behind a maximized
-    /// sibling).
-    pub fn split_tabs_width(&self, split_id: LeafId) -> u16 {
-        match self.buffers.splits() {
-            Some((mgr, _)) => {
-                let visible = self.visible_panes();
-                let Some((_, _, area)) = visible.iter().find(|(id, _, _)| *id == split_id) else {
-                    return self.effective_tabs_width();
-                };
-                // The split-control (maximize / close) buttons are painted over
-                // the right edge of the tab row; reserve their columns here so
-                // the scroll math measures against the same width the tab bar
-                // actually lays tabs into (fresh#2768). Mirror the show-flags in
-                // `render_split_tab_bar`.
-                let has_multiple_splits = visible.len() > 1;
-                let is_maximized = mgr.is_maximized();
-                let show_maximize = has_multiple_splits || is_maximized;
-                let show_close = has_multiple_splits && !is_maximized;
-                let reserve =
-                    crate::view::ui::tabs::split_control_reserve(show_maximize, show_close);
-                area.width.saturating_sub(reserve)
-            }
-            None => self.effective_tabs_width(),
-        }
     }
 
     /// Where the last layout put this window's panes. See the field.
@@ -2895,10 +2867,17 @@ impl Window {
     /// holds the group. `hover` is the tab under the pointer, by target,
     /// pane and whether it is the close button — the frame's, or none for a
     /// grid nothing points at.
+    /// `ui` is the frame before this one, and the only thing read off it is
+    /// each strip window's outer width — what decides whether the tabs fit
+    /// with their names whole. `None` (a window with no laid-out tree of its
+    /// own, such as one painted as an embed) shows whole names, which the
+    /// window can scroll across.
     pub(crate) fn pane_strips(
         &self,
         chrome: &HashMap<LeafId, crate::view::shell::splits::PaneChrome>,
         hover: Option<(crate::view::split::TabTarget, LeafId, bool)>,
+        hover_plus: Option<LeafId>,
+        ui: Option<&fresh_ui::Ui<crate::view::shell::msg::UiMsg>>,
     ) -> HashMap<LeafId, crate::view::shell::tabs::Strip> {
         use crate::view::shell::tabs::{Strip, Tab};
         use crate::view::split::TabTarget;
@@ -2921,15 +2900,10 @@ impl Window {
             if !chrome.get(&leaf).is_some_and(|c| c.tabs) {
                 continue;
             }
-            let (targets, offset, active) = match vs_map.get(&leaf) {
-                Some(vs) => (
-                    vs.open_buffers.clone(),
-                    vs.tab_scroll_offset,
-                    vs.active_target(),
-                ),
+            let (targets, active) = match vs_map.get(&leaf) {
+                Some(vs) => (vs.open_buffers.clone(), vs.active_target()),
                 None => (
                     vec![TabTarget::Buffer(buffer_id)],
-                    0,
                     TabTarget::Buffer(buffer_id),
                 ),
             };
@@ -2940,7 +2914,7 @@ impl Window {
                 &self.composite_buffers,
                 &group_names,
             );
-            let tabs = targets
+            let tabs: Vec<Tab> = targets
                 .iter()
                 .filter_map(|t| {
                     let name = names.get(t)?.clone();
@@ -2961,6 +2935,19 @@ impl Window {
                     })
                 })
                 .collect();
+            // The room the last frame gave this strip's window, against what
+            // these tabs measure uncapped. The window's *outer* width: it is
+            // what the strip row leaves after the control cluster, so it does
+            // not move with the names and the answer cannot feed itself.
+            let cap_names = ui
+                .and_then(|ui| {
+                    let k = crate::view::shell::tabs::tab_window_key(leaf);
+                    let w = ui.find_by_key(&k).map(|e| ui.rect_of(e).w)?;
+                    Some(
+                        crate::view::shell::tabs::natural_width(&tabs, &preview_label) > w as usize,
+                    )
+                })
+                .unwrap_or(false);
             out.insert(
                 leaf,
                 Strip {
@@ -2968,12 +2955,53 @@ impl Window {
                     active: Some(active),
                     active_pane: leaf == active_split,
                     hover: hover.and_then(|(t, pane, close)| (pane == leaf).then_some((t, close))),
-                    offset,
+                    hover_plus: hover_plus == Some(leaf),
+                    cap_names,
+                    reveal: Some(self.tab_reveal_for(leaf)),
                     preview_label: preview_label.clone(),
                 },
             );
         }
         out
+    }
+
+    /// The pane's tab-strip reveal handle, made on first sight of the pane
+    /// and kept for as long as it lives. See the field.
+    pub(crate) fn tab_reveal_for(&self, pane: LeafId) -> std::rc::Rc<fresh_ui::behavior::Anchor> {
+        self.tab_reveal
+            .borrow_mut()
+            .entry(pane)
+            .or_default()
+            .clone()
+    }
+
+    /// Ask `pane`'s strip to show the tab it is now on.
+    ///
+    /// **The editor's whole say in where the strip sits.** This was
+    /// `ensure_active_tab_visible`, which resolved every tab's name, measured
+    /// every label, summed the widths, found the active tab's column and
+    /// moved an offset the editor kept — a second measurement of the strip,
+    /// run at a width the caller had to supply and get right (hence
+    /// `split_tabs_width`, and its comment about mirroring the painter's
+    /// show-flags). Which tab to show is a fact about the pane; where that
+    /// puts the window is the window's answer, and this asks for it.
+    pub(crate) fn reveal_active_tab(&self, pane: LeafId) {
+        let Some((_, vs_map)) = self.buffers.splits() else {
+            return;
+        };
+        let Some(vs) = vs_map.get(&pane) else { return };
+        let active = vs.active_target();
+        // **On the last tab, show the end of the strip.** The `+` follows the
+        // last tab, so revealing the tab alone would leave the button one cell
+        // past the window's edge — visible only after a nudge, on the very
+        // strip where "new tab" is what you reach for next. Revealing the
+        // button brings the tab with it: they are adjacent, and the window
+        // moves the shortest distance that holds what it was asked for.
+        let key = match vs.open_buffers.last() == Some(&active) {
+            true => crate::view::shell::tabs::new_tab_key(pane),
+            false => crate::view::shell::tabs::tab_span_key(pane, active),
+        };
+        self.tab_reveal_for(pane).reveal_key(key);
     }
 
     /// The pane's handle, made on first sight of the pane.
@@ -3025,8 +3053,13 @@ impl Window {
     }
 
     /// Drop the handles of panes that no longer exist.
+    ///
+    /// Both of them: a pane's strip-reveal `Anchor` is made on first sight of
+    /// the pane exactly as its `PaneHandle` is, so it goes when the pane does
+    /// rather than sitting in the map for the window's lifetime.
     pub(crate) fn retain_pane_handles(&mut self, live: impl Fn(LeafId) -> bool) {
         self.panes.retain(|pane, _| live(*pane));
+        self.tab_reveal.borrow_mut().retain(|pane, _| live(*pane));
     }
 
     /// Forget every pane's rows: a setting changed what a row shows, and the
@@ -3124,9 +3157,7 @@ impl Window {
     pub fn active_cursors(&self) -> &crate::model::cursor::Cursors {
         let split_id = self.effective_active_split();
         &self
-            .buffers
             .splits()
-            .expect("active window must have a populated split layout")
             .1
             .get(&split_id)
             .expect("active split must be in view-state map")
@@ -3137,9 +3168,7 @@ impl Window {
     pub fn active_cursors_mut(&mut self) -> &mut crate::model::cursor::Cursors {
         let split_id = self.effective_active_split();
         &mut self
-            .buffers
             .splits_mut()
-            .expect("active window must have a populated split layout")
             .1
             .get_mut(&split_id)
             .expect("active split must be in view-state map")
@@ -3656,9 +3685,7 @@ impl Window {
         if target == active {
             return;
         }
-        self.split_manager_mut()
-            .expect("active window must have a populated split layout")
-            .set_active_split(target);
+        self.split_manager_mut().set_active_split(target);
     }
 
     /// Restore per-file state (cursors, scroll, etc.) for a buffer in a
@@ -3703,13 +3730,7 @@ impl Window {
             .file_path()?
             .to_path_buf();
 
-        let view_state = self
-            .buffers
-            .splits()
-            .expect("active window must have a populated split layout")
-            .1
-            .values()
-            .find(|vs| vs.has_buffer(buffer_id));
+        let view_state = self.splits().1.values().find(|vs| vs.has_buffer(buffer_id));
 
         let view_state = view_state?;
         let buf_state = view_state.keyed_states.get(&buffer_id)?;
@@ -3987,6 +4008,7 @@ impl Window {
                 &self.resources.grammar_registry,
                 &self.config().languages,
                 self.config().default_language.as_deref(),
+                buffer.filesystem().as_ref(),
             );
         let state = crate::state::EditorState::from_buffer_with_language(buffer, detected);
 
@@ -4011,11 +4033,7 @@ impl Window {
         // Snapshot config values before taking the mutable view-states borrow
         // so the closure body doesn't have to re-borrow `self`.
         let cfg = self.config().editor.clone();
-        if let Some(view_state) = self
-            .split_view_states_mut()
-            .expect("active window must have a populated split layout")
-            .get_mut(&target_split)
-        {
+        if let Some(view_state) = self.split_view_states_mut().get_mut(&target_split) {
             view_state.add_buffer(buffer_id);
             let buf_state = view_state.ensure_buffer_state(buffer_id);
             buf_state.apply_config_defaults(crate::view::split::ViewConfigDefaults {
@@ -4124,9 +4142,7 @@ impl Window {
 
         let active_split = self.effective_active_split();
         let (top_byte, visible_height) = self
-            .buffers
             .splits()
-            .expect("active window must have a populated split layout")
             .1
             .get(&active_split)
             .map(|vs| (vs.viewport.top_byte(), vs.viewport.height.saturating_sub(2)))
@@ -4136,8 +4152,7 @@ impl Window {
         state.overlays.clear_namespace(&ns, &mut state.marker_list);
 
         let visible_start = top_byte;
-        let mut visible_end = top_byte;
-        visible_end = state
+        let visible_end = state
             .buffer
             .advance_lines_within(top_byte, visible_height as usize, VISIBLE_WINDOW_SCAN_BYTES)
             .min(state.buffer.len());
@@ -4308,6 +4323,55 @@ impl Window {
             + std::time::Duration::from_millis(SEMANTIC_TOKENS_FULL_DEBOUNCE_MS);
         self.semantic_tokens_full_debounce
             .insert(buffer_id, next_time);
+    }
+
+    /// Forget that `buffer_id`'s semantic tokens are up to date, so the next
+    /// full / range request is actually sent even though the buffer has not
+    /// changed. Used when the server sends `workspace/semanticTokens/refresh`
+    /// or (re)starts. The displayed highlights are kept until the new
+    /// response replaces them.
+    ///
+    /// Requests already in flight are cancelled and forgotten (a late
+    /// response is then ignored as unknown): they were computed before
+    /// whatever prompted the refresh, and letting them land would mark the
+    /// buffer fresh again. `forget_result_id` drops the delta baseline — see
+    /// `EditorState::mark_semantic_tokens_stale`.
+    pub(crate) fn invalidate_semantic_tokens(
+        &mut self,
+        buffer_id: BufferId,
+        forget_result_id: bool,
+    ) {
+        let Some(state) = self.buffers.get_mut(&buffer_id) else {
+            return;
+        };
+        state.mark_semantic_tokens_stale(forget_result_id);
+        let language = state.language.clone();
+
+        let mut superseded = Vec::new();
+        if let Some((request_id, _, _)) = self.semantic_tokens_in_flight.remove(&buffer_id) {
+            self.pending_semantic_token_requests.remove(&request_id);
+            superseded.push(request_id);
+        }
+        if let Some((request_id, _, _, _)) = self.semantic_tokens_range_in_flight.remove(&buffer_id)
+        {
+            self.pending_semantic_token_range_requests
+                .remove(&request_id);
+            superseded.push(request_id);
+        }
+        if !superseded.is_empty() {
+            if let Some(sh) = self
+                .lsp
+                .handle_for_feature_mut(&language, LspFeature::SemanticTokens)
+            {
+                for request_id in superseded {
+                    if let Err(e) = sh.handle.cancel_request(request_id) {
+                        tracing::debug!("Failed to cancel semantic token request: {}", e);
+                    }
+                }
+            }
+        }
+        self.semantic_tokens_range_applied.remove(&buffer_id);
+        self.semantic_tokens_range_last_request.remove(&buffer_id);
     }
 
     /// Forward incremental LSP `didChange` notifications for `buffer_id`
@@ -4769,21 +4833,6 @@ impl Window {
         merged
     }
 
-    /// Invalidate cached layouts and view transforms for every split
-    /// that displays `buffer_id`. Pure window-state mutation: walks
-    /// the window's split tree and view-state map.
-    pub fn invalidate_layouts_for_buffer(&mut self, buffer_id: BufferId) {
-        let Some((mgr, vs_map)) = self.buffers.splits_mut() else {
-            return;
-        };
-        let splits_for_buffer = mgr.splits_for_buffer(buffer_id);
-        for split_id in splits_for_buffer {
-            if let Some(view_state) = vs_map.get_mut(&split_id) {
-                view_state.invalidate_layout();
-            }
-        }
-    }
-
     /// Adjust cursors in other splits that share the same buffer after
     /// an edit. The split that originated the event already had its
     /// cursors moved by `BufferState::apply`; this method walks every
@@ -4908,7 +4957,7 @@ impl Window {
         {
             let left = group.left_split;
             let right = group.right_split;
-            if let Some(vs_map) = self.split_view_states_mut() {
+            if let Some(vs_map) = self.buffers.split_view_states_mut() {
                 if let Some(vs) = vs_map.get_mut(&LeafId(left)) {
                     vs.viewport.set_skip_ensure_visible();
                 }
@@ -4954,69 +5003,6 @@ impl Window {
                             line_offset.unsigned_abs(),
                         );
                     }
-                    view_state.viewport.set_skip_ensure_visible();
-                });
-        }
-    }
-
-    /// Handle a `SetViewport` event using the active split's viewport.
-    pub(crate) fn handle_set_viewport_event(&mut self, top_line: usize) {
-        let Some((mgr, _)) = self.buffers.splits() else {
-            return;
-        };
-        let active_split = mgr.active_split();
-
-        if self
-            .scroll_sync_manager
-            .is_split_synced(active_split.into())
-        {
-            if let Some(group) = self
-                .scroll_sync_manager
-                .find_group_for_split_mut(active_split.into())
-            {
-                let scroll_line = if group.is_left_split(active_split.into()) {
-                    top_line
-                } else {
-                    group.right_to_left_line(top_line)
-                };
-                group.set_scroll_line(scroll_line);
-            }
-
-            let (left, right) = match self
-                .scroll_sync_manager
-                .find_group_for_split(active_split.into())
-            {
-                Some(group) => (group.left_split, group.right_split),
-                None => return,
-            };
-            if let Some(vs_map) = self.split_view_states_mut() {
-                if let Some(vs) = vs_map.get_mut(&LeafId(left)) {
-                    vs.viewport.set_skip_ensure_visible();
-                }
-                if let Some(vs) = vs_map.get_mut(&LeafId(right)) {
-                    vs.viewport.set_skip_ensure_visible();
-                }
-            }
-            return;
-        }
-
-        let (mgr, vs_map) = self.buffers.splits().expect("splits checked above");
-        let sync_group = vs_map.get(&active_split).and_then(|vs| vs.sync_group);
-        let splits_to_scroll = if let Some(group_id) = sync_group {
-            mgr.get_splits_in_group(group_id, vs_map)
-        } else {
-            vec![active_split]
-        };
-
-        for split_id in splits_to_scroll {
-            let (mgr, _) = self.buffers.splits().expect("splits checked above");
-            let Some(buffer_id) = mgr.buffer_for_split(split_id) else {
-                continue;
-            };
-
-            self.buffers
-                .with_buffer_and_split(buffer_id, split_id, |state, view_state| {
-                    view_state.viewport.scroll_to(&mut state.buffer, top_line);
                     view_state.viewport.set_skip_ensure_visible();
                 });
         }
@@ -5078,10 +5064,7 @@ impl Window {
     /// `file_explorer.follow_active_buffer` setting included, is
     /// [`Window::follow_path_in_explorer`]'s to decide.
     pub fn set_pane_buffer(&mut self, leaf: LeafId, buffer_id: BufferId) {
-        let (mgr, vs_map) = self
-            .buffers
-            .splits_mut()
-            .expect("active window must have a populated split layout");
+        let (mgr, vs_map) = self.splits_mut();
         mgr.set_split_buffer(leaf, buffer_id);
         if let Some(view_state) = vs_map.get_mut(&leaf) {
             view_state.switch_buffer(buffer_id);
@@ -5091,6 +5074,52 @@ impl Window {
             self.follow_file_explorer_to_active_file();
         }
     }
+}
+
+/// Byte ranges the renderer hides for `buffer_id`'s collapsed folds, in the
+/// form the viewport scroll primitives consume. A scroll that counts these
+/// lines spends its budget on rows nobody sees, so the viewport stalls while
+/// the cursor runs ahead into the hidden region.
+fn collapsed_hidden_ranges(
+    view_state: &crate::view::split::SplitViewState,
+    state: &crate::state::EditorState,
+    buffer_id: BufferId,
+) -> Vec<(usize, usize)> {
+    let Some(folds) = view_state.keyed_states.get(&buffer_id).map(|bs| &bs.folds) else {
+        return Vec::new();
+    };
+    state
+        .fold_ranges(folds)
+        .into_iter()
+        .map(|r| (r.start, r.end))
+        .collect()
+}
+
+/// The wrap-index geometry for a split, when one is already built for it.
+///
+/// `None` means the byte-walking scroll path must be used — before the first
+/// render there is nothing to read row positions from, and building an index
+/// here would trade a cheap walk for an O(buffer) pass.
+fn wrap_scroll_geometry(
+    view_state: &crate::view::split::SplitViewState,
+    state: &crate::state::EditorState,
+) -> Option<crate::view::wrap_index::WrapIndexGeometry> {
+    if !view_state.viewport.line_wrap_enabled || state.wrap_indices.is_empty() {
+        return None;
+    }
+    let inputs = state.pipeline_inputs();
+    let geometry = crate::view::ui::split_rendering::wrap_index_geometry_for(
+        &view_state.viewport,
+        &state.buffer,
+        view_state.viewport.line_wrap_enabled,
+        &crate::state::ViewMode::Source,
+        crate::view::wrap_index::fold_signature(&state.fold_ranges(&view_state.folds)),
+    );
+    state
+        .wrap_indices
+        .get(&geometry)
+        .is_some_and(|index| index.is_built_for(&geometry, inputs))
+        .then_some(geometry)
 }
 
 // Label-defaulting unit tests (`empty_label_defaults_to_root_basename`,
@@ -5161,50 +5190,4 @@ mod exited_terminal_tests {
         assert!(!e.resumes_agent());
         assert_eq!(e.program_name(), Some("bash"));
     }
-}
-
-/// Byte ranges the renderer hides for `buffer_id`'s collapsed folds, in the
-/// form the viewport scroll primitives consume. A scroll that counts these
-/// lines spends its budget on rows nobody sees, so the viewport stalls while
-/// the cursor runs ahead into the hidden region.
-fn collapsed_hidden_ranges(
-    view_state: &crate::view::split::SplitViewState,
-    state: &crate::state::EditorState,
-    buffer_id: BufferId,
-) -> Vec<(usize, usize)> {
-    let Some(folds) = view_state.keyed_states.get(&buffer_id).map(|bs| &bs.folds) else {
-        return Vec::new();
-    };
-    state
-        .fold_ranges(folds)
-        .into_iter()
-        .map(|r| (r.start, r.end))
-        .collect()
-}
-
-/// The wrap-index geometry for a split, when one is already built for it.
-///
-/// `None` means the byte-walking scroll path must be used — before the first
-/// render there is nothing to read row positions from, and building an index
-/// here would trade a cheap walk for an O(buffer) pass.
-fn wrap_scroll_geometry(
-    view_state: &crate::view::split::SplitViewState,
-    state: &crate::state::EditorState,
-) -> Option<crate::view::wrap_index::WrapIndexGeometry> {
-    if !view_state.viewport.line_wrap_enabled || state.wrap_indices.is_empty() {
-        return None;
-    }
-    let inputs = state.pipeline_inputs();
-    let geometry = crate::view::ui::split_rendering::wrap_index_geometry_for(
-        &view_state.viewport,
-        &state.buffer,
-        view_state.viewport.line_wrap_enabled,
-        &crate::state::ViewMode::Source,
-        crate::view::wrap_index::fold_signature(&state.fold_ranges(&view_state.folds)),
-    );
-    state
-        .wrap_indices
-        .get(&geometry)
-        .is_some_and(|index| index.is_built_for(&geometry, inputs))
-        .then_some(geometry)
 }

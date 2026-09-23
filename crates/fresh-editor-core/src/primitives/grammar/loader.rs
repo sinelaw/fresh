@@ -316,11 +316,6 @@ impl GrammarRegistry {
 
         registry
     }
-
-    /// Get the grammars directory path for the given config directory.
-    pub fn grammars_directory(config_dir: &std::path::Path) -> PathBuf {
-        config_dir.join("grammars")
-    }
 }
 
 /// Load user grammars from a directory using the provided loader.
@@ -884,7 +879,6 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let mut registry =
             Arc::try_unwrap(GrammarRegistry::for_editor(temp_dir.path().to_path_buf()))
-                .ok()
                 .expect("registry should have refcount 1");
 
         // Create a custom languages config that maps "custom.myext" files to bash

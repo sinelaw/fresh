@@ -127,7 +127,7 @@ The following methods need to be added to `JsEditorApi` in `quickjs_backend.rs`:
 **Priority 9 - Process Management:**
 - `isProcessRunning(process_id)` → `boolean`
 - `spawnProcessWait(process_id)` → `Promise<SpawnResult>`
-- `killProcess(process_id)` → `Promise<boolean>`
+- `killProcess(process_id)` → `boolean`
 
 **Priority 10 - UI:**
 - `showActionPopup(options)` → `Promise<ActionPopupResult>`

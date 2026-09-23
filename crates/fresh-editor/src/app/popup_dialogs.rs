@@ -637,18 +637,8 @@ impl Editor {
             .position(|i| i.data.is_some() && !i.disabled)
             .unwrap_or(0);
 
-        // Left-align the popup's column with the LSP indicator on the status
-        // bar, if we know where it was drawn in the last frame. Falls back to
-        // the BottomRight anchor when the LSP segment isn't visible.
-        let position = self
-            .status_bar_clickable_area_now(crate::view::ui::status_bar::StatusBarClickable::Lsp)
-            .map(
-                |(status_row, col_start, _)| crate::view::popup::PopupPosition::AboveStatusBarAt {
-                    x: col_start,
-                    status_row,
-                },
-            )
-            .unwrap_or(crate::view::popup::PopupPosition::BottomRight);
+        let position =
+            self.popup_above_status_bar(crate::view::ui::status_bar::StatusBarClickable::Lsp);
 
         let focus_hint = if !focused {
             self.popup_focus_key_hint()
@@ -953,22 +943,9 @@ impl Editor {
             .position(|i| i.data.is_some() && !i.disabled)
             .unwrap_or(0);
 
-        // Anchor the popup to the remote-indicator's left edge if it's
-        // visible in the last frame; otherwise fall back to the bottom-
-        // right corner so the popup still appears. `status_row` comes
-        // from the same cached layout so the popup hugs the status bar
-        // even in prompt-auto-hide mode.
-        let position = self
-            .status_bar_clickable_area_now(
-                crate::view::ui::status_bar::StatusBarClickable::RemoteIndicator,
-            )
-            .map(
-                |(status_row, col_start, _)| crate::view::popup::PopupPosition::AboveStatusBarAt {
-                    x: col_start,
-                    status_row,
-                },
-            )
-            .unwrap_or(crate::view::popup::PopupPosition::BottomRight);
+        let position = self.popup_above_status_bar(
+            crate::view::ui::status_bar::StatusBarClickable::RemoteIndicator,
+        );
 
         let popup_width = (items
             .iter()
@@ -1019,9 +996,7 @@ impl Editor {
     /// `Action::ToggleReadOnly`). Toggles closed on a second click, mirroring
     /// the LSP / remote menus.
     pub fn show_read_only_popup(&mut self) {
-        use crate::view::popup::{
-            Popup, PopupContent, PopupKind, PopupListItem, PopupPosition, PopupResolver,
-        };
+        use crate::view::popup::{Popup, PopupContent, PopupKind, PopupListItem, PopupResolver};
         use ratatui::style::Style;
 
         // Second click on the indicator closes the menu instead of rebuilding.
@@ -1045,17 +1020,8 @@ impl Editor {
                 .with_data("cancel".to_string()),
         ];
 
-        let position = self
-            .status_bar_clickable_area_now(
-                crate::view::ui::status_bar::StatusBarClickable::ReadOnly,
-            )
-            .map(
-                |(status_row, col_start, _)| PopupPosition::AboveStatusBarAt {
-                    x: col_start,
-                    status_row,
-                },
-            )
-            .unwrap_or(PopupPosition::BottomRight);
+        let position =
+            self.popup_above_status_bar(crate::view::ui::status_bar::StatusBarClickable::ReadOnly);
 
         let popup_width = (items
             .iter()
@@ -1253,9 +1219,7 @@ impl Editor {
         body: Option<String>,
         mut items: Vec<crate::view::popup::PopupListItem>,
     ) {
-        use crate::view::popup::{
-            Popup, PopupContent, PopupKind, PopupListItem, PopupPosition, PopupResolver,
-        };
+        use crate::view::popup::{Popup, PopupContent, PopupKind, PopupListItem, PopupResolver};
         use ratatui::style::Style;
 
         // Second click on the indicator closes the menu instead of rebuilding.
@@ -1288,15 +1252,8 @@ impl Editor {
                 .with_data("cancel_popup".to_string()),
         );
 
-        let position = self
-            .status_bar_clickable_area_now(crate::view::ui::status_bar::StatusBarClickable::Update)
-            .map(
-                |(status_row, col_start, _)| PopupPosition::AboveStatusBarAt {
-                    x: col_start,
-                    status_row,
-                },
-            )
-            .unwrap_or(PopupPosition::BottomRight);
+        let position =
+            self.popup_above_status_bar(crate::view::ui::status_bar::StatusBarClickable::Update);
 
         let has_body = body.is_some();
         let popup_width = (items

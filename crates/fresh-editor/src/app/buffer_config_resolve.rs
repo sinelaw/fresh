@@ -64,8 +64,10 @@ mod tests {
 
     #[test]
     fn line_wrap_language_override_wins_over_global() {
-        let mut lang = LanguageConfig::default();
-        lang.line_wrap = Some(true);
+        let lang = LanguageConfig {
+            line_wrap: Some(true),
+            ..Default::default()
+        };
         let mut config = config_with("markdown", lang);
         config.editor.line_wrap = false;
 
@@ -90,8 +92,10 @@ mod tests {
 
     #[test]
     fn wrap_column_language_override_wins() {
-        let mut lang = LanguageConfig::default();
-        lang.wrap_column = Some(100);
+        let lang = LanguageConfig {
+            wrap_column: Some(100),
+            ..Default::default()
+        };
         let mut config = config_with("rust", lang);
         config.editor.wrap_column = Some(80);
         assert_eq!(wrap_column("rust", &config), Some(100));
@@ -119,9 +123,11 @@ mod tests {
 
     #[test]
     fn page_view_uses_language_width_first() {
-        let mut lang = LanguageConfig::default();
-        lang.page_view = Some(true);
-        lang.page_width = Some(72);
+        let lang = LanguageConfig {
+            page_view: Some(true),
+            page_width: Some(72),
+            ..Default::default()
+        };
         let mut config = config_with("markdown", lang);
         config.editor.page_width = Some(80);
         assert_eq!(page_view("markdown", &config), Some(Some(72)));
@@ -129,8 +135,10 @@ mod tests {
 
     #[test]
     fn page_view_falls_back_to_global_width() {
-        let mut lang = LanguageConfig::default();
-        lang.page_view = Some(true);
+        let lang = LanguageConfig {
+            page_view: Some(true),
+            ..Default::default()
+        };
         // page_width left as None
         let mut config = config_with("markdown", lang);
         config.editor.page_width = Some(80);

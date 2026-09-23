@@ -413,6 +413,17 @@ Updating a panel re-renders preserving state; a widget mutate is a fast path for
 targeted updates (set value, set checked, set items, set expanded keys, set
 completions, append tree nodes, set focus key, …).
 
+**A panel's keymap is the one it names.** A floating or dock panel's keys go to
+its focused control first, then to the `mode` it was mounted with, then to the
+panel's own defaults (Tab, Esc). A panel mounted without a `mode` has no keymap
+at all. It used to fall back to the window's editor mode (`setEditorMode`), so
+a menu that bound nothing handed its arrows and Esc to whatever plugin held
+that slot — vi-normal's `j`/`k`, for one — and plugins defined empty modes just
+to block the fallback. *Change for third-party plugins:* a plugin that keyed a
+centred panel by calling `setEditorMode` before mounting it must now pass that
+mode as the mount's `mode` option (`FloatingWidgetPanel.mount(spec, { mode })`).
+The window's editor mode is the buffer's.
+
 ### 7.3 Events back to the plugin
 
 Key/mouse input is routed through the widget runtime (command handling, smart

@@ -606,6 +606,8 @@ mod tests {
     /// renderer never draws. Given the frame's folds, the same walk reaches the
     /// far side.
     #[test]
+    // A list of fold ranges holding one fold, not a range of values.
+    #[allow(clippy::single_range_in_vec_init)]
     fn a_walk_steps_over_a_collapsed_fold() {
         let mut content = String::from("header\n");
         let fold_start = content.len();

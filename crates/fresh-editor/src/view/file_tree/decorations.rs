@@ -5,7 +5,6 @@ use super::cache::{build_bubbled_cache, insert_with_aliases};
 use super::slots::{
     ExplorerSlotContext, ExplorerTooltipSummary, ExplorerTrailingSlotPayload,
     ExplorerTrailingSlotProvider, ExplorerTrailingSlotResolution,
-    COMPATIBILITY_TRAILING_SLOT_HIT_WIDTH,
 };
 use crate::view::theme::Theme;
 use ratatui::style::Color;
@@ -115,10 +114,6 @@ impl ExplorerTrailingSlotProvider for CompatibilityTrailingSlotProvider {
             payload: row_status.compatibility_trailing_slot(context.theme, context.is_dir),
             name_color_hint: None,
         }
-    }
-
-    fn hit_test_width(&self) -> u16 {
-        COMPATIBILITY_TRAILING_SLOT_HIT_WIDTH
     }
 }
 

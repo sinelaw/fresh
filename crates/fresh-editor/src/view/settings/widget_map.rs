@@ -37,10 +37,10 @@
 //! events the kind reports are written to the model.
 
 use super::items::{
-    json_is_unset, json_is_valid, map_display_value, object_array_row, SettingControl, SettingItem,
+    json_is_unset, json_is_valid, map_display_value, object_array_row, SettingControl,
 };
 use fresh_core::api::{ButtonKind, DualListOption, OverlayColorSpec, OverlayOptions, WidgetSpec};
-use fresh_core::text_property::{InlineOverlay, OffsetUnit, StyledSegment, TextPropertyEntry};
+use fresh_core::text_property::{StyledSegment, TextPropertyEntry};
 
 /// Accent color for the "key" column (key combo / map key). Matches the
 /// widget framework's help-key accent and the historical `MapColors::key`.
@@ -117,6 +117,7 @@ pub fn setting_control_to_widget_aligned(
             indeterminate: *inherited,
             label_first: true,
             label_width: lw,
+            mnemonic: None,
             key,
         },
         // The value as the JSON carries it; the kind formats a percent as
@@ -185,6 +186,8 @@ pub fn setting_control_to_widget_aligned(
             full_width: true,
             completions: Vec::new(),
             completions_visible_rows: 0,
+            min_rows: 0,
+            max_rows: 0,
             block_caret: true,
             sel_start: -1,
             sel_end: -1,
@@ -194,6 +197,7 @@ pub fn setting_control_to_widget_aligned(
             label_width: lw,
             read_only: false,
             markdown: false,
+            combo: false,
             key,
         },
         // The included set is the model's; which column the keyboard
@@ -374,12 +378,15 @@ pub fn setting_control_to_widget_aligned(
                     full_width: true,
                     completions: Vec::new(),
                     completions_visible_rows: 0,
+                    min_rows: 0,
+                    max_rows: 0,
                     block_caret: true,
                     sel_start: -1,
                     sel_end: -1,
                     label_width: 0,
                     read_only: false,
                     markdown: false,
+                    combo: false,
                     key,
                 },
             ];
@@ -449,12 +456,15 @@ fn text_list_row(field_key: &str, row: Option<usize>, value: &str) -> WidgetSpec
             full_width: false,
             completions: Vec::new(),
             completions_visible_rows: 0,
+            min_rows: 0,
+            max_rows: 0,
             block_caret: true,
             sel_start: -1,
             sel_end: -1,
             label_width: 0,
             read_only: false,
             markdown: false,
+            combo: false,
             key: Some(SettingControl::text_list_row_key(field_key, row)),
         },
     ];
@@ -524,6 +534,7 @@ fn rows_list(
         selected_index: cursor.map(|c| c as i32).unwrap_or(-1),
         visible_rows: Some(visible),
         focusable: true,
+        type_ahead: false,
         key: Some(field_key.to_string()),
     }
 }
@@ -618,7 +629,8 @@ pub(crate) fn column_title(display_field: &str) -> String {
 /// divider between sections) at each `is_section_start` boundary. This
 /// is the tree Settings hands to `widgets::render_spec` once it renders
 /// through the widget framework.
-pub fn settings_items_to_widget(items: &[SettingItem]) -> WidgetSpec {
+#[cfg(test)]
+pub fn settings_items_to_widget(items: &[super::items::SettingItem]) -> WidgetSpec {
     let mut children: Vec<WidgetSpec> = Vec::with_capacity(items.len());
     for item in items {
         if item.is_section_start {
@@ -642,7 +654,9 @@ pub fn settings_items_to_widget(items: &[SettingItem]) -> WidgetSpec {
 }
 
 /// A styled section-header row (`Raw`, accent fg + bold).
+#[cfg(test)]
 fn section_header(section: &str) -> WidgetSpec {
+    use fresh_core::text_property::{InlineOverlay, OffsetUnit};
     let mut entry = TextPropertyEntry::text(section);
     entry.inline_overlays.push(InlineOverlay {
         start: 0,
@@ -663,6 +677,7 @@ fn section_header(section: &str) -> WidgetSpec {
 
 #[cfg(test)]
 mod tests {
+    use super::super::items::SettingItem;
     use super::*;
 
     #[test]

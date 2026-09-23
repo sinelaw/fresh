@@ -42,6 +42,54 @@ fn unnamed_modified_buffers_in(window: &crate::app::window::Window) -> Vec<Buffe
         .collect()
 }
 
+impl crate::app::window::Window {
+    /// Whether `path` changed on disk since this window last loaded or saved
+    /// it. Returns the file's current mtime if so.
+    ///
+    /// Any mtime difference counts, not only a newer one: a replacement file
+    /// can carry an *older* timestamp (`cp -p`, `rsync -t`, `tar x`, `mv` of
+    /// an older file) and is still someone else's content (issue #3346).
+    pub(crate) fn changed_on_disk(&self, path: &Path) -> Option<std::time::SystemTime> {
+        let current_mtime = self
+            .authority()
+            .filesystem
+            .metadata(path)
+            .ok()
+            .and_then(|m| m.modified)?;
+        let recorded_mtime = self.file_mod_times.get(path)?;
+        (current_mtime != *recorded_mtime).then_some(current_mtime)
+    }
+}
+
+/// What Save All ([`Editor::save_all`]) did.
+#[derive(Debug, Default)]
+pub struct SaveAllOutcome {
+    /// Buffers written to disk.
+    pub saved: usize,
+    /// Every buffer whose write failed (needs sudo, lost remote, ...).
+    pub failed: Vec<PathBuf>,
+    /// Buffers left unsaved because their file changed on disk since it was
+    /// loaded or saved; overwriting it needs an explicit Save (issue #3346).
+    pub changed_on_disk: Vec<PathBuf>,
+}
+
+/// What the save on exit ([`Editor::save_all_on_exit`]) did.
+///
+/// Unlike [`SaveAllOutcome`], what it left unsaved is listed only for the
+/// buffers the quit prompt asks about: a buffer hidden from the tabs is
+/// saved where it can be, but one it can't save doesn't hold the quit
+/// ([`Window::quit_skips_buffer`](crate::app::window::Window::quit_skips_buffer)).
+#[derive(Debug, Default)]
+pub struct ExitSaveOutcome {
+    /// Buffers written to disk, hidden ones included.
+    pub saved: usize,
+    /// Asked-about buffers whose write failed (needs sudo, lost remote, ...).
+    pub failed: Vec<PathBuf>,
+    /// Asked-about buffers left unsaved because their file changed on disk
+    /// (issue #3346).
+    pub changed_on_disk: Vec<PathBuf>,
+}
+
 impl Editor {
     /// Save the active buffer
     pub fn save(&mut self) -> anyhow::Result<()> {
@@ -62,11 +110,13 @@ impl Editor {
             .file_path()
             .map(|p| p.to_path_buf());
 
-        match self.active_state_mut().buffer.save() {
+        let recovery_dir = self.dir_context.recovery_dir();
+        match self.active_state_mut().buffer.save(&recovery_dir) {
             Ok(()) => self.finalize_save(path),
-            Err(e) => {
-                if let Some(sudo_info) = e.downcast_ref::<SudoSaveRequired>() {
-                    let info = sudo_info.clone();
+            Err(e) => match e.downcast::<SudoSaveRequired>() {
+                // The prompt takes the temp file over: it lives as long as
+                // the prompt does, and is deleted however the prompt ends.
+                Ok(info) => {
                     let body = t!("prompt.sudo_save_confirm").to_string();
                     let confirm = crate::view::confirm::Confirm::new(
                         t!("dialog.title.permission_denied").into_owned(),
@@ -81,37 +131,41 @@ impl Editor {
                         ],
                     )
                     .detail(info.dest_path.display().to_string());
+                    let info = std::sync::Arc::new(info);
                     self.start_confirm_prompt(body, PromptType::ConfirmSudoSave { info }, confirm);
                     Ok(())
-                } else if let Some(path) = path {
-                    // Check if failure is due to non-existent parent directory
-                    let is_not_found = e
-                        .downcast_ref::<std::io::Error>()
-                        .is_some_and(|io_err| io_err.kind() == std::io::ErrorKind::NotFound);
-                    if is_not_found {
-                        if let Some(parent) = path.parent() {
-                            if !self.authority().filesystem.exists(parent) {
-                                let dir_name = parent
-                                    .strip_prefix(self.working_dir())
-                                    .unwrap_or(parent)
-                                    .display()
-                                    .to_string();
-                                let confirm =
-                                    crate::app::confirm_dialog::create_directory(&dir_name);
-                                self.start_confirm_prompt(
-                                    confirm.body.clone(),
-                                    PromptType::ConfirmCreateDirectory { path },
-                                    confirm,
-                                );
-                                return Ok(());
+                }
+                Err(e) => {
+                    if let Some(path) = path {
+                        // Check if failure is due to non-existent parent directory
+                        let is_not_found = e
+                            .downcast_ref::<std::io::Error>()
+                            .is_some_and(|io_err| io_err.kind() == std::io::ErrorKind::NotFound);
+                        if is_not_found {
+                            if let Some(parent) = path.parent() {
+                                if !self.authority().filesystem.exists(parent) {
+                                    let dir_name = parent
+                                        .strip_prefix(self.working_dir())
+                                        .unwrap_or(parent)
+                                        .display()
+                                        .to_string();
+                                    let confirm =
+                                        crate::app::confirm_dialog::create_directory(&dir_name);
+                                    self.start_confirm_prompt(
+                                        confirm.body.clone(),
+                                        PromptType::ConfirmCreateDirectory { path },
+                                        confirm,
+                                    );
+                                    return Ok(());
+                                }
                             }
                         }
+                        Err(e)
+                    } else {
+                        Err(e)
                     }
-                    Err(e)
-                } else {
-                    Err(e)
                 }
-            }
+            },
         }
     }
 
@@ -145,6 +199,7 @@ impl Editor {
                             first_line.as_deref(),
                             &self.grammar_registry,
                             &self.config.languages,
+                            state.buffer.filesystem().as_ref(),
                         );
                     state.apply_language(detected);
                     state.apply_buffer_config(&self.config);
@@ -281,7 +336,15 @@ impl Editor {
         }
 
         let mut count = 0;
+        let mut changed_on_disk = Vec::new();
         for (id, path) in to_save {
+            // Never overwrite someone else's change unasked; auto-save can't
+            // prompt, so leave the buffer dirty and say so.
+            if self.changed_on_disk(&path).is_some() {
+                tracing::warn!("Auto-save skipped for {}: changed on disk", path.display());
+                changed_on_disk.push(path);
+                continue;
+            }
             if let Some(state) = self
                 .windows
                 .get_mut(&self.active_window)
@@ -289,14 +352,14 @@ impl Editor {
                 .expect("active window present")
                 .get_mut(&id)
             {
-                match state.buffer.save() {
+                match state.buffer.save(&self.dir_context.recovery_dir()) {
                     Ok(()) => {
                         self.finalize_save_buffer(id, Some(path), true)?;
                         count += 1;
                     }
                     Err(e) => {
                         // Skip if sudo is required (auto-save can't handle prompts)
-                        if e.downcast_ref::<SudoSaveRequired>().is_some() {
+                        if e.is::<SudoSaveRequired>() {
                             tracing::debug!(
                                 "Auto-save skipped for {:?} (sudo required)",
                                 path.display()
@@ -307,6 +370,18 @@ impl Editor {
                     }
                 }
             }
+        }
+
+        // Say so when the set of skipped files changes, not every interval:
+        // repeating it would keep overwriting whatever the status bar has
+        // shown since.
+        changed_on_disk.sort();
+        if changed_on_disk != self.active_window().auto_save_changed_on_disk {
+            if !changed_on_disk.is_empty() {
+                self.active_window_mut().status_message =
+                    Some(Self::not_saved_changed_on_disk_message(&changed_on_disk));
+            }
+            self.active_window_mut().auto_save_changed_on_disk = changed_on_disk;
         }
 
         Ok(count)
@@ -398,74 +473,89 @@ impl Editor {
         }
     }
 
-    /// Save all modified file-backed buffers to disk (called on exit when auto_save is enabled).
-    /// Unlike `auto_save_persistent_buffers`, this skips the interval check and only saves
-    /// named file-backed buffers (not unnamed buffers).
-    pub fn save_all_on_exit(&mut self) -> anyhow::Result<usize> {
+    /// Carry out the exit save plan ([`Editor::exit_save_plan`]): write every
+    /// modified buffer backed by a named file, in every workspace, except one
+    /// whose file changed on disk. Unnamed buffers are left to the quit
+    /// prompt.
+    ///
+    /// Run by the auto-save on exit ([`Editor::auto_save_on_exit`]) and by
+    /// the quit prompt's "Save and Quit".
+    pub fn save_all_on_exit(&mut self) -> anyhow::Result<ExitSaveOutcome> {
         // Exiting closes every workspace, so "save on the way out" must mean
         // all of them (issue #3189). Retargeted per window so the per-buffer
         // finalize (LSP didSave, event-log marker, recovery delete) lands on
-        // the right window's state.
-        let mut count = 0;
+        // the right window's state. Each window's part of the plan is read
+        // just before it is carried out: a file open in two workspaces is
+        // saved by the first, and has changed on disk for the second.
+        let hot_exit = self.config.editor.hot_exit;
+        let mut outcome = ExitSaveOutcome::default();
         for window_id in self.window_ids_sorted() {
-            count += self.with_window_retargeted(window_id, |editor| {
-                editor.save_all_on_exit_in_active_window()
+            let Some(plan) = self
+                .windows
+                .get(&window_id)
+                .map(|window| window.exit_save_plan(window_id, hot_exit))
+            else {
+                continue;
+            };
+            self.with_window_retargeted(window_id, |editor| {
+                editor.carry_out_exit_save(plan, &mut outcome)
             })?;
         }
-        Ok(count)
+        Ok(outcome)
     }
 
-    /// The single-workspace half of [`Editor::save_all_on_exit`].
-    fn save_all_on_exit_in_active_window(&mut self) -> anyhow::Result<usize> {
-        let mut to_save = Vec::new();
-        for (id, state) in self
-            .windows
-            .get(&self.active_window)
-            .map(|w| &w.buffers)
-            .expect("active window present")
-        {
-            if state.buffer.is_modified() {
-                if let Some(path) = state.buffer.file_path() {
-                    if !path.as_os_str().is_empty() {
-                        to_save.push((*id, path.to_path_buf()));
+    /// The active window's part of [`Editor::save_all_on_exit`].
+    fn carry_out_exit_save(
+        &mut self,
+        plan: Vec<super::lifecycle::ExitSaveEntry>,
+        outcome: &mut ExitSaveOutcome,
+    ) -> anyhow::Result<()> {
+        use super::lifecycle::ExitSave;
+        for entry in plan {
+            let path = match entry.save {
+                ExitSave::NoFile => continue,
+                ExitSave::ChangedOnDisk(path) => {
+                    tracing::warn!(
+                        "Auto-save on exit skipped for {}: changed on disk",
+                        path.display()
+                    );
+                    if entry.asked {
+                        outcome.changed_on_disk.push(path);
                     }
+                    continue;
                 }
-            }
-        }
-
-        let mut count = 0;
-        for (id, path) in to_save {
-            if let Some(state) = self
+                ExitSave::Write(path) => path,
+            };
+            let Some(state) = self
                 .windows
                 .get_mut(&self.active_window)
                 .map(|w| &mut w.buffers)
                 .expect("active window present")
-                .get_mut(&id)
-            {
-                match state.buffer.save() {
-                    Ok(()) => {
-                        self.finalize_save_buffer(id, Some(path), true)?;
-                        count += 1;
+                .get_mut(&entry.buffer)
+            else {
+                continue;
+            };
+            match state.buffer.save(&self.dir_context.recovery_dir()) {
+                Ok(()) => {
+                    self.finalize_save_buffer(entry.buffer, Some(path), true)?;
+                    outcome.saved += 1;
+                }
+                Err(e) => {
+                    if e.is::<SudoSaveRequired>() {
+                        tracing::debug!(
+                            "Auto-save on exit skipped for {} (sudo required)",
+                            path.display()
+                        );
+                    } else {
+                        tracing::warn!("Auto-save on exit failed for {}: {}", path.display(), e);
                     }
-                    Err(e) => {
-                        if e.downcast_ref::<SudoSaveRequired>().is_some() {
-                            tracing::debug!(
-                                "Auto-save on exit skipped for {} (sudo required)",
-                                path.display()
-                            );
-                        } else {
-                            tracing::warn!(
-                                "Auto-save on exit failed for {}: {}",
-                                path.display(),
-                                e
-                            );
-                        }
+                    if entry.asked {
+                        outcome.failed.push(path);
                     }
                 }
             }
         }
-
-        Ok(count)
+        Ok(())
     }
 
     /// Save every modified, file-backed buffer in the active window to disk.
@@ -478,9 +568,10 @@ impl Editor {
     /// so LSP notifications, recovery cleanup, and the modified marker are all
     /// kept in sync, just like a single-buffer save.
     ///
-    /// Returns `(saved, failed)`: the number of buffers written successfully
-    /// and the number whose write failed (e.g. permissions, lost remote).
-    pub fn save_all(&mut self) -> anyhow::Result<(usize, usize)> {
+    /// Buffers whose file changed on disk since it was loaded or saved are
+    /// left unsaved (and listed in the outcome) rather than overwriting the
+    /// other change; a plain Save on that buffer asks first.
+    pub fn save_all(&mut self) -> anyhow::Result<SaveAllOutcome> {
         // Collect ids + paths up front so we don't hold an immutable borrow of
         // `windows` while mutably saving each buffer below.
         let mut to_save = Vec::new();
@@ -500,30 +591,33 @@ impl Editor {
             }
         }
 
-        let mut saved = 0;
-        let mut failed = 0;
+        let mut outcome = SaveAllOutcome::default();
         for (id, path) in to_save {
+            if self.changed_on_disk(&path).is_some() {
+                outcome.changed_on_disk.push(path);
+                continue;
+            }
             let result = self
                 .windows
                 .get_mut(&self.active_window)
                 .map(|w| &mut w.buffers)
                 .expect("active window present")
                 .get_mut(&id)
-                .map(|state| state.buffer.save());
+                .map(|state| state.buffer.save(&self.dir_context.recovery_dir()));
             match result {
                 Some(Ok(())) => {
                     self.finalize_save_buffer(id, Some(path), true)?;
-                    saved += 1;
+                    outcome.saved += 1;
                 }
                 Some(Err(e)) => {
-                    failed += 1;
                     tracing::warn!("Save All failed for {}: {}", path.display(), e);
+                    outcome.failed.push(path);
                 }
                 None => {}
             }
         }
 
-        Ok((saved, failed))
+        Ok(outcome)
     }
 
     /// Revert the active buffer to the last saved version on disk
@@ -545,19 +639,10 @@ impl Editor {
         }
 
         // Save scroll position (from SplitViewState) and cursor positions before reloading
-        let active_split = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(mgr, _)| mgr)
-            .expect("active window must have a populated split layout")
-            .active_split();
+        let active_split = self.active_window().split_manager().active_split();
         let (old_top_byte, old_left_column) = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(_, vs)| vs)
-            .expect("active window must have a populated split layout")
+            .active_window()
+            .split_view_states()
             .get(&active_split)
             .map(|vs| (vs.viewport.top_byte(), vs.viewport.left_column))
             .unwrap_or((0, 0));
@@ -605,18 +690,10 @@ impl Editor {
         }
 
         // Restore cursor positions in SplitViewState (clamped to valid range for new file size)
-        let active_split = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(mgr, _)| mgr)
-            .expect("active window must have a populated split layout")
-            .active_split();
+        let active_split = self.active_window().split_manager().active_split();
         if let Some(view_state) = self
-            .windows
-            .get_mut(&self.active_window)
-            .and_then(|w| w.split_view_states_mut())
-            .expect("active window must have a populated split layout")
+            .active_window_mut()
+            .split_view_states_mut()
             .get_mut(&active_split)
         {
             view_state.cursors = restored_cursors;
@@ -624,10 +701,8 @@ impl Editor {
 
         // Restore scroll position in SplitViewState (clamped to valid range for new file size)
         if let Some(view_state) = self
-            .windows
-            .get_mut(&self.active_window)
-            .and_then(|w| w.split_view_states_mut())
-            .expect("active window must have a populated split layout")
+            .active_window_mut()
+            .split_view_states_mut()
             .get_mut(&active_split)
         {
             view_state
@@ -1230,11 +1305,8 @@ impl Editor {
         // TODO: Consider moving line numbers to SplitViewState (per-view setting)
         // Get cursors from split view states for this buffer (find any split showing it)
         let old_cursors = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(_, vs)| vs)
-            .expect("active window must have a populated split layout")
+            .active_window()
+            .split_view_states()
             .values()
             .find_map(|vs| {
                 if vs.keyed_states.contains_key(&buffer_id) {
@@ -1299,10 +1371,8 @@ impl Editor {
 
         // Restore cursors in any split view states that have this buffer
         for vs in self
-            .windows
-            .get_mut(&self.active_window)
-            .and_then(|w| w.split_view_states_mut())
-            .expect("active window must have a populated split layout")
+            .active_window_mut()
+            .split_view_states_mut()
             .values_mut()
         {
             if let Some(buf_state) = vs.keyed_states.get_mut(&buffer_id) {
@@ -1393,13 +1463,14 @@ impl Editor {
                 None => continue, // Can't read file, skip
             };
 
-            let dominated_by_stored = self
+            // Any difference counts: a replacement can carry an older mtime
+            // (issue #3346).
+            let matches_stored = self
                 .file_mod_times()
                 .get(&path)
-                .map(|stored| current_mtime <= *stored)
-                .unwrap_or(false);
+                .is_some_and(|stored| current_mtime == *stored);
 
-            if dominated_by_stored {
+            if matches_stored {
                 continue;
             }
 
@@ -1421,8 +1492,7 @@ impl Editor {
                 let still_needs_revert = self
                     .file_mod_times()
                     .get(&path)
-                    .map(|stored| current_mtime > *stored)
-                    .unwrap_or(true);
+                    .is_none_or(|stored| current_mtime != *stored);
 
                 if !still_needs_revert {
                     continue;
@@ -1458,24 +1528,87 @@ impl Editor {
     /// Returns Some(current_mtime) if there's a conflict, None otherwise
     pub fn check_save_conflict(&self) -> Option<std::time::SystemTime> {
         let path = self.active_state().buffer.file_path()?;
-
-        // Get current file modification time
-        let current_mtime = self
-            .authority()
-            .filesystem
-            .metadata(path)
-            .ok()
-            .and_then(|m| m.modified)?;
-
-        // Compare with our recorded modification time
-        match self.file_mod_times().get(path) {
-            Some(recorded_mtime) if current_mtime > *recorded_mtime => {
-                // File was modified externally since we last loaded/saved it
-                Some(current_mtime)
-            }
-            _ => None,
-        }
+        self.changed_on_disk(path)
     }
+
+    /// [`Window::changed_on_disk`](crate::app::window::Window::changed_on_disk)
+    /// in the active window.
+    pub(crate) fn changed_on_disk(&self, path: &Path) -> Option<std::time::SystemTime> {
+        self.active_window().changed_on_disk(path)
+    }
+
+    /// Report buffers a bulk save left alone because their file changed on
+    /// disk (see [`Editor::changed_on_disk`]).
+    pub(crate) fn not_saved_changed_on_disk_message(paths: &[PathBuf]) -> String {
+        t!(
+            "status.not_saved_changed_on_disk",
+            files = file_names(paths)
+        )
+        .to_string()
+    }
+
+    /// What the save on exit didn't write that the quit prompt asks about,
+    /// if anything: the files it failed to save and those it left alone
+    /// because they changed on disk.
+    pub(crate) fn not_saved_message(outcome: &ExitSaveOutcome) -> Option<String> {
+        let failed = file_names(&outcome.failed);
+        let changed = file_names(&outcome.changed_on_disk);
+        let msg = match (failed.is_empty(), changed.is_empty()) {
+            (true, true) => return None,
+            (false, true) => t!("status.not_saved_failed", files = failed),
+            (true, false) => t!("status.not_saved_changed_on_disk", files = changed),
+            (false, false) => t!(
+                "status.not_saved_failed_changed_on_disk",
+                failed = failed,
+                changed = changed
+            ),
+        };
+        Some(msg.to_string())
+    }
+
+    /// The status line for Save All: how many files it saved and failed to
+    /// save, and those it left alone because they changed on disk.
+    pub(crate) fn save_all_message(outcome: &SaveAllOutcome) -> String {
+        let saved = outcome.saved.to_string();
+        let failed = outcome.failed.len();
+        let changed = file_names(&outcome.changed_on_disk);
+        match (failed > 0, outcome.saved > 0, changed.is_empty()) {
+            (true, _, true) => t!(
+                "status.save_all_partial",
+                saved = saved,
+                failed = failed.to_string()
+            ),
+            (true, _, false) => t!(
+                "status.save_all_partial_changed_on_disk",
+                saved = saved,
+                failed = failed.to_string(),
+                files = changed
+            ),
+            (false, false, true) => t!("status.save_all_none"),
+            (false, false, false) => t!("status.not_saved_changed_on_disk", files = changed),
+            (false, true, true) => t!("status.save_all", count = saved),
+            (false, true, false) => t!(
+                "status.save_all_changed_on_disk",
+                count = saved,
+                files = changed
+            ),
+        }
+        .to_string()
+    }
+}
+
+/// `paths`' file names, comma-separated, for a status message.
+fn file_names(paths: &[PathBuf]) -> String {
+    paths
+        .iter()
+        .map(|p| {
+            p.file_name()
+                .unwrap_or(p.as_os_str())
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// Stat and read `dir/.gitignore` via the filesystem authority and install

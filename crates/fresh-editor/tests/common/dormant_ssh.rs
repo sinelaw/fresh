@@ -71,6 +71,17 @@ pub fn slow_fake_ssh_on_path() -> PathPin {
     pin_shim_dir("tests/fixtures/fake-ssh-slow")
 }
 
+/// Like [`fake_ssh_on_path`], but the shim **runs the remote command here**
+/// (`tests/fixtures/fake-ssh-local`), in the pretend remote home named by
+/// `FAKE_SSH_REMOTE_HOME` (set it through [`PathPin::set_env`]). One-shot
+/// remote commands — probes, folder listings, clones — then work end to end
+/// with no network. It does not speak the remote-agent protocol, so a test
+/// using it must not open a remote workspace.
+#[must_use = "the shim leaves $PATH as soon as the guard is dropped"]
+pub fn local_shell_ssh_on_path() -> PathPin {
+    pin_shim_dir("tests/fixtures/fake-ssh-local")
+}
+
 fn pin_shim_dir(rel: &str) -> PathPin {
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(rel);
     assert!(
@@ -83,6 +94,7 @@ fn pin_shim_dir(rel: &str) -> PathPin {
 
 /// Re-exported from [`super::global_state`], where the five other roots that
 /// need the same thing now find it too.
+#[cfg(feature = "plugins")]
 pub use super::global_state::isolated_dir_context;
 
 /// An SSH `authority_spec` for a host the fake shim "fails to reach".

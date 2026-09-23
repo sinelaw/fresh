@@ -689,7 +689,10 @@ pub struct PluginTrackedState {
     /// Context names set by the plugin
     pub contexts_set: Vec<String>,
     // --- Phase 3: Resource cleanup ---
-    /// Background process IDs spawned by this plugin
+    /// Background process IDs spawned by this plugin that are still live:
+    /// added when `spawnBackgroundProcess` issues the id, removed when the
+    /// process's result callback settles or a kill is requested. Backs
+    /// `isProcessRunning` and the kill-on-unload cleanup.
     pub background_process_ids: Vec<u64>,
     /// Scroll sync group IDs created by this plugin
     pub scroll_sync_group_ids: Vec<u32>,
@@ -709,6 +712,19 @@ pub struct PluginTrackedState {
     pub timer_ids: Vec<u64>,
     /// Machine handles from `editor.openMachine`, each holding a connection. Closed on unload.
     pub machine_ids: Vec<u64>,
+}
+
+/// Forget a background process id (it exited or a kill was requested), so
+/// `isProcessRunning` reports it as gone and unload doesn't kill it again.
+/// Ids come from the backend-wide request counter, so searching every
+/// plugin is unambiguous.
+fn forget_background_process(
+    tracked: &RefCell<HashMap<String, PluginTrackedState>>,
+    process_id: u64,
+) {
+    for state in tracked.borrow_mut().values_mut() {
+        state.background_process_ids.retain(|&id| id != process_id);
+    }
 }
 
 /// Type alias for the shared async resource owner map.
@@ -1033,18 +1049,6 @@ impl JsEditorApi {
             fresh_core::api::PluginPath::Authority { window, .. } => {
                 self.services.authority_filesystem(*window)
             }
-        }
-    }
-
-    /// Whether two plugin paths resolve to the same filesystem backend (so a
-    /// two-path op like rename/copy is well-defined). Cross-backend moves are
-    /// rejected rather than silently operating on one side.
-    fn same_backend(a: &fresh_core::api::PluginPath, b: &fresh_core::api::PluginPath) -> bool {
-        use fresh_core::api::PluginPath::{Authority, Local};
-        match (a, b) {
-            (Local(_), Local(_)) => true,
-            (Authority { window: wa, .. }, Authority { window: wb, .. }) => wa == wb,
-            _ => false,
         }
     }
 
@@ -2857,8 +2861,9 @@ impl JsEditorApi {
             .and_then(|bytes| String::from_utf8(bytes).ok())
     }
 
-    /// Write file contents to the path's filesystem. Parent directories are
-    /// created as needed.
+    /// Write file contents to a NEW file on the path's filesystem. Parent
+    /// directories are created as needed. Returns false if the path already
+    /// exists — use `replaceFile` to replace a file deliberately.
     pub fn write_file(
         &self,
         #[plugin_api(ts_type = "string | LocalPath | WindowPath | AuthorityPath")]
@@ -2867,6 +2872,23 @@ impl JsEditorApi {
     ) -> bool {
         self.fs_for(&path)
             .write_file(Path::new(path.as_str()), content.as_bytes())
+    }
+
+    /// Write to a file, replacing it if it already exists.
+    ///
+    /// `writeFile` refuses an existing path, which is what its documentation
+    /// always promised and what stops a plugin destroying a user's file by
+    /// accident. Use this when replacing the file is the actual intent — a
+    /// plugin rewriting its own cache or state, or re-exporting a report the
+    /// user asked for again. The write is atomic.
+    pub fn replace_file(
+        &self,
+        #[plugin_api(ts_type = "string | LocalPath | WindowPath | AuthorityPath")]
+        path: fresh_core::api::PluginPath,
+        content: String,
+    ) -> bool {
+        self.fs_for(&path)
+            .replace_file(Path::new(path.as_str()), content.as_bytes())
     }
 
     /// Read directory contents (returns array of {name, is_file, is_dir})
@@ -2893,83 +2915,116 @@ impl JsEditorApi {
         self.fs_for(&path).create_dir_all(Path::new(path.as_str()))
     }
 
-    /// Permanently remove a file or directory on the path's filesystem
-    /// (recursively for directories). For safety, the path must be under the OS
-    /// temp directory or the Fresh config directory. Returns true on success.
-    pub fn remove_path(
-        &self,
-        #[plugin_api(ts_type = "string | LocalPath | WindowPath | AuthorityPath")]
-        path: fresh_core::api::PluginPath,
-    ) -> bool {
-        let fs = self.fs_for(&path);
-        let target = match fs.canonicalize(Path::new(path.as_str())) {
-            Some(p) => p,
-            None => return false, // path doesn't exist or can't be resolved
-        };
+    // `removePath`, `renamePath` and `copyPath` used to live here.
+    //
+    // All three took a path the plugin chose. `removePath` checked that the
+    // top-level target sat under the temp or config directory, but a symlink
+    // *inside* that target walked its recursive delete straight back out;
+    // `renamePath` had no such check at all and fell back to copy-then-delete,
+    // so anything `removePath` refused could be moved somewhere it allowed and
+    // deleted from there. `copyPath` overwrote its destination. Between them a
+    // plugin bug could destroy any file the editor could write, with no
+    // confirmation and nothing in the trash to recover from.
+    //
+    // What replaced them takes a name instead of a path — a staging token the
+    // editor issued, or a package kind and name, or a state namespace and key
+    // — and the editor resolves that to a path itself.
 
-        // Canonicalize allowed roots through the same backend so path prefix
-        // comparisons are consistent (e.g. Windows extended-length paths).
-        let temp_dir = fs
-            .canonicalize(&std::env::temp_dir())
-            .unwrap_or_else(std::env::temp_dir);
-        let config_dir = fs
-            .canonicalize(&self.services.config_dir())
-            .unwrap_or_else(|| self.services.config_dir());
-
-        // Verify the path is under an allowed root (temp or config dir)
-        let allowed = target.starts_with(&temp_dir) || target.starts_with(&config_dir);
-        if !allowed {
-            tracing::warn!(
-                "removePath refused: {:?} is not under temp dir ({:?}) or config dir ({:?})",
-                target,
-                temp_dir,
-                config_dir
-            );
-            return false;
-        }
-
-        // Don't allow removing the root directories themselves
-        if target == temp_dir || target == config_dir {
-            tracing::warn!(
-                "removePath refused: cannot remove root directory {:?}",
-                target
-            );
-            return false;
-        }
-
-        fs.remove_path(&target)
+    /// Create an editor-owned staging directory and return the opaque token
+    /// that names it. Write into it with the path `scratchPath` returns, then
+    /// either publish it with `installScratch` or drop it with
+    /// `scratchDiscard`. `label` only makes the directory recognisable to a
+    /// human; it does not decide where the directory goes.
+    pub fn scratch_create(&self, label: String) -> Option<String> {
+        self.services.scratch_create(&label)
     }
 
-    /// Rename/move a file or directory. Both paths must target the same
-    /// filesystem (a cross-backend move is rejected). Returns true on success.
-    pub fn rename_path(
-        &self,
-        #[plugin_api(ts_type = "string | LocalPath | WindowPath | AuthorityPath")]
-        from: fresh_core::api::PluginPath,
-        #[plugin_api(ts_type = "string | LocalPath | WindowPath | AuthorityPath")]
-        to: fresh_core::api::PluginPath,
-    ) -> bool {
-        if !Self::same_backend(&from, &to) {
-            return false;
-        }
-        self.fs_for(&from)
-            .rename(Path::new(from.as_str()), Path::new(to.as_str()))
+    /// The directory a staging token names, or `null` if the token is unknown
+    /// or already spent.
+    pub fn scratch_path(&self, token: String) -> Option<String> {
+        self.services
+            .scratch_path(&token)
+            .map(|p| p.to_string_lossy().to_string())
     }
 
-    /// Copy a file or directory recursively to a new location. Both paths must
-    /// target the same filesystem. Returns true on success.
-    pub fn copy_path(
+    /// Discard a staging directory. The path is looked up from the token, so
+    /// an unknown or spent token removes nothing.
+    pub fn scratch_discard(&self, token: String) -> bool {
+        self.services.scratch_discard(&token)
+    }
+
+    /// Publish a staging directory as the installed package `<kind>/<name>`,
+    /// where `kind` is one of `plugin`, `theme`, `language` or `bundle`. Any
+    /// existing install under that name goes to the system trash first, so an
+    /// upgrade is recoverable.
+    ///
+    /// `subpath` installs one directory out of the staging tree (a package in
+    /// a subdirectory of a cloned monorepo); pass `""` for the whole thing. It
+    /// chooses the source only — `kind` and `name` decide where the package
+    /// lands. Installing the whole tree spends the token; installing a subpath
+    /// leaves it live so the rest can be discarded.
+    pub fn install_scratch(
         &self,
-        #[plugin_api(ts_type = "string | LocalPath | WindowPath | AuthorityPath")]
-        from: fresh_core::api::PluginPath,
-        #[plugin_api(ts_type = "string | LocalPath | WindowPath | AuthorityPath")]
-        to: fresh_core::api::PluginPath,
+        token: String,
+        kind: String,
+        name: String,
+        subpath: String,
     ) -> bool {
-        if !Self::same_backend(&from, &to) {
-            return false;
-        }
-        self.fs_for(&from)
-            .copy(Path::new(from.as_str()), Path::new(to.as_str()))
+        self.services
+            .install_scratch(&token, &kind, &name, &subpath)
+    }
+
+    /// Create a staging directory holding a copy of `from`, and return the
+    /// token that names it — how a package installed from a local directory
+    /// reaches staging.
+    ///
+    /// `from` is a path on the editor host. Staging directories, installed
+    /// packages and plugin state all live there by design, so an install
+    /// survives the SSH session that started it going away; there is no
+    /// authority-path form of this call, so the argument is a plain path
+    /// rather than a `LocalPath | WindowPath | AuthorityPath` union with two
+    /// thirds of it rejected at runtime.
+    ///
+    /// Answers `null` if `from` is not a directory or could not be copied,
+    /// having discarded anything it had already staged — so there is never a
+    /// half-filled staging directory to clean up.
+    pub fn scratch_from_directory(&self, from: String) -> Option<String> {
+        self.services.scratch_from_directory(Path::new(&from))
+    }
+
+    /// Move an installed package to the system trash. Returns false if nothing
+    /// is installed under that kind and name.
+    pub fn uninstall_package(&self, kind: String, name: String) -> bool {
+        self.services.uninstall_package(&kind, &name)
+    }
+
+    /// Write a namespaced state entry, replacing any previous value. The
+    /// editor owns the on-disk layout; a plugin names the entry, not the file.
+    pub fn state_set(&self, namespace: String, key: String, value: String) -> bool {
+        self.services.state_set(&namespace, &key, &value)
+    }
+
+    /// Read a namespaced state entry, or `null` if it is unset.
+    pub fn state_get(&self, namespace: String, key: String) -> Option<String> {
+        self.services.state_get(&namespace, &key)
+    }
+
+    /// The keys set in a namespace, in no particular order.
+    #[plugin_api(ts_return = "string[]")]
+    pub fn state_keys<'js>(
+        &self,
+        ctx: rquickjs::Ctx<'js>,
+        namespace: String,
+    ) -> rquickjs::Result<Value<'js>> {
+        let keys = self.services.state_keys(&namespace);
+        rquickjs_serde::to_value(ctx, &keys)
+            .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string()))
+    }
+
+    /// Clear a namespaced state entry. Returns true if it is gone afterwards,
+    /// including when it was already unset.
+    pub fn state_delete(&self, namespace: String, key: String) -> bool {
+        self.services.state_delete(&namespace, &key)
     }
 
     /// Construct a `LocalPath` — a path that always resolves on the local
@@ -3833,21 +3888,13 @@ impl JsEditorApi {
     }
 
     /// Delete a custom theme file (sync)
+    ///
+    /// The editor resolves the name to a path and moves the file to the system
+    /// trash: this used to unlink it, so a mis-click lost a hand-tuned theme
+    /// with nothing to recover from.
     #[qjs(rename = "_deleteThemeSync")]
     pub fn delete_theme_sync(&self, name: String) -> bool {
-        // Security: only allow deleting from the themes directory
-        let themes_dir = self.services.config_dir().join("themes");
-        let theme_path = themes_dir.join(format!("{}.json", name));
-
-        // Verify the file is actually in the themes directory (prevent path traversal)
-        if let Ok(canonical) = theme_path.canonicalize() {
-            if let Ok(themes_canonical) = themes_dir.canonicalize() {
-                if canonical.starts_with(&themes_canonical) {
-                    return std::fs::remove_file(&canonical).is_ok();
-                }
-            }
-        }
-        false
+        self.services.trash_theme(&name)
     }
 
     /// Delete a custom theme (alias for deleteThemeSync)
@@ -3903,18 +3950,19 @@ impl JsEditorApi {
 
     // === Process Management ===
 
-    /// Check if a background process is still running
-    pub fn is_process_running(&self, _process_id: u64) -> bool {
-        // This would need to check against tracked processes
-        // For now, return false - proper implementation needs process tracking
-        false
+    /// Check if a background process is still running: true from
+    /// `spawnBackgroundProcess` until its result promise settles or it is
+    /// killed.
+    pub fn is_process_running(&self, process_id: u64) -> bool {
+        self.plugin_tracked_state
+            .borrow()
+            .values()
+            .any(|state| state.background_process_ids.contains(&process_id))
     }
 
     /// Kill a process by ID (alias for killBackgroundProcess)
     pub fn kill_process(&self, process_id: u64) -> bool {
-        self.command_sender
-            .send(PluginCommand::KillBackgroundProcess { process_id })
-            .is_ok()
+        self.kill_background_process(process_id)
     }
 
     // === Translation ===
@@ -4512,6 +4560,7 @@ impl JsEditorApi {
     /// cursor-revealable decoration once — instead of rebuilding markers
     /// on every cursor move — is what keeps cursor movement free of
     /// marker churn (and of the cache invalidation it causes).
+    #[allow(clippy::too_many_arguments)]
     pub fn add_conceal(
         &self,
         buffer_id: u32,
@@ -4701,6 +4750,7 @@ impl JsEditorApi {
     /// It is drawn *inside* the `indent` columns rather than in addition to
     /// them, so a wrapped block quote can keep its `▌` down every row without
     /// shifting the text. `indent` grows to fit a prefix wider than it.
+    #[allow(clippy::too_many_arguments)]
     pub fn add_soft_break<'js>(
         &self,
         buffer_id: u32,
@@ -5417,6 +5467,16 @@ impl JsEditorApi {
             .is_ok()
     }
 
+    /// Centre the floating-overlay prompt's card on the whole frame — 90%
+    /// of it, over the dock and sidebar, as the Settings dialog is — instead
+    /// of on the chrome area beside the dock. `false` puts it back. Has no
+    /// visible effect on non-overlay prompts.
+    pub fn set_prompt_fullscreen(&self, fullscreen: bool) -> bool {
+        self.command_sender
+            .send(PluginCommand::SetPromptFullscreen { fullscreen })
+            .is_ok()
+    }
+
     /// Set the floating-overlay prompt's input-row status text (right-aligned,
     /// left of the match count). Empty string clears it.
     pub fn set_prompt_status(&self, status: String) -> bool {
@@ -5482,6 +5542,26 @@ impl JsEditorApi {
     // === Modes ===
 
     /// Define a buffer mode (takes bindings as array of [key, command] pairs)
+    ///
+    /// On a widget panel whose keymap is this mode, **the focused control
+    /// handles a key first** — a field types and moves its caret, an open
+    /// list takes the arrows and Enter, a button takes Enter and Space, Esc
+    /// closes a pop-up before the dialog — and a binding gets only the keys
+    /// the control does not use. Bind commands ("submit", "close"), not the
+    /// controls' own keys.
+    ///
+    /// A binding whose third element is `"shortcut"` —
+    /// `["C-Enter", "submit", "shortcut"]` — is a **dialog-wide shortcut**
+    /// instead: it runs ahead of any control, wherever focus is. Keep that
+    /// list short and made of chords no control uses.
+    ///
+    /// A binding whose third element is `"on:a,b"` —
+    /// `["Up", "history_prev", "on:name,cmd"]` — belongs to the controls
+    /// named: it applies only while one of those widgets holds the panel's
+    /// focus, and on any other control the key is left to the panel's
+    /// defaults (↑/↓ move focus to the control above or below). Use it for a
+    /// command that is about one field, rather than binding the key for the
+    /// whole dialog and forwarding it back.
     pub fn define_mode(
         &self,
         name: String,
@@ -5490,6 +5570,30 @@ impl JsEditorApi {
         allow_text_input: rquickjs::function::Opt<bool>,
         inherit_normal_bindings: rquickjs::function::Opt<bool>,
     ) -> bool {
+        // A binding's optional third element `"shortcut"` declares it a
+        // dialog-wide shortcut: on a widget panel it runs before the focused
+        // control instead of after it.
+        let shortcuts: Vec<String> = bindings_arr
+            .iter()
+            .filter(|arr| arr.len() >= 3 && arr[2] == "shortcut")
+            .map(|arr| arr[0].clone())
+            .collect();
+        // `"on:a,b"` scopes a binding to the controls named: it applies only
+        // while one of them holds the panel's focus.
+        let scoped: Vec<(String, Vec<String>)> = bindings_arr
+            .iter()
+            .filter_map(|arr| {
+                let widgets = arr.get(2)?.strip_prefix("on:")?;
+                Some((
+                    arr[0].clone(),
+                    widgets
+                        .split(',')
+                        .map(|w| w.trim().to_string())
+                        .filter(|w| !w.is_empty())
+                        .collect(),
+                ))
+            })
+            .collect();
         let bindings: Vec<(String, String)> = bindings_arr
             .into_iter()
             .filter_map(|arr| {
@@ -5544,6 +5648,8 @@ impl JsEditorApi {
                 allow_text_input: allow_text,
                 inherit_normal_bindings: inherit_normal_bindings.0.unwrap_or(false),
                 plugin_name: Some(self.plugin_name.clone()),
+                shortcuts,
+                scoped,
             })
             .is_ok()
     }
@@ -5553,6 +5659,26 @@ impl JsEditorApi {
         self.command_sender
             .send(PluginCommand::SetEditorMode { mode })
             .is_ok()
+    }
+
+    /// Which widget holds focus in one of this plugin's mounted panels —
+    /// its key, or `""` when nothing is focused or the panel is not mounted.
+    ///
+    /// The host owns a panel's focus: Tab, a click, a control's own move and
+    /// `setFocusKey` all write the one fact this reads. Read it rather than
+    /// mirroring focus from `focus` events — every `widget_event` also carries
+    /// it, as `focus_key`.
+    pub fn get_panel_focus_key(&self, panel_id: u32) -> String {
+        self.state_snapshot
+            .read()
+            .ok()
+            .and_then(|s| {
+                s.panel_focus
+                    .get(&self.plugin_name)
+                    .and_then(|m| m.get(&(panel_id as u64)))
+                    .cloned()
+            })
+            .unwrap_or_default()
     }
 
     /// Get the current editor mode
@@ -7333,6 +7459,18 @@ impl JsEditorApi {
                 return Ok(false);
             }
         };
+        // Write-through, the way `setViewState` does: the host applies the
+        // focus a moment later, but a `getPanelFocusKey` right after this
+        // call must already read the focus this plugin just decided.
+        if let fresh_core::api::WidgetMutation::SetFocusKey { widget_key } = &mutation {
+            if let Ok(mut snapshot) = self.state_snapshot.write() {
+                snapshot
+                    .panel_focus
+                    .entry(self.plugin_name.clone())
+                    .or_default()
+                    .insert(panel_id as u64, widget_key.clone());
+            }
+        }
         Ok(self
             .command_sender
             .send(PluginCommand::WidgetMutate {
@@ -8404,6 +8542,7 @@ impl JsEditorApi {
 
     /// Kill a background process
     pub fn kill_background_process(&self, process_id: u64) -> bool {
+        forget_background_process(&self.plugin_tracked_state, process_id);
         self.command_sender
             .send(PluginCommand::KillBackgroundProcess { process_id })
             .is_ok()
@@ -8994,6 +9133,7 @@ const EDITOR_PROMISE_BOOTSTRAP: &str = r#"
                         globalThis._pendingCallbacks.set(callbackId, { resolve, reject });
                     });
                     return {
+                        processId: callbackId,
                         get result() { return resultPromise; },
                         // `kill()` cancels a still-running spawn. The
                         // dispatcher stores a oneshot keyed by callbackId;
@@ -9061,7 +9201,29 @@ const EDITOR_PROMISE_BOOTSTRAP: &str = r#"
                 editor.createVirtualBufferInExistingSplit = _wrapAsync("_createVirtualBufferInExistingSplitStart", "createVirtualBufferInExistingSplit");
                 editor.createBufferGroup = _wrapAsync("_createBufferGroupStart", "createBufferGroup");
                 editor.sendLspRequest = _wrapAsync("_sendLspRequestStart", "sendLspRequest");
-                editor.spawnBackgroundProcess = _wrapAsyncThenable("_spawnBackgroundProcessStart", "spawnBackgroundProcess");
+                // spawnBackgroundProcess also gets a bespoke wrapper so its
+                // `ProcessHandle` carries `processId` (the id the
+                // onProcessStdout/Stderr hooks report) and a real `kill()`.
+                editor.spawnBackgroundProcess = function(...args) {
+                    if (typeof editor._spawnBackgroundProcessStart !== 'function') {
+                        throw new Error('editor.spawnBackgroundProcess is not implemented (missing _spawnBackgroundProcessStart)');
+                    }
+                    const processId = editor._spawnBackgroundProcessStart(...args);
+                    const resultPromise = new Promise(function(resolve, reject) {
+                        globalThis._pendingCallbacks.set(processId, { resolve: resolve, reject: reject });
+                    });
+                    return {
+                        processId: processId,
+                        get result() { return resultPromise; },
+                        then: function(f, r) { return resultPromise.then(f, r); },
+                        catch: function(r) { return resultPromise.catch(r); },
+                        // Resolves true when the kill was enqueued; the
+                        // result promise then settles with exit_code -1.
+                        kill: function() {
+                            return Promise.resolve(editor.killBackgroundProcess(processId));
+                        }
+                    };
+                };
                 editor.httpFetch = _wrapAsyncThenable("_httpFetchStart", "httpFetch");
                 editor.spawnProcessWait = _wrapAsync("_spawnProcessWaitStart", "spawnProcessWait");
                 editor.watchPath = _wrapAsync("_watchPathStart", "watchPath");
@@ -10286,6 +10448,10 @@ impl QuickJsBackend {
             return;
         };
 
+        // A background process's id is its callback id; its callback
+        // settling means the process has exited.
+        forget_background_process(&self.plugin_tracked_state, id);
+
         // Record a virtual buffer against the plugin that asked for it, so
         // unload can close it.
         //
@@ -10399,6 +10565,8 @@ impl QuickJsBackend {
             return;
         };
 
+        forget_background_process(&self.plugin_tracked_state, id);
+
         let plugin_contexts = self.plugin_contexts.borrow();
         let Some(context) = plugin_contexts.get(&name) else {
             tracing::warn!("reject_callback: Context lost for plugin {}", name);
@@ -10490,6 +10658,9 @@ mod tests {
             }
             std::fs::write(path, contents).is_ok()
         }
+        fn replace_file(&self, path: &Path, contents: &[u8]) -> bool {
+            self.write_file(path, contents)
+        }
         fn exists(&self, path: &Path) -> bool {
             path.exists()
         }
@@ -10511,19 +10682,6 @@ mod tests {
         }
         fn create_dir_all(&self, path: &Path) -> bool {
             path.is_dir() || std::fs::create_dir_all(path).is_ok()
-        }
-        fn remove_path(&self, path: &Path) -> bool {
-            if path.is_dir() {
-                std::fs::remove_dir_all(path).is_ok()
-            } else {
-                std::fs::remove_file(path).is_ok()
-            }
-        }
-        fn rename(&self, from: &Path, to: &Path) -> bool {
-            std::fs::rename(from, to).is_ok()
-        }
-        fn copy(&self, from: &Path, to: &Path) -> bool {
-            !from.is_dir() && std::fs::copy(from, to).is_ok()
         }
         fn stat(&self, path: &Path) -> Option<fresh_core::services::PluginFileStat> {
             let m = std::fs::metadata(path).ok()?;
@@ -10717,6 +10875,7 @@ mod tests {
                 allow_text_input,
                 inherit_normal_bindings,
                 plugin_name,
+                ..
             } => {
                 assert_eq!(name, "test-mode");
                 assert_eq!(bindings.len(), 2);
@@ -13097,6 +13256,9 @@ mod tests {
             fn write_file(&self, _path: &Path, _contents: &[u8]) -> bool {
                 true
             }
+            fn replace_file(&self, _path: &Path, _contents: &[u8]) -> bool {
+                true
+            }
             fn exists(&self, _path: &Path) -> bool {
                 true
             }
@@ -13108,15 +13270,6 @@ mod tests {
                 }]
             }
             fn create_dir_all(&self, _path: &Path) -> bool {
-                true
-            }
-            fn remove_path(&self, _path: &Path) -> bool {
-                true
-            }
-            fn rename(&self, _from: &Path, _to: &Path) -> bool {
-                true
-            }
-            fn copy(&self, _from: &Path, _to: &Path) -> bool {
                 true
             }
             fn stat(&self, _path: &Path) -> Option<fresh_core::services::PluginFileStat> {

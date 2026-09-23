@@ -11,6 +11,17 @@ use crate::widgets::render::PanelPopup;
 pub struct Dropdown;
 
 impl WidgetImpl for Dropdown {
+    /// **The dropdown's keys, defined once** (`docs/internal/widget-controls-own-interaction.md` R3).
+    ///
+    /// Closed: ↑/↓ are not the dropdown's — they pass, so they move focus on;
+    /// ←/→ step the value in place (the `◂`/`▸` affordance), a committed
+    /// change each; Enter, Space and Alt+↓ open the list on the current value.
+    ///
+    /// Open: ↑/↓, PgUp/PgDn and Home/End move the *highlight* only — nothing
+    /// fires; typing jumps to a matching option ([`WidgetImpl::on_text`]).
+    /// Enter, Space or Alt+↑ commit the highlight — one `change`, and only if
+    /// it differs — and close. Tab commits and passes on, so focus still
+    /// moves. Esc closes with no event.
     fn on_key(
         &self,
         spec: &WidgetSpec,
@@ -20,81 +31,84 @@ impl WidgetImpl for Dropdown {
         key: &crate::keys::KeySeq,
         fx: &mut super::KeyFx,
     ) -> super::KeyDisposition {
-        use super::KeyDisposition::{Consumed, Pass};
-        use crossterm::event::KeyCode;
-        // Every key a dropdown answers is unmodified.
-        let Some(key) = key.single().filter(|k| k.mods().is_empty()) else {
+        use super::KeyDisposition::{Consumed, Pass, PassAfter};
+        use crossterm::event::{KeyCode, KeyModifiers};
+        let Some(key) = key.single() else {
             return Pass;
         };
+        let alt = key.mods() == KeyModifiers::ALT;
+        if !key.mods().is_empty() && !alt {
+            return Pass;
+        }
         if !is_open(widget_key, panel) {
-            // Closed: arrows cycle the value in place (matching the
-            // ◂/▸ glyphs), Enter/Space open the option popup —
-            // everything else bubbles to the panel dispatch.
-            return match key.code() {
-                KeyCode::Up | KeyCode::Left => {
+            return match (key.code(), alt) {
+                (KeyCode::Left, false) => {
                     cycle_selection(spec, widget_key, panel, -1, fx);
                     Consumed
                 }
-                KeyCode::Down | KeyCode::Right => {
+                (KeyCode::Right, false) => {
                     cycle_selection(spec, widget_key, panel, 1, fx);
                     Consumed
                 }
-                KeyCode::Enter | KeyCode::Char(' ') => {
+                (KeyCode::Enter | KeyCode::Char(' '), false) | (KeyCode::Down, true) => {
                     set_open(spec, widget_key, panel, true, fx);
                     Consumed
                 }
                 _ => Pass,
             };
         }
-        // Open: Up/Down (and Left/Right, which do the same thing closed, and
-        // which the form's own footer advertises as "change option" without
-        // qualifying it by whether the list is up) move the (live) selection,
-        // Home/End jump it, Enter/Space commit-and-close, Esc puts back the
-        // selection the list opened on and closes.
-        match key.code() {
-            KeyCode::Up | KeyCode::Left => {
-                cycle_selection(spec, widget_key, panel, -1, fx);
+        if let Some(nav) = super::popup_list::nav_of(key) {
+            move_highlight(spec, widget_key, panel, nav);
+            return Consumed;
+        }
+        match (key.code(), alt) {
+            (KeyCode::Enter | KeyCode::Char(' '), false) | (KeyCode::Up, true) => {
+                commit(spec, widget_key, panel, fx);
                 Consumed
             }
-            KeyCode::Down | KeyCode::Right => {
-                cycle_selection(spec, widget_key, panel, 1, fx);
-                Consumed
+            (KeyCode::Tab | KeyCode::BackTab, false) => {
+                commit(spec, widget_key, panel, fx);
+                PassAfter
             }
-            KeyCode::Home => {
-                set_selection(spec, widget_key, panel, 0, fx);
-                Consumed
-            }
-            KeyCode::End => {
-                set_selection(spec, widget_key, panel, i32::MAX, fx);
-                Consumed
-            }
-            KeyCode::Enter | KeyCode::Char(' ') => {
-                // The selection is already live (Up/Down fired
-                // `change`); closing just dismisses the list.
+            (KeyCode::Esc, false) => {
                 set_open(spec, widget_key, panel, false, fx);
                 Consumed
             }
-            KeyCode::Esc => {
-                if let Some(WidgetInstanceState::Dropdown {
-                    restore: Some(at), ..
-                }) = panel.instance_states.get(widget_key)
-                {
-                    let at = *at;
-                    set_selection(spec, widget_key, panel, at, fx);
-                }
-                set_open(spec, widget_key, panel, false, fx);
-                Consumed
-            }
+            // The list holds the keyboard while it is up: the sideways arrows
+            // mean nothing to it and must not walk focus out from under it.
+            (KeyCode::Left | KeyCode::Right, false) => Consumed,
             _ => Pass,
         }
     }
 
-    /// Pointer model: clicking the `[value ▼]` trigger toggles the
-    /// option popup open/closed; clicking an option row commits that
-    /// index (fires `change` through the same kind-owned mutation
-    /// keyboard nav uses) and closes the popup. The host owns both
-    /// the open flag and the index, so both hits are fully handled
-    /// here — the recorded events never reach the plugin raw.
+    /// Typing into an open list jumps the highlight to the next option that
+    /// starts with what was typed. A closed dropdown types nothing.
+    fn on_text(
+        &self,
+        spec: &WidgetSpec,
+        widget_key: &str,
+        panel: &mut crate::widgets::WidgetPanelState,
+        text: &str,
+        _fx: &mut super::KeyFx,
+    ) -> super::KeyDisposition {
+        let WidgetSpec::Dropdown { options, .. } = spec else {
+            return super::KeyDisposition::Pass;
+        };
+        if !is_open(widget_key, panel) || text.trim().is_empty() {
+            return super::KeyDisposition::Pass;
+        }
+        let from = highlight_of(spec, widget_key, panel).max(0) as usize;
+        if let Some(i) = super::popup_list::jump_to_prefix(options, from, text) {
+            set_highlight(widget_key, panel, i as i32);
+        }
+        super::KeyDisposition::Consumed
+    }
+
+    /// Pointer model: clicking the `[value ▼]` trigger toggles the option
+    /// list (closing it this way is a cancel); clicking an option row commits
+    /// that option — one `change` if it differs — and closes the list. The
+    /// host owns both the open flag and the index, so both hits are fully
+    /// handled here — the recorded events never reach the plugin raw.
     fn on_pointer(
         &self,
         spec: &WidgetSpec,
@@ -110,14 +124,40 @@ impl WidgetImpl for Dropdown {
                 set_open(spec, widget_key, panel, now_open, &mut fx.key);
                 super::PointerDisposition::Consumed
             }
+            // A press on a row (or a surface that picks by index, open or
+            // not — Settings' web side) chooses that row: the value is the
+            // index named, not whatever the list had highlighted.
             "dropdown_select" => {
-                if let Some(idx) = payload.get("index").and_then(|v| v.as_i64()) {
-                    set_selection(spec, widget_key, panel, idx as i32, &mut fx.key);
+                match payload.get("index").and_then(|v| v.as_i64()) {
+                    Some(idx) => {
+                        set_selection(spec, widget_key, panel, idx as i32, &mut fx.key);
+                        set_open(spec, widget_key, panel, false, &mut fx.key);
+                    }
+                    None => commit(spec, widget_key, panel, &mut fx.key),
                 }
-                set_open(spec, widget_key, panel, false, &mut fx.key);
                 super::PointerDisposition::Consumed
             }
             _ => super::PointerDisposition::Default,
+        }
+    }
+
+    /// Focus leaving an open list closes it, uncommitted — a menu goes away
+    /// when you act elsewhere, and what it had highlighted was never chosen.
+    fn on_focus_change(
+        &self,
+        panel: &mut crate::widgets::WidgetPanelState,
+        key: &str,
+        gained: bool,
+    ) {
+        if gained {
+            return;
+        }
+        if let Some(WidgetInstanceState::Dropdown {
+            open, highlight, ..
+        }) = panel.instance_states.get_mut(key)
+        {
+            *open = false;
+            *highlight = None;
         }
     }
 
@@ -140,6 +180,9 @@ pub struct Resolved {
     pub selected: i32,
     /// Whether the option pop-over is up.
     pub open: bool,
+    /// The row the open list highlights: the stored highlight while open,
+    /// else the committed value. Clamped into the current set.
+    pub highlight: i32,
 }
 
 /// **Where a `Dropdown`'s selection and open flag actually come from.**
@@ -164,29 +207,37 @@ pub fn resolve(
     prev: &HashMap<String, WidgetInstanceState>,
     is_focused: bool,
 ) -> Resolved {
-    let (cur, state_open) = match key {
+    let (cur, state_open, hl) = match key {
         Some(k) if !k.is_empty() => match prev.get(k) {
             Some(WidgetInstanceState::Dropdown {
                 selected_index,
                 open,
-                ..
-            }) => (*selected_index, Some(*open)),
-            _ => (spec_selected, None),
+                highlight,
+            }) => (*selected_index, Some(*open), *highlight),
+            _ => (spec_selected, None, None),
         },
-        _ => (spec_selected, None),
+        _ => (spec_selected, None, None),
     };
-    let selected = if options.is_empty() {
-        0
-    } else {
-        cur.clamp(0, options.len() as i32 - 1)
+    let clamp = |i: i32| match options.is_empty() {
+        true => 0,
+        false => i.clamp(0, options.len() as i32 - 1),
     };
+    let selected = clamp(cur);
     // Instance-state open only persists while the widget is focused —
     // a blur (Tab away, click elsewhere) closes it.
     let open = match state_open {
         Some(o) => o && is_focused,
         None => spec_open,
     } && !options.is_empty();
-    Resolved { selected, open }
+    let highlight = match open {
+        true => clamp(hl.unwrap_or(selected)),
+        false => selected,
+    };
+    Resolved {
+        selected,
+        open,
+        highlight,
+    }
 }
 
 /// The column the pop-over drops under: the display width of the trigger row's
@@ -228,8 +279,9 @@ pub fn popup_of(
     use fresh_core::text_property::{InlineOverlay, OffsetUnit, TextPropertyEntry};
 
     let visible = options.len().min(crate::widgets::DROPDOWN_VISIBLE_OPTIONS);
-    let max_scroll = options.len().saturating_sub(visible);
-    let scroll = (scroll_offset as usize).min(max_scroll);
+    let scroll = follow_scroll(options.len(), selected_index, scroll_offset as usize);
+    // A list longer than its window carries a scrollbar in its last column.
+    let bar = scrollbar_cells(options.len(), visible, scroll);
     let cell_cols = options
         .iter()
         .map(|o| crate::primitives::display_width::str_width(o))
@@ -237,9 +289,30 @@ pub fn popup_of(
         .unwrap_or(0);
     let mut entries = Vec::new();
     let mut row_indices = Vec::new();
-    for (idx, opt) in options.iter().enumerate().skip(scroll).take(visible) {
+    for (row, (idx, opt)) in options
+        .iter()
+        .enumerate()
+        .skip(scroll)
+        .take(visible)
+        .enumerate()
+    {
         let text = format!(" {} ", crate::widgets::render::cell(opt, cell_cols));
         let mut e = TextPropertyEntry::text(&text);
+        if let Some(bar) = &bar {
+            let start = e.text.len();
+            e.text.push(if bar[row] { '█' } else { '│' });
+            let end = e.text.len();
+            e.inline_overlays.push(InlineOverlay {
+                start,
+                end,
+                style: OverlayOptions {
+                    fg: Some(OverlayColorSpec::theme_key(KEY_COMPLETION_FG)),
+                    ..Default::default()
+                },
+                properties: Default::default(),
+                unit: OffsetUnit::Byte,
+            });
+        }
         let selected = idx == selected_index as usize;
         // The row under the pointer, which the tree reports because the
         // runtime's own hover probe cannot see a pop-over's rows. Selected
@@ -278,6 +351,25 @@ pub fn popup_of(
         entries,
         row_indices,
     }
+}
+
+/// The first option row the list shows: the spec's offset, moved just
+/// enough to keep `highlight` in the window, and clamped so the window never
+/// runs past the end — the shared pop-up list's rule
+/// ([`super::popup_list::window`]), run on every layout.
+pub fn follow_scroll(len: usize, highlight: i32, scroll_offset: usize) -> usize {
+    let h = (highlight >= 0).then_some(highlight as usize);
+    super::popup_list::window(
+        len,
+        crate::widgets::DROPDOWN_VISIBLE_OPTIONS,
+        h,
+        scroll_offset,
+    )
+    .0
+}
+
+fn scrollbar_cells(len: usize, visible: usize, scroll: usize) -> Option<Vec<bool>> {
+    super::popup_list::scrollbar(len, visible, scroll)
 }
 
 /// **Which keyed `Dropdown` in this spec has its option list up**, as a walk
@@ -362,12 +454,12 @@ pub fn cycle_selection(
     if options.is_empty() {
         return;
     }
-    let (cur, open, restore) = match panel.instance_states.get(widget_key) {
+    let (cur, open, highlight) = match panel.instance_states.get(widget_key) {
         Some(WidgetInstanceState::Dropdown {
             selected_index,
             open,
-            restore,
-        }) => (*selected_index, *open, *restore),
+            highlight,
+        }) => (*selected_index, *open, *highlight),
         _ => (*spec_sel, false, None),
     };
     let cur = cur.clamp(0, options.len() as i32 - 1);
@@ -376,10 +468,8 @@ pub fn cycle_selection(
         widget_key.to_string(),
         WidgetInstanceState::Dropdown {
             selected_index: new_sel,
-            // Preserve the popup's open state across a cycle so
-            // Up/Down inside the open list keeps it open.
             open,
-            restore,
+            highlight,
         },
     );
     if new_sel != cur {
@@ -413,12 +503,12 @@ pub fn set_selection(
     if options.is_empty() {
         return;
     }
-    let (cur, open, restore) = match panel.instance_states.get(widget_key) {
+    let (cur, open, highlight) = match panel.instance_states.get(widget_key) {
         Some(WidgetInstanceState::Dropdown {
             selected_index,
             open,
-            restore,
-        }) => (*selected_index, *open, *restore),
+            highlight,
+        }) => (*selected_index, *open, *highlight),
         _ => (*spec_sel, false, None),
     };
     let new_sel = index.clamp(0, options.len() as i32 - 1);
@@ -428,7 +518,7 @@ pub fn set_selection(
         WidgetInstanceState::Dropdown {
             selected_index: new_sel,
             open,
-            restore,
+            highlight,
         },
     );
     if changed {
@@ -472,16 +562,83 @@ pub fn set_open(
         WidgetInstanceState::Dropdown {
             selected_index: cur,
             open,
-            // Opening records where the list started, for Escape; closing
-            // any other way — Enter, a click, a blur — is a commit and
-            // forgets it.
-            restore: open.then_some(cur),
+            // The list opens on the current value, and closing forgets the
+            // highlight: only a commit (`commit`) turns it into the value.
+            highlight: open.then_some(cur),
         },
     );
     if open != prev_open {
         fx.events
             .push(("dropdown_open".into(), serde_json::json!({ "open": open })));
     }
+}
+
+/// The open list's highlighted row (the committed value when there is no
+/// stored highlight), clamped into the option set.
+fn highlight_of(
+    spec: &WidgetSpec,
+    widget_key: &str,
+    panel: &crate::widgets::WidgetPanelState,
+) -> i32 {
+    let WidgetSpec::Dropdown {
+        options,
+        selected_index,
+        open,
+        ..
+    } = spec
+    else {
+        return 0;
+    };
+    let focused = panel.focus_key == widget_key;
+    resolve(
+        options,
+        *selected_index,
+        *open,
+        Some(widget_key),
+        &panel.instance_states,
+        focused,
+    )
+    .highlight
+}
+
+/// Put the open list's highlight on `index` (clamped when read). Fires
+/// nothing: a highlight is not a value.
+fn set_highlight(widget_key: &str, panel: &mut crate::widgets::WidgetPanelState, index: i32) {
+    if let Some(WidgetInstanceState::Dropdown { highlight, .. }) =
+        panel.instance_states.get_mut(widget_key)
+    {
+        *highlight = Some(index);
+    }
+}
+
+/// Move the open list's highlight — the shared pop-up list's arithmetic
+/// ([`super::popup_list::step`]), a window of rows per page.
+fn move_highlight(
+    spec: &WidgetSpec,
+    widget_key: &str,
+    panel: &mut crate::widgets::WidgetPanelState,
+    nav: super::popup_list::Nav,
+) {
+    let WidgetSpec::Dropdown { options, .. } = spec else {
+        return;
+    };
+    let cur = highlight_of(spec, widget_key, panel).max(0) as usize;
+    let page = options.len().min(crate::widgets::DROPDOWN_VISIBLE_OPTIONS);
+    let next = super::popup_list::step(options.len(), cur, nav, page);
+    set_highlight(widget_key, panel, next as i32);
+}
+
+/// Commit the open list's highlight as the value — one `change` when it
+/// differs from the value the list opened on — and close the list.
+pub fn commit(
+    spec: &WidgetSpec,
+    widget_key: &str,
+    panel: &mut crate::widgets::WidgetPanelState,
+    fx: &mut super::KeyFx,
+) {
+    let chosen = highlight_of(spec, widget_key, panel);
+    set_selection(spec, widget_key, panel, chosen, fx);
+    set_open(spec, widget_key, panel, false, fx);
 }
 
 /// Kind policy for the plugin `SetDropdown` mutation: clamp the wire
@@ -508,7 +665,210 @@ pub fn set_index_state(
     crate::widgets::WidgetInstanceState::Dropdown {
         selected_index: clamped,
         open,
-        // A plugin's set is the value now: nothing older to go back to.
-        restore: None,
+        // A plugin's set is the value now, and an open list shows it.
+        highlight: open.then_some(clamped),
+    }
+}
+
+#[cfg(test)]
+mod scroll_tests {
+    use super::*;
+
+    fn opts(n: usize) -> Vec<String> {
+        (0..n).map(|i| format!("option {i}")).collect()
+    }
+
+    /// ↓ past the last visible row scrolls the list with it.
+    #[test]
+    fn the_window_follows_the_selection() {
+        let v = crate::widgets::DROPDOWN_VISIBLE_OPTIONS;
+        assert_eq!(follow_scroll(20, 0, 0), 0);
+        assert_eq!(follow_scroll(20, v as i32 - 1, 0), 0);
+        assert_eq!(follow_scroll(20, v as i32, 0), 1);
+        assert_eq!(follow_scroll(20, 19, 0), 20 - v);
+        assert_eq!(follow_scroll(20, 2, 10), 2);
+        assert_eq!(follow_scroll(3, 2, 0), 0);
+    }
+
+    /// The popup shows the selected row, and a scrollbar when it scrolls.
+    #[test]
+    fn a_long_list_shows_the_selection_and_a_scrollbar() {
+        let o = opts(20);
+        let p = popup_of(&o, 15, 0, "", "k", 0);
+        assert!(p.row_indices.contains(&15));
+        assert!(p
+            .entries
+            .iter()
+            .all(|e| e.text.ends_with('█') || e.text.ends_with('│')));
+        assert!(p.entries.iter().any(|e| e.text.ends_with('█')));
+        let short = popup_of(&opts(3), 0, 0, "", "k", 0);
+        assert!(short
+            .entries
+            .iter()
+            .all(|e| !e.text.ends_with('█') && !e.text.ends_with('│')));
+    }
+}
+
+/// **The dropdown's contract** (R3): closed, ↑/↓ are not its keys; open, the
+/// keys move a highlight and fire nothing; Enter or a click commits with one
+/// `change`; Esc cancels with none.
+#[cfg(test)]
+mod contract_tests {
+    use super::super::{behavior, KeyDisposition, KeyFx};
+    use super::*;
+    use crate::widgets::WidgetPanelState;
+
+    fn spec(n: usize) -> WidgetSpec {
+        WidgetSpec::Dropdown {
+            options: (0..n).map(|i| format!("opt {i}")).collect(),
+            selected_index: 1,
+            label: "L".into(),
+            focused: false,
+            label_width: 0,
+            open: false,
+            scroll_offset: 0,
+            key: Some("d".into()),
+        }
+    }
+
+    fn panel(spec: &WidgetSpec) -> WidgetPanelState {
+        let mut p = WidgetPanelState::surface(spec.clone());
+        p.focus_key = "d".into();
+        p
+    }
+
+    fn key(spec: &WidgetSpec, p: &mut WidgetPanelState, k: &str) -> (KeyDisposition, KeyFx) {
+        let mut fx = KeyFx::default();
+        let seq: crate::keys::KeySeq = k.parse().expect("test key name parses");
+        let d = behavior(spec).on_key(spec, "d", p, Default::default(), &seq, &mut fx);
+        (d, fx)
+    }
+
+    fn changes(fx: &KeyFx) -> usize {
+        fx.events.iter().filter(|(t, _)| t == "change").count()
+    }
+
+    fn value(spec: &WidgetSpec, p: &WidgetPanelState) -> i32 {
+        let WidgetSpec::Dropdown { options, .. } = spec else {
+            unreachable!()
+        };
+        resolve(options, 1, false, Some("d"), &p.instance_states, true).selected
+    }
+
+    #[test]
+    fn closed_the_vertical_arrows_pass_and_change_nothing() {
+        let s = spec(4);
+        let mut p = panel(&s);
+        for k in ["Up", "Down"] {
+            let (d, fx) = key(&s, &mut p, k);
+            assert_eq!(d, KeyDisposition::Pass, "{k}");
+            assert_eq!(changes(&fx), 0);
+        }
+        assert_eq!(value(&s, &p), 1);
+    }
+
+    #[test]
+    fn enter_space_and_alt_down_open_the_list() {
+        for k in ["Enter", "Space", "M-Down"] {
+            let s = spec(4);
+            let mut p = panel(&s);
+            let (d, fx) = key(&s, &mut p, k);
+            assert_eq!(d, KeyDisposition::Consumed, "{k}");
+            assert!(is_open("d", &p), "{k} opens");
+            assert_eq!(changes(&fx), 0);
+        }
+    }
+
+    #[test]
+    fn open_the_keys_move_the_highlight_only_and_enter_commits_once() {
+        let s = spec(20);
+        let mut p = panel(&s);
+        key(&s, &mut p, "Enter");
+        for k in ["Down", "Down", "PageDown", "Up", "End", "Home", "Down"] {
+            let (d, fx) = key(&s, &mut p, k);
+            assert_eq!(d, KeyDisposition::Consumed, "{k}");
+            assert_eq!(changes(&fx), 0, "{k} fires nothing");
+        }
+        assert_eq!(value(&s, &p), 1, "the value has not moved");
+        // Home then Down: row 1, the value the list opened on — a commit
+        // that did not move fires nothing.
+        let (_, fx) = key(&s, &mut p, "Enter");
+        assert_eq!(changes(&fx), 0, "no change when the commit did not move");
+        assert!(!is_open("d", &p));
+        assert_eq!(value(&s, &p), 1);
+    }
+
+    #[test]
+    fn a_commit_that_moved_reports_the_new_value() {
+        let s = spec(5);
+        let mut p = panel(&s);
+        key(&s, &mut p, "Enter");
+        key(&s, &mut p, "Down");
+        key(&s, &mut p, "Down");
+        let (_, fx) = key(&s, &mut p, "Enter");
+        assert_eq!(changes(&fx), 1);
+        assert_eq!(value(&s, &p), 3);
+    }
+
+    #[test]
+    fn escape_cancels_with_no_event() {
+        let s = spec(5);
+        let mut p = panel(&s);
+        key(&s, &mut p, "Enter");
+        key(&s, &mut p, "Down");
+        let (d, fx) = key(&s, &mut p, "Esc");
+        assert_eq!(d, KeyDisposition::Consumed);
+        assert_eq!(changes(&fx), 0);
+        assert!(!is_open("d", &p));
+        assert_eq!(value(&s, &p), 1);
+    }
+
+    #[test]
+    fn typing_jumps_the_highlight_to_a_match() {
+        let s = WidgetSpec::Dropdown {
+            options: vec!["alpha".into(), "beta".into(), "gamma".into()],
+            selected_index: 0,
+            label: String::new(),
+            focused: false,
+            label_width: 0,
+            open: false,
+            scroll_offset: 0,
+            key: Some("d".into()),
+        };
+        let mut p = panel(&s);
+        key(&s, &mut p, "Enter");
+        let mut fx = KeyFx::default();
+        assert_eq!(
+            behavior(&s).on_text(&s, "d", &mut p, "g", &mut fx),
+            KeyDisposition::Consumed
+        );
+        let (_, fx) = key(&s, &mut p, "Enter");
+        assert_eq!(changes(&fx), 1);
+        let WidgetSpec::Dropdown { options, .. } = &s else {
+            unreachable!()
+        };
+        assert_eq!(
+            resolve(options, 0, false, Some("d"), &p.instance_states, true).selected,
+            2
+        );
+    }
+
+    #[test]
+    fn a_click_on_an_option_commits_it() {
+        let s = spec(5);
+        let mut p = panel(&s);
+        key(&s, &mut p, "Enter");
+        let mut fx = crate::widgets::kinds::PointerFx::default();
+        behavior(&s).on_pointer(
+            &s,
+            "d",
+            &mut p,
+            "dropdown_select",
+            &serde_json::json!({ "index": 4 }),
+            &mut fx,
+        );
+        assert_eq!(changes(&fx.key), 1);
+        assert!(!is_open("d", &p));
+        assert_eq!(value(&s, &p), 4);
     }
 }

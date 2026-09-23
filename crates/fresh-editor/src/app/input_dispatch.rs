@@ -433,6 +433,7 @@ impl Editor {
     /// the plugin's panel `PROMPT_TOOLBAR_PANEL_ID`, so the events reach it
     /// tagged `panel_id: 0`, and the checked state the events carry is what
     /// the plugin re-emits its spec with.
+    #[cfg(feature = "plugins")]
     pub(crate) fn toggle_overlay_toolbar_widget(&mut self, key: &str) {
         if key.is_empty() {
             return;
@@ -478,6 +479,21 @@ impl Editor {
         self.active_window().prompt.as_ref()?.toolbar.clone()
     }
 
+    /// Whether the open prompt's toolbar carries a checked `Toggle` under
+    /// `key`. `false` when there is no toolbar, no such control, or the
+    /// control is not a toggle.
+    ///
+    /// The read-back side of `setPromptToolbar`: the spec the plugin mounted
+    /// is the plugin's own state, so a host feature that must agree with a
+    /// plugin's toggle (the Live Grep preview highlight and its Case toggle)
+    /// asks the toolbar rather than keeping a second copy of the rule.
+    pub(crate) fn prompt_toolbar_toggle_checked(&self, key: &str) -> bool {
+        self.prompt_toolbar_key()
+            .and_then(|panel_key| self.widget_registry.get(&panel_key))
+            .and_then(|panel| crate::widgets::find_widget_by_key(&panel.spec, key))
+            .is_some_and(|w| matches!(w, fresh_core::api::WidgetSpec::Toggle { checked: true, .. }))
+    }
+
     /// Whether a toolbar control has the keyboard rather than the query
     /// input: the toolbar panel's focus fact names one.
     pub(crate) fn prompt_toolbar_holds_keyboard(&self) -> bool {
@@ -507,6 +523,7 @@ impl Editor {
     /// panel's update does (`resolve_described_panel`). The toolbar never
     /// had a text projection: it is described in the card's header band, so
     /// nothing is rendered into a buffer here.
+    #[cfg(any(feature = "plugins", test))]
     pub(crate) fn mount_prompt_toolbar(
         &mut self,
         key: &crate::widgets::PanelKey,

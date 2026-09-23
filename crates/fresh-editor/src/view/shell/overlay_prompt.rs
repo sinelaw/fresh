@@ -342,11 +342,28 @@ fn input_row_at(c: &Card, width: u16) -> Node<UiMsg> {
     let right_gap = usize::from(count_w > 0);
     let status_w = str_width(&c.status);
     let status_gap = if status_w > 0 && count_w > 0 { 2 } else { 0 };
-    let cluster_w =
-        (status_w + status_gap + count_w + right_gap).min(usize::from(width - message_w)) as u16;
-    let input_cols = width - message_w - cluster_w;
+    // And one leading column, so it does not sit flush against the field.
+    let left_gap = usize::from(status_w > 0 || count_w > 0);
+    let cluster_w = (left_gap + status_w + status_gap + count_w + right_gap)
+        .min(usize::from(width - message_w)) as u16;
+    // The query is drawn as the widget system's text field — `[value]` on
+    // the field background, its brackets banded while it has the keyboard
+    // (`render_text_input`) — so it reads as the thing to type into rather
+    // than as a line of the card's text. The brackets take two columns.
+    let well_cols = width - message_w - cluster_w;
+    let input_cols = well_cols.saturating_sub(2);
+    let bracket_ink = match c.input_focused {
+        true => pair("ui.popup_selection_fg", "ui.popup_selection_bg"),
+        false => pair("ui.help_key_fg", "editor.current_line_bg"),
+    };
+    let bracket = |b: &'static str| {
+        text_runs([Run::plain(b)])
+            .theme(bracket_ink.clone())
+            .w(Sizing::Cells(u16::from(well_cols >= 2)))
+    };
     let dim = pair("ui.popup_border_fg", "editor.bg");
     let cluster = text_runs([
+        Run::plain(" ".repeat(left_gap)),
         Run::themed(&c.status, dim.clone()),
         Run::plain(" ".repeat(status_gap)),
         Run::themed(&count, dim),
@@ -356,8 +373,11 @@ fn input_row_at(c: &Card, width: u16) -> Node<UiMsg> {
         text_runs([Run::plain(&c.input.message)])
             .theme(pair("ui.suggestion_fg", "ui.suggestion_bg"))
             .w(Sizing::Cells(message_w)),
+        bracket("["),
         super::prompt_line::input_window(&c.input, input_cols, c.input_focused)
+            .theme(pair("editor.fg", "editor.current_line_bg"))
             .w(Sizing::Cells(input_cols)),
+        bracket("]"),
         cluster.w(Sizing::Cells(cluster_w)),
     ])
 }
@@ -434,6 +454,14 @@ fn toolbar_band(c: &Card) -> Node<UiMsg> {
         .key(region_key(CardRegion::Toolbar))
         .h(Sizing::Cells(c.title_row as u16));
     };
+    // **An open dropdown's list keeps the arrows.** Up/Down on a focused
+    // toolbar control step the results, except while that control is a
+    // dropdown with its option list up: there they move through the list,
+    // as they do in any panel.
+    let list_open = matches!(
+        i.states.get(&i.focus_key),
+        Some(crate::widgets::WidgetInstanceState::Dropdown { open: true, .. })
+    );
     let body = fresh_ui::layout_reader(move |info: fresh_ui::LayoutInfo| {
         let inner_w = info.constraints.max_w.max(1);
         super::widgets::node(
@@ -459,13 +487,13 @@ fn toolbar_band(c: &Card) -> Node<UiMsg> {
         )
         .w(Sizing::Cells(inner_w))
     });
-    let to_input: super::panel::Capture = Rc::new(|e: &Event| {
+    let to_input: super::panel::Capture = Rc::new(move |e: &Event| {
         let k = e.key?;
         let input_key = match k.code {
             fresh_ui::KeyCode::Up
             | fresh_ui::KeyCode::Down
             | fresh_ui::KeyCode::PageUp
-            | fresh_ui::KeyCode::PageDown => true,
+            | fresh_ui::KeyCode::PageDown => !list_open,
             // Space activates the focused control; every other character
             // types into the query.
             fresh_ui::KeyCode::Char(ch) => ch != ' ',
@@ -594,6 +622,7 @@ mod tests {
                 indeterminate: false,
                 label_first: false,
                 label_width: 0,
+                mnemonic: None,
                 key: Some(format!("t{i}")),
             })
             .collect();
@@ -855,8 +884,8 @@ mod tests {
         ui.frame(col().child(card(&c)), Size::new(200, 60));
         assert_eq!(
             ui.spec().cursor.map(|k| (k.pos.x, k.pos.y)),
-            Some((11 + 6 + 3, 5)),
-            "after the message and the query, inside the ring"
+            Some((11 + 6 + 1 + 3, 5)),
+            "after the message, the field's `[` and the query, inside the ring"
         );
         let text = |ui: &Ui<UiMsg>| -> String {
             let mut cells: Vec<(i32, String)> = ui
@@ -873,7 +902,7 @@ mod tests {
             cells.into_iter().map(|(_, s)| s).collect()
         };
         let row = text(&ui);
-        assert!(row.starts_with("Grep: abc"), "{row:?}");
+        assert!(row.starts_with("Grep: [abc"), "{row:?}");
         assert!(row.trim_end().ends_with("Searching…  1 / 9"), "{row:?}");
 
         c.input_focused = false;
@@ -943,8 +972,8 @@ mod tests {
             }
             assert!(b.x >= 11, "{r:?} clears the left ring: {b:?}");
             assert!(b.y >= 5, "{r:?} clears the top ring: {b:?}");
-            assert!(b.right() <= 10 + 150 - 1, "{r:?} clears the right: {b:?}");
-            assert!(b.bottom() <= 4 + 40 - 1, "{r:?} clears the bottom: {b:?}");
+            assert!(b.right() < 10 + 150, "{r:?} clears the right: {b:?}");
+            assert!(b.bottom() < 4 + 40, "{r:?} clears the bottom: {b:?}");
         }
     }
 }

@@ -335,6 +335,8 @@ impl Editor {
                 }
             }
             PromptType::ConfirmSudoSave { info } => {
+                // `info` owns the save's temp file: it is deleted when `info`
+                // drops at the end of this arm, whatever the answer.
                 let input_lower = input.trim().to_lowercase();
                 if input_lower == "y" || input_lower == "yes" {
                     // Hide prompt before starting blocking command to clear the line
@@ -342,7 +344,7 @@ impl Editor {
 
                     // Read temp file and write via sudo (works for both local and remote)
                     let result = (|| -> anyhow::Result<()> {
-                        let data = self.authority().filesystem.read_file(&info.temp_path)?;
+                        let data = info.read_content()?;
                         self.authority().filesystem.sudo_write(
                             &info.dest_path,
                             &data,
@@ -350,9 +352,14 @@ impl Editor {
                             info.uid,
                             info.gid,
                         )?;
-                        // Best-effort cleanup of temp file.
-                        #[allow(clippy::let_underscore_must_use)]
-                        let _ = self.authority().filesystem.remove_file(&info.temp_path);
+                        // The file now holds the full content, so a copy an
+                        // earlier interrupted in-place attempt staged for it
+                        // is obsolete.
+                        crate::model::buffer::save::resolve_inplace_write_recovery(
+                            &*self.authority().filesystem,
+                            &self.dir_context.recovery_dir(),
+                            &info.dest_path,
+                        );
                         Ok(())
                     })();
 
@@ -368,7 +375,8 @@ impl Editor {
                                     t!("prompt.sudo_save_failed", error = e.to_string())
                                         .to_string(),
                                 );
-                            } else if let Err(e) = self.finalize_save(Some(info.dest_path)) {
+                            } else if let Err(e) = self.finalize_save(Some(info.dest_path.clone()))
+                            {
                                 tracing::warn!("Failed to finalize save after sudo: {}", e);
                                 self.set_status_message(
                                     t!("prompt.sudo_save_failed", error = e.to_string())
@@ -381,16 +389,10 @@ impl Editor {
                             self.set_status_message(
                                 t!("prompt.sudo_save_failed", error = e.to_string()).to_string(),
                             );
-                            // Best-effort cleanup of temp file.
-                            #[allow(clippy::let_underscore_must_use)]
-                            let _ = self.authority().filesystem.remove_file(&info.temp_path);
                         }
                     }
                 } else {
                     self.set_status_message(t!("buffer.save_cancelled").to_string());
-                    // Best-effort cleanup of temp file.
-                    #[allow(clippy::let_underscore_must_use)]
-                    let _ = self.authority().filesystem.remove_file(&info.temp_path);
                 }
             }
             PromptType::ConfirmOverwriteFile { path } => {
@@ -430,6 +432,11 @@ impl Editor {
             PromptType::ConfirmQuit => {
                 self.handle_confirm_quit(&input);
             }
+            PromptType::ConfirmQuitDaemon => match input.trim() {
+                "detach" => self.should_detach = true,
+                "quit" => self.quit_with_prompts(false),
+                _ => self.set_status_message(t!("buffer.close_cancelled").to_string()),
+            },
             PromptType::LspRename {
                 original_text,
                 start_pos,
@@ -780,7 +787,12 @@ impl Editor {
             before_len
         );
 
-        match self.active_state_mut().buffer.save_to_file(&full_path) {
+        let recovery_dir = self.dir_context.recovery_dir();
+        match self
+            .active_state_mut()
+            .buffer
+            .save_to_file(&full_path, &recovery_dir)
+        {
             Ok(()) => {
                 let after_save_idx = self.active_event_log().current_index();
                 let after_save_len = self.active_event_log().len();
@@ -822,6 +834,7 @@ impl Editor {
                                 first_line.as_deref(),
                                 &self.grammar_registry,
                                 &self.config.languages,
+                                state.buffer.filesystem().as_ref(),
                             );
                         new_language = detected.name.clone();
                         state.apply_language(detected);
@@ -912,21 +925,13 @@ impl Editor {
 
     /// Handle SetPageWidth prompt confirmation.
     fn handle_set_page_width(&mut self, input: &str) {
-        let active_split = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(mgr, _)| mgr)
-            .expect("active window must have a populated split layout")
-            .active_split();
+        let active_split = self.active_window().split_manager().active_split();
         let trimmed = input.trim();
 
         if trimmed.is_empty() {
             if let Some(vs) = self
-                .windows
-                .get_mut(&self.active_window)
-                .and_then(|w| w.split_view_states_mut())
-                .expect("active window must have a populated split layout")
+                .active_window_mut()
+                .split_view_states_mut()
                 .get_mut(&active_split)
             {
                 vs.compose_width = None;
@@ -936,10 +941,8 @@ impl Editor {
             match trimmed.parse::<u16>() {
                 Ok(val) if val > 0 => {
                     if let Some(vs) = self
-                        .windows
-                        .get_mut(&self.active_window)
-                        .and_then(|w| w.split_view_states_mut())
-                        .expect("active window must have a populated split layout")
+                        .active_window_mut()
+                        .split_view_states_mut()
                         .get_mut(&active_split)
                     {
                         vs.compose_width = Some(val);
@@ -960,18 +963,10 @@ impl Editor {
         let trimmed = input.trim();
         match trimmed.parse::<usize>() {
             Ok(col) if col > 0 => {
-                let active_split = self
-                    .windows
-                    .get(&self.active_window)
-                    .and_then(|w| w.buffers.splits())
-                    .map(|(mgr, _)| mgr)
-                    .expect("active window must have a populated split layout")
-                    .active_split();
+                let active_split = self.active_window().split_manager().active_split();
                 if let Some(view_state) = self
-                    .windows
-                    .get_mut(&self.active_window)
-                    .and_then(|w| w.split_view_states_mut())
-                    .expect("active window must have a populated split layout")
+                    .active_window_mut()
+                    .split_view_states_mut()
                     .get_mut(&active_split)
                 {
                     if !view_state.rulers.contains(&col) {
@@ -981,11 +976,8 @@ impl Editor {
                 }
                 // Persist to user config
                 let new_rulers = self
-                    .windows
-                    .get(&self.active_window)
-                    .and_then(|w| w.buffers.splits())
-                    .map(|(_, vs)| vs)
-                    .expect("active window must have a populated split layout")
+                    .active_window()
+                    .split_view_states()
                     .get(&active_split)
                     .map(|vs| vs.rulers.clone())
                     .unwrap_or_default();
@@ -1006,29 +998,18 @@ impl Editor {
     fn handle_remove_ruler(&mut self, input: &str) {
         let trimmed = input.trim();
         if let Ok(col) = trimmed.parse::<usize>() {
-            let active_split = self
-                .windows
-                .get(&self.active_window)
-                .and_then(|w| w.buffers.splits())
-                .map(|(mgr, _)| mgr)
-                .expect("active window must have a populated split layout")
-                .active_split();
+            let active_split = self.active_window().split_manager().active_split();
             if let Some(view_state) = self
-                .windows
-                .get_mut(&self.active_window)
-                .and_then(|w| w.split_view_states_mut())
-                .expect("active window must have a populated split layout")
+                .active_window_mut()
+                .split_view_states_mut()
                 .get_mut(&active_split)
             {
                 view_state.rulers.retain(|&r| r != col);
             }
             // Persist to user config
             let new_rulers = self
-                .windows
-                .get(&self.active_window)
-                .and_then(|w| w.buffers.splits())
-                .map(|(_, vs)| vs)
-                .expect("active window must have a populated split layout")
+                .active_window()
+                .split_view_states()
                 .get(&active_split)
                 .map(|vs| vs.rulers.clone())
                 .unwrap_or_default();
@@ -1379,6 +1360,19 @@ impl Editor {
                 .map(|s| s.buffer.file_path().is_some())
                 .unwrap_or(false);
 
+            let changed_on_disk = self
+                .buffers()
+                .get(&buffer_id)
+                .and_then(|s| s.buffer.file_path())
+                .filter(|p| self.changed_on_disk(p).is_some())
+                .map(std::path::Path::to_path_buf);
+            if let Some(path) = changed_on_disk {
+                // Don't write over someone else's change on the way out, and
+                // don't close either, which would drop these edits (#3346).
+                self.set_status_message(Self::not_saved_changed_on_disk_message(&[path]));
+                return true;
+            }
+
             if has_path {
                 let old_active = self.active_buffer();
                 self.set_active_buffer(buffer_id);
@@ -1432,7 +1426,9 @@ impl Editor {
         let first_char = input_trim.chars().next();
         let confirms = first_char == quit_first || first_char == Some('y') || input_trim == "yes";
         if confirms {
-            self.should_quit = true;
+            // Only now, with the quit confirmed, does auto-save write
+            // anything; what it can't write is asked about instead.
+            self.quit_after_auto_save();
         } else {
             self.set_status_message(t!("buffer.close_cancelled").to_string());
         }
@@ -1453,8 +1449,19 @@ impl Editor {
         if first_char == save_first {
             // Save all modified file-backed buffers to disk first.
             match self.save_all_on_exit() {
-                Ok(count) => {
-                    tracing::info!("Saved {} buffer(s) on exit", count);
+                Ok(outcome)
+                    if !outcome.failed.is_empty() || !outcome.changed_on_disk.is_empty() =>
+                {
+                    // Quitting now would drop the edits that couldn't be
+                    // written (a file that needs sudo, one changed on disk
+                    // we refused to overwrite); stay so the user can decide.
+                    if let Some(msg) = Self::not_saved_message(&outcome) {
+                        self.set_status_message(msg);
+                    }
+                    return true;
+                }
+                Ok(outcome) => {
+                    tracing::info!("Saved {} buffer(s) on exit", outcome.saved);
                 }
                 Err(e) => {
                     self.set_status_message(
@@ -1734,8 +1741,7 @@ impl Editor {
                     .and_then(|view_states| {
                         view_states.iter().find_map(|(split_id, vs)| {
                             vs.open_buffers
-                                .iter()
-                                .any(|t| *t == crate::view::split::TabTarget::Group(group_leaf))
+                                .contains(&crate::view::split::TabTarget::Group(group_leaf))
                                 .then_some(*split_id)
                         })
                     });

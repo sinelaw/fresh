@@ -4,7 +4,7 @@
  * backslash is doubled, so fields cannot be recovered with a substring split.
  */
 
-/** The field separator byte; tmux prints it as `\037`. */
+/** The field separator byte; tmux prints it as `\037`, or raw in newer versions. */
 const SEP_BYTE = 0x1f;
 const SEP = "\x1f";
 
@@ -48,6 +48,13 @@ export function splitEscapedFields(line: string): string[] {
   let i = 0;
 
   while (i < line.length) {
+    // tmux 3.7 prints the separator raw rather than as `\037`.
+    if (line[i] === SEP) {
+      fields.push(current);
+      current = "";
+      i += 1;
+      continue;
+    }
     if (line[i] !== "\\") {
       current += line[i];
       i += 1;

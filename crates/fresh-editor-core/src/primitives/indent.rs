@@ -70,81 +70,81 @@ impl IndentCalculator {
     }
 
     /// Get or create parser and query for a language
-    fn get_config(&mut self, language: &Language) -> Option<(&mut Parser, &Query)> {
+    #[cfg(not(feature = "tree-sitter"))]
+    fn get_config(&mut self, _language: &Language) -> Option<(&mut Parser, &Query)> {
         // Without the tree-sitter grammars compiled in, there is no parser to
         // build. Returning `None` makes `calculate_indent` fall back to the
         // pure-Rust pattern-based indentation heuristics.
-        #[cfg(not(feature = "tree-sitter"))]
-        {
-            let _ = language;
-            return None;
-        }
-        #[cfg(feature = "tree-sitter")]
-        {
-            // Parser language comes from the centralized accessor, which is
-            // `None` for any grammar not compiled into this build. Most
-            // languages are no longer bundled (they use syntect highlighting +
-            // the regex indent-rules tier), so this bails to the caller's
-            // fallback for them. See fresh_languages::Language::ts_language.
-            let ts_language: fresh_languages::tree_sitter::Language = language.ts_language()?;
-            let (lang_name, query_str) = match language {
-                Language::Rust => ("rust", include_str!("../../queries/rust/indents.scm")),
-                Language::Python => ("python", include_str!("../../queries/python/indents.scm")),
-                Language::JavaScript => (
-                    "javascript",
-                    include_str!("../../queries/javascript/indents.scm"),
-                ),
-                Language::TypeScript => (
-                    "typescript",
-                    include_str!("../../queries/typescript/indents.scm"),
-                ),
-                Language::C => ("c", include_str!("../../queries/c/indents.scm")),
-                Language::Cpp => ("cpp", include_str!("../../queries/cpp/indents.scm")),
-                Language::Go => ("go", include_str!("../../queries/go/indents.scm")),
-                Language::Java => ("java", include_str!("../../queries/java/indents.scm")),
-                Language::HTML => ("html", include_str!("../../queries/html/indents.scm")),
-                Language::CSS => ("css", include_str!("../../queries/css/indents.scm")),
-                Language::Bash => ("bash", include_str!("../../queries/bash/indents.scm")),
-                Language::Json => ("json", include_str!("../../queries/json/indents.scm")),
-                Language::Jsonc => ("jsonc", include_str!("../../queries/json/indents.scm")),
-                Language::Ruby => ("ruby", include_str!("../../queries/ruby/indents.scm")),
-                Language::Php => ("php", include_str!("../../queries/php/indents.scm")),
-                Language::Lua => ("lua", include_str!("../../queries/lua/indents.scm")),
-                Language::CSharp => ("csharp", include_str!("../../queries/csharp/indents.scm")),
-                // Templ extends Go's grammar; Go's indent rules apply to the Go
-                // portions of a templ file. The HTML/CSS portions fall back to
-                // copy-current-line indent, good enough as an initial heuristic.
-                Language::Templ => ("templ", include_str!("../../queries/go/indents.scm")),
-                // No tree-sitter indent query is bundled for these, so the
-                // caller falls back to the regex indent-rules tier.
-                Language::Pascal | Language::Odin => return None,
-            };
 
-            // Check if we already have this config
-            if !self.configs.contains_key(lang_name) {
-                // Create parser
-                let mut parser = Parser::new();
-                if parser.set_language(&ts_language).is_err() {
-                    tracing::error!("Failed to set language for {}", lang_name);
-                    return None;
-                }
+        None
+    }
 
-                // Create query
-                let query = match Query::new(&ts_language, query_str) {
-                    Ok(q) => q,
-                    Err(e) => {
-                        tracing::error!("Failed to create query for {}: {:?}", lang_name, e);
-                        return None;
-                    }
-                };
+    /// Get or create parser and query for a language
+    #[cfg(feature = "tree-sitter")]
+    fn get_config(&mut self, language: &Language) -> Option<(&mut Parser, &Query)> {
+        // Parser language comes from the centralized accessor, which is
+        // `None` for any grammar not compiled into this build. Most
+        // languages are no longer bundled (they use syntect highlighting +
+        // the regex indent-rules tier), so this bails to the caller's
+        // fallback for them. See fresh_languages::Language::ts_language.
+        let ts_language: fresh_languages::tree_sitter::Language = language.ts_language()?;
+        let (lang_name, query_str) = match language {
+            Language::Rust => ("rust", include_str!("../../queries/rust/indents.scm")),
+            Language::Python => ("python", include_str!("../../queries/python/indents.scm")),
+            Language::JavaScript => (
+                "javascript",
+                include_str!("../../queries/javascript/indents.scm"),
+            ),
+            Language::TypeScript => (
+                "typescript",
+                include_str!("../../queries/typescript/indents.scm"),
+            ),
+            Language::C => ("c", include_str!("../../queries/c/indents.scm")),
+            Language::Cpp => ("cpp", include_str!("../../queries/cpp/indents.scm")),
+            Language::Go => ("go", include_str!("../../queries/go/indents.scm")),
+            Language::Java => ("java", include_str!("../../queries/java/indents.scm")),
+            Language::HTML => ("html", include_str!("../../queries/html/indents.scm")),
+            Language::CSS => ("css", include_str!("../../queries/css/indents.scm")),
+            Language::Bash => ("bash", include_str!("../../queries/bash/indents.scm")),
+            Language::Json => ("json", include_str!("../../queries/json/indents.scm")),
+            Language::Jsonc => ("jsonc", include_str!("../../queries/json/indents.scm")),
+            Language::Ruby => ("ruby", include_str!("../../queries/ruby/indents.scm")),
+            Language::Php => ("php", include_str!("../../queries/php/indents.scm")),
+            Language::Lua => ("lua", include_str!("../../queries/lua/indents.scm")),
+            Language::CSharp => ("csharp", include_str!("../../queries/csharp/indents.scm")),
+            // Templ extends Go's grammar; Go's indent rules apply to the Go
+            // portions of a templ file. The HTML/CSS portions fall back to
+            // copy-current-line indent, good enough as an initial heuristic.
+            Language::Templ => ("templ", include_str!("../../queries/go/indents.scm")),
+            // No tree-sitter indent query is bundled for these, so the
+            // caller falls back to the regex indent-rules tier.
+            Language::Pascal | Language::Odin => return None,
+        };
 
-                self.configs.insert(lang_name, (parser, query));
+        // Check if we already have this config
+        if !self.configs.contains_key(lang_name) {
+            // Create parser
+            let mut parser = Parser::new();
+            if parser.set_language(&ts_language).is_err() {
+                tracing::error!("Failed to set language for {}", lang_name);
+                return None;
             }
 
-            // Return mutable references
-            let (parser, query) = self.configs.get_mut(lang_name)?;
-            Some((parser, query))
+            // Create query
+            let query = match Query::new(&ts_language, query_str) {
+                Ok(q) => q,
+                Err(e) => {
+                    tracing::error!("Failed to create query for {}: {:?}", lang_name, e);
+                    return None;
+                }
+            };
+
+            self.configs.insert(lang_name, (parser, query));
         }
+
+        // Return mutable references
+        let (parser, query) = self.configs.get_mut(lang_name)?;
+        Some((parser, query))
     }
 
     /// Calculate indent for a new line at the given position

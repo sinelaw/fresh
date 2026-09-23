@@ -336,6 +336,7 @@ pub fn visible_char_count(text: &str) -> usize {
 /// Parse a string with ANSI codes and return segments with their styles
 ///
 /// Returns a vector of (text, style) pairs representing the parsed content.
+#[cfg(test)]
 pub fn parse_ansi_string(text: &str) -> Vec<(String, Style)> {
     if !contains_ansi_codes(text) {
         return vec![(text.to_string(), Style::default())];

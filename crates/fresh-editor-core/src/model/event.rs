@@ -53,11 +53,6 @@ pub enum Event {
         line_offset: isize,
     },
 
-    /// Set viewport to specific position
-    SetViewport {
-        top_line: usize,
-    },
-
     /// Center the viewport on the cursor
     Recenter,
 
@@ -340,23 +335,9 @@ pub enum PopupPositionData {
     AtCursor,
     BelowCursor,
     AboveCursor,
-    Fixed {
-        x: u16,
-        y: u16,
-    },
+    Fixed { x: u16, y: u16 },
     Centered,
     BottomRight,
-    /// Anchored above the status bar at a specific column. Used for the
-    /// LSP-status popup so it appears directly above the LSP segment of
-    /// the status bar that opened it.
-    AboveStatusBarAt {
-        x: u16,
-        /// Row of the status bar in the current frame. Lets the popup
-        /// place its bottom border immediately above the status bar
-        /// regardless of whether the prompt line is visible (which
-        /// shifts the status bar's row by one).
-        status_row: u16,
-    },
 }
 
 /// Margin position for events
@@ -471,10 +452,6 @@ impl Event {
             Self::Scroll { line_offset } => Some(Self::Scroll {
                 line_offset: -line_offset,
             }),
-            Self::SetViewport { top_line: _ } => {
-                // Can't invert without knowing old top_line
-                None
-            }
             Self::ChangeMode { mode: _ } => {
                 // Can't invert without knowing old mode
                 None
@@ -532,7 +509,7 @@ impl Event {
     ///
     /// Readonly actions include:
     /// - Cursor movement (MoveCursor)
-    /// - Scrolling and viewport changes (Scroll, SetViewport)
+    /// - Scrolling and viewport changes (Scroll, Recenter)
     /// - UI events (overlays, popups, margins, mode changes, etc.)
     pub fn is_write_action(&self) -> bool {
         match self {
@@ -751,12 +728,6 @@ impl EventLog {
 
         self.stream_file = Some(file);
         Ok(())
-    }
-
-    /// Disable streaming (runtime only)
-    #[cfg(feature = "runtime")]
-    pub fn disable_streaming(&mut self) {
-        self.stream_file = None;
     }
 
     /// Log rendering state (for debugging, runtime only)
@@ -995,15 +966,6 @@ impl EventLog {
         &self.entries[range]
     }
 
-    /// Get the most recent event
-    pub fn last_event(&self) -> Option<&Event> {
-        if self.current_index > 0 {
-            Some(&self.entries[self.current_index - 1].event)
-        } else {
-            None
-        }
-    }
-
     /// Clear all events (for testing or reset)
     pub fn clear(&mut self) {
         self.entries.clear();
@@ -1045,11 +1007,6 @@ impl EventLog {
         log.current_index = log.entries.len();
 
         Ok(log)
-    }
-
-    /// Set snapshot interval
-    pub fn set_snapshot_interval(&mut self, interval: usize) {
-        self.snapshot_interval = interval;
     }
 }
 

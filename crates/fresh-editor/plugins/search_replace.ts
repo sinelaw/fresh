@@ -137,6 +137,47 @@ interface PanelState {
 }
 let panel: PanelState | null = null;
 
+/** The match options the *next* panel opens on.
+ *
+ * The panel itself is rebuilt from scratch every time it opens, so
+ * without this the Case / Regex / Word toggles reset on each open and
+ * a user who wants case-sensitive matching has to say so again every
+ * single time. Seeded from the `editor.search` config preset, then
+ * updated by every toggle — so the last state wins for the rest of the
+ * session, and the config decides only where the session starts.
+ *
+ * Session-scoped on purpose: the config file is not rewritten behind
+ * the user's back, and the in-buffer search prompt persists its own
+ * copy with the workspace.
+ */
+const sessionMatchOptions = {
+  caseSensitive: false,
+  useRegex: false,
+  wholeWords: false,
+};
+
+/** Seed `sessionMatchOptions` from `editor.search`. Anything missing or
+ *  non-boolean stays off, which is also the shipped default. */
+function seedMatchOptionsFromConfig(): void {
+  const search = (
+    editor.getConfig() as
+      | {
+          editor?: {
+            search?: {
+              case_sensitive?: unknown;
+              regex?: unknown;
+              whole_word?: unknown;
+            };
+          };
+        }
+      | null
+  )?.editor?.search;
+  sessionMatchOptions.caseSensitive = search?.case_sensitive === true;
+  sessionMatchOptions.useRegex = search?.regex === true;
+  sessionMatchOptions.wholeWords = search?.whole_word === true;
+}
+seedMatchOptionsFromConfig();
+
 const MAX_RESULTS = 10000;
 const MIN_WIDTH = 60;
 const DEFAULT_WIDTH = 100;
@@ -157,13 +198,6 @@ let historyIndex = -1;
  *  to enter history-walk mode. Restored when they Down past the most
  *  recent history entry. */
 let historySavedPattern: string | null = null;
-/** Most recent widget_event we saw a widget_key for. Used to decide
- *  whether Up/Down should walk history (when focus appears to be on
- *  the search field) or fall through to the widget runtime. The
- *  widget runtime doesn't expose focus directly to the plugin, but
- *  every event that's relevant (change/select/toggle/activate/expand)
- *  carries widget_key. Best-effort proxy. */
-let lastFocusedWidget: string | null = null;
 
 function historyPush(pattern: string): void {
   if (!pattern) return;
@@ -395,19 +429,14 @@ function setActiveFieldText(text: string): void {
 // Mode — uses allowTextInput for inline editing (supports all keyboard layouts)
 // =============================================================================
 
-// Only explicit bindings for special keys; character input is handled via
-// allowTextInput which dispatches unbound characters as mode_text_input events.
-const modeBindings: [string, string][] = [
-  ["Return", "search_replace_enter"],
-  ["Space", "search_replace_space"],
-  ["Tab", "search_replace_tab"],
-  ["S-Tab", "search_replace_shift_tab"],
-  ["Up", "search_replace_nav_up"],
-  ["Down", "search_replace_nav_down"],
-  ["PageUp", "search_replace_nav_page_up"],
-  ["PageDown", "search_replace_nav_page_down"],
-  ["Left", "search_replace_nav_left"],
-  ["Right", "search_replace_nav_right"],
+// The focused control answers a key first — a field types, moves its caret
+// and edits; the match tree walks, opens and folds; a toggle or button runs
+// on Enter/Space; Tab walks the controls — so the mode binds only the
+// panel's own commands, and ↑/↓ for the search field's history (a
+// single-line field leaves them).
+const modeBindings: string[][] = [
+  ["Up", "search_replace_nav_up", "on:searchField"],
+  ["Down", "search_replace_nav_down", "on:searchField"],
   ["M-c", "search_replace_toggle_case"],
   ["M-r", "search_replace_toggle_regex"],
   ["M-w", "search_replace_toggle_whole_word"],
@@ -420,10 +449,6 @@ const modeBindings: [string, string][] = [
   ["C-M-Right", "search_replace_next_match"],
   ["C-M-Left", "search_replace_prev_match"],
   ["Escape", "search_replace_close"],
-  ["Backspace", "search_replace_backspace"],
-  ["Delete", "search_replace_delete"],
-  ["Home", "search_replace_home"],
-  ["End", "search_replace_end"],
 ];
 
 editor.defineMode("search-replace-list", modeBindings, true, true);
@@ -1677,9 +1702,9 @@ async function openPanelInner(opts?: { allFiles?: boolean }): Promise<void> {
       queryField: "search",
       optionIndex: 0,
       matchIndex: 0,
-      caseSensitive: false,
-      useRegex: false,
-      wholeWords: false,
+      caseSensitive: sessionMatchOptions.caseSensitive,
+      useRegex: sessionMatchOptions.useRegex,
+      wholeWords: sessionMatchOptions.wholeWords,
       allFiles,
       sourceBufferPath,
       sourceBufferRelPath,
@@ -1854,22 +1879,13 @@ async function rerunSearchQuiet(): Promise<void> {
 // Text editing handlers (inline editing of query fields)
 // =============================================================================
 
-// All editing / navigation keys route through the widget runtime
-// via the smart `Key` dispatch — the host knows which widget is
-// focused and routes accordingly (Backspace into TextInput; Up/Down
-// across List rows; Enter/Space activate Toggle/Button/List;
-// printable Space inserts into TextInput; Tab/Shift+Tab cycles
-// focus). See WidgetAction::Key for the full table.
+// ↓ in the search field that is not walking history goes on to the
+// host's own arrow handling (into the match tree): the binding owns the
+// key on that field, so it hands it back explicitly.
 function dispatch(action: WidgetAction): void {
   panel?.widgetPanel?.command(action);
 }
 
-registerHandler("search_replace_backspace", () => dispatch(widgetKey("Backspace")));
-registerHandler("search_replace_delete",    () => dispatch(widgetKey("Delete")));
-registerHandler("search_replace_home",      () => dispatch(widgetKey("Home")));
-registerHandler("search_replace_end",       () => dispatch(widgetKey("End")));
-registerHandler("search_replace_nav_left",  () => dispatch(widgetKey("Left")));
-registerHandler("search_replace_nav_right", () => dispatch(widgetKey("Right")));
 /** Apply a stored history entry to the search field. Mutates the
  *  widget's value via setValue so the host instance state stays in
  *  sync with the plugin's panel.searchPattern, and triggers a
@@ -1883,35 +1899,25 @@ function applyHistoryEntry(text: string): void {
   rerunSearchDebounced();
 }
 
-/** Whether Up/Down should be intercepted for history walk (instead of
- *  being passed to the focused widget). True only when the most recent
- *  widget_event indicated focus was on the search field. */
-function shouldInterceptForHistory(): boolean {
-  return lastFocusedWidget === "searchField" || lastFocusedWidget === null;
-}
-
+// Bound only on the search field (`on:searchField`): everywhere else ↑/↓
+// are the focused control's, or the host's spatial move.
 registerHandler("search_replace_nav_up", () => {
-  if (!panel) return;
-  if (shouldInterceptForHistory()) {
-    if (searchHistory.length === 0) return;
-    if (historyIndex < 0) {
-      // Entering history walk — snapshot what the user had typed so
-      // a Down past the most recent entry restores it.
-      historySavedPattern = panel.searchPattern;
-      historyIndex = 0;
-    } else if (historyIndex < searchHistory.length - 1) {
-      historyIndex += 1;
-    } else {
-      return; // already at the oldest entry
-    }
-    applyHistoryEntry(searchHistory[historyIndex]);
-    return;
+  if (!panel || searchHistory.length === 0) return;
+  if (historyIndex < 0) {
+    // Entering history walk — snapshot what the user had typed so
+    // a Down past the most recent entry restores it.
+    historySavedPattern = panel.searchPattern;
+    historyIndex = 0;
+  } else if (historyIndex < searchHistory.length - 1) {
+    historyIndex += 1;
+  } else {
+    return; // already at the oldest entry
   }
-  dispatch(widgetKey("Up"));
+  applyHistoryEntry(searchHistory[historyIndex]);
 });
 registerHandler("search_replace_nav_down", () => {
   if (!panel) return;
-  if (shouldInterceptForHistory() && historyIndex >= 0) {
+  if (historyIndex >= 0) {
     if (historyIndex > 0) {
       historyIndex -= 1;
       applyHistoryEntry(searchHistory[historyIndex]);
@@ -1927,29 +1933,11 @@ registerHandler("search_replace_nav_down", () => {
   }
   dispatch(widgetKey("Down"));
 });
-registerHandler("search_replace_nav_page_up",   () => dispatch(widgetKey("PageUp")));
-registerHandler("search_replace_nav_page_down", () => dispatch(widgetKey("PageDown")));
-
-// Tab / Shift+Tab now cycle focus through the host's tabbable
-// widget set (declared in spec via `key`s — searchField,
-// replaceField, case, regex, whole, replaceAll, matchTree).
-// The host re-renders with focus styling on the new widget; the
-// plugin needn't track focusPanel/queryField/optionIndex anymore
-// (the legacy fields linger in PanelState until the rest of the
-// plugin migrates off them).
-registerHandler("search_replace_tab",       () => dispatch(widgetKey("Tab")));
-registerHandler("search_replace_shift_tab", () => dispatch(widgetKey("Shift+Tab")));
-
-// Left/Right route through the smart-key dispatcher: the host
-// expands/collapses Tree nodes (when the matchTree is focused) or
-// moves the TextInput cursor (when a search/replace field is
-// focused). Plugin no longer needs separate file-row expand
-// handling.
-
 // Global option toggles (Alt+C, Alt+R, Alt+W)
 function search_replace_toggle_case(): void {
   if (!panel) return;
   panel.caseSensitive = !panel.caseSensitive;
+  sessionMatchOptions.caseSensitive = panel.caseSensitive;
   updatePanelContent();
   rerunSearchDebounced();
 }
@@ -1958,6 +1946,7 @@ registerHandler("search_replace_toggle_case", search_replace_toggle_case);
 function search_replace_toggle_regex(): void {
   if (!panel) return;
   panel.useRegex = !panel.useRegex;
+  sessionMatchOptions.useRegex = panel.useRegex;
   updatePanelContent();
   rerunSearchDebounced();
 }
@@ -1966,6 +1955,7 @@ registerHandler("search_replace_toggle_regex", search_replace_toggle_regex);
 function search_replace_toggle_whole_word(): void {
   if (!panel) return;
   panel.wholeWords = !panel.wholeWords;
+  sessionMatchOptions.wholeWords = panel.wholeWords;
   updatePanelContent();
   rerunSearchDebounced();
 }
@@ -1984,23 +1974,6 @@ registerHandler("search_replace_replace_scoped", search_replace_replace_scoped);
 // =============================================================================
 // Action handlers
 // =============================================================================
-
-// Enter / Space route to the widget runtime. The host decides what
-// each does based on the focused widget kind:
-//   * Toggle (case/regex/whole) → fires `widget_event` "toggle".
-//   * Button (replaceAll)       → fires `widget_event` "activate".
-//   * Tree   (matchTree)        → fires `widget_event` "activate"
-//                                  with the focused row's index/key.
-//                                  Plugin handler opens the match
-//                                  for leaf rows or toggles
-//                                  expansion for file rows.
-//   * TextInput + Space         → inserts " " (fires "change").
-//   * TextInput + Enter         → no-op (plugin can still bind a
-//                                  separate handler if it wants
-//                                  Enter to mean "submit").
-// Per-event handling lives in the `widget_event` listener below.
-registerHandler("search_replace_enter", () => dispatch(widgetKey("Enter")));
-registerHandler("search_replace_space", () => dispatch(widgetKey("Space")));
 
 /** Lock against re-entrant Replace All / Replace Scoped. Set as soon
  *  as doReplaceAll/doReplaceScoped enters and cleared in a try/finally
@@ -2490,15 +2463,6 @@ editor.on("after_file_open", (args) => {
 editor.on("widget_event", (args) => {
   if (!panel || args.panel_id !== panel.widgetPanel?.id()) return;
 
-  // Track most-recent focused widget so Up/Down can decide whether to
-  // walk search history (search field) or pass through to the widget
-  // runtime (matches tree, toggles, button). The widget runtime
-  // doesn't expose focus to the plugin directly; this best-effort
-  // proxy is good enough for the history-walk gesture. See §11.
-  if (typeof args.widget_key === "string" && args.widget_key.length > 0) {
-    lastFocusedWidget = args.widget_key;
-  }
-
   // `change` — fired for TextInput edits (Backspace, Delete,
   // arrows, Home/End, mode_text_input). Payload carries the new
   // value and cursor byte offset. The host already updated the
@@ -2630,16 +2594,19 @@ editor.on("widget_event", (args) => {
         break;
       case "case":
         panel.caseSensitive = newChecked;
+        sessionMatchOptions.caseSensitive = newChecked;
         panel.widgetPanel?.setChecked("case", newChecked);
         rerunSearchDebounced();
         break;
       case "regex":
         panel.useRegex = newChecked;
+        sessionMatchOptions.useRegex = newChecked;
         panel.widgetPanel?.setChecked("regex", newChecked);
         rerunSearchDebounced();
         break;
       case "whole":
         panel.wholeWords = newChecked;
+        sessionMatchOptions.wholeWords = newChecked;
         panel.widgetPanel?.setChecked("whole", newChecked);
         rerunSearchDebounced();
         break;

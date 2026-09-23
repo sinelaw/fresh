@@ -580,7 +580,7 @@ impl Window {
         self.event_logs
             .insert(buffer_id, crate::model::event::EventLog::new());
 
-        if let Some(view_states) = self.split_view_states_mut() {
+        if let Some(view_states) = self.buffers.split_view_states_mut() {
             if let Some(view_state) = view_states.get_mut(&split_id) {
                 view_state.add_buffer(buffer_id);
                 // Terminal buffers grid-wrap: exact-column rows at the PTY
@@ -690,10 +690,9 @@ impl Window {
                     let rulers = self.resources.config.editor.rulers.clone();
                     let terminal_width = self.terminal_width;
                     let terminal_height = self.terminal_height;
-                    let split_result = self
-                        .split_manager_mut()
-                        .expect("active split implies populated layout")
-                        .split_active(split_dir, buffer_id, split_ratio);
+                    let split_result =
+                        self.split_manager_mut()
+                            .split_active(split_dir, buffer_id, split_ratio);
                     match split_result {
                         Ok(new_split_id) => {
                             let mut view_state = SplitViewState::with_buffer(
@@ -730,12 +729,9 @@ impl Window {
                             view_state.viewport.line_wrap_enabled = true;
                             view_state.viewport.grid_wrap = true;
                             self.split_view_states_mut()
-                                .expect("active split implies populated layout")
                                 .insert(new_split_id, view_state);
                             if focus {
-                                self.split_manager_mut()
-                                    .expect("active split implies populated layout")
-                                    .set_active_split(new_split_id);
+                                self.split_manager_mut().set_active_split(new_split_id);
                             }
                             (buffer_id, Some(new_split_id))
                         }
@@ -747,6 +743,7 @@ impl Window {
                             // Graceful fallback: attach to the active
                             // split so the buffer isn't orphaned.
                             if let Some(view_state) = self
+                                .buffers
                                 .split_view_states_mut()
                                 .and_then(|m| m.get_mut(&parent))
                             {
@@ -1622,10 +1619,8 @@ impl Editor {
         // Split the active pane, placing the new terminal leaf after
         // (right for Vertical, below for Horizontal).
         let new_leaf = self
-            .windows
-            .get_mut(&self.active_window)
-            .and_then(|w| w.split_manager_mut())
-            .expect("active window must have a populated split layout")
+            .active_window_mut()
+            .split_manager_mut()
             .split_active(direction, buffer_id, 0.5);
         let new_leaf = match new_leaf {
             Ok(leaf) => leaf,
@@ -1655,15 +1650,11 @@ impl Editor {
         view_state.viewport.grid_wrap = true;
         view_state.viewport.wrap_indent = false;
 
-        self.windows
-            .get_mut(&self.active_window)
-            .and_then(|w| w.split_view_states_mut())
-            .expect("active window must have a populated split layout")
+        self.active_window_mut()
+            .split_view_states_mut()
             .insert(new_leaf, view_state);
-        self.windows
-            .get_mut(&self.active_window)
-            .and_then(|w| w.split_manager_mut())
-            .expect("active window must have a populated split layout")
+        self.active_window_mut()
+            .split_manager_mut()
             .set_active_split(new_leaf);
 
         // Mirror open_terminal's post-attach bookkeeping. The new terminal was
@@ -1998,8 +1989,12 @@ impl Editor {
                 state.editing_disabled = false;
                 state.margins.configure_for_line_numbers(false);
             }
-            let __active_split = self.split_manager().active_split();
-            if let Some(view_state) = self.split_view_states_mut().get_mut(&__active_split) {
+            let __active_split = self.active_window().split_manager().active_split();
+            if let Some(view_state) = self
+                .active_window_mut()
+                .split_view_states_mut()
+                .get_mut(&__active_split)
+            {
                 // Keep the grid-wrap config (fresh#2649) — the live grid
                 // overlays the buffer view, but scroll math still reads
                 // these flags until the next scroll-back visit re-syncs.
@@ -2156,20 +2151,24 @@ impl Window {
     }
 
     /// Send a key event to this window's active terminal. Picks
-    /// "application cursor" vs "normal cursor" escape sequences
-    /// based on the terminal's current state.
+    /// "application cursor" vs "normal cursor" escape sequences, and
+    /// kitty CSI-u for modified keys when the child enabled that
+    /// protocol, based on the terminal's current state.
     pub fn send_terminal_key(
         &mut self,
         code: crossterm::event::KeyCode,
         modifiers: crossterm::event::KeyModifiers,
     ) {
-        let app_cursor = self
+        use crate::services::terminal::pty::{key_to_pty_bytes, kitty_disambiguated_key};
+        let (app_cursor, kitty) = self
             .get_active_terminal_state()
-            .map(|s| s.is_app_cursor())
-            .unwrap_or(false);
-        if let Some(bytes) =
-            crate::services::terminal::pty::key_to_pty_bytes(code, modifiers, app_cursor)
-        {
+            .map(|s| (s.is_app_cursor(), s.kitty_disambiguates_keys()))
+            .unwrap_or((false, false));
+        let bytes = kitty
+            .then(|| kitty_disambiguated_key(code, modifiers))
+            .flatten()
+            .or_else(|| key_to_pty_bytes(code, modifiers, app_cursor));
+        if let Some(bytes) = bytes {
             self.send_terminal_input(&bytes);
         }
     }
@@ -2756,35 +2755,6 @@ impl Editor {
             .and_then(|state| state.buffer.to_string())
     }
 
-    /// Get cursor position for a buffer (for testing)
-    pub fn get_cursor_position(&self, buffer_id: BufferId) -> Option<usize> {
-        // Find cursor from any split view state that has this buffer
-        self.windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(_, vs)| vs)
-            .expect("active window must have a populated split layout")
-            .values()
-            .find_map(|vs| {
-                if vs.keyed_states.contains_key(&buffer_id) {
-                    Some(vs.keyed_states.get(&buffer_id)?.cursors.primary().position)
-                } else {
-                    None
-                }
-            })
-            .or_else(|| {
-                // Fallback: check active cursors
-                self.windows
-                    .get(&self.active_window)
-                    .and_then(|w| w.buffers.splits())
-                    .map(|(_, vs)| vs)
-                    .expect("active window must have a populated split layout")
-                    .values()
-                    .map(|vs| vs.cursors.primary().position)
-                    .next()
-            })
-    }
-
     // `render_terminal_splits` moved to `impl Window`. Active-window
     // callers reach it via `self.active_window().render_terminal_splits(...)`;
     // the picker preview path reaches it via the previewed window
@@ -3160,5 +3130,28 @@ mod mouse_encoding_tests {
         assert_eq!(cb(TerminalMouseEventKind::ScrollDown), 65 + 32);
         assert_eq!(cb(TerminalMouseEventKind::ScrollLeft), 66 + 32);
         assert_eq!(cb(TerminalMouseEventKind::ScrollRight), 67 + 32);
+    }
+}
+
+impl crate::app::window::Window {
+    /// Get cursor position for a buffer (for testing)
+    pub fn get_cursor_position(&self, buffer_id: BufferId) -> Option<usize> {
+        // Find cursor from any split view state that has this buffer
+        self.split_view_states()
+            .values()
+            .find_map(|vs| {
+                if vs.keyed_states.contains_key(&buffer_id) {
+                    Some(vs.keyed_states.get(&buffer_id)?.cursors.primary().position)
+                } else {
+                    None
+                }
+            })
+            .or_else(|| {
+                // Fallback: check active cursors
+                self.split_view_states()
+                    .values()
+                    .map(|vs| vs.cursors.primary().position)
+                    .next()
+            })
     }
 }

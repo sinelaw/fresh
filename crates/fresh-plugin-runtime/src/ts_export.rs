@@ -861,6 +861,19 @@ interface HookEventMap {
     server_command: string;
     params: string | null;
   };
+  /**
+   * A server -> client notification whose method the editor does not handle
+   * itself (e.g. clangd's `textDocument/clangd.fileStatus`, `$/memoryUsage`).
+   * Unlike `lsp_server_request`, `params` is the parsed JSON value, not a
+   * string. `server_name` tells apart several servers for one language.
+   */
+  "lsp/custom_notification": {
+    language: string;
+    server_name: string;
+    method: string;
+    /** JSON-RPC params: an object or array, or `null` when omitted */
+    params: Record<string, unknown> | unknown[] | null;
+  };
   lsp_server_error: {
     language: string;
     server_command: string;
@@ -962,6 +975,9 @@ interface HookEventMap {
     widget_key: string;
     event_type: string;
     payload: Record<string, unknown>;
+    /** The widget that holds the panel's focus now, after the event
+     *  (`""` for none) — the host's fact; see `getPanelFocusKey`. */
+    focus_key: string;
   };
 }
 
@@ -1576,11 +1592,22 @@ mod tests {
             "fileExists",
             "readFile",
             "writeFile",
+            "replaceFile",
             "readDir",
             "createDir",
-            "removePath",
-            "renamePath",
-            "copyPath",
+            // No `removePath` / `renamePath` / `copyPath`: a plugin cannot
+            // name a path and have it removed or overwritten. What replaced
+            // them names a staging directory, a package, or a state entry.
+            "scratchCreate",
+            "scratchPath",
+            "scratchDiscard",
+            "scratchFromDirectory",
+            "installScratch",
+            "uninstallPackage",
+            "stateSet",
+            "stateGet",
+            "stateKeys",
+            "stateDelete",
             "getTempDir",
             "getConfig",
             "getUserConfig",
@@ -1662,6 +1689,7 @@ mod tests {
             "defineMode",
             "setEditorMode",
             "getEditorMode",
+            "getPanelFocusKey",
             "closeSplit",
             "setSplitBuffer",
             "focusSplit",

@@ -493,20 +493,21 @@ impl EditorTestApi for crate::app::Editor {
     }
 
     fn viewport_top_byte(&self) -> usize {
-        self.active_viewport().top_byte()
+        self.active_window().active_viewport().top_byte()
     }
 
     fn terminal_width(&self) -> u16 {
-        self.active_viewport().width
+        self.active_window().active_viewport().width
     }
 
     fn terminal_height(&self) -> u16 {
-        self.active_viewport().height
+        self.active_window().active_viewport().height
     }
 
     fn gutter_width(&self) -> u16 {
         let buffer = &self.active_state().buffer;
-        u16::try_from(self.active_viewport().gutter_width(buffer)).unwrap_or(u16::MAX)
+        u16::try_from(self.active_window().active_viewport().gutter_width(buffer))
+            .unwrap_or(u16::MAX)
     }
 
     fn hardware_cursor_position(&mut self) -> Option<(u16, u16)> {
@@ -516,7 +517,7 @@ impl EditorTestApi for crate::app::Editor {
         // before taking the mutable buffer borrow on the next
         // accessor call.
         let cursor = *self.active_cursors().primary();
-        let viewport = self.active_viewport().clone();
+        let viewport = self.active_window().active_viewport().clone();
         let viewport_height = viewport.height;
         let viewport_width = viewport.width;
         let buffer = &mut self.active_state_mut().buffer;
@@ -908,7 +909,7 @@ impl EditorTestApi for crate::app::Editor {
     }
 
     fn top_line_number(&mut self) -> usize {
-        let top_byte = self.active_viewport().top_byte();
+        let top_byte = self.active_window().active_viewport().top_byte();
         self.active_state_mut().buffer.get_line_number(top_byte)
     }
 

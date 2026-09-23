@@ -25,6 +25,7 @@ mod orchestration;
 // three for a caller that hands it a whole rectangle; the shell folds a
 // display list and calls them one `Host` at a time instead, so that a pane's
 // rectangle is the one layout gave it.
+pub(crate) use orchestration::reconcile::pane_text_width;
 pub(crate) use orchestration::render_buffer::wrap_index_geometry_for;
 pub(crate) use orchestration::{
     content_pass, paint_leaf, prepare_content, reconcile_panes, ContentPass, FrameFacts,
@@ -254,7 +255,8 @@ impl SplitRenderer {
             false,
             None,
         );
-        orchestration::reconcile::settle_pane(state, viewport, left_column, false);
+        // No horizontal bar here, so no clamp and no width to clamp to.
+        orchestration::reconcile::settle_pane(state, viewport, left_column, false, 0);
         rows
     }
 

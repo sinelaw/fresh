@@ -12,7 +12,7 @@
 //!
 //! In `save_with_inplace_write()` (buffer.rs):
 //! 1. File is opened with `truncate(true)` - this empties the file
-//! 2. `write_recipe_to_file()` iterates through the recipe
+//! 2. `write_recipe()` iterates through the recipe
 //! 3. For Copy actions, it tries to read from the source file (same file we just truncated!)
 //! 4. Result: reads fail or return empty data = corruption
 //!
@@ -71,6 +71,12 @@ impl FileSystem for NotOwnerFileSystem {
 
     fn create_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
         self.inner.create_file(path)
+    }
+    fn create_new_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
+        self.inner.create_new_file(path)
+    }
+    fn create_new_private_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
+        self.inner.create_new_private_file(path)
     }
 
     fn open_file(&self, path: &Path) -> io::Result<Box<dyn FileReader>> {
@@ -189,6 +195,9 @@ impl FileSystem for NotOwnerFileSystem {
 fn test_large_file_inplace_write_corruption() {
     use std::fs;
 
+    let data_dir = TempDir::new().unwrap();
+    let recovery_dir = data_dir.path().join("recovery");
+
     let temp_dir = TempDir::new().unwrap();
     let file_path = temp_dir.path().join("large_inplace_test.txt");
 
@@ -225,7 +234,7 @@ fn test_large_file_inplace_write_corruption() {
     // Save the file - this is where the bug manifests
     // With the bug: file is truncated, then Copy ops read from truncated file = corruption
     // Without the bug: all content should be preserved
-    let save_result = buffer.save();
+    let save_result = buffer.save(&recovery_dir);
 
     // The bug can manifest in two ways:
     // 1. Save fails with "failed to fill whole buffer" because Copy ops can't read truncated file
@@ -287,6 +296,9 @@ fn test_large_file_inplace_write_corruption() {
 fn test_large_file_inplace_write_multiple_edits() {
     use std::fs;
 
+    let data_dir = TempDir::new().unwrap();
+    let recovery_dir = data_dir.path().join("recovery");
+
     let temp_dir = TempDir::new().unwrap();
     let file_path = temp_dir.path().join("large_multi_edit_test.txt");
 
@@ -316,7 +328,7 @@ fn test_large_file_inplace_write_multiple_edits() {
     buffer.insert_bytes(middle_pos, b"<<<MIDDLE>>>".to_vec());
 
     // Save - may fail due to the bug
-    let save_result = buffer.save();
+    let save_result = buffer.save(&recovery_dir);
     if let Err(e) = save_result {
         panic!(
             "BUG CONFIRMED: Save failed with error: {}\n\
@@ -360,11 +372,23 @@ struct CrashDuringStreamFileSystem {
     inner: Arc<dyn FileSystem>,
     /// Path to the destination file (writes to this path will fail)
     dest_path: PathBuf,
+    /// When set, opening the destination for writing fails with this error
+    /// instead (it is never opened, so never truncated).
+    refuse_open: std::sync::Mutex<Option<io::ErrorKind>>,
 }
 
 impl CrashDuringStreamFileSystem {
     fn new(inner: Arc<dyn FileSystem>, dest_path: PathBuf) -> Self {
-        Self { inner, dest_path }
+        Self {
+            inner,
+            dest_path,
+            refuse_open: std::sync::Mutex::new(None),
+        }
+    }
+
+    /// Make opening the destination for writing fail with `kind` from now on.
+    fn refuse_open(&self, kind: io::ErrorKind) {
+        *self.refuse_open.lock().unwrap() = Some(kind);
     }
 }
 
@@ -378,10 +402,7 @@ impl std::io::Write for CrashingFileWriter {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         if self.should_crash {
             // Simulate crash on write to destination
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
-                "simulated crash during write",
-            ));
+            return Err(io::Error::other("simulated crash during write"));
         }
         self.inner.write(buf)
     }
@@ -403,6 +424,11 @@ impl FileSystem for CrashDuringStreamFileSystem {
     }
 
     fn open_file_for_write(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
+        if path == self.dest_path {
+            if let Some(kind) = *self.refuse_open.lock().unwrap() {
+                return Err(io::Error::new(kind, "simulated refusal to open"));
+            }
+        }
         let inner = self.inner.open_file_for_write(path)?;
         if path == self.dest_path {
             // Wrap with crashing writer for destination file
@@ -430,6 +456,12 @@ impl FileSystem for CrashDuringStreamFileSystem {
 
     fn create_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
         self.inner.create_file(path)
+    }
+    fn create_new_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
+        self.inner.create_new_file(path)
+    }
+    fn create_new_private_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
+        self.inner.create_new_private_file(path)
     }
 
     fn open_file(&self, path: &Path) -> io::Result<Box<dyn FileReader>> {
@@ -545,6 +577,9 @@ impl FileSystem for CrashDuringStreamFileSystem {
 fn test_inplace_write_crash_recovery() {
     use std::fs;
 
+    let data_dir = TempDir::new().unwrap();
+    let recovery_dir = data_dir.path().join("recovery");
+
     let temp_dir = TempDir::new().unwrap();
     let file_path = temp_dir.path().join("crash_test.txt");
 
@@ -575,15 +610,13 @@ fn test_inplace_write_crash_recovery() {
     buffer.insert_bytes(0, b"EDITED: ".to_vec());
 
     // Save should fail due to simulated crash
-    let save_result = buffer.save();
+    let save_result = buffer.save(&recovery_dir);
     assert!(
         save_result.is_err(),
         "Save should fail due to simulated crash"
     );
 
-    // Verify recovery files exist directly (can't use list_inplace_write_recoveries
-    // because it filters out entries from still-running processes - i.e., this test)
-    let recovery_dir = fresh::services::recovery::RecoveryStorage::get_recovery_dir().unwrap();
+    // Verify recovery files exist directly
     let hash = fresh::services::recovery::path_hash(&file_path);
     let meta_path = recovery_dir.join(format!("{}.inplace.json", hash));
 
@@ -664,6 +697,9 @@ fn test_inplace_write_crash_recovery() {
 fn test_inplace_write_recovery_restores_file() {
     use std::fs;
 
+    let data_dir = TempDir::new().unwrap();
+    let recovery_dir = data_dir.path().join("recovery");
+
     let temp_dir = TempDir::new().unwrap();
     let file_path = temp_dir.path().join("recovery_test.txt");
 
@@ -695,7 +731,7 @@ fn test_inplace_write_recovery_restores_file() {
     buffer.insert_bytes(0, edit_prefix.to_vec());
 
     // Save should fail due to simulated crash
-    let save_result = buffer.save();
+    let save_result = buffer.save(&recovery_dir);
     assert!(
         save_result.is_err(),
         "Save should fail due to simulated crash"
@@ -705,7 +741,6 @@ fn test_inplace_write_recovery_restores_file() {
     // but the temp file should have the complete content.
 
     // Find the recovery entry
-    let recovery_dir = fresh::services::recovery::RecoveryStorage::get_recovery_dir().unwrap();
     let hash = fresh::services::recovery::path_hash(&file_path);
     let meta_path = recovery_dir.join(format!("{}.inplace.json", hash));
 
@@ -781,8 +816,11 @@ fn test_inplace_write_recovery_restores_file() {
 #[test]
 #[cfg(unix)]
 fn test_successful_inplace_write_cleans_up_recovery() {
-    use fresh::services::recovery::RecoveryStorage;
+    use fresh::services::recovery::InplaceWriteRecovery;
     use std::fs;
+
+    let data_dir = TempDir::new().unwrap();
+    let recovery_dir = data_dir.path().join("recovery");
 
     let temp_dir = TempDir::new().unwrap();
     let file_path = temp_dir.path().join("success_test.txt");
@@ -806,13 +844,14 @@ fn test_successful_inplace_write_cleans_up_recovery() {
     buffer.insert_bytes(0, b"SUCCESS: ".to_vec());
 
     // Save should succeed
-    buffer.save().unwrap();
+    buffer.save(&recovery_dir).unwrap();
 
     // Verify NO recovery files remain for this path
-    let recovery_storage = RecoveryStorage::default();
-    let inplace_recoveries = recovery_storage.list_inplace_write_recoveries().unwrap();
+    let inplace_recoveries = InplaceWriteRecovery::scan(&StdFileSystem, &recovery_dir);
 
-    let our_recovery = inplace_recoveries.iter().find(|r| r.dest_path == file_path);
+    let our_recovery = inplace_recoveries
+        .iter()
+        .find(|(_, r)| r.dest_path == file_path);
 
     assert!(
         our_recovery.is_none(),
@@ -826,4 +865,384 @@ fn test_successful_inplace_write_cleans_up_recovery() {
         saved.starts_with("SUCCESS: Line 0000"),
         "File should have been saved correctly"
     );
+}
+
+/// Issue #3348: saving an emptied buffer skipped the in-place decision and
+/// always replaced the file via temp file + rename, so a file owned by
+/// another user took the saver's owner and group (root:root under sudo).
+/// It must be rewritten in place like any other save of a file we don't own.
+#[test]
+#[cfg(unix)]
+fn test_emptying_not_owned_file_writes_in_place() {
+    use std::os::unix::fs::MetadataExt;
+
+    let data_dir = TempDir::new().unwrap();
+    let recovery_dir = data_dir.path().join("recovery");
+
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("not_mine.txt");
+    std::fs::write(&file_path, "some content\n").unwrap();
+    let ino = std::fs::metadata(&file_path).unwrap().ino();
+
+    let not_owner_fs = Arc::new(NotOwnerFileSystem::new(Arc::new(StdFileSystem)));
+    let mut buffer = TextBuffer::load_from_file(&file_path, 1024 * 1024, not_owner_fs).unwrap();
+    let len = buffer.len();
+    buffer.delete_bytes(0, len);
+    buffer.save(&recovery_dir).unwrap();
+
+    assert_eq!(std::fs::read(&file_path).unwrap(), b"");
+    assert_eq!(
+        std::fs::metadata(&file_path).unwrap().ino(),
+        ino,
+        "an emptied file we don't own must be truncated in place, not replaced"
+    );
+}
+
+/// A small (fully loaded) file written in place used to be truncated and
+/// rewritten from memory with no staged copy, so a write failing part-way
+/// left the file empty or partial with the new content nowhere on disk. It
+/// must be staged in the recovery directory first, like the large-file path.
+#[test]
+#[cfg(unix)]
+fn test_small_file_inplace_write_failure_keeps_staged_copy() {
+    let data_dir = TempDir::new().unwrap();
+    let recovery_dir = data_dir.path().join("recovery");
+
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("small.txt");
+    std::fs::write(&file_path, "original line\n").unwrap();
+    let crash_fs = Arc::new(CrashDuringStreamFileSystem::new(
+        Arc::new(StdFileSystem),
+        file_path.clone(),
+    ));
+    let mut buffer = TextBuffer::load_from_file(&file_path, 1024 * 1024, crash_fs).unwrap();
+    assert!(!buffer.is_large_file());
+    buffer.insert_bytes(0, b"EDITED: ".to_vec());
+
+    assert!(
+        buffer.save(&recovery_dir).is_err(),
+        "the simulated failure must surface"
+    );
+
+    let hash = fresh::services::recovery::path_hash(&file_path);
+    let meta_path = data_dir
+        .path()
+        .join("recovery")
+        .join(format!("{}.inplace.json", hash));
+    let meta = std::fs::read_to_string(&meta_path)
+        .unwrap_or_else(|e| panic!("no in-place recovery metadata at {meta_path:?}: {e}"));
+    let recovery: fresh::services::recovery::InplaceWriteRecovery =
+        serde_json::from_str(&meta).unwrap();
+    assert_eq!(recovery.dest_path, file_path);
+    assert_eq!(
+        std::fs::read_to_string(&recovery.temp_path).unwrap(),
+        "EDITED: original line\n",
+        "the staged copy must hold the complete new content"
+    );
+}
+
+/// A successful small in-place write leaves nothing behind in the recovery
+/// directory.
+#[test]
+#[cfg(unix)]
+fn test_small_file_inplace_write_cleans_up_staged_copy() {
+    let data_dir = TempDir::new().unwrap();
+    let recovery_dir = data_dir.path().join("recovery");
+
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("small.txt");
+    std::fs::write(&file_path, "original line\n").unwrap();
+    let not_owner_fs = Arc::new(NotOwnerFileSystem::new(Arc::new(StdFileSystem)));
+    let mut buffer = TextBuffer::load_from_file(&file_path, 1024 * 1024, not_owner_fs).unwrap();
+    buffer.insert_bytes(0, b"EDITED: ".to_vec());
+
+    buffer.save(&recovery_dir).unwrap();
+
+    assert_eq!(
+        std::fs::read_to_string(&file_path).unwrap(),
+        "EDITED: original line\n"
+    );
+    let leftovers: Vec<_> = std::fs::read_dir(data_dir.path().join("recovery"))
+        .map(|dir| dir.map(|e| e.unwrap().file_name()).collect())
+        .unwrap_or_default();
+    assert!(leftovers.is_empty(), "left behind: {leftovers:?}");
+}
+
+/// The `.inplace-*.tmp` files staged in the recovery directory.
+fn staged_copies(recovery_dir: &Path) -> Vec<PathBuf> {
+    let mut staged: Vec<PathBuf> = std::fs::read_dir(recovery_dir)
+        .map(|dir| dir.map(|e| e.unwrap().path()).collect())
+        .unwrap_or_default();
+    staged.retain(|p| {
+        p.file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| n.starts_with(".inplace-"))
+    });
+    staged
+}
+
+/// The copy staged for an in-place write holds the file's content outside
+/// the file's own directory, so it must be readable by its owner only — not
+/// created with the umask default (0644) in a world-readable data dir.
+#[test]
+#[cfg(unix)]
+fn test_inplace_staged_copy_is_private() {
+    use std::os::unix::fs::PermissionsExt;
+    let data_dir = TempDir::new().unwrap();
+    let recovery_dir = data_dir.path().join("recovery");
+
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("secret.txt");
+    std::fs::write(&file_path, "original line\n").unwrap();
+    std::fs::set_permissions(&file_path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let crash_fs = Arc::new(CrashDuringStreamFileSystem::new(
+        Arc::new(StdFileSystem),
+        file_path.clone(),
+    ));
+    let mut buffer = TextBuffer::load_from_file(&file_path, 1024 * 1024, crash_fs).unwrap();
+    buffer.insert_bytes(0, b"EDITED: ".to_vec());
+    assert!(
+        buffer.save(&recovery_dir).is_err(),
+        "the simulated failure must surface"
+    );
+
+    let staged = staged_copies(&data_dir.path().join("recovery"));
+    assert_eq!(staged.len(), 1, "staged: {staged:?}");
+    let mode = std::fs::metadata(&staged[0]).unwrap().permissions().mode();
+    assert_eq!(mode & 0o777, 0o600, "staged copy mode {:o}", mode & 0o777);
+}
+
+/// Every failed in-place write of a file used to leave its own staged copy
+/// and point the file's metadata at the newest, orphaning the rest — one
+/// more copy per auto-save interval while the failure lasted. The latest
+/// copy supersedes the earlier ones, so only it is kept.
+#[test]
+#[cfg(unix)]
+fn test_repeated_inplace_write_failures_keep_one_staged_copy() {
+    let data_dir = TempDir::new().unwrap();
+    let recovery_dir = data_dir.path().join("recovery");
+
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("small.txt");
+    std::fs::write(&file_path, "original line\n").unwrap();
+    let crash_fs = Arc::new(CrashDuringStreamFileSystem::new(
+        Arc::new(StdFileSystem),
+        file_path.clone(),
+    ));
+    let mut buffer = TextBuffer::load_from_file(&file_path, 1024 * 1024, crash_fs).unwrap();
+    for attempt in 0..3 {
+        buffer.insert_bytes(0, format!("{attempt}").into_bytes());
+        assert!(
+            buffer.save(&recovery_dir).is_err(),
+            "the simulated failure must surface"
+        );
+    }
+
+    let staged = staged_copies(&recovery_dir);
+    assert_eq!(staged.len(), 1, "staged: {staged:?}");
+    let hash = fresh::services::recovery::path_hash(&file_path);
+    let meta = std::fs::read_to_string(recovery_dir.join(format!("{hash}.inplace.json"))).unwrap();
+    let recovery: fresh::services::recovery::InplaceWriteRecovery =
+        serde_json::from_str(&meta).unwrap();
+    assert_eq!(recovery.temp_path, staged[0]);
+    assert_eq!(
+        std::fs::read_to_string(&staged[0]).unwrap(),
+        "210original line\n",
+        "the copy kept is the latest attempt's"
+    );
+}
+
+/// What a crash in the middle of an in-place write leaves in the top-level
+/// recovery directory is cleaned up when a session starts — where nothing
+/// is lost by it: a staged copy its destination already matches, metadata
+/// whose staged copy is gone, and a half-written metadata temp file. A
+/// staged copy that differs from its destination may be the only copy of
+/// what was being saved, and is kept.
+#[test]
+#[cfg(unix)]
+fn test_session_start_cleans_up_resolved_inplace_recoveries() {
+    use fresh::services::recovery::{path_hash, InplaceWriteRecovery};
+    let data_dir = TempDir::new().unwrap();
+    let recovery_dir = data_dir.path().join("recovery");
+    std::fs::create_dir_all(&recovery_dir).unwrap();
+    let files = TempDir::new().unwrap();
+    // No process has this pid (it's above any pid_max), so it "crashed".
+    const DEAD_PID: u32 = 2_000_000_000;
+
+    let plant = |name: &str, on_disk: &str, staged: Option<&str>| -> (PathBuf, PathBuf) {
+        let dest = files.path().join(name);
+        std::fs::write(&dest, on_disk).unwrap();
+        let temp = recovery_dir.join(format!(".inplace-{name}-{DEAD_PID}-1.tmp"));
+        if let Some(staged) = staged {
+            std::fs::write(&temp, staged).unwrap();
+        }
+        let mut recovery = InplaceWriteRecovery::new(dest.clone(), temp.clone(), 0, 0, 0o644);
+        recovery.pid = DEAD_PID;
+        let meta = recovery_dir.join(format!("{}.inplace.json", path_hash(&dest)));
+        std::fs::write(&meta, serde_json::to_string(&recovery).unwrap()).unwrap();
+        (temp, meta)
+    };
+    let (done_temp, done_meta) = plant("done.txt", "new\n", Some("new\n"));
+    let (torn_temp, torn_meta) = plant("torn.txt", "ne", Some("new\n"));
+    let (_, gone_meta) = plant("gone.txt", "x\n", None);
+    let meta_temp = recovery_dir.join(format!(".0123456789abcdef.inplace.json.{DEAD_PID}.3.tmp"));
+    std::fs::write(&meta_temp, "{").unwrap();
+    let live_meta_temp = recovery_dir.join(format!(
+        ".0123456789abcdef.inplace.json.{}.4.tmp",
+        std::process::id()
+    ));
+    std::fs::write(&live_meta_temp, "{").unwrap();
+
+    let removed = fresh::model::buffer::save::clean_up_inplace_write_recoveries(
+        &StdFileSystem,
+        &recovery_dir,
+    );
+
+    for gone in [&done_temp, &done_meta, &gone_meta, &meta_temp] {
+        assert!(!gone.exists(), "{gone:?} should have been removed");
+    }
+    for kept in [&torn_temp, &torn_meta, &live_meta_temp] {
+        assert!(kept.exists(), "{kept:?} must be kept");
+    }
+    assert_eq!(removed, 4);
+}
+
+/// A write that fails part-way leaves the file torn and its complete new
+/// content in a staged copy — the only complete copy on disk. A later
+/// attempt that can't even open the file (read-only remount, permission
+/// revoked) truncated nothing, yet it used to delete that copy as soon as
+/// it staged its own, then discard its own because the open failed (or
+/// hand it to a sudo prompt that deletes it when cancelled), leaving the
+/// torn file with no copy of anything anywhere.
+///
+/// A small file's first attempt fails for real. A large file's recipe
+/// reads the unchanged parts back from the file itself, which a torn write
+/// has truncated, so its earlier copy is planted as one a crashed session
+/// left behind.
+fn check_refused_retry_keeps_earlier_copy(large: bool, refusal: io::ErrorKind) {
+    use fresh::services::recovery::{path_hash, InplaceWriteRecovery};
+    let data_dir = TempDir::new().unwrap();
+    let recovery_dir = data_dir.path().join("recovery");
+    let meta_path = |file: &Path| recovery_dir.join(format!("{}.inplace.json", path_hash(file)));
+
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("torn.txt");
+    let original: String = if large {
+        (0..500)
+            .map(|i| format!("Line {i:04}: original\n"))
+            .collect()
+    } else {
+        "original line\n".into()
+    };
+    std::fs::write(&file_path, &original).unwrap();
+    let fs = Arc::new(CrashDuringStreamFileSystem::new(
+        Arc::new(StdFileSystem),
+        file_path.clone(),
+    ));
+    let threshold = if large { 1024 } else { 1024 * 1024 };
+    let mut buffer = TextBuffer::load_from_file(&file_path, threshold, fs.clone()).unwrap();
+    assert_eq!(buffer.is_large_file(), large);
+
+    let first = format!("first {original}");
+    if large {
+        // No process has this pid (it's above any pid_max), so it "crashed".
+        const DEAD_PID: u32 = 2_000_000_000;
+        std::fs::create_dir_all(&recovery_dir).unwrap();
+        let copy = recovery_dir.join(format!(".inplace-torn.txt-{DEAD_PID}-1.tmp"));
+        std::fs::write(&copy, &first).unwrap();
+        let mut recovery = InplaceWriteRecovery::new(file_path.clone(), copy, 0, 0, 0o644);
+        recovery.pid = DEAD_PID;
+        std::fs::write(
+            meta_path(&file_path),
+            serde_json::to_string(&recovery).unwrap(),
+        )
+        .unwrap();
+    } else {
+        // Attempt 1: the write fails part-way.
+        buffer.insert_bytes(0, b"first ".to_vec());
+        assert!(
+            buffer.save(&recovery_dir).is_err(),
+            "the simulated failure must surface"
+        );
+    }
+
+    // Attempt 2: the file can't be opened for writing at all.
+    fs.refuse_open(refusal);
+    buffer.insert_bytes(0, b"second ".to_vec());
+    let err = buffer
+        .save(&recovery_dir)
+        .expect_err("the refusal must surface");
+    // A sudo prompt the user cancels deletes the copy handed to it, as
+    // dropping the error does.
+    drop(err);
+
+    let meta = std::fs::read_to_string(meta_path(&file_path))
+        .expect("the torn file's recovery metadata must be kept");
+    let recovery: InplaceWriteRecovery = serde_json::from_str(&meta).unwrap();
+    let kept = std::fs::read_to_string(&recovery.temp_path).ok();
+    assert!(
+        kept.as_deref() == Some(first.as_str()),
+        "the metadata must still point at the earlier complete copy, not {:?}",
+        recovery.temp_path
+    );
+    assert_eq!(
+        staged_copies(&recovery_dir),
+        vec![recovery.temp_path],
+        "nothing else is left staged"
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn test_refused_retry_keeps_earlier_copy_small_file() {
+    check_refused_retry_keeps_earlier_copy(false, io::ErrorKind::ReadOnlyFilesystem);
+}
+
+#[test]
+#[cfg(unix)]
+fn test_refused_retry_keeps_earlier_copy_small_file_sudo() {
+    check_refused_retry_keeps_earlier_copy(false, io::ErrorKind::PermissionDenied);
+}
+
+#[test]
+#[cfg(unix)]
+fn test_refused_retry_keeps_earlier_copy_large_file() {
+    check_refused_retry_keeps_earlier_copy(true, io::ErrorKind::ReadOnlyFilesystem);
+}
+
+#[test]
+#[cfg(unix)]
+fn test_refused_retry_keeps_earlier_copy_large_file_sudo() {
+    check_refused_retry_keeps_earlier_copy(true, io::ErrorKind::PermissionDenied);
+}
+
+/// Once the sudo fallback has written the whole file, the copy an earlier,
+/// interrupted in-place attempt left for it is obsolete: its metadata and
+/// staged copy are removed rather than kept (and warned about) forever.
+#[test]
+#[cfg(unix)]
+fn test_completed_sudo_save_resolves_earlier_staged_copy() {
+    use fresh::services::recovery::{path_hash, InplaceWriteRecovery};
+    let data_dir = TempDir::new().unwrap();
+    let recovery_dir = data_dir.path().join("recovery");
+    std::fs::create_dir_all(&recovery_dir).unwrap();
+
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("torn.txt");
+    std::fs::write(&file_path, "complete content\n").unwrap();
+    // A copy an earlier attempt of this process staged and kept.
+    let copy = recovery_dir.join(format!(".inplace-torn.txt-{}-1.tmp", std::process::id()));
+    std::fs::write(&copy, "complete content\n").unwrap();
+    let meta_path = recovery_dir.join(format!("{}.inplace.json", path_hash(&file_path)));
+    let recovery = InplaceWriteRecovery::new(file_path.clone(), copy.clone(), 0, 0, 0o644);
+    std::fs::write(&meta_path, serde_json::to_string(&recovery).unwrap()).unwrap();
+
+    fresh::model::buffer::save::resolve_inplace_write_recovery(
+        &StdFileSystem,
+        &recovery_dir,
+        &file_path,
+    );
+
+    assert!(!meta_path.exists(), "the recovery metadata must be removed");
+    assert!(!copy.exists(), "the obsolete staged copy must be removed");
 }

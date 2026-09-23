@@ -61,12 +61,6 @@ pub enum PluginRequest {
         error: String,
     },
 
-    /// Load all plugins from a directory
-    LoadPluginsFromDir {
-        dir: PathBuf,
-        response: oneshot::Sender<Vec<String>>,
-    },
-
     /// Load all plugins from a directory with config support
     /// Returns (errors, discovered_plugins) where discovered_plugins contains
     /// all found plugins with their paths and enabled status
@@ -142,6 +136,18 @@ pub enum PluginRequest {
         response: oneshot::Sender<Vec<TsPluginInfo>>,
     },
 
+    /// Answer once everything queued ahead of this request has been handled
+    /// and the JS job queue is empty.
+    ///
+    /// The request channel is FIFO, so every `ResolveCallback` sent earlier
+    /// has run — including its JS continuation, which `resolve_callback`
+    /// runs synchronously. So by the time this answers, any host call those
+    /// continuations made is already on the command channel.
+    ///
+    /// This is a sync point, not a wait for the action to finish: a handler
+    /// parked on `editor.getNextKey()` answers immediately.
+    SyncRuntime { response: oneshot::Sender<()> },
+
     /// Track an async resource (buffer/terminal) that was just created.
     /// Sent by deliver_response when the editor confirms resource creation.
     TrackAsyncResource {
@@ -169,6 +175,10 @@ pub enum TrackedAsyncResource {
 pub mod oneshot {
     use std::fmt;
     use std::sync::mpsc;
+
+    /// So callers can match `try_recv`'s error without naming the backing
+    /// channel type.
+    pub use std::sync::mpsc::TryRecvError;
 
     pub struct Sender<T>(mpsc::SyncSender<T>);
     pub struct Receiver<T>(mpsc::Receiver<T>);
@@ -589,26 +599,6 @@ impl PluginThreadHandle {
         rx.recv().map_err(|_| anyhow!("Plugin thread closed"))?
     }
 
-    /// Load all plugins from a directory (blocking)
-    pub fn load_plugins_from_dir(&self, dir: &Path) -> Vec<String> {
-        let (tx, rx) = oneshot::channel();
-        let Some(sender) = self.request_sender.as_ref() else {
-            return vec!["Plugin thread shut down".to_string()];
-        };
-        if sender
-            .send(PluginRequest::LoadPluginsFromDir {
-                dir: dir.to_path_buf(),
-                response: tx,
-            })
-            .is_err()
-        {
-            return vec!["Plugin thread not responding".to_string()];
-        }
-
-        rx.recv()
-            .unwrap_or_else(|_| vec!["Plugin thread closed".to_string()])
-    }
-
     /// Load all plugins from a directory with config support (blocking)
     /// Returns (errors, discovered_plugins) where discovered_plugins is a map of
     /// plugin name -> PluginConfig with paths populated.
@@ -789,6 +779,21 @@ impl PluginThreadHandle {
         rx.recv().unwrap_or(false)
     }
 
+    /// See [`PluginRequest::SyncRuntime`]. `None` if there is no plugin
+    /// thread.
+    ///
+    /// Non-blocking on purpose: the plugin thread may be parked on a host
+    /// round-trip queued ahead of this request, so a caller that blocked on
+    /// the answer instead of servicing the command channel would deadlock.
+    pub fn sync_runtime(&self) -> Option<oneshot::Receiver<()>> {
+        let (tx, rx) = oneshot::channel();
+        let sender = self.request_sender.as_ref()?;
+        sender
+            .send(PluginRequest::SyncRuntime { response: tx })
+            .ok()?;
+        Some(rx)
+    }
+
     /// List all loaded plugins (blocking)
     pub fn list_plugins(&self) -> Vec<TsPluginInfo> {
         let (tx, rx) = oneshot::channel();
@@ -871,64 +876,6 @@ impl PluginThreadHandle {
         while let Ok(cmd) = self.command_receiver.try_recv() {
             commands.push(cmd);
         }
-        commands
-    }
-
-    /// Process commands, blocking until `HookCompleted` for the given hook arrives.
-    ///
-    /// After the render loop fires a hook like `lines_changed`, the plugin thread
-    /// processes it and sends back commands (AddConceal, etc.) followed by a
-    /// `HookCompleted` sentinel. This method waits for that sentinel so the
-    /// render has all conceal/overlay updates before painting the frame.
-    ///
-    /// Returns all non-sentinel commands collected while waiting.
-    /// Falls back to non-blocking drain if the timeout expires.
-    pub fn process_commands_until_hook_completed(
-        &mut self,
-        hook_name: &str,
-        timeout: std::time::Duration,
-    ) -> Vec<PluginCommand> {
-        let mut commands = Vec::new();
-        let deadline = std::time::Instant::now() + timeout;
-
-        loop {
-            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
-            if remaining.is_zero() {
-                // Timeout: drain whatever is available
-                while let Ok(cmd) = self.command_receiver.try_recv() {
-                    if !matches!(&cmd, PluginCommand::HookCompleted { .. }) {
-                        commands.push(cmd);
-                    }
-                }
-                break;
-            }
-
-            match self.command_receiver.recv_timeout(remaining) {
-                Ok(PluginCommand::HookCompleted {
-                    hook_name: ref name,
-                }) if name == hook_name => {
-                    // Got our sentinel — drain any remaining commands
-                    while let Ok(cmd) = self.command_receiver.try_recv() {
-                        if !matches!(&cmd, PluginCommand::HookCompleted { .. }) {
-                            commands.push(cmd);
-                        }
-                    }
-                    break;
-                }
-                Ok(PluginCommand::HookCompleted { .. }) => {
-                    // Sentinel for a different hook, keep waiting
-                    continue;
-                }
-                Ok(cmd) => {
-                    commands.push(cmd);
-                }
-                Err(_) => {
-                    // Timeout or disconnected
-                    break;
-                }
-            }
-        }
-
         commands
     }
 
@@ -1226,11 +1173,6 @@ async fn handle_request(
             fire_and_forget(response.send(result));
         }
 
-        PluginRequest::LoadPluginsFromDir { dir, response } => {
-            let errors = load_plugins_from_dir_internal(Rc::clone(&runtime), plugins, &dir).await;
-            fire_and_forget(response.send(errors));
-        }
-
         PluginRequest::LoadPluginsFromDirWithConfig {
             dir,
             plugin_configs,
@@ -1346,6 +1288,16 @@ async fn handle_request(
         PluginRequest::ListPlugins { response } => {
             let plugin_list: Vec<TsPluginInfo> = plugins.values().cloned().collect();
             fire_and_forget(response.send(plugin_list));
+        }
+
+        PluginRequest::SyncRuntime { response } => {
+            // Reaching this arm means earlier requests are handled, but a
+            // continuation that needed only a microtask to reach its next
+            // host call would otherwise wait for the loop's 1ms poll. Run
+            // the job queue out instead. It terminates: a promise waiting on
+            // the host is not a job.
+            while runtime.borrow_mut().poll_event_loop_once() {}
+            fire_and_forget(response.send(()));
         }
 
         PluginRequest::ResolveCallback {
@@ -1639,59 +1591,6 @@ async fn load_plugin_internal(
     );
 
     Ok(())
-}
-
-/// Load all plugins from a directory
-async fn load_plugins_from_dir_internal(
-    runtime: Rc<RefCell<QuickJsBackend>>,
-    plugins: &mut HashMap<String, TsPluginInfo>,
-    dir: &Path,
-) -> Vec<String> {
-    tracing::debug!(
-        "load_plugins_from_dir_internal: scanning directory {:?}",
-        dir
-    );
-    let mut errors = Vec::new();
-
-    if !dir.exists() {
-        tracing::warn!("Plugin directory does not exist: {:?}", dir);
-        return errors;
-    }
-
-    // Scan directory for .ts and .js files
-    match std::fs::read_dir(dir) {
-        Ok(entries) => {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                let ext = path.extension().and_then(|s| s.to_str());
-                if ext == Some("ts") || ext == Some("js") {
-                    tracing::debug!(
-                        "load_plugins_from_dir_internal: attempting to load {:?}",
-                        path
-                    );
-                    if let Err(e) = load_plugin_internal(Rc::clone(&runtime), plugins, &path).await
-                    {
-                        let err = format!("Failed to load {:?}: {}", path, e);
-                        tracing::error!("{}", err);
-                        errors.push(err);
-                    }
-                }
-            }
-
-            tracing::debug!(
-                "load_plugins_from_dir_internal: finished loading from {:?}, {} errors",
-                dir,
-                errors.len()
-            );
-        }
-        Err(e) => {
-            let err = format!("Failed to read plugin directory: {}", e);
-            tracing::error!("{}", err);
-            errors.push(err);
-        }
-    }
-
-    errors
 }
 
 /// Load all plugins from a directory with config support

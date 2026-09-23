@@ -129,6 +129,7 @@ impl WorkspaceTrust {
 
     /// Build trust state backed by `store` (a per-project trust file), so
     /// [`Self::set_level`] persists the decision for this workspace.
+    #[cfg(test)]
     pub fn new_persistent(root: Option<PathBuf>, level: TrustLevel, store: TrustStore) -> Self {
         Self::build(root, level, Some(store))
     }

@@ -70,6 +70,7 @@ impl ReferenceHighlightOverlay {
     }
 
     /// Create with custom debounce delay
+    #[cfg(test)]
     pub fn with_debounce(delay_ms: u64) -> Self {
         Self {
             debounce_delay: Duration::from_millis(delay_ms),
@@ -259,11 +260,6 @@ impl ReferenceHighlightOverlay {
         self.current_target = None;
         self.pending_target = None;
         self.target_changed_at = None;
-    }
-
-    /// Check if currently debouncing
-    pub fn is_debouncing(&self) -> bool {
-        self.target_changed_at.is_some()
     }
 
     /// Get the debounce delay

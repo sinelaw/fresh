@@ -426,7 +426,7 @@ All UI is plugin-side (orchestrator.ts). Shipped surfaces:
 
 The dock's opening state is user-configurable through the **plugin** config API
 (`editor.defineConfigBoolean` / `defineConfigEnum` at the top of orchestrator.ts,
-rendered by the Settings UI under **Plugin: orchestrator**, stored at
+rendered by the Settings UI under **Plugins › orchestrator**, stored at
 `plugins.orchestrator.settings.*`). They're plugin config rather than core
 config because they're meaningless without this plugin loaded, and the plugin
 API already supplies schema validation, the User/Project/Session layering, and

@@ -579,15 +579,15 @@ fn wrap_in(
     let mut lines: Vec<(usize, usize)> = Vec::new(); // [start, end)
     let mut start = 0usize;
     let mut used = 0u16;
-    for i in 0..n {
+    for (i, &main) in mains.iter().enumerate().take(n) {
         let with_gap = match i == start {
-            true => mains[i],
-            false => mains[i].saturating_add(gap),
+            true => main,
+            false => main.saturating_add(gap),
         };
         if i > start && used.saturating_add(with_gap) > avail {
             lines.push((start, i));
             start = i;
-            used = mains[i];
+            used = main;
         } else {
             used = used.saturating_add(with_gap);
         }
@@ -815,9 +815,17 @@ impl RenderObject for BoxRender {
             o
         };
 
+        // **A table row's cells are as wide as their columns** — fitted to this
+        // row's room, the same numbers every row sharing the columns gets —
+        // whatever the cells' own sizing says. See `Node::columns`.
+        let column_widths: Vec<u16> = match (&p.columns, dir) {
+            (Some(cols), Dir::Row) => cols.fit(avail),
+            _ => Vec::new(),
+        };
         // Everything that is not flex resolves first; flex divides what is left.
         for i in order {
             let (sw, sh) = cx.sizing(kids[i]);
+            let sw = column_widths.get(i).map_or(sw, |&w| Sizing::Cells(w));
             let (s_main, s_cross) = match dir {
                 Dir::Row => (sw, sh),
                 Dir::Col => (sh, sw),
@@ -1481,6 +1489,11 @@ impl ViewportRender {
             translate: false,
             band: Some(crate::render::object::Band::Measuring),
             pinned: 0,
+            // An index-scrolled window counts items down; there is no
+            // horizontal form of it.
+            axis: crate::event::Axis::Vertical,
+            step: 0,
+            cap: 0,
         });
         let probe = Constraints::new(w, w, 0, u16::MAX);
         let mut cells = 0u16;
@@ -1538,6 +1551,7 @@ impl RenderObject for ViewportRender {
             }
         };
         let scroll = cx.scroll();
+        let horizontal = self.props.axis == crate::event::Axis::Horizontal;
 
         let mut own = own;
         match self.props.mode {
@@ -1556,8 +1570,22 @@ impl RenderObject for ViewportRender {
                     // nothing to pin.
                     band: None,
                     pinned: 0,
+                    axis: self.props.axis,
+                    step: self.props.step,
+                    cap: self.props.cap,
                 });
-                let inner = if c.min_w == c.max_w {
+                // **The scrolled axis is measured loose; the other is the
+                // window's.** A window exists to show part of something
+                // bigger, so the axis it scrolls must be free to exceed it —
+                // a vertical window gives its child a definite width and lets
+                // the rows run on, and a horizontal one gives a definite
+                // height and lets the columns.
+                let inner = if horizontal {
+                    match c.min_h == c.max_h {
+                        true => Constraints::new(0, u16::MAX, own.h, own.h),
+                        false => Constraints::new(0, u16::MAX, 0, own.h),
+                    }
+                } else if c.min_w == c.max_w {
                     Constraints::new(w, w, 0, u16::MAX)
                 } else {
                     Constraints::new(0, w, 0, u16::MAX)
@@ -1584,6 +1612,50 @@ impl RenderObject for ViewportRender {
                 // was also asked for a stable gutter, which is how a window
                 // whose content reaches its last column gets a bar that
                 // neither covers it nor moves it.
+                // **A horizontal window's affordance is a cell at each end,
+                // not a gutter down one side.** Its content is on the rows a
+                // bar would need, so what it offers is a `Draw::Overflow` cap
+                // over the first and last column — reserved whenever the
+                // content overflows, and *not* per end, because which ends
+                // have more behind them depends on the offset and the offset
+                // depends on the window: reserving by end would be a layout
+                // that fed itself. The caps' cells are held either way and the
+                // glyphs come and go inside them, so the content does not jump
+                // by a column the moment you scroll off the start.
+                if horizontal {
+                    let caps = match self.props.scrollbar
+                        && (self.props.stable_gutter || content.w > own.w)
+                    {
+                        true => self.props.cap.max(1),
+                        false => 0,
+                    };
+                    let view_w = own.w.saturating_sub(caps.saturating_mul(2));
+                    // The content does not reflow when the window narrows —
+                    // its width is its own — so there is no second measure
+                    // here, only a re-place past the leading cap.
+                    if caps > 0 {
+                        for k in cx.children() {
+                            cx.place(k, Point::new(caps as i32, 0));
+                        }
+                    }
+                    self.window = Rect::at(scroll, Size::new(view_w, own.h));
+                    self.ceiling = content.w.saturating_sub(view_w) as u32;
+                    cx.set_scroll(ScrollInfo {
+                        window: self.window,
+                        content,
+                        max: Point::new(
+                            content.w.saturating_sub(view_w) as i32,
+                            content.h.saturating_sub(own.h) as i32,
+                        ),
+                        translate: true,
+                        band: None,
+                        pinned: 0,
+                        axis: self.props.axis,
+                        step: self.props.step,
+                        cap: self.props.cap,
+                    });
+                    return own;
+                }
                 let gutter = u16::from(
                     self.props.scrollbar
                         && (self.props.stable_gutter || (!self.props.overlay && content.h > own.h)),
@@ -1618,6 +1690,9 @@ impl RenderObject for ViewportRender {
                     // nothing to pin.
                     band: None,
                     pinned: 0,
+                    axis: self.props.axis,
+                    step: self.props.step,
+                    cap: self.props.cap,
                 });
             }
             ScrollMode::Items {
@@ -1745,6 +1820,9 @@ impl RenderObject for ViewportRender {
                     // height puts every index below it on the wrong cell.
                     band: Some(crate::render::object::Band::Cells(height)),
                     pinned: pinned_of(rows) as u16,
+                    axis: crate::event::Axis::Vertical,
+                    step: 0,
+                    cap: 0,
                 });
                 let inner = Constraints::new(inner_w, inner_w, 0, own.h);
                 for k in cx.children() {
@@ -1785,6 +1863,51 @@ impl RenderObject for ViewportRender {
         // the end" for a window the owner put there (see `Scroll::At`).
         // `hit.rs` reads the bar's extents the same way, so a press on the
         // track and the thumb it lands on agree by construction.
+        // **A horizontal window caps its ends instead of growing a bar.**
+        // One cell at each edge that still has content behind it, in the cells
+        // the measure reserved — so a cap appearing never moves the content,
+        // and an edge with nothing past it simply has no item. Which glyph
+        // stands for "more this way" is the backend's; see `Draw::Overflow`.
+        if self.props.axis == crate::event::Axis::Horizontal {
+            if self.ceiling == 0 {
+                return;
+            }
+            let offset = self.window.x.max(0) as i64;
+            let caps = crate::render::object::overflow_caps(
+                g.rect,
+                offset,
+                self.ceiling as i64,
+                self.props.cap,
+            );
+            for (end, more, rect) in caps {
+                if !more {
+                    continue;
+                }
+                // The same rectangle a press hit-tests, so the cap lights
+                // exactly where it acts.
+                let hovered = g.pointer.is_some_and(|p| rect.contains(p));
+                let draw = Draw::Overflow {
+                    axis: crate::event::Axis::Horizontal,
+                    end,
+                    hovered,
+                };
+                let ink = match hovered {
+                    true => self
+                        .props
+                        .bar_hover_theme
+                        .as_ref()
+                        .or(self.props.bar_theme.as_ref()),
+                    false => self.props.bar_theme.as_ref(),
+                };
+                match ink {
+                    Some(t) => {
+                        out.push_themed(draw, rect, g.clip, crate::ThemeKey(Some(t.clone())))
+                    }
+                    None => out.push_at(draw, rect, g.clip),
+                }
+            }
+            return;
+        }
         let offset = self.window.y.max(0) as u32;
         let window = self.window.h;
         let content = self.ceiling.saturating_add(window as u32);
@@ -1918,7 +2041,7 @@ impl RenderObject for LayerRender {
     /// no scope: it never claimed the keyboard, and grouping focusables under
     /// it would confine traversal to a layer that has no business holding it.
     fn focus_reg(&self) -> Option<FocusReg> {
-        self.geom.modality.owns_keyboard().then(|| FocusReg {
+        self.geom.modality.owns_keyboard().then_some(FocusReg {
             ordinal: None,
             skip: true,
             scope: true,

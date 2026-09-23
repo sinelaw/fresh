@@ -29,7 +29,6 @@ use crate::model::event::{BufferId, ContainerId, LeafId, SplitDirection, SplitId
 use crate::model::marker::MarkerList;
 use crate::state::ViewMode;
 use crate::view::folding::FoldManager;
-use crate::view::ui::view_pipeline::Layout;
 use crate::view::viewport::Viewport;
 use ratatui::layout::Rect;
 use serde::{Deserialize, Serialize};
@@ -52,13 +51,6 @@ impl TabTarget {
         match self {
             Self::Buffer(id) => Some(id),
             Self::Group(_) => None,
-        }
-    }
-
-    pub fn as_group(self) -> Option<LeafId> {
-        match self {
-            Self::Buffer(_) => None,
-            Self::Group(id) => Some(id),
         }
     }
 }
@@ -425,16 +417,6 @@ pub struct SplitViewState {
     /// (for group tabs).
     pub open_buffers: Vec<TabTarget>,
 
-    /// Horizontal scroll offset for the tabs in this split
-    pub tab_scroll_offset: usize,
-
-    /// Computed layout for this view
-    /// This is View state - each split has its own Layout
-    pub layout: Option<Layout>,
-
-    /// Whether the layout needs to be rebuilt (buffer changed, transform changed, etc.)
-    pub layout_dirty: bool,
-
     /// Focus history stack for this split (most recent at end).
     /// Tracks both buffer tabs and group tabs so that "Switch to Previous
     /// Tab" and close-buffer replacement both work across tab types.
@@ -492,9 +474,6 @@ impl SplitViewState {
             active_buffer: buffer_id,
             keyed_states,
             open_buffers: vec![TabTarget::Buffer(buffer_id)],
-            tab_scroll_offset: 0,
-            layout: None,
-            layout_dirty: true,
             focus_history: Vec::new(),
             sync_group: None,
             composite_view: None,
@@ -537,8 +516,6 @@ impl SplitViewState {
                 .insert(new_buffer_id, BufferViewState::new(width, height));
         }
         self.active_buffer = new_buffer_id;
-        // Invalidate layout since we're now showing different buffer content
-        self.layout_dirty = true;
     }
 
     /// Get the view state for a specific buffer (if it exists)
@@ -561,47 +538,6 @@ impl SplitViewState {
         self.keyed_states
             .entry(buffer_id)
             .or_insert_with(|| BufferViewState::new(width, height))
-    }
-
-    /// Remove keyed state for a buffer (when buffer is closed from this split)
-    pub fn remove_buffer_state(&mut self, buffer_id: BufferId) {
-        if buffer_id != self.active_buffer {
-            self.keyed_states.remove(&buffer_id);
-        }
-    }
-
-    /// Mark layout as needing rebuild (call after buffer changes)
-    pub fn invalidate_layout(&mut self) {
-        self.layout_dirty = true;
-    }
-
-    /// Ensure layout is valid, rebuilding if needed.
-    /// Returns the Layout - never returns None. Following VSCode's ViewModel pattern.
-    ///
-    /// # Arguments
-    /// * `tokens` - ViewTokenWire array built from the buffer
-    /// * `source_range` - The byte range this layout covers
-    /// * `tab_size` - Tab width for rendering
-    pub fn ensure_layout(
-        &mut self,
-        tokens: &[fresh_core::api::ViewTokenWire],
-        source_range: std::ops::Range<usize>,
-        tab_size: usize,
-    ) -> &Layout {
-        if self.layout.is_none() || self.layout_dirty {
-            self.layout = Some(Layout::from_tokens(tokens, source_range, tab_size));
-            self.layout_dirty = false;
-        }
-        self.layout.as_ref().unwrap()
-    }
-
-    /// Get the current layout if it exists and is valid
-    pub fn get_layout(&self) -> Option<&Layout> {
-        if self.layout_dirty {
-            None
-        } else {
-            self.layout.as_ref()
-        }
     }
 
     /// Add a buffer to this split's tabs (if not already present)
@@ -665,14 +601,6 @@ impl SplitViewState {
         self.buffer_tab_ids().collect()
     }
 
-    /// Count only buffer tabs (ignoring group tabs).
-    pub fn buffer_tab_count(&self) -> usize {
-        self.open_buffers
-            .iter()
-            .filter(|t| matches!(t, TabTarget::Buffer(_)))
-            .count()
-    }
-
     /// Return the effective active tab target for this split.
     /// If a group tab is marked active, returns `TabTarget::Group`. Otherwise
     /// returns `TabTarget::Buffer(active_buffer)`.
@@ -681,14 +609,6 @@ impl SplitViewState {
             Some(leaf_id) => TabTarget::Group(leaf_id),
             None => TabTarget::Buffer(self.active_buffer),
         }
-    }
-
-    /// Switch the active tab to a regular buffer target. Clears any
-    /// active group tab marker.
-    pub fn set_active_buffer_tab(&mut self, buffer_id: BufferId) {
-        self.active_group_tab = None;
-        self.focused_group_leaf = None;
-        self.switch_buffer(buffer_id);
     }
 
     /// Switch the active tab to a group target.
@@ -731,15 +651,6 @@ impl SplitNode {
             buffer_id,
             split_id: LeafId(split_id),
             role: None,
-        }
-    }
-
-    /// Create a new leaf node with a role tag.
-    pub fn leaf_with_role(buffer_id: BufferId, split_id: SplitId, role: SplitRole) -> Self {
-        Self::Leaf {
-            buffer_id,
-            split_id: LeafId(split_id),
-            role: Some(role),
         }
     }
 
@@ -855,90 +766,6 @@ impl SplitNode {
         }
     }
 
-    /// Find the Grouped ancestor node that contains a given target id (by walking
-    /// into Grouped subtrees). Returns the Grouped node's own `split_id` if found.
-    pub fn grouped_ancestor_of(&self, target_id: SplitId) -> Option<LeafId> {
-        match self {
-            Self::Leaf { .. } => None,
-            Self::Split { first, second, .. } => first
-                .grouped_ancestor_of(target_id)
-                .or_else(|| second.grouped_ancestor_of(target_id)),
-            Self::Grouped {
-                split_id, layout, ..
-            } => {
-                if layout.find(target_id).is_some() {
-                    Some(*split_id)
-                } else {
-                    layout.grouped_ancestor_of(target_id)
-                }
-            }
-        }
-    }
-
-    /// Find the Grouped node whose `split_id` matches `target`. Returns
-    /// a reference to the Grouped node (or None).
-    pub fn find_grouped(&self, target: LeafId) -> Option<&Self> {
-        match self {
-            Self::Leaf { .. } => None,
-            Self::Split { first, second, .. } => first
-                .find_grouped(target)
-                .or_else(|| second.find_grouped(target)),
-            Self::Grouped {
-                split_id, layout, ..
-            } => {
-                if *split_id == target {
-                    Some(self)
-                } else {
-                    layout.find_grouped(target)
-                }
-            }
-        }
-    }
-
-    /// Get all leaf nodes (buffer views) with their rectangles.
-    ///
-    /// Where each leaf of this subtree sits inside `rect`, by the model's own
-    /// walk: recurse over the ratios, reserving a cell per separator. Grouped
-    /// nodes always recurse into their inner layout — the layout's leaves get
-    /// the full rect that would have been given to the Grouped node.
-    /// Visibility (which group is "active") is applied elsewhere.
-    ///
-    /// **The engine the description replaced**, kept as the thing the swap is
-    /// pinned against. `view::shell::splits::grid` is the layout now, and the
-    /// editor reads where the panes are off the tree it laid out
-    /// (`view::shell::geometry::PaneRects`); a replacement is only as
-    /// trustworthy as what it was checked against, so the original walk stays
-    /// here as the oracle of the parity tests in `shell::splits` and
-    /// `shell::geometry`, and nothing else compiles it.
-    #[cfg(test)]
-    pub fn reference_leaves_with_rects(&self, rect: Rect) -> Vec<(LeafId, BufferId, Rect)> {
-        match self {
-            Self::Leaf {
-                buffer_id,
-                split_id,
-                ..
-            } => {
-                vec![(*split_id, *buffer_id, rect)]
-            }
-            Self::Split {
-                direction,
-                first,
-                second,
-                ratio,
-                fixed_first,
-                fixed_second,
-                ..
-            } => {
-                let (first_rect, second_rect) =
-                    split_rect_ext(rect, *direction, *ratio, *fixed_first, *fixed_second);
-                let mut leaves = first.reference_leaves_with_rects(first_rect);
-                leaves.extend(second.reference_leaves_with_rects(second_rect));
-                leaves
-            }
-            Self::Grouped { layout, .. } => layout.reference_leaves_with_rects(rect),
-        }
-    }
-
     /// The leaves this subtree shows, in the tree's order — first child before
     /// second, so left to right and top to bottom — without their rectangles.
     ///
@@ -962,119 +789,6 @@ impl SplitNode {
                 out
             }
             Self::Grouped { layout, .. } => layout.visible_leaves(),
-        }
-    }
-
-    /// Walk the tree using an "active group" predicate. For each Grouped node
-    /// encountered, the predicate is called with the Grouped node's split_id;
-    /// if it returns `true`, the node's layout is recursed into (with the
-    /// Grouped node's rect). If `false`, the Grouped node and its subtree are
-    /// skipped entirely (not rendered).
-    pub fn get_visible_leaves_with_rects<F>(
-        &self,
-        rect: Rect,
-        is_group_active: &F,
-    ) -> Vec<(LeafId, BufferId, Rect)>
-    where
-        F: Fn(LeafId) -> bool,
-    {
-        match self {
-            Self::Leaf {
-                buffer_id,
-                split_id,
-                ..
-            } => {
-                vec![(*split_id, *buffer_id, rect)]
-            }
-            Self::Split {
-                direction,
-                first,
-                second,
-                ratio,
-                fixed_first,
-                fixed_second,
-                ..
-            } => {
-                let (first_rect, second_rect) =
-                    split_rect_ext(rect, *direction, *ratio, *fixed_first, *fixed_second);
-                let mut leaves = first.get_visible_leaves_with_rects(first_rect, is_group_active);
-                leaves.extend(second.get_visible_leaves_with_rects(second_rect, is_group_active));
-                leaves
-            }
-            Self::Grouped {
-                split_id, layout, ..
-            } => {
-                if is_group_active(*split_id) {
-                    layout.get_visible_leaves_with_rects(rect, is_group_active)
-                } else {
-                    Vec::new()
-                }
-            }
-        }
-    }
-
-    /// Get all split separator lines (for rendering borders)
-    /// Returns (direction, x, y, length) tuples
-    pub fn get_separators(&self, rect: Rect) -> Vec<(SplitDirection, u16, u16, u16)> {
-        self.get_separators_with_ids(rect)
-            .into_iter()
-            .map(|(_, dir, x, y, len)| (dir, x, y, len))
-            .collect()
-    }
-
-    /// Get all split separator lines with their split IDs (for mouse hit testing)
-    /// Returns (split_id, direction, x, y, length) tuples
-    pub fn get_separators_with_ids(
-        &self,
-        rect: Rect,
-    ) -> Vec<(ContainerId, SplitDirection, u16, u16, u16)> {
-        match self {
-            Self::Leaf { .. } => vec![],
-            Self::Grouped { layout, .. } => layout.get_separators_with_ids(rect),
-            Self::Split {
-                direction,
-                first,
-                second,
-                ratio,
-                split_id,
-                fixed_first,
-                fixed_second,
-            } => {
-                let (first_rect, second_rect) =
-                    split_rect_ext(rect, *direction, *ratio, *fixed_first, *fixed_second);
-                let mut separators = Vec::new();
-
-                // Add separator for this split (in the 1-char gap between first and second)
-                match direction {
-                    SplitDirection::Horizontal => {
-                        // Horizontal split: separator line is between first and second
-                        // y position is at the end of first rect (the gap line)
-                        separators.push((
-                            *split_id,
-                            SplitDirection::Horizontal,
-                            rect.x,
-                            first_rect.y + first_rect.height,
-                            rect.width,
-                        ));
-                    }
-                    SplitDirection::Vertical => {
-                        // Vertical split: separator line is between first and second
-                        // x position is at the end of first rect (the gap column)
-                        separators.push((
-                            *split_id,
-                            SplitDirection::Vertical,
-                            first_rect.x + first_rect.width,
-                            rect.y,
-                            rect.height,
-                        ));
-                    }
-                }
-
-                // Recursively get separators from children
-                separators.extend(first.get_separators_with_ids(first_rect));
-                separators.extend(second.get_separators_with_ids(second_rect));
-                separators
-            }
         }
     }
 
@@ -1116,33 +830,6 @@ impl SplitNode {
             Self::Leaf { .. } => 1,
             Self::Split { first, second, .. } => first.count_leaves() + second.count_leaves(),
             Self::Grouped { layout, .. } => layout.count_leaves(),
-        }
-    }
-
-    /// Collect display names for all Grouped nodes in the tree, keyed by
-    /// their LeafId (which is what `TabTarget::Group` points to).
-    pub fn collect_group_names(&self) -> HashMap<LeafId, String> {
-        let mut map = HashMap::new();
-        self.collect_group_names_into(&mut map);
-        map
-    }
-
-    fn collect_group_names_into(&self, map: &mut HashMap<LeafId, String>) {
-        match self {
-            Self::Leaf { .. } => {}
-            Self::Split { first, second, .. } => {
-                first.collect_group_names_into(map);
-                second.collect_group_names_into(map);
-            }
-            Self::Grouped {
-                split_id,
-                name,
-                layout,
-                ..
-            } => {
-                map.insert(*split_id, name.clone());
-                layout.collect_group_names_into(map);
-            }
         }
     }
 }
@@ -1326,18 +1013,6 @@ impl SplitManager {
         id
     }
 
-    /// Replace the root split tree. The new tree must have unique IDs
-    /// (allocated via `allocate_split_id`). The caller must also provide
-    /// the new active leaf ID.
-    pub fn replace_root(&mut self, new_root: SplitNode, new_active: LeafId) {
-        self.root = new_root;
-        self.active_split = new_active;
-        // None of the previously-tracked focus-history ids exist in
-        // the new tree. Reseed with just the new active.
-        self.focus_history.clear();
-        self.focus_history.push(new_active);
-    }
-
     /// Get the currently active split ID
     pub fn active_split(&self) -> LeafId {
         self.active_split
@@ -1439,17 +1114,6 @@ impl SplitManager {
         ratio: f32,
     ) -> Result<LeafId, String> {
         self.split_active_positioned(direction, new_buffer_id, ratio, false)
-    }
-
-    /// Split the active pane, placing the new buffer before (left/top) the existing content.
-    /// `ratio` still controls the first child's proportion of space.
-    pub fn split_active_before(
-        &mut self,
-        direction: SplitDirection,
-        new_buffer_id: BufferId,
-        ratio: f32,
-    ) -> Result<LeafId, String> {
-        self.split_active_positioned(direction, new_buffer_id, ratio, true)
     }
 
     pub fn split_active_positioned(
@@ -1637,26 +1301,6 @@ impl SplitManager {
         }
     }
 
-    /// Remove a Grouped node from the tree by its split_id. Unlike
-    /// `close_split` which requires a leaf, this removes a whole Grouped
-    /// subtree (tab) from the split structure. The Grouped node is
-    /// replaced with... well, nothing — so this can only succeed if the
-    /// Grouped is inside a Split (so we can replace the Split with its
-    /// sibling) or if the root itself is the Grouped (which we can't
-    /// remove without a replacement).
-    pub fn remove_grouped(&mut self, target: LeafId) -> Result<(), String> {
-        let target_id: SplitId = target.into();
-        if self.root.id() == target_id {
-            return Err("Cannot remove root Grouped node".to_string());
-        }
-        let result = Self::remove_child_static(&mut self.root, target_id);
-        if result.is_ok() {
-            // Same invariant as `close_split` (#2415).
-            self.clear_root_leaf_role();
-        }
-        result
-    }
-
     /// Adjust the split ratio of a container
     pub fn adjust_ratio(&mut self, container_id: ContainerId, delta: f32) {
         match self.root.find_mut(container_id.into()) {
@@ -1709,36 +1353,6 @@ impl SplitManager {
         self.root.visible_leaves()
     }
 
-    /// Get all split separator positions for rendering borders
-    /// Returns (direction, x, y, length) tuples
-    pub fn get_separators(&self, viewport_rect: Rect) -> Vec<(SplitDirection, u16, u16, u16)> {
-        // No separators when a split is maximized
-        if self.maximized_split.is_some() {
-            return vec![];
-        }
-        self.root.get_separators(viewport_rect)
-    }
-
-    /// Where the separators are, computed from the model.
-    ///
-    /// **Not the editor's answer any more** — the shell tree places the
-    /// dividers and `view::shell::splits::separator_rects` reads them back, so
-    /// this is a second derivation of the same rectangles and using it would
-    /// be the thing goal 5 forbids. It is kept because
-    /// `the_dividers_are_where_the_separators_are` uses it as the oracle the
-    /// tree is checked against, which is the one job a second derivation is
-    /// good for.
-    pub fn get_separators_with_ids(
-        &self,
-        viewport_rect: Rect,
-    ) -> Vec<(ContainerId, SplitDirection, u16, u16, u16)> {
-        // No separators when a split is maximized
-        if self.maximized_split.is_some() {
-            return vec![];
-        }
-        self.root.get_separators_with_ids(viewport_rect)
-    }
-
     /// Get the current ratio of a split container
     pub fn get_ratio(&self, split_id: SplitId) -> Option<f32> {
         if let Some(SplitNode::Split { ratio, .. }) = self.root.find(split_id) {
@@ -1766,25 +1380,6 @@ impl SplitManager {
             true
         } else {
             false
-        }
-    }
-
-    /// Set a fixed size on a split container's first or second child.
-    /// When set, the child gets exactly this many rows/cols instead of using the ratio.
-    pub fn set_fixed_size(
-        &mut self,
-        container_id: ContainerId,
-        first: Option<u16>,
-        second: Option<u16>,
-    ) {
-        if let Some(SplitNode::Split {
-            fixed_first,
-            fixed_second,
-            ..
-        }) = self.root.find_mut(container_id.into())
-        {
-            *fixed_first = first;
-            *fixed_second = second;
         }
     }
 

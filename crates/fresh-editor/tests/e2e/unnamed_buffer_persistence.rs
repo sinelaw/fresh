@@ -400,7 +400,9 @@ fn test_hot_exit_restores_without_workspace() {
         .unwrap();
 
         // Startup with CLI file, no workspace restore (mirrors `fresh hello.txt`)
-        harness.startup(false, &[file1.clone()]).unwrap();
+        harness
+            .startup(false, std::slice::from_ref(&file1))
+            .unwrap();
         harness.assert_screen_contains("EDITED");
     }
 }
@@ -547,7 +549,7 @@ fn test_auto_save_saves_on_exit() {
     assert_eq!(std::fs::read_to_string(&file1).unwrap(), "original");
 
     // save_all_on_exit should save to disk (simulates quit with auto_save)
-    let saved = harness.editor_mut().save_all_on_exit().unwrap();
+    let saved = harness.editor_mut().save_all_on_exit().unwrap().saved;
     assert_eq!(saved, 1, "Should have saved one buffer");
 
     // File on disk should now have the modifications

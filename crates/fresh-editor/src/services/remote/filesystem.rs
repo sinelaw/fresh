@@ -326,6 +326,25 @@ impl FileSystem for RemoteFileSystem {
         )))
     }
 
+    /// The agent protocol has no exclusive create, so this can't be done
+    /// without racing. Nothing on a remote host needs it: saves there go
+    /// through `write_file` / `write_patched`, never a sudo temp file or an
+    /// in-place staging copy.
+    fn create_new_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            format!(
+                "exclusive create of {} is not supported on a remote host",
+                path.display()
+            ),
+        ))
+    }
+
+    /// See [`Self::create_new_file`].
+    fn create_new_private_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
+        self.create_new_file(path)
+    }
+
     fn open_file(&self, path: &Path) -> io::Result<Box<dyn FileReader>> {
         // Read the entire file into memory for seeking
         let data = self.read_file(path)?;
@@ -474,6 +493,38 @@ impl FileSystem for RemoteFileSystem {
             .get("file")
             .and_then(|v| v.as_bool())
             .unwrap_or(false))
+    }
+
+    /// One request instead of one per ancestor. The default implementation
+    /// would issue a `stat` per directory per marker, and every one of those
+    /// is a blocking round trip on the editor thread — an unacceptable cost
+    /// on the file-open path, which is where this is called from.
+    fn find_up(
+        &self,
+        start: &Path,
+        markers: &[&str],
+        max_dirs: Option<usize>,
+    ) -> io::Result<Vec<PathBuf>> {
+        let params = serde_json::json!({
+            "path": start.to_string_lossy(),
+            "markers": markers,
+            "max_dirs": max_dirs,
+        });
+        let result = self
+            .channel
+            .request_blocking("find_up", params)
+            .map_err(Self::to_io_error)?;
+
+        Ok(result
+            .get("dirs")
+            .and_then(|v| v.as_array())
+            .map(|dirs| {
+                dirs.iter()
+                    .filter_map(|d| d.as_str())
+                    .map(PathBuf::from)
+                    .collect()
+            })
+            .unwrap_or_default())
     }
 
     fn set_permissions(&self, path: &Path, permissions: &FilePermissions) -> io::Result<()> {

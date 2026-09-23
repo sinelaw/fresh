@@ -65,7 +65,7 @@ pub use types::{
 
 use std::collections::HashMap;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::Instant;
 
 /// Configuration for the recovery service
@@ -98,16 +98,6 @@ pub struct RecoveryService {
 }
 
 impl RecoveryService {
-    /// Create a new recovery service with custom config and storage directory
-    pub fn with_config_and_dir(config: RecoveryConfig, storage_dir: PathBuf) -> Self {
-        Self {
-            storage: RecoveryStorage::with_dir(storage_dir),
-            config,
-            last_save_times: HashMap::new(),
-            session_started: false,
-        }
-    }
-
     /// Create a new recovery service scoped to a named daemon or working directory.
     ///
     /// Performs one-time migration of old flat-layout recovery files if needed.
@@ -160,6 +150,11 @@ impl RecoveryService {
         }
 
         self.storage.create_session_lock()?;
+        match self.storage.remove_stale_temp_files() {
+            Ok(0) => {}
+            Ok(n) => tracing::info!("Removed {} stale recovery temp file(s)", n),
+            Err(e) => tracing::warn!("Failed to clean up stale recovery temp files: {}", e),
+        }
         self.session_started = true;
         tracing::info!("Recovery session started");
         Ok(())
@@ -431,6 +426,22 @@ mod tests {
         assert!(!service.session_started);
     }
 
+    /// A recovery save interrupted by a crash leaves its hidden temp file in
+    /// the recovery directory, and nothing else ever removes it; the next
+    /// session does.
+    #[test]
+    fn start_session_removes_stale_recovery_temp_files() {
+        let (mut service, temp) = create_test_service();
+        let stale = temp
+            .path()
+            .join(format!(".abc.meta.json.{}.0.tmp", 2_000_000_000u32));
+        std::fs::write(&stale, b"partial").unwrap();
+
+        service.start_session().unwrap();
+
+        assert!(!stale.exists());
+    }
+
     /// Issue #3189: a clean exit must not delete recovery data this session
     /// never had in memory. Such an entry belongs to a workspace that was
     /// never materialized, so its unsaved content was never offered to the
@@ -456,7 +467,7 @@ mod tests {
 
         service
             .end_session_accounting(
-                &[still_dirty.clone()],
+                std::slice::from_ref(&still_dirty),
                 &[still_dirty.clone(), resolved.clone()],
             )
             .unwrap();

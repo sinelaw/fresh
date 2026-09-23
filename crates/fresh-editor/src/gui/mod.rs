@@ -85,8 +85,8 @@ pub fn run_gui(
     // Configure wgpu reset colors and ANSI color table based on theme.
     // Load the theme to check its editor_bg luminance rather than relying
     // on the theme name — this works for custom themes too.
-    let is_light = crate::view::theme::Theme::load_builtin(&loaded_config.theme)
-        .map_or(false, |t| t.is_light());
+    let is_light =
+        crate::view::theme::Theme::load_builtin(&loaded_config.theme).is_some_and(|t| t.is_light());
     let gui_config = {
         let mut cfg = GuiConfig::default();
         if is_light {
@@ -273,15 +273,10 @@ impl GuiApplication for EditorApp {
     }
 
     fn on_close(&mut self) {
-        // End recovery session first (flushes dirty buffers + assigns recovery IDs),
-        // then save workspace (captures those IDs for next session restore).
-        if let Err(e) = self.editor.end_recovery_session() {
-            tracing::warn!("Failed to end recovery session: {}", e);
-        }
-        if self.workspace_enabled {
-            if let Err(e) = self.editor.save_all_windows_workspaces() {
-                tracing::warn!("Failed to save workspaces: {}", e);
-            }
+        // The same quit-time persistence as the terminal and daemon exits.
+        // Each failure is logged inside; none blocks closing.
+        if let Err(e) = self.editor.persist_on_exit(self.workspace_enabled) {
+            tracing::debug!("Close-time persistence incomplete: {e}");
         }
     }
 

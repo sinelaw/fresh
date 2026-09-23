@@ -31,8 +31,7 @@
 //! The last one is the ledger's finding A: it looks like it needs an anchor
 //! that is a node on one axis and a point on the other, and it does not. The
 //! status bar is migrated and its elements are keyed, so the popup hangs off
-//! *the segment that opened it* — which is what the feature means. Its `x` and
-//! `status_row` parameters exist only because a popup could not name a node.
+//! *the segment that opened it* — which is what the feature means.
 
 use std::rc::Rc;
 
@@ -137,8 +136,7 @@ pub fn placed(position: &PopupPosition, at: CaretAnchor) -> Node<UiMsg> {
             .align_to_anchor(Align::End)
             .fit(Fit::CLAMP),
         // The segment that opened it. See the module docs and the ledger's
-        // finding A; the two numbers in this variant are a rectangle the caller
-        // already had and threw away.
+        // finding A.
         //
         // **Confined to the area left of the editor's scrollbar.** Clamping to
         // the frame puts this popup's right border on the scrollbar's column —
@@ -146,11 +144,8 @@ pub fn placed(position: &PopupPosition, at: CaretAnchor) -> Node<UiMsg> {
         // saying why. Naming the region says the same thing without the
         // arithmetic, and it is the only strategy that reserves anything, so it
         // is the only one that names it.
-        PopupPosition::AboveStatusBarAt { .. } => l
-            .anchor(Anchor::Node(super::status_bar::item_key(
-                super::status_bar::Side::Right,
-                0,
-            )))
+        PopupPosition::AboveStatusBarAt(id) => l
+            .anchor(Anchor::Node(super::status_bar::clickable_key(*id)))
             .place(Place::Above)
             .within(clear_of_scrollbar_key())
             .fit(Fit::FLIP.or(Fit::CLAMP)),
@@ -274,6 +269,17 @@ pub fn popup_key(i: usize) -> Key {
     Key::Pair("popup".into(), i as u64)
 }
 
+/// The key a placed popup's *content slot* carries — inside the frame, past
+/// the description, which is the rectangle the rows are laid out in.
+///
+/// The editor used to derive this rectangle from the popup's outer rect by
+/// hand, in two copy-pasted blocks: add one for a border, add the
+/// description's height, take two off the width. It is a node, so it is a
+/// read. See [`inner_rects_of`].
+pub fn popup_content_key(i: usize) -> Key {
+    Key::Pair("popup_content".into(), i as u64)
+}
+
 /// The key of a popup's keyboard seam — the focusable that holds focus
 /// while the popup owns the keyboard — which names the popup's key
 /// section: `frame::key_context_of` reads `KeyContext::Completion` or
@@ -310,7 +316,7 @@ pub fn placed_layers(ps: &[Placed]) -> Vec<Node<UiMsg>> {
                     .dismiss(fresh_ui::Dismiss::OUTSIDE_POINTER.passing_through())
                     .on_dismiss(|_| UiMsg::Ui(UiFact::PopupDismissTransient));
             }
-            let content = body(&p.body)
+            let content = body(&p.body, i)
                 .w(Sizing::Cells(p.size.0))
                 .h(Sizing::Cells(p.size.1));
             match &p.keys {
@@ -473,17 +479,22 @@ fn keyboard(l: Node<UiMsg>, content: Node<UiMsg>, k: &Keys) -> Node<UiMsg> {
 /// `Paragraph` put `[×]` over it three cells from the right; both are one row
 /// stacked over the frame, and the row says where each sits instead of two
 /// widgets each computing an `x`.
-pub fn body(b: &Body) -> Node<UiMsg> {
+pub fn body(b: &Body, i: usize) -> Node<UiMsg> {
     // **The content fills the popup, and says so.** It is a flex child under
     // the description, and flex divides what is *left* — so a column that
     // asked only for its natural height gave it nothing to divide (rule L15)
     // and the popup came out empty inside its own frame.
+    //
+    // It carries [`popup_content_key`], because where it lands is the answer
+    // the web's projection wants and layout is what settles it.
     let inner = col().h(Sizing::Flex(1)).children([
         match &b.description {
             Some(d) => description(d),
             None => col().h(Sizing::Cells(0)),
         },
-        content(&b.content, b.selected_hint.as_deref()).flex(1),
+        content(&b.content, b.selected_hint.as_deref())
+            .flex(1)
+            .key(popup_content_key(i)),
     ]);
     // Absorbing *inside* the frame, not around the whole thing: the stacked
     // paths are tried in order and the first that claims ends it, so an absorb
@@ -600,6 +611,29 @@ pub fn rects_of(ui: &fresh_ui::Ui<UiMsg>, n: usize) -> Vec<ratatui::layout::Rect
         .collect()
 }
 
+/// Where the tree put each popup's *content slot*, in declaration order.
+///
+/// The partner of [`rects_of`] for the rectangle inside the frame and below
+/// the description — what the rows are laid out in, and what the web's
+/// projection reports as the popup's content rect. Same convention: a popup
+/// the tree did not place reports an empty rectangle rather than being absent.
+pub fn inner_rects_of(ui: &fresh_ui::Ui<UiMsg>, n: usize) -> Vec<ratatui::layout::Rect> {
+    (0..n)
+        .map(|i| {
+            let r = ui
+                .find_by_key(&popup_content_key(i))
+                .map(|id| ui.rect_of(id))
+                .unwrap_or_default();
+            ratatui::layout::Rect {
+                x: r.x.max(0) as u16,
+                y: r.y.max(0) as u16,
+                width: r.w,
+                height: r.h,
+            }
+        })
+        .collect()
+}
+
 /// A popup's frame: its ring and its ground.
 pub fn frame(bordered: bool, body: Node<UiMsg>) -> Node<UiMsg> {
     let n = col()
@@ -624,7 +658,7 @@ fn description(text: &str) -> Node<UiMsg> {
         // The `- 2` the painter wrapped to was padding it then had to leave
         // room for by hand; `pad` states it and the wrap follows the width it
         // is given.
-        fresh_ui::text(text.to_string())
+        fresh_ui::text(text)
             .wrap_hanging()
             .theme(pair("ui.help_separator_fg", "ui.popup_bg")),
         row().h(Sizing::Cells(1)),
@@ -651,14 +685,14 @@ fn list_row(item: &PopupListItem, row_theme: &str, hint: Option<&str>) -> Node<U
         .unwrap_or_else(|| row_theme.to_string());
     let mut cells: Vec<Node<UiMsg>> = Vec::new();
     if let Some(icon) = &item.icon {
-        cells.push(fresh_ui::text(format!("{icon} ")).theme(row_theme.to_string()));
+        cells.push(fresh_ui::text(format!("{icon} ")).theme(row_theme));
     }
     // Leading whitespace is kept out of the underline: an indented row is a
     // nested one, and underlining its indent makes the link look ragged.
     let trimmed = item.text.trim_start();
     let indent = item.text.len() - trimmed.len();
     if indent > 0 {
-        cells.push(fresh_ui::text(&item.text[..indent]).theme(row_theme.to_string()));
+        cells.push(fresh_ui::text(&item.text[..indent]).theme(row_theme));
     }
     // A row with a `data` payload acts on click, so it reads as a link; a
     // disabled one recedes and takes the muted foreground with it.
@@ -746,7 +780,7 @@ pub fn content(c: &PopupContent, selected_hint: Option<&str>) -> Node<UiMsg> {
                     Some(it) => list_row(
                         it,
                         &row_theme(i == sel, st == RowState::Hover),
-                        (i == sel).then(|| hint.as_deref()).flatten(),
+                        (i == sel).then_some(hint.as_deref()).flatten(),
                     ),
                     None => row().h(Sizing::Cells(1)),
                 },
@@ -936,7 +970,8 @@ mod tests {
     #[test]
     fn the_cursor_relative_placements() {
         // caret, size, expected origin.
-        let at_cursor: &[((u16, u16), (u16, u16), (u16, u16))] = &[
+        type Case = ((u16, u16), (u16, u16), (u16, u16));
+        let at_cursor: &[Case] = &[
             ((0, 0), (20, 5), (0, 0)),
             ((1, 1), (20, 5), (1, 1)),
             // Wider than the frame: pinned to the left edge, not hanging off
@@ -959,7 +994,7 @@ mod tests {
             );
         }
 
-        let below: &[((u16, u16), (u16, u16), (u16, u16))] = &[
+        let below: &[Case] = &[
             // The row *after* the caret's, which is what makes the anchor a
             // cell rather than a point.
             ((0, 0), (20, 5), (0, 1)),

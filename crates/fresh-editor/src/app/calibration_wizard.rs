@@ -348,6 +348,7 @@ impl CalibrationWizard {
     }
 
     /// Check if a group was skipped
+    #[cfg(test)]
     pub fn is_group_skipped(&self, group_idx: usize) -> bool {
         self.skipped_groups.contains(&group_idx)
     }

@@ -1,13 +1,12 @@
-/** The Everything dialog's row model: a scan in, rows out. */
+/** The Import sessions dialog's row model: a scan in, rows out. */
 import {
-  discoverElide,
   discoverIsGroup,
-  discoverLayout,
+  discoverColumns,
   discoverRowAction,
-  discoverRowEntry,
+  discoverRowCells,
   discoverRowsFrom,
-  DISCOVER_ABSENT_KEY,
-  DISCOVER_COL_GAP,
+  discoverVerbFor,
+  DISCOVER_COL_MAX,
   DISCOVER_PROBLEMS_KEY,
   type DiscoverRow,
   type DiscoverScan,
@@ -89,23 +88,20 @@ const proj = (label: string, id = label) => ({ kind: "repo" as const, id: `repo:
   eq(verbs["s4"], { kind: "attach", argv: ["tmux", "attach", "-t", "s4"] }, "a live pane is attached to");
 }
 
-// ── problems are problems; absence is not ─────────────────────────
+// ── problems are problems; absence is not listed ─────────────────────────
 
 {
   const rows = discoverRowsFrom(
     [scan("m", [session({ id: "s", tool: "tmux", cwd: "/p" })],
-      [tool("tmux", "found"), tool("codex-cli", "absent"), tool("super-engineering", "unsupported", "ships for macOS only"), tool("herdr", "failed", "boom")],
-      ["herdr: boom"])],
+      [tool("tmux", "found"), tool("codex-cli", "absent"), tool("super-engineering", "unsupported", "ships for macOS only"), tool("orca", "failed", "boom")],
+      ["orca: boom"])],
     { filter: "", grouping: "tool" }, resumeArgv, t,
   );
   const keys = rows.map((r) => r.key);
-  const absentAt = keys.indexOf(DISCOVER_ABSENT_KEY), problemsAt = keys.indexOf(DISCOVER_PROBLEMS_KEY);
-  eq(absentAt >= 0 && problemsAt > absentAt, true, "absent tools get their own heading, before the problems");
-  eq(rows.slice(absentAt + 1, problemsAt).map(cells),
-    [["codex-cli", "discover.not_installed"], ["super-engineering", "ships for macOS only"]],
-    "absent and unsupported are listed with why, by name; a failed tool is not among them");
-  eq(rows.slice(problemsAt + 1).map((r) => r.cells[0].text), ["herdr: boom"], "the problems list holds only problems");
-  eq(rows[absentAt].cells[0].text, "discover.absent(2)", "the heading counts them");
+  const problemsAt = keys.indexOf(DISCOVER_PROBLEMS_KEY);
+  eq(rows.some((r) => r.cells.some((c) => c.text === "codex-cli" || c.text === "super-engineering")), false,
+    "a tool that is absent or unsupported is not listed at all");
+  eq(rows.slice(problemsAt + 1).map((r) => r.cells[0].text), ["orca: boom"], "the problems list holds only problems");
 }
 
 {
@@ -113,8 +109,7 @@ const proj = (label: string, id = label) => ({ kind: "repo" as const, id: `repo:
     [scan("m", [session({ id: "s", tool: "tmux", cwd: "/p" })], [tool("tmux", "found")])],
     { filter: "", grouping: "tool" }, resumeArgv, t,
   );
-  eq(rows.some((r) => r.key === DISCOVER_ABSENT_KEY || r.key === DISCOVER_PROBLEMS_KEY), false,
-    "a clean scan has neither heading");
+  eq(rows.some((r) => r.key === DISCOVER_PROBLEMS_KEY), false, "a clean scan has no problems heading");
 }
 
 // ── filter ────────────────────────────────────────────────────────
@@ -128,7 +123,6 @@ const proj = (label: string, id = label) => ({ kind: "repo" as const, id: `repo:
     { filter: "checkout-flow", grouping: "project" }, resumeArgv, t,
   );
   eq(rows.filter((r) => r.session).map((r) => r.session!.id), ["a"], "the filter matches the resolved branch");
-  eq(rows.some((r) => r.key === DISCOVER_ABSENT_KEY), true, "absent tools are not filtered — they are the scan talking about itself");
 }
 
 // ── the table ─────────────────────────────────────────────────────
@@ -148,30 +142,29 @@ const proj = (label: string, id = label) => ({ kind: "repo" as const, id: `repo:
     ["  short", "Claude Code", "main"],
   ], "a session row is its name, then one column per thing the heading did not say");
 
-  const layout = discoverLayout(rows, measure);
-  const w = layout.widths.get("session")!;
-  eq(w[0], measure("  a much longer session title"), "a column is as wide as its widest cell");
-  eq(w[1], measure("Claude Code"), "and each column is measured on its own");
-  // What alignment *is*, read off the rendered rows: the second column
-  // begins at the same offset on both, though their names differ by 23
-  // columns, and both rows end in the same place.
-  const rendered = sessions.map((r) =>
-    (discoverRowEntry(r, layout, measure).segments ?? []).map((seg) => seg.text).join("")
-  );
-  const second = w[0] + DISCOVER_COL_GAP;
-  eq(rendered.map((line) => [...line].slice(second, second + 4).join("")), ["tmux", "Clau"],
-    "so every row's second column starts in the same place");
-  eq(new Set(rendered.map((line) => [...line].length)).size, 1,
-    "and every row is padded to one width, so the panel does not clip the longest");
-  eq(layout.widths.get("group")!.length >= 1, true, "headings are measured as their own family");
+  // How wide each column is, and where a cell is cut, is the host table's
+  // to work out from the width it lays the list out at; the plugin says only
+  // what the columns are and which end of each is cut.
+  const columns = discoverColumns(rows, "project", false, t);
+  eq(columns.map((c) => c.title), ["discover.col_session", "discover.col_tool", "discover.col_branch"],
+    "one column per cell, titled for the grouping");
+  eq(columns.every((c) => c.maxWidth === DISCOVER_COL_MAX), true, "no column may take the whole panel");
+  eq(discoverRowCells(sessions[0]).map((c) => c.text), cells(sessions[0]),
+    "a session row's cells are its columns' text, unpadded");
+  eq(discoverRowCells(sessions[0])[1].style?.fg, "ui.menu_disabled_fg", "what tells rows apart is dim");
 }
 
 {
   // A path is cut at the head: the directory it ends in is what tells two
   // checkouts of one repository apart.
-  eq(discoverElide("/home/u/work/repo", 10, "tail", measure), "…work/repo", "a path keeps its tail");
-  eq(discoverElide("a-very-long-name", 10, "head", measure), "a-very-lo…", "a name keeps its head");
-  eq(discoverElide("short", 10, "head", measure), "short", "a cell that fits is left alone");
+  const rows = discoverRowsFrom(
+    [scan("local", [session({ id: "a", tool: "claude-code", cwd: "/home/u/work/repo", title: "x" })],
+      [{ id: "claude-code", displayName: "Claude Code", status: "found", count: 1 }])],
+    { filter: "", grouping: "tool" }, resumeArgv, t,
+  );
+  const columns = discoverColumns(rows, "tool", false, t);
+  eq(columns[1].elide, "head", "a directory column keeps its tail");
+  eq(columns[0].elide, "tail", "a name keeps its head");
 }
 
 // ── the button ────────────────────────────────────────────────────
@@ -192,6 +185,18 @@ const proj = (label: string, id = label) => ({ kind: "repo" as const, id: `repo:
   eq(actionOf("s3"), null, "a session with no way back does not");
   eq(rows.filter((r) => discoverRowAction(r, t) !== null).length, 2,
     "and neither does a heading or a problem line");
+}
+
+{
+  // An Orca worktree: resumes its recorded agent, else opens the folder.
+  const wt = { id: "r::/w", tool: "orca", cwd: "/w", openable: true };
+  eq(discoverVerbFor(session({ ...wt, agent: "claude", agentSessionId: "abc" }), resumeArgv, t),
+    { kind: "resume", argv: ["claude", "--resume", "abc"], exact: true },
+    "an openable row with a known agent resumes it");
+  eq(discoverVerbFor(session({ ...wt, agent: "grok" }), resumeArgv, t).kind, "open",
+    "an openable row whose agent cannot resume opens the folder");
+  eq(discoverVerbFor(session({ id: "x", tool: "tmux", cwd: "/w", agent: "grok" }), resumeArgv, t).kind,
+    "none", "a row that is not openable still says why it cannot resume");
 }
 
 console.log(failures === 0 ? "\nAll discovery tests passed." : `\n${failures} failed.`);

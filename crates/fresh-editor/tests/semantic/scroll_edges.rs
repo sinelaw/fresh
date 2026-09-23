@@ -106,7 +106,7 @@ fn harness_scrolled_into_the_middle(lines: usize, config: Config) -> EditorTestH
 fn the_two_rows_at_each_edge_are_shaded_in_steps() {
     const LINES: usize = 200;
     const TEXT_COL: u16 = 20;
-    let mut harness = harness_scrolled_into_the_middle(LINES, edge_config());
+    let harness = harness_scrolled_into_the_middle(LINES, edge_config());
 
     let (first, last) = text_rows(&harness, LINES);
     // A row well clear of either band is the fully painted reference.
@@ -319,7 +319,7 @@ fn viewport_edge_fade_disabled_paints_every_row_at_full_strength() {
     const TEXT_COL: u16 = 20;
     let mut config = edge_config();
     config.editor.viewport_edge_fade = false;
-    let mut harness = harness_scrolled_into_the_middle(LINES, config);
+    let harness = harness_scrolled_into_the_middle(LINES, config);
 
     let (first, last) = text_rows(&harness, LINES);
     let painted = colors_at(&harness, TEXT_COL, first + 6).0;

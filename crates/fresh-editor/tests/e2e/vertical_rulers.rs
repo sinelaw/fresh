@@ -235,7 +235,7 @@ fn test_no_rulers_on_virtual_buffer() {
         .set_virtual_buffer_content(
             dashboard_buffer,
             vec![fresh::primitives::text_property::TextPropertyEntry::text(
-                &"X".repeat(60),
+                "X".repeat(60),
             )],
         )
         .unwrap();

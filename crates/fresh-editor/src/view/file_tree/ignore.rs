@@ -130,11 +130,6 @@ impl IgnorePatterns {
         }
     }
 
-    /// Remove a custom pattern
-    pub fn remove_custom_pattern(&mut self, pattern: &str) {
-        self.custom_patterns.retain(|p| p != pattern);
-    }
-
     /// Check if a path should be ignored
     ///
     /// Each filter (hidden / custom / gitignored) is evaluated independently:
@@ -157,6 +152,7 @@ impl IgnorePatterns {
     /// Get the ignore status of a path
     ///
     /// This is useful for rendering (e.g., gray out ignored files)
+    #[cfg(test)]
     pub fn get_status(&self, path: &Path, is_dir: bool) -> IgnoreStatus {
         if is_hidden_name(path) {
             return IgnoreStatus::Hidden;
@@ -258,11 +254,6 @@ impl IgnorePatterns {
         self.respect_gitignore
     }
 
-    /// Set whether to show custom ignored files
-    pub fn set_show_custom_ignored(&mut self, show: bool) {
-        self.show_custom_ignored = show;
-    }
-
     /// Toggle showing gitignored files
     pub fn toggle_show_gitignored(&mut self) {
         self.show_gitignored = !self.show_gitignored;
@@ -273,18 +264,13 @@ impl IgnorePatterns {
         self.show_hidden = !self.show_hidden;
     }
 
-    /// Clear all gitignore rules
-    pub fn clear_gitignores(&mut self) {
-        self.gitignores.clear();
-        self.gitignore_mtimes.clear();
-    }
-
     /// Clear all custom patterns
     pub fn clear_custom_patterns(&mut self) {
         self.custom_patterns.clear();
     }
 
     /// Get number of loaded .gitignore files
+    #[cfg(test)]
     pub fn gitignore_count(&self) -> usize {
         self.gitignores.len()
     }

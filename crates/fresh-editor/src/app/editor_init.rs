@@ -394,6 +394,7 @@ pub(super) struct EditorParts {
     // Keybindings + buffer-id allocation
     pub(super) keybindings: Arc<RwLock<KeybindingResolver>>,
     pub(super) buffer_id_alloc: crate::app::window_resources::BufferIdAllocator,
+    pub(super) terminal_id_alloc: crate::services::terminal::TerminalIdAllocator,
     pub(super) next_buffer_id: usize,
 
     // Terminal
@@ -457,7 +458,7 @@ fn load_prompt_histories(
     dir_context: &DirectoryContext,
 ) -> HashMap<String, crate::input::input_history::InputHistory> {
     let mut histories = HashMap::new();
-    for history_name in ["search", "replace", "goto_line"] {
+    for history_name in super::workspace::GLOBAL_PROMPT_HISTORIES {
         let path = dir_context.prompt_history_path(history_name);
         let history = crate::input::input_history::InputHistory::load_from_file(&path)
             .unwrap_or_else(|e| {
@@ -620,6 +621,7 @@ impl Editor {
             // From parts (non-trivial):
             next_buffer_id: parts.next_buffer_id,
             buffer_id_alloc: parts.buffer_id_alloc,
+            terminal_id_alloc: parts.terminal_id_alloc,
             config: parts.config,
             config_snapshot_anchor: parts.config_snapshot_anchor,
             config_cached_json: parts.config_cached_json,
@@ -766,6 +768,7 @@ impl Editor {
             pending_vb_animations: Vec::new(),
             widget_registry: crate::widgets::WidgetRegistry::new(),
             floating_widget_panel: None,
+            dock_covered: false,
             dock: None,
             dock_reserved: false,
             dock_width: None,
@@ -778,7 +781,6 @@ impl Editor {
             sidebar_drag: None,
             prose_drag: None,
             prose_reveal: std::cell::RefCell::new(HashMap::new()),
-            widget_panel_render_heights: std::collections::HashMap::new(),
         };
 
         // The plugin per-window filesystem registry is populated on the first
@@ -1388,6 +1390,10 @@ impl Editor {
         // is what gets cloned into every `Window` so handlers on
         // `impl Window` can mint ids without an `Editor` reference.
         let buffer_id_alloc = crate::app::window_resources::BufferIdAllocator::new(2);
+        // One terminal-id sequence for the whole editor, shared into every
+        // window's `TerminalManager`, so a bare `TerminalId` can't name a
+        // terminal in two windows at once.
+        let terminal_id_alloc = crate::services::terminal::TerminalIdAllocator::new();
 
         // The local-host filesystem handle, shared with the base window's
         // `WindowResources` and the editor. Same `Arc` the orchestrator
@@ -1400,7 +1406,6 @@ impl Editor {
         let recovery_service = {
             let recovery_config = RecoveryConfig {
                 enabled: recovery_enabled,
-                ..RecoveryConfig::default()
             };
             // Default to a CWD-scoped recovery directory so each working
             // directory keeps its own hot-exit recovery files. If this
@@ -1442,6 +1447,7 @@ impl Editor {
             fs_manager: Arc::clone(&fs_manager),
             local_filesystem: Arc::clone(&local_filesystem),
             buffer_id_alloc: buffer_id_alloc.clone(),
+            terminal_id_alloc: terminal_id_alloc.clone(),
             time_source: Arc::clone(&time_source),
             dir_context: dir_context.clone(),
             tokio_runtime: tokio_runtime.clone(),
@@ -1606,6 +1612,7 @@ impl Editor {
             needs_full_grammar_build: true,
             keybindings,
             buffer_id_alloc: buffer_id_alloc.clone(),
+            terminal_id_alloc: terminal_id_alloc.clone(),
             next_buffer_id: 2,
             terminal_width: width,
             terminal_height: height,
@@ -2268,32 +2275,11 @@ impl Editor {
         self.keybindings.clone()
     }
 
-    /// Test-only accessor for the Live Grep Resume cache (issue #1796).
-    #[doc(hidden)]
-    pub fn live_grep_last_state_for_tests(
-        &self,
-    ) -> Option<&crate::services::live_grep_state::LiveGrepLastState> {
-        self.active_window().live_grep_last_state.as_ref()
-    }
-
-    /// Test-only setter for the Live Grep Resume cache.
-    #[doc(hidden)]
-    pub fn set_live_grep_last_state_for_tests(
-        &mut self,
-        state: Option<crate::services::live_grep_state::LiveGrepLastState>,
-    ) {
-        self.active_window_mut().live_grep_last_state = state;
-    }
-
     /// Test-only accessor for the split tree, so layout-shape
     /// regression tests can assert on the structure directly.
     #[doc(hidden)]
     pub fn split_manager_for_tests(&self) -> &crate::view::split::SplitManager {
-        self.windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(mgr, _)| mgr)
-            .expect("active window must have a populated split layout")
+        self.active_window().split_manager()
     }
 
     /// Test-only accessor for a leaf's `SplitViewState`, so tab-list
@@ -2305,12 +2291,7 @@ impl Editor {
         &self,
         leaf: crate::model::event::LeafId,
     ) -> Option<&crate::view::split::SplitViewState> {
-        self.windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(_, vs)| vs)
-            .expect("active window must have a populated split layout")
-            .get(&leaf)
+        self.active_window().split_view_states().get(&leaf)
     }
 
     /// Refresh the plugin-readable keybinding-label snapshot from

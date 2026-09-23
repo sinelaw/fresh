@@ -7,7 +7,6 @@ use crate::app::window::LspCompletionCandidate;
 use crate::model::event::Event;
 use crate::primitives::snippet::{expand_snippet, is_snippet};
 use crate::primitives::word_navigation::find_completion_word_start;
-use fresh_i18n::t;
 
 /// Result of handling a popup confirmation.
 pub enum PopupConfirmResult {
@@ -91,23 +90,6 @@ impl Editor {
                 }
                 self.active_window_mut().pending_code_actions = None;
                 PopupConfirmResult::EarlyReturn
-            }
-
-            Some(PopupResolver::LspConfirm { language }) => {
-                let action = self
-                    .active_state()
-                    .popups
-                    .top()
-                    .and_then(|p| p.selected_item())
-                    .and_then(|item| item.data.clone());
-                if let Some(action) = action {
-                    self.hide_popup();
-                    self.handle_lsp_confirmation_response(&language, &action);
-                    PopupConfirmResult::EarlyReturn
-                } else {
-                    self.hide_popup();
-                    PopupConfirmResult::EarlyReturn
-                }
             }
 
             Some(PopupResolver::RemoteIndicator) => {
@@ -399,11 +381,6 @@ impl Editor {
 
             Some(PopupResolver::CodeAction) => {
                 self.active_window_mut().pending_code_actions = None;
-                self.hide_popup();
-            }
-
-            Some(PopupResolver::LspConfirm { language: _ }) => {
-                self.set_status_message(t!("lsp.startup_cancelled_msg").to_string());
                 self.hide_popup();
             }
 

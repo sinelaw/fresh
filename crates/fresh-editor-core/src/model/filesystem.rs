@@ -495,8 +495,33 @@ pub trait FileSystem: Send + Sync {
         Ok(data.iter().filter(|&&b| b == b'\n').count())
     }
 
-    /// Write data to file atomically (temp file + rename)
+    /// Write data to file atomically (temp file + rename).
+    ///
+    /// The original's permissions are carried over, and — where the backend
+    /// can — its owner, group and extended attributes. When those can't be
+    /// kept, or the file has other hard links, the file is still replaced:
+    /// right for the editor's own files (config, workspace, recovery data).
+    /// Saving a user's file goes through
+    /// [`FileSystem::replace_file_preserving_identity`] instead.
     fn write_file(&self, path: &Path, data: &[u8]) -> io::Result<()>;
+
+    /// Replace `path` with `data` atomically (temp file + rename), but only
+    /// if the new file can stand in for the old one: the same owner, group,
+    /// permissions and extended attributes, and no other hard links left
+    /// pointing at the old content. Otherwise returns
+    /// [`ReplaceError::IdentityNotPreserved`] without having changed `path`,
+    /// so the caller can overwrite it in place instead.
+    ///
+    /// The default is [`FileSystem::write_file`], for backends that keep a
+    /// file's identity themselves or can't tell (remote hosts, test
+    /// filesystems); wrappers forward it to what they wrap.
+    fn replace_file_preserving_identity(
+        &self,
+        path: &Path,
+        data: &[u8],
+    ) -> Result<(), ReplaceError> {
+        self.write_file(path, data).map_err(ReplaceError::Io)
+    }
 
     /// Create a file for writing, returns a writer handle
     fn create_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>>;
@@ -560,19 +585,27 @@ pub trait FileSystem: Send + Sync {
     /// Remove an empty directory
     fn remove_dir(&self, path: &Path) -> io::Result<()>;
 
-    /// Recursively remove a directory and all its contents
-    fn remove_dir_all(&self, path: &Path) -> io::Result<()> {
-        for entry in self.read_dir(path)? {
-            if entry.is_dir() {
-                self.remove_dir_all(&entry.path)?;
-            } else {
-                self.remove_file(&entry.path)?;
-            }
-        }
-        self.remove_dir(path)
-    }
+    // There is deliberately no `remove_dir_all` here.
+    //
+    // The one that was here walked the tree itself, and `DirEntry::is_dir()`
+    // answers true for a symlink *pointing at* a directory — so it descended
+    // through links and deleted the contents of whatever they pointed at,
+    // anywhere on the disk, then failed with `ENOTDIR` on the link, reporting
+    // an error only once the data was gone. Guarding the entries it walked
+    // still left the case where the path it was handed was itself a link.
+    //
+    // Nothing in the editor needs to walk a tree to delete it. The file
+    // explorer — the only caller that ever did — moves the entry to the
+    // system trash in one operation instead, which cannot follow a link and
+    // which the user can undo. See `App::trash_path`.
 
-    /// Recursively copy a directory and all its contents to dst
+    /// Recursively copy a directory and all its contents to dst.
+    ///
+    /// This follows symlinks: a link to a directory is copied as the
+    /// directory it names. That duplicates data rather than destroying any,
+    /// and there is no symlink-creating operation on this trait to do better
+    /// with. A symlink that points at one of its own ancestors will recurse
+    /// until the disk fills.
     fn copy_dir_all(&self, src: &Path, dst: &Path) -> io::Result<()> {
         self.create_dir_all(dst)?;
         for entry in self.read_dir(src)? {
@@ -671,10 +704,28 @@ pub trait FileSystem: Send + Sync {
         }
     }
 
-    /// Get a temporary file path for atomic writes
+    /// Get a temporary file path next to `path` for atomic writes.
+    ///
+    /// Each call returns a fresh name (see [`sibling_temp_path`]); open it with
+    /// [`FileSystem::create_new_file`] so an existing file is never clobbered.
     fn temp_path_for(&self, path: &Path) -> PathBuf {
-        path.with_extension("tmp")
+        sibling_temp_path(path)
     }
+
+    /// Create a file that must not exist yet, atomically: fails with
+    /// `AlreadyExists` if it does, and never opens a file someone else
+    /// created in between (`O_EXCL` locally). No default — a check followed
+    /// by a create would race; a backend that can't do it atomically returns
+    /// `Unsupported`.
+    fn create_new_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>>;
+
+    /// Like [`FileSystem::create_new_file`], but readable and writable only
+    /// by its owner (0600 on unix) from the moment it exists — for a copy of
+    /// some file's content kept away from that file, where its permissions
+    /// no longer guard it. No default — creating the file and narrowing its
+    /// permissions afterwards leaves a window in which anyone may open it; a
+    /// backend that can't create it that way returns `Unsupported`.
+    fn create_new_private_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>>;
 
     /// Get a unique temporary file path (using timestamp and PID)
     fn unique_temp_path(&self, dest_path: &Path) -> PathBuf {
@@ -812,6 +863,53 @@ pub trait FileSystem: Send + Sync {
         on_entry: &mut dyn FnMut(WalkEntry<'_>) -> bool,
     ) -> io::Result<()>;
 
+    /// Every ancestor of `start` (and `start` itself) that directly contains
+    /// one of `markers`, nearest first.
+    ///
+    /// This is the "climb until you find the project root" question that
+    /// several features ask: the nearest `compile_commands.json` for a `.h`
+    /// header, an LSP server's root markers, and so on. Callers that want
+    /// only the closest match take `.first()`; callers that must inspect the
+    /// contents of each candidate — where an outer directory can still be the
+    /// answer if the nearest one does not qualify — iterate.
+    ///
+    /// A marker is matched by *existence*, not by kind, so directory markers
+    /// such as `.git` count.
+    ///
+    /// `max_dirs` bounds how many directories are examined, counting `start`
+    /// itself; `None` climbs to the filesystem root. Missing or unreadable
+    /// directories are skipped rather than reported as errors, so the result
+    /// is "what we could see", and an empty vector means "no marker found".
+    ///
+    /// The default implementation walks the ancestors itself, which is right
+    /// for any filesystem whose metadata calls are cheap. **A remote
+    /// implementation should override it with a single server-side request**:
+    /// the default costs one round trip per directory per marker, and this
+    /// runs on latency-sensitive paths like opening a file. This is the same
+    /// reasoning that puts the tree walk behind [`Self::walk`] rather than
+    /// leaving callers to recurse with `read_dir`.
+    fn find_up(
+        &self,
+        start: &Path,
+        markers: &[&str],
+        max_dirs: Option<usize>,
+    ) -> io::Result<Vec<PathBuf>> {
+        let mut found = Vec::new();
+        let mut current = Some(start);
+        let mut visited = 0usize;
+        while let Some(dir) = current {
+            if max_dirs.is_some_and(|max| visited >= max) {
+                break;
+            }
+            if markers.iter().any(|m| self.exists(&dir.join(m))) {
+                found.push(dir.to_path_buf());
+            }
+            visited += 1;
+            current = dir.parent();
+        }
+        Ok(found)
+    }
+
     /// Walk `root`, reporting every non-hidden file. A provided method over
     /// [`Self::walk`], so a filesystem implements one method, not two.
     fn walk_files(
@@ -942,6 +1040,125 @@ pub trait FileSystemExt: FileSystem {
 
 /// Blanket implementation: all FileSystem types automatically get async methods
 impl<T: FileSystem> FileSystemExt for T {}
+
+/// Why replacing a file with a new one (write-then-rename) would not leave
+/// the same file behind.
+#[derive(Debug)]
+pub enum IdentityLoss {
+    /// The file has other hard links, which would keep the old content.
+    HardLinks,
+    /// The new file can't be given the original's owner/group or one of its
+    /// extended attributes (e.g. a group the user isn't a member of).
+    Attributes(io::Error),
+}
+
+impl std::fmt::Display for IdentityLoss {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::HardLinks => write!(f, "the file has other hard links"),
+            Self::Attributes(e) => write!(f, "can't carry owner/xattrs over to a new file ({e})"),
+        }
+    }
+}
+
+/// Error from [`FileSystem::replace_file_preserving_identity`].
+#[derive(Debug)]
+pub enum ReplaceError {
+    /// The file was left untouched: a replacement wouldn't be the same file.
+    IdentityNotPreserved(IdentityLoss),
+    /// The write itself failed.
+    Io(io::Error),
+}
+
+impl From<io::Error> for ReplaceError {
+    fn from(e: io::Error) -> Self {
+        Self::Io(e)
+    }
+}
+
+impl std::fmt::Display for ReplaceError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::IdentityNotPreserved(loss) => {
+                write!(f, "replacing the file would not preserve it: {loss}")
+            }
+            Self::Io(e) => e.fmt(f),
+        }
+    }
+}
+
+impl std::error::Error for ReplaceError {}
+
+/// Create a new, uniquely named temp file next to `path`, readable only by
+/// its owner (see [`FileSystem::create_new_private_file`]), to hold content
+/// meant for `path` until it can be written there. Never opens a file that
+/// already exists.
+pub fn create_private_temp_file_for(
+    fs: &dyn FileSystem,
+    path: &Path,
+) -> io::Result<(PathBuf, Box<dyn FileWriter>)> {
+    retry_on_name_clash(|| {
+        let temp_path = fs.temp_path_for(path);
+        let file = fs.create_new_private_file(&temp_path)?;
+        Ok((temp_path, file))
+    })
+}
+
+/// Run `create`, which creates a file under a freshly picked temp name, again
+/// while the name it picked turns out to exist already.
+fn retry_on_name_clash<T>(mut create: impl FnMut() -> io::Result<T>) -> io::Result<T> {
+    const ATTEMPTS: usize = 16;
+    let mut attempt = 0;
+    loop {
+        match create() {
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists && attempt + 1 < ATTEMPTS => {
+                attempt += 1;
+            }
+            result => return result,
+        }
+    }
+}
+
+/// A temp-file path in the same directory as `path`, for write-then-rename.
+///
+/// The name is `.<file name>.<pid>.<n>.tmp`, where `n` is a per-process
+/// counter, so it never coincides with a real sibling such as `foo.tmp`
+/// (issue #3377) and two saves never share a temp file. Callers still open it
+/// with `create_new` semantics, since a stale file from an earlier process
+/// with the same pid may exist.
+pub fn sibling_temp_path(path: &Path) -> PathBuf {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    // Keep the result within the usual 255-byte file-name limit.
+    const MAX_NAME_BYTES: usize = 200;
+
+    let file_name = path
+        .file_name()
+        .map(|n| n.to_string_lossy())
+        .unwrap_or_else(|| "fresh-save".into());
+    let mut name_len = 0;
+    let short_name: String = file_name
+        .chars()
+        .take_while(|c| {
+            name_len += c.len_utf8();
+            name_len <= MAX_NAME_BYTES
+        })
+        .collect();
+    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+    path.with_file_name(format!(".{short_name}.{}.{n}.tmp", std::process::id()))
+}
+
+/// The pid in a name [`sibling_temp_path`] makes (`.<name>.<pid>.<n>.tmp`),
+/// or `None` for any other file name. Lets a sweep of a directory tell a temp
+/// file left by a process that died mid-write from one being written now.
+pub fn sibling_temp_pid(file_name: &str) -> Option<u32> {
+    let rest = file_name.strip_prefix('.')?.strip_suffix(".tmp")?;
+    let mut parts = rest.rsplitn(3, '.');
+    parts.next()?.parse::<u64>().ok()?;
+    let pid = parts.next()?.parse().ok()?;
+    parts.next().filter(|name| !name.is_empty())?;
+    Some(pid)
+}
 
 // ============================================================================
 // Default search_file implementation
@@ -1306,12 +1523,245 @@ pub fn default_search_file(
 #[derive(Debug, Clone, Copy, Default)]
 pub struct StdFileSystem;
 
+/// Whether [`StdFileSystem::replace_atomically`] must keep the file's
+/// identity or may give it up.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Identity {
+    /// Refuse to replace the file rather than lose it.
+    Required,
+    /// Keep what can be kept, replace the file regardless.
+    BestEffort,
+}
+
+/// Setting a file's owner and extended attributes: what an atomic replace
+/// does to carry them over to the new file. [`SystemAttributes`] makes the
+/// real calls; tests substitute one that fails the way they do for a
+/// non-root user (a group they aren't in) or for a system-managed attribute,
+/// which a test environment can't be relied on to reproduce.
+trait SetAttributes {
+    #[cfg(unix)]
+    fn chown(&self, path: &Path, uid: Option<u32>, gid: Option<u32>) -> io::Result<()>;
+    #[cfg(unix)]
+    fn set_xattr(&self, path: &Path, name: &std::ffi::OsStr, value: &[u8]) -> io::Result<()>;
+}
+
+/// The system's own [`SetAttributes`].
+struct SystemAttributes;
+
+impl SetAttributes for SystemAttributes {
+    #[cfg(unix)]
+    fn chown(&self, path: &Path, uid: Option<u32>, gid: Option<u32>) -> io::Result<()> {
+        std::os::unix::fs::chown(path, uid, gid)
+    }
+
+    #[cfg(unix)]
+    fn set_xattr(&self, path: &Path, name: &std::ffi::OsStr, value: &[u8]) -> io::Result<()> {
+        xattr::set(path, name, value)
+    }
+}
+
 impl StdFileSystem {
     /// Check if a file is hidden (platform-specific)
     fn is_hidden(path: &Path) -> bool {
         path.file_name()
             .and_then(|n| n.to_str())
             .is_some_and(|n| n.starts_with('.'))
+    }
+
+    /// Replace `path` with `data` via a temp file renamed over it, giving the
+    /// temp file the original's permissions, owner, group and extended
+    /// attributes first (issue #3348).
+    ///
+    /// With `identity` [`Identity::Required`], a replacement that wouldn't
+    /// keep the file's identity — other hard links, or an owner/group/xattr
+    /// that can't be carried over — fails with
+    /// [`ReplaceError::IdentityNotPreserved`] and leaves `path` untouched;
+    /// with [`Identity::BestEffort`] the file is replaced anyway. Owner and
+    /// xattrs are set through `attrs`.
+    #[cfg_attr(not(unix), allow(unused_variables))]
+    fn replace_atomically(
+        &self,
+        path: &Path,
+        data: &[u8],
+        identity: Identity,
+        attrs: &dyn SetAttributes,
+    ) -> Result<(), ReplaceError> {
+        let original = std::fs::metadata(path).ok();
+        #[cfg(unix)]
+        if identity == Identity::Required
+            && original
+                .as_ref()
+                .is_some_and(|m| std::os::unix::fs::MetadataExt::nlink(m) > 1)
+        {
+            // Renaming a new file over one with other hard links would leave
+            // those links on the old content.
+            return Err(ReplaceError::IdentityNotPreserved(IdentityLoss::HardLinks));
+        }
+
+        #[cfg(unix)]
+        let mode = original.as_ref().map(|m| {
+            Self::temp_file_mode(std::os::unix::fs::PermissionsExt::mode(&m.permissions()))
+        });
+        #[cfg(not(unix))]
+        let mode = None;
+        let (temp_path, mut file) = self.create_temp_file_with_mode(path, mode)?;
+        let result = (|| {
+            file.write_all(data)?;
+            file.sync_all()?;
+            drop(file);
+            if let Some(ref meta) = original {
+                #[cfg(unix)]
+                if let Err(e) = Self::copy_owner_and_xattrs(attrs, meta, path, &temp_path) {
+                    if identity == Identity::Required {
+                        return Err(ReplaceError::IdentityNotPreserved(
+                            IdentityLoss::Attributes(e),
+                        ));
+                    }
+                    tracing::debug!("Replacing {} without its owner/xattrs: {e}", path.display());
+                }
+                // Best-effort permission restore; rename will proceed regardless
+                #[allow(clippy::let_underscore_must_use)]
+                let _ = std::fs::set_permissions(&temp_path, meta.permissions());
+            }
+            Ok(self.rename(&temp_path, path)?)
+        })();
+        if result.is_err() {
+            // Best-effort cleanup; the original error is what the caller needs
+            #[allow(clippy::let_underscore_must_use)]
+            let _ = self.remove_file(&temp_path);
+        }
+        result
+    }
+
+    /// Create a new, uniquely named temp file next to `path` for an atomic
+    /// write-then-rename. On unix it is created with at most the permission
+    /// bits of `mode` (the file it will replace), not the umask default. The new content is written before
+    /// the original's permissions are copied over, and a file created e.g.
+    /// 0644 next to a 0600 original could be opened by anyone in between
+    /// and read through that handle afterwards.
+    #[cfg_attr(not(unix), allow(unused_variables))]
+    fn create_temp_file_with_mode(
+        &self,
+        path: &Path,
+        mode: Option<u32>,
+    ) -> io::Result<(PathBuf, Box<dyn FileWriter>)> {
+        retry_on_name_clash(|| {
+            let temp_path = self.temp_path_for(path);
+            let mut options = std::fs::OpenOptions::new();
+            options.write(true).create_new(true);
+            #[cfg(unix)]
+            if let Some(mode) = mode {
+                std::os::unix::fs::OpenOptionsExt::mode(&mut options, mode & 0o777);
+            }
+            let file = options.open(&temp_path)?;
+            Ok((
+                temp_path,
+                Box::new(StdFileWriter(file)) as Box<dyn FileWriter>,
+            ))
+        })
+    }
+
+    /// The mode to create a save's temp file with, given the original's: its
+    /// permission bits, plus owner read and write. Linux lets only a process
+    /// that may write a file set its `user.*` xattrs (and read them only if
+    /// it may read it), so a temp file created e.g. 0444 like a read-only
+    /// original would silently lose them in [`Self::copy_owner_and_xattrs`].
+    /// Adding owner bits exposes nothing — the owner could chmod the file
+    /// anyway — and the original's exact mode is set once the xattrs are.
+    #[cfg(unix)]
+    fn temp_file_mode(original_mode: u32) -> u32 {
+        (original_mode & 0o777) | 0o600
+    }
+
+    /// Give `temp` the owner, group and extended attributes (on Linux these
+    /// include POSIX ACLs) of `original`, which describes `path`, so renaming
+    /// it over `path` doesn't change them (issue #3348).
+    ///
+    /// Fails only when the owner/group can't be set (e.g. a group the user
+    /// isn't a member of) or an xattr can't be copied for an unexpected
+    /// reason. An attribute this process may not set is skipped rather than
+    /// giving up the atomic save for all of them (see
+    /// [`Self::xattr_error_drops_only_the_attribute`]), and content-bound
+    /// attributes are never copied (see [`Self::xattr_is_content_bound`]).
+    #[cfg(unix)]
+    fn copy_owner_and_xattrs(
+        attrs: &dyn SetAttributes,
+        original: &std::fs::Metadata,
+        path: &Path,
+        temp: &Path,
+    ) -> io::Result<()> {
+        use std::os::unix::fs::MetadataExt;
+        let created = std::fs::metadata(temp)?;
+        let uid = (created.uid() != original.uid()).then_some(original.uid());
+        let gid = (created.gid() != original.gid()).then_some(original.gid());
+        if uid.is_some() || gid.is_some() {
+            attrs.chown(temp, uid, gid)?;
+        }
+
+        let names = match xattr::list_deref(path) {
+            Ok(names) => names,
+            // Nothing to carry over on a filesystem without xattrs.
+            Err(e) if e.kind() == io::ErrorKind::Unsupported => return Ok(()),
+            Err(e) => return Err(e),
+        };
+        for name in names {
+            if Self::xattr_is_content_bound(&name) {
+                continue;
+            }
+            let copied = xattr::get_deref(path, &name).and_then(|value| {
+                let Some(value) = value else {
+                    return Ok(());
+                };
+                // A new file often already has the same label/ACL; setting it
+                // again could need privileges the save doesn't otherwise need.
+                if xattr::get(temp, &name)?.as_deref() != Some(value.as_slice()) {
+                    attrs.set_xattr(temp, &name, &value)?;
+                }
+                Ok(())
+            });
+            match copied {
+                Ok(()) => {}
+                Err(e) if Self::xattr_error_drops_only_the_attribute(&e) => {
+                    tracing::debug!(
+                        "Not carrying xattr {:?} of {} over to the saved file: {e}",
+                        name,
+                        path.display()
+                    );
+                }
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(())
+    }
+
+    /// Extended attributes that vouch for the file's *content*, so must not
+    /// be carried over to new content: a file capability
+    /// (`security.capability`) would hand its privileges to whatever was
+    /// just written, and IMA/EVM hashes and signatures (`security.ima`,
+    /// `security.evm`) describe the old bytes.
+    #[cfg(unix)]
+    fn xattr_is_content_bound(name: &std::ffi::OsStr) -> bool {
+        matches!(
+            name.to_str(),
+            Some("security.capability" | "security.ima" | "security.evm")
+        )
+    }
+
+    /// Whether an error reading or setting one xattr just means that
+    /// attribute can't be carried over, rather than that the save can't be
+    /// made atomic: one this process may not set (EPERM/EACCES — e.g.
+    /// system-managed attributes on macOS, or an SELinux policy) or one the
+    /// filesystem can't hold (ENOTSUP). Falling back to an in-place write for
+    /// those would make nearly every save on such a system non-atomic.
+    #[cfg(unix)]
+    fn xattr_error_drops_only_the_attribute(e: &io::Error) -> bool {
+        e.kind() == io::ErrorKind::Unsupported
+            || e.raw_os_error().is_some_and(|code| {
+                code == libc::EPERM
+                    || code == libc::EACCES
+                    || code == libc::ENOTSUP
+                    || code == libc::EOPNOTSUPP
+            })
     }
 
     /// Get the current user's effective UID and all group IDs (primary + supplementary).
@@ -1445,27 +1895,41 @@ impl FileSystem for StdFileSystem {
     }
 
     fn write_file(&self, path: &Path, data: &[u8]) -> io::Result<()> {
-        let original_metadata = self.metadata_if_exists(path);
-        let temp_path = self.temp_path_for(path);
-        {
-            let mut file = self.create_file(&temp_path)?;
-            file.write_all(data)?;
-            file.sync_all()?;
+        match self.replace_atomically(path, data, Identity::BestEffort, &SystemAttributes) {
+            Ok(()) => Ok(()),
+            Err(ReplaceError::Io(e)) => Err(e),
+            // Not produced with `BestEffort`.
+            Err(e @ ReplaceError::IdentityNotPreserved(_)) => Err(io::Error::other(e)),
         }
-        if let Some(ref meta) = original_metadata {
-            if let Some(ref perms) = meta.permissions {
-                // Best-effort permission restore; rename will proceed regardless
-                #[allow(clippy::let_underscore_must_use)]
-                let _ = self.set_permissions(&temp_path, perms);
-            }
-        }
-        self.rename(&temp_path, path)?;
-        Ok(())
+    }
+
+    fn replace_file_preserving_identity(
+        &self,
+        path: &Path,
+        data: &[u8],
+    ) -> Result<(), ReplaceError> {
+        self.replace_atomically(path, data, Identity::Required, &SystemAttributes)
     }
 
     fn create_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
         let file = std::fs::File::create(path)?;
         Ok(Box::new(StdFileWriter(file)))
+    }
+
+    fn create_new_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
+        let file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)?;
+        Ok(Box::new(StdFileWriter(file)))
+    }
+
+    fn create_new_private_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+        Ok(Box::new(StdFileWriter(options.open(path)?)))
     }
 
     fn open_file(&self, path: &Path) -> io::Result<Box<dyn FileReader>> {
@@ -1794,6 +2258,14 @@ impl FileSystem for NoopFileSystem {
         Self::unsupported()
     }
 
+    fn create_new_file(&self, _path: &Path) -> io::Result<Box<dyn FileWriter>> {
+        Self::unsupported()
+    }
+
+    fn create_new_private_file(&self, _path: &Path) -> io::Result<Box<dyn FileWriter>> {
+        Self::unsupported()
+    }
+
     fn open_file(&self, _path: &Path) -> io::Result<Box<dyn FileReader>> {
         Self::unsupported()
     }
@@ -1907,6 +2379,39 @@ mod tests {
     use super::*;
     use tempfile::NamedTempFile;
 
+    /// [`SetAttributes`] whose `chown` fails with EPERM, as it does for a
+    /// non-root user and a group they aren't in.
+    #[cfg(unix)]
+    struct ChownDenied;
+
+    #[cfg(unix)]
+    impl SetAttributes for ChownDenied {
+        fn chown(&self, _path: &Path, _uid: Option<u32>, _gid: Option<u32>) -> io::Result<()> {
+            Err(io::Error::from_raw_os_error(libc::EPERM))
+        }
+        fn set_xattr(&self, path: &Path, name: &std::ffi::OsStr, value: &[u8]) -> io::Result<()> {
+            SystemAttributes.set_xattr(path, name, value)
+        }
+    }
+
+    /// [`SetAttributes`] that may not set the xattr it names (EPERM), as for
+    /// attributes the system manages.
+    #[cfg(unix)]
+    struct XattrDenied(&'static str);
+
+    #[cfg(unix)]
+    impl SetAttributes for XattrDenied {
+        fn chown(&self, path: &Path, uid: Option<u32>, gid: Option<u32>) -> io::Result<()> {
+            SystemAttributes.chown(path, uid, gid)
+        }
+        fn set_xattr(&self, path: &Path, name: &std::ffi::OsStr, value: &[u8]) -> io::Result<()> {
+            if name == self.0 {
+                return Err(io::Error::from_raw_os_error(libc::EPERM));
+            }
+            SystemAttributes.set_xattr(path, name, value)
+        }
+    }
+
     #[test]
     fn test_std_filesystem_read_write() {
         let fs = StdFileSystem;
@@ -2014,6 +2519,491 @@ mod tests {
 
         fs.write_file(&path, b"updated").unwrap();
         assert_eq!(fs.read_file(&path).unwrap(), b"updated");
+    }
+
+    /// Issue #3377: the atomic-write temp file used to be `path.with_extension("tmp")`,
+    /// so saving `foo.txt` overwrote and then renamed away an unrelated `foo.tmp`.
+    #[test]
+    fn atomic_write_leaves_unrelated_sibling_tmp_file_alone() {
+        let fs = StdFileSystem;
+        let dir = tempfile::tempdir().unwrap();
+        let unrelated = dir.path().join("foo.tmp");
+        std::fs::write(&unrelated, b"IMPORTANT DATA\n").unwrap();
+        let path = dir.path().join("foo.txt");
+        std::fs::write(&path, b"hello\n").unwrap();
+
+        fs.write_file(&path, b"hello, edited\n").unwrap();
+
+        assert_eq!(std::fs::read(&path).unwrap(), b"hello, edited\n");
+        assert_eq!(std::fs::read(&unrelated).unwrap(), b"IMPORTANT DATA\n");
+        // The temp file itself must not be left behind.
+        let mut names: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .collect();
+        names.sort();
+        assert_eq!(names, ["foo.tmp", "foo.txt"]);
+    }
+
+    /// An owner/group for `path` that differs from what a file this process
+    /// creates would get, and that this process is allowed to set: any ids as
+    /// root, otherwise our own uid plus a supplementary group. `None` when the
+    /// environment has no such group (non-root with a single group).
+    #[cfg(unix)]
+    fn foreign_owner_for(path: &Path) -> Option<(u32, u32)> {
+        use std::os::unix::fs::MetadataExt;
+        let meta = std::fs::metadata(path).unwrap();
+        let (euid, groups) = StdFileSystem::current_user_groups();
+        if euid == 0 {
+            let other = |id: u32| if id == 4242 { 4243 } else { 4242 };
+            return Some((other(meta.uid()), other(meta.gid())));
+        }
+        groups
+            .into_iter()
+            .find(|&g| g != meta.gid())
+            .map(|g| (meta.uid(), g))
+    }
+
+    /// Issue #3348: an atomic save replaced the file with a temp file created
+    /// by the saving process, so the file's group (and, as root, its owner)
+    /// became the saver's.
+    #[cfg(unix)]
+    #[test]
+    fn atomic_write_preserves_owner_and_group() {
+        use std::os::unix::fs::MetadataExt;
+        let fs = StdFileSystem;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("owned.txt");
+        std::fs::write(&path, b"line one\n").unwrap();
+        let Some((uid, gid)) = foreign_owner_for(&path) else {
+            eprintln!("skipping: no second group available to test with");
+            return;
+        };
+        std::os::unix::fs::chown(&path, Some(uid), Some(gid)).unwrap();
+        fs.set_permissions(&path, &FilePermissions::from_mode(0o664))
+            .unwrap();
+
+        fs.write_file(&path, b"line one\nline two\n").unwrap();
+
+        let meta = std::fs::metadata(&path).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"line one\nline two\n");
+        assert_eq!((meta.uid(), meta.gid()), (uid, gid));
+        assert_eq!(meta.mode() & 0o7777, 0o664);
+    }
+
+    /// Issue #3348: replacing the file via rename detached it from its other
+    /// hard links, which kept the old content. A save must not do that, so
+    /// the identity-preserving replace refuses, leaving the file untouched.
+    #[cfg(unix)]
+    #[test]
+    fn replace_refuses_to_break_hard_links() {
+        use std::os::unix::fs::MetadataExt;
+        let fs = StdFileSystem;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.txt");
+        let link = dir.path().join("b.txt");
+        std::fs::write(&path, b"old\n").unwrap();
+        std::fs::hard_link(&path, &link).unwrap();
+        let ino = std::fs::metadata(&path).unwrap().ino();
+
+        let result = fs.replace_file_preserving_identity(&path, b"new\n");
+
+        assert!(
+            matches!(
+                result,
+                Err(ReplaceError::IdentityNotPreserved(IdentityLoss::HardLinks))
+            ),
+            "{result:?}"
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), b"old\n");
+        assert_eq!(std::fs::metadata(&path).unwrap().ino(), ino);
+        let names: Vec<_> = std::fs::read_dir(dir.path()).unwrap().collect();
+        assert_eq!(names.len(), 2, "no temp file may be left behind");
+    }
+
+    /// The editor's own files (config, workspace, recovery data) are written
+    /// with `write_file`, which replaces the file atomically even when that
+    /// detaches it from other hard links, as it always has.
+    #[cfg(unix)]
+    #[test]
+    fn write_file_replaces_a_hard_linked_file() {
+        let fs = StdFileSystem;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.txt");
+        let link = dir.path().join("b.txt");
+        std::fs::write(&path, b"old\n").unwrap();
+        std::fs::hard_link(&path, &link).unwrap();
+
+        fs.write_file(&path, b"new\n").unwrap();
+
+        assert_eq!(std::fs::read(&path).unwrap(), b"new\n");
+        assert_eq!(std::fs::read(&link).unwrap(), b"old\n");
+    }
+
+    /// Issue #3348: saving a file with other hard links must update all of
+    /// them — the save writes it in place, keeping its inode, and cleans up
+    /// the copy it staged in the recovery dir.
+    #[cfg(unix)]
+    #[test]
+    fn save_keeps_hard_links_together() {
+        use std::os::unix::fs::MetadataExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.txt");
+        let link = dir.path().join("b.txt");
+        std::fs::write(&path, b"old\n").unwrap();
+        std::fs::hard_link(&path, &link).unwrap();
+        let ino = std::fs::metadata(&path).unwrap().ino();
+        let recovery_dir = tempfile::tempdir().unwrap();
+
+        let fs: std::sync::Arc<dyn FileSystem + Send + Sync> = std::sync::Arc::new(StdFileSystem);
+        let mut buffer =
+            crate::model::buffer::TextBuffer::load_from_file(&path, 1 << 20, fs).unwrap();
+        buffer.insert_bytes(0, b"NEW ".to_vec());
+        buffer.save(recovery_dir.path()).unwrap();
+
+        assert_eq!(std::fs::read(&link).unwrap(), b"NEW old\n");
+        let meta = std::fs::metadata(&path).unwrap();
+        assert_eq!(meta.ino(), ino);
+        assert_eq!(meta.nlink(), 2);
+        let staged: Vec<_> = std::fs::read_dir(recovery_dir.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert!(staged.is_empty(), "left behind: {staged:?}");
+    }
+
+    /// Issue #3348: extended attributes (and, on Linux, POSIX ACLs, which are
+    /// stored as xattrs) of the original file were dropped by the atomic replace.
+    #[cfg(unix)]
+    #[test]
+    fn atomic_write_preserves_extended_attributes() {
+        let fs = StdFileSystem;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tagged.txt");
+        std::fs::write(&path, b"old\n").unwrap();
+        if let Err(e) = xattr::set(&path, "user.fresh_test", b"kept") {
+            eprintln!("skipping: user xattrs unsupported here ({e})");
+            return;
+        }
+
+        fs.write_file(&path, b"new\n").unwrap();
+
+        assert_eq!(std::fs::read(&path).unwrap(), b"new\n");
+        assert_eq!(
+            xattr::get(&path, "user.fresh_test").unwrap().as_deref(),
+            Some(&b"kept"[..])
+        );
+    }
+
+    /// A read-only file's `user.*` xattrs survive a save: Linux lets only a
+    /// process that may write a file set them, so a temp file created with
+    /// the original's 0444 lost every one of them.
+    ///
+    /// Root may write any file, so as root this drops the capabilities that
+    /// let it, for the test's own thread only (capabilities are per-thread on
+    /// Linux; a raw `capset` doesn't broadcast to the others).
+    #[cfg(unix)]
+    #[test]
+    fn atomic_write_preserves_extended_attributes_of_a_read_only_file() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("readonly.txt");
+        std::fs::write(&path, b"old\n").unwrap();
+        if let Err(e) = xattr::set(&path, "user.fresh_test", b"kept") {
+            eprintln!("skipping: user xattrs unsupported here ({e})");
+            return;
+        }
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o444)).unwrap();
+
+        let thread_path = path.clone();
+        let saved = std::thread::spawn(move || {
+            // SAFETY: geteuid has no failure modes.
+            if unsafe { libc::geteuid() } == 0 && !drop_file_access_overrides_on_this_thread() {
+                return None;
+            }
+            Some(StdFileSystem.write_file(&thread_path, b"new\n"))
+        })
+        .join()
+        .unwrap();
+        let Some(saved) = saved else {
+            eprintln!("skipping: running as root and can't drop CAP_DAC_OVERRIDE");
+            return;
+        };
+        saved.unwrap();
+
+        assert_eq!(std::fs::read(&path).unwrap(), b"new\n");
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o444, "the exact mode is restored");
+        assert_eq!(
+            xattr::get(&path, "user.fresh_test").unwrap().as_deref(),
+            Some(&b"kept"[..])
+        );
+    }
+
+    /// A recovery directory the user can't write (e.g. under `su` with
+    /// `$HOME` still another user's) made saving a hard-linked file fail with
+    /// the staging error, a `PermissionDenied` that the buffer then reported
+    /// as the *file* needing sudo. The file itself is writable, so it is
+    /// written in place without a staged copy.
+    #[cfg(unix)]
+    #[test]
+    fn save_of_hard_linked_file_does_not_need_sudo_when_staging_is_denied() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.txt");
+        let link = dir.path().join("b.txt");
+        std::fs::write(&path, b"old\n").unwrap();
+        std::fs::hard_link(&path, &link).unwrap();
+        let data_dir = tempfile::tempdir().unwrap();
+        let recovery_dir = data_dir.path().join("recovery");
+        std::fs::create_dir(&recovery_dir).unwrap();
+        std::fs::set_permissions(&recovery_dir, std::fs::Permissions::from_mode(0o555)).unwrap();
+
+        let (thread_path, thread_recovery_dir) = (path.clone(), recovery_dir.clone());
+        let saved = std::thread::spawn(move || {
+            // SAFETY: geteuid has no failure modes.
+            if unsafe { libc::geteuid() } == 0 && !drop_file_access_overrides_on_this_thread() {
+                return None;
+            }
+            let fs: std::sync::Arc<dyn FileSystem + Send + Sync> =
+                std::sync::Arc::new(StdFileSystem);
+            let mut buffer =
+                crate::model::buffer::TextBuffer::load_from_file(&thread_path, 1 << 20, fs)
+                    .unwrap();
+            buffer.insert_bytes(0, b"NEW ".to_vec());
+            Some(buffer.save(&thread_recovery_dir).map_err(|e| e.to_string()))
+        })
+        .join()
+        .unwrap();
+        let Some(saved) = saved else {
+            eprintln!("skipping: running as root and can't drop CAP_DAC_OVERRIDE");
+            return;
+        };
+
+        assert_eq!(saved, Ok(()));
+        assert_eq!(std::fs::read(&link).unwrap(), b"NEW old\n");
+        let leftovers: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(leftovers.len(), 2, "no temp file left: {leftovers:?}");
+    }
+
+    /// Drop the capabilities that let root ignore file permissions from the
+    /// calling thread's effective set. Returns whether that worked.
+    #[cfg(unix)]
+    fn drop_file_access_overrides_on_this_thread() -> bool {
+        #[cfg(target_os = "linux")]
+        {
+            #[repr(C)]
+            struct CapHeader {
+                version: u32,
+                pid: i32,
+            }
+            #[repr(C)]
+            #[derive(Clone, Copy, Default)]
+            struct CapData {
+                effective: u32,
+                permitted: u32,
+                inheritable: u32,
+            }
+            const LINUX_CAPABILITY_VERSION_3: u32 = 0x2008_0522;
+            const CAP_DAC_OVERRIDE: u32 = 1;
+            const CAP_DAC_READ_SEARCH: u32 = 2;
+            const CAP_FOWNER: u32 = 3;
+            let mut header = CapHeader {
+                version: LINUX_CAPABILITY_VERSION_3,
+                pid: 0,
+            };
+            let mut data = [CapData::default(); 2];
+            // SAFETY: `header` and the two-element `data` array are what the
+            // v3 capget/capset ABI reads and writes; pid 0 is this thread.
+            unsafe {
+                if libc::syscall(libc::SYS_capget, &mut header, data.as_mut_ptr()) != 0 {
+                    return false;
+                }
+                data[0].effective &=
+                    !(1 << CAP_DAC_OVERRIDE | 1 << CAP_DAC_READ_SEARCH | 1 << CAP_FOWNER);
+                libc::syscall(libc::SYS_capset, &mut header, data.as_ptr()) == 0
+            }
+        }
+        #[cfg(not(target_os = "linux"))]
+        false
+    }
+
+    /// An owner/group the saving process can't give the new file (a group a
+    /// non-root user isn't in) must not be dropped: the identity-preserving
+    /// replace refuses, leaving the file as it was for the save to rewrite in
+    /// place (as [`save_keeps_hard_links_together`] shows it does).
+    #[cfg(unix)]
+    #[test]
+    fn replace_refuses_when_owner_cannot_be_set() {
+        use std::os::unix::fs::MetadataExt;
+        let fs = StdFileSystem;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("owned.txt");
+        std::fs::write(&path, b"old\n").unwrap();
+        let Some((uid, gid)) = foreign_owner_for(&path) else {
+            eprintln!("skipping: no second group available to test with");
+            return;
+        };
+        std::os::unix::fs::chown(&path, Some(uid), Some(gid)).unwrap();
+        let ino = std::fs::metadata(&path).unwrap().ino();
+
+        let result = fs.replace_atomically(&path, b"new\n", Identity::Required, &ChownDenied);
+
+        assert!(
+            matches!(
+                result,
+                Err(ReplaceError::IdentityNotPreserved(
+                    IdentityLoss::Attributes(_)
+                ))
+            ),
+            "{result:?}"
+        );
+        let meta = std::fs::metadata(&path).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"old\n");
+        assert_eq!(meta.ino(), ino);
+        assert_eq!((meta.uid(), meta.gid()), (uid, gid));
+        let names: Vec<_> = std::fs::read_dir(dir.path()).unwrap().collect();
+        assert_eq!(names.len(), 1, "the temp file must not be left behind");
+    }
+
+    /// `write_file` (a best-effort replace) still replaces a file whose owner/group it can't carry
+    /// over, as it always has: the editor's own files need the atomic write
+    /// more than their group.
+    #[cfg(unix)]
+    #[test]
+    fn write_file_replaces_when_owner_cannot_be_set() {
+        let fs = StdFileSystem;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("owned.txt");
+        std::fs::write(&path, b"old\n").unwrap();
+        let Some((uid, gid)) = foreign_owner_for(&path) else {
+            eprintln!("skipping: no second group available to test with");
+            return;
+        };
+        std::os::unix::fs::chown(&path, Some(uid), Some(gid)).unwrap();
+
+        fs.replace_atomically(&path, b"new\n", Identity::BestEffort, &ChownDenied)
+            .unwrap();
+
+        assert_eq!(std::fs::read(&path).unwrap(), b"new\n");
+    }
+
+    /// An xattr this process may not set (e.g. a system-managed one on macOS)
+    /// is dropped, and the rest still copied: giving up the atomic save for
+    /// it would make most saves on such a system non-atomic.
+    #[cfg(unix)]
+    #[test]
+    fn unsettable_xattr_keeps_the_save_atomic() {
+        use std::os::unix::fs::MetadataExt;
+        let fs = StdFileSystem;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tagged.txt");
+        std::fs::write(&path, b"old\n").unwrap();
+        for name in ["user.fresh_a_system", "user.fresh_test"] {
+            if let Err(e) = xattr::set(&path, name, b"kept") {
+                eprintln!("skipping: user xattrs unsupported here ({e})");
+                return;
+            }
+        }
+        let ino = std::fs::metadata(&path).unwrap().ino();
+
+        fs.replace_atomically(
+            &path,
+            b"new\n",
+            Identity::Required,
+            &XattrDenied("user.fresh_a_system"),
+        )
+        .unwrap();
+
+        assert_eq!(std::fs::read(&path).unwrap(), b"new\n");
+        assert_ne!(
+            std::fs::metadata(&path).unwrap().ino(),
+            ino,
+            "an unsettable xattr must not force a non-atomic in-place write"
+        );
+        assert_eq!(
+            xattr::get(&path, "user.fresh_test").unwrap().as_deref(),
+            Some(&b"kept"[..])
+        );
+    }
+
+    /// A save's temp file must never be more readable than the file it
+    /// replaces, not even before its permissions are copied over.
+    #[cfg(unix)]
+    #[test]
+    fn atomic_write_temp_file_is_created_with_the_original_mode() {
+        use std::os::unix::fs::PermissionsExt;
+        let fs = StdFileSystem;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("secret.txt");
+
+        let (temp_path, _file) = fs
+            .create_temp_file_with_mode(&path, Some(0o100600))
+            .unwrap();
+
+        let mode = std::fs::metadata(&temp_path).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+    }
+
+    /// Which xattr failures merely drop that attribute: those caused by it
+    /// being one the process can't set or the filesystem can't hold. Anything
+    /// else still stops the atomic replace.
+    #[cfg(unix)]
+    #[test]
+    fn xattr_errors_that_drop_only_the_attribute() {
+        let drops = |code| {
+            StdFileSystem::xattr_error_drops_only_the_attribute(&io::Error::from_raw_os_error(code))
+        };
+        assert!(drops(libc::EPERM));
+        assert!(drops(libc::EACCES));
+        assert!(drops(libc::ENOTSUP));
+        assert!(drops(libc::EOPNOTSUPP));
+        assert!(!drops(libc::ENOSPC));
+        assert!(!drops(libc::EIO));
+        assert!(!drops(libc::E2BIG));
+    }
+
+    /// A file capability or IMA/EVM hash/signature vouches for the old bytes
+    /// and must not be carried over to new content; ordinary attributes are.
+    #[cfg(unix)]
+    #[test]
+    fn content_bound_xattrs_are_recognized() {
+        let bound = |name: &str| StdFileSystem::xattr_is_content_bound(name.as_ref());
+        assert!(bound("security.capability"));
+        assert!(bound("security.ima"));
+        assert!(bound("security.evm"));
+        assert!(!bound("security.selinux"));
+        assert!(!bound("system.posix_acl_access"));
+        assert!(!bound("user.xdg.origin.url"));
+    }
+
+    /// A file capability grants privileges to the executable's *content*;
+    /// copying it onto whatever root just saved would hand those privileges
+    /// to new code.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn file_capability_is_not_carried_to_new_content() {
+        let fs = StdFileSystem;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tool");
+        std::fs::write(&path, b"old\n").unwrap();
+        // VFS_CAP_REVISION_2, no flags; permitted = CAP_NET_RAW (bit 13).
+        let mut cap = Vec::new();
+        for word in [0x0200_0000u32, 1 << 13, 0, 0, 0] {
+            cap.extend_from_slice(&word.to_le_bytes());
+        }
+        if let Err(e) = xattr::set(&path, "security.capability", &cap) {
+            eprintln!("skipping: can't set a file capability here ({e})");
+            return;
+        }
+
+        fs.write_file(&path, b"new\n").unwrap();
+
+        assert_eq!(std::fs::read(&path).unwrap(), b"new\n");
+        assert_eq!(xattr::get(&path, "security.capability").unwrap(), None);
     }
 
     #[test]

@@ -333,12 +333,6 @@ impl Overlay {
         self
     }
 
-    /// Set the namespace
-    pub fn with_namespace_value(mut self, namespace: OverlayNamespace) -> Self {
-        self.namespace = Some(namespace);
-        self
-    }
-
     /// Set whether to extend the overlay to the end of the visual line
     pub fn with_extend_to_line_end(mut self, extend: bool) -> Self {
         self.extend_to_line_end = extend;
@@ -840,16 +834,6 @@ impl OverlayManager {
             .collect()
     }
 
-    /// Get overlay by handle
-    pub fn get_by_handle(&self, handle: &OverlayHandle) -> Option<&Overlay> {
-        self.overlays.iter().find(|o| &o.handle == handle)
-    }
-
-    /// Get mutable overlay by handle
-    pub fn get_by_handle_mut(&mut self, handle: &OverlayHandle) -> Option<&mut Overlay> {
-        self.overlays.iter_mut().find(|o| &o.handle == handle)
-    }
-
     /// Get total number of overlays
     pub fn len(&self) -> usize {
         self.overlays.len()
@@ -982,113 +966,6 @@ impl Default for OverlayManager {
     }
 }
 
-/// Helper functions for creating common overlay types
-impl Overlay {
-    /// Create an error underline overlay (wavy red line)
-    pub fn error(
-        marker_list: &mut MarkerList,
-        range: Range<usize>,
-        message: Option<String>,
-    ) -> Self {
-        let mut overlay = Self::with_priority(
-            marker_list,
-            range,
-            OverlayFace::Underline {
-                color: Color::Red,
-                style: UnderlineStyle::Wavy,
-            },
-            10, // Higher priority for errors
-        );
-        overlay.message = message;
-        overlay
-    }
-
-    /// Create a warning underline overlay (wavy yellow line)
-    pub fn warning(
-        marker_list: &mut MarkerList,
-        range: Range<usize>,
-        message: Option<String>,
-    ) -> Self {
-        let mut overlay = Self::with_priority(
-            marker_list,
-            range,
-            OverlayFace::Underline {
-                color: Color::Yellow,
-                style: UnderlineStyle::Wavy,
-            },
-            5, // Medium priority for warnings
-        );
-        overlay.message = message;
-        overlay
-    }
-
-    /// Create an info underline overlay (wavy blue line)
-    pub fn info(
-        marker_list: &mut MarkerList,
-        range: Range<usize>,
-        message: Option<String>,
-    ) -> Self {
-        let mut overlay = Self::with_priority(
-            marker_list,
-            range,
-            OverlayFace::Underline {
-                color: Color::Blue,
-                style: UnderlineStyle::Wavy,
-            },
-            3, // Lower priority for info
-        );
-        overlay.message = message;
-        overlay
-    }
-
-    /// Create a hint underline overlay (dotted gray line)
-    pub fn hint(
-        marker_list: &mut MarkerList,
-        range: Range<usize>,
-        message: Option<String>,
-    ) -> Self {
-        let mut overlay = Self::with_priority(
-            marker_list,
-            range,
-            OverlayFace::Underline {
-                color: Color::Gray,
-                style: UnderlineStyle::Dotted,
-            },
-            1, // Lowest priority for hints
-        );
-        overlay.message = message;
-        overlay
-    }
-
-    /// Create a selection highlight overlay
-    pub fn selection(marker_list: &mut MarkerList, range: Range<usize>) -> Self {
-        let mut overlay = Self::with_priority(
-            marker_list,
-            range,
-            OverlayFace::Background {
-                color: Color::Rgb(38, 79, 120), // VSCode-like selection color
-            },
-            -10, // Very low priority so it's under other overlays
-        );
-        overlay.theme_key = Some("editor.selection_bg");
-        overlay
-    }
-
-    /// Create a search result highlight overlay
-    pub fn search_match(marker_list: &mut MarkerList, range: Range<usize>) -> Self {
-        let mut overlay = Self::with_priority(
-            marker_list,
-            range,
-            OverlayFace::Background {
-                color: Color::Rgb(72, 72, 0), // Yellow-ish highlight
-            },
-            -5, // Low priority
-        );
-        overlay.theme_key = Some("search.match_bg");
-        overlay
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1179,7 +1056,7 @@ mod tests {
         );
         mgr.check_invariants();
         assert!(
-            mgr.namespace_to_idx.get(&scratch).is_none(),
+            !mgr.namespace_to_idx.contains_key(&scratch),
             "the cleared namespace leaves no index entry behind"
         );
         // Every surviving overlay must be findable at its recorded index.

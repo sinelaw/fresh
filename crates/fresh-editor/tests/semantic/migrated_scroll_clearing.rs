@@ -73,7 +73,7 @@ fn scroll_test_file_path() -> std::path::PathBuf {
 }
 
 fn many<T: Clone>(item: T, n: usize) -> Vec<T> {
-    std::iter::repeat(item).take(n).collect()
+    std::iter::repeat_n(item, n).collect()
 }
 
 #[test]

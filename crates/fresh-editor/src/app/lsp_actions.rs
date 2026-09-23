@@ -5,7 +5,6 @@
 
 use super::Editor;
 use crate::input::commands::Suggestion;
-use crate::model::event::BufferId;
 use crate::view::prompt::{Prompt, PromptType};
 use fresh_i18n::t;
 
@@ -1251,7 +1250,12 @@ impl Editor {
     /// Creates a temp directory with `fresh.d.ts` + `tsconfig.json` so that
     /// `typescript-language-server` can provide autocomplete and type checking
     /// for plugin buffers (including unsaved/unnamed ones).
-    pub(crate) fn setup_plugin_dev_lsp(&mut self, buffer_id: BufferId, content: &str) {
+    #[cfg(feature = "plugins")]
+    pub(crate) fn setup_plugin_dev_lsp(
+        &mut self,
+        buffer_id: crate::model::event::BufferId,
+        content: &str,
+    ) {
         use crate::services::plugins::plugin_dev_workspace::PluginDevWorkspace;
 
         // Use the exact cached extraction location for fresh.d.ts
@@ -1339,6 +1343,7 @@ impl Editor {
                             first_line.as_deref(),
                             &self.grammar_registry,
                             &self.config.languages,
+                            state.buffer.filesystem().as_ref(),
                         );
                     state.apply_language(detected);
                     state.apply_buffer_config(&self.config);

@@ -159,23 +159,29 @@ fn rows(c: &Confirm) -> Vec<Node<UiMsg>> {
         // `wrap` with `Sizing::Auto`: the column's height is however many rows
         // the question takes at this width, which is what stops a long path or
         // a five-workspace summary from being cut off the way the row cut it.
-        text(format!(" {}", c.body))
-            .wrap()
-            .theme(ink)
-            .h(Sizing::Auto),
+        para(&c.body, ink),
     ];
     if !c.detail.is_empty() {
         out.push(blank());
-        out.push(
-            text(format!(" {}", c.detail))
-                .wrap()
-                .theme(dim)
-                .h(Sizing::Auto),
-        );
+        out.push(para(&c.detail, dim));
     }
     out.push(blank());
     out.push(rule(ring));
     out
+}
+
+/// A wrapped paragraph, inset one column from each border.
+///
+/// **The inset is the box's, not a leading space.** A `" "` prefixed to the
+/// text indented only its first row: every wrapped row after it started hard
+/// against the border, so the paragraph read as ragged. Padding the box keeps
+/// every row — and every `\n`-separated line — on the same left edge, and
+/// leaves the matching column free on the right.
+fn para(s: &str, theme: String) -> Node<UiMsg> {
+    col()
+        .pad(1, 0)
+        .h(Sizing::Auto)
+        .children([text(s).wrap().theme(theme).h(Sizing::Auto)])
 }
 
 fn line(s: String, theme: String) -> Node<UiMsg> {

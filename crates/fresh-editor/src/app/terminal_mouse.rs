@@ -339,51 +339,10 @@ fn convert_kind(kind: MouseEventKind) -> TerminalMouseEventKind {
     }
 }
 
-#[cfg(test)]
-mod convert_kind_tests {
-    use super::*;
-
-    #[test]
-    fn horizontal_wheel_has_a_wire_representation() {
-        assert_eq!(
-            convert_kind(MouseEventKind::ScrollLeft),
-            TerminalMouseEventKind::ScrollLeft
-        );
-        assert_eq!(
-            convert_kind(MouseEventKind::ScrollRight),
-            TerminalMouseEventKind::ScrollRight
-        );
-    }
-
-    #[test]
-    fn other_kinds_are_unchanged() {
-        assert_eq!(
-            convert_kind(MouseEventKind::Down(MouseButton::Left)),
-            TerminalMouseEventKind::Down(TerminalMouseButton::Left)
-        );
-        assert_eq!(
-            convert_kind(MouseEventKind::Drag(MouseButton::Middle)),
-            TerminalMouseEventKind::Drag(TerminalMouseButton::Middle)
-        );
-        assert_eq!(
-            convert_kind(MouseEventKind::Moved),
-            TerminalMouseEventKind::Moved
-        );
-        assert_eq!(
-            convert_kind(MouseEventKind::ScrollUp),
-            TerminalMouseEventKind::ScrollUp
-        );
-        assert_eq!(
-            convert_kind(MouseEventKind::ScrollDown),
-            TerminalMouseEventKind::ScrollDown
-        );
-    }
-}
-
 impl super::Editor {
     /// Begin a text-selection drag on a terminal split that was showing the
     /// live PTY grid when the mouse went down (see
-    /// `MouseState::terminal_drag_pending` — a bare click only focuses).
+    /// `PointerDrag::TerminalPress` — a bare click only focuses).
     ///
     /// Live terminals have no cursor/selection model of their own, so the
     /// split is dropped into read-only scrollback first — exactly the
@@ -406,7 +365,7 @@ impl super::Editor {
         col: u16,
         row: u16,
     ) -> AnyhowResult<()> {
-        self.active_window_mut().mouse_state.terminal_drag_pending = None;
+        self.active_window_mut().mouse_state.drag = None;
 
         let Some(content_rect) =
             self.drop_terminal_grid_into_selection_scrollback(split_id, buffer_id)
@@ -438,10 +397,13 @@ impl super::Editor {
         }
 
         // Hand off to the standard drag machinery for subsequent motion.
-        let ms = &mut self.active_window_mut().mouse_state;
-        ms.dragging_text_selection = true;
-        ms.drag_selection_split = Some(split_id);
-        ms.drag_selection_anchor = Some(anchor);
+        self.active_window_mut().mouse_state.drag = Some(
+            crate::app::types::PointerDrag::Selection(crate::app::types::SelectionDrag {
+                pane: split_id,
+                anchor: Some(anchor),
+                word_end: None,
+            }),
+        );
         Ok(())
     }
 
@@ -457,7 +419,7 @@ impl super::Editor {
         col: u16,
         row: u16,
     ) -> AnyhowResult<()> {
-        self.active_window_mut().mouse_state.terminal_drag_pending = None;
+        self.active_window_mut().mouse_state.drag = None;
 
         let Some(content_rect) =
             self.drop_terminal_grid_into_selection_scrollback(split_id, buffer_id)
@@ -492,12 +454,13 @@ impl super::Editor {
                 (c.selection_start(), c.selection_end())
             })
         {
-            let ms = &mut self.active_window_mut().mouse_state;
-            ms.dragging_text_selection = true;
-            ms.drag_selection_split = Some(split_id);
-            ms.drag_selection_anchor = Some(sel_start);
-            ms.drag_selection_by_words = true;
-            ms.drag_selection_word_end = Some(sel_end);
+            self.active_window_mut().mouse_state.drag = Some(
+                crate::app::types::PointerDrag::Selection(crate::app::types::SelectionDrag {
+                    pane: split_id,
+                    anchor: Some(sel_start),
+                    word_end: Some(sel_end),
+                }),
+            );
         }
         Ok(())
     }
@@ -511,7 +474,7 @@ impl super::Editor {
         col: u16,
         row: u16,
     ) -> AnyhowResult<()> {
-        self.active_window_mut().mouse_state.terminal_drag_pending = None;
+        self.active_window_mut().mouse_state.drag = None;
 
         let Some(content_rect) =
             self.drop_terminal_grid_into_selection_scrollback(split_id, buffer_id)
@@ -604,8 +567,7 @@ impl super::Editor {
         let grid_row = row.saturating_sub(content_rect.y) as usize;
         // Account for horizontal scroll (a pinned view starts at 0, but an
         // explicit scrollback view may have been scrolled right).
-        let grid_col =
-            col.saturating_sub(content_rect.x) as usize + vs.viewport.left_column as usize;
+        let grid_col = col.saturating_sub(content_rect.x) as usize + vs.viewport.left_column;
 
         // Grid-wrapped scroll-back (fresh#2649): visual rows are exact-column
         // wrap segments of the logical lines, so walk the segments from the
@@ -663,5 +625,46 @@ impl super::Editor {
             .buffer
             .line_col_to_position(top_line + grid_row, grid_col);
         Some(state.buffer.snap_to_char_boundary(pos))
+    }
+}
+
+#[cfg(test)]
+mod convert_kind_tests {
+    use super::*;
+
+    #[test]
+    fn horizontal_wheel_has_a_wire_representation() {
+        assert_eq!(
+            convert_kind(MouseEventKind::ScrollLeft),
+            TerminalMouseEventKind::ScrollLeft
+        );
+        assert_eq!(
+            convert_kind(MouseEventKind::ScrollRight),
+            TerminalMouseEventKind::ScrollRight
+        );
+    }
+
+    #[test]
+    fn other_kinds_are_unchanged() {
+        assert_eq!(
+            convert_kind(MouseEventKind::Down(MouseButton::Left)),
+            TerminalMouseEventKind::Down(TerminalMouseButton::Left)
+        );
+        assert_eq!(
+            convert_kind(MouseEventKind::Drag(MouseButton::Middle)),
+            TerminalMouseEventKind::Drag(TerminalMouseButton::Middle)
+        );
+        assert_eq!(
+            convert_kind(MouseEventKind::Moved),
+            TerminalMouseEventKind::Moved
+        );
+        assert_eq!(
+            convert_kind(MouseEventKind::ScrollUp),
+            TerminalMouseEventKind::ScrollUp
+        );
+        assert_eq!(
+            convert_kind(MouseEventKind::ScrollDown),
+            TerminalMouseEventKind::ScrollDown
+        );
     }
 }

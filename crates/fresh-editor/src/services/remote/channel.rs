@@ -120,6 +120,14 @@ type BoxedWriter = Box<dyn AsyncWrite + Unpin + Send>;
 /// this channel, without the channel knowing anything about windows.
 static NEXT_CHANNEL_ID: AtomicU64 = AtomicU64::new(1);
 
+/// A streaming request in flight: its id, the stream of partial results,
+/// and the final result.
+pub type StreamingRequest = (
+    u64,
+    mpsc::Receiver<serde_json::Value>,
+    oneshot::Receiver<Result<serde_json::Value, String>>,
+);
+
 /// Communication channel with the remote agent
 pub struct AgentChannel {
     /// Stable identity for this channel, assigned at creation. Survives
@@ -571,14 +579,7 @@ impl AgentChannel {
         &self,
         method: &str,
         params: serde_json::Value,
-    ) -> Result<
-        (
-            u64,
-            mpsc::Receiver<serde_json::Value>,
-            oneshot::Receiver<Result<serde_json::Value, String>>,
-        ),
-        ChannelError,
-    > {
+    ) -> Result<StreamingRequest, ChannelError> {
         if !self.is_connected() {
             return Err(ChannelError::ChannelClosed);
         }
@@ -808,14 +809,7 @@ impl AgentChannel {
         &self,
         method: &str,
         params: serde_json::Value,
-    ) -> Result<
-        (
-            u64,
-            mpsc::Receiver<serde_json::Value>,
-            oneshot::Receiver<Result<serde_json::Value, String>>,
-        ),
-        ChannelError,
-    > {
+    ) -> Result<StreamingRequest, ChannelError> {
         self.block_on_request(self.request_streaming_id(method, params))?
     }
 

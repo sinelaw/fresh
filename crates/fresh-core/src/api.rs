@@ -1734,6 +1734,16 @@ pub struct EditorStateSnapshot {
     /// When set, this mode's keybindings take precedence over normal key handling
     pub editor_mode: Option<String>,
 
+    /// Which widget holds each mounted panel's focus, per owning plugin:
+    /// plugin name → panel id → widget key (`""` for none). The host's
+    /// fact (`WidgetRegistry::decide_focus`), published before every
+    /// `widget_event` and every plugin action runs, so
+    /// `editor.getPanelFocusKey` answers what the host decided rather than
+    /// a copy the plugin keeps and has to keep in step.
+    #[serde(skip)]
+    #[ts(skip)]
+    pub panel_focus: HashMap<String, HashMap<u64, String>>,
+
     /// Plugin-managed per-buffer view state for the active split.
     /// Updated from BufferViewState.plugin_state during snapshot updates.
     /// Also written directly by JS plugins via setViewState for immediate read-back.
@@ -1860,6 +1870,7 @@ impl EditorStateSnapshot {
             available_grammars: Vec::new(),
             last_grammar_gen: 0,
             editor_mode: None,
+            panel_focus: HashMap::new(),
             plugin_view_states: HashMap::new(),
             plugin_view_states_split: 0,
             plugin_markers: HashMap::new(),
@@ -2212,6 +2223,43 @@ pub struct TreeNode {
     /// whose chrome has nowhere to put one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub action: Option<String>,
+    /// **A table row.** When the parent `Tree` declares `columns`, a node
+    /// that carries cells is drawn from them — one per column, each fitted
+    /// to its column at the width layout gives the tree and elided at the
+    /// end its column says — instead of from `text`. A node with no cells
+    /// (a group heading) is drawn from `text` across the whole row.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cells: Vec<TableCell>,
+}
+
+/// One cell of a table row (`TreeNode::cells`).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+#[ts(export, rename_all = "camelCase")]
+pub struct TableCell {
+    pub text: String,
+    /// The cell's ink (a theme key or colour), e.g. dimmed secondary cells.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "Partial<OverlayOptions>")]
+    pub style: Option<OverlayOptions>,
+}
+
+/// One column of a table (`Tree::columns`).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+#[ts(export, rename_all = "camelCase")]
+pub struct TableColumn {
+    /// The header row's title over this column.
+    #[serde(default)]
+    pub title: String,
+    /// Which end of a cell too wide for its column goes: `head` keeps the
+    /// tail (a path), `tail` keeps the head (a name). The default keeps the
+    /// head.
+    #[serde(default)]
+    pub elide: Elide,
+    /// The widest this column grows, in display columns; `0` for no cap.
+    #[serde(default)]
+    pub max_width: u32,
 }
 
 /// How a row asks to be windowed when it is wider than the panel.
@@ -2385,6 +2433,12 @@ pub enum WidgetSpec {
         /// before this field was read on that path it stayed flush left.
         #[serde(default)]
         label_width: u32,
+        /// The keyboard accelerator's letter, underlined where it first
+        /// appears in `label` (case-insensitively) — the classic menu-bar
+        /// mnemonic, so `Alt+L` reads as the `l` in `Files`. Absent, or a
+        /// letter the label does not contain, underlines nothing.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        mnemonic: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         key: Option<String>,
     },
@@ -2792,6 +2846,14 @@ pub enum WidgetSpec {
         /// dispatch.
         #[serde(default = "default_true")]
         focusable: bool,
+        /// Typing jumps the selection to the next item whose text starts
+        /// with what was typed (the listbox pattern's type-ahead). Off by
+        /// default: a list that is a command surface — Git Log's `q`, a
+        /// dock's single-key actions — binds those letters in its mode, and
+        /// the focused widget is asked first. Turn it on for a list of names
+        /// to find, such as a file browser.
+        #[serde(default)]
+        type_ahead: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         key: Option<String>,
     },
@@ -2875,6 +2937,18 @@ pub enum WidgetSpec {
         /// the disclosure glyph (or the blank standing in for one).
         #[serde(default = "default_tree_indent_cols")]
         indent_cols: u32,
+        /// When true, a click anywhere on a node with children toggles its
+        /// expansion (and selects it), not only a click on the disclosure
+        /// glyph. The toggle fires `expand` with `{ index, key, expanded }`.
+        #[serde(default)]
+        toggle_on_click: bool,
+        /// **A table.** Columns declared here turn every node that carries
+        /// `cells` into a row of them: the host measures the cells, fits the
+        /// columns to the width layout gives the tree (the widest gives
+        /// first), elides each cell at its column's end, and draws a header
+        /// row of the titles above the tree. Empty (default): a plain tree.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        columns: Vec<TableColumn>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         key: Option<String>,
     },
@@ -3006,6 +3080,18 @@ pub enum WidgetSpec {
         /// more to scroll. `0` (default) falls back to `5`.
         #[serde(default)]
         completions_visible_rows: u32,
+        /// A multi-line field that **grows with its text**: the smallest
+        /// number of editing rows it shows (`rows` when `0`). Only read when
+        /// `max_rows` is set.
+        #[serde(default)]
+        min_rows: u32,
+        /// A multi-line field that **grows with its text**: when `> 0`, the
+        /// editing region is as tall as its value wraps to — at the width
+        /// layout actually gives it — between `min_rows` and this, and
+        /// scrolls (keeping its caret in view) past it. `0` (default): the
+        /// region is `rows` tall, as before.
+        #[serde(default)]
+        max_rows: u32,
         /// Paint the caret as a REVERSED block cell inside the row
         /// (in addition to publishing the hardware-cursor position).
         /// Modal form surfaces (e.g. Settings) use this — a hardware
@@ -3048,6 +3134,19 @@ pub enum WidgetSpec {
         /// changes via a spec update.
         #[serde(default)]
         markdown: bool,
+        /// A single-line field that offers a list of values to pick from as
+        /// well as free text — a combo box (the ARIA combobox pattern). Drawn
+        /// with a `▼` in the last cell inside its `]` (`▲` while its
+        /// completion list is open), so the field says it has a list before
+        /// it is focused. The list itself is still the plugin's
+        /// `completions`: with the list closed, ↓ / Alt+↓ or a press on the
+        /// arrow fires `completion_request`, which the plugin answers with
+        /// `setCompletions`; a press on the arrow with the list open closes
+        /// it (`completion_dismiss`). Opening on focus is left out on
+        /// purpose — a list that opens as a form is walked covers the fields
+        /// under it. Defaults to `false`.
+        #[serde(default)]
+        combo: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         key: Option<String>,
     },
@@ -4607,6 +4706,13 @@ pub enum PluginCommand {
     /// footer. Has no visible effect on non-overlay prompts.
     SetPromptFooter { footer: Vec<StyledText> },
 
+    /// Centre the floating-overlay prompt's card on the whole frame (90% of
+    /// it, over the dock and sidebar, as the Settings dialog is) instead of
+    /// on the chrome area beside the dock — the prompt's counterpart of
+    /// `FloatingPanelControl`'s `fullscreen`.
+    /// Has no visible effect on non-overlay prompts.
+    SetPromptFullscreen { fullscreen: bool },
+
     /// Plugin-supplied toolbar for the floating-overlay prompt's header
     /// band, as a `WidgetSpec` (a `Row`/`Col` of `Toggle`s/`Button`s). Unlike
     /// `SetPromptTitle` (styled text), these are real widgets: they render
@@ -4835,6 +4941,16 @@ pub enum PluginCommand {
         inherit_normal_bindings: bool,
         /// Name of the plugin that defined this mode (for attribution)
         plugin_name: Option<String>,
+        /// Keys (as in `bindings`) the plugin declared **dialog-wide
+        /// shortcuts**: on a widget panel they run ahead of the focused
+        /// control. Every other binding gets only the keys the focused
+        /// control does not use.
+        #[serde(default)]
+        shortcuts: Vec<String>,
+        /// Bindings (by key, as in `bindings`) scoped to named controls: each
+        /// applies only while one of its widgets holds the panel's focus.
+        #[serde(default)]
+        scoped: Vec<(String, Vec<String>)>,
     },
 
     /// Switch the current split to display a buffer
@@ -6079,8 +6195,9 @@ pub enum PluginCommand {
         /// resolve against first — the panel's own keymap, ahead of the
         /// widget that holds focus. A dock declares its chords here rather
         /// than through the window's editor mode, which is the buffer's
-        /// and would shadow or be shadowed by it. `None` keeps the
-        /// window's editor mode as the panel's keymap, as before.
+        /// and would shadow or be shadowed by it. `None`: the panel has no
+        /// keymap — the keys its focused control passes go to the panel's
+        /// own defaults (Tab, Esc), never to the window's editor mode.
         #[serde(default)]
         mode: Option<String>,
     },
@@ -7730,6 +7847,12 @@ impl PluginApi {
         self.send_command(PluginCommand::SetPromptFooter { footer })
     }
 
+    /// Centre the floating-overlay prompt's card on the whole frame
+    /// (`true`) or on the chrome area beside the dock (`false`).
+    pub fn set_prompt_fullscreen(&self, fullscreen: bool) -> Result<(), String> {
+        self.send_command(PluginCommand::SetPromptFullscreen { fullscreen })
+    }
+
     /// Set the floating-overlay prompt's toolbar as a `WidgetSpec` (real,
     /// clickable `Toggle`/`Button` widgets). `None` clears it. `plugin` is
     /// the plugin the toolbar's `widget_event`s go back to.
@@ -7871,6 +7994,8 @@ impl PluginApi {
             allow_text_input,
             inherit_normal_bindings: false,
             plugin_name: None,
+            shortcuts: Vec::new(),
+            scoped: Vec::new(),
         })
     }
 
@@ -8979,7 +9104,7 @@ mod tests {
                 false,
             ),
             PluginCommand::DefineMode {
-                name, bindings, read_only, allow_text_input, inherit_normal_bindings, plugin_name
+                name, bindings, read_only, allow_text_input, inherit_normal_bindings, plugin_name, ..
             }
                 if name == "m"
                     && bindings.len() == 1

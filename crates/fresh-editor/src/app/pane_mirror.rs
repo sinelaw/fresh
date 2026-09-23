@@ -100,7 +100,8 @@ impl Editor {
         // there, so its view has nothing to scroll sideways to; the caret
         // below can sit at the end of a full row, and cursor-following would
         // otherwise drag the whole panel left by a column.
-        self.pin_widget_panel_horizontal_scroll(buffer);
+        self.active_window_mut()
+            .pin_widget_panel_horizontal_scroll(buffer);
         // **A page's cursor is the reader's**, seated by `move_page_reader`
         // from the reading position the caret marker is drawn *from*; seating
         // it here again would only round-trip that position through the row
@@ -138,11 +139,7 @@ impl Editor {
         let Some(byte) = byte else {
             return;
         };
-        for vs in window
-            .split_view_states_mut()
-            .expect("active window must have a populated split layout")
-            .values_mut()
-        {
+        for vs in window.split_view_states_mut().values_mut() {
             if vs.buffer_state(buffer).is_some() {
                 vs.cursors.primary_mut().position = byte;
             }

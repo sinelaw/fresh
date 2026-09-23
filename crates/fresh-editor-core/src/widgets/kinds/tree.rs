@@ -206,10 +206,16 @@ impl WidgetImpl for Tree {
                 // a click on its `[v]`/`[ ]` glyph would do). Falls
                 // back to `activate` for trees that aren't checkable,
                 // or rows without a checkbox glyph (`checked: None`).
+                //
+                // The fallback says it came from Space (`via: "space"`): a
+                // plugin whose Enter "opens" a row can tell the two apart and
+                // leave Space inert, now that the focused tree answers Space
+                // before the plugin's own bindings do.
                 if let Some(ev) = toggle_if_checkable_event(spec, widget_key, panel) {
                     fx.events.push(ev);
-                } else if let Some(ev) = activate_event(spec, widget_key, panel) {
-                    fx.events.push(ev);
+                } else if let Some((name, mut payload)) = activate_event(spec, widget_key, panel) {
+                    payload["via"] = json!("space");
+                    fx.events.push((name, payload));
                 }
             }
             _ => return super::KeyDisposition::Pass,
@@ -246,7 +252,6 @@ impl WidgetImpl for Tree {
                 let Resolved {
                     selected: cur_sel,
                     mut expanded,
-                    user_scrolled: cur_user_scrolled,
                 } = resolve(spec, widget_key, &panel.instance_states);
                 let now_expanded = if expanded.contains(item_key) {
                     expanded.remove(item_key);
@@ -260,9 +265,6 @@ impl WidgetImpl for Tree {
                     WidgetInstanceState::Tree {
                         selected_index: cur_sel,
                         expanded_keys: expanded,
-                        // A disclosure click doesn't move the selection —
-                        // keep the user's scroll suppression as-is.
-                        user_scrolled: cur_user_scrolled,
                     },
                 );
                 fx.key.events.push((
@@ -274,6 +276,40 @@ impl WidgetImpl for Tree {
             // A press on a row's action button is also a press on the row:
             // the selection follows it, so what the plugin then does happens
             // to the row the reader is looking at.
+            // With `toggle_on_click`, a press on a heading's body is a press
+            // on its disclosure glyph too: it selects the row and flips it.
+            "select" if toggles_on_click(spec, payload) => {
+                let (Some(idx), Some(item_key)) = (
+                    payload.get("index").and_then(|v| v.as_i64()),
+                    payload.get("key").and_then(|v| v.as_str()),
+                ) else {
+                    return super::PointerDisposition::Default;
+                };
+                let Resolved { mut expanded, .. } =
+                    resolve(spec, widget_key, &panel.instance_states);
+                let now_expanded = if expanded.remove(item_key) {
+                    false
+                } else {
+                    expanded.insert(item_key.to_string());
+                    true
+                };
+                panel.instance_states.insert(
+                    widget_key.to_string(),
+                    WidgetInstanceState::Tree {
+                        selected_index: idx as i32,
+                        expanded_keys: expanded,
+                    },
+                );
+                fx.key.events.push((
+                    "expand".to_string(),
+                    serde_json::json!({
+                        "index": idx,
+                        "key": item_key,
+                        "expanded": now_expanded,
+                    }),
+                ));
+                super::PointerDisposition::Consumed
+            }
             "select" | "action" => {
                 if let Some(idx) = payload.get("index").and_then(|v| v.as_i64()) {
                     panel.set_selected_index(widget_key, idx as i32);
@@ -283,6 +319,30 @@ impl WidgetImpl for Tree {
             _ => super::PointerDisposition::Default,
         }
     }
+}
+
+/// Whether a row-body click described by `payload` should toggle the
+/// row's expansion: the tree opted in with `toggle_on_click` and the
+/// row is a keyed node with children.
+fn toggles_on_click(spec: &WidgetSpec, payload: &serde_json::Value) -> bool {
+    let WidgetSpec::Tree {
+        nodes,
+        toggle_on_click: true,
+        ..
+    } = spec
+    else {
+        return false;
+    };
+    let keyed = payload
+        .get("key")
+        .and_then(|v| v.as_str())
+        .is_some_and(|k| !k.is_empty());
+    keyed
+        && payload
+            .get("index")
+            .and_then(|v| v.as_u64())
+            .and_then(|i| nodes.get(i as usize))
+            .is_some_and(|n| n.has_children)
 }
 
 /// A `Tree`'s state, once the spec and the instance map have been
@@ -302,8 +362,6 @@ pub struct Resolved {
     /// The expanded-key set: the stored one once anything has expanded
     /// or collapsed a node, the spec's seed until then.
     pub expanded: HashSet<String>,
-    /// Whether the user has taken the window off the selection by mouse.
-    pub user_scrolled: bool,
 }
 
 /// **Where a `Tree`'s selection and expansion actually come from.**
@@ -344,16 +402,13 @@ pub fn resolve_seeded(
         Some(WidgetInstanceState::Tree {
             selected_index,
             expanded_keys,
-            user_scrolled,
         }) => Resolved {
             selected: *selected_index,
             expanded: expanded_keys.clone(),
-            user_scrolled: *user_scrolled,
         },
         _ => Resolved {
             selected: spec_selected,
             expanded: spec_expanded.iter().cloned().collect(),
-            user_scrolled: false,
         },
     }
 }
@@ -361,8 +416,7 @@ pub fn resolve_seeded(
 /// Move the host-owned selection by `delta` along the visible-flat
 /// order (descendants of collapsed nodes are skipped — selection is
 /// the *absolute* `nodes` index, so we walk the visible order to
-/// find the neighbour), re-arming scroll-follows-selection, and
-/// queue `select`. Also requests the host's scrollbar flash so
+/// find the neighbour), and queue `select`. Also requests the host's scrollbar flash so
 /// keyboard nav in an overflowing dock list stays oriented.
 pub fn select_move(
     spec: &WidgetSpec,
@@ -410,9 +464,6 @@ pub fn select_move(
         WidgetInstanceState::Tree {
             selected_index: new_abs as i32,
             expanded_keys: expanded,
-            // Keyboard nav is a deliberate selection move —
-            // re-arm scroll-follows-selection.
-            user_scrolled: false,
         },
     );
     fx.flash_scrollbar = true;
@@ -450,7 +501,6 @@ pub fn lateral(
     let Resolved {
         selected: cur_sel,
         mut expanded,
-        user_scrolled: cur_user_scrolled,
     } = resolve(spec, widget_key, &panel.instance_states);
     if cur_sel < 0 {
         return;
@@ -485,10 +535,6 @@ pub fn lateral(
         WidgetInstanceState::Tree {
             selected_index: new_sel,
             expanded_keys: expanded,
-            // Jumping to the parent is a deliberate selection
-            // move (re-arm follow); a pure expansion flip keeps
-            // the user's scroll intact.
-            user_scrolled: cur_user_scrolled && new_sel == cur_sel,
         },
     );
     if let Some(now_expanded) = expansion_changed {
@@ -593,4 +639,117 @@ pub fn collect_visible_tree_indices(
         ancestor_open.push(is_open);
     }
     visible
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::widgets::kinds::WidgetImpl;
+    use fresh_core::api::TreeNode;
+    use fresh_core::text_property::TextPropertyEntry;
+
+    fn node(text: &str, depth: u32, has_children: bool) -> TreeNode {
+        TreeNode {
+            text: TextPropertyEntry::text(text),
+            depth,
+            has_children,
+            checked: None,
+            extra_lines: Vec::new(),
+            window_anchor: None,
+            cells: Vec::new(),
+            action: None,
+        }
+    }
+
+    fn tree(toggle_on_click: bool) -> WidgetSpec {
+        WidgetSpec::Tree {
+            nodes: vec![node("group", 0, true), node("leaf", 1, false)],
+            item_keys: vec!["g".into(), "l".into()],
+            selected_index: -1,
+            visible_rows: Some(5),
+            expanded_keys: vec![],
+            checkable: false,
+            item_height: 1,
+            card_borders: false,
+            toggle_on_click,
+            indent_cols: 2,
+            columns: Vec::new(),
+            key: Some("t".into()),
+        }
+    }
+
+    fn panel_of(spec: &WidgetSpec) -> crate::widgets::WidgetPanelState {
+        crate::widgets::WidgetPanelState {
+            buffer_id: None,
+            spec: spec.clone(),
+            instance_states: HashMap::new(),
+            focus_key: String::new(),
+            auto_focus_first: true,
+            page: false,
+            focus_follows_cursor: false,
+            hovered_widget_key: String::new(),
+            hovered_item_key: String::new(),
+            h_pan: Default::default(),
+        }
+    }
+
+    fn click(
+        spec: &WidgetSpec,
+        panel: &mut crate::widgets::WidgetPanelState,
+        index: i64,
+        key: &str,
+    ) -> (super::super::PointerDisposition, super::super::PointerFx) {
+        let mut fx = super::super::PointerFx::default();
+        let d = Tree.on_pointer(
+            spec,
+            "t",
+            panel,
+            "select",
+            &json!({ "index": index, "key": key }),
+            &mut fx,
+        );
+        (d, fx)
+    }
+
+    #[test]
+    fn a_row_click_on_a_heading_toggles_it_when_opted_in() {
+        let spec = tree(true);
+        let mut panel = panel_of(&spec);
+        let (d, fx) = click(&spec, &mut panel, 0, "g");
+        assert!(matches!(d, super::super::PointerDisposition::Consumed));
+        assert_eq!(fx.key.events.len(), 1);
+        assert_eq!(fx.key.events[0].0, "expand");
+        assert_eq!(fx.key.events[0].1["expanded"], true);
+        assert_eq!(fx.key.events[0].1["index"], 0);
+        let r = resolve(&spec, "t", &panel.instance_states);
+        assert_eq!(r.selected, 0, "the click selects the heading");
+        assert!(r.expanded.contains("g"));
+
+        let (_, fx) = click(&spec, &mut panel, 0, "g");
+        assert_eq!(
+            fx.key.events[0].1["expanded"], false,
+            "a second click folds it"
+        );
+        assert!(!resolve(&spec, "t", &panel.instance_states)
+            .expanded
+            .contains("g"));
+    }
+
+    #[test]
+    fn a_row_click_on_a_leaf_or_without_the_flag_only_selects() {
+        let spec = tree(true);
+        let mut panel = panel_of(&spec);
+        let (d, fx) = click(&spec, &mut panel, 1, "l");
+        assert!(matches!(d, super::super::PointerDisposition::Default));
+        assert!(fx.key.events.is_empty());
+        assert_eq!(resolve(&spec, "t", &panel.instance_states).selected, 1);
+
+        let spec = tree(false);
+        let mut panel = panel_of(&spec);
+        let (d, _) = click(&spec, &mut panel, 0, "g");
+        assert!(matches!(d, super::super::PointerDisposition::Default));
+        assert!(resolve(&spec, "t", &panel.instance_states)
+            .expanded
+            .is_empty());
+    }
 }

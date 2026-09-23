@@ -523,7 +523,7 @@ mod tests {
                     UiMsg::Ui(UiFact::Hover(t)) => Some(t.clone()),
                     _ => None,
                 })
-                .last(),
+                .next_back(),
             Some(Some(HoverTarget::SearchOptionRegex))
         );
     }

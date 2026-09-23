@@ -454,6 +454,16 @@ pub enum AsyncMessage {
         params: Option<Value>,
     },
 
+    /// LSP server notification (server -> client) whose method the editor
+    /// does not handle itself (e.g. clangd's `textDocument/clangd.fileStatus`).
+    /// Forwarded to plugins via the `lsp/custom_notification` hook.
+    LspCustomNotification {
+        language: String,
+        server_name: String,
+        method: String,
+        params: Option<Value>,
+    },
+
     /// Response for a plugin-initiated LSP request
     PluginLspResponse {
         language: String,
@@ -657,16 +667,6 @@ impl AsyncBridge {
         }
 
         messages
-    }
-
-    /// Check if there are pending messages (non-blocking)
-    pub fn has_messages(&self) -> bool {
-        // Note: This is racy but safe - only used for optimization
-        if let Ok(receiver) = self.receiver.lock() {
-            receiver.try_recv().is_ok()
-        } else {
-            false
-        }
     }
 }
 

@@ -521,7 +521,7 @@ impl EditorServer {
             // Process input events
             if !input_events.is_empty() {
                 self.last_client_activity = Instant::now();
-                for event in input_events {
+                for event in crate::server::input_parser::coalesce_motion(input_events) {
                     if self.handle_event(event)? {
                         needs_render = true;
                     }
@@ -656,33 +656,13 @@ impl EditorServer {
             std::thread::sleep(Duration::from_millis(5));
         }
 
-        // Perform the same shutdown sequence as the normal (non-daemon) exit path
-        // in run_event_loop_common: auto-save, end recovery session, save workspace.
+        // The same shutdown sequence as the normal (non-daemon) exit path in
+        // run_event_loop_common — see `Editor::persist_on_exit`.
         if let Some(ref mut editor) = self.editor {
-            // Auto-save file-backed buffers to disk before exiting
-            if editor.config().editor.auto_save_enabled {
-                match editor.save_all_on_exit() {
-                    Ok(count) if count > 0 => {
-                        tracing::info!("Auto-saved {} buffer(s) on exit", count);
-                    }
-                    Ok(_) => {}
-                    Err(e) => {
-                        tracing::warn!("Failed to auto-save on exit: {}", e);
-                    }
-                }
+            // Each failure is logged inside; none blocks shutdown.
+            if let Err(e) = editor.persist_on_exit(true) {
+                tracing::debug!("Shutdown persistence incomplete: {e}");
             }
-
-            // End recovery session first (flushes dirty buffers + assigns recovery IDs),
-            // then save workspace (captures those IDs for next workspace restore).
-            if let Err(e) = editor.end_recovery_session() {
-                tracing::warn!("Failed to end recovery session: {}", e);
-            }
-            if let Err(e) = editor.save_all_windows_workspaces() {
-                tracing::warn!("Failed to save workspaces: {}", e);
-            } else {
-                tracing::debug!("Workspaces saved successfully");
-            }
-            editor.save_dock_chrome();
         }
 
         // Clean shutdown
@@ -1658,12 +1638,15 @@ mod wave_dismiss_tests {
             full_width: true,
             completions: Vec::new(),
             completions_visible_rows: 0,
+            min_rows: 0,
+            max_rows: 0,
             block_caret: false,
             sel_start: -1,
             sel_end: -1,
             label_width: 0,
             read_only: false,
             markdown: false,
+            combo: false,
             key: Some("field".to_string()),
         };
         editor.widget_registry.mount(

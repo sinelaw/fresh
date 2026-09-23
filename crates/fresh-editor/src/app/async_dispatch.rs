@@ -83,6 +83,7 @@ impl Editor {
     /// races past cancellation its eventual `RemoteAttachReady`/`Failed` is
     /// dropped on arrival (see `remote_attach_was_cancelled`) — so no window is
     /// ever built. This is the host side of the New-Session dialog's Cancel.
+    #[cfg(feature = "plugins")]
     pub(crate) fn cancel_remote_attaches(&mut self) {
         let inflight: Vec<u64> = self.remote_attach_inflight.drain().collect();
         let any = !inflight.is_empty();
@@ -197,10 +198,13 @@ impl Editor {
         // on the next tick). Forcing a render for the bare completion made
         // live_diff's per-keystroke debounce repaint the screen with no
         // change — invisible locally, but real lag over serial (#2100).
+        // A custom LSP notification is the same: it only feeds a plugin
+        // hook, and chatty servers (clangd's per-edit fileStatus) send many.
         let needs_render = messages.iter().any(|m| {
             !matches!(
                 m,
                 AsyncMessage::Plugin(fresh_core::api::PluginAsyncMessage::DelayComplete { .. })
+                    | AsyncMessage::LspCustomNotification { .. }
             )
         });
         tracing::trace!(
@@ -496,6 +500,14 @@ impl Editor {
                 } => {
                     self.handle_lsp_server_request(language, server_command, method, params);
                 }
+                AsyncMessage::LspCustomNotification {
+                    language,
+                    server_name,
+                    method,
+                    params,
+                } => {
+                    self.handle_custom_notification(language, server_name, method, params);
+                }
                 AsyncMessage::PluginLspResponse {
                     language: _,
                     request_id,
@@ -695,6 +707,12 @@ impl Editor {
         );
         self.active_window_mut().status_message = Some(format!("LSP ({}) ready", language));
 
+        // A (re)started server has none of the previous process's
+        // semantic-token state: whatever we hold is stale and its `resultId`
+        // is meaningless to the new process, so re-pull with a plain `full`.
+        let provides_semantic_tokens =
+            capabilities.semantic_tokens_full || capabilities.semantic_tokens_range;
+
         // Store capabilities on the specific server handle
         let __active_id = self.active_window;
         if let Some(lsp) = self.windows.get_mut(&__active_id).map(|w| &mut w.lsp) {
@@ -703,6 +721,9 @@ impl Editor {
 
         // Send didOpen for all open buffers of this language
         self.resend_did_open_for_language(&language);
+        if provides_semantic_tokens {
+            self.invalidate_semantic_tokens_for_language(&language, true);
+        }
         self.request_semantic_tokens_for_language(&language);
         self.request_folding_ranges_for_language(&language);
         // Now that capabilities are known, kick off inlay hints
@@ -786,6 +807,11 @@ impl Editor {
 
     /// Handle an LSP server crash/spawn failure: surface it, fire the
     /// `lsp_server_error` hook, and open the stderr log in the background.
+    ///
+    /// A crash the manager is about to retry is treated as transient: only
+    /// the log line and status message survive, so a server that recovers a
+    /// moment later does not leave an install-help popup and a stale stderr
+    /// log tab to accumulate across sessions (issue #3282).
     fn handle_lsp_error(
         &mut self,
         language: String,
@@ -795,6 +821,18 @@ impl Editor {
         tracing::error!("LSP error for {}: {}", language, error);
         self.active_window_mut().status_message =
             Some(format!("LSP error ({}): {}", language, error));
+
+        if self
+            .lsp()
+            .map(|mgr| mgr.has_pending_restart(&language))
+            .unwrap_or(false)
+        {
+            tracing::info!(
+                "Suppressing LSP error UI for {}: a restart is already scheduled",
+                language
+            );
+            return;
+        }
 
         // Get server command from config for the hook
         let server_command = self
@@ -855,10 +893,17 @@ impl Editor {
     fn handle_lsp_apply_edit(&mut self, edit: lsp_types::WorkspaceEdit, label: Option<String>) {
         tracing::info!("Applying workspace edit from server (label: {:?})", label);
         match self.apply_workspace_edit(edit) {
-            Ok(n) => {
+            // A refused operation has already named the file it was about.
+            Ok(applied) if applied.refused > 0 => {}
+            Ok(applied) => {
                 if let Some(label) = label {
                     self.set_status_message(
-                        t!("lsp.code_action_applied", title = &label, count = n).to_string(),
+                        t!(
+                            "lsp.code_action_applied",
+                            title = &label,
+                            count = applied.changes
+                        )
+                        .to_string(),
                     );
                 }
             }
@@ -971,7 +1016,7 @@ impl Editor {
         // jump_to_end_on_output is enabled, snap it back to the live grid.
         //
         // ...but never yank the view away from a text selection: a drag that
-        // just started on the live grid (`terminal_drag_pending`), an
+        // just started on the live grid (`PointerDrag::TerminalPress`), an
         // in-progress selection drag, or a completed selection waiting to be
         // copied all pin the scrollback view. A chatty program would
         // otherwise destroy the selection the instant its next output
@@ -980,17 +1025,21 @@ impl Editor {
         // gone (Ctrl+Space, typing, or a click that collapses it).
         let selection_active = {
             let win = self.active_window();
-            win.mouse_state.dragging_text_selection
-                || win.mouse_state.terminal_drag_pending.is_some()
-                || win
-                    .buffers
-                    .splits()
-                    .and_then(|(mgr, view_states)| view_states.get(&mgr.active_split()))
-                    .map(|vs| {
-                        let c = vs.cursors.primary();
-                        c.anchor.is_some_and(|a| a != c.position)
-                    })
-                    .unwrap_or(false)
+            matches!(
+                win.mouse_state.drag,
+                Some(
+                    crate::app::types::PointerDrag::Selection(_)
+                        | crate::app::types::PointerDrag::TerminalPress { .. }
+                )
+            ) || win
+                .buffers
+                .splits()
+                .and_then(|(mgr, view_states)| view_states.get(&mgr.active_split()))
+                .map(|vs| {
+                    let c = vs.cursors.primary();
+                    c.anchor.is_some_and(|a| a != c.position)
+                })
+                .unwrap_or(false)
         };
         if self.config.terminal.jump_to_end_on_output
             && !self.active_window().focused_terminal_live()
@@ -1351,11 +1400,10 @@ impl Editor {
     /// `terminal_manager.close`) and the terminal-id-keyed maps for the
     /// scrollback files and launch/resume argv.
     fn exited_terminal_record(
-        &self,
+        window: &crate::app::window::Window,
         terminal_id: crate::services::terminal::TerminalId,
         exit_code: Option<i32>,
     ) -> crate::app::window::ExitedTerminal {
-        let window = self.active_window();
         let handle = window.terminal_manager.get(terminal_id);
         let (cols, rows) = handle
             .map(|h| h.size())
@@ -1389,12 +1437,45 @@ impl Editor {
         terminal: fresh_core::WindowTerminalId,
         exit_code: Option<i32>,
     ) {
-        // The message is tagged with its owning window, so the
-        // plugin hook is attributed correctly even for a
-        // background session's terminal.
+        // The message is tagged with its owning window. Terminal ids collide
+        // across windows (every window's manager counts from 0), so all the
+        // teardown below happens in *that* window — resolving the id against
+        // the active window would tear down (and kill) an unrelated terminal
+        // there while leaving the dead one registered as live.
         let terminal_id = terminal.terminal;
         let exited_window_id = terminal.window;
         tracing::info!("Terminal {} exited", terminal);
+        // The owning window may already be gone (closed while its PTY was
+        // winding down); then there is nothing left to tear down, but the
+        // plugin hook below still fires.
+        if let Some(window) = self.windows.get_mut(&exited_window_id) {
+            Self::teardown_exited_terminal(window, terminal_id, exit_code);
+        }
+
+        // Notify plugins after the editor's own exit handling
+        // is complete. Orchestrator's state machine reads this
+        // to transition agents to READY (code 0) or ERRORED.
+        // `exit_code` is currently always `None` here; full
+        // wait-status capture is a follow-up commit.
+        self.plugin_manager.read().unwrap().run_hook(
+            "terminal_exit",
+            crate::services::plugins::hooks::HookArgs::TerminalExited {
+                terminal_id: terminal_id.0 as u64,
+                window_id: exited_window_id.0,
+                exit_code,
+            },
+        );
+    }
+
+    /// Editor-side teardown of an exited terminal, applied to the window that
+    /// owns it: its buffer becomes read-only scrollback and the handle is
+    /// closed. Every piece of state touched here is per-window, so this is
+    /// correct for a background window as well as the active one.
+    fn teardown_exited_terminal(
+        window: &mut crate::app::window::Window,
+        terminal_id: crate::services::terminal::TerminalId,
+        exit_code: Option<i32>,
+    ) {
         // A remote window whose carrier just dropped: its embedded PTY (a
         // separate `ssh -t` / `kubectl exec` from the agent channel) died with
         // the link, not because the user exited the shell. Keep the
@@ -1410,12 +1491,11 @@ impl Editor {
         // normal exit (remote still connected, or any local terminal) falls
         // through to the usual permanent teardown.
         let preserve_for_reconnect = {
-            let fs = &self.active_window().authority().filesystem;
+            let fs = &window.authority().filesystem;
             fs.remote_connection_info().is_some() && !fs.is_remote_connected()
         };
         // Find the buffer associated with this terminal
-        if let Some((&buffer_id, _)) = self
-            .active_window()
+        if let Some((&buffer_id, _)) = window
             .terminal_buffers
             .iter()
             .find(|(_, tb)| tb.terminal_id == terminal_id)
@@ -1427,8 +1507,7 @@ impl Editor {
             // reconnect keeps its per-split live state so it comes back live
             // when the carrier respawns it.
             if !preserve_for_reconnect {
-                let dead_splits: Vec<crate::model::event::LeafId> = self
-                    .active_window()
+                let dead_splits: Vec<crate::model::event::LeafId> = window
                     .buffers
                     .splits()
                     .map(|(_, vs_map)| {
@@ -1440,19 +1519,18 @@ impl Editor {
                     })
                     .unwrap_or_default();
                 for leaf in dead_splits {
-                    self.active_window_mut()
-                        .set_split_terminal_scrollback(leaf, buffer_id, true);
+                    window.set_split_terminal_scrollback(leaf, buffer_id, true);
                 }
             }
 
             // If the focused split was driving this now-dead terminal, leave the
             // Terminal key context (its derived live state is already false).
-            if self.active_buffer() == buffer_id
-                && self.active_window().key_context
-                    == crate::input::keybindings::KeyContext::Terminal
+            // The key context is per-window, so a background window is fixed
+            // up too and doesn't come back in Terminal mode over a dead grid.
+            if window.active_buffer() == buffer_id
+                && window.key_context == crate::input::keybindings::KeyContext::Terminal
             {
-                self.active_window_mut().key_context =
-                    crate::input::keybindings::KeyContext::Normal;
+                window.key_context = crate::input::keybindings::KeyContext::Normal;
             }
 
             // Sync terminal content to buffer (final screen state). This pins
@@ -1466,16 +1544,10 @@ impl Editor {
             // is often the part you wanted. The exit is reported on the tab
             // title and by the status-bar restart indicator instead, neither of
             // which costs a row of output.
-            self.active_window_mut().sync_terminal_to_buffer(buffer_id);
+            window.sync_terminal_to_buffer(buffer_id);
 
             // Ensure buffer remains read-only with no line numbers
-            if let Some(state) = self
-                .windows
-                .get_mut(&self.active_window)
-                .map(|w| &mut w.buffers)
-                .expect("active window present")
-                .get_mut(&buffer_id)
-            {
+            if let Some(state) = window.buffers.get_mut(&buffer_id) {
                 state.editing_disabled = true;
                 state.margins.configure_for_line_numbers(false);
                 state.buffer.set_modified(false);
@@ -1485,21 +1557,20 @@ impl Editor {
             // as a terminal — unless we're holding it for a remote
             // reconnect to respawn in place (see above).
             if !preserve_for_reconnect {
-                self.active_window_mut().terminal_buffers.remove(&buffer_id);
+                window.terminal_buffers.remove(&buffer_id);
                 // Snapshot everything a restart needs *before* the handle is
                 // closed below, so the buffer can be brought back live in
                 // place (palette command / status-bar indicator) with the
                 // same argv precedence a workspace restore would use. The
                 // reconnect path doesn't need this: it keeps the binding and
                 // respawns from the still-intact terminal-id-keyed maps.
-                let mut record = self.exited_terminal_record(terminal_id, exit_code);
+                let mut record = Self::exited_terminal_record(window, terminal_id, exit_code);
                 // Report the exit on the tab instead of in the output. An
                 // explicitly-titled tab (an agent, a named plugin terminal)
                 // keeps its name with a marker appended; an auto-named one has
                 // no live process left to read a name from, so it gets the
                 // marker on its current name and stops being auto-updated
                 // (`sync_terminal_titles` only walks live `terminal_buffers`).
-                let window = self.active_window_mut();
                 record.title = window
                     .terminal_explicit_titles
                     .contains(&buffer_id)
@@ -1513,23 +1584,9 @@ impl Editor {
                 window.exited_terminals.insert(buffer_id, record);
             }
 
-            self.set_status_message(t!("terminal.exited", id = terminal_id.0).to_string());
+            window.set_status_message(t!("terminal.exited", id = terminal_id.0).to_string());
         }
-        self.active_window_mut().terminal_manager.close(terminal_id);
-
-        // Notify plugins after the editor's own exit handling
-        // is complete. Orchestrator's state machine reads this
-        // to transition agents to READY (code 0) or ERRORED.
-        // `exit_code` is currently always `None` here; full
-        // wait-status capture is a follow-up commit.
-        self.plugin_manager.read().unwrap().run_hook(
-            "terminal_exit",
-            crate::services::plugins::hooks::HookArgs::TerminalExited {
-                terminal_id: terminal_id.0 as u64,
-                window_id: exited_window_id.0,
-                exit_code,
-            },
-        );
+        window.terminal_manager.close(terminal_id);
     }
 
     /// Install a completed `attachRemoteAgent` connection per its mode
@@ -1763,6 +1820,7 @@ impl Editor {
 
     /// Swap in a freshly-built grammar registry, re-detect syntax for open
     /// buffers, and resolve any plugin callbacks that awaited the build.
+    #[cfg_attr(not(feature = "plugins"), allow(unused_variables))]
     fn handle_grammar_registry_built(
         &mut self,
         registry: std::sync::Arc<crate::primitives::grammar::GrammarRegistry>,
@@ -1814,6 +1872,7 @@ impl Editor {
                     first_line.as_deref(),
                     &self.grammar_registry,
                     &self.config.languages,
+                    state.buffer.filesystem().as_ref(),
                 );
 
                 if detected.highlighter.has_highlighting() || !state.highlighter.has_highlighting()

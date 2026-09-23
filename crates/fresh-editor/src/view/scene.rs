@@ -298,13 +298,19 @@ pub struct TabBarView {
 
 // ─────────────────────────── status bar ───────────────────────────
 
+/// One status-bar element as the web renders it.
 #[derive(Debug, Clone, Serialize)]
 pub struct StatusSegment {
+    /// Semantic kind: "lsp" | "warning" | "language" | "encoding" |
+    /// "lineEnding" | "remote" | "trust" | "message" | "terminalRestart" |
+    /// "plugin" | "text".
     pub name: &'static str,
+    /// Plugin token key for `name == "plugin"`.
     pub key: Option<String>,
     pub text: String,
     pub x: u16,
     pub w: u16,
+    /// "left" or "right": the side the element was tiled on.
     pub side: &'static str,
 }
 
@@ -449,19 +455,14 @@ impl Editor {
         // Each keyed element (indicators + text) is a segment, and `side` is
         // the description's own left/right tiling carried on the segment, not
         // a midpoint guess from `x`. No cell scraping either way.
-        let segments: Vec<StatusSegment> = self
-            .shell_status_segments()
-            .into_iter()
-            .filter(|s| !s.text.trim().is_empty())
-            .map(|s| StatusSegment {
-                name: s.name,
-                key: s.key,
-                text: s.text.trim().to_string(),
-                x: s.x,
-                w: s.w,
-                side: s.side,
-            })
-            .collect();
+        let segments = match (self.shell_ui.as_ref(), self.shell_frame_status_bar.as_ref()) {
+            (Some(ui), Some(bar)) => {
+                let f = self.active_chrome().last_frame;
+                let size = ratatui::layout::Rect::new(0, 0, f.width, f.height);
+                crate::view::shell::status_bar::segments(ui, bar, size)
+            }
+            _ => Vec::new(),
+        };
 
         Some(StatusView {
             rect: RectView {
@@ -478,9 +479,27 @@ impl Editor {
     /// pipeline's suggestion-popup geometry. `None` unless a picker list (or a
     /// floating overlay) is showing. Single derivation shared by both frontends.
     pub fn palette_view(&self) -> Option<PaletteView> {
-        let chrome = self.active_chrome();
-        let sugg_outer = chrome.suggestions_outer_area;
-        let sugg_area = chrome.suggestions_area;
+        // The popup's own two rectangles, read off the tree that placed them
+        // — like the card's bands below, and unlike the pair of `ChromeLayout`
+        // fields this replaces, which were a copy of exactly this read.
+        let to_rect = |r: fresh_ui::Rect| ratatui::layout::Rect {
+            x: r.x.max(0) as u16,
+            y: r.y.max(0) as u16,
+            width: r.w,
+            height: r.h,
+        };
+        let (sugg_outer, sugg_list) = self
+            .shell_ui
+            .as_ref()
+            .map(|ui| {
+                let spec = ui.spec();
+                (
+                    crate::view::shell::prompt::suggestions_rect(spec).map(to_rect),
+                    crate::view::shell::prompt::suggestions_list_rect(spec).map(to_rect),
+                )
+            })
+            .unwrap_or((None, None));
+        let sugg_window = self.active_chrome().suggestions_window;
         let p = self.active_window().prompt.as_ref()?;
         // The overlay card's bands, read off the tree that placed them.
         let card_band = |r: crate::view::shell::overlay_prompt::CardRegion| {
@@ -506,11 +525,8 @@ impl Editor {
         // it the web shows no prompt at all while the editor waits for input.
         // Such prompts have no native suggestion list; the frontend renders
         // just the input bar (null `list_rect`/`outer_rect` below).
-        let (scroll_start, visible, total) = sugg_area.map(|(_, s, v, t)| (s, v, t)).unwrap_or((
-            p.scroll_offset,
-            p.suggestions.len(),
-            p.suggestions.len(),
-        ));
+        let total = p.suggestions.len();
+        let (scroll_start, visible) = sugg_window.unwrap_or((p.scroll_offset, p.suggestions.len()));
         // Search-option toggles: the row's own content — the same values the
         // TUI describes its toggles with — plus the cell spans the shell's
         // layout assigned them, READ BACK off the laid-out tree rather than
@@ -552,10 +568,7 @@ impl Editor {
             visible_count: visible,
             total,
             outer_rect: sugg_outer.map(RectView::from),
-            list_rect: sugg_area
-                .map(|(r, _, _, _)| r)
-                .or(prompt_results)
-                .map(RectView::from),
+            list_rect: sugg_list.or(prompt_results).map(RectView::from),
             // The preview pane's content: the band names the pane inside its
             // rule, so this is the rectangle as the tree placed it. Only
             // meaningful for overlay prompts.
@@ -742,21 +755,41 @@ fn project_popup(
 impl Editor {
     /// All visible popups across the per-buffer and global stacks, projected
     /// semantically. Single derivation shared by the web frontend (native HTML)
-    /// and available to the TUI compositor; geometry comes from the pipeline's
-    /// popup-area caches so clicks/scroll route through the existing hit-tester.
+    /// and available to the TUI compositor.
+    ///
+    /// **Geometry is the tree's, by key.** This read two caches that `render`
+    /// filled — `ChromeLayout::popup_areas` and `global_popup_areas`, the last
+    /// two members of the paint-recorded roster — each of which took the outer
+    /// rect off this very tree and then re-derived the content rect from it by
+    /// hand, in two copy-pasted blocks of border arithmetic. Both are keyed
+    /// nodes (`popup::rects_of`, `popup::inner_rects_of`), the popups' order in
+    /// the description is `Editor::popup_counts`' — the buffer's stack, then
+    /// the top of the global one — and the scroll offset was never geometry at
+    /// all: it is on the popup.
     pub fn popups_view(&self) -> Vec<ScenePopup> {
-        let chrome = self.active_chrome();
+        let (buffer_n, total) = self.popup_counts();
+        let outers = self.popup_rects();
+        let inners = self.popup_content_rects();
+        let at = |i: usize| -> (ratatui::layout::Rect, ratatui::layout::Rect) {
+            (
+                outers.get(i).copied().unwrap_or_default(),
+                inners.get(i).copied().unwrap_or_default(),
+            )
+        };
         let mut out = Vec::new();
-        let locals = self.active_state().popups.all();
-        for (idx, outer, inner, scroll, _n, _sb, _t) in &chrome.popup_areas {
-            if let Some(p) = locals.get(*idx) {
-                out.push(project_popup(p, *outer, *inner, *scroll));
+        for (idx, p) in self.active_state().popups.all().iter().enumerate() {
+            if idx >= buffer_n {
+                break;
             }
+            let (outer, inner) = at(idx);
+            out.push(project_popup(p, outer, inner, p.scroll_offset));
         }
-        let globals = self.global_popups.all();
-        for (idx, outer, inner, scroll, _n) in &chrome.global_popup_areas {
-            if let Some(p) = globals.get(*idx) {
-                out.push(project_popup(p, *outer, *inner, *scroll));
+        // The description carries at most the top of the global stack, after
+        // the buffer's — so it is the last entry, and only when there is one.
+        if total > buffer_n {
+            if let Some(p) = self.global_popups.top() {
+                let (outer, inner) = at(buffer_n);
+                out.push(project_popup(p, outer, inner, p.scroll_offset));
             }
         }
         out
@@ -1522,6 +1555,23 @@ impl Editor {
                     None,
                     false,
                 ),
+                // "There is more this way", as a kind the DOM can draw as it
+                // likes — a chevron, a fade at the edge. The glyph the
+                // terminal uses is not carried: unlike a rule, there is no
+                // single character this *is*.
+                Draw::Overflow { axis, end, .. } => {
+                    horizontal = matches!(axis, fresh_ui::Axis::Horizontal);
+                    (
+                        match end {
+                            fresh_ui::End::Before => "overflow-before",
+                            fresh_ui::End::After => "overflow-after",
+                        },
+                        None,
+                        None,
+                        None,
+                        false,
+                    )
+                }
                 Draw::Scrim(Scrim::Opaque) => ("scrim", None, None, None, false),
                 Draw::Scrim(Scrim::Dim) => ("scrim", None, None, None, true),
                 Draw::Lines(ls) => (
@@ -2074,6 +2124,9 @@ pub struct SettingsCategoryView {
     pub expandable: bool,
     pub expanded: bool,
     pub sections: Vec<String>,
+    /// Listed under another category's row (a plugin's page under
+    /// "Plugins"), so drawn indented and without a chevron.
+    pub nested: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -2322,17 +2375,34 @@ impl Editor {
             return None;
         }
 
+        // The rows the TUI's tree shows, in its order: nested pages appear
+        // only under an expanded parent, and a category lists its sections
+        // only when it has more than one.
         let categories = st
-            .pages
-            .iter()
-            .enumerate()
-            .map(|(i, p)| SettingsCategoryView {
-                index: i,
-                name: p.name.clone(),
-                selected: i == st.selected_category,
-                expandable: !p.subpages.is_empty() || p.sections.len() > 1,
-                expanded: st.expanded_categories.contains(&i),
-                sections: p.sections.iter().map(|s| s.name.clone()).collect(),
+            .visible_tree()
+            .into_iter()
+            .filter_map(|row| match row {
+                crate::view::settings::state::TreeRow::Category {
+                    idx,
+                    expandable,
+                    expanded,
+                    nested,
+                } => {
+                    let p = &st.pages[idx];
+                    Some(SettingsCategoryView {
+                        index: idx,
+                        name: p.name.clone(),
+                        selected: idx == st.selected_category,
+                        expandable,
+                        expanded,
+                        sections: match p.sections.len() > 1 {
+                            true => p.sections.iter().map(|s| s.name.clone()).collect(),
+                            false => Vec::new(),
+                        },
+                        nested,
+                    })
+                }
+                crate::view::settings::state::TreeRow::Section { .. } => None,
             })
             .collect();
 

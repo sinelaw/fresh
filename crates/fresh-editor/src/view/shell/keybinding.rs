@@ -142,7 +142,8 @@ pub struct Confirm {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Dialog {
     Help(Help),
-    Edit(Edit),
+    /// Boxed: the edit form is several times the size of the other two.
+    Edit(Box<Edit>),
     Confirm(Confirm),
 }
 
@@ -158,8 +159,7 @@ pub fn key() -> fresh_ui::Key {
 pub fn fit(info: LayoutInfo) -> (u16, u16) {
     let (w, h) = (info.constraints.max_w, info.constraints.max_h);
     let width = ((w as f32 * 0.90) as u16)
-        .min(MAX_WIDTH)
-        .max(MIN_WIDTH)
+        .clamp(MIN_WIDTH, MAX_WIDTH)
         .min(w.saturating_sub(2));
     let height = ((h as f32 * 0.90) as u16)
         .max(MIN_HEIGHT)
@@ -1041,7 +1041,7 @@ mod tests {
             ("Apply", Target::Save),
             ("Dismiss", Target::Cancel),
         ] {
-            let mut ui = with_dialog(Dialog::Edit(edit()), 120, 40);
+            let mut ui = with_dialog(Dialog::Edit(Box::new(edit())), 120, 40);
             // Find the row carrying the label, and press inside it.
             let at = ui
                 .spec()
@@ -1109,7 +1109,7 @@ mod tests {
     #[test]
     fn a_press_on_the_backdrop_does_nothing() {
         use crate::view::shell::msg::UiFact;
-        let mut ui = with_dialog(Dialog::Edit(edit()), 120, 40);
+        let mut ui = with_dialog(Dialog::Edit(Box::new(edit())), 120, 40);
         let got = facts(ui.dispatch(fresh_ui::Input::press(
             fresh_ui::Point::new(1, 1),
             fresh_ui::MouseButton::Left,
@@ -1126,14 +1126,14 @@ mod tests {
     /// on the description side of the seam.
     #[test]
     fn the_action_description_is_optional() {
-        let with = painted(&with_dialog(Dialog::Edit(edit()), 120, 40));
+        let with = painted(&with_dialog(Dialog::Edit(Box::new(edit())), 120, 40));
         assert!(
             with.iter().any(|r| r.contains("→ Store the file")),
             "{with:?}"
         );
         let mut e = edit();
         e.action_description = None;
-        let without = painted(&with_dialog(Dialog::Edit(e), 120, 40));
+        let without = painted(&with_dialog(Dialog::Edit(Box::new(e)), 120, 40));
         assert!(!without.iter().any(|r| r.contains("→")), "{without:?}");
     }
 
@@ -1146,7 +1146,7 @@ mod tests {
             suggestions: (0..20).map(|i| format!("action_{i}")).collect(),
             selected: Some(0),
         });
-        let ui = with_dialog(Dialog::Edit(e), 120, 40);
+        let ui = with_dialog(Dialog::Edit(Box::new(e)), 120, 40);
         let rows = painted(&ui);
         assert!(
             rows.iter().any(|r| r.contains("action_0")),

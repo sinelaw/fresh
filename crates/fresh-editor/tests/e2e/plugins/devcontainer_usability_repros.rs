@@ -179,6 +179,7 @@ fn attach_via_fake(harness: &mut EditorTestHarness) {
 ///   1. attaching successfully against the workspace,
 ///   2. editing `devcontainer.json` to malformed JSON on disk,
 ///   3. triggering `Dev Container: Rebuild` from the palette.
+///
 /// After step 3 the entire `Dev Container:` family disappears from
 /// the palette — verified by scrolling the alphabetical D-section
 /// (only `Decrease`, `Dedent`, `Dump Config`, `Duplicate Line` are
@@ -521,8 +522,9 @@ fn broken_devcontainer_json_keeps_recovery_commands_registered() {
 /// fired — the `onAutoForward` field was read by the panel
 /// renderer but never acted on.
 ///
-/// Regression guard for that fix: configure `forwardPorts: [9000]`
-/// + `portsAttributes."9000".onAutoForward: "notify"`, set
+/// Regression guard for that fix: configure
+/// `forwardPorts: [9000]` +
+/// `portsAttributes."9000".onAutoForward: "notify"`, set
 /// `FAKE_DC_PORTS=9000` so the fake docker reports the binding,
 /// attach via the fake CLI, and assert the rendered screen
 /// surfaces the `Port 9000 forwarded` toast.
@@ -686,7 +688,7 @@ fn rebuild_reuses_build_log_split_instead_of_stacking() {
     harness
         .wait_until(|h| h.screen_to_string().contains("devcontainer-logs/build-"))
         .unwrap();
-    let splits_after_attach = harness.editor().get_split_count();
+    let splits_after_attach = harness.editor().active_window().get_split_count();
 
     // 2. Trigger Rebuild via the palette — produces a new
     // log file with a different timestamp.
@@ -711,7 +713,7 @@ fn rebuild_reuses_build_log_split_instead_of_stacking() {
         harness.advance_time(Duration::from_millis(25));
     }
 
-    let splits_after_rebuild = harness.editor().get_split_count();
+    let splits_after_rebuild = harness.editor().active_window().get_split_count();
     assert_eq!(
         splits_after_rebuild, splits_after_attach,
         "Rebuild must reuse the build-log split, not stack a new one. \
@@ -758,7 +760,7 @@ fn show_panels_reuse_single_split_instead_of_stacking() {
     harness
         .wait_until(|h| h.screen_to_string().contains("devcontainer-logs/build-"))
         .unwrap();
-    let baseline = harness.editor().get_split_count();
+    let baseline = harness.editor().active_window().get_split_count();
 
     // Show Container Info — should reuse the panel slot.
     harness
@@ -778,7 +780,7 @@ fn show_panels_reuse_single_split_instead_of_stacking() {
         std::thread::sleep(Duration::from_millis(25));
         harness.advance_time(Duration::from_millis(25));
     }
-    let after_info = harness.editor().get_split_count();
+    let after_info = harness.editor().active_window().get_split_count();
 
     // Show Container Logs — should also reuse the panel slot.
     harness
@@ -800,7 +802,7 @@ fn show_panels_reuse_single_split_instead_of_stacking() {
         std::thread::sleep(Duration::from_millis(25));
         harness.advance_time(Duration::from_millis(25));
     }
-    let after_logs = harness.editor().get_split_count();
+    let after_logs = harness.editor().active_window().get_split_count();
 
     assert_eq!(
         after_info, baseline,

@@ -37,6 +37,8 @@ declare function registerHandler(name: string, fn: Function): void;
 interface ProcessHandle<T> extends PromiseLike<T> {
 	/** Promise that resolves to the result when complete */
 	readonly result: Promise<T>;
+	/** Id of the spawned process (the `process_id` in onProcessStdout/onProcessStderr payloads) */
+	readonly processId: number;
 	/** Cancel/kill the operation. Returns true if cancelled, false if already completed */
 	kill(): Promise<boolean>;
 }
@@ -1512,6 +1514,14 @@ type TreeNode = {
 	* whose chrome has nowhere to put one.
 	*/
 	action?: string | null;
+	/**
+	* **A table row.** When the parent `Tree` declares `columns`, a node
+	* that carries cells is drawn from them — one per column, each fitted
+	* to its column at the width layout gives the tree and elided at the
+	* end its column says — instead of from `text`. A node with no cells
+	* (a group heading) is drawn from `text` across the whole row.
+	*/
+	cells?: Array<TableCell>;
 };
 type TextWindowAnchor = {
 	/**
@@ -1601,6 +1611,13 @@ type WidgetSpec = {
 	* before this field was read on that path it stayed flush left.
 	*/
 	labelWidth: number;
+	/**
+	* The keyboard accelerator's letter, underlined where it first
+	* appears in `label` (case-insensitively) — the classic menu-bar
+	* mnemonic, so `Alt+L` reads as the `l` in `Files`. Absent, or a
+	* letter the label does not contain, underlines nothing.
+	*/
+	mnemonic?: string | null;
 	key?: string | null;
 } | {
 	"kind": "number";
@@ -1937,6 +1954,15 @@ type WidgetSpec = {
 	* dispatch.
 	*/
 	focusable: boolean;
+	/**
+	* Typing jumps the selection to the next item whose text starts
+	* with what was typed (the listbox pattern's type-ahead). Off by
+	* default: a list that is a command surface — Git Log's `q`, a
+	* dock's single-key actions — binds those letters in its mode, and
+	* the focused widget is asked first. Turn it on for a list of names
+	* to find, such as a file browser.
+	*/
+	typeAhead: boolean;
 	key?: string | null;
 } | {
 	"kind": "tree";
@@ -1998,6 +2024,20 @@ type WidgetSpec = {
 	* the disclosure glyph (or the blank standing in for one).
 	*/
 	indentCols: number;
+	/**
+	* When true, a click anywhere on a node with children toggles its
+	* expansion (and selects it), not only a click on the disclosure
+	* glyph. The toggle fires `expand` with `{ index, key, expanded }`.
+	*/
+	toggleOnClick: boolean;
+	/**
+	* **A table.** Columns declared here turn every node that carries
+	* `cells` into a row of them: the host measures the cells, fits the
+	* columns to the width layout gives the tree (the widest gives
+	* first), elides each cell at its column's end, and draws a header
+	* row of the titles above the tree. Empty (default): a plain tree.
+	*/
+	columns?: Array<TableColumn>;
 	key?: string | null;
 } | {
 	"kind": "text";
@@ -2091,6 +2131,20 @@ type WidgetSpec = {
 	*/
 	completionsVisibleRows: number;
 	/**
+	* A multi-line field that **grows with its text**: the smallest
+	* number of editing rows it shows (`rows` when `0`). Only read when
+	* `max_rows` is set.
+	*/
+	minRows: number;
+	/**
+	* A multi-line field that **grows with its text**: when `> 0`, the
+	* editing region is as tall as its value wraps to — at the width
+	* layout actually gives it — between `min_rows` and this, and
+	* scrolls (keeping its caret in view) past it. `0` (default): the
+	* region is `rows` tall, as before.
+	*/
+	maxRows: number;
+	/**
 	* Paint the caret as a REVERSED block cell inside the row
 	* (in addition to publishing the hardware-cursor position).
 	* Modal form surfaces (e.g. Settings) use this — a hardware
@@ -2136,6 +2190,20 @@ type WidgetSpec = {
 	* changes via a spec update.
 	*/
 	markdown: boolean;
+	/**
+	* A single-line field that offers a list of values to pick from as
+	* well as free text — a combo box (the ARIA combobox pattern). Drawn
+	* with a `▼` in the last cell inside its `]` (`▲` while its
+	* completion list is open), so the field says it has a list before
+	* it is focused. The list itself is still the plugin's
+	* `completions`: with the list closed, ↓ / Alt+↓ or a press on the
+	* arrow fires `completion_request`, which the plugin answers with
+	* `setCompletions`; a press on the arrow with the list open closes
+	* it (`completion_dismiss`). Opening on focus is left out on
+	* purpose — a list that opens as a form is walked covers the fields
+	* under it. Defaults to `false`.
+	*/
+	combo: boolean;
 	key?: string | null;
 } | {
 	"kind": "labeledSection";
@@ -3569,10 +3637,21 @@ interface EditorAPI {
 	*/
 	readFile(path: string | LocalPath | WindowPath | AuthorityPath): string | null;
 	/**
-	* Write file contents to the path's filesystem. Parent directories are
-	* created as needed.
+	* Write file contents to a NEW file on the path's filesystem. Parent
+	* directories are created as needed. Returns false if the path already
+	* exists — use `replaceFile` to replace a file deliberately.
 	*/
 	writeFile(path: string | LocalPath | WindowPath | AuthorityPath, content: string): boolean;
+	/**
+	* Write to a file, replacing it if it already exists.
+	* 
+	* `writeFile` refuses an existing path, which is what its documentation
+	* always promised and what stops a plugin destroying a user's file by
+	* accident. Use this when replacing the file is the actual intent — a
+	* plugin rewriting its own cache or state, or re-exporting a report the
+	* user asked for again. The write is atomic.
+	*/
+	replaceFile(path: string | LocalPath | WindowPath | AuthorityPath, content: string): boolean;
 	/**
 	* Read directory contents (returns array of {name, is_file, is_dir})
 	*/
@@ -3584,21 +3663,76 @@ interface EditorAPI {
 	*/
 	createDir(path: string | LocalPath | WindowPath | AuthorityPath): boolean;
 	/**
-	* Permanently remove a file or directory on the path's filesystem
-	* (recursively for directories). For safety, the path must be under the OS
-	* temp directory or the Fresh config directory. Returns true on success.
+	* Create an editor-owned staging directory and return the opaque token
+	* that names it. Write into it with the path `scratchPath` returns, then
+	* either publish it with `installScratch` or drop it with
+	* `scratchDiscard`. `label` only makes the directory recognisable to a
+	* human; it does not decide where the directory goes.
 	*/
-	removePath(path: string | LocalPath | WindowPath | AuthorityPath): boolean;
+	scratchCreate(label: string): string | null;
 	/**
-	* Rename/move a file or directory. Both paths must target the same
-	* filesystem (a cross-backend move is rejected). Returns true on success.
+	* The directory a staging token names, or `null` if the token is unknown
+	* or already spent.
 	*/
-	renamePath(from: string | LocalPath | WindowPath | AuthorityPath, to: string | LocalPath | WindowPath | AuthorityPath): boolean;
+	scratchPath(token: string): string | null;
 	/**
-	* Copy a file or directory recursively to a new location. Both paths must
-	* target the same filesystem. Returns true on success.
+	* Discard a staging directory. The path is looked up from the token, so
+	* an unknown or spent token removes nothing.
 	*/
-	copyPath(from: string | LocalPath | WindowPath | AuthorityPath, to: string | LocalPath | WindowPath | AuthorityPath): boolean;
+	scratchDiscard(token: string): boolean;
+	/**
+	* Publish a staging directory as the installed package `<kind>/<name>`,
+	* where `kind` is one of `plugin`, `theme`, `language` or `bundle`. Any
+	* existing install under that name goes to the system trash first, so an
+	* upgrade is recoverable.
+	* 
+	* `subpath` installs one directory out of the staging tree (a package in
+	* a subdirectory of a cloned monorepo); pass `""` for the whole thing. It
+	* chooses the source only — `kind` and `name` decide where the package
+	* lands. Installing the whole tree spends the token; installing a subpath
+	* leaves it live so the rest can be discarded.
+	*/
+	installScratch(token: string, kind: string, name: string, subpath: string): boolean;
+	/**
+	* Create a staging directory holding a copy of `from`, and return the
+	* token that names it — how a package installed from a local directory
+	* reaches staging.
+	* 
+	* `from` is a path on the editor host. Staging directories, installed
+	* packages and plugin state all live there by design, so an install
+	* survives the SSH session that started it going away; there is no
+	* authority-path form of this call, so the argument is a plain path
+	* rather than a `LocalPath | WindowPath | AuthorityPath` union with two
+	* thirds of it rejected at runtime.
+	* 
+	* Answers `null` if `from` is not a directory or could not be copied,
+	* having discarded anything it had already staged — so there is never a
+	* half-filled staging directory to clean up.
+	*/
+	scratchFromDirectory(from: string): string | null;
+	/**
+	* Move an installed package to the system trash. Returns false if nothing
+	* is installed under that kind and name.
+	*/
+	uninstallPackage(kind: string, name: string): boolean;
+	/**
+	* Write a namespaced state entry, replacing any previous value. The
+	* editor owns the on-disk layout; a plugin names the entry, not the file.
+	*/
+	stateSet(namespace: string, key: string, value: string): boolean;
+	/**
+	* Read a namespaced state entry, or `null` if it is unset.
+	*/
+	stateGet(namespace: string, key: string): string | null;
+	/**
+	* The keys set in a namespace, in no particular order.
+	*/
+	stateKeys(namespace: string): string[];
+	/**
+	* Clear a namespaced state entry. Returns true if it is gone afterwards,
+	* including when it was already unset.
+	*/
+	stateDelete(namespace: string, key: string): boolean;
 	/**
 	* Construct a `LocalPath` — a path that always resolves on the local
 	* editor host, regardless of the active window's authority. Use for
@@ -3858,7 +3992,9 @@ interface EditorAPI {
 	*/
 	fileStat(path: string | LocalPath | WindowPath | AuthorityPath): unknown;
 	/**
-	* Check if a background process is still running
+	* Check if a background process is still running: true from
+	* `spawnBackgroundProcess` until its result promise settles or it is
+	* killed.
 	*/
 	isProcessRunning(processId: number): boolean;
 	/**
@@ -4364,6 +4500,13 @@ interface EditorAPI {
 	*/
 	setPromptFooter(footer: StyledText[]): boolean;
 	/**
+	* Centre the floating-overlay prompt's card on the whole frame — 90%
+	* of it, over the dock and sidebar, as the Settings dialog is — instead
+	* of on the chrome area beside the dock. `false` puts it back. Has no
+	* visible effect on non-overlay prompts.
+	*/
+	setPromptFullscreen(fullscreen: boolean): boolean;
+	/**
 	* Set the floating-overlay prompt's input-row status text (right-aligned,
 	* left of the match count). Empty string clears it.
 	*/
@@ -4393,12 +4536,42 @@ interface EditorAPI {
 	setPromptSelectedIndex(index: number): boolean;
 	/**
 	* Define a buffer mode (takes bindings as array of [key, command] pairs)
+	* 
+	* On a widget panel whose keymap is this mode, **the focused control
+	* handles a key first** — a field types and moves its caret, an open
+	* list takes the arrows and Enter, a button takes Enter and Space, Esc
+	* closes a pop-up before the dialog — and a binding gets only the keys
+	* the control does not use. Bind commands ("submit", "close"), not the
+	* controls' own keys.
+	* 
+	* A binding whose third element is `"shortcut"` —
+	* `["C-Enter", "submit", "shortcut"]` — is a **dialog-wide shortcut**
+	* instead: it runs ahead of any control, wherever focus is. Keep that
+	* list short and made of chords no control uses.
+	* 
+	* A binding whose third element is `"on:a,b"` —
+	* `["Up", "history_prev", "on:name,cmd"]` — belongs to the controls
+	* named: it applies only while one of those widgets holds the panel's
+	* focus, and on any other control the key is left to the panel's
+	* defaults (↑/↓ move focus to the control above or below). Use it for a
+	* command that is about one field, rather than binding the key for the
+	* whole dialog and forwarding it back.
 	*/
 	defineMode(name: string, bindingsArr: string[][], readOnly?: boolean, allowTextInput?: boolean, inheritNormalBindings?: boolean): boolean;
 	/**
 	* Set the global editor mode
 	*/
 	setEditorMode(mode: string | null): boolean;
+	/**
+	* Which widget holds focus in one of this plugin's mounted panels —
+	* its key, or `""` when nothing is focused or the panel is not mounted.
+	* 
+	* The host owns a panel's focus: Tab, a click, a control's own move and
+	* `setFocusKey` all write the one fact this reads. Read it rather than
+	* mirroring focus from `focus` events — every `widget_event` also carries
+	* it, as `focus_key`.
+	*/
+	getPanelFocusKey(panelId: number): string;
 	/**
 	* Get the current editor mode
 	*/
@@ -5907,6 +6080,19 @@ interface HookEventMap {
 		server_command: string;
 		params: string | null;
 	};
+	/**
+	* A server -> client notification whose method the editor does not handle
+	* itself (e.g. clangd's `textDocument/clangd.fileStatus`, `$/memoryUsage`).
+	* Unlike `lsp_server_request`, `params` is the parsed JSON value, not a
+	* string. `server_name` tells apart several servers for one language.
+	*/
+	"lsp/custom_notification": {
+		language: string;
+		server_name: string;
+		method: string;
+		/** JSON-RPC params: an object or array, or `null` when omitted */
+		params: Record<string, unknown> | unknown[] | null;
+	};
 	lsp_server_error: {
 		language: string;
 		server_command: string;
@@ -6043,6 +6229,9 @@ interface HookEventMap {
 		widget_key: string;
 		event_type: string;
 		payload: Record<string, unknown>;
+		/** The widget that holds the panel's focus now, after the event
+		*  (`""` for none) — the host's fact; see `getPanelFocusKey`. */
+		focus_key: string;
 	};
 }
 /**
