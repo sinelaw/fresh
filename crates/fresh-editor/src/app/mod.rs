@@ -999,9 +999,11 @@ pub struct Editor {
     // grouped_subtrees moved onto `Window` — each window owns its
     // own buffer-group subtrees (a window with a Live Grep panel
     // open doesn't share the panel state with sibling windows).
-    /// Background process abort handles for cancellation
-    /// Maps process_id to abort handle
-    background_process_handles: HashMap<u64, tokio::task::AbortHandle>,
+    /// Cancellation senders for background processes spawned via
+    /// `spawnBackgroundProcess`, keyed by process id. Firing (or dropping)
+    /// the sender makes the spawn task kill and reap the child and then
+    /// send `ProcessExit`. Entries are removed on that `ProcessExit`.
+    background_process_handles: HashMap<u64, tokio::sync::oneshot::Sender<()>>,
 
     /// Cancellation senders for host-side processes spawned via
     /// `spawnHostProcess`. Firing the sender (or dropping it) triggers
