@@ -238,7 +238,6 @@ pub(crate) struct Ctl {
     pub flow: Cell<Flow>,
     pub default_prevented: Cell<bool>,
     pub capture_request: Cell<Option<ElementId>>,
-    pub release_request: Cell<bool>,
     pub focus_request: Cell<Option<(ElementId, SelectionOnFocus)>>,
 }
 
@@ -367,17 +366,9 @@ impl Event {
         self.ctl.capture_request.set(Some(self.current));
     }
 
-    pub fn release_pointer(&self) {
-        self.ctl.release_request.set(true);
-    }
-
     /// Ask for focus to move to this element.
     pub fn request_focus(&self, sel: SelectionOnFocus) {
         self.ctl.focus_request.set(Some((self.current, sel)));
-    }
-
-    pub fn is_key(&self, code: KeyCode, mods: Mods) -> bool {
-        matches!(self.key, Some(k) if k.code == code && k.mods == mods)
     }
 }
 

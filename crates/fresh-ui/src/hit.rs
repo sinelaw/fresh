@@ -629,9 +629,6 @@ impl<M: 'static> Ui<M> {
         if let Some(c) = ctl.capture_request.take() {
             self.captured = Some(c);
         }
-        if ctl.release_request.take() {
-            self.captured = None;
-        }
         if let Some((id, sel)) = ctl.focus_request.take() {
             self.focus_element(id, sel, out);
         }

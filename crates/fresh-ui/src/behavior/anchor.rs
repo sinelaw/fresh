@@ -39,8 +39,6 @@ pub(crate) enum Command {
     /// Move the window by this many of its own heights (negative: up),
     /// clamped — a page key, in whatever unit the window counts.
     ScrollByPages(i32),
-    /// Move the window to the end of its content.
-    ScrollToEnd,
 }
 
 #[derive(Debug, Default)]
@@ -82,11 +80,6 @@ impl Anchor {
     /// up), clamped. The page keys of a page that scrolls as a whole.
     pub fn scroll_by_pages(&self, pages: i32) {
         self.queue.borrow_mut().push(Command::ScrollByPages(pages));
-    }
-
-    /// Move the target's window to the end of its content.
-    pub fn scroll_to_end(&self) {
-        self.queue.borrow_mut().push(Command::ScrollToEnd);
     }
 
     /// Move the target's window so that `index` is inside it, by the shortest

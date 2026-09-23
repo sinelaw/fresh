@@ -891,13 +891,11 @@ impl<M: 'static> Ui<M> {
                 // command below reasons in one dimension, and these are what
                 // say which. The other axis is left exactly where it was.
                 let here = main(axis, scroll);
-                let ceiling = main(axis, max);
                 let at = |v: i32| along(axis, scroll, v);
                 let next = match cmd {
                     Command::ScrollTo(p) => p,
                     Command::ScrollBy(dy) => at(here + dy),
                     Command::ScrollByPages(n) => at(here + n * rows.max(1)),
-                    Command::ScrollToEnd => at(ceiling),
                     Command::Reveal(i) => {
                         let i = i as i32;
                         // The shortest move that puts the index inside the

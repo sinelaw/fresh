@@ -312,12 +312,6 @@ impl<'a, M: 'static> InitCx<'a, M> {
         crate::services::GeomHandle::new(self.geom_store.clone(), self.sched.clone(), self.id)
     }
 
-    /// A handle to another element's geometry, addressed by the element id an
-    /// owner already holds.
-    pub fn geometry_of(&mut self, id: ElementId) -> crate::services::GeomHandle {
-        crate::services::GeomHandle::new(self.geom_store.clone(), self.sched.clone(), id)
-    }
-
     /// Read an ambient as a snapshot. This does **not** create a dependency:
     /// caching the result in a field and using it later is the stale-output
     /// case, and it is reported by a debug assertion if the value ever changes.
