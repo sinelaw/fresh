@@ -11935,6 +11935,21 @@ function scanTargets(): DiscoverTarget[] {
       reach: { kind: "option", key: m.id },
     });
   }
+  // The `~/.ssh/config` hosts the Machines dialog lists beside the saved
+  // machines, less those a saved machine or an open window already stands for.
+  for (const h of sshConfigHosts()) {
+    if (saved.some((m) => machineCoversHost(m, h))) continue;
+    const m = machineForHost(h);
+    const resolved = machineFacetKey({ ...m, target: sshResolvedTarget(h) });
+    if (byMachine.has(machineFacetKey(m)) || byMachine.has(resolved)) continue;
+    targets.push({
+      key: m.id,
+      label: h.alias,
+      spec: machineTransport(m),
+      connects: true,
+      reach: { kind: "option", key: m.id },
+    });
+  }
   // "All machines" goes last because it is the expensive choice, and only
   // when there is more than one machine to scan.
   if (targets.filter((t) => t.spec !== null).length > 1) {
