@@ -9772,6 +9772,7 @@ function machineFromDialog(d: MachineDialogState): Machine {
 function buildMachineDialogSpec(): WidgetSpec {
   const d = machineDialog!;
   const children: WidgetSpec[] = [
+    spacer(0),
     radio([editor.t("backend.ssh"), editor.t("backend.kubernetes")], {
       selectedIndex: d.kind === "ssh" ? 0 : 1,
       label: editor.t("machine.kind"),
@@ -10283,10 +10284,10 @@ function repoBrowseRows(d: RepoDialogState): WidgetSpec[] {
     });
   }
   return [
-    labeledSection({
+    row(spacer(2), labeledSection({
       label: title,
       child: col(body, label(editor.t("repo.browse_hint"), { style: NOTE_STYLE })),
-    }),
+    })),
   ];
 }
 
@@ -10304,12 +10305,16 @@ function buildRepoDialogSpec(): WidgetSpec {
       kids.push(label(`  ${editor.t("repo.none_yet")}`, { style: NOTE_STYLE }));
     } else {
       const w = Math.max(12, ...repos.map((r) => r.name.length)) + 3;
-      kids.push(list({
-        items: repos.map((r) => ({ text: `  ${r.name.padEnd(w)}${repoRemoteLabel(r)}` })),
-        selectedIndex: Math.max(0, repos.findIndex((r) => r.id === d.repoId)),
-        visibleRows: Math.min(6, repos.length),
-        key: "repo_list",
-      }));
+      // Boxed, like Browse, so it reads as a list to pick from.
+      kids.push(row(spacer(2), labeledSection({
+        label: editor.t("repo.list_title", { count: String(repos.length) }),
+        child: list({
+          items: repos.map((r) => ({ text: `${r.name.padEnd(w)}${repoRemoteLabel(r)}` })),
+          selectedIndex: Math.max(0, repos.findIndex((r) => r.id === d.repoId)),
+          visibleRows: Math.min(6, repos.length),
+          key: "repo_list",
+        }),
+      })));
     }
     kids.push(...gap());
     const r = repoById(d.repoId);
@@ -10381,7 +10386,15 @@ function buildRepoDialogSpec(): WidgetSpec {
       kids.push(label(editor.t("repo.more_machines_later"), { labelWidth: FORM_LABEL_W, style: NOTE_STYLE }));
     }
   }
-  kids.push(...gap(), divider({ style: { fg: "ui.menu_disabled_fg" } }), ...gap());
+  // Opened from New Workspace: say what the primary button does there, and
+  // that Cancel returns without it.
+  if (d.returnTo === "form" && d.mode !== "add" && repoById(d.repoId)) {
+    kids.push(...gap(), label(editor.t("repo.use_explain", {
+      name: repoById(d.repoId)!.name,
+      machine: machineKeyLabel(d.machineKey),
+    }), { labelWidth: FORM_LABEL_W, style: NOTE_STYLE, wrap: true }));
+  }
+  kids.push(...gap(), footerRule(), ...gap());
   if (d.error) kids.push(label(`  ${d.error}`, { style: { fg: "diagnostic.error_fg", bold: true }, wrap: true }));
   kids.push(repoFooterRow(d), ...gap());
   return col(...kids);
@@ -10409,7 +10422,7 @@ function repoFooterRow(d: RepoDialogState): WidgetSpec {
   }
   if (d.returnTo === "form") {
     return endRow(
-      actionButton(editor.t("repo.back_to_form"), "repo_back"),
+      actionButton(editor.t("form.btn_cancel_short"), "repo_back"),
       spacer(5),
       button(`  ${editor.t("repo.btn_use")}  `, { intent: "primary", key: "repo_save", disabled: !ok || !repoById(d.repoId) }),
       spacer(3),
@@ -12592,6 +12605,12 @@ function gap(): WidgetSpec[] {
 // `PROMPT ─────…` — a section's name and a rule to the right edge. The rule
 // is a long label the host clips at the panel's inner width, so it always
 // ends at the border without this side knowing the width.
+// The rule above a dialog's buttons, inset like the section rules so it
+// keeps the same margin from the ring on both sides.
+function footerRule(): WidgetSpec {
+  return label(`  ${"─".repeat(400)}`, { style: { fg: "ui.menu_disabled_fg" } });
+}
+
 function sectionHeader(key: string): WidgetSpec {
   return label(`  ${editor.t(key)} ${"─".repeat(400)}`, { style: SECTION_STYLE });
 }
@@ -12632,7 +12651,7 @@ function promptBox(f: NewSessionForm): WidgetSpec {
   });
   // Inset from the dialog's edges: a margin on the left, and a width that
   // leaves the same on the right (a section otherwise fills its row).
-  return row(spacer(3), labeledSection({ child: spec, widthPct: 93 }));
+  return row(spacer(3), labeledSection({ child: spec }));
 }
 
 // The agent and its own switches on one row; `custom…` adds the command row
@@ -12847,12 +12866,19 @@ function formFooterRows(creating: boolean): WidgetSpec[] {
   const ok = formIsSubmittable();
   const actions = creating
     ? endRow(
+      button(editor.t("form.btn_cancel_short"), { key: "cancel" }),
+      spacer(5),
       button(editor.t("form.btn_launch_bg"), { key: "create-bg", disabled: !ok }),
       spacer(5),
       button(`  ${editor.t("form.btn_launch")}  `, { intent: "primary", key: "create-visit", disabled: !ok }),
       spacer(3),
     )
-    : endRow(button(`  ${editor.t("run_agent.btn_run")}  `, { intent: "primary", key: "create-visit" }), spacer(3));
+    : endRow(
+      button(editor.t("form.btn_cancel_short"), { key: "cancel" }),
+      spacer(5),
+      button(`  ${editor.t("run_agent.btn_run")}  `, { intent: "primary", key: "create-visit" }),
+      spacer(3),
+    );
   const hints = creating
     ? [
       { keys: "Ctrl+⏎", label: editor.t("hint.launch") },
@@ -12869,7 +12895,7 @@ function formFooterRows(creating: boolean): WidgetSpec[] {
       wrap: true,
     })
     : row(flexSpacer(), hintBar(hints), flexSpacer());
-  return [divider({ style: { fg: "ui.menu_disabled_fg" } }), ...gap(), actions, ...gap(), tail];
+  return [footerRule(), ...gap(), actions, ...gap(), tail];
 }
 
 // Launch asks before cloning (§4.6): the question replaces the footer and
@@ -12878,7 +12904,7 @@ function formFooterRows(creating: boolean): WidgetSpec[] {
 function cloneFooterRows(f: NewSessionForm): WidgetSpec[] {
   const r = formRepo(f);
   const key = formMachineKey(f);
-  const rule = divider({ style: { fg: "ui.menu_disabled_fg" } });
+  const rule = footerRule();
   if (!r || !key) return [rule];
   const where = `${machineKeyLabel(key)} : ${f.cloning?.path ?? repoCloneTarget(r)}`;
   if (f.cloning) {

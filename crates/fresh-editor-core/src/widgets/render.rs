@@ -1971,8 +1971,10 @@ pub fn render_dropdown(
 
     let mut overlays = Vec::new();
     if focused {
+        // The band is the control, `[value ▼]`: the label beside it stays
+        // plain, as a text field's does.
         overlays.push(InlineOverlay {
-            start: focus_band_start(&text),
+            start: button_start,
             end: text.len(),
             style: OverlayOptions {
                 fg: Some(OverlayColorSpec::theme_key(KEY_FOCUSED_FG)),
@@ -3444,11 +3446,11 @@ pub struct RenderedTextArea {
 
 /// What every row of a text area shares, resolved once from the whole value.
 ///
-/// **A text area does not wrap.** [`render_text_area`] splits `value` on
-/// `\n` and pads or tail-truncates each line to the field width, so the row
-/// drawn for line `i` is a function of that one line plus the four facts
-/// below — none of which depend on which rows are being drawn, or on how
-/// many. That is what lets a caller which owns its own window format only
+/// **A text area soft-wraps, once, up front.** [`text_area_geom`] splits
+/// `value` on `\n` and wraps each line to the field width into rows, so the
+/// row drawn at index `i` is a function of that one row's byte range plus the
+/// four facts below — none of which depend on which rows are being drawn, or
+/// on how many. That is what lets a caller which owns its own window format only
 /// the rows it shows, instead of asking for the whole document and windowing
 /// the answer it gets back.
 ///
@@ -3456,7 +3458,7 @@ pub struct RenderedTextArea {
 /// function (`kinds::text::render_markdown_text_area`) for that reason: there
 /// a row is a slice of a reflowed document rather than a line of this one.
 pub struct TextAreaGeom {
-    /// Byte range of each logical line within the value.
+    /// Byte range of each row within the value: its lines, soft-wrapped.
     lines: Vec<(usize, usize)>,
     /// Columns every row is padded or truncated to.
     width: usize,
@@ -3477,13 +3479,14 @@ pub struct TextAreaGeom {
 }
 
 impl TextAreaGeom {
-    /// How many rows the document has: one per line, always. An empty value
-    /// is one empty line, which is what an empty editor shows.
+    /// How many rows the document has: at least one per line, more where a
+    /// line wraps. An empty value is one empty row, which is what an empty
+    /// editor shows.
     pub fn rows(&self) -> usize {
         self.lines.len()
     }
 
-    /// The line the caret sits on, whether or not it is drawn. The scroll
+    /// The row the caret sits on, whether or not it is drawn. The scroll
     /// clamp is expressed in it.
     pub fn cursor_line(&self) -> usize {
         self.cursor_at.0
@@ -3510,26 +3513,23 @@ pub fn text_area_geom(
         40
     };
 
-    // Split value into lines (without the `\n`), as byte ranges rather than
-    // slices so the geometry outlives the borrow — a windowing caller keeps
-    // it across the whole build and slices `value` per row. `split` always
-    // yields at least one piece, so an empty value is one empty line.
-    let mut lines: Vec<(usize, usize)> = Vec::new();
-    let mut at = 0usize;
-    for line in value.split('\n') {
-        lines.push((at, at + line.len()));
-        at += line.len() + 1;
-    }
+    // Split value into rows, as byte ranges rather than slices so the
+    // geometry outlives the borrow — a windowing caller keeps it across the
+    // whole build and slices `value` per row. A line longer than the field
+    // wraps at its last space (or mid-word, when a word is wider than the
+    // field). `split` always yields at least one piece, so an empty value is
+    // one empty row.
+    let lines = wrap_rows(value, width);
 
-    // Cursor → (line_index, byte_in_line). When `cursor_byte` is
-    // negative (no cursor), we still compute a line for scroll
+    // Cursor → (row_index, byte_in_row). When `cursor_byte` is
+    // negative (no cursor), we still compute a row for scroll
     // bookkeeping but don't draw one.
     let raw_cursor_byte = if cursor_byte < 0 {
         value.len()
     } else {
         (cursor_byte as usize).min(value.len())
     };
-    let cursor_at = byte_to_line_col(value, raw_cursor_byte);
+    let cursor_at = byte_to_row_col(&lines, raw_cursor_byte);
 
     // Selection decomposed onto (line_start, byte_in_line) →
     // (line_end, byte_in_line) so each visible row can emit its own
@@ -3541,7 +3541,7 @@ pub fn text_area_geom(
         if hi <= lo || hi > value.len() {
             return None;
         }
-        Some((byte_to_line_col(value, lo), byte_to_line_col(value, hi)))
+        Some((byte_to_row_col(&lines, lo), byte_to_row_col(&lines, hi)))
     });
 
     let show_placeholder = !focused && value.is_empty();
@@ -3780,18 +3780,65 @@ pub fn render_text_area(
     }
 }
 
-/// Translate a byte offset in `value` to (line_index, byte_in_line).
-fn byte_to_line_col(value: &str, byte: usize) -> (usize, usize) {
-    let byte = byte.min(value.len());
-    let mut line = 0usize;
-    let mut line_start = 0usize;
-    for (i, &b) in value.as_bytes().iter().enumerate().take(byte) {
-        if b == b'\n' {
-            line += 1;
-            line_start = i + 1;
+/// The rows a text area draws `value` as: its lines, each soft-wrapped to
+/// `width` columns.
+///
+/// A row is at most `width - 1` characters (plus the one space it may end
+/// on), so the caret after the last one still lands inside the field. A wrapped row breaks after its last space,
+/// which stays on that row, and a word wider than the row is cut where the
+/// row ends. Rows are byte ranges into `value`; a wrapped line's rows are
+/// contiguous, and the next line's first row starts one byte (the `\n`)
+/// past the last one's end.
+fn wrap_rows(value: &str, width: usize) -> Vec<(usize, usize)> {
+    let limit = width.saturating_sub(1).max(1);
+    let mut rows = Vec::new();
+    let mut at = 0usize;
+    for line in value.split('\n') {
+        let end = at + line.len();
+        let mut pos = at;
+        loop {
+            // The byte `limit` characters on, or the line's end.
+            let hard = value[pos..end]
+                .char_indices()
+                .nth(limit)
+                .map_or(end, |(i, _)| pos + i);
+            if hard >= end {
+                rows.push((pos, end));
+                break;
+            }
+            // A space right after the row's last character still ends it:
+            // the space rides on this row, past the text, rather than
+            // pushing the whole last word down.
+            let scan = if value[hard..].starts_with(' ') {
+                hard + 1
+            } else {
+                hard
+            };
+            let brk = match value[pos..scan].rfind(' ') {
+                Some(i) if i > 0 => pos + i + 1,
+                _ => hard,
+            };
+            rows.push((pos, brk));
+            pos = brk;
+        }
+        at = end + 1;
+    }
+    rows
+}
+
+/// Translate a byte offset in `value` to (row_index, byte_in_row) over the
+/// rows [`wrap_rows`] made. A byte on a wrap boundary is the start of the
+/// next row, where typing there would land; the end of a line is its last
+/// row's end.
+fn byte_to_row_col(rows: &[(usize, usize)], byte: usize) -> (usize, usize) {
+    for (r, &(a, b)) in rows.iter().enumerate() {
+        let continues = rows.get(r + 1).is_some_and(|&(next, _)| next == b);
+        if byte >= a && (byte < b || (byte == b && !continues)) {
+            return (r, byte - a);
         }
     }
-    (line, byte - line_start)
+    let last = rows.len().saturating_sub(1);
+    (last, rows.get(last).map_or(0, |&(a, b)| b - a))
 }
 
 /// Pad `line` with trailing spaces to `target` chars, or
@@ -4349,6 +4396,28 @@ pub mod tests {
             o.style.bg.as_ref().and_then(|c| c.as_theme_key()) == Some("ui.text_input_selection_bg")
         });
         assert!(!has_sel_overlay);
+    }
+
+    /// **A long line wraps at a space instead of running off the field.** The
+    /// field is 12 wide, so a row holds 11 characters; the break keeps the
+    /// space on the first row, and the caret at the end of the text sits on
+    /// the second row, where typing continues.
+    #[test]
+    fn a_long_line_wraps_at_a_space_and_the_caret_follows() {
+        let v = "hello there world";
+        let r = render_text_area(v, v.len() as i32, None, true, "", None, 3, 12, 0, 80);
+        assert_eq!(r.entries[0].text.trim_end(), "hello there");
+        assert_eq!(r.entries[1].text.trim_end(), "world");
+        assert_eq!(r.cursor_buffer_row, Some(1));
+        assert_eq!(r.cursor_byte_in_row, Some(5));
+        // A word wider than the row is cut where the row ends.
+        let r = render_text_area("abcdefghijklmnop", 0, None, true, "", None, 3, 6, 0, 80);
+        assert_eq!(r.entries[0].text, "abcde ");
+        assert_eq!(r.entries[1].text.trim_end(), "fghij");
+        // A caret on a wrap boundary starts the next row.
+        let r = render_text_area("hello there", 6, None, true, "", None, 3, 8, 0, 80);
+        assert_eq!(r.cursor_buffer_row, Some(1));
+        assert_eq!(r.cursor_byte_in_row, Some(0));
     }
 
     #[test]

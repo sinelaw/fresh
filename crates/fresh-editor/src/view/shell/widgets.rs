@@ -59,10 +59,10 @@
 //! `render::{text_area_geom, text_area_row}`, which the collector calls too —
 //! one copy of each rule rather than two that can drift.
 //!
-//! **A plain text area does not wrap**, which is what let the multi-line field
-//! cross: `render_text_area` splits the value on `\n` and pads or
-//! tail-truncates each line to the field width, so a row is a function of one
-//! line and the field's window can format the rows it draws and no others.
+//! **A plain text area wraps up front**, which is what let the multi-line field
+//! cross: `render::text_area_geom` splits the value on `\n` and soft-wraps each
+//! line to the field width into rows, so a row is a function of one byte range
+//! and the field's window can format the rows it draws and no others.
 //! The wrapping engine is the *markdown* path only (`wrap_styled_lines` over a
 //! parsed document, with a shadow editor over the result), and that is the one
 //! multi-line shape still going through the collector.
@@ -2099,10 +2099,10 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
         // per line, with the library's own bar, and the caret is what it
         // reveals.
         //
-        // **What made that cheap is that a text area does not wrap.**
-        // `render_text_area` splits the value on `\n` and pads or truncates
-        // each line to the field width, so the row for line `i` is a function
-        // of that line and of five facts resolved once for the whole value —
+        // **What made that cheap is that a text area wraps once, up front.**
+        // `render::text_area_geom` splits the value on `\n` and soft-wraps
+        // each line to the field width, so the row `i` is a function of its
+        // byte range and of five facts resolved once for the whole value —
         // width, focus, the selection in line coordinates, the caret's line,
         // and the placeholder. Those are `render::text_area_geom`, and
         // `render::text_area_row` is the row; the collector is built from the
