@@ -1,6 +1,11 @@
 #!/bin/bash
-# Run the whole test suite (unit, integration, e2e) under coverage and write a
-# report to target/coverage-report/, then analyse it for dead code.
+# Run the whole test suite (unit, integration, e2e) under coverage, analyse the
+# result for dead code, and write the reports to target/coverage-report/:
+#
+#   coverage.html   single self-contained page (source view, dead code, …)
+#   analysis.json   dead code / untested plugin API / uncovered blocks
+#   report.txt      llvm-cov per-file table
+#   lcov.info, export.json, html/   raw llvm-cov output
 #
 #   scripts/coverage-full [--report-only] [-- EXTRA_NEXTEST_ARGS...]
 #
@@ -12,7 +17,7 @@
 # and the e2e tests start the editor thousands of times: left alone, a full
 # run writes over 30 GB of profiles. A background job folds finished profiles
 # into one .profdata every 45 seconds and deletes them, which keeps the peak
-# around 1 GB.
+# to a few GB.
 
 set -euo pipefail
 
@@ -28,7 +33,7 @@ EXTRA=()
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --report-only) REPORT_ONLY=1; shift ;;
-        -h|--help) sed -n '2,15p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,21p' "$0"; exit 0 ;;
         --) shift; EXTRA=("$@"); break ;;
         *) echo "unknown option: $1" >&2; exit 2 ;;
     esac
@@ -60,8 +65,8 @@ if [[ $REPORT_ONLY -eq 0 ]]; then
 
     set +e
     cargo llvm-cov nextest --no-report --no-fail-fast --locked \
-        --all-features --all-targets "${EXTRA[@]}"
-    TEST_STATUS=$?
+        --all-features --all-targets "${EXTRA[@]}" 2>&1 | tee "$OUT/nextest.log"
+    TEST_STATUS=${PIPESTATUS[0]}
     set -e
 
     touch "$OUT/.stop"
@@ -99,4 +104,5 @@ tail -1 "$OUT/report.txt"
 echo
 python3 "$REPO_ROOT/scripts/coverage-analyze.py" "$OUT"
 echo
-echo "HTML report: $OUT/html/index.html"
+python3 "$REPO_ROOT/scripts/coverage-html.py" "$OUT" "$OUT/coverage.html"
+echo "Report: $OUT/coverage.html   (llvm-cov's own HTML: $OUT/html/index.html)"

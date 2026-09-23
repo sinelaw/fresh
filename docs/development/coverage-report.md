@@ -5,8 +5,12 @@ refresh them, re-run the script below.*
 
 Snapshot of line coverage for the full test suite (unit, integration and e2e),
 taken to find dead code and big untested chunks. Reproduce with
-`xvfb-run scripts/coverage-full`; `scripts/coverage-analyze.py` builds the lists
-below from the result.
+`xvfb-run scripts/coverage-full` (about 35 minutes on 4 cores). It runs the
+tests, then `scripts/coverage-analyze.py` builds the lists below and
+`scripts/coverage-html.py` bundles everything into
+`target/coverage-report/coverage.html`, a single page with annotated source.
+`scripts/coverage-full --report-only` regenerates the reports from the last
+run's profile.
 
 - **Run:** `cargo llvm-cov nextest --all-features --all-targets` (the same test
   set as CI's Linux job), under `xvfb-run`.
