@@ -1375,7 +1375,7 @@ fn new_session_form_buttons_wrap_on_narrow_form() {
     h.wait_until(|h| h.screen_to_string().contains("Launch in background"))
         .unwrap();
     let background_row = row_of(&h, "Launch in background");
-    let launch_row = row_of(&h, "Launch   ]");
+    let launch_row = row_of(&h, "[ Launch ]");
     assert_ne!(
         background_row,
         launch_row,
@@ -4199,17 +4199,22 @@ fn dock_dropdown_cursor_band_spans_the_menu_row() {
     let idle = row_bgs(&h, menu_row);
 
     // Focus opens on "New folder…"; Tab and ↓ walk the entries in reading
-    // order, onto "Machines…" and then "Import sessions…".
+    // order, which runs across both columns a line at a time: Compact,
+    // Cards, "Machines…", then "Import sessions…".
+    h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     h.wait_until(|h| row_bgs(h, menu_row) != idle).unwrap();
     let selected = row_bgs(&h, menu_row);
 
     let (start, end) = band_span(&idle, &selected).expect("the cursor row must repaint");
+    // The column runs from the panel's edge to the rule between the two
+    // columns, which keeps one blank cell on either side of it.
     assert!(
-        start <= label_start && end >= label_end + 3 && end < limit,
+        start <= label_start && end > label_end && end + 2 >= limit && end < limit,
         "the focus band must span the menu column (label {label_start}..{label_end}, \
-         next box at {limit}), got cols {start}..{end}:\n{}",
+         column rule at {limit}), got cols {start}..{end}:\n{}",
         h.screen_to_string()
     );
 }
