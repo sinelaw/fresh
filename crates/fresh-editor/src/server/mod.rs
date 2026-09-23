@@ -21,8 +21,6 @@ pub mod local_control;
 pub mod protocol;
 
 #[cfg(test)]
-mod runner;
-#[cfg(test)]
 mod tests;
 
 pub use capture_backend::{terminal_setup_sequences, terminal_teardown_sequences, CaptureBackend};
@@ -43,5 +41,3 @@ pub use editor_server::{EditorServer, EditorServerConfig};
 pub use input_parser::InputParser;
 pub use ipc::{ServerListener, ServerLiveness, SocketPaths};
 pub use protocol::{ClientHello, ControlMessage, ServerHello, PROTOCOL_VERSION};
-#[cfg(test)]
-pub use runner::{Server, ServerConfig};

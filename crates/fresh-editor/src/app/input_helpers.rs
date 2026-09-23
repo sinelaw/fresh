@@ -367,7 +367,7 @@ impl Editor {
     }
 
     /// Route a key event through the CompositeInputRouter for a composite
-    /// buffer.  Returns `Some(Ok(()))` if the event was handled (or blocked),
+    /// buffer.  Returns `Some(Ok(()))` if the event was handled,
     /// `None` if the router returned `Unhandled` (let fallthrough continue).
     pub(super) fn try_route_composite_key(
         &mut self,
@@ -392,7 +392,6 @@ impl Editor {
                 let delta = match action {
                     ScrollAction::Up(n) => -(n as isize),
                     ScrollAction::Down(n) => n as isize,
-                    _ => return Some(Ok(())),
                 };
                 self.active_window_mut()
                     .composite_scroll(split_id, buffer_id, delta);
@@ -410,9 +409,6 @@ impl Editor {
                 }
                 Some(Ok(()))
             }
-
-            // Anything else the router might return — let normal dispatch handle it
-            _ => None,
         }
     }
 }

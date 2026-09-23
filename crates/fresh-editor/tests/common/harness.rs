@@ -2069,11 +2069,6 @@ impl EditorTestHarness {
         self.editor.get_plugin_errors()
     }
 
-    /// Clear accumulated plugin errors (useful if testing error handling)
-    pub fn clear_plugin_errors(&mut self) {
-        self.editor.clear_plugin_errors();
-    }
-
     /// Get the buffer content (not screen, actual buffer text)
     /// Returns None for large files with unloaded regions (lazy loading)
     pub fn get_buffer_content(&self) -> Option<String> {

@@ -801,10 +801,6 @@ pub struct Window {
     /// (e.g. after the user picks a hit in the search overlay).
     pub pending_search_range: Option<std::ops::Range<usize>>,
 
-    /// Last live-grep panel state (cached so re-opening the panel
-    /// preserves the user's query / scroll / selection).
-    pub live_grep_last_state: Option<crate::services::live_grep_state::LiveGrepLastState>,
-
     /// Overlay-preview state used by the floating-prompt preview pane
     /// when it's showing a buffer view.
     pub overlay_preview_state: Option<crate::app::types::OverlayPreviewState>,
@@ -2444,7 +2440,6 @@ impl Window {
                 "search".to_string(),
             ),
             pending_search_range: None,
-            live_grep_last_state: None,
             overlay_preview_state: None,
             file_rapid_change_counts: HashMap::new(),
             goto_line_preview: None,
@@ -4919,69 +4914,6 @@ impl Window {
                             line_offset.unsigned_abs(),
                         );
                     }
-                    view_state.viewport.set_skip_ensure_visible();
-                });
-        }
-    }
-
-    /// Handle a `SetViewport` event using the active split's viewport.
-    pub(crate) fn handle_set_viewport_event(&mut self, top_line: usize) {
-        let Some((mgr, _)) = self.buffers.splits() else {
-            return;
-        };
-        let active_split = mgr.active_split();
-
-        if self
-            .scroll_sync_manager
-            .is_split_synced(active_split.into())
-        {
-            if let Some(group) = self
-                .scroll_sync_manager
-                .find_group_for_split_mut(active_split.into())
-            {
-                let scroll_line = if group.is_left_split(active_split.into()) {
-                    top_line
-                } else {
-                    group.right_to_left_line(top_line)
-                };
-                group.set_scroll_line(scroll_line);
-            }
-
-            let (left, right) = match self
-                .scroll_sync_manager
-                .find_group_for_split(active_split.into())
-            {
-                Some(group) => (group.left_split, group.right_split),
-                None => return,
-            };
-            if let Some(vs_map) = self.split_view_states_mut() {
-                if let Some(vs) = vs_map.get_mut(&LeafId(left)) {
-                    vs.viewport.set_skip_ensure_visible();
-                }
-                if let Some(vs) = vs_map.get_mut(&LeafId(right)) {
-                    vs.viewport.set_skip_ensure_visible();
-                }
-            }
-            return;
-        }
-
-        let (mgr, vs_map) = self.buffers.splits().expect("splits checked above");
-        let sync_group = vs_map.get(&active_split).and_then(|vs| vs.sync_group);
-        let splits_to_scroll = if let Some(group_id) = sync_group {
-            mgr.get_splits_in_group(group_id, vs_map)
-        } else {
-            vec![active_split]
-        };
-
-        for split_id in splits_to_scroll {
-            let (mgr, _) = self.buffers.splits().expect("splits checked above");
-            let Some(buffer_id) = mgr.buffer_for_split(split_id) else {
-                continue;
-            };
-
-            self.buffers
-                .with_buffer_and_split(buffer_id, split_id, |state, view_state| {
-                    view_state.viewport.scroll_to(&mut state.buffer, top_line);
                     view_state.viewport.set_skip_ensure_visible();
                 });
         }

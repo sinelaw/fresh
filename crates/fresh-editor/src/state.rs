@@ -1044,9 +1044,9 @@ impl EditorState {
                 self.sync_primary_cursor_line_number(cursors.primary().position);
             }
 
-            // View events (Scroll, SetViewport, Recenter) are now handled at Editor level
+            // View events (Scroll, Recenter) are now handled at Editor level
             // via SplitViewState. They should not reach EditorState.apply().
-            Event::Scroll { .. } | Event::SetViewport { .. } | Event::Recenter => {
+            Event::Scroll { .. } | Event::Recenter => {
                 // These events are intercepted in Editor::apply_event_to_active_buffer
                 // and routed to SplitViewState. If we get here, something is wrong.
                 tracing::warn!("View event {:?} reached EditorState.apply() - should be handled by SplitViewState", event);

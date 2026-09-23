@@ -12,7 +12,7 @@
 //!   to plugins after an event applies.
 //!
 //! The "scroll/viewport event" handlers (handle_scroll_event,
-//! handle_set_viewport_event, handle_recenter_event) live on
+//! handle_recenter_event) live on
 //! `impl Window` since they're entirely per-window concerns.
 
 use lsp_types::TextDocumentContentChangeEvent;
@@ -112,11 +112,6 @@ impl Editor {
         match event {
             Event::Scroll { line_offset } => {
                 self.active_window_mut().handle_scroll_event(*line_offset);
-                return;
-            }
-            Event::SetViewport { top_line } => {
-                self.active_window_mut()
-                    .handle_set_viewport_event(*top_line);
                 return;
             }
             Event::Recenter => {

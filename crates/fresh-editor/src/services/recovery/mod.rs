@@ -65,7 +65,7 @@ pub use types::{
 
 use std::collections::HashMap;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::Instant;
 
 /// Configuration for the recovery service
@@ -98,16 +98,6 @@ pub struct RecoveryService {
 }
 
 impl RecoveryService {
-    /// Create a new recovery service with custom config and storage directory
-    pub fn with_config_and_dir(config: RecoveryConfig, storage_dir: PathBuf) -> Self {
-        Self {
-            storage: RecoveryStorage::with_dir(storage_dir),
-            config,
-            last_save_times: HashMap::new(),
-            session_started: false,
-        }
-    }
-
     /// Create a new recovery service scoped to a named daemon or working directory.
     ///
     /// Performs one-time migration of old flat-layout recovery files if needed.

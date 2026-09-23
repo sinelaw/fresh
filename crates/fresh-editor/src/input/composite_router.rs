@@ -4,67 +4,25 @@
 //! based on focus state and cursor position within the composite view.
 
 use crate::model::composite_buffer::CompositeBuffer;
-use crate::model::event::BufferId;
 use crate::view::composite_view::CompositeViewState;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 /// Result of routing an input event
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RoutedEvent {
     /// Event affects composite view scrolling
     CompositeScroll(ScrollAction),
     /// Switch focus to another pane
     SwitchPane(Direction),
-    /// Navigate to next/previous hunk
-    NavigateHunk(Direction),
-    /// Route to a source buffer for editing
-    ToSourceBuffer {
-        buffer_id: BufferId,
-        action: BufferAction,
-    },
-    /// Cursor movement within focused pane
-    PaneCursor(CursorAction),
-    /// Selection action
-    Selection(SelectionAction),
-    /// Yank/copy the selected text
-    Yank,
-    /// Event was blocked (e.g., editing read-only pane)
-    Blocked(&'static str),
-    /// Close the composite view
-    Close,
     /// Event not handled by composite router
     Unhandled,
 }
 
-/// Selection actions for visual mode
-#[derive(Debug, Clone, Copy)]
-pub enum SelectionAction {
-    /// Start visual selection at current position
-    StartVisual,
-    /// Start line-wise visual selection
-    StartVisualLine,
-    /// Clear selection
-    ClearSelection,
-    /// Extend selection up
-    ExtendUp,
-    /// Extend selection down
-    ExtendDown,
-    /// Extend selection left
-    ExtendLeft,
-    /// Extend selection right
-    ExtendRight,
-}
-
 /// Scroll actions for the composite view
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScrollAction {
     Up(usize),
     Down(usize),
-    PageUp,
-    PageDown,
-    ToTop,
-    ToBottom,
-    ToRow(usize),
 }
 
 /// Direction for navigation
@@ -72,31 +30,6 @@ pub enum ScrollAction {
 pub enum Direction {
     Next,
     Prev,
-}
-
-/// Actions that modify buffer content
-#[derive(Debug, Clone)]
-pub enum BufferAction {
-    Insert(char),
-    InsertString(String),
-    Delete,
-    Backspace,
-    NewLine,
-}
-
-/// Cursor movement actions
-#[derive(Debug, Clone, Copy)]
-pub enum CursorAction {
-    Up,
-    Down,
-    Left,
-    Right,
-    LineStart,
-    LineEnd,
-    WordLeft,
-    WordRight,
-    Top,
-    Bottom,
 }
 
 /// Routes input events for a composite buffer
@@ -135,19 +68,11 @@ impl CompositeInputRouter {
     }
 }
 
-/// Coordinates within a source buffer
-#[derive(Debug, Clone)]
-pub struct SourceCoordinate {
-    pub buffer_id: BufferId,
-    pub byte_offset: usize,
-    pub line: usize,
-    pub column: usize,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::model::composite_buffer::{CompositeLayout, SourcePane};
+    use crate::model::event::BufferId;
 
     fn create_test_composite() -> (CompositeBuffer, CompositeViewState) {
         let sources = vec![
@@ -165,51 +90,49 @@ mod tests {
         (composite, view_state)
     }
 
-    #[test]
-    fn test_scroll_routing() {
+    fn route(code: KeyCode, modifiers: KeyModifiers) -> RoutedEvent {
         let (composite, view_state) = create_test_composite();
-
-        let event = KeyEvent::new(KeyCode::Down, KeyModifiers::NONE);
-        let result = CompositeInputRouter::route_key_event(&composite, &view_state, &event);
-
-        matches!(result, RoutedEvent::CompositeScroll(ScrollAction::Down(1)));
+        CompositeInputRouter::route_key_event(
+            &composite,
+            &view_state,
+            &KeyEvent::new(code, modifiers),
+        )
     }
 
     #[test]
-    fn test_pane_switch_routing() {
-        let (composite, view_state) = create_test_composite();
-
-        let event = KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE);
-        let result = CompositeInputRouter::route_key_event(&composite, &view_state, &event);
-
-        matches!(result, RoutedEvent::SwitchPane(Direction::Next));
+    fn test_j_k_scroll_the_composite_view() {
+        assert_eq!(
+            route(KeyCode::Char('j'), KeyModifiers::NONE),
+            RoutedEvent::CompositeScroll(ScrollAction::Down(1))
+        );
+        assert_eq!(
+            route(KeyCode::Char('k'), KeyModifiers::NONE),
+            RoutedEvent::CompositeScroll(ScrollAction::Up(1))
+        );
     }
 
     #[test]
-    fn test_readonly_blocking() {
-        let (composite, view_state) = create_test_composite();
-        // Focused pane is 0 (OLD), which is read-only
-
-        let event = KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE);
-        let result = CompositeInputRouter::route_key_event(&composite, &view_state, &event);
-
-        matches!(result, RoutedEvent::Blocked(_));
+    fn test_tab_switches_pane() {
+        assert_eq!(
+            route(KeyCode::Tab, KeyModifiers::NONE),
+            RoutedEvent::SwitchPane(Direction::Next)
+        );
+        assert_eq!(
+            route(KeyCode::BackTab, KeyModifiers::SHIFT),
+            RoutedEvent::SwitchPane(Direction::Prev)
+        );
     }
 
+    /// Arrows and typing fall through to the editor's native dispatch.
     #[test]
-    fn test_editable_routing() {
-        let (composite, mut view_state) = create_test_composite();
-        view_state.focused_pane = 1; // NEW pane is editable
-
-        let event = KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE);
-        let result = CompositeInputRouter::route_key_event(&composite, &view_state, &event);
-
-        matches!(
-            result,
-            RoutedEvent::ToSourceBuffer {
-                buffer_id: BufferId(2),
-                action: BufferAction::Insert('x'),
-            }
+    fn test_other_keys_are_unhandled() {
+        assert_eq!(
+            route(KeyCode::Down, KeyModifiers::NONE),
+            RoutedEvent::Unhandled
+        );
+        assert_eq!(
+            route(KeyCode::Char('x'), KeyModifiers::NONE),
+            RoutedEvent::Unhandled
         );
     }
 }

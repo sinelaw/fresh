@@ -53,11 +53,6 @@ pub enum Event {
         line_offset: isize,
     },
 
-    /// Set viewport to specific position
-    SetViewport {
-        top_line: usize,
-    },
-
     /// Center the viewport on the cursor
     Recenter,
 
@@ -471,10 +466,6 @@ impl Event {
             Self::Scroll { line_offset } => Some(Self::Scroll {
                 line_offset: -line_offset,
             }),
-            Self::SetViewport { top_line: _ } => {
-                // Can't invert without knowing old top_line
-                None
-            }
             Self::ChangeMode { mode: _ } => {
                 // Can't invert without knowing old mode
                 None
@@ -532,7 +523,7 @@ impl Event {
     ///
     /// Readonly actions include:
     /// - Cursor movement (MoveCursor)
-    /// - Scrolling and viewport changes (Scroll, SetViewport)
+    /// - Scrolling and viewport changes (Scroll, Recenter)
     /// - UI events (overlays, popups, margins, mode changes, etc.)
     pub fn is_write_action(&self) -> bool {
         match self {
