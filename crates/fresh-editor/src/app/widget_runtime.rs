@@ -3627,26 +3627,21 @@ mod tests {
         );
     }
 
-    /// **A modal that blurred the dock on its way in does not hand the
-    /// keyboard back to it on its way out.**
+    /// **A workspace created from a modal over the dock keeps the keyboard.**
     ///
-    /// A centred panel mounting over a focused dock blurs it
-    /// (`handle_mount_floating_widget`), so the keyboard is the editor's
-    /// from that moment and stays the editor's when the modal closes. The
-    /// tree used to say otherwise: focus was inside the dock when the
-    /// modal's scope opened, so the settle that opened it recorded the dock
-    /// widget as the place to come back to, and closing the modal restored
-    /// focus there — to a panel that had given the keyboard up while the
-    /// modal was up. Every key after that resolved in the `Dock` context
-    /// and died: the Orchestrator's New-Workspace form (a centred modal
-    /// over the dock) left the workspace it had just created unable to
-    /// type, so a file opened in it never took the keyboard.
+    /// A centred panel mounting over a focused dock blurs it, and when the
+    /// panel closes the host hands the keyboard back to the dock widget that
+    /// opened it (R2) — a Cancel is back where it started. A submit that
+    /// goes somewhere else says so: the Orchestrator's New-Workspace form
+    /// closes and then blurs the dock (`showDockUnfocused`) so the workspace
+    /// it just created takes the keys. Plugin commands run in order, so that
+    /// blur lands after the give-back and wins. (The bug this guards: every
+    /// key after the submit resolved in the `Dock` context and died, so a
+    /// file opened in the new workspace never took the keyboard.)
     ///
     /// Gated on `plugins`: it mounts and unmounts the modal through the
     /// plugin command path (`handle_plugin_command`), which only exists
-    /// when the plugin runtime is compiled in — and the mount is the half
-    /// that blurs the dock, so driving it any other way would be modelling
-    /// the thing under test rather than running it.
+    /// when the plugin runtime is compiled in.
     #[cfg(feature = "plugins")]
     #[test]
     fn a_modal_that_blurred_the_dock_leaves_the_keyboard_with_the_editor() {
@@ -3685,15 +3680,25 @@ mod tests {
             "mounting a centred modal blurs the dock"
         );
 
-        // Submitting it closes the form — and the dock stays blurred.
+        // Submitting it closes the form — the host gives the dock its
+        // keyboard back — and then blurs the dock, as the plugin does when
+        // it moves into the workspace it made.
         editor
             .handle_plugin_command(fresh_core::api::PluginCommand::UnmountFloatingWidget {
                 plugin: "test-plugin".to_string(),
                 panel_id: 2,
             })
             .unwrap();
+        editor
+            .handle_plugin_command(fresh_core::api::PluginCommand::FloatingPanelControl {
+                plugin: "test-plugin".to_string(),
+                panel_id: 1,
+                op: "blur".to_string(),
+                arg: 0.0,
+            })
+            .unwrap();
         frame_the_shell(&mut editor);
-        assert!(!editor.is_dock_focused(), "the dock is still blurred");
+        assert!(!editor.is_dock_focused(), "the dock is blurred");
         assert_eq!(
             editor.get_key_context(),
             KeyContext::Normal,

@@ -2322,7 +2322,13 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
             let bar = cx.scrollbar_reveal;
             let state_key = spec_state_key(spec);
             let fallback_width = width;
-            fresh_ui::layout_reader(move |info: fresh_ui::LayoutInfo| {
+            // A box of a fixed row count knows its height before layout: say
+            // so, or the reader stretches to whatever it is offered (a tight
+            // constraint, a root). One that grows with its text is `Auto` —
+            // its content's height at the width it is laid out at.
+            let fixed_height =
+                (max_rows == 0).then(|| rows.max(1) as u16 + u16::from(!label.is_empty()));
+            let reader = fresh_ui::layout_reader(move |info: fresh_ui::LayoutInfo| {
                 let max_w = info.constraints.max_w;
                 let width = match max_w > 0 && max_w < u16::MAX {
                     true => max_w,
@@ -2432,7 +2438,11 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                         col().children([entry_row(&fmt::text_area_label(&label), &surface), body])
                     }
                 }
-            })
+            });
+            match fixed_height {
+                Some(h) => reader.h(Sizing::Cells(h)),
+                None => reader,
+            }
         }
         // **A markdown document is a wrapped run in a viewport.** The whole
         // rendered document is one logical string (`markdown_document`, the
