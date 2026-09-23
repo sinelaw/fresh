@@ -360,6 +360,98 @@ fn spec_state_key(spec: &WidgetSpec) -> Option<fresh_ui::Key> {
     }
 }
 
+/// The width a `layout_reader` is laid out at, or `fallback` when the
+/// constraint is unbounded (an intrinsic measure).
+fn real_width(info: fresh_ui::LayoutInfo, fallback: u16) -> u16 {
+    let w = info.constraints.max_w;
+    match w > 0 && w < u16::MAX {
+        true => w,
+        false => fallback,
+    }
+}
+
+/// **A tree drawn as a table** (`Tree::columns`, `TreeNode::cells`): the
+/// columns, their natural widths over every cell row, and what a cell row
+/// spends before and after its cells — so the header and every row fit the
+/// same columns to the same room, at whatever width layout gives them.
+#[derive(Clone)]
+struct TreeTable {
+    columns: std::rc::Rc<Vec<fresh_core::api::TableColumn>>,
+    natural: std::rc::Rc<Vec<u32>>,
+    /// Indent, disclosure and checkbox columns before a cell row's first cell.
+    lead: u32,
+    /// Columns after the cells: the widest row button and its gap, and the
+    /// scrollbar column a row with a button leaves.
+    tail: u32,
+}
+
+impl TreeTable {
+    fn of(
+        columns: &[fresh_core::api::TableColumn],
+        nodes: &[fresh_core::api::TreeNode],
+        indent: u32,
+        checkable: bool,
+    ) -> Option<TreeTable> {
+        if columns.is_empty() {
+            return None;
+        }
+        let rows = nodes.iter().filter(|n| !n.cells.is_empty());
+        let natural = crate::widgets::kinds::table::natural_widths(
+            columns,
+            rows.clone().map(|n| n.cells.as_slice()),
+        );
+        // Cell rows share a depth in every table there is; the first one's
+        // stands for all, so the columns line up down the whole table.
+        let first = rows.clone().next();
+        let depth = first.map(|n| n.depth).unwrap_or(0);
+        let checkbox = match checkable && first.is_some_and(|n| n.checked.is_some()) {
+            true => 4,
+            false => 0,
+        };
+        let action = rows
+            .clone()
+            .map(|n| crate::widgets::render::tree_row_action_cols(n) as u32)
+            .max()
+            .unwrap_or(0);
+        let bar = match action > 0 {
+            true => PANEL_BAR_COLS as u32,
+            false => 0,
+        };
+        Some(TreeTable {
+            columns: std::rc::Rc::new(columns.to_vec()),
+            natural: std::rc::Rc::new(natural),
+            lead: depth * indent + 2 + checkbox,
+            tail: action + bar,
+        })
+    }
+
+    fn widths(&self, width: u16) -> Vec<u32> {
+        let room = (width as u32).saturating_sub(self.lead + self.tail);
+        crate::widgets::kinds::table::fit(&self.natural, room)
+    }
+
+    fn row(&self, cells: &[fresh_core::api::TableCell], width: u16) -> TextPropertyEntry {
+        crate::widgets::kinds::table::row_entry(&self.columns, cells, &self.widths(width))
+    }
+
+    fn header(&self, width: u16) -> TextPropertyEntry {
+        let mut e = crate::widgets::kinds::table::header_entry(&self.columns, &self.widths(width));
+        let lead = " ".repeat(self.lead as usize);
+        for o in &mut e.inline_overlays {
+            o.start += lead.len();
+            o.end += lead.len();
+        }
+        e.text.insert_str(0, &lead);
+        e
+    }
+}
+
+/// Whether `spec`, in a row, takes the width the row's other children leave:
+/// a single-line field that asked to fill its container (`full_width`).
+fn fills_row(spec: &WidgetSpec) -> bool {
+    matches!(spec, WidgetSpec::Text { rows, full_width: true, .. } if *rows <= 1)
+}
+
 /// Apply [`state_key`]'s answer, if there is one.
 fn keyed(node: Node<UiMsg>, key: Option<fresh_ui::Key>) -> Node<UiMsg> {
     match key {
@@ -853,6 +945,9 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                         let n = node_in(c, w, &inner, site.across());
                         match crate::widgets::kinds::containers::predicts_block(c) {
                             true => n.w(Sizing::Cells(w)),
+                            // A field that fills its row takes what the
+                            // row's other children leave (R5).
+                            false if fills_row(c) => n.w(Sizing::Flex(1)),
                             false => n,
                         }
                     })
@@ -1738,6 +1833,7 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
             item_height,
             card_borders,
             toggle_on_click: _,
+            columns: _,
         } if *card_borders => {
             let sel_abs = live_selection(cx, key, *selected_index);
             let expanded: std::collections::HashSet<String> =
@@ -1922,6 +2018,7 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
             item_height,
             card_borders,
             toggle_on_click: _,
+            columns,
         } if !*card_borders => {
             use std::rc::Rc;
             let expanded: std::collections::HashSet<String> =
@@ -1938,119 +2035,159 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
             let sel_abs = live_selection(cx, key, *selected_index);
             let n = visible.len();
 
-            let row_at = {
-                let (nodes, keys, visible) = (nodes.clone(), keys.clone(), visible.clone());
+            // One row, at the width it is laid out at.
+            let build_row: Rc<
+                dyn Fn(
+                    &fresh_core::api::TreeNode,
+                    usize,
+                    fresh_ui::widgets::RowState,
+                    u16,
+                ) -> Node<UiMsg>,
+            > = {
+                let keys = keys.clone();
                 let tree_key = tree_key.clone();
-                move |i: usize, st: fresh_ui::widgets::RowState| -> Node<UiMsg> {
-                    let surface = row_surface(st, &surface);
-                    let abs = visible[i];
-                    let mut node = nodes[abs].clone();
-                    node.text.normalize_widths();
-                    let item_key = keys.get(abs).cloned().unwrap_or_default();
-                    let open =
-                        node.has_children && !item_key.is_empty() && expanded.contains(&item_key);
-                    let r = crate::widgets::render_tree_row(
-                        &node,
-                        open,
-                        checkable,
-                        1,
-                        false,
-                        tree_row_width(width, &node) as u32,
-                        indent,
-                        h_pan,
-                    );
-                    let end = r.entry.text.len();
-                    let hit = |kind: &'static str,
-                               a: usize,
-                               b: usize,
-                               payload: serde_json::Value,
-                               row_target: bool| {
-                        (
-                            (a, b),
-                            crate::widgets::WidgetEvent {
-                                row_target,
-                                context_click: row_target,
-                                widget_key: tree_key.clone(),
-                                widget_kind: "tree",
-                                payload,
-                                event_type: kind,
-                                owner_key: None,
-                            },
-                        )
-                    };
-                    // Order is the collector's: the narrow targets are named
-                    // before the row-wide one, so a byte inside the glyph or
-                    // the box belongs to it rather than to `select`.
-                    let mut hits = Vec::new();
-                    if let Some((a, b)) = r.disclosure_range {
-                        hits.push(hit(
-                            "expand",
-                            a,
-                            b,
-                            serde_json::json!({
-                                "index": abs, "key": item_key, "expanded": !open,
-                            }),
+                let expanded = expanded.clone();
+                Rc::new(
+                    move |node: &fresh_core::api::TreeNode,
+                          abs: usize,
+                          st: fresh_ui::widgets::RowState,
+                          width: u16|
+                          -> Node<UiMsg> {
+                        let surface = row_surface(st, &surface);
+                        let mut node = node.clone();
+                        node.text.normalize_widths();
+                        let item_key = keys.get(abs).cloned().unwrap_or_default();
+                        let open = node.has_children
+                            && !item_key.is_empty()
+                            && expanded.contains(&item_key);
+                        let r = crate::widgets::render_tree_row(
+                            &node,
+                            open,
+                            checkable,
+                            1,
                             false,
-                        ));
-                    }
-                    if let Some((a, b)) = r.checkbox_range {
+                            tree_row_width(width, &node) as u32,
+                            indent,
+                            h_pan,
+                        );
+                        let end = r.entry.text.len();
+                        let hit = |kind: &'static str,
+                                   a: usize,
+                                   b: usize,
+                                   payload: serde_json::Value,
+                                   row_target: bool| {
+                            (
+                                (a, b),
+                                crate::widgets::WidgetEvent {
+                                    row_target,
+                                    context_click: row_target,
+                                    widget_key: tree_key.clone(),
+                                    widget_kind: "tree",
+                                    payload,
+                                    event_type: kind,
+                                    owner_key: None,
+                                },
+                            )
+                        };
+                        // Order is the collector's: the narrow targets are named
+                        // before the row-wide one, so a byte inside the glyph or
+                        // the box belongs to it rather than to `select`.
+                        let mut hits = Vec::new();
+                        if let Some((a, b)) = r.disclosure_range {
+                            hits.push(hit(
+                                "expand",
+                                a,
+                                b,
+                                serde_json::json!({
+                                    "index": abs, "key": item_key, "expanded": !open,
+                                }),
+                                false,
+                            ));
+                        }
+                        if let Some((a, b)) = r.checkbox_range {
+                            hits.push(hit(
+                                "toggle",
+                                a,
+                                b,
+                                serde_json::json!({
+                                    "index": abs,
+                                    "key": item_key,
+                                    "checked": !node.checked.unwrap_or(false),
+                                }),
+                                false,
+                            ));
+                        }
+                        if let Some((a, b)) = r.action_range {
+                            hits.push(hit(
+                                "action",
+                                a,
+                                b,
+                                serde_json::json!({ "index": abs, "key": item_key }),
+                                false,
+                            ));
+                        }
                         hits.push(hit(
-                            "toggle",
-                            a,
-                            b,
-                            serde_json::json!({
-                                "index": abs,
-                                "key": item_key,
-                                "checked": !node.checked.unwrap_or(false),
-                            }),
-                            false,
-                        ));
-                    }
-                    if let Some((a, b)) = r.action_range {
-                        hits.push(hit(
-                            "action",
-                            a,
-                            b,
+                            "select",
+                            0,
+                            end,
                             serde_json::json!({ "index": abs, "key": item_key }),
-                            false,
+                            true,
                         ));
+                        let piece = entry_row_hits(&r.entry, slot, &surface, &hits);
+                        // **In the sidebar, the selected row wears the explorer's
+                        // `▌`** (design §5.1): a section's tree sits in the same
+                        // column as the file tree, and the two read as one family
+                        // when selection looks the same in both. The mark replaces
+                        // the row's first cell exactly as the explorer's caret
+                        // does, over the band the row already has, and only in
+                        // this slot — the dock's and a pane's trees keep the band
+                        // alone. The overlay carries no gesture, so a press on
+                        // that cell continues to the row's own `select` beneath.
+                        let selected = matches!(
+                            st,
+                            fresh_ui::widgets::RowState::Selected
+                                | fresh_ui::widgets::RowState::SelectedBlur
+                        );
+                        if selected && matches!(slot, Slot::Sidebar(_)) {
+                            let ink = surface.with_fg(Paint::key("editor.cursor")).to_string();
+                            fresh_ui::stack().h(Sizing::Cells(1)).children([
+                                piece,
+                                row()
+                                    .h(Sizing::Cells(1))
+                                    .children([fresh_ui::text("▌").theme(ink).w(Sizing::Cells(1))]),
+                            ])
+                        } else {
+                            piece
+                        }
+                    },
+                )
+            };
+            // **A table** (`columns`): the rows that carry cells are laid out
+            // on columns fitted to the width layout gives the tree, and a
+            // header row of titles stands over them. See `kinds::table`.
+            let table = TreeTable::of(columns, &nodes, indent, checkable);
+            let row_at = {
+                let (nodes, visible) = (nodes.clone(), visible.clone());
+                let table = table.clone();
+                let build_row = build_row.clone();
+                move |i: usize, st: fresh_ui::widgets::RowState| -> Node<UiMsg> {
+                    let abs = visible[i];
+                    // A cell row is built at the width it is laid out at, so
+                    // its columns fit the room that is really there.
+                    if let Some(t) = table.as_ref().filter(|_| !nodes[abs].cells.is_empty()) {
+                        let t = t.clone();
+                        let build = build_row.clone();
+                        let base = nodes[abs].clone();
+                        return fresh_ui::layout_reader(move |info: fresh_ui::LayoutInfo| {
+                            let w = real_width(info, width);
+                            let mut node = base.clone();
+                            node.text = t.row(&node.cells, w);
+                            build(&node, abs, st, w)
+                        });
                     }
-                    hits.push(hit(
-                        "select",
-                        0,
-                        end,
-                        serde_json::json!({ "index": abs, "key": item_key }),
-                        true,
-                    ));
-                    let piece = entry_row_hits(&r.entry, slot, &surface, &hits);
-                    // **In the sidebar, the selected row wears the explorer's
-                    // `▌`** (design §5.1): a section's tree sits in the same
-                    // column as the file tree, and the two read as one family
-                    // when selection looks the same in both. The mark replaces
-                    // the row's first cell exactly as the explorer's caret
-                    // does, over the band the row already has, and only in
-                    // this slot — the dock's and a pane's trees keep the band
-                    // alone. The overlay carries no gesture, so a press on
-                    // that cell continues to the row's own `select` beneath.
-                    let selected = matches!(
-                        st,
-                        fresh_ui::widgets::RowState::Selected
-                            | fresh_ui::widgets::RowState::SelectedBlur
-                    );
-                    if selected && matches!(slot, Slot::Sidebar(_)) {
-                        let ink = surface.with_fg(Paint::key("editor.cursor")).to_string();
-                        fresh_ui::stack().h(Sizing::Cells(1)).children([
-                            piece,
-                            row()
-                                .h(Sizing::Cells(1))
-                                .children([fresh_ui::text("▌").theme(ink).w(Sizing::Cells(1))]),
-                        ])
-                    } else {
-                        piece
-                    }
+                    build_row(&nodes[abs], abs, st, width)
                 }
             };
-
             let list = fresh_ui::List::windowed_stateful(
                 n,
                 {
@@ -2081,13 +2218,26 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
             let list = list.selection(visible.iter().position(|&a| a as i32 == sel_abs));
             let node = keyed(fresh_ui::ComponentExt::node(list), state_key(key));
             let node = pan_to_widget(node, slot, &tree_key);
-            match visible_rows {
+            let node = match visible_rows {
                 Some(r) => node.h(Sizing::Cells(tree_rows(n as u32, *r))),
                 // Height only. `flex(1)` set both axes, and a flexible width
                 // on a column's cross axis is measured at the whole extent —
                 // frame-wide under an `Auto` box. The width stays `Auto`;
                 // the column stretches it.
                 None => node.h(Sizing::Flex(1)),
+            };
+            // The table's header row: each title over its column, at the
+            // width layout gives it — the same fit its rows make.
+            match table {
+                None => node,
+                Some(t) => {
+                    let surface = cx.surface.clone();
+                    let header = fresh_ui::layout_reader(move |info: fresh_ui::LayoutInfo| {
+                        entry_row(&t.header(real_width(info, width)), &surface)
+                    })
+                    .h(Sizing::Cells(1));
+                    col().children([header, node])
+                }
             }
         }
         // **A multi-line field's rows are built one at a time, from lines.**
@@ -2616,7 +2766,7 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
             let label_s = label.clone();
             let placeholder_s = placeholder.clone();
             let key_s = key.map(|k| k.to_string());
-            let (fw, mvc, fullw, bc, sel, lw, la, gutter, w32) = (
+            let (fw, mvc, fullw, bc, sel, lw, la, gutter) = (
                 *field_width,
                 *max_visible_chars,
                 *full_width,
@@ -2625,9 +2775,8 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                 *label_width,
                 cx.label_align,
                 cx.marker_gutter,
-                width as u32,
             );
-            let build_line = move |window: u32| {
+            let build_line = move |window: u32, w32: u32| {
                 tx::single_line(
                     &ed,
                     window,
@@ -2648,20 +2797,21 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
             };
             // Measured once, before the builder moves into the window: the
             // value's column does not depend on the window.
-            let value_col = build_line(st.scroll).value_col;
+            let value_col = build_line(st.scroll, width as u32).value_col;
             // One press or none — an unkeyed field has none, because an event
             // with no widget to name could not say what it focused — spanning
             // the whole row, and the caret's marker rides in the same split:
             // the `block_caret` overlay is already on the entry, and this is
             // the *cell* the host drops a hardware cursor into.
-            let field = {
+            let make_field = {
                 let (slot, surface) = (cx.slot, cx.surface.clone());
                 let places = places_cursor(cx);
-                windowed(
-                    state_key(&key.map(|k| k.to_string())),
-                    st.scroll,
-                    move |window| {
-                        let line = build_line(window);
+                let (state, seed) = (state_key(&key.map(|k| k.to_string())), st.scroll);
+                move |w32: u32| {
+                    let build_line = build_line.clone();
+                    let surface = surface.clone();
+                    windowed(state.clone(), seed, move |window| {
+                        let line = build_line(window, w32);
                         let next = line.scroll;
                         let hits: Vec<((usize, usize), crate::widgets::WidgetEvent)> = line
                             .event
@@ -2681,8 +2831,27 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                             ),
                         };
                         (node, next)
-                    },
-                )
+                    })
+                }
+            };
+            // **A field that fills its row is sized by layout** (R5): its
+            // value cell is as wide as what the row leaves it — beside a
+            // `Browse…` button, say — read from the width this node is laid
+            // out at, not guessed from the terminal's by the plugin. The row
+            // gives such a field the flexible share (`fills_row`).
+            let field = match fullw {
+                true => {
+                    let fallback = width as u32;
+                    fresh_ui::layout_reader(move |info: fresh_ui::LayoutInfo| {
+                        let max_w = info.constraints.max_w;
+                        let w = match max_w > 0 && max_w < u16::MAX {
+                            true => max_w as u32,
+                            false => fallback,
+                        };
+                        make_field(w)
+                    })
+                }
+                false => make_field(width as u32),
             };
             // The candidates line up under the value: its column is the
             // row's to say, and where the float starts is the site's.
@@ -5162,6 +5331,7 @@ pub(crate) mod tests {
             checked: None,
             extra_lines: Vec::new(),
             window_anchor: None,
+            cells: Vec::new(),
             action: None,
         }
     }
@@ -5182,6 +5352,7 @@ pub(crate) mod tests {
             item_height: 1,
             card_borders: false,
             toggle_on_click: false,
+            columns: Vec::new(),
             indent_cols: 2,
         }
     }
@@ -6314,6 +6485,7 @@ pub(crate) mod tests {
                     checked: None,
                     extra_lines: vec![raw(&format!("branch-{i}")), raw("2 files")],
                     window_anchor: None,
+                    cells: Vec::new(),
                     action: None,
                 })
                 .collect(),
@@ -6327,6 +6499,7 @@ pub(crate) mod tests {
             item_height: 3,
             card_borders: true,
             toggle_on_click: false,
+            columns: Vec::new(),
         }
     }
 

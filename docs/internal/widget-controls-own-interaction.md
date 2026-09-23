@@ -187,6 +187,36 @@ answer it. The New Workspace form's history arrows are bound
 history arrows are bound `on:searchField`, and its `lastFocusedWidget` guess
 at where focus was is gone.
 
+### R5 — sizes come from layout
+
+A plugin cannot see the width layout gives a control, so every size it worked
+out itself was a guess from the terminal's width and the panel's share of it —
+right until a frame, a gutter or a sibling changed.
+
+**A `Text` that fills the rest of its row.** `fullWidth: true` on a single-line
+field inside a `row` now makes it `Sizing::Flex(1)` and builds the field in a
+`layout_reader` at the width it actually got (`fills_row` / `make_field` in
+`view/shell/widgets.rs`). The Machine dialog's identity field uses it;
+the orchestrator's `machineFieldWidth` (the terminal width less the label and
+the frame, guessed) is deleted.
+
+**A table.** `tree({ columns })` with `treeNode(…, { cells })` is a table: the
+host measures every cell, caps each column at its `maxWidth`, fits the columns
+to the width the tree is laid out at (the widest column gives first, never
+below a floor), elides each cell at the end its column names (`"head"` keeps a
+path's tail, `"tail"` a name's head), and draws a header over the rows. The
+rules are pure functions in `fresh-editor-core` `kinds::table`; the host's
+`TreeTable` computes the lead (depth indent, fold glyph, checkbox) and tail
+(the widest row button, the scrollbar) so the columns line up whatever the
+row's depth or button. A node without cells (a group heading, a problem line)
+spans the row. Tree was extended rather than a new kind added so Import
+sessions keeps its folding, selection and row buttons.
+
+Import sessions now passes cells and column titles; `discoverRowRoom`,
+`discoverLayout`, `discoverRowEntry`, `discoverHeaderEntry`, `discoverElide`,
+`DISCOVER_COL_GAP` and `DISCOVER_TREE_GLYPH_COLS` — the plugin's own copy of
+column measuring, fitting, eliding and padding — are deleted.
+
 ## Checklist
 
 - [x] R1 — controls get keys first; declared dialog-wide shortcuts.
@@ -196,5 +226,5 @@ at where focus was is gone.
 - [x] R3 — the text area keeps its caret in view on every layout; `minRows` /
       `maxRows`.
 - [x] R4 — unconsumed arrows move focus by screen position.
-- [ ] R5 — sizes from layout: fill-the-row `Text`, the table widget.
+- [x] R5 — sizes from layout: fill-the-row `Text`, the table widget.
 - [ ] R6 — shared composites (path picker, Machine picker) in `plugins/lib`.

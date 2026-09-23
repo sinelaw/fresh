@@ -1,13 +1,12 @@
 /** The Import sessions dialog's row model: a scan in, rows out. */
 import {
-  discoverElide,
   discoverIsGroup,
-  discoverLayout,
+  discoverColumns,
   discoverRowAction,
-  discoverRowEntry,
+  discoverRowCells,
   discoverRowsFrom,
   discoverVerbFor,
-  DISCOVER_COL_GAP,
+  DISCOVER_COL_MAX,
   DISCOVER_PROBLEMS_KEY,
   type DiscoverRow,
   type DiscoverScan,
@@ -143,30 +142,29 @@ const proj = (label: string, id = label) => ({ kind: "repo" as const, id: `repo:
     ["  short", "Claude Code", "main"],
   ], "a session row is its name, then one column per thing the heading did not say");
 
-  const layout = discoverLayout(rows, measure);
-  const w = layout.widths.get("session")!;
-  eq(w[0], measure("  a much longer session title"), "a column is as wide as its widest cell");
-  eq(w[1], measure("Claude Code"), "and each column is measured on its own");
-  // What alignment *is*, read off the rendered rows: the second column
-  // begins at the same offset on both, though their names differ by 23
-  // columns, and both rows end in the same place.
-  const rendered = sessions.map((r) =>
-    (discoverRowEntry(r, layout, measure).segments ?? []).map((seg) => seg.text).join("")
-  );
-  const second = w[0] + DISCOVER_COL_GAP;
-  eq(rendered.map((line) => [...line].slice(second, second + 4).join("")), ["tmux", "Clau"],
-    "so every row's second column starts in the same place");
-  eq(new Set(rendered.map((line) => [...line].length)).size, 1,
-    "and every row is padded to one width, so the panel does not clip the longest");
-  eq(layout.widths.get("group")!.length >= 1, true, "headings are measured as their own family");
+  // How wide each column is, and where a cell is cut, is the host table's
+  // to work out from the width it lays the list out at; the plugin says only
+  // what the columns are and which end of each is cut.
+  const columns = discoverColumns(rows, "project", false, t);
+  eq(columns.map((c) => c.title), ["discover.col_session", "discover.col_tool", "discover.col_branch"],
+    "one column per cell, titled for the grouping");
+  eq(columns.every((c) => c.maxWidth === DISCOVER_COL_MAX), true, "no column may take the whole panel");
+  eq(discoverRowCells(sessions[0]).map((c) => c.text), cells(sessions[0]),
+    "a session row's cells are its columns' text, unpadded");
+  eq(discoverRowCells(sessions[0])[1].style?.fg, "ui.menu_disabled_fg", "what tells rows apart is dim");
 }
 
 {
   // A path is cut at the head: the directory it ends in is what tells two
   // checkouts of one repository apart.
-  eq(discoverElide("/home/u/work/repo", 10, "tail", measure), "…work/repo", "a path keeps its tail");
-  eq(discoverElide("a-very-long-name", 10, "head", measure), "a-very-lo…", "a name keeps its head");
-  eq(discoverElide("short", 10, "head", measure), "short", "a cell that fits is left alone");
+  const rows = discoverRowsFrom(
+    [scan("local", [session({ id: "a", tool: "claude-code", cwd: "/home/u/work/repo", title: "x" })],
+      [{ id: "claude-code", displayName: "Claude Code", status: "found", count: 1 }])],
+    { filter: "", grouping: "tool" }, resumeArgv, t,
+  );
+  const columns = discoverColumns(rows, "tool", false, t);
+  eq(columns[1].elide, "head", "a directory column keeps its tail");
+  eq(columns[0].elide, "tail", "a name keeps its head");
 }
 
 // ── the button ────────────────────────────────────────────────────

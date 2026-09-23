@@ -1514,6 +1514,14 @@ type TreeNode = {
 	* whose chrome has nowhere to put one.
 	*/
 	action?: string | null;
+	/**
+	* **A table row.** When the parent `Tree` declares `columns`, a node
+	* that carries cells is drawn from them — one per column, each fitted
+	* to its column at the width layout gives the tree and elided at the
+	* end its column says — instead of from `text`. A node with no cells
+	* (a group heading) is drawn from `text` across the whole row.
+	*/
+	cells?: Array<TableCell>;
 };
 type TextWindowAnchor = {
 	/**
@@ -2006,6 +2014,14 @@ type WidgetSpec = {
 	* glyph. The toggle fires `expand` with `{ index, key, expanded }`.
 	*/
 	toggleOnClick: boolean;
+	/**
+	* **A table.** Columns declared here turn every node that carries
+	* `cells` into a row of them: the host measures the cells, fits the
+	* columns to the width layout gives the tree (the widest gives
+	* first), elides each cell at its column's end, and draws a header
+	* row of the titles above the tree. Empty (default): a plain tree.
+	*/
+	columns?: Array<TableColumn>;
 	key?: string | null;
 } | {
 	"kind": "text";

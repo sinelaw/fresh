@@ -16,16 +16,14 @@ import {
   discoverGroupOf,
   discoverMatches,
   discoverIsGroup,
-  discoverLayout,
   discoverRowAction,
-  discoverRowEntry,
+  discoverColumns,
+  discoverRowCells,
+  discoverRowText,
   discoverRowsFrom,
   discoverVisibleRowCount,
   quoteForAgentCmd,
   DISCOVER_INDENT_COLS,
-  DISCOVER_TREE_GLYPH_COLS,
-  discoverColumnTitles,
-  discoverHeaderEntry,
   type DiscoverGrouping,
   type DiscoverVerb,
   type DiscoverRow,
@@ -55,7 +53,6 @@ const editor = getEditor();
 
 // Editor methods need their receiver; the row model takes plain functions.
 const t = (key: string, params?: Record<string, string>): string => editor.t(key, params);
-const measure = (s: string): number => editor.stringWidth(s);
 
 /** The orchestrator's side of the contract, or null when it is not loaded. */
 function host(): DiscoveryHost | null {
@@ -103,16 +100,6 @@ const DISCOVER_MIN_TREE_ROWS = 8;
  *  the scan found: as many as the panel has room for, so a modest answer
  *  opens up without scrolling. Sized off the whole terminal, which is what
  *  the centred panel's `heightPct` is a share of. */
-/** The row width the list has room for before its buttons: the panel, less
- *  its frame, the list's indent and frame, the tree's fold glyph, and the
- *  `[ Import ]` button with its gap. */
-function discoverRowRoom(): number {
-  const w = editor.getScreenSize().width;
-  const panel = Math.floor((w > 0 ? w : 120) * DISCOVER_WIDTH_PCT / 100);
-  const button = measure(`[ ${t("discover.btn_import")} ]`) + 2;
-  return panel - 2 - 2 - 4 - DISCOVER_TREE_GLYPH_COLS - button - 2;
-}
-
 function discoverTreeRows(): number {
   const h = editor.getScreenSize().height;
   const panel = Math.floor((h > 0 ? h : 30) * DISCOVER_HEIGHT_PCT / 100);
@@ -261,21 +248,21 @@ function buildDiscoverSpec(): WidgetSpec {
   } else if (rows.length === 0) {
     results.push(...filled(label(editor.t("discover.empty"))));
   } else {
-    // Measured over every row, so the columns line up down the whole
-    // answer rather than within each heading.
-    const layout = discoverLayout(rows, measure, discoverRowRoom());
-    // What the columns are: the heading says the rest.
+    // The columns are the host's to size: it measures the cells and fits
+    // them to the width it lays the list out at, with a header over them.
     const many = (st.scans?.length ?? 0) > 1;
-    results.push(raw([discoverHeaderEntry(discoverColumnTitles(st.grouping, many, t), layout, measure)]));
     // Headings start collapsed so hundreds of sessions fit one screen.
     // `visibleRows` must be given: an auto-sized tree draws nothing here.
     results.push(
       tree({
+        columns: discoverColumns(rows, st.grouping, many, t),
         nodes: rows.map((r) => {
           const action = discoverRowAction(r, t);
-          return treeNode(discoverRowEntry(r, layout, measure), {
+          const inColumns = r.family === "session";
+          return treeNode(inColumns ? { text: "" } : discoverRowText(r), {
             depth: discoverIsGroup(r) ? 0 : 1,
             hasChildren: discoverIsGroup(r),
+            ...(inColumns ? { cells: discoverRowCells(r) } : {}),
             ...(action === null ? {} : { action }),
           });
         }),

@@ -4391,6 +4391,7 @@ mod tests {
             item_height: 2,
             card_borders: true,
             toggle_on_click: false,
+            columns: Vec::new(),
         };
         assert_eq!(
             Viewport::from_spec(&cards),
@@ -4424,6 +4425,7 @@ mod tests {
                 item_height: 1,
                 card_borders: false,
                 toggle_on_click: false,
+                columns: Vec::new(),
             },
             other => other,
         };

@@ -363,69 +363,10 @@ export function discoverVisibleRowCount(rows: DiscoverRow[], expanded: Set<strin
   return n;
 }
 
-/** Blank columns between one column and the next. */
-export const DISCOVER_COL_GAP = 2;
-
 /** The widest a single column may grow. A path long enough to fill the
  *  panel on its own would push every column after it off the edge, so the
  *  cell is cut instead — losing one cell's tail, not the table. */
 export const DISCOVER_COL_MAX = 44;
-
-/** What the rows in hand make the table: a width per column per family,
- *  and the width every row is then padded to.
- *
- *  The widths are measured, not declared, because the dialog cannot know
- *  before the scan whether it is showing one tmux pane or eighty
- *  transcripts across four machines. */
-export interface DiscoverLayout {
-  /** Column widths, in display columns, per family. A family's last column
-   *  is measured like the rest — `total` needs its width — but nothing is
-   *  padded past it. */
-  widths: Map<DiscoverFamily, number[]>;
-  /** The width every row is padded to. Without it the tree column takes the
-   *  button row's width and clips longer rows. Bounded so one long row
-   *  cannot stretch the panel. */
-  total: number;
-}
-
-/** Measure the table. */
-export function discoverLayout(
-  rows: DiscoverRow[],
-  measure: (s: string) => number,
-  /** The row width the list has room for. A table wider than this is cut
-   *  by the list itself, at the row's end — on top of a path's own cut at
-   *  its start — so the columns are narrowed to fit instead. */
-  room = 140,
-): DiscoverLayout {
-  const widths = new Map<DiscoverFamily, number[]>();
-  for (const r of rows) {
-    const w = widths.get(r.family) ?? [];
-    r.cells.forEach((cell, i) => {
-      w[i] = Math.max(w[i] ?? 0, Math.min(DISCOVER_COL_MAX, measure(cell.text)));
-    });
-    widths.set(r.family, w);
-  }
-  const limit = Math.max(24, Math.min(140, room));
-  let natural = 0;
-  for (const [family, w] of widths) {
-    // The tree draws the child indent, but it still costs the row width.
-    const indent = family === "group" ? 0 : DISCOVER_INDENT_COLS;
-    const gaps = Math.max(0, w.length - 1) * DISCOVER_COL_GAP;
-    const used = (): number => indent + gaps + w.reduce((a, b) => a + b, 0);
-    // Too wide: the widest column gives a column at a time, so the long
-    // path goes before the short name and branch do.
-    while (used() > limit) {
-      const widest = w.indexOf(Math.max(...w));
-      if (w[widest] <= DISCOVER_COL_MIN) break;
-      w[widest] -= 1;
-    }
-    natural = Math.max(natural, used());
-  }
-  return { widths, total: Math.max(Math.min(48, limit), Math.min(limit, natural)) };
-}
-
-/** The narrowest a column is squeezed to when the table must fit. */
-export const DISCOVER_COL_MIN = 8;
 
 /** What each column of a session row holds, for the header over the list:
  *  the heading already says the rest. */
@@ -438,93 +379,49 @@ export function discoverColumnTitles(grouping: DiscoverGrouping, manyMachines: b
   return titles;
 }
 
-/** The header row: each title over its column of session rows, where the
- *  tree draws those rows (past its fold glyph and the child indent, and the
- *  row's two-column mark). */
-export function discoverHeaderEntry(
-  titles: string[],
-  layout: DiscoverLayout,
-  measure: (s: string) => number,
-): TextPropertyEntry {
-  const widths = layout.widths.get("session") ?? [];
-  const style = { fg: "ui.menu_disabled_fg", bold: true };
-  const segments: StyledSegment[] = [{ text: " ".repeat(DISCOVER_TREE_GLYPH_COLS + DISCOVER_INDENT_COLS + 2) }];
-  titles.forEach((title, i) => {
-    const width = Math.max(0, (widths[i] ?? measure(title)) - (i === 0 ? 2 : 0));
-    const text = discoverElide(title, width, "head", measure);
-    const last = i === titles.length - 1;
-    segments.push({ text: last ? text : text + " ".repeat(Math.max(0, width - measure(text)) + DISCOVER_COL_GAP), style });
-  });
-  return styledRow(segments);
+/** A column of the results table, as `tree({ columns })` takes it. */
+export interface DiscoverColumn {
+  title: string;
+  /** `"head"` cuts the head (a path keeps its tail); `"tail"` a name's. */
+  elide: "head" | "tail";
+  maxWidth: number;
 }
 
-/** Columns the tree spends on its fold glyph (`▶ `) before a row's text. */
-export const DISCOVER_TREE_GLYPH_COLS = 2;
-
-/** `text` cut to `width` columns, with `…` marking the cut. Which end goes
- *  is the cell's: a path keeps its tail, a name its head. */
-export function discoverElide(
-  text: string,
-  width: number,
-  keep: "head" | "tail",
-  measure: (s: string) => number,
-): string {
-  if (measure(text) <= width) return text;
-  if (width <= 1) return "…";
-  const chars = [...text];
-  let out = "…";
-  if (keep === "head") {
-    let taken = "";
-    for (const ch of chars) {
-      if (measure(taken + ch) + 1 > width) break;
-      taken += ch;
-    }
-    out = `${taken}…`;
-  } else {
-    let taken = "";
-    for (let i = chars.length - 1; i >= 0; i--) {
-      if (measure(chars[i] + taken) + 1 > width) break;
-      taken = chars[i] + taken;
-    }
-    out = `…${taken}`;
-  }
-  return out;
+/** The results table's columns: the session rows' titles, and which end of
+ *  each column's cells is cut. How wide each is, and how the table fits the
+ *  list, is the host's to work out from the width it lays the list out at. */
+export function discoverColumns(
+  rows: DiscoverRow[],
+  grouping: DiscoverGrouping,
+  manyMachines: boolean,
+  t: Translate,
+): DiscoverColumn[] {
+  const session = rows.find((r) => r.family === "session");
+  return discoverColumnTitles(grouping, manyMachines, t).map((title, i) => ({
+    title,
+    elide: session?.cells[i]?.keep === "tail" ? "head" : "tail",
+    maxWidth: DISCOVER_COL_MAX,
+  }));
 }
 
-/** One row's styled text: its cells, each in its column, padded to the
- *  table's width. Inert rows are drawn dim. */
-export function discoverRowEntry(
-  r: DiscoverRow,
-  layout: DiscoverLayout,
-  measure: (s: string) => number,
-): TextPropertyEntry {
+/** A session row's cells as the table draws them: the name, then what tells
+ *  two of them apart, dimmed. An inert row's name is dim too. */
+export function discoverRowCells(r: DiscoverRow): { text: string; style?: { fg: string } }[] {
+  const dim = { fg: "ui.menu_disabled_fg" };
+  const inert = !r.session || !r.verb || r.verb.kind === "none";
+  return r.cells.map((cell, i) => (i === 0 && !inert ? { text: cell.text } : { text: cell.text, style: dim }));
+}
+
+/** A heading or a problem line, which spans the table rather than sitting in
+ *  its columns: the heading's name bold, the rest dim. */
+export function discoverRowText(r: DiscoverRow): TextPropertyEntry {
   const dim = { fg: "ui.menu_disabled_fg" };
   const group = discoverIsGroup(r);
-  const inert = !group && (!r.session || !r.verb || r.verb.kind === "none");
-  const widths = layout.widths.get(r.family) ?? [];
-  const indent = group ? 0 : DISCOVER_INDENT_COLS;
   const segments: StyledSegment[] = [];
-  let used = indent;
   r.cells.forEach((cell, i) => {
-    const width = widths[i] ?? measure(cell.text);
-    const text = discoverElide(cell.text, width, cell.keep ?? "head", measure);
-    // Every column but the last is padded to its width; the last one is
-    // padded to the table's, below, so the pad it rides on is one segment.
-    const last = i === r.cells.length - 1;
-    const pad = last ? 0 : Math.max(0, width - measure(text)) + DISCOVER_COL_GAP;
-    segments.push({
-      text: text + " ".repeat(pad),
-      // The first column is the row's name, and it is what the reader is
-      // looking for; the rest is what tells two of them apart.
-      style: i === 0 ? (group ? { bold: true } : inert ? dim : {}) : dim,
-    });
-    used += measure(text) + pad;
+    if (i > 0 && cell.text) segments.push({ text: "  " });
+    if (cell.text) segments.push({ text: cell.text, style: i === 0 && group ? { bold: true } : dim });
   });
-  // The trailing pad rides on the last segment so it is dim, and makes the
-  // tree column as wide as the widest row rather than as wide as the buttons.
-  if (used < layout.total) {
-    segments.push({ text: " ".repeat(layout.total - used), style: dim });
-  }
   return styledRow(segments);
 }
 

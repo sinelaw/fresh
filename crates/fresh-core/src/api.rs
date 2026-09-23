@@ -2220,6 +2220,43 @@ pub struct TreeNode {
     /// whose chrome has nowhere to put one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub action: Option<String>,
+    /// **A table row.** When the parent `Tree` declares `columns`, a node
+    /// that carries cells is drawn from them — one per column, each fitted
+    /// to its column at the width layout gives the tree and elided at the
+    /// end its column says — instead of from `text`. A node with no cells
+    /// (a group heading) is drawn from `text` across the whole row.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cells: Vec<TableCell>,
+}
+
+/// One cell of a table row (`TreeNode::cells`).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+#[ts(export, rename_all = "camelCase")]
+pub struct TableCell {
+    pub text: String,
+    /// The cell's ink (a theme key or colour), e.g. dimmed secondary cells.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "Partial<OverlayOptions>")]
+    pub style: Option<OverlayOptions>,
+}
+
+/// One column of a table (`Tree::columns`).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+#[ts(export, rename_all = "camelCase")]
+pub struct TableColumn {
+    /// The header row's title over this column.
+    #[serde(default)]
+    pub title: String,
+    /// Which end of a cell too wide for its column goes: `head` keeps the
+    /// tail (a path), `tail` keeps the head (a name). The default keeps the
+    /// head.
+    #[serde(default)]
+    pub elide: Elide,
+    /// The widest this column grows, in display columns; `0` for no cap.
+    #[serde(default)]
+    pub max_width: u32,
 }
 
 /// How a row asks to be windowed when it is wider than the panel.
@@ -2888,6 +2925,13 @@ pub enum WidgetSpec {
         /// glyph. The toggle fires `expand` with `{ index, key, expanded }`.
         #[serde(default)]
         toggle_on_click: bool,
+        /// **A table.** Columns declared here turn every node that carries
+        /// `cells` into a row of them: the host measures the cells, fits the
+        /// columns to the width layout gives the tree (the widest gives
+        /// first), elides each cell at its column's end, and draws a header
+        /// row of the titles above the tree. Empty (default): a plain tree.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        columns: Vec<TableColumn>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         key: Option<String>,
     },

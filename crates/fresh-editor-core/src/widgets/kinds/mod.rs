@@ -31,6 +31,7 @@ pub mod popup_list;
 pub mod radio;
 mod raw;
 mod spacer;
+pub mod table;
 pub mod text;
 mod toggle;
 pub mod tree;
