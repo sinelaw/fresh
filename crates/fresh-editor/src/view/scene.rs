@@ -1542,6 +1542,23 @@ impl Editor {
                     None,
                     false,
                 ),
+                // "There is more this way", as a kind the DOM can draw as it
+                // likes — a chevron, a fade at the edge. The glyph the
+                // terminal uses is not carried: unlike a rule, there is no
+                // single character this *is*.
+                Draw::Overflow { axis, end } => {
+                    horizontal = matches!(axis, fresh_ui::Axis::Horizontal);
+                    (
+                        match end {
+                            fresh_ui::End::Before => "overflow-before",
+                            fresh_ui::End::After => "overflow-after",
+                        },
+                        None,
+                        None,
+                        None,
+                        false,
+                    )
+                }
                 Draw::Scrim(Scrim::Opaque) => ("scrim", None, None, None, false),
                 Draw::Scrim(Scrim::Dim) => ("scrim", None, None, None, true),
                 Draw::Lines(ls) => (

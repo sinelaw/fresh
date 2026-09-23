@@ -166,6 +166,19 @@ fn draw(s: &mut Screen, item: &Item, frame: Rect, fill_char: &impl Fn(&str) -> O
                 }
             }
         }
+        // "There is more content this way", as the terminal draws it.
+        Draw::Overflow { axis, end } => {
+            let g = match (axis, end) {
+                (fresh_ui::Axis::Horizontal, fresh_ui::End::Before) => "<",
+                (fresh_ui::Axis::Horizontal, fresh_ui::End::After) => ">",
+                (fresh_ui::Axis::Vertical, fresh_ui::End::Before) => "^",
+                (fresh_ui::Axis::Vertical, fresh_ui::End::After) => "v",
+            };
+            let clip = clip.intersect(r);
+            for y in r.y..r.y + r.h as i32 {
+                s.put_symbol(r.x, y, g, 1, clip);
+            }
+        }
         Draw::Scrim(Scrim::Opaque) => fill(s, frame, ' ', frame),
         Draw::Scrim(Scrim::Dim) => fill(s, frame, '·', frame),
         Draw::Border(bs) => border(s, r, clip, *bs),

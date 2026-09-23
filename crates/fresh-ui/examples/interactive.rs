@@ -324,6 +324,17 @@ impl Terminal {
         let r = item.rect;
         let (fg, bg) = style(&item.theme, roles);
         match &item.draw {
+            // "There is more this way" — one glyph in the cell the window
+            // reserved at that edge.
+            Draw::Overflow { axis, end } => {
+                let g = match (axis, end) {
+                    (fresh_ui::Axis::Horizontal, fresh_ui::End::Before) => '<',
+                    (fresh_ui::Axis::Horizontal, fresh_ui::End::After) => '>',
+                    (fresh_ui::Axis::Vertical, fresh_ui::End::Before) => '^',
+                    (fresh_ui::Axis::Vertical, fresh_ui::End::After) => 'v',
+                };
+                self.fill(r, g, fg, bg, clip);
+            }
             Draw::Fill => {
                 if elevated(&item.theme) {
                     // A floating surface: it casts a shadow onto whatever is

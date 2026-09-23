@@ -126,6 +126,7 @@ impl<M: 'static> LayoutCx for UiLayoutCx<'_, M> {
             n.data.pinned = info.pinned;
             n.data.content = info.content;
             n.data.scroll_max = info.max;
+            n.data.scroll_axis = info.axis;
             n.data.translate = info.translate;
             moved
         };
@@ -149,6 +150,23 @@ impl<M: 'static> LayoutCx for UiLayoutCx<'_, M> {
 // ---------------------------------------------------------------------------
 // The pass
 // ---------------------------------------------------------------------------
+
+/// The component of `p` along `axis` — the one a window's offset counts.
+fn main(axis: crate::event::Axis, p: Point) -> i32 {
+    match axis {
+        crate::event::Axis::Vertical => p.y,
+        crate::event::Axis::Horizontal => p.x,
+    }
+}
+
+/// `p` with its `axis` component replaced, leaving the other where it was: a
+/// command moves the window one way and must not disturb the other.
+fn along(axis: crate::event::Axis, p: Point, v: i32) -> Point {
+    match axis {
+        crate::event::Axis::Vertical => Point::new(p.x, v),
+        crate::event::Axis::Horizontal => Point::new(v, p.y),
+    }
+}
 
 impl<M: 'static> Ui<M> {
     /// A node whose geometry is stale. The mark travels up only as far as the
@@ -733,12 +751,20 @@ impl<M: 'static> Ui<M> {
     /// has been taken off it — so putting it back is what turns "where it is
     /// on screen" into "where it is in the column", which is the space a
     /// scroll offset is in.
+    /// Where the keyed descendant sits inside the window's content, along the
+    /// axis the window scrolls: `(start, extent)`.
+    ///
+    /// **One reading, both axes.** The band is the child's rectangle relative
+    /// to the window's, put back into content space; which of its two
+    /// dimensions that is depends only on which way the window scrolls, and
+    /// the window is what knows.
     fn keyed_band(
         &self,
         vp_el: ElementId,
         vp_r: RenderId,
         key: &crate::key::Key,
         arranged_at: Point,
+        axis: crate::event::Axis,
     ) -> Option<(i32, i32)> {
         let el = self.keyed_descendant(vp_el, key)?;
         let child = self.render_for(el).and_then(|r| self.render.get(r))?;
@@ -748,8 +774,16 @@ impl<M: 'static> Ui<M> {
         // re-arranged between commands — so the children's rectangles are
         // still the ones the last arrange produced, and it is that offset they
         // have to be read against.
-        let top = child.data.rect.y - vp.data.rect.y + arranged_at.y;
-        Some((top, child.data.rect.h as i32))
+        Some(match axis {
+            crate::event::Axis::Vertical => (
+                child.data.rect.y - vp.data.rect.y + arranged_at.y,
+                child.data.rect.h as i32,
+            ),
+            crate::event::Axis::Horizontal => (
+                child.data.rect.x - vp.data.rect.x + arranged_at.x,
+                child.data.rect.w as i32,
+            ),
+        })
     }
 
     /// Which row of the keyed descendant's wrapped text holds `byte`.
@@ -816,91 +850,105 @@ impl<M: 'static> Ui<M> {
                 // the height for both put a list of three-row cards eleven
                 // items down inside a "fifteen-row" window and left it where
                 // it was.
-                let (scroll, max, rows) = {
+                let (scroll, max, rows, axis) = {
                     let n = &self.render[r];
-                    let rows = n.data.window.map_or(n.data.size.h, |w| w.h) as i32;
-                    (n.data.scroll, n.data.scroll_max, rows)
+                    let axis = n.data.scroll_axis;
+                    // The window along the axis the offset counts. For a
+                    // horizontal window that is its width in cells; a
+                    // horizontal window is never index-scrolled, so there is
+                    // no band to divide by.
+                    let rows = match axis {
+                        crate::event::Axis::Vertical => {
+                            n.data.window.map_or(n.data.size.h, |w| w.h) as i32
+                        }
+                        crate::event::Axis::Horizontal => {
+                            n.data.window.map_or(n.data.size.w, |w| w.w) as i32
+                        }
+                    };
+                    (n.data.scroll, n.data.scroll_max, rows, axis)
                 };
+                // The offset, and the point that carries it back — every
+                // command below reasons in one dimension, and these are what
+                // say which. The other axis is left exactly where it was.
+                let here = main(axis, scroll);
+                let ceiling = main(axis, max);
+                let at = |v: i32| along(axis, scroll, v);
                 let next = match cmd {
                     Command::ScrollTo(p) => p,
-                    Command::ScrollBy(dy) => Point::new(scroll.x, scroll.y + dy),
-                    Command::ScrollByPages(n) => Point::new(scroll.x, scroll.y + n * rows.max(1)),
-                    Command::ScrollToEnd => Point::new(scroll.x, max.y),
+                    Command::ScrollBy(dy) => at(here + dy),
+                    Command::ScrollByPages(n) => at(here + n * rows.max(1)),
+                    Command::ScrollToEnd => at(ceiling),
                     Command::Reveal(i) => {
                         let i = i as i32;
                         // The shortest move that puts the index inside the
                         // window; nothing at all if it already is.
-                        let y = if i < scroll.y {
+                        at(if i < here {
                             i
-                        } else if i >= scroll.y + rows {
+                        } else if i >= here + rows {
                             i - rows + 1
                         } else {
-                            scroll.y
-                        };
-                        Point::new(scroll.x, y)
+                            here
+                        })
                     }
                     // The same, for a band the framework measured rather than
                     // a row the caller counted. A key that names nothing under
                     // this element leaves the window where it is.
                     // "Take me there", rather than "keep it in sight".
                     Command::TopKey(k) => {
-                        let Some((top, _)) = self.keyed_band(id, r, &k, arranged_at) else {
+                        let Some((top, _)) = self.keyed_band(id, r, &k, arranged_at, axis) else {
                             continue;
                         };
-                        Point::new(scroll.x, top)
+                        at(top)
                     }
                     // A row inside the band, which is one cell tall wherever
                     // the band starts.
-                    Command::RevealKeyAt(k, at) => {
-                        let Some((top, h)) = self.keyed_band(id, r, &k, arranged_at) else {
+                    Command::RevealKeyAt(k, row) => {
+                        let Some((top, h)) = self.keyed_band(id, r, &k, arranged_at, axis) else {
                             continue;
                         };
-                        let want = top + (at as i32).min(h.saturating_sub(1).max(0));
-                        let y = if want < scroll.y {
+                        let want = top + (row as i32).min(h.saturating_sub(1).max(0));
+                        at(if want < here {
                             want
-                        } else if want >= scroll.y + rows {
+                        } else if want >= here + rows {
                             want - rows + 1
                         } else {
-                            scroll.y
-                        };
-                        Point::new(scroll.x, y)
+                            here
+                        })
                     }
                     // A byte of a keyed wrapped run, whose row only the
                     // shaping knows (L5). The band gives where the run starts
                     // in content space; the run gives how far into itself the
                     // byte fell, and the two add.
                     Command::RevealByte(k, byte) => {
-                        let Some((top, h)) = self.keyed_band(id, r, &k, arranged_at) else {
+                        let Some((top, h)) = self.keyed_band(id, r, &k, arranged_at, axis) else {
                             continue;
                         };
                         let Some(row) = self.byte_row(id, &k, byte) else {
                             continue;
                         };
                         let want = top + (row as i32).min(h.saturating_sub(1).max(0));
-                        let y = if want < scroll.y {
+                        at(if want < here {
                             want
-                        } else if want >= scroll.y + rows {
+                        } else if want >= here + rows {
                             want - rows + 1
                         } else {
-                            scroll.y
-                        };
-                        Point::new(scroll.x, y)
+                            here
+                        })
                     }
                     Command::RevealKey(k) => {
-                        let Some((top, h)) = self.keyed_band(id, r, &k, arranged_at) else {
+                        let Some((top, h)) = self.keyed_band(id, r, &k, arranged_at, axis) else {
                             continue;
                         };
-                        let y = if top < scroll.y {
+                        at(if top < here {
                             top
-                        } else if top + h > scroll.y + rows {
-                            // A band taller than the window shows its top:
-                            // flushing its bottom edge would scroll past the
+                        } else if top + h > here + rows {
+                            // A band longer than the window shows its start:
+                            // flushing its far edge would scroll past the
                             // thing that was asked for.
                             (top + h - rows).min(top)
                         } else {
-                            scroll.y
-                        };
-                        Point::new(scroll.x, y)
+                            here
+                        })
                     }
                 };
                 let next = Point::new(next.x.clamp(0, max.x.max(0)), next.y.clamp(0, max.y.max(0)));

@@ -152,7 +152,16 @@ impl<M: 'static> Ui<M> {
                 // message it produces is the window's own report of where it
                 // went (`Node::on_scroll`), for an owner that holds the
                 // offset.
+                // A press on a horizontal window's overflow cap steps it
+                // that way. The cap is the window's own affordance — it knows
+                // whether there is more behind that edge, which is why it is
+                // the thing drawn there — so the move is the window's too, and
+                // produces no message beyond its own report.
                 if button == MouseButton::Left {
+                    if let Some((r, dir)) = self.overflow_cap_hit(pos) {
+                        self.step_window(r, dir, out);
+                        return true;
+                    }
                     if let Some(r) = self.scrollbar_hit(pos) {
                         self.scrollbar_drag = Some(r);
                         self.scrollbar_grab = self.grab_within_thumb(r, pos.y);
@@ -785,6 +794,81 @@ impl<M: 'static> Ui<M> {
     /// over a window — a strip carrying a popup's title — is exactly the case
     /// that produces a second path, and the gutter is on the second one. The
     /// deepest match within a path wins, which is the innermost window.
+    /// The horizontal window whose overflow cap is under this point, and the
+    /// direction that cap points.
+    ///
+    /// **Only an end with content behind it answers.** The cells are reserved
+    /// whenever the content overflows, but a cap is drawn in one only while
+    /// there is more that way — so at the start of the strip the leading cell
+    /// carries no glyph, and a press there belongs to whatever is under it
+    /// rather than to a button that is not being offered.
+    fn overflow_cap_hit(&self, pos: Point) -> Option<(RenderId, i32)> {
+        for path in self.hit_paths(pos) {
+            let mut found = None;
+            for e in path {
+                let Some(r) = self.arena.get(e).and_then(|el| el.render) else {
+                    continue;
+                };
+                let Some(n) = self.render.get(r) else {
+                    continue;
+                };
+                if !n.scrollbar
+                    || !n.clips
+                    || n.data.scroll_axis != crate::event::Axis::Horizontal
+                    || n.data.scroll_max.x <= 0
+                {
+                    continue;
+                }
+                let rect = n.data.rect;
+                if pos.y < rect.y || pos.y >= rect.bottom() {
+                    continue;
+                }
+                let off = n.data.scroll.x;
+                if pos.x == rect.x && off > 0 {
+                    found = Some((r, -1));
+                } else if pos.x == rect.right() - 1 && off < n.data.scroll_max.x {
+                    found = Some((r, 1));
+                }
+            }
+            if found.is_some() {
+                return found;
+            }
+        }
+        None
+    }
+
+    /// Move a window one windowful along the axis it scrolls.
+    ///
+    /// A page, not a fixed number of cells: the cap says "there is more this
+    /// way", and the answer to pressing it is the next screenful of it. It is
+    /// the same move clicking a scrollbar's track makes, for the same reason.
+    fn step_window(&mut self, r: RenderId, dir: i32, out: &mut Vec<M>) {
+        let (was, max, page) = {
+            let Some(n) = self.render.get(r) else { return };
+            let page = match n.data.scroll_axis {
+                crate::event::Axis::Vertical => n.data.window.map_or(n.data.rect.h, |w| w.h),
+                crate::event::Axis::Horizontal => n.data.window.map_or(n.data.rect.w, |w| w.w),
+            };
+            let (was, max) = match n.data.scroll_axis {
+                crate::event::Axis::Vertical => (n.data.scroll.y, n.data.scroll_max.y),
+                crate::event::Axis::Horizontal => (n.data.scroll.x, n.data.scroll_max.x),
+            };
+            (was, max, page.max(1) as i32)
+        };
+        let off = (was + dir * page).clamp(0, max.max(0));
+        if off == was {
+            return;
+        }
+        if let Some(n) = self.render.get_mut(r) {
+            match n.data.scroll_axis {
+                crate::event::Axis::Vertical => n.data.scroll.y = off,
+                crate::event::Axis::Horizontal => n.data.scroll.x = off,
+            }
+        }
+        self.mark_render_dirty(r);
+        self.report_scroll(r, off, out);
+    }
+
     fn scrollbar_hit(&self, pos: Point) -> Option<RenderId> {
         for path in self.hit_paths(pos) {
             let mut found = None;
@@ -933,7 +1017,7 @@ impl<M: 'static> Ui<M> {
             let Some(r) = self.render_for(n) else {
                 continue;
             };
-            let (scroll, max, clips, floating) = {
+            let (scroll, max, clips, floating, own_axis) = {
                 let Some(node) = self.render.get(r) else {
                     continue;
                 };
@@ -942,6 +1026,7 @@ impl<M: 'static> Ui<M> {
                     node.data.scroll_max,
                     node.clips,
                     node.out_of_flow,
+                    node.data.scroll_axis,
                 )
             };
             if floating {
@@ -950,20 +1035,33 @@ impl<M: 'static> Ui<M> {
             if !clips {
                 continue;
             }
-            let (at, limit) = match wheel.axis {
+            // **A plain wheel moves a window the way that window scrolls.**
+            // The bare wheel is "scroll this", not "scroll downwards": over a
+            // tab strip it means along the strip, which is the only direction
+            // there is. A wheel that names the other axis explicitly — a
+            // trackpad's sideways gesture, shift and the wheel — still means
+            // that axis, so a vertical list can be panned across.
+            let axis = match wheel.axis {
+                Axis::Vertical => own_axis,
+                Axis::Horizontal => Axis::Horizontal,
+            };
+            let (at, limit) = match axis {
                 Axis::Vertical => (scroll.y, max.y),
                 Axis::Horizontal => (scroll.x, max.x),
             };
             let next = (at + wheel.delta).clamp(0, limit.max(0));
             if next != at {
                 if let Some(node) = self.render.get_mut(r) {
-                    match wheel.axis {
+                    match axis {
                         Axis::Vertical => node.data.scroll.y = next,
                         Axis::Horizontal => node.data.scroll.x = next,
                     }
                 }
                 self.mark_render_dirty(r);
-                if wheel.axis == Axis::Vertical {
+                // The owner holds one offset, which is the one along the
+                // window's own axis; a pan across a vertical list is the
+                // framework's alone and is not reported.
+                if axis == own_axis {
                     self.report_scroll(r, next, out);
                 }
                 return Chain::Scrolled;
