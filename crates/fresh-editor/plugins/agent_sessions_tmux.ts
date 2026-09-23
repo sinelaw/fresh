@@ -121,8 +121,10 @@ async function liveSessions(
         mtime: session?.mtime,
         // A name match on the foreground process, so weak.
         agent: baseName(paneCommand),
-        // tmux attaches to a session; there is no attach-to-pane.
-        attach: session?.attach,
+        // A pane target makes its window and pane current on attach.
+        attach: paneId
+          ? { program: "tmux", args: ["-S", socket, "attach", "-t", paneId] }
+          : session?.attach,
         evidence: [
           {
             locator: `${socket} ${paneId ?? ""}`.trim(),

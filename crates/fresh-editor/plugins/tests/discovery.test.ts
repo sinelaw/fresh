@@ -94,15 +94,15 @@ const proj = (label: string, id = label) => ({ kind: "repo" as const, id: `repo:
 {
   const rows = discoverRowsFrom(
     [scan("m", [session({ id: "s", tool: "tmux", cwd: "/p" })],
-      [tool("tmux", "found"), tool("codex-cli", "absent"), tool("super-engineering", "unsupported", "ships for macOS only"), tool("orca", "failed", "boom")],
-      ["orca: boom"])],
+      [tool("tmux", "found"), tool("codex-cli", "absent"), tool("super-engineering", "unsupported", "ships for macOS only"), tool("herdr", "failed", "boom")],
+      ["herdr: boom"])],
     { filter: "", grouping: "tool" }, resumeArgv, t,
   );
   const keys = rows.map((r) => r.key);
   const problemsAt = keys.indexOf(DISCOVER_PROBLEMS_KEY);
   eq(rows.some((r) => r.cells.some((c) => c.text === "codex-cli" || c.text === "super-engineering")), false,
     "a tool that is absent or unsupported is not listed at all");
-  eq(rows.slice(problemsAt + 1).map((r) => r.cells[0].text), ["orca: boom"], "the problems list holds only problems");
+  eq(rows.slice(problemsAt + 1).map((r) => r.cells[0].text), ["herdr: boom"], "the problems list holds only problems");
 }
 
 {
@@ -197,7 +197,7 @@ const proj = (label: string, id = label) => ({ kind: "repo" as const, id: `repo:
     "an openable row with a known agent resumes it");
   eq(discoverVerbFor(session({ ...wt, agent: "grok" }), resumeArgv, t).kind, "open",
     "an openable row whose agent cannot resume opens the folder");
-  eq(discoverVerbFor(session({ id: "x", tool: "tmux", cwd: "/w", agent: "grok" }), resumeArgv, t).kind,
+  eq(discoverVerbFor(session({ id: "x", tool: "herdr", cwd: "/w", agent: "grok" }), resumeArgv, t).kind,
     "none", "a row that is not openable still says why it cannot resume");
 }
 

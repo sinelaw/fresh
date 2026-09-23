@@ -31,6 +31,7 @@
     "agent_sessions.ts",
     "agent_sessions_claude_code.ts",
     "agent_sessions_codex.ts",
+    "agent_sessions_herdr.ts",
     "agent_sessions_multiplexers.ts",
     "agent_sessions_orchestrators.ts",
     "agent_sessions_tmux.ts",
