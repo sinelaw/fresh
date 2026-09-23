@@ -128,8 +128,9 @@ fn an_ipv6_config_host_is_bracketed_so_its_port_survives() {
     harness.assert_screen_contains("deploy@[2001:db8::1]:2222");
 }
 
-/// **On a config host the action is to add it.** Enter opens Add Machine
-/// prefilled from the entry, and Save turns the row into a saved machine.
+/// **On a config host the action is to set it up.** The footer's open button
+/// reads `Set up…`; Enter opens the machine form prefilled from the entry,
+/// and Add turns the row into a saved machine.
 #[test]
 fn enter_on_a_config_host_adds_it_as_a_machine() {
     let data_home = tempfile::tempdir().unwrap();
@@ -138,26 +139,30 @@ fn enter_on_a_config_host_adds_it_as_a_machine() {
         "Host plantedbox\n  HostName 10.0.0.9\n  User deploy\n",
     );
     open_machines_dialog(&mut harness);
-    // Local is first; the config host follows it.
-    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    // Local is not listed: the config host is the first row.
     harness
-        .wait_until(|h| h.screen_to_string().contains("Add as machine"))
+        .wait_until(|h| h.screen_to_string().contains("[ Set up… ]"))
         .unwrap_or_else(|_| {
             panic!(
-                "a config host's primary action is to add it. Screen:\n{}",
+                "a config host's open button reads Set up…. Screen:\n{}",
                 harness.screen_to_string()
             )
         });
-    harness.assert_screen_not_contains("New workspace here");
+    harness.assert_screen_not_contains("this computer");
 
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
     harness
-        .wait_until(|h| h.screen_to_string().contains("┌ Add Machine"))
+        .wait_until(|h| {
+            h.screen_to_string()
+                .contains("┌ Set up machine · plantedbox")
+        })
         .unwrap();
-    // Name and Target come from the alias.
+    // Name and Host come from the alias, and what it resolves to is shown.
     harness.assert_screen_contains("[plantedbox");
+    harness.assert_screen_contains("deploy@10.0.0.9");
+    harness.assert_screen_contains("[ Add ]");
     harness
         .send_key(KeyCode::Enter, KeyModifiers::CONTROL)
         .unwrap();
@@ -266,8 +271,8 @@ fn import_sessions_survives_a_cancelled_add() {
         });
 }
 
-/// **The selected machine gets a section of its own, and Remove asks first.**
-/// Cancel keeps the machine; Remove forgets it.
+/// **A saved machine opens in its own form, and Remove asks first.**
+/// Cancel keeps the machine; Remove forgets it and goes back to the list.
 #[test]
 fn removing_a_machine_asks_first() {
     let data_home = tempfile::tempdir().unwrap();
@@ -280,19 +285,20 @@ fn removing_a_machine_asks_first() {
     let mut harness = editor_with_ssh_config(&data_home, "");
     open_machines_dialog(&mut harness);
     harness
-        .wait_until(|h| h.screen_to_string().contains("gpubox"))
+        .wait_until(|h| h.screen_to_string().contains("[ Edit… ]"))
         .unwrap();
-    // Local is first; the saved machine follows it.
-    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     harness
-        .wait_until(|h| h.screen_to_string().contains("GPUBOX"))
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("┌ Machine · gpubox"))
         .unwrap_or_else(|_| {
             panic!(
-                "the selected machine should head its own section. Screen:\n{}",
+                "Enter should open the machine's form. Screen:\n{}",
                 harness.screen_to_string()
             )
         });
-    harness.assert_screen_contains("noam@10.4.2.19");
+    harness.assert_screen_contains("[noam@10.4.2.19");
 
     focus_stop(&mut harness, "▸ [ Remove…");
     harness
@@ -314,7 +320,6 @@ fn removing_a_machine_asks_first() {
                 .contains("Remove gpubox from Machines?")
         })
         .unwrap();
-    harness.assert_screen_contains("gpubox");
 
     focus_stop(&mut harness, "▸ [ Remove…");
     harness
@@ -331,7 +336,7 @@ fn removing_a_machine_asks_first() {
         })
         .unwrap_or_else(|_| {
             panic!(
-                "Remove should forget the machine. Screen:\n{}",
+                "Remove should forget the machine and go back to the list. Screen:\n{}",
                 harness.screen_to_string()
             )
         });

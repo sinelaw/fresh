@@ -870,43 +870,53 @@ Kubernetes reuses the same grid; only the fields differ.
 
 ### 5.4 Machines
 
-Laid out like the Projects dialog: `+ Add machine…`, the list in its own
-box, then the selected machine under its name — its actions on one row,
-then what is known about it — and one `Close` to leave. `⏎` on a row runs
-its first action: Add for a config host, Edit for a saved machine. Remove
-asks inline before it forgets a machine; nothing on the machine changes.
+Two dialogs: the list, and one machine's form.
+
+The list holds only remote machines, the saved ones and the `~/.ssh/config`
+hosts not added yet. Local is not listed (there is nothing to set up about
+it) but every machine picker offers it first. The list keeps three rows of
+height even when empty. Its state column is the last test (`✓ ok`,
+`✗ 2m ago`, `—`) with the workspaces open on the machine, or `not added`.
+One footer: `[ + Add machine… ]`, then `[ Edit… ] ⏎` for the selected row
+(`[ Set up… ]` on a config host; inert with nothing selected), and
+`[ Close ]` on the right.
+
+```
+┌ Machines ──────────────────────────────────────────────────────────[×]┐
+│  ┌ Machines (3) ─────────────────────────────────────────────────┐    │
+│  │gpubox       ssh  noam@10.4.2.19            ✓ ok · 2 workspaces │    │
+│  │ml-cluster   k8s  research / trainer-0      —                  │    │
+│  │plantedbox   ssh  deploy@10.0.0.9           not added          │    │
+│  └───────────────────────────────────────────────────────────────┘    │
+│   ─────────────────────────────────────────────────────────────────   │
+│   [ + Add machine… ]   [ Edit… ] ⏎                  [ Close ]  Esc    │
+└───────────────────────────────────────────────────────────────────────┘
+```
+
+The form is one machine: right-aligned labels, left-aligned values. The
+read-only rows (what a config name resolves to, the last test) have no
+brackets. `[ Remove… ]` sits bottom-left, away from Save, and asks inline;
+nothing on the machine changes. A config host opens the same form titled
+`Set up machine · <name>` and saves with `Add`. A new machine picks its
+Kind first; a Kubernetes machine has Context / Namespace / Pod in place of
+Host / Identity file / SSH options.
+
+```
+┌ Machine · gpubox ─────────────────────────────────────────────────[×]┐
+│            Name: [gpubox                                   ]         │
+│            Host: [noam@10.4.2.19                           ]         │
+│   Identity file: [~/.ssh/id_ed25519                        ]         │
+│     SSH options: [-J jump-host                             ]         │
+│    Default path: [~/src                                    ]         │
+│       Last test:  ✓ Connected · Linux · 4m ago                       │
+│                  [ Test connection ]  ^T                             │
+│   ────────────────────────────────────────────────────────────────   │
+│   [ Remove… ]                       [ Cancel ] Esc   [ Save ] ^⏎     │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
 Launching is not done from here: the New Workspace form's Machine control
 is where a machine is picked for a workspace.
-
-```
-┌ Machines ──────────────────────────────────────────────────────────────[×]┐
-│                                                                           │
-│   [ + Add machine… ]                                                      │
-│                                                                           │
-│  ┌ Machines (4) ────────────────────────────────────────────────────────┐ │
-│  │ Local             this computer                        1 workspaces  │ │
-│  │ gpubox       ssh  noam@10.4.2.19               ✓ ok                  │ │
-│  │ ml-cluster   k8s  research / trainer-0 (prod)  —                     │ │
-│  │ plantedbox   ssh  deploy@10.0.0.9              not added             │ │
-│  └──────────────────────────────────────────────────────────────────────┘ │
-│                                                                           │
-│   GPUBOX ──────────────────────────────────────────────────────────────   │
-│                                                                           │
-│     [ Edit… ]   [ Test connection ]   [ Remove… ]                         │
-│                                                                           │
-│           Target: noam@10.4.2.19                                          │
-│     Default path: ~/src                                                   │
-│        Last test: ✓ Connected · Linux · git 2.43 · 32 cores · 4m ago      │
-│       Workspaces: 0                                                       │
-│                                                                           │
-│   ───────────────────────────────────────────────────────────────────     │
-│                                                          [  Close  ] Esc  │
-└───────────────────────────────────────────────────────────────────────────┘
-```
-
-A config host that is not added shows `[ Add as machine ]  [ Test
-connection ]`, a note that it is in `~/.ssh/config` but not added, and what
-it resolves to. Local shows only its facts.
 
 ### 5.5 Only saved machines (supersedes parts of §3.8, §4, §5.1–5.2)
 
@@ -920,9 +930,9 @@ One rule now: **a workspace runs only on a saved machine, and the Machines
 dialog is where a machine is added.**
 
 - The Machines dialog still lists the `~/.ssh/config` hosts that are not
-  saved, marked `~/.ssh/config · not added`. On such a row the primary
-  action is `Add as machine` (Add Machine, prefilled from the entry, target
-  = the alias so ssh keeps applying the whole `Host` block); `Test` works.
+  saved, marked `not added`. Opening one (`Set up…`) shows the machine form
+  prefilled from the entry, with the alias as Host so ssh keeps applying
+  the whole `Host` block; `Add` saves it.
 - Every other machine picker (New Workspace, Repositories, Import sessions)
   lists Local, the saved machines and (New Workspace only) the
   devcontainer. There is no `Other host…`, no `Kubernetes…` and no
@@ -1060,14 +1070,13 @@ no longer reads the config itself (§5.5).
 
 Machines (§5): a registry at `<data dir>/orchestrator/machines.json`
 (never `~/.ssh/config`); `Add Machine` / `Edit Machine` with a `Kind`
-radio, `[ Test ]` (ssh `BatchMode` with an 8 s timeout, or `kubectl
-get pods`) whose result is a `✓ connected · uname · git · cores` or
-`✗ …` label with a hint, and `[ Save anyway ]` after a failure; the
-`Machines` list (laid out as §5.4: `+ Add machine…`, the boxed list, the
-selected machine's `[ Edit… ] [ Test connection ] [ Remove… ]` and facts),
-which also lists the hosts `~/.ssh/config` names that are
-not saved yet (test one, or `Add as machine`; not removable — the file
-is not Fresh's); `Add Machine` offers those hosts in a `Host` picker that
-fills Name and Target from the alias; and every dialog's `Machine` control
+radio (new machines only), `[ Test connection ]` (ssh `BatchMode` with an
+8 s timeout, or `kubectl get pods`) whose result is the `Last test` row,
+`✓ connected · uname · git · cores` or `✗ …` with a hint; the `Machines`
+list (§5.4: the boxed list, then `+ Add machine…`, `Edit…` / `Set up…` and
+`Close` in one footer), which also lists the hosts `~/.ssh/config` names
+that are not saved yet (open one to set it up; not removable — the file
+is not Fresh's); a Host that is a config name shows what it resolves to;
+and every dialog's `Machine` control
 lists only Local and the saved machines (plus Devcontainer in New
 Workspace), with `+ Add machine…` beside it (§5.5).
