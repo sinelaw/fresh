@@ -8,6 +8,7 @@
 //! the right buffer byte offset.
 
 use crate::input::actions::action_to_events as convert_action_to_events;
+use crate::input::actions::clear_block_selection_if_active;
 use crate::input::keybindings::Action;
 use crate::model::event::{Event, LeafId};
 
@@ -33,6 +34,22 @@ impl crate::app::window::Window {
             .get(&active_split)
             .map(|vs| vs.viewport.height)
             .unwrap_or(24);
+
+        // A cursor motion that is not a block-select step ends block
+        // (column) mode, the same way a plain move drops a normal selection.
+        // Done up front so every motion path below (visual-line, page,
+        // logical) sees it; a Shift+motion keeps the byte `anchor` and so
+        // continues as a normal selection. Editing actions are left to
+        // `convert_block_selection_to_cursors`, which needs the block.
+        if ends_block_selection(&action) {
+            if let Some(vs) = self
+                .buffers
+                .splits_mut()
+                .and_then(|(_, vs_map)| vs_map.get_mut(&active_split))
+            {
+                clear_block_selection_if_active(&mut vs.cursors);
+            }
+        }
 
         // Always try visual line movement first — it uses the cached layout to
         // move through soft-wrapped rows.  Returns None when the layout can't
@@ -847,4 +864,20 @@ fn char_at(buffer: &crate::model::buffer::Buffer, pos: usize) -> Option<char> {
     };
     let bytes = buffer.slice_bytes(pos..pos.saturating_add(width));
     std::str::from_utf8(&bytes).ok()?.chars().next()
+}
+
+/// Whether `action` moves the cursor (or re-selects) without being a
+/// block-select step, and so should end an active block selection.
+fn ends_block_selection(action: &Action) -> bool {
+    action.is_movement_or_editing()
+        && !action.is_editing()
+        && !matches!(
+            action,
+            Action::BlockSelectLeft
+                | Action::BlockSelectRight
+                | Action::BlockSelectUp
+                | Action::BlockSelectDown
+                | Action::Undo
+                | Action::Redo
+        )
 }
