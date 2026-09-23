@@ -9424,6 +9424,12 @@ function sameRemote(a: string, b: string): boolean {
 // The remote as a row shows it: `github.com/sinelaw/fresh`, or `local only`.
 function repoRemoteLabel(r: Repository): string {
   if (r.remote) return remoteIdentity(r.remote);
+  // Nothing to clone from, so where it is says what it is: the path on this
+  // machine, or `machine:path` elsewhere.
+  const at = cloneMachineKeys()
+    .filter((k) => r.clones[k])
+    .map((k) => (k === "local" ? tildePath(expandHome(r.clones[k])) : `${machineKeyLabel(k)}:${r.clones[k]}`));
+  if (at.length) return at.join(" · ");
   return r.kind === "folder" ? editor.t("repo.plain_folder") : editor.t("repo.local_only");
 }
 
