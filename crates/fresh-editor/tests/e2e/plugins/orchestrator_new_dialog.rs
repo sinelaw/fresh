@@ -93,7 +93,24 @@ const FORM_TITLE: &str = "┌ New Workspace";
 /// on.)
 fn open_new_session_form(harness: &mut EditorTestHarness) {
     open_new_session_form_unfocused(harness);
+    // The fold's open state is remembered across opens, so a test that ran
+    // earlier can leave it open; start every test from the default.
+    set_details(harness, false);
     focus_stop(harness, "Folder:");
+}
+
+/// Open or close the `Details` fold, whichever state it was left in.
+fn set_details(harness: &mut EditorTestHarness, open: bool) {
+    if harness.screen_to_string().contains("Hide details") == open {
+        return;
+    }
+    focus_stop(harness, "Details");
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Hide details") == open)
+        .unwrap();
 }
 
 /// Open the form and leave focus where the form puts it.
@@ -1010,7 +1027,7 @@ fn tab_is_linear_one_stop_per_radio_group() {
     // (The form opens focused on Folder field, so the "Machine:" stop is a
     // few stops away.)
     let mut guard = 0;
-    while !focused_line(&harness.screen_to_string()).contains("Machine:") {
+    while !focused_line(&harness.screen_to_string()).contains("▸ Machine:") {
         harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
         harness.tick_and_render().unwrap();
         guard += 1;
@@ -1032,7 +1049,7 @@ fn tab_is_linear_one_stop_per_radio_group() {
         harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
         harness.tick_and_render().unwrap();
         let line = focused_line(&harness.screen_to_string());
-        if line.contains("Machine:") {
+        if line.contains("▸ Machine:") {
             break; // back to the anchor — one full cycle walked
         }
         cycle_lines.push(line);
@@ -1048,7 +1065,7 @@ fn tab_is_linear_one_stop_per_radio_group() {
     let mut saw_create = false;
     let mut saw_inactive_option = false;
     for line in &cycle_lines {
-        if line.contains("Machine:") {
+        if line.contains("▸ Machine:") {
             run_in_stops += 1;
             // The dropdown is one stop, and the marker sits on the row — with
             // Local still the value, since Tab never changes it.
@@ -1056,7 +1073,7 @@ fn tab_is_linear_one_stop_per_radio_group() {
                 saw_inactive_option = true;
             }
         }
-        if line.contains("Agent:") {
+        if line.contains("▸ Agent:") {
             agent_stops += 1;
             if line.contains("▸ [ claude")
                 || line.contains("▸ [ aider")
@@ -1102,7 +1119,7 @@ fn arrows_switch_run_in_selector_option() {
         .unwrap();
     harness.tick_and_render().unwrap();
     assert!(
-        focused_line(&harness.screen_to_string()).contains("Machine:"),
+        focused_line(&harness.screen_to_string()).contains("▸ Machine:"),
         "Shift+Tab should land focus on the Machine control. Screen:\n{}",
         harness.screen_to_string(),
     );
@@ -1212,7 +1229,7 @@ fn ctrl_enter_submits_from_a_text_field() {
 /// Advance Tab focus until the single "Agent:" preset stop is reached.
 fn focus_agent_preset_stop(harness: &mut EditorTestHarness) {
     let mut guard = 0;
-    while !focused_line(&harness.screen_to_string()).contains("Agent:") {
+    while !focused_line(&harness.screen_to_string()).contains("▸ Agent:") {
         harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
         harness.tick_and_render().unwrap();
         guard += 1;
@@ -1630,13 +1647,7 @@ fn long_value_can_be_navigated_back_to_its_start() {
     // Walk to the Workspace field (a plain text field — the Folder field
     // opens a completion popup as it fills, which is a different test's
     // subject). It lives in the Details fold, so open that first.
-    focus_stop(&mut harness, "Details");
-    harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
-        .unwrap();
-    harness
-        .wait_until(|h| h.screen_to_string().contains("Workspace:"))
-        .unwrap();
+    set_details(&mut harness, true);
     let mut guard = 0;
     while !field_focused(&harness.screen_to_string(), "Workspace:") {
         harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
@@ -1788,7 +1799,7 @@ fn custom_agent_is_typable_when_running_in_the_current_workspace() {
     // Walk to the agent selector and step left, which wraps the list around to
     // "custom…" — the shortest route, and the one that used to strand focus.
     let mut guard = 0;
-    while !focused_line(&harness.screen_to_string()).contains("Agent:") {
+    while !focused_line(&harness.screen_to_string()).contains("▸ Agent:") {
         harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
         harness.tick_and_render().unwrap();
         guard += 1;
@@ -2010,6 +2021,9 @@ fn typing_a_repository_path_arms_the_worktree_toggle() {
 
     // The form opens focused on Folder field.
     harness.type_text(repo.to_str().unwrap()).unwrap();
+    // Leave the field: the path-completion popup it opened covers the plan
+    // line under it, and Tab closes it without accepting a suggestion.
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
 
     harness
         .wait_until(|h| {
@@ -2061,6 +2075,9 @@ fn a_tilde_repository_path_arms_the_worktree_toggle() {
         .expect("the form opens on a non-git workspace, so the plan starts as a plain folder");
 
     harness.type_text("~/tildedir").unwrap();
+    // Leave the field: the path-completion popup it opened covers the plan
+    // line under it, and Tab closes it without accepting a suggestion.
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
 
     harness
         .wait_until(|h| {
@@ -2093,10 +2110,7 @@ fn the_ssh_form_offers_a_worktree_too() {
 
     step_to_first_planted_host(&mut harness);
     // The worktree choice lives in the Details fold.
-    focus_stop(&mut harness, "Details");
-    harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
-        .unwrap();
+    set_details(&mut harness, true);
     harness
         .wait_until(|h| h.screen_to_string().contains("New worktree"))
         .unwrap_or_else(|_| {
