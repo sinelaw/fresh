@@ -17397,9 +17397,8 @@ editor.on("widget_event", (e) => {
   if (mainMenuPanel && e.panel_id === mainMenuPanel.id()) {
     if (e.event_type === "cancel") {
       // Esc or a press outside: the host unmounted it already. A press on
-      // the Menu button itself dismissed it, and must not reopen it.
+      // the Menu button is spent on the dismissal, so it cannot reopen it.
       mainMenuPanel = null;
-      lastMenuDismissed = { key: MAIN_MENU_PREFIX, at: Date.now() };
       closeMainMenu();
       return;
     }
@@ -17859,14 +17858,9 @@ editor.on("widget_event", (e) => {
         // Task… ▾" and "Move to Folder…" overlays: they are menus, and
         // clicking away from a menu dismisses it.
         openDialog.projectMenuOpen = false;
-        openDialog.dockMenu = null;
-        // The Menu panel too, and without handing focus back: the press
-        // that blurred the dock is also dismissing it.
-        if (mainMenuPanel) {
-          const menuPanel = mainMenuPanel;
-          mainMenuPanel = null;
-          menuPanel.unmount();
-        }
+        // The Menu is a panel of its own that takes the keyboard, so the
+        // dock blurs when it opens; it stays up.
+        if (!mainMenuPanel) openDialog.dockMenu = null;
         // The search row goes with them — unless a needle keeps it (a
         // dive keeps the filter, see below), which the render decides.
         openDialog.searchOpen = false;
@@ -18150,9 +18144,7 @@ editor.on("widget_event", (e) => {
     }
     if (e.event_type === "activate" && e.widget_key === "dock-menu") {
       if (openDialog.dockMenu?.kind === "main") closeDockMenu();
-      else if (
-        lastMenuDismissed.key !== MAIN_MENU_PREFIX || Date.now() - lastMenuDismissed.at > 300
-      ) openMainMenu();
+      else openMainMenu();
       return;
     }
     // The `Menu ▾` / "Move to folder…" dropdown list: ↑/↓ move its

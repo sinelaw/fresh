@@ -286,7 +286,8 @@ fn set_card_view(h: &mut EditorTestHarness) {
     h.wait_until(|h| h.screen_to_string().contains("(•) Cards"))
         .unwrap();
     h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
-    h.wait_until(|h| !h.screen_to_string().contains("Machines…"))
+    // The dock gets the keyboard back a beat after the Menu panel goes.
+    h.wait_until(|h| !h.screen_to_string().contains("Machines…") && h.editor().is_dock_focused())
         .unwrap();
 }
 

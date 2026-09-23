@@ -104,7 +104,10 @@ fn open_dock_menu(h: &mut EditorTestHarness) {
 /// session list.
 fn close_dock_menu(h: &mut EditorTestHarness) {
     h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
-    h.wait_until(|h| !h.screen_to_string().contains("Machines…"))
+    // The Menu is its own panel: the host drops it at once, and the plugin
+    // hands the keyboard back to the dock a beat later. A key sent in
+    // between would land nowhere.
+    h.wait_until(|h| !h.screen_to_string().contains("Machines…") && h.editor().is_dock_focused())
         .unwrap();
 }
 
@@ -315,9 +318,14 @@ fn editor_click_blurs_dock_when_a_header_widget_is_focused() {
         "the dock should remain focused after Tab + Enter on a filter widget"
     );
 
-    // Click the editor area (well to the right of the dock column). Focus must
-    // leave the dock: its divider dims.
+    // Click the editor area (well to the right of the dock column). The Menu
+    // is an anchored panel, and like the right-click menu it spends the
+    // first press outside it on closing; the next one reaches the editor,
+    // and focus must leave the dock: its divider dims.
     let wall = dock_wall_col(&h);
+    h.mouse_click(wall + 20, 3).unwrap();
+    h.wait_until(|h| !h.screen_to_string().contains("Machines…"))
+        .unwrap();
     h.mouse_click(wall + 20, 3).unwrap();
     h.render().unwrap();
     assert_ne!(
