@@ -819,6 +819,17 @@ becomes theme-file data. Nothing depends on either.
 
 ### Smaller residue
 
+- **Library surface nothing asks for is gone.** The working rule is that a
+  library change needs a caller in the same PR; a sweep for `pub fn`s in
+  `fresh-ui` with no reference anywhere — editor, tests, examples — found nine,
+  three of them whole mechanisms rather than conveniences. `Anchor::
+  scroll_to_end` took `Command::ScrollToEnd` and its arm in the command loop
+  with it; `Event::release_pointer` took `Ctl::release_request` and the branch
+  in `apply_controls` that cleared the capture (a capture ends when the pointer
+  is released or the element unmounts, which is what every caller relies on).
+  The rest were sugar with no user: `Event::is_key`, `Node::on_secondary_click`
+  (the gesture kind stays — it is the context menu's), `Node::child_if_some`,
+  `InitCx::geometry_of`, `GeomHandle::rect_of_key`, `Commands::is_bound`.
 - The pointer's legacy walk (see *The one asymmetry*), whose members are now
   the terminal's own mouse and the multi-click detector; the markdown drag was
   its last grab and is the run's own capture.

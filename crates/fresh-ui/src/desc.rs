@@ -1358,13 +1358,6 @@ impl<M> Node<M> {
         }
     }
 
-    pub fn child_if_some<T>(self, v: Option<T>, f: impl FnOnce(T) -> Node<M>) -> Self {
-        match v {
-            Some(v) => self.child(f(v)),
-            None => self,
-        }
-    }
-
     /// Keep this node when `cond`, otherwise collapse it to [`Node::nil`].
     pub fn if_(self, cond: bool) -> Self {
         if cond {
@@ -2006,10 +1999,6 @@ impl<M> Node<M> {
 
     pub fn on_click(self, f: impl Fn(&Event) -> M + 'static) -> Self {
         self.on(GestureKind::Click, Rc::new(move |e| Some(f(e))))
-    }
-
-    pub fn on_secondary_click(self, f: impl Fn(&Event) -> M + 'static) -> Self {
-        self.on(GestureKind::SecondaryClick, Rc::new(move |e| Some(f(e))))
     }
 
     /// The pointer entered this node. Fired on the node itself, not propagated —
