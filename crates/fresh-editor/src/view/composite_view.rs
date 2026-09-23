@@ -89,15 +89,6 @@ impl CompositeViewState {
         Some((start, end))
     }
 
-    /// Check if a row is within the selection
-    pub fn is_row_selected(&self, row: usize) -> bool {
-        if !self.visual_mode {
-            return false;
-        }
-        let (start, end) = self.selection_row_range().unwrap();
-        row >= start && row <= end
-    }
-
     /// Get the column range that is selected for a given row
     /// Returns (start_col, end_col) where end_col is exclusive
     /// Returns None if row is not in selection
@@ -284,11 +275,6 @@ impl CompositeViewState {
         self.scroll_row = row.min(max_row);
     }
 
-    /// Scroll to top
-    pub fn scroll_to_top(&mut self) {
-        self.scroll_row = 0;
-    }
-
     /// Scroll to bottom
     pub fn scroll_to_bottom(&mut self, total_rows: usize, viewport_height: usize) {
         self.scroll_row = total_rows.saturating_sub(viewport_height);
@@ -319,36 +305,9 @@ impl CompositeViewState {
         }
     }
 
-    /// Set focus to a specific pane
-    pub fn set_focused_pane(&mut self, pane_index: usize) {
-        if pane_index < self.pane_viewports.len() {
-            self.focused_pane = pane_index;
-        }
-    }
-
     /// Get the viewport for a specific pane
     pub fn get_pane_viewport(&self, pane_index: usize) -> Option<&PaneViewport> {
         self.pane_viewports.get(pane_index)
-    }
-
-    /// Get the cursor for a specific pane
-    pub fn get_pane_cursor(&self, pane_index: usize) -> Option<&Cursors> {
-        self.pane_cursors.get(pane_index)
-    }
-
-    /// Get mutable cursor for a specific pane
-    pub fn get_pane_cursor_mut(&mut self, pane_index: usize) -> Option<&mut Cursors> {
-        self.pane_cursors.get_mut(pane_index)
-    }
-
-    /// Get the focused pane's cursor
-    pub fn focused_cursor(&self) -> Option<&Cursors> {
-        self.pane_cursors.get(self.focused_pane)
-    }
-
-    /// Get mutable reference to the focused pane's cursor
-    pub fn focused_cursor_mut(&mut self) -> Option<&mut Cursors> {
-        self.pane_cursors.get_mut(self.focused_pane)
     }
 }
 

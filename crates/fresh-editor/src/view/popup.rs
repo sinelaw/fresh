@@ -374,12 +374,6 @@ impl Popup {
         self
     }
 
-    /// Set the popup kind (determines input handling behavior)
-    pub fn with_kind(mut self, kind: PopupKind) -> Self {
-        self.kind = kind;
-        self
-    }
-
     /// Mark this popup as transient (will be dismissed on focus loss)
     pub fn with_transient(mut self, transient: bool) -> Self {
         self.transient = transient;
@@ -404,31 +398,11 @@ impl Popup {
         self
     }
 
-    /// Set border style
-    pub fn with_border_style(mut self, style: Style) -> Self {
-        self.border_style = style;
-        self
-    }
-
-    /// Attach the confirm/cancel resolver so this popup dispatches to
-    /// the right handler regardless of what other popups are on screen.
-    pub fn with_resolver(mut self, resolver: PopupResolver) -> Self {
-        self.resolver = resolver;
-        self
-    }
-
     /// Mark the popup as keyboard-focused (so popup-context bindings
     /// route through it). LSP popups stay unfocused on creation; the
     /// user toggles focus with the `popup_focus` action.
     pub fn with_focused(mut self, focused: bool) -> Self {
         self.focused = focused;
-        self
-    }
-
-    /// Pre-render the focus-key hint shown in the popup title when the
-    /// popup is unfocused.
-    pub fn with_focus_key_hint(mut self, hint: String) -> Self {
-        self.focus_key_hint = Some(hint);
         self
     }
 
@@ -938,27 +912,6 @@ impl PopupManager {
     /// Check if any popups are visible
     pub fn is_visible(&self) -> bool {
         !self.popups.is_empty()
-    }
-
-    /// Check if the topmost popup is a completion popup (supports type-to-filter)
-    pub fn is_completion_popup(&self) -> bool {
-        self.top()
-            .map(|p| p.kind == PopupKind::Completion)
-            .unwrap_or(false)
-    }
-
-    /// Check if the topmost popup is a hover popup
-    pub fn is_hover_popup(&self) -> bool {
-        self.top()
-            .map(|p| p.kind == PopupKind::Hover)
-            .unwrap_or(false)
-    }
-
-    /// Check if the topmost popup is an action popup
-    pub fn is_action_popup(&self) -> bool {
-        self.top()
-            .map(|p| p.kind == PopupKind::Action)
-            .unwrap_or(false)
     }
 
     /// Get all popups (for rendering)

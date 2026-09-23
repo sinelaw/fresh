@@ -1974,24 +1974,9 @@ impl Viewport {
         self.set_top_byte_with_limit(buffer, &[], &[], end);
     }
 
-    /// Mark viewport as needing synchronization with cursor positions
-    /// This defers the actual viewport update until sync_with_cursor is called
-    pub fn mark_needs_sync(&mut self) {
-        self.needs_sync = true;
-    }
-
     /// Check if viewport needs synchronization
     pub fn needs_sync(&self) -> bool {
         self.needs_sync
-    }
-
-    /// Synchronize viewport with cursor position (deferred ensure_visible)
-    /// This should be called before rendering to batch multiple cursor movements
-    pub fn sync_with_cursor(&mut self, buffer: &mut Buffer, cursor: &Cursor) {
-        if self.needs_sync {
-            self.ensure_visible(buffer, cursor, &[]);
-            self.needs_sync = false;
-        }
     }
 
     /// Low-level: ensure cursor is visible, scrolling if necessary.
@@ -2825,65 +2810,6 @@ impl Viewport {
             if self.left_column > max_left_column {
                 self.left_column = max_left_column;
             }
-        }
-    }
-
-    /// Ensure multiple cursors are visible (smart scroll for multi-cursor)
-    /// Prioritizes keeping the primary cursor visible
-    pub fn ensure_cursors_visible(
-        &mut self,
-        buffer: &mut Buffer,
-        cursors: &[(usize, &Cursor)], // (priority, cursor) - lower priority number = higher priority
-    ) {
-        if cursors.is_empty() {
-            return;
-        }
-
-        // Sort cursors by priority (primary cursor first)
-        let mut sorted_cursors: Vec<_> = cursors.to_vec();
-        sorted_cursors.sort_by_key(|(priority, _)| *priority);
-
-        // Get byte positions for all cursors (at line starts)
-        let cursor_line_bytes: Vec<usize> = sorted_cursors
-            .iter()
-            .map(|(_, cursor)| {
-                let iter = buffer.line_iterator(cursor.position, 80);
-                iter.current_position()
-            })
-            .collect();
-
-        // Count how many lines span between min and max cursors
-        let min_byte = *cursor_line_bytes.iter().min().unwrap();
-        let max_byte = *cursor_line_bytes.iter().max().unwrap();
-
-        // Count lines between min and max using iterator
-        let mut iter = buffer.line_iterator(min_byte, 80);
-        let mut line_span = 0;
-        while let Some((line_byte, _)) = iter.next_line() {
-            if line_byte >= max_byte {
-                break;
-            }
-            line_span += 1;
-        }
-
-        let visible_count = self.visible_line_count();
-
-        // If all cursors fit in the viewport, center them
-        if line_span < visible_count {
-            let lines_to_go_back = visible_count / 2;
-            let mut iter = buffer.line_iterator(min_byte, 80);
-            for _ in 0..lines_to_go_back {
-                if iter.prev().is_none() {
-                    break;
-                }
-            }
-            let position = iter.current_position();
-            // Cursor-positioning flow: no soft-break info available here.
-            self.set_top_byte_with_limit(buffer, &[], &[], position);
-        } else {
-            // Can't fit all cursors, ensure primary is visible
-            let primary_cursor = sorted_cursors[0].1;
-            self.ensure_visible(buffer, primary_cursor, &[]);
         }
     }
 

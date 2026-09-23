@@ -1057,18 +1057,6 @@ impl FileTreeView {
             .get_node(node_id)
             .and_then(|node| self.search.match_name(&node.entry.name))
     }
-
-    /// Check if a node matches the current search
-    pub fn node_matches_search(&self, node_id: NodeId) -> bool {
-        if !self.search.is_active() {
-            return true;
-        }
-
-        self.tree
-            .get_node(node_id)
-            .map(|node| self.search.matches(&node.entry.name))
-            .unwrap_or(false)
-    }
 }
 
 #[cfg(test)]

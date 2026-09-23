@@ -502,13 +502,6 @@ impl EntryDialogState {
         self.user_edited
     }
 
-    /// Mark the dialog as edited. Called from every mutator path
-    /// (insert_char, toggle_bool, list add/remove, etc.) — anywhere
-    /// the user can produce a change the dialog should remember.
-    pub fn mark_edited(&mut self) {
-        self.user_edited = true;
-    }
-
     /// Mark the *focused field* as explicitly edited: flags the dialog dirty
     /// and clears the field's inherited state. Once the user gives a field a
     /// value of their own it is no longer inherited, so `to_value` persists it
@@ -1029,67 +1022,6 @@ impl EntryDialogState {
             }
             _ => 0,
         }
-    }
-
-    /// Toggle focus between items region and buttons region.
-    /// Used by Tab key to provide region-level navigation.
-    pub fn toggle_focus_region(&mut self) {
-        self.toggle_focus_region_direction(true);
-    }
-
-    /// Toggle between items and buttons regions.
-    /// When in buttons region, Tab cycles through buttons before returning to items.
-    /// `forward` controls direction: true = Tab, false = Shift+Tab.
-    pub fn toggle_focus_region_direction(&mut self, forward: bool) {
-        if self.is_editing() {
-            return;
-        }
-
-        if self.focus_on_buttons {
-            if forward {
-                // Tab forward through buttons, then back to items
-                if self.focused_button + 1 < self.button_count() {
-                    self.focused_button += 1;
-                } else {
-                    // Past last button — return to items
-                    if self.first_editable_index < self.items.len() {
-                        self.focus_on_buttons = false;
-                        if self.selected_item < self.first_editable_index {
-                            self.selected_item = self.first_editable_index;
-                        }
-                    } else {
-                        // All items read-only, wrap to first button
-                        self.focused_button = 0;
-                    }
-                }
-            } else {
-                // Shift+Tab backward through buttons, then back to items
-                if self.focused_button > 0 {
-                    self.focused_button -= 1;
-                } else {
-                    // Before first button — return to items
-                    if self.first_editable_index < self.items.len() {
-                        self.focus_on_buttons = false;
-                        if self.selected_item < self.first_editable_index {
-                            self.selected_item = self.first_editable_index;
-                        }
-                    } else {
-                        // All items read-only, wrap to last button
-                        self.focused_button = self.button_count().saturating_sub(1);
-                    }
-                }
-            }
-        } else {
-            // Move to buttons
-            self.focus_on_buttons = true;
-            self.focused_button = if forward {
-                0
-            } else {
-                self.button_count().saturating_sub(1)
-            };
-        }
-
-        self.ensure_selected_visible(self.viewport_height);
     }
 
     /// Initialize composite control focus for the selected item (when dialog opens)

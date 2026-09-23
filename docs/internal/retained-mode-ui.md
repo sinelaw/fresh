@@ -868,6 +868,18 @@ becomes theme-file data. Nothing depends on either.
   the move), and a reaction that is not run is a name that does not resolve.
   `app::chrome`'s modules stay: they are where each surface's `Editor` methods
   live, which was never the registry's doing.
+- **And the same sweep run over the whole view layer.** Every `pub fn` under
+  `view/` and `widgets/` with no reference anywhere — 880 lines across
+  nineteen files. Some is plainly the migration's: `Popup`'s four unused
+  builders and its three `is_*_popup` predicates, `MarginManager::
+  {get_at_line, right_total_width}`, `LineWrap`'s `cursor_sig_for_line` and
+  `char_position_in_layout`, the widget renderer's `blank_list_row`,
+  `render_section_top_border` and `wrap_in_side_border` (with the two border
+  constants only they used). Some predates it — `ScrollSyncManager`'s group
+  API and its `next_id`, ten `SettingsState` accessors, ten `SplitManager`
+  ones, seven on `CompositeViewState`. All of it was dead either way, and the
+  compiler could not say so because it was `pub`. The cascades were followed
+  to a fixed point: the sweep leaves the dead-code warning set unchanged.
 - The pointer's legacy walk (see *The one asymmetry*), whose members are now
   the terminal's own mouse and the multi-click detector; the markdown drag was
   its last grab and is the run's own capture.

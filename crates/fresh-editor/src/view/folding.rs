@@ -341,23 +341,6 @@ impl FoldManager {
             })
             .collect()
     }
-
-    /// Count total hidden lines for folds with headers in the given range.
-    pub fn hidden_line_count_in_range(
-        &self,
-        buffer: &Buffer,
-        marker_list: &MarkerList,
-        start_line: usize,
-        end_line: usize,
-    ) -> usize {
-        let mut hidden = 0usize;
-        for range in self.resolved_ranges(buffer, marker_list) {
-            if range.header_line >= start_line && range.header_line <= end_line {
-                hidden = hidden.saturating_add(range.end_line.saturating_sub(range.start_line) + 1);
-            }
-        }
-        hidden
-    }
 }
 
 // ---------------------------------------------------------------------------

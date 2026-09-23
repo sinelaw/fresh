@@ -556,32 +556,6 @@ impl Prompt {
         self.edit.move_end();
     }
 
-    /// Scroll the result list by `delta` rows without moving the selection
-    /// (mouse wheel over the Live Grep overlay results pane, issue #2119).
-    /// `visible` is the number of result rows currently on screen, used to
-    /// clamp the offset so it can't scroll past the end of the list.
-    pub fn scroll_results(&mut self, delta: i32, visible: usize) {
-        let total = self.suggestions.len();
-        if total == 0 {
-            return;
-        }
-        let max_offset = total.saturating_sub(visible.max(1));
-        let next = (self.scroll_offset as i32 + delta).clamp(0, max_offset as i32) as usize;
-        if next != self.scroll_offset {
-            self.scroll_offset = next;
-        }
-        // Latch manual scroll even when clamped at an edge, so a follow-up
-        // render doesn't immediately yank the offset back to the selection.
-        self.manual_scroll = true;
-    }
-
-    /// Get the currently selected suggestion value
-    pub fn selected_value(&self) -> Option<String> {
-        self.selected_suggestion
-            .and_then(|idx| self.suggestions.get(idx))
-            .map(|s| s.get_value().to_string())
-    }
-
     /// Get the final input (use selected suggestion if available, otherwise raw input)
     /// The query text. Accessor for the §4.5 state collapse: external
     /// readers go through this (not the field) so the storage can
