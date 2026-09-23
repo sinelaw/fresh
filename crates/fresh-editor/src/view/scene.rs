@@ -478,9 +478,27 @@ impl Editor {
     /// pipeline's suggestion-popup geometry. `None` unless a picker list (or a
     /// floating overlay) is showing. Single derivation shared by both frontends.
     pub fn palette_view(&self) -> Option<PaletteView> {
-        let chrome = self.active_chrome();
-        let sugg_outer = chrome.suggestions_outer_area;
-        let sugg_area = chrome.suggestions_area;
+        // The popup's own two rectangles, read off the tree that placed them
+        // — like the card's bands below, and unlike the pair of `ChromeLayout`
+        // fields this replaces, which were a copy of exactly this read.
+        let to_rect = |r: fresh_ui::Rect| ratatui::layout::Rect {
+            x: r.x.max(0) as u16,
+            y: r.y.max(0) as u16,
+            width: r.w,
+            height: r.h,
+        };
+        let (sugg_outer, sugg_list) = self
+            .shell_ui
+            .as_ref()
+            .map(|ui| {
+                let spec = ui.spec();
+                (
+                    crate::view::shell::prompt::suggestions_rect(spec).map(to_rect),
+                    crate::view::shell::prompt::suggestions_list_rect(spec).map(to_rect),
+                )
+            })
+            .unwrap_or((None, None));
+        let sugg_window = self.active_chrome().suggestions_window;
         let p = self.active_window().prompt.as_ref()?;
         // The overlay card's bands, read off the tree that placed them.
         let card_band = |r: crate::view::shell::overlay_prompt::CardRegion| {
@@ -506,11 +524,8 @@ impl Editor {
         // it the web shows no prompt at all while the editor waits for input.
         // Such prompts have no native suggestion list; the frontend renders
         // just the input bar (null `list_rect`/`outer_rect` below).
-        let (scroll_start, visible, total) = sugg_area.map(|(_, s, v, t)| (s, v, t)).unwrap_or((
-            p.scroll_offset,
-            p.suggestions.len(),
-            p.suggestions.len(),
-        ));
+        let total = p.suggestions.len();
+        let (scroll_start, visible) = sugg_window.unwrap_or((p.scroll_offset, p.suggestions.len()));
         // Search-option toggles: the row's own content — the same values the
         // TUI describes its toggles with — plus the cell spans the shell's
         // layout assigned them, READ BACK off the laid-out tree rather than
@@ -552,10 +567,7 @@ impl Editor {
             visible_count: visible,
             total,
             outer_rect: sugg_outer.map(RectView::from),
-            list_rect: sugg_area
-                .map(|(r, _, _, _)| r)
-                .or(prompt_results)
-                .map(RectView::from),
+            list_rect: sugg_list.or(prompt_results).map(RectView::from),
             // The preview pane's content: the band names the pane inside its
             // rule, so this is the rectangle as the tree placed it. Only
             // meaningful for overlay prompts.

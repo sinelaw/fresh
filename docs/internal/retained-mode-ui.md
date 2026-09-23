@@ -667,16 +667,31 @@ inside per-item loops (the web's dropdown projection does one full walk per
 row). The design has always called for the library to publish `Key → Rect` as an
 O(1) read after layout; nothing has been built. This is the live asymptotic hole.
 
-**The caches it was going to retire are gone ahead of it.** `popup_areas` and
-`global_popup_areas` both read the popup's box off the tree and then re-derived
-the content rect from it by hand, in two copy-pasted blocks of border
-arithmetic — so they were a second *statement*, not merely a cache. The content
-slot carries `popup::popup_content_key` now and `popup::inner_rects_of` reads
-it, the web's projection and the transient-popup probe ask the tree directly,
-and three of `PopupAreaLayout`'s seven fields turned out to have no reader at
-all. `ChromeLayout`'s paint-recorded roster is down to the prompt's suggestion
-areas; its third entry, `prompt_toolbar_boxes`, named a field that had not
-existed for some time.
+**The caches it was going to retire are gone ahead of it, and the roster is
+now empty.** `popup_areas` and `global_popup_areas` both read the popup's box
+off the tree and then re-derived the content rect from it by hand, in two
+copy-pasted blocks of border arithmetic — so they were a second *statement*,
+not merely a cache. The content slot carries `popup::popup_content_key` now and
+`popup::inner_rects_of` reads it, the web's projection and the transient-popup
+probe ask the tree directly, and three of `PopupAreaLayout`'s seven fields
+turned out to have no reader at all. `prompt_toolbar_boxes`, the roster's third
+entry, named a field that had not existed for some time.
+
+The last two, `suggestions_area` and `suggestions_outer_area`, were a copy of
+`shell::prompt::{suggestions_list_rect, suggestions_rect}` — already a read of
+the tree — kept for one reader, the web `Scene`, which now asks for them the
+way it already asked `overlay_prompt::regions_of` for the card's bands in the
+same function. The count beside them was `prompt.suggestions.len()` copied, and
+the doc comment listed a third consumer, `cursor_obscured_by_overlay`, which
+exists nowhere.
+
+What is left under that name is `suggestions_window`, and it is not a
+rectangle and not a cache: it is **feedback**. The palette's description
+measures its columns against the rows that will be on screen, and which rows
+those are is the window the *previous* layout arrived at — the one thing about
+the popup a fresh read cannot supply, because the tree is the thing being
+described. So `ChromeLayout`'s paint-recorded geometry roster is empty, and the
+class it enumerated has no members.
 
 ### Per-frame deep clones
 

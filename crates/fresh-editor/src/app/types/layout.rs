@@ -1,6 +1,5 @@
 use super::theme::CellThemeInfo;
 use crate::model::event::BufferId;
-use ratatui::layout::Rect;
 use std::collections::HashSet;
 
 /// Mapping from visual row to buffer positions for mouse click handling
@@ -102,45 +101,48 @@ impl ViewLineMapping {
     }
 }
 
-/// Editor-chrome layout cache: full-frame and chrome-region rects
-/// (status bar, menu bar, prompt overlay, popups) plus the screen-
-/// indexed cell-theme map. Per-window geometry is the retained tree's:
-/// pane boxes on `Window::pane_rects`, tab rectangles by key
+/// What the frame leaves behind for the next one: its size, the screen-indexed
+/// cell-theme map, and the suggestion list's window. Per-window geometry is the
+/// retained tree's: pane boxes on `Window::pane_rects`, tab rectangles by key
 /// (`tabs::rects`), each pane's rows on its `PaneHandle`.
 ///
-/// ## THE paint-recorded (`screen_space`-class) roster — CLOSED LIST
+/// ## THE paint-recorded (`screen_space`-class) roster — EMPTY
 ///
-/// Most chrome geometry is derived at event time from live state
-/// (slice 7); the surfaces below are the ruled exceptions whose rects
-/// are recorded at PAINT time because their geometry is a paint
-/// product (content-measured popups, dialog layout math), each with
-/// standing debug parity or documented rationale at its site:
+/// This was the one enumeration of the parallel geometry path: chrome whose
+/// rectangles were recorded at PAINT time rather than derived at event time,
+/// because their geometry was a paint product. **No rectangle is recorded here
+/// any longer.** `popup_areas` and `global_popup_areas` became keyed nodes
+/// (`shell::popup::{rects_of, inner_rects_of}`) — both took the outer rect off
+/// the tree and then re-derived the content rect by hand, so they were a second
+/// statement of an answer the tree already held. `prompt_toolbar_boxes` was
+/// listed here and existed nowhere in the workspace, a roster entry outliving
+/// its field. And `suggestions_area` / `suggestions_outer_area` were a copy of
+/// `shell::prompt::{suggestions_list_rect, suggestions_rect}` kept for one
+/// reader, the web `Scene`, which asks the tree directly now.
 ///
-///   - `suggestions_area` / `suggestions_outer_area` (the prompt's
-///     suggestion list, both forms)
-///
-/// This list is the ONE enumeration of the parallel geometry path
-/// (recorded by ruling; `docs/internal/retained-mode-ui.md` "The keyed geometry index" retires it).
-/// ADDING A SURFACE HERE REQUIRES A RULING — the
-/// event-time derivation is the default, and this class must not
-/// grow surface by surface without one; retiring it entirely is the
-/// paint-time compositing arc (sinelaw/fresh#3024).
-///
-/// Two entries left it. `popup_areas` / `global_popup_areas` are keyed nodes
-/// now (`shell::popup::{rects_of, inner_rects_of}`): both caches took the
-/// outer rect off the tree and then re-derived the content rect by hand, so
-/// they were a second statement of an answer the tree already held.
-/// `prompt_toolbar_boxes` was listed here and exists nowhere in the
-/// workspace — a roster entry outliving its field.
+/// What remains under that name is `suggestions_window`, which is not a
+/// rectangle and not a cache: see its own note. ADDING A SURFACE TO THE ROSTER
+/// REQUIRES A RULING — event-time derivation is the default, and this class
+/// must not grow back surface by surface (`docs/internal/retained-mode-ui.md`,
+/// "The keyed geometry index"; the paint-time compositing arc is
+/// sinelaw/fresh#3024).
 #[derive(Debug, Clone, Default)]
 pub(crate) struct ChromeLayout {
-    /// Suggestions area for mouse hit testing
-    /// (inner_rect, scroll_start_idx, visible_count, total_count)
-    pub suggestions_area: Option<(Rect, usize, usize, usize)>,
-    /// Full outer rect of the suggestions popup (including borders).
-    /// Used to absorb clicks on the popup chrome so they don't reach the
-    /// buffer below while the prompt is open.
-    pub suggestions_outer_area: Option<Rect>,
+    /// The suggestion list's window as the last layout settled it: the first
+    /// row shown, and how many.
+    ///
+    /// **The only thing here that is feedback rather than a cache.** The
+    /// description measures the palette's columns against the rows that will
+    /// be on screen, and which rows those are is the window the *previous*
+    /// layout arrived at — a description reading back its own last frame, and
+    /// the one thing about the popup a fresh read of the tree cannot supply
+    /// while the tree is being described. The two rectangles that sat beside
+    /// it were caches: the web `Scene` was their only reader and it asks
+    /// `shell::prompt::{suggestions_rect, suggestions_list_rect}` for them
+    /// now, the way it already asked `overlay_prompt::regions_of` for the
+    /// card's bands two lines above. The count beside them was
+    /// `prompt.suggestions.len()` copied.
+    pub suggestions_window: Option<(usize, usize)>,
     /// Dimensions of the last rendered frame. See [`FrameDimensions`].
     pub last_frame: FrameDimensions,
     /// Per-cell theme key provenance recorded during rendering.
