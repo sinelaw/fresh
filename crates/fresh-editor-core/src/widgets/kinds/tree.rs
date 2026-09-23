@@ -697,6 +697,7 @@ mod tests {
             card_borders: false,
             toggle_on_click,
             indent_cols: 2,
+            columns: Vec::new(),
             key: Some("t".into()),
         }
     }
