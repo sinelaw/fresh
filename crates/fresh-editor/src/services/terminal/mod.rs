@@ -78,7 +78,7 @@ pub mod term;
 #[cfg(windows)]
 pub mod windows_shell;
 
-pub use manager::{detect_shell, BackingMode, TerminalId, TerminalManager};
+pub use manager::{detect_shell, BackingMode, TerminalId, TerminalIdAllocator, TerminalManager};
 pub use term::{PrependedHead, TerminalCell, TerminalState};
 #[cfg(windows)]
 pub use windows_shell::set_skip_app_execution_alias;

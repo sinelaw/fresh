@@ -58,6 +58,7 @@ impl crate::app::Editor {
             )),
             local_filesystem: std::sync::Arc::clone(&self.local_filesystem),
             buffer_id_alloc: self.buffer_id_alloc.clone(),
+            terminal_id_alloc: self.terminal_id_alloc.clone(),
             time_source: std::sync::Arc::clone(&self.time_source),
             dir_context: self.dir_context.clone(),
             tokio_runtime: self.tokio_runtime.clone(),
@@ -1174,7 +1175,7 @@ impl crate::app::Editor {
 
     /// Move every piece of per-terminal state for `buffer_id`'s terminal
     /// from the active window to `target`: the PTY handle (adopted under a
-    /// fresh id, since terminal ids are per-window), the backing/log file
+    /// fresh editor-wide id and re-tagged with its new window), the backing/log file
     /// bindings, launch/resume argv, the ephemeral flag, title/fg-name
     /// caches, and the process-group registration. Mirrors the remap loop
     /// in `respawn_terminals_through_authority`, which is the same

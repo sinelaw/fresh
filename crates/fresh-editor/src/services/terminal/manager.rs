@@ -216,18 +216,48 @@ impl TerminalHandle {
     }
 }
 
+/// Editor-wide `TerminalId` allocator shared by every window's
+/// [`TerminalManager`].
+///
+/// Terminal ids are unique across the whole editor, not per window: a bare
+/// `TerminalId` (as plugins hold it, or as a stale lookup carries it) names
+/// at most one terminal, so resolving it in the wrong window finds nothing
+/// rather than a different window's terminal. One allocator is created per
+/// `Editor` and cloned (it is an `Arc`) into each window's manager, so two
+/// editors in one process — as in tests — each number from 0.
+#[derive(Debug, Clone, Default)]
+pub struct TerminalIdAllocator(Arc<std::sync::atomic::AtomicUsize>);
+
+impl TerminalIdAllocator {
+    /// A fresh allocator; the first id it hands out is `TerminalId(0)`.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Allocate the next id.
+    fn next(&self) -> TerminalId {
+        TerminalId(self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
+    }
+
+    /// The id the next allocation will return, without advancing.
+    fn peek(&self) -> TerminalId {
+        TerminalId(self.0.load(std::sync::atomic::Ordering::Relaxed))
+    }
+}
+
 /// Manager for multiple terminal sessions
 pub struct TerminalManager {
-    /// The window that owns this manager. Terminal IDs are only unique
-    /// within a single manager (each starts numbering at 0), so output
-    /// messages are tagged with `(window_id, terminal_id)` — see
-    /// [`fresh_core::WindowTerminalId`] — to stay unambiguous once they
-    /// leave this window's context (e.g. on the async bus).
+    /// The window that owns this manager. Terminal ids are unique
+    /// editor-wide (see [`TerminalIdAllocator`]); output messages are still
+    /// tagged with `(window_id, terminal_id)` — see
+    /// [`fresh_core::WindowTerminalId`] — so they can be routed to the
+    /// owning window once they leave this window's context (e.g. on the
+    /// async bus).
     window_id: fresh_core::WindowId,
     /// Map from terminal ID to handle
     terminals: HashMap<TerminalId, TerminalHandle>,
-    /// Next terminal ID
-    next_id: usize,
+    /// Source of terminal ids, shared with every other window's manager.
+    ids: TerminalIdAllocator,
     /// Async bridge for sending notifications to main loop
     async_bridge: Option<AsyncBridge>,
 }
@@ -236,12 +266,13 @@ impl TerminalManager {
     /// Create a new terminal manager owned by `window_id`. The owner is
     /// required (not defaulted) so output can never be attributed to the
     /// wrong window: every terminal this manager spawns is tagged with
-    /// it.
-    pub fn new(window_id: fresh_core::WindowId) -> Self {
+    /// it. `ids` is the editor-wide allocator shared by every window's
+    /// manager, so ids never collide across windows.
+    pub fn new(window_id: fresh_core::WindowId, ids: TerminalIdAllocator) -> Self {
         Self {
             window_id,
             terminals: HashMap::new(),
-            next_id: 0,
+            ids,
             async_bridge: None,
         }
     }
@@ -257,8 +288,12 @@ impl TerminalManager {
     }
 
     /// Peek at the next terminal ID that would be assigned.
+    ///
+    /// The allocator is shared editor-wide, so the peek holds only until
+    /// any window's manager allocates; callers peek and spawn back to back
+    /// on the UI thread (and re-key by the id `spawn` actually returns).
     pub fn next_terminal_id(&self) -> TerminalId {
-        TerminalId(self.next_id)
+        self.ids.peek()
     }
 
     /// Spawn a new terminal session
@@ -287,8 +322,7 @@ impl TerminalManager {
         env_delta: crate::services::env_provider::EnvDelta,
         extra_env: HashMap<String, String>,
     ) -> Result<TerminalId, String> {
-        let id = TerminalId(self.next_id);
-        self.next_id += 1;
+        let id = self.ids.next();
 
         let handle = self.build_terminal(
             id,
@@ -451,14 +485,12 @@ impl TerminalManager {
 
     /// Adopt a live terminal released from another window's manager.
     ///
-    /// Assigns the handle a fresh id in this manager's namespace (ids are
-    /// per-window and would otherwise collide) and rewrites the shared
+    /// Assigns the handle a fresh editor-wide id and rewrites the shared
     /// `(window, terminal)` tag, so output/exit messages the terminal's
     /// threads send from now on are attributed to this window. Returns the
     /// new id.
     pub fn adopt(&mut self, handle: TerminalHandle) -> TerminalId {
-        let id = TerminalId(self.next_id);
-        self.next_id += 1;
+        let id = self.ids.next();
         if let Ok(mut wt_id) = handle.wt_id.lock() {
             *wt_id = fresh_core::WindowTerminalId::new(self.window_id, id);
         }
@@ -1107,32 +1139,40 @@ mod tests {
         );
     }
 
-    /// Terminal ids are per-window: each manager numbers from 0, so two
-    /// windows both hand out `Terminal-0`. The owning window is what
-    /// disambiguates them — output messages are tagged with the
-    /// `(window, terminal)` pair so a `Terminal-0` from one session can't
-    /// be attributed to another session's `Terminal-0`. (Regression
-    /// guard for the dock "pending output on the wrong session" bug.)
+    /// Terminal ids are editor-wide: every window's manager draws from one
+    /// shared allocator, so no two windows ever hand out the same id and a
+    /// bare `TerminalId` resolved in the wrong window finds nothing instead
+    /// of that window's own terminal. The owning window still tags output
+    /// messages (`WindowTerminalId`) for routing.
     #[test]
-    fn terminal_ids_collide_across_windows_but_window_disambiguates() {
+    fn terminal_ids_are_unique_across_windows() {
         use fresh_core::{WindowId, WindowTerminalId};
 
-        let win_a = TerminalManager::new(WindowId(1));
-        let win_b = TerminalManager::new(WindowId(2));
+        let ids = TerminalIdAllocator::new();
+        let win_a = TerminalManager::new(WindowId(1), ids.clone());
+        let win_b = TerminalManager::new(WindowId(2), ids.clone());
 
-        // Both managers would assign the same local id to their first
-        // terminal — the namespaces are independent.
+        // Both managers peek the same shared counter...
         assert_eq!(win_a.next_terminal_id(), win_b.next_terminal_id());
-        assert_eq!(win_a.next_terminal_id(), TerminalId(0));
+        // ...and every allocation, from either manager, advances it for both.
+        let mut seen = std::collections::HashSet::new();
+        for _ in 0..4 {
+            let a = win_a.ids.next();
+            let b = win_b.ids.next();
+            assert!(seen.insert(a), "id {a} handed out twice");
+            assert!(seen.insert(b), "id {b} handed out twice");
+            assert_eq!(win_a.next_terminal_id(), win_b.next_terminal_id());
+        }
 
-        // Each manager knows its owner, so the global identity differs.
+        // A separate editor (its own allocator) numbers independently.
+        let other_editor = TerminalManager::new(WindowId(1), TerminalIdAllocator::new());
+        assert_eq!(other_editor.next_terminal_id(), TerminalId(0));
+
         assert_eq!(win_a.window_id(), WindowId(1));
         assert_eq!(win_b.window_id(), WindowId(2));
-        let a0 = WindowTerminalId::new(win_a.window_id(), win_a.next_terminal_id());
-        let b0 = WindowTerminalId::new(win_b.window_id(), win_b.next_terminal_id());
         assert_ne!(
-            a0, b0,
-            "same local terminal id in different windows must be distinct globally"
+            WindowTerminalId::new(win_a.window_id(), win_a.next_terminal_id()),
+            WindowTerminalId::new(win_b.window_id(), win_b.next_terminal_id()),
         );
     }
 

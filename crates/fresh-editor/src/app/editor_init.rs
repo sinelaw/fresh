@@ -394,6 +394,7 @@ pub(super) struct EditorParts {
     // Keybindings + buffer-id allocation
     pub(super) keybindings: Arc<RwLock<KeybindingResolver>>,
     pub(super) buffer_id_alloc: crate::app::window_resources::BufferIdAllocator,
+    pub(super) terminal_id_alloc: crate::services::terminal::TerminalIdAllocator,
     pub(super) next_buffer_id: usize,
 
     // Terminal
@@ -620,6 +621,7 @@ impl Editor {
             // From parts (non-trivial):
             next_buffer_id: parts.next_buffer_id,
             buffer_id_alloc: parts.buffer_id_alloc,
+            terminal_id_alloc: parts.terminal_id_alloc,
             config: parts.config,
             config_snapshot_anchor: parts.config_snapshot_anchor,
             config_cached_json: parts.config_cached_json,
@@ -1388,6 +1390,10 @@ impl Editor {
         // is what gets cloned into every `Window` so handlers on
         // `impl Window` can mint ids without an `Editor` reference.
         let buffer_id_alloc = crate::app::window_resources::BufferIdAllocator::new(2);
+        // One terminal-id sequence for the whole editor, shared into every
+        // window's `TerminalManager`, so a bare `TerminalId` can't name a
+        // terminal in two windows at once.
+        let terminal_id_alloc = crate::services::terminal::TerminalIdAllocator::new();
 
         // The local-host filesystem handle, shared with the base window's
         // `WindowResources` and the editor. Same `Arc` the orchestrator
@@ -1442,6 +1448,7 @@ impl Editor {
             fs_manager: Arc::clone(&fs_manager),
             local_filesystem: Arc::clone(&local_filesystem),
             buffer_id_alloc: buffer_id_alloc.clone(),
+            terminal_id_alloc: terminal_id_alloc.clone(),
             time_source: Arc::clone(&time_source),
             dir_context: dir_context.clone(),
             tokio_runtime: tokio_runtime.clone(),
@@ -1606,6 +1613,7 @@ impl Editor {
             needs_full_grammar_build: true,
             keybindings,
             buffer_id_alloc: buffer_id_alloc.clone(),
+            terminal_id_alloc: terminal_id_alloc.clone(),
             next_buffer_id: 2,
             terminal_width: width,
             terminal_height: height,
