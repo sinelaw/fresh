@@ -4866,6 +4866,10 @@ pub enum PluginCommand {
         /// control does not use.
         #[serde(default)]
         shortcuts: Vec<String>,
+        /// Bindings (by key, as in `bindings`) scoped to named controls: each
+        /// applies only while one of its widgets holds the panel's focus.
+        #[serde(default)]
+        scoped: Vec<(String, Vec<String>)>,
     },
 
     /// Switch the current split to display a buffer
@@ -7902,6 +7906,7 @@ impl PluginApi {
             inherit_normal_bindings: false,
             plugin_name: None,
             shortcuts: Vec::new(),
+            scoped: Vec::new(),
         })
     }
 

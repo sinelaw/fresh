@@ -73,12 +73,6 @@ impl WidgetImpl for Radio {
         super::PointerDisposition::Consumed
     }
 
-    fn arrows_advance_focus(&self) -> bool {
-        // The options run left-to-right; the vertical axis belongs to
-        // the form around the control.
-        true
-    }
-
     fn box_meta(&self, spec: &WidgetSpec) -> super::BoxMeta {
         let mut m = super::BoxMeta::plain("radio");
         if let WidgetSpec::Radio { key: Some(k), .. } = spec {

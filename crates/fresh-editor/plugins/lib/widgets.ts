@@ -1390,8 +1390,10 @@ export class FloatingWidgetPanel {
        * bindings get only what it leaves; then the panel's own defaults
        * (Tab walks the controls). A binding declared `"shortcut"`
        * (`["C-Enter", "submit", "shortcut"]`) is dialog-wide and runs
-       * ahead of any control. A dock declares its chords here rather than
-       * through the window's editor mode. */
+       * ahead of any control; one declared `"on:a,b"` applies only while
+       * one of the named widgets has focus. An arrow nothing uses moves
+       * focus to the nearest control on screen that way. A dock declares
+       * its chords here rather than through the window's editor mode. */
       mode?: string;
       /** How the panel's form controls (`text` / `dropdown` / `toggle` /
        * `number` / `radio` with a `labelWidth`) align their labels in the shared

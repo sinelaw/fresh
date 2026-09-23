@@ -1043,31 +1043,27 @@ impl Editor {
         match key.code() {
             KeyCode::Tab => self.handle_widget_focus_advance(panel_key, 1),
             KeyCode::BackTab => self.handle_widget_focus_advance(panel_key, -1),
-            KeyCode::Up | KeyCode::Down => {
-                let delta = if key.code() == KeyCode::Up { -1 } else { 1 };
-                // Picker-style nav, capability-declared: the focused
-                // kind says whether panel arrows should walk the focus
-                // ring instead (`arrows_advance_focus` — Button/Toggle,
-                // no vertical axis of their own), and the panel's
-                // picker target says how an arrow reaches it
-                // (`picker_nav`: List peeks, Tree takes focus). No
-                // kind matching here — the capabilities are the kinds'
-                // declarations.
-                let arrows_advance = widget
-                    .map(|w| crate::widgets::kinds::behavior(w).arrows_advance_focus())
-                    .unwrap_or(false);
+            KeyCode::Up | KeyCode::Down | KeyCode::Left | KeyCode::Right => {
+                // **An arrow nothing used moves focus by where things are**
+                // (`docs/internal/widget-controls-own-interaction.md` R4): the
+                // focused control and the panel's mode have both passed it, so
+                // it goes to the nearest control on screen in its direction
+                // (`fresh_ui::focus::spatial`) — not the next one in Tab order,
+                // which in a two-column menu or a form's footer is the wrong
+                // one. Tab stays reading order.
+                //
+                // The one exception is the typed-filter panel: ↑/↓ from its
+                // single-line filter field reach the panel's picker (a List
+                // moves its selection while the field keeps typing; a Tree
+                // takes focus), capability-declared by the picker's kind.
+                let vertical = matches!(key.code(), KeyCode::Up | KeyCode::Down);
+                let from_field = matches!(widget, Some(fresh_core::api::WidgetSpec::Text { .. }));
                 let scrollable = self
                     .widget_registry
                     .get(panel_key)
                     .and_then(|p| find_scrollable_widget_key(&p.spec));
-                if scrollable.is_none() && arrows_advance {
-                    // Button-only popups (the dock's right-click
-                    // context menu, confirm panes): arrows walk
-                    // the controls like Tab / Shift+Tab, matching
-                    // every other menu in the dock.
-                    self.handle_widget_focus_advance(panel_key, delta);
-                }
-                if let Some(target_key) = scrollable {
+                if let Some(target_key) = scrollable.filter(|_| vertical && from_field) {
+                    let delta = if key.code() == KeyCode::Up { -1 } else { 1 };
                     let nav = self
                         .widget_registry
                         .get(panel_key)
@@ -1077,6 +1073,7 @@ impl Editor {
                     match nav {
                         crate::widgets::kinds::PickerNav::Peek => {
                             self.handle_widget_select_move_for_key(panel_key, &target_key, delta);
+                            return;
                         }
                         crate::widgets::kinds::PickerNav::TakeFocus => {
                             // set_panel_focus_and_notify seeds the
@@ -1084,10 +1081,18 @@ impl Editor {
                             // row (the kind's on_focus_change).
                             self.set_panel_focus_and_notify(panel_key, target_key.clone());
                             self.rerender_widget_panel(panel_key);
+                            return;
                         }
                         crate::widgets::kinds::PickerNav::Skip => {}
                     }
                 }
+                let dir = match key.code() {
+                    KeyCode::Up => fresh_ui::focus::spatial::Direction::Up,
+                    KeyCode::Down => fresh_ui::focus::spatial::Direction::Down,
+                    KeyCode::Left => fresh_ui::focus::spatial::Direction::Left,
+                    _ => fresh_ui::focus::spatial::Direction::Right,
+                };
+                self.move_panel_focus_spatially(panel_key, dir);
             }
             KeyCode::Enter => match widget {
                 Some(fresh_core::api::WidgetSpec::Text { .. }) => {
@@ -1115,6 +1120,57 @@ impl Editor {
                 _ => {}
             },
             _ => {} // unrecognised key — quietly ignore
+        }
+    }
+
+    /// Move this panel's focus to the nearest control on screen in `dir`
+    /// from the focused one, by the rectangles the tree laid them out at
+    /// (`fresh_ui::Ui::spatial_neighbour`). Returns whether focus moved.
+    ///
+    /// Confined to the focused control's nearest focus scope inside the
+    /// panel, the same confinement Tab has. Nothing that way: nothing moves.
+    fn move_panel_focus_spatially(
+        &mut self,
+        panel_key: &crate::widgets::PanelKey,
+        dir: fresh_ui::focus::spatial::Direction,
+    ) -> bool {
+        self.lay_out_shell_if_stale();
+        let focus_key = self
+            .widget_registry
+            .focus_key(panel_key)
+            .map(str::to_string)
+            .unwrap_or_default();
+        if focus_key.is_empty() {
+            return false;
+        }
+        let target = {
+            let Some(ui) = self.shell_ui.as_ref() else {
+                return false;
+            };
+            let Some(root) = self.panel_subtree_root(ui, panel_key) else {
+                return false;
+            };
+            let Some(from) = ui
+                .find_by_key(&crate::view::shell::widgets::widget_focus_key(&focus_key))
+                .filter(|f| ui.contains(root, *f))
+            else {
+                return false;
+            };
+            let scope = ui
+                .enclosing_focus_scope(from)
+                .filter(|s| ui.contains(root, *s))
+                .unwrap_or(root);
+            ui.spatial_neighbour(scope, from, dir)
+                .and_then(|to| ui.key_of(to))
+                .and_then(|k| crate::view::shell::widgets::widget_key_of(&k).map(str::to_string))
+        };
+        match target {
+            Some(key) if key != focus_key => {
+                self.set_panel_focus_and_notify(panel_key, key);
+                self.rerender_widget_panel(panel_key);
+                true
+            }
+            _ => false,
         }
     }
 

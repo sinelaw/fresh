@@ -198,13 +198,6 @@ let historyIndex = -1;
  *  to enter history-walk mode. Restored when they Down past the most
  *  recent history entry. */
 let historySavedPattern: string | null = null;
-/** Most recent widget_event we saw a widget_key for. Used to decide
- *  whether Up/Down should walk history (when focus appears to be on
- *  the search field) or fall through to the widget runtime. The
- *  widget runtime doesn't expose focus directly to the plugin, but
- *  every event that's relevant (change/select/toggle/activate/expand)
- *  carries widget_key. Best-effort proxy. */
-let lastFocusedWidget: string | null = null;
 
 function historyPush(pattern: string): void {
   if (!pattern) return;
@@ -442,8 +435,8 @@ function setActiveFieldText(text: string): void {
 // panel's own commands, and ↑/↓ for the search field's history (a
 // single-line field leaves them).
 const modeBindings: string[][] = [
-  ["Up", "search_replace_nav_up"],
-  ["Down", "search_replace_nav_down"],
+  ["Up", "search_replace_nav_up", "on:searchField"],
+  ["Down", "search_replace_nav_down", "on:searchField"],
   ["M-c", "search_replace_toggle_case"],
   ["M-r", "search_replace_toggle_regex"],
   ["M-w", "search_replace_toggle_whole_word"],
@@ -1886,8 +1879,9 @@ async function rerunSearchQuiet(): Promise<void> {
 // Text editing handlers (inline editing of query fields)
 // =============================================================================
 
-// ↑/↓ that the focused control left (the search field's, or a toggle's)
-// go back to the host's own arrow handling once history has had its say.
+// ↓ in the search field that is not walking history goes on to the
+// host's own arrow handling (into the match tree): the binding owns the
+// key on that field, so it hands it back explicitly.
 function dispatch(action: WidgetAction): void {
   panel?.widgetPanel?.command(action);
 }
@@ -1905,35 +1899,25 @@ function applyHistoryEntry(text: string): void {
   rerunSearchDebounced();
 }
 
-/** Whether Up/Down should be intercepted for history walk (instead of
- *  being passed to the focused widget). True only when the most recent
- *  widget_event indicated focus was on the search field. */
-function shouldInterceptForHistory(): boolean {
-  return lastFocusedWidget === "searchField" || lastFocusedWidget === null;
-}
-
+// Bound only on the search field (`on:searchField`): everywhere else ↑/↓
+// are the focused control's, or the host's spatial move.
 registerHandler("search_replace_nav_up", () => {
-  if (!panel) return;
-  if (shouldInterceptForHistory()) {
-    if (searchHistory.length === 0) return;
-    if (historyIndex < 0) {
-      // Entering history walk — snapshot what the user had typed so
-      // a Down past the most recent entry restores it.
-      historySavedPattern = panel.searchPattern;
-      historyIndex = 0;
-    } else if (historyIndex < searchHistory.length - 1) {
-      historyIndex += 1;
-    } else {
-      return; // already at the oldest entry
-    }
-    applyHistoryEntry(searchHistory[historyIndex]);
-    return;
+  if (!panel || searchHistory.length === 0) return;
+  if (historyIndex < 0) {
+    // Entering history walk — snapshot what the user had typed so
+    // a Down past the most recent entry restores it.
+    historySavedPattern = panel.searchPattern;
+    historyIndex = 0;
+  } else if (historyIndex < searchHistory.length - 1) {
+    historyIndex += 1;
+  } else {
+    return; // already at the oldest entry
   }
-  dispatch(widgetKey("Up"));
+  applyHistoryEntry(searchHistory[historyIndex]);
 });
 registerHandler("search_replace_nav_down", () => {
   if (!panel) return;
-  if (shouldInterceptForHistory() && historyIndex >= 0) {
+  if (historyIndex >= 0) {
     if (historyIndex > 0) {
       historyIndex -= 1;
       applyHistoryEntry(searchHistory[historyIndex]);
@@ -2478,15 +2462,6 @@ editor.on("after_file_open", (args) => {
 // the state change.
 editor.on("widget_event", (args) => {
   if (!panel || args.panel_id !== panel.widgetPanel?.id()) return;
-
-  // Track most-recent focused widget so Up/Down can decide whether to
-  // walk search history (search field) or pass through to the widget
-  // runtime (matches tree, toggles, button). The widget runtime
-  // doesn't expose focus to the plugin directly; this best-effort
-  // proxy is good enough for the history-walk gesture. See §11.
-  if (typeof args.widget_key === "string" && args.widget_key.length > 0) {
-    lastFocusedWidget = args.widget_key;
-  }
 
   // `change` — fired for TextInput edits (Backspace, Delete,
   // arrows, Home/End, mode_text_input). Payload carries the new

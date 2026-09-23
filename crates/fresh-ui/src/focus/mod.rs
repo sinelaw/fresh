@@ -10,6 +10,7 @@
 
 pub mod intent;
 pub mod policy;
+pub mod spatial;
 pub mod tree;
 
 pub use intent::{default_shortcuts, Intent, Shortcut};
@@ -414,6 +415,21 @@ impl<M: 'static> Ui<M> {
     /// subtree and not about where the keyboard is.
     pub fn traversal_order(&self, root: ElementId) -> Vec<ElementId> {
         self.scope_under(root).ordered()
+    }
+
+    /// The focusable under `root` an arrow in `dir` reaches from `from`, by
+    /// where things are laid out rather than by reading order — see
+    /// [`spatial`]. `None` when nothing under `root` lies that way.
+    pub fn spatial_neighbour(
+        &self,
+        root: ElementId,
+        from: ElementId,
+        dir: spatial::Direction,
+    ) -> Option<ElementId> {
+        let ring = self.traversal_order(root);
+        let rects: Vec<crate::render::geom::Rect> = ring.iter().map(|&e| self.rect_of(e)).collect();
+        let i = spatial::nearest(self.rect_of(from), &rects, dir)?;
+        ring.get(i).copied()
     }
 
     /// The element traversal reaches from `from` moving `dir` within `root`'s

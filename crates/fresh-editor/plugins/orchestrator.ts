@@ -25,7 +25,6 @@ import {
   FloatingWidgetPanel,
   hintBar,
   divider,
-  key as widgetKey,
   label,
   labeledSection,
   list,
@@ -16640,8 +16639,11 @@ const FORM_MODE_BINDINGS: string[][] = [
   ["C-Enter", "orchestrator_form_submit", "shortcut"],
   ["M-Enter", "orchestrator_form_submit_bg", "shortcut"],
   ["Escape", "orchestrator_form_key_escape"],
-  ["Up", "orchestrator_form_key_up"],
-  ["Down", "orchestrator_form_key_down"],
+  // ↑/↓ on the fields that remember what was typed: history, or the
+  // suggestions with history mixed in. On every other control ↑/↓ are the
+  // host's — they move focus to the control above or below.
+  ["Up", "orchestrator_form_key_up", "on:project_path,branch,name,cmd"],
+  ["Down", "orchestrator_form_key_down", "on:project_path,branch,name,cmd"],
 ];
 
 editor.defineMode(NEW_SESSION_MODE, FORM_MODE_BINDINGS, true, true);
@@ -16827,11 +16829,6 @@ registerHandler("orchestrator_folder_submit", () => {
   submitCreateFolder();
 });
 
-function dispatchFormKey(name: string): void {
-  if (!form || !formPanel) return;
-  formPanel.command(widgetKey(name));
-}
-
 // Ctrl+Enter: submit from anywhere, no matter which field is focused or
 // whether a completion popup is open. Runs the primary action, "Create &
 // Visit" (the "In Background" alternative is an explicit button / Enter on it).
@@ -16876,38 +16873,22 @@ registerHandler("orchestrator_form_key_escape", () => {
   }
   if (form) cancelForm();
 });
-registerHandler("orchestrator_form_key_up", () => {
-  // Only what the focused control left arrives: an open suggestion list
-  // and the prompt box take their own arrows. On a completion-bearing
-  // field (project_path / branch) re-fetch the popup so the user gets back
-  // live candidates AND any `↶`-marked history rows mixed in (see
-  // `setCompletionItems`). On a history-bearing non-completion field
-  // (name / cmd) walk history in place. Otherwise walk the form.
+// ↑/↓ on a field that remembers (the binding is scoped to them): on a
+// completion-bearing field (project_path / branch) re-fetch the suggestions,
+// live candidates AND the `↶`-marked history rows mixed in (see
+// `setCompletionItems`); on name / cmd walk the history in place. An open
+// suggestion list takes its own arrows before this binding is asked.
+function formHistoryKey(delta: -1 | 1): void {
   const focusKey = formFocusedKey();
   if (focusKey === "project_path" || focusKey === "branch") {
     scheduleCompletionRefresh(focusKey);
     return;
   }
   const histField = focusToHistoryField(focusKey);
-  if (histField) {
-    walkHistory(histField, -1);
-  } else {
-    dispatchFormKey("Up");
-  }
-});
-registerHandler("orchestrator_form_key_down", () => {
-  const focusKey = formFocusedKey();
-  if (focusKey === "project_path" || focusKey === "branch") {
-    scheduleCompletionRefresh(focusKey);
-    return;
-  }
-  const histField = focusToHistoryField(focusKey);
-  if (histField) {
-    walkHistory(histField, 1);
-  } else {
-    dispatchFormKey("Down");
-  }
-});
+  if (histField) walkHistory(histField, delta);
+}
+registerHandler("orchestrator_form_key_up", () => formHistoryKey(-1));
+registerHandler("orchestrator_form_key_down", () => formHistoryKey(1));
 
 // Printable input arrives via the global `mode_text_input` action.
 // Other plugins may also register a `mode_text_input` handler;

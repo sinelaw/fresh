@@ -2796,6 +2796,7 @@ impl Editor {
         name: String,
         bindings: Vec<(String, String)>,
         shortcuts: Vec<String>,
+        scoped: Vec<(String, Vec<String>)>,
         read_only: bool,
         allow_text_input: bool,
         inherit_normal_bindings: bool,
@@ -2832,6 +2833,9 @@ impl Editor {
                 Some(key) => {
                     if shortcuts.contains(key_str) {
                         kb.set_mode_shortcut(&name, key.code(), key.mods());
+                    }
+                    if let Some((_, widgets)) = scoped.iter().find(|(k, _)| k == key_str) {
+                        kb.set_mode_binding_scope(&name, key.code(), key.mods(), widgets.clone());
                     }
                     kb.load_plugin_default(mode_context.clone(), key.code(), key.mods(), action)
                 }
