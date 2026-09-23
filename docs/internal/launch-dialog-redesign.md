@@ -695,6 +695,37 @@ show, and the primary button names what it will do.
 - `Save as project` in New Workspace opens this source on the form's machine
   and folder. `+ Add project` opens on whichever source was used last.
 
+### 4.17 Where a project is, per machine — asked when first needed
+
+A project remembers one folder per machine. Nothing asks for it up front:
+New Workspace says `⚠ api isn't on gpu-box yet — Launch will ask where it
+is.`, and Launch asks, in the footer:
+
+```
+│    ⚠ api isn't on gpu-box yet. Where is it?                                  │
+│                                                                              │
+│             Where: (•) Clone it   ( ) It's already there                     │
+│        Clone into: [ ~/src/api                                         ]     │
+│                    git@github.com:acme/api.git  →  gpu-box                   │
+│                    [ ] Clone future projects on gpu-box into ~/work          │
+│                                                                              │
+│                                       [ Cancel ]   [  Clone and launch  ]    │
+```
+
+- `It's already there` swaps in a Folder field with `Browse…` (over ssh for
+  a remote) and the path check; the button is `Use it and launch`. A plain
+  folder project only has this branch.
+- The answer is saved, and the launch carries on.
+- **Clone folder per machine.** New clones go in `<clone folder>/<name>`;
+  the clone folder is `~/src` until changed. Wherever a clone is offered
+  (here, Add Project, a machine row), a path outside it offers
+  `Clone future projects on <machine> into <parent>`.
+
+In Projects this is the advanced part: the project shows `On: Local ·
+gpu-box`, and `▹ Machines (advanced)` opens one row per machine —
+`Change…` / `Forget` where it is, `Clone…` / `Pick folder…` where it isn't —
+each answering the same question in place, saved by its own button.
+
 ## 5. Parity with today
 
 | Today | Redesign |
@@ -773,6 +804,9 @@ show, and the primary button names what it will do.
 - **Repositories are Projects.** The registry holds git repositories and
   plain folders, so the dialog, the palette command and the Project dropdown
   say "project". (The state namespace stays `repositories`.)
+- **Where a project is on a machine is asked when first needed** (§4.17),
+  not set up front; the per-machine rows are the advanced view. New clones
+  go in a per-machine clone folder.
 - **Add Project picks its source first** (a switch: Git URL / Folder on a
   machine) and shows only that source's fields. Folders may be on remote
   machines, and need not be git.

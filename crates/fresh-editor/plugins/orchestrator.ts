@@ -460,11 +460,9 @@ interface NewSessionForm {
   // A local git folder's `origin`, read by the folder probe, so the form can
   // say when the folder is a clone of a known repository.
   folderOrigin: string;
-  // Launch asked to clone first and is waiting for the user's answer.
-  cloneConfirm: { visit: boolean } | null;
-  // A launch-time clone in flight: where it goes, and the process to kill on
-  // Cancel.
-  cloning: { path: string; handle: ProcessHandle<SpawnResult> | null } | null;
+  // Launch found the project isn't on this machine yet and asks where it is
+  // (§4.17); `visit` is the launch to resume once answered.
+  place: (PlaceAsk & { visit: boolean }) | null;
   // Which backend the session runs in, as the Machine control set it: drives
   // the connection fields and the submit path. Only meaningful when
   // `target === "new"`.
@@ -9600,25 +9598,18 @@ function formMainClone(f: NewSessionForm): string {
   return r && key ? r.clones[key] ?? "" : "";
 }
 
-// A repository is picked but the machine has no main clone of it: Launch has
-// to clone first, and asks (§4.6).
-function formNeedsClone(f: NewSessionForm): boolean {
-  // Only a project with a remote can be cloned; one without is blocked
-  // instead (`formRepoBlocker`).
-  return !!formRepo(f)?.remote && !formMainClone(f);
+// A project is picked but this machine doesn't know where it is yet: Launch
+// asks (§4.17) — clone it, or name the folder it's already in.
+function formNeedsPlace(f: NewSessionForm): boolean {
+  return !!formRepo(f) && !!formMachineKey(f) && !formMainClone(f);
 }
 
-// What stops a repository launch outright: a machine that cannot hold a main
-// clone (typed by hand), or a missing clone with nothing to clone from.
+// What stops a project launch outright: a machine typed by hand, which has
+// no identity to remember a folder under.
 function formRepoBlocker(f: NewSessionForm): string {
   const r = formRepo(f);
   if (!r) return "";
-  const key = formMachineKey(f);
-  if (!key) return editor.t("form.repo_needs_saved_machine");
-  if (!r.clones[key] && !r.remote) {
-    // Nothing to clone: a plain folder, or a clone kept on its machine only.
-    return editor.t(r.kind === "folder" ? "form.folder_project_none" : "form.repo_no_remote", { name: r.name, machine: machineKeyLabel(key) });
-  }
+  if (!formMachineKey(f)) return editor.t("form.repo_needs_saved_machine");
   return "";
 }
 
@@ -9630,7 +9621,7 @@ function syncRepoPath(): void {
   if (!form) return;
   const r = formRepo(form);
   if (!r) return;
-  const p = formMainClone(form) || repoCloneTarget(r);
+  const p = formMainClone(form) || cloneTarget(r, formMachineKey(form) ?? "local");
   const slot = { value: p, cursor: p.length };
   if (form.backend === "ssh") {
     form.sshPath = slot;
@@ -10078,6 +10069,388 @@ function resumeSuspendedForm(): boolean {
 }
 
 // =============================================================================
+// Where a project is on one machine (§4.17)
+// =============================================================================
+//
+// A project remembers one folder per machine. Nobody has to set that up
+// front: the first time a project is used on a machine that has none, Launch
+// asks — clone it there, or name the folder it is already in — and the answer
+// is kept. The advanced per-machine rows in Projects ask the same question.
+//
+// New clones go in a per-machine folder (`~/src` by default), as
+// `<that folder>/<name>`; the question offers to remember a different one.
+
+const CLONE_BASES_KEY = "orchestrator.clone_bases";
+const DEFAULT_CLONE_BASE = "~/src";
+
+function cloneBase(machineKey: string): string {
+  const all = editor.getGlobalState(CLONE_BASES_KEY) as Record<string, string> | undefined;
+  const b = all?.[machineKey];
+  return typeof b === "string" && b.trim() ? b.trim() : DEFAULT_CLONE_BASE;
+}
+
+function setCloneBase(machineKey: string, base: string): void {
+  const all = { ...((editor.getGlobalState(CLONE_BASES_KEY) as Record<string, string> | undefined) ?? {}) };
+  all[machineKey] = base;
+  editor.setGlobalState(CLONE_BASES_KEY, all);
+}
+
+// Where a clone of `r` goes on a machine, unless the user says otherwise.
+function cloneTarget(r: Repository, machineKey: string): string {
+  return `${cloneBase(machineKey).replace(/\/+$/, "")}/${r.name}`;
+}
+
+// A folder picker on one machine, for a text field to fill.
+interface FolderBrowser {
+  machineKey: string;
+  dir: string;
+  entries: RepoBrowseEntry[];
+  loading: boolean;
+  error: string;
+  index: number;
+  // A plain folder will do, so the folder shown can itself be picked.
+  picksAny: boolean;
+}
+
+function browserItems(b: FolderBrowser): { text: string; dir: string | null; up?: boolean }[] {
+  const child = (name: string) => (b.dir === "/" ? `/${name}` : `${b.dir.replace(/\/+$/, "")}/${name}`);
+  return [
+    { text: "..", dir: parentDir(b.dir), up: true },
+    ...(b.picksAny ? [{ text: `✓ ${editor.t("repo.use_this_folder")}`, dir: null }] : []),
+    ...b.entries.map((e) => ({ text: `${`${e.name}/`.padEnd(40)} ${e.git ? "git" : ""}`, dir: child(e.name) })),
+  ];
+}
+
+function browserRows(b: FolderBrowser, listKey: string): WidgetSpec[] {
+  const title = `${machineKeyLabel(b.machineKey)} : ${b.machineKey === "local" ? tildePath(expandHome(b.dir)) : b.dir}`;
+  const body = b.loading
+    ? label(editor.t("repo.loading"), { style: NOTE_STYLE })
+    : b.error
+    ? label(`✗ ${b.error}`, { style: { fg: "diagnostic.error_fg" }, wrap: true })
+    : list({
+      items: browserItems(b).map((i) => ({ text: i.text })),
+      selectedIndex: Math.min(b.index, browserItems(b).length - 1),
+      visibleRows: 8,
+      key: listKey,
+    });
+  const hint = editor.t(b.picksAny ? "repo.browse_hint_any" : "repo.browse_hint");
+  return [row(spacer(2), labeledSection({ label: title, child: col(body, label(hint, { style: NOTE_STYLE })) }))];
+}
+
+async function browserGo(b: FolderBrowser, dir: string, render: () => void): Promise<void> {
+  b.dir = dir;
+  b.entries = [];
+  b.loading = true;
+  b.error = "";
+  b.index = 0;
+  render();
+  const r = await listMachineDir(b.machineKey, dir);
+  if (b.dir !== dir) return;
+  b.entries = r.entries;
+  b.error = r.error;
+  b.loading = false;
+  render();
+}
+
+// `⏎` on a row: go up, go in, or pick — a git folder, or (when a plain folder
+// will do) the folder shown. Answers the picked folder, or null.
+function browserActivate(b: FolderBrowser, index: number, render: () => void): string | null {
+  if (b.loading) return null;
+  const item = browserItems(b)[index];
+  if (!item) return null;
+  if (item.up) {
+    void browserGo(b, item.dir!, render);
+    return null;
+  }
+  if (item.dir === null) return b.dir;
+  const e = b.entries.find((x) => item.dir!.endsWith(`/${x.name}`));
+  if (e?.git) return item.dir;
+  void browserGo(b, item.dir, render);
+  return null;
+}
+
+// The question itself.
+interface PlaceAsk {
+  repoId: string;
+  machineKey: string;
+  how: "clone" | "existing";
+  clonePath: Field;
+  // The clone's parent becomes this machine's clone folder.
+  rememberBase: boolean;
+  folder: Field;
+  check: ClonePathCheck | null;
+  checking: boolean;
+  token: number;
+  browse: FolderBrowser | null;
+  cloning: { path: string; handle: ProcessHandle<SpawnResult> } | null;
+  error: string;
+}
+
+// What the question sits in: the launch form, or the Projects dialog.
+interface PlaceHost {
+  panel(): FloatingWidgetPanel | null;
+  render(): void;
+  // The answer was saved (true), or the question was dropped (false).
+  done(saved: boolean): void;
+}
+
+function newPlaceAsk(r: Repository, machineKey: string, how?: "clone" | "existing"): PlaceAsk {
+  return {
+    repoId: r.id,
+    machineKey,
+    how: how ?? (r.remote ? "clone" : "existing"),
+    clonePath: fieldOf(cloneTarget(r, machineKey)),
+    rememberBase: false,
+    folder: fieldOf(r.clones[machineKey] ?? ""),
+    check: null,
+    checking: false,
+    token: 0,
+    browse: null,
+    cloning: null,
+    error: "",
+  };
+}
+
+function placeParent(p: string): string {
+  const t = p.trim().replace(/\/+$/, "");
+  const i = t.lastIndexOf("/");
+  return i > 0 ? t.slice(0, i) : t;
+}
+
+// The rows of the question, without its buttons (the host places those).
+function placeAskRows(a: PlaceAsk): WidgetSpec[] {
+  const r = repoById(a.repoId);
+  if (!r) return [];
+  const machine = machineKeyLabel(a.machineKey);
+  const note = (t: string, style: Partial<OverlayOptions> = NOTE_STYLE): WidgetSpec =>
+    label(t, { labelWidth: FORM_LABEL_W, style, wrap: true });
+  if (a.cloning) {
+    return [note(editor.t("form.cloning", { remote: remoteIdentity(r.remote), where: `${machine} : ${a.cloning.path}` }))];
+  }
+  const out: WidgetSpec[] = [];
+  if (r.remote) {
+    out.push(radio([editor.t("place.clone_it"), editor.t("place.already_there")], {
+      selectedIndex: a.how === "clone" ? 0 : 1,
+      label: editor.t("place.how"),
+      labelWidth: FORM_LABEL_W,
+      key: "place_how",
+    }));
+  }
+  if (a.how === "clone") {
+    out.push(
+      ...field(formLabel("place.clone_into"), a.clonePath, { key: "place_clone_path" }),
+      note(`${r.remote}  →  ${machine}`),
+    );
+    const parent = placeParent(a.clonePath.value);
+    if (parent && parent !== cloneBase(a.machineKey)) {
+      out.push(formToggle(a.rememberBase, editor.t("place.remember_base", { base: parent, machine }), "place_remember_base"));
+    }
+  } else {
+    out.push(row(
+      text({
+        value: a.folder.value,
+        cursorByte: a.folder.cursor,
+        label: formLabel("repo.folder"),
+        labelWidth: FORM_LABEL_W,
+        fieldWidth: 44,
+        key: "place_folder",
+      }),
+      spacer(3),
+      actionButton(editor.t("repo.browse"), "place_browse"),
+    ));
+    if (a.browse) out.push(...browserRows(a.browse, "place_browse_list"));
+    out.push(...placeCheckRows(a, r, note));
+  }
+  if (a.error) out.push(note(`✗ ${a.error}`, { fg: "diagnostic.error_fg" }));
+  return out;
+}
+
+function placeCheckRows(
+  a: PlaceAsk,
+  r: Repository,
+  note: (t: string, s?: Partial<OverlayOptions>) => WidgetSpec,
+): WidgetSpec[] {
+  const machine = machineKeyLabel(a.machineKey);
+  const bad = { fg: "diagnostic.error_fg" };
+  const good = { fg: "diagnostic.info_fg" };
+  if (a.checking) return [note(editor.t("repo.checking"))];
+  const c = a.check;
+  if (!c || c.state === "empty") return [];
+  const st = { branch: c.branch || "HEAD", state: c.dirty ? editor.t("repo.dirty") : editor.t("repo.clean") };
+  switch (c.state) {
+    case "ok":
+      return [note(`✓ ${editor.t(r.remote ? "repo.path_ok" : "repo.path_ok_local", st)}`, good)];
+    case "not_git":
+      return r.kind === "folder"
+        ? [note(`✓ ${editor.t("repo.plain_folder_found")}`, good)]
+        : [note(`✗ ${editor.t("repo.path_not_git")}`, bad)];
+    case "wrong_remote":
+      return [note(`✗ ${editor.t("repo.path_wrong_remote", { origin: c.origin ? remoteIdentity(c.origin) : editor.t("repo.no_origin") })}`, bad)];
+    case "missing":
+      return [note(`✗ ${editor.t("repo.path_missing", { machine })}`, bad)];
+    case "unreachable":
+      return [note(`✗ ${editor.t("repo.path_unreachable", { machine, reason: c.error })}`, bad)];
+  }
+  return [];
+}
+
+// Whether the primary button can go.
+function placeReady(a: PlaceAsk): boolean {
+  if (a.cloning || a.checking) return false;
+  if (a.how === "clone") return !!a.clonePath.value.trim();
+  const r = repoById(a.repoId);
+  const c = a.check?.state;
+  return !!a.folder.value.trim() && (c === "ok" || (c === "not_git" && r?.kind === "folder"));
+}
+
+function placeGoLabel(a: PlaceAsk, thenLaunch: boolean): string {
+  if (a.how === "clone") return editor.t(thenLaunch ? "form.btn_clone_launch" : "repo.btn_clone");
+  return editor.t(thenLaunch ? "place.use_and_launch" : "place.use_folder");
+}
+
+async function placeRecheck(a: PlaceAsk, host: PlaceHost): Promise<void> {
+  const r = repoById(a.repoId);
+  const p = a.folder.value.trim();
+  const token = ++a.token;
+  if (!r || !p) {
+    a.check = null;
+    a.checking = false;
+    host.render();
+    return;
+  }
+  a.checking = true;
+  host.render();
+  const c = await checkClonePath(a.machineKey, p, r.remote);
+  if (a.token !== token) return;
+  a.check = c;
+  a.checking = false;
+  // A folder inside the clone is the clone.
+  if (c.state === "ok" && c.top && !samePath(a.machineKey, p, c.top)) {
+    a.folder = fieldOf(a.machineKey === "local" ? tildePath(c.top) : c.top);
+    host.panel()?.setValue("place_folder", a.folder.value, a.folder.cursor);
+  }
+  host.render();
+}
+
+let placeTimer = 0;
+function schedulePlaceRecheck(a: PlaceAsk, host: PlaceHost): void {
+  const token = ++a.token;
+  const mine = ++placeTimer;
+  void editor.delay(350).then(() => {
+    if (a.token !== token || mine !== placeTimer) return;
+    void placeRecheck(a, host);
+  });
+}
+
+// Save the answer: clone first when that is the answer.
+async function placeGo(a: PlaceAsk, host: PlaceHost): Promise<void> {
+  const r = repoById(a.repoId);
+  if (!r || !placeReady(a)) return;
+  if (a.how === "existing") {
+    r.clones[a.machineKey] = a.folder.value.trim();
+    upsertRepository(r);
+    host.done(true);
+    return;
+  }
+  const path = a.clonePath.value.trim();
+  if (a.rememberBase) setCloneBase(a.machineKey, placeParent(path));
+  const handle = startClone(a.machineKey, r.remote, path);
+  if (!handle) {
+    a.error = editor.t("repo.err_no_ssh");
+    host.render();
+    return;
+  }
+  a.cloning = { path, handle };
+  a.error = "";
+  host.render();
+  host.panel()?.setFocusKey("place_cancel");
+  const res = await handle;
+  if (!a.cloning) return;
+  a.cloning = null;
+  if (res.exit_code !== 0) {
+    await cleanupPartialClone(a.machineKey, path);
+    a.error = editor.t("form.clone_failed", { reason: lastErrorLine(res) || String(res.exit_code) });
+    host.render();
+    return;
+  }
+  const fresh = repoById(r.id) ?? r;
+  fresh.clones[a.machineKey] = path;
+  upsertRepository(fresh);
+  host.done(true);
+}
+
+async function placeCancel(a: PlaceAsk, host: PlaceHost): Promise<void> {
+  const c = a.cloning;
+  a.cloning = null;
+  if (c) {
+    await c.handle.kill();
+    await cleanupPartialClone(a.machineKey, c.path);
+  }
+  host.done(false);
+}
+
+// A widget event for the question; true when it was one.
+function handlePlaceEvent(a: PlaceAsk, host: PlaceHost, e: WidgetEvt): boolean {
+  const key = e.widget_key ?? "";
+  const payload = (e.payload ?? {}) as Record<string, unknown>;
+  if (isListEvent(e as { event_type: string; widget_key?: string; payload?: unknown }, "place_browse_list")) {
+    const b = a.browse;
+    const idx = typeof payload.index === "number" ? payload.index : -1;
+    if (!b || idx < 0) return true;
+    b.index = idx;
+    if (e.event_type === "activate") {
+      const picked = browserActivate(b, idx, () => host.render());
+      if (picked) {
+        a.browse = null;
+        a.folder = fieldOf(picked);
+        host.render();
+        host.panel()?.setValue("place_folder", a.folder.value, a.folder.cursor);
+        host.panel()?.setFocusKey("place_folder");
+        void placeRecheck(a, host);
+      }
+    }
+    return true;
+  }
+  if (!key.startsWith("place_")) return false;
+  if (e.event_type === "change" && key === "place_how") {
+    a.how = payload.index === 1 ? "existing" : "clone";
+    a.error = "";
+    host.render();
+    if (a.how === "existing" && a.folder.value.trim()) void placeRecheck(a, host);
+    return true;
+  }
+  if (e.event_type === "toggle" && key === "place_remember_base") {
+    a.rememberBase = typeof payload.checked === "boolean" ? payload.checked : !a.rememberBase;
+    host.render();
+    return true;
+  }
+  if (e.event_type === "change" && (key === "place_clone_path" || key === "place_folder")) {
+    const slot = key === "place_clone_path" ? a.clonePath : a.folder;
+    const before = slot.value;
+    applyTextChange(slot, e.payload);
+    if (slot.value === before) return true;
+    a.error = "";
+    if (key === "place_folder") schedulePlaceRecheck(a, host);
+    host.render();
+    return true;
+  }
+  if (e.event_type !== "activate") return true;
+  if (key === "place_browse") {
+    const typed = a.folder.value.trim();
+    const r = repoById(a.repoId);
+    a.browse = { machineKey: a.machineKey, dir: "", entries: [], loading: true, error: "", index: 0, picksAny: r?.kind === "folder" };
+    void browserGo(a.browse, typed ? parentDir(typed) : "~", () => host.render()).then(() => {
+      host.panel()?.setFocusKey("place_browse_list");
+    });
+  } else if (key === "place_go") {
+    void placeGo(a, host);
+  } else if (key === "place_cancel") {
+    void placeCancel(a, host);
+  }
+  return true;
+}
+
+// =============================================================================
 // Repositories dialog (§4.11–§4.16)
 // =============================================================================
 
@@ -10123,6 +10496,11 @@ interface RepoDialogState {
   focus: string;
   // `Remove…` pressed: the repository's row asks before it goes.
   confirmRemove: boolean;
+  // The advanced per-machine rows are open, and the one being answered.
+  machinesOpen: boolean;
+  place: PlaceAsk | null;
+  // Add Project, Git URL: the Path's parent becomes the machine's clone folder.
+  rememberBase: boolean;
 }
 
 const REPOS_MODE = "orchestrator-repos";
@@ -10187,16 +10565,31 @@ function openRepositoriesDialog(opts: {
     focus: "",
     confirmRemove: false,
     useOrigin: true,
+    machinesOpen: false,
+    place: null,
+    rememberBase: false,
   };
+  // From New Workspace's `Change…`: that machine's row, asking.
+  const r = repoById(repoId);
+  if (!add && opts.returnTo === "form" && r && opts.machineKey) {
+    repoDialog.machinesOpen = true;
+    repoDialog.place = newPlaceAsk(r, opts.machineKey, "existing");
+  }
   mountRepoPanel();
-  void recheckRepoPath();
+  if (repoDialog.place) {
+    repoPanel?.setFocusKey("place_folder");
+    repoDialog.focus = "place_folder";
+    void placeRecheck(repoDialog.place, repoPlaceHost(repoDialog));
+  } else {
+    void recheckRepoPath();
+  }
 }
 
-// Git URL: until the user picks a Path, it is the default clone location
-// for the name (`~/src/<name>`).
+// Git URL: until the user picks a Path, it is the machine's clone folder
+// plus the name (`~/src/<name>`).
 function urlPathFollowsName(d: RepoDialogState): void {
   const name = d.name.value.trim();
-  d.path = fieldOf(name ? DEFAULT_CLONE_NEW_TO.replace(/<name>/g, name) : "");
+  d.path = fieldOf(name ? `${cloneBase(d.machineKey).replace(/\/+$/, "")}/${name}` : "");
   repoPanel?.setValue("repo_path", d.path.value, d.path.cursor);
   scheduleRepoPathCheck();
 }
@@ -10235,7 +10628,7 @@ function mountRepoPanel(): void {
   editor.setEditorMode(REPOS_MODE);
   const focus = d.mode === "add"
     ? (d.addFrom === "url" ? "repo_url" : d.path.value ? "repo_name" : "repo_path")
-    : d.returnTo === "form" ? "repo_path" : "repo_list";
+    : "repo_list";
   repoPanel.setFocusKey(focus);
   d.focus = focus;
 }
@@ -10286,61 +10679,6 @@ function repoMachineOptions(d: RepoDialogState): { key: string; label: string }[
   });
 }
 
-// What the path check says, as the lines under Path (§4.14).
-function repoPathStatusRows(d: RepoDialogState): WidgetSpec[] {
-  const at = (txt: string, style: Partial<OverlayOptions> = NOTE_STYLE): WidgetSpec =>
-    label(txt, { labelWidth: FORM_LABEL_W, style, wrap: true });
-  const machine = machineKeyLabel(d.machineKey);
-  const remote = repoDialogRemote(d);
-  if (d.cloning) {
-    return [
-      at(editor.t("repo.cloning")),
-      fieldColumnRow(actionButton(editor.t("form.btn_cancel_short"), "repo_clone_cancel")),
-    ];
-  }
-  if (d.cloneConfirm) {
-    return [
-      at(`⚠ ${editor.t("repo.clone_q", { remote })}`, WARN_STYLE),
-      at(`  ${editor.t("repo.clone_into", { machine, path: d.path.value.trim() })}`, WARN_STYLE),
-      fieldColumnRow(
-        spacer(30),
-        actionButton(editor.t("form.btn_cancel_short"), "repo_clone_no"),
-        spacer(3),
-        button(`  ${editor.t("repo.btn_clone")}  `, { intent: "primary", key: "repo_clone_yes" }),
-      ),
-    ];
-  }
-  if (d.checking) return [at(editor.t("repo.checking"))];
-  const c = d.check;
-  const plain = repoById(d.repoId)?.kind === "folder";
-  if (!c || c.state === "empty") {
-    if (d.mode === "add") return [];
-    if (plain) return [at(`⚠ ${editor.t("repo.no_folder_on", { machine })}`, WARN_STYLE)];
-    return [
-      at(`⚠ ${editor.t("repo.none_on", { machine })}`, WARN_STYLE),
-      at(`  ${editor.t("repo.type_or_browse")}`, WARN_STYLE),
-      ...(remote ? [fieldColumnRow(actionButton(editor.t("repo.clone_ellipsis"), "repo_clone_default"))] : []),
-    ];
-  }
-  switch (c.state) {
-    case "ok":
-      // With no remote there is no origin to match: say only what it is.
-      return [at(`✓ ${editor.t(repoDialogRemote(d) ? "repo.path_ok" : "repo.path_ok_local", { branch: c.branch || "HEAD", state: c.dirty ? editor.t("repo.dirty") : editor.t("repo.clean") })}`, { fg: "diagnostic.info_fg" })];
-    case "wrong_remote":
-      return [at(`✗ ${editor.t("repo.path_wrong_remote", { origin: c.origin ? remoteIdentity(c.origin) : editor.t("repo.no_origin") })}`, { fg: "diagnostic.error_fg" })];
-    case "not_git":
-      if (plain) return [at(`✓ ${editor.t("repo.plain_folder_found")}`, { fg: "diagnostic.info_fg" })];
-      return [at(`✗ ${editor.t("repo.path_not_git")}`, { fg: "diagnostic.error_fg" })];
-    case "unreachable":
-      return [at(`✗ ${editor.t("repo.path_unreachable", { machine, reason: c.error })}`, { fg: "diagnostic.error_fg" })];
-    case "missing":
-      return [
-        at(`⚠ ${editor.t("repo.path_missing", { machine })}`, WARN_STYLE),
-        ...(remote ? [fieldColumnRow(actionButton(editor.t("repo.clone_here"), "repo_clone_here"))] : []),
-      ];
-  }
-  return [];
-}
 
 // Browse… (§4.13): the folders of one directory on the selected machine.
 function repoBrowseRows(d: RepoDialogState): WidgetSpec[] {
@@ -10410,26 +10748,11 @@ function buildRepoDialogSpec(): WidgetSpec {
         ...repoActionRows(d, r),
         ...gap(),
         label(`${formLabel("repo.remote").padStart(FORM_LABEL_W)}: ${r.remote || (r.kind === "folder" ? editor.t("repo.remote_none_folder") : editor.t("repo.remote_none_local"))}`),
-        // Only a project with a remote is ever cloned somewhere new.
-        ...(r.remote ? field(formLabel("repo.clone_new_to"), d.cloneNewTo, { key: "repo_clone_new_to" }) : []),
-        ...gap(),
+        ...repoWhereSummaryRows(d, r),
       );
     }
   } else {
     kids.push(...addProjectRows(d));
-  }
-  const managed = d.mode === "manage" ? repoById(d.repoId) : null;
-  if (managed) {
-    kids.push(
-      sectionHeader(managed.kind === "folder" ? "repo.section_folder" : "repo.section_main_clone"),
-      ...gap(),
-      ...repoMachinePathRows(d, managed.kind === "folder" ? "repo.folder" : "repo.path"),
-      ...repoPathStatusRows(d),
-    );
-  }
-  // Managing: nothing waits on a button, so say so once.
-  if (d.mode === "manage" && repoById(d.repoId)) {
-    kids.push(...gap(), label(editor.t("repo.autosave_note"), { labelWidth: FORM_LABEL_W, style: NOTE_STYLE }));
   }
   kids.push(...gap(), footerRule(), ...gap());
   if (d.error) kids.push(label(`  ${d.error}`, { style: { fg: "diagnostic.error_fg", bold: true }, wrap: true }));
@@ -10510,6 +10833,12 @@ function addProjectRows(d: RepoDialogState): WidgetSpec[] {
 // Git URL: what the Path is, and so what the primary button will do there.
 function addUrlPathRows(d: RepoDialogState, note: (t: string, s?: Partial<OverlayOptions>) => WidgetSpec): WidgetSpec[] {
   const machine = machineKeyLabel(d.machineKey);
+  // A clone somewhere other than the machine's clone folder can make that
+  // its clone folder.
+  const parent = placeParent(d.path.value);
+  const remember = d.check?.state === "missing" && !d.cloning && parent && parent !== cloneBase(d.machineKey)
+    ? [formToggle(d.rememberBase, editor.t("place.remember_base", { base: parent, machine }), "repo_remember_base")]
+    : [];
   if (d.cloning) {
     return [note(editor.t("repo.cloning")), fieldColumnRow(actionButton(editor.t("form.btn_cancel_short"), "repo_clone_cancel"))];
   }
@@ -10519,7 +10848,7 @@ function addUrlPathRows(d: RepoDialogState, note: (t: string, s?: Partial<Overla
   const bad = { fg: "diagnostic.error_fg" };
   switch (c.state) {
     case "missing":
-      return [note(editor.t("repo.will_clone_here"))];
+      return [note(editor.t("repo.will_clone_here")), ...remember];
     case "ok":
       return [note(`✓ ${editor.t("repo.existing_clone", {
         branch: c.branch || "HEAD",
@@ -10630,32 +10959,68 @@ function repoActionRows(d: RepoDialogState, r: Repository): WidgetSpec[] {
   ];
 }
 
-// Managing a repository keeps no draft: `Clone new to` is written as it is
-// typed, and the main clone path as soon as its check says it is this
-// repository's clone (or it is cleared, which forgets the machine's). A path
-// still being typed, missing, or someone else's is left unsaved, and the
-// saved one stands.
-function autoSaveRepo(d: RepoDialogState): void {
-  if (d.mode !== "manage") return;
-  const r = repoById(d.repoId);
-  if (!r) return;
-  let changed = false;
-  const cloneNewTo = d.cloneNewTo.value.trim() || DEFAULT_CLONE_NEW_TO;
-  if (r.cloneNewTo !== cloneNewTo) {
-    r.cloneNewTo = cloneNewTo;
-    changed = true;
+
+// Where the project is: one line, and — behind `▹ Machines` — a row per
+// machine to set, change or forget it by hand (§4.11). Nobody needs those
+// rows to get going: New Workspace asks the first time (§4.17).
+function repoWhereSummaryRows(d: RepoDialogState, r: Repository): WidgetSpec[] {
+  const on = cloneMachineKeys().filter((k) => r.clones[k]).map((k) => machineKeyLabel(k));
+  const out: WidgetSpec[] = [
+    label(
+      `${formLabel("repo.on").padStart(FORM_LABEL_W)}: ${on.length ? on.join(" · ") : editor.t("repo.on_none")}`,
+      { wrap: true },
+    ),
+    ...gap(),
+    fieldColumnRow(actionButton(editor.t(d.machinesOpen ? "repo.machines_hide" : "repo.machines_show"), "repo_machines_toggle")),
+  ];
+  if (!d.machinesOpen) return out;
+  out.push(...gap());
+  // The paths as one column, so each row's buttons line up.
+  const shown = (k: string) => (r.clones[k] ? tildePath(r.clones[k]) : "—");
+  const pathW = Math.max(12, ...cloneMachineKeys().map((k) => shown(k).length));
+  for (const k of cloneMachineKeys()) {
+    const name = machineKeyLabel(k);
+    const path = r.clones[k];
+    if (d.place && d.place.machineKey === k) {
+      out.push(
+        label(`${name.padStart(FORM_LABEL_W)}:`, { style: { bold: true } }),
+        ...placeAskRows(d.place),
+        fieldColumnRow(
+          actionButton(editor.t("form.btn_cancel_short"), "place_cancel"),
+          spacer(4),
+          button(`  ${placeGoLabel(d.place, false)}  `, { intent: "primary", key: "place_go", disabled: !placeReady(d.place) }),
+        ),
+        ...gap(),
+      );
+      continue;
+    }
+    const kids: WidgetSpec[] = [label(`${name.padStart(FORM_LABEL_W)}: ${shown(k).padEnd(pathW)}`), spacer(3)];
+    if (path) {
+      kids.push(actionButton(editor.t("repo.m_change"), `repo_m_change:${k}`), spacer(2), actionButton(editor.t("repo.m_forget"), `repo_m_forget:${k}`));
+    } else {
+      if (r.remote) kids.push(actionButton(editor.t("repo.m_clone"), `repo_m_clone:${k}`), spacer(2));
+      kids.push(actionButton(editor.t("repo.m_pick"), `repo_m_pick:${k}`));
+    }
+    out.push(row(...kids));
   }
-  const path = d.path.value.trim();
-  const settled = !d.checking && !d.cloneConfirm && !d.cloning;
-  const fits = d.check?.state === "ok" || (r.kind === "folder" && d.check?.state === "not_git");
-  if (settled && path && fits && r.clones[d.machineKey] !== path) {
-    r.clones[d.machineKey] = path;
-    changed = true;
-  } else if (settled && !path && d.machineKey in r.clones) {
-    delete r.clones[d.machineKey];
-    changed = true;
-  }
-  if (changed) upsertRepository(r);
+  out.push(fieldColumnRow(actionButton(`+ ${editor.t("repo.add_machine")}`, "repo_add_machine")));
+  return out;
+}
+
+function repoPlaceHost(d: RepoDialogState): PlaceHost {
+  return {
+    panel: () => (repoDialog === d ? repoPanel : null),
+    render: () => {
+      if (repoDialog === d) renderRepoDialog();
+    },
+    done: () => {
+      const k = d.place?.machineKey;
+      d.place = null;
+      if (repoDialog !== d) return;
+      renderRepoDialog();
+      if (k) repoPanel?.setFocusKey(repoById(d.repoId)?.clones[k] ? `repo_m_change:${k}` : `repo_m_pick:${k}`);
+    },
+  };
 }
 
 function repoFooterRow(d: RepoDialogState): WidgetSpec {
@@ -10678,8 +11043,8 @@ function repoFooterRow(d: RepoDialogState): WidgetSpec {
       spacer(3),
     );
   }
-  // Managing saves as it goes (`autoSaveRepo`), so the footer only leaves:
-  // back to the form that opened it, or out.
+  // Managing saves per row, so the footer only leaves: back to the form that
+  // opened it, or out.
   const done = d.returnTo === "form" ? editor.t("repo.back_to_form_btn") : editor.t("repo.done");
   return endRow(button(`  ${done}  `, { intent: "primary", key: "repo_done" }), spacer(3));
 }
@@ -10696,7 +11061,6 @@ async function recheckRepoPath(): Promise<void> {
   if (!p) {
     d.check = null;
     d.checking = false;
-    autoSaveRepo(d);
     renderRepoDialog();
     return;
   }
@@ -10710,7 +11074,6 @@ async function recheckRepoPath(): Promise<void> {
   const originBefore = d.check?.origin ?? "";
   d.check = c;
   d.checking = false;
-  autoSaveRepo(d);
   if (folder && c.state === "ok" && c.top && !samePath(d.machineKey, p, c.top)) {
     // A folder inside a clone is that clone: the Folder becomes its top.
     d.path = fieldOf(d.machineKey === "local" ? tildePath(c.top) : c.top);
@@ -10949,14 +11312,6 @@ async function cancelRepoClone(): Promise<void> {
   }
 }
 
-function askRepoClone(): void {
-  const d = repoDialog;
-  if (!d) return;
-  d.cloneConfirm = true;
-  renderRepoDialog();
-  repoPanel?.setFocusKey("repo_clone_yes");
-  d.focus = "repo_clone_yes";
-}
 
 // ── Save ─────────────────────────────────────────────────────────────────────
 
@@ -10991,6 +11346,7 @@ function saveRepoDialog(): void {
     r.cloneNewTo = cloneNewTo;
     if (plain) r.kind = "folder";
     r.clones[d.machineKey] = path;
+    if (d.addFrom === "url" && d.rememberBase) setCloneBase(d.machineKey, placeParent(path));
     upsertRepository(r);
     editor.setGlobalState(ADD_FROM_KEY, d.addFrom);
     if (d.returnTo === "form" && suspendedForm) {
@@ -11017,6 +11373,7 @@ function repoDialogShow(repoId: string | null, machineKey: string): void {
   d.path = fieldOf(r?.clones[machineKey] ?? "");
   d.cloneConfirm = false;
   d.confirmRemove = false;
+  d.place = null;
   d.browse = null;
   d.error = "";
   repoPanel?.setValue("repo_path", d.path.value, d.path.cursor);
@@ -11034,12 +11391,19 @@ editor.defineMode(REPOS_MODE, REPOS_MODE_BINDINGS, true, true);
 
 // Ctrl+Enter: Add Repository saves; managing has nothing to save, so it is Done.
 registerHandler("orchestrator_repos_save", () => {
-  if (repoDialog?.mode === "manage") closeRepoDialog();
+  const d = repoDialog;
+  if (d?.place) void placeGo(d.place, repoPlaceHost(d));
+  else if (d?.mode === "manage") closeRepoDialog();
   else saveRepoDialog();
 });
 registerHandler("orchestrator_repos_enter", () => {
   const d = repoDialog;
   if (!d || !repoPanel) return;
+  // In a machine row's question, Enter on its text answers it.
+  if (d.place && (d.focus === "place_folder" || d.focus === "place_clone_path")) {
+    void placeGo(d.place, repoPlaceHost(d));
+    return;
+  }
   // Enter on a text field saves (Add Repository) or checks the path now
   // (managing, which saves once the check passes); on everything else it is
   // that control's own (a button, the dropdown, a list row).
@@ -11060,6 +11424,16 @@ registerHandler("orchestrator_repos_enter", () => {
 registerHandler("orchestrator_repos_escape", () => {
   const d = repoDialog;
   if (!d || !repoPanel) return;
+  if (d.place) {
+    if (d.place.browse) {
+      d.place.browse = null;
+      renderRepoDialog();
+      repoPanel.setFocusKey("place_browse");
+      return;
+    }
+    void placeCancel(d.place, repoPlaceHost(d));
+    return;
+  }
   if (d.browse) {
     d.browse = null;
     renderRepoDialog();
@@ -11080,7 +11454,11 @@ registerHandler("orchestrator_repos_escape", () => {
 registerHandler("orchestrator_repos_backspace", () => {
   const d = repoDialog;
   if (!d || !repoPanel) return;
-  // In the browser, Backspace goes up a folder.
+  // In a browser, Backspace goes up a folder.
+  if (d.place?.browse && d.focus === "place_browse_list") {
+    void browserGo(d.place.browse, parentDir(d.place.browse.dir), () => renderRepoDialog());
+    return;
+  }
   if (d.browse && d.focus === "repo_browse_list") {
     void browseTo(parentDir(d.browse.dir));
     return;
@@ -11100,12 +11478,41 @@ function handleRepoDialogEvent(e: WidgetEvt): void {
     if (typeof e.widget_key === "string") d.focus = e.widget_key;
     return;
   }
+  if (d.place && handlePlaceEvent(d.place, repoPlaceHost(d), e)) return;
   const payload = (e.payload ?? {}) as Record<string, unknown>;
+  if (e.event_type === "activate" && e.widget_key?.startsWith("repo_m_")) {
+    // A machine row's button: `repo_m_<action>:<machine key>`.
+    const [action, ...rest] = e.widget_key.slice("repo_m_".length).split(":");
+    const k = rest.join(":");
+    const r = repoById(d.repoId);
+    if (!r) return;
+    if (action === "forget") {
+      delete r.clones[k];
+      upsertRepository(r);
+      renderRepoDialog();
+      repoPanel?.setFocusKey(`repo_m_pick:${k}`);
+      return;
+    }
+    d.place = newPlaceAsk(r, k, action === "clone" ? "clone" : "existing");
+    renderRepoDialog();
+    const first = d.place.how === "clone" ? "place_clone_path" : "place_folder";
+    repoPanel?.setFocusKey(first);
+    d.focus = first;
+    if (d.place.how === "existing" && d.place.folder.value) void placeRecheck(d.place, repoPlaceHost(d));
+    return;
+  }
+  if (e.event_type === "activate" && e.widget_key === "repo_machines_toggle") {
+    d.machinesOpen = !d.machinesOpen;
+    d.place = null;
+    renderRepoDialog();
+    return;
+  }
   if (isListEvent(e as { event_type: string; widget_key?: string; payload?: unknown }, "repo_list")) {
     const idx = typeof payload.index === "number" ? payload.index : -1;
     const r = loadRepositories()[idx];
     if (!r) return;
     if (e.event_type === "select" && r.id !== d.repoId) {
+      d.place = null;
       repoDialogShow(r.id, d.machineKey);
       renderRepoDialog();
     } else if (e.event_type === "activate") {
@@ -11135,6 +11542,11 @@ function handleRepoDialogEvent(e: WidgetEvt): void {
     }
     return;
   }
+  if (e.event_type === "toggle" && e.widget_key === "repo_remember_base") {
+    d.rememberBase = typeof payload.checked === "boolean" ? payload.checked : !d.rememberBase;
+    renderRepoDialog();
+    return;
+  }
   if (e.event_type === "change" && e.widget_key === "repo_remote_choice") {
     d.useOrigin = payload.index !== 1;
     renderRepoDialog();
@@ -11154,6 +11566,9 @@ function handleRepoDialogEvent(e: WidgetEvt): void {
           d.path = fieldOf("");
           d.pathTouched = false;
           repoPanel?.setValue("repo_path", "", 0);
+        } else if (!d.pathTouched) {
+          // The other machine's clone folder.
+          urlPathFollowsName(d);
         }
         void recheckRepoPath();
       } else {
@@ -11182,8 +11597,6 @@ function handleRepoDialogEvent(e: WidgetEvt): void {
       d.cloneConfirm = false;
       scheduleRepoPathCheck();
       renderRepoDialog();
-    } else if (e.widget_key === "repo_clone_new_to") {
-      autoSaveRepo(d);
     } else if (e.widget_key === "repo_url") {
       // The name follows the URL, and the Path follows the name into the
       // default clone location, until the user types their own.
@@ -11238,20 +11651,6 @@ function handleRepoDialogEvent(e: WidgetEvt): void {
     case "repo_browse":
       openBrowse();
       return;
-    case "repo_clone_here":
-      askRepoClone();
-      return;
-    case "repo_clone_default": {
-      const r = repoById(d.repoId);
-      d.path = fieldOf(r ? repoCloneTarget(r) : (d.cloneNewTo.value || DEFAULT_CLONE_NEW_TO).replace(/<name>/g, d.name.value.trim()));
-      repoPanel?.setValue("repo_path", d.path.value, d.path.cursor);
-      d.check = { state: "missing", branch: "", dirty: false, origin: "", error: "" };
-      askRepoClone();
-      return;
-    }
-    case "repo_clone_yes":
-      void runRepoClone();
-      return;
     case "repo_clone_add":
       // The button's label already says it clones: no second question.
       d.saveAfterClone = true;
@@ -11263,7 +11662,6 @@ function handleRepoDialogEvent(e: WidgetEvt): void {
       repoPanel?.setFocusKey("repo_set_remote");
       d.focus = "repo_set_remote";
       return;
-    case "repo_clone_no":
     case "repo_clone_cancel":
       void cancelRepoClone();
       return;
@@ -11301,6 +11699,7 @@ function handleRepoDialogEvent(e: WidgetEvt): void {
       return;
     }
     case "repo_done":
+      if (d.place) void placeCancel(d.place, repoPlaceHost(d));
       closeRepoDialog();
       return;
     case "repo_new_here":
@@ -12389,7 +12788,7 @@ function plannedWorkspaceName(f: NewSessionForm): string {
 // another machine or one not cloned yet: those take the repository's name.
 function formDefaultSessionName(f: NewSessionForm): string {
   const r = formRepo(f);
-  if (r && (f.backend !== "local" || formNeedsClone(f))) {
+  if (r && (f.backend !== "local" || formNeedsPlace(f))) {
     const n = ((editor.getGlobalState("orchestrator.session_counter") as number | undefined) ?? 0) + 1;
     return `${sessionNameBaseFor(r.name)}-${n}`;
   }
@@ -13069,8 +13468,8 @@ function whereFields(f: NewSessionForm): WidgetSpec[] {
     // A blocked project has no plan to show; its blocker says why.
     const plan = r && formRepoBlocker(f)
       ? null
-      : r && formNeedsClone(f)
-      ? { text: editor.t("form.plan_after_clone", { name: plannedWorkspaceName(f) }) }
+      : r && formNeedsPlace(f)
+      ? (r.kind === "folder" ? null : { text: editor.t("form.plan_after_place", { name: plannedWorkspaceName(f) }) })
       : gitPlanLine(f);
     if (plan) out.push(label(plan.text, { labelWidth: FORM_LABEL_W, style: plan.style ?? NOTE_STYLE }));
   }
@@ -13094,25 +13493,16 @@ function repoWhereRows(f: NewSessionForm, r: Repository): WidgetSpec[] {
   const blocker = formRepoBlocker(f);
   const key = formMachineKey(f);
   if (blocker) {
-    const out: WidgetSpec[] = [label(`✗ ${blocker}`, { labelWidth: FORM_LABEL_W, style: { fg: "diagnostic.error_fg" }, wrap: true })];
-    if (key) {
-      out.push(fieldColumnRow(actionButton(editor.t(r.kind === "folder" ? "form.set_folder" : "form.use_existing_clone"), "use_existing_clone")));
-    }
-    return out;
+    return [label(`✗ ${blocker}`, { labelWidth: FORM_LABEL_W, style: { fg: "diagnostic.error_fg" }, wrap: true })];
   }
   const clone = formMainClone(f);
   if (!clone) {
-    return [
-      label(`⚠ ${editor.t("form.no_main_clone", { name: r.name, machine: machineKeyLabel(key!) })}`, {
-        labelWidth: FORM_LABEL_W,
-        style: WARN_STYLE,
-      }),
-      fieldColumnRow(
-        actionButton(editor.t("form.use_existing_clone"), "use_existing_clone"),
-        spacer(2),
-        label(editor.t("form.or_launch_clones"), { style: WARN_STYLE }),
-      ),
-    ];
+    // Nothing to do here: Launch asks where it is, once (§4.17).
+    return [label(`⚠ ${editor.t("form.not_on_machine", { name: r.name, machine: machineKeyLabel(key!) })}`, {
+      labelWidth: FORM_LABEL_W,
+      style: WARN_STYLE,
+      wrap: true,
+    })];
   }
   if (!f.detailsOpen) {
     const line = r.kind === "folder" ? "form.folder_line" : "form.main_clone_line";
@@ -13179,7 +13569,7 @@ function detailsToggleRow(f: NewSessionForm): WidgetSpec {
 function gitSectionFields(f: NewSessionForm): WidgetSpec[] {
   // A main clone still to be made will be a repository: offer the worktree
   // group as it will be, not as the empty path reads now.
-  const g: NewSessionForm = formNeedsClone(f)
+  const g: NewSessionForm = formNeedsPlace(f) && formRepo(f)?.kind !== "folder"
     ? { ...f, projectPathIsGit: true, projectPathIsLinkedWorktree: false, remoteIsGit: true, remoteProbing: false, remoteProbeError: "", defaultBranch: f.defaultBranch || "HEAD" }
     : f;
   if (g.backend === "local") return worktreeFields(g);
@@ -13196,7 +13586,7 @@ function gitSectionShown(f: NewSessionForm): boolean {
 // error in their place.
 function formFooterRows(creating: boolean): WidgetSpec[] {
   if (!form) return [];
-  if (creating && (form.cloneConfirm || form.cloning)) return cloneFooterRows(form);
+  if (creating && form.place) return placeFooterRows(form, form.place);
   const ok = formIsSubmittable();
   const actions = creating
     ? endRow(
@@ -13232,101 +13622,57 @@ function formFooterRows(creating: boolean): WidgetSpec[] {
   return [footerRule(), ...gap(), actions, ...gap(), tail];
 }
 
-// Launch asks before cloning (§4.6): the question replaces the footer and
-// names the URL, the machine and the path. While the clone runs the same place
-// shows its progress and a Cancel.
-function cloneFooterRows(f: NewSessionForm): WidgetSpec[] {
+// Launch asks where the project is on this machine (§4.17): the question
+// replaces the footer, and its answer resumes the launch.
+function placeFooterRows(f: NewSessionForm, a: PlaceAsk): WidgetSpec[] {
   const r = formRepo(f);
-  const key = formMachineKey(f);
-  const rule = footerRule();
-  if (!r || !key) return [rule];
-  const where = `${machineKeyLabel(key)} : ${f.cloning?.path ?? repoCloneTarget(r)}`;
-  if (f.cloning) {
-    return [
-      rule,
-      ...gap(),
-      label(`  ${editor.t("form.cloning", { remote: remoteIdentity(r.remote), where })}`, { style: NOTE_STYLE }),
-      ...gap(),
-      endRow(button(editor.t("form.btn_cancel_short"), { key: "clone_cancel" }), spacer(3)),
-    ];
-  }
+  const machine = machineKeyLabel(a.machineKey);
   return [
-    rule,
+    footerRule(),
     ...gap(),
-    label(`  ⚠ ${editor.t("form.clone_confirm_title")}`, { style: { ...WARN_STYLE, bold: true } }),
+    label(`  ⚠ ${editor.t("place.question", { name: r?.name ?? "", machine })}`, { style: { ...WARN_STYLE, bold: true } }),
     ...gap(),
-    label(`      ${r.remote}`),
-    label(`      → ${where}      ${editor.t("form.clone_becomes_main", { name: r.name })}`, { elide: "tail" }),
+    ...placeAskRows(a),
     ...gap(),
     endRow(
-      button(editor.t("form.btn_cancel_short"), { key: "clone_cancel" }),
+      button(editor.t("form.btn_cancel_short"), { key: "place_cancel" }),
       spacer(5),
-      button(`  ${editor.t("form.btn_clone_launch")}  `, { intent: "primary", key: "clone_launch" }),
+      button(`  ${placeGoLabel(a, true)}  `, { intent: "primary", key: "place_go", disabled: !placeReady(a) }),
       spacer(3),
     ),
   ];
 }
 
-// Run the confirmed launch-time clone, record it as the machine's main clone,
-// re-read the new checkout, then launch as the user asked.
-async function runLaunchClone(): Promise<void> {
-  const f = form;
-  if (!f || !f.cloneConfirm) return;
-  const r = formRepo(f);
-  const key = formMachineKey(f);
-  if (!r || !key || !r.remote) return;
-  const visit = f.cloneConfirm.visit;
-  const path = repoCloneTarget(r);
-  const handle = startClone(key, r.remote, path);
-  f.cloneConfirm = null;
-  if (!handle) {
-    f.lastError = editor.t("repo.err_no_ssh");
-    renderForm();
-    return;
-  }
-  f.cloning = { path, handle };
-  f.lastError = null;
-  rebuildFormFocusCycle();
-  renderForm();
-  formPanel?.setFocusKey("clone_cancel");
-  const res = await handle;
-  if (form !== f || !f.cloning) return;
-  f.cloning = null;
-  if (res.exit_code !== 0) {
-    await cleanupPartialClone(key, path);
-    if (form !== f) return;
-    f.lastError = editor.t("form.clone_failed", { reason: lastErrorLine(res) || String(res.exit_code) });
-    rebuildFormFocusCycle();
-    renderForm();
-    return;
-  }
-  const fresh = repoById(r.id) ?? r;
-  fresh.clones[key] = path;
-  upsertRepository(fresh);
-  syncRepoPath();
-  if (f.backend === "local") await probeProjectPathDefaults();
-  else if (f.backend === "ssh") await probeRemoteProjectDefaults();
-  if (form !== f) return;
-  rebuildFormFocusCycle();
-  renderForm();
-  await submitForm(visit);
-}
-
-// Cancel a pending question or an in-flight clone; the form is left as it was.
-async function cancelLaunchClone(): Promise<void> {
-  const f = form;
-  if (!f) return;
-  f.cloneConfirm = null;
-  const c = f.cloning;
-  f.cloning = null;
-  rebuildFormFocusCycle();
-  renderForm();
-  formPanel?.setFocusKey("create-visit");
-  if (c?.handle) {
-    await c.handle.kill();
-    const key = formMachineKey(f);
-    if (key) await cleanupPartialClone(key, c.path);
-  }
+function formPlaceHost(f: NewSessionForm): PlaceHost {
+  return {
+    panel: () => (form === f ? formPanel : null),
+    render: () => {
+      if (form !== f) return;
+      rebuildFormFocusCycle();
+      renderForm();
+    },
+    done: (saved) => {
+      const visit = f.place?.visit ?? true;
+      f.place = null;
+      if (form !== f) return;
+      rebuildFormFocusCycle();
+      renderForm();
+      if (!saved) {
+        formPanel?.setFocusKey("create-visit");
+        return;
+      }
+      // Now it's there: point the form at it, re-read it, and launch.
+      syncRepoPath();
+      void (async () => {
+        if (f.backend === "local") await probeProjectPathDefaults();
+        else if (f.backend === "ssh") await probeRemoteProjectDefaults();
+        if (form !== f) return;
+        rebuildFormFocusCycle();
+        renderForm();
+        await submitForm(visit);
+      })();
+    },
+  };
 }
 
 function buildFormSpec(): WidgetSpec {
@@ -13450,8 +13796,7 @@ function openForm(options?: { fromPicker?: boolean; target?: RunAgentTarget }): 
     detailsOpen: editor.getGlobalState(LAUNCH_DETAILS_KEY) === true,
     repoId: initialProjectRepo(),
     folderOrigin: "",
-    cloneConfirm: null,
-    cloning: null,
+    place: null,
     backend: "local",
     sshHost: { value: "", cursor: 0 },
     sshHosts: sshConfigHosts(),
@@ -15291,15 +15636,18 @@ function recoverPendingWorkspaces(): void {
 // `!visit`: "Create in Background" — stay put. Both are non-blocking.
 async function submitForm(visit: boolean): Promise<void> {
   if (!form) return;
-  // A repository with no main clone on this machine: ask before cloning
-  // (§4.6). The answer comes back through `runLaunchClone`.
-  if (form.target === "new" && formNeedsClone(form)) {
-    if (formRepoBlocker(form)) return;
-    form.cloneConfirm = { visit };
+  // A project this machine doesn't know the place of: ask (§4.17). The
+  // answer resumes this launch (`formPlaceHost`).
+  if (form.target === "new" && formNeedsPlace(form)) {
+    const r = formRepo(form);
+    const key = formMachineKey(form);
+    if (formRepoBlocker(form) || !r || !key) return;
+    form.place = { ...newPlaceAsk(r, key), visit };
     rebuildFormFocusCycle();
     renderForm();
-    formPanel?.setFocusKey("clone_launch");
-    snapFormFocusTo("clone_launch");
+    const first = form.place.how === "clone" ? "place_go" : "place_folder";
+    formPanel?.setFocusKey(first);
+    snapFormFocusTo(first);
     return;
   }
   // The next open lands on the mode and project used now (§7: last used wins).
@@ -16845,11 +17193,10 @@ registerHandler("orchestrator_form_key_tab", () => {
 // Visit" (the "In Background" alternative is an explicit button / Enter on it).
 registerHandler("orchestrator_form_submit", () => {
   if (!form) return;
-  if (form.cloneConfirm) {
-    void runLaunchClone();
+  if (form.place) {
+    void placeGo(form.place, formPlaceHost(form));
     return;
   }
-  if (form.cloning) return;
   // Same gating as the Create buttons: no required input ⇒ no submit.
   if (!formIsSubmittable()) return;
   void submitForm(true);
@@ -16928,8 +17275,16 @@ registerHandler("orchestrator_form_key_escape", () => {
     dispatchFormKey("Escape");
     return;
   }
-  if (form && (form.cloneConfirm || form.cloning)) {
-    void cancelLaunchClone();
+  if (form?.place) {
+    // Esc closes the folder browser first, then drops the question.
+    if (form.place.browse) {
+      form.place.browse = null;
+      rebuildFormFocusCycle();
+      renderForm();
+      formPanel?.setFocusKey("place_browse");
+      return;
+    }
+    void placeCancel(form.place, formPlaceHost(form));
     return;
   }
   if (form) cancelForm();
@@ -17294,6 +17649,8 @@ editor.on("widget_event", (e) => {
   // New-session form
   // ---------------------------------------------------------------------
   if (form && formPanel && e.panel_id === formPanel.id()) {
+    // The launch-time "where is it?" question owns its own widgets.
+    if (form.place && e.event_type !== "focus" && handlePlaceEvent(form.place, formPlaceHost(form), e as WidgetEvt)) return;
     if (e.event_type === "focus") {
       // Host fires this whenever the panel's focused widget
       // changes — key-driven (Tab / Shift-Tab / Enter focus-
@@ -17576,11 +17933,7 @@ editor.on("widget_event", (e) => {
         void submitForm(false);
       } else if (e.widget_key === "details") {
         toggleFormDetails();
-      } else if (e.widget_key === "clone_launch") {
-        void runLaunchClone();
-      } else if (e.widget_key === "clone_cancel") {
-        void cancelLaunchClone();
-      } else if (e.widget_key === "use_existing_clone" || e.widget_key === "change_clone") {
+      } else if (e.widget_key === "change_clone") {
         openRepositoriesFromForm(form.repoId, formMachineKey(form));
       } else if (e.widget_key === "switch_repo") {
         const known = folderKnownRepo(form);
