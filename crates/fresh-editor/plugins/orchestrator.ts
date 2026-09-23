@@ -33,6 +33,7 @@ import {
   row,
   endRow,
   overlay,
+  popup,
   radio,
   spacer,
   styledRow,
@@ -810,7 +811,7 @@ interface OpenDialogState {
   // non-empty filter keeps the row on screen regardless — the row says
   // what the list is filtered by, so it cannot go while a filter applies.
   searchOpen: boolean;
-  // Dock-only: a transient toolbar dropdown (the header's `⋯` menu or a
+  // Dock-only: a transient toolbar dropdown (the header's Menu or a
   // session's "Move to folder…" menu), or null when none is open. A
   // `list` the keyboard drives itself; the plugin hears `select` and
   // `activate` on `DOCK_MENU_KEY`, and the dock mode's Esc closes it.
@@ -831,7 +832,8 @@ interface OpenDialogState {
 // A transient dock toolbar dropdown. `index` is the keyboard cursor into
 // the menu's option list. `move` also carries the session being filed.
 type DockDropdown =
-  | { kind: "main"; index: number }
+  // `group` is the Menu group list the cursor is in.
+  | { kind: "main"; group: string; index: number }
   | { kind: "move"; sessionId: number; index: number };
 let openDialog: OpenDialogState | null = null;
 let openPanel: FloatingWidgetPanel | null = null;
@@ -884,10 +886,6 @@ let dockMenuState: DockMenuState | null = null;
 // The floor of the manifest's width rule (`orchestrator.manifest.json`).
 // The dock's actual width is the host's; `dockWidth()` reads it back.
 const DOCK_MIN_WIDTH_COLS = 24;
-// Everything that is a *setting* of the dock (density, what to show, the
-// project scope), plus folder creation and hiding it, behind one glyph.
-// See docs/internal/orchestrator-ux-redesign.md §2.4.
-const DOCK_MORE_GLYPH = "⋯";
 // `×` (U+00D7), the multiplication sign the file explorer's close button and
 // the host's native modal `[×]` use — not the ASCII letter — so all three
 // close affordances read identically.
@@ -5240,7 +5238,7 @@ function openProjectMenu(): void {
   const keys = projectMenuKeys();
   const applied = openDialog.projectFilter;
   const idx = applied === null ? 0 : Math.max(0, keys.indexOf(applied));
-  // One dropdown at a time: the scope list replaces the `⋯` menu it may
+  // One dropdown at a time: the scope list replaces the Menu it may
   // have been picked from.
   openDialog.dockMenu = null;
   openDialog.projectMenuOpen = true;
@@ -5403,10 +5401,10 @@ function buildDockSpec(): WidgetSpec {
     ? dockTree.keys.indexOf(openDialog.dockSelKey)
     : -1;
 
-  // The action row: `[ + New ]` on the left, `/ search` and `⋯` on the
+  // The action row: `[ + New ]` on the left, `/ search` and `Menu ▾` on the
   // right. Four header controls collapse to two: `+ New` goes straight to
-  // the dialog (folder creation moved into `⋯`, where the rare thing costs
-  // the extra click), and every *setting* lives behind `⋯`.
+  // the dialog (folder creation moved into `Menu ▾`, where the rare thing costs
+  // the extra click), and every *setting* lives behind `Menu ▾`.
   const dockCols = dockContentCols(dockWidth());
   // Search on demand: the filter row appears when asked for, or while a
   // filter applies (the row says what the list is filtered by).
@@ -5508,11 +5506,12 @@ function buildDockSpec(): WidgetSpec {
 
   return col(
     dockTitleRow(),
-    row(
+    {
+      ...row(
       button(editor.t("dock.new"), { intent: "primary", key: "new-session" }),
       flexSpacer(),
       // `/ search`: the key and the word. Mouse-only — the keyboard has
-      // `/` — so the Tab ring stays `+ New`, `⋯`, the field, the list.
+      // `/` — so the Tab ring stays `+ New`, `Menu ▾`, the field, the list.
       button(editor.t("dock.search_btn"), {
         key: "search-toggle",
         bare: true,
@@ -5521,15 +5520,16 @@ function buildDockSpec(): WidgetSpec {
         hoverStyle: { fg: "ui.help_key_fg" },
       }),
       spacer(2),
-      button(DOCK_MORE_GLYPH, {
+      button(editor.t("dock.menu_button"), {
         key: "dock-menu",
         bare: true,
         hoverStyle: { fg: "ui.help_key_fg" },
       }),
-    ),
-    // The `⋯` menu and the project (scope) dropdown float just under the
-    // action row.
-    ...(openDialog.dockMenu?.kind === "main" ? [dockMainMenu()] : []),
+      ),
+      key: DOCK_ACTION_ROW_KEY,
+    } as WidgetSpec,
+    // The project (scope) dropdown floats just under the action row; the
+    // Menu is declared further down (see `dockMainMenu`).
     ...(openDialog.projectMenuOpen ? [dockProjectMenu()] : []),
     ...searchRow,
     ...attentionRow,
@@ -5558,6 +5558,10 @@ function buildDockSpec(): WidgetSpec {
       focusable: true,
       key: "sessions",
     }),
+    // The Menu comes after the tree so it paints over it (see
+    // `dockMainMenu`), and before the bottom rows so its zero-height slot is
+    // still inside the dock.
+    ...(openDialog.dockMenu?.kind === "main" ? [dockMainMenu()] : []),
     ...bottomPad,
     ...bottom,
   );
@@ -5599,7 +5603,7 @@ function dockTreeExpandedKeys(t: DockTree): string[] {
   return Array.from(loadExpanded());
 }
 
-// Dock toolbar dropdowns — the header's `⋯` menu and a session's "Move to
+// Dock toolbar dropdowns — the header's Menu and a session's "Move to
 // folder…" menu — reuse the project dropdown's mechanics: an overlaid `list`
 // keyed `DOCK_MENU_KEY` whose ↑/↓ and Enter are the list's own. The `●` marks
 // the applied choice; the list's selection is the cursor.
@@ -5610,25 +5614,71 @@ interface MenuOption {
   marked?: boolean;
 }
 
-// Options for the header's `⋯` menu: the rare creation (a folder), the
-// machines and import dialogs, then the dock's settings — density, what to show (the `●`
-// marks what is on), the project scope — and hiding the dock.
-function dockMainOptions(): MenuOption[] {
+// The header's Menu, as groups: actions on the left (they open something),
+// the dock's settings on the right (they flip in place, marked as the
+// controls they are: `(•)` for the one view, `[✓]` for each switch), and
+// hiding the dock on its own below. Each group is its own list, so Tab moves
+// between groups and ↑/↓ within one.
+interface DockMenuGroup {
+  key: string; // the group's list key, `menu-pick-<name>`
+  heading: string;
+  side: "left" | "right" | "bottom";
+  opts: MenuOption[];
+}
+
+function dockMainGroups(): DockMenuGroup[] {
   if (!openDialog) return [];
   const projWord = openDialog.projectFilter === null
-    ? editor.t("list.scope_all")
+    ? editor.t("dock.all_projects")
     : editor.pathBasename(openDialog.projectFilter);
-  const hideKey = editor.getKeybindingLabel("toggle_dock_focus", "normal") ?? "";
+  const radio = (on: boolean): string => (on ? "(•) " : "( ) ");
+  const check = (on: boolean): string => (on ? "[✓] " : "[ ] ");
   return [
-    { key: "main:folder", label: editor.t("dock.new_menu_folder") },
-    { key: "main:machines", label: editor.t("dock.menu_machines") },
-    { key: "main:discover", label: editor.t("dock.menu_discover") },
-    { key: "main:view:compact", label: editor.t("dock.menu_view_compact"), marked: dockView === "compact" },
-    { key: "main:view:card", label: editor.t("dock.menu_view_card"), marked: dockView === "card" },
-    { key: "main:empty", label: editor.t("dock.show_empty"), marked: !openDialog.hideTrivial },
-    { key: "main:worktrees", label: editor.t("dock.all_worktrees"), marked: openDialog.showWorktrees },
-    { key: "main:scope", label: editor.t("dock.menu_scope", { word: projWord }) },
-    { key: "main:hide", label: editor.t("dock.menu_hide", { key: hideKey }).trimEnd() },
+    {
+      key: `${DOCK_MENU_KEY}-create`,
+      heading: editor.t("dock.menu_h_create"),
+      side: "left",
+      opts: [{ key: "main:folder", label: editor.t("dock.new_menu_folder") }],
+    },
+    {
+      key: `${DOCK_MENU_KEY}-manage`,
+      heading: editor.t("dock.menu_h_manage"),
+      side: "left",
+      opts: [
+        { key: "main:machines", label: editor.t("dock.menu_machines") },
+        { key: "main:discover", label: editor.t("dock.menu_discover") },
+      ],
+    },
+    {
+      key: `${DOCK_MENU_KEY}-view`,
+      heading: editor.t("dock.menu_h_view"),
+      side: "right",
+      opts: [
+        { key: "main:view:compact", label: radio(dockView === "compact") + editor.t("dock.menu_view_compact") },
+        { key: "main:view:card", label: radio(dockView === "card") + editor.t("dock.menu_view_card") },
+      ],
+    },
+    {
+      key: `${DOCK_MENU_KEY}-show`,
+      heading: editor.t("dock.menu_h_show"),
+      side: "right",
+      opts: [
+        { key: "main:empty", label: check(!openDialog.hideTrivial) + editor.t("dock.show_empty") },
+        { key: "main:worktrees", label: check(openDialog.showWorktrees) + editor.t("dock.all_worktrees") },
+      ],
+    },
+    {
+      key: `${DOCK_MENU_KEY}-project`,
+      heading: editor.t("dock.menu_h_project"),
+      side: "right",
+      opts: [{ key: "main:scope", label: `${projWord} ▾` }],
+    },
+    {
+      key: `${DOCK_MENU_KEY}-hide`,
+      heading: "",
+      side: "bottom",
+      opts: [{ key: "main:hide", label: editor.t("dock.menu_hide") }],
+    },
   ];
 }
 
@@ -5656,8 +5706,8 @@ function dockMoveOptions(sessionId: number): MenuOption[] {
 
 function dockMenuOptions(): MenuOption[] {
   const m = openDialog?.dockMenu;
-  if (!m) return [];
-  return m.kind === "main" ? dockMainOptions() : dockMoveOptions(m.sessionId);
+  if (!m || m.kind !== "move") return [];
+  return dockMoveOptions(m.sessionId);
 }
 
 // A dropdown/context-menu row. Menu entries are *rows in a list*, not
@@ -5704,14 +5754,14 @@ function menuRows(
 // The dock's menus float over its rows as keyed overlays: the host reports a
 // press outside one as a `dismiss` on its key, which closes it (the press
 // still lands where it was aimed — a row click both closes the menu and
-// selects the row). The `⋯` button's own press arrives right after that
+// selects the row). The `Menu ▾` button's own press arrives right after that
 // dismissal, so it is held off from reopening what it just closed.
 const DOCK_MENU_OVERLAY_KEY = "dock-menu-overlay";
 const DOCK_PROJECT_OVERLAY_KEY = "dock-project-overlay";
-// The press that dismissed a menu goes on to its target, so a press on `⋯`
+// The press that dismissed a menu goes on to its target, so a press on `Menu ▾`
 // with the menu up arrives here as a dismiss and then an activate. The stamp
 // keys on which menu was dismissed: closing the project menu must not leave
-// `⋯` dead.
+// `Menu ▾` dead.
 let lastMenuDismissed = { key: "", at: 0 };
 
 /** The width a menu box needs: its widest row plus the two border columns,
@@ -5723,7 +5773,7 @@ function dockMenuBoxWidth(label: string, rows: string[]): number {
 }
 
 /** A dock menu box. `anchorRightAt` puts its right edge on that content
- *  column (the `⋯` it drops from); omitted, the box stays where it is
+ *  column (the `Menu ▾` it drops from); omitted, the box stays where it is
  *  emitted. Rows are padded to the widest because a `list` does not widen
  *  its box and clips longer rows. */
 function dockDropdownOverlay(
@@ -5758,20 +5808,59 @@ function dockDropdownOverlay(
   }));
 }
 
+// The Menu panel: two columns of groups, a rule, and Hide dock. Wider than
+// the dock, so it hangs off the dock's right edge over the editor; its
+// right edge is anchored under the Menu button.
 function dockMainMenu(): WidgetSpec {
-  const cursor = clampMenuIndex(
-    openDialog?.dockMenu?.kind === "main" ? openDialog.dockMenu.index : 0,
-    dockMainOptions().length,
-  );
-  // Under the `⋯`, the dock's own last column. Not `dockContentCols`, which
-  // subtracts the border and gutter the header row reaches past.
-  return dockDropdownOverlay(
-    editor.t("dock.title"),
-    dockMainOptions(),
-    cursor,
-    dockWidth() - 1,
-  );
+  const groups = dockMainGroups();
+  const m = openDialog?.dockMenu;
+  const cursorOf = (g: DockMenuGroup): number =>
+    m?.kind === "main" && m.group === g.key ? clampMenuIndex(m.index, g.opts.length) : 0;
+  const colW = Math.max(
+    ...groups.flatMap((g) => [editor.stringWidth(g.heading), ...g.opts.map((o) => editor.stringWidth(o.label))]),
+  ) + 4;
+  const groupSpec = (g: DockMenuGroup): WidgetSpec[] => [
+    ...(g.heading ? [label(` ${g.heading.toUpperCase()}`, { style: SECTION_STYLE })] : []),
+    list({
+      items: g.opts.map((o) => ({ text: ` ${o.label}`.padEnd(colW) })),
+      itemKeys: g.opts.map((o) => `${DOCK_MENU_KEY}:${o.key}`),
+      selectedIndex: cursorOf(g),
+      visibleRows: g.opts.length,
+      key: g.key,
+    }),
+  ];
+  const side = (which: DockMenuGroup["side"]): WidgetSpec[] => {
+    const out: WidgetSpec[] = [];
+    groups.filter((g) => g.side === which).forEach((g, i) => {
+      if (i > 0) out.push(spacer(0));
+      out.push(...groupSpec(g));
+    });
+    return out;
+  };
+  const box = colW * 2 + 5;
+  const menu = labeledSection({
+    label: editor.t("dock.title"),
+    widthCols: box,
+    child: col(
+      // Two columns, split evenly: actions on the left, settings on the right.
+      row(col(...side("left")), col(...side("right"))),
+      divider({ style: { fg: "ui.menu_disabled_fg" } }),
+      ...side("bottom"),
+    ),
+  });
+  // Declared late in the dock, so it paints over what the dock draws before
+  // it (the active card's tab included), and dropped from the action row,
+  // its right edge under the Menu button.
+  return popup(menu, {
+    key: DOCK_MENU_OVERLAY_KEY,
+    screenSpace: true,
+    anchorKey: DOCK_ACTION_ROW_KEY,
+    anchor: [0, Math.max(0, dockWidth() - box)],
+  });
 }
+
+// The dock's `[ + New ] … Menu ▾` row, named so the Menu can hang off it.
+const DOCK_ACTION_ROW_KEY = "dock-actions";
 
 function dockMoveMenu(): WidgetSpec {
   if (openDialog?.dockMenu?.kind !== "move") return col();
@@ -5788,7 +5877,7 @@ function openDockMenu(menu: DockDropdown): void {
   if (openDialog.projectMenuOpen) closeProjectMenu();
   openDialog.dockMenu = menu;
   openPanel.update(buildDockSpec());
-  focusDockControl(DOCK_MENU_KEY);
+  focusDockControl(menu.kind === "main" ? menu.group : DOCK_MENU_KEY);
 }
 
 function closeDockMenu(): void {
@@ -17812,7 +17901,7 @@ editor.on("widget_event", (e) => {
           openDialog.projectMenuOpen = false;
           openPanel?.update(buildDockSpec());
         }
-        if (openDialog.dockMenu !== null && e.widget_key !== DOCK_MENU_KEY) {
+        if (openDialog.dockMenu !== null && !(e.widget_key ?? "").startsWith(DOCK_MENU_KEY)) {
           openDialog.dockMenu = null;
           openPanel?.update(buildDockSpec());
         }
@@ -18044,11 +18133,23 @@ editor.on("widget_event", (e) => {
       if (openDialog.dockMenu?.kind === "main") closeDockMenu();
       else if (
         lastMenuDismissed.key !== DOCK_MENU_OVERLAY_KEY || Date.now() - lastMenuDismissed.at > 300
-      ) openDockMenu({ kind: "main", index: 0 });
+      ) openDockMenu({ kind: "main", group: `${DOCK_MENU_KEY}-create`, index: 0 });
       return;
     }
-    // The `⋯` / "Move to folder…" dropdown list: ↑/↓ move its
+    // The `Menu ▾` / "Move to folder…" dropdown list: ↑/↓ move its
     // cursor, Enter runs the cursor's option, a click runs the clicked one.
+    // A Menu group's list: the same, within that group.
+    const group = openDialog.dockMenu?.kind === "main"
+      ? dockMainGroups().find((g) => isListEvent(e, g.key))
+      : undefined;
+    if (group) {
+      const payload = (e.payload ?? {}) as Record<string, unknown>;
+      const idx = clampMenuIndex(typeof payload.index === "number" ? payload.index : 0, group.opts.length);
+      openDialog.dockMenu = { kind: "main", group: group.key, index: idx };
+      const opt = group.opts[idx];
+      if (opt && (e.event_type === "activate" || payload.via === "click")) runDockMenuOption(opt.key);
+      return;
+    }
     if (isListEvent(e, DOCK_MENU_KEY)) {
       const payload = (e.payload ?? {}) as Record<string, unknown>;
       const idx = typeof payload.index === "number" ? payload.index : -1;

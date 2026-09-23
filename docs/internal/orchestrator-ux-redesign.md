@@ -147,27 +147,37 @@ With nothing blocked there is no chrome at all above the list: the row that
 would carry the summary is simply not drawn. The thumb is longer here
 because fewer rows are hidden.
 
-### 2.4 The `⋯` menu
+### 2.4 The Menu
 
 Three of the four header controls are *settings*, not actions, and settings
 belong in a menu. Folder creation joins them. The dock's title row stays:
 `Orchestrator` names the panel the way the explorer's title names it, and
 its `×` is the mouse route to hiding the dock (`Alt+O` is the keyboard's).
 
-The menu is short and fixed, so it has no scrollbar. That contrast is
-deliberate: a track means the region scrolls.
+The button reads `Menu ▾` — a lone `⋯` was too easy to miss. The panel is
+wider than the dock and hangs over the editor (a screen-space popup,
+declared after the tree so it paints over the active card's tab). Actions
+are on the left, the dock's settings on the right as the controls they
+are — one `(•)` view, `[✓]` switches, the project scope — and hiding the
+dock sits alone below. Each group is its own list: Tab moves between
+groups, ↑/↓ within one, Enter runs an item; a setting flips in place and
+the menu stays up. The panel shows no shortcuts.
 
 ```
-┌──────────────────────────────────────────┐
-│ New folder…                              │
-│ Manage workspaces…                       │
-├──────────────────────────────────────────┤
-│ view      compact · comfortable · detail │
-│ show      [ ] empty   [ ] all worktrees  │
-│ scope     this project ▾                 │
-├──────────────────────────────────────────┤
-│ Hide dock                        Alt+O   │
-└──────────────────────────────────────────┘
+╭─ Orchestrator ───────────────────────────────────╮
+│  CREATE                  VIEW                    │
+│  New folder…             (•) Compact             │
+│                          ( ) Cards               │
+│  MANAGE                                          │
+│  Machines…               SHOW                    │
+│  Import sessions…        [✓] Empty workspaces    │
+│                          [ ] All worktrees       │
+│                                                  │
+│                          PROJECT                 │
+│                          All projects ▾          │
+│ ──────────────────────────────────────────────── │
+│  Hide dock                                       │
+╰──────────────────────────────────────────────────╯
 ```
 
 ### 2.5 Search on demand

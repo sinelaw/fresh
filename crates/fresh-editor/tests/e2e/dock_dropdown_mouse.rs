@@ -1,4 +1,4 @@
-//! The Orchestrator dock's dropdowns — the header's `⋯` menu and the row context
+//! The Orchestrator dock's dropdowns — the header's Menu and the row context
 //! menu's "Move to Folder…" — must be usable with the mouse: clicking an
 //! option picks it, and clicking away dismisses the menu.
 //!
@@ -86,15 +86,15 @@ fn launch(root: PathBuf) -> EditorTestHarness {
     h
 }
 
-/// Open the header's `⋯` menu by clicking its glyph.
+/// Open the header's Menu by clicking its glyph.
 fn open_dock_menu(h: &mut EditorTestHarness) {
-    let (mcol, mrow) = pos_of(h, "⋯");
+    let (mcol, mrow) = pos_of(h, "Menu ▾");
     h.mouse_click(mcol, mrow).unwrap();
     h.wait_until(|h| h.screen_to_string().contains("New Folder"))
         .unwrap();
 }
 
-/// Create a folder named `name` through the `⋯` menu (its first row), with
+/// Create a folder named `name` through the Menu (its first row), with
 /// the "organize the current session under it" checkbox switched off, so
 /// the folder starts empty.
 fn create_empty_folder(h: &mut EditorTestHarness, name: &str) {
@@ -147,7 +147,7 @@ fn move_to_folder_dropdown_option_is_clickable() {
     .unwrap();
 }
 
-/// Clicking an option in the `⋯` menu activates it.
+/// Clicking an option in the Menu activates it.
 ///
 /// Not a reproducer — this dropdown anchors high enough in the dock that
 /// the old base-row byte mapping happened to line up, so it kept working
@@ -239,7 +239,7 @@ fn dock_menu_dismissal_passes_the_click_through() {
     .unwrap();
 }
 
-/// **`⋯` with its menu up closes it, and leaves it closed.** The press
+/// **`Menu ▾` with its menu up closes it, and leaves it closed.** The press
 /// arrives twice — once as the layer's dismissal, once as the button's own
 /// activation — and the second must not reopen what the first shut.
 #[test]
@@ -248,7 +248,7 @@ fn pressing_the_dock_menu_glyph_again_closes_the_menu() {
     let mut h = launch(root);
     open_dock_menu(&mut h);
 
-    let (mcol, mrow) = pos_of(&h, "⋯");
+    let (mcol, mrow) = pos_of(&h, "Menu ▾");
     h.mouse_click(mcol, mrow).unwrap();
 
     h.wait_until(|h| {

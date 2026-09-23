@@ -275,27 +275,27 @@ fn dock_column(screen: &str) -> String {
         .join("\n")
 }
 
-/// Put the dock in card density through the `⋯` menu's "card view" row, so
+/// Put the dock in card density through the Menu's "card view" row, so
 /// the probe has a density to change from. The menu is closed again after.
 fn set_card_view(h: &mut EditorTestHarness) {
     open_dock_menu(h);
     let (vcol, vrow) = h
-        .find_text_on_screen("card view")
-        .unwrap_or_else(|| panic!("screen missing 'card view':\n{}", h.screen_to_string()));
+        .find_text_on_screen("( ) Cards")
+        .unwrap_or_else(|| panic!("screen missing '( ) Cards':\n{}", h.screen_to_string()));
     h.mouse_click(vcol + 1, vrow).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("● card view"))
+    h.wait_until(|h| h.screen_to_string().contains("(•) Cards"))
         .unwrap();
     h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
     h.wait_until(|h| !h.screen_to_string().contains("Machines…"))
         .unwrap();
 }
 
-/// Open the dock header's `⋯` menu, which holds the density rows (the
+/// Open the dock header's Menu, which holds the density rows (the
 /// applied one wears a `●`), the show switches and the project scope.
 fn open_dock_menu(h: &mut EditorTestHarness) {
     let (mcol, mrow) = h
-        .find_text_on_screen("⋯")
-        .unwrap_or_else(|| panic!("screen missing '⋯':\n{}", h.screen_to_string()));
+        .find_text_on_screen("Menu ▾")
+        .unwrap_or_else(|| panic!("screen missing 'Menu ▾':\n{}", h.screen_to_string()));
     h.mouse_click(mcol, mrow).unwrap();
     h.wait_until(|h| h.screen_to_string().contains("Machines…"))
         .unwrap();
@@ -482,7 +482,7 @@ fn list_folders_reports_the_tree_the_dock_renders() {
     .unwrap();
 }
 
-/// `setDockView` flips the density the dock's own `⋯` menu rows flip.
+/// `setDockView` flips the density the dock's own Menu rows flip.
 #[test]
 fn set_dock_view_switches_the_dock_to_compact() {
     let (_tmp, mut h) = harness();
@@ -493,9 +493,9 @@ fn set_dock_view_switches_the_dock_to_compact() {
     run_command(&mut h, "Probe Compact View");
 
     open_dock_menu(&mut h);
-    h.wait_until(|h| h.screen_to_string().contains("● compact view"))
+    h.wait_until(|h| h.screen_to_string().contains("(•) Compact"))
         .unwrap();
-    h.assert_screen_not_contains("● card view");
+    h.assert_screen_not_contains("(•) Cards");
 }
 
 /// `setDockFilter` drives the dock's search box: a needle nothing matches

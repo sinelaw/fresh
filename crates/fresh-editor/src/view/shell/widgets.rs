@@ -1090,6 +1090,7 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
             child,
             key,
             anchor,
+            anchor_key,
             screen_space,
         } => {
             let k = match key.as_deref() {
@@ -1106,17 +1107,58 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
             let l = fresh_ui::layer()
                 .place(fresh_ui::Place::Over)
                 .fit(fresh_ui::Fit::CLAMP);
-            let l = match anchor {
-                Some([r, c]) => l
+            let l = match (anchor_key.as_deref(), anchor) {
+                // Below the named node: `Place::Below` drops from its
+                // bottom edge, and `anchor`, if given, shifts it.
+                (Some(named), _) if !named.is_empty() => {
+                    let [r, c] = anchor.unwrap_or([0, 0]);
+                    l.anchor(fresh_ui::Anchor::Node(widget_node_key(named)))
+                        .place(fresh_ui::Place::Below)
+                        .offset(c as i16, r as i16)
+                }
+                (_, Some([r, c])) => l
                     .anchor(fresh_ui::Anchor::Node(super::panel::body_key()))
                     .offset(*c as i16, *r as i16),
-                None => l.anchor(fresh_ui::Anchor::Node(k)),
+                _ => l.anchor(fresh_ui::Anchor::Node(k)),
             };
             let l = match screen_space {
                 true => l,
                 false => l.within(super::panel::body_key()),
             };
-            fresh_ui::stack().children([slot, l.child(node(child, width, cx))])
+            // **A screen-space popup is as wide as it asks to be.** Escaping
+            // the panel's clipping is no use to a box still laid out at the
+            // panel's width: a menu wider than a narrow dock would be cut to
+            // the dock and only painted outside it. A section that names its
+            // columns gets them; the layer's clamp keeps it on screen.
+            let child_width = match (screen_space, child.as_ref()) {
+                (
+                    true,
+                    WidgetSpec::LabeledSection {
+                        width_cols: Some(w),
+                        ..
+                    },
+                ) => u16::try_from(*w).unwrap_or(u16::MAX).max(width),
+                _ => width,
+            };
+            // **A keyed popup closes like a keyed overlay**: a press outside
+            // it is dismissed to the plugin and goes on to its target.
+            let widget_key = key.clone().unwrap_or_default();
+            let l = if widget_key.is_empty() {
+                l
+            } else {
+                let slot = cx.slot;
+                l.dismiss(fresh_ui::Dismiss {
+                    pass_through: true,
+                    ..fresh_ui::Dismiss::OUTSIDE_POINTER
+                })
+                .on_dismiss(move |_| {
+                    UiMsg::Ui(super::msg::UiFact::WidgetOverlayDismiss {
+                        slot,
+                        key: widget_key.clone(),
+                    })
+                })
+            };
+            fresh_ui::stack().children([slot, l.child(node(child, child_width, cx))])
         }
         // **A hit that is not the whole row.** Form layout (`label: [v]`)
         // restricts the press to the chip so a click on the label does not

@@ -3260,6 +3260,13 @@ pub enum WidgetSpec {
         /// own position in the tree.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         anchor: Option<[u32; 2]>,
+        /// The key of another node in the panel to drop from, in place
+        /// of the popup's own position. Lets a popup be declared late —
+        /// so it paints over everything declared before it, which is
+        /// declaration order — while hanging off a control near the
+        /// top. Takes precedence over `anchor`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        anchor_key: Option<String>,
         /// When true, the popup escapes the panel's clipping and is
         /// painted at screen level (what the dropdown pop-over does);
         /// false keeps it panel-clipped like `Overlay`.

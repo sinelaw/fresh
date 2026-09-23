@@ -1015,6 +1015,11 @@ export function popup(
      * from (host resolves the final rect: below the anchor, flipping
      * above near the frame edge, clamped on screen). */
     anchor?: [number, number];
+    /** Drop from the node with this key instead of the popup's own
+     * position, so a popup declared late (and so painted over what
+     * came before it) can still hang off a control near the top.
+     * `anchor`, if given, then offsets it. */
+    anchorKey?: string;
     /** Escape the panel's clipping and paint at screen level (what
      * the dropdown pop-over does). Default: panel-clipped. */
     screenSpace?: boolean;
@@ -1025,6 +1030,7 @@ export function popup(
     child,
     key: options?.key,
     anchor: options?.anchor,
+    anchorKey: options?.anchorKey,
     screenSpace: options?.screenSpace ?? false,
   };
 }
