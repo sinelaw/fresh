@@ -33,13 +33,13 @@ use super::Editor;
 /// [`crate::view::ui::layout::point_in_rect`], of which this was a third
 /// copy.
 ///
-/// It outlived the box walk it was written for because three probes still
-/// test a rectangle some *other* writer published, none of them a node's
-/// hit-test: the widget runtime, against the hit list and popup rect its own
-/// painter recorded; the transient-popup probe in `mouse_input`, against
-/// `active_chrome().popup_areas`; and `chrome::splits`, against the pane and
-/// tab-strip rectangles the split layout and the shell tree report. The
-/// modals no longer ask — their interiors answer their own presses.
+/// It outlived the box walk it was written for because a few probes still
+/// test a rectangle against a point rather than letting a node answer: the
+/// widget runtime, against the hit list and popup rect its own painter
+/// recorded; `chrome::splits`, against the pane and tab-strip rectangles the
+/// shell tree reports; and the transient-popup probe in `mouse_input`, which
+/// now asks the tree for the boxes but still compares them itself. The modals
+/// no longer ask — their interiors answer their own presses.
 pub(crate) fn in_rect(col: u16, row: u16, rect: ratatui::layout::Rect) -> bool {
     crate::view::ui::layout::point_in_rect(rect, col, row)
 }

@@ -800,10 +800,16 @@ impl Editor {
         if !self.transient_popup_showing() {
             return false;
         }
-        self.active_chrome()
-            .popup_areas
+        // The boxes the tree placed, asked by key. This read
+        // `ChromeLayout::popup_areas`, a cache `render` filled from this same
+        // read — one of the two whose deletion retires the paint-recorded
+        // roster. Only the buffer's stack is on screen for this question, and
+        // those are the description's first `buffer_n` popups.
+        let (buffer_n, _) = self.popup_counts();
+        self.popup_rects()
             .iter()
-            .any(|(_, outer, ..)| in_rect(col, row, *outer))
+            .take(buffer_n)
+            .any(|outer| in_rect(col, row, *outer))
     }
 
     /// Is a transient popup (hover, signature help) actually on screen?
