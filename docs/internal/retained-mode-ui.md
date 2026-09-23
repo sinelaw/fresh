@@ -395,6 +395,95 @@ height changes; with nothing rendered by height any more the re-resolve is a
 no-op beyond marking the description stale, and the machinery can go with
 it.
 
+### Where the assertion was the only reader
+
+**Closed.** Three surfaces had migrated in description only: the tree laid
+them out, and the painter went on using the older mechanism, with the tree's
+answer read by a `debug_assert` beside it. Recorded because the shape recurs
+and the symptom — a passing test suite and a correct debug build — is the
+opposite of alarming.
+
+- **A pane's four rectangles.** `split_layout` built a throwaway `Ui`, laid
+  `pane_interior` out again at the pane's box and read four rectangles back by
+  key, once per pane per frame. `paint_leaf` had `pass.rects.content(split_id)`
+  in hand, asserted the two agreed, and then painted into the throwaway's. Two
+  further sites took it as a fallback for a case that could not arise — the
+  fallback's `split_area` came from `PaneRects::visible`, so a pane missing
+  from `rects` already had a zero box and the fallback laid *that* out. The
+  instrument could not see any of it: `geometry::stats::note_shell_layout` is
+  called from `render`, and `split_layout` never counted itself. `PaneRects` is
+  the only source now, `VisibleBuffer` no longer carries a rectangle, and
+  `split_layout` is `#[cfg(test)]` — which is a stronger instrument than a
+  counter, because a frame cannot call it at all. It keeps its one honest job
+  beside `reference_split_layout`, as the oracle the description is pinned to.
+- **The status bar's own area.** `publish_status_bar` asserted that "the
+  retained tree and a fresh one must lay the frame out alike". Neither side was
+  fresh: both resolved to `frame::regions_of` on the same retained `Ui`, and
+  `shell_region_now`'s doc forbids building a throwaway one. The claim is real
+  and now lives where it can be checked —
+  `frame::tests::a_retained_tree_lays_the_frame_out_like_a_fresh_one` walks one
+  `Ui` through frames that add and drop rows, then compares against
+  `region_rects`.
+- **The gutter's width.** `app::scrollbar_math` kept its own copy of the
+  formula under a doc naming the stake ("any divergence makes scroll math wrap
+  at a different column than the renderer"), and it had diverged: it missed
+  byte-offset mode, and its doc described a `show_line_numbers` behaviour the
+  code did not have. `view::viewport::gutter_width` is the one statement; the
+  flag had no reader and is gone from the call chain.
+
+### The tab strip is measured twice, and the fix is blocked
+
+**Open, and not on the old plan at all.** `view::shell::tabs::lay_out` does not
+use the layout engine. It measures every piece with `str_width`, computes the
+available width, decides whether the `<` and `>` arrows appear, slices each
+label by column, and emits fixed `Sizing::Cells` nodes — the tree receives a
+finished picture, which is *A surface is done when the tree measures it*
+failing on the most-looked-at row in the editor.
+
+Because layout never decides the widths, the scroll offset cannot come from it
+either, so a second full measurement runs in `view::ui::tabs`
+(`calculate_tab_widths`, `tab_name_cap`, `full_tab_label_width`,
+`tabs_render_width`, `scroll_to_show_tab`), driven by
+`Window::ensure_active_tab_visible` from five call sites. A third copy of the
+same decision is `Window::split_tabs_width`, whose comment says to "Mirror the
+show-flags in `render_split_tab_bar`". Both sides format the same
+`" {name}{mod}{preview}{bin} "` and measure it; comments reading "or widths
+drift" and "stay in lockstep" are what holds them together.
+
+**The intended fix does not work yet, and the reason is in the library.** The
+shape is obvious — make the strip a scrollable viewport that names the active
+tab as its reveal target, and layout produces the offset — and
+`Anchor::reveal_key` ships. But `fresh-ui`'s viewport scrolls vertically only:
+`Scroll::At` is a single number, every `Anchor` command preserves `scroll.x`
+and changes only `y`, and `ScrollMode::Items` is documented as scrolling "only
+down". A horizontal offset is honoured in layout and nothing can move it. So
+this needs a horizontal axis in the library first — `Scroll::At` with an `x`,
+horizontal reveal commands, a wheel and a bar that move it — which is a
+library change with a design of its own, not a use of a primitive that already
+ships.
+
+What already works and must keep working: hit testing, hover, the drag drop
+zone and the web all read tab rectangles off the tree by key
+(`chrome::splits::tab_rects`, `scene::tab_bar_view`). The genuine model
+helpers, `resolve_tab_names` and `elided_tab_name`, were never paint.
+
+### Composite buffer panes never migrated
+
+**Open.** Not a leftover — this surface has no description at all.
+`orchestration::render_composite` computes a hand-rolled column split
+(`compute_pane_layout`: ratio times available width, round, reserve a
+separator) and writes it into `CompositeViewState::pane_widths`. Four
+event-time readers then hand-roll a hit test over that vector:
+`input::composite_router::click_to_pane`, two identical walks inside
+`composite_buffer_actions::handle_composite_click`, and `pane_width` with an
+`.unwrap_or(40)`; a fifth site hardcodes `let gutter_width = 4`.
+
+That is the `screen_space` class exactly, and composite panes are not on
+`app::types::layout`'s closed roster — which says adding a surface there
+requires a ruling. The work is a pane-strip description under `view::shell::`
+and four keyed tree queries in place of the walks. It is the largest piece
+left and wants its own change.
+
 ### The status bar does layout by hand
 
 `Editor::status_bar_description` measures element widths, drops right-hand
@@ -414,9 +503,18 @@ open item and it closes a stated done-criterion.
 `view::shell::rect_of` wraps it. There are ~180 call sites in the editor, some
 inside per-item loops (the web's dropdown projection does one full walk per
 row). The design has always called for the library to publish `Key → Rect` as an
-O(1) read after layout; nothing has been built. This is the live asymptotic hole,
-and it also retires the last recorded-rectangle caches (`popup_areas` and
-friends, which are now caches *of* tree geometry rather than a second layout).
+O(1) read after layout; nothing has been built. This is the live asymptotic hole.
+
+**The caches it was going to retire are gone ahead of it.** `popup_areas` and
+`global_popup_areas` both read the popup's box off the tree and then re-derived
+the content rect from it by hand, in two copy-pasted blocks of border
+arithmetic — so they were a second *statement*, not merely a cache. The content
+slot carries `popup::popup_content_key` now and `popup::inner_rects_of` reads
+it, the web's projection and the transient-popup probe ask the tree directly,
+and three of `PopupAreaLayout`'s seven fields turned out to have no reader at
+all. `ChromeLayout`'s paint-recorded roster is down to the prompt's suggestion
+areas; its third entry, `prompt_toolbar_boxes`, named a field that had not
+existed for some time.
 
 ### Per-frame deep clones
 
@@ -567,6 +665,19 @@ becomes theme-file data. Nothing depends on either.
   *tier* in the audit rather than a blank surface.
 - No palette-resolve cache.
 - `EntryDialogState` still carries the settings entry dialog's own state model.
+- `SplitRenderer::render_phantom_leaf` writes cells into a `Buffer` directly,
+  while the sibling branch sixty lines earlier in the same function goes
+  through `shell_host::paint_embed` — two paint paths in one function.
+- **The settings dialog's second copy of its own heights is gone.**
+  `ScrollItem for TreeRow` fed `ScrollablePanel::ensure_focused_visible`, which
+  walked every row's height to compute an offset nothing read — the tree
+  column's window is its `List` element's, and the list reveals its own
+  selection. `ScrollablePanel`, `ScrollItem` and `FocusRegion` went with it,
+  and with them the body's old measuring kit (`ItemBox`,
+  `SettingItem::{layout_box, description_rows_for}`,
+  `SettingControl::control_height`), whose note in `items.rs` had claimed it
+  was already deleted. `ScrollState` survives for the keybinding editor's
+  table, which is not the tree's yet.
 
 ---
 
@@ -586,9 +697,18 @@ Recorded so the corrections are not re-derived:
   arena — see *Delete the widget text projection* — not before.
 - **The deletion ledger conflated two kinds of survivor.** `HostRegion` and
   `HostTarget` survive as a *key namespace* for readers that ask where a region
-  is — no region is a `Host` any more. `popup_areas` survives as a cache of tree
-  geometry, retired by *The keyed geometry index*. Neither is the second system
-  the ledger implied.
+  is — no region is a `Host` any more. `popup_areas` was called a cache of tree
+  geometry, which was half right and the wrong half: it took the outer rect off
+  the tree and then re-derived the inner one by hand, so it *was* a second
+  statement of geometry, and it is deleted rather than retired. See *The keyed
+  geometry index*.
+- **"The painter reads the tree" was asserted where it was not true.** Three
+  surfaces kept the old mechanism as the answer the painter used and demoted
+  the tree's to a `debug_assert` beside it, so a release build ran on the
+  mechanism the migration had supposedly replaced — see *Where the assertion
+  was the only reader*. A `debug_assert_eq!` between a new answer and an old
+  one is a migration step, not a finished one; the finished form has one
+  answer and nothing to compare it to.
 
 ---
 
