@@ -2297,6 +2297,12 @@ impl Editor {
                                 owner_key: None,
                             };
                             self.deliver_widget_hit(&panel_key, &ev, None);
+                        } else if let Some(panel_key) =
+                            self.panel(panel).map(|p| p.panel_key.clone())
+                        {
+                            // No dropdown is up, so it is the focused field's
+                            // suggestion list the press landed outside of.
+                            self.dismiss_focused_completions(&panel_key);
                         }
                     }
                 }

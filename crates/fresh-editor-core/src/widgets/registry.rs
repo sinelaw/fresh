@@ -304,14 +304,15 @@ pub enum WidgetInstanceState {
     /// same overlay-paint path as `Text` completions, no separate
     /// compositor.
     Dropdown {
+        /// The committed value — what the trigger shows and what `change`
+        /// reported last.
         selected_index: i32,
         open: bool,
-        /// The index the list opened on, kept while it is open so Escape
-        /// can put it back: Up/Down move the selection live (the trigger
-        /// shows it and `change` fires), and Escape is the word that the
-        /// move was not meant. `None` while closed, and after Enter or a
-        /// click commits the live selection.
-        restore: Option<i32>,
+        /// The row the open list has highlighted. Moving it — ↑/↓, paging,
+        /// typing — is not a value change and fires nothing; Enter or a click
+        /// commits it into `selected_index` (one `change`), and Esc or a
+        /// press outside closes the list and forgets it. `None` while closed.
+        highlight: Option<i32>,
     },
     /// `Radio` instance state: the host-owned selected index.
     /// Authoritative after first render; the spec's `selected_index`

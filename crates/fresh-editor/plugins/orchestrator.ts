@@ -5755,9 +5755,6 @@ let mainMenuPanel: FloatingWidgetPanel | null = null;
 const MAIN_MENU_PREFIX = "mm:";
 // The Menu's project dropdown.
 const MAIN_MENU_PROJECT_KEY = "mm-project";
-// Whether its list is up, and the option the list's selection sits on.
-let mainMenuProjectOpen = false;
-let mainMenuProjectPick: number | null = null;
 
 function buildMainMenuSpec(): WidgetSpec {
   const groups = dockMainGroups();
@@ -5807,8 +5804,6 @@ function openMainMenu(): void {
   openDialog.dockMenu = { kind: "main" };
   if (!mainMenuPanel) mainMenuPanel = new FloatingWidgetPanel();
   // Sizes to its content; the percentages are unused for an anchored panel.
-  mainMenuProjectOpen = false;
-  mainMenuProjectPick = null;
   mainMenuPanel.mount(buildMainMenuSpec(), { widthPct: 50, heightPct: 44 });
   // Under the title strip, which is its button.
   editor.floatingPanelControl(mainMenuPanel.id(), "anchor", packCell(0, 1));
@@ -9990,11 +9985,7 @@ function suggestMachineHosts(): void {
   setMachineHostSuggestions(items);
 }
 
-// Whether the Host field's suggestion list is up, for Enter.
-let machineHostSuggesting = false;
-
 function setMachineHostSuggestions(items: string[]): void {
-  machineHostSuggesting = items.length > 0;
   machinePanel?.setCompletions("machine-target", items);
 }
 
@@ -10041,13 +10032,9 @@ function handleMachineDialogEvent(e: WidgetEvt): void {
     return;
   }
   if (e.event_type === "completion_accept" && e.widget_key === "machine-target") {
-    const value = ((e.payload ?? {}) as Record<string, unknown>).value;
-    if (typeof value !== "string") return;
-    d.target.value = value;
-    d.target.cursor = utf8Len(value);
-    machinePanel?.setValue("machine-target", value, d.target.cursor);
+    // The host put the host name in the field and reported the `change`;
+    // an accepted name needs no more suggestions.
     setMachineHostSuggestions([]);
-    renderMachineDialog();
     return;
   }
   if (isListEvent(e as { event_type: string; widget_key?: string; payload?: unknown }, "machine-browse-list")) {
@@ -10067,10 +10054,6 @@ function handleMachineDialogEvent(e: WidgetEvt): void {
         machinePanel?.setFocusKey("machine-identity");
       }
     }
-    return;
-  }
-  if (e.event_type === "completion_dismiss" && e.widget_key === "machine-target") {
-    machineHostSuggesting = false;
     return;
   }
   if (e.event_type === "change" && e.widget_key === "machine-kind") {
@@ -13603,10 +13586,6 @@ function initialLaunchTarget(): RunAgentTarget {
 
 const LAUNCH_PROJECT_KEY = "orchestrator.last_project";
 
-// `Manage repositories…` highlighted in the Project list, waiting for the list
-// to close on it.
-let projectManageArmed = false;
-
 // A repository asked for by whoever opens the form (the Repositories dialog's
 // `New workspace here`); consumed by the next open.
 let pendingFormRepo: string | null = null;
@@ -14129,38 +14108,6 @@ async function fetchBranchCompletions(typed: string): Promise<string[]> {
     return a.length - b.length || a.localeCompare(b);
   });
   return filtered;
-}
-
-/// Apply the user-accepted completion candidate to its field.
-/// Fired in response to the host's `completion_accept` event
-/// (Tab on a Text-with-open-completions): the host has already
-/// figured out which row was selected — we just write it into
-/// the form model and update the field's value. For Project
-/// Path accepts that end in `/` (directory descent) we re-
-/// fetch the candidate list for the new path so the user can
-/// keep Tab-ing into deeper subdirs without first typing
-/// anything; the host preserves the open popup across the
-/// fetch, so it just refreshes in place.
-function applyAcceptedCompletion(
-  field: "project_path" | "branch",
-  item: string,
-): void {
-  if (!form) return;
-  const slot = field === "project_path" ? form.projectPath : form.branch;
-  slot.value = item;
-  slot.cursor = item.length;
-  if (formPanel) formPanel.setValue(field, slot.value, slot.cursor);
-  if (field === "project_path") {
-    scheduleProjectPathReprobe();
-  }
-  // Always close the dropdown on accept — including when the accepted
-  // item is a directory. Re-popping it here (the old behaviour) left the
-  // popup covering the worktree / name fields and, because Tab *accepts*
-  // while a popup is open, a Tab-to-advance user got stuck re-accepting
-  // instead of moving to the next field (F8). Descending deeper still
-  // works by typing — the field's `change` handler re-pops the
-  // completion — and the next Tab now advances as expected.
-  closeCompletion();
 }
 
 function closeForm(): void {
@@ -17139,23 +17086,11 @@ editor.on("widget_event", (e) => {
       closeMainMenu();
       return;
     }
-    // The project dropdown walks its list live, but the filter only moves
-    // once a value is accepted: the list closes on a click or Enter (Esc
-    // first puts the selection back). A change while it is closed is an
-    // accept in itself.
-    if (e.event_type === "dropdown_open" && e.widget_key === MAIN_MENU_PROJECT_KEY) {
-      mainMenuProjectOpen = ((e.payload ?? {}) as Record<string, unknown>).open === true;
-      if (!mainMenuProjectOpen && mainMenuProjectPick !== null) {
-        const pick = mainMenuProjectPick;
-        mainMenuProjectPick = null;
-        applyProjectFilter(projectMenuKeys()[pick] ?? "");
-      }
-      return;
-    }
+    // The project dropdown: a `change` is an accepted value (the list's
+    // highlight moves fire nothing), so the filter moves on it.
     if (e.event_type === "change" && e.widget_key === MAIN_MENU_PROJECT_KEY) {
       const index = Number(((e.payload ?? {}) as Record<string, unknown>).index ?? 0);
-      if (mainMenuProjectOpen) mainMenuProjectPick = index;
-      else applyProjectFilter(projectMenuKeys()[index] ?? "");
+      applyProjectFilter(projectMenuKeys()[index] ?? "");
       return;
     }
     if (e.event_type === "activate" && typeof e.widget_key === "string" && e.widget_key.startsWith(MAIN_MENU_PREFIX)) {
@@ -17282,16 +17217,6 @@ editor.on("widget_event", (e) => {
       }
       return;
     }
-    if (e.event_type === "dropdown_open") {
-      // Host-authoritative open/closed signal for a dropdown's pop-over.
-      const payload = (e.payload ?? {}) as Record<string, unknown>;
-      if (payload.open !== true && e.widget_key === "project" && projectManageArmed) {
-        projectManageArmed = false;
-        formPanel.setDropdown("project", projectPickIndex(form));
-        openRepositoriesFromForm(form.repoId, formMachineKey(form));
-      }
-      return;
-    }
     if (e.event_type === "change" && e.widget_key === "machine") {
       // The Machine control moved (design §5.1): the option decides the
       // backend and the host state; the body follows.
@@ -17331,13 +17256,13 @@ editor.on("widget_event", (e) => {
           clearRepoPath();
         }
       } else {
-        // `Manage repositories…` is an action, not a project. The list reports
-        // every highlight move as a change, so it is only armed here and runs
-        // when the list closes on it (see `dropdown_open`).
-        projectManageArmed = true;
+        // `Manage repositories…` is an action, not a project: it runs when it
+        // is chosen (a `change` is an accepted value), and the dropdown goes
+        // back to the project it showed.
+        formPanel.setDropdown("project", projectPickIndex(form));
+        openRepositoriesFromForm(form.repoId, formMachineKey(form));
         return;
       }
-      projectManageArmed = false;
       form.lastError = null;
       renderForm();
       return;
@@ -17484,15 +17409,11 @@ editor.on("widget_event", (e) => {
       return;
     }
     if (e.event_type === "completion_accept") {
-      // Host fires this on Tab against a Text widget with an
-      // open completion popup. The payload carries the
-      // candidate that was highlighted.
-      const payload = (e.payload ?? {}) as Record<string, unknown>;
-      const value = payload.value;
-      if (typeof value !== "string") return;
-      if (e.widget_key === "project_path" || e.widget_key === "branch") {
-        applyAcceptedCompletion(e.widget_key, value);
-      }
+      // The host already put the accepted suggestion in the field and
+      // reported it as a `change` (which re-probes the path). Keep the list
+      // shut after an accept — even onto a folder — so the next Tab moves on
+      // rather than re-accepting (F8); typing re-opens it.
+      closeCompletion();
       return;
     }
     if (e.event_type === "completion_dismiss") {

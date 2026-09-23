@@ -272,6 +272,33 @@ impl Editor {
         );
     }
 
+    /// Close the focused field's suggestion list, if it has one up — a press
+    /// landed outside it. The kind decides what closing means (and queues
+    /// `completion_dismiss`); this applies it.
+    pub(crate) fn dismiss_focused_completions(&mut self, panel_key: &crate::widgets::PanelKey) {
+        let Some(focus_key) = self
+            .widget_registry
+            .focus_key(panel_key)
+            .map(str::to_string)
+        else {
+            return;
+        };
+        let mut fx = crate::widgets::kinds::KeyFx::default();
+        let closed = match self.widget_registry.get_mut(panel_key) {
+            Some(panel) => {
+                crate::widgets::kinds::text::dismiss_completion_list(&focus_key, panel, &mut fx)
+            }
+            None => return,
+        };
+        if !closed {
+            return;
+        }
+        self.rerender_widget_panel(panel_key);
+        for (event_type, payload) in fx.events {
+            self.fire_widget_event(panel_key, focus_key.clone(), event_type, payload);
+        }
+    }
+
     /// Publish every mounted panel's focus fact to the plugins' state
     /// snapshot, where `editor.getPanelFocusKey` reads it.
     ///
