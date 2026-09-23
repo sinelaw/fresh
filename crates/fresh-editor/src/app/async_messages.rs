@@ -1334,21 +1334,37 @@ impl Editor {
         );
     }
 
-    /// Handle custom LSP notification
-    #[allow(dead_code)] // Prepared for future use when AsyncMessage::LspCustomNotification is added
+    /// Handle a server -> client LSP notification the editor does not handle
+    /// itself (e.g. clangd's `textDocument/clangd.fileStatus`) by forwarding
+    /// it to plugins subscribed with `editor.on("lsp/custom_notification", ..)`.
     pub(super) fn handle_custom_notification(
         &mut self,
         language: String,
+        server_name: String,
         method: String,
         params: Option<Value>,
     ) {
-        tracing::debug!("Custom LSP notification {} from {}", method, language);
-        let payload = serde_json::json!({
-            "language": language,
-            "method": method,
-            "params": params,
-        });
-        self.emit_event("lsp/custom_notification", payload);
+        tracing::debug!(
+            "Custom LSP notification {} from {} ({})",
+            method,
+            language,
+            server_name
+        );
+        let plugin_manager = self.plugin_manager.read().unwrap();
+        // Chatty servers can send these often; skip the plugin-thread
+        // round trip when nothing is listening.
+        if !plugin_manager.has_subscribers("lsp/custom_notification") {
+            return;
+        }
+        plugin_manager.run_hook(
+            "lsp/custom_notification",
+            crate::services::plugins::hooks::HookArgs::LspCustomNotification {
+                language,
+                server_name,
+                method,
+                params,
+            },
+        );
     }
 
     /// Handle LSP server request (server -> client)

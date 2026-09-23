@@ -861,6 +861,19 @@ interface HookEventMap {
     server_command: string;
     params: string | null;
   };
+  /**
+   * A server -> client notification whose method the editor does not handle
+   * itself (e.g. clangd's `textDocument/clangd.fileStatus`, `$/memoryUsage`).
+   * Unlike `lsp_server_request`, `params` is the parsed JSON value, not a
+   * string. `server_name` tells apart several servers for one language.
+   */
+  "lsp/custom_notification": {
+    language: string;
+    server_name: string;
+    method: string;
+    /** JSON-RPC params: an object or array, or `null` when omitted */
+    params: Record<string, unknown> | unknown[] | null;
+  };
   lsp_server_error: {
     language: string;
     server_command: string;

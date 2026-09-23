@@ -4659,7 +4659,20 @@ async fn handle_notification_dispatch(
             }
         }
         _ => {
-            tracing::debug!("Unhandled notification: {}", notification.method);
+            // Non-standard / server-specific notification (clangd's
+            // `textDocument/clangd.fileStatus`, `$/memoryUsage`, ...): hand it
+            // to plugins, which subscribe via `lsp/custom_notification`.
+            tracing::debug!(
+                "LSP ({}) notification for plugins: {}",
+                language,
+                notification.method
+            );
+            let _ = async_tx.send(AsyncMessage::LspCustomNotification {
+                language: language.to_string(),
+                server_name: server_name.to_string(),
+                method: notification.method,
+                params: notification.params,
+            });
         }
     }
 

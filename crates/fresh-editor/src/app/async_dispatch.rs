@@ -197,10 +197,13 @@ impl Editor {
         // on the next tick). Forcing a render for the bare completion made
         // live_diff's per-keystroke debounce repaint the screen with no
         // change — invisible locally, but real lag over serial (#2100).
+        // A custom LSP notification is the same: it only feeds a plugin
+        // hook, and chatty servers (clangd's per-edit fileStatus) send many.
         let needs_render = messages.iter().any(|m| {
             !matches!(
                 m,
                 AsyncMessage::Plugin(fresh_core::api::PluginAsyncMessage::DelayComplete { .. })
+                    | AsyncMessage::LspCustomNotification { .. }
             )
         });
         tracing::trace!(
@@ -492,6 +495,14 @@ impl Editor {
                     params,
                 } => {
                     self.handle_lsp_server_request(language, server_command, method, params);
+                }
+                AsyncMessage::LspCustomNotification {
+                    language,
+                    server_name,
+                    method,
+                    params,
+                } => {
+                    self.handle_custom_notification(language, server_name, method, params);
                 }
                 AsyncMessage::PluginLspResponse {
                     language: _,
