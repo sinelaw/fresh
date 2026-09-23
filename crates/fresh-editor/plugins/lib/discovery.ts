@@ -49,7 +49,7 @@ export interface DiscoverCell {
 /** Rows that line up with each other. Each family has its own column
  *  widths: a tool name belongs under a tool name, not under a session's
  *  branch, and a heading's columns are not a session's at all. */
-export type DiscoverFamily = "group" | "session" | "absent" | "problem";
+export type DiscoverFamily = "group" | "session" | "problem";
 
 export interface DiscoverRow {
   key: string;
@@ -118,9 +118,6 @@ export type DiscoverVerb =
 
 /** The problems heading's key; the filter's auto-expand leaves it alone. */
 export const DISCOVER_PROBLEMS_KEY = "group:problems";
-
-/** The heading for tools not on the machine. Named for the same reason. */
-export const DISCOVER_ABSENT_KEY = "group:absent";
 
 /** Columns a session row is indented under its heading. */
 export const DISCOVER_INDENT_COLS = 2;
@@ -216,7 +213,8 @@ export function discoverPathProject(cwd: string): ProjectIdentity | null {
   };
 }
 
-/** Turn scans into rows: filtered, grouped, then absent tools, then problems.
+/** Turn scans into rows: filtered, grouped, then problems. A tool that is
+ *  not installed on a machine is simply not listed.
  *  Machines are merged; the machine a row is on rides with the row. */
 export function discoverRowsFrom(
   scans: DiscoverScan[],
@@ -319,30 +317,6 @@ export function discoverRowsFrom(
         machineKey: from.key,
       });
     }
-  }
-
-  // Absent tools get their own heading so the problems list holds only problems.
-  const absent: DiscoverRow[] = [];
-  for (const from of scans) {
-    for (const tool of from.scan.tools) {
-      if (tool.status !== "absent" && tool.status !== "unsupported") continue;
-      const why = tool.status === "unsupported" ? (tool.note ?? "") : t("discover.not_installed");
-      absent.push({
-        key: `absent:${from.key}/${tool.id}`,
-        family: "absent",
-        cells: manyMachines
-          ? [{ text: tool.displayName }, { text: why }, { text: from.label }]
-          : [{ text: tool.displayName }, { text: why }],
-      });
-    }
-  }
-  if (absent.length > 0) {
-    rows.push({
-      key: DISCOVER_ABSENT_KEY,
-      family: "group",
-      cells: [{ text: t("discover.absent", { count: String(absent.length) }) }],
-    });
-    rows.push(...absent.sort((a, b) => byName(a.cells[0].text, b.cells[0].text)));
   }
 
   // Problems are not filtered: hiding one because it does not match the

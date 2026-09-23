@@ -67,14 +67,12 @@ fn open_machines_dialog(harness: &mut EditorTestHarness) {
         .unwrap();
 }
 
-/// In Add Machine, on an editor with no `~/.ssh/config` (so there is no Host
-/// picker and focus starts on Name): fill Name and Target, then Save.
-fn fill_and_save_new_machine(harness: &mut EditorTestHarness, name: &str, target: &str) {
+/// In Add Machine, where focus starts on Host: type the target, then Save.
+/// The machine is named by its host.
+fn fill_and_save_new_machine(harness: &mut EditorTestHarness, target: &str) {
     harness
         .wait_until(|h| h.screen_to_string().contains("┌ Add Machine"))
         .unwrap();
-    harness.type_text(name).unwrap();
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     harness.type_text(target).unwrap();
     harness
         .send_key(KeyCode::Enter, KeyModifiers::CONTROL)
@@ -144,8 +142,6 @@ fn an_ipv6_config_host_is_bracketed_so_its_port_survives() {
     );
     open_machines_dialog(&mut harness);
     add_from_machines_dialog(&mut harness);
-    harness.type_text("v6").unwrap();
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     harness.type_text("v6box").unwrap();
     harness
         .wait_until(|h| h.screen_to_string().contains("deploy@[2001:db8::1]:2222"))
@@ -165,9 +161,14 @@ fn a_config_host_is_added_through_add_machine() {
     open_machines_dialog(&mut harness);
     harness.assert_screen_not_contains("this computer");
     add_from_machines_dialog(&mut harness);
-    harness.type_text("planted").unwrap();
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
-    harness.type_text("plantedbox").unwrap();
+    // The Host field opens with the config host to pick: ↓ then Enter.
+    harness
+        .wait_until(|h| h.screen_to_string().matches("plantedbox").count() >= 1)
+        .unwrap();
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
     harness
         .wait_until(|h| h.screen_to_string().contains("deploy@10.0.0.9"))
         .unwrap();
@@ -178,7 +179,7 @@ fn a_config_host_is_added_through_add_machine() {
     harness
         .wait_until(|h| {
             let s = h.screen_to_string();
-            s.contains("┌ Machines") && s.contains("planted") && !s.contains("not added")
+            s.contains("┌ Machines") && s.contains("plantedbox") && !s.contains("not added")
         })
         .unwrap_or_else(|_| {
             panic!(
@@ -202,7 +203,7 @@ fn the_form_adds_a_machine_and_picks_it() {
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
-    fill_and_save_new_machine(&mut harness, "newbox", "deploy@10.1.1.1");
+    fill_and_save_new_machine(&mut harness, "deploy@newbox");
 
     harness
         .wait_until(|h| {
@@ -215,7 +216,7 @@ fn the_form_adds_a_machine_and_picks_it() {
                 harness.screen_to_string()
             )
         });
-    harness.assert_screen_contains("deploy@10.1.1.1");
+    harness.assert_screen_contains("deploy@newbox");
 }
 
 /// **`+ Add machine…` in Import sessions comes back with the machine picked.**
@@ -233,7 +234,7 @@ fn import_sessions_adds_a_machine_and_picks_it() {
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
-    fill_and_save_new_machine(&mut harness, "newbox", "deploy@10.1.1.1");
+    fill_and_save_new_machine(&mut harness, "deploy@newbox");
 
     harness
         .wait_until(|h| {

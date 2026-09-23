@@ -9,7 +9,6 @@
 
 import { hub, type CollectedSession, type ScanResult } from "./lib/agent_scanner.ts";
 import {
-  DISCOVER_ABSENT_KEY,
   DISCOVER_ALL_KEY,
   DISCOVER_GROUPINGS,
   DISCOVER_PROBLEMS_KEY,
@@ -153,10 +152,10 @@ function discoverExpandedKeys(): string[] {
   const st = discoverState;
   if (!st) return [];
   if (st.filter.value === "") return [...st.expanded];
-  // The problems and absent groups are not filtered, so they stay folded.
+  // The problems group is not filtered, so it stays folded.
   return (st.rows ?? [])
     .filter((r) =>
-      discoverIsGroup(r) && r.key !== DISCOVER_PROBLEMS_KEY && r.key !== DISCOVER_ABSENT_KEY
+      discoverIsGroup(r) && r.key !== DISCOVER_PROBLEMS_KEY
     )
     .map((r) => r.key);
 }

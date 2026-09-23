@@ -6,7 +6,6 @@ import {
   discoverRowAction,
   discoverRowEntry,
   discoverRowsFrom,
-  DISCOVER_ABSENT_KEY,
   DISCOVER_COL_GAP,
   DISCOVER_PROBLEMS_KEY,
   type DiscoverRow,
@@ -89,7 +88,7 @@ const proj = (label: string, id = label) => ({ kind: "repo" as const, id: `repo:
   eq(verbs["s4"], { kind: "attach", argv: ["tmux", "attach", "-t", "s4"] }, "a live pane is attached to");
 }
 
-// ── problems are problems; absence is not ─────────────────────────
+// ── problems are problems; absence is not listed ─────────────────────────
 
 {
   const rows = discoverRowsFrom(
@@ -99,13 +98,10 @@ const proj = (label: string, id = label) => ({ kind: "repo" as const, id: `repo:
     { filter: "", grouping: "tool" }, resumeArgv, t,
   );
   const keys = rows.map((r) => r.key);
-  const absentAt = keys.indexOf(DISCOVER_ABSENT_KEY), problemsAt = keys.indexOf(DISCOVER_PROBLEMS_KEY);
-  eq(absentAt >= 0 && problemsAt > absentAt, true, "absent tools get their own heading, before the problems");
-  eq(rows.slice(absentAt + 1, problemsAt).map(cells),
-    [["codex-cli", "discover.not_installed"], ["super-engineering", "ships for macOS only"]],
-    "absent and unsupported are listed with why, by name; a failed tool is not among them");
+  const problemsAt = keys.indexOf(DISCOVER_PROBLEMS_KEY);
+  eq(rows.some((r) => r.cells.some((c) => c.text === "codex-cli" || c.text === "super-engineering")), false,
+    "a tool that is absent or unsupported is not listed at all");
   eq(rows.slice(problemsAt + 1).map((r) => r.cells[0].text), ["herdr: boom"], "the problems list holds only problems");
-  eq(rows[absentAt].cells[0].text, "discover.absent(2)", "the heading counts them");
 }
 
 {
@@ -113,8 +109,7 @@ const proj = (label: string, id = label) => ({ kind: "repo" as const, id: `repo:
     [scan("m", [session({ id: "s", tool: "tmux", cwd: "/p" })], [tool("tmux", "found")])],
     { filter: "", grouping: "tool" }, resumeArgv, t,
   );
-  eq(rows.some((r) => r.key === DISCOVER_ABSENT_KEY || r.key === DISCOVER_PROBLEMS_KEY), false,
-    "a clean scan has neither heading");
+  eq(rows.some((r) => r.key === DISCOVER_PROBLEMS_KEY), false, "a clean scan has no problems heading");
 }
 
 // ── filter ────────────────────────────────────────────────────────
@@ -128,7 +123,6 @@ const proj = (label: string, id = label) => ({ kind: "repo" as const, id: `repo:
     { filter: "checkout-flow", grouping: "project" }, resumeArgv, t,
   );
   eq(rows.filter((r) => r.session).map((r) => r.session!.id), ["a"], "the filter matches the resolved branch");
-  eq(rows.some((r) => r.key === DISCOVER_ABSENT_KEY), true, "absent tools are not filtered — they are the scan talking about itself");
 }
 
 // ── the table ─────────────────────────────────────────────────────

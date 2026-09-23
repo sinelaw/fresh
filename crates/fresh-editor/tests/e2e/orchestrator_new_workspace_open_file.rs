@@ -91,7 +91,7 @@ fn open_file_in_a_just_created_workspace_takes_the_keyboard() {
     // "Launch" is the create-and-visit button: it builds the workspace and
     // takes the user into it. (Matched with its bracket, since "Launch in
     // background" sits beside it.)
-    let (ccol, crow) = pos_of(&h, "[   Launch");
+    let (ccol, crow) = pos_of(&h, "[ Launch ]");
     h.mouse_click(ccol + 4, crow).unwrap();
     // The workspace is live once the form is gone and its seeded terminal is
     // on screen as the new window's only tab.

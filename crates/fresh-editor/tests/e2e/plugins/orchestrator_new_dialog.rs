@@ -1070,7 +1070,7 @@ fn tab_is_linear_one_stop_per_radio_group() {
                 saw_inactive_option = true;
             }
         }
-        if line.contains("[   Launch") {
+        if line.contains("[ Launch ]") {
             saw_create = true;
         }
     }

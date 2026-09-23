@@ -9722,6 +9722,11 @@ interface MachineDialogState {
   lastTest: MachineTest | null;
   // Remove… was pressed and waits for a yes.
   confirmRemove: boolean;
+  // What the machine reached when the form opened (host or pod): while it
+  // stays, the machine keeps its name.
+  origReach: string;
+  // Browse… beside Identity file: the shared browser, picking a file.
+  browse: FolderBrowser | null;
   name: Field;
   target: Field;
   identity: Field;
@@ -9750,7 +9755,8 @@ type MachineDialogReturn = "machines" | "form" | "repos" | "discover" | null;
 const MACHINE_DIALOG_MODE = "orchestrator-machine-dialog";
 let machineDialog: MachineDialogState | null = null;
 let machinePanel: FloatingWidgetPanel | null = null;
-let machineFocusKey = "machine-name";
+let machineFocusKey = "machine-target";
+const MACHINE_DIALOG_WIDTH_PCT = 60;
 
 /** Open Add Machine (`existing` null) or Edit Machine. `fromHost` seeds it
  *  from a `~/.ssh/config` entry; `template` from a machine known only by its
@@ -9772,6 +9778,8 @@ function openMachineDialog(
     lastTest: existing?.lastTest ?? (fromHost ? sshHostTests.get(fromHost.alias) ?? null : null),
     confirmRemove: false,
     name: fieldOf(m?.name ?? fromHost?.alias ?? ""),
+    origReach: m ? (m.kind === "ssh" ? (sshTargetParts(m.target).host || m.target) : m.pod) : "",
+    browse: null,
     target: fieldOf(m?.target ?? fromHost?.alias ?? ""),
     identity: fieldOf(m?.identity ?? ""),
     options: fieldOf(m?.options ?? ""),
@@ -9787,7 +9795,7 @@ function openMachineDialog(
   };
   machinePanel = new FloatingWidgetPanel();
   machinePanel.mount(buildMachineDialogSpec(), {
-    widthPct: 60,
+    widthPct: MACHINE_DIALOG_WIDTH_PCT,
     heightPct: 70,
     focusMarker: true,
     labelAlign: "right",
@@ -9800,8 +9808,12 @@ function openMachineDialog(
   });
   editor.floatingPanelControl(machinePanel.id(), "fullscreen", 1);
   editor.setEditorMode(MACHINE_DIALOG_MODE);
-  machineFocusKey = "machine-name";
-  machinePanel.setFocusKey("machine-name");
+  // Straight to what the machine reaches; for a new ssh machine the Host
+  // field opens with the config hosts to pick from.
+  const first = machineDialog.kind === "ssh" ? "machine-target" : "machine-context";
+  machineFocusKey = first;
+  machinePanel.setFocusKey(first);
+  suggestMachineHosts();
 }
 
 function blankMachine(): Machine {
@@ -9862,10 +9874,21 @@ function closeMachineDialog(reopen: boolean): void {
   restoreDockAfterDialog();
 }
 
+// A machine is named by what it reaches: the ssh host (a config alias as
+// written, else the host of `user@host:port`), or the pod. An existing
+// machine keeps the name it has while that stays the same.
+function machineDialogName(d: MachineDialogState): string {
+  const reach = d.kind === "ssh"
+    ? (sshTargetParts(d.target.value.trim()).host || d.target.value.trim())
+    : d.pod.value.trim();
+  if (d.id !== null && d.name.value.trim() && reach === d.origReach) return d.name.value.trim();
+  return reach;
+}
+
 function machineFromDialog(d: MachineDialogState): Machine {
   return {
     id: d.id ?? newMachineId(),
-    name: d.name.value.trim(),
+    name: machineDialogName(d),
     kind: d.kind,
     target: d.target.value.trim(),
     identity: d.identity.value.trim(),
@@ -9878,6 +9901,15 @@ function machineFromDialog(d: MachineDialogState): Machine {
       ? { ok: d.test.state === "ok", at: Date.now(), summary: d.test.summary }
       : d.lastTest,
   };
+}
+
+// A field that shares its row with `besides` columns (a button and the gap
+// before it) and still ends where the full-width fields do: the dialog's
+// width, less its frame, the marker gutter, the label and the brackets.
+function machineFieldWidth(besides: number): number {
+  const w = editor.getScreenSize().width;
+  const panel = Math.floor((w > 0 ? w : 120) * MACHINE_DIALOG_WIDTH_PCT / 100);
+  return Math.max(12, panel - 4 - 2 - FORM_LABEL_W - 2 - 2 - besides - 2);
 }
 
 // One machine, as a plain form: right-aligned labels, the editable fields,
@@ -9900,36 +9932,34 @@ function buildMachineDialogSpec(): WidgetSpec {
       spacer(0),
     );
   }
-  children.push(...field(editor.t("machine.name"), d.name, { key: "machine-name" }));
   if (d.kind === "ssh") {
     children.push(
-      ...field(formLabel("machine.host"), d.target, {
-        key: "machine-target",
-        placeholder: editor.t("machine.host_placeholder"),
-      }),
+      ...field(formLabel("machine.host"), d.target, { key: "machine-target" }),
     );
     const h = d.hosts.find((x) => x.alias === d.target.value.trim());
     if (h) children.push(machineFact("machine.resolves_to", [{ text: sshResolvedTarget(h) }]));
+    // The key file: typed, or picked with the shared browser beside it.
+    const browse = editor.t("repo.browse");
     children.push(
-      ...field(splitLabel("form.ssh_identity_label").label, d.identity, {
-        key: "machine-identity",
-        placeholder: editor.t("form.ssh_identity_placeholder"),
-      }),
-      ...field(splitLabel("form.ssh_options_label").label, d.options, {
-        key: "machine-options",
-        placeholder: splitPlaceholder(editor.t("form.ssh_options_placeholder")).placeholder,
-      }),
+      row(
+        text({
+          value: d.identity.value,
+          cursorByte: d.identity.cursor,
+          label: splitLabel("form.ssh_identity_label").label,
+          labelWidth: FORM_LABEL_W,
+          fieldWidth: machineFieldWidth(editor.stringWidth(browse) + 4 + 2),
+          key: "machine-identity",
+        }),
+        spacer(2),
+        actionButton(browse, "machine-identity-browse"),
+      ),
+      ...(d.browse ? browserRows(d.browse, "machine-browse-list") : []),
+      ...field(splitLabel("form.ssh_options_label").label, d.options, { key: "machine-options" }),
     );
   } else {
     children.push(
-      ...field(splitLabel("form.k8s_context_label").label, d.context, {
-        key: "machine-context",
-        placeholder: editor.t("form.k8s_context_placeholder"),
-      }),
-      ...field(formLabel("form.k8s_namespace_label"), d.namespace, {
-        key: "machine-namespace",
-        placeholder: editor.t("form.k8s_namespace_placeholder"),
-      }),
+      ...field(splitLabel("form.k8s_context_label").label, d.context, { key: "machine-context" }),
+      ...field(formLabel("form.k8s_namespace_label"), d.namespace, { key: "machine-namespace" }),
       ...field(formLabel("form.k8s_pod_label"), d.pod, {
         key: "machine-pod",
         note: editor.t("machine.pod_note"),
@@ -9937,10 +9967,7 @@ function buildMachineDialogSpec(): WidgetSpec {
     );
   }
   children.push(
-    ...field(editor.t("machine.path"), d.path, {
-      key: "machine-path",
-      placeholder: d.kind === "ssh" ? "/srv" : "/workspace",
-    }),
+    ...field(editor.t("machine.path"), d.path, { key: "machine-path" }),
     machineFact("machine.last_test", machineTestSegments(d)),
     fieldColumnRow(withAccel(button(editor.t("machine.btn_test"), { key: "machine-test" }), "^T")),
   );
@@ -10029,9 +10056,7 @@ function saveMachineDialog(): void {
   const d = machineDialog;
   if (!d) return;
   const m = machineFromDialog(d);
-  d.error = !m.name
-    ? editor.t("machine.err_name")
-    : m.kind === "ssh" && !parseSshTarget(m.target).dest
+  d.error = m.kind === "ssh" && !parseSshTarget(m.target).dest
     ? editor.t("machine.err_target")
     : m.kind === "kubernetes" && (!m.namespace || !m.pod)
     ? editor.t("machine.err_ns_pod")
@@ -10063,7 +10088,13 @@ registerHandler("orchestrator_machine_enter", () => {
     machinePanel.command(widgetKey("Enter"));
     return;
   }
-  // Enter saves from any field; on a button it is that button.
+  // Enter saves from any field; on a button it is that button, and in the
+  // file browser it opens the folder or picks the file.
+  if (machineFocusKey === "machine-browse-list") {
+    machinePanel.command({ kind: "activate" });
+    return;
+  }
+  if (machineFocusKey === "machine-identity-browse") return browseIdentityFile();
   if (machineFocusKey === "machine-cancel") return closeMachineDialog(true);
   if (machineFocusKey === "machine-test") return runMachineTest();
   if (machineFocusKey === "machine-remove") return askRemoveMachine(true);
@@ -10115,6 +10146,36 @@ function setMachineHostSuggestions(items: string[]): void {
   machinePanel?.setCompletions("machine-target", items);
 }
 
+// Browse… beside Identity file: the shared browser on this computer (ssh
+// reads the key locally), from the typed file's folder or `~/.ssh`. Pressed
+// again, it closes.
+function browseIdentityFile(): void {
+  const d = machineDialog;
+  if (!d) return;
+  if (d.browse) {
+    d.browse = null;
+    renderMachineDialog();
+    return;
+  }
+  const typed = d.identity.value.trim();
+  const b: FolderBrowser = {
+    machineKey: "local",
+    dir: "",
+    entries: [],
+    loading: true,
+    error: "",
+    index: 0,
+    picksAny: false,
+    files: true,
+  };
+  d.browse = b;
+  void browserGo(b, typed ? parentDir(typed) : "~/.ssh", () => renderMachineDialog()).then(() => {
+    if (machineDialog !== d || d.browse !== b) return;
+    machineFocusKey = "machine-browse-list";
+    machinePanel?.setFocusKey("machine-browse-list");
+  });
+}
+
 function handleMachineDialogEvent(e: WidgetEvt): void {
   const d = machineDialog!;
   if (e.event_type === "cancel") {
@@ -10135,14 +10196,28 @@ function handleMachineDialogEvent(e: WidgetEvt): void {
     d.target.value = value;
     d.target.cursor = utf8Len(value);
     machinePanel?.setValue("machine-target", value, d.target.cursor);
-    // A config host names itself: an empty Name takes the alias.
-    if (!d.name.value.trim()) {
-      d.name.value = value;
-      d.name.cursor = utf8Len(value);
-      machinePanel?.setValue("machine-name", value, d.name.cursor);
-    }
     setMachineHostSuggestions([]);
     renderMachineDialog();
+    return;
+  }
+  if (isListEvent(e as { event_type: string; widget_key?: string; payload?: unknown }, "machine-browse-list")) {
+    const b = d.browse;
+    const idx = typeof (e.payload as Record<string, unknown> | undefined)?.index === "number"
+      ? (e.payload as Record<string, number>).index
+      : -1;
+    if (!b || idx < 0) return;
+    b.index = idx;
+    if (e.event_type === "activate") {
+      const picked = browserActivate(b, idx, () => renderMachineDialog());
+      if (picked) {
+        d.browse = null;
+        d.identity = fieldOf(tildePath(picked));
+        renderMachineDialog();
+        machinePanel?.setValue("machine-identity", d.identity.value, d.identity.cursor);
+        machineFocusKey = "machine-identity";
+        machinePanel?.setFocusKey("machine-identity");
+      }
+    }
     return;
   }
   if (e.event_type === "completion_dismiss" && e.widget_key === "machine-target") {
@@ -10161,7 +10236,6 @@ function handleMachineDialogEvent(e: WidgetEvt): void {
   }
   if (e.event_type === "change") {
     const slots: Record<string, Field> = {
-      "machine-name": d.name,
       "machine-target": d.target,
       "machine-identity": d.identity,
       "machine-options": d.options,
@@ -10189,7 +10263,8 @@ function handleMachineDialogEvent(e: WidgetEvt): void {
     return;
   }
   if (e.event_type === "activate") {
-    if (e.widget_key === "machine-save") saveMachineDialog();
+    if (e.widget_key === "machine-identity-browse") browseIdentityFile();
+    else if (e.widget_key === "machine-save") saveMachineDialog();
     else if (e.widget_key === "machine-test") runMachineTest();
     else if (e.widget_key === "machine-cancel") closeMachineDialog(true);
     else if (e.widget_key === "machine-remove") askRemoveMachine(true);
@@ -10267,7 +10342,9 @@ function cloneTarget(r: Repository, machineKey: string): string {
   return `${cloneBase(machineKey).replace(/\/+$/, "")}/${r.name}`;
 }
 
-// A folder picker on one machine, for a text field to fill.
+// The one path picker the dialogs share: a folder browser on one machine, for
+// a text field to fill — a project's folder, a clone's, or (with `files`) a
+// file such as an ssh identity.
 interface FolderBrowser {
   machineKey: string;
   dir: string;
@@ -10277,14 +10354,20 @@ interface FolderBrowser {
   index: number;
   // A plain folder will do, so the folder shown can itself be picked.
   picksAny: boolean;
+  // Files are listed too, and picking one is the answer (dotfiles shown).
+  files?: boolean;
 }
 
-function browserItems(b: FolderBrowser): { text: string; dir: string | null; up?: boolean }[] {
+function browserItems(b: FolderBrowser): { text: string; dir: string | null; up?: boolean; file?: string }[] {
   const child = (name: string) => (b.dir === "/" ? `/${name}` : `${b.dir.replace(/\/+$/, "")}/${name}`);
   return [
     { text: "..", dir: parentDir(b.dir), up: true },
     ...(b.picksAny ? [{ text: `✓ ${editor.t("repo.use_this_folder")}`, dir: null }] : []),
-    ...b.entries.map((e) => ({ text: `${`${e.name}/`.padEnd(40)} ${e.git ? "git" : ""}`, dir: child(e.name) })),
+    ...b.entries.map((e) =>
+      e.file
+        ? { text: e.name, dir: null, file: child(e.name) }
+        : { text: `${`${e.name}/`.padEnd(40)} ${e.git ? "git" : ""}`, dir: child(e.name) }
+    ),
   ];
 }
 
@@ -10300,7 +10383,7 @@ function browserRows(b: FolderBrowser, listKey: string): WidgetSpec[] {
       visibleRows: 8,
       key: listKey,
     });
-  const hint = editor.t(b.picksAny ? "repo.browse_hint_any" : "repo.browse_hint");
+  const hint = editor.t(b.files ? "repo.browse_hint_file" : b.picksAny ? "repo.browse_hint_any" : "repo.browse_hint");
   return [row(spacer(2), labeledSection({ label: title, child: col(body, label(hint, { style: NOTE_STYLE })) }))];
 }
 
@@ -10311,7 +10394,7 @@ async function browserGo(b: FolderBrowser, dir: string, render: () => void): Pro
   b.error = "";
   b.index = 0;
   render();
-  const r = await listMachineDir(b.machineKey, dir);
+  const r = await listMachineDir(b.machineKey, dir, !!b.files);
   if (b.dir !== dir) return;
   b.entries = r.entries;
   b.error = r.error;
@@ -10329,6 +10412,7 @@ function browserActivate(b: FolderBrowser, index: number, render: () => void): s
     void browserGo(b, item.dir!, render);
     return null;
   }
+  if (item.file) return item.file;
   if (item.dir === null) return b.dir;
   const e = b.entries.find((x) => item.dir!.endsWith(`/${x.name}`));
   if (e?.git) return item.dir;
@@ -10621,7 +10705,7 @@ function handlePlaceEvent(a: PlaceAsk, host: PlaceHost, e: WidgetEvt): boolean {
 // Repositories dialog (§4.11–§4.16)
 // =============================================================================
 
-interface RepoBrowseEntry { name: string; git: boolean }
+interface RepoBrowseEntry { name: string; git: boolean; file?: boolean }
 
 interface RepoDialogState {
   // Back to the launch form when done (its state is `suspendedForm`).
@@ -10655,7 +10739,7 @@ interface RepoDialogState {
   checkToken: number;
   cloneConfirm: boolean;
   cloning: { handle: ProcessHandle<SpawnResult> } | null;
-  browse: { dir: string; entries: RepoBrowseEntry[]; loading: boolean; error: string; index: number } | null;
+  browse: FolderBrowser | null;
   // Adding a folder that is a clone: whether its `origin` becomes the
   // project's remote, or it stays on this machine only.
   useOrigin: boolean;
@@ -10849,36 +10933,7 @@ function repoMachineOptions(d: RepoDialogState): { key: string; label: string }[
 
 // Browse… (§4.13): the folders of one directory on the selected machine.
 function repoBrowseRows(d: RepoDialogState): WidgetSpec[] {
-  const b = d.browse;
-  if (!b) return [];
-  const key = d.machineKey;
-  const title = `${machineKeyLabel(key)} : ${key === "local" ? tildePath(expandHome(b.dir)) : b.dir}`;
-  let body: WidgetSpec;
-  if (b.loading) {
-    body = label(editor.t("repo.loading"), { style: NOTE_STYLE });
-  } else if (b.error) {
-    body = label(`✗ ${b.error}`, { style: { fg: "diagnostic.error_fg" }, wrap: true });
-  } else {
-    // Where a plain folder will do, the folder being shown can itself be
-    // picked: a row under `..` says so.
-    const here = browsePicksAnyFolder(d) ? [`✓ ${editor.t("repo.use_this_folder")}`] : [];
-    const items = ["..", ...here, ...b.entries.map((e) => `${e.name}/`)];
-    const tags = ["", ...here.map(() => ""), ...b.entries.map((e) => (e.git ? "git" : ""))];
-    body = list({
-      items: items.map((t, i) => ({ text: `${t.padEnd(40)} ${tags[i]}` })),
-      selectedIndex: Math.min(b.index, items.length - 1),
-      // A constant height: the list keeps the size it first rendered at, so
-      // one sized to a short folder would clip the next, longer one.
-      visibleRows: 8,
-      key: "repo_browse_list",
-    });
-  }
-  return [
-    row(spacer(2), labeledSection({
-      label: title,
-      child: col(body, label(editor.t(browsePicksAnyFolder(d) ? "repo.browse_hint_any" : "repo.browse_hint"), { style: NOTE_STYLE })),
-    })),
-  ];
+  return d.browse ? browserRows(d.browse, "repo_browse_list") : [];
 }
 
 function buildRepoDialogSpec(): WidgetSpec {
@@ -11324,17 +11379,28 @@ function scheduleRepoUrlCheck(): void {
 
 // The folders of `dir` on the dialog's machine, with a `git` tag on those that
 // hold a `.git`. Local reads the directory; a remote lists it over ssh.
-async function listMachineDir(machineKey: string, dir: string): Promise<{ entries: RepoBrowseEntry[]; error: string }> {
+async function listMachineDir(
+  machineKey: string,
+  dir: string,
+  files = false,
+): Promise<{ entries: RepoBrowseEntry[]; error: string }> {
   if (machineKey === "local") {
     const base = expandHome(dir);
     const out: RepoBrowseEntry[] = [];
+    const found: RepoBrowseEntry[] = [];
     for (const e of editor.readDir(editor.localPath(base))) {
-      if (!e.is_dir || e.name.startsWith(".")) continue;
+      // Picking a file shows dotfiles: the key lives in `~/.ssh`.
+      if (!files && e.name.startsWith(".")) continue;
+      if (!e.is_dir) {
+        if (files) found.push({ name: e.name, git: false, file: true });
+        continue;
+      }
       const p = editor.pathJoin(base, e.name);
       out.push({ name: e.name, git: editor.fileExists(editor.localPath(editor.pathJoin(p, ".git"))) });
     }
     out.sort((a, b) => a.name.localeCompare(b.name));
-    return { entries: out, error: "" };
+    found.sort((a, b) => a.name.localeCompare(b.name));
+    return { entries: [...out, ...found], error: "" };
   }
   const script = [
     `cd ${remoteShellPath(dir)} 2>/dev/null || { echo NODIR; exit 0; }`,
@@ -11363,12 +11429,18 @@ function parentDir(dir: string): string {
 async function browseTo(dir: string): Promise<void> {
   const d = repoDialog;
   if (!d) return;
-  d.browse = { dir, entries: [], loading: true, error: "", index: 0 };
-  renderRepoDialog();
-  const r = await listMachineDir(d.machineKey, dir);
-  if (repoDialog !== d || !d.browse || d.browse.dir !== dir) return;
-  d.browse = { dir, entries: r.entries, loading: false, error: r.error, index: 0 };
-  renderRepoDialog();
+  const b: FolderBrowser = {
+    machineKey: d.machineKey,
+    dir,
+    entries: [],
+    loading: true,
+    error: "",
+    index: 0,
+    picksAny: browsePicksAnyFolder(d),
+  };
+  d.browse = b;
+  await browserGo(b, dir, () => renderRepoDialog());
+  if (repoDialog !== d || d.browse !== b || b.dir !== dir) return;
   repoPanel?.setFocusKey("repo_browse_list");
   d.focus = "repo_browse_list";
 }
@@ -11409,22 +11481,10 @@ function pickBrowsed(dir: string): void {
 function browseActivate(index: number): void {
   const d = repoDialog;
   const b = d?.browse;
-  if (!d || !b || b.loading) return;
-  if (index === 0) {
-    void browseTo(parentDir(b.dir));
-    return;
-  }
-  const here = browsePicksAnyFolder(d);
-  if (here && index === 1) {
-    pickBrowsed(b.dir);
-    return;
-  }
-  const e = b.entries[index - (here ? 2 : 1)];
-  if (!e) return;
-  const next = b.dir === "/" ? `/${e.name}` : `${b.dir.replace(/\/+$/, "")}/${e.name}`;
-  // A repository is what is being looked for: picking one ends the browse.
-  if (e.git) pickBrowsed(next);
-  else void browseTo(next);
+  if (!d || !b) return;
+  // A repository (or, where one will do, the folder shown) ends the browse.
+  const picked = browserActivate(b, index, () => renderRepoDialog());
+  if (picked) pickBrowsed(picked);
 }
 
 // ── Clone (§4.15) ────────────────────────────────────────────────────────────

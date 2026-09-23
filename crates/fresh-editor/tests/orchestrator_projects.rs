@@ -367,7 +367,7 @@ fn plain_folder_project_lists_its_path_and_opens_in_place() {
     if !pty_available() {
         return;
     }
-    press(&mut w.h, "[   Launch");
+    press(&mut w.h, "[ Launch ]");
     launched(&mut w.h);
 }
 
@@ -386,7 +386,7 @@ fn launch_asks_where_the_project_is_and_clones_it() {
     choose_terminal_agent(&mut w.h);
     wait_for(&mut w.h, "isn't on Local yet — Launch will ask");
 
-    press(&mut w.h, "[   Launch");
+    press(&mut w.h, "[ Launch ]");
     wait_for(&mut w.h, "Where is it?");
     let s = screen(&w.h);
     assert!(s.contains("(•) Clone it"), "{s}");
@@ -431,7 +431,7 @@ fn launch_asks_and_uses_a_folder_that_is_already_there() {
     press(&mut w.h, "[ New workspace here");
     wait_for(&mut w.h, FORM_TITLE);
     choose_terminal_agent(&mut w.h);
-    press(&mut w.h, "[   Launch");
+    press(&mut w.h, "[ Launch ]");
     wait_for(&mut w.h, "Where is it?");
     stop(&mut w.h, "Where:");
     key(&mut w.h, KeyCode::Right);
@@ -449,7 +449,7 @@ fn launch_asks_and_uses_a_folder_that_is_already_there() {
     if !pty_available() {
         return;
     }
-    press(&mut w.h, "[   Launch");
+    press(&mut w.h, "[ Launch ]");
     wait_for(&mut w.h, "Where is it?");
     stop(&mut w.h, "Where:");
     key(&mut w.h, KeyCode::Right);

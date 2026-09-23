@@ -1806,7 +1806,7 @@ fn dock_new_session_in_uncommitted_repo_surfaces_real_git_error() {
     // field count. Tab also closes any open path-completion popup along the
     // way. Enter then submits (create + visit).
     let mut guard = 0;
-    while !h.screen_to_string().contains("▸ [   Launch") {
+    while !h.screen_to_string().contains("▸ [ Launch ]") {
         h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
         h.render().unwrap();
         guard += 1;
@@ -2257,13 +2257,13 @@ fn create_and_visit_dives_into_the_new_workspace() {
     // Accept the path completion with Tab so the popup closes and the
     // buttons are no longer obscured by it.
     h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("[   Launch"))
+    h.wait_until(|h| h.screen_to_string().contains("[ Launch ]"))
         .unwrap();
 
     // Submit by clicking "Launch" — the focus-following action (its
     // background-only counterpart is "Launch in background").
     let (col, btn_row) = h
-        .find_text_on_screen("[   Launch")
+        .find_text_on_screen("[ Launch ]")
         .expect("Launch button should be visible");
     h.mouse_click(col + 4, btn_row).unwrap();
 
