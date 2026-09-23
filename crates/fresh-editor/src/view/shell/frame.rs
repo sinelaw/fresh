@@ -994,9 +994,11 @@ pub fn region_key(r: HostRegion) -> fresh_ui::Key {
 /// the display list instead would lose exactly the regions that paint nothing
 /// — a hidden row, a menu bar with no labels — and lose them silently.
 ///
-/// [`region_rects`] is the standalone form, for tests and for callers with no
-/// `Ui` of their own; this is the form `render` uses, so the frame is laid out
-/// once and both the rectangles and the painted output come from it.
+/// [`region_rects`] is the standalone form: it builds its own `Ui` and lays the
+/// frame out to answer. Nothing in the editor does that — `render` uses this
+/// form, so the frame is laid out once and both the rectangles and the painted
+/// output come from it. `region_rects` exists for tests, which have no laid-out
+/// `Ui` to ask.
 pub fn regions_of(
     ui: &fresh_ui::Ui<UiMsg>,
     size: ratatui::layout::Rect,
@@ -1011,6 +1013,12 @@ pub fn regions_of(
         .collect()
 }
 
+/// Lay a `Frame` out in a throwaway `Ui` and report every region's rectangle.
+///
+/// **Tests only.** A second layout is exactly what
+/// *Geometry is produced by layout* forbids in the editor; it is a fair
+/// question for a test, which has no frame in flight to read. Production code
+/// wants [`regions_of`] on the `Ui` it already laid out.
 pub fn region_rects(
     f: Frame,
     size: ratatui::layout::Rect,

@@ -12,9 +12,8 @@
 //!   to plugins after an event applies.
 //!
 //! The "scroll/viewport event" handlers (handle_scroll_event,
-//! handle_set_viewport_event, handle_recenter_event) and the small
-//! `invalidate_layouts_for_buffer` helper now live on `impl Window`
-//! since they're entirely per-window concerns.
+//! handle_set_viewport_event, handle_recenter_event) live on
+//! `impl Window` since they're entirely per-window concerns.
 
 use lsp_types::TextDocumentContentChangeEvent;
 
@@ -198,13 +197,12 @@ impl Editor {
                 .apply_event_to_keyed_buffer(active_buf, split_id, event);
         }
 
-        // 1c. Invalidate layouts for all views of this buffer after content changes
+        // 1c. Refresh the per-buffer derived state after content changes
         // Note: recovery_pending is set automatically by the buffer on edits
         match event {
             Event::Insert { .. } | Event::Delete { .. } | Event::BulkEdit { .. } => {
                 let buf = self.active_buffer();
                 let win = self.active_window_mut();
-                win.invalidate_layouts_for_buffer(buf);
                 win.prune_orphaned_folds(buf);
                 win.schedule_semantic_tokens_full_refresh(buf);
                 win.schedule_folding_ranges_refresh(buf);
@@ -216,7 +214,6 @@ impl Editor {
                 if has_edits {
                     let buf = self.active_buffer();
                     let win = self.active_window_mut();
-                    win.invalidate_layouts_for_buffer(buf);
                     win.prune_orphaned_folds(buf);
                     win.schedule_semantic_tokens_full_refresh(buf);
                     win.schedule_folding_ranges_refresh(buf);
@@ -701,10 +698,8 @@ impl Editor {
             displaced_markers,
         };
 
-        // Post-processing (layout invalidation, split cursor sync, etc.)
-        let buf = self.active_buffer();
+        // Post-processing (split cursor sync, etc.)
         let win = self.active_window_mut();
-        win.invalidate_layouts_for_buffer(buf);
         win.adjust_other_split_cursors_for_event(&bulk_edit);
         // Note: Do NOT clear search overlays - markers track through edits for F3/Shift+F3
 

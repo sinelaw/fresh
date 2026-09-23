@@ -4751,21 +4751,6 @@ impl Window {
         merged
     }
 
-    /// Invalidate cached layouts and view transforms for every split
-    /// that displays `buffer_id`. Pure window-state mutation: walks
-    /// the window's split tree and view-state map.
-    pub fn invalidate_layouts_for_buffer(&mut self, buffer_id: BufferId) {
-        let Some((mgr, vs_map)) = self.buffers.splits_mut() else {
-            return;
-        };
-        let splits_for_buffer = mgr.splits_for_buffer(buffer_id);
-        for split_id in splits_for_buffer {
-            if let Some(view_state) = vs_map.get_mut(&split_id) {
-                view_state.invalidate_layout();
-            }
-        }
-    }
-
     /// Adjust cursors in other splits that share the same buffer after
     /// an edit. The split that originated the event already had its
     /// cursors moved by `BufferState::apply`; this method walks every
