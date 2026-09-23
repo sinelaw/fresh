@@ -286,7 +286,7 @@ function buildDiscoverSpec(): WidgetSpec {
   body.push(row(spacer(2), labeledSection({ label: editor.t("discover.sessions"), child: col(...results) })));
   body.push(
     spacer(0),
-    label(`  ${"─".repeat(400)}`, { style: { fg: "ui.menu_disabled_fg" } }),
+    label("─".repeat(400), { style: { fg: "ui.menu_disabled_fg" } }),
     spacer(0),
     row(
       flexSpacer(),

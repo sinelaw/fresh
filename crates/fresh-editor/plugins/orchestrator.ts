@@ -10057,6 +10057,12 @@ editor.defineMode(MACHINE_DIALOG_MODE, MACHINE_DIALOG_MODE_BINDINGS, true, true)
 
 registerHandler("orchestrator_machine_enter", () => {
   if (!machineDialog || !machinePanel) return;
+  // The Host field's suggestions are up: Enter is theirs — it takes the
+  // highlighted host, or closes the list.
+  if (machineHostSuggesting && machineFocusKey === "machine-target") {
+    machinePanel.command(widgetKey("Enter"));
+    return;
+  }
   // Enter saves from any field; on a button it is that button.
   if (machineFocusKey === "machine-cancel") return closeMachineDialog(true);
   if (machineFocusKey === "machine-test") return runMachineTest();
@@ -10088,6 +10094,27 @@ function removeMachineFromDialog(): void {
   closeMachineDialog(true);
 }
 
+// The Host field offers the `~/.ssh/config` hosts not yet added as machines,
+// narrowed by what is typed — the way the Machines dialog's hint says to add
+// one. Nothing is offered once the field names a host exactly.
+function suggestMachineHosts(): void {
+  const d = machineDialog;
+  if (!d || !machinePanel || d.kind !== "ssh" || d.id !== null) return;
+  const typed = d.target.value.trim().toLowerCase();
+  const items = unaddedSshHosts()
+    .map((h) => h.alias)
+    .filter((a) => a.toLowerCase().includes(typed) && a.toLowerCase() !== typed);
+  setMachineHostSuggestions(items);
+}
+
+// Whether the Host field's suggestion list is up, for Enter.
+let machineHostSuggesting = false;
+
+function setMachineHostSuggestions(items: string[]): void {
+  machineHostSuggesting = items.length > 0;
+  machinePanel?.setCompletions("machine-target", items);
+}
+
 function handleMachineDialogEvent(e: WidgetEvt): void {
   const d = machineDialog!;
   if (e.event_type === "cancel") {
@@ -10098,6 +10125,28 @@ function handleMachineDialogEvent(e: WidgetEvt): void {
   }
   if (e.event_type === "focus") {
     if (typeof e.widget_key === "string" && e.widget_key.length > 0) machineFocusKey = e.widget_key;
+    if (e.widget_key === "machine-target") suggestMachineHosts();
+    else setMachineHostSuggestions([]);
+    return;
+  }
+  if (e.event_type === "completion_accept" && e.widget_key === "machine-target") {
+    const value = ((e.payload ?? {}) as Record<string, unknown>).value;
+    if (typeof value !== "string") return;
+    d.target.value = value;
+    d.target.cursor = utf8Len(value);
+    machinePanel?.setValue("machine-target", value, d.target.cursor);
+    // A config host names itself: an empty Name takes the alias.
+    if (!d.name.value.trim()) {
+      d.name.value = value;
+      d.name.cursor = utf8Len(value);
+      machinePanel?.setValue("machine-name", value, d.name.cursor);
+    }
+    setMachineHostSuggestions([]);
+    renderMachineDialog();
+    return;
+  }
+  if (e.event_type === "completion_dismiss" && e.widget_key === "machine-target") {
+    machineHostSuggesting = false;
     return;
   }
   if (e.event_type === "change" && e.widget_key === "machine-kind") {
@@ -10125,7 +10174,10 @@ function handleMachineDialogEvent(e: WidgetEvt): void {
     if (slot) {
       applyTextChange(slot, e.payload);
       // Host decides whether a "Resolves to" row shows.
-      if (slot === d.target) renderMachineDialog();
+      if (slot === d.target) {
+        suggestMachineHosts();
+        renderMachineDialog();
+      }
       // An edit outdates the test's answer and any validation error.
       if (d.test.state !== "idle" || d.error) {
         d.test = { state: "idle", summary: "", detail: "" };
@@ -12651,7 +12703,7 @@ function pickMachineOption(key: string): void {
   if (idx >= 0) applyMachinePick(idx);
 }
 
-// The Machine control, without its note: it shares a row with Project.
+// The Machine control: the first row of WHERE, with `+ Add machine…` beside it.
 function machineDropdown(): WidgetSpec {
   const opts = machineOptions();
   // Machines can be deleted while the form is open, so the stored pick is
@@ -12659,21 +12711,23 @@ function machineDropdown(): WidgetSpec {
   if (form!.machinePick >= opts.length || form!.machinePick < 0) applyMachinePick(0);
   return dropdown(opts.map((o) => o.label), {
     selectedIndex: form!.machinePick,
-    label: editor.t("form.machine"),
+    label: formLabel("form.machine"),
+    labelWidth: FORM_LABEL_W,
     key: "machine",
   });
 }
 
-// The row under Project / Machine: `+ Add machine…`, then what a non-local
-// machine resolves to (`user@host:port`, a pod); Local needs no gloss. The
-// button is not beside the Machine control because a narrow form clips it
-// there, and a clipped button still takes a Tab stop.
-function machineNoteRows(): WidgetSpec[] {
+// The Machine row — the control, then `+ Add machine…` right beside it — and
+// under it what a non-local machine resolves to (`user@host:port`, a pod);
+// Local needs no gloss.
+function machineRows(): WidgetSpec[] {
   const o = machineOptions()[form!.machinePick];
   const note = !o || o.kind === "local" ? "" : machineOptionNote(o);
-  const add = actionButton(`+ ${editor.t("machine.add")}`, "form_add_machine");
-  if (!note) return [fieldColumnRow(add)];
-  return [fieldColumnRow(add, spacer(2), label(`↳ ${noteText(note)}`, { style: NOTE_STYLE }))];
+  const out: WidgetSpec[] = [
+    row(machineDropdown(), spacer(3), actionButton(`+ ${editor.t("machine.add")}`, "form_add_machine")),
+  ];
+  if (note) out.push(label(noteText(note), { labelWidth: FORM_LABEL_W, style: NOTE_STYLE }));
+  return out;
 }
 
 // Agent selector: a single dropdown of the preset labels (terminal, the
@@ -13246,11 +13300,11 @@ function gap(): WidgetSpec[] {
 // The rule above a dialog's buttons, inset like the section rules so it
 // keeps the same margin from the ring on both sides.
 function footerRule(): WidgetSpec {
-  return label(`  ${"─".repeat(400)}`, { style: { fg: "ui.menu_disabled_fg" } });
+  return label("─".repeat(400), { style: { fg: "ui.menu_disabled_fg" } });
 }
 
 function sectionHeader(key: string): WidgetSpec {
-  return label(`  ${editor.t(key)} ${"─".repeat(400)}`, { style: SECTION_STYLE });
+  return label(`${editor.t(key)} ${"─".repeat(400)}`, { style: SECTION_STYLE });
 }
 
 // The mode switch: a new workspace, or here. Both options are always on
@@ -13292,7 +13346,7 @@ function promptBox(f: NewSessionForm): WidgetSpec {
   });
   // Inset from the dialog's edges: a margin on the left, and a width that
   // leaves the same on the right (a section otherwise fills its row).
-  return row(spacer(3), labeledSection({ child: spec }));
+  return row(spacer(2), labeledSection({ child: spec }));
 }
 
 // The agent and its own switches on one row; `custom…` adds the command row
@@ -13360,17 +13414,13 @@ function planWorktreeText(branch: string, base: string, name: string): string {
 // will do to git.
 function whereFields(f: NewSessionForm): WidgetSpec[] {
   const out: WidgetSpec[] = [
-    row(
-      dropdown(projectOptionLabels(), {
-        selectedIndex: projectPickIndex(f),
-        label: formLabel("form.project"),
-        labelWidth: FORM_LABEL_W,
-        key: "project",
-      }),
-      spacer(5),
-      machineDropdown(),
-    ),
-    ...machineNoteRows(),
+    ...machineRows(),
+    dropdown(projectOptionLabels(), {
+      selectedIndex: projectPickIndex(f),
+      label: formLabel("form.project"),
+      labelWidth: FORM_LABEL_W,
+      key: "project",
+    }),
   ];
   const r = formRepo(f);
   if (r) out.push(...repoWhereRows(f, r));
@@ -13497,45 +13547,35 @@ function gitSectionShown(f: NewSessionForm): boolean {
   return f.target === "new" && f.detailsOpen && gitSectionFields(f).length > 0;
 }
 
-// The footer: a rule, the actions flush right (the background launch as a
-// quiet link beside the primary button), then the key hints — or the last
-// error in their place.
+// The footer: a rule, then the actions flush right, each with its key beside
+// it — and the last error under them, when there is one.
 function formFooterRows(creating: boolean): WidgetSpec[] {
   if (!form) return [];
   if (creating && form.place) return placeFooterRows(form, form.place);
   const ok = formIsSubmittable();
+  // One row: each button with its key beside it, the primary last.
   const actions = creating
     ? endRow(
-      button(editor.t("form.btn_cancel_short"), { key: "cancel" }),
-      spacer(5),
-      button(editor.t("form.btn_launch_bg"), { key: "create-bg", disabled: !ok }),
-      spacer(5),
-      button(`  ${editor.t("form.btn_launch")}  `, { intent: "primary", key: "create-visit", disabled: !ok }),
+      withAccel(button(editor.t("form.btn_cancel_short"), { key: "cancel" }), "Esc"),
       spacer(3),
+      withAccel(button(editor.t("form.btn_launch_bg"), { key: "create-bg", disabled: !ok }), "Alt+⏎"),
+      spacer(3),
+      withAccel(button(editor.t("form.btn_launch"), { intent: "primary", key: "create-visit", disabled: !ok }), "Ctrl+⏎"),
+      spacer(2),
     )
     : endRow(
-      button(editor.t("form.btn_cancel_short"), { key: "cancel" }),
-      spacer(5),
-      button(`  ${editor.t("run_agent.btn_run")}  `, { intent: "primary", key: "create-visit", disabled: !ok }),
+      withAccel(button(editor.t("form.btn_cancel_short"), { key: "cancel" }), "Esc"),
       spacer(3),
+      withAccel(button(editor.t("run_agent.btn_run"), { intent: "primary", key: "create-visit", disabled: !ok }), "Ctrl+⏎"),
+      spacer(2),
     );
-  const hints = creating
-    ? [
-      { keys: "Ctrl+⏎", label: editor.t("hint.launch") },
-      { keys: "Alt+⏎", label: editor.t("hint.background") },
-      { keys: "Esc", label: editor.t("hint.close") },
-    ]
-    : [
-      { keys: "Ctrl+⏎", label: editor.t("hint.run") },
-      { keys: "Esc", label: editor.t("hint.close") },
-    ];
   const tail = form.lastError
-    ? label(editor.t("form.error_prefix") + form.lastError, {
+    ? [...gap(), label(editor.t("form.error_prefix") + form.lastError, {
       style: { fg: "diagnostic.error_fg", bold: true },
       wrap: true,
-    })
-    : row(flexSpacer(), hintBar(hints), flexSpacer());
-  return [footerRule(), ...gap(), actions, ...gap(), tail];
+    })]
+    : [];
+  return [footerRule(), ...gap(), actions, ...tail, ...gap()];
 }
 
 // Launch asks where the project is on this machine (§4.17): the question
