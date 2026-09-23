@@ -149,6 +149,7 @@ export function discoverVerbFor(
   // A row that records another tool's session (a Herdr pane running Claude)
   // resumes that one; an empty id there means "the newest in the directory".
   const resume = resumeArgv(agent, session.agentSessionId ?? session.id);
+  if (!resume && session.openable && session.cwd) return { kind: "open", argv: [] };
   if (!resume) return { kind: "none", why: t("discover.no_resume_unknown", { agent }) };
   return { kind: "resume", argv: resume.argv, exact: resume.exact };
 }

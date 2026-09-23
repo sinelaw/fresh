@@ -6,6 +6,7 @@ import {
   discoverRowAction,
   discoverRowEntry,
   discoverRowsFrom,
+  discoverVerbFor,
   DISCOVER_COL_GAP,
   DISCOVER_PROBLEMS_KEY,
   type DiscoverRow,
@@ -186,6 +187,18 @@ const proj = (label: string, id = label) => ({ kind: "repo" as const, id: `repo:
   eq(actionOf("s3"), null, "a session with no way back does not");
   eq(rows.filter((r) => discoverRowAction(r, t) !== null).length, 2,
     "and neither does a heading or a problem line");
+}
+
+{
+  // An Orca worktree: resumes its recorded agent, else opens the folder.
+  const wt = { id: "r::/w", tool: "orca", cwd: "/w", openable: true };
+  eq(discoverVerbFor(session({ ...wt, agent: "claude", agentSessionId: "abc" }), resumeArgv, t),
+    { kind: "resume", argv: ["claude", "--resume", "abc"], exact: true },
+    "an openable row with a known agent resumes it");
+  eq(discoverVerbFor(session({ ...wt, agent: "grok" }), resumeArgv, t).kind, "open",
+    "an openable row whose agent cannot resume opens the folder");
+  eq(discoverVerbFor(session({ id: "x", tool: "herdr", cwd: "/w", agent: "grok" }), resumeArgv, t).kind,
+    "none", "a row that is not openable still says why it cannot resume");
 }
 
 console.log(failures === 0 ? "\nAll discovery tests passed." : `\n${failures} failed.`);
