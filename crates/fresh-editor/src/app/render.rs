@@ -3581,17 +3581,19 @@ impl Editor {
             // browser popup took the row. Nothing to record.
             return;
         }
-        // The retained tree and a fresh one must still lay the frame out
-        // alike: `render` goes through the `Ui` that persists across frames,
-        // while `status_bar_area_now` builds a throwaway one, and stale
-        // retained state skewing layout is exactly the failure a retained tree
-        // makes possible.
-        #[cfg(debug_assertions)]
-        debug_assert_eq!(
-            self.status_bar_area_now(),
-            Some(area),
-            "the retained tree and a fresh one must lay the frame out alike"
-        );
+        // **There is no second side to check here, and there must not be.**
+        // This used to assert `status_bar_area_now() == Some(area)` under the
+        // claim that "the retained tree and a fresh one must lay the frame out
+        // alike". Neither side was fresh: `area` is
+        // `frame::regions_of(ui, size)` on `self.shell_ui`, and
+        // `status_bar_area_now` resolves through `shell_region_now` to
+        // `frame::regions_of(ui, size)` on the same retained `Ui` — whose own
+        // doc forbids building a throwaway one. It compared one read of the
+        // tree against another read of the same tree.
+        //
+        // The property is real and worth holding; the place for it is a test,
+        // where laying the frame out twice is a fair question. See
+        // `frame::tests::a_retained_tree_lays_the_frame_out_like_a_fresh_one`.
 
         let Some(bar) = self.shell_frame_status_bar.clone() else {
             return;
