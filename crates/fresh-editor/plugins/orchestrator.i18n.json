@@ -89,7 +89,6 @@
     "dock.hint_select": "изберѝ",
     "dock.hint_switch": "превключѝ",
     "dock.menu_discover": "Импорт на сесии…",
-    "dock.menu_hide": "Скриване на дока",
     "dock.menu_label": "проект",
     "dock.menu_machines": "Машини…",
     "dock.menu_move_label": "премести към",
@@ -516,9 +515,7 @@
     "dock.menu_h_manage": "Управление",
     "dock.menu_h_view": "Изглед",
     "dock.menu_h_show": "Показване",
-    "dock.menu_h_project": "Проект",
-    "dock.menu_actions": "Действия",
-    "dock.menu_settings": "Настройки"
+    "dock.menu_h_project": "Проект"
   },
   "cs": {
     "backend.devcontainer": "Devcontainer",
@@ -610,7 +607,6 @@
     "dock.hint_select": "označit",
     "dock.hint_switch": "přepnout",
     "dock.menu_discover": "Import relací…",
-    "dock.menu_hide": "Skrýt dok",
     "dock.menu_label": "projekt",
     "dock.menu_machines": "Stroje…",
     "dock.menu_move_label": "přesunout do",
@@ -1037,9 +1033,7 @@
     "dock.menu_h_manage": "Spravovat",
     "dock.menu_h_view": "Zobrazení",
     "dock.menu_h_show": "Zobrazit",
-    "dock.menu_h_project": "Projekt",
-    "dock.menu_actions": "Akce",
-    "dock.menu_settings": "Nastavení"
+    "dock.menu_h_project": "Projekt"
   },
   "de": {
     "backend.devcontainer": "Devcontainer",
@@ -1131,7 +1125,6 @@
     "dock.hint_select": "auswählen",
     "dock.hint_switch": "wechseln",
     "dock.menu_discover": "Sitzungen importieren…",
-    "dock.menu_hide": "Dock ausblenden",
     "dock.menu_label": "Projekt",
     "dock.menu_machines": "Maschinen…",
     "dock.menu_move_label": "verschieben",
@@ -1558,9 +1551,7 @@
     "dock.menu_h_manage": "Verwalten",
     "dock.menu_h_view": "Ansicht",
     "dock.menu_h_show": "Anzeigen",
-    "dock.menu_h_project": "Projekt",
-    "dock.menu_actions": "Aktionen",
-    "dock.menu_settings": "Einstellungen"
+    "dock.menu_h_project": "Projekt"
   },
   "en": {
     "backend.devcontainer": "Devcontainer",
@@ -1652,7 +1643,6 @@
     "dock.hint_select": "select",
     "dock.hint_switch": "switch",
     "dock.menu_discover": "Import sessions…",
-    "dock.menu_hide": "Hide dock",
     "dock.menu_label": "project",
     "dock.menu_machines": "Machines…",
     "dock.menu_move_label": "move to",
@@ -2079,9 +2069,7 @@
     "dock.menu_h_manage": "Manage",
     "dock.menu_h_view": "View",
     "dock.menu_h_show": "Show",
-    "dock.menu_h_project": "Project",
-    "dock.menu_actions": "Actions",
-    "dock.menu_settings": "Settings"
+    "dock.menu_h_project": "Project"
   },
   "es": {
     "backend.devcontainer": "Devcontainer",
@@ -2173,7 +2161,6 @@
     "dock.hint_select": "seleccionar",
     "dock.hint_switch": "cambiar",
     "dock.menu_discover": "Importar sesiones…",
-    "dock.menu_hide": "Ocultar dock",
     "dock.menu_label": "proyecto",
     "dock.menu_machines": "Máquinas…",
     "dock.menu_move_label": "mover a",
@@ -2600,9 +2587,7 @@
     "dock.menu_h_manage": "Gestionar",
     "dock.menu_h_view": "Vista",
     "dock.menu_h_show": "Mostrar",
-    "dock.menu_h_project": "Proyecto",
-    "dock.menu_actions": "Acciones",
-    "dock.menu_settings": "Ajustes"
+    "dock.menu_h_project": "Proyecto"
   },
   "fr": {
     "backend.devcontainer": "Devcontainer",
@@ -2694,7 +2679,6 @@
     "dock.hint_select": "sélectionner",
     "dock.hint_switch": "changer",
     "dock.menu_discover": "Importer des sessions…",
-    "dock.menu_hide": "Masquer le dock",
     "dock.menu_label": "projet",
     "dock.menu_machines": "Machines…",
     "dock.menu_move_label": "déplacer vers",
@@ -3121,9 +3105,7 @@
     "dock.menu_h_manage": "Gérer",
     "dock.menu_h_view": "Affichage",
     "dock.menu_h_show": "Afficher",
-    "dock.menu_h_project": "Projet",
-    "dock.menu_actions": "Actions",
-    "dock.menu_settings": "Réglages"
+    "dock.menu_h_project": "Projet"
   },
   "it": {
     "backend.devcontainer": "Devcontainer",
@@ -3215,7 +3197,6 @@
     "dock.hint_select": "seleziona",
     "dock.hint_switch": "cambia",
     "dock.menu_discover": "Importa sessioni…",
-    "dock.menu_hide": "Nascondi dock",
     "dock.menu_label": "progetto",
     "dock.menu_machines": "Macchine…",
     "dock.menu_move_label": "sposta in",
@@ -3642,9 +3623,7 @@
     "dock.menu_h_manage": "Gestisci",
     "dock.menu_h_view": "Vista",
     "dock.menu_h_show": "Mostra",
-    "dock.menu_h_project": "Progetto",
-    "dock.menu_actions": "Azioni",
-    "dock.menu_settings": "Impostazioni"
+    "dock.menu_h_project": "Progetto"
   },
   "ja": {
     "backend.devcontainer": "Devcontainer",
@@ -3736,7 +3715,6 @@
     "dock.hint_select": "選ぶ",
     "dock.hint_switch": "切り替え",
     "dock.menu_discover": "セッションをインポート…",
-    "dock.menu_hide": "ドックを隠す",
     "dock.menu_label": "プロジェクト",
     "dock.menu_machines": "マシン…",
     "dock.menu_move_label": "移動先",
@@ -4163,9 +4141,7 @@
     "dock.menu_h_manage": "管理",
     "dock.menu_h_view": "表示",
     "dock.menu_h_show": "表示対象",
-    "dock.menu_h_project": "プロジェクト",
-    "dock.menu_actions": "操作",
-    "dock.menu_settings": "設定"
+    "dock.menu_h_project": "プロジェクト"
   },
   "ko": {
     "backend.devcontainer": "Devcontainer",
@@ -4257,7 +4233,6 @@
     "dock.hint_select": "선택",
     "dock.hint_switch": "전환",
     "dock.menu_discover": "세션 가져오기…",
-    "dock.menu_hide": "독 숨기기",
     "dock.menu_label": "프로젝트",
     "dock.menu_machines": "머신…",
     "dock.menu_move_label": "이동",
@@ -4684,9 +4659,7 @@
     "dock.menu_h_manage": "관리",
     "dock.menu_h_view": "보기",
     "dock.menu_h_show": "표시",
-    "dock.menu_h_project": "프로젝트",
-    "dock.menu_actions": "작업",
-    "dock.menu_settings": "설정"
+    "dock.menu_h_project": "프로젝트"
   },
   "pt-BR": {
     "backend.devcontainer": "Devcontainer",
@@ -4778,7 +4751,6 @@
     "dock.hint_select": "selecionar",
     "dock.hint_switch": "alternar",
     "dock.menu_discover": "Importar sessões…",
-    "dock.menu_hide": "Ocultar dock",
     "dock.menu_label": "projeto",
     "dock.menu_machines": "Máquinas…",
     "dock.menu_move_label": "mover para",
@@ -5205,9 +5177,7 @@
     "dock.menu_h_manage": "Gerenciar",
     "dock.menu_h_view": "Visualização",
     "dock.menu_h_show": "Mostrar",
-    "dock.menu_h_project": "Projeto",
-    "dock.menu_actions": "Ações",
-    "dock.menu_settings": "Configurações"
+    "dock.menu_h_project": "Projeto"
   },
   "ru": {
     "backend.devcontainer": "Devcontainer",
@@ -5299,7 +5269,6 @@
     "dock.hint_select": "отметить",
     "dock.hint_switch": "переключить",
     "dock.menu_discover": "Импорт сессий…",
-    "dock.menu_hide": "Скрыть док",
     "dock.menu_label": "проект",
     "dock.menu_machines": "Машины…",
     "dock.menu_move_label": "переместить в",
@@ -5726,9 +5695,7 @@
     "dock.menu_h_manage": "Управление",
     "dock.menu_h_view": "Вид",
     "dock.menu_h_show": "Показывать",
-    "dock.menu_h_project": "Проект",
-    "dock.menu_actions": "Действия",
-    "dock.menu_settings": "Настройки"
+    "dock.menu_h_project": "Проект"
   },
   "th": {
     "backend.devcontainer": "Devcontainer",
@@ -5820,7 +5787,6 @@
     "dock.hint_select": "เลือก",
     "dock.hint_switch": "สลับ",
     "dock.menu_discover": "นำเข้าเซสชัน…",
-    "dock.menu_hide": "ซ่อนด็อก",
     "dock.menu_label": "โปรเจกต์",
     "dock.menu_machines": "เครื่อง…",
     "dock.menu_move_label": "ย้ายไป",
@@ -6247,9 +6213,7 @@
     "dock.menu_h_manage": "จัดการ",
     "dock.menu_h_view": "มุมมอง",
     "dock.menu_h_show": "แสดง",
-    "dock.menu_h_project": "โปรเจกต์",
-    "dock.menu_actions": "การทำงาน",
-    "dock.menu_settings": "การตั้งค่า"
+    "dock.menu_h_project": "โปรเจกต์"
   },
   "uk": {
     "backend.devcontainer": "Devcontainer",
@@ -6341,7 +6305,6 @@
     "dock.hint_select": "вибрати",
     "dock.hint_switch": "перемкнути",
     "dock.menu_discover": "Імпорт сеансів…",
-    "dock.menu_hide": "Сховати док",
     "dock.menu_label": "проєкт",
     "dock.menu_machines": "Машини…",
     "dock.menu_move_label": "перемістити до",
@@ -6768,9 +6731,7 @@
     "dock.menu_h_manage": "Керування",
     "dock.menu_h_view": "Вигляд",
     "dock.menu_h_show": "Показувати",
-    "dock.menu_h_project": "Проєкт",
-    "dock.menu_actions": "Дії",
-    "dock.menu_settings": "Налаштування"
+    "dock.menu_h_project": "Проєкт"
   },
   "vi": {
     "backend.devcontainer": "Devcontainer",
@@ -6862,7 +6823,6 @@
     "dock.hint_select": "lựa chọn",
     "dock.hint_switch": "chuyển",
     "dock.menu_discover": "Nhập phiên…",
-    "dock.menu_hide": "Ẩn dock",
     "dock.menu_label": "dự án",
     "dock.menu_machines": "Máy…",
     "dock.menu_move_label": "chuyển đến",
@@ -7289,9 +7249,7 @@
     "dock.menu_h_manage": "Quản lý",
     "dock.menu_h_view": "Chế độ xem",
     "dock.menu_h_show": "Hiển thị",
-    "dock.menu_h_project": "Dự án",
-    "dock.menu_actions": "Thao tác",
-    "dock.menu_settings": "Cài đặt"
+    "dock.menu_h_project": "Dự án"
   },
   "zh-CN": {
     "backend.devcontainer": "Devcontainer",
@@ -7383,7 +7341,6 @@
     "dock.hint_select": "选中",
     "dock.hint_switch": "切换",
     "dock.menu_discover": "导入会话…",
-    "dock.menu_hide": "隐藏停靠栏",
     "dock.menu_label": "项目",
     "dock.menu_machines": "机器…",
     "dock.menu_move_label": "移动到",
@@ -7810,8 +7767,6 @@
     "dock.menu_h_manage": "管理",
     "dock.menu_h_view": "视图",
     "dock.menu_h_show": "显示",
-    "dock.menu_h_project": "项目",
-    "dock.menu_actions": "操作",
-    "dock.menu_settings": "设置"
+    "dock.menu_h_project": "项目"
   }
 }

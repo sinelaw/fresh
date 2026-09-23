@@ -221,16 +221,18 @@ fn dock_dropdown_swallows_clicks_on_its_own_frame() {
 
 /// **A press outside the Menu closes it**, the way the right-click menu
 /// closes: the Menu is an anchored panel, and an anchored panel spends the
-/// outside press on its dismissal. The press on `+ New` closes the Menu; a
-/// second one opens the New Workspace form.
+/// outside press on its dismissal. A press in the editor closes the Menu;
+/// then `+ New` answers as usual.
 #[test]
 fn dock_menu_closes_on_a_press_outside() {
     let (_tmp, root) = setup_project("alphaproj");
     let mut h = launch(root);
+    // The Menu hangs over the action row, so find `+ New` before it opens.
+    let (ncol, nrow) = pos_of(&h, "+ New");
     open_dock_menu(&mut h);
 
-    let (ncol, nrow) = pos_of(&h, "+ New");
-    h.mouse_click(ncol + 2, nrow).unwrap();
+    // A press in the editor, well clear of the Menu.
+    h.mouse_click(110, 28).unwrap();
     h.wait_until(|h| !h.screen_to_string().contains("New folder…"))
         .unwrap();
 

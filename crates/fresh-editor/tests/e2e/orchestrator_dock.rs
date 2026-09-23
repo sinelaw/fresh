@@ -242,7 +242,8 @@ fn alt_o_toggles_dock_focus_with_visible_indicator() {
     // border can shadow it, then sample its colour on a content row. The
     // default width is responsive, so scan for the glyph rather than
     // hard-coding a column.
-    const ROW: u16 = 6;
+    // Below the Menu, which hangs over the top of the dock.
+    const ROW: u16 = 24;
     let border_col = |h: &EditorTestHarness| -> u16 {
         let cols = h.screen_row_text(0).chars().count() as u16;
         (0..cols)
@@ -302,10 +303,9 @@ fn editor_click_blurs_dock_when_a_header_widget_is_focused() {
     let focused_fg = divider_fg(&h);
 
     // Move keyboard focus off the list onto a header control: Tab from the
-    // list wraps to `[ + New ]`, one more lands on `Menu ▾`. Enter opens its menu
-    // — the user's exact sequence. The menu re-renders the dock; focus must
-    // stay in it, and the subsequent editor click must still blur.
-    h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    // list wraps to the title strip, which is the Menu. Enter opens it — the
+    // user's exact sequence. Focus must stay in the dock, and the subsequent
+    // editor click must still blur.
     h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     h.render().unwrap();
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
@@ -912,11 +912,10 @@ fn dock_enter_on_focused_button_runs_button_action() {
     h.render().unwrap();
     open_dock(&mut h);
 
-    // Focus opens on the sessions tree. Tab wraps to `[ + New ]` (spec-order
-    // first tabbable) and a second lands on `Menu ▾`. Enter must open its menu —
-    // the same thing a click on the glyph does — not dive the tree.
+    // Focus opens on the sessions tree. Tab wraps to the title strip — the
+    // Menu, spec-order first tabbable. Enter must open it — the same thing
+    // a click on the strip does — not dive the tree.
     h.assert_screen_not_contains("Machines…");
-    h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
     h.wait_until(|h| h.screen_to_string().contains("Machines…"))
@@ -925,8 +924,10 @@ fn dock_enter_on_focused_button_runs_button_action() {
     // Esc closes the menu; back on the tree, nothing dived.
     close_dock_menu(&mut h);
 
-    // One Tab to `[ + New ]` and Enter it: the New Workspace form opens,
-    // proving Enter activated the focused button rather than diving the tree.
+    // Two Tabs — the Menu, then `[ + New ]` — and Enter: the New Workspace
+    // form opens, proving Enter activated the focused button rather than
+    // diving the tree.
+    h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
     h.wait_until(|h| h.screen_to_string().contains(launch_form::FORM_TITLE))
@@ -2067,7 +2068,7 @@ fn dock_project_dropdown_is_keyboard_navigable() {
 
     // The scope starts unfiltered: the Menu's scope row reads "All".
     open_dock_menu(&mut h);
-    h.assert_screen_contains("All projects ▾");
+    h.assert_screen_contains("[All projects ▼]");
     close_dock_menu(&mut h);
 
     // Alt+P opens the dropdown; it lists "All projects" plus this project.
@@ -2087,8 +2088,40 @@ fn dock_project_dropdown_is_keyboard_navigable() {
     // …and the project filter is applied: the Menu's scope row now
     // reads the project basename, no longer "All".
     open_dock_menu(&mut h);
-    h.assert_screen_contains("alphaproj ▾");
-    h.assert_screen_not_contains("All projects ▾");
+    h.assert_screen_contains("▼]");
+    h.assert_screen_not_contains("[All projects ▼]");
+}
+
+/// The Menu's project filter is a dropdown in place: a click drops its list
+/// right under it, a pick applies the filter, and the Menu stays open.
+#[test]
+fn dock_menu_project_dropdown_picks_in_place() {
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+            .unwrap();
+    h.render().unwrap();
+    open_dock(&mut h);
+    open_dock_menu(&mut h);
+
+    let (col, row) = pos_of(&h, "[All projects ▼]");
+    h.mouse_click(col + 2, row).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("All projects ▲"))
+        .unwrap();
+    // The list hangs under the control, starting with "All projects".
+    let below = h.screen_row_text(row + 2);
+    assert!(
+        below.contains("All projects"),
+        "the option list drops under the control:\n{}",
+        h.screen_to_string()
+    );
+    // The project is the next option down.
+    h.mouse_click(col + 3, row + 3).unwrap();
+    h.wait_until(|h| !h.screen_to_string().contains("[All projects"))
+        .unwrap();
+    // Still open: the Menu's other entries are on screen.
+    h.assert_screen_contains("Machines…");
+    h.assert_screen_contains("▼]");
 }
 
 /// Esc cancels the open project dropdown without applying a filter and
@@ -2117,7 +2150,7 @@ fn dock_project_dropdown_esc_cancels_without_filtering() {
     h.wait_until(|h| !h.screen_to_string().contains("All projects"))
         .unwrap();
     open_dock_menu(&mut h);
-    h.assert_screen_contains("All projects ▾");
+    h.assert_screen_contains("[All projects ▼]");
     close_dock_menu(&mut h);
 
     // The dock still owns the keyboard: Alt+P re-opens the dropdown.
@@ -3733,12 +3766,11 @@ fn settings_modal_covers_the_full_screen_and_dims_the_dock() {
     );
 }
 
-/// The Menu's last row hides the dock, the same teardown Esc and
-/// "Orchestrator: Toggle Dock" run: the whole dock column goes away. The
-/// title bar above the action row keeps its `×` as the mouse route to the
-/// same thing; the action row itself carries the Menu.
+/// The title strip is the Menu's button and carries the `×` that hides the
+/// dock, the same teardown Esc and "Orchestrator: Toggle Dock" run: the
+/// whole dock column goes away. The Menu itself has no Hide dock entry.
 #[test]
-fn dock_menu_hide_dock_hides_the_dock() {
+fn dock_title_close_hides_the_dock() {
     let (_tmp, root) = setup_project("alphaproj");
     let mut h =
         EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
@@ -3746,9 +3778,9 @@ fn dock_menu_hide_dock_hides_the_dock() {
     h.render().unwrap();
     open_dock(&mut h);
 
-    // The title bar carries the `×`; the action row under it carries `Menu ▾`.
-    // Only the dock's column counts: the editor's tab bar shares these
-    // screen rows and has a `×` of its own.
+    // The title strip is the Menu's button and carries the `×`; the action
+    // row under it carries `+ New`. Only the dock's column counts: the
+    // editor's tab bar shares these screen rows and has a `×` of its own.
     let dock_col = |row: usize| -> String {
         let text = h.screen_row_text(row as u16);
         text.split('│').next().unwrap_or("").to_string()
@@ -3756,24 +3788,26 @@ fn dock_menu_hide_dock_hides_the_dock() {
     let action_row = row_of(&h, "+ New");
     let header = dock_col(action_row);
     assert!(
-        header.contains("Menu ▾") && !header.contains('×'),
-        "the dock's action row carries the Menu:\n{}",
+        !header.contains("Menu ▾") && !header.contains('×'),
+        "the dock's action row carries neither the Menu nor the ×:\n{}",
         h.screen_to_string()
     );
     let title = dock_col(action_row - 1);
     assert!(
-        title.contains("Orchestrator") && title.contains('×'),
-        "the dock's title bar sits above the action row with its ×:\n{}",
+        title.contains("Orchestrator") && title.contains("Menu ▾") && title.contains('×'),
+        "the dock's title strip is the Menu, with its ×:\n{}",
         h.screen_to_string()
     );
 
     open_dock_menu(&mut h);
-    let (hcol, hrow) = pos_of(&h, "Hide dock");
-    h.mouse_click(hcol, hrow).unwrap();
+    h.assert_screen_not_contains("Hide dock");
+    close_dock_menu(&mut h);
+
+    let close_col = title.find('×').map(|b| title[..b].chars().count()).unwrap();
+    h.mouse_click(close_col as u16, (action_row - 1) as u16).unwrap();
     h.wait_until(|h| !h.screen_to_string().contains("+ New"))
         .unwrap();
     h.assert_screen_not_contains("Menu ▾");
-    h.assert_screen_not_contains("Hide dock");
 }
 
 /// View ▸ Orchestrator Dock toggles the dock, sits directly under the file
@@ -4465,4 +4499,39 @@ fn mouse_click_on_dock_filter_moves_the_keyboard_into_the_dock() {
         "",
         "the keystrokes belonged to the dock's filter, not to the editor"
     );
+}
+
+/// Walking the dock's list with ↑/↓ and pressing Enter hands the keyboard to
+/// the workspace: the dock blurs and the active window takes focus — also
+/// after the Menu was opened and closed with Esc first.
+#[test]
+fn dock_enter_after_arrowing_focuses_the_active_window() {
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+            .unwrap();
+    h.editor_mut()
+        .create_window_at(root.join("wt-beta"), "beta".to_string());
+    h.editor_mut()
+        .create_window_at(root.join("wt-gamma"), "gamma".to_string());
+    h.render().unwrap();
+    open_dock(&mut h);
+    h.wait_until(|h| {
+        let s = h.screen_to_string();
+        s.contains("beta") && s.contains("gamma")
+    })
+    .unwrap();
+
+    open_dock_menu(&mut h);
+    close_dock_menu(&mut h);
+
+    let start = h.editor().active_window_id();
+    h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| h.editor().active_window_id() != start)
+        .unwrap();
+    h.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
+    h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    h.render().unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| !h.editor().is_dock_focused()).unwrap();
 }

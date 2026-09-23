@@ -5280,6 +5280,17 @@ function acceptProjectMenu(index?: number): void {
 // keyboard cursor, and any programmatic pick.
 function pickProject(optionKey: string): void {
   if (!openDialog) return;
+  applyProjectFilter(optionKey);
+  closeProjectMenu();
+  if (openPanel && openDialog.filteredIds.length > 0) {
+    openPanel.setSelectedIndex("sessions", openDialog.selectedIndex);
+  }
+}
+
+// Set the dock's project filter (empty = "All projects") and re-filter
+// the session list, leaving focus where it is.
+function applyProjectFilter(optionKey: string): void {
+  if (!openDialog) return;
   openDialog.projectFilter = optionKey === "" ? null : optionKey;
   lastDockProjectFilter = openDialog.projectFilter;
   // Re-filter to the chosen project and keep the active session selected
@@ -5289,11 +5300,7 @@ function pickProject(optionKey: string): void {
   openDialog.filteredIds = next;
   const activeIdx = next.indexOf(activeId);
   openDialog.selectedIndex = activeIdx >= 0 ? activeIdx : 0;
-  closeProjectMenu();
   refreshOpenDialog();
-  if (openPanel && next.length > 0) {
-    openPanel.setSelectedIndex("sessions", openDialog.selectedIndex);
-  }
 }
 
 // The dock's attention line (§2.3): how many workspaces need the user
@@ -5330,26 +5337,21 @@ function dockAttentionRow(att: { blocked: number; done: number }): WidgetSpec {
 // explorer's; the keyboard has Toggle Dock). The accelerator that focuses
 // the dock supplies the mnemonic: its letter in the title is underlined
 // when the binding really is a single letter that appears in the title.
+// The title strip is the Menu's button: `Orchestrator  Menu ▾`, padded to the
+// dock's width so a press anywhere on it drops the Menu, with the `×` that
+// hides the dock at its end.
 function dockTitleRow(): WidgetSpec {
-  const title = editor.t("dock.title");
   const base = { fg: "ui.menu_fg", bg: "ui.menu_bg" };
-  const accel = editor.getKeybindingLabel("toggle_dock_focus", "normal");
-  const m = accel ? accel.match(/([A-Za-z])\s*$/) : null;
-  const mnem = m ? m[1].toLowerCase() : "";
-  const idx = mnem ? title.toLowerCase().indexOf(mnem) : -1;
-  const segments: Entry[] = [];
-  if (idx >= 0) {
-    if (idx > 0) segments.push({ text: title.slice(0, idx), style: base });
-    segments.push({ text: title.slice(idx, idx + 1), style: { ...base, underline: true, bold: true } });
-    segments.push({ text: title.slice(idx + 1), style: base });
-  } else {
-    segments.push({ text: title, style: { ...base, bold: true } });
-  }
-  // The strip's background rides on the first inline piece's entry style:
-  // a Row's inline collapse keeps the leading child's style for the merged
-  // line, so `base` tints the title, the spacer and the button alike.
+  const text = `${editor.t("dock.title")}  ${editor.t("dock.menu_button")}`;
+  // The `×` and the gap before it take the last three columns.
+  const width = Math.max(editor.stringWidth(text), dockWidth() - 3);
   return row(
-    raw([styledRow(segments as Parameters<typeof styledRow>[0], { style: base })]),
+    button(text + " ".repeat(Math.max(0, width - editor.stringWidth(text))), {
+      key: "dock-menu",
+      bare: true,
+      style: { ...base, bold: true },
+      hoverStyle: { ...base, bold: true, fg: "ui.help_key_fg" },
+    }),
     flexSpacer(),
     button(DOCK_CLOSE_GLYPH, {
       key: "dock-close",
@@ -5509,18 +5511,13 @@ function buildDockSpec(): WidgetSpec {
       button(editor.t("dock.new"), { intent: "primary", key: "new-session" }),
       flexSpacer(),
       // `/ search`: the key and the word. Mouse-only — the keyboard has
-      // `/` — so the Tab ring stays `+ New`, `Menu ▾`, the field, the list.
+      // `/` — so the Tab ring stays the title (the Menu), `+ New`, the field,
+      // the list.
       button(editor.t("dock.search_btn"), {
         key: "search-toggle",
         bare: true,
         focusable: false,
         style: { fg: "ui.menu_disabled_fg" },
-        hoverStyle: { fg: "ui.help_key_fg" },
-      }),
-      spacer(2),
-      button(editor.t("dock.menu_button"), {
-        key: "dock-menu",
-        bare: true,
         hoverStyle: { fg: "ui.help_key_fg" },
       }),
     ),
@@ -5612,7 +5609,7 @@ interface MenuOption {
 // hiding the dock on its own below.
 interface DockMenuGroup {
   heading: string;
-  side: "left" | "right" | "bottom";
+  side: "left" | "right";
   opts: MenuOption[];
 }
 
@@ -5652,16 +5649,6 @@ function dockMainGroups(): DockMenuGroup[] {
         { key: "main:empty", label: check(!openDialog.hideTrivial) + editor.t("dock.show_empty") },
         { key: "main:worktrees", label: check(openDialog.showWorktrees) + editor.t("dock.all_worktrees") },
       ],
-    },
-    {
-      heading: editor.t("dock.menu_h_project"),
-      side: "right",
-      opts: [{ key: "main:scope", label: `${projWord} ▾` }],
-    },
-    {
-      heading: "",
-      side: "bottom",
-      opts: [{ key: "main:hide", label: editor.t("dock.menu_hide") }],
     },
   ];
 }
@@ -5787,33 +5774,50 @@ let mainMenuPanel: FloatingWidgetPanel | null = null;
 
 // Buttons are keyed `mm:<option key>`.
 const MAIN_MENU_PREFIX = "mm:";
+// The Menu's project dropdown.
+const MAIN_MENU_PROJECT_KEY = "mm-project";
 
 function buildMainMenuSpec(): WidgetSpec {
   const groups = dockMainGroups();
-  const colW = Math.max(
-    ...groups.flatMap((g) => [editor.stringWidth(g.heading), ...g.opts.map((o) => editor.stringWidth(o.label))]),
-  ) + 4;
-  const heading = (t: string): WidgetSpec =>
-    ({ kind: "raw", entries: [styledRow([{ text: ` ${t.toUpperCase()}`.padEnd(colW), style: SECTION_STYLE }])] });
-  const item = (o: MenuOption): WidgetSpec =>
-    button(` ${o.label}`.padEnd(colW), { key: MAIN_MENU_PREFIX + o.key, bare: true });
-  const side = (which: DockMenuGroup["side"]): WidgetSpec[] => {
+  const colW = (which: DockMenuGroup["side"]): number => Math.max(
+    ...groups.filter((g) => g.side === which)
+      .flatMap((g) => [editor.stringWidth(g.heading), ...g.opts.map((o) => editor.stringWidth(o.label))]),
+  ) + 3;
+  const leftW = colW("left");
+  const rightW = colW("right");
+  const text = (t: string, w: number, style?: Partial<OverlayOptions>): WidgetSpec =>
+    ({ kind: "raw", entries: [styledRow([style ? { text: t.padEnd(w), style } : { text: t.padEnd(w) }])] });
+  const column = (which: DockMenuGroup["side"], w: number): WidgetSpec[] => {
     const out: WidgetSpec[] = [];
     groups.filter((g) => g.side === which).forEach((g, i) => {
-      if (i > 0) out.push(heading(""));
-      if (g.heading) out.push(heading(g.heading));
-      out.push(...g.opts.map(item));
+      if (i > 0) out.push(text("", w));
+      out.push(text(` ${g.heading.toUpperCase()}`, w, SECTION_STYLE));
+      out.push(...g.opts.map((o) =>
+        button(` ${o.label}`.padEnd(w), { key: MAIN_MENU_PREFIX + o.key, bare: true })));
     });
     return out;
   };
-  // Each column is a titled box of its own width: a row of plain columns
-  // would split the whole panel between them and stretch it to the screen.
-  const box = (title: string, which: DockMenuGroup["side"]): WidgetSpec =>
-    labeledSection({ label: title, widthCols: colW + 4, child: col(...side(which)) });
-  return col(
-    row(box(editor.t("dock.menu_actions"), "left"), spacer(1), box(editor.t("dock.menu_settings"), "right")),
-    ...side("bottom"),
-  );
+  const left = column("left", leftW);
+  const right = column("right", rightW);
+  // The project filter is a real dropdown: it drops its list where it
+  // sits, over the panel, and scrolls when there are many projects.
+  const projects = dockProjectOptions();
+  const cur = openDialog?.projectFilter ?? null;
+  const at = cur === null ? 0 : projects.indexOf(cur) + 1;
+  right.push(text("", rightW));
+  right.push(text(` ${editor.t("dock.menu_h_project").toUpperCase()}`, rightW, SECTION_STYLE));
+  right.push(row(spacer(1), dropdown([editor.t("dock.all_projects"), ...projects.map(projectLabel)], {
+    selectedIndex: Math.max(0, at),
+    key: MAIN_MENU_PROJECT_KEY,
+  })));
+  // Two columns side by side, one rule between them: each line is a row of
+  // single-line cells, so the panel stays as wide as its content.
+  const rule = text(" │ ", 3, { fg: "ui.popup_border_fg" });
+  const lines: WidgetSpec[] = [];
+  for (let i = 0; i < Math.max(left.length, right.length); i++) {
+    lines.push(row(left[i] ?? text("", leftW), rule, right[i] ?? text("", rightW)));
+  }
+  return col(...lines);
 }
 
 function openMainMenu(): void {
@@ -5822,8 +5826,8 @@ function openMainMenu(): void {
   if (!mainMenuPanel) mainMenuPanel = new FloatingWidgetPanel();
   // Sizes to its content; the percentages are unused for an anchored panel.
   mainMenuPanel.mount(buildMainMenuSpec(), { widthPct: 50, heightPct: 44 });
-  // Under the header: the dock's title row and action row are the first two.
-  editor.floatingPanelControl(mainMenuPanel.id(), "anchor", packCell(0, 2));
+  // Under the title strip, which is its button.
+  editor.floatingPanelControl(mainMenuPanel.id(), "anchor", packCell(0, 1));
   mainMenuPanel.setFocusKey(MAIN_MENU_PREFIX + "main:folder");
 }
 
@@ -5927,21 +5931,6 @@ function runDockMenuOption(optKey: string): void {
   if (optKey === "main:worktrees") {
     toggleShowWorktrees();
     renderMainMenu();
-    return;
-  }
-  if (optKey === "main:scope") {
-    closeDockMenu();
-    openProjectMenu();
-    return;
-  }
-  if (optKey === "main:hide") {
-    // The dock first, then the Menu that hangs off it: the other way round,
-    // closing the Menu refocuses the dock it is about to lose.
-    const menuPanel = mainMenuPanel;
-    mainMenuPanel = null;
-    openDialog.dockMenu = null;
-    closeOpenDialog();
-    menuPanel?.unmount();
     return;
   }
   if (optKey.startsWith("move:") && menu?.kind === "move") {
@@ -6084,6 +6073,7 @@ function mountFolderDialog(): void {
     widthPct: 50,
     heightPct: 42,
     focusMarker: true,
+    labelAlign: "right",
     // The dialog's title + border are now native modal-frame chrome
     // (drawn by the host around the WidgetSpec), and `closable` renders
     // a native `[×]` that dismisses via the same cancel path as Esc.
@@ -6109,41 +6099,48 @@ function buildCreateFolderSpec(): WidgetSpec {
   const promptLabel = renamingSession
     ? editor.t("dock.rename_workspace_prompt")
     : editor.t("dock.new_folder_prompt");
+  // The same shape as the other forms: a padded field with its label in a
+  // right-aligned column, the checkbox under the field, and a footer rule
+  // over Cancel and the primary button with their keys.
+  const labelW = editor.stringWidth(promptLabel);
   const children: WidgetSpec[] = [
-    // Render the label inline ("Folder name: " / "Workspace name: ") so the
-    // ": " separator appears the same way in the TUI and the web UI.
-    row(
-      raw([
-        styledRow([
-          { text: promptLabel + ": ", style: { fg: "ui.menu_disabled_fg" } },
-        ]),
-      ]),
-      text({
-        value: d.name.value,
-        cursorByte: d.name.cursor,
-        placeholder: renamingSession ? "" : editor.t("dock.new_folder_default"),
-        fieldWidth: 32,
-        key: "folder-name",
-      }),
-    ),
+    spacer(0),
+    text({
+      value: d.name.value,
+      cursorByte: d.name.cursor,
+      label: promptLabel,
+      placeholder: renamingSession ? "" : editor.t("dock.new_folder_default"),
+      fullWidth: true,
+      labelWidth: labelW,
+      key: "folder-name",
+    }),
   ];
   if (sess) {
     children.push(
       toggle(d.organizeCurrent, editor.t("dock.new_folder_organize", { name: sess.label }), {
         key: "folder-organize",
+        labelWidth: labelW,
       }),
     );
   }
   children.push(
-    endRow(
-      button(editor.t("dock.new_folder_btn_cancel"), { intent: "danger", key: "folder-cancel" }),
-      spacer(2),
-      button(
-        renaming
-          ? editor.t("dock.rename_folder_btn")
-          : editor.t("dock.new_folder_btn_create"),
-        { intent: "primary", key: "folder-create" },
+    spacer(0),
+    footerRule(),
+    spacer(0),
+    row(
+      flexSpacer(),
+      withAccel(button(editor.t("dock.new_folder_btn_cancel"), { key: "folder-cancel" }), "Esc"),
+      spacer(3),
+      withAccel(
+        button(
+          renaming
+            ? editor.t("dock.rename_folder_btn")
+            : editor.t("dock.new_folder_btn_create"),
+          { intent: "primary", key: "folder-create" },
+        ),
+        "⏎",
       ),
+      spacer(2),
     ),
   );
   // The dialog's title + border come from the native modal-frame chrome
@@ -17400,6 +17397,11 @@ editor.on("widget_event", (e) => {
       // the Menu button is spent on the dismissal, so it cannot reopen it.
       mainMenuPanel = null;
       closeMainMenu();
+      return;
+    }
+    if (e.event_type === "change" && e.widget_key === MAIN_MENU_PROJECT_KEY) {
+      const index = Number(((e.payload ?? {}) as Record<string, unknown>).index ?? 0);
+      applyProjectFilter(projectMenuKeys()[index] ?? "");
       return;
     }
     if (e.event_type === "activate" && typeof e.widget_key === "string" && e.widget_key.startsWith(MAIN_MENU_PREFIX)) {
