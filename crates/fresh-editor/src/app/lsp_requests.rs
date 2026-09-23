@@ -3725,7 +3725,13 @@ impl Editor {
             .map(|state| {
                 (
                     state.buffer.version(),
-                    state.semantic_tokens.as_ref().map(|s| s.version),
+                    // A stale store (server asked for a refresh) is never
+                    // "already up to date", whatever its version.
+                    state
+                        .semantic_tokens
+                        .as_ref()
+                        .filter(|s| !s.stale)
+                        .map(|s| s.version),
                     state
                         .semantic_tokens
                         .as_ref()
