@@ -4257,28 +4257,6 @@ impl Editor {
         crate::view::shell::context_menu::menu_rect(self.shell_ui.as_ref()?.spec())
     }
 
-    /// The status bar's segments, read off the retained tree.
-    ///
-    /// The third of the same family as [`Self::shell_region_now`] and
-    /// [`Self::shell_menu_rect`]: layout placed these, and this reads the
-    /// answer back. It replaced a `StatusBarChrome` capture that `render`
-    /// filled from this very walk and the web `Scene` read back a moment
-    /// later — a second copy of an answer the tree already held, which had to
-    /// be cleared by hand on the frames where the bar is hidden (a suggestions
-    /// or file-browser popup owns the row) or the web kept drawing a bar the
-    /// TUI no longer had.
-    pub(crate) fn shell_status_segments(
-        &self,
-    ) -> Vec<crate::view::ui::status_bar::StatusSegmentInfo> {
-        let (Some(ui), Some(bar)) = (self.shell_ui.as_ref(), self.shell_frame_status_bar.as_ref())
-        else {
-            return Vec::new();
-        };
-        let f = self.active_chrome().last_frame;
-        let size = ratatui::layout::Rect::new(0, 0, f.width, f.height);
-        crate::view::shell::status_bar::segments(ui, bar, size)
-    }
-
     /// The status bar's screen area THIS instant, derived from live state:
     /// the same visibility conditions and vertical frame split `render`
     /// uses ([`Self::shell_frame`]; asserted against the paint pass in

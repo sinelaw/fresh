@@ -298,13 +298,19 @@ pub struct TabBarView {
 
 // ─────────────────────────── status bar ───────────────────────────
 
+/// One status-bar element as the web renders it.
 #[derive(Debug, Clone, Serialize)]
 pub struct StatusSegment {
+    /// Semantic kind: "lsp" | "warning" | "language" | "encoding" |
+    /// "lineEnding" | "remote" | "trust" | "message" | "terminalRestart" |
+    /// "plugin" | "text".
     pub name: &'static str,
+    /// Plugin token key for `name == "plugin"`.
     pub key: Option<String>,
     pub text: String,
     pub x: u16,
     pub w: u16,
+    /// "left" or "right": the side the element was tiled on.
     pub side: &'static str,
 }
 
@@ -449,19 +455,14 @@ impl Editor {
         // Each keyed element (indicators + text) is a segment, and `side` is
         // the description's own left/right tiling carried on the segment, not
         // a midpoint guess from `x`. No cell scraping either way.
-        let segments: Vec<StatusSegment> = self
-            .shell_status_segments()
-            .into_iter()
-            .filter(|s| !s.text.trim().is_empty())
-            .map(|s| StatusSegment {
-                name: s.name,
-                key: s.key,
-                text: s.text.trim().to_string(),
-                x: s.x,
-                w: s.w,
-                side: s.side,
-            })
-            .collect();
+        let segments = match (self.shell_ui.as_ref(), self.shell_frame_status_bar.as_ref()) {
+            (Some(ui), Some(bar)) => {
+                let f = self.active_chrome().last_frame;
+                let size = ratatui::layout::Rect::new(0, 0, f.width, f.height);
+                crate::view::shell::status_bar::segments(ui, bar, size)
+            }
+            _ => Vec::new(),
+        };
 
         Some(StatusView {
             rect: RectView {

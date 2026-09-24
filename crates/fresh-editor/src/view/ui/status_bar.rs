@@ -282,25 +282,6 @@ pub struct TerminalRestartState {
     pub resumes_agent: bool,
 }
 
-/// One rendered status-bar element, captured semantically (text + position)
-/// alongside the cell drawing so the web can render it natively.
-#[derive(Debug, Clone)]
-pub struct StatusSegmentInfo {
-    /// Semantic kind: "lsp" | "warning" | "language" | "encoding" |
-    /// "lineEnding" | "remote" | "trust" | "message" | "plugin" | "text".
-    pub name: &'static str,
-    /// Plugin token key for `name == "plugin"`.
-    pub key: Option<String>,
-    pub text: String,
-    pub x: u16,
-    pub w: u16,
-    /// Which side of the bar the renderer tiled this segment on: "left" or
-    /// "right". Carried from the actual left/right render passes so the web
-    /// orders/justifies segments exactly as the TUI does (rather than
-    /// re-deriving from a midpoint of `x`).
-    pub side: &'static str,
-}
-
 /// Result of truncating a path for display
 #[derive(Debug, Clone)]
 pub struct TruncatedPath {
