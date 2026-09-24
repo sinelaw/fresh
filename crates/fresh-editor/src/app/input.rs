@@ -238,10 +238,8 @@ impl Editor {
         // scrolling the viewport.
         let active_split = self.effective_active_split();
         if let Some(view_state) = self
-            .windows
-            .get_mut(&self.active_window)
-            .and_then(|w| w.split_view_states_mut())
-            .expect("active window must have a populated split layout")
+            .active_window_mut()
+            .split_view_states_mut()
             .get_mut(&active_split)
         {
             view_state.viewport.clear_skip_ensure_visible();

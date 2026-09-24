@@ -658,7 +658,7 @@ impl crate::app::window::Window {
             .iter()
             .map(|(split_id, _, area)| (*split_id, *area))
             .collect();
-        if let Some(view_states) = self.split_view_states_mut() {
+        if let Some(view_states) = self.buffers.split_view_states_mut() {
             for (split_id, view_state) in view_states.iter_mut() {
                 match visible_rects.get(split_id) {
                     Some(area) => view_state.viewport.resize(area.width, area.height),

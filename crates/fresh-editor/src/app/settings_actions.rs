@@ -188,7 +188,7 @@ impl Editor {
         for view_state in self
             .windows
             .get_mut(&self.active_window)
-            .and_then(|w| w.split_view_states_mut())
+            .and_then(|w| w.buffers.split_view_states_mut())
             .expect("active window must have a populated split layout")
             .values_mut()
         {

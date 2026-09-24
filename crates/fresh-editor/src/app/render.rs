@@ -450,25 +450,15 @@ impl Editor {
             let hooks_start = std::time::Instant::now();
             // Get visible buffers and their areas — the boxes the tree placed
             // them in.
-            let visible_buffers = pane_rects.visible(
-                &self
-                    .windows
-                    .get(&self.active_window)
-                    .and_then(|w| w.buffers.splits())
-                    .map(|(mgr, _)| mgr)
-                    .expect("active window must have a populated split layout")
-                    .visible_leaves(),
-            );
+            let visible_buffers =
+                pane_rects.visible(&self.active_window().split_manager().visible_leaves());
 
             let mut total_new_lines = 0usize;
             for (split_id, buffer_id, split_area) in visible_buffers {
                 // Get viewport from SplitViewState (the authoritative source)
                 let viewport_top_byte = self
-                    .windows
-                    .get(&self.active_window)
-                    .and_then(|w| w.buffers.splits())
-                    .map(|(_, vs)| vs)
-                    .expect("active window must have a populated split layout")
+                    .active_window()
+                    .split_view_states()
                     .get(&split_id)
                     .map(|vs| vs.viewport.top_byte())
                     .unwrap_or(0);
@@ -481,14 +471,8 @@ impl Editor {
                 // `getBufferInfo()` would be reading a mirror that is refreshed
                 // on the editor thread's own schedule, and would silently drop
                 // its only decoration pass whenever it read too early (#2968).
-                let composing_in_any_split = self
-                    .windows
-                    .get(&self.active_window)
-                    .and_then(|w| w.buffers.splits())
-                    .map(|(_, vs)| vs)
-                    .expect("active window must have a populated split layout")
-                    .values()
-                    .any(|vs| {
+                let composing_in_any_split =
+                    self.active_window().split_view_states().values().any(|vs| {
                         vs.buffer_state(buffer_id)
                             .map(|bs| matches!(bs.view_mode, crate::state::ViewMode::PageView))
                             .unwrap_or(false)
@@ -923,13 +907,7 @@ impl Editor {
         // panes or moved more than two rows within the same pane. The
         // trail crosses pane separators when the jump is across splits —
         // that's the intended "follow the focus" cue.
-        let active_split = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(mgr, _)| mgr)
-            .expect("active window must have a populated split layout")
-            .active_split();
+        let active_split = self.active_window().split_manager().active_split();
         let pane_caret = self.active_window().pane_caret();
         self.maybe_start_cursor_jump_animation(pane_caret, active_split);
 
@@ -959,13 +937,7 @@ impl Editor {
             }
         };
         if viewport_plugins_active {
-            for (split_id, view_state) in self
-                .windows
-                .get(&self.active_window)
-                .and_then(|w| w.buffers.splits())
-                .map(|(_, vs)| vs)
-                .expect("active window must have a populated split layout")
-            {
+            for (split_id, view_state) in self.active_window().split_view_states() {
                 if !on_screen.contains(split_id) {
                     continue;
                 }
@@ -999,11 +971,8 @@ impl Editor {
                     // scrolled or been resized. Fall back to the grouped
                     // subtrees for those leaves.
                     let buffer_id = self
-                        .windows
-                        .get(&self.active_window)
-                        .and_then(|w| w.buffers.splits())
-                        .map(|(mgr, _)| mgr)
-                        .expect("active window must have a populated split layout")
+                        .active_window()
+                        .split_manager()
                         .get_buffer_id((*split_id).into())
                         .or_else(|| {
                             self.active_window()
@@ -1088,10 +1057,7 @@ impl Editor {
         if !skip_viewport_snapshot {
             __vp_win.previous_viewports.clear();
         }
-        let (_, __vp_vs_map) = __vp_win
-            .buffers
-            .splits()
-            .expect("active window must have a populated split layout");
+        let (_, __vp_vs_map) = __vp_win.splits();
         let snapshot: Vec<(LeafId, (usize, u16, u16))> = __vp_vs_map
             .iter()
             .filter(|(split_id, _)| on_screen.contains(split_id))
@@ -1609,13 +1575,7 @@ impl Editor {
         // to visually indicate that focus is exclusively on the terminal
         if self.active_window().keyboard_capture && self.active_window().focused_terminal_live() {
             // Find the active split's content area
-            let active_split = self
-                .windows
-                .get(&self.active_window)
-                .and_then(|w| w.buffers.splits())
-                .map(|(mgr, _)| mgr)
-                .expect("active window must have a populated split layout")
-                .active_split();
+            let active_split = self.active_window().split_manager().active_split();
             let active_split_area = self.pane_content_rect(active_split);
 
             if let Some(terminal_area) = active_split_area {
@@ -4874,13 +4834,7 @@ impl Editor {
     /// produce a one-frame lag on cursor moves that trigger a scroll-sync anchor
     /// change (e.g. `G` in a side-by-side diff).
     fn pre_sync_and_scroll_sync(&mut self) {
-        let active_split = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(mgr, _)| mgr)
-            .expect("active window must have a populated split layout")
-            .active_split();
+        let active_split = self.active_window().split_manager().active_split();
         {
             let _span = tracing::info_span!("pre_sync_ensure_visible").entered();
             self.active_window_mut()
@@ -4899,19 +4853,10 @@ impl Editor {
             std::collections::HashMap::new();
         {
             let _span = tracing::info_span!("compute_semantic_ranges").entered();
-            for (split_id, view_state) in self
-                .windows
-                .get(&self.active_window)
-                .and_then(|w| w.buffers.splits())
-                .map(|(_, vs)| vs)
-                .expect("active window must have a populated split layout")
-            {
+            for (split_id, view_state) in self.active_window().split_view_states() {
                 if let Some(buffer_id) = self
-                    .windows
-                    .get(&self.active_window)
-                    .and_then(|w| w.buffers.splits())
-                    .map(|(mgr, _)| mgr)
-                    .expect("active window must have a populated split layout")
+                    .active_window()
+                    .split_manager()
                     .get_buffer_id((*split_id).into())
                 {
                     if let Some(state) = self
@@ -4959,10 +4904,7 @@ impl Editor {
                 .windows
                 .get(&active_id)
                 .expect("active window must exist");
-            let (mgr, vs_map) = win
-                .buffers
-                .splits()
-                .expect("active window must have a populated split layout");
+            let (mgr, vs_map) = win.splits();
             vs_map
                 .iter()
                 .filter_map(|(split_id, vs)| {
@@ -5285,13 +5227,7 @@ impl Editor {
             // effects of `open_file_no_focus` (it adds the buffer to
             // the active split's tabs and may switch its active
             // buffer to the loaded file).
-            let source_split = self
-                .windows
-                .get(&self.active_window)
-                .and_then(|w| w.buffers.splits())
-                .map(|(mgr, _)| mgr)
-                .expect("active window must have a populated split layout")
-                .active_split();
+            let source_split = self.active_window().split_manager().active_split();
             // `open_file_for_preview` always allocates a fresh buffer
             // — never repurposes the "no name" empty buffer the user
             // is currently looking at — so the background view stays
@@ -5310,20 +5246,15 @@ impl Editor {
                 // overlay's standalone view-state — it doesn't need
                 // to be in `open_buffers`.
                 let leaf_ids: Vec<_> = self
-                    .windows
-                    .get(&self.active_window)
-                    .and_then(|w| w.buffers.splits())
-                    .map(|(_, vs)| vs)
-                    .expect("active window must have a populated split layout")
+                    .active_window()
+                    .split_view_states()
                     .keys()
                     .copied()
                     .collect();
                 for leaf_id in leaf_ids {
                     if let Some(view_state) = self
-                        .windows
-                        .get_mut(&self.active_window)
-                        .and_then(|w| w.split_view_states_mut())
-                        .expect("active window must have a populated split layout")
+                        .active_window_mut()
+                        .split_view_states_mut()
                         .get_mut(&leaf_id)
                     {
                         view_state.remove_buffer(buffer_id);
@@ -5343,10 +5274,7 @@ impl Editor {
                     .get_mut(&__active_id)
                     .expect("active window must exist");
                 let __buffer_keys: Vec<BufferId> = __win.buffers.ids();
-                let (__mgr, __vs_map) = __win
-                    .buffers
-                    .splits_mut()
-                    .expect("active window must have a populated split layout");
+                let (__mgr, __vs_map) = __win.splits_mut();
                 if let Some(source_state) = __vs_map.get_mut(&source_split) {
                     if source_state.active_buffer == buffer_id {
                         let fallback = source_state
@@ -5365,10 +5293,8 @@ impl Editor {
                         }
                     }
                 }
-                self.windows
-                    .get_mut(&self.active_window)
-                    .and_then(|w| w.split_manager_mut())
-                    .expect("active window must have a populated split layout")
+                self.active_window_mut()
+                    .split_manager_mut()
                     .set_active_split(source_split);
             }
             buffer_id
@@ -5778,13 +5704,7 @@ impl Editor {
         let size = ratatui::layout::Rect::new(0, 0, width, height);
 
         // Replicate the pre-render sync steps from render()
-        let active_split = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(mgr, _)| mgr)
-            .expect("active window must have a populated split layout")
-            .active_split();
+        let active_split = self.active_window().split_manager().active_split();
         self.active_window_mut()
             .pre_sync_ensure_visible(active_split);
         self.active_window_mut().sync_scroll_groups();

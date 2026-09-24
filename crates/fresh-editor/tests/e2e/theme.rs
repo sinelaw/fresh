@@ -240,7 +240,11 @@ fn test_bracket_highlight_uses_theme_colors() {
 
     let theme = harness.editor().theme();
     let buffer = &harness.editor().active_state().buffer;
-    let gutter_width = harness.editor().active_viewport().gutter_width(buffer) as u16;
+    let gutter_width = harness
+        .editor()
+        .active_window()
+        .active_viewport()
+        .gutter_width(buffer) as u16;
     let (content_first_row, _) = harness.content_area_rows();
 
     // Verify we are looking at the opening bracket cell
@@ -273,7 +277,11 @@ fn test_rainbow_bracket_colorization() {
 
     let theme = harness.editor().theme();
     let buffer = &harness.editor().active_state().buffer;
-    let gutter_width = harness.editor().active_viewport().gutter_width(buffer) as u16;
+    let gutter_width = harness
+        .editor()
+        .active_window()
+        .active_viewport()
+        .gutter_width(buffer) as u16;
     let (content_first_row, _) = harness.content_area_rows();
 
     let expected_colors = [

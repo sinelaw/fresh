@@ -465,13 +465,7 @@ impl Editor {
         // Which leaves, not where. This used to ask the split manager for
         // rectangles in a box it made up — the whole terminal, which is not
         // the box the grid is laid out in — and then dropped them.
-        let visible = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(mgr, _)| mgr)
-            .expect("active window must have a populated split layout")
-            .visible_leaves();
+        let visible = self.active_window().split_manager().visible_leaves();
 
         for (split_id, buffer_id) in &visible {
             // Only process composite buffers

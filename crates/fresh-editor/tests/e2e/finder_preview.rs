@@ -41,7 +41,7 @@ fn tab_bar(harness: &EditorTestHarness) -> String {
 }
 
 fn active_split(harness: &EditorTestHarness) -> LeafId {
-    harness.editor().get_active_split()
+    harness.editor().active_window().get_active_split()
 }
 
 /// Preview `name` in the split the "search" was started from — here, the

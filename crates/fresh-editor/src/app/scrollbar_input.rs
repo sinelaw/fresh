@@ -120,11 +120,7 @@ impl crate::app::window::Window {
             return Ok(());
         }
 
-        if let Some(view_state) = self
-            .split_view_states_mut()
-            .expect("active window must have a populated split layout")
-            .get_mut(&target_split)
-        {
+        if let Some(view_state) = self.split_view_states_mut().get_mut(&target_split) {
             // Line wrap makes horizontal scroll a no-op.
             if view_state.viewport.line_wrap_enabled {
                 return Ok(());
@@ -186,20 +182,14 @@ impl crate::app::window::Window {
 
         // Get viewport height from SplitViewState
         let viewport_height = self
-            .buffers
-            .splits()
-            .map(|(_, vs)| vs)
-            .expect("active window must have a populated split layout")
+            .split_view_states()
             .get(&split_id)
             .map(|vs| vs.viewport.height as usize)
             .unwrap_or(10);
 
         // Check if line wrapping is enabled
         let line_wrap_enabled = self
-            .buffers
-            .splits()
-            .map(|(_, vs)| vs)
-            .expect("active window must have a populated split layout")
+            .split_view_states()
             .get(&split_id)
             .map(|vs| vs.viewport.line_wrap_enabled)
             .unwrap_or(false);
@@ -209,10 +199,7 @@ impl crate::app::window::Window {
         // wide terminals with `composeWidth` set (mouse-wheel /
         // scrollbar-drag stop short of the buffer's tail).
         let (wrap_width, grid_cols) = self
-            .buffers
-            .splits()
-            .map(|(_, vs)| vs)
-            .expect("active window must have a populated split layout")
+            .split_view_states()
             .get(&split_id)
             .map(|vs| {
                 (
@@ -349,11 +336,7 @@ impl crate::app::window::Window {
         };
 
         // Set viewport top to this position in SplitViewState
-        if let Some(view_state) = self
-            .split_view_states_mut()
-            .expect("active window must have a populated split layout")
-            .get_mut(&split_id)
-        {
+        if let Some(view_state) = self.split_view_states_mut().get_mut(&split_id) {
             view_state.viewport.set_top_byte(scroll_position.0);
             view_state
                 .viewport
@@ -404,29 +387,20 @@ impl crate::app::window::Window {
 
         // Get viewport height from SplitViewState
         let viewport_height = self
-            .buffers
-            .splits()
-            .map(|(_, vs)| vs)
-            .expect("active window must have a populated split layout")
+            .split_view_states()
             .get(&split_id)
             .map(|vs| vs.viewport.height as usize)
             .unwrap_or(10);
 
         // Check if line wrapping is enabled
         let line_wrap_enabled = self
-            .buffers
-            .splits()
-            .map(|(_, vs)| vs)
-            .expect("active window must have a populated split layout")
+            .split_view_states()
             .get(&split_id)
             .map(|vs| vs.viewport.line_wrap_enabled)
             .unwrap_or(false);
 
         let (wrap_width, grid_cols) = self
-            .buffers
-            .splits()
-            .map(|(_, vs)| vs)
-            .expect("active window must have a populated split layout")
+            .split_view_states()
             .get(&split_id)
             .map(|vs| {
                 (
@@ -531,11 +505,7 @@ impl crate::app::window::Window {
         };
 
         // Set viewport top to this position in SplitViewState
-        if let Some(view_state) = self
-            .split_view_states_mut()
-            .expect("active window must have a populated split layout")
-            .get_mut(&split_id)
-        {
+        if let Some(view_state) = self.split_view_states_mut().get_mut(&split_id) {
             view_state.viewport.set_top_byte(scroll_position.0);
             view_state
                 .viewport

@@ -1274,59 +1274,6 @@ impl Editor {
         Some(&mut self.active_window_mut().lsp)
     }
 
-    /// Active window's split tree. Panics if the window has no
-    /// layout yet — the invariant is "the active window always has
-    /// `splits` populated", upheld by `set_active_window` (which
-    /// seeds the layout on first dive) and by editor init (which
-    /// hands the initial layout to the base window).
-    pub(crate) fn split_manager(&self) -> &crate::view::split::SplitManager {
-        &self
-            .active_window()
-            .buffers
-            .splits()
-            .expect("active window must have a populated split layout")
-            .0
-    }
-
-    /// Mutable handle to the active window's split tree.
-    pub(crate) fn split_manager_mut(&mut self) -> &mut crate::view::split::SplitManager {
-        &mut self
-            .active_window_mut()
-            .buffers
-            .splits_mut()
-            .expect("active window must have a populated split layout")
-            .0
-    }
-
-    /// Active window's per-leaf view state map.
-    #[cfg(test)]
-    pub(crate) fn split_view_states(
-        &self,
-    ) -> &std::collections::HashMap<crate::model::event::LeafId, crate::view::split::SplitViewState>
-    {
-        &self
-            .active_window()
-            .buffers
-            .splits()
-            .expect("active window must have a populated split layout")
-            .1
-    }
-
-    /// Mutable handle to the active window's per-leaf view state map.
-    pub(crate) fn split_view_states_mut(
-        &mut self,
-    ) -> &mut std::collections::HashMap<
-        crate::model::event::LeafId,
-        crate::view::split::SplitViewState,
-    > {
-        &mut self
-            .active_window_mut()
-            .buffers
-            .splits_mut()
-            .expect("active window must have a populated split layout")
-            .1
-    }
-
     /// Return buffer ids whose on-disk path sits at or under `root`.
     /// Used by file-explorer operations that need to react when a file
     /// or directory on disk goes away or moves.
