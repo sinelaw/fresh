@@ -833,7 +833,7 @@ fn bracketed_paste_routes_to_focused_dialog_field() {
 /// — neither inserted into any field nor leaked into the obscured
 /// buffer.
 ///
-/// The form's tab cycle runs the mode switch, the prompt, the agent, then
+/// The form's tab cycle runs the mode switch, the agent, the prompt, then
 /// `Project`, `Machine` and the fields; this test puts focus in the
 /// Folder field, so a single Shift+Tab walks focus back onto the
 /// `Machine` dropdown — a non-text widget,

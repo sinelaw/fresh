@@ -13364,13 +13364,15 @@ function buildFormSpec(): WidgetSpec {
     ...gap(),
     launchModeRow(),
     ...gap(),
-    sectionHeader("form.section_prompt"),
-    ...gap(),
-    promptBox(f),
-    ...gap(),
+    // The agent first, then what to tell it: whether there is a prompt at
+    // all, and what it means, depend on the agent chosen above it.
     sectionHeader("form.section_agent"),
     ...gap(),
     ...agentRowFields(f),
+    ...gap(),
+    sectionHeader("form.section_prompt"),
+    ...gap(),
+    promptBox(f),
     ...gap(),
   ];
   if (creating) {
