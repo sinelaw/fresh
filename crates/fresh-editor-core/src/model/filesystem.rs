@@ -1444,10 +1444,16 @@ impl StdFileSystem {
         file.sync_all()
     }
 
-    /// Give `temp` the owner, group and extended attributes (incl. POSIX
-    /// ACLs) of `original`, which describes `path`, so renaming it over
-    /// `path` doesn't change them (issue #3348). Fails when this process may
-    /// not set them, e.g. a group the user isn't a member of.
+    /// Give `temp` the owner, group and extended attributes (on Linux these
+    /// include POSIX ACLs) of `original`, which describes `path`, so renaming
+    /// it over `path` doesn't change them (issue #3348).
+    ///
+    /// Fails only when the owner/group can't be set (e.g. a group the user
+    /// isn't a member of) or an xattr can't be copied for an unexpected
+    /// reason. An attribute this process may not set is skipped rather than
+    /// giving up the atomic save for all of them (see
+    /// [`Self::xattr_error_drops_only_the_attribute`]), and content-bound
+    /// attributes are never copied (see [`Self::xattr_is_content_bound`]).
     #[cfg(unix)]
     fn copy_owner_and_xattrs(
         original: &std::fs::Metadata,
@@ -1459,7 +1465,7 @@ impl StdFileSystem {
         let uid = (created.uid() != original.uid()).then_some(original.uid());
         let gid = (created.gid() != original.gid()).then_some(original.gid());
         if uid.is_some() || gid.is_some() {
-            std::os::unix::fs::chown(temp, uid, gid)?;
+            Self::chown(temp, uid, gid)?;
         }
 
         let names = match xattr::list_deref(path) {
@@ -1469,16 +1475,81 @@ impl StdFileSystem {
             Err(e) => return Err(e),
         };
         for name in names {
-            let Some(value) = xattr::get_deref(path, &name)? else {
+            if Self::xattr_is_content_bound(&name) {
                 continue;
-            };
-            // A new file often already has the same label/ACL; setting it
-            // again could need privileges the save doesn't otherwise need.
-            if xattr::get(temp, &name)?.as_deref() != Some(value.as_slice()) {
-                xattr::set(temp, &name, &value)?;
+            }
+            let copied = xattr::get_deref(path, &name).and_then(|value| {
+                let Some(value) = value else {
+                    return Ok(());
+                };
+                // A new file often already has the same label/ACL; setting it
+                // again could need privileges the save doesn't otherwise need.
+                if xattr::get(temp, &name)?.as_deref() != Some(value.as_slice()) {
+                    Self::set_xattr(temp, &name, &value)?;
+                }
+                Ok(())
+            });
+            match copied {
+                Ok(()) => {}
+                Err(e) if Self::xattr_error_drops_only_the_attribute(&e) => {
+                    tracing::debug!(
+                        "Not carrying xattr {:?} of {} over to the saved file: {e}",
+                        name,
+                        path.display()
+                    );
+                }
+                Err(e) => return Err(e),
             }
         }
         Ok(())
+    }
+
+    /// Extended attributes that vouch for the file's *content*, so must not
+    /// be carried over to new content: a file capability
+    /// (`security.capability`) would hand its privileges to whatever was
+    /// just written, and IMA/EVM hashes and signatures (`security.ima`,
+    /// `security.evm`) describe the old bytes.
+    #[cfg(unix)]
+    fn xattr_is_content_bound(name: &std::ffi::OsStr) -> bool {
+        matches!(
+            name.to_str(),
+            Some("security.capability" | "security.ima" | "security.evm")
+        )
+    }
+
+    /// Whether an error reading or setting one xattr just means that
+    /// attribute can't be carried over, rather than that the save can't be
+    /// made atomic: one this process may not set (EPERM/EACCES — e.g.
+    /// system-managed attributes on macOS, or an SELinux policy) or one the
+    /// filesystem can't hold (ENOTSUP). Falling back to an in-place write for
+    /// those would make nearly every save on such a system non-atomic.
+    #[cfg(unix)]
+    fn xattr_error_drops_only_the_attribute(e: &io::Error) -> bool {
+        e.kind() == io::ErrorKind::Unsupported
+            || e.raw_os_error().is_some_and(|code| {
+                code == libc::EPERM
+                    || code == libc::EACCES
+                    || code == libc::ENOTSUP
+                    || code == libc::EOPNOTSUPP
+            })
+    }
+
+    #[cfg(unix)]
+    fn chown(path: &Path, uid: Option<u32>, gid: Option<u32>) -> io::Result<()> {
+        #[cfg(test)]
+        if tests::FAIL_CHOWN.with(std::cell::Cell::get) {
+            return Err(io::Error::from_raw_os_error(libc::EPERM));
+        }
+        std::os::unix::fs::chown(path, uid, gid)
+    }
+
+    #[cfg(unix)]
+    fn set_xattr(path: &Path, name: &std::ffi::OsStr, value: &[u8]) -> io::Result<()> {
+        #[cfg(test)]
+        if tests::UNSETTABLE_XATTR.with(|n| n.borrow().as_deref() == Some(name)) {
+            return Err(io::Error::from_raw_os_error(libc::EPERM));
+        }
+        xattr::set(path, name, value)
     }
 
     /// Get the current user's effective UID and all group IDs (primary + supplementary).
@@ -2108,6 +2179,18 @@ mod tests {
     use super::*;
     use tempfile::NamedTempFile;
 
+    thread_local! {
+        #[cfg(unix)]
+        /// Makes `StdFileSystem::chown` fail with EPERM on this thread, as it
+        /// does for a non-root user and a group they aren't in.
+        pub(super) static FAIL_CHOWN: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+        #[cfg(unix)]
+        /// Makes setting this xattr fail with EPERM on this thread, as it does
+        /// for attributes the system manages.
+        pub(super) static UNSETTABLE_XATTR: std::cell::RefCell<Option<std::ffi::OsString>> =
+            const { std::cell::RefCell::new(None) };
+    }
+
     #[test]
     fn test_std_filesystem_read_write() {
         let fs = StdFileSystem;
@@ -2309,8 +2392,8 @@ mod tests {
         assert_eq!(meta.nlink(), 2);
     }
 
-    /// Issue #3348: extended attributes (and POSIX ACLs, which are stored as
-    /// xattrs) of the original file were dropped by the atomic replace.
+    /// Issue #3348: extended attributes (and, on Linux, POSIX ACLs, which are
+    /// stored as xattrs) of the original file were dropped by the atomic replace.
     #[cfg(unix)]
     #[test]
     fn atomic_write_preserves_extended_attributes() {
@@ -2330,6 +2413,131 @@ mod tests {
             xattr::get(&path, "user.fresh_test").unwrap().as_deref(),
             Some(&b"kept"[..])
         );
+    }
+
+    /// An owner/group the saving process can't give the new file (a group a
+    /// non-root user isn't in) must not be dropped: the file is rewritten in
+    /// place instead, keeping its inode and with it owner and group.
+    #[cfg(unix)]
+    #[test]
+    fn atomic_write_falls_back_to_in_place_when_owner_cannot_be_set() {
+        use std::os::unix::fs::MetadataExt;
+        let fs = StdFileSystem;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("owned.txt");
+        std::fs::write(&path, b"old\n").unwrap();
+        let Some((uid, gid)) = foreign_owner_for(&path) else {
+            eprintln!("skipping: no second group available to test with");
+            return;
+        };
+        std::os::unix::fs::chown(&path, Some(uid), Some(gid)).unwrap();
+        let ino = std::fs::metadata(&path).unwrap().ino();
+
+        FAIL_CHOWN.with(|f| f.set(true));
+        let result = fs.write_file(&path, b"new\n");
+        FAIL_CHOWN.with(|f| f.set(false));
+        result.unwrap();
+
+        let meta = std::fs::metadata(&path).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"new\n");
+        assert_eq!(meta.ino(), ino, "must be rewritten in place");
+        assert_eq!((meta.uid(), meta.gid()), (uid, gid));
+        let names: Vec<_> = std::fs::read_dir(dir.path()).unwrap().collect();
+        assert_eq!(names.len(), 1, "the temp file must not be left behind");
+    }
+
+    /// An xattr this process may not set (e.g. a system-managed one on macOS)
+    /// is dropped, and the rest still copied: giving up the atomic save for
+    /// it would make most saves on such a system non-atomic.
+    #[cfg(unix)]
+    #[test]
+    fn unsettable_xattr_keeps_the_save_atomic() {
+        use std::os::unix::fs::MetadataExt;
+        let fs = StdFileSystem;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tagged.txt");
+        std::fs::write(&path, b"old\n").unwrap();
+        for name in ["user.fresh_a_system", "user.fresh_test"] {
+            if let Err(e) = xattr::set(&path, name, b"kept") {
+                eprintln!("skipping: user xattrs unsupported here ({e})");
+                return;
+            }
+        }
+        let ino = std::fs::metadata(&path).unwrap().ino();
+
+        UNSETTABLE_XATTR.with(|n| *n.borrow_mut() = Some("user.fresh_a_system".into()));
+        let result = fs.write_file(&path, b"new\n");
+        UNSETTABLE_XATTR.with(|n| *n.borrow_mut() = None);
+        result.unwrap();
+
+        assert_eq!(std::fs::read(&path).unwrap(), b"new\n");
+        assert_ne!(
+            std::fs::metadata(&path).unwrap().ino(),
+            ino,
+            "an unsettable xattr must not force a non-atomic in-place write"
+        );
+        assert_eq!(
+            xattr::get(&path, "user.fresh_test").unwrap().as_deref(),
+            Some(&b"kept"[..])
+        );
+    }
+
+    /// Which xattr failures merely drop that attribute: those caused by it
+    /// being one the process can't set or the filesystem can't hold. Anything
+    /// else still stops the atomic replace.
+    #[cfg(unix)]
+    #[test]
+    fn xattr_errors_that_drop_only_the_attribute() {
+        let drops = |code| {
+            StdFileSystem::xattr_error_drops_only_the_attribute(&io::Error::from_raw_os_error(code))
+        };
+        assert!(drops(libc::EPERM));
+        assert!(drops(libc::EACCES));
+        assert!(drops(libc::ENOTSUP));
+        assert!(drops(libc::EOPNOTSUPP));
+        assert!(!drops(libc::ENOSPC));
+        assert!(!drops(libc::EIO));
+        assert!(!drops(libc::E2BIG));
+    }
+
+    /// A file capability or IMA/EVM hash/signature vouches for the old bytes
+    /// and must not be carried over to new content; ordinary attributes are.
+    #[cfg(unix)]
+    #[test]
+    fn content_bound_xattrs_are_recognized() {
+        let bound = |name: &str| StdFileSystem::xattr_is_content_bound(name.as_ref());
+        assert!(bound("security.capability"));
+        assert!(bound("security.ima"));
+        assert!(bound("security.evm"));
+        assert!(!bound("security.selinux"));
+        assert!(!bound("system.posix_acl_access"));
+        assert!(!bound("user.xdg.origin.url"));
+    }
+
+    /// A file capability grants privileges to the executable's *content*;
+    /// copying it onto whatever root just saved would hand those privileges
+    /// to new code.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn file_capability_is_not_carried_to_new_content() {
+        let fs = StdFileSystem;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tool");
+        std::fs::write(&path, b"old\n").unwrap();
+        // VFS_CAP_REVISION_2, no flags; permitted = CAP_NET_RAW (bit 13).
+        let mut cap = Vec::new();
+        for word in [0x0200_0000u32, 1 << 13, 0, 0, 0] {
+            cap.extend_from_slice(&word.to_le_bytes());
+        }
+        if let Err(e) = xattr::set(&path, "security.capability", &cap) {
+            eprintln!("skipping: can't set a file capability here ({e})");
+            return;
+        }
+
+        fs.write_file(&path, b"new\n").unwrap();
+
+        assert_eq!(std::fs::read(&path).unwrap(), b"new\n");
+        assert_eq!(xattr::get(&path, "security.capability").unwrap(), None);
     }
 
     #[test]
