@@ -48,4 +48,4 @@ pub use scroll_panel::ScrollState;
 #[cfg(feature = "runtime")]
 pub use split_rendering::{EditorRenderConfig, RenderStyle, SplitRenderer};
 #[cfg(feature = "runtime")]
-pub use status_bar::{truncate_path, StatusBarRenderer, TruncatedPath};
+pub use status_bar::StatusBarRenderer;

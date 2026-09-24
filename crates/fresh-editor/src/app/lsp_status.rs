@@ -49,7 +49,7 @@ fn centered(s: &str) -> String {
 /// Compose the LSP segment of the status bar for a given buffer language.
 ///
 /// Returns (text, indicator-state).  The state drives the indicator's color
-/// in `status_bar::element_style`; the text is what's rendered inside the
+/// in `view::ui::status_bar::lsp_look`; the text is what's rendered inside the
 /// segment.  Priority:
 ///
 /// ```text
@@ -171,7 +171,7 @@ pub(crate) fn compose_lsp_status(
         .unwrap_or(0);
     if configured_count > 0 {
         // User-dismissed languages keep the same `LSP (off)` text — only
-        // the style changes (handled by `element_style` via the
+        // the style changes (handled by `lsp_look` via the
         // `OffDismissed` variant). `enabled = false` on every configured
         // server is the persistent flavour of the same idea, so render
         // it the same way: pill stays visible but dimmed, so the user

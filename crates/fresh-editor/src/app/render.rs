@@ -6115,11 +6115,10 @@ impl Editor {
 
 /// Building the status bar's description from live state.
 impl Editor {
-    /// The bar's elements, in the order they sit on the row.
-    ///
-    /// This is the half of `render_status` that decides *what is on the bar*.
-    /// The other half — where each element lands — is the tree's now; see
-    /// `view::shell::status_bar`.
+    /// What is on the status bar, in the order it sits on the row, gathered
+    /// from live state. Where each element lands is the tree's; see
+    /// `view::shell::status_bar`. `None` when the active buffer is missing
+    /// from the window's buffer map (teardown).
     pub(crate) fn status_bar_description(
         &mut self,
         width: u16,
