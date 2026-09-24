@@ -402,3 +402,64 @@ fn test_both_sides_empty() {
         "No cursor info expected.\nStatus bar: {status}"
     );
 }
+
+/// Ctrl+Right-click a status-bar cell and return the inspector's text.
+fn inspect_status_cell(harness: &mut EditorTestHarness, col: u16) -> String {
+    use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+    let row = crate::common::harness::layout::status_bar_row(harness.terminal_height()) as u16;
+    for kind in [
+        MouseEventKind::Down(MouseButton::Right),
+        MouseEventKind::Up(MouseButton::Right),
+    ] {
+        harness
+            .send_mouse(MouseEvent {
+                kind,
+                column: col,
+                row,
+                modifiers: KeyModifiers::CONTROL,
+            })
+            .unwrap();
+    }
+    harness.render().unwrap();
+    harness.screen_to_string()
+}
+
+/// The theme inspector names the keys a status-bar cell was painted with:
+/// the bar's own for an element, the separator's for the separator. Both
+/// come from the fold's provenance, read off the runs' theme names.
+#[test]
+fn test_theme_inspector_names_status_bar_keys() {
+    let mut config = config_with_status_bar(
+        vec![StatusBarElement::Filename],
+        vec![StatusBarElement::LineEnding, StatusBarElement::Encoding],
+    );
+    config.editor.status_bar.separator = "|".to_string();
+    let mut harness = EditorTestHarness::with_temp_project_and_config(100, 24, config).unwrap();
+    let dir = harness.project_dir().unwrap();
+    let file = dir.join("named.txt");
+    fs::write(&file, "hello\n").unwrap();
+    harness.open_file(&file).unwrap();
+    harness.render().unwrap();
+
+    let status = harness.get_status_bar();
+    let col = |needle: &str| {
+        status
+            .find(needle)
+            .unwrap_or_else(|| panic!("{needle:?} on the bar: {status}")) as u16
+    };
+    let (name_col, sep_col) = (col("named.txt"), col("LF |") + 3);
+
+    let shown = inspect_status_cell(&mut harness, name_col);
+    assert!(
+        shown.contains("ui.status_bar_fg") && shown.contains("ui.status_bar_bg"),
+        "the filename is painted in the bar's keys:\n{shown}"
+    );
+
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    let shown = inspect_status_cell(&mut harness, sep_col);
+    assert!(
+        shown.contains("ui.status_separator_fg") && shown.contains("ui.status_separator_bg"),
+        "the separator is painted in its own keys:\n{shown}"
+    );
+}

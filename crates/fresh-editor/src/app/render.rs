@@ -126,9 +126,8 @@ fn flow_run_start(buffer: &crate::model::buffer::Buffer, top_byte: usize) -> usi
 /// understood — not inside `view::shell::fold`, which is meant to know nothing
 /// about the editor's theme vocabulary.
 ///
-/// One recorder for the whole display list, replacing the per-surface
-/// `provenance_runs` walks that each newly described surface would otherwise
-/// have had to grow. Later items overwrite earlier ones, which is the paint
+/// One recorder for the whole display list, so no surface keeps a provenance
+/// walk of its own. Later items overwrite earlier ones, which is the paint
 /// order the inspector wants.
 ///
 /// **The region is generic on purpose.** `ThemeRun::region` is a surface label
@@ -285,21 +284,6 @@ impl Editor {
             self.update_search_highlights(&query);
         }
 
-        // Hide status bar when suggestions popup or file browser
-        // popup is shown — those popups float just above the prompt
-        // line, and a visible status bar wedged between them looks
-        // wrong. Floating-overlay prompts (Live Grep, issue #1796)
-        // are exempt because their suggestions live inside the
-        // centred frame, not above the bottom row.
-        // The prompt-row flag is read by `shell_frame`, which owns the frame's
-        // shape; the two below are read directly for painting decisions.
-        let BottomRowFlags {
-            prompt_is_overlay: _,
-            has_suggestions,
-            has_file_browser,
-            prompt_row_visible: _,
-        } = self.bottom_row_flags();
-
         // The frame's geometry comes from the migration shell: one `fresh-ui`
         // description, laid out once, giving every region its rectangle. This
         // replaced a vertical `Layout` over five rows plus a horizontal carve
@@ -351,7 +335,6 @@ impl Editor {
             .shell_ui
             .as_ref()
             .expect("the shell tree is taken and returned within one frame");
-        let regions = crate::view::shell::frame::regions_of(ui, size);
         // **The frame's one geometry pass, for the panes.** Every pane's box
         // and content slot, off the tree just laid out. The plugin hooks below,
         // the body painter's pass and the pane `Host`s all read this; nothing
@@ -362,13 +345,6 @@ impl Editor {
         // Retained for the callers that ask between frames where a pane is —
         // the same rects this frame paints with. See `Window::pane_rects`.
         self.active_window_mut().set_pane_rects(pane_rects.clone());
-        let region = |r: crate::view::shell::frame::HostRegion| -> ratatui::layout::Rect {
-            regions
-                .iter()
-                .find(|(k, _)| *k == r)
-                .map(|(_, rect)| *rect)
-                .unwrap_or_default()
-        };
         // The shell's BACKGROUND band: everything the tree owns that is not a
         // `Layer`, painted *before* every legacy painter so they land on top
         // of it — the mirror of the overlay band at the end of this method.
@@ -385,9 +361,6 @@ impl Editor {
         // Nothing between the two points writes a cell, so deferring the
         // paint changes no pixel; what it buys is one paint of the body
         // instead of a live one here and an unreached copy behind the seam.
-
-        use crate::view::shell::frame::HostRegion;
-        let status_bar_area = region(HostRegion::StatusBar);
 
         // The chrome each pane has, resolved with the shell's description of
         // the same grid — read by the reconcile below and by the body's
@@ -1146,10 +1119,6 @@ impl Editor {
         // writes when the title actually changes so we don't flood stdout
         // with OSC sequences every frame.
         self.update_terminal_title(&display_name);
-
-        // Status bar (hidden when toggled off, or when a suggestions/file-
-        // browser popup covers the bottom row).
-        self.publish_status_bar(status_bar_area, has_suggestions, has_file_browser);
 
         // Render file browser popup or suggestions popup AFTER status bar + prompt,
         // so they overlay on top of both (fixes bottom border being overwritten by status bar)
@@ -3406,76 +3375,6 @@ impl Editor {
             }
         }
         out
-    }
-
-    /// Record the status bar's theme-key provenance for the inspector.
-    ///
-    /// `StatusBarRenderer::render_status_bar` placed every element, drew it,
-    /// and recorded provenance in one walk. The tree places, the fold draws,
-    /// and this is the only part left.
-    ///
-    /// It used to publish a `StatusBarChrome` capture beside the runs, so the
-    /// web `Scene` could read the segments back. The `Scene` asks the tree
-    /// directly now ([`Self::shell_status_segments`]), which is why the
-    /// early-return below no longer has a capture to clear.
-    fn publish_status_bar(
-        &mut self,
-        area: ratatui::layout::Rect,
-        has_suggestions: bool,
-        has_file_browser: bool,
-    ) {
-        if !(self.active_window().status_bar_visible && !has_suggestions && !has_file_browser) {
-            // No bar this frame — the user hid it, or a suggestions / file-
-            // browser popup took the row. Nothing to record.
-            return;
-        }
-        // **There is no second side to check here, and there must not be.**
-        // This used to assert `status_bar_area_now() == Some(area)` under the
-        // claim that "the retained tree and a fresh one must lay the frame out
-        // alike". Neither side was fresh: `area` is
-        // `frame::regions_of(ui, size)` on `self.shell_ui`, and
-        // `status_bar_area_now` resolves through `shell_region_now` to
-        // `frame::regions_of(ui, size)` on the same retained `Ui` — whose own
-        // doc forbids building a throwaway one. It compared one read of the
-        // tree against another read of the same tree.
-        //
-        // The property is real and worth holding; the place for it is a test,
-        // where laying the frame out twice is a fair question. See
-        // `frame::tests::a_retained_tree_lays_the_frame_out_like_a_fresh_one`.
-
-        let Some(bar) = self.shell_frame_status_bar.clone() else {
-            return;
-        };
-        let frame_rect = {
-            let f = self.active_chrome().last_frame;
-            ratatui::layout::Rect::new(0, 0, f.width, f.height)
-        };
-        let runs = {
-            let Some(ui) = self.shell_ui.as_ref() else {
-                return;
-            };
-            crate::view::shell::status_bar::provenance_runs(ui, &bar, frame_rect, area)
-                .into_iter()
-                .map(|(x, y, w, fg, bg)| crate::app::types::ThemeRun {
-                    x,
-                    y,
-                    w,
-                    // Validated and given back as `'static` in one step: a
-                    // name that is not a real theme key reports `None`, which
-                    // is what the inspector should say about it.
-                    fg_key: fg
-                        .as_deref()
-                        .and_then(crate::view::theme::Theme::static_theme_key)
-                        .map(std::borrow::Cow::Borrowed),
-                    bg_key: bg
-                        .as_deref()
-                        .and_then(crate::view::theme::Theme::static_theme_key)
-                        .map(std::borrow::Cow::Borrowed),
-                    region: std::borrow::Cow::Borrowed("Status Bar"),
-                })
-                .collect::<Vec<_>>()
-        };
-        self.active_chrome_mut().apply_theme_runs(&runs);
     }
 
     /// Gather every status-bar input from live editor state and run `f`
