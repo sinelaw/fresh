@@ -1505,9 +1505,11 @@ fn test_concurrent_mixed_requests() {
         ReadRange { idx: usize, expected: Vec<u8> },
     }
 
+    /// One request's outcome: its index, the bytes read, the LF count.
+    type Outcome = std::io::Result<(usize, Vec<u8>, usize)>;
+
     let (expectations, results): (Vec<Expected>, Vec<std::io::Result<()>>) = rt.block_on(async {
-        let mut handles: Vec<tokio::task::JoinHandle<std::io::Result<(usize, Vec<u8>, usize)>>> =
-            Vec::new();
+        let mut handles: Vec<tokio::task::JoinHandle<Outcome>> = Vec::new();
         let mut expectations = Vec::new();
 
         for i in 0..num_each {
