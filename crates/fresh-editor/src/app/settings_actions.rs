@@ -208,6 +208,8 @@ impl Editor {
         // and width are shadows of config, not read live on each render).
         self.active_window_mut().file_explorer_width = self.config.file_explorer.width;
         self.active_window_mut().file_explorer_side = self.config.file_explorer.side;
+        self.quick_open_registry
+            .set_file_visibility(self.config.file_explorer.show_hidden);
         let active_id = self.active_window;
         if let Some(explorer) = self
             .windows

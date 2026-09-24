@@ -1276,6 +1276,7 @@ impl Editor {
             tokio_runtime.clone(),
             Some(async_bridge.sender()),
         )));
+        quick_open_registry.set_file_visibility(config.file_explorer.show_hidden);
         quick_open_registry.register(Box::new(CommandProvider::new(
             Arc::clone(&command_registry),
             Arc::clone(&keybindings),

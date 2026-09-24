@@ -267,6 +267,15 @@ impl QuickOpenRegistry {
         }
     }
 
+    /// Keep the file picker aligned with the project explorer toggles.
+    pub fn set_file_visibility(&self, show_hidden: bool) {
+        if let Some((provider, _)) = self.get_provider_for_input("") {
+            if let Some(fp) = provider.as_any().downcast_ref::<FileProvider>() {
+                fp.set_visibility(show_hidden);
+            }
+        }
+    }
+
     /// Get the provider for a given input
     ///
     /// Returns (provider, query_without_prefix)
