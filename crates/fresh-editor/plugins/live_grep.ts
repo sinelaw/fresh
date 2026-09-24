@@ -1235,7 +1235,8 @@ function openLiveGrep(initialQuery: string): void {
     floatingOverlay: true,
     ...(initialQuery ? { initialQuery } : {}),
   });
-  // Results, preview and toolbar all want the room: take the whole screen.
+  // Results, preview and toolbar all want the room: size the card on the
+  // whole screen (90%, over the dock), the way Settings is.
   editor.setPromptFullscreen(true);
   // Pre-populate the overlay's frame title with the cached
   // provider name (if any) before the user types — avoids the

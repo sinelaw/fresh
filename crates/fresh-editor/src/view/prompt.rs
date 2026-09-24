@@ -271,8 +271,9 @@ pub struct Prompt {
     /// session_preview delegate region was already provided by
     /// Primitive #1 — `editor.previewWindowInRect`).
     pub footer: Vec<fresh_core::api::StyledText>,
-    /// Lay the overlay's card over the whole frame (dock and sidebar
-    /// included) rather than its default centered box. Plugin-controlled
+    /// Centre the overlay's card on the whole frame (90% of it, over the
+    /// dock and sidebar, as Settings is) rather than on the chrome beside
+    /// the dock. Plugin-controlled
     /// via `editor.setPromptFullscreen(on)`; no effect on non-overlay
     /// prompts.
     pub fullscreen: bool,

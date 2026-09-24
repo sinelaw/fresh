@@ -4477,9 +4477,10 @@ interface EditorAPI {
 	*/
 	setPromptFooter(footer: StyledText[]): boolean;
 	/**
-	* Lay the floating-overlay prompt's card over the whole frame — the
-	* dock and sidebar included — instead of its default centered box.
-	* `false` puts it back. Has no visible effect on non-overlay prompts.
+	* Centre the floating-overlay prompt's card on the whole frame — 90%
+	* of it, over the dock and sidebar, as the Settings dialog is — instead
+	* of on the chrome area beside the dock. `false` puts it back. Has no
+	* visible effect on non-overlay prompts.
 	*/
 	setPromptFullscreen(fullscreen: boolean): boolean;
 	/**

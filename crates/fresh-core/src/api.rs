@@ -4682,9 +4682,10 @@ pub enum PluginCommand {
     /// footer. Has no visible effect on non-overlay prompts.
     SetPromptFooter { footer: Vec<StyledText> },
 
-    /// Lay the floating-overlay prompt's card over the whole frame (the
-    /// dock and sidebar included) instead of its default centered box —
-    /// the prompt's counterpart of `FloatingPanelControl`'s `fullscreen`.
+    /// Centre the floating-overlay prompt's card on the whole frame (90% of
+    /// it, over the dock and sidebar, as the Settings dialog is) instead of
+    /// on the chrome area beside the dock — the prompt's counterpart of
+    /// `FloatingPanelControl`'s `fullscreen`.
     /// Has no visible effect on non-overlay prompts.
     SetPromptFullscreen { fullscreen: bool },
 
@@ -7820,8 +7821,8 @@ impl PluginApi {
         self.send_command(PluginCommand::SetPromptFooter { footer })
     }
 
-    /// Lay the floating-overlay prompt's card over the whole frame
-    /// (`true`) or back in its default centered box (`false`).
+    /// Centre the floating-overlay prompt's card on the whole frame
+    /// (`true`) or on the chrome area beside the dock (`false`).
     pub fn set_prompt_fullscreen(&self, fullscreen: bool) -> Result<(), String> {
         self.send_command(PluginCommand::SetPromptFullscreen { fullscreen })
     }

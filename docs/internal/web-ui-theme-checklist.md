@@ -475,7 +475,7 @@ row: teal translucent pill (Cosmos) vs soft neutral pill + dark label (macOS).
 - Bottom **hint bar**: `↕ switch  →← fold` / `Enter edit  F2 menu` — plain text
   with the **keys** (`Enter`, `F2`) in the accent colour.
 
-**Live-grep toolbar:** the card covers the whole screen. A label column
+**Live-grep toolbar:** the card is 90% of the whole screen, centred over the dock as Settings is. A label column
 (`Search` / `Scope` / `Match` / `Provider`) runs beside the controls; the
 `Search` row is the query as a standard text field — `[query]` on the field
 background, its brackets banded while it has the keyboard — with the

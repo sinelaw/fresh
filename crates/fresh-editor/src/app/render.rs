@@ -3565,8 +3565,8 @@ impl Editor {
         self.shell_frame_status_bar = status_bar_items.clone();
         let menu_keys = self.menu_shortcuts();
         let suggestions = self.suggestions_description();
-        // A fullscreen card covers the whole frame, the dock beside the chrome
-        // included.
+        // A fullscreen card is placed on the whole frame, the dock beside the
+        // chrome included.
         let frame_area = match dock_area {
             Some(dock) => chrome_area.union(dock),
             None => chrome_area,
@@ -3903,10 +3903,16 @@ impl Editor {
         if !prompt.overlay {
             return None;
         }
-        let at = match prompt.fullscreen {
-            true => frame,
-            false => Self::centered_overlay_rect(chrome, 90, 90),
-        };
+        // A fullscreen card is centred on the whole frame, as the Settings
+        // dialog is, rather than on the chrome beside the dock.
+        let at = Self::centered_overlay_rect(
+            match prompt.fullscreen {
+                true => frame,
+                false => chrome,
+            },
+            90,
+            90,
+        );
         let toolbar = self.prompt_toolbar_interior();
         let default_title;
         let title_segs: &[fresh_core::api::StyledText] = if prompt.title.is_empty() {
