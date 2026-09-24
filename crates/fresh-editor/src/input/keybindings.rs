@@ -2636,6 +2636,7 @@ impl KeybindingResolver {
     /// "did someone *explicitly* claim this key for this mode"
     /// check used by `dispatch_floating_widget_key` to decide
     /// whether to let mode dispatch override its smart-key defaults.
+    #[cfg(test)]
     pub fn has_explicit_binding(&self, event: &KeyEvent, context: &KeyContext) -> bool {
         self.explicit_binding(event, context).is_some()
     }

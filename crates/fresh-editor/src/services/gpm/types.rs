@@ -106,6 +106,7 @@ impl GpmEvent {
     }
 
     /// Check if this is a single click
+    #[cfg(test)]
     pub fn is_single_click(&self) -> bool {
         self.event_type & GpmEventType::Single as u32 != 0
     }

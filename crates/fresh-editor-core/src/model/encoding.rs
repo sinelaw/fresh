@@ -115,6 +115,7 @@ impl Encoding {
     }
 
     /// Returns true if this encoding uses a BOM (Byte Order Mark)
+    #[cfg(test)]
     pub fn has_bom(&self) -> bool {
         matches!(self, Self::Utf8Bom | Self::Utf16Le | Self::Utf16Be)
     }

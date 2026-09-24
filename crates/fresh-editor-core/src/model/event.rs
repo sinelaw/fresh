@@ -1022,11 +1022,6 @@ impl EventLog {
 
         Ok(log)
     }
-
-    /// Set snapshot interval
-    pub fn set_snapshot_interval(&mut self, interval: usize) {
-        self.snapshot_interval = interval;
-    }
 }
 
 impl Default for EventLog {

@@ -746,6 +746,7 @@ pub fn suggestions_list_rect(spec: &fresh_ui::LayoutSpec) -> Option<fresh_ui::Re
 /// when `total > visible` — and cached it in `ChromeLayout` for the drag
 /// handlers. The viewport emits the bar as an item when it needs one, so its
 /// presence and its rectangle are the same answer.
+#[cfg(test)]
 pub fn suggestions_scrollbar_rect(spec: &fresh_ui::LayoutSpec) -> Option<fresh_ui::Rect> {
     let key = LIST_KEY.with(|k| k.clone());
     let range = spec.index.iter().find(|(k, _)| *k == key)?.1.clone();

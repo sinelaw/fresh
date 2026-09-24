@@ -987,7 +987,6 @@ mod tests {
     /// `layout_reader`. A window can show what does not fit, so the cap is a
     /// rule about tab names rather than about the room they have: it stops one
     /// 151-character name from being a scroll of its own (issue #2650).
-    #[test]
     /// **A name is capped when the names do not fit, and whole when they do.**
     ///
     /// This asserted the cap applied at every width, which is what the strip

@@ -709,15 +709,6 @@ impl WidgetRegistry {
         state.buffer_id
     }
 
-    /// Borrow the current spec + return the buffer id. Companion to
-    /// `update_side_effects` — render with the borrow and then write
-    /// back only the side-effects, avoiding the deep clone of the spec
-    /// that `buffer_and_spec()` does.
-    pub fn buffer_and_spec_ref(&self, panel_key: &PanelKey) -> Option<(BufferId, &WidgetSpec)> {
-        let s = self.panels.get(panel_key)?;
-        Some((s.buffer_id?, &s.spec))
-    }
-
     /// Find the buffer and current spec for a panel — used by the
     /// dispatcher to re-render after a focus advance / activate
     /// command without the plugin needing to send an UpdateWidgetPanel.
@@ -760,46 +751,6 @@ impl WidgetRegistry {
             .filter(|(_, s)| s.buffer_id == Some(buffer_id))
             .map(|(key, _)| key.clone())
             .collect()
-    }
-
-    /// Whether any panel mounted into `buffer_id` asked for
-    /// `focusFollowsCursor`.
-    ///
-    /// The cheap gate in front of the geometry: it is asked on **every
-    /// reading-row move**, almost all of them in ordinary buffers no panel is
-    /// mounted into, so it allocates nothing and never touches the buffer.
-    pub fn has_focus_follower(&self, buffer_id: BufferId) -> bool {
-        self.panels
-            .values()
-            .any(|p| p.buffer_id == Some(buffer_id) && p.focus_follows_cursor)
-    }
-
-    /// The one panel mounted into `buffer_id` that asked for
-    /// `focusFollowsCursor`, or `None`.
-    ///
-    /// **`None` when two of them share a buffer**, deliberately. Two panels
-    /// both tracking one reading row is not a state with a right answer —
-    /// each would seat it where the other did not want it — and picking one
-    /// of them here would pick it out of a `HashMap`, so the pair could
-    /// resolve differently on two consecutive calls in the same frame.
-    /// Answering "no" and saying so in the log leaves the reader alone, which
-    /// is the one behaviour that cannot be wrong.
-    pub fn focus_follower_of(&self, buffer_id: BufferId) -> Option<PanelKey> {
-        let mut found: Option<&PanelKey> = None;
-        for (key, state) in &self.panels {
-            if state.buffer_id != Some(buffer_id) || !state.focus_follows_cursor {
-                continue;
-            }
-            if found.is_some() {
-                tracing::warn!(
-                    "two focusFollowsCursor panels in buffer {:?}; neither will track the reader",
-                    buffer_id
-                );
-                return None;
-            }
-            found = Some(key);
-        }
-        found.cloned()
     }
 }
 

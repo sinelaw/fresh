@@ -25,7 +25,6 @@
 use fresh_i18n::t;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::time::Instant;
 
 use crate::state::EditorState;
 
@@ -142,10 +141,6 @@ fn resolve_fold_header_line(
 pub struct WorkspaceTracker {
     /// Whether workspace has unsaved changes
     dirty: bool,
-    /// Last save time
-    last_save: Instant,
-    /// Minimum interval between saves (debounce)
-    save_interval: std::time::Duration,
     /// Whether workspace persistence is enabled
     enabled: bool,
 }
@@ -155,8 +150,6 @@ impl WorkspaceTracker {
     pub fn new(enabled: bool) -> Self {
         Self {
             dirty: false,
-            last_save: Instant::now(),
-            save_interval: std::time::Duration::from_secs(5),
             enabled,
         }
     }
@@ -171,17 +164,6 @@ impl WorkspaceTracker {
         if self.enabled {
             self.dirty = true;
         }
-    }
-
-    /// Check if a save is needed and enough time has passed
-    pub fn should_save(&self) -> bool {
-        self.enabled && self.dirty && self.last_save.elapsed() >= self.save_interval
-    }
-
-    /// Record that a save was performed
-    pub fn record_save(&mut self) {
-        self.dirty = false;
-        self.last_save = Instant::now();
     }
 
     /// Check if there are unsaved changes (for shutdown)

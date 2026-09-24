@@ -430,11 +430,6 @@ impl WebBridge {
         !self.ws.is_empty() || !self.pending.is_empty()
     }
 
-    /// How many browsers are connected.
-    pub fn client_count(&self) -> usize {
-        self.ws.len()
-    }
-
     /// The grid size that fits every connected browser: the element-wise MIN of
     /// their wanted (cols, rows), so each can see the whole grid (bigger
     /// windows letterbox). Clients that haven't reported a size yet

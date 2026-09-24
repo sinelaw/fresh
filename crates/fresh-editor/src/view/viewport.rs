@@ -2630,63 +2630,6 @@ impl Viewport {
         self.set_top_view_line_offset(0);
     }
 
-    /// Ensure a line is visible with scroll offset applied
-    /// This is a legacy method kept for backward compatibility with tests
-    /// In practice, use ensure_visible() which works directly with cursors and bytes
-    pub fn ensure_line_visible(&mut self, buffer: &mut Buffer, line: usize) {
-        // Seek to the target line to get its byte position
-        let mut seek_iter = buffer.line_iterator(0, 80);
-        let mut current_line = 0;
-        let mut target_line_byte = 0;
-
-        while current_line < line {
-            if let Some((line_start, _)) = seek_iter.next_line() {
-                if current_line + 1 == line {
-                    target_line_byte = line_start;
-                    break;
-                }
-                current_line += 1;
-            } else {
-                // Reached end of buffer before target line
-                return;
-            }
-        }
-
-        // Check if the line is already visible by iterating from top_byte
-        let visible_count = self.visible_line_count();
-        let mut iter = buffer.line_iterator(self.top_byte(), 80);
-        let mut lines_from_top = 0;
-        let mut target_is_visible = false;
-
-        while let Some((line_byte, _)) = iter.next_line() {
-            if line_byte == target_line_byte {
-                target_is_visible = lines_from_top < visible_count;
-                break;
-            }
-            lines_from_top += 1;
-            if lines_from_top >= visible_count {
-                break;
-            }
-        }
-
-        // If not visible, scroll to show it with scroll offset
-        if !target_is_visible {
-            let effective_offset = self.scroll_offset.min(visible_count / 2);
-            let target_line_from_top = effective_offset;
-
-            // Move backwards from target to find new top_byte
-            let mut iter = buffer.line_iterator(target_line_byte, 80);
-            for _ in 0..target_line_from_top {
-                if iter.prev().is_none() {
-                    break;
-                }
-            }
-            let position = iter.current_position();
-            // Cursor-positioning flow: no soft-break info available here.
-            self.set_top_byte_with_limit(buffer, &[], &[], position);
-        }
-    }
-
     /// Ensure a column is visible with horizontal scroll offset applied
     ///
     /// # Arguments
@@ -3159,32 +3102,6 @@ mod tests {
             vp.top_view_line_offset() > 0,
             "top should be partway down the wrapped line's visual rows"
         );
-    }
-
-    #[test]
-    fn test_ensure_line_visible() {
-        let mut buffer = Buffer::from_str_test("line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10\nline11\nline12\nline13\nline14\nline15\nline16\nline17\nline18\nline19\nline20\nline21\nline22\nline23\nline24\nline25\nline26\nline27\nline28\nline29\nline30\nline31\nline32\nline33\nline34\nline35\nline36\nline37\nline38\nline39\nline40\nline41\nline42\nline43\nline44\nline45\nline46\nline47\nline48\nline49\nline50\nline51");
-        let mut vp = Viewport::new(80, 24);
-        vp.scroll_offset = 3;
-
-        // Line within scroll offset should adjust viewport
-        vp.ensure_line_visible(&mut buffer, 2);
-        // top_byte should be close to the beginning since line 2 is near the top
-        assert!(vp.top_byte() < 100);
-
-        // Line far below should scroll down
-        vp.ensure_line_visible(&mut buffer, 50);
-        assert!(vp.top_byte() > 0);
-        // Verify the line is now visible by checking we can iterate to it
-        let mut iter = buffer.line_iterator(vp.top_byte(), 80);
-        let mut found = false;
-        for _ in 0..vp.visible_line_count() {
-            if iter.next_line().is_none() {
-                break;
-            }
-            found = true;
-        }
-        assert!(found);
     }
 
     #[test]

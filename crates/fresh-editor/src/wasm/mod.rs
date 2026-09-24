@@ -44,20 +44,6 @@ impl WasmEditor {
         }
     }
 
-    /// Create a new WASM editor with initial content
-    pub fn with_content(content: &str) -> Self {
-        let fs: Arc<dyn FileSystem + Send + Sync> = Arc::new(NoopFileSystem);
-        Self {
-            // `from_str` builds an in-memory buffer and ignores the threshold;
-            // pass the single config default so no separate constant exists.
-            buffer: Buffer::from_str(
-                content,
-                crate::config::LARGE_FILE_THRESHOLD_BYTES as usize,
-                fs,
-            ),
-        }
-    }
-
     /// Get the buffer content as a string
     ///
     /// Returns None if the buffer contains invalid UTF-8
@@ -123,19 +109,5 @@ mod tests {
         assert!(!editor.is_empty());
         assert_eq!(editor.len(), 13);
         assert_eq!(editor.content(), Some("Hello, World!".to_string()));
-    }
-
-    #[test]
-    fn test_wasm_editor_with_content() {
-        let editor = WasmEditor::with_content("Initial content");
-        assert_eq!(editor.content(), Some("Initial content".to_string()));
-        assert_eq!(editor.line_count(), Some(1));
-    }
-
-    #[test]
-    fn test_wasm_editor_delete() {
-        let mut editor = WasmEditor::with_content("Hello, World!");
-        editor.delete(5, 13); // Delete ", World!"
-        assert_eq!(editor.content(), Some("Hello".to_string()));
     }
 }

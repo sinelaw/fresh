@@ -110,6 +110,7 @@ pub fn line_width_at_content_end(buffer: &Buffer, position: usize) -> Option<usi
 /// The sticky column that places a cursor `virtual_columns` past the end of
 /// the line containing `line_content_end` (a byte position at a line's
 /// content end). Inverse of [`cursor_virtual_columns`].
+#[cfg(test)]
 pub fn sticky_for_virtual_position(
     buffer: &Buffer,
     line_content_end: usize,

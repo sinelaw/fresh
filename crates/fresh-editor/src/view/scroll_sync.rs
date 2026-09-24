@@ -141,11 +141,13 @@ impl ScrollSyncGroup {
     }
 
     /// Get the scroll line for the left split
+    #[cfg(test)]
     pub fn left_scroll_line(&self) -> usize {
         self.scroll_line
     }
 
     /// Get the scroll line for the right split (derived via anchors)
+    #[cfg(test)]
     pub fn right_scroll_line(&self) -> usize {
         self.left_to_right_line(self.scroll_line)
     }

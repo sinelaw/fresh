@@ -93,9 +93,4 @@ impl Editor {
 
         InputResult::Consumed
     }
-
-    /// Check if calibration wizard is active
-    pub fn is_calibration_active(&self) -> bool {
-        self.calibration_wizard.is_some()
-    }
 }

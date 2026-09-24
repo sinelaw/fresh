@@ -88,11 +88,6 @@ fn column_in(line: &str, needle: &str) -> usize {
     line[..byte].chars().count()
 }
 
-/// Character column `needle` starts at on the row it appears on.
-fn column_of(harness: &EditorTestHarness, needle: &str) -> usize {
-    column_in(&line_with(harness, needle), needle)
-}
-
 /// Wait until the plugin has decorated the buffer: `**` disappearing is the
 /// established "the conceal pass has run" signal in this suite.
 fn settle(harness: &mut EditorTestHarness) {

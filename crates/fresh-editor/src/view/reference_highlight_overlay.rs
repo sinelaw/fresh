@@ -70,6 +70,7 @@ impl ReferenceHighlightOverlay {
     }
 
     /// Create with custom debounce delay
+    #[cfg(test)]
     pub fn with_debounce(delay_ms: u64) -> Self {
         Self {
             debounce_delay: Duration::from_millis(delay_ms),

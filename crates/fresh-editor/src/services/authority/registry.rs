@@ -64,14 +64,6 @@ impl ConnectionRegistry {
         self.open.get(&id)
     }
 
-    /// The id of an `Arc` this registry handed out.
-    pub fn id_of(&self, connection: &Arc<Connection>) -> Option<ConnectionId> {
-        self.open
-            .iter()
-            .find(|(_, c)| Arc::ptr_eq(c, connection))
-            .map(|(id, _)| *id)
-    }
-
     /// Every open connection, in no particular order.
     pub fn iter(&self) -> impl Iterator<Item = (ConnectionId, &Arc<Connection>)> {
         self.open.iter().map(|(id, c)| (*id, c))
@@ -126,17 +118,6 @@ mod tests {
             Arc::new(WorkspaceTrust::permissive()),
             Arc::new(EnvProvider::inactive()),
         ))
-    }
-
-    #[test]
-    fn a_registered_connection_resolves_by_id() {
-        let mut registry = ConnectionRegistry::new();
-        let (id, connection) = registry.register(local());
-        assert!(Arc::ptr_eq(
-            registry.get(id).expect("the entry is open"),
-            &connection
-        ));
-        assert_eq!(registry.id_of(&connection), Some(id));
     }
 
     #[test]

@@ -619,70 +619,6 @@ impl RecoveryStorage {
         Ok(entries)
     }
 
-    /// Clean up orphaned files (content without metadata or vice versa)
-    pub fn cleanup_orphans(&self) -> io::Result<usize> {
-        if !self.recovery_dir.exists() {
-            return Ok(0);
-        }
-
-        let mut cleaned = 0;
-        let mut seen_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
-
-        for entry in fs::read_dir(&self.recovery_dir)? {
-            let entry = entry?;
-            let path = entry.path();
-
-            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                // Skip session lock
-                if name == Self::SESSION_LOCK {
-                    continue;
-                }
-
-                // Extract ID from various file types
-                let id = if name.ends_with(&format!(".{}", Self::META_EXT)) {
-                    name.trim_end_matches(&format!(".{}", Self::META_EXT))
-                        .to_string()
-                } else if name.ends_with(&format!(".{}", Self::CONTENT_EXT)) {
-                    name.trim_end_matches(&format!(".{}", Self::CONTENT_EXT))
-                        .to_string()
-                } else if name.contains(".chunk.") {
-                    // Handle chunk files like "id.chunk.0"
-                    name.split(".chunk.").next().unwrap_or("").to_string()
-                } else {
-                    // Unknown file type, skip
-                    continue;
-                };
-
-                if id.is_empty() || seen_ids.contains(&id) {
-                    continue;
-                }
-                seen_ids.insert(id.clone());
-
-                let (meta_path, _content_path) = self.recovery_paths(&id);
-                let chunk_paths = self.list_chunk_paths(&id).unwrap_or_default();
-
-                // Need meta + chunk files
-                let is_valid = meta_path.exists() && !chunk_paths.is_empty();
-
-                if !is_valid {
-                    if let Err(e) = fs::remove_file(&meta_path) {
-                        tracing::warn!(
-                            "Failed to remove orphan metadata {}: {}",
-                            meta_path.display(),
-                            e
-                        );
-                    }
-                    if let Err(e) = self.delete_chunk_files(&id) {
-                        tracing::warn!("Failed to remove orphan chunk files for {}: {}", id, e);
-                    }
-                    cleaned += 1;
-                }
-            }
-        }
-
-        Ok(cleaned)
-    }
-
     // ========================================================================
     // In-place write recovery
     // ========================================================================
@@ -732,26 +668,6 @@ impl RecoveryStorage {
         // Sort by start time (oldest first)
         entries.sort_by_key(|e| e.started_at);
         Ok(entries)
-    }
-
-    /// Clean up an in-place write recovery entry and its temp file.
-    pub fn cleanup_inplace_write_recovery(
-        &self,
-        recovery: &super::types::InplaceWriteRecovery,
-    ) -> io::Result<()> {
-        // Delete the temp file
-        if recovery.temp_path.exists() {
-            fs::remove_file(&recovery.temp_path)?;
-        }
-
-        // Delete the metadata file
-        let hash = path_hash(&recovery.dest_path);
-        let meta_path = self.recovery_dir.join(format!("{}.inplace.json", hash));
-        if meta_path.exists() {
-            fs::remove_file(&meta_path)?;
-        }
-
-        Ok(())
     }
 
     // ========================================================================
@@ -887,29 +803,6 @@ mod tests {
 
         // Verify it's gone
         assert!(storage.load_entry(id).unwrap().is_none());
-    }
-
-    #[test]
-    fn test_cleanup_orphans() {
-        let (storage, _temp) = create_test_storage();
-        storage.ensure_dir().unwrap();
-
-        // Create an orphan content file (no metadata)
-        let orphan_content = storage.recovery_dir.join("orphan.content");
-        fs::write(&orphan_content, b"orphan").unwrap();
-
-        // Create a complete entry
-        let chunks = vec![RecoveryChunk::new(0, 0, b"content".to_vec())];
-        storage
-            .save_recovery("complete", chunks, None, Some("Test"), None, 0, 7)
-            .unwrap();
-
-        // Cleanup should remove the orphan
-        let cleaned = storage.cleanup_orphans().unwrap();
-        assert_eq!(cleaned, 1);
-
-        // Complete entry should still exist
-        assert!(storage.load_entry("complete").unwrap().is_some());
     }
 
     #[test]
@@ -1093,35 +986,6 @@ mod tests {
         assert!(!storage.chunk_path(id, 0).exists());
         assert!(!storage.chunk_path(id, 1).exists());
         assert!(!storage.chunk_path(id, 2).exists());
-    }
-
-    #[test]
-    fn test_chunked_recovery_cleanup_orphan_chunks() {
-        let (storage, _temp) = create_test_storage();
-        storage.ensure_dir().unwrap();
-
-        // Create orphan chunk files (no metadata)
-        let orphan_chunk0 = storage.chunk_path("orphan", 0);
-        let orphan_chunk1 = storage.chunk_path("orphan", 1);
-        fs::write(&orphan_chunk0, b"orphan chunk 0").unwrap();
-        fs::write(&orphan_chunk1, b"orphan chunk 1").unwrap();
-
-        // Create a valid entry
-        let chunks = vec![RecoveryChunk::new(0, 0, b"valid".to_vec())];
-        storage
-            .save_recovery("valid", chunks, None, None, None, 100, 105)
-            .unwrap();
-
-        // Cleanup orphans
-        let cleaned = storage.cleanup_orphans().unwrap();
-        assert_eq!(cleaned, 1); // One orphan ID cleaned up
-
-        // Orphan chunks should be gone
-        assert!(!orphan_chunk0.exists());
-        assert!(!orphan_chunk1.exists());
-
-        // Valid entry should still exist
-        assert!(storage.load_entry("valid").unwrap().is_some());
     }
 
     #[test]
