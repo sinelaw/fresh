@@ -35,13 +35,9 @@ pub enum PopupPosition {
     CenteredOverlay { width_pct: u8, height_pct: u8 },
     /// Bottom right corner (above status bar)
     BottomRight,
-    /// Anchored above the status bar at a specific column (left-aligned at x).
-    /// Used by the LSP-status popup so it appears directly above the LSP
-    /// segment that opened it. `status_row` is the actual row of the status
-    /// bar in the current frame — passing it in lets the popup hug the
-    /// status bar regardless of whether the prompt line is visible (which
-    /// shifts the status bar by a row when it auto-hides).
-    AboveStatusBarAt { x: u16, status_row: u16 },
+    /// Directly above the status-bar element that opened it — the LSP,
+    /// remote, read-only and update menus.
+    AboveStatusBarAt(crate::view::ui::status_bar::StatusBarClickable),
 }
 
 /// Kind of popup - determines input handling behavior

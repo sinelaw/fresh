@@ -1369,35 +1369,24 @@ impl Editor {
         Some(crate::view::shell::search_options::option_spans(ui, size))
     }
 
-    /// Where layout put each clickable status-bar element, read off the
-    /// retained tree.
-    pub(crate) fn status_bar_clickable_rects_now(
+    /// Where a popup opened from a status-bar element goes: above that
+    /// element while it is on the bar, the bottom-right corner otherwise.
+    pub(crate) fn popup_above_status_bar(
         &self,
-    ) -> Vec<(
-        crate::view::ui::status_bar::StatusBarClickable,
-        ratatui::layout::Rect,
-    )> {
-        let Some(ui) = self.shell_ui.as_ref() else {
-            return Vec::new();
-        };
-        let Some(bar) = self.shell_frame_status_bar.as_ref() else {
-            return Vec::new();
-        };
-        let frame = self.active_chrome().last_frame;
-        let size = ratatui::layout::Rect::new(0, 0, frame.width, frame.height);
-        crate::view::shell::status_bar::clickable_rects(ui, bar, size)
-    }
-
-    /// Screen area `(row, start_col, end_col)` of one clickable element, for
-    /// the popups that anchor to their indicator.
-    pub(crate) fn status_bar_clickable_area_now(
-        &mut self,
         id: crate::view::ui::status_bar::StatusBarClickable,
-    ) -> Option<(u16, u16, u16)> {
-        self.status_bar_clickable_rects_now()
-            .into_iter()
-            .find(|(cid, _)| *cid == id)
-            .map(|(_, r)| (r.y, r.x, r.x.saturating_add(r.width)))
+    ) -> crate::view::popup::PopupPosition {
+        use crate::view::popup::PopupPosition;
+        let on_bar = self.shell_frame_status_bar.as_ref().is_some_and(|bar| {
+            bar.left
+                .iter()
+                .chain(&bar.right)
+                .any(|it| it.clickable == Some(id))
+        });
+        if on_bar {
+            PopupPosition::AboveStatusBarAt(id)
+        } else {
+            PopupPosition::BottomRight
+        }
     }
 
     /// The prompt row's description: the prompt's message, its query and the
