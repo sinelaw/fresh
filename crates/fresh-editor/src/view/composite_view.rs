@@ -2,8 +2,102 @@
 //!
 //! Manages viewport, cursor, and focus state for composite buffer rendering.
 
+use crate::model::composite_buffer::{CompositeBuffer, CompositeLayout};
 use crate::model::cursor::Cursors;
 use crate::model::event::BufferId;
+
+/// The line-number gutter each composite pane draws before its text.
+pub const PANE_GUTTER_WIDTH: u16 = 4;
+
+/// Where each pane of a composite view sits across the width it is drawn in.
+///
+/// **A function of the composite and the width, not a record of the last
+/// paint.** The painter used to compute the widths and store them on the
+/// view state (`pane_widths`) for the event-time readers, which then
+/// walked them with their own idea of the separator: a click added one
+/// column per pane whether or not the layout drew a separator, so in a
+/// layout without one every pane after the first was hit one column off.
+/// Now the painter and each reader build the same value from the same two
+/// inputs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PaneLayout {
+    /// Each pane's width, gutter included.
+    pub widths: Vec<u16>,
+    /// The columns drawn between two panes: one for a side-by-side layout
+    /// that shows a separator, none otherwise.
+    pub separator_width: u16,
+}
+
+impl PaneLayout {
+    pub fn new(composite: &CompositeBuffer, width: u16) -> Self {
+        let pane_count = composite.sources.len();
+        if pane_count == 0 {
+            return Self {
+                widths: Vec::new(),
+                separator_width: 0,
+            };
+        }
+        let separator_width = match &composite.layout {
+            CompositeLayout::SideBySide { show_separator, .. } => u16::from(*show_separator),
+            _ => 0,
+        };
+        let available = width.saturating_sub((pane_count as u16 - 1) * separator_width);
+        let widths = match &composite.layout {
+            CompositeLayout::SideBySide { ratios, .. } => {
+                let default_ratio = 1.0 / pane_count as f32;
+                ratios
+                    .iter()
+                    .chain(std::iter::repeat(&default_ratio))
+                    .take(pane_count)
+                    .map(|r| (available as f32 * r).round() as u16)
+                    .collect()
+            }
+            _ => vec![available / pane_count as u16; pane_count],
+        };
+        Self {
+            widths,
+            separator_width,
+        }
+    }
+
+    pub fn pane_count(&self) -> usize {
+        self.widths.len()
+    }
+
+    /// The column pane `index` starts at, from the left of the view.
+    pub fn pane_x(&self, index: usize) -> u16 {
+        self.widths
+            .iter()
+            .take(index)
+            .map(|w| w + self.separator_width)
+            .sum()
+    }
+
+    /// The pane under column `x` (from the left of the view). A separator
+    /// belongs to the pane on its left, and a column past the last pane to
+    /// the last pane.
+    pub fn pane_at(&self, x: u16) -> usize {
+        let mut right = 0u16;
+        for (i, w) in self.widths.iter().enumerate() {
+            right += w + self.separator_width;
+            if x < right {
+                return i;
+            }
+        }
+        self.pane_count().saturating_sub(1)
+    }
+
+    /// How many columns of text pane `index` shows beside its gutter.
+    pub fn text_width(&self, index: usize) -> usize {
+        usize::from(
+            self.widths
+                .get(index)
+                .copied()
+                .unwrap_or(0)
+                .saturating_sub(PANE_GUTTER_WIDTH),
+        )
+    }
+}
 
 /// View state for a composite buffer in a split
 #[derive(Debug, Clone)]
@@ -34,9 +128,6 @@ pub struct CompositeViewState {
     /// Cursor positions per pane (for editing)
     pub pane_cursors: Vec<Cursors>,
 
-    /// Width of each pane (computed during render)
-    pub pane_widths: Vec<u16>,
-
     /// Whether visual selection mode is active
     pub visual_mode: bool,
 
@@ -59,7 +150,6 @@ impl CompositeViewState {
             cursor_column: 0,
             sticky_column: 0,
             pane_cursors: (0..pane_count).map(|_| Cursors::new()).collect(),
-            pane_widths: vec![0; pane_count],
             visual_mode: false,
             selection_anchor_row: 0,
             selection_anchor_column: 0,
@@ -186,40 +276,18 @@ impl CompositeViewState {
         if self.cursor_column > 0 {
             self.cursor_column -= 1;
             self.sticky_column = self.cursor_column;
-            // Auto-scroll horizontally all panes together
-            let current_left = self
-                .pane_viewports
-                .get(self.focused_pane)
-                .map(|v| v.left_column)
-                .unwrap_or(0);
-            if self.cursor_column < current_left {
-                for viewport in &mut self.pane_viewports {
-                    viewport.left_column = self.cursor_column;
-                }
-            }
+            // A step left can only leave the view on its left, which needs
+            // no width to correct.
+            self.reveal_cursor_column(0);
         }
     }
 
     /// Move cursor right by one column
-    pub fn move_cursor_right(&mut self, max_column: usize, pane_width: usize) {
+    pub fn move_cursor_right(&mut self, max_column: usize, text_width: usize) {
         if self.cursor_column < max_column {
             self.cursor_column += 1;
             self.sticky_column = self.cursor_column;
-            // Auto-scroll horizontally all panes together
-            let visible_width = pane_width.saturating_sub(4); // minus gutter
-            let current_left = self
-                .pane_viewports
-                .get(self.focused_pane)
-                .map(|v| v.left_column)
-                .unwrap_or(0);
-            if visible_width > 0 && self.cursor_column >= current_left + visible_width {
-                let new_left = self
-                    .cursor_column
-                    .saturating_sub(visible_width.saturating_sub(1));
-                for viewport in &mut self.pane_viewports {
-                    viewport.left_column = new_left;
-                }
-            }
+            self.reveal_cursor_column(text_width);
         }
     }
 
@@ -234,23 +302,29 @@ impl CompositeViewState {
     }
 
     /// Move cursor to end of line
-    pub fn move_cursor_to_line_end(&mut self, line_length: usize, pane_width: usize) {
+    pub fn move_cursor_to_line_end(&mut self, line_length: usize, text_width: usize) {
         self.cursor_column = line_length;
         self.sticky_column = line_length;
-        // Auto-scroll all panes to show cursor
-        let visible_width = pane_width.saturating_sub(4); // minus gutter
-        let current_left = self
+        self.reveal_cursor_column(text_width);
+    }
+
+    /// Scroll every pane sideways, together, so the cursor's column is among
+    /// the `text_width` columns each shows: to the cursor when it is left of
+    /// the view, and so it sits at the right edge when it is past it.
+    pub fn reveal_cursor_column(&mut self, text_width: usize) {
+        let left = self
             .pane_viewports
             .get(self.focused_pane)
-            .map(|v| v.left_column)
-            .unwrap_or(0);
-        if visible_width > 0 && self.cursor_column >= current_left + visible_width {
-            let new_left = self
-                .cursor_column
-                .saturating_sub(visible_width.saturating_sub(1));
-            for viewport in &mut self.pane_viewports {
-                viewport.left_column = new_left;
-            }
+            .map_or(0, |v| v.left_column);
+        let new_left = if self.cursor_column < left {
+            self.cursor_column
+        } else if text_width > 0 && self.cursor_column >= left + text_width {
+            self.cursor_column + 1 - text_width
+        } else {
+            return;
+        };
+        for viewport in &mut self.pane_viewports {
+            viewport.left_column = new_left;
         }
     }
 
@@ -353,5 +427,40 @@ mod tests {
 
         view.focus_prev_pane();
         assert_eq!(view.focused_pane, 2);
+    }
+
+    fn side_by_side(show_separator: bool) -> CompositeBuffer {
+        use crate::model::composite_buffer::SourcePane;
+        let pane = |label: &str| SourcePane::new(BufferId(1), label, false);
+        CompositeBuffer::new(
+            BufferId(9),
+            "diff".into(),
+            "diff-view".into(),
+            CompositeLayout::SideBySide {
+                ratios: vec![0.5, 0.5],
+                show_separator,
+            },
+            vec![pane("OLD"), pane("NEW")],
+        )
+    }
+
+    #[test]
+    fn a_separator_takes_a_column_between_panes() {
+        let layout = PaneLayout::new(&side_by_side(true), 81);
+        assert_eq!(layout.widths, vec![40, 40]);
+        assert_eq!(layout.pane_x(1), 41);
+        assert_eq!(layout.pane_at(39), 0);
+        assert_eq!(layout.pane_at(40), 0, "the separator is the left pane's");
+        assert_eq!(layout.pane_at(41), 1);
+    }
+
+    #[test]
+    fn without_a_separator_the_second_pane_starts_where_the_first_ends() {
+        let layout = PaneLayout::new(&side_by_side(false), 80);
+        assert_eq!(layout.widths, vec![40, 40]);
+        assert_eq!(layout.pane_x(1), 40);
+        assert_eq!(layout.pane_at(39), 0);
+        assert_eq!(layout.pane_at(40), 1);
+        assert_eq!(layout.text_width(1), 36);
     }
 }

@@ -2454,3 +2454,65 @@ fn test_split_separator_hover_after_drag_does_not_resize() {
         "a hover across the divider must not move it"
     );
 }
+
+/// A click in the second pane of a composite laid out without a separator
+/// lands on the column it was aimed at.
+///
+/// The click used to walk the painted pane widths adding one separator
+/// column per pane whatever the layout drew, so without a separator every
+/// pane after the first was hit one column to the right of the pointer,
+/// and the cursor was drawn one cell left of it.
+#[test]
+fn test_composite_click_without_separator_lands_on_the_clicked_column() {
+    use fresh::model::composite_buffer::{CompositeLayout, LineAlignment, SourcePane};
+    use fresh::primitives::text_property::TextPropertyEntry;
+
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    {
+        let editor = harness.editor_mut();
+        let mut source = |label: &str, text: &str| {
+            let id = editor.active_window_mut().create_virtual_buffer(
+                label.to_string(),
+                "text".to_string(),
+                true,
+            );
+            editor
+                .set_virtual_buffer_content(id, vec![TextPropertyEntry::text(text)])
+                .unwrap();
+            SourcePane::new(id, label, false)
+        };
+        let sources = vec![
+            source("LEFT", "leftleftleft\n"),
+            source("RIGHT", "0123456789abcdefghij\n"),
+        ];
+        let composite = editor.create_composite_buffer(
+            "no-separator".to_string(),
+            "text".to_string(),
+            CompositeLayout::SideBySide {
+                ratios: vec![0.5, 0.5],
+                show_separator: false,
+            },
+            sources,
+        );
+        editor
+            .active_window_mut()
+            .set_composite_alignment(composite, LineAlignment::from_hunks(&[], 1, 1));
+        editor.switch_buffer(composite);
+    }
+    harness.render().unwrap();
+
+    let (x, y) = harness
+        .find_text_on_screen("abcdefghij")
+        .expect("the right pane's text is on screen");
+    harness.mouse_click(x, y).unwrap();
+    harness.render().unwrap();
+
+    let cursor_bg = harness.editor().theme().editor_fg;
+    let bg_at = |col: u16| harness.get_cell_style(col, y).and_then(|s| s.bg);
+    assert_eq!(
+        bg_at(x),
+        Some(cursor_bg),
+        "the cursor is drawn on the clicked cell ('a' at column {x})"
+    );
+    assert_ne!(bg_at(x - 1), Some(cursor_bg), "and not one to its left");
+}
