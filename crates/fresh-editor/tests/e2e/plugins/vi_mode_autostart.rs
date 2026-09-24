@@ -140,3 +140,77 @@ fn vi_mode_autostart_false_leaves_vi_dormant() {
          Screen:\n{screen}"
     );
 }
+
+/// autoStart with the Orchestrator dock up: the dock's mount (from `ready`,
+/// after vi_mode has enabled itself at load) used to reset the editor mode
+/// to none, so the status bar said vi was on while `j` typed a `j`
+/// (issue #3305).
+#[test]
+fn vi_mode_autostart_survives_the_orchestrator_dock_mount() {
+    use crate::common::harness::HarnessOptions;
+
+    init_tracing_from_env();
+    let temp = tempfile::TempDir::new().unwrap();
+    let project_root = temp.path().join("project_root");
+    fs::create_dir_all(&project_root).unwrap();
+    let plugins_dir = project_root.join("plugins");
+    fs::create_dir_all(&plugins_dir).unwrap();
+    copy_plugin(&plugins_dir, "vi_mode");
+    copy_plugin(&plugins_dir, "orchestrator");
+    copy_plugin_lib(&plugins_dir);
+    let file = project_root.join("two_lines.txt");
+    fs::write(&file, "alpha\nbeta\n").unwrap();
+
+    let mut config = Config::default();
+    config.plugins.insert(
+        "vi_mode".to_string(),
+        PluginConfig {
+            enabled: true,
+            path: None,
+            settings: serde_json::json!({ "autoStart": true }),
+        },
+    );
+    let mut h = EditorTestHarness::create(
+        120,
+        32,
+        HarnessOptions::new()
+            .with_config(config)
+            .with_working_dir(project_root)
+            .without_empty_plugins_dir()
+            .with_startup_chrome(),
+    )
+    .unwrap();
+    h.editor_mut().set_clipboard_for_test(String::new());
+
+    // vi_mode has run its top-level body (and so `enableVi()`) once its
+    // toggle command is registered; the dock mounts from `ready`, after.
+    {
+        use fresh::input::keybindings::Action::PluginAction;
+        h.wait_until(|h| {
+            let cmds = h.editor().command_registry().read().unwrap().get_all();
+            cmds.iter()
+                .any(|c| c.action == PluginAction("vi_mode_toggle".to_string()))
+        })
+        .unwrap();
+    }
+    h.editor_mut().fire_ready_hook();
+    h.wait_until(|h| h.screen_to_string().contains("+ New"))
+        .unwrap();
+
+    h.open_file(&file).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("two_lines.txt"))
+        .unwrap();
+    h.send_key(KeyCode::Char('j'), KeyModifiers::NONE).unwrap();
+    // Either outcome settles the question: the cursor moved, or a `j` was
+    // typed into the buffer.
+    h.wait_until(|h| {
+        let s = h.screen_to_string();
+        s.contains("Ln 2, Col 1") || s.contains("jalpha")
+    })
+    .unwrap();
+    let screen = h.screen_to_string();
+    assert!(
+        !screen.contains("jalpha") && screen.contains("Ln 2, Col 1"),
+        "vi-normal `j` moves down instead of typing:\n{screen}"
+    );
+}

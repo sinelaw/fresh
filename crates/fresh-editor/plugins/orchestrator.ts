@@ -629,6 +629,19 @@ const DOCK_MODE = "orchestrator-dock";
 const PROJECT_MENU_KEY = "project-pick";
 const DOCK_MENU_KEY = "menu-pick";
 
+// The editor has one mode slot, shared with every plugin: vi_mode keeps
+// "vi-normal" there. The dock owns no editor mode, so where it hands the
+// keyboard back it clears the slot only of a mode of ours (every one is
+// named "orchestrator-…"), never another plugin's — the dock's mount at
+// startup used to wipe vi_mode's `autoStart` (issue #3305).
+function clearOwnEditorMode(): void {
+  // No mode reads back as `undefined`, not the declared `null`.
+  const mode = editor.getEditorMode();
+  if (typeof mode === "string" && mode.startsWith("orchestrator-")) {
+    editor.setEditorMode(null);
+  }
+}
+
 // The "New Folder" dialog — a small centered floating panel with a name
 // field, an "organize the current session under it" checkbox, and
 // Cancel / Create Folder buttons. Replaces the old bottom-of-screen
@@ -5086,7 +5099,7 @@ function openControlRoom(
     // The dock has no editor mode — its keys are handled at the host
     // floating-panel layer (mode bindings would be shadowed by the
     // active session's buffer mode).
-    editor.setEditorMode(null);
+    clearOwnEditorMode();
   } else {
     editor.setEditorMode(OPEN_MODE);
   }
@@ -5141,7 +5154,7 @@ function closeOpenDialog(): void {
   // The dock is gone — restore the default Next/Prev Window cycling (every
   // window, by id).
   editor.setWindowCycleOrder([]);
-  editor.setEditorMode(null);
+  clearOwnEditorMode();
 }
 
 // ---------------------------------------------------------------------
@@ -6229,7 +6242,7 @@ function dockMenuVisit(id: number): void {
   if (openPanel && dockMode) {
     dockBlurred = true;
     editor.floatingPanelControl(openPanel.id(), "blur", 0);
-    editor.setEditorMode(null);
+    clearOwnEditorMode();
   }
 }
 
@@ -6609,7 +6622,7 @@ function diveDockSelectionFromClick(fromEdge: "top" | "bottom" | null): void {
   dockDiveBlur = true;
   dockBlurred = true;
   editor.floatingPanelControl(openPanel.id(), "blur", 0);
-  editor.setEditorMode(null);
+  clearOwnEditorMode();
 }
 
 // Toggle command (bind to a key of choice; reachable as
@@ -14962,7 +14975,7 @@ async function runLocalCreate(id: number): Promise<void> {
       // the keyboard (blur the dock) so they can type into the agent.
       dockBlurred = true;
       editor.floatingPanelControl(openPanel.id(), "blur", 0);
-      editor.setEditorMode(null);
+      clearOwnEditorMode();
     }
     if (openPanel) {
       refreshOpenDialog();
@@ -15137,7 +15150,7 @@ async function runRemoteCreate(id: number): Promise<void> {
       if (openPanel && dockMode) {
         dockBlurred = true;
         editor.floatingPanelControl(openPanel.id(), "blur", 0);
-        editor.setEditorMode(null);
+        clearOwnEditorMode();
       }
     } else {
       // Stay put: the attach activated the born window — return to where the
@@ -15348,7 +15361,7 @@ async function attachToWorktree(opts: {
       dockDiveBlur = true;
       dockBlurred = true;
       editor.floatingPanelControl(openPanel.id(), "blur", 0);
-      editor.setEditorMode(null);
+      clearOwnEditorMode();
     } else if (dockMode && openPanel) {
       // Live-switch: keep the dock focused, but rebuild the list (the
       // `· on-disk` row's synthetic id is gone, replaced by the new live
@@ -16541,7 +16554,7 @@ function dockActivate(): void {
   dockDiveBlur = true;
   dockBlurred = true;
   editor.floatingPanelControl(openPanel.id(), "blur", 0);
-  editor.setEditorMode(null);
+  clearOwnEditorMode();
   return;
 }
 
