@@ -941,9 +941,7 @@ impl Editor {
         ms.dragging_horizontal_scrollbar = None;
         ms.drag_start_hcol = None;
         ms.drag_start_left_column = None;
-        ms.dragging_separator = None;
         ms.drag_start_position = None;
-        ms.drag_start_ratio = None;
         ms.dragging_file_explorer = false;
         ms.drag_start_explorer_width = None;
         ms.dragging_text_selection = false;

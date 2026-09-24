@@ -24,6 +24,31 @@ use fresh_i18n::t;
 
 use super::Editor;
 
+/// A split separator drag, from the divider's press to its release.
+///
+/// **One value per gesture, owned by the capture.** The divider's node
+/// captures the pointer on its press (`view::shell::grip::draggable`), so
+/// every move and the release come back to it, and only a move that arrived
+/// by capture is a drag. The press builds this value whole; each captured
+/// move reads it; the release takes it. It used to be three loose
+/// `MouseState` fields — `dragging_separator`, `drag_start_position`,
+/// `drag_start_ratio` — cleared by the blanket sweep in the pointer's legacy
+/// walk, which a captured release never reaches.
+///
+/// Nothing sweeps it. A capture that ends without a release (the divider
+/// unmounted mid-drag) leaves the value behind, and that is harmless: no
+/// captured move can arrive without a new press, and the press replaces it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct SeparatorDrag {
+    /// The container whose divider was pressed.
+    pub container: crate::model::event::ContainerId,
+    pub direction: SplitDirection,
+    /// Where the press landed. A move's delta is measured from here.
+    pub press: (u16, u16),
+    /// The container's ratio at the press.
+    pub start_ratio: f32,
+}
+
 impl Editor {
     /// Double-click on a split's content rect: the Splits component's
     /// `chrome:editor` arm (moved from the old post-walk scan).
@@ -1372,16 +1397,14 @@ impl Editor {
         &mut self,
         col: u16,
         row: u16,
-        split_id: crate::model::event::ContainerId,
-        direction: crate::model::event::SplitDirection,
+        drag: SeparatorDrag,
     ) -> AnyhowResult<()> {
-        let Some((start_col, start_row)) = self.active_window_mut().mouse_state.drag_start_position
-        else {
-            return Ok(());
-        };
-        let Some(start_ratio) = self.active_window_mut().mouse_state.drag_start_ratio else {
-            return Ok(());
-        };
+        let SeparatorDrag {
+            container: split_id,
+            direction,
+            press: (start_col, start_row),
+            start_ratio,
+        } = drag;
         let Some(editor_area) = self.body_area() else {
             return Ok(());
         };

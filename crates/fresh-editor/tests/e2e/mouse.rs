@@ -2422,3 +2422,35 @@ fn test_horizontal_scrollbar_thumb_drag_scrolls() {
         "the thumb tracks the pointer: {thumb:?} -> {moved:?}"
     );
 }
+
+/// A finished separator drag leaves nothing armed: moving the pointer back
+/// and forth across the divider afterwards, with no button held, is a hover
+/// and does not resize the split.
+#[test]
+fn test_split_separator_hover_after_drag_does_not_resize() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.type_text("split vert").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    let (split_id, _, sep_x, sep_y, sep_length) = harness.editor().get_separator_areas()[0];
+    let row = sep_y + sep_length / 2;
+    harness.mouse_drag(sep_x, row, sep_x + 10, row).unwrap();
+    let dragged = harness.editor().get_split_ratio(split_id.into()).unwrap();
+
+    let (_, _, sep_x, _, _) = harness.editor().get_separator_areas()[0];
+    for col in [sep_x, sep_x + 5, sep_x, sep_x - 5, sep_x] {
+        harness.mouse_move(col, row).unwrap();
+    }
+
+    assert_eq!(
+        harness.editor().get_split_ratio(split_id.into()).unwrap(),
+        dragged,
+        "a hover across the divider must not move it"
+    );
+}

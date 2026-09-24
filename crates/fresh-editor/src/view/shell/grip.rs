@@ -16,11 +16,12 @@
 //! grip's cell (which every resize does immediately) still arrives at the
 //! grip.
 //!
-//! **What stays app-side is the state, not the routing.** Whether a drag is
-//! in progress, and what it is dragging, is a fact about the editor and the
-//! applier keeps it; the grip's `Move` fires on a bare hover too, and it is
-//! that state which says whether the move means anything. What goes is the
-//! ladder.
+//! **What stays app-side is the state, not the routing.** What a drag is
+//! dragging is a fact about the editor and the applier keeps it — one value
+//! per gesture, set by the press and taken by the release (the separator's
+//! `app::chrome::splits::SeparatorDrag`, the sidebar's `SidebarDrag`). Whether
+//! a move *is* a drag is the capture's answer: the grip reports only moves
+//! that came to it by capture, so a bare hover across it is not one.
 
 use std::rc::Rc;
 
@@ -62,6 +63,11 @@ pub fn draggable(
             GestureKind::Move,
             Rc::new(move |e: &Event| {
                 e.stop();
+                // A move that did not come by capture is the pointer passing
+                // over the grip, not a drag of it.
+                if !e.captured {
+                    return None;
+                }
                 Some(UiMsg::Ui(UiFact::GripDrag {
                     which,
                     x: e.pos.x.max(0) as u16,
@@ -155,5 +161,16 @@ mod tests {
             mods: Mods::NONE,
         });
         assert!(facts(got).is_empty(), "the release let the pointer go");
+
+        // And a move across the grip with no press behind it is a hover,
+        // not a drag: the grip claims it and reports nothing.
+        let got = ui.dispatch(Input::Move {
+            pos: Point::new(0, 4),
+            mods: Mods::NONE,
+        });
+        assert!(
+            facts(got).is_empty(),
+            "a bare hover over a grip drags nothing"
+        );
     }
 }
