@@ -1126,24 +1126,6 @@ impl Editor {
         // When S5 puts the split grid in the tree the buffer's leaf has a
         // rectangle at layout time, the caret becomes an ordinary keyed
         // element, and this call site goes with it.
-        // A split that changed size takes any widget panel mounted in it
-        // with it: an auto-sized (`visible_rows: None`) list or tree was
-        // windowed to the old row budget, and the rects published just
-        // above are the first place the panel's new geometry is known.
-        // Re-render those panels against it and ask for the frame that
-        // shows the result, rather than leaving a grown panel with blank
-        // rows under its short list until something else repaints it.
-        // Must stay below the frame's layout (`set_pane_rects`):
-        // `widget_panels_with_stale_height` reads this frame's rects, and
-        // against the previous frame's it would find nothing stale on the
-        // one frame that matters.
-        let restaled_panels = self.widget_panels_with_stale_height();
-        if !restaled_panels.is_empty() {
-            for panel_key in &restaled_panels {
-                self.rerender_widget_panel(panel_key);
-            }
-            self.request_plugin_render();
-        }
 
         // Promote any deferred virtual-buffer animations whose Rect is now
         // known. Done here (after the frame's layout retained the pane

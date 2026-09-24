@@ -1552,14 +1552,6 @@ pub struct Editor {
     pub(crate) prose_reveal: std::cell::RefCell<
         HashMap<crate::widgets::PanelKey, std::rc::Rc<fresh_ui::behavior::anchor::Anchor>>,
     >,
-    /// Row budget each buffer-mounted widget panel was last rendered
-    /// against, so a panel whose split has since changed size can be
-    /// re-rendered once — and only once — against the new one. Comparing
-    /// against what was *rendered* (rather than against the previous
-    /// frame's viewport) is what keeps that a single repaint instead of a
-    /// per-frame one.
-    pub(crate) widget_panel_render_heights:
-        std::collections::HashMap<crate::widgets::PanelKey, u32>,
 }
 
 /// Sentinel `BufferId` registered with the widget registry for the
@@ -1585,7 +1577,7 @@ pub(crate) const SIDEBAR_PANEL_BUFFER_SPAN: usize = 256;
 /// The buffer id the overlay prompt's toolbar panel is registered against.
 /// No buffer has it: the toolbar is described in the prompt card's header
 /// band and never had a text projection to write anywhere. Below the sidebar
-/// sections' span, so `slot_for_panel_buffer` answers `None` for it.
+/// sections' span, so it never names a section's buffer.
 pub(crate) const PROMPT_TOOLBAR_BUFFER_ID: BufferId =
     BufferId(SIDEBAR_PANEL_BUFFER_BASE.0 - SIDEBAR_PANEL_BUFFER_SPAN - 1);
 

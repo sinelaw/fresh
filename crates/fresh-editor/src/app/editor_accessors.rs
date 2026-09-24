@@ -1116,19 +1116,6 @@ impl Editor {
         }
     }
 
-    /// Map a panel sentinel buffer-id back to its slot.
-    pub(crate) fn slot_for_panel_buffer(buffer_id: BufferId) -> Option<crate::app::PanelSlot> {
-        if buffer_id == crate::app::FLOATING_PANEL_BUFFER_ID {
-            Some(crate::app::PanelSlot::Floating)
-        } else if buffer_id == crate::app::DOCK_PANEL_BUFFER_ID {
-            Some(crate::app::PanelSlot::Dock)
-        } else {
-            let base = crate::app::SIDEBAR_PANEL_BUFFER_BASE.0;
-            (buffer_id.0 <= base && buffer_id.0 > base - crate::app::SIDEBAR_PANEL_BUFFER_SPAN)
-                .then(|| crate::app::PanelSlot::Sidebar(base - buffer_id.0))
-        }
-    }
-
     /// The active window's layout-cache (split-leaf rects, tab rects,
     /// file-explorer rect, view-line mappings). Mouse hit-testing and
     /// visual-line motion read from here.

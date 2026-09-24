@@ -5480,7 +5480,6 @@ impl Editor {
         // so a plugin that re-mounts (e.g. reopening a panel with
         // a fresh prefill) sees its spec values take effect. To
         // *preserve* state across renders, the plugin uses Update.
-        let avail_height = self.widget_panel_height(buffer_id);
         let ink = self.markdown_ink();
         let out = crate::widgets::resolve_panel(
             &spec,
@@ -5489,7 +5488,6 @@ impl Editor {
             options.auto_focus_first(),
             Some(ink.ctx()),
         );
-        self.record_widget_panel_render_height(&panel_key, avail_height);
         self.widget_registry.mount(
             panel_key.clone(),
             buffer_id,
@@ -5549,12 +5547,6 @@ impl Editor {
             .focus_key(panel_key)
             .map(|s| s.to_string())
             .unwrap_or_default();
-        let buffer_id = self
-            .widget_registry
-            .buffer_and_spec(panel_key)
-            .map(|(b, _)| b)
-            .unwrap_or(BufferId(0));
-        let avail_height = self.widget_panel_height(buffer_id);
         // The policy the mount set, not a fresh default: a repaint that
         // resolved focus differently from the mount is exactly the drift
         // `auto_focus_first` exists to prevent.
@@ -5571,7 +5563,6 @@ impl Editor {
             auto_focus_first,
             Some(ink.ctx()),
         );
-        self.record_widget_panel_render_height(panel_key, avail_height);
         match self
             .widget_registry
             .update(panel_key, spec, out.instance_states, out.focus_key)

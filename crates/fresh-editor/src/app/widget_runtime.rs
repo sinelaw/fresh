@@ -35,26 +35,6 @@ use super::Editor;
 /// positionless wheel to pick which widget inside a panel absorbs
 /// the scroll. No kind matching here: the capability is the kind's
 /// declaration.
-/// Whether `spec` contains a `List`/`Tree` that omitted `visible_rows` —
-/// the widgets whose row window is the host's to size, and so the only
-/// ones a change of panel height can leave laid out wrongly.
-fn spec_has_auto_sized_list(spec: &fresh_core::api::WidgetSpec) -> bool {
-    use fresh_core::api::WidgetSpec;
-    if matches!(
-        spec,
-        WidgetSpec::List {
-            visible_rows: None,
-            ..
-        } | WidgetSpec::Tree {
-            visible_rows: None,
-            ..
-        }
-    ) {
-        return true;
-    }
-    spec.children().any(spec_has_auto_sized_list)
-}
-
 fn find_scrollable_widget_key(spec: &fresh_core::api::WidgetSpec) -> Option<String> {
     let meta = crate::widgets::kinds::behavior(spec).box_meta(spec);
     if meta.picker_scroll_target {
@@ -496,103 +476,6 @@ impl Editor {
             .and_then(|b| b.compose_width)
     }
 
-    /// The viewport
-    /// height of a split currently rendering this buffer, or `None`
-    /// when the buffer isn't on screen (auto-sized widgets then keep
-    /// the legacy fallback until it is). No padding is subtracted —
-    /// the viewport height is already the buffer's usable rows.
-    pub(super) fn widget_panel_height(&self, buffer_id: BufferId) -> Option<u32> {
-        // Prefer the rect the last draw actually gave this panel. The
-        // split view-state's viewport is a seed the layout pass computes,
-        // and for a buffer-group panel it can only be a guess: the group's
-        // inner tree is stashed out of the main split tree, so
-        // `apply_layout` finds no rect for those leaves and falls back to
-        // the whole editor height. Sizing a list to that overshoots the
-        // panel and clips its last rows.
-        if let Some(painted) = self.painted_panel_height(buffer_id) {
-            return Some(painted);
-        }
-        self.windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(_, vs)| vs)
-            .and_then(|vs| {
-                vs.values()
-                    .find(|vs| vs.buffer_state(buffer_id).is_some() && vs.viewport.height > 0)
-                    .map(|vs| vs.viewport.height as u32)
-            })
-    }
-
-    /// Height of the content rect the last draw gave `buffer_id`, or
-    /// `None` when it wasn't painted into a split at all (hidden panel,
-    /// a group slot pointing at some other buffer).
-    fn painted_panel_height(&self, buffer_id: BufferId) -> Option<u32> {
-        self.pane_content_rect_for_buffer(buffer_id)
-            .map(|content_rect| content_rect.height as u32)
-            .filter(|h| *h > 0)
-    }
-
-    /// Buffer-mounted widget panels whose split no longer matches the row
-    /// budget their auto-sized (`visible_rows: None`) lists and trees were
-    /// windowed to — a resize, a divider drag, a panel becoming visible.
-    ///
-    /// Deliberately narrow, because the repaint it drives happens mid-draw:
-    ///
-    /// * only panels currently painted into a split (a panel whose buffer
-    ///   has been swapped out of its group's slot has no geometry to be
-    ///   stale against, and must not be rewritten underneath the plugin);
-    /// * only panels that actually *have* an auto-sized list or tree —
-    ///   a spec that pins every `visible_rows` lays out the same at any
-    ///   height, so repainting it would be work with no visible effect;
-    /// * and the comparison is against the height the panel was last
-    ///   *rendered* against, not the previous frame's viewport, so a panel
-    ///   is repainted once per size change rather than once per frame.
-    pub(super) fn widget_panels_with_stale_height(&self) -> Vec<crate::widgets::PanelKey> {
-        self.widget_registry
-            .panel_keys()
-            .into_iter()
-            .filter(|key| {
-                let Some((buffer_id, spec)) = self.widget_registry.buffer_and_spec_ref(key) else {
-                    return false;
-                };
-                // Floating and dock panels size themselves to their own
-                // frame (`floating_panel_inner_height`) and are re-rendered
-                // by the paths that move them; only the split-mounted ones
-                // take their budget from a split.
-                if Self::slot_for_panel_buffer(buffer_id).is_some() {
-                    return false;
-                }
-                if !spec_has_auto_sized_list(spec) {
-                    return false;
-                }
-                let Some(painted) = self.painted_panel_height(buffer_id) else {
-                    return false;
-                };
-                self.widget_panel_render_heights.get(key) != Some(&painted)
-            })
-            .collect()
-    }
-
-    /// Record the row budget `panel_key` was just rendered against. Called
-    /// from every path that renders a buffer-mounted panel, so
-    /// [`Self::widget_panels_with_stale_height`] can tell a panel that has
-    /// seen the current geometry from one that has not.
-    pub(super) fn record_widget_panel_render_height(
-        &mut self,
-        panel_key: &crate::widgets::PanelKey,
-        avail_height: Option<u32>,
-    ) {
-        match avail_height {
-            Some(h) => {
-                self.widget_panel_render_heights
-                    .insert(panel_key.clone(), h);
-            }
-            None => {
-                self.widget_panel_render_heights.remove(panel_key);
-            }
-        }
-    }
-
     /// Forget every panel mounted into `buffer_id`, because that buffer is
     /// being closed.
     ///
@@ -615,7 +498,6 @@ impl Editor {
             self.page_anchors.remove(&panel_key);
             self.pane_mirrors.remove(&panel_key);
             self.prose_reveal.borrow_mut().remove(&panel_key);
-            self.widget_panel_render_heights.remove(&panel_key);
             self.widget_registry.unmount(&panel_key);
             // The description names the panels, so losing one changes it.
             self.shell_description_stale = true;
@@ -663,7 +545,6 @@ impl Editor {
         if !self.panel_is_the_trees(panel_key) {
             return false;
         }
-        let slot = self.slot_of_panel(panel_key);
         let Some(state) = self.widget_registry.get(panel_key) else {
             return false;
         };
@@ -680,16 +561,6 @@ impl Editor {
             state.auto_focus_first,
             Some(ink.ctx()),
         );
-        // The row budget this panel was resolved against, for the resize
-        // bookkeeping that decides when a pane-mounted panel has to be
-        // re-rendered. A described panel auto-sizes in layout, so the number
-        // no longer decides a window — but the record has to stay truthful or
-        // `widget_panels_with_stale_height` reports the same panel forever.
-        let avail_height = match slot {
-            Some(slot) => self.floating_panel_inner_height(slot),
-            None => state.buffer_id.and_then(|b| self.widget_panel_height(b)),
-        };
-        self.record_widget_panel_render_height(panel_key, avail_height);
         if self
             .widget_registry
             .update_side_effects(panel_key, out.instance_states, out.focus_key)
@@ -4339,7 +4210,6 @@ mod tests {
         let panel_key = crate::widgets::PanelKey::new("welcome_screen", 1);
         let buffer = editor.active_buffer();
         mount_list_panel(&mut editor, &panel_key, buffer);
-        editor.record_widget_panel_render_height(&panel_key, Some(20));
         assert!(
             editor.widget_registry.get(&panel_key).is_some(),
             "mounted to begin with"
@@ -4352,10 +4222,6 @@ mod tests {
         assert!(
             editor.widget_registry.get(&panel_key).is_none(),
             "the panel went with its buffer"
-        );
-        assert!(
-            !editor.widget_panel_render_heights.contains_key(&panel_key),
-            "and so did the row budget it was last rendered against"
         );
     }
 
