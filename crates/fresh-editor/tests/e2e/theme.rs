@@ -365,11 +365,12 @@ fn test_markdown_popup_body_text_has_explicit_popup_text_fg() {
     let popup_text_fg = {
         let editor = harness.editor_mut();
         let theme = editor.theme().clone();
-        let popup = Popup::markdown("Create a new string object.", &theme, None)
-            .with_position(PopupPosition::Fixed { x: 10, y: 5 })
-            .with_width(50)
-            .with_max_height(10)
-            .with_transient(true);
+        // Built the way the hover and signature-help paths build theirs.
+        let mut popup = Popup::markdown("Create a new string object.", &theme, None);
+        popup.position = PopupPosition::Fixed { x: 10, y: 5 };
+        popup.width = 50;
+        popup.max_height = 10;
+        popup.transient = true;
         editor.active_state_mut().popups.show(popup);
         theme.popup_text_fg
     };
