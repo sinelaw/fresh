@@ -498,14 +498,13 @@ fn completion_popup_renders_scrollbar_when_overflowing() {
 }
 
 /// The selected candidate's row paints with `popup_selection_bg`
-/// across the candidate text + trailing pad + scrollbar column,
-/// but the popup's `│` side borders must stay outside the
-/// highlight — the right `│` in particular must keep the
-/// popup's base bg (`theme.suggestion_bg`), not the selection
-/// blue. Regression guard for a bug where the row-level
-/// selection style propagated onto the wrapping `│ ... │` entry
-/// and the per-border fg-only inline overlay could not paint
-/// the bg back, so the right border sat on selection blue.
+/// across the candidate text, trailing pad and scrollbar column, but
+/// the popup's `│` side borders must stay outside the highlight — the
+/// right `│` in particular keeps the list box's own ground
+/// (`popup_bg`, the ground a dropdown's option list takes), not the
+/// selection blue. Regression guard for a bug where the row-level
+/// selection style propagated onto the border and it sat on selection
+/// blue.
 #[test]
 fn selection_highlight_does_not_overlap_right_border() {
     let (_temp, workspace, _names) = set_up_workspace_many_alphas();
@@ -527,37 +526,26 @@ fn selection_highlight_does_not_overlap_right_border() {
     // `alpha_00/` is the first candidate, now selected after the `↓`
     // stepped into the dropdown (the host keeps `selectedIndex` at 0
     // when first entering the list).
-    let (_text_col, row) = harness
+    let (text_col, row) = harness
         .find_text_on_screen("alpha_00/")
         .expect("`alpha_00/` should be visible as the first candidate row");
 
-    // Scan the selected row right-to-left for the popup's
-    // right `│` border. The dialog that wraps the form draws
-    // its own `│` one column further out, so the rightmost
-    // `│` is the dialog's border — the popup's right border
-    // is the next `│` inward, identified as the rightmost `│`
-    // whose left neighbor is NOT also `│` (the dialog border
-    // would have the popup's `│` immediately to its left).
+    // The popup's right `│` is the first one to the right of the selected
+    // candidate's text: the list box is exactly as wide as its field, so
+    // that is its wall, whatever frames the dialog further out.
     let width = harness.buffer().area.width;
-    let mut right_border_col: Option<u16> = None;
-    for x in (1..width).rev() {
-        if harness.get_cell(x, row).as_deref() == Some("│")
-            && harness.get_cell(x - 1, row).as_deref() != Some("│")
-        {
-            right_border_col = Some(x);
-            break;
-        }
-    }
-    let right_border_col = right_border_col.unwrap_or_else(|| {
-        panic!(
-            "popup right `│` border should be visible on the selected candidate row.\nScreen:\n{}",
-            harness.screen_to_string(),
-        )
-    });
+    let right_border_col = (text_col..width)
+        .find(|&x| harness.get_cell(x, row).as_deref() == Some("│"))
+        .unwrap_or_else(|| {
+            panic!(
+                "popup right `│` border should be visible on the selected candidate row.\nScreen:\n{}",
+                harness.screen_to_string(),
+            )
+        });
 
-    let (popup_selection_bg, suggestion_bg) = {
+    let (popup_selection_bg, popup_bg) = {
         let theme = harness.editor().theme();
-        (theme.popup_selection_bg, theme.suggestion_bg)
+        (theme.popup_selection_bg, theme.popup_bg)
     };
     let border_style = harness
         .get_cell_style(right_border_col, row)
@@ -575,10 +563,10 @@ fn selection_highlight_does_not_overlap_right_border() {
     );
     assert_eq!(
         border_style.bg,
-        Some(suggestion_bg),
+        Some(popup_bg),
         "right `│` border on the selected candidate row should paint on the \
-         popup's base background (`suggestion_bg` = {:?}), not {:?}.\nScreen:\n{}",
-        suggestion_bg,
+         list box's own ground (`popup_bg` = {:?}), not {:?}.\nScreen:\n{}",
+        popup_bg,
         border_style.bg,
         harness.screen_to_string(),
     );
