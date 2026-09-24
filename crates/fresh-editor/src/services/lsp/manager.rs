@@ -2538,6 +2538,36 @@ mod tests {
         assert_eq!(spaced.as_str(), "file:///C:/my%20project/src");
     }
 
+    /// Regression test for issue #3280: after session restore on Windows the
+    /// first spawn resolves its root from the restored buffer's path, which
+    /// carries the `\\?\` verbatim prefix. That path goes through
+    /// `resolve_root_uri` -> `path_to_uri` (the auto-restart instead passes no
+    /// file and falls back to the global `root_uri`, which is why the retry
+    /// always got the drive right). The verbatim drive must survive.
+    #[cfg(windows)]
+    #[test]
+    fn resolve_root_uri_keeps_drive_of_verbatim_file_path() {
+        let manager = LspManager::new(fresh_core::WindowId(1), None);
+        let file = Path::new(r"\\?\D:\Code\temp\test_fresh\main.py");
+        let uri = manager.resolve_root_uri("python", Some(file)).unwrap();
+        assert_eq!(uri.as_str(), "file:///D:/Code/temp/test_fresh");
+    }
+
+    /// The file-path branch of `resolve_root_uri` (the one the first spawn
+    /// after restore takes) must produce the same URI as the global-root
+    /// fallback the auto-restart takes, for the same directory (#3280).
+    #[test]
+    fn resolve_root_uri_from_file_matches_global_root_fallback() {
+        let dir = std::env::current_dir().unwrap().join("some project");
+        let global = path_to_uri(&dir).unwrap();
+        let manager = LspManager::new(fresh_core::WindowId(1), Some(global.clone()));
+        let from_file = manager
+            .resolve_root_uri("python", Some(&dir.join("main.py")))
+            .unwrap();
+        assert_eq!(from_file, global);
+        assert_eq!(manager.resolve_root_uri("python", None), Some(global));
+    }
+
     #[test]
     fn dynamic_registration_enables_then_disables_inlay_hints() {
         // A server that advertised no static inlayHintProvider but registers it
