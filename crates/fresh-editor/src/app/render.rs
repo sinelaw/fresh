@@ -3377,192 +3377,6 @@ impl Editor {
         out
     }
 
-    /// Gather every status-bar input from live editor state and run `f`
-    /// with the assembled [`crate::view::ui::status_bar::StatusBarContext`]
-    /// and the user's status-bar config. Returns `None` when the active
-    /// buffer is missing from the window's buffer map (teardown).
-    pub(crate) fn with_status_bar_ctx<R>(
-        &mut self,
-        f: impl FnOnce(
-            &mut crate::view::ui::status_bar::StatusBarContext<'_>,
-            &crate::config::StatusBarConfig,
-        ) -> R,
-    ) -> Option<R> {
-        let display_name_owned = self
-            .active_window()
-            .buffer_metadata
-            .get(&self.active_buffer())
-            .map(|m| m.display_name.clone())
-            .unwrap_or_else(|| "[No Name]".to_string());
-        let display_name = display_name_owned.as_str();
-        let status_message = self.active_window().status_message.clone();
-        let plugin_status_message = self.active_window().plugin_status_message.clone();
-        // Compute a simple buffer-aware LSP indicator.
-        // Compose the LSP status-bar segment for the active buffer. This
-        // runs every render — the editor has no precomputed LSP-status
-        // string cached anywhere else, so there is a single source of
-        // truth for what the user sees.
-        //
-        // Priority order (first non-empty wins):
-        //
-        //   1. Active `$/progress` work for this language — e.g.
-        //      "LSP (cpp): indexing (42%)". Conveys the transient
-        //      startup/indexing phase.
-        //   2. A running server — "LSP". Short because detail belongs
-        //      in LSP-specific UI, not the compact status bar pill.
-        //   3. Configured `auto_start=true` servers that haven't started
-        //      (error / crashed / pending) — "LSP off".
-        //   4. Configured `enabled && !auto_start` servers that the user
-        //      has to opt into — "LSP: off (N)".
-        //   5. Nothing.
-        //
-        // Rules 3 and 4 address heuristic eval H-1: without them, a
-        // configured-but-dormant server is indistinguishable from "no
-        // LSP at all."
-        let current_language = self
-            .buffers()
-            .get(&self.active_buffer())
-            .map(|s| s.language.clone())
-            .unwrap_or_default();
-        let buffer_lsp_disabled_reason = self
-            .active_window()
-            .buffer_metadata
-            .get(&self.active_buffer())
-            .filter(|m| !m.lsp_enabled)
-            .and_then(|m| m.lsp_disabled_reason.as_deref());
-        let (lsp_status, lsp_indicator_state) = compose_lsp_status(
-            &current_language,
-            buffer_lsp_disabled_reason,
-            &self.active_window().lsp_progress,
-            &self.active_window().lsp_server_statuses,
-            &self.config.lsp,
-            &self.active_window().user_dismissed_lsp_languages,
-            self.config.lsp_enabled,
-        );
-        let chord_state_cloned = self.active_window().chord_state.clone(); // Clone the chord state
-
-        // Get update availability info
-        let update_available = self.latest_version().map(|v| v.to_string());
-        let self_update_phase = self.self_update_phase();
-
-        let general_warning_count = if self.config.warnings.show_status_indicator {
-            self.active_window().warning_domains.general.count
-        } else {
-            0
-        };
-
-        // Which clickable status-bar segment (if any) the mouse is over —
-        // drives hover styling generically (one variant for the whole bar).
-        let status_bar_hovered = match &self.hovered() {
-            Some(HoverTarget::StatusBarClickable(id)) => Some(*id),
-            _ => None,
-        };
-
-        let remote_connection = self.connection_display_string();
-        // Active window's last failed-reconnect error (drives a core
-        // FailedAttach indicator for a dormant remote workspace).
-        let remote_reconnect_error = self.active_window().remote_reconnect_error.clone();
-        // The active window is a remote session whose window-derived
-        // connect (dive / retry; see `start_remote_reconnect`'s request-id
-        // scheme) is still in flight — its shell shows `Connecting`.
-        let remote_connecting = self
-            .remote_attach_inflight
-            .contains(&(u64::MAX - self.active_window_id().0))
-            && self.active_window().authority_spec.is_remote();
-
-        // Get session label for display (only in session mode). The display
-        // name, not `session_name`: an unnamed working-directory daemon has
-        // no daemon name but is still labelled with its directory.
-        let session_name = self.session_display_name().map(|s| s.to_string());
-
-        let active_split = self.effective_active_split();
-        let active_buf = self.active_buffer();
-        let default_cursors = crate::model::cursor::Cursors::new();
-        let is_read_only = self
-            .active_window()
-            .buffer_metadata
-            .get(&active_buf)
-            .map(|m| m.read_only)
-            .unwrap_or(false);
-        let is_synthetic_placeholder = self
-            .active_window()
-            .buffer_metadata
-            .get(&active_buf)
-            .map(|m| m.synthetic_placeholder)
-            .unwrap_or(false);
-        // Compute plugin-provided status-bar values before taking the
-        // mutable window borrow below.
-        let dynamic_status_bar_elements = self.get_status_bar_element_values(active_buf);
-        // Active session's trust level for the always-present `{trust}`
-        // indicator — read here (Copy) before the mutable window borrow.
-        let workspace_trust_level = self.authority().workspace_trust.level();
-        // Restart affordance for a terminal buffer whose process quit.
-        // `exited_terminal` is `Some` only in exactly that state, so the
-        // indicator can't offer to restart a live agent.
-        let terminal_restart = self.active_window().exited_terminal(active_buf).map(|e| {
-            crate::view::ui::status_bar::TerminalRestartState {
-                program: e.program_name().map(str::to_string),
-                exit_code: e.exit_code,
-                resumes_agent: e.resumes_agent() && self.config.terminal.resume_agents,
-            }
-        });
-        // Shared chrome inputs, locked here (rather than passed in) so
-        // the event-time caller needs no per-frame clones. Field-level
-        // borrows: the guards borrow `self.theme` / `self.keybindings`,
-        // disjoint from the `self.windows` borrow below.
-        let theme_guard = self.theme.read().unwrap();
-        let theme = &*theme_guard;
-        let keybindings_guard = self.keybindings.read().unwrap();
-        let keybindings = &*keybindings_guard;
-        // Single window borrow, split into buffers + cursors so the
-        // status-bar context can hold both.
-        let __active_id = self.active_window;
-        let __win = self
-            .windows
-            .get_mut(&__active_id)
-            .expect("active window must exist");
-        __win
-            .buffers
-            .with_buffer_and_view_states(active_buf, |state, vs_map| {
-                let cursors = vs_map
-                    .get(&active_split)
-                    .map(|v| &v.cursors)
-                    .unwrap_or(&default_cursors);
-                let mut status_ctx = crate::view::ui::status_bar::StatusBarContext {
-                    state,
-                    cursors,
-                    status_message: &status_message,
-                    plugin_status_message: &plugin_status_message,
-                    lsp_status: &lsp_status,
-                    lsp_indicator_state,
-                    theme,
-                    display_name,
-                    keybindings,
-                    chord_state: &chord_state_cloned,
-                    update_available: update_available.as_deref(),
-                    update_phase: self_update_phase,
-                    general_warning_count,
-                    hovered: status_bar_hovered,
-                    remote_connection: remote_connection.as_deref(),
-                    session_name: session_name.as_deref(),
-                    read_only: is_read_only,
-                    remote_state_override: self.remote_indicator_override.as_ref(),
-                    remote_reconnect_error: remote_reconnect_error.as_deref(),
-                    remote_connecting,
-                    is_synthetic_placeholder,
-                    // Filled in by `render_status` from the user's
-                    // status_bar config; the value here is just a
-                    // safe default for the rare path that builds the
-                    // ctx but doesn't run `render_status`.
-                    remote_indicator_on_bar: false,
-                    dynamic_status_bar_elements: dynamic_status_bar_elements.clone(),
-                    workspace_trust_level,
-                    terminal_restart: terminal_restart.clone(),
-                };
-                f(&mut status_ctx, &self.config.editor.status_bar)
-            })
-    }
-
     /// The bottom-row visibility facts, computed ONCE: whether the
     /// active prompt is a floating overlay, whether a bottom-anchored
     /// suggestions popup is up, whether the file-browser dialog is up,
@@ -6345,81 +6159,220 @@ impl Editor {
     ) -> Option<crate::view::shell::status_bar::StatusBar> {
         use crate::app::shell_host::shell_theme::pair;
         use crate::view::shell::status_bar as sb;
-        use crate::view::ui::status_bar::{element_kind_name, SideElement, StatusBarRenderer};
+        use crate::view::ui::status_bar::StatusBarRenderer;
 
-        self.with_status_bar_ctx(|ctx, config| {
-            // Whether the dedicated remote indicator is on the bar, so the
-            // filename branch can drop its now-redundant prefix. Read before
-            // the sides are rendered, exactly as before.
-            ctx.remote_indicator_on_bar = config
-                .left
-                .iter()
-                .chain(config.right.iter())
-                .any(|e| matches!(e, crate::config::StatusBarElement::RemoteIndicator));
+        let display_name_owned = self
+            .active_window()
+            .buffer_metadata
+            .get(&self.active_buffer())
+            .map(|m| m.display_name.clone())
+            .unwrap_or_else(|| "[No Name]".to_string());
+        let display_name = display_name_owned.as_str();
+        let status_message = self.active_window().status_message.clone();
+        let plugin_status_message = self.active_window().plugin_status_message.clone();
+        // Compute a simple buffer-aware LSP indicator.
+        // Compose the LSP status-bar segment for the active buffer. This
+        // runs every render — the editor has no precomputed LSP-status
+        // string cached anywhere else, so there is a single source of
+        // truth for what the user sees.
+        //
+        // Priority order (first non-empty wins):
+        //
+        //   1. Active `$/progress` work for this language — e.g.
+        //      "LSP (cpp): indexing (42%)". Conveys the transient
+        //      startup/indexing phase.
+        //   2. A running server — "LSP". Short because detail belongs
+        //      in LSP-specific UI, not the compact status bar pill.
+        //   3. Configured `auto_start=true` servers that haven't started
+        //      (error / crashed / pending) — "LSP off".
+        //   4. Configured `enabled && !auto_start` servers that the user
+        //      has to opt into — "LSP: off (N)".
+        //   5. Nothing.
+        //
+        // Rules 3 and 4 address heuristic eval H-1: without them, a
+        // configured-but-dormant server is indistinguishable from "no
+        // LSP at all."
+        let current_language = self
+            .buffers()
+            .get(&self.active_buffer())
+            .map(|s| s.language.clone())
+            .unwrap_or_default();
+        let buffer_lsp_disabled_reason = self
+            .active_window()
+            .buffer_metadata
+            .get(&self.active_buffer())
+            .filter(|m| !m.lsp_enabled)
+            .and_then(|m| m.lsp_disabled_reason.as_deref());
+        let (lsp_status, lsp_indicator_state) = compose_lsp_status(
+            &current_language,
+            buffer_lsp_disabled_reason,
+            &self.active_window().lsp_progress,
+            &self.active_window().lsp_server_statuses,
+            &self.config.lsp,
+            &self.active_window().user_dismissed_lsp_languages,
+            self.config.lsp_enabled,
+        );
+        let chord_state_cloned = self.active_window().chord_state.clone(); // Clone the chord state
 
-            let left = StatusBarRenderer::render_side(&config.left, ctx);
-            let mut right = StatusBarRenderer::render_side(&config.right, ctx);
+        // Get update availability info
+        let update_available = self.latest_version().map(|v| v.to_string());
+        let self_update_phase = self.self_update_phase();
 
-            // **Which right-hand elements survive** — a content decision, made
-            // from measured text, kept verbatim from `render_status`. Reserve
-            // a sane minimum for the left side so the buffer name and cursor
-            // position are not truncated to a single character on a narrow
-            // terminal, then drop low-priority right elements (configured
-            // right-most first) until the rest fits alongside it. The *first*
-            // right element is never dropped, so a user who configured any
-            // right-side status keeps some of it.
-            let available = width as usize;
-            let sep_w = crate::primitives::display_width::str_width(&config.separator);
-            let total_right: usize = right.iter().map(|(_, w, _, _)| *w).sum::<usize>()
-                + sep_w * right.len().saturating_sub(1);
-            let left_min_target = available.saturating_mul(2).saturating_div(5).min(40);
-            let right_budget = available.saturating_sub(left_min_target + 1);
-            // How many right elements are kept whatever happens. Normally one,
-            // so a user who configured any right-side status keeps some of it.
-            // On a bar too narrow to host both sides — `sb::BOTH_SIDES_MIN`,
-            // the boundary `render_status` drew and `left_budget` kept — it is
-            // none: the left side is what survives there, which is what
-            // "reserve nothing for the right" amounted to when the right was
-            // then clipped to whatever the left had not taken. Said as which
-            // elements are on the bar, because that is the decision it is.
-            let keep = usize::from(available >= sb::BOTH_SIDES_MIN);
-            if total_right > right_budget && right.len() > keep {
-                let mut current = total_right;
-                while current > right_budget && right.len() > keep {
-                    let Some(dropped) = right.pop() else { break };
-                    current = current.saturating_sub(dropped.1).saturating_sub(sep_w);
+        let general_warning_count = if self.config.warnings.show_status_indicator {
+            self.active_window().warning_domains.general.count
+        } else {
+            0
+        };
+
+        // Which clickable status-bar segment (if any) the mouse is over —
+        // drives hover styling generically (one variant for the whole bar).
+        let status_bar_hovered = match &self.hovered() {
+            Some(HoverTarget::StatusBarClickable(id)) => Some(*id),
+            _ => None,
+        };
+
+        let remote_connection = self.connection_display_string();
+        // Active window's last failed-reconnect error (drives a core
+        // FailedAttach indicator for a dormant remote workspace).
+        let remote_reconnect_error = self.active_window().remote_reconnect_error.clone();
+        // The active window is a remote session whose window-derived
+        // connect (dive / retry; see `start_remote_reconnect`'s request-id
+        // scheme) is still in flight — its shell shows `Connecting`.
+        let remote_connecting = self
+            .remote_attach_inflight
+            .contains(&(u64::MAX - self.active_window_id().0))
+            && self.active_window().authority_spec.is_remote();
+
+        // Get session label for display (only in session mode). The display
+        // name, not `session_name`: an unnamed working-directory daemon has
+        // no daemon name but is still labelled with its directory.
+        let session_name = self.session_display_name().map(|s| s.to_string());
+
+        let active_split = self.effective_active_split();
+        let active_buf = self.active_buffer();
+        let default_cursors = crate::model::cursor::Cursors::new();
+        let is_read_only = self
+            .active_window()
+            .buffer_metadata
+            .get(&active_buf)
+            .map(|m| m.read_only)
+            .unwrap_or(false);
+        let is_synthetic_placeholder = self
+            .active_window()
+            .buffer_metadata
+            .get(&active_buf)
+            .map(|m| m.synthetic_placeholder)
+            .unwrap_or(false);
+        // Compute plugin-provided status-bar values before taking the
+        // mutable window borrow below.
+        let dynamic_status_bar_elements = self.get_status_bar_element_values(active_buf);
+        // Active session's trust level for the always-present `{trust}`
+        // indicator — read here (Copy) before the mutable window borrow.
+        let workspace_trust_level = self.authority().workspace_trust.level();
+        // Restart affordance for a terminal buffer whose process quit.
+        // `exited_terminal` is `Some` only in exactly that state, so the
+        // indicator can't offer to restart a live agent.
+        let terminal_restart = self.active_window().exited_terminal(active_buf).map(|e| {
+            crate::view::ui::status_bar::TerminalRestartState {
+                program: e.program_name().map(str::to_string),
+                exit_code: e.exit_code,
+                resumes_agent: e.resumes_agent() && self.config.terminal.resume_agents,
+            }
+        });
+        // A field-level borrow, disjoint from the `self.windows` borrow below.
+        let keybindings_guard = self.keybindings.read().unwrap();
+        let keybindings = &*keybindings_guard;
+        // Single window borrow, split into buffers + cursors so the
+        // status-bar context can hold both.
+        let __active_id = self.active_window;
+        let __win = self
+            .windows
+            .get_mut(&__active_id)
+            .expect("active window must exist");
+        __win
+            .buffers
+            .with_buffer_and_view_states(active_buf, |state, vs_map| {
+                let cursors = vs_map
+                    .get(&active_split)
+                    .map(|v| &v.cursors)
+                    .unwrap_or(&default_cursors);
+                let config = &self.config.editor.status_bar;
+                let mut status_ctx = crate::view::ui::status_bar::StatusBarContext {
+                    state,
+                    cursors,
+                    status_message: &status_message,
+                    plugin_status_message: &plugin_status_message,
+                    lsp_status: &lsp_status,
+                    lsp_indicator_state,
+                    display_name,
+                    keybindings,
+                    chord_state: &chord_state_cloned,
+                    update_available: update_available.as_deref(),
+                    update_phase: self_update_phase,
+                    general_warning_count,
+                    hovered: status_bar_hovered,
+                    remote_connection: remote_connection.as_deref(),
+                    session_name: session_name.as_deref(),
+                    read_only: is_read_only,
+                    remote_state_override: self.remote_indicator_override.as_ref(),
+                    remote_reconnect_error: remote_reconnect_error.as_deref(),
+                    remote_connecting,
+                    is_synthetic_placeholder,
+                    // So the filename can drop its now-redundant prefix.
+                    remote_indicator_on_bar: config
+                        .left
+                        .iter()
+                        .chain(config.right.iter())
+                        .any(|e| matches!(e, crate::config::StatusBarElement::RemoteIndicator)),
+                    dynamic_status_bar_elements,
+                    workspace_trust_level,
+                    terminal_restart,
+                };
+
+                let left = StatusBarRenderer::render_side(&config.left, &mut status_ctx);
+                let mut right = StatusBarRenderer::render_side(&config.right, &mut status_ctx);
+
+                // **Which right-hand elements survive** — a content decision, made
+                // from measured text. Reserve
+                // a sane minimum for the left side so the buffer name and cursor
+                // position are not truncated to a single character on a narrow
+                // terminal, then drop low-priority right elements (configured
+                // right-most first) until the rest fits alongside it. The *first*
+                // right element is never dropped, so a user who configured any
+                // right-side status keeps some of it.
+                let available = width as usize;
+                let sep_w = crate::primitives::display_width::str_width(&config.separator);
+                let width_of =
+                    |it: &sb::Item| crate::primitives::display_width::str_width(&it.text());
+                let total_right: usize = right.iter().map(width_of).sum::<usize>()
+                    + sep_w * right.len().saturating_sub(1);
+                let left_min_target = available.saturating_mul(2).saturating_div(5).min(40);
+                let right_budget = available.saturating_sub(left_min_target + 1);
+                // How many right elements are kept whatever happens. Normally one,
+                // so a user who configured any right-side status keeps some of it.
+                // On a bar too narrow to host both sides (`sb::BOTH_SIDES_MIN`) it
+                // is none: the left side is what survives there.
+                let keep = usize::from(available >= sb::BOTH_SIDES_MIN);
+                if total_right > right_budget && right.len() > keep {
+                    let mut current = total_right;
+                    while current > right_budget && right.len() > keep {
+                        let Some(dropped) = right.pop() else { break };
+                        current = current
+                            .saturating_sub(width_of(&dropped))
+                            .saturating_sub(sep_w);
+                    }
                 }
-            }
 
-            // **The left side is not pre-fitted here, and that is the
-            // point.** `render_status` reserved the right side, spent what was
-            // left on the left, truncated the element that straddled the
-            // boundary and dropped the rest; the migration ported that
-            // arithmetic into `sb::left_budget` and ran it over measured text
-            // before the description existed, which is a picture with a
-            // pre-fitted string in it.
-            //
-            // The description states what is on the bar; who yields and where
-            // the cut falls are `Node::priority` and `Elide::Tail` — see
-            // `sb::yields_last`. The regression the budget existed for (a long
-            // message costing the right side its place) is the priority, and
-            // the cut is made at paint against the width layout settled on.
-
-            let item = |(runs, _w, kind, token_key): SideElement| sb::Item {
-                runs,
-                name: element_kind_name(kind),
-                clickable: StatusBarRenderer::clickable_for_kind(kind),
-                token_key,
-            };
-
-            sb::StatusBar {
-                left: left.into_iter().map(item).collect(),
-                right: right.into_iter().map(item).collect(),
-                separator: config.separator.clone(),
-                base_theme: pair("ui.status_bar_fg", "ui.status_bar_bg"),
-                sep_theme: pair("ui.status_separator_fg", "ui.status_separator_bg"),
-            }
-        })
+                // The left side is not pre-fitted: who yields and where the cut
+                // falls are layout's (`sb::yields_last`, `Elide::Tail`).
+                sb::StatusBar {
+                    left,
+                    right,
+                    separator: config.separator.clone(),
+                    base_theme: pair("ui.status_bar_fg", "ui.status_bar_bg"),
+                    sep_theme: pair("ui.status_separator_fg", "ui.status_separator_bg"),
+                }
+            })
     }
 }
 
