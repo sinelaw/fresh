@@ -63,6 +63,10 @@ Fresh is now licensed **GPL-3.0-or-later**, up from GPL-2.0-only (#3328).
 * **Settings dialog keybindings fire again** - a custom binding scoped to the settings context was silently dropped instead of reaching the dialog
 * **File Explorer resize divider tracks the pointer accurately**, and its grip sits on the correct wall when the explorer is docked on the right
 * **Plugin API: killing a background process now actually kills it and reports whether it's still running**, instead of leaving it orphaned with its promise never settling
+* **Settings: adding an entry to a nested map (an LSP server's `env` or `language_id_overrides`) saves into the field it belongs to**, instead of being misfiled as a new top-level item on the settings page
+* **The status bar underlines a hovered element again** - the underline was silently dropped in the move to the current renderer, and every hovered element's colour, plus the separator, stopped following the theme
+* **The horizontal scrollbar can reach the end of the widest line** - a press at the far end of the track, or a drag of the thumb to it, used to stop short by the gutter's width
+* **Clicking a split pane hits the pane you clicked** - in a layout without a visible separator, every pane past the first could be off by one column, and a click on the separator or past the last pane landed in the first pane instead
 
 ### Internals
 
