@@ -5,6 +5,7 @@
 //! 1. Open a new file with Ctrl+O, type a path with a non-existent parent directory
 //! 2. Type some content
 //! 3. Press Ctrl+S to save
+//!
 //! Expected: Prompt asking to create the directory
 //! Actual (before fix): Editor crashes with "No such file or directory (os error 2)"
 

@@ -3,8 +3,9 @@
 //!
 //!   1. Tree keyboard nav scrolls the body to the matching section.
 //!   2. Clicking a tree section row jumps the body to that section.
-//!   3a. Body keyboard scroll updates the tree section highlight.
-//!   3b. Body mouse-wheel scroll updates the tree section highlight.
+//!   3. Body scroll updates the tree section highlight:
+//!      - 3a. via keyboard scroll;
+//!      - 3b. via mouse-wheel scroll.
 //!   4. At every assertion point exactly ONE row in the left panel is
 //!      visually highlighted (single-cursor invariant) — checked via the
 //!      cell background color, not just the `>` glyph, so the test

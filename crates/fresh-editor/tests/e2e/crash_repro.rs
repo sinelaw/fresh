@@ -669,7 +669,7 @@ fn test_issue_1278_crash_workspace_deleted_file() {
         .unwrap();
 
         harness
-            .startup(true, &[new_file.clone()])
+            .startup(true, std::slice::from_ref(&new_file))
             .expect("startup should not panic when workspace references deleted files");
 
         harness.assert_buffer_content("new content");

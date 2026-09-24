@@ -14,6 +14,7 @@ use crate::common::blog_showcase::BlogShowcase;
 use crate::common::fixtures::TestFixture;
 use crate::common::git_test_helper::{git_command, GitTestRepo};
 use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness, HarnessOptions};
+#[cfg(feature = "plugins")]
 use crate::common::launch_form::FORM_TITLE;
 use crossterm::event::{KeyCode, KeyModifiers};
 use lsp_types::FoldingRange;

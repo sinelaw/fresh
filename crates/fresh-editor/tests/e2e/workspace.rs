@@ -1760,7 +1760,7 @@ fn test_reopen_with_file_arg_restores_session_and_opens_new_file() {
         .unwrap();
 
         // Startup with CLI file arg (mirrors production startup path)
-        let restored = harness.startup(true, &[file3.clone()]).unwrap();
+        let restored = harness.startup(true, std::slice::from_ref(&file3)).unwrap();
         assert!(restored, "Session should have been restored");
 
         // All three files should be visible in tabs

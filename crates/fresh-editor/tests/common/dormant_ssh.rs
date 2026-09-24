@@ -94,6 +94,7 @@ fn pin_shim_dir(rel: &str) -> PathPin {
 
 /// Re-exported from [`super::global_state`], where the five other roots that
 /// need the same thing now find it too.
+#[cfg(feature = "plugins")]
 pub use super::global_state::isolated_dir_context;
 
 /// An SSH `authority_spec` for a host the fake shim "fails to reach".

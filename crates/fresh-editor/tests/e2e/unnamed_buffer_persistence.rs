@@ -400,7 +400,9 @@ fn test_hot_exit_restores_without_workspace() {
         .unwrap();
 
         // Startup with CLI file, no workspace restore (mirrors `fresh hello.txt`)
-        harness.startup(false, &[file1.clone()]).unwrap();
+        harness
+            .startup(false, std::slice::from_ref(&file1))
+            .unwrap();
         harness.assert_screen_contains("EDITED");
     }
 }

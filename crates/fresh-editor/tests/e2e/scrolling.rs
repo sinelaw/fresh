@@ -2755,9 +2755,10 @@ fn assert_cursor_visible(harness: &mut EditorTestHarness, context: &str) {
 /// Assert consecutive pages retain at least `min_overlap` view rows of shared
 /// context: the last N rows of `prev` must appear as the first N rows of
 /// `cur`. Counts view rows (raw rendered row strings) rather than logical
-/// lines — what the user actually sees on screen — because `viewport_height
-/// - 3` scroll is defined in view rows, and with wrap a single overlapping
-/// logical line can correspond to multiple shared view rows and vice versa.
+/// lines — what the user actually sees on screen — because
+/// `viewport_height - 3` scroll is defined in view rows, and with wrap a
+/// single overlapping logical line can correspond to multiple shared view
+/// rows and vice versa.
 fn assert_pages_overlap(prev: &str, cur: &str, min_overlap: usize, context: &str) {
     let prev_rows: Vec<&str> = prev.lines().collect();
     let cur_rows: Vec<&str> = cur.lines().collect();

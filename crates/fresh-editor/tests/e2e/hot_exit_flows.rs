@@ -204,7 +204,9 @@ fn test_flow_b_cli_files_additive_to_workspace() {
         )
         .unwrap();
 
-        let restored = harness.startup(true, &[file_cli.clone()]).unwrap();
+        let restored = harness
+            .startup(true, std::slice::from_ref(&file_cli))
+            .unwrap();
         assert!(restored, "Workspace should be restored");
         harness.render().unwrap();
 
@@ -271,7 +273,7 @@ fn test_flow_b_cli_file_already_in_workspace_no_duplicate() {
         )
         .unwrap();
 
-        harness.startup(true, &[file1.clone()]).unwrap();
+        harness.startup(true, std::slice::from_ref(&file1)).unwrap();
         harness.render().unwrap();
 
         // There should be exactly one tab for shared.txt, no duplicates.
@@ -349,7 +351,9 @@ fn test_flow_b_hot_exit_recovery_with_cli_files() {
         )
         .unwrap();
 
-        harness.startup(true, &[file_cli.clone()]).unwrap();
+        harness
+            .startup(true, std::slice::from_ref(&file_cli))
+            .unwrap();
         harness.render().unwrap();
 
         // The unsaved change should have been recovered
@@ -576,7 +580,9 @@ fn test_flow_d_cli_files_added_to_restored_session() {
         .unwrap();
 
         harness.editor_mut().set_session_mode(true);
-        let restored = harness.startup(true, &[file_cli.clone()]).unwrap();
+        let restored = harness
+            .startup(true, std::slice::from_ref(&file_cli))
+            .unwrap();
         assert!(restored, "Session workspace should be restored");
         harness.render().unwrap();
 
