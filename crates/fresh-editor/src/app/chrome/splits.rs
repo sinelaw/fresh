@@ -356,6 +356,21 @@ impl Editor {
         Some(Ok(()))
     }
 
+    /// The horizontal bar's range, in columns: the widest line, and how many
+    /// columns of text the pane shows beside its gutter. Both are the bar's
+    /// own facts, so a press, a drag and the thumb all measure one range.
+    fn hbar_extent(&self, pane: LeafId) -> Option<(usize, usize)> {
+        let facts = self
+            .active_window()
+            .panes
+            .get(&pane)?
+            .bar(fresh_ui::Axis::Horizontal)?;
+        let crate::view::shell::buffer_host::BarWindow::Cells(visible) = facts.window else {
+            return None;
+        };
+        Some((facts.content as usize, visible as usize))
+    }
+
     pub(crate) fn handle_click_horizontal_scrollbar(
         &mut self,
         pane: LeafId,
@@ -369,18 +384,11 @@ impl Editor {
             .windows
             .get(&self.active_window)
             .and_then(|w| w.pane_buffer(pane))?;
-        let (max_content_width, is_on_thumb) = {
-            let facts = self
-                .active_window()
-                .panes
-                .get(&pane)?
-                .bar(fresh_ui::Axis::Horizontal)?;
+        let (max_content_width, visible_width) = self.hbar_extent(pane)?;
+        let is_on_thumb = {
             let (start, end, _) = self.bar_thumb(pane, fresh_ui::Axis::Horizontal)?;
             let relative_col = col.saturating_sub(hscrollbar_rect.x) as usize;
-            (
-                facts.content as usize,
-                relative_col >= start && relative_col < end,
-            )
+            relative_col >= start && relative_col < end
         };
 
         self.focus_split(split_id, buffer_id);
@@ -417,7 +425,6 @@ impl Editor {
                 .expect("active window must have a populated split layout")
                 .get_mut(&split_id)
             {
-                let visible_width = vs.viewport.width as usize;
                 let max_scroll = max_content_width.saturating_sub(visible_width);
                 let target_col = (ratio * max_scroll as f64).round() as usize;
                 vs.viewport.left_column = target_col.min(max_scroll);
@@ -1098,11 +1105,7 @@ impl Editor {
             let Some(bar) = self.pane_hscroll_rect(dragging_split_id) else {
                 return Ok(());
             };
-            let Some(facts) = self
-                .active_window()
-                .panes
-                .get(&dragging_split_id)
-                .and_then(|h| h.bar(fresh_ui::Axis::Horizontal))
+            let Some((max_content_width, visible_width)) = self.hbar_extent(dragging_split_id)
             else {
                 return Ok(());
             };
@@ -1111,7 +1114,6 @@ impl Editor {
             else {
                 return Ok(());
             };
-            let max_content_width = facts.content as usize;
             {
                 {
                     let hscrollbar_rect = &bar;
@@ -1134,7 +1136,6 @@ impl Editor {
                             .expect("active window must have a populated split layout")
                             .get_mut(&dragging_split_id)
                         {
-                            let visible_width = view_state.viewport.width as usize;
                             let max_scroll = max_content_width.saturating_sub(visible_width);
                             if max_scroll > 0 {
                                 let thumb_size = thumb_end.saturating_sub(thumb_start).max(1);
@@ -1160,7 +1161,6 @@ impl Editor {
                             .expect("active window must have a populated split layout")
                             .get_mut(&dragging_split_id)
                         {
-                            let visible_width = view_state.viewport.width as usize;
                             let max_scroll = max_content_width.saturating_sub(visible_width);
                             let target_col = (ratio * max_scroll as f64).round() as usize;
                             view_state.viewport.left_column = target_col.min(max_scroll);
