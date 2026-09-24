@@ -679,9 +679,43 @@ pub trait FileSystem: Send + Sync {
         }
     }
 
-    /// Get a temporary file path for atomic writes
+    /// Get a temporary file path next to `path` for atomic writes.
+    ///
+    /// Each call returns a fresh name (see [`sibling_temp_path`]); open it with
+    /// [`FileSystem::create_new_file`] so an existing file is never clobbered.
     fn temp_path_for(&self, path: &Path) -> PathBuf {
-        path.with_extension("tmp")
+        sibling_temp_path(path)
+    }
+
+    /// Create a file that must not exist yet (fails with `AlreadyExists` otherwise).
+    ///
+    /// The default checks existence first; implementations that can do so
+    /// atomically (e.g. `O_EXCL`) should override it.
+    fn create_new_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
+        if self.symlink_metadata(path).is_ok() {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                format!("{} already exists", path.display()),
+            ));
+        }
+        self.create_file(path)
+    }
+
+    /// Create a new, uniquely named temp file next to `path` for an atomic
+    /// write-then-rename. Never opens a file that already exists.
+    fn create_temp_file_for(&self, path: &Path) -> io::Result<(PathBuf, Box<dyn FileWriter>)> {
+        const ATTEMPTS: usize = 16;
+        let mut attempt = 0;
+        loop {
+            let temp_path = self.temp_path_for(path);
+            match self.create_new_file(&temp_path) {
+                Ok(file) => return Ok((temp_path, file)),
+                Err(e) if e.kind() == io::ErrorKind::AlreadyExists && attempt + 1 < ATTEMPTS => {
+                    attempt += 1;
+                }
+                Err(e) => return Err(e),
+            }
+        }
     }
 
     /// Get a unique temporary file path (using timestamp and PID)
@@ -950,6 +984,35 @@ pub trait FileSystemExt: FileSystem {
 
 /// Blanket implementation: all FileSystem types automatically get async methods
 impl<T: FileSystem> FileSystemExt for T {}
+
+/// A temp-file path in the same directory as `path`, for write-then-rename.
+///
+/// The name is `.<file name>.<pid>.<n>.tmp`, where `n` is a per-process
+/// counter, so it never coincides with a real sibling such as `foo.tmp`
+/// (issue #3377) and two saves never share a temp file. Callers still open it
+/// with `create_new` semantics, since a stale file from an earlier process
+/// with the same pid may exist.
+pub fn sibling_temp_path(path: &Path) -> PathBuf {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    // Keep the result within the usual 255-byte file-name limit.
+    const MAX_NAME_BYTES: usize = 200;
+
+    let file_name = path
+        .file_name()
+        .map(|n| n.to_string_lossy())
+        .unwrap_or_else(|| "fresh-save".into());
+    let mut name_len = 0;
+    let short_name: String = file_name
+        .chars()
+        .take_while(|c| {
+            name_len += c.len_utf8();
+            name_len <= MAX_NAME_BYTES
+        })
+        .collect();
+    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+    path.with_file_name(format!(".{short_name}.{}.{n}.tmp", std::process::id()))
+}
 
 // ============================================================================
 // Default search_file implementation
@@ -1454,25 +1517,38 @@ impl FileSystem for StdFileSystem {
 
     fn write_file(&self, path: &Path, data: &[u8]) -> io::Result<()> {
         let original_metadata = self.metadata_if_exists(path);
-        let temp_path = self.temp_path_for(path);
-        {
-            let mut file = self.create_file(&temp_path)?;
+        let (temp_path, mut file) = self.create_temp_file_for(path)?;
+        let result = (|| {
             file.write_all(data)?;
             file.sync_all()?;
-        }
-        if let Some(ref meta) = original_metadata {
-            if let Some(ref perms) = meta.permissions {
-                // Best-effort permission restore; rename will proceed regardless
-                #[allow(clippy::let_underscore_must_use)]
-                let _ = self.set_permissions(&temp_path, perms);
+            drop(file);
+            if let Some(ref meta) = original_metadata {
+                if let Some(ref perms) = meta.permissions {
+                    // Best-effort permission restore; rename will proceed regardless
+                    #[allow(clippy::let_underscore_must_use)]
+                    let _ = self.set_permissions(&temp_path, perms);
+                }
             }
+            self.rename(&temp_path, path)
+        })();
+        if result.is_err() {
+            // Best-effort cleanup; the original error is what the caller needs
+            #[allow(clippy::let_underscore_must_use)]
+            let _ = self.remove_file(&temp_path);
         }
-        self.rename(&temp_path, path)?;
-        Ok(())
+        result
     }
 
     fn create_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
         let file = std::fs::File::create(path)?;
+        Ok(Box::new(StdFileWriter(file)))
+    }
+
+    fn create_new_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
+        let file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)?;
         Ok(Box::new(StdFileWriter(file)))
     }
 
@@ -2022,6 +2098,30 @@ mod tests {
 
         fs.write_file(&path, b"updated").unwrap();
         assert_eq!(fs.read_file(&path).unwrap(), b"updated");
+    }
+
+    /// Issue #3377: the atomic-write temp file used to be `path.with_extension("tmp")`,
+    /// so saving `foo.txt` overwrote and then renamed away an unrelated `foo.tmp`.
+    #[test]
+    fn atomic_write_leaves_unrelated_sibling_tmp_file_alone() {
+        let fs = StdFileSystem;
+        let dir = tempfile::tempdir().unwrap();
+        let unrelated = dir.path().join("foo.tmp");
+        std::fs::write(&unrelated, b"IMPORTANT DATA\n").unwrap();
+        let path = dir.path().join("foo.txt");
+        std::fs::write(&path, b"hello\n").unwrap();
+
+        fs.write_file(&path, b"hello, edited\n").unwrap();
+
+        assert_eq!(std::fs::read(&path).unwrap(), b"hello, edited\n");
+        assert_eq!(std::fs::read(&unrelated).unwrap(), b"IMPORTANT DATA\n");
+        // The temp file itself must not be left behind.
+        let mut names: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .collect();
+        names.sort();
+        assert_eq!(names, ["foo.tmp", "foo.txt"]);
     }
 
     #[test]

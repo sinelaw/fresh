@@ -185,6 +185,12 @@ impl FileSystem for SlowFileSystem {
         self.inner.create_file(path)
     }
 
+    fn create_new_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
+        self.add_delay(self.config.write_file_delay);
+        self.metrics.write_file_calls.fetch_add(1, Ordering::SeqCst);
+        self.inner.create_new_file(path)
+    }
+
     fn open_file(&self, path: &Path) -> io::Result<Box<dyn FileReader>> {
         self.add_delay(self.config.read_file_delay);
         self.metrics.read_file_calls.fetch_add(1, Ordering::SeqCst);

@@ -292,13 +292,12 @@ pub(super) fn create_temp_file(
     dest_path: &Path,
 ) -> io::Result<(PathBuf, Box<dyn FileWriter>)> {
     // Try creating in same directory first
-    let same_dir_temp = fs.temp_path_for(dest_path);
-    match fs.create_file(&same_dir_temp) {
-        Ok(file) => Ok((same_dir_temp, file)),
+    match fs.create_temp_file_for(dest_path) {
+        Ok(created) => Ok(created),
         Err(e) if e.kind() == io::ErrorKind::PermissionDenied => {
             // Fallback to system temp directory
             let temp_path = fs.unique_temp_path(dest_path);
-            let file = fs.create_file(&temp_path)?;
+            let file = fs.create_new_file(&temp_path)?;
             Ok((temp_path, file))
         }
         Err(e) => Err(e),
