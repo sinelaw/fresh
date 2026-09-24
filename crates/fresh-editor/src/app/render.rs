@@ -1,6 +1,7 @@
 use super::lsp_status::compose_lsp_status;
 use super::*;
 use crate::config::FileExplorerSide;
+use crate::view::settings::surface::SettingsSurface as _;
 
 /// The bottom-row visibility facts (see [`Editor::bottom_row_flags`]):
 /// one computation consumed by the paint-time frame split and every
