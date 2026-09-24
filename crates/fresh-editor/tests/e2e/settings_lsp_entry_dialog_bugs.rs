@@ -406,7 +406,7 @@ fn test_entry_dialog_down_visits_every_field_once() {
 
     // Assert: the visit order matches the expected field order
     let visited_names: Vec<&str> = distinct_fields.iter().map(|s| s.as_str()).collect();
-    let expected_names: Vec<&str> = known_fields.iter().copied().collect();
+    let expected_names: Vec<&str> = known_fields.to_vec();
     assert_eq!(
         visited_names, expected_names,
         "Field visit order doesn't match expected order"

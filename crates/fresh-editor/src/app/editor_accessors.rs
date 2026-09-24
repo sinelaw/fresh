@@ -791,7 +791,7 @@ impl Editor {
         // there is no separate editor-wide copy. Each window owns its
         // authority outright (no `Clone`), so a session's backend/trust/env
         // can never be shared into another window (issue #2280).
-        &self.active_window().authority()
+        self.active_window().authority()
     }
 
     /// Move the active window's connection out, leaving a local placeholder.

@@ -966,8 +966,8 @@ impl Editor {
                 };
                 self.move_panel_focus(panel_key, dir, 1);
             }
-            KeyCode::Enter => match widget {
-                Some(fresh_core::api::WidgetSpec::Text { .. }) => {
+            KeyCode::Enter => {
+                if let Some(fresh_core::api::WidgetSpec::Text { .. }) = widget {
                     // Multi-line Enter (newline, or markdown
                     // activate) is kind-owned in on_key; what
                     // reaches here is a single-line field.
@@ -989,8 +989,7 @@ impl Editor {
                         self.handle_widget_focus_advance(panel_key, 1);
                     }
                 }
-                _ => {}
-            },
+            }
             _ => {} // unrecognised key — quietly ignore
         }
     }
@@ -3187,6 +3186,38 @@ impl Editor {
     }
 }
 
+/// The display column a byte offset sits at within `line`.
+///
+/// The page's rows are text and its spans are cells, and these two are where
+/// the one becomes the other. A byte column is what a buffer cursor is; a
+/// display column is what the tree laid out, what a press lands on, and what
+/// a selection is washed across.
+fn display_col_of(line: &str, byte: usize) -> u16 {
+    use unicode_width::UnicodeWidthChar;
+    let mut cols = 0usize;
+    for (at, ch) in line.char_indices() {
+        if at >= byte {
+            break;
+        }
+        cols += ch.width().unwrap_or(0);
+    }
+    cols.min(u16::MAX as usize) as u16
+}
+
+/// The byte offset at display column `col` of `line` — the start of the
+/// character covering that cell, and the line's length past its end.
+pub(super) fn byte_at_display_col(line: &str, col: u16) -> usize {
+    use unicode_width::UnicodeWidthChar;
+    let mut cols = 0usize;
+    for (at, ch) in line.char_indices() {
+        if cols >= col as usize {
+            return at;
+        }
+        cols += ch.width().unwrap_or(0);
+    }
+    line.len()
+}
+
 #[cfg(test)]
 mod tests {
     use super::Editor;
@@ -4705,36 +4736,4 @@ mod tests {
         );
         assert_eq!(editor.widget_registry.focus_key(&dock_key), Some("menu"));
     }
-}
-
-/// The display column a byte offset sits at within `line`.
-///
-/// The page's rows are text and its spans are cells, and these two are where
-/// the one becomes the other. A byte column is what a buffer cursor is; a
-/// display column is what the tree laid out, what a press lands on, and what
-/// a selection is washed across.
-fn display_col_of(line: &str, byte: usize) -> u16 {
-    use unicode_width::UnicodeWidthChar;
-    let mut cols = 0usize;
-    for (at, ch) in line.char_indices() {
-        if at >= byte {
-            break;
-        }
-        cols += ch.width().unwrap_or(0);
-    }
-    cols.min(u16::MAX as usize) as u16
-}
-
-/// The byte offset at display column `col` of `line` — the start of the
-/// character covering that cell, and the line's length past its end.
-pub(super) fn byte_at_display_col(line: &str, col: u16) -> usize {
-    use unicode_width::UnicodeWidthChar;
-    let mut cols = 0usize;
-    for (at, ch) in line.char_indices() {
-        if cols >= col as usize {
-            return at;
-        }
-        cols += ch.width().unwrap_or(0);
-    }
-    line.len()
 }

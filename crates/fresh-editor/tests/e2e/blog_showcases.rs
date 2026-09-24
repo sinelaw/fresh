@@ -4600,9 +4600,7 @@ fn blog_showcase_fresh_0_4_0_workspace_trust() {
     // build.rs) starts Restricted and raises the full-screen trust prompt.
     let store_path = {
         let editor = h.editor();
-        editor
-            .dir_context()
-            .project_state_dir(&editor.working_dir().to_path_buf())
+        editor.dir_context().project_state_dir(editor.working_dir())
     };
     let store = fresh::services::workspace_trust::TrustStore::for_project_dir(&store_path);
     h.editor()

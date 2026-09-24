@@ -1510,7 +1510,7 @@ fn a_list_that_declines_focus_still_answers_a_click() {
     // Tab does not stop here: with nothing focusable in the frame, the key is
     // left for whoever else is listening.
     let tab = ui.dispatch(Input::Key(KeyPress::new(KeyCode::Tab)));
-    assert!(tab.claimed == false && tab.msgs.is_empty());
+    assert!(!tab.claimed && tab.msgs.is_empty());
 }
 
 // -- pinned rows and controlled windows --------------------------------------

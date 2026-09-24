@@ -27,10 +27,8 @@ fn test_js_variable_builtin_highlight() {
         for x in 0..120 {
             if let Some(style) = harness.get_cell_style(x, y) {
                 let c = harness.get_cell(x, y);
-                if style.fg == Some(expected_color) {
-                    if c == Some("t".to_string()) {
-                        found = true;
-                    }
+                if style.fg == Some(expected_color) && c == Some("t".to_string()) {
+                    found = true;
                 }
             }
         }

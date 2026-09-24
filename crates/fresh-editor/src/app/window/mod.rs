@@ -2916,7 +2916,7 @@ impl Window {
         self.tab_reveal
             .borrow_mut()
             .entry(pane)
-            .or_insert_with(fresh_ui::behavior::Anchor::new)
+            .or_default()
             .clone()
     }
 
@@ -5042,6 +5042,52 @@ impl Window {
     }
 }
 
+/// Byte ranges the renderer hides for `buffer_id`'s collapsed folds, in the
+/// form the viewport scroll primitives consume. A scroll that counts these
+/// lines spends its budget on rows nobody sees, so the viewport stalls while
+/// the cursor runs ahead into the hidden region.
+fn collapsed_hidden_ranges(
+    view_state: &crate::view::split::SplitViewState,
+    state: &crate::state::EditorState,
+    buffer_id: BufferId,
+) -> Vec<(usize, usize)> {
+    let Some(folds) = view_state.keyed_states.get(&buffer_id).map(|bs| &bs.folds) else {
+        return Vec::new();
+    };
+    state
+        .fold_ranges(folds)
+        .into_iter()
+        .map(|r| (r.start, r.end))
+        .collect()
+}
+
+/// The wrap-index geometry for a split, when one is already built for it.
+///
+/// `None` means the byte-walking scroll path must be used — before the first
+/// render there is nothing to read row positions from, and building an index
+/// here would trade a cheap walk for an O(buffer) pass.
+fn wrap_scroll_geometry(
+    view_state: &crate::view::split::SplitViewState,
+    state: &crate::state::EditorState,
+) -> Option<crate::view::wrap_index::WrapIndexGeometry> {
+    if !view_state.viewport.line_wrap_enabled || state.wrap_indices.is_empty() {
+        return None;
+    }
+    let inputs = state.pipeline_inputs();
+    let geometry = crate::view::ui::split_rendering::wrap_index_geometry_for(
+        &view_state.viewport,
+        &state.buffer,
+        view_state.viewport.line_wrap_enabled,
+        &crate::state::ViewMode::Source,
+        crate::view::wrap_index::fold_signature(&state.fold_ranges(&view_state.folds)),
+    );
+    state
+        .wrap_indices
+        .get(&geometry)
+        .is_some_and(|index| index.is_built_for(&geometry, inputs))
+        .then_some(geometry)
+}
+
 // Label-defaulting unit tests (`empty_label_defaults_to_root_basename`,
 // `explicit_label_is_kept`, `empty_label_with_rootless_path_falls_back_to_main`)
 // were removed when `Window::new` started taking a `WindowResources`
@@ -5110,50 +5156,4 @@ mod exited_terminal_tests {
         assert!(!e.resumes_agent());
         assert_eq!(e.program_name(), Some("bash"));
     }
-}
-
-/// Byte ranges the renderer hides for `buffer_id`'s collapsed folds, in the
-/// form the viewport scroll primitives consume. A scroll that counts these
-/// lines spends its budget on rows nobody sees, so the viewport stalls while
-/// the cursor runs ahead into the hidden region.
-fn collapsed_hidden_ranges(
-    view_state: &crate::view::split::SplitViewState,
-    state: &crate::state::EditorState,
-    buffer_id: BufferId,
-) -> Vec<(usize, usize)> {
-    let Some(folds) = view_state.keyed_states.get(&buffer_id).map(|bs| &bs.folds) else {
-        return Vec::new();
-    };
-    state
-        .fold_ranges(folds)
-        .into_iter()
-        .map(|r| (r.start, r.end))
-        .collect()
-}
-
-/// The wrap-index geometry for a split, when one is already built for it.
-///
-/// `None` means the byte-walking scroll path must be used — before the first
-/// render there is nothing to read row positions from, and building an index
-/// here would trade a cheap walk for an O(buffer) pass.
-fn wrap_scroll_geometry(
-    view_state: &crate::view::split::SplitViewState,
-    state: &crate::state::EditorState,
-) -> Option<crate::view::wrap_index::WrapIndexGeometry> {
-    if !view_state.viewport.line_wrap_enabled || state.wrap_indices.is_empty() {
-        return None;
-    }
-    let inputs = state.pipeline_inputs();
-    let geometry = crate::view::ui::split_rendering::wrap_index_geometry_for(
-        &view_state.viewport,
-        &state.buffer,
-        view_state.viewport.line_wrap_enabled,
-        &crate::state::ViewMode::Source,
-        crate::view::wrap_index::fold_signature(&state.fold_ranges(&view_state.folds)),
-    );
-    state
-        .wrap_indices
-        .get(&geometry)
-        .is_some_and(|index| index.is_built_for(&geometry, inputs))
-        .then_some(geometry)
 }

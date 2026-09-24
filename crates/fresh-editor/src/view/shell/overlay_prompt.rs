@@ -943,8 +943,8 @@ mod tests {
             }
             assert!(b.x >= 11, "{r:?} clears the left ring: {b:?}");
             assert!(b.y >= 5, "{r:?} clears the top ring: {b:?}");
-            assert!(b.right() <= 10 + 150 - 1, "{r:?} clears the right: {b:?}");
-            assert!(b.bottom() <= 4 + 40 - 1, "{r:?} clears the bottom: {b:?}");
+            assert!(b.right() < 10 + 150, "{r:?} clears the right: {b:?}");
+            assert!(b.bottom() < 4 + 40, "{r:?} clears the bottom: {b:?}");
         }
     }
 }

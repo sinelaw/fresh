@@ -6187,7 +6187,6 @@ impl Editor {
                 "UpdateFloatingWidget for unknown panel {} ignored (not in registry)",
                 panel_key
             );
-            return;
         }
     }
 
@@ -6777,168 +6776,6 @@ fn clamp_buffer_text_range(start: usize, end: usize, len: usize) -> (usize, usiz
     (start, end)
 }
 
-#[cfg(test)]
-mod tests {
-    //! Focused tests for the SpawnHostProcess kill mechanism.
-    //!
-    //! These don't exercise the full `handle_plugin_command` dispatcher
-    //! (which would require scaffolding an Editor with a real tokio
-    //! runtime and async_bridge); they replicate the inner
-    //! `tokio::select!` pattern directly on a real subprocess. A
-    //! regression in the select arms or in the kill-then-wait
-    //! sequencing would reproduce here.
-    //!
-    //! The dispatcher-level integration coverage comes from the e2e
-    //! attach-cancel test in `tests/e2e/` — this unit test is the
-    //! lower-level pin.
-    use tokio::io::{AsyncReadExt, BufReader};
-    use tokio::process::Command as TokioCommand;
-    use tokio::time::{timeout, Duration};
-
-    /// A long-sleep child that runs `tokio::select! { wait | kill_rx }`
-    /// terminates when the kill channel fires, and the terminal exit
-    /// code reflects signal termination (non-zero / None).
-    ///
-    /// Spawns `sleep` directly rather than through `sh -c` so SIGKILL
-    /// reaches the process whose pipe our reader futures hold —
-    /// `sh -c sleep` leaks the sleep child on SIGKILL (Q-C2), the
-    /// pipe stays open, and the reader future hangs. That's a
-    /// deliberate known limitation of start_kill; this test
-    /// exercises the clean path.
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn kill_via_oneshot_terminates_long_running_child() {
-        let mut cmd = TokioCommand::new("sleep");
-        cmd.args(["30"]);
-        cmd.stdout(std::process::Stdio::piped());
-        cmd.stderr(std::process::Stdio::piped());
-
-        let mut child = cmd.spawn().expect("spawn sh -c sleep 30");
-        let pid = child.id().expect("child has a pid");
-
-        let (kill_tx, mut kill_rx) = tokio::sync::oneshot::channel::<()>();
-        let stdout_pipe = child.stdout.take();
-        let stderr_pipe = child.stderr.take();
-
-        let stdout_fut = async {
-            let mut buf = String::new();
-            if let Some(s) = stdout_pipe {
-                #[allow(clippy::let_underscore_must_use)]
-                let _ = BufReader::new(s).read_to_string(&mut buf).await;
-            }
-            buf
-        };
-        let stderr_fut = async {
-            let mut buf = String::new();
-            if let Some(s) = stderr_pipe {
-                #[allow(clippy::let_underscore_must_use)]
-                let _ = BufReader::new(s).read_to_string(&mut buf).await;
-            }
-            buf
-        };
-        let wait_fut = async {
-            tokio::select! {
-                status = child.wait() => {
-                    status.map(|s| s.code().unwrap_or(-1)).unwrap_or(-1)
-                }
-                _ = &mut kill_rx => {
-                    #[allow(clippy::let_underscore_must_use)]
-                    let _ = child.start_kill();
-                    child
-                        .wait()
-                        .await
-                        .map(|s| s.code().unwrap_or(-1))
-                        .unwrap_or(-1)
-                }
-            }
-        };
-
-        // Give the shell a moment to install itself — firing kill
-        // against an not-yet-existent child is still valid (SIGKILL
-        // to a zombie is a no-op) but we want to actually exercise
-        // the running-child path.
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        kill_tx.send(()).expect("kill channel send");
-
-        let result = timeout(Duration::from_secs(5), async {
-            tokio::join!(stdout_fut, stderr_fut, wait_fut)
-        })
-        .await;
-
-        let (_stdout, _stderr, exit_code) = result.expect(
-            "kill path must resolve within 5s — if this times out the \
-             select! arm order or kill-then-wait logic is broken",
-        );
-        // The cross-platform invariant is "the child did not complete
-        // its 30s sleep" — i.e. the exit code is non-success. Platform
-        // specifics:
-        //   - Unix: `start_kill()` sends SIGKILL; `ExitStatus::code()`
-        //     returns None for signal-terminated processes, which our
-        //     dispatcher maps to -1 via `.unwrap_or(-1)`.
-        //   - Windows: `start_kill()` calls `TerminateProcess(..., 1)`;
-        //     `code()` returns `Some(1)`, mapped to 1 by the same
-        //     `.unwrap_or(-1)`.
-        // A successful 30s sleep would yield 0 — that's the
-        // regression case we're guarding against.
-        assert_ne!(
-            exit_code, 0,
-            "killed child must exit non-success (got 0 — did the \
-             kill arm fire too late, or did sleep somehow complete?)"
-        );
-
-        // Sanity: on Unix the child must be gone. `kill -0 <pid>`
-        // returns 0 iff the process still exists; we expect non-zero
-        // (No such process) after wait(). This catches a zombie /
-        // leaked child that would indicate we skipped the wait() on
-        // the kill path. Skipped on Windows — `kill` isn't available
-        // and `tasklist` output parsing is more noise than signal
-        // for this one-shot check; the wait() having returned is
-        // already evidence of reap there.
-        #[cfg(unix)]
-        {
-            let still_alive = std::process::Command::new("kill")
-                .args(["-0", &pid.to_string()])
-                .status()
-                .map(|s| s.success())
-                .unwrap_or(false);
-            assert!(
-                !still_alive,
-                "process {pid} must be reaped after wait() — a still-\
-                 alive check means the kill path leaked the child"
-            );
-        }
-        #[cfg(not(unix))]
-        {
-            // Touch `pid` so the unused-variable lint doesn't fire on
-            // non-Unix builds.
-            let _ = pid;
-        }
-    }
-
-    use super::clamp_buffer_text_range;
-
-    #[test]
-    fn clamp_text_range_passes_through_in_bounds() {
-        assert_eq!(clamp_buffer_text_range(0, 165, 165), (0, 165));
-        assert_eq!(clamp_buffer_text_range(10, 50, 165), (10, 50));
-    }
-
-    /// The reported regression: `getBufferLength` returned a snapshot
-    /// length one byte ahead of the live buffer (the file was shrinking
-    /// under concurrent editor + external edits), so `getBufferText`
-    /// requested `0..len+1`. Pre-fix this produced "Invalid range
-    /// 0..165003 for buffer of length 165002"; now the end clamps down.
-    #[test]
-    fn clamp_text_range_clamps_stale_end_past_buffer() {
-        assert_eq!(clamp_buffer_text_range(0, 165_003, 165_002), (0, 165_002));
-    }
-
-    #[test]
-    fn clamp_text_range_pins_overlarge_start_to_empty() {
-        // start beyond the live length must not yield start > end.
-        assert_eq!(clamp_buffer_text_range(200, 250, 165), (165, 165));
-    }
-}
-
 impl Window {
     /// Populate the per-window fields of the plugin state snapshot.
     ///
@@ -7391,5 +7228,167 @@ impl VariantNameSink {
             return "PluginCommand";
         }
         std::str::from_utf8(&self.buf[..self.len]).unwrap_or("PluginCommand")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! Focused tests for the SpawnHostProcess kill mechanism.
+    //!
+    //! These don't exercise the full `handle_plugin_command` dispatcher
+    //! (which would require scaffolding an Editor with a real tokio
+    //! runtime and async_bridge); they replicate the inner
+    //! `tokio::select!` pattern directly on a real subprocess. A
+    //! regression in the select arms or in the kill-then-wait
+    //! sequencing would reproduce here.
+    //!
+    //! The dispatcher-level integration coverage comes from the e2e
+    //! attach-cancel test in `tests/e2e/` — this unit test is the
+    //! lower-level pin.
+    use tokio::io::{AsyncReadExt, BufReader};
+    use tokio::process::Command as TokioCommand;
+    use tokio::time::{timeout, Duration};
+
+    /// A long-sleep child that runs `tokio::select! { wait | kill_rx }`
+    /// terminates when the kill channel fires, and the terminal exit
+    /// code reflects signal termination (non-zero / None).
+    ///
+    /// Spawns `sleep` directly rather than through `sh -c` so SIGKILL
+    /// reaches the process whose pipe our reader futures hold —
+    /// `sh -c sleep` leaks the sleep child on SIGKILL (Q-C2), the
+    /// pipe stays open, and the reader future hangs. That's a
+    /// deliberate known limitation of start_kill; this test
+    /// exercises the clean path.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn kill_via_oneshot_terminates_long_running_child() {
+        let mut cmd = TokioCommand::new("sleep");
+        cmd.args(["30"]);
+        cmd.stdout(std::process::Stdio::piped());
+        cmd.stderr(std::process::Stdio::piped());
+
+        let mut child = cmd.spawn().expect("spawn sh -c sleep 30");
+        let pid = child.id().expect("child has a pid");
+
+        let (kill_tx, mut kill_rx) = tokio::sync::oneshot::channel::<()>();
+        let stdout_pipe = child.stdout.take();
+        let stderr_pipe = child.stderr.take();
+
+        let stdout_fut = async {
+            let mut buf = String::new();
+            if let Some(s) = stdout_pipe {
+                #[allow(clippy::let_underscore_must_use)]
+                let _ = BufReader::new(s).read_to_string(&mut buf).await;
+            }
+            buf
+        };
+        let stderr_fut = async {
+            let mut buf = String::new();
+            if let Some(s) = stderr_pipe {
+                #[allow(clippy::let_underscore_must_use)]
+                let _ = BufReader::new(s).read_to_string(&mut buf).await;
+            }
+            buf
+        };
+        let wait_fut = async {
+            tokio::select! {
+                status = child.wait() => {
+                    status.map(|s| s.code().unwrap_or(-1)).unwrap_or(-1)
+                }
+                _ = &mut kill_rx => {
+                    #[allow(clippy::let_underscore_must_use)]
+                    let _ = child.start_kill();
+                    child
+                        .wait()
+                        .await
+                        .map(|s| s.code().unwrap_or(-1))
+                        .unwrap_or(-1)
+                }
+            }
+        };
+
+        // Give the shell a moment to install itself — firing kill
+        // against an not-yet-existent child is still valid (SIGKILL
+        // to a zombie is a no-op) but we want to actually exercise
+        // the running-child path.
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        kill_tx.send(()).expect("kill channel send");
+
+        let result = timeout(Duration::from_secs(5), async {
+            tokio::join!(stdout_fut, stderr_fut, wait_fut)
+        })
+        .await;
+
+        let (_stdout, _stderr, exit_code) = result.expect(
+            "kill path must resolve within 5s — if this times out the \
+             select! arm order or kill-then-wait logic is broken",
+        );
+        // The cross-platform invariant is "the child did not complete
+        // its 30s sleep" — i.e. the exit code is non-success. Platform
+        // specifics:
+        //   - Unix: `start_kill()` sends SIGKILL; `ExitStatus::code()`
+        //     returns None for signal-terminated processes, which our
+        //     dispatcher maps to -1 via `.unwrap_or(-1)`.
+        //   - Windows: `start_kill()` calls `TerminateProcess(..., 1)`;
+        //     `code()` returns `Some(1)`, mapped to 1 by the same
+        //     `.unwrap_or(-1)`.
+        // A successful 30s sleep would yield 0 — that's the
+        // regression case we're guarding against.
+        assert_ne!(
+            exit_code, 0,
+            "killed child must exit non-success (got 0 — did the \
+             kill arm fire too late, or did sleep somehow complete?)"
+        );
+
+        // Sanity: on Unix the child must be gone. `kill -0 <pid>`
+        // returns 0 iff the process still exists; we expect non-zero
+        // (No such process) after wait(). This catches a zombie /
+        // leaked child that would indicate we skipped the wait() on
+        // the kill path. Skipped on Windows — `kill` isn't available
+        // and `tasklist` output parsing is more noise than signal
+        // for this one-shot check; the wait() having returned is
+        // already evidence of reap there.
+        #[cfg(unix)]
+        {
+            let still_alive = std::process::Command::new("kill")
+                .args(["-0", &pid.to_string()])
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false);
+            assert!(
+                !still_alive,
+                "process {pid} must be reaped after wait() — a still-\
+                 alive check means the kill path leaked the child"
+            );
+        }
+        #[cfg(not(unix))]
+        {
+            // Touch `pid` so the unused-variable lint doesn't fire on
+            // non-Unix builds.
+            let _ = pid;
+        }
+    }
+
+    use super::clamp_buffer_text_range;
+
+    #[test]
+    fn clamp_text_range_passes_through_in_bounds() {
+        assert_eq!(clamp_buffer_text_range(0, 165, 165), (0, 165));
+        assert_eq!(clamp_buffer_text_range(10, 50, 165), (10, 50));
+    }
+
+    /// The reported regression: `getBufferLength` returned a snapshot
+    /// length one byte ahead of the live buffer (the file was shrinking
+    /// under concurrent editor + external edits), so `getBufferText`
+    /// requested `0..len+1`. Pre-fix this produced "Invalid range
+    /// 0..165003 for buffer of length 165002"; now the end clamps down.
+    #[test]
+    fn clamp_text_range_clamps_stale_end_past_buffer() {
+        assert_eq!(clamp_buffer_text_range(0, 165_003, 165_002), (0, 165_002));
+    }
+
+    #[test]
+    fn clamp_text_range_pins_overlarge_start_to_empty() {
+        // start beyond the live length must not yield start > end.
+        assert_eq!(clamp_buffer_text_range(200, 250, 165), (165, 165));
     }
 }

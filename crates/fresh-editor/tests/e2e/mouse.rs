@@ -817,10 +817,7 @@ fn test_hovering_a_split_separator_names_it() {
     harness.mouse_move(sep_x + sep_length / 2, sep_y).unwrap();
     assert_eq!(
         harness.editor().hovered(),
-        Some(fresh::app::HoverTarget::SplitSeparator(
-            split_id.into(),
-            direction
-        )),
+        Some(fresh::app::HoverTarget::SplitSeparator(split_id, direction)),
         "the pointer is on the separator"
     );
 
@@ -828,10 +825,7 @@ fn test_hovering_a_split_separator_names_it() {
     harness.mouse_move(sep_x + sep_length / 2, 1).unwrap();
     assert_ne!(
         harness.editor().hovered(),
-        Some(fresh::app::HoverTarget::SplitSeparator(
-            split_id.into(),
-            direction
-        )),
+        Some(fresh::app::HoverTarget::SplitSeparator(split_id, direction)),
         "and off it, it is not"
     );
 }

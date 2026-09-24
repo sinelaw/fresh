@@ -1073,13 +1073,10 @@ fn apply_paste(editor: &mut Editor, v: &Value) {
 /// panel on the page to have clicked. See
 /// `docs/internal/retained-mode-ui.md` "The web".
 fn apply_widget(editor: &mut Editor, v: &Value) {
-    match v.get("surface").and_then(|s| s.as_str()) {
-        Some("toolbar") => {
-            if let Some(key) = v.get("key").and_then(|k| k.as_str()) {
-                editor.toggle_overlay_toolbar_widget(key);
-            }
+    if let Some("toolbar") = v.get("surface").and_then(|s| s.as_str()) {
+        if let Some(key) = v.get("key").and_then(|k| k.as_str()) {
+            editor.toggle_overlay_toolbar_widget(key);
         }
-        _ => {}
     }
 }
 
@@ -1591,8 +1588,7 @@ impl WsSession {
     /// buffering unboundedly.
     fn flush(&mut self) -> std::io::Result<()> {
         if self.outbuf.len() > WS_OUTBUF_CAP {
-            return Err(std::io::Error::new(
-                ErrorKind::Other,
+            return Err(std::io::Error::other(
                 "ws outbound backlog exceeded cap; peer not draining",
             ));
         }

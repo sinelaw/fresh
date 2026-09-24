@@ -100,7 +100,7 @@ impl Editor {
     pub fn session_display_name(&self) -> Option<&str> {
         self.session_display_name
             .as_deref()
-            .or_else(|| self.session_name.as_deref())
+            .or(self.session_name.as_deref())
     }
 
     /// Queue escape sequences to be sent to the client (session mode only)

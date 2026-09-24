@@ -378,10 +378,7 @@ impl std::io::Write for CrashingFileWriter {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         if self.should_crash {
             // Simulate crash on write to destination
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
-                "simulated crash during write",
-            ));
+            return Err(io::Error::other("simulated crash during write"));
         }
         self.inner.write(buf)
     }

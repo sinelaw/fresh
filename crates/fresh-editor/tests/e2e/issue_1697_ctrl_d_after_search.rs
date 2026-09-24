@@ -61,7 +61,7 @@ fn test_ctrl_d_after_search_uses_match_not_word() {
         .unwrap();
     harness.render().unwrap();
 
-    let primary = harness.editor().active_cursors().primary().clone();
+    let primary = *harness.editor().active_cursors().primary();
     let selection = primary
         .selection_range()
         .expect("Ctrl-D should produce a selection");

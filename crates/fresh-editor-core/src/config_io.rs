@@ -1535,7 +1535,7 @@ mod tests {
             .unwrap();
 
         let after: serde_json::Value = crate::config::parse_config_jsonc(
-            &std::fs::read_to_string(&resolver.user_config_path()).unwrap(),
+            &std::fs::read_to_string(resolver.user_config_path()).unwrap(),
         )
         .unwrap();
         assert_eq!(

@@ -3332,7 +3332,7 @@ fn setup_many_hunks_repo() -> (GitTestRepo, std::path::PathBuf) {
     // rows per hunk, ~30 hunks total).
     let mut modified = String::new();
     for i in 1..=300 {
-        if matches!(i % 10, 0 | 1 | 2) && i >= 10 {
+        if matches!(i % 10, 0..=2) && i >= 10 {
             modified.push_str(&format!("MODIFIED line {}\n", i));
         } else {
             modified.push_str(&format!("Line {}\n", i));

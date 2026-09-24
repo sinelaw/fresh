@@ -4058,7 +4058,7 @@ fn test_arrow_keys_in_less() {
             }
 
             // Periodic progress logging (every ~5s)
-            if iter % 100 == 0 && iter > 0 {
+            if iter.is_multiple_of(100) && iter > 0 {
                 let screen = harness.screen_to_string();
                 let elapsed = start.elapsed();
                 tracing::info!(

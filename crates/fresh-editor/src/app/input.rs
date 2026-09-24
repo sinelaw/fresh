@@ -598,7 +598,7 @@ impl Editor {
                 .unwrap_or_default();
             let out_of_scope = self.keybindings.read().ok().is_some_and(|kb| {
                 kb.mode_binding_scope(&keymap.mode, &ev)
-                    .is_some_and(|w| !w.iter().any(|x| *x == focus_now))
+                    .is_some_and(|w| !w.contains(&focus_now))
             });
             let bound = match out_of_scope {
                 true => Bound::None,

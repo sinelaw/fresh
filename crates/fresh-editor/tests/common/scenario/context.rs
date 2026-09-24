@@ -83,7 +83,9 @@ pub struct NamedBuffer {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
+#[derive(Default)]
 pub enum SplitLayout {
+    #[default]
     Single,
     Horizontal {
         left: Box<SplitLayout>,
@@ -93,12 +95,6 @@ pub enum SplitLayout {
         top: Box<SplitLayout>,
         bottom: Box<SplitLayout>,
     },
-}
-
-impl Default for SplitLayout {
-    fn default() -> Self {
-        SplitLayout::Single
-    }
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -162,16 +158,12 @@ pub struct LspIncoming {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
+#[derive(Default)]
 pub enum ThemeRef {
+    #[default]
     Default,
     Named(String),
     HighContrast,
-}
-
-impl Default for ThemeRef {
-    fn default() -> Self {
-        ThemeRef::Default
-    }
 }
 
 // ─────────────────────────────────────────────────────────────────────

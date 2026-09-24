@@ -288,7 +288,7 @@ mod tests {
     #[test]
     fn create_wrapped_virtual_lines_splits_no_boundary_at_hard_cap() {
         // No word boundary anywhere — must hard-cap at width.
-        let text: String = std::iter::repeat('X').take(50).collect();
+        let text: String = std::iter::repeat_n('X', 50).collect();
         let lines = create_wrapped_virtual_lines(&text, Style::default(), Some(20), None, &[]);
         assert_eq!(lines.len(), 3);
         assert_eq!(lines[0].text.chars().count(), 20);

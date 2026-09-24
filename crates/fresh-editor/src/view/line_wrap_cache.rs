@@ -925,7 +925,7 @@ mod tests {
                 &text, line_start, &good, width, gutter, hanging,
             );
             assert!(
-                rows as usize >= good.len() + 1,
+                rows as usize > good.len(),
                 "rows={rows} < segments={}: text={text:?} breaks={good:?} \
                  width={width} gutter={gutter} hanging={hanging}",
                 good.len() + 1,

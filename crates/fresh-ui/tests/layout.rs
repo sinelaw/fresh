@@ -602,7 +602,7 @@ fn a_stale_boundary_is_re_measured_even_when_the_root_is_too() {
         // something in between, the root's own re-measure would reach the
         // boundary by accident and the bug would not show.
         let base = col().children([col().flex(1).children([
-            row().h(Sizing::Cells(1)).children([text(msg.to_string())]),
+            row().h(Sizing::Cells(1)).children([text(msg)]),
             text("body").flex(1),
         ])]);
         if overlay {

@@ -3942,7 +3942,7 @@ fn strip_sentinel<'a>(text: &'a str, sentinel: &str) -> (&'a str, bool) {
 }
 
 fn has_flag(flags: &[&str], name: &str) -> bool {
-    flags.iter().any(|f| *f == name)
+    flags.contains(&name)
 }
 
 /// `--timeout SECS`, or `default` when absent. A value that is not a number
@@ -4858,10 +4858,7 @@ fn parse_dts_entries(text: &str, source: &str) -> Vec<ApiEntry> {
 
         // A declaration we can name: `foo(...)`, `foo: T;`, or `type Foo = {`.
         let name = if let Some(rest) = t.strip_prefix("type ") {
-            rest.split(|c: char| c == ' ' || c == '=' || c == '<')
-                .next()
-                .unwrap_or("")
-                .to_string()
+            rest.split([' ', '=', '<']).next().unwrap_or("").to_string()
         } else {
             let head: String = t
                 .chars()
@@ -6036,7 +6033,7 @@ fn real_main() -> AnyhowResult<()> {
         _remote_session: remote_session,
     } = initialize_app(&args).context("Failed to initialize application")?;
 
-    let mut current_working_dir = initial_working_dir;
+    let current_working_dir = initial_working_dir;
     let (terminal_width, terminal_height) = terminal_size;
 
     // Track whether this is the first run (for session restore, file open, etc.)
@@ -6680,7 +6677,7 @@ where
                 if fresh::input::is_keystroke(key_event.kind) {
                     editor
                         .active_window_mut()
-                        .handle_event_debug_input(&key_event);
+                        .handle_event_debug_input(key_event);
                     needs_render = true;
                 }
             }
