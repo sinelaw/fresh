@@ -300,6 +300,10 @@ the shape is what stops it growing back.
   *metrics*, the indented-card box, and per-side padding.
 - **Smaller residue** — `Paint::Lit`, no palette-resolve cache,
   `EntryDialogState`, and the pointer's legacy walk (see *The one asymmetry*).
+- **Drag state lives twice** — every drag is routed by a node's capture, but
+  all except the split separator still keep their gesture in `MouseState` and
+  rely on the legacy walk's blanket sweep. See *A drag's state is the
+  gesture's*.
 
 ### The markdown document view
 
@@ -417,15 +421,17 @@ moved: the buffer fills on the next frame, not synchronously at mount — a
 plugin that reads its own panel buffer inside the same tick as its update
 reads the previous frame's rows.
 
-**Residue the deletion exposed.** `user_scrolled` on the `List`, `Tree` and
-`Text` instance states has no writer left (`latch_user_scrolled` and the
-wheel branches that set it went with the window); `resolve` still reads it
-and `set_selected_index` still clears it. It is dead state and should go —
-about sixty sites, mechanical. `widget_panel_render_heights` /
-`widget_panels_with_stale_height` re-resolve a pane panel when its split
-height changes; with nothing rendered by height any more the re-resolve is a
-no-op beyond marking the description stale, and the machinery can go with
-it.
+**Residue the deletion exposed, now closed.** `user_scrolled` on the `List`,
+`Tree` and `Text` instance states had no writer left (`latch_user_scrolled`
+and the wheel branches that set it went with the window), while `resolve`
+still read it and `set_selected_index` still cleared it. It is deleted,
+with `text::clear_user_scrolled`. `widget_panel_render_heights` /
+`widget_panels_with_stale_height` re-resolved a pane panel when its split
+height changed. With nothing rendered by height, that did nothing beyond
+marking the description stale, which layout does not need. It is deleted
+with its bookkeeping (`record_widget_panel_render_height`,
+`widget_panel_height`, `painted_panel_height`, `spec_has_auto_sized_list`,
+`slot_for_panel_buffer`).
 
 ### Where the assertion was the only reader
 
@@ -931,6 +937,16 @@ Still open:
 - No palette-resolve cache.
 - `EntryDialogState` still carries the settings entry dialog's own state model.
 
+- `SettingsState` and `EntryDialogState` are still two models of one thing.
+  Their shared list-row gestures now live once, on
+  `view::settings::surface::SettingsSurface` (`select_list_row`,
+  `commit_list_draft`, `remove_list_row`, `live_text`, `spec_for`,
+  `current_spec`, `live_list_row`). Every copy was reachable: a coverage run
+  showed `state.rs::remove_list_row` and `entry_dialog.rs::select_list_row`
+  never executing, but that was a test gap, not dead code. What each type
+  still does its own way is what a value change means and how a text-list
+  row opens.
+
 Closed, and worth keeping the reasoning for:
 
 - **The settings dialog's second copy of its own heights is gone.**
@@ -1010,6 +1026,57 @@ predated it and was dead anyway: `ScrollSyncManager`'s group API and the
 `next_id` only `create_group` touched, ten `SettingsState` accessors, ten
 `SplitManager` ones, seven on `CompositeViewState`, and a scatter of others.
 The distinction did not change what to do about any of it.
+
+**The count misses what tests keep alive.** A `pub fn` whose only callers
+are tests appears more than once, so the sweep passes over it. A later
+coverage run found these: `Popup::{with_position, with_width,
+with_max_height, with_transient}`, `PopupListItem::with_icon`,
+`MarginAnnotation::breakpoint` and `MarginManager::{without_line_numbers,
+get_line_indicator, remove_line_indicator, annotation_count}`. They are
+deleted, and their tests now go through the production path:
+`Editor::show_popup`, field assignment as the hover path does it,
+`get_indicators_for_viewport` and `render_line`. `update_width_for_buffer`
+was on the same list but has callers in split rendering, and stays. To
+catch this class, count callers outside `#[cfg(test)]` modules and
+`tests/`, not names.
+
+---
+
+### A drag's state is the gesture's
+
+**Open for five drags, done for one.** Since the pointer migration, every drag
+is routed by a node's pointer capture: the pane scrollbars, the split
+separator, the file explorer's border, tabs, and text selection. The routing
+moved, but the state did not. Most gestures still keep it in the window's
+`MouseState` (`dragging_scrollbar`, `drag_start_row`, `drag_start_top_byte`,
+`dragging_horizontal_scrollbar`, `drag_start_hcol`, `drag_start_left_column`,
+`dragging_file_explorer`, `drag_start_position`, `drag_start_explorer_width`,
+the `drag_selection_*` fields, …). `clear_active_window_drag_state` clears
+them in the legacy walk's `Up` arm and in `release_pane_content`. A captured
+release never reaches that walk, so the sweep is either redundant or covering
+for a release a finalizer forgot.
+
+**The pattern, from the split separator** (`app::chrome::splits::SeparatorDrag`)
+and the sidebar divider before it (`app::sidebar::SidebarDrag`):
+
+1. One value per gesture, typed. Build it whole on the press: what is being
+   dragged, where the press landed, and whatever the gesture measures from
+   (the separator's ratio at the press). Store it as
+   `Option<ThatDrag>` on the `Editor`, not as loose fields.
+2. Each captured move reads it. The grip reports only moves that came to it
+   by capture (`Event::captured`, in `view::shell::grip::draggable`), so a
+   hover is never mistaken for a drag, whatever is stored.
+3. The release takes it (`Option::take`, or `= None`).
+4. Nothing sweeps it. A capture that ends without a release, because the
+   node unmounted, leaves a value no move can read, and the next press
+   replaces it.
+
+**What is left to follow it:** the file explorer's border (the last user of
+`drag_start_position`), both scrollbars (`PaneScrollbarDrag` still gates on
+`dragging_*scrollbar` because the vertical bar's uncaptured move is its hover
+highlight; split the two by `captured` the way the grip does), and the pane
+content's text-selection and terminal-grid drags. When the last one moves,
+`clear_active_window_drag_state` and the `Up` arm's sweep go with them.
 
 ---
 
