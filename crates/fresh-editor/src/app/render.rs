@@ -4025,8 +4025,7 @@ impl Editor {
                 drop_zone: self
                     .active_window()
                     .mouse_state
-                    .dragging_tab
-                    .as_ref()
+                    .tab_drag()
                     .filter(|d| d.is_dragging())
                     .and_then(|d| d.drop_zone),
                 hosts,

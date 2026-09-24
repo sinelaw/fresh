@@ -25,7 +25,7 @@ mod menu;
 mod modals;
 mod popups;
 mod prompt;
-pub(crate) mod splits;
+mod splits;
 mod status_bar;
 
 use super::Editor;

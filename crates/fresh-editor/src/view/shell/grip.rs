@@ -17,11 +17,11 @@
 //! grip.
 //!
 //! **What stays app-side is the state, not the routing.** What a drag is
-//! dragging is a fact about the editor and the applier keeps it — one value
-//! per gesture, set by the press and taken by the release (the separator's
-//! `app::chrome::splits::SeparatorDrag`, the sidebar's `SidebarDrag`). Whether
-//! a move *is* a drag is the capture's answer: the grip reports only moves
-//! that came to it by capture, so a bare hover across it is not one.
+//! dragging is a fact about the editor and the applier keeps it: one value
+//! for the held press, set by the press and taken by the release (the
+//! window's `MouseState::drag`, a `PointerDrag`; the sidebar's `SidebarDrag`).
+//! Whether a move *is* a drag is the capture's answer: the grip reports only
+//! moves that came to it by capture, so a bare hover across it is not one.
 
 use std::rc::Rc;
 

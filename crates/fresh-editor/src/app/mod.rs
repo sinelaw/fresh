@@ -1541,10 +1541,6 @@ pub struct Editor {
     pub(crate) sidebar_layout_hints: HashMap<crate::widgets::PanelKey, (u16, bool)>,
     /// The divider drag in progress, if a section header holds the pointer.
     pub(crate) sidebar_drag: Option<sidebar::SidebarDrag>,
-    /// The split separator drag in progress: set by the divider's press,
-    /// read by its captured moves, taken by its release. See
-    /// [`chrome::splits::SeparatorDrag`].
-    pub(crate) separator_drag: Option<chrome::splits::SeparatorDrag>,
     /// A markdown document's press, while it is held: which panel and widget
     /// the run's captured moves extend a selection in. Not a pointer grab —
     /// routing is the tree's capture; this only says a press is live, which

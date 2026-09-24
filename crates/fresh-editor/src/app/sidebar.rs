@@ -176,8 +176,8 @@ impl SidebarSection {
 ///
 /// The applier recomputes both rows from the *absolute* pointer row on each
 /// move rather than accumulating deltas — what the explorer-width drag does
-/// from `drag_start_position`, and why a long drag cannot drift away from the
-/// cursor.
+/// from its press (`PointerDrag::ExplorerBorder`), and why a long drag cannot
+/// drift away from the cursor.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct SidebarDrag {
     /// The header row that was pressed.

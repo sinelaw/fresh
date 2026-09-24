@@ -1685,11 +1685,13 @@ impl Editor {
         // every move of the pointer under the same capture extends from here
         // (`drag_moved_the_page_selection`), and the release leaves the
         // selection standing for Copy.
-        let ms = &mut self.active_window_mut().mouse_state;
-        ms.dragging_text_selection = true;
-        ms.drag_selection_split = Some(pane);
-        ms.drag_selection_by_words = false;
-        ms.drag_selection_word_end = None;
+        self.active_window_mut().mouse_state.drag = Some(
+            crate::app::types::PointerDrag::Selection(crate::app::types::SelectionDrag {
+                pane,
+                anchor: None,
+                word_end: None,
+            }),
+        );
     }
 
     /// The page panel a pane holds, if it holds one whose focus follows its
@@ -1746,8 +1748,12 @@ impl Editor {
         let Some(panel_key) = self.page_panel_of_pane(pane) else {
             return false;
         };
-        let ms = &self.active_window().mouse_state;
-        if !ms.dragging_text_selection || ms.drag_selection_split != Some(pane) {
+        if self
+            .active_window()
+            .mouse_state
+            .selection_in(pane)
+            .is_none()
+        {
             return true;
         }
         let Some(at) = self.page_point_at(&panel_key, x, y, true) else {

@@ -17,7 +17,7 @@ impl Editor {
     pub(super) fn handle_tab_drag(&mut self, col: u16, row: u16) -> AnyhowResult<()> {
         // Update current position and check if we're dragging
         let (is_dragging, source_split_id) =
-            if let Some(ref mut drag_state) = self.active_window_mut().mouse_state.dragging_tab {
+            if let Some(drag_state) = self.active_window_mut().mouse_state.tab_drag_mut() {
                 drag_state.current_position = (col, row);
                 (drag_state.is_dragging(), drag_state.source_split_id)
             } else {
@@ -33,7 +33,7 @@ impl Editor {
         // content, `splits::drop_zone_node`): a drag move is a
         // pointer-transient fact, so the move that changes where the tab
         // would land is the one that marks the description stale.
-        if let Some(ref mut drag_state) = self.active_window_mut().mouse_state.dragging_tab {
+        if let Some(drag_state) = self.active_window_mut().mouse_state.tab_drag_mut() {
             if drag_state.drop_zone != drop_zone {
                 drag_state.drop_zone = drop_zone;
                 self.shell_description_stale = true;
@@ -166,7 +166,7 @@ impl Editor {
     /// said, if the drag ever passed its threshold. A press that never moved
     /// that far was a click, and the tab's press already activated it.
     pub(crate) fn finish_tab_drag(&mut self) {
-        let Some(drag) = self.active_window_mut().mouse_state.dragging_tab.take() else {
+        let Some(drag) = self.active_window_mut().mouse_state.take_tab_drag() else {
             return;
         };
         if !drag.is_dragging() {
