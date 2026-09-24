@@ -3099,9 +3099,8 @@ impl Editor {
                 match which {
                     Grip::DockWidth if self.dock_resizing => self.handle_dock_resize_drag(x),
                     Grip::Separator => {
-                        if let Some((id, dir)) = self.active_window().mouse_state.dragging_separator
-                        {
-                            if let Err(e) = self.handle_separator_drag(x, y, id, dir) {
+                        if let Some(drag) = self.separator_drag {
+                            if let Err(e) = self.handle_separator_drag(x, y, drag) {
                                 tracing::warn!("separator drag failed: {e}");
                             }
                         }
@@ -3129,7 +3128,7 @@ impl Editor {
                     // A finished separator drag changed the ratios, so the
                     // frame reflows through the one layout funnel.
                     Grip::Separator => {
-                        self.active_window_mut().mouse_state.dragging_separator = None;
+                        self.separator_drag = None;
                         self.relayout();
                     }
                     Grip::ExplorerWidth => {
@@ -3152,8 +3151,9 @@ impl Editor {
             // A split divider. The node is the container, so there is no hit
             // test: `handle_click_split_separator` walked a recorded list of
             // separator rectangles comparing the click against each in turn,
-            // to arrive at the identity the node already had. The drag it arms
-            // is still the legacy grab.
+            // to arrive at the identity the node already had. The press also
+            // records the whole gesture in one value, which the release
+            // takes; a container with no ratio to move records nothing.
             UiFact::SeparatorPress {
                 container,
                 direction,
@@ -3164,12 +3164,13 @@ impl Editor {
                     .split_manager_mut()
                     .get_ratio(container.into())
                     .or_else(|| self.grouped_split_ratio(container));
-                let st = &mut self.active_window_mut().mouse_state;
-                st.dragging_separator = Some((container, direction));
-                st.drag_start_position = Some((x, y));
-                if let Some(ratio) = ratio {
-                    self.active_window_mut().mouse_state.drag_start_ratio = Some(ratio);
-                }
+                self.separator_drag =
+                    ratio.map(|start_ratio| crate::app::chrome::splits::SeparatorDrag {
+                        container,
+                        direction,
+                        press: (x, y),
+                        start_ratio,
+                    });
             }
             UiFact::SeparatorHover(at) => {
                 // The tree's field, not the walk's. The walk runs after this on

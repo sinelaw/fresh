@@ -1,6 +1,6 @@
 use super::drag::TabDragState;
 use crate::config::ExplorerWidth;
-use crate::model::event::{BufferId, ContainerId, LeafId, SplitDirection};
+use crate::model::event::{BufferId, LeafId};
 
 /// Mouse state tracking
 #[derive(Debug, Clone, Default)]
@@ -34,13 +34,8 @@ pub struct MouseState {
     /// Initial viewport top_view_line_offset when starting to drag the scrollbar thumb
     /// This is needed for proper visual row calculation when scrolled into a wrapped line
     pub drag_start_view_line_offset: Option<usize>,
-    /// Whether we're currently dragging a split separator
-    /// Stores (split_id, direction) for the separator being dragged
-    pub dragging_separator: Option<(ContainerId, SplitDirection)>,
-    /// Initial mouse position when starting to drag a separator
+    /// Initial mouse position when starting to drag the file explorer border
     pub drag_start_position: Option<(u16, u16)>,
-    /// Initial split ratio when starting to drag a separator
-    pub drag_start_ratio: Option<f32>,
     /// Whether we're currently dragging the file explorer border
     pub dragging_file_explorer: bool,
     /// File explorer width at the moment the drag started. Drag
