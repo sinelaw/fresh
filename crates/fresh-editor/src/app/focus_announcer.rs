@@ -51,7 +51,9 @@ impl Editor {
     /// Which chrome region holds the keyboard right now.
     pub(crate) fn current_chrome_focus(&self) -> ChromeFocus {
         use crate::input::keybindings::KeyContext;
-        if self.dock.as_ref().is_some_and(|d| d.focused) {
+        // The tree's answer: a focused dock under a centred panel keeps its
+        // layer but not the keyboard.
+        if self.is_dock_focused() {
             return ChromeFocus::Dock;
         }
         if let Some(i) = self.focused_sidebar_panel() {

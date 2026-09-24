@@ -901,8 +901,20 @@ impl Editor {
     /// without that readiness check, keys can race into the editor
     /// during the gap and the test silently waits for a dock response
     /// that never comes.
+    ///
+    /// **Asked of the tree.** A focused dock keeps its keyboard layer under a
+    /// centred panel, which holds the keyboard while it is up; whether the
+    /// keys go to the dock is where the tree's focus is — inside the dock's
+    /// interior (or its sink, for a dock with nothing described).
     pub fn is_dock_focused(&self) -> bool {
+        use crate::view::shell::{panel, widgets::Slot};
         self.dock.as_ref().is_some_and(|d| d.focused)
+            && self.shell_ui.as_ref().is_some_and(|ui| {
+                [panel::interior_key(Slot::Dock), panel::sink_key(Slot::Dock)]
+                    .iter()
+                    .filter_map(|k| ui.find_by_key(k))
+                    .any(|el| ui.has_focus_within(el))
+            })
     }
 
     /// Allocate the next globally-unique `BufferId`. Use this in

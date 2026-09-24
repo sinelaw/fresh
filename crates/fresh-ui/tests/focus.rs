@@ -186,6 +186,37 @@ fn directional_traversal_at_the_edge_declines_the_arrow() {
     assert!(!d.claimed, "nothing above: the arrow is someone else's");
 }
 
+/// **A subtree is told when focus enters and leaves it — not when it moves
+/// inside.** A panel's keyboard is its subtree: a layer opening over it takes
+/// focus out without any control in it changing, and that is the one move the
+/// panel has to hear about.
+#[test]
+fn a_subtree_is_told_when_focus_enters_and_leaves_it() {
+    let log: Log = Rc::new(RefCell::new(Vec::new()));
+    let panel = {
+        let log = log.clone();
+        focusable(col().children([field("a"), field("b")]))
+            .skip_traversal()
+            .on_focus_within_change(move |e: &Event| {
+                log.borrow_mut().push(format!("{:?}", e.kind));
+                None
+            })
+    };
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(col().children([panel, field("outside")]), FRAME);
+    let id = |ui: &Ui<()>, k: &'static str| ui.find_by_key(&k.into()).unwrap();
+
+    ui.request_focus(id(&ui, "a"), SelectionOnFocus::None);
+    ui.request_focus(id(&ui, "b"), SelectionOnFocus::None);
+    ui.request_focus(id(&ui, "outside"), SelectionOnFocus::None);
+    ui.request_focus(id(&ui, "b"), SelectionOnFocus::None);
+    assert_eq!(
+        *log.borrow(),
+        vec!["FocusGained", "FocusLost", "FocusGained"],
+        "in, (a move inside says nothing), out, in again"
+    );
+}
+
 // -- preservation ------------------------------------------------------------
 
 struct Counter;

@@ -163,6 +163,9 @@ pub(crate) struct FocusConfig<M: 'static> {
     pub shortcuts: Vec<Shortcut>,
     pub actions: Vec<(Intent, crate::desc::Handler<M>)>,
     pub on_change: Option<crate::desc::Handler<M>>,
+    /// Focus entering or leaving the subtree. See
+    /// [`crate::Node::on_focus_within_change`].
+    pub on_within: Option<crate::desc::Handler<M>>,
 }
 
 impl<M: 'static> Ui<M> {
@@ -175,6 +178,7 @@ impl<M: 'static> Ui<M> {
                 shortcuts: f.shortcuts.clone(),
                 actions: f.actions.clone(),
                 on_change: f.on_focus_change.clone(),
+                on_within: f.on_focus_within_change.clone(),
             });
         }
         el.behaviors.iter().find_map(|b| {
@@ -186,6 +190,7 @@ impl<M: 'static> Ui<M> {
                     shortcuts: f.shortcuts.clone(),
                     actions: f.actions.clone(),
                     on_change: f.on_change.clone(),
+                    on_within: None,
                 })
         })
     }
@@ -244,14 +249,14 @@ impl<M: 'static> Ui<M> {
             self.fire_focus_change(o, false, out);
         }
         self.fire_focus_change(id, true, out);
-        self.invalidate_focus_within(old, Some(id));
+        self.invalidate_focus_within(old, Some(id), out);
     }
 
     pub fn blur(&mut self) {
         let mut out = Vec::new();
         if let Some(o) = self.focus.take() {
             self.fire_focus_change(o, false, &mut out);
-            self.invalidate_focus_within(Some(o), None);
+            self.invalidate_focus_within(Some(o), None, &mut out);
         }
         self.pending_messages.extend(out);
     }
@@ -306,23 +311,46 @@ impl<M: 'static> Ui<M> {
 
     /// Only registrants below the common ancestor of the old and new positions
     /// are invalidated: for the common ancestor and everything above it, the
-    /// answer to "is focus inside me" did not change.
-    fn invalidate_focus_within(&mut self, old: Option<ElementId>, new: Option<ElementId>) {
+    /// answer to "is focus inside me" did not change. The same registrants are
+    /// the ones focus entered or left, and each that asked is told
+    /// ([`crate::Node::on_focus_within_change`]) — the side focus left before
+    /// the side it entered, as [`Self::focus_element`] orders its own.
+    fn invalidate_focus_within(
+        &mut self,
+        old: Option<ElementId>,
+        new: Option<ElementId>,
+        out: &mut Vec<M>,
+    ) {
         let ca = match (old, new) {
             (Some(a), Some(b)) => self.common_ancestor(a, b),
             _ => None,
         };
-        for end in [old, new].into_iter().flatten() {
-            let mut cur = Some(end);
+        for (end, gained) in [(old, false), (new, true)] {
+            let mut cur = end;
             while let Some(c) = cur {
                 if Some(c) == ca {
                     break;
                 }
                 if self.registers_focus_within(c) {
                     self.mark_dirty(c, DirtyCause::Focus);
+                    self.fire_focus_within_change(c, gained, out);
                 }
                 cur = self.arena.get(c).and_then(|e| e.parent);
             }
+        }
+    }
+
+    fn fire_focus_within_change(&mut self, id: ElementId, gained: bool, out: &mut Vec<M>) {
+        let Some(h) = self.focus_config(id).and_then(|c| c.on_within) else {
+            return;
+        };
+        let kind = match gained {
+            true => GestureKind::FocusGained,
+            false => GestureKind::FocusLost,
+        };
+        let ev = self.synth_event(id, kind, None, Rc::new(Ctl::default()));
+        if let Some(m) = h(&ev) {
+            out.push(m);
         }
     }
 
@@ -789,7 +817,7 @@ impl<M: 'static> Ui<M> {
             None => {
                 if let Some(o) = self.focus.take() {
                     self.fire_focus_change(o, false, &mut out);
-                    self.invalidate_focus_within(Some(o), None);
+                    self.invalidate_focus_within(Some(o), None, &mut out);
                 }
             }
         }

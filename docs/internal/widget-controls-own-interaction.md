@@ -85,11 +85,27 @@ focus itself, and each able to drift.
   `widget_event` and every plugin action (`Editor::publish_panel_focus`), so a
   mode binding's handler reads the focus as of its key; a plugin's own
   `setFocusKey` writes through, so a read right after it agrees.
-- **Focus returns to what opened a panel.** When a centred or anchored panel
-  mounts over a focused dock, the host records the dock widget that had the
-  keyboard (`Editor::floating_opener`); when the floating slot empties — Esc,
-  a press outside, the plugin's own unmount — the dock takes the keyboard back
-  on that widget (`Editor::floating_slot_closed`). The plugin's
+- **Focus returns to what opened a panel — by the tree's own rule.** A
+  focused dock stays focused under a centred or anchored panel: the panel's
+  keyboard layer is declared above the dock's, so it holds the keyboard while
+  it is up, and the dock's layer is only covered. The tree's focus leaves the
+  dock's interior and comes back when the panel closes, landing on the widget
+  the dock's description marks `autofocus` — the one that had focus, which
+  opened the panel. Nothing on the editor remembers an opener.
+
+  The dock's plugin hears the cover and the uncover as it always heard the
+  dock losing and regaining the keyboard, a `blur` and a `focus` marked
+  `previous: "(re-focus)"`. They come from the tree: fresh-ui's
+  `Node::on_focus_within_change` on the panel interior raises
+  `UiFact::PanelKeyboard`, applied by `Editor::panel_keyboard_changed`, and
+  a frame's settled facts are applied at the end of that frame so the plugin
+  is told on the frame that covered or uncovered it, not on the next key.
+  `Editor::is_dock_focused` asks the tree whether focus is inside the dock;
+  the `focused` flag now means only that the dock has a keyboard layer.
+
+  A first cut remembered the opener on the editor (`floating_opener` /
+  `floating_slot_closed`) and blurred the dock as the panel mounted, which is
+  exactly the case fresh-ui's own restore voids; it is deleted. The plugin's
   `closeMainMenu` / `closeCreateFolderDialog` / `restoreDockAfterDialog` /
   `restoreDockAfterForm` refocus code and the `yieldDock` / `restoreDock`
   discovery hooks are gone. A dialog opened while the editor had the keyboard

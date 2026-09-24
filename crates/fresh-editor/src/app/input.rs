@@ -661,9 +661,6 @@ impl Editor {
                     *o = None;
                 }
                 let _ = self.widget_registry.unmount(&panel_key);
-                if slot == Some(super::PanelSlot::Floating) {
-                    self.floating_slot_closed();
-                }
                 true
             }
             WidgetKeyOutcome::SmartKey(key) => {

@@ -548,6 +548,17 @@ pub fn interior_capturing(
         true => n.autofocus(),
         false => n,
     };
+    // **Whether the panel's keyboard is where the keys go, as the tree has
+    // it.** A panel keeps its keyboard layer while another layer is open over
+    // it (a dialog over the dock), and the tree's focus leaves the interior
+    // and comes back without the panel's own focus fact changing. The runtime
+    // hears both moves from here (`Editor::panel_keyboard_changed`).
+    let n = n.on_focus_within_change(move |e: &fresh_ui::Event| {
+        Some(UiMsg::Ui(UiFact::PanelKeyboard {
+            slot,
+            held: e.kind == fresh_ui::GestureKind::FocusGained,
+        }))
+    });
     n.on_key(move |e: &fresh_ui::Event| {
         // **Tab too.** It used to be declined here so the tree's ring moved
         // focus before anything else saw it — which meant the focused

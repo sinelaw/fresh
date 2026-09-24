@@ -554,6 +554,9 @@ pub struct FocusProps<M> {
     pub on_focus_change: Option<Handler<M>>,
     /// Rebuild this element when focus enters or leaves its subtree.
     pub focus_within: bool,
+    /// Called with `FocusGained` when focus enters this subtree and
+    /// `FocusLost` when it leaves. See [`Node::on_focus_within_change`].
+    pub on_focus_within_change: Option<Handler<M>>,
     /// The stop traversal enters this subtree at. See [`Node::enters_at`].
     pub entry: Option<crate::key::Key>,
     /// How traversal moves inside this subtree. See [`Node::traversal`].
@@ -573,6 +576,7 @@ impl<M> Default for FocusProps<M> {
             actions: Vec::new(),
             on_focus_change: None,
             focus_within: false,
+            on_focus_within_change: None,
             entry: None,
             traversal: None,
         }
@@ -1107,6 +1111,7 @@ impl<M> Clone for FocusProps<M> {
             actions: self.actions.clone(),
             on_focus_change: self.on_focus_change.clone(),
             focus_within: self.focus_within,
+            on_focus_within_change: self.on_focus_within_change.clone(),
             entry: self.entry.clone(),
             traversal: self.traversal.clone(),
         }
@@ -2084,6 +2089,22 @@ impl<M> Node<M> {
     /// Rebuild when focus enters or leaves this subtree.
     pub fn focus_within(mut self) -> Self {
         self.focus_props().focus_within = true;
+        self
+    }
+
+    /// Be told when focus enters this subtree (`FocusGained`) or leaves it
+    /// (`FocusLost`) — a move *within* the subtree is neither. Implies
+    /// [`Self::focus_within`].
+    ///
+    /// [`Self::on_focus_change`] answers for this element alone. A surface
+    /// whose keyboard is a subtree — a panel, whose controls are its
+    /// descendants — asks this instead: a layer opening over it takes focus
+    /// out of the subtree without any control in it changing, and closing
+    /// that layer brings focus back in the same way.
+    pub fn on_focus_within_change(mut self, f: impl Fn(&Event) -> Option<M> + 'static) -> Self {
+        let p = self.focus_props();
+        p.focus_within = true;
+        p.on_focus_within_change = Some(Rc::new(f));
         self
     }
 
