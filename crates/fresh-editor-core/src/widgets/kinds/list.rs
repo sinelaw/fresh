@@ -114,11 +114,13 @@ impl WidgetImpl for List {
         super::KeyDisposition::Consumed
     }
 
-    /// **Type-ahead** (the listbox pattern): characters typed in quick
-    /// succession build a prefix, and the selection moves to the next item
-    /// whose text starts with it — case-insensitively, wrapping. The same
-    /// character typed again cycles through the items it starts. A pause
-    /// longer than [`TYPE_AHEAD_PAUSE`] starts a new prefix.
+    /// **Type-ahead** (the listbox pattern), for a list that asks for it
+    /// (`type_ahead`): characters typed in quick succession build a prefix,
+    /// and the selection moves to the next item whose text starts with it —
+    /// case-insensitively, wrapping. The same character typed again cycles
+    /// through the items it starts. A pause longer than [`TYPE_AHEAD_PAUSE`]
+    /// starts a new prefix. Any other list passes the character on, so a
+    /// letter its mode binds (Git Log's `q`) still reaches the mode.
     fn on_text(
         &self,
         spec: &WidgetSpec,
@@ -127,6 +129,15 @@ impl WidgetImpl for List {
         text: &str,
         fx: &mut super::KeyFx,
     ) -> super::KeyDisposition {
+        if !matches!(
+            spec,
+            WidgetSpec::List {
+                type_ahead: true,
+                ..
+            }
+        ) {
+            return super::KeyDisposition::Pass;
+        }
         let typed: String = text.chars().filter(|c| !c.is_control()).collect();
         if typed.is_empty() {
             return super::KeyDisposition::Pass;

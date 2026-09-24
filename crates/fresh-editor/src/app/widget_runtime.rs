@@ -3312,6 +3312,7 @@ mod tests {
             selected_index: 0,
             visible_rows: Some(4),
             focusable: true,
+            type_ahead: false,
             key: Some("lst".into()),
         }
     }
@@ -3327,6 +3328,7 @@ mod tests {
                 item_keys,
                 selected_index,
                 focusable,
+                type_ahead,
                 key,
                 ..
             } => WidgetSpec::List {
@@ -3336,6 +3338,7 @@ mod tests {
                 selected_index,
                 visible_rows: None,
                 focusable,
+                type_ahead,
                 key,
             },
             other => other,

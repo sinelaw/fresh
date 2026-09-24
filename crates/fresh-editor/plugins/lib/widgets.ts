@@ -560,6 +560,12 @@ export function list(options: {
    * skipping the list in the Tab cycle keeps focus jumping
    * straight between filter and action buttons. */
   focusable?: boolean;
+  /** Typing jumps to the next item starting with what was typed (the
+   * listbox pattern). Off by default — leave it off for a list whose mode
+   * binds single letters (`q` to quit), since the focused list is asked
+   * first. Turn it on for a list of names to find, such as a file
+   * browser. */
+  typeAhead?: boolean;
   key?: string;
 }): WidgetSpec {
   return {
@@ -570,6 +576,7 @@ export function list(options: {
     selectedIndex: options.selectedIndex ?? -1,
     visibleRows: options.visibleRows,
     focusable: options.focusable ?? true,
+    typeAhead: options.typeAhead ?? false,
     key: options.key,
   };
 }

@@ -5238,6 +5238,7 @@ pub(crate) mod tests {
             visible_rows: Some(1),
             key: Some("l".into()),
             focusable: true,
+            type_ahead: false,
         };
         let multiline = |rows: u32| WidgetSpec::Text {
             value: "a\nb\nc".into(),
@@ -5313,6 +5314,7 @@ pub(crate) mod tests {
             visible_rows: Some(visible),
             key: Some("l".into()),
             focusable: true,
+            type_ahead: false,
         }
     }
 
@@ -6374,6 +6376,7 @@ pub(crate) mod tests {
             visible_rows: Some(visible),
             key: Some("cards".into()),
             focusable: true,
+            type_ahead: false,
         }
     }
 
@@ -6435,6 +6438,7 @@ pub(crate) mod tests {
             visible_rows: Some(18),
             key: Some("cards".into()),
             focusable: true,
+            type_ahead: false,
         };
         let mut ui: Ui<UiMsg> = Ui::new();
         ui.frame(node(&spec, WIDTH, &cx()), Size::new(WIDTH, 24));

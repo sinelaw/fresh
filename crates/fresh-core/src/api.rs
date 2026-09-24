@@ -2843,6 +2843,14 @@ pub enum WidgetSpec {
         /// dispatch.
         #[serde(default = "default_true")]
         focusable: bool,
+        /// Typing jumps the selection to the next item whose text starts
+        /// with what was typed (the listbox pattern's type-ahead). Off by
+        /// default: a list that is a command surface — Git Log's `q`, a
+        /// dock's single-key actions — binds those letters in its mode, and
+        /// the focused widget is asked first. Turn it on for a list of names
+        /// to find, such as a file browser.
+        #[serde(default)]
+        type_ahead: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         key: Option<String>,
     },

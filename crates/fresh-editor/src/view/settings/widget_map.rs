@@ -534,6 +534,7 @@ fn rows_list(
         selected_index: cursor.map(|c| c as i32).unwrap_or(-1),
         visible_rows: Some(visible),
         focusable: true,
+        type_ahead: false,
         key: Some(field_key.to_string()),
     }
 }

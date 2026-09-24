@@ -297,6 +297,8 @@ export class PathPicker {
       ),
       selectedIndex: Math.max(0, Math.min(b.index, items.length - 1)),
       visibleRows: BROWSER_ROWS,
+      // A folder's names: typing jumps to one.
+      typeAhead: true,
       key: this.o.listKey,
     });
     const notice = b.notice && !b.loading
