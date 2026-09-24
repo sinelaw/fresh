@@ -1869,6 +1869,7 @@ impl Editor {
                     first_line.as_deref(),
                     &self.grammar_registry,
                     &self.config.languages,
+                    state.buffer.filesystem().as_ref(),
                 );
 
                 if detected.highlighter.has_highlighting() || !state.highlighter.has_highlighting()

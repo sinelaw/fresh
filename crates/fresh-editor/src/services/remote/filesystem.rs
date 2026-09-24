@@ -476,6 +476,38 @@ impl FileSystem for RemoteFileSystem {
             .unwrap_or(false))
     }
 
+    /// One request instead of one per ancestor. The default implementation
+    /// would issue a `stat` per directory per marker, and every one of those
+    /// is a blocking round trip on the editor thread — an unacceptable cost
+    /// on the file-open path, which is where this is called from.
+    fn find_up(
+        &self,
+        start: &Path,
+        markers: &[&str],
+        max_dirs: Option<usize>,
+    ) -> io::Result<Vec<PathBuf>> {
+        let params = serde_json::json!({
+            "path": start.to_string_lossy(),
+            "markers": markers,
+            "max_dirs": max_dirs,
+        });
+        let result = self
+            .channel
+            .request_blocking("find_up", params)
+            .map_err(Self::to_io_error)?;
+
+        Ok(result
+            .get("dirs")
+            .and_then(|v| v.as_array())
+            .map(|dirs| {
+                dirs.iter()
+                    .filter_map(|d| d.as_str())
+                    .map(PathBuf::from)
+                    .collect()
+            })
+            .unwrap_or_default())
+    }
+
     fn set_permissions(&self, path: &Path, permissions: &FilePermissions) -> io::Result<()> {
         #[cfg(unix)]
         {

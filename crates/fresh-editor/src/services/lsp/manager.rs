@@ -1843,6 +1843,7 @@ pub use fresh_editor_core::language_detect::detect_language;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::filesystem::StdFileSystem;
     use std::path::Path;
 
     #[test]
@@ -2127,33 +2128,48 @@ mod tests {
 
         // Test configured languages
         assert_eq!(
-            detect_language(Path::new("main.rs"), &languages),
+            detect_language(Path::new("main.rs"), &languages, &StdFileSystem),
             Some("rust".to_string())
         );
         assert_eq!(
-            detect_language(Path::new("index.js"), &languages),
+            detect_language(Path::new("index.js"), &languages, &StdFileSystem),
             Some("javascript".to_string())
         );
         assert_eq!(
-            detect_language(Path::new("App.jsx"), &languages),
+            detect_language(Path::new("App.jsx"), &languages, &StdFileSystem),
             Some("javascript".to_string())
         );
         assert_eq!(
-            detect_language(Path::new("Program.cs"), &languages),
+            detect_language(Path::new("Program.cs"), &languages, &StdFileSystem),
             Some("csharp".to_string())
         );
 
         // Test unconfigured extensions return None
-        assert_eq!(detect_language(Path::new("main.py"), &languages), None);
-        assert_eq!(detect_language(Path::new("file.xyz"), &languages), None);
-        assert_eq!(detect_language(Path::new("file"), &languages), None);
+        assert_eq!(
+            detect_language(Path::new("main.py"), &languages, &StdFileSystem),
+            None
+        );
+        assert_eq!(
+            detect_language(Path::new("file.xyz"), &languages, &StdFileSystem),
+            None
+        );
+        assert_eq!(
+            detect_language(Path::new("file"), &languages, &StdFileSystem),
+            None
+        );
     }
 
     #[test]
     fn test_detect_language_no_extension() {
         let languages = test_languages();
-        assert_eq!(detect_language(Path::new("README"), &languages), None);
-        assert_eq!(detect_language(Path::new("Makefile"), &languages), None);
+        assert_eq!(
+            detect_language(Path::new("README"), &languages, &StdFileSystem),
+            None
+        );
+        assert_eq!(
+            detect_language(Path::new("Makefile"), &languages, &StdFileSystem),
+            None
+        );
     }
 
     #[test]
@@ -2188,19 +2204,22 @@ mod tests {
 
         // Path glob: /etc/**/rc.* should match
         assert_eq!(
-            detect_language(Path::new("/etc/rc.conf"), &languages),
+            detect_language(Path::new("/etc/rc.conf"), &languages, &StdFileSystem),
             Some("shell".to_string())
         );
         assert_eq!(
-            detect_language(Path::new("/etc/init/rc.local"), &languages),
+            detect_language(Path::new("/etc/init/rc.local"), &languages, &StdFileSystem),
             Some("shell".to_string())
         );
         // Path glob should NOT match different root
-        assert_eq!(detect_language(Path::new("/var/rc.conf"), &languages), None);
+        assert_eq!(
+            detect_language(Path::new("/var/rc.conf"), &languages, &StdFileSystem),
+            None
+        );
 
         // Filename glob: *rc should still work
         assert_eq!(
-            detect_language(Path::new("lfrc"), &languages),
+            detect_language(Path::new("lfrc"), &languages, &StdFileSystem),
             Some("shell".to_string())
         );
     }
@@ -2334,7 +2353,7 @@ mod tests {
         // default-config answer (`c`) survives.
         let languages = c_cpp_languages();
         assert_eq!(
-            detect_language(Path::new("foo.h"), &languages),
+            detect_language(Path::new("foo.h"), &languages, &StdFileSystem),
             Some("c".to_string())
         );
     }
@@ -2351,7 +2370,7 @@ mod tests {
 
         let languages = c_cpp_languages();
         assert_eq!(
-            detect_language(&header, &languages),
+            detect_language(&header, &languages, &StdFileSystem),
             Some("cpp".to_string())
         );
     }
@@ -2368,7 +2387,7 @@ mod tests {
 
         let languages = c_cpp_languages();
         assert_eq!(
-            detect_language(&header, &languages),
+            detect_language(&header, &languages, &StdFileSystem),
             Some("cpp".to_string())
         );
     }
@@ -2391,7 +2410,7 @@ mod tests {
 
         let languages = c_cpp_languages();
         assert_eq!(
-            detect_language(&header, &languages),
+            detect_language(&header, &languages, &StdFileSystem),
             Some("cpp".to_string())
         );
     }
@@ -2413,7 +2432,10 @@ mod tests {
         std::fs::write(&header, "").unwrap();
 
         let languages = c_cpp_languages();
-        assert_eq!(detect_language(&header, &languages), Some("c".to_string()));
+        assert_eq!(
+            detect_language(&header, &languages, &StdFileSystem),
+            Some("c".to_string())
+        );
     }
 
     #[test]
@@ -2427,7 +2449,10 @@ mod tests {
         std::fs::write(project.join("lib.c"), "").unwrap();
 
         let languages = c_cpp_languages();
-        assert_eq!(detect_language(&header, &languages), Some("c".to_string()));
+        assert_eq!(
+            detect_language(&header, &languages, &StdFileSystem),
+            Some("c".to_string())
+        );
     }
 
     #[test]
@@ -2442,7 +2467,10 @@ mod tests {
         std::fs::write(&header, "").unwrap();
 
         let languages = c_cpp_languages();
-        assert_eq!(detect_language(&header, &languages), Some("c".to_string()));
+        assert_eq!(
+            detect_language(&header, &languages, &StdFileSystem),
+            Some("c".to_string())
+        );
     }
 
     #[test]
@@ -2465,7 +2493,7 @@ mod tests {
 
         let languages = c_cpp_languages();
         assert_eq!(
-            detect_language(&header, &languages),
+            detect_language(&header, &languages, &StdFileSystem),
             Some("cpp".to_string())
         );
     }
@@ -2481,7 +2509,10 @@ mod tests {
         std::fs::write(project.join("main.cpp"), "").unwrap();
 
         let languages = c_cpp_languages();
-        assert_eq!(detect_language(&source, &languages), Some("c".to_string()));
+        assert_eq!(
+            detect_language(&source, &languages, &StdFileSystem),
+            Some("c".to_string())
+        );
     }
 
     #[test]
@@ -2497,7 +2528,10 @@ mod tests {
 
         let mut languages = c_cpp_languages();
         languages.remove("cpp");
-        assert_eq!(detect_language(&header, &languages), Some("c".to_string()));
+        assert_eq!(
+            detect_language(&header, &languages, &StdFileSystem),
+            Some("c".to_string())
+        );
     }
 
     // These two use POSIX-absolute inputs (`/tmp/...`). On Windows such a path

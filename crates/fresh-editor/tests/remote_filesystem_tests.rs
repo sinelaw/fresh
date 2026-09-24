@@ -83,6 +83,90 @@ fn test_read_file_content() {
     );
 }
 
+/// `find_up` is served by the agent in one request, so this exercises the
+/// override and `cmd_find_up` together: the nearest match must come first,
+/// and an outer marker must still be reported so a caller that has to look
+/// inside each candidate can keep climbing.
+#[test]
+fn test_find_up_reports_matching_ancestors_nearest_first() {
+    let Some((fs, temp_dir, _rt)) = create_test_filesystem() else {
+        eprintln!("Skipping test: could not create test filesystem");
+        return;
+    };
+
+    // The agent canonicalizes every path it is handed (`validate_path` ->
+    // `os.path.realpath`), so compare against canonical paths. On macOS the
+    // temp dir is `/var/folders/...`, a symlink to `/private/var/folders/...`,
+    // and unresolved expectations never match what comes back.
+    let root = std::fs::canonicalize(temp_dir.path()).unwrap();
+    let nested = root.join("proj/include/detail");
+    std::fs::create_dir_all(&nested).unwrap();
+    std::fs::write(root.join("proj/compile_commands.json"), b"[]").unwrap();
+    std::fs::write(root.join("proj/include/compile_commands.json"), b"[]").unwrap();
+
+    let found = fs
+        .find_up(&nested, &["compile_commands.json"], Some(11))
+        .unwrap();
+
+    assert_eq!(
+        found,
+        vec![root.join("proj/include"), root.join("proj")],
+        "both ancestors carrying the marker, nearest first"
+    );
+}
+
+/// A marker that is nowhere up the tree is an empty answer, not an error —
+/// the probe treats "could not see it" and "not there" alike.
+#[test]
+fn test_find_up_without_a_match_is_empty() {
+    let Some((fs, temp_dir, _rt)) = create_test_filesystem() else {
+        eprintln!("Skipping test: could not create test filesystem");
+        return;
+    };
+
+    let nested = std::fs::canonicalize(temp_dir.path()).unwrap().join("a/b");
+    std::fs::create_dir_all(&nested).unwrap();
+    std::fs::write(nested.join("present.json"), b"").unwrap();
+
+    let found = fs.find_up(&nested, &["nothing-here.json"], Some(4)).unwrap();
+    assert!(found.is_empty(), "no marker anywhere means no directories");
+
+    // Positive control, same tree and budget: an empty answer has to mean
+    // "searched and found nothing", not "the search never happened".
+    let found = fs.find_up(&nested, &["present.json"], Some(4)).unwrap();
+    assert_eq!(found, vec![nested], "the marker that does exist is reported");
+}
+
+/// `max_dirs` counts the starting directory itself, so a budget of 1 can
+/// only ever report the directory the search began in.
+#[test]
+fn test_find_up_respects_max_dirs() {
+    let Some((fs, temp_dir, _rt)) = create_test_filesystem() else {
+        eprintln!("Skipping test: could not create test filesystem");
+        return;
+    };
+
+    let root = std::fs::canonicalize(temp_dir.path()).unwrap();
+    let nested = root.join("proj/include");
+    std::fs::create_dir_all(&nested).unwrap();
+    std::fs::write(root.join("proj/marker.txt"), b"").unwrap();
+
+    let found = fs.find_up(&nested, &["marker.txt"], Some(1)).unwrap();
+    assert!(
+        found.is_empty(),
+        "a budget of one directory must not reach the parent that holds the marker"
+    );
+
+    // Positive control: one more directory of budget reaches it. Without
+    // this the assertion above would also hold if the search did nothing.
+    let found = fs.find_up(&nested, &["marker.txt"], Some(2)).unwrap();
+    assert_eq!(
+        found,
+        vec![root.join("proj")],
+        "a budget of two reaches the parent"
+    );
+}
+
 #[test]
 fn test_write_and_read_roundtrip() {
     let Some((fs, temp_dir, _rt)) = create_test_filesystem() else {
