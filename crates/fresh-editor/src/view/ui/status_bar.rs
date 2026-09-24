@@ -5,8 +5,8 @@ use std::path::Path;
 
 use crate::app::shell_host::shell_theme::{Attrs, Ink};
 use crate::config::{StatusBarElement, VirtualSpaceMode};
-use crate::primitives::display_width::str_width;
 use crate::state::EditorState;
+use crate::view::shell::status_bar::Item;
 use chrono::Timelike;
 use fresh_i18n::t;
 
@@ -28,9 +28,9 @@ const SSH_PREFIX_TERMINATOR: &str = "] ";
 /// The paint-time `StatusBarLayout` that used to carry these is gone: the bar
 /// migrated to the shell, and the walk that recorded them had no callers left.
 ///
-/// Wiring a new clickable built-in element is therefore: give it an
-/// `ElementKind`, list it in [`StatusBarRenderer::clickable_for_kind`], and add
-/// one arm to the app-side dispatch. No new layout field / hover variant /
+/// Wiring a new clickable built-in element is therefore: pass its id where
+/// `StatusBarRenderer::render_element` builds it, and add one arm to the
+/// app-side dispatch. No new layout field / hover variant /
 /// chrome area / mouse loop.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StatusBarClickable {
@@ -48,42 +48,6 @@ pub enum StatusBarClickable {
     /// The restart indicator on a terminal buffer whose process quit — click
     /// to respawn it (resuming the agent conversation when there is one).
     RestartTerminal,
-}
-
-/// Categorization of how a rendered element should be styled and tracked for click detection.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ElementKind {
-    /// Normal text using base status bar colors
-    Normal,
-    /// Line ending indicator (clickable)
-    LineEnding,
-    /// Encoding indicator (clickable)
-    Encoding,
-    /// Language indicator (clickable)
-    Language,
-    /// LSP status indicator (colored by warning level, clickable)
-    Lsp,
-    /// Warning badge (colored, clickable)
-    WarningBadge,
-    /// Update available indicator (highlighted)
-    Update,
-    /// Exited-terminal restart indicator (error palette, clickable)
-    TerminalRestart,
-    /// Command palette shortcut hint (distinct style)
-    Palette,
-    /// Status message area (clickable to show history)
-    Messages,
-    /// Read-only `[RO]` indicator (clickable to open the read-only menu)
-    ReadOnly,
-    /// Remote disconnected prefix (error colors)
-    RemoteDisconnected,
-    /// Remote authority indicator — styling driven by connection state
-    RemoteIndicator(RemoteIndicatorState),
-    /// Workspace-trust indicator — always present, styling driven by the
-    /// active session's trust level. Clickable (opens the trust prompt).
-    WorkspaceTrust(crate::services::workspace_trust::TrustLevel),
-    /// Custom plugin token
-    Custom,
 }
 
 /// Visual/semantic state of the remote authority indicator.
@@ -200,17 +164,6 @@ impl RemoteIndicatorOverride {
     }
 }
 
-/// A single rendered status bar element with its text and styling info.
-struct RenderedElement {
-    text: String,
-    kind: ElementKind,
-    /// For `ElementKind::Custom` elements, the plugin-registered token
-    /// key (`"<plugin>:<token>"`) — preserved here so the layout pass
-    /// can record this element's screen area under the same key for
-    /// click dispatch. `None` for every built-in element kind.
-    token_key: Option<String>,
-}
-
 /// Three-state LSP status used by the status bar `Lsp` element.
 ///
 /// Collapses the previous "running / auto_start-dormant / opt-in-dormant /
@@ -246,7 +199,6 @@ pub struct StatusBarContext<'a> {
     pub lsp_status: &'a str,
     /// LSP indicator state; drives the indicator's colours.
     pub lsp_indicator_state: LspIndicatorState,
-    pub theme: &'a crate::view::theme::Theme,
     pub display_name: &'a str,
     pub keybindings: &'a crate::input::keybindings::KeybindingResolver,
     pub chord_state: &'a [(crossterm::event::KeyCode, crossterm::event::KeyModifiers)],
@@ -258,7 +210,7 @@ pub struct StatusBarContext<'a> {
     pub general_warning_count: usize,
     /// The clickable status-bar segment the mouse is currently over, if any.
     /// Drives hover styling generically — each element underlines/recolors when
-    /// its own `clickable_for_kind` id equals this.
+    /// its own clickable id equals this.
     pub hovered: Option<StatusBarClickable>,
     pub remote_connection: Option<&'a str>,
     pub session_name: Option<&'a str>,
@@ -347,23 +299,6 @@ pub struct StatusSegmentInfo {
     /// orders/justifies segments exactly as the TUI does (rather than
     /// re-deriving from a midpoint of `x`).
     pub side: &'static str,
-}
-
-/// Map an [`ElementKind`] to the stable semantic name `status_view` uses.
-pub(crate) fn element_kind_name(kind: ElementKind) -> &'static str {
-    match kind {
-        ElementKind::Lsp => "lsp",
-        ElementKind::WarningBadge => "warning",
-        ElementKind::Language => "language",
-        ElementKind::Encoding => "encoding",
-        ElementKind::LineEnding => "lineEnding",
-        ElementKind::RemoteIndicator(_) => "remote",
-        ElementKind::WorkspaceTrust(_) => "trust",
-        ElementKind::Messages => "message",
-        ElementKind::TerminalRestart => "terminalRestart",
-        ElementKind::Custom => "plugin",
-        _ => "text",
-    }
 }
 
 /// Result of truncating a path for display
@@ -672,12 +607,9 @@ pub(crate) fn input_hscroll(cursor_cells: usize, width: usize) -> usize {
 pub struct StatusBarRenderer;
 
 impl StatusBarRenderer {
-    /// Render a single element to its text representation.
-    /// Returns None if the element has nothing to display.
-    fn render_element(
-        element: &StatusBarElement,
-        ctx: &mut StatusBarContext<'_>,
-    ) -> Option<RenderedElement> {
+    /// One configured element as it sits on the bar, or `None` when it has
+    /// nothing to show.
+    fn render_element(element: &StatusBarElement, ctx: &mut StatusBarContext<'_>) -> Option<Item> {
         // Buffer-specific elements have nothing meaningful to show when
         // the active buffer is just a synthesized placeholder kept alive
         // for editor invariants. Suppress them so the status bar tells
@@ -697,6 +629,12 @@ impl StatusBarRenderer {
         {
             return None;
         }
+        let hovered = ctx.hovered;
+        // An element that answers a press, painted in `keys` and answering
+        // the pointer as `hover` says.
+        let clickable = |text: String, name, id, keys, hover| {
+            item(text, name, keys, Some((id, hover)), hovered)
+        };
         match element {
             StatusBarElement::Filename => {
                 let modified = if ctx.state.buffer.is_modified() {
@@ -736,16 +674,11 @@ impl StatusBarRenderer {
                 let text = format!(
                     "{session_prefix}{remote_prefix}{display_name}{modified}{read_only_indicator}"
                 );
-                let kind = if remote_disconnected {
-                    ElementKind::RemoteDisconnected
+                if remote_disconnected {
+                    disconnected_filename(text)
                 } else {
-                    ElementKind::Normal
-                };
-                Some(RenderedElement {
-                    text,
-                    kind,
-                    token_key: None,
-                })
+                    item(text, "text", BAR, None, hovered)
+                }
             }
             StatusBarElement::ReadOnly => {
                 // Persistent `[RO]` indicator. Renders only while the active
@@ -757,11 +690,13 @@ impl StatusBarRenderer {
                 if !ctx.read_only {
                     return None;
                 }
-                Some(RenderedElement {
-                    text: "[RO]".to_string(),
-                    kind: ElementKind::ReadOnly,
-                    token_key: None,
-                })
+                clickable(
+                    "[RO]".to_string(),
+                    "text",
+                    StatusBarClickable::ReadOnly,
+                    BAR,
+                    Hover::Underline,
+                )
             }
             StatusBarElement::Cursor => {
                 if !ctx.state.show_cursors {
@@ -784,11 +719,7 @@ impl StatusBarRenderer {
                 } else {
                     format!("Byte {}", cursor.position)
                 };
-                Some(RenderedElement {
-                    text,
-                    kind: ElementKind::Normal,
-                    token_key: None,
-                })
+                item(text, "text", BAR, None, hovered)
             }
             StatusBarElement::CursorCompact => {
                 if !ctx.state.show_cursors {
@@ -811,11 +742,7 @@ impl StatusBarRenderer {
                 } else {
                     format!("{}", cursor.position)
                 };
-                Some(RenderedElement {
-                    text,
-                    kind: ElementKind::Normal,
-                    token_key: None,
-                })
+                item(text, "text", BAR, None, hovered)
             }
             StatusBarElement::Diagnostics => {
                 let mut error_count = 0usize;
@@ -834,9 +761,6 @@ impl StatusBarRenderer {
                         _ => info_count += 1,
                     }
                 }
-                if error_count + warning_count + info_count == 0 {
-                    return None;
-                }
                 let mut parts = Vec::new();
                 if error_count > 0 {
                     parts.push(format!("E:{}", error_count));
@@ -847,21 +771,14 @@ impl StatusBarRenderer {
                 if info_count > 0 {
                     parts.push(format!("I:{}", info_count));
                 }
-                Some(RenderedElement {
-                    text: parts.join(" "),
-                    kind: ElementKind::Normal,
-                    token_key: None,
-                })
+                item(parts.join(" "), "text", BAR, None, hovered)
             }
             StatusBarElement::CursorCount => {
                 if ctx.cursors.count() <= 1 {
                     return None;
                 }
-                Some(RenderedElement {
-                    text: t!("status.cursors", count = ctx.cursors.count()).to_string(),
-                    kind: ElementKind::Normal,
-                    token_key: None,
-                })
+                let text = t!("status.cursors", count = ctx.cursors.count()).to_string();
+                item(text, "text", BAR, None, hovered)
             }
             StatusBarElement::Messages => {
                 let mut parts: Vec<&str> = Vec::new();
@@ -875,14 +792,14 @@ impl StatusBarRenderer {
                         parts.push(msg);
                     }
                 }
-                if parts.is_empty() {
-                    return None;
-                }
-                Some(RenderedElement {
-                    text: parts.join(" | "),
-                    kind: ElementKind::Messages,
-                    token_key: None,
-                })
+                // Clickable (it opens the message log) without a hover cue.
+                clickable(
+                    parts.join(" | "),
+                    "message",
+                    StatusBarClickable::Messages,
+                    BAR,
+                    Hover::None,
+                )
             }
             StatusBarElement::Chord => {
                 if ctx.chord_state.is_empty() {
@@ -896,22 +813,22 @@ impl StatusBarRenderer {
                     })
                     .collect::<Vec<_>>()
                     .join(" ");
-                Some(RenderedElement {
-                    text: format!("[{}]", chord_str),
-                    kind: ElementKind::Normal,
-                    token_key: None,
-                })
+                item(format!("[{}]", chord_str), "text", BAR, None, hovered)
             }
-            StatusBarElement::LineEnding => Some(RenderedElement {
-                text: ctx.state.buffer.line_ending().display_name().to_string(),
-                kind: ElementKind::LineEnding,
-                token_key: None,
-            }),
-            StatusBarElement::Encoding => Some(RenderedElement {
-                text: ctx.state.buffer.encoding().display_name().to_string(),
-                kind: ElementKind::Encoding,
-                token_key: None,
-            }),
+            StatusBarElement::LineEnding => clickable(
+                ctx.state.buffer.line_ending().display_name().to_string(),
+                "lineEnding",
+                StatusBarClickable::LineEnding,
+                BAR,
+                Hover::Swap(MENU_HOVER),
+            ),
+            StatusBarElement::Encoding => clickable(
+                ctx.state.buffer.encoding().display_name().to_string(),
+                "encoding",
+                StatusBarClickable::Encoding,
+                BAR,
+                Hover::Swap(MENU_HOVER),
+            ),
             StatusBarElement::Language => {
                 let text = if ctx.state.language == "text"
                     && ctx.state.display_name != "Text"
@@ -922,31 +839,38 @@ impl StatusBarRenderer {
                 } else {
                     ctx.state.display_name.to_string()
                 };
-                Some(RenderedElement {
+                clickable(
                     text,
-                    kind: ElementKind::Language,
-                    token_key: None,
-                })
+                    "language",
+                    StatusBarClickable::Language,
+                    BAR,
+                    Hover::Swap(MENU_HOVER),
+                )
             }
             StatusBarElement::Lsp => {
-                if ctx.lsp_status.is_empty() {
-                    return None;
-                }
-                Some(RenderedElement {
-                    text: ctx.lsp_status.to_string(),
-                    kind: ElementKind::Lsp,
-                    token_key: None,
-                })
+                let (keys, hover) = lsp_look(ctx.lsp_indicator_state);
+                clickable(
+                    ctx.lsp_status.to_string(),
+                    "lsp",
+                    StatusBarClickable::Lsp,
+                    keys,
+                    hover,
+                )
             }
             StatusBarElement::Warnings => {
                 if ctx.general_warning_count == 0 {
                     return None;
                 }
-                Some(RenderedElement {
-                    text: format!("[\u{26a0} {}]", ctx.general_warning_count),
-                    kind: ElementKind::WarningBadge,
-                    token_key: None,
-                })
+                clickable(
+                    format!("[\u{26a0} {}]", ctx.general_warning_count),
+                    "warning",
+                    StatusBarClickable::Warnings,
+                    WARNING,
+                    Hover::Swap((
+                        "ui.status_warning_indicator_hover_fg",
+                        "ui.status_warning_indicator_hover_bg",
+                    )),
+                )
             }
             StatusBarElement::Update => {
                 use crate::services::release_checker::SelfUpdatePhase;
@@ -965,11 +889,13 @@ impl StatusBarRenderer {
                         t!("status.update_available", version = version).to_string()
                     }
                 };
-                Some(RenderedElement {
+                clickable(
                     text,
-                    kind: ElementKind::Update,
-                    token_key: None,
-                })
+                    "text",
+                    StatusBarClickable::Update,
+                    ("ui.menu_highlight_fg", "ui.menu_dropdown_bg"),
+                    Hover::Underline,
+                )
             }
             StatusBarElement::TerminalRestart => {
                 // Absent unless the active buffer is a terminal whose process
@@ -995,11 +921,18 @@ impl StatusBarRenderer {
                     }
                     _ => text,
                 };
-                Some(RenderedElement {
+                // The error palette: a dead agent is a state the user has to
+                // act on, and the indicator is the action.
+                clickable(
                     text,
-                    kind: ElementKind::TerminalRestart,
-                    token_key: None,
-                })
+                    "terminalRestart",
+                    StatusBarClickable::RestartTerminal,
+                    ERROR,
+                    Hover::Swap((
+                        "ui.status_error_indicator_hover_fg",
+                        "ui.status_error_indicator_hover_bg",
+                    )),
+                )
             }
             StatusBarElement::Palette => {
                 let shortcut = ctx
@@ -1009,20 +942,13 @@ impl StatusBarRenderer {
                         crate::input::keybindings::KeyContext::Global,
                     )
                     .unwrap_or_else(|| "?".to_string());
-                Some(RenderedElement {
-                    text: t!("status.palette", shortcut = shortcut).to_string(),
-                    kind: ElementKind::Palette,
-                    token_key: None,
-                })
+                let text = t!("status.palette", shortcut = shortcut).to_string();
+                item(text, "text", PALETTE, None, hovered)
             }
             StatusBarElement::Clock => {
                 let now = chrono::Local::now();
                 let text = format!("{:02}:{:02}", now.hour(), now.minute());
-                Some(RenderedElement {
-                    text,
-                    kind: ElementKind::Normal,
-                    token_key: None,
-                })
+                item(text, "text", BAR, None, hovered)
             }
             StatusBarElement::RemoteIndicator => {
                 // Persistent remote-authority entry point. When local we
@@ -1066,11 +992,25 @@ impl StatusBarRenderer {
                         Some(conn) => (conn.to_string(), RemoteIndicatorState::Connected),
                     }
                 };
-                Some(RenderedElement {
+                // Connecting and Connected share a palette so the transition
+                // is a glyph swap rather than a colour flash; the two ways of
+                // not reaching the remote share the error palette.
+                let keys = match state {
+                    RemoteIndicatorState::Connecting | RemoteIndicatorState::Connected => {
+                        ("ui.help_indicator_fg", "ui.help_indicator_bg")
+                    }
+                    RemoteIndicatorState::FailedAttach | RemoteIndicatorState::Disconnected => {
+                        ERROR
+                    }
+                    RemoteIndicatorState::Local => BAR,
+                };
+                clickable(
                     text,
-                    kind: ElementKind::RemoteIndicator(state),
-                    token_key: None,
-                })
+                    "remote",
+                    StatusBarClickable::RemoteIndicator,
+                    keys,
+                    Hover::Underline,
+                )
             }
             StatusBarElement::WorkspaceTrust => {
                 // Always-present trust control, read from the active session's
@@ -1078,182 +1018,40 @@ impl StatusBarRenderer {
                 // vanishes, so the user always knows whether repo-controlled
                 // execution is gated. Capitalized for a status-bar label.
                 use crate::services::workspace_trust::TrustLevel;
-                let level = ctx.workspace_trust_level;
-                let text = match level {
-                    TrustLevel::Trusted => t!("statusbar.trust.trusted"),
-                    TrustLevel::Restricted => t!("statusbar.trust.restricted"),
-                    TrustLevel::Blocked => t!("statusbar.trust.blocked"),
-                }
-                .to_string();
-                Some(RenderedElement {
-                    text,
-                    kind: ElementKind::WorkspaceTrust(level),
-                    token_key: None,
-                })
+                let (text, keys) = match ctx.workspace_trust_level {
+                    TrustLevel::Trusted => (t!("statusbar.trust.trusted"), BAR),
+                    TrustLevel::Restricted => (t!("statusbar.trust.restricted"), WARNING),
+                    TrustLevel::Blocked => (t!("statusbar.trust.blocked"), WARNING),
+                };
+                clickable(
+                    text.to_string(),
+                    "trust",
+                    StatusBarClickable::WorkspaceTrust,
+                    keys,
+                    Hover::Underline,
+                )
             }
             StatusBarElement::CustomToken(key) => {
-                ctx.dynamic_status_bar_elements
-                    .get(key)
-                    .map(|value| RenderedElement {
-                        text: value.clone(),
-                        kind: ElementKind::Custom,
-                        token_key: Some(key.clone()),
-                    })
+                let value = ctx.dynamic_status_bar_elements.get(key)?;
+                let mut it = item(value.clone(), "plugin", BAR, None, hovered)?;
+                it.token_key = Some(key.clone());
+                Some(it)
             }
         }
     }
 
-    /// The theme keys an element paints with, and how it answers the pointer.
-    fn look(kind: ElementKind, lsp_state: LspIndicatorState) -> (Keys, Hover) {
-        use crate::services::workspace_trust::TrustLevel;
-        match kind {
-            ElementKind::Normal | ElementKind::Messages | ElementKind::Custom => (BAR, Hover::None),
-            ElementKind::RemoteDisconnected => (ERROR, Hover::None),
-            ElementKind::LineEnding | ElementKind::Encoding | ElementKind::Language => {
-                (BAR, Hover::Swap(("ui.menu_hover_fg", "ui.menu_hover_bg")))
-            }
-            ElementKind::ReadOnly => (BAR, Hover::Underline),
-            // Error is a problem, Off is prominent because a click has useful
-            // options behind it, On is healthy, Dismissed and None are muted.
-            ElementKind::Lsp => match lsp_state {
-                LspIndicatorState::Error => (
-                    ("diagnostic.error_fg", "diagnostic.error_bg"),
-                    Hover::Underline,
-                ),
-                LspIndicatorState::Warning => (WARNING, Hover::Underline),
-                LspIndicatorState::Off => (
-                    ("ui.status_lsp_actionable_fg", "ui.status_lsp_actionable_bg"),
-                    Hover::Underline,
-                ),
-                LspIndicatorState::On => (
-                    ("ui.status_lsp_on_fg", "ui.status_lsp_on_bg"),
-                    Hover::Underline,
-                ),
-                LspIndicatorState::OffDismissed => (BAR, Hover::Underline),
-                LspIndicatorState::None => (BAR, Hover::None),
-            },
-            ElementKind::WarningBadge => (
-                WARNING,
-                Hover::Swap((
-                    "ui.status_warning_indicator_hover_fg",
-                    "ui.status_warning_indicator_hover_bg",
-                )),
-            ),
-            ElementKind::Update => (
-                ("ui.menu_highlight_fg", "ui.menu_dropdown_bg"),
-                Hover::Underline,
-            ),
-            // A dead agent is a state the user has to act on, and the
-            // indicator is the action.
-            ElementKind::TerminalRestart => (
-                ERROR,
-                Hover::Swap((
-                    "ui.status_error_indicator_hover_fg",
-                    "ui.status_error_indicator_hover_bg",
-                )),
-            ),
-            ElementKind::Palette => (
-                ("ui.status_palette_fg", "ui.status_palette_bg"),
-                Hover::None,
-            ),
-            // Connecting and Connected share a palette so the transition is a
-            // glyph swap rather than a colour flash; the two ways of not
-            // reaching the remote share the error palette.
-            ElementKind::RemoteIndicator(state) => match state {
-                RemoteIndicatorState::Connecting | RemoteIndicatorState::Connected => (
-                    ("ui.help_indicator_fg", "ui.help_indicator_bg"),
-                    Hover::Underline,
-                ),
-                RemoteIndicatorState::FailedAttach | RemoteIndicatorState::Disconnected => {
-                    (ERROR, Hover::Underline)
-                }
-                RemoteIndicatorState::Local => (BAR, Hover::Underline),
-            },
-            ElementKind::WorkspaceTrust(level) => match level {
-                TrustLevel::Restricted | TrustLevel::Blocked => (WARNING, Hover::Underline),
-                TrustLevel::Trusted => (BAR, Hover::Underline),
-            },
-        }
-    }
-
-    /// The clickable identity of an element kind, or `None` for static
-    /// (non-interactive) elements. This single mapping is what makes the
-    /// click + hover rail generic: it's the *only* place that decides
-    /// whether a built-in element is clickable. Plugin tokens are handled
-    /// separately (they dispatch a hook, not a core `Action`).
-    pub(crate) fn clickable_for_kind(kind: ElementKind) -> Option<StatusBarClickable> {
-        match kind {
-            ElementKind::LineEnding => Some(StatusBarClickable::LineEnding),
-            ElementKind::Encoding => Some(StatusBarClickable::Encoding),
-            ElementKind::Language => Some(StatusBarClickable::Language),
-            ElementKind::Lsp => Some(StatusBarClickable::Lsp),
-            ElementKind::WarningBadge => Some(StatusBarClickable::Warnings),
-            ElementKind::Messages => Some(StatusBarClickable::Messages),
-            ElementKind::RemoteIndicator(_) => Some(StatusBarClickable::RemoteIndicator),
-            ElementKind::WorkspaceTrust(_) => Some(StatusBarClickable::WorkspaceTrust),
-            ElementKind::ReadOnly => Some(StatusBarClickable::ReadOnly),
-            ElementKind::Update => Some(StatusBarClickable::Update),
-            ElementKind::TerminalRestart => Some(StatusBarClickable::RestartTerminal),
-            ElementKind::Normal
-            | ElementKind::RemoteDisconnected
-            | ElementKind::Palette
-            | ElementKind::Custom => None,
-        }
-    }
-
-    /// An element's runs, each padded by a cell on either side in its own
-    /// colours so an element with a distinct background reads as a pill.
-    ///
-    /// A filename edited over a disconnected SSH session paints its
-    /// `[SSH:…] ` prefix in the error palette and the rest in the bar's.
-    fn element_runs(
-        rendered: &RenderedElement,
-        hovered: Option<StatusBarClickable>,
-        lsp_state: LspIndicatorState,
-    ) -> Vec<(String, String)> {
-        let text = &rendered.text;
-        if rendered.kind == ElementKind::RemoteDisconnected && text.starts_with(SSH_PREFIX) {
-            if let Some(term_off) = text.find(SSH_PREFIX_TERMINATOR) {
-                let (prefix, rest) = text.split_at(term_off + SSH_PREFIX_TERMINATOR.len());
-                return vec![
-                    (format!(" {prefix}"), ink(ERROR, false)),
-                    (format!("{rest} "), ink(BAR, false)),
-                ];
-            }
-        }
-        let hovering = Self::clickable_for_kind(rendered.kind).is_some_and(|c| Some(c) == hovered);
-        let (keys, hover) = Self::look(rendered.kind, lsp_state);
-        let (keys, underline) = match (hovering, hover) {
-            (true, Hover::Swap(swapped)) => (swapped, true),
-            (true, Hover::Underline) => (keys, true),
-            _ => (keys, false),
-        };
-        vec![(format!(" {text} "), ink(keys, underline))]
-    }
-
-    /// Render a configured side (left/right): each element's runs, its width,
-    /// its kind, and — for a plugin token — its registry key.
+    /// Render a configured side (left/right), in order, skipping elements
+    /// with nothing to show.
     pub(crate) fn render_side(
         config_side: &[StatusBarElement],
         ctx: &mut StatusBarContext<'_>,
-    ) -> Vec<SideElement> {
-        let rendered: Vec<RenderedElement> = config_side
+    ) -> Vec<Item> {
+        config_side
             .iter()
             .filter_map(|elem| Self::render_element(elem, ctx))
-            .filter(|e| !e.text.is_empty())
-            .collect();
-        rendered
-            .into_iter()
-            .map(|r| {
-                let runs = Self::element_runs(&r, ctx.hovered, ctx.lsp_indicator_state);
-                (runs, str_width(&r.text) + 2, r.kind, r.token_key)
-            })
             .collect()
     }
 }
-
-/// One element of a side: its runs, its width, its kind and its plugin key.
-pub(crate) type SideElement = (Vec<(String, String)>, usize, ElementKind, Option<String>);
 
 /// A `(fg, bg)` pair of theme keys.
 type Keys = (&'static str, &'static str);
@@ -1267,16 +1065,95 @@ const ERROR: Keys = (
     "ui.status_error_indicator_fg",
     "ui.status_error_indicator_bg",
 );
+const MENU_HOVER: Keys = ("ui.menu_hover_fg", "ui.menu_hover_bg");
+/// The palette hint, on keys of its own so a theme can repaint it without
+/// breaking the bar's colour band (#1711).
+const PALETTE: Keys = ("ui.status_palette_fg", "ui.status_palette_bg");
 
 /// How an element answers the pointer over it.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Hover {
-    /// Not at all: it is inert, or (the message area) clickable without a cue.
+    /// Not at all.
     None,
     /// Underlined, in its own colours.
     Underline,
     /// Underlined, and repainted in these keys.
     Swap(Keys),
+}
+
+/// The LSP indicator's keys by state. Error is a problem, Off is prominent
+/// because a click has useful options behind it, On is healthy, and a
+/// dismissed or absent indicator blends into the bar. It underlines on hover
+/// only while it has a state to act on.
+fn lsp_look(state: LspIndicatorState) -> (Keys, Hover) {
+    match state {
+        LspIndicatorState::Error => (
+            ("diagnostic.error_fg", "diagnostic.error_bg"),
+            Hover::Underline,
+        ),
+        LspIndicatorState::Warning => (WARNING, Hover::Underline),
+        LspIndicatorState::Off => (
+            ("ui.status_lsp_actionable_fg", "ui.status_lsp_actionable_bg"),
+            Hover::Underline,
+        ),
+        LspIndicatorState::On => (
+            ("ui.status_lsp_on_fg", "ui.status_lsp_on_bg"),
+            Hover::Underline,
+        ),
+        LspIndicatorState::OffDismissed => (BAR, Hover::Underline),
+        LspIndicatorState::None => (BAR, Hover::None),
+    }
+}
+
+/// An element as one run, padded by a cell on either side in its own colours
+/// so an element with a distinct background reads as a pill. `None` for empty
+/// text: an element with nothing to say is not on the bar.
+fn item(
+    text: String,
+    name: &'static str,
+    keys: Keys,
+    click: Option<(StatusBarClickable, Hover)>,
+    hovered: Option<StatusBarClickable>,
+) -> Option<Item> {
+    if text.is_empty() {
+        return None;
+    }
+    let (keys, underline) = match click {
+        Some((id, hover)) if Some(id) == hovered => match hover {
+            Hover::None => (keys, false),
+            Hover::Underline => (keys, true),
+            Hover::Swap(swapped) => (swapped, true),
+        },
+        _ => (keys, false),
+    };
+    Some(Item {
+        runs: vec![(format!(" {text} "), ink(keys, underline))],
+        name,
+        clickable: click.map(|(id, _)| id),
+        token_key: None,
+    })
+}
+
+/// The filename edited over a disconnected remote, in the error palette. Over
+/// SSH, only its `[SSH:…] ` prefix is: the name after it keeps the bar's.
+fn disconnected_filename(text: String) -> Option<Item> {
+    let split = text
+        .starts_with(SSH_PREFIX)
+        .then(|| text.find(SSH_PREFIX_TERMINATOR))
+        .flatten();
+    let Some(term_off) = split else {
+        return item(text, "text", ERROR, None, None);
+    };
+    let (prefix, rest) = text.split_at(term_off + SSH_PREFIX_TERMINATOR.len());
+    Some(Item {
+        runs: vec![
+            (format!(" {prefix}"), ink(ERROR, false)),
+            (format!("{rest} "), ink(BAR, false)),
+        ],
+        name: "text",
+        clickable: None,
+        token_key: None,
+    })
 }
 
 /// A run's theme name: two keys, underlined or not.
@@ -1551,41 +1428,34 @@ mod tests {
         assert_eq!(theme.status_lsp_on_fg, theme.status_bar_fg);
         assert_eq!(theme.status_lsp_on_bg, theme.status_bar_bg);
 
-        let keys = |kind, lsp| StatusBarRenderer::look(kind, lsp).0;
+        assert_eq!(PALETTE, ("ui.status_palette_fg", "ui.status_palette_bg"));
+        let keys = |lsp| lsp_look(lsp).0;
         assert_eq!(
-            keys(ElementKind::Palette, LspIndicatorState::None),
-            ("ui.status_palette_fg", "ui.status_palette_bg")
-        );
-        assert_eq!(
-            keys(ElementKind::Lsp, LspIndicatorState::On),
+            keys(LspIndicatorState::On),
             ("ui.status_lsp_on_fg", "ui.status_lsp_on_bg")
         );
         // Off / Error keep their own keys so they remain visible signals.
         assert_eq!(
-            keys(ElementKind::Lsp, LspIndicatorState::Off),
+            keys(LspIndicatorState::Off),
             ("ui.status_lsp_actionable_fg", "ui.status_lsp_actionable_bg")
         );
         assert_eq!(
-            keys(ElementKind::Lsp, LspIndicatorState::Error),
+            keys(LspIndicatorState::Error),
             ("diagnostic.error_fg", "diagnostic.error_bg")
         );
     }
 
-    fn runs_of(
-        kind: ElementKind,
-        text: &str,
-        hovered: Option<StatusBarClickable>,
-        lsp: LspIndicatorState,
-    ) -> Vec<(String, crate::app::shell_host::shell_theme::Ink)> {
-        let rendered = RenderedElement {
-            text: text.to_string(),
-            kind,
-            token_key: None,
-        };
-        StatusBarRenderer::element_runs(&rendered, hovered, lsp)
+    fn runs_of(it: Option<Item>) -> Vec<(String, Ink)> {
+        it.expect("an element")
+            .runs
             .into_iter()
             .map(|(t, theme)| (t, Ink::parse(&theme).expect("a readable theme name")))
             .collect()
+    }
+
+    fn encoding(hovered: Option<StatusBarClickable>) -> Vec<(String, Ink)> {
+        let click = Some((StatusBarClickable::Encoding, Hover::Swap(MENU_HOVER)));
+        runs_of(item("UTF-8".into(), "encoding", BAR, click, hovered))
     }
 
     /// A hovered clickable element is underlined, and the underline reaches
@@ -1597,12 +1467,7 @@ mod tests {
             r#"{"name":"t","editor":{},"ui":{},"search":{},"diagnostic":{},"syntax":{}}"#,
         )
         .expect("minimal theme should parse");
-        let hovered = runs_of(
-            ElementKind::Encoding,
-            "UTF-8",
-            Some(StatusBarClickable::Encoding),
-            LspIndicatorState::None,
-        );
+        let hovered = encoding(Some(StatusBarClickable::Encoding));
         let [(text, ink)] = hovered.as_slice() else {
             panic!("one run, got {hovered:?}");
         };
@@ -1619,12 +1484,7 @@ mod tests {
 
         // Not hovered, or hovering a different element: plain bar colours.
         for other in [None, Some(StatusBarClickable::Lsp)] {
-            let runs = runs_of(
-                ElementKind::Encoding,
-                "UTF-8",
-                other,
-                LspIndicatorState::None,
-            );
+            let runs = encoding(other);
             assert_eq!(runs[0].1.attrs, Attrs::NONE);
             assert_eq!(
                 runs[0].1.names(),
@@ -1637,22 +1497,25 @@ mod tests {
     #[test]
     fn an_empty_lsp_indicator_is_not_underlined_on_hover() {
         let hovered = Some(StatusBarClickable::Lsp);
-        let none = runs_of(ElementKind::Lsp, "LSP", hovered, LspIndicatorState::None);
-        assert_eq!(none[0].1.attrs, Attrs::NONE);
-        let on = runs_of(ElementKind::Lsp, "LSP", hovered, LspIndicatorState::On);
-        assert!(on[0].1.attrs.contains(Attrs::UNDERLINE));
+        let lsp = |state| {
+            let (keys, hover) = lsp_look(state);
+            let click = Some((StatusBarClickable::Lsp, hover));
+            runs_of(item("LSP".into(), "lsp", keys, click, hovered))
+        };
+        assert_eq!(lsp(LspIndicatorState::None)[0].1.attrs, Attrs::NONE);
+        assert!(lsp(LspIndicatorState::On)[0]
+            .1
+            .attrs
+            .contains(Attrs::UNDERLINE));
     }
 
     /// A filename over a disconnected SSH session paints its prefix in the
     /// error palette and the rest in the bar's.
     #[test]
     fn a_disconnected_ssh_filename_is_two_colours() {
-        let runs = runs_of(
-            ElementKind::RemoteDisconnected,
-            "[SSH:host (Disconnected)] main.rs",
-            None,
-            LspIndicatorState::None,
-        );
+        let runs = runs_of(disconnected_filename(
+            "[SSH:host (Disconnected)] main.rs".into(),
+        ));
         let got: Vec<_> = runs
             .iter()
             .map(|(t, ink)| (t.as_str(), ink.names()))
