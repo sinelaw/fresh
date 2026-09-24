@@ -78,8 +78,7 @@ fn test_clock_element_renders() {
     harness.render().unwrap();
 
     let status = harness.get_status_bar();
-    // Clock renders as HH:MM with hardware blink on the colon.
-    // Match DD:DD pattern anywhere in the status bar.
+    // Clock renders as HH:MM; match DD:DD anywhere in the status bar.
     let has_time = {
         let bytes = status.as_bytes();
         bytes.windows(5).any(|w| {

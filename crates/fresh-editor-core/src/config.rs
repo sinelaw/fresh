@@ -849,7 +849,7 @@ impl WhitespaceVisibility {
 /// - `"{warnings}"` — general warning badge
 /// - `"{update}"` — update available indicator
 /// - `"{palette}"` — command palette shortcut hint
-/// - `"{clock}"` — current time (HH:MM) with blinking colon separator
+/// - `"{clock}"` — current time (HH:MM)
 /// - `"{remote}"` — remote authority indicator (Local / SSH / Container / Disconnected)
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
@@ -891,7 +891,7 @@ pub enum StatusBarElement {
     TerminalRestart,
     /// Command palette shortcut hint
     Palette,
-    /// Current time (HH:MM) with blinking colon separator
+    /// Current time (HH:MM)
     Clock,
     /// Remote authority indicator: shows "Local", the active SSH/Container
     /// authority label, or a disconnected marker. Intended for placement at

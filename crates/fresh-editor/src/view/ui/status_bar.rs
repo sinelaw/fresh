@@ -3,17 +3,16 @@
 use std::collections::HashMap;
 use std::path::Path;
 
+use crate::app::shell_host::shell_theme::{Attrs, Ink};
 use crate::config::{StatusBarElement, VirtualSpaceMode};
 use crate::primitives::display_width::str_width;
 use crate::state::EditorState;
 use chrono::Timelike;
 use fresh_i18n::t;
-use ratatui::style::{Modifier, Style};
-use ratatui::text::Span;
 
 /// Text that both marks a buffer as "edited over a disconnected SSH session"
 /// and styles the prefix in the status bar. Kept as constants so `render_element`
-/// and `element_spans` stay in sync.
+/// and `element_runs` stay in sync.
 const SSH_PREFIX: &str = "[SSH:";
 const SSH_PREFIX_TERMINATOR: &str = "] ";
 
@@ -78,8 +77,6 @@ pub(crate) enum ElementKind {
     ReadOnly,
     /// Remote disconnected prefix (error colors)
     RemoteDisconnected,
-    /// Clock element — colon rendered with hardware blink
-    Clock,
     /// Remote authority indicator — styling driven by connection state
     RemoteIndicator(RemoteIndicatorState),
     /// Workspace-trust indicator — always present, styling driven by the
@@ -165,7 +162,7 @@ pub enum RemoteIndicatorOverride {
 }
 
 impl RemoteIndicatorOverride {
-    /// Project into the Copy enum consumed by `element_style`.
+    /// Project into the Copy enum the indicator is styled by.
     pub fn state(&self) -> RemoteIndicatorState {
         match self {
             Self::Local => RemoteIndicatorState::Local,
@@ -1023,7 +1020,7 @@ impl StatusBarRenderer {
                 let text = format!("{:02}:{:02}", now.hour(), now.minute());
                 Some(RenderedElement {
                     text,
-                    kind: ElementKind::Clock,
+                    kind: ElementKind::Normal,
                     token_key: None,
                 })
             }
@@ -1106,277 +1103,76 @@ impl StatusBarRenderer {
         }
     }
 
-    /// Get the style for a rendered element based on its kind, theme, and
-    /// whether the mouse is currently over it (`is_hovering`, computed
-    /// generically by the caller from the element's `clickable_for_kind` id).
-    fn element_style(
-        kind: ElementKind,
-        theme: &crate::view::theme::Theme,
-        is_hovering: bool,
-        lsp_state: LspIndicatorState,
-    ) -> Style {
+    /// The theme keys an element paints with, and how it answers the pointer.
+    fn look(kind: ElementKind, lsp_state: LspIndicatorState) -> (Keys, Hover) {
+        use crate::services::workspace_trust::TrustLevel;
         match kind {
-            ElementKind::Normal | ElementKind::Messages | ElementKind::Clock => Style::default()
-                .fg(theme.status_bar_fg)
-                .bg(theme.status_bar_bg),
-            ElementKind::RemoteDisconnected => Style::default()
-                .fg(theme.status_error_indicator_fg)
-                .bg(theme.status_error_indicator_bg),
-            ElementKind::LineEnding => {
-                let (fg, bg) = if is_hovering {
-                    (theme.menu_hover_fg, theme.menu_hover_bg)
-                } else {
-                    (theme.status_bar_fg, theme.status_bar_bg)
-                };
-                let mut style = Style::default().fg(fg).bg(bg);
-                if is_hovering {
-                    style = style.add_modifier(Modifier::UNDERLINED);
-                }
-                style
+            ElementKind::Normal | ElementKind::Messages | ElementKind::Custom => (BAR, Hover::None),
+            ElementKind::RemoteDisconnected => (ERROR, Hover::None),
+            ElementKind::LineEnding | ElementKind::Encoding | ElementKind::Language => {
+                (BAR, Hover::Swap(("ui.menu_hover_fg", "ui.menu_hover_bg")))
             }
-            ElementKind::Encoding => {
-                let (fg, bg) = if is_hovering {
-                    (theme.menu_hover_fg, theme.menu_hover_bg)
-                } else {
-                    (theme.status_bar_fg, theme.status_bar_bg)
-                };
-                let mut style = Style::default().fg(fg).bg(bg);
-                if is_hovering {
-                    style = style.add_modifier(Modifier::UNDERLINED);
-                }
-                style
-            }
-            ElementKind::Language => {
-                let (fg, bg) = if is_hovering {
-                    (theme.menu_hover_fg, theme.menu_hover_bg)
-                } else {
-                    (theme.status_bar_fg, theme.status_bar_bg)
-                };
-                let mut style = Style::default().fg(fg).bg(bg);
-                if is_hovering {
-                    style = style.add_modifier(Modifier::UNDERLINED);
-                }
-                style
-            }
-            // The read-only indicator paints with the neutral status-bar
-            // palette and only underlines on hover, signalling it's clickable
-            // (opens the read-only menu) without breaking the bar's color band.
-            ElementKind::ReadOnly => {
-                let mut style = Style::default()
-                    .fg(theme.status_bar_fg)
-                    .bg(theme.status_bar_bg);
-                if is_hovering {
-                    style = style.add_modifier(Modifier::UNDERLINED);
-                }
-                style
-            }
-            ElementKind::Lsp => {
-                // Color by LSP state:
-                //   Error  → diagnostic_error_*       (red-ish; problem)
-                //   Off    → status_lsp_actionable_*  (prominent; click to act)
-                //   On     → status_lsp_on_*          (neutral; healthy)
-                //   Dismissed/None → status-bar palette (muted; nothing to do)
-                //
-                // Off is the indicator's main signal that the user has
-                // useful options behind a click — drawn prominently so
-                // it stands out in the status bar without auto-popping
-                // a dialog.
-                let (fg, bg) = match lsp_state {
-                    LspIndicatorState::Error => {
-                        (theme.diagnostic_error_fg, theme.diagnostic_error_bg)
-                    }
-                    LspIndicatorState::Warning => (
-                        theme.status_warning_indicator_fg,
-                        theme.status_warning_indicator_bg,
-                    ),
-                    LspIndicatorState::Off => (
-                        theme.status_lsp_actionable_fg,
-                        theme.status_lsp_actionable_bg,
-                    ),
-                    LspIndicatorState::On => (theme.status_lsp_on_fg, theme.status_lsp_on_bg),
-                    LspIndicatorState::OffDismissed => (theme.status_bar_fg, theme.status_bar_bg),
-                    LspIndicatorState::None => (theme.status_bar_fg, theme.status_bar_bg),
-                };
-                let mut style = Style::default().fg(fg).bg(bg);
-                // Underline on hover — the indicator is clickable in all
-                // non-empty states.
-                if is_hovering && lsp_state != LspIndicatorState::None {
-                    style = style.add_modifier(Modifier::UNDERLINED);
-                }
-                style
-            }
-            ElementKind::WarningBadge => {
-                let (fg, bg) = if is_hovering {
-                    (
-                        theme.status_warning_indicator_hover_fg,
-                        theme.status_warning_indicator_hover_bg,
-                    )
-                } else {
-                    (
-                        theme.status_warning_indicator_fg,
-                        theme.status_warning_indicator_bg,
-                    )
-                };
-                let mut style = Style::default().fg(fg).bg(bg);
-                if is_hovering {
-                    style = style.add_modifier(Modifier::UNDERLINED);
-                }
-                style
-            }
-            ElementKind::Update => {
-                // Keep the indicator's distinctive palette, but underline on
-                // hover to signal it's clickable — matching the LSP / read-only
-                // indicators.
-                let mut style = Style::default()
-                    .fg(theme.menu_highlight_fg)
-                    .bg(theme.menu_dropdown_bg);
-                if is_hovering {
-                    style = style.add_modifier(Modifier::UNDERLINED);
-                }
-                style
-            }
-            ElementKind::TerminalRestart => {
-                // The error palette: a dead agent is a state the user has to
-                // act on, and the indicator *is* the action. Hover styling
-                // matches the other clickable indicators.
-                let (fg, bg) = if is_hovering {
-                    (
-                        theme.status_error_indicator_hover_fg,
-                        theme.status_error_indicator_hover_bg,
-                    )
-                } else {
-                    (
-                        theme.status_error_indicator_fg,
-                        theme.status_error_indicator_bg,
-                    )
-                };
-                let mut style = Style::default().fg(fg).bg(bg);
-                if is_hovering {
-                    style = style.add_modifier(Modifier::UNDERLINED);
-                }
-                style
-            }
-            // The palette shortcut hint is purely informational — driven
-            // by the dedicated `status_palette_*` theme keys (default
-            // to the neutral status-bar palette so it blends into the
-            // bar instead of breaking the color band at the right edge).
-            ElementKind::Palette => Style::default()
-                .fg(theme.status_palette_fg)
-                .bg(theme.status_palette_bg),
-            ElementKind::Custom => Style::default()
-                .fg(theme.status_bar_fg)
-                .bg(theme.status_bar_bg),
-            ElementKind::RemoteIndicator(state) => {
-                let (fg, bg) = match state {
-                    // Connecting and Connected share the "help
-                    // indicator" palette so the transition from one to
-                    // the other is a glyph swap rather than a color
-                    // flash — the user's eye tracks the indicator
-                    // changing, not disappearing.
-                    RemoteIndicatorState::Connecting | RemoteIndicatorState::Connected => {
-                        (theme.help_indicator_fg, theme.help_indicator_bg)
-                    }
-                    // FailedAttach + Disconnected share the error
-                    // palette. Both are "the remote isn't reaching you
-                    // right now" states, differing only in cause.
-                    RemoteIndicatorState::FailedAttach | RemoteIndicatorState::Disconnected => (
-                        theme.status_error_indicator_fg,
-                        theme.status_error_indicator_bg,
-                    ),
-                    // Local: neutral status-bar palette.
-                    RemoteIndicatorState::Local => (theme.status_bar_fg, theme.status_bar_bg),
-                };
-                let mut style = Style::default().fg(fg).bg(bg);
-                if is_hovering {
-                    style = style.add_modifier(Modifier::UNDERLINED);
-                }
-                style
-            }
-            ElementKind::WorkspaceTrust(level) => {
-                use crate::services::workspace_trust::TrustLevel;
-                let (fg, bg) = match level {
-                    // Gated states reuse the warning indicator palette so
-                    // "execution is restricted/blocked" reads at a glance.
-                    TrustLevel::Restricted | TrustLevel::Blocked => (
-                        theme.status_warning_indicator_fg,
-                        theme.status_warning_indicator_bg,
-                    ),
-                    // Trusted: neutral status-bar palette (everything-works).
-                    TrustLevel::Trusted => (theme.status_bar_fg, theme.status_bar_bg),
-                };
-                let mut style = Style::default().fg(fg).bg(bg);
-                if is_hovering {
-                    style = style.add_modifier(Modifier::UNDERLINED);
-                }
-                style
-            }
-        }
-    }
-
-    /// The (fg, bg) theme-key strings an element paints with — its non-hover
-    /// provenance for the theme inspector, mirroring `element_style`. Hover is
-    /// transient so the recorded key is always the element's semantic key.
-    pub(crate) fn element_keys(
-        kind: ElementKind,
-        lsp_state: LspIndicatorState,
-    ) -> (&'static str, &'static str) {
-        match kind {
-            ElementKind::Normal
-            | ElementKind::Messages
-            | ElementKind::Clock
-            | ElementKind::Custom
-            | ElementKind::LineEnding
-            | ElementKind::Encoding
-            | ElementKind::ReadOnly
-            | ElementKind::Language => ("ui.status_bar_fg", "ui.status_bar_bg"),
-            ElementKind::RemoteDisconnected => (
-                "ui.status_error_indicator_fg",
-                "ui.status_error_indicator_bg",
-            ),
+            ElementKind::ReadOnly => (BAR, Hover::Underline),
+            // Error is a problem, Off is prominent because a click has useful
+            // options behind it, On is healthy, Dismissed and None are muted.
             ElementKind::Lsp => match lsp_state {
-                LspIndicatorState::Error => ("diagnostic.error_fg", "diagnostic.error_bg"),
-                LspIndicatorState::Warning => (
-                    "ui.status_warning_indicator_fg",
-                    "ui.status_warning_indicator_bg",
+                LspIndicatorState::Error => (
+                    ("diagnostic.error_fg", "diagnostic.error_bg"),
+                    Hover::Underline,
                 ),
-                LspIndicatorState::Off => {
-                    ("ui.status_lsp_actionable_fg", "ui.status_lsp_actionable_bg")
-                }
-                LspIndicatorState::On => ("ui.status_lsp_on_fg", "ui.status_lsp_on_bg"),
-                LspIndicatorState::OffDismissed | LspIndicatorState::None => {
-                    ("ui.status_bar_fg", "ui.status_bar_bg")
-                }
+                LspIndicatorState::Warning => (WARNING, Hover::Underline),
+                LspIndicatorState::Off => (
+                    ("ui.status_lsp_actionable_fg", "ui.status_lsp_actionable_bg"),
+                    Hover::Underline,
+                ),
+                LspIndicatorState::On => (
+                    ("ui.status_lsp_on_fg", "ui.status_lsp_on_bg"),
+                    Hover::Underline,
+                ),
+                LspIndicatorState::OffDismissed => (BAR, Hover::Underline),
+                LspIndicatorState::None => (BAR, Hover::None),
             },
             ElementKind::WarningBadge => (
-                "ui.status_warning_indicator_fg",
-                "ui.status_warning_indicator_bg",
+                WARNING,
+                Hover::Swap((
+                    "ui.status_warning_indicator_hover_fg",
+                    "ui.status_warning_indicator_hover_bg",
+                )),
             ),
-            ElementKind::Update => ("ui.menu_highlight_fg", "ui.menu_dropdown_bg"),
+            ElementKind::Update => (
+                ("ui.menu_highlight_fg", "ui.menu_dropdown_bg"),
+                Hover::Underline,
+            ),
+            // A dead agent is a state the user has to act on, and the
+            // indicator is the action.
             ElementKind::TerminalRestart => (
-                "ui.status_error_indicator_fg",
-                "ui.status_error_indicator_bg",
+                ERROR,
+                Hover::Swap((
+                    "ui.status_error_indicator_hover_fg",
+                    "ui.status_error_indicator_hover_bg",
+                )),
             ),
-            ElementKind::Palette => ("ui.status_palette_fg", "ui.status_palette_bg"),
+            ElementKind::Palette => (
+                ("ui.status_palette_fg", "ui.status_palette_bg"),
+                Hover::None,
+            ),
+            // Connecting and Connected share a palette so the transition is a
+            // glyph swap rather than a colour flash; the two ways of not
+            // reaching the remote share the error palette.
             ElementKind::RemoteIndicator(state) => match state {
-                RemoteIndicatorState::Connecting | RemoteIndicatorState::Connected => {
-                    ("ui.help_indicator_fg", "ui.help_indicator_bg")
-                }
-                RemoteIndicatorState::FailedAttach | RemoteIndicatorState::Disconnected => (
-                    "ui.status_error_indicator_fg",
-                    "ui.status_error_indicator_bg",
+                RemoteIndicatorState::Connecting | RemoteIndicatorState::Connected => (
+                    ("ui.help_indicator_fg", "ui.help_indicator_bg"),
+                    Hover::Underline,
                 ),
-                RemoteIndicatorState::Local => ("ui.status_bar_fg", "ui.status_bar_bg"),
-            },
-            ElementKind::WorkspaceTrust(level) => {
-                use crate::services::workspace_trust::TrustLevel;
-                match level {
-                    TrustLevel::Restricted | TrustLevel::Blocked => (
-                        "ui.status_warning_indicator_fg",
-                        "ui.status_warning_indicator_bg",
-                    ),
-                    TrustLevel::Trusted => ("ui.status_bar_fg", "ui.status_bar_bg"),
+                RemoteIndicatorState::FailedAttach | RemoteIndicatorState::Disconnected => {
+                    (ERROR, Hover::Underline)
                 }
-            }
+                RemoteIndicatorState::Local => (BAR, Hover::Underline),
+            },
+            ElementKind::WorkspaceTrust(level) => match level {
+                TrustLevel::Restricted | TrustLevel::Blocked => (WARNING, Hover::Underline),
+                TrustLevel::Trusted => (BAR, Hover::Underline),
+            },
         }
     }
 
@@ -1401,107 +1197,96 @@ impl StatusBarRenderer {
             ElementKind::Normal
             | ElementKind::RemoteDisconnected
             | ElementKind::Palette
-            | ElementKind::Clock
             | ElementKind::Custom => None,
         }
     }
 
-    /// Build the styled spans for a single rendered element, honoring the
-    /// special-case two-color rendering for a disconnected remote filename.
+    /// An element's runs, each padded by a cell on either side in its own
+    /// colours so an element with a distinct background reads as a pill.
     ///
-    /// Returns the spans and the total display width of the emitted text.
-    fn element_spans(
+    /// A filename edited over a disconnected SSH session paints its
+    /// `[SSH:…] ` prefix in the error palette and the rest in the bar's.
+    fn element_runs(
         rendered: &RenderedElement,
-        theme: &crate::view::theme::Theme,
         hovered: Option<StatusBarClickable>,
         lsp_state: LspIndicatorState,
-    ) -> (Vec<Span<'static>>, usize) {
-        let is_hovering =
-            Self::clickable_for_kind(rendered.kind).is_some_and(|c| Some(c) == hovered);
-        let base_style = Style::default()
-            .fg(theme.status_bar_fg)
-            .bg(theme.status_bar_bg);
-        // Each entry carries a one-space margin on each side painted in its own
-        // style, so entries with a distinct background (LSP / warnings / update
-        // / palette / remote) render as a padded pill. The separator is then a
-        // bare glyph drawn between these padded entries.
-        let width = str_width(&rendered.text) + 2;
-
-        if rendered.kind == ElementKind::RemoteDisconnected && rendered.text.starts_with(SSH_PREFIX)
-        {
-            let error_style = Style::default()
-                .fg(theme.status_error_indicator_fg)
-                .bg(theme.status_error_indicator_bg);
-            if let Some(term_off) = rendered.text.find(SSH_PREFIX_TERMINATOR) {
-                let split_at = term_off + SSH_PREFIX_TERMINATOR.len();
-                let prefix = rendered.text[..split_at].to_string();
-                let rest = rendered.text[split_at..].to_string();
-                return (
-                    vec![
-                        Span::styled(" ", error_style),
-                        Span::styled(prefix, error_style),
-                        Span::styled(rest, base_style),
-                        Span::styled(" ", base_style),
-                    ],
-                    width,
-                );
+    ) -> Vec<(String, String)> {
+        let text = &rendered.text;
+        if rendered.kind == ElementKind::RemoteDisconnected && text.starts_with(SSH_PREFIX) {
+            if let Some(term_off) = text.find(SSH_PREFIX_TERMINATOR) {
+                let (prefix, rest) = text.split_at(term_off + SSH_PREFIX_TERMINATOR.len());
+                return vec![
+                    (format!(" {prefix}"), ink(ERROR, false)),
+                    (format!("{rest} "), ink(BAR, false)),
+                ];
             }
-            return (
-                vec![
-                    Span::styled(" ", error_style),
-                    Span::styled(rendered.text.clone(), error_style),
-                    Span::styled(" ", error_style),
-                ],
-                width,
-            );
         }
-
-        let style = Self::element_style(rendered.kind, theme, is_hovering, lsp_state);
-        let mut spans = vec![Span::styled(" ", style)];
-        if rendered.kind == ElementKind::Clock {
-            // "HH:MM" — blink the colon via terminal hardware (SGR 5)
-            spans.push(Span::styled(rendered.text[..2].to_string(), style));
-            spans.push(Span::styled(
-                ":".to_string(),
-                style.add_modifier(Modifier::SLOW_BLINK),
-            ));
-            spans.push(Span::styled(rendered.text[3..].to_string(), style));
-        } else {
-            spans.push(Span::styled(rendered.text.clone(), style));
-        }
-        spans.push(Span::styled(" ", style));
-        (spans, width)
+        let hovering = Self::clickable_for_kind(rendered.kind).is_some_and(|c| Some(c) == hovered);
+        let (keys, hover) = Self::look(rendered.kind, lsp_state);
+        let (keys, underline) = match (hovering, hover) {
+            (true, Hover::Swap(swapped)) => (swapped, true),
+            (true, Hover::Underline) => (keys, true),
+            _ => (keys, false),
+        };
+        vec![(format!(" {text} "), ink(keys, underline))]
     }
 
-    /// Render a configured side (left/right) into styled per-element groups.
-    /// Each tuple carries the rendered spans, total width, the kind tag
-    /// (for layout/click-area routing of built-ins), and the plugin
-    /// token key (`Some` only for `ElementKind::Custom`) so the
-    /// placement loops can record the screen area under the same key
-    /// the plugin registered.
+    /// Render a configured side (left/right): each element's runs, its width,
+    /// its kind, and — for a plugin token — its registry key.
     pub(crate) fn render_side(
         config_side: &[StatusBarElement],
         ctx: &mut StatusBarContext<'_>,
-    ) -> Vec<(Vec<Span<'static>>, usize, ElementKind, Option<String>)> {
+    ) -> Vec<SideElement> {
         let rendered: Vec<RenderedElement> = config_side
             .iter()
             .filter_map(|elem| Self::render_element(elem, ctx))
             .filter(|e| !e.text.is_empty())
             .collect();
-
-        let theme = ctx.theme;
-        let hovered = ctx.hovered;
-        let lsp_state = ctx.lsp_indicator_state;
         rendered
             .into_iter()
             .map(|r| {
-                let kind = r.kind;
-                let token_key = r.token_key.clone();
-                let (spans, width) = Self::element_spans(&r, theme, hovered, lsp_state);
-                (spans, width, kind, token_key)
+                let runs = Self::element_runs(&r, ctx.hovered, ctx.lsp_indicator_state);
+                (runs, str_width(&r.text) + 2, r.kind, r.token_key)
             })
             .collect()
     }
+}
+
+/// One element of a side: its runs, its width, its kind and its plugin key.
+pub(crate) type SideElement = (Vec<(String, String)>, usize, ElementKind, Option<String>);
+
+/// A `(fg, bg)` pair of theme keys.
+type Keys = (&'static str, &'static str);
+
+const BAR: Keys = ("ui.status_bar_fg", "ui.status_bar_bg");
+const WARNING: Keys = (
+    "ui.status_warning_indicator_fg",
+    "ui.status_warning_indicator_bg",
+);
+const ERROR: Keys = (
+    "ui.status_error_indicator_fg",
+    "ui.status_error_indicator_bg",
+);
+
+/// How an element answers the pointer over it.
+#[derive(Clone, Copy)]
+enum Hover {
+    /// Not at all: it is inert, or (the message area) clickable without a cue.
+    None,
+    /// Underlined, in its own colours.
+    Underline,
+    /// Underlined, and repainted in these keys.
+    Swap(Keys),
+}
+
+/// A run's theme name: two keys, underlined or not.
+fn ink((fg, bg): Keys, underline: bool) -> String {
+    let attrs = if underline {
+        Attrs::UNDERLINE
+    } else {
+        Attrs::NONE
+    };
+    Ink::keys(fg, bg).plus(attrs).to_string()
 }
 
 #[cfg(test)]
@@ -1766,43 +1551,122 @@ mod tests {
         assert_eq!(theme.status_lsp_on_fg, theme.status_bar_fg);
         assert_eq!(theme.status_lsp_on_bg, theme.status_bar_bg);
 
-        let palette_style = StatusBarRenderer::element_style(
-            ElementKind::Palette,
-            &theme,
-            false,
+        let keys = |kind, lsp| StatusBarRenderer::look(kind, lsp).0;
+        assert_eq!(
+            keys(ElementKind::Palette, LspIndicatorState::None),
+            ("ui.status_palette_fg", "ui.status_palette_bg")
+        );
+        assert_eq!(
+            keys(ElementKind::Lsp, LspIndicatorState::On),
+            ("ui.status_lsp_on_fg", "ui.status_lsp_on_bg")
+        );
+        // Off / Error keep their own keys so they remain visible signals.
+        assert_eq!(
+            keys(ElementKind::Lsp, LspIndicatorState::Off),
+            ("ui.status_lsp_actionable_fg", "ui.status_lsp_actionable_bg")
+        );
+        assert_eq!(
+            keys(ElementKind::Lsp, LspIndicatorState::Error),
+            ("diagnostic.error_fg", "diagnostic.error_bg")
+        );
+    }
+
+    fn runs_of(
+        kind: ElementKind,
+        text: &str,
+        hovered: Option<StatusBarClickable>,
+        lsp: LspIndicatorState,
+    ) -> Vec<(String, crate::app::shell_host::shell_theme::Ink)> {
+        let rendered = RenderedElement {
+            text: text.to_string(),
+            kind,
+            token_key: None,
+        };
+        StatusBarRenderer::element_runs(&rendered, hovered, lsp)
+            .into_iter()
+            .map(|(t, theme)| (t, Ink::parse(&theme).expect("a readable theme name")))
+            .collect()
+    }
+
+    /// A hovered clickable element is underlined, and the underline reaches
+    /// the painted style. The modifier used to be written as `underlined`,
+    /// which the grammar does not know and silently dropped.
+    #[test]
+    fn a_hovered_clickable_run_is_underlined() {
+        let theme = crate::view::theme::Theme::from_json(
+            r#"{"name":"t","editor":{},"ui":{},"search":{},"diagnostic":{},"syntax":{}}"#,
+        )
+        .expect("minimal theme should parse");
+        let hovered = runs_of(
+            ElementKind::Encoding,
+            "UTF-8",
+            Some(StatusBarClickable::Encoding),
             LspIndicatorState::None,
         );
-        assert_eq!(palette_style.fg, Some(theme.status_palette_fg));
-        assert_eq!(palette_style.bg, Some(theme.status_palette_bg));
-
-        let lsp_on_style = StatusBarRenderer::element_style(
-            ElementKind::Lsp,
-            &theme,
-            false,
-            LspIndicatorState::On,
+        let [(text, ink)] = hovered.as_slice() else {
+            panic!("one run, got {hovered:?}");
+        };
+        assert_eq!(text, " UTF-8 ");
+        assert!(ink.attrs.contains(Attrs::UNDERLINE), "{ink:?}");
+        assert_eq!(
+            ink.names(),
+            (Some("ui.menu_hover_fg"), Some("ui.menu_hover_bg"))
         );
-        assert_eq!(lsp_on_style.fg, Some(theme.status_lsp_on_fg));
-        assert_eq!(lsp_on_style.bg, Some(theme.status_lsp_on_bg));
+        let style = ink.style(&theme).expect("the keys resolve");
+        assert!(style
+            .add_modifier
+            .contains(ratatui::style::Modifier::UNDERLINED));
 
-        // Sanity: Off / Error must still differ from the status-bar
-        // palette so they remain user-visible signals.
-        let lsp_off_style = StatusBarRenderer::element_style(
-            ElementKind::Lsp,
-            &theme,
-            false,
-            LspIndicatorState::Off,
-        );
-        assert_eq!(lsp_off_style.fg, Some(theme.status_lsp_actionable_fg));
-        assert_eq!(lsp_off_style.bg, Some(theme.status_lsp_actionable_bg));
+        // Not hovered, or hovering a different element: plain bar colours.
+        for other in [None, Some(StatusBarClickable::Lsp)] {
+            let runs = runs_of(
+                ElementKind::Encoding,
+                "UTF-8",
+                other,
+                LspIndicatorState::None,
+            );
+            assert_eq!(runs[0].1.attrs, Attrs::NONE);
+            assert_eq!(
+                runs[0].1.names(),
+                (Some("ui.status_bar_fg"), Some("ui.status_bar_bg"))
+            );
+        }
+    }
 
-        let lsp_error_style = StatusBarRenderer::element_style(
-            ElementKind::Lsp,
-            &theme,
-            false,
-            LspIndicatorState::Error,
+    /// The LSP indicator only underlines while it has a state to act on.
+    #[test]
+    fn an_empty_lsp_indicator_is_not_underlined_on_hover() {
+        let hovered = Some(StatusBarClickable::Lsp);
+        let none = runs_of(ElementKind::Lsp, "LSP", hovered, LspIndicatorState::None);
+        assert_eq!(none[0].1.attrs, Attrs::NONE);
+        let on = runs_of(ElementKind::Lsp, "LSP", hovered, LspIndicatorState::On);
+        assert!(on[0].1.attrs.contains(Attrs::UNDERLINE));
+    }
+
+    /// A filename over a disconnected SSH session paints its prefix in the
+    /// error palette and the rest in the bar's.
+    #[test]
+    fn a_disconnected_ssh_filename_is_two_colours() {
+        let runs = runs_of(
+            ElementKind::RemoteDisconnected,
+            "[SSH:host (Disconnected)] main.rs",
+            None,
+            LspIndicatorState::None,
         );
-        assert_eq!(lsp_error_style.fg, Some(theme.diagnostic_error_fg));
-        assert_eq!(lsp_error_style.bg, Some(theme.diagnostic_error_bg));
+        let got: Vec<_> = runs
+            .iter()
+            .map(|(t, ink)| (t.as_str(), ink.names()))
+            .collect();
+        assert_eq!(
+            got,
+            vec![
+                (
+                    " [SSH:host (Disconnected)] ",
+                    (ERROR.0.into(), ERROR.1.into())
+                ),
+                ("main.rs ", (BAR.0.into(), BAR.1.into())),
+            ]
+        );
     }
 
     #[test]

@@ -6444,26 +6444,11 @@ impl Editor {
         &mut self,
         width: u16,
     ) -> Option<crate::view::shell::status_bar::StatusBar> {
-        use crate::app::shell_host::shell_theme::{attrs, literal};
+        use crate::app::shell_host::shell_theme::pair;
         use crate::view::shell::status_bar as sb;
-        use crate::view::ui::status_bar::{element_kind_name, StatusBarRenderer};
+        use crate::view::ui::status_bar::{element_kind_name, SideElement, StatusBarRenderer};
 
-        let (bar_fg, bar_bg, sep_fg, sep_bg) = {
-            let t = self.theme.read().unwrap();
-            (
-                t.status_bar_fg,
-                t.status_bar_bg,
-                t.status_separator_fg,
-                t.status_separator_bg,
-            )
-        };
-        // What a theme key resolves to, for deciding whether a span's colour
-        // *is* the one its element's key names. Snapshotted here so the read
-        // guard does not have to be held across the description build.
-        let theme_snapshot = self.theme.read().unwrap().clone();
-        let theme_of = move |key: &str| theme_snapshot.resolve_theme_key(key);
         self.with_status_bar_ctx(|ctx, config| {
-            let lsp_state = ctx.lsp_indicator_state;
             // Whether the dedicated remote indicator is on the bar, so the
             // filename branch can drop its now-redundant prefix. Read before
             // the sides are rendered, exactly as before.
@@ -6521,85 +6506,19 @@ impl Editor {
             // message costing the right side its place) is the priority, and
             // the cut is made at paint against the width layout settled on.
 
-            let item = |(spans, _w, kind, token_key): (
-                Vec<ratatui::text::Span<'static>>,
-                usize,
-                crate::view::ui::status_bar::ElementKind,
-                Option<String>,
-            )| {
-                // **Names where a name exists.** Every colour on this bar comes
-                // from a named theme field — `element_spans` resolves
-                // `status_error_indicator_fg` and friends into a `Style`, and
-                // re-encoding that as `#rrggbb` threw the name away, which is
-                // why provenance had to be carried in a second field beside
-                // the paint.
-                //
-                // A span whose colours are the ones `element_keys` names for
-                // this element carries those names; anything else is a colour
-                // with no name and carries a literal. That is the honest
-                // distinction, and it is the same one the grammar already
-                // draws — so provenance is *read back out of* the run's theme
-                // rather than duplicated next to it.
-                let (kfg, kbg) = StatusBarRenderer::element_keys(kind, lsp_state);
-                let named = |c: ratatui::style::Color,
-                             key: &'static str,
-                             fallback: ratatui::style::Color|
-                 -> String {
-                    let resolved = theme_of(key).unwrap_or(fallback);
-                    if c == resolved {
-                        key.to_string()
-                    } else {
-                        literal(c)
-                    }
-                };
-                let runs = spans
-                    .into_iter()
-                    .map(|s| {
-                        let fg = named(s.style.fg.unwrap_or(bar_fg), kfg, bar_fg);
-                        let bg = named(s.style.bg.unwrap_or(bar_bg), kbg, bar_bg);
-                        let mut mods: Vec<&str> = Vec::new();
-                        if s.style
-                            .add_modifier
-                            .contains(ratatui::style::Modifier::BOLD)
-                        {
-                            mods.push("bold");
-                        }
-                        if s.style
-                            .add_modifier
-                            .contains(ratatui::style::Modifier::ITALIC)
-                        {
-                            mods.push("italic");
-                        }
-                        if s.style
-                            .add_modifier
-                            .contains(ratatui::style::Modifier::UNDERLINED)
-                        {
-                            mods.push("underlined");
-                        }
-                        (s.content.to_string(), attrs(&fg, &bg, &mods))
-                    })
-                    .collect();
-                sb::Item {
-                    runs,
-                    name: element_kind_name(kind),
-                    clickable: StatusBarRenderer::clickable_for_kind(kind),
-                    token_key,
-                }
+            let item = |(runs, _w, kind, token_key): SideElement| sb::Item {
+                runs,
+                name: element_kind_name(kind),
+                clickable: StatusBarRenderer::clickable_for_kind(kind),
+                token_key,
             };
 
             sb::StatusBar {
                 left: left.into_iter().map(item).collect(),
                 right: right.into_iter().map(item).collect(),
                 separator: config.separator.clone(),
-                base_theme: crate::app::shell_host::shell_theme::pair(
-                    "ui.status_bar_fg",
-                    "ui.status_bar_bg",
-                ),
-                sep_theme: crate::app::shell_host::shell_theme::attrs(
-                    &literal(sep_fg),
-                    &literal(sep_bg),
-                    &[],
-                ),
+                base_theme: pair("ui.status_bar_fg", "ui.status_bar_bg"),
+                sep_theme: pair("ui.status_separator_fg", "ui.status_separator_bg"),
             }
         })
     }
