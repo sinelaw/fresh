@@ -1313,20 +1313,34 @@ impl Editor {
         if let Some(event_log) = self.active_window_mut().event_logs.get_mut(&buffer_id) {
             event_log.append(event.clone());
         }
-        // A drag is cursor motion, so it owns vertical placement from here on
-        // — exactly like a key press, which clears this same flag in
-        // `handle_key`. A wheel or scrollbar scroll sets `skip_ensure_visible`
-        // so the render pass won't yank the viewport back to the cursor, and
-        // nothing on the mouse path used to clear it again: after any scroll
-        // by wheel or scrollbar, a drag-select moved the selection head but
-        // the viewport stayed frozen, in *both* directions (issue #3006).
+        // Past the text area's edge, a drag is cursor motion that owns
+        // vertical placement — exactly like a key press, which clears this
+        // same flag in `handle_key`. A wheel or scrollbar scroll sets
+        // `skip_ensure_visible` so the render pass won't yank the viewport
+        // back to the cursor, and nothing on the mouse path used to clear it
+        // again: after any scroll by wheel or scrollbar, a drag-select moved
+        // the selection head but the viewport stayed frozen, in *both*
+        // directions (issue #3006).
+        //
+        // Inside the text area the head is the cell under the pointer, which
+        // is on screen by construction, so the view must stay put. Letting
+        // ensure-visible run there applied the scroll-off margin to the head:
+        // a drag within `scroll_offset` rows of an edge scrolled the view,
+        // the next motion at the same screen row then named a line further
+        // along, and the selection ran away from the pointer — backwards
+        // from the anchor on a drag along the top rows (issue #3329).
+        let pointer_in_text_area = crate::app::chrome::in_rect(col, row, content_rect);
         if let Some(view_state) = self
             .windows
             .get_mut(&self.active_window)
             .and_then(|w| w.buffers.split_view_states_mut())
             .and_then(|states| states.get_mut(&leaf_id))
         {
-            view_state.viewport.clear_skip_ensure_visible();
+            if pointer_in_text_area {
+                view_state.viewport.set_skip_ensure_visible();
+            } else {
+                view_state.viewport.clear_skip_ensure_visible();
+            }
         }
         self.active_window_mut()
             .apply_event_to_buffer(buffer_id, leaf_id, &event);
