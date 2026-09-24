@@ -157,20 +157,19 @@ fn project_path_field_value(screen: &str) -> String {
     );
 }
 
-/// True when the rendered screen shows the completion list closing the box
-/// its field opens: a `╰─...─╯` row. A field outside a labeled section is a
-/// combo box while its list is up — the field's `[` `]` become the box's
-/// walls, the candidates hang under it with no border between, and this row
-/// closes it — so the row is the load-bearing cue that input + popup are one
-/// box.
+/// True when the rendered screen shows a completion list box: a `┌─...─┐`
+/// top row with nothing but rule in it. A field outside a labeled section
+/// drops its candidates in a bordered box of their own, the way a dropdown's
+/// option list is drawn; a dialog's own top border carries its title, so it
+/// never matches.
 pub(crate) fn screen_has_completion_box(screen: &str) -> bool {
     screen.lines().any(|l| {
-        let Some(start) = l.find('╰') else {
+        let Some(start) = l.find('┌') else {
             return false;
         };
-        let rest = &l[start + '╰'.len_utf8()..];
+        let rest = &l[start + '┌'.len_utf8()..];
         let run = rest.chars().take_while(|c| *c == '─').count();
-        run >= 8 && rest.chars().nth(run) == Some('╯')
+        run >= 8 && rest.chars().nth(run) == Some('┐')
     })
 }
 
@@ -193,12 +192,12 @@ fn type_alpha_prefix_and_wait(
     prefix
 }
 
-/// The host-rendered popup and its field are one box: the field's
-/// brackets become the box's side walls, which continue past the input
-/// through the candidate rows to a `╰─...─╯` row, with no border between
-/// the input and the candidates.
+/// The host-rendered popup of a field outside a labeled section is a
+/// bordered box under the field, drawn like a dropdown's option list — not
+/// the section-joined list with its dim `┄` separator, which has no section
+/// border here to join.
 #[test]
-fn completion_popup_renders_as_one_box_with_its_field() {
+fn completion_popup_renders_as_a_box_under_its_field() {
     let (_temp, workspace) = set_up_workspace();
     let mut harness = EditorTestHarness::with_working_dir(160, 50, workspace.clone()).unwrap();
     harness.tick_and_render().unwrap();
@@ -210,13 +209,12 @@ fn completion_popup_renders_as_one_box_with_its_field() {
     let screen = harness.screen_to_string();
     assert!(
         screen_has_completion_box(&screen),
-        "completion popup must close the field's box with a `╰─...─╯` row. \
-         Screen:\n{}",
+        "completion popup must render as a bordered `┌─...─┐` box. Screen:\n{}",
         screen,
     );
     assert!(
         !screen.contains('┄'),
-        "no separator between the input and its candidates. Screen:\n{}",
+        "no section separator without a section. Screen:\n{}",
         screen,
     );
 }

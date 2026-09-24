@@ -781,7 +781,7 @@ pub fn render_completion_item_overlay(
 /// text. `None` rows leave the column blank — either because
 /// the popup fits without scrolling or because every row gets
 /// `None` when there's nothing to indicate.
-fn render_completion_item(
+pub fn render_completion_item(
     item: &str,
     kind: Option<&str>,
     selected: bool,

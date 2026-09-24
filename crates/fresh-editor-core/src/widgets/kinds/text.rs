@@ -12,7 +12,8 @@ use crate::widgets::registry::WidgetInstanceState;
 use crate::widgets::render::{
     completion_scrollbar_glyph, ensure_trailing_newline, fit_label, focus_gutter_prefix,
     form_label_width, ratatui_style_to_overlay, render_completion_bottom_border,
-    render_completion_dim_separator_overlay, render_completion_item_overlay, render_text_input,
+    render_completion_dim_separator_overlay, render_completion_item,
+    render_completion_item_overlay, render_text_input,
 };
 
 pub struct Text;
@@ -411,8 +412,8 @@ pub fn completion_popup(
     let (scroll, visible) = (scroll as u32, visible as u32);
 
     let mut rows = Vec::with_capacity(visible as usize + 2);
-    // A box's top is the field itself (`open_combo_field` turns its `[` `]`
-    // into the box's walls), so it has no lid of its own.
+    // A box is framed by its node's border; only the section-joined list
+    // paints its own chrome rows.
     if frame == CompletionFrame::Section {
         rows.push(render_completion_dim_separator_overlay(popup_total));
     }
@@ -425,21 +426,37 @@ pub fn completion_popup(
         } else {
             None
         };
-        rows.push(render_completion_item_overlay(
-            &item.value,
-            item.kind.as_deref(),
-            // Only paint a selected-row highlight once the user
-            // has stepped into the dropdown (↓/↑). A freshly
-            // surfaced popup shows plain suggestions so it's
-            // clear Enter acts on the form, not the list.
-            navigated && i == selected_idx,
-            popup_total,
-            thumb,
-            lead,
-            frame == CompletionFrame::Section,
-        ));
+        rows.push(match frame {
+            CompletionFrame::Section => render_completion_item_overlay(
+                &item.value,
+                item.kind.as_deref(),
+                // Only paint a selected-row highlight once the user
+                // has stepped into the dropdown (↓/↑). A freshly
+                // surfaced popup shows plain suggestions so it's
+                // clear Enter acts on the form, not the list.
+                navigated && i == selected_idx,
+                popup_total,
+                thumb,
+                lead,
+                true,
+            ),
+            // The box's walls are the node's border, as a dropdown's list's
+            // are, so a row is only the inside: no gutter, starting in the
+            // value's own column.
+            CompletionFrame::Box => render_completion_item(
+                &item.value,
+                item.kind.as_deref(),
+                navigated && i == selected_idx,
+                popup_total.saturating_sub(2),
+                thumb,
+                0,
+                false,
+            ),
+        });
     }
-    rows.push(render_completion_bottom_border(popup_total));
+    if frame == CompletionFrame::Section {
+        rows.push(render_completion_bottom_border(popup_total));
+    }
     Some(CompletionPopup {
         rows,
         scroll,
@@ -454,12 +471,12 @@ pub enum CompletionFrame {
     /// first row is a dashed separator painted over the section's bottom
     /// border, so section and list read as one frame.
     Section,
-    /// Anywhere else: the field and its list are one box, exactly
-    /// `panel_width` wide (the caller passes the field's `[…]` span). The
-    /// field row is the box's top — its `[` `]` become the walls
-    /// (`open_combo_field`) — so the list has no lid, and its rows carry no
-    /// gutter: a candidate starts in the value's own column. A list wider
-    /// than its field ran past the dialog's edge.
+    /// Anywhere else: a box of its own under the field, drawn the way a
+    /// dropdown's option list is — the rows are only its inside, and the
+    /// caller frames them with the node's border. `panel_width` is the box's
+    /// outer width, the field's `[…]` span, so the left wall sits under the
+    /// `[` and a row, carrying no gutter, starts in the value's own column. A
+    /// list wider than its field ran past the dialog's edge.
     Box,
 }
 
@@ -801,45 +818,6 @@ fn replace_cell(line: &mut SingleLine, at: usize, glyph: &str) {
     }
     if let Some(c) = &mut line.caret {
         shift(c);
-    }
-}
-
-/// **An open combo box's field row is the top of its list's box.**
-///
-/// The `[` and `]` become the box's side walls, in the list's border colour,
-/// so the field and the candidates under it read as one control — the walls
-/// run from the field down to the list's `╰─╯`, with no border between. The
-/// brackets' focus band goes with them: the caret, the field's own ground and
-/// the list under it already say where the keys go.
-pub fn open_combo_field(line: &mut SingleLine) {
-    let text = &line.entry.text;
-    let (Some(close), Some(open)) = (text.rfind(']'), text.find('[')) else {
-        return;
-    };
-    let wall = "│";
-    // Right first, so the left's byte offset still holds.
-    replace_cell(line, close, wall);
-    replace_cell(line, open, wall);
-    let close = close + wall.len() - 1;
-    // The brackets' own overlays (the focus band) no longer describe them.
-    let walls = [(open, open + wall.len()), (close, close + wall.len())];
-    line.entry
-        .inline_overlays
-        .retain(|io| !walls.iter().any(|&(s, e)| io.start == s && io.end == e));
-    for (start, end) in walls {
-        line.entry.inline_overlays.push(InlineOverlay {
-            start,
-            end,
-            style: OverlayOptions {
-                fg: Some(OverlayColorSpec::theme_key(
-                    crate::widgets::render::KEY_COMPLETION_BORDER_FG,
-                )),
-                bg: Some(OverlayColorSpec::theme_key("ui.popup_bg")),
-                ..Default::default()
-            },
-            properties: Default::default(),
-            unit: OffsetUnit::Byte,
-        });
     }
 }
 

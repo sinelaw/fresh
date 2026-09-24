@@ -2984,19 +2984,17 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
             // **Where the list stands decides how it is framed.** Inside a
             // `LabeledSection` (`site.escape` columns of chrome) it joins the
             // section's frame: as wide as the section, its candidates lined up
-            // under the value. Anywhere else there is no frame to join, so the
-            // field and its list make one box spanning exactly the field's
-            // `[…]`: the field row is its top (`open_combo_field` turns the
-            // brackets into its walls) and the rows hang straight under it —
-            // the shape a combo box has — rather than a section-wide strip
-            // that ran past the dialog's edge.
+            // under the value. Anywhere else there is no frame to join, so it
+            // is a box of its own, drawn the way a dropdown's option list is:
+            // bordered, directly under the field and exactly as wide as its
+            // `[…]`, its candidates starting in the value's column — rather
+            // than a section-wide strip that ran past the dialog's edge.
             let list_open = !st.completions.is_empty();
             let field_start = value_col.saturating_sub(1);
             let boxed = match (site.escape, field_end) {
                 (0, Some(end)) if end > field_start + 2 => Some(end - field_start),
                 _ => None,
             };
-            let open_box = list_open && boxed.is_some();
             // A combo field's arrow turns over while its list is up.
             let combo = *combo;
             let make_field = {
@@ -3010,9 +3008,6 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                         let mut line = build_line(window, w32);
                         if combo {
                             tx::mark_combo(&mut line, list_open);
-                        }
-                        if open_box {
-                            tx::open_combo_field(&mut line);
                         }
                         let next = line.scroll;
                         let hits: Vec<((usize, usize), crate::widgets::WidgetEvent)> = line
@@ -3111,6 +3106,18 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                         .child(entry_row(e, &cx.surface))
                 })
                 .collect();
+            // Section-joined rows carry their own walls; a box's walls are its
+            // node's border, in the same ink a dropdown's list takes.
+            let list_node = match frame {
+                tx::CompletionFrame::Section => col().children(box_rows),
+                tx::CompletionFrame::Box => col()
+                    .theme(
+                        Ink::new(Paint::key("ui.popup_border_fg"), Paint::key("ui.popup_bg"))
+                            .to_string(),
+                    )
+                    .border()
+                    .children(box_rows),
+            };
             // **Both halves take the wheel, because the runtime's rule was
             // "the popup's own box, or the field's".** `Text::on_wheel` reads
             // the notch as a statement about the candidate list wherever on
@@ -3136,7 +3143,7 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                     .dismiss(fresh_ui::Dismiss::OUTSIDE_POINTER)
                     .on_dismiss(move |_| UiMsg::Ui(super::msg::UiFact::WidgetPopupDismiss { slot }))
                     .child(float_route(
-                        wheel_to_widget(col().children(box_rows), cx.slot, wheel_key),
+                        wheel_to_widget(list_node, cx.slot, wheel_key),
                         cx.slot,
                     )),
             ])
