@@ -1941,18 +1941,35 @@ impl SettingsState {
         let is_new = dialog.is_new;
         let key_changed = !is_new && key != original_key;
 
-        // Update the map control with the new value
-        if let Some(item) = self.current_item_mut() {
-            if let SettingControl::Map { entries, .. } = &mut item.control {
-                // If key was changed, remove old entry first
-                if key_changed {
-                    if let Some(idx) = entries.iter().position(|(k, _)| k == &original_key) {
-                        entries.remove(idx);
-                    }
-                }
-                // Find or add the entry with the (possibly new) key
-                super::items::map_set(entries, key.clone(), value.clone());
+        // The map the entry belongs to: a field of the dialog below this
+        // one, or the page's own item. A nested entry is the parent's to
+        // write — its save carries the whole value — so only a page-level
+        // entry records pending changes here.
+        let item_path = self
+            .entry_dialog_stack
+            .last()
+            .map(|parent| Self::parent_item_path(parent, &map_path));
+        let nested = item_path.is_some();
+        let item = match item_path {
+            Some(item_path) => self.entry_dialog_stack.last_mut().and_then(|parent| {
+                let item = parent.items.iter_mut().find(|i| i.path == item_path)?;
+                // The parent's title flips to `• modified`: its save still
+                // owes the change.
+                parent.user_edited = true;
+                Some(item)
+            }),
+            None => self.current_item_mut(),
+        };
+        if let Some(SettingControl::Map { entries, .. }) = item.map(|i| &mut i.control) {
+            // If key was changed, remove old entry first
+            if key_changed {
+                entries.retain(|(k, _)| k != &original_key);
             }
+            // Find or add the entry with the (possibly new) key
+            super::items::map_set(entries, key.clone(), value.clone());
+        }
+        if nested {
+            return;
         }
 
         // Record deletion of old key if key was changed
@@ -1965,6 +1982,24 @@ impl SettingsState {
         // Record the pending change
         let path = format!("{}/{}", map_path, key);
         self.set_pending_change(&path, value);
+    }
+
+    /// The path, within `parent`, of the field a nested dialog at
+    /// `nested_path` edits: the nested path less the parent's entry path.
+    /// For an is_single_value parent (e.g. a quicklsp entry whose value
+    /// schema is an array) the field is the entry's value at
+    /// `SINGLE_VALUE_PATH` and the nested dialog lives exactly at the entry
+    /// path, so nothing is left and the path names that item.
+    fn parent_item_path(parent: &EntryDialogState, nested_path: &str) -> String {
+        let parent_entry_path = parent.entry_path();
+        match nested_path
+            .strip_prefix(parent_entry_path.as_str())
+            .unwrap_or(nested_path)
+            .trim_end_matches('/')
+        {
+            "" => super::entry_dialog::SINGLE_VALUE_PATH.to_string(),
+            rest => rest.to_string(),
+        }
     }
 
     /// Save an ObjectArray item dialog
@@ -1985,26 +2020,11 @@ impl SettingsState {
 
         if is_nested {
             // Nested dialog - update the parent dialog's ObjectArray item.
-            // Extract the item path within the parent dialog by stripping the
-            // parent's full entry path (map_path + "/" + entry_key) from the
-            // nested dialog's array path. For an is_single_value parent (e.g.
-            // a quicklsp entry whose value schema is an array), the inner
-            // ObjectArray item is the entry's value at `SINGLE_VALUE_PATH`
-            // and the nested dialog lives exactly at the entry path, so the
-            // stripped path is empty and names that item.
-            let parent_entry_path = self
+            let item_path = self
                 .entry_dialog_stack
                 .last()
-                .map(|p| p.entry_path())
+                .map(|p| Self::parent_item_path(p, &array_path))
                 .unwrap_or_default();
-            let item_path = match array_path
-                .strip_prefix(parent_entry_path.as_str())
-                .unwrap_or(&array_path)
-                .trim_end_matches('/')
-            {
-                "" => super::entry_dialog::SINGLE_VALUE_PATH.to_string(),
-                rest => rest.to_string(),
-            };
 
             // Find and update the ObjectArray in the parent dialog. Mark
             // the parent dirty so its title flips to `• modified` —
@@ -3637,6 +3657,83 @@ mod tests {
                 .contains_key("/universal_lsp/quicklsp"),
             "expected pending change at /universal_lsp/quicklsp, got {:?}",
             state.pending_changes.keys().collect::<Vec<_>>()
+        );
+    }
+
+    /// A map inside an entry dialog (an LSP server's `env`) takes the
+    /// entry its nested dialog saves. It used to land in the settings
+    /// page's own item instead — a stray server beside `rust`, with the
+    /// `env` field left empty and a pending change at a path nobody asked
+    /// for.
+    #[test]
+    fn nested_map_save_updates_the_parent_dialog() {
+        use crate::view::settings::schema::SettingType;
+
+        let field = |path: &str, setting_type| SettingSchema {
+            path: path.to_string(),
+            name: path.trim_start_matches('/').to_string(),
+            description: None,
+            setting_type,
+            default: None,
+            read_only: false,
+            section: None,
+            order: None,
+            nullable: false,
+            enum_from: None,
+            dual_list_sibling: None,
+            dynamically_extendable_status_bar_elements: false,
+        };
+        let server = field(
+            "",
+            SettingType::Object {
+                properties: vec![field(
+                    "/env",
+                    SettingType::Map {
+                        value_schema: Box::new(field("", SettingType::String)),
+                        display_field: None,
+                        no_add: false,
+                    },
+                )],
+            },
+        );
+
+        let config = test_config();
+        let mut state = SettingsState::new(TEST_SCHEMA, &config).unwrap();
+        let pending_before = state.pending_changes.clone();
+        state.entry_dialog_stack.push(EntryDialogState::from_schema(
+            "rust".to_string(),
+            &serde_json::json!({ "env": {} }),
+            &server,
+            "/lsp",
+            false,
+            false,
+            &HashMap::new(),
+        ));
+
+        // The server's one field, `env`, is focused on its add row.
+        state.open_nested_entry_dialog();
+        assert_eq!(state.entry_dialog_stack.len(), 2);
+        let nested = state.entry_dialog_stack.last_mut().unwrap();
+        for item in nested.items.iter_mut() {
+            match &mut item.control {
+                SettingControl::Text { value, .. } if item.path == "__key__" => {
+                    *value = "FOO".to_string()
+                }
+                SettingControl::Text { value, .. } => *value = "bar".to_string(),
+                _ => {}
+            }
+        }
+        state.save_entry_dialog();
+
+        let parent = state.entry_dialog_stack.last().unwrap();
+        assert!(parent.user_edited, "the parent owes the change a save");
+        assert_eq!(
+            parent.to_value(),
+            serde_json::json!({ "env": { "FOO": "bar" } })
+        );
+        assert_eq!(
+            state.pending_changes, pending_before,
+            "the parent's save records the entry, not the nested one"
         );
     }
 
