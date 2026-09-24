@@ -2621,7 +2621,12 @@ impl Editor {
             UiFact::PaneWheel { pane, x, y, delta } => {
                 // A live terminal that asked for the mouse gets the notch —
                 // the same gate the content's press asks, for the same reason.
+                // The child scrolls by its own rule, one report per notch, so
+                // the lines the smooth-scroll walk armed for this notch are
+                // not owed: replaying them would forward the notch again
+                // (`deliver_wheel` dispatches back through here).
                 if self.pane_content_took_wheel(x, y) {
+                    self.pending_wheel_scroll = None;
                     return;
                 }
                 // A plugin's panel inside the pane's content scrolls itself:
