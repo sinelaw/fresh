@@ -9,7 +9,7 @@ use crate::model::composite_buffer::{AlignedRow, CompositeBuffer};
 use crate::model::event::BufferId;
 use crate::primitives::display_width::char_width;
 use crate::state::{EditorState, ViewMode};
-use crate::view::composite_view::CompositeViewState;
+use crate::view::composite_view::{CompositeViewState, PaneLayout, PANE_GUTTER_WIDTH};
 use crate::view::folding::FoldManager;
 use crate::view::theme::Theme;
 use crate::view::ui::view_pipeline::{should_show_line_number, ViewLine};
@@ -30,7 +30,7 @@ pub(crate) fn render_composite_buffer(
     buffers: &mut HashMap<BufferId, EditorState>,
     theme: &Theme,
     is_active: bool,
-    view_state: &mut CompositeViewState,
+    view_state: &CompositeViewState,
     use_terminal_bg: bool,
     show_tilde: bool,
 ) {
@@ -45,9 +45,7 @@ pub(crate) fn render_composite_buffer(
     if composite.sources.is_empty() {
         return;
     }
-    let layout = compute_pane_layout(composite, area.width);
-    // Store computed pane widths in view state for cursor movement calculations.
-    view_state.pane_widths = layout.widths.clone();
+    let layout = PaneLayout::new(composite, area.width);
     render_pane_headers(
         buf,
         area,
@@ -103,51 +101,6 @@ pub(crate) fn render_composite_buffer(
             effective_editor_bg,
             theme,
         );
-    }
-}
-/// Pane geometry for a composite buffer: the content width of each pane plus
-/// the width and visibility of the vertical separators drawn between them.
-struct PaneLayout {
-    widths: Vec<u16>,
-    separator_width: u16,
-    show_separator: bool,
-}
-impl PaneLayout {
-    fn pane_count(&self) -> usize {
-        self.widths.len()
-    }
-}
-/// Compute the [`PaneLayout`] from the composite's layout spec and the
-/// available width. Only called once at least one source pane exists.
-fn compute_pane_layout(composite: &CompositeBuffer, area_width: u16) -> PaneLayout {
-    use crate::model::composite_buffer::CompositeLayout;
-    let pane_count = composite.sources.len();
-    let show_separator = match &composite.layout {
-        CompositeLayout::SideBySide { show_separator, .. } => *show_separator,
-        _ => false,
-    };
-    let separator_width = if show_separator { 1 } else { 0 };
-    let total_separators = (pane_count.saturating_sub(1)) as u16 * separator_width;
-    let available_width = area_width.saturating_sub(total_separators);
-    let widths: Vec<u16> = match &composite.layout {
-        CompositeLayout::SideBySide { ratios, .. } => {
-            let default_ratio = 1.0 / pane_count as f32;
-            ratios
-                .iter()
-                .chain(std::iter::repeat(&default_ratio))
-                .take(pane_count)
-                .map(|r| (available_width as f32 * r).round() as u16)
-                .collect()
-        }
-        _ => {
-            let pane_width = available_width / pane_count as u16;
-            vec![pane_width; pane_count]
-        }
-    };
-    PaneLayout {
-        widths,
-        separator_width,
-        show_separator,
     }
 }
 /// Render the one-row header bar for each pane (the source label), with the
@@ -240,9 +193,8 @@ fn build_pane_render_data(
         let mut viewport = crate::view::viewport::Viewport::new(pane_width, content_height);
         viewport.set_top_byte(top_byte);
         viewport.line_wrap_enabled = false;
-        let pane_width = layout.widths.get(pane_idx).copied().unwrap_or(80) as usize;
-        let gutter_width = 4; // Line number width
-        let content_width = pane_width.saturating_sub(gutter_width);
+        let gutter_width = usize::from(PANE_GUTTER_WIDTH);
+        let content_width = layout.text_width(pane_idx);
         let lines_needed = last_line - first_line + 10;
         let empty_folds = FoldManager::new();
         // A composite side is formatted here, not by `compute_buffer_layout`;
@@ -392,7 +344,7 @@ fn render_aligned_row(
             theme,
         );
         x_offset += width;
-        if layout.show_separator && pane_idx < layout.pane_count() - 1 {
+        if layout.separator_width > 0 && pane_idx < layout.pane_count() - 1 {
             let sep_area = Rect::new(x_offset, row_y, layout.separator_width, 1);
             let sep = Paragraph::new("│").style(
                 Style::default()
@@ -428,8 +380,7 @@ fn render_row_pane(
         .map(|v| v.left_column)
         .unwrap_or(0);
     let is_focused_pane = pane_idx == view_state.focused_pane;
-    let gutter_width = 4usize;
-    let max_content_width = width.saturating_sub(gutter_width as u16) as usize;
+    let max_content_width = width.saturating_sub(PANE_GUTTER_WIDTH) as usize;
     let Some(source_line_ref) = aligned_row.get_pane_line(pane_idx) else {
         // No content for this pane (padding/gap line).
         let pane_has_selection = is_focused_pane
@@ -448,7 +399,7 @@ fn render_row_pane(
             let cursor_style = Style::default().fg(theme.editor_bg).bg(theme.editor_fg);
             let padding = " ".repeat(max_content_width.saturating_sub(1));
             let line = Line::from(vec![
-                Span::styled("    ", style),
+                Span::styled(" ".repeat(usize::from(PANE_GUTTER_WIDTH)), style),
                 Span::styled(" ", cursor_style),
                 Span::styled(padding, Style::default().bg(bg)),
             ]);
@@ -482,7 +433,12 @@ fn render_row_pane(
     } else {
         None
     };
-    let line_num = format!("{:>3} ", source_line_ref.line + 1);
+    // The number right-aligned in the gutter, and a space before the text.
+    let line_num = format!(
+        "{:>digits$} ",
+        source_line_ref.line + 1,
+        digits = usize::from(PANE_GUTTER_WIDTH) - 1
+    );
     let line_num_style = Style::default().fg(theme.line_number_fg).bg(bg);
     let inline_ranges = inline_diffs.get(pane_idx).cloned().unwrap_or_default();
     let highlight_bg = match aligned_row.row_type {
