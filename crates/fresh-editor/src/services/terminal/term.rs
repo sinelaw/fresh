@@ -533,6 +533,12 @@ impl TerminalState {
             // down to `scrollback_lines` itself so the emulator never evicts a
             // row out from under the sync pointer. See SCROLLBACK_DRAIN_MARGIN.
             scrolling_history: scrollback_lines.saturating_add(SCROLLBACK_DRAIN_MARGIN),
+            // Answer the kitty keyboard protocol's query and track the flags a
+            // child pushes, so a TUI can ask for Shift+Enter and friends in
+            // CSI-u form (see `kitty_disambiguates_keys`). Not on Windows:
+            // there the child sits behind ConPTY, whose handling of CSI-u
+            // input is unverified.
+            kitty_keyboard: cfg!(not(windows)),
             ..Default::default()
         };
         let listener = PtyWriteListener::new();
@@ -919,6 +925,15 @@ impl TerminalState {
     /// send `\x1bOA` (SS3) instead of `\x1b[A` (CSI).
     pub fn is_app_cursor(&self) -> bool {
         self.term.mode().contains(TermMode::APP_CURSOR)
+    }
+
+    /// Check if the child enabled the kitty keyboard protocol at a level that
+    /// wants modified keys in CSI-u form ("disambiguate escape codes", or
+    /// "report all keys as escape codes").
+    pub fn kitty_disambiguates_keys(&self) -> bool {
+        self.term
+            .mode()
+            .intersects(TermMode::DISAMBIGUATE_ESC_CODES | TermMode::REPORT_ALL_KEYS_AS_ESC)
     }
 
     /// Check if the child asked for bracketed paste (DECSET 2004).
