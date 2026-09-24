@@ -884,8 +884,8 @@ mod tests {
         ui.frame(col().child(card(&c)), Size::new(200, 60));
         assert_eq!(
             ui.spec().cursor.map(|k| (k.pos.x, k.pos.y)),
-            Some((11 + 6 + 3, 5)),
-            "after the message and the query, inside the ring"
+            Some((11 + 6 + 1 + 3, 5)),
+            "after the message, the field's `[` and the query, inside the ring"
         );
         let text = |ui: &Ui<UiMsg>| -> String {
             let mut cells: Vec<(i32, String)> = ui
@@ -902,7 +902,7 @@ mod tests {
             cells.into_iter().map(|(_, s)| s).collect()
         };
         let row = text(&ui);
-        assert!(row.starts_with("Grep: abc"), "{row:?}");
+        assert!(row.starts_with("Grep: [abc"), "{row:?}");
         assert!(row.trim_end().ends_with("Searching…  1 / 9"), "{row:?}");
 
         c.input_focused = false;
