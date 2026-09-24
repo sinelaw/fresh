@@ -1240,6 +1240,17 @@ impl TerminalState {
 
         for col in 0..self.cols as usize {
             let cell = &row_data[Column(col)];
+            // A wide character fills two columns, and the second is a spacer
+            // cell holding a blank. So is the last column of a row whose next
+            // character was too wide to fit and wrapped. Neither is text:
+            // written out, every CJK character in the scrollback gained a
+            // space after it (sinelaw/fresh#3235).
+            if cell
+                .flags
+                .intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER)
+            {
+                continue;
+            }
             let fg = color_to_rgb(&cell.fg);
             let bg = color_to_rgb(&cell.bg);
             let flags = cell.flags;
@@ -1715,6 +1726,30 @@ mod tests {
             max = max.max(c);
         }
         (min, max)
+    }
+
+    /// Wide (CJK) characters are written to the scrollback as themselves, not
+    /// followed by the blank spacer cell that fills their second column —
+    /// including one wrapped to the next row because it did not fit in the
+    /// last column (sinelaw/fresh#3235).
+    #[test]
+    fn test_wide_chars_stored_without_spacer_cells() {
+        let mut state = TerminalState::new(9, 24);
+        // `ab你好世` is 8 columns, so `界` (2 wide) cannot fit in the 9th and
+        // wraps, leaving a leading spacer at the end of the first row.
+        state.process_output("你好世界test\r\nab你好世界x\r\n".as_bytes());
+        for _ in 0..24 {
+            state.process_output(b"y\r\n");
+        }
+        let mut sink: Vec<u8> = Vec::new();
+        state.flush_new_scrollback(&mut sink).unwrap();
+        let text = String::from_utf8_lossy(&sink);
+        let lines: Vec<&str> = text.lines().take(2).collect();
+        assert_eq!(
+            lines,
+            ["你好世界test", "ab你好世界x"],
+            "scrollback:\n{text}"
+        );
     }
 
     /// A wrapped line is stored as ONE unwrapped logical line in the backing
