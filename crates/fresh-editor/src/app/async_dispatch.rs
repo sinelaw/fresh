@@ -804,6 +804,11 @@ impl Editor {
 
     /// Handle an LSP server crash/spawn failure: surface it, fire the
     /// `lsp_server_error` hook, and open the stderr log in the background.
+    ///
+    /// A crash the manager is about to retry is treated as transient: only
+    /// the log line and status message survive, so a server that recovers a
+    /// moment later does not leave an install-help popup and a stale stderr
+    /// log tab to accumulate across sessions (issue #3282).
     fn handle_lsp_error(
         &mut self,
         language: String,
@@ -813,6 +818,18 @@ impl Editor {
         tracing::error!("LSP error for {}: {}", language, error);
         self.active_window_mut().status_message =
             Some(format!("LSP error ({}): {}", language, error));
+
+        if self
+            .lsp()
+            .map(|mgr| mgr.has_pending_restart(&language))
+            .unwrap_or(false)
+        {
+            tracing::info!(
+                "Suppressing LSP error UI for {}: a restart is already scheduled",
+                language
+            );
+            return;
+        }
 
         // Get server command from config for the hook
         let server_command = self
