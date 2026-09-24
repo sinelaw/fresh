@@ -688,13 +688,16 @@ fn test_unfold_works_after_folding_ranges_cleared() {
 /// Same for scrolling back up.
 #[test]
 fn test_scroll_margin_identical_with_and_without_fold() {
+    /// `(cursor_screen_row_in_content, top_visible_line)` per key press.
+    type ScrollTrace = Vec<(usize, usize)>;
+
     /// Record (cursor_screen_row_in_content, top_visible_line) after each
     /// Down / Up key press.
     fn collect_scroll_trace(
         harness: &mut EditorTestHarness,
         steps_down: usize,
         steps_up: usize,
-    ) -> (Vec<(usize, usize)>, Vec<(usize, usize)>) {
+    ) -> (ScrollTrace, ScrollTrace) {
         let mut down = Vec::new();
         let mut up = Vec::new();
         let (start_row, _) = harness.content_area_rows();

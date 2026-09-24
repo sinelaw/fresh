@@ -22,7 +22,7 @@
 use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness};
 use crossterm::event::{KeyCode, KeyModifiers};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Build a workspace with two `alpha*` subdirs and the orchestrator
 /// plugin installed. Returns (tempdir guard, canonicalized
@@ -993,8 +993,9 @@ fn focused_line(screen: &str) -> String {
 
 /// Open the form on a non-git workspace (so the worktree toggle and
 /// Branch field are absent — a predictable, minimal field set).
-fn open_form_on(workspace: &PathBuf) -> EditorTestHarness {
-    let mut harness = EditorTestHarness::with_working_dir(160, 50, workspace.clone()).unwrap();
+fn open_form_on(workspace: &Path) -> EditorTestHarness {
+    let mut harness =
+        EditorTestHarness::with_working_dir(160, 50, workspace.to_path_buf()).unwrap();
     harness.tick_and_render().unwrap();
     wait_for_new_session_command(&mut harness);
     open_new_session_form(&mut harness);

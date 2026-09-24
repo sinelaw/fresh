@@ -14,6 +14,7 @@
 //!      - `style(snapshot, theme, roles) -> StyledFrame`
 //!        ‹this is the new one this scenario needs›,
 //!      - `emit(frame, caps) -> AnsiStream` (today's body).
+//!
 //!    Production stays the composition; tests call `style()`
 //!    independently. Estimated cost: 2-3 days in `src/view/`.
 //!

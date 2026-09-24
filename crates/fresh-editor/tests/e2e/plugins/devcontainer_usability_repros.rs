@@ -179,6 +179,7 @@ fn attach_via_fake(harness: &mut EditorTestHarness) {
 ///   1. attaching successfully against the workspace,
 ///   2. editing `devcontainer.json` to malformed JSON on disk,
 ///   3. triggering `Dev Container: Rebuild` from the palette.
+///
 /// After step 3 the entire `Dev Container:` family disappears from
 /// the palette — verified by scrolling the alphabetical D-section
 /// (only `Decrease`, `Dedent`, `Dump Config`, `Duplicate Line` are
@@ -521,8 +522,9 @@ fn broken_devcontainer_json_keeps_recovery_commands_registered() {
 /// fired — the `onAutoForward` field was read by the panel
 /// renderer but never acted on.
 ///
-/// Regression guard for that fix: configure `forwardPorts: [9000]`
-/// + `portsAttributes."9000".onAutoForward: "notify"`, set
+/// Regression guard for that fix: configure
+/// `forwardPorts: [9000]` +
+/// `portsAttributes."9000".onAutoForward: "notify"`, set
 /// `FAKE_DC_PORTS=9000` so the fake docker reports the binding,
 /// attach via the fake CLI, and assert the rendered screen
 /// surfaces the `Port 9000 forwarded` toast.

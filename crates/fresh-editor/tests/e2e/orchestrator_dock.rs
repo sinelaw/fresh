@@ -3280,8 +3280,8 @@ fn open_new_session_form(h: &mut EditorTestHarness) {
 }
 
 /// The New-Session ("New Workspace") form is a centered floating panel that
-/// now wears the native modal-frame chrome: its "New Workspace" title bar
-/// + border come from the host (`mount({ title,
+/// now wears the native modal-frame chrome: its "New Workspace" title
+/// bar + border come from the host (`mount({ title,
 /// closable })`), replacing the in-body styled header banner the form used
 /// to draw itself. This asserts, on rendered cells, that (a) the title
 /// renders in the native title bar (the frame's top border) and (b) a

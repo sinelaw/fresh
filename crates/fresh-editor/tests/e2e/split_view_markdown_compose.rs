@@ -1,3 +1,5 @@
+#[cfg(feature = "plugins")]
+use crate::common::harness::HarnessOptions;
 /// E2E tests for split view with markdown compose mode.
 ///
 /// Tests the use case: same markdown document shown in two vertical splits,
@@ -7,7 +9,7 @@
 /// 1. Compose mode only applies to the right panel (conceals, soft breaks)
 /// 2. Line numbers visible in source panel, hidden in compose panel
 /// 3. Scroll synchronization between panels
-use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness, HarnessOptions};
+use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness};
 use crate::common::tracing::init_tracing_from_env;
 use crossterm::event::{KeyCode, KeyModifiers};
 

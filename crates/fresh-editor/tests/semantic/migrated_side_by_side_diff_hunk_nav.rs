@@ -47,28 +47,28 @@
 use crate::common::scenario::context::MouseEvent;
 use crate::common::scenario::input_event::{InputEvent, KeyMods, KeySpec};
 use crate::common::scenario::layout_scenario::{
-    assert_layout_scenario, check_layout_scenario, CompositeBufferSpec, LayoutScenario,
+    assert_layout_scenario, check_layout_scenario, CompositeBufferSpec, HunkSpec, LayoutScenario,
 };
 use crate::common::scenario::render_snapshot::{RenderSnapshotExpect, RowMatch};
 
 /// Generate `(old_content, new_content, hunks)` for a 150-line file
 /// with three modified hunks at lines 20, 60, 120. Mirrors the e2e
 /// `generate_multi_hunk_content` helper byte-for-byte.
-fn multi_hunk() -> (String, String, Vec<(usize, usize, usize, usize)>) {
+fn multi_hunk() -> (String, String, Vec<HunkSpec>) {
     let line_count = 150;
     let old_lines: Vec<String> = (1..=line_count)
         .map(|i| format!("Line {i} original content"))
         .collect();
 
     let mut new_lines = old_lines.clone();
-    for i in 19..22 {
-        new_lines[i] = format!("Line {} MODIFIED in hunk 1", i + 1);
+    for (i, line) in new_lines.iter_mut().enumerate().take(22).skip(19) {
+        *line = format!("Line {} MODIFIED in hunk 1", i + 1);
     }
-    for i in 59..63 {
-        new_lines[i] = format!("Line {} MODIFIED in hunk 2", i + 1);
+    for (i, line) in new_lines.iter_mut().enumerate().take(63).skip(59) {
+        *line = format!("Line {} MODIFIED in hunk 2", i + 1);
     }
-    for i in 119..124 {
-        new_lines[i] = format!("Line {} MODIFIED in hunk 3", i + 1);
+    for (i, line) in new_lines.iter_mut().enumerate().take(124).skip(119) {
+        *line = format!("Line {} MODIFIED in hunk 3", i + 1);
     }
 
     let old_content = old_lines.join("\n") + "\n";

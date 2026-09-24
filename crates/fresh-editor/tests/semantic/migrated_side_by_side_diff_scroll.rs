@@ -37,7 +37,7 @@
 use crate::common::scenario::context::{MouseButton, MouseEvent};
 use crate::common::scenario::input_event::InputEvent;
 use crate::common::scenario::layout_scenario::{
-    assert_layout_scenario, check_layout_scenario, CompositeBufferSpec, LayoutScenario,
+    assert_layout_scenario, check_layout_scenario, CompositeBufferSpec, HunkSpec, LayoutScenario,
 };
 use crate::common::scenario::render_snapshot::{RenderSnapshotExpect, RowMatch};
 
@@ -48,7 +48,7 @@ use crate::common::scenario::render_snapshot::{RenderSnapshotExpect, RowMatch};
 fn generate_diff_content(
     line_count: usize,
     extra_new_lines: usize,
-) -> (String, String, Vec<(usize, usize, usize, usize)>) {
+) -> (String, String, Vec<HunkSpec>) {
     let old_content: String = (1..=line_count)
         .map(|i| format!("Line {i} original content here\n"))
         .collect();

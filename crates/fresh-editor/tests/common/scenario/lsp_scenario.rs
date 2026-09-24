@@ -14,6 +14,7 @@
 //!      - matches expected outgoing JSON-RPC by method + shape,
 //!      - injects pre-canned server replies on cue,
 //!      - records all traffic for the `LspTraffic` observable.
+//!
 //!    Estimated cost: 1-2 days of work in `src/services/lsp/`.
 //!
 //! 2. **`EditorTestApi::lsp_traffic()` accessor.** Returns the
