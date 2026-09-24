@@ -758,6 +758,41 @@ appear at all is a content decision made from measured text, because a
 description that listed elements layout would then silently discard would be
 lying about what is on the bar.
 
+### The status bar's leftovers
+
+**Closed.** With layout gone, the bar still carried the pipeline it had
+before the tree. `element_style` resolved theme keys to colours as ratatui
+`Span`s, and `status_bar_description` compared every span's colours against
+`element_keys` to recover the names, fell back to literals where they
+differed, and re-spelled the modifiers as attribute words. That round trip
+hid three bugs:
+
+- **No hovered element was underlined.** The modifier was written
+  `+underlined`; the grammar spells it `underline` and drops words it does not
+  know. Elements are now written straight to an `Ink`, which cannot misspell
+  an attribute (`view::ui::status_bar::item`).
+- **Every status-bar popup opened over the first right-hand element.** The
+  LSP, remote, read-only and update menus computed their element's column,
+  and `AboveStatusBarAt { x, status_row }` ignored it and anchored to
+  `item_key(Side::Right, 0)`. Built-in clickable elements are keyed by their
+  `StatusBarClickable` now (`clickable_key`), and `AboveStatusBarAt` carries
+  that id. The never-constructed `PopupPositionData::AboveStatusBarAt` is
+  gone from core.
+- **The clock's colon had not blinked since the migration.** `Attrs` has no
+  blink, so the `SLOW_BLINK` span was dropped on the way to the paint. The
+  split was deleted rather than blink added to the grammar.
+
+Hovered colours and the separator had been literals, which is why
+`publish_status_bar` re-recorded provenance after the fold. They are keys
+now, so the fold covers every cell and that recorder is gone. Also gone:
+`ElementKind`, `RenderedElement` and the three tables keyed on it (each arm of
+`render_element` states its name, click id and keys and builds the
+`sb::Item`), `with_status_bar_ctx`, `StatusSegmentInfo` (the web gets
+`scene::StatusSegment` from `segments`), the dead `warning_level`, and
+`clickable_rects` with its linear scans. `truncate_path` moved to
+`view::shell::path_display`, and `input_hscroll` to `prompt_line`, their
+only users.
+
 ### The keyed geometry index
 
 `Ui::find_by_key` is a depth-first walk of the element tree, and
