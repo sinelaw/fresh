@@ -196,11 +196,6 @@ impl PopupListItem {
         self
     }
 
-    pub fn with_icon(mut self, icon: String) -> Self {
-        self.icon = Some(icon);
-        self
-    }
-
     pub fn with_data(mut self, data: String) -> Self {
         self.data = Some(data);
         self
@@ -367,30 +362,6 @@ impl Popup {
     /// Set the title
     pub fn with_title(mut self, title: String) -> Self {
         self.title = Some(title);
-        self
-    }
-
-    /// Mark this popup as transient (will be dismissed on focus loss)
-    pub fn with_transient(mut self, transient: bool) -> Self {
-        self.transient = transient;
-        self
-    }
-
-    /// Set the position
-    pub fn with_position(mut self, position: PopupPosition) -> Self {
-        self.position = position;
-        self
-    }
-
-    /// Set the width
-    pub fn with_width(mut self, width: u16) -> Self {
-        self.width = width;
-        self
-    }
-
-    /// Set the max height
-    pub fn with_max_height(mut self, max_height: u16) -> Self {
-        self.max_height = max_height;
         self
     }
 
@@ -943,13 +914,10 @@ mod tests {
 
     #[test]
     fn test_popup_list_item() {
-        let item = PopupListItem::new("test".to_string())
-            .with_detail("detail".to_string())
-            .with_icon("📄".to_string());
+        let item = PopupListItem::new("test".to_string()).with_detail("detail".to_string());
 
         assert_eq!(item.text, "test");
         assert_eq!(item.detail, Some("detail".to_string()));
-        assert_eq!(item.icon, Some("📄".to_string()));
     }
 
     #[test]

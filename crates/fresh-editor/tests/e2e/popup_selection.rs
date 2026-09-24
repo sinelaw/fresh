@@ -2,7 +2,24 @@
 
 use crate::common::harness::EditorTestHarness;
 use crossterm::event::{KeyCode, KeyModifiers};
+use fresh::model::event::{PopupContentData, PopupData, PopupKindHint, PopupPositionData};
 use fresh::view::popup::{Popup, PopupPosition};
+
+/// A bordered text popup at a fixed cell, in the shape `Editor::show_popup`
+/// takes — the event path a plugin's popup goes through.
+fn text_popup(lines: Vec<String>, at: (u16, u16), width: u16, max_height: u16) -> PopupData {
+    PopupData {
+        kind: PopupKindHint::Text,
+        title: None,
+        description: None,
+        transient: false,
+        content: PopupContentData::Text(lines),
+        position: PopupPositionData::Fixed { x: at.0, y: at.1 },
+        width,
+        max_height,
+        bordered: true,
+    }
+}
 
 /// Test LSP hover popup text selection and copy with real LSP flow
 /// This tests the actual user scenario: hover triggers popup, user selects text, presses Ctrl+C
@@ -156,22 +173,18 @@ fn test_popup_text_selection_copy() {
     // Create a popup with text content directly
     {
         let editor = harness.editor_mut();
-        let theme = editor.theme().clone();
 
         // Create a simple text popup with known content
-        let popup = Popup::text(
+        editor.show_popup(text_popup(
             vec![
                 "Line 0: Hello World".to_string(),
                 "Line 1: Test Content".to_string(),
                 "Line 2: More Text".to_string(),
             ],
-            &theme,
-        )
-        .with_position(PopupPosition::Fixed { x: 10, y: 5 })
-        .with_width(40)
-        .with_max_height(10);
-
-        editor.active_state_mut().popups.show(popup);
+            (10, 5),
+            40,
+            10,
+        ));
 
         // Enable internal-only clipboard for testing
         editor.set_clipboard_for_test("".to_string());
@@ -270,14 +283,8 @@ fn test_popup_copy_does_not_copy_from_editor() {
     // Create a popup with text content
     {
         let editor = harness.editor_mut();
-        let theme = editor.theme().clone();
 
-        let popup = Popup::text(vec!["Popup text".to_string()], &theme)
-            .with_position(PopupPosition::Fixed { x: 10, y: 5 })
-            .with_width(30)
-            .with_max_height(5);
-
-        editor.active_state_mut().popups.show(popup);
+        editor.show_popup(text_popup(vec!["Popup text".to_string()], (10, 5), 30, 5));
         editor.set_clipboard_for_test("".to_string());
     }
 
@@ -330,11 +337,12 @@ fn test_markdown_popup_text_selection_copy() {
         // Create a markdown popup with known content (like LSP hover)
         // Pass None for grammar_registry since we don't need syntax highlighting for this test
         let markdown_content = "# Function\n\n`hello_world()`\n\nThis is a test function.";
-        let popup = Popup::markdown(markdown_content, &theme, None)
-            .with_position(PopupPosition::Fixed { x: 10, y: 5 })
-            .with_width(40)
-            .with_max_height(10)
-            .with_transient(true); // LSP hover popups are transient
+        // Built the way the hover and signature-help paths build theirs.
+        let mut popup = Popup::markdown(markdown_content, &theme, None);
+        popup.position = PopupPosition::Fixed { x: 10, y: 5 };
+        popup.width = 40;
+        popup.max_height = 10;
+        popup.transient = true; // LSP hover popups are transient
 
         editor.active_state_mut().popups.show(popup);
         editor.set_clipboard_for_test("".to_string());
@@ -436,11 +444,12 @@ fn test_transient_popup_mouse_drag_and_copy() {
         let theme = editor.theme().clone();
 
         let markdown_content = "# Function\n\nhello_world()\n\nThis is a test.";
-        let popup = Popup::markdown(markdown_content, &theme, None)
-            .with_position(PopupPosition::Fixed { x: 10, y: 5 })
-            .with_width(40)
-            .with_max_height(10)
-            .with_transient(true); // This is key - LSP hover popups are transient
+        // Built the way the hover and signature-help paths build theirs.
+        let mut popup = Popup::markdown(markdown_content, &theme, None);
+        popup.position = PopupPosition::Fixed { x: 10, y: 5 };
+        popup.width = 40;
+        popup.max_height = 10;
+        popup.transient = true; // This is key - LSP hover popups are transient
 
         editor.active_state_mut().popups.show(popup);
         editor.set_clipboard_for_test("".to_string());
@@ -544,22 +553,18 @@ fn test_popup_copy_with_wrapped_lines() {
     // But a second long line will wrap, pushing visual lines out of sync.
     {
         let editor = harness.editor_mut();
-        let theme = editor.theme().clone();
 
-        let popup = Popup::text(
+        editor.show_popup(text_popup(
             vec![
                 // Line 0: 40 chars — will wrap into 2 visual lines at width ~20
                 "First line is long enough to wrap around".to_string(),
                 // Line 1: short — this is what we'll select
                 "TARGET".to_string(),
             ],
-            &theme,
-        )
-        .with_position(PopupPosition::Fixed { x: 5, y: 3 })
-        .with_width(22) // inner width ~20 (borders take 2)
-        .with_max_height(10);
-
-        editor.active_state_mut().popups.show(popup);
+            (5, 3),
+            22, // inner width ~20 (borders take 2)
+            10,
+        ));
         editor.set_clipboard_for_test("".to_string());
     }
 
