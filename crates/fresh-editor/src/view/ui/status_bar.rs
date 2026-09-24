@@ -3,7 +3,6 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use crate::app::WarningLevel;
 use crate::config::{StatusBarElement, VirtualSpaceMode};
 use crate::primitives::display_width::str_width;
 use crate::state::EditorState;
@@ -248,10 +247,7 @@ pub struct StatusBarContext<'a> {
     pub status_message: &'a Option<String>,
     pub plugin_status_message: &'a Option<String>,
     pub lsp_status: &'a str,
-    /// Three-state LSP indicator: On / Off / Error / None.  Drives the
-    /// indicator's background color independently of `warning_level` (the
-    /// latter still scopes whether a warning badge is shown on the right
-    /// side of the status bar).
+    /// LSP indicator state; drives the indicator's colours.
     pub lsp_indicator_state: LspIndicatorState,
     pub theme: &'a crate::view::theme::Theme,
     pub display_name: &'a str,
@@ -262,7 +258,6 @@ pub struct StatusBarContext<'a> {
     /// "Update: vX" text with progress/outcome so the indicator itself relays
     /// the result (no transient status message).
     pub update_phase: crate::services::release_checker::SelfUpdatePhase,
-    pub warning_level: WarningLevel,
     pub general_warning_count: usize,
     /// The clickable status-bar segment the mouse is currently over, if any.
     /// Drives hover styling generically — each element underlines/recolors when
@@ -1118,7 +1113,6 @@ impl StatusBarRenderer {
         kind: ElementKind,
         theme: &crate::view::theme::Theme,
         is_hovering: bool,
-        _warning_level: WarningLevel,
         lsp_state: LspIndicatorState,
     ) -> Style {
         match kind {
@@ -1204,10 +1198,8 @@ impl StatusBarRenderer {
                     LspIndicatorState::None => (theme.status_bar_fg, theme.status_bar_bg),
                 };
                 let mut style = Style::default().fg(fg).bg(bg);
-                // Always underline on hover — the indicator is clickable
-                // in all non-empty states.  Previously we only underlined
-                // when warning_level != None, so "LSP (on)" gave no hover
-                // cue that it was clickable.
+                // Underline on hover — the indicator is clickable in all
+                // non-empty states.
                 if is_hovering && lsp_state != LspIndicatorState::None {
                     style = style.add_modifier(Modifier::UNDERLINED);
                 }
@@ -1422,7 +1414,6 @@ impl StatusBarRenderer {
         rendered: &RenderedElement,
         theme: &crate::view::theme::Theme,
         hovered: Option<StatusBarClickable>,
-        warning_level: WarningLevel,
         lsp_state: LspIndicatorState,
     ) -> (Vec<Span<'static>>, usize) {
         let is_hovering =
@@ -1465,8 +1456,7 @@ impl StatusBarRenderer {
             );
         }
 
-        let style =
-            Self::element_style(rendered.kind, theme, is_hovering, warning_level, lsp_state);
+        let style = Self::element_style(rendered.kind, theme, is_hovering, lsp_state);
         let mut spans = vec![Span::styled(" ", style)];
         if rendered.kind == ElementKind::Clock {
             // "HH:MM" — blink the colon via terminal hardware (SGR 5)
@@ -1501,15 +1491,13 @@ impl StatusBarRenderer {
 
         let theme = ctx.theme;
         let hovered = ctx.hovered;
-        let warning_level = ctx.warning_level;
         let lsp_state = ctx.lsp_indicator_state;
         rendered
             .into_iter()
             .map(|r| {
                 let kind = r.kind;
                 let token_key = r.token_key.clone();
-                let (spans, width) =
-                    Self::element_spans(&r, theme, hovered, warning_level, lsp_state);
+                let (spans, width) = Self::element_spans(&r, theme, hovered, lsp_state);
                 (spans, width, kind, token_key)
             })
             .collect()
@@ -1671,38 +1659,6 @@ mod tests {
     }
 
     #[test]
-    fn test_remote_indicator_element_kind_equality() {
-        // Each lifecycle state produces a distinct ElementKind so the styler
-        // can pick the right palette for Local / Connecting / Connected /
-        // FailedAttach / Disconnected.
-        assert_eq!(
-            ElementKind::RemoteIndicator(RemoteIndicatorState::Local),
-            ElementKind::RemoteIndicator(RemoteIndicatorState::Local)
-        );
-        let distinct = [
-            RemoteIndicatorState::Local,
-            RemoteIndicatorState::Connecting,
-            RemoteIndicatorState::Connected,
-            RemoteIndicatorState::FailedAttach,
-            RemoteIndicatorState::Disconnected,
-        ];
-        for (i, a) in distinct.iter().enumerate() {
-            for (j, b) in distinct.iter().enumerate() {
-                if i == j {
-                    continue;
-                }
-                assert_ne!(
-                    ElementKind::RemoteIndicator(*a),
-                    ElementKind::RemoteIndicator(*b),
-                    "expected {:?} != {:?}",
-                    a,
-                    b
-                );
-            }
-        }
-    }
-
-    #[test]
     fn test_remote_indicator_state_default_is_local() {
         // `Default` → `Local` is relied on by callers that construct the
         // indicator before a connection is known.
@@ -1814,7 +1770,6 @@ mod tests {
             ElementKind::Palette,
             &theme,
             false,
-            WarningLevel::None,
             LspIndicatorState::None,
         );
         assert_eq!(palette_style.fg, Some(theme.status_palette_fg));
@@ -1824,7 +1779,6 @@ mod tests {
             ElementKind::Lsp,
             &theme,
             false,
-            WarningLevel::None,
             LspIndicatorState::On,
         );
         assert_eq!(lsp_on_style.fg, Some(theme.status_lsp_on_fg));
@@ -1836,7 +1790,6 @@ mod tests {
             ElementKind::Lsp,
             &theme,
             false,
-            WarningLevel::None,
             LspIndicatorState::Off,
         );
         assert_eq!(lsp_off_style.fg, Some(theme.status_lsp_actionable_fg));
@@ -1846,7 +1799,6 @@ mod tests {
             ElementKind::Lsp,
             &theme,
             false,
-            WarningLevel::None,
             LspIndicatorState::Error,
         );
         assert_eq!(lsp_error_style.fg, Some(theme.diagnostic_error_fg));

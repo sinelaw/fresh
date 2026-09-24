@@ -1402,12 +1402,6 @@ impl Editor {
 
     /// Where layout put each clickable status-bar element, read off the
     /// retained tree.
-    ///
-    /// This replaces `status_bar_layout_now`, which re-ran the whole placement
-    /// walk on live state every time a pointer event or a popup anchor needed
-    /// a column — a second derivation that could disagree with the painted one
-    /// whenever the state behind it had moved. The tree that painted is the
-    /// one answering.
     pub(crate) fn status_bar_clickable_rects_now(
         &self,
     ) -> Vec<(
@@ -3414,14 +3408,6 @@ impl Editor {
         out
     }
 
-    /// Returns the cell the sidebar wants the hardware caret parked on (its
-    /// selected row) when it owns the keyboard, for the caller to commit at
-    /// the end of the draw. See `view::shell::file_explorer`.
-    /// Render the status bar into `area`, unless it's toggled off or a
-    /// suggestions / file-browser popup is occupying the bottom row. The
-    /// bar's inputs are gathered by [`Self::with_status_bar_ctx`], shared
-    /// with the event-time layout derivation
-    /// ([`Self::status_bar_layout_now`]).
     /// Record the status bar's theme-key provenance for the inspector.
     ///
     /// `StatusBarRenderer::render_status_bar` placed every element, drew it,
@@ -3494,14 +3480,8 @@ impl Editor {
 
     /// Gather every status-bar input from live editor state and run `f`
     /// with the assembled [`crate::view::ui::status_bar::StatusBarContext`]
-    /// and the user's status-bar config. Shared by the paint pass
-    /// ([`Self::render_status_bar_row`]) and the event-time layout
-    /// derivation ([`Self::status_bar_layout_now`]) so both see the SAME
-    /// strings — the bar's geometry is content-dependent (rendered label
-    /// widths: encoding, LSP state, cursor position, messages), so any
-    /// drift between the two would move the clickable segments. Returns
-    /// `None` when the active buffer is missing from the window's buffer
-    /// map (teardown).
+    /// and the user's status-bar config. Returns `None` when the active
+    /// buffer is missing from the window's buffer map (teardown).
     pub(crate) fn with_status_bar_ctx<R>(
         &mut self,
         f: impl FnOnce(
@@ -3566,40 +3546,10 @@ impl Editor {
         let update_available = self.latest_version().map(|v| v.to_string());
         let self_update_phase = self.self_update_phase();
 
-        // Get warning level for colored indicator (respects config setting)
-        // LSP warning level is scoped to the current buffer's language
-        let (warning_level, general_warning_count) = if self.config.warnings.show_status_indicator {
-            let lsp_level = {
-                use crate::services::async_bridge::LspServerStatus;
-                let mut level = WarningLevel::None;
-                for ((lang, _), status) in &self.active_window().lsp_server_statuses {
-                    if lang == &current_language {
-                        match status {
-                            LspServerStatus::Error => {
-                                level = WarningLevel::Error;
-                                break;
-                            }
-                            LspServerStatus::Starting
-                            | LspServerStatus::Initializing
-                            // A server that stopped answering requests is
-                            // a warning, not a healthy "on" (issue #2197).
-                            | LspServerStatus::Unresponsive
-                                if level != WarningLevel::Error =>
-                            {
-                                level = WarningLevel::Warning;
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-                level
-            };
-            (
-                lsp_level,
-                self.active_window().warning_domains.general.count,
-            )
+        let general_warning_count = if self.config.warnings.show_status_indicator {
+            self.active_window().warning_domains.general.count
         } else {
-            (WarningLevel::None, 0)
+            0
         };
 
         // Which clickable status-bar segment (if any) the mouse is over —
@@ -3692,7 +3642,6 @@ impl Editor {
                     chord_state: &chord_state_cloned,
                     update_available: update_available.as_deref(),
                     update_phase: self_update_phase,
-                    warning_level,
                     general_warning_count,
                     hovered: status_bar_hovered,
                     remote_connection: remote_connection.as_deref(),

@@ -113,7 +113,7 @@ pub fn item_key(side: Side, index: usize) -> Key {
     Key::Pair(tag.into(), index as u64)
 }
 
-fn element(bar: &StatusBar, it: &Item, key: Key, side: Side) -> Node<UiMsg> {
+fn element(it: &Item, key: Key, side: Side) -> Node<UiMsg> {
     let runs = text_runs(
         it.runs
             .iter()
@@ -137,7 +137,6 @@ fn element(bar: &StatusBar, it: &Item, key: Key, side: Side) -> Node<UiMsg> {
         Side::Left => yields_last::LEFT,
         Side::Right => yields_last::RIGHT,
     };
-    let _ = bar;
     // What a press on this element means: a built-in indicator names its id, a
     // plugin token names its registry key, and anything else is inert — still
     // keyed, because the web projection and the theme inspector read every
@@ -263,7 +262,7 @@ fn build(bar: &StatusBar) -> Node<UiMsg> {
         if i > 0 {
             kids.push(separator(bar, Side::Left));
         }
-        kids.push(element(bar, it, item_key(Side::Left, i), Side::Left));
+        kids.push(element(it, item_key(Side::Left, i), Side::Left));
     }
     // The gap, which closes completely on a bar too narrow for both sides.
     kids.push(row().flex(1));
@@ -271,7 +270,7 @@ fn build(bar: &StatusBar) -> Node<UiMsg> {
         if i > 0 {
             kids.push(separator(bar, Side::Right));
         }
-        kids.push(element(bar, it, item_key(Side::Right, i), Side::Right));
+        kids.push(element(it, item_key(Side::Right, i), Side::Right));
     }
     // **The row claims its own gaps.** Every element answers its own press,
     // and between them is the flexible gap and the padding either side of a
