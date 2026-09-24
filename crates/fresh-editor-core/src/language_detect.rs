@@ -95,61 +95,14 @@ fn detect_language_by_config(
     None
 }
 
-/// How much filesystem I/O the `.h` tree probe may spend, decided by the
-/// filesystem that owns the file rather than by a flag a caller could get
-/// wrong.
-///
-/// This exists because the two backends have costs that differ by four
-/// orders of magnitude for the *same* trait call. `StdFileSystem`'s
-/// `read_dir` / `metadata` are microsecond syscalls. `RemoteFileSystem`
-/// implements the whole sync `FileSystem` surface with
-/// `AgentChannel::request_blocking` — one blocking SSH round trip each,
-/// on the editor thread. Language detection runs on the file-open path, so
-/// the unbudgeted probe (one `ls` plus up to eleven `stat`s plus a read)
-/// would be up to thirteen serialized round trips before a remote `.h`
-/// could be displayed, and the editor loop is single-threaded: a stalled
-/// link would freeze the UI for the request timeout on each one. (The same
-/// hazard is called out in `services/remote/filesystem.rs`, where the
-/// `$HOME`/temp-dir lookups are cached specifically to keep blocking
-/// requests off the editor thread.)
-///
-/// So the remote budget buys only the decisive signal — the single sibling
-/// listing, which is one round trip and covers the ordinary
-/// `widget.h`/`widget.cpp` layout that motivated #3009 — and declines the
-/// ancestor walk. A remote header under an `include/` tree with sources
-/// elsewhere therefore still reads as C: strictly better than today's
-/// unconditional no-op, and it does not trade a highlighting nicety for a
-/// frozen editor. Carrying the depth as data (rather than an
-/// `if is_remote` inside the loop) keeps "walk ten ancestors over SSH"
-/// unrepresentable instead of merely unreached.
-#[derive(Clone, Copy)]
-struct ProbeBudget {
-    /// How many directories the `compile_commands.json` walk may visit,
-    /// counting from the header's own directory upward. `0` disables the
-    /// walk outright, so no request is issued at all.
-    compile_commands_dirs: u32,
-}
+/// The build database a C++ tree is recognised by.
+const COMPILE_COMMANDS: &str = "compile_commands.json";
 
-impl ProbeBudget {
-    /// Directories visited on a local filesystem: the header's own plus
-    /// ten ancestors — deep enough for the fmt / Chromium / LLVM / Qt
-    /// layouts where the header sits several levels under `include/`.
-    const LOCAL_COMPILE_COMMANDS_DIRS: u32 = 11;
-
-    fn for_filesystem(fs: &dyn crate::model::filesystem::FileSystem) -> Self {
-        // `remote_connection_info` is the trait's own locality signal:
-        // `Some("user@host")` exactly for filesystems whose sync methods
-        // are blocking round trips.
-        let compile_commands_dirs = if fs.remote_connection_info().is_some() {
-            0
-        } else {
-            Self::LOCAL_COMPILE_COMMANDS_DIRS
-        };
-        Self {
-            compile_commands_dirs,
-        }
-    }
-}
+/// Directories the `compile_commands.json` search may examine, counting the
+/// header's own: deep enough for the fmt / Chromium / LLVM / Qt layouts where
+/// a header sits several levels under `include/` while the build DB sits at
+/// the project root.
+const MAX_ANCESTOR_DIRS: usize = 11;
 
 /// Filesystem probe: does this header sit inside something that looks like
 /// a C++ project? Two signals, both conservative:
@@ -165,9 +118,9 @@ impl ProbeBudget {
 ///     extension (`c++`, `.cpp`, `.cc`, `.cxx`, `.C` ). This still covers
 ///     the fmt / Chromium / LLVM / Qt-style layouts where the header
 ///     lives deep under `include/` while sources sit in `src/` at the
-///     project root. This second signal is budgeted away on a remote
-///     filesystem, where each level would be a blocking round trip —
-///     see [`ProbeBudget`].
+///     project root. The climb goes through [`FileSystem::find_up`], so a
+///     remote host answers it in one request rather than a round trip per
+///     level — local and remote run the same logic.
 ///
 /// All access goes through `fs` — the filesystem that owns the header —
 /// so the probe answers about the host the file actually lives on. Reading
@@ -186,7 +139,8 @@ impl ProbeBudget {
 /// LSP server spawn/initialize, `LspManager` holds no filesystem, and
 /// `resolve_root_uri` deliberately walks *host* paths before applying
 /// `path_translation` for devcontainers — so "which filesystem" is a real
-/// design question there, not a mechanical substitution.
+/// design question there, not a mechanical substitution. (It is now a
+/// smaller one: `find_up` is exactly the primitive it needs.)
 fn header_in_cpp_tree(
     path: &std::path::Path,
     fs: &dyn crate::model::filesystem::FileSystem,
@@ -194,8 +148,6 @@ fn header_in_cpp_tree(
     let Some(start_dir) = path.parent() else {
         return false;
     };
-    let budget = ProbeBudget::for_filesystem(fs);
-
     // 1. Sibling scan in the header's own directory: one shallow,
     //    non-recursive listing, and the decisive signal.
     if let Ok(entries) = fs.read_dir(start_dir) {
@@ -212,25 +164,18 @@ fn header_in_cpp_tree(
         }
     }
 
-    // 2. Walk up looking for compile_commands.json, and only promote if
-    //    the file actually carries a C++ marker — CMake emits it for
-    //    pure-C builds too. `budget.compile_commands_dirs` is 0 on a
-    //    remote filesystem, which skips this loop entirely without ever
-    //    issuing a request (see `ProbeBudget`).
-    let mut current = Some(start_dir);
-    let mut visited = 0u32;
-    while let Some(dir) = current {
-        if visited >= budget.compile_commands_dirs {
-            break;
-        }
-        if compile_commands_has_cpp_marker(&dir.join("compile_commands.json"), fs) {
-            return true;
-        }
-        visited += 1;
-        current = dir.parent();
-    }
-
-    false
+    // 2. Walk up looking for compile_commands.json, and only promote if the
+    //    file actually carries a C++ marker — CMake emits it for pure-C
+    //    builds too, so an outer build DB can still be the answer when the
+    //    nearest one does not qualify. `find_up` answers the whole climb in
+    //    one call, which a remote filesystem serves with a single request
+    //    rather than a round trip per level.
+    let Ok(candidates) = fs.find_up(start_dir, &[COMPILE_COMMANDS], Some(MAX_ANCESTOR_DIRS)) else {
+        return false;
+    };
+    candidates
+        .iter()
+        .any(|dir| compile_commands_has_cpp_marker(&dir.join(COMPILE_COMMANDS), fs))
 }
 
 /// Returns true when `compile_commands.json` exists at `path` and contains

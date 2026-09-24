@@ -364,6 +364,42 @@ def cmd_exists(id, p):
         send(id, r={"exists": False})
 
 
+def cmd_find_up(id, p):
+    """Ancestors of a path that directly contain one of `markers`, nearest first.
+
+    Answers the whole "climb to the project root" question in one exchange.
+    Done client-side it would be a stat per directory per marker, and each of
+    those is a network round trip on the editor's UI thread.
+    """
+    try:
+        path = validate_path(p["path"])
+    except (ValueError, OSError):
+        send(id, r={"dirs": []})
+        return
+
+    markers = p.get("markers") or []
+    max_dirs = p.get("max_dirs")
+    dirs = []
+    visited = 0
+    current = path
+
+    while max_dirs is None or visited < max_dirs:
+        try:
+            if any(os.path.exists(os.path.join(current, m)) for m in markers):
+                dirs.append(current)
+        except OSError:
+            # Unreadable directory: skip it, keep climbing. "What we could
+            # see" is the contract, same as the local implementation.
+            pass
+        visited += 1
+        parent = os.path.dirname(current)
+        if parent == current:
+            break
+        current = parent
+
+    send(id, r={"dirs": dirs})
+
+
 def cmd_info(id, p):
     """Get system info (home directory, cwd, temp directory, etc.)."""
     import tempfile
@@ -740,6 +776,7 @@ METHODS = {
     "patch": cmd_patch,
     "count_lf": cmd_count_lf,
     "exists": cmd_exists,
+    "find_up": cmd_find_up,
     "info": cmd_info,
     "search_file": cmd_search_file,
     "exec": cmd_exec,

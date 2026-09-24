@@ -289,10 +289,14 @@ mod tests {
         dirs: HashMap<PathBuf, Vec<String>>,
         /// File path → contents.
         files: HashMap<PathBuf, Vec<u8>>,
-        /// `Some(..)` makes this look like an SSH filesystem to
-        /// `ProbeBudget`, exactly as `RemoteFileSystem` does.
+        /// `Some(..)` makes this look like an SSH filesystem, and makes it
+        /// serve `find_up` in one server-side call the way `RemoteFileSystem`
+        /// does — so a test can count what a real remote host would be asked.
         connection: Option<String>,
         ops: AtomicUsize,
+        /// How many times `find_up` was called: the round-trip count a
+        /// remote host would see for the ancestor search.
+        find_up_calls: AtomicUsize,
     }
 
     impl FakeTree {
@@ -302,11 +306,12 @@ mod tests {
                 files: HashMap::new(),
                 connection: None,
                 ops: AtomicUsize::new(0),
+                find_up_calls: AtomicUsize::new(0),
             }
         }
 
-        /// Mark this filesystem as remote, so the probe budgets it like an
-        /// SSH host (see `ProbeBudget` in `services/lsp/manager.rs`).
+        /// Mark this filesystem as remote: it answers `find_up` in a single
+        /// call, as `RemoteFileSystem` does with one agent request.
         fn remote(mut self) -> Self {
             self.connection = Some("user@fake-host".to_string());
             self
@@ -329,6 +334,10 @@ mod tests {
 
         fn ops(&self) -> usize {
             self.ops.load(Ordering::SeqCst)
+        }
+
+        fn find_up_calls(&self) -> usize {
+            self.find_up_calls.load(Ordering::SeqCst)
         }
 
         fn count_op(&self) {
@@ -465,6 +474,44 @@ mod tests {
             on_entry: &mut dyn FnMut(WalkEntry<'_>) -> bool,
         ) -> io::Result<()> {
             NoopFileSystem.walk(root, opts, cancel, on_entry)
+        }
+        /// A remote fake answers the whole climb in one call, like the SSH
+        /// filesystem's single `find_up` request; a local fake falls through
+        /// to the trait's per-directory default. Either way the result is the
+        /// same set of directories — that parity is the point of the
+        /// primitive, and `find_up_calls` lets a test hold the remote side to
+        /// exactly one round trip.
+        fn find_up(
+            &self,
+            start: &Path,
+            markers: &[&str],
+            max_dirs: Option<usize>,
+        ) -> io::Result<Vec<PathBuf>> {
+            self.find_up_calls.fetch_add(1, Ordering::SeqCst);
+            // Remote: the host does the climbing, so no per-directory op is
+            // charged. Local: charge one op per directory, as the trait's
+            // default does by calling `exists`.
+            let remote = self.connection.is_some();
+            let mut found = Vec::new();
+            let mut current = Some(start);
+            let mut visited = 0usize;
+            while let Some(dir) = current {
+                if max_dirs.is_some_and(|max| visited >= max) {
+                    break;
+                }
+                let hit = markers.iter().any(|m| {
+                    if !remote {
+                        self.count_op();
+                    }
+                    self.files.contains_key(&dir.join(m))
+                });
+                if hit {
+                    found.push(dir.to_path_buf());
+                }
+                visited += 1;
+                current = dir.parent();
+            }
+            Ok(found)
         }
     }
 
@@ -661,15 +708,14 @@ mod tests {
         assert_eq!(detected.ts_language, Some(Language::C));
     }
 
-    /// A remote filesystem's sync methods are blocking agent round trips on
-    /// the single-threaded editor loop, so the probe spends exactly one on
-    /// the file-open path: the sibling listing. The ten-deep
-    /// `compile_commands.json` ancestor walk is not affordable there and is
-    /// budgeted away — a remote header under `include/` stays C rather than
-    /// costing up to a dozen serialized round trips before the file can be
-    /// shown.
+    /// A header under `include/` whose build DB sits at the project root is
+    /// detected the same over SSH as locally — and the ancestor climb costs
+    /// the remote host a single request, not one per level. A remote
+    /// filesystem's sync calls are blocking round trips on the
+    /// single-threaded editor loop, and this runs on the file-open path, so
+    /// the round-trip count is the property worth pinning.
     #[test]
-    fn test_remote_probe_spends_one_op_and_skips_ancestor_walk() {
+    fn test_remote_ancestor_search_is_one_round_trip() {
         let fs = FakeTree::new()
             .remote()
             .file("/proj/include/widget.h", "")
@@ -688,17 +734,26 @@ mod tests {
             &fs,
         );
 
-        assert_eq!(detected.name, "c", "remote budget skips the ancestor walk");
+        assert_eq!(
+            detected.name, "cpp",
+            "a remote header in a C++ tree resolves exactly as a local one does"
+        );
+        assert_eq!(
+            fs.find_up_calls(),
+            1,
+            "the whole ancestor climb must be one server-side call"
+        );
+        // The listing, plus the metadata + read of the one build DB found.
         assert_eq!(
             fs.ops(),
-            1,
-            "exactly one filesystem op (the sibling listing) may reach a remote host"
+            3,
+            "no per-directory op may reach a remote host during the climb"
         );
     }
 
-    /// The mirror of the budget test: the identical tree on a *local*
-    /// filesystem still walks ancestors and finds the C++ marker, so
-    /// budgeting the remote path costs local users nothing.
+    /// The mirror: the identical tree on a *local* filesystem reaches the
+    /// same answer through the trait's per-directory default, so the remote
+    /// override is an optimisation rather than a second behaviour.
     #[test]
     fn test_local_probe_still_walks_ancestors_for_compile_commands() {
         let fs = FakeTree::new().file("/proj/include/widget.h", "").file(
