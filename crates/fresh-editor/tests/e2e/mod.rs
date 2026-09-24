@@ -138,6 +138,7 @@ pub mod issue_3150_block_selection_offset;
 pub mod issue_3189_multi_workspace_quit;
 pub mod issue_3192_scrollbar_drag_cursor;
 pub mod issue_3218_cjk_tab_marker;
+pub mod issue_3294_wrap_column_cursor_visible;
 pub mod issue_3329_drag_in_scroll_margin;
 pub mod issue_3351_click_past_one_char_line;
 pub mod issue_623_prompt_dropdown_scrollbar;
