@@ -1615,6 +1615,9 @@ pub enum ChordResolution {
     NoMatch,
 }
 
+/// Multi-key chords, per context: the key sequence and what it runs.
+type ChordBindings = HashMap<KeyContext, HashMap<Vec<(KeyCode, KeyModifiers)>, Action>>;
+
 /// Resolves key events to actions based on configuration
 #[derive(Clone)]
 pub struct KeybindingResolver {
@@ -1631,13 +1634,13 @@ pub struct KeybindingResolver {
 
     /// Chord bindings (multi-key sequences)
     /// Maps context -> sequence -> action
-    chord_bindings: HashMap<KeyContext, HashMap<Vec<(KeyCode, KeyModifiers)>, Action>>,
+    chord_bindings: ChordBindings,
 
     /// Default chord bindings for each context
-    default_chord_bindings: HashMap<KeyContext, HashMap<Vec<(KeyCode, KeyModifiers)>, Action>>,
+    default_chord_bindings: ChordBindings,
 
     /// Plugin default chord bindings (for mode chord bindings from defineMode)
-    plugin_chord_defaults: HashMap<KeyContext, HashMap<Vec<(KeyCode, KeyModifiers)>, Action>>,
+    plugin_chord_defaults: ChordBindings,
 
     /// Entries of `default_bindings` that were not written by the keymap
     /// itself but synthesized by [`terminal_key_equivalents`] (e.g. the
@@ -2346,10 +2349,7 @@ impl KeybindingResolver {
         }
     }
 
-    fn chord_map(
-        &self,
-        source: BindingSource,
-    ) -> &HashMap<KeyContext, HashMap<Vec<(KeyCode, KeyModifiers)>, Action>> {
+    fn chord_map(&self, source: BindingSource) -> &ChordBindings {
         match source {
             BindingSource::Custom => &self.chord_bindings,
             BindingSource::Default => &self.default_chord_bindings,
@@ -4784,8 +4784,10 @@ mod tests {
         // keymap, which deliberately binds Alt+F to word movement in Normal —
         // that context-specific binding outranks the File mnemonic there, so
         // the mnemonic assertions below only hold on the default keymap.
-        let mut baseline = Config::default();
-        baseline.active_keybinding_map = "default".into();
+        let baseline = Config {
+            active_keybinding_map: "default".into(),
+            ..Default::default()
+        };
 
         // Baseline: with no user override, Alt+H is the Help menu mnemonic
         // (a default *global* binding).
@@ -4902,8 +4904,10 @@ mod tests {
     fn test_chord_prefix_user_single_key_outranks_keymap() {
         use crate::config::Keybinding;
 
-        let mut baseline = Config::default();
-        baseline.active_keybinding_map = "emacs".into();
+        let baseline = Config {
+            active_keybinding_map: "emacs".into(),
+            ..Default::default()
+        };
         let alt_g = KeyEvent::new(KeyCode::Char('g'), KeyModifiers::ALT);
         let alt_g_single = |action: &str, when: &str| -> Keybinding {
             serde_json::from_value(serde_json::json!({
@@ -4986,8 +4990,10 @@ mod tests {
     fn test_chord_prefix_released_by_noop_override() {
         use crate::config::Keybinding;
 
-        let mut baseline = Config::default();
-        baseline.active_keybinding_map = "emacs".into();
+        let baseline = Config {
+            active_keybinding_map: "emacs".into(),
+            ..Default::default()
+        };
         let alt_g = KeyEvent::new(KeyCode::Char('g'), KeyModifiers::ALT);
         let g = KeyEvent::new(KeyCode::Char('g'), KeyModifiers::NONE);
         let alt_g_state = [(KeyCode::Char('g'), KeyModifiers::ALT)];
@@ -5103,8 +5109,10 @@ mod tests {
     fn test_unbind_removes_keymap_chord_and_releases_prefix() {
         use crate::config::Keybinding;
 
-        let mut config = Config::default();
-        config.active_keybinding_map = "emacs".into();
+        let mut config = Config {
+            active_keybinding_map: "emacs".into(),
+            ..Default::default()
+        };
         let alt_g = KeyEvent::new(KeyCode::Char('g'), KeyModifiers::ALT);
         let g = KeyEvent::new(KeyCode::Char('g'), KeyModifiers::NONE);
         let alt_g_state = [(KeyCode::Char('g'), KeyModifiers::ALT)];
@@ -5152,8 +5160,10 @@ mod tests {
     /// firing from the terminal's own spelling of it.
     #[test]
     fn test_unbind_takes_terminal_aliases_along() {
-        let mut config = Config::default();
-        config.active_keybinding_map = "default".into();
+        let mut config = Config {
+            active_keybinding_map: "default".into(),
+            ..Default::default()
+        };
         let ctrl_slash = KeyEvent::new(KeyCode::Char('/'), KeyModifiers::CONTROL);
         let ctrl_7 = KeyEvent::new(KeyCode::Char('7'), KeyModifiers::CONTROL);
 
@@ -5189,8 +5199,10 @@ mod tests {
     fn test_unbind_outlives_plugin_registration_and_reload() {
         let ctx = KeyContext::Mode("nav".to_string());
         let j = KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE);
-        let mut removed = Config::default();
-        removed.active_keybinding_map = "default".into();
+        let mut removed = Config {
+            active_keybinding_map: "default".into(),
+            ..Default::default()
+        };
         removed.keybindings.push(
             serde_json::from_value(serde_json::json!({
                 "key": "j", "action": "unbind", "when": "mode:nav"
@@ -5205,8 +5217,10 @@ mod tests {
             "a plugin must not re-register a removed key"
         );
 
-        let mut pristine = Config::default();
-        pristine.active_keybinding_map = "default".into();
+        let pristine = Config {
+            active_keybinding_map: "default".into(),
+            ..Default::default()
+        };
         let mut resolver = KeybindingResolver::new(&pristine);
         resolver.load_plugin_default(ctx.clone(), j.code, j.modifiers, Action::MoveDown);
         assert!(resolver.has_explicit_binding(&j, &ctx));
@@ -5226,8 +5240,10 @@ mod tests {
     fn test_default_prompt_bindings_outrank_menu_mnemonics() {
         // Pin the keymap so the assertions don't depend on the host OS
         // (macOS defaults to the macos keymap).
-        let mut config = Config::default();
-        config.active_keybinding_map = "default".into();
+        let config = Config {
+            active_keybinding_map: "default".into(),
+            ..Default::default()
+        };
         let resolver = KeybindingResolver::new(&config);
 
         // Alt+G: `live_grep_toggle_regex` (prompt) vs `menu_open Go` (global).
@@ -5272,8 +5288,10 @@ mod tests {
         // Pin the keymap: on macOS `Config::default()` selects the macos
         // keymap, whose own `normal` Alt+F word-movement binding would
         // resolve here (correctly) instead of Action::None.
-        let mut baseline = Config::default();
-        baseline.active_keybinding_map = "default".into();
+        let mut baseline = Config {
+            active_keybinding_map: "default".into(),
+            ..Default::default()
+        };
         baseline.editor.menu_bar_mnemonics = false;
 
         let resolver = KeybindingResolver::new(&baseline);
@@ -5612,8 +5630,10 @@ mod tests {
     #[test]
     fn test_builtin_keymap_bindings_are_reachable() {
         for map_name in crate::config::KeybindingMapName::BUILTIN_OPTIONS {
-            let mut config = Config::default();
-            config.active_keybinding_map = (*map_name).into();
+            let config = Config {
+                active_keybinding_map: (*map_name).into(),
+                ..Default::default()
+            };
             let resolver = KeybindingResolver::new(&config);
 
             for (context, bindings) in &resolver.default_bindings {

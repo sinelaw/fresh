@@ -227,9 +227,11 @@ mod tests {
 
     fn configured_for(lang: &str, command: &str) -> HashMap<String, LspLanguageConfig> {
         let mut m = HashMap::new();
-        let mut server = LspServerConfig::default();
-        server.command = command.to_string();
-        server.enabled = true;
+        let server = LspServerConfig {
+            command: command.to_string(),
+            enabled: true,
+            ..Default::default()
+        };
         m.insert(
             lang.to_string(),
             LspLanguageConfig::Single(Box::new(server)),
@@ -362,9 +364,11 @@ mod tests {
     #[test]
     fn off_dismissed_when_all_servers_disabled_in_config() {
         let mut config = HashMap::new();
-        let mut server = LspServerConfig::default();
-        server.command = "rust-analyzer".to_string();
-        server.enabled = false;
+        let server = LspServerConfig {
+            command: "rust-analyzer".to_string(),
+            enabled: false,
+            ..Default::default()
+        };
         config.insert(
             "rust".to_string(),
             LspLanguageConfig::Single(Box::new(server)),

@@ -21,6 +21,7 @@ mod composite_buffer_actions;
 pub mod confirm_dialog;
 mod dabbrev_actions;
 mod diagnostic_jumps;
+#[cfg(feature = "plugins")]
 pub(crate) mod diff_baselines;
 mod editor_accessors;
 mod editor_init;
@@ -474,6 +475,7 @@ pub struct PerfCounters {
 ///
 /// An `AuthorityPayload` can only describe a local filesystem, so a remote
 /// machine is reached by borrowing the connection of a window attached to it.
+#[cfg_attr(not(feature = "plugins"), allow(dead_code))]
 pub(crate) enum OpenMachineKind {
     /// Built from a plugin payload; a reference into the connection registry.
     Owned(Arc<crate::services::authority::Connection>),
@@ -481,6 +483,7 @@ pub(crate) enum OpenMachineKind {
     Window(fresh_core::WindowId),
 }
 
+#[cfg_attr(not(feature = "plugins"), allow(dead_code))]
 pub(crate) struct OpenMachine {
     pub(crate) kind: OpenMachineKind,
     /// Set when the handle is closed. Off-loop work still running against the
@@ -489,6 +492,7 @@ pub(crate) struct OpenMachine {
 }
 
 impl OpenMachine {
+    #[cfg(feature = "plugins")]
     pub(crate) fn new(kind: OpenMachineKind) -> Self {
         Self {
             kind,
@@ -504,8 +508,10 @@ pub struct Editor {
     pub(crate) connections: crate::services::authority::ConnectionRegistry,
     /// Machines a plugin opened with `openMachine`, by handle id. Held until
     /// the plugin closes the handle, so a scan connects once rather than per call.
+    #[cfg_attr(not(feature = "plugins"), allow(dead_code))]
     pub(crate) open_machines: std::collections::HashMap<u64, OpenMachine>,
     /// Source of `open_machines` keys. Starts at 1 so 0 can mean "active window" on the wire.
+    #[cfg_attr(not(feature = "plugins"), allow(dead_code))]
     pub(crate) next_machine_id: u64,
     /// See [`PerfCounters`]. Cheap to maintain (two increments on a path
     /// that is already copying), and the only way an assertion can tell a
@@ -570,10 +576,12 @@ pub struct Editor {
     config: Arc<Config>,
 
     /// Clone of `config` captured at the last plugin-snapshot refresh.
+    #[cfg_attr(not(feature = "plugins"), allow(dead_code))]
     config_snapshot_anchor: Arc<Config>,
 
     /// Serialized JSON of `*self.config` as of the last time
     /// `ptr_eq(&self.config, &self.config_snapshot_anchor)` was false.
+    #[cfg_attr(not(feature = "plugins"), allow(dead_code))]
     config_cached_json: Arc<serde_json::Value>,
 
     /// Cached raw user config (for plugins, avoids re-reading file on every frame).
@@ -1573,11 +1581,13 @@ pub(crate) const DOCK_PANEL_BUFFER_ID: BufferId = BufferId(usize::MAX - 1);
 /// `PanelSlot::Sidebar`.
 pub(crate) const SIDEBAR_PANEL_BUFFER_BASE: BufferId = BufferId(usize::MAX - 2);
 /// How many sidebar sections the sentinel range spans.
+#[cfg_attr(not(feature = "plugins"), allow(dead_code))]
 pub(crate) const SIDEBAR_PANEL_BUFFER_SPAN: usize = 256;
 /// The buffer id the overlay prompt's toolbar panel is registered against.
 /// No buffer has it: the toolbar is described in the prompt card's header
 /// band and never had a text projection to write anywhere. Below the sidebar
 /// sections' span, so it never names a section's buffer.
+#[cfg_attr(not(feature = "plugins"), allow(dead_code))]
 pub(crate) const PROMPT_TOOLBAR_BUFFER_ID: BufferId =
     BufferId(SIDEBAR_PANEL_BUFFER_BASE.0 - SIDEBAR_PANEL_BUFFER_SPAN - 1);
 
@@ -1616,7 +1626,7 @@ impl PanelSlot {
 // handlers, but they are matched throughout the shared widget runtime and
 // render/input code, so the enum itself stays un-gated. Suppress the
 // "never constructed" lint in plugin-less builds.
-#[cfg_attr(not(any(feature = "plugins", test)), allow(dead_code))]
+#[cfg_attr(not(feature = "plugins"), allow(dead_code))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PanelPlacement {
     /// Centered modal overlay sized by `width_pct`/`height_pct`

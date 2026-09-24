@@ -4560,6 +4560,7 @@ impl JsEditorApi {
     /// cursor-revealable decoration once — instead of rebuilding markers
     /// on every cursor move — is what keeps cursor movement free of
     /// marker churn (and of the cache invalidation it causes).
+    #[allow(clippy::too_many_arguments)]
     pub fn add_conceal(
         &self,
         buffer_id: u32,
@@ -4749,6 +4750,7 @@ impl JsEditorApi {
     /// It is drawn *inside* the `indent` columns rather than in addition to
     /// them, so a wrapped block quote can keep its `▌` down every row without
     /// shifting the text. `indent` grows to fit a prefix wider than it.
+    #[allow(clippy::too_many_arguments)]
     pub fn add_soft_break<'js>(
         &self,
         buffer_id: u32,

@@ -68,7 +68,6 @@ impl Editor {
             };
             let recovery_config = RecoveryConfig {
                 enabled: self.recovery_service.lock().unwrap().is_enabled(),
-                ..RecoveryConfig::default()
             };
             // Replace the shared service's contents in place — the
             // `Arc<Mutex>` is cloned into every window, so we must not

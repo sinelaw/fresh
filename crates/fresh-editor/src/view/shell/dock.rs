@@ -849,11 +849,10 @@ mod tests {
             .take_messages()
             .into_iter()
             .filter_map(|m| match m {
-                UiMsg::Ui(UiFact::WidgetFocus { slot, widget })
-                    if slot == super::super::widgets::Slot::Dock =>
-                {
-                    Some(widget)
-                }
+                UiMsg::Ui(UiFact::WidgetFocus {
+                    slot: super::super::widgets::Slot::Dock,
+                    widget,
+                }) => Some(widget),
                 _ => None,
             })
             .collect();

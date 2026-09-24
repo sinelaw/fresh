@@ -530,18 +530,19 @@ pub fn clear_key() -> fresh_ui::Key {
     fresh_ui::Key::Str("settings_clear_category".into())
 }
 
-/// The band the settings themselves are painted into.
-///
-/// The painter derived it by counting the header rows it had just drawn —
-/// `header_height = y - header_start_y`, then `available_height = area.height
-/// - header_height`. The header is a description now, so the band under it is
-/// layout's answer and this is the key to read it back by.
 /// One entry dialog's field window, re-exported so the host reads both
 /// windows through one module.
 pub fn entry_items_key(level: usize) -> fresh_ui::Key {
     super::entry::items_key(level)
 }
 
+/// The band the settings themselves are painted into.
+///
+/// The painter derived it by counting the header rows it had just drawn
+/// (`header_height = y - header_start_y`, then
+/// `available_height = area.height - header_height`). The header is a
+/// description now, so the band under it is layout's answer and this is the
+/// key to read it back by.
 pub fn items_key() -> fresh_ui::Key {
     fresh_ui::Key::Str("settings_items".into())
 }

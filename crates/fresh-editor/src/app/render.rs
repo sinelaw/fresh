@@ -614,10 +614,7 @@ impl Editor {
                         // the run's lead-in, which must not eat the viewport's
                         // line budget.
                         let mut lead_in = 0usize;
-                        loop {
-                            let Some((line_start, line_content)) = iter.next_line() else {
-                                break;
-                            };
+                        while let Some((line_start, line_content)) = iter.next_line() {
                             let byte_end = line_start + line_content.len();
                             walked_end = byte_end;
                             walked_bytes += line_content.len();
@@ -2929,7 +2926,7 @@ impl Editor {
                 .filter(|desc| {
                     desc.to_lowercase() != d.action_text.replace('_', " ").to_lowercase()
                 });
-            return Some(kb::Dialog::Edit(kb::Edit {
+            return Some(kb::Dialog::Edit(Box::new(kb::Edit {
                 title: match d.editing_index.is_some() {
                     true => t!("keybinding_editor.dialog_edit_title").to_string(),
                     false => t!("keybinding_editor.dialog_add_title").to_string(),
@@ -2991,7 +2988,7 @@ impl Editor {
                         suggestions: d.autocomplete_suggestions.clone(),
                         selected: d.autocomplete_selected,
                     }),
-            }));
+            })));
         }
 
         if e.showing_confirm_dialog {
@@ -3101,12 +3098,6 @@ impl Editor {
             max_height: size.height.saturating_sub(2),
         })
     }
-
-    /// Whether a file-explorer sidebar is showing, and if so how many columns
-    /// it wants and which side it sits on.
-    ///
-    /// A *decision*, not a layout: the shell turns this into rectangles (see
-    /// the frame layout at the top of `render`). Splitting the two is what let
 
     /// The sidebar's content THIS instant: its chrome, and one row per visible
     /// tree node.
@@ -6782,8 +6773,11 @@ mod dock_reservation_tests {
         let rule = DockWidthRule::default().width(COLS);
         let switched_off = orchestrator_config(true, serde_json::json!({ "autoOpenDock": false }));
         let disabled = orchestrator_config(false, serde_json::Value::Null);
+        // The case, the plugin's manifest, the config, whether the editor
+        // runs in orchestrator mode (a bare `fresh`), and the width expected.
+        type Case<'a> = (&'a str, Option<&'a str>, Config, bool, Option<u16>);
         #[rustfmt::skip]
-        let cases: [(&str, Option<&str>, Config, bool, Option<u16>); 7] = [
+        let cases: [Case; 7] = [
             ("a declared dock, at the rule's width", Some(DECLARES_DOCK), Config::default(), false, Some(rule)),
             ("no manifest", None, Config::default(), false, None),
             ("a manifest with no dock", Some(r#"{"chrome":{}}"#), Config::default(), false, None),

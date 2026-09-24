@@ -83,6 +83,7 @@ impl Editor {
     /// races past cancellation its eventual `RemoteAttachReady`/`Failed` is
     /// dropped on arrival (see `remote_attach_was_cancelled`) — so no window is
     /// ever built. This is the host side of the New-Session dialog's Cancel.
+    #[cfg(feature = "plugins")]
     pub(crate) fn cancel_remote_attaches(&mut self) {
         let inflight: Vec<u64> = self.remote_attach_inflight.drain().collect();
         let any = !inflight.is_empty();
@@ -1799,6 +1800,7 @@ impl Editor {
 
     /// Swap in a freshly-built grammar registry, re-detect syntax for open
     /// buffers, and resolve any plugin callbacks that awaited the build.
+    #[cfg_attr(not(feature = "plugins"), allow(unused_variables))]
     fn handle_grammar_registry_built(
         &mut self,
         registry: std::sync::Arc<crate::primitives::grammar::GrammarRegistry>,

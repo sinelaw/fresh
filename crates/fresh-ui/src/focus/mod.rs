@@ -1168,7 +1168,7 @@ impl<M: 'static> Ui<M> {
             let depth = self.arena.get(root).map_or(0, |e| e.depth);
             held.push((depth, l));
         }
-        held.sort_by(|a, b| b.0.cmp(&a.0));
+        held.sort_by_key(|&(depth, _)| std::cmp::Reverse(depth));
         held.into_iter().map(|(_, e)| e).collect()
     }
 

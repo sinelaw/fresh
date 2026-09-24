@@ -1406,7 +1406,6 @@ impl Editor {
         let recovery_service = {
             let recovery_config = RecoveryConfig {
                 enabled: recovery_enabled,
-                ..RecoveryConfig::default()
             };
             // Default to a CWD-scoped recovery directory so each working
             // directory keeps its own hot-exit recovery files. If this

@@ -542,7 +542,8 @@ impl WebBridge {
                         &self.bind_host,
                         self.allow_reset,
                     ) {
-                        Ok(Served::WsClient(mut session)) => {
+                        Ok(Served::WsClient(session)) => {
+                            let mut session = *session;
                             // A new client mirrors the same editor. Seed its
                             // wanted size from the current effective grid so it
                             // doesn't momentarily shrink everyone to the default
@@ -831,7 +832,8 @@ fn try_parse_request(buf: &[u8]) -> Option<HttpRequest> {
 /// Outcome of serving one complete request.
 enum Served {
     /// The request was a successful `/ws` upgrade — this is the new client.
-    WsClient(WsSession),
+    /// Boxed: a session is large, and every other request answers `Http`.
+    WsClient(Box<WsSession>),
     /// A plain HTTP exchange; `mutated` = the route may have changed editor
     /// state (input routes, /step, /reset), so a connected WS client should
     /// get a diff pushed without waiting for the tick deadline.
@@ -870,7 +872,7 @@ fn serve_request(
             .is_some_and(|u| u.to_ascii_lowercase().contains("websocket"));
     if wants_ws {
         return match upgrade_ws(stream, req, editor, *cols, *rows, clip, bind_host)? {
-            Some(session) => Ok(Served::WsClient(session)),
+            Some(session) => Ok(Served::WsClient(Box::new(session))),
             None => Ok(Served::Http { mutated: false }),
         };
     }

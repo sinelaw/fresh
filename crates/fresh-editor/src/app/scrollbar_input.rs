@@ -10,10 +10,6 @@ use anyhow::Result as AnyhowResult;
 
 use crate::model::event::{BufferId, LeafId};
 
-/// Columns a single scroll step moves a split's tab strip, shared by the
-/// wheel and by a click on the bar's `<` / `>` indicators so both nudge the
-/// strip by the same amount.
-
 impl crate::app::window::Window {
     /// Fire the `mouse_scroll` plugin hook — plugins can react to the
     /// wheel for virtual buffers. Fired by every scroll-surface arm

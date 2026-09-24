@@ -903,6 +903,7 @@ impl Editor {
     // ==================== Soft Break Commands ====================
 
     /// Handle AddSoftBreak command
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn handle_add_soft_break(
         &mut self,
         buffer_id: BufferId,
@@ -2791,6 +2792,7 @@ impl Editor {
     }
 
     /// Handle DefineMode command
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn handle_define_mode(
         &mut self,
         name: String,
@@ -3800,6 +3802,7 @@ impl Editor {
     /// as file offsets rather than copied — but a large fully-loaded dirty
     /// buffer is copied in full, once per call. Worth knowing before adding
     /// anything else to this path.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn handle_grep_project(
         &mut self,
         plugin_name: String,
