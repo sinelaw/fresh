@@ -313,43 +313,6 @@ pub fn clickable_rects(
         .collect()
 }
 
-/// One run of the status bar as the theme inspector reads it: x, y, width,
-/// and the theme keys of its foreground and background.
-pub type ProvenanceRun = (u16, u16, u16, Option<String>, Option<String>);
-
-/// The theme-key provenance of every painted cell on the bar, in paint order:
-/// the bar's own ground first, then each element and separator over it.
-///
-/// The old recorder emitted exactly these runs *during* the paint walk. They
-/// come from the laid-out tree now, which is why the walk could go.
-pub fn provenance_runs(
-    ui: &fresh_ui::Ui<UiMsg>,
-    bar: &StatusBar,
-    size: ratatui::layout::Rect,
-    row: ratatui::layout::Rect,
-) -> Vec<ProvenanceRun> {
-    let mut out = vec![(
-        row.x,
-        row.y,
-        row.width,
-        Some("ui.status_bar_fg".to_string()),
-        Some("ui.status_bar_bg".to_string()),
-    )];
-    for (side, i, it) in sides(bar) {
-        let Some(r) = rect_of(ui, &item_key(side, i), size) else {
-            continue;
-        };
-        // Read out of the run's own theme rather than from a field beside it.
-        // The first run's names stand for the element: a run whose colour has
-        // no name reports `None`, which is what the inspector should say about
-        // a colour nobody named.
-        let theme = it.runs.first().map(|(_, t)| t.as_str()).unwrap_or("");
-        let (fg, bg) = crate::app::shell_host::shell_theme::names(theme);
-        out.push((r.x, r.y, r.width, fg, bg));
-    }
-    out
-}
-
 /// Every element in screen order with its name, text and cells — the bar's
 /// semantic model, which the web renders directly instead of scraping cells.
 pub fn segments(

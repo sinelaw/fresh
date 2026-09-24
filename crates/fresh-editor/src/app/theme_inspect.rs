@@ -11,9 +11,7 @@ use ratatui::style::{Color, Style};
 ///
 /// **The provenance gate** (design §3.7.9): every cell a frame shows was
 /// written either by the fold, from a display-list item — recorded with the
-/// region `Chrome`, or relabelled by the described surface it belongs to,
-/// as the status bar does — or by the one painter left, the pane's text
-/// pipeline, which records its own two regions ([`PAINTER_REGIONS`]). A
+/// region `Chrome` — or by the one painter left, the pane's text pipeline, which records its own two regions ([`PAINTER_REGIONS`]). A
 /// painter-written cell outside every `Draw::Host` item's rectangle would
 /// be a painter that is not a leaf's, which is the migration's defect;
 /// there are none, and this is what says so.
