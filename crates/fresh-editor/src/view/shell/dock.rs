@@ -813,11 +813,19 @@ mod tests {
     fn an_imperative_move_reports_the_new_holder() {
         let mut ui = described_with_buttons();
         // The interior names no focused widget, so the frame rested focus on
-        // the scope itself and said nothing — "nothing focused" is a state
-        // the description carries, not a gain the registry is told about.
+        // the scope itself and named no widget — "nothing focused" is a state
+        // the description carries, not a gain the registry is told about. The
+        // one thing it does say is that the dock's keyboard is where the keys
+        // go now (focus entered the interior).
         let settled = ui.take_messages();
         assert!(
-            settled.is_empty(),
+            matches!(
+                settled.as_slice(),
+                [UiMsg::Ui(UiFact::PanelKeyboard {
+                    slot: super::super::widgets::Slot::Dock,
+                    held: true,
+                })]
+            ),
             "nothing named, nothing gained: the frame rested on the scope"
         );
         let first = ui.focused().expect("the scope took focus");

@@ -4082,9 +4082,12 @@ impl Editor {
                 self.shell_hover,
                 Some(crate::app::types::HoverTarget::DockBorder)
             ),
-            // Drawn as focused while it has the keyboard — the tree's answer,
-            // so a dock under a centred panel reads as not holding it.
-            dock_focused: self.is_dock_focused(),
+            // Drawn as focused while it has the keyboard, so a dock under a
+            // centred panel reads as not holding it. `dock_covered` is the
+            // tree's answer as it last settled (`panel_keyboard_changed`);
+            // reading the tree here instead would see the previous frame,
+            // and a dock just given focus back would draw one frame late.
+            dock_focused: self.dock.as_ref().is_some_and(|d| d.focused) && !self.dock_covered,
             // A column with no panel in it that the layout carved anyway:
             // the tree, not the painter, owns every cell of it.
             dock_reserved: self.dock_slot_reserved(),
