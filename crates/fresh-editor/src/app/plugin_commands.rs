@@ -2930,6 +2930,20 @@ impl Editor {
                 .reject_callback(callback_id, "No async bridge available".to_string());
             return;
         };
+        // Decode the baseline the way the buffer's own bytes were decoded.
+        let encoding = self
+            .diff_baselines
+            .inner
+            .lock()
+            .ok()
+            .and_then(|inner| inner.entries.get(&baseline_id).map(|e| e.buffer_id))
+            .and_then(|buffer_id| {
+                self.windows
+                    .get(&self.active_window)?
+                    .buffer_state(buffer_id)
+                    .map(|state| state.buffer.encoding())
+            })
+            .unwrap_or_default();
         super::plugin_offloop::load_diff_baseline(
             &runtime,
             super::plugin_offloop::OffLoop {
@@ -2943,6 +2957,7 @@ impl Editor {
                 spawner: self.authority().process_spawner.clone(),
                 store: self.diff_baselines.clone(),
                 callback_id,
+                encoding,
                 is_registration,
             },
         );
