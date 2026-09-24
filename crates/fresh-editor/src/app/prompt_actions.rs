@@ -1353,6 +1353,19 @@ impl Editor {
                 .map(|s| s.buffer.file_path().is_some())
                 .unwrap_or(false);
 
+            let changed_on_disk = self
+                .buffers()
+                .get(&buffer_id)
+                .and_then(|s| s.buffer.file_path())
+                .filter(|p| self.changed_on_disk(p).is_some())
+                .map(std::path::Path::to_path_buf);
+            if let Some(path) = changed_on_disk {
+                // Don't write over someone else's change on the way out, and
+                // don't close either, which would drop these edits (#3346).
+                self.set_status_message(Self::not_saved_changed_on_disk_message(&[path]));
+                return true;
+            }
+
             if has_path {
                 let old_active = self.active_buffer();
                 self.set_active_buffer(buffer_id);

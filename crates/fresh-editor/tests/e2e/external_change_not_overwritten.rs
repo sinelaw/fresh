@@ -121,6 +121,27 @@ fn save_and_quit_stays_open_when_a_file_changed_on_disk() {
 }
 
 #[test]
+fn save_on_close_keeps_the_buffer_when_its_file_changed_on_disk() {
+    let (mut harness, files) = dirty_buffers(Config::default(), &["notes.txt"]);
+    change_externally(&files[0], "external\n");
+
+    harness
+        .send_key(KeyCode::Char('w'), KeyModifiers::ALT)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("[ Save ]");
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    assert_eq!(std::fs::read_to_string(&files[0]).unwrap(), "external\n");
+    // The buffer is still open with the edits, and the reason is on screen.
+    harness.assert_screen_contains("EDIT orig1");
+    harness.assert_screen_contains("Not saved");
+}
+
+#[test]
 fn auto_save_skips_a_file_changed_on_disk() {
     let mut config = Config::default();
     config.editor.auto_save_enabled = true;
