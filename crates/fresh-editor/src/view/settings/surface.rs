@@ -4,11 +4,13 @@
 //! [`EntryDialogState`](super::entry_dialog::EntryDialogState) are the same
 //! shape: a column of [`SettingItem`]s, one of them selected, over one
 //! widget store (`controls`) that the selected item's control is edited in.
-//! A press on a list row, typing into a live field and a text list's rows
-//! are the same act on either, and each used to carry its own copy of them —
-//! which is how the two drifted (the dialog marked the field edited before
-//! pushing a draft, the page after). The bodies live here once; what differs
-//! is what each surface does when a value changes and how it opens a row.
+//! Which control is live, what it paints as focused, a list's cursor row, a
+//! press on a list row, typing into a live field and a text list's rows are
+//! the same act on either. Each type used to carry its own copy of all of
+//! them, and the copies had started to drift (the dialog marked the field
+//! edited before pushing a draft, the page after). The bodies live here once.
+//! What differs is what each surface does when a value changes, how it opens
+//! a text list's row, and what else can hold its keyboard.
 
 use super::items::SettingControl;
 use super::items::SettingItem;
@@ -22,9 +24,9 @@ pub(crate) trait SettingsSurface {
     fn controls_mut(&mut self) -> &mut WidgetPanelState;
     fn current_item(&self) -> Option<&SettingItem>;
     fn current_item_mut(&mut self) -> Option<&mut SettingItem>;
-    /// The key of the live control, when the store's focus names one of the
-    /// selected item's.
-    fn live_control(&self) -> Option<String>;
+    /// Whether the column of items holds the keyboard, rather than
+    /// something beside it (the dialog's buttons, the page's categories).
+    fn items_have_keyboard(&self) -> bool;
     /// Fold a kind's events for `key` back into the item's model.
     fn absorb(&mut self, key: &str, events: &[(String, Value)]);
     /// The selected item's value was changed by the user.
@@ -32,6 +34,108 @@ pub(crate) trait SettingsSurface {
     /// Open a row of the selected text list for editing — an item's field,
     /// or the add row's for `None`.
     fn edit_list_row(&mut self, row: Option<usize>);
+
+    /// The key of the live control: the selected item's, or one of its
+    /// rows', when the store's focus names it.
+    fn live_control(&self) -> Option<String> {
+        let item = self.current_item()?;
+        (self.items_have_keyboard()
+            && live::kind_edited(&item.control)
+            && self.focus_key_of(item).is_some())
+        .then(|| self.controls().focus_key.clone())
+    }
+
+    /// The store's focus key when it names `item`'s control or one of its
+    /// rows — what the item paints as focused.
+    fn focus_key_of(&self, item: &SettingItem) -> Option<&str> {
+        let key = self.controls().focus_key.as_str();
+        (key == item.path
+            || key
+                .strip_prefix(&item.path)
+                .is_some_and(|r| r.starts_with("::")))
+        .then_some(key)
+    }
+
+    /// The row the selected item's list cursor is on, while the list has
+    /// the keyboard: a map's or an object array's entry, or its add row
+    /// (`SettingControl::add_row`).
+    fn composite_cursor(&self) -> Option<usize> {
+        let item = self.current_item()?;
+        self.composite_cursor_of(item)
+    }
+
+    /// [`composite_cursor`](Self::composite_cursor) for any item.
+    fn composite_cursor_of(&self, item: &SettingItem) -> Option<usize> {
+        if !item.control.has_list_rows() || self.controls().focus_key != item.path {
+            return None;
+        }
+        let spec = super::widget_map::live_widget(&item.path, &item.control, &item.path);
+        live::list_row(self.controls(), &spec, &item.path)
+    }
+
+    /// Whether the selected item's dropdown has its list up.
+    fn is_dropdown_open(&self) -> bool {
+        self.current_item().is_some_and(|item| {
+            matches!(item.control, SettingControl::Dropdown { .. })
+                && crate::widgets::kinds::dropdown::is_open(&item.path, self.controls())
+        })
+    }
+
+    /// Whether the selected item's JSON editor is being edited.
+    fn is_editing_json(&self) -> bool {
+        self.live_control().is_some()
+            && matches!(
+                self.current_item().map(|i| &i.control),
+                Some(SettingControl::Json { .. })
+            )
+    }
+
+    /// Move the live text field's caret to a byte of its value — a press
+    /// (#2573). No-op unless a text edit is open.
+    fn position_text_cursor(&mut self, byte: usize) {
+        let Some(path) = self.live_control() else {
+            return;
+        };
+        if let Some(editor) = live::text_editor(self.controls_mut(), &path) {
+            editor.clear_selection();
+            editor.set_cursor_from_flat(byte);
+        }
+    }
+
+    /// Up or Down in a live text list field: the adjacent row's field
+    /// opens — the add row's after the last item. Returns whether the
+    /// keyboard moved; at either end it did not, and the caller moves on.
+    fn list_row_step(&mut self, delta: i32) -> bool {
+        let Some(live) = self.live_list_row() else {
+            return false;
+        };
+        // A draft in the add row becomes an item first, so the row above
+        // the add row is the one just typed.
+        if live.is_none() {
+            self.commit_list_draft();
+        }
+        let Some(SettingControl::TextList { items, .. }) = self.current_item().map(|i| &i.control)
+        else {
+            return false;
+        };
+        let n = items.len();
+        let target = live.unwrap_or(n) as i32 + delta;
+        if target < 0 || target > n as i32 {
+            return false;
+        }
+        let target = target as usize;
+        self.edit_list_row((target < n).then_some(target));
+        true
+    }
+
+    /// Enter in a live text list field: the add row's draft becomes an
+    /// item and the add row stays open for the next; an item's field keeps
+    /// the keyboard.
+    fn list_row_enter(&mut self) {
+        if self.live_list_row() == Some(None) && self.commit_list_draft() {
+            self.edit_list_row(None);
+        }
+    }
 
     /// The node of the selected item's description that carries `key`: the
     /// control's own, or one of a text list's rows.

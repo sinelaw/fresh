@@ -23,6 +23,7 @@
 //! leaf is what belongs to no pane: the pass they share, and the separators
 //! between them.
 
+use crate::view::settings::surface::SettingsSurface as _;
 use std::collections::HashSet;
 
 use ratatui::buffer::Buffer;

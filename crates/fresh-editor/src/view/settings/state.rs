@@ -341,8 +341,10 @@ impl SettingsSurface for SettingsState {
     fn current_item_mut(&mut self) -> Option<&mut SettingItem> {
         SettingsState::current_item_mut(self)
     }
-    fn live_control(&self) -> Option<String> {
-        SettingsState::live_control(self)
+    /// The keyboard is on the category list or the footer instead while
+    /// either is focused.
+    fn items_have_keyboard(&self) -> bool {
+        self.focus_panel == FocusPanel::Settings
     }
     fn absorb(&mut self, key: &str, events: &[(String, serde_json::Value)]) {
         SettingsState::absorb(self, key, events)
@@ -2161,44 +2163,6 @@ impl SettingsState {
         self.activate_control();
     }
 
-    /// The key of the live control: the selected card's, or one of its
-    /// rows', when the store's focus names it.
-    pub fn live_control(&self) -> Option<String> {
-        let item = self.current_item()?;
-        (self.focus_panel == FocusPanel::Settings
-            && live::kind_edited(&item.control)
-            && self.focus_key_of(item).is_some())
-        .then(|| self.controls.focus_key.clone())
-    }
-
-    /// The store's focus key when it names `item`'s control or one of its
-    /// rows — what the card paints as focused.
-    pub fn focus_key_of(&self, item: &SettingItem) -> Option<&str> {
-        let key = self.controls.focus_key.as_str();
-        (key == item.path
-            || key
-                .strip_prefix(&item.path)
-                .is_some_and(|r| r.starts_with("::")))
-        .then_some(key)
-    }
-
-    /// The row the selected card's list cursor is on, while the list has
-    /// the keyboard: a map's or an object array's entry, or its add row
-    /// (`SettingControl::add_row`).
-    pub fn composite_cursor(&self) -> Option<usize> {
-        let item = self.current_item()?;
-        self.composite_cursor_of(item)
-    }
-
-    /// [`composite_cursor`](Self::composite_cursor) for any card.
-    pub fn composite_cursor_of(&self, item: &SettingItem) -> Option<usize> {
-        if !item.control.has_list_rows() || self.controls.focus_key != item.path {
-            return None;
-        }
-        let spec = super::widget_map::live_widget(&item.path, &item.control, &item.path);
-        live::list_row(&self.controls, &spec, &item.path)
-    }
-
     /// The tree key of the row the keyboard is on inside the selected card:
     /// a map's or an object array's cursor row, or a text list's live field.
     /// `None` when the card is the finest thing to reveal.
@@ -2211,14 +2175,6 @@ impl SettingsState {
             _ => self.composite_cursor()?,
         };
         Some(item.control.row_tree_key(&item.path, row))
-    }
-
-    /// Whether the selected card's dropdown has its list up.
-    pub fn is_dropdown_open(&self) -> bool {
-        self.current_item().is_some_and(|item| {
-            matches!(item.control, SettingControl::Dropdown { .. })
-                && crate::widgets::kinds::dropdown::is_open(&item.path, &self.controls)
-        })
     }
 
     /// Whether the selected card's number has a draft open.
@@ -2400,41 +2356,6 @@ impl SettingsState {
         let (path, items) = (item.path.clone(), items.clone());
         live::text_list::edit_row(&mut self.controls, &path, &items, row);
         self.ensure_visible();
-    }
-
-    /// Up or Down in a live text list field: the adjacent row's field
-    /// opens — the add row's after the last item. Returns whether the
-    /// keyboard moved; at either end it stays.
-    pub fn list_row_step(&mut self, delta: i32) -> bool {
-        let Some(live) = self.live_list_row() else {
-            return false;
-        };
-        // A draft in the add row becomes an item first, so the row above
-        // the add row is the one just typed.
-        if live.is_none() {
-            self.commit_list_draft();
-        }
-        let Some(SettingControl::TextList { items, .. }) = self.current_item().map(|i| &i.control)
-        else {
-            return false;
-        };
-        let n = items.len();
-        let cur = live.unwrap_or(n) as i32;
-        let target = (cur + delta).clamp(0, n as i32) as usize;
-        if target == cur as usize {
-            return false;
-        }
-        self.edit_list_row((target < n).then_some(target));
-        true
-    }
-
-    /// Enter in a live text list field: the add row's draft becomes an
-    /// item and the add row stays open for the next; an item's field keeps
-    /// the keyboard.
-    pub fn list_row_enter(&mut self) {
-        if self.live_list_row() == Some(None) && self.commit_list_draft() {
-            self.edit_list_row(None);
-        }
     }
 
     /// Leave the live text list field: the add row's draft becomes an item
@@ -2678,26 +2599,6 @@ impl SettingsState {
     /// land here and keep what was typed: a text field's value is recorded.
     pub fn stop_editing(&mut self) {
         self.leave_live_control();
-    }
-    /// Whether the selected card's JSON editor is being edited.
-    pub fn is_editing_json(&self) -> bool {
-        self.live_control().is_some()
-            && matches!(
-                self.current_item().map(|i| &i.control),
-                Some(SettingControl::Json { .. })
-            )
-    }
-
-    /// Move the live text field's caret to a byte of its value — a press
-    /// (#2573). No-op unless a text edit is open.
-    pub fn position_text_cursor(&mut self, byte: usize) {
-        let Some(path) = self.live_control() else {
-            return;
-        };
-        if let Some(editor) = live::text_editor(&mut self.controls, &path) {
-            editor.clear_selection();
-            editor.set_cursor_from_flat(byte);
-        }
     }
     /// Paste into whatever is being edited: the live control's kind, or the
     /// entry dialog's field. Returns whether the text landed anywhere.
