@@ -44,9 +44,10 @@ pub use component::{memo, AnyComponent, Component, Memo};
 pub use desc::{
     col, focusable, gesture, host, host_leaf, host_object, layer, layout_reader, node_key,
     node_type, resolve, row, shared_rc, stack, text, text_runs, viewport, Align, Anchor, BoxProps,
-    ComponentExt, Desc, Dir, Dismiss, ElemType, Elide, Fit, FocusProps, GestureProps, Handler,
-    HostId, HostSpec, ItemHeight, Justify, LayerProps, LayoutReaderProps, Listener, Modality, Node,
-    Pad, Place, PointerMode, Run, Scrim, Scroll, ScrollMode, Sizing, TextProps, ViewportProps,
+    Columns, ComponentExt, Desc, Dir, Dismiss, ElemType, Elide, Fit, FocusProps, GestureProps,
+    Handler, HostId, HostSpec, ItemHeight, Justify, LayerProps, LayoutReaderProps, Listener,
+    Modality, Node, Pad, Place, PointerMode, Run, Scrim, Scroll, ScrollMode, Sizing, TextProps,
+    ViewportProps,
 };
 pub use element::ElementId;
 pub use event::{

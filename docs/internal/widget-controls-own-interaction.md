@@ -224,17 +224,27 @@ field inside a `row` now makes it `Sizing::Flex(1)` and builds the field in a
 the orchestrator's `machineFieldWidth` (the terminal width less the label and
 the frame, guessed) is deleted.
 
-**A table.** `tree({ columns })` with `treeNode(…, { cells })` is a table: the
-host measures every cell, caps each column at its `maxWidth`, fits the columns
-to the width the tree is laid out at (the widest column gives first, never
-below a floor), elides each cell at the end its column names (`"head"` keeps a
-path's tail, `"tail"` a name's head), and draws a header over the rows. The
-rules are pure functions in `fresh-editor-core` `kinds::table`; the host's
-`TreeTable` computes the lead (depth indent, fold glyph, checkbox) and tail
-(the widest row button, the scrollbar) so the columns line up whatever the
-row's depth or button. A node without cells (a group heading, a problem line)
-spans the row. Tree was extended rather than a new kind added so Import
-sessions keeps its folding, selection and row buttons.
+**A table.** `tree({ columns })` with `treeNode(…, { cells })` is a table, and
+its cells are nodes of the tree. A cell row is its prefix (indent, fold glyph,
+checkbox — the tree row rendered without a body), its cells, and a button column
+as wide as the widest row's button. The cells are `text` nodes, each cut by
+fresh-ui's own `Elide` at the end its column names (`"head"` keeps a path's
+tail, `"tail"` a name's head), laid on fresh-ui's `Columns`
+(`Node::columns`): every row and the header give the same natural widths to the
+same room, and layout fits them — the widest column gives first, never below a
+floor — so the columns line up without anything measuring a width. The natural
+widths are the one thing measured outside layout (`kinds::table::natural_widths`,
+over every row): the rows are a windowed list, and widths taken from the rows on
+screen would change as it scrolled. The list keeps its scrollbar's column
+(`scrollbar_gutter`), which is what lets the header, above the list, reserve
+the same room. A node without cells (a group heading, a problem line) spans the
+row. Tree was extended rather than a new kind added so Import sessions keeps
+its folding, selection and row buttons.
+
+A first cut built each cell row as one pre-fitted, padded string inside a
+`layout_reader` — measured at the real width, but still a picture of a table.
+Its fitting, eliding and padding (`kinds::table::{fit, elide, row_entry,
+header_entry}`) are deleted.
 
 Import sessions now passes cells and column titles; `discoverRowRoom`,
 `discoverLayout`, `discoverRowEntry`, `discoverHeaderEntry`, `discoverElide`,

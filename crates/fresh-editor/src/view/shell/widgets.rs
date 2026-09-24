@@ -360,29 +360,25 @@ fn spec_state_key(spec: &WidgetSpec) -> Option<fresh_ui::Key> {
     }
 }
 
-/// The width a `layout_reader` is laid out at, or `fallback` when the
-/// constraint is unbounded (an intrinsic measure).
-fn real_width(info: fresh_ui::LayoutInfo, fallback: u16) -> u16 {
-    let w = info.constraints.max_w;
-    match w > 0 && w < u16::MAX {
-        true => w,
-        false => fallback,
-    }
-}
-
-/// **A tree drawn as a table** (`Tree::columns`, `TreeNode::cells`): the
-/// columns, their natural widths over every cell row, and what a cell row
-/// spends before and after its cells — so the header and every row fit the
-/// same columns to the same room, at whatever width layout gives them.
+/// **A tree drawn as a table** (`Tree::columns`, `TreeNode::cells`).
+///
+/// A cell row is three pieces side by side: its prefix (indent, disclosure
+/// glyph, checkbox — `lead` cells, the same on every cell row), its cells laid
+/// on `layout`, and a button column as wide as the widest row's button
+/// (`action`). The cells are text nodes, each cut at its column's end
+/// (`fresh_ui::Elide`), and `layout` is fresh-ui's `Columns`: every row and
+/// the header fit the same natural widths to the same room, so the columns
+/// line up down the whole table without anything measuring a width. The list
+/// keeps its scrollbar's column whatever the bar is doing, which is what lets
+/// the header — above the list — give its titles the same room.
 #[derive(Clone)]
 struct TreeTable {
     columns: std::rc::Rc<Vec<fresh_core::api::TableColumn>>,
-    natural: std::rc::Rc<Vec<u32>>,
-    /// Indent, disclosure and checkbox columns before a cell row's first cell.
-    lead: u32,
-    /// Columns after the cells: the widest row button and its gap, and the
-    /// scrollbar column a row with a button leaves.
-    tail: u32,
+    layout: std::rc::Rc<fresh_ui::Columns>,
+    /// Indent, disclosure and checkbox cells before a cell row's first cell.
+    lead: u16,
+    /// Cells after the cells: the widest row button, its gap included.
+    action: u16,
 }
 
 impl TreeTable {
@@ -392,14 +388,12 @@ impl TreeTable {
         indent: u32,
         checkable: bool,
     ) -> Option<TreeTable> {
+        use crate::widgets::kinds::table;
         if columns.is_empty() {
             return None;
         }
         let rows = nodes.iter().filter(|n| !n.cells.is_empty());
-        let natural = crate::widgets::kinds::table::natural_widths(
-            columns,
-            rows.clone().map(|n| n.cells.as_slice()),
-        );
+        let natural = table::natural_widths(columns, rows.clone().map(|n| n.cells.as_slice()));
         // Cell rows share a depth in every table there is; the first one's
         // stands for all, so the columns line up down the whole table.
         let first = rows.clone().next();
@@ -409,41 +403,196 @@ impl TreeTable {
             false => 0,
         };
         let action = rows
-            .clone()
-            .map(|n| crate::widgets::render::tree_row_action_cols(n) as u32)
+            .map(crate::widgets::render::tree_row_action_cols)
             .max()
             .unwrap_or(0);
-        let bar = match action > 0 {
-            true => PANEL_BAR_COLS as u32,
-            false => 0,
-        };
         Some(TreeTable {
             columns: std::rc::Rc::new(columns.to_vec()),
-            natural: std::rc::Rc::new(natural),
-            lead: depth * indent + 2 + checkbox,
-            tail: action + bar,
+            layout: std::rc::Rc::new(fresh_ui::Columns::new(natural, table::MIN_COL)),
+            lead: (depth * indent + 2 + checkbox).min(u16::MAX as u32) as u16,
+            action: action.min(u16::MAX as usize) as u16,
         })
     }
 
-    fn widths(&self, width: u16) -> Vec<u32> {
-        let room = (width as u32).saturating_sub(self.lead + self.tail);
-        crate::widgets::kinds::table::fit(&self.natural, room)
+    /// The row of `cells` on the table's columns.
+    fn cells(&self, cells: &[fresh_core::api::TableCell], surface: &Ink) -> Node<UiMsg> {
+        row()
+            .h(Sizing::Cells(1))
+            .gap(crate::widgets::kinds::table::GAP)
+            .columns(self.layout.clone())
+            .children(self.columns.iter().enumerate().map(|(i, c)| {
+                let cell = cells.get(i);
+                table_cell(
+                    cell.map(|c| c.text.as_str()).unwrap_or(""),
+                    cell.and_then(|c| c.style.as_ref()),
+                    c.elide,
+                    surface,
+                )
+            }))
     }
 
-    fn row(&self, cells: &[fresh_core::api::TableCell], width: u16) -> TextPropertyEntry {
-        crate::widgets::kinds::table::row_entry(&self.columns, cells, &self.widths(width))
+    /// The header: each title over its column, the prefix, button and
+    /// scrollbar columns left blank so the titles get the room the cells do.
+    fn header(&self, surface: &Ink) -> Node<UiMsg> {
+        let ink = fresh_core::api::OverlayOptions {
+            fg: Some(fresh_core::api::OverlayColorSpec::theme_key(
+                "ui.menu_disabled_fg",
+            )),
+            bold: true,
+            ..Default::default()
+        };
+        let titles =
+            row()
+                .h(Sizing::Cells(1))
+                .gap(crate::widgets::kinds::table::GAP)
+                .columns(self.layout.clone())
+                .children(self.columns.iter().map(|c| {
+                    table_cell(&c.title, Some(&ink), fresh_core::api::Elide::Tail, surface)
+                }))
+                .w(Sizing::Flex(1));
+        row().h(Sizing::Cells(1)).children([
+            row().w(Sizing::Cells(self.lead)),
+            titles,
+            row().w(Sizing::Cells(self.action + PANEL_BAR_COLS)),
+        ])
     }
+}
 
-    fn header(&self, width: u16) -> TextPropertyEntry {
-        let mut e = crate::widgets::kinds::table::header_entry(&self.columns, &self.widths(width));
-        let lead = " ".repeat(self.lead as usize);
-        for o in &mut e.inline_overlays {
-            o.start += lead.len();
-            o.end += lead.len();
+/// One cell of a table: its text in its style, cut at the end its column
+/// names when the column is narrower than it.
+fn table_cell(
+    text: &str,
+    style: Option<&fresh_core::api::OverlayOptions>,
+    keep: fresh_core::api::Elide,
+    surface: &Ink,
+) -> Node<UiMsg> {
+    let mut e = TextPropertyEntry::text(text);
+    if let Some(style) = style {
+        e.inline_overlays
+            .push(fresh_core::text_property::InlineOverlay {
+                start: 0,
+                end: text.len(),
+                style: style.clone(),
+                properties: Default::default(),
+                unit: fresh_core::text_property::OffsetUnit::Byte,
+            });
+    }
+    let keep = match keep {
+        fresh_core::api::Elide::None => fresh_ui::Elide::None,
+        fresh_core::api::Elide::Tail => fresh_ui::Elide::Tail,
+        fresh_core::api::Elide::Head => fresh_ui::Elide::Head,
+    };
+    text_runs(entry_runs(&e, &[], surface).into_iter().map(|(_, r)| r))
+        .elide(keep)
+        .h(Sizing::Cells(1))
+}
+
+/// The bytes `range` of `entry`, with the overlays that fall in it rebased
+/// onto the slice (clipped to it).
+fn slice_entry(entry: &TextPropertyEntry, range: std::ops::Range<usize>) -> TextPropertyEntry {
+    let mut e = TextPropertyEntry::text(&entry.text[range.clone()]);
+    e.inline_overlays = entry
+        .inline_overlays
+        .iter()
+        .filter(|o| o.start < range.end && o.end > range.start)
+        .map(|o| {
+            let mut o = o.clone();
+            o.start = o.start.max(range.start) - range.start;
+            o.end = o.end.min(range.end) - range.start;
+            o
+        })
+        .collect();
+    e
+}
+
+/// One cell row of a [`TreeTable`]: the row's prefix (the tree row rendered
+/// without a body — indent, disclosure glyph, checkbox, with their hits), its
+/// cells on the table's columns, and its button in a column as wide as the
+/// widest row's. The row-wide `select` is the cells' and the padding's; the
+/// narrower targets keep the bytes they name, as on any tree row.
+fn table_row(
+    t: &TreeTable,
+    r: &crate::widgets::render::RenderedTreeRow,
+    hits: &[((usize, usize), crate::widgets::WidgetEvent)],
+    cells: &[fresh_core::api::TableCell],
+    slot: Slot,
+    surface: &Ink,
+) -> Node<UiMsg> {
+    let end = r.entry.text.len();
+    let split = r.body_start.min(end);
+    let select = hits
+        .iter()
+        .rev()
+        .find(|(_, h)| h.row_target)
+        .map(|(_, h)| h.clone());
+    // The narrow hits that fall in `lo..hi`, rebased to a piece that starts at
+    // `lo` and is shifted right by `shift`.
+    let within = |lo: usize, hi: usize, shift: usize| {
+        hits.iter()
+            .filter(|(_, h)| !h.row_target)
+            .filter_map(|((a, b), h)| {
+                let (a, b) = ((*a).max(lo), (*b).min(hi));
+                (a < b).then(|| ((a - lo + shift, b - lo + shift), h.clone()))
+            })
+            .collect::<Vec<_>>()
+    };
+    let with_select = |mut hs: Vec<_>, len: usize| {
+        if let Some(h) = &select {
+            hs.push(((0, len), h.clone()));
         }
-        e.text.insert_str(0, &lead);
-        e
+        hs
+    };
+    let head = slice_entry(&r.entry, 0..split);
+    let head_hits = with_select(within(0, split, 0), split);
+    let head = row_pieces(
+        &head,
+        slot,
+        surface,
+        &head_hits,
+        None,
+        Fill::ToRowEnd,
+        false,
+    )
+    .w(Sizing::Cells(t.lead));
+    let body = t.cells(cells, surface);
+    let body = match &select {
+        Some(h) => hit_node(body, slot, h.clone(), 0),
+        None => body,
     }
+    .w(Sizing::Flex(1));
+    let mut kids = vec![head, body];
+    if t.action > 0 {
+        let own = slice_entry(&r.entry, split..end);
+        let pad = t
+            .action
+            .saturating_sub(crate::primitives::display_width::str_width(&own.text) as u16)
+            as usize;
+        let mut tail = TextPropertyEntry::text(format!("{}{}", " ".repeat(pad), own.text));
+        tail.inline_overlays = own
+            .inline_overlays
+            .iter()
+            .map(|o| {
+                let mut o = o.clone();
+                o.start += pad;
+                o.end += pad;
+                o
+            })
+            .collect();
+        let tail_hits = with_select(within(split, end, pad), tail.text.len());
+        kids.push(
+            row_pieces(
+                &tail,
+                slot,
+                surface,
+                &tail_hits,
+                None,
+                Fill::ToRowEnd,
+                false,
+            )
+            .w(Sizing::Cells(t.action)),
+        );
+    }
+    row().h(Sizing::Cells(1)).children(kids)
 }
 
 /// Whether `spec`, in a row, takes the width the row's other children leave:
@@ -2035,6 +2184,10 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
             let sel_abs = live_selection(cx, key, *selected_index);
             let n = visible.len();
 
+            // **A table** (`columns`): the rows that carry cells lay them on
+            // the table's columns, and a header row of titles stands over
+            // them. See [`TreeTable`].
+            let table = TreeTable::of(columns, &nodes, indent, checkable);
             // One row, at the width it is laid out at.
             let build_row: Rc<
                 dyn Fn(
@@ -2047,6 +2200,7 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                 let keys = keys.clone();
                 let tree_key = tree_key.clone();
                 let expanded = expanded.clone();
+                let table = table.clone();
                 Rc::new(
                     move |node: &fresh_core::api::TreeNode,
                           abs: usize,
@@ -2060,16 +2214,29 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                         let open = node.has_children
                             && !item_key.is_empty()
                             && expanded.contains(&item_key);
-                        let r = crate::widgets::render_tree_row(
-                            &node,
-                            open,
-                            checkable,
-                            1,
-                            false,
-                            tree_row_width(width, &node) as u32,
-                            indent,
-                            h_pan,
-                        );
+                        let table = table.as_ref().filter(|_| !node.cells.is_empty());
+                        let r = match table {
+                            // A cell row's body is its cells, which are nodes
+                            // of their own: the row is rendered without one,
+                            // for its prefix and its button.
+                            Some(_) => {
+                                let mut head = node.clone();
+                                head.text = TextPropertyEntry::text("");
+                                crate::widgets::render_tree_row(
+                                    &head, open, checkable, 1, false, 0, indent, 0,
+                                )
+                            }
+                            None => crate::widgets::render_tree_row(
+                                &node,
+                                open,
+                                checkable,
+                                1,
+                                false,
+                                tree_row_width(width, &node) as u32,
+                                indent,
+                                h_pan,
+                            ),
+                        };
                         let end = r.entry.text.len();
                         let hit = |kind: &'static str,
                                    a: usize,
@@ -2133,7 +2300,10 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                             serde_json::json!({ "index": abs, "key": item_key }),
                             true,
                         ));
-                        let piece = entry_row_hits(&r.entry, slot, &surface, &hits);
+                        let piece = match table {
+                            Some(t) => table_row(t, &r, &hits, &node.cells, slot, &surface),
+                            None => entry_row_hits(&r.entry, slot, &surface, &hits),
+                        };
                         // **In the sidebar, the selected row wears the explorer's
                         // `▌`** (design §5.1): a section's tree sits in the same
                         // column as the file tree, and the two read as one family
@@ -2162,29 +2332,11 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                     },
                 )
             };
-            // **A table** (`columns`): the rows that carry cells are laid out
-            // on columns fitted to the width layout gives the tree, and a
-            // header row of titles stands over them. See `kinds::table`.
-            let table = TreeTable::of(columns, &nodes, indent, checkable);
             let row_at = {
                 let (nodes, visible) = (nodes.clone(), visible.clone());
-                let table = table.clone();
                 let build_row = build_row.clone();
                 move |i: usize, st: fresh_ui::widgets::RowState| -> Node<UiMsg> {
                     let abs = visible[i];
-                    // A cell row is built at the width it is laid out at, so
-                    // its columns fit the room that is really there.
-                    if let Some(t) = table.as_ref().filter(|_| !nodes[abs].cells.is_empty()) {
-                        let t = t.clone();
-                        let build = build_row.clone();
-                        let base = nodes[abs].clone();
-                        return fresh_ui::layout_reader(move |info: fresh_ui::LayoutInfo| {
-                            let w = real_width(info, width);
-                            let mut node = base.clone();
-                            node.text = t.row(&node.cells, w);
-                            build(&node, abs, st, w)
-                        });
-                    }
                     build_row(&nodes[abs], abs, st, width)
                 }
             };
@@ -2216,6 +2368,13 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
             // A selection the window does not contain is *no* selection here,
             // not the element's own — see the `List` arm above.
             let list = list.selection(visible.iter().position(|&a| a as i32 == sel_abs));
+            // A table keeps its scrollbar's column whether the bar is there or
+            // not: its rows' room must not change when the list grows past its
+            // window, and the header above the list reserves the same column.
+            let list = match table {
+                Some(_) => list.scrollbar_gutter(),
+                None => list,
+            };
             let node = keyed(fresh_ui::ComponentExt::node(list), state_key(key));
             let node = pan_to_widget(node, slot, &tree_key);
             let node = match visible_rows {
@@ -2226,18 +2385,11 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                 // the column stretches it.
                 None => node.h(Sizing::Flex(1)),
             };
-            // The table's header row: each title over its column, at the
-            // width layout gives it — the same fit its rows make.
+            // The table's header row: each title over its column, fitted the
+            // way the rows fit their cells.
             match table {
                 None => node,
-                Some(t) => {
-                    let surface = cx.surface.clone();
-                    let header = fresh_ui::layout_reader(move |info: fresh_ui::LayoutInfo| {
-                        entry_row(&t.header(real_width(info, width)), &surface)
-                    })
-                    .h(Sizing::Cells(1));
-                    col().children([header, node])
-                }
+                Some(t) => col().children([t.header(&cx.surface), node]),
             }
         }
         // **A multi-line field's rows are built one at a time, from lines.**

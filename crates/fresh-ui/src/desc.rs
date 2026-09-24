@@ -236,6 +236,54 @@ pub struct BoxProps {
     /// The box's ground is this cluster, tiled across its rect, rather than a
     /// blank fill. See [`Node::rule`].
     pub rule: Option<std::rc::Rc<str>>,
+    /// A row whose children are the cells of a table row. See
+    /// [`Node::columns`].
+    pub columns: Option<Rc<Columns>>,
+}
+
+/// **The columns a table's rows lay their cells on.** Every row that shares
+/// one is given the same widths for the same room, so the cells of a column
+/// line up down the whole table without any row measuring another.
+///
+/// The natural widths are the description's to say: a table's rows are
+/// usually a windowed list, which builds only the rows on screen, and a
+/// column measured from those alone would change width as it scrolled. Layout
+/// fits them to the room each row actually has ([`Columns::fit`]).
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
+pub struct Columns {
+    /// Each column's natural width — its widest cell, capped as the table
+    /// sees fit.
+    pub natural: Vec<u16>,
+    /// The narrowest a column is squeezed to when the table must fit.
+    pub floor: u16,
+}
+
+impl Columns {
+    pub fn new(natural: Vec<u16>, floor: u16) -> Self {
+        Columns { natural, floor }
+    }
+
+    /// The widths the columns take in `room` cells (gaps already taken out).
+    ///
+    /// Too wide, the widest column gives one cell at a time — so a long path
+    /// is cut before a short name is — and none goes below `floor` (nor below
+    /// its own natural width, if that is smaller). Ties go to the leftmost.
+    pub fn fit(&self, room: u16) -> Vec<u16> {
+        let mut w = self.natural.clone();
+        let total = |w: &[u16]| w.iter().map(|&v| v as u32).sum::<u32>();
+        while total(&w) > room as u32 {
+            let widest = w
+                .iter()
+                .enumerate()
+                .filter(|(_, &v)| v > self.floor)
+                .max_by_key(|(i, &v)| (v, std::cmp::Reverse(*i)));
+            match widest {
+                Some((i, _)) => w[i] -= 1,
+                None => break,
+            }
+        }
+        w
+    }
 }
 
 /// How a run gives up cells it was not given.
@@ -1761,6 +1809,19 @@ impl<M> Node<M> {
     /// whole rect.
     pub fn wrap_children(mut self) -> Self {
         self.box_props().wrap = true;
+        self
+    }
+
+    /// Lay this row's children on `columns`: child *i* is as wide as column
+    /// *i* comes out at the width this row is laid out at, whatever its own
+    /// sizing says, with the box's [`gap`](Self::gap) between them. Children
+    /// past the last column are sized as usual.
+    ///
+    /// Give every row of a table — and its header — the same `Rc`, and their
+    /// cells line up. A cell that does not fit its column is cut the way its
+    /// own text says ([`Elide`]).
+    pub fn columns(mut self, columns: Rc<Columns>) -> Self {
+        self.box_props().columns = Some(columns);
         self
     }
 
