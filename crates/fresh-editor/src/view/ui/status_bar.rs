@@ -18,20 +18,12 @@ const SSH_PREFIX_TERMINATOR: &str = "] ";
 
 /// Stable identity of a *clickable* status-bar segment.
 ///
-/// This is the generic rail that replaces per-element layout fields, hover
-/// enum variants, and bespoke mouse-detective branches. Rectangles are read
-/// back off the laid-out tree by `view::shell::status_bar::clickable_rects`,
-/// keyed by this id; the app layer runs a single hit-test over that list for
-/// both hover and click, mapping the id to an editor `Action` in one place
-/// (`dispatch_status_bar_click`).
-///
-/// The paint-time `StatusBarLayout` that used to carry these is gone: the bar
-/// migrated to the shell, and the walk that recorded them had no callers left.
-///
-/// Wiring a new clickable built-in element is therefore: pass its id where
-/// `StatusBarRenderer::render_element` builds it, and add one arm to the
-/// app-side dispatch. No new layout field / hover variant /
-/// chrome area / mouse loop.
+/// The element carrying it answers its own press and hover, the tree keys it
+/// by this id (`view::shell::status_bar::clickable_key`) so a popup it opens
+/// can hang off it, and `dispatch_status_bar_click` maps it to an editor
+/// `Action`. Wiring a new clickable built-in element is: pass its id where
+/// `StatusBarRenderer::render_element` builds it, and add one arm to that
+/// dispatch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StatusBarClickable {
     LineEnding,

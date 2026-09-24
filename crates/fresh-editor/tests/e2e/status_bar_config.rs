@@ -463,3 +463,48 @@ fn test_theme_inspector_names_status_bar_keys() {
         "the separator is painted in its own keys:\n{shown}"
     );
 }
+
+/// A popup opened from a status-bar element hangs directly above that
+/// element. The read-only menu used to be anchored to the first element on
+/// the right side whatever opened it, so an `[RO]` on the left opened its
+/// menu across the bar from it.
+#[test]
+fn test_status_bar_popup_opens_above_its_own_segment() {
+    let config = config_with_status_bar(
+        vec![StatusBarElement::Cursor, StatusBarElement::ReadOnly],
+        vec![StatusBarElement::Encoding, StatusBarElement::LineEnding],
+    );
+    let mut harness = EditorTestHarness::with_temp_project_and_config(120, 30, config).unwrap();
+    let dir = harness.project_dir().unwrap();
+    let file = dir.join("locked.txt");
+    fs::write(&file, "hello\n").unwrap();
+    harness.open_file(&file).unwrap();
+    let buffer_id = harness.editor().active_buffer();
+    harness
+        .editor_mut()
+        .active_window_mut()
+        .mark_buffer_read_only(buffer_id, true);
+    harness.render().unwrap();
+
+    let status = harness.get_status_bar();
+    let ro_col = status
+        .find("[RO]")
+        .unwrap_or_else(|| panic!("[RO] on the bar: {status}")) as u16;
+    let row = crate::common::harness::layout::status_bar_row(harness.terminal_height()) as u16;
+    harness.mouse_click(ro_col, row).unwrap();
+    harness.render().unwrap();
+
+    let (item_col, item_row) = harness
+        .find_text_on_screen("Enable editing")
+        .unwrap_or_else(|| panic!("the read-only menu:\n{}", harness.screen_to_string()));
+    assert!(item_row < row, "the menu sits above the bar");
+    // The segment starts one cell before `[RO]` (its padding); the item's
+    // text sits inside the popup's border and its four-space indent.
+    let seg_x = ro_col - 1;
+    assert!(
+        (seg_x..seg_x + 8).contains(&item_col),
+        "the menu hangs off `[RO]` at column {seg_x}, but its item is at \
+         column {item_col}:\n{}",
+        harness.screen_to_string()
+    );
+}

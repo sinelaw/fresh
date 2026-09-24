@@ -12,8 +12,8 @@
 //!
 //! Here the bar says what is *on* it — the pieces of each element, their
 //! colours, and the identity each one answers to — and layout decides every
-//! column. `clickable_rects` and `segments` read the result back, which is
-//! what a hover, a click, a popup anchor and the web projection all use.
+//! column. A popup anchors to an element's key, and `segments` reads the
+//! result back for the web projection.
 //!
 //! **What stays app-side, and why it is not geometry.** Which right-hand
 //! elements appear at all is a *content* decision the bar makes from measured
@@ -102,15 +102,28 @@ pub struct StatusBar {
     pub sep_theme: String,
 }
 
-/// The key an element is looked up by. Side and index, because that is what
-/// identifies a position on the bar; `clickable` and `token_key` are
-/// properties *of* the element rather than its address.
+/// The key an inert element or a plugin token is looked up by: its side and
+/// index, which is its position on the bar.
 pub fn item_key(side: Side, index: usize) -> Key {
     let tag = match side {
         Side::Left => "status_left",
         Side::Right => "status_right",
     };
     Key::Pair(tag.into(), index as u64)
+}
+
+/// The key a built-in clickable element is looked up by: its id, so a popup
+/// it opens can hang off it without knowing where it sits.
+pub fn clickable_key(id: StatusBarClickable) -> Key {
+    Key::Pair("status_click".into(), id as u64)
+}
+
+/// The key `it`, at `index` on `side`, is built with.
+pub fn key_of(side: Side, index: usize, it: &Item) -> Key {
+    match it.clickable {
+        Some(id) => clickable_key(id),
+        None => item_key(side, index),
+    }
 }
 
 fn element(it: &Item, key: Key, side: Side) -> Node<UiMsg> {
@@ -262,7 +275,7 @@ fn build(bar: &StatusBar) -> Node<UiMsg> {
         if i > 0 {
             kids.push(separator(bar, Side::Left));
         }
-        kids.push(element(it, item_key(Side::Left, i), Side::Left));
+        kids.push(element(it, key_of(Side::Left, i, it), Side::Left));
     }
     // The gap, which closes completely on a bar too narrow for both sides.
     kids.push(row().flex(1));
@@ -270,7 +283,7 @@ fn build(bar: &StatusBar) -> Node<UiMsg> {
         if i > 0 {
             kids.push(separator(bar, Side::Right));
         }
-        kids.push(element(it, item_key(Side::Right, i), Side::Right));
+        kids.push(element(it, key_of(Side::Right, i, it), Side::Right));
     }
     // **The row claims its own gaps.** Every element answers its own press,
     // and between them is the flexible gap and the padding either side of a
@@ -295,24 +308,6 @@ fn build(bar: &StatusBar) -> Node<UiMsg> {
 
 // ── reading the laid-out bar back ──────────────────────────────────────────
 
-/// Every clickable element's screen rectangle, in render order.
-///
-/// This is what `StatusBarLayout::clickable` was — but read from the tree that
-/// painted rather than recomputed by a second walk over state that has moved
-/// on. That type and its walk are deleted; this is the only source now.
-pub fn clickable_rects(
-    ui: &fresh_ui::Ui<UiMsg>,
-    bar: &StatusBar,
-    size: ratatui::layout::Rect,
-) -> Vec<(StatusBarClickable, ratatui::layout::Rect)> {
-    sides(bar)
-        .filter_map(|(side, i, it)| {
-            let id = it.clickable?;
-            Some((id, rect_of(ui, &item_key(side, i), size)?))
-        })
-        .collect()
-}
-
 /// Every element with visible text, in screen order, with its name, trimmed
 /// text and cells — the bar's semantic model, which the web renders directly
 /// instead of scraping cells.
@@ -327,7 +322,7 @@ pub fn segments(
             if text.is_empty() {
                 return None;
             }
-            let r = rect_of(ui, &item_key(side, i), size)?;
+            let r = rect_of(ui, &key_of(side, i, it), size)?;
             Some(crate::view::scene::StatusSegment {
                 name: it.name,
                 key: it.token_key.clone(),
@@ -374,19 +369,18 @@ mod tests {
     fn fitted(bar: &StatusBar, w: u16) -> (Vec<u16>, Vec<u16>) {
         let ui = laid_out(bar.clone(), w, 4);
         let size = Rect::new(0, 0, w, 4);
-        let side = |s: Side, n: usize| -> Vec<u16> {
-            (0..n)
-                .map(|i| {
-                    rect_of(&ui, &item_key(s, i), size)
+        let side = |s: Side, items: &[Item]| -> Vec<u16> {
+            items
+                .iter()
+                .enumerate()
+                .map(|(i, it)| {
+                    rect_of(&ui, &key_of(s, i, it), size)
                         .map(|r| r.width)
                         .unwrap_or(0)
                 })
                 .collect()
         };
-        (
-            side(Side::Left, bar.left.len()),
-            side(Side::Right, bar.right.len()),
-        )
+        (side(Side::Left, &bar.left), side(Side::Right, &bar.right))
     }
 
     /// **The regression the budget existed for, now the yield order's.** A
@@ -650,7 +644,7 @@ mod tests {
         );
         let mut ui = laid_out(bar, 40, 3);
         let r = ui.rect_of(
-            ui.find_by_key(&item_key(Side::Left, 0))
+            ui.find_by_key(&clickable_key(StatusBarClickable::RemoteIndicator))
                 .expect("the segment"),
         );
         let got = ui.dispatch(Input::press(
@@ -727,10 +721,9 @@ mod tests {
         assert_eq!(row_text(bar, 12, 3), "main.rsUTF-8");
     }
 
-    /// Every element's rectangle is read back from the tree, which is what a
-    /// hover, a click, a popup anchor and the web projection all use. The old
-    /// `StatusBarLayout` spelled these out during paint and then spelled them
-    /// again at event time.
+    /// Every element's rectangle is read back from the tree: a clickable one
+    /// by its id, which is what a popup anchors to, and every one through
+    /// `segments` for the web projection.
     #[test]
     fn the_rectangles_come_from_layout() {
         let bar = bar_of(
@@ -743,16 +736,14 @@ mod tests {
         let ui = laid_out(bar.clone(), 40, 3);
         let size = Rect::new(0, 0, 40, 3);
 
-        let clicks = clickable_rects(&ui, &bar, size);
-        let ids: Vec<_> = clicks.iter().map(|(id, _)| *id).collect();
-        assert_eq!(
-            ids,
-            vec![StatusBarClickable::Encoding, StatusBarClickable::LineEnding],
-            "in render order, and only the elements that answer a press"
-        );
+        let at = |id| rect_of(&ui, &clickable_key(id), size).expect("keyed by its id");
         // "UTF-8 | LF" ends at the right edge: LF at 38..40, UTF-8 at 30..35.
-        assert_eq!((clicks[0].1.x, clicks[0].1.width), (30, 5));
-        assert_eq!((clicks[1].1.x, clicks[1].1.width), (38, 2));
+        let (enc, le) = (
+            at(StatusBarClickable::Encoding),
+            at(StatusBarClickable::LineEnding),
+        );
+        assert_eq!((enc.x, enc.width), (30, 5));
+        assert_eq!((le.x, le.width), (38, 2));
 
         let segs = segments(&ui, &bar, size);
         assert_eq!(segs.len(), 3, "every element, clickable or not");
@@ -776,7 +767,7 @@ mod tests {
         );
         let mut ui = laid_out(bar.clone(), 40, 3);
         let size = Rect::new(0, 0, 40, 3);
-        let at = clickable_rects(&ui, &bar, size)[0].1;
+        let at = rect_of(&ui, &clickable_key(StatusBarClickable::Encoding), size).unwrap();
 
         let got = ui.dispatch(fresh_ui::Input::press(
             fresh_ui::Point::new(at.x as i32, at.y as i32),

@@ -31,8 +31,7 @@
 //! The last one is the ledger's finding A: it looks like it needs an anchor
 //! that is a node on one axis and a point on the other, and it does not. The
 //! status bar is migrated and its elements are keyed, so the popup hangs off
-//! *the segment that opened it* — which is what the feature means. Its `x` and
-//! `status_row` parameters exist only because a popup could not name a node.
+//! *the segment that opened it* — which is what the feature means.
 
 use std::rc::Rc;
 
@@ -137,8 +136,7 @@ pub fn placed(position: &PopupPosition, at: CaretAnchor) -> Node<UiMsg> {
             .align_to_anchor(Align::End)
             .fit(Fit::CLAMP),
         // The segment that opened it. See the module docs and the ledger's
-        // finding A; the two numbers in this variant are a rectangle the caller
-        // already had and threw away.
+        // finding A.
         //
         // **Confined to the area left of the editor's scrollbar.** Clamping to
         // the frame puts this popup's right border on the scrollbar's column —
@@ -146,11 +144,8 @@ pub fn placed(position: &PopupPosition, at: CaretAnchor) -> Node<UiMsg> {
         // saying why. Naming the region says the same thing without the
         // arithmetic, and it is the only strategy that reserves anything, so it
         // is the only one that names it.
-        PopupPosition::AboveStatusBarAt { .. } => l
-            .anchor(Anchor::Node(super::status_bar::item_key(
-                super::status_bar::Side::Right,
-                0,
-            )))
+        PopupPosition::AboveStatusBarAt(id) => l
+            .anchor(Anchor::Node(super::status_bar::clickable_key(*id)))
             .place(Place::Above)
             .within(clear_of_scrollbar_key())
             .fit(Fit::FLIP.or(Fit::CLAMP)),
