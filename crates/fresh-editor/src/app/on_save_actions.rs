@@ -8,6 +8,7 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
+use super::shell_command::shell_command;
 use super::Editor;
 use crate::config::{FormatterConfig, OnSaveAction};
 use crate::model::event::Event;
@@ -219,9 +220,8 @@ impl Editor {
             .unwrap_or_else(|_| file_path.parent().unwrap_or(Path::new(".")).to_path_buf());
 
         // Set up the command
-        let mut cmd = Command::new(&shell);
-        cmd.args(["-c", &full_command])
-            .current_dir(&project_root)
+        let mut cmd = shell_command(&shell, &full_command);
+        cmd.current_dir(&project_root)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .hide_window();
@@ -404,9 +404,8 @@ impl Editor {
             .unwrap_or_else(|| project_root.to_path_buf());
 
         // Set up the command
-        let mut cmd = Command::new(&shell);
-        cmd.args(["-c", &full_command])
-            .current_dir(&working_dir)
+        let mut cmd = shell_command(&shell, &full_command);
+        cmd.current_dir(&working_dir)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .hide_window();
