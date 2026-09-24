@@ -636,6 +636,13 @@ pub enum UiFact {
     /// A left press landed outside the dock column. Blurs a focused dock and
     /// does nothing to one already blurred; either way the press goes on.
     DockBlur,
+    /// The tree's focus entered (`held`) or left a panel's interior. While the
+    /// panel keeps its keyboard layer that is a layer above it opening or
+    /// closing — see `Editor::panel_keyboard_changed`.
+    PanelKeyboard {
+        slot: super::widgets::Slot,
+        held: bool,
+    },
     /// A press outside the theme inspector, or any key while it is up. Both
     /// dismiss it and both go on to what they were aimed at.
     ThemeInfoDismiss,

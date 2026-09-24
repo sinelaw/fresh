@@ -119,7 +119,11 @@ is load-bearing:
 1. `apply_settled_shell_messages()` — drain what the *previous frame's* focus
    settle left in `Ui::pending_messages`. Applied before routing, they say what
    was true when the key arrived; applied after, they would overwrite a focus
-   this key just moved.
+   this key just moved. `Editor::render` drains the same queue at the end of
+   every frame too, so a settle's facts reach the editor with the frame that
+   settled them — a panel a layer covered hears it then, not on the next key
+   (`UiFact::PanelKeyboard`); this drain is what is left for a key that
+   arrives before any frame.
 2. `lay_out_shell_if_stale()` — the stale-tree rule again, because step 1 may
    have dirtied it.
 3. Snapshot `EventFacts` — what the menu bar was showing *before* any message,

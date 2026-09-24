@@ -5954,28 +5954,16 @@ impl Editor {
             super::PanelSlot::Floating
         };
         let buffer_id = slot.buffer_id();
-        // A centered modal owns the keyboard: blur a focused dock so the
-        // two slots never both claim input. Without this, a dock key
-        // handler (e.g. its Esc→blur) would greedily consume keys the
-        // modal deferred to its own mode bindings, stranding the modal
-        // open. Fires the dock's `blur` widget_event so the owning plugin
-        // can mirror the state. Does nothing when the dock isn't focused.
-        //
-        // The dock's focused widget is remembered as the panel's opener, and
-        // gets the keyboard back when the floating slot empties
-        // (`Editor::floating_slot_closed`). A panel mounted over another
-        // keeps the opener the first one recorded.
-        if !as_dock && self.dock.as_ref().is_some_and(|f| f.focused) {
-            if let Some(dock_key) = self.dock.as_ref().map(|f| f.panel_key.clone()) {
-                let widget = self
-                    .widget_registry
-                    .focus_key(&dock_key)
-                    .map(str::to_string)
-                    .unwrap_or_default();
-                self.floating_opener = Some((dock_key, widget));
-            }
-            self.blur_floating_panel(super::PanelSlot::Dock);
-        }
+        // **A focused dock stays focused under a centred panel.** The
+        // panel's keyboard layer is declared above the dock's, so it owns the
+        // keyboard while it is up (layer declaration order is the precedence),
+        // and the dock's keyboard is simply covered: the tree's focus leaves
+        // its interior, and the plugin hears that as a `blur`
+        // (`Editor::panel_keyboard_changed`). When the panel closes, the dock's
+        // layer is the keyboard's again and the tree settles on the widget its
+        // description marks — the one that had focus, which opened the panel —
+        // so focus returns to the opener by the tree's own rule, with nothing
+        // remembered here.
         // A dock's width is the editor's (`dock_width` / `dock_width_rule`),
         // not the panel's.
         let placement = if as_dock {
@@ -6236,9 +6224,6 @@ impl Editor {
             *o = None;
         }
         let _ = self.widget_registry.unmount(panel_key);
-        if slot == super::PanelSlot::Floating {
-            self.floating_slot_closed();
-        }
         // Hiding the left dock frees its full-height column. The next
         // frame's `compute_dock_split` already lays the chrome back out
         // full-width (and the early command drain in `render` makes that

@@ -2102,6 +2102,10 @@ pub struct RenderedTreeRow {
     /// primary row's body and blank-padded so the card is exactly
     /// `item_height` rows tall. Empty for a single-line tree.
     pub extra_entries: Vec<TextPropertyEntry>,
+    /// Byte offset in `entry.text` where the row's body starts — past the
+    /// indent, the disclosure glyph and the checkbox. A table row puts its
+    /// cells here (the body of a cell row is empty).
+    pub body_start: usize,
 }
 
 /// Columns a row's action button takes, its leading gap included.
@@ -2785,6 +2789,7 @@ pub fn render_tree_row(
         checkbox_range,
         action_range,
         extra_entries,
+        body_start,
     }
 }
 
@@ -2908,6 +2913,7 @@ fn render_tree_card(node: &TreeNode, item_height: u32, panel_width: u32) -> Rend
 
     RenderedTreeRow {
         entry: border_row('╭', '╮'),
+        body_start: 0,
         disclosure_range: None,
         checkbox_range: None,
         // A card's chrome has nowhere to put a button; `TreeNode::action`

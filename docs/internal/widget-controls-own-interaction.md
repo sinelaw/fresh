@@ -85,11 +85,27 @@ focus itself, and each able to drift.
   `widget_event` and every plugin action (`Editor::publish_panel_focus`), so a
   mode binding's handler reads the focus as of its key; a plugin's own
   `setFocusKey` writes through, so a read right after it agrees.
-- **Focus returns to what opened a panel.** When a centred or anchored panel
-  mounts over a focused dock, the host records the dock widget that had the
-  keyboard (`Editor::floating_opener`); when the floating slot empties — Esc,
-  a press outside, the plugin's own unmount — the dock takes the keyboard back
-  on that widget (`Editor::floating_slot_closed`). The plugin's
+- **Focus returns to what opened a panel — by the tree's own rule.** A
+  focused dock stays focused under a centred or anchored panel: the panel's
+  keyboard layer is declared above the dock's, so it holds the keyboard while
+  it is up, and the dock's layer is only covered. The tree's focus leaves the
+  dock's interior and comes back when the panel closes, landing on the widget
+  the dock's description marks `autofocus` — the one that had focus, which
+  opened the panel. Nothing on the editor remembers an opener.
+
+  The dock's plugin hears the cover and the uncover as it always heard the
+  dock losing and regaining the keyboard, a `blur` and a `focus` marked
+  `previous: "(re-focus)"`. They come from the tree: fresh-ui's
+  `Node::on_focus_within_change` on the panel interior raises
+  `UiFact::PanelKeyboard`, applied by `Editor::panel_keyboard_changed`, and
+  a frame's settled facts are applied at the end of that frame so the plugin
+  is told on the frame that covered or uncovered it, not on the next key.
+  `Editor::is_dock_focused` asks the tree whether focus is inside the dock;
+  the `focused` flag now means only that the dock has a keyboard layer.
+
+  A first cut remembered the opener on the editor (`floating_opener` /
+  `floating_slot_closed`) and blurred the dock as the panel mounted, which is
+  exactly the case fresh-ui's own restore voids; it is deleted. The plugin's
   `closeMainMenu` / `closeCreateFolderDialog` / `restoreDockAfterDialog` /
   `restoreDockAfterForm` refocus code and the `yieldDock` / `restoreDock`
   discovery hooks are gone. A dialog opened while the editor had the keyboard
@@ -169,10 +185,18 @@ would have re-triggered it never reached the box.
 
 An arrow the focused control passed and the panel's mode did not bind now goes
 to the nearest focusable in its direction, measured from the rectangles layout
-gave them (`fresh_ui::focus::spatial::nearest`, reached through
-`Ui::spatial_neighbour`): only controls wholly past this one's edge that way,
-those in its "beam" (overlapping across the arrow's axis) first, then the
-smallest gap, then the nearest centre. Tab stays reading order. ←/→ join ↑/↓ —
+gave them: only controls wholly past this one's edge that way, those in its
+"beam" (overlapping across the arrow's axis) first, then the smallest gap, then
+the nearest centre. Tab stays reading order.
+
+This is fresh-ui's own traversal, not a rule of the editor's: the rule is
+`fresh_ui::Directional`, and a surface declares the policy its subtree moves by
+(`Node::traversal`; the nearest declaring ancestor wins, else the `Ui`'s
+installed policy). The panel interior declares `Directional`, and the panel's
+arrow default is the same walk as its Tab (`Editor::move_panel_focus`: the
+tree's `move_focus` when it holds the panel's focus, `next_in` when it does
+not). A first cut kept the rule in a separate `focus::spatial` module beside
+`Directional`; it is folded in. ←/→ join ↑/↓ —
 a button row's neighbours are to its sides. The typed-filter panel keeps its
 one special case: ↑/↓ from its single-line filter field reach the picker (a
 List moves its selection, a Tree takes focus). The `arrows_advance_focus`
@@ -200,17 +224,27 @@ field inside a `row` now makes it `Sizing::Flex(1)` and builds the field in a
 the orchestrator's `machineFieldWidth` (the terminal width less the label and
 the frame, guessed) is deleted.
 
-**A table.** `tree({ columns })` with `treeNode(…, { cells })` is a table: the
-host measures every cell, caps each column at its `maxWidth`, fits the columns
-to the width the tree is laid out at (the widest column gives first, never
-below a floor), elides each cell at the end its column names (`"head"` keeps a
-path's tail, `"tail"` a name's head), and draws a header over the rows. The
-rules are pure functions in `fresh-editor-core` `kinds::table`; the host's
-`TreeTable` computes the lead (depth indent, fold glyph, checkbox) and tail
-(the widest row button, the scrollbar) so the columns line up whatever the
-row's depth or button. A node without cells (a group heading, a problem line)
-spans the row. Tree was extended rather than a new kind added so Import
-sessions keeps its folding, selection and row buttons.
+**A table.** `tree({ columns })` with `treeNode(…, { cells })` is a table, and
+its cells are nodes of the tree. A cell row is its prefix (indent, fold glyph,
+checkbox — the tree row rendered without a body), its cells, and a button column
+as wide as the widest row's button. The cells are `text` nodes, each cut by
+fresh-ui's own `Elide` at the end its column names (`"head"` keeps a path's
+tail, `"tail"` a name's head), laid on fresh-ui's `Columns`
+(`Node::columns`): every row and the header give the same natural widths to the
+same room, and layout fits them — the widest column gives first, never below a
+floor — so the columns line up without anything measuring a width. The natural
+widths are the one thing measured outside layout (`kinds::table::natural_widths`,
+over every row): the rows are a windowed list, and widths taken from the rows on
+screen would change as it scrolled. The list keeps its scrollbar's column
+(`scrollbar_gutter`), which is what lets the header, above the list, reserve
+the same room. A node without cells (a group heading, a problem line) spans the
+row. Tree was extended rather than a new kind added so Import sessions keeps
+its folding, selection and row buttons.
+
+A first cut built each cell row as one pre-fitted, padded string inside a
+`layout_reader` — measured at the real width, but still a picture of a table.
+Its fitting, eliding and padding (`kinds::table::{fit, elide, row_entry,
+header_entry}`) are deleted.
 
 Import sessions now passes cells and column titles; `discoverRowRoom`,
 `discoverLayout`, `discoverRowEntry`, `discoverHeaderEntry`, `discoverElide`,

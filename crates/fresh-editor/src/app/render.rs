@@ -1287,6 +1287,16 @@ impl Editor {
             frame.buffer_mut(),
             self.color_capability,
         );
+
+        // **What this frame's settle decided reaches the editor with this
+        // frame**, not with the next input. The settle moves the tree's focus
+        // on its own — a layer opening takes it, a layer closing hands it back
+        // to the marked control — and a plugin whose panel that covered or
+        // uncovered hears it from these facts (`UiFact::PanelKeyboard`);
+        // waiting for a key would leave the panel showing the wrong state
+        // until the user pressed one. Still ahead of the next key, which is
+        // what `Editor::shell_dispatch`'s own drain of the same queue is for.
+        self.apply_settled_shell_messages();
     }
 
     /// The Confirm-each option's live value when it is shown (replace
@@ -4072,7 +4082,12 @@ impl Editor {
                 self.shell_hover,
                 Some(crate::app::types::HoverTarget::DockBorder)
             ),
-            dock_focused: self.dock.as_ref().is_some_and(|d| d.focused),
+            // Drawn as focused while it has the keyboard, so a dock under a
+            // centred panel reads as not holding it. `dock_covered` is the
+            // tree's answer as it last settled (`panel_keyboard_changed`);
+            // reading the tree here instead would see the previous frame,
+            // and a dock just given focus back would draw one frame late.
+            dock_focused: self.dock.as_ref().is_some_and(|d| d.focused) && !self.dock_covered,
             // A column with no panel in it that the layout carved anyway:
             // the tree, not the painter, owns every cell of it.
             dock_reserved: self.dock_slot_reserved(),

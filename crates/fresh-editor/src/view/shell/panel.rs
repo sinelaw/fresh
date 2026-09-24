@@ -524,11 +524,16 @@ pub fn interior_capturing(
     body: Node<UiMsg>,
 ) -> Node<UiMsg> {
     let (w, h) = (body.w, body.h);
+    // **Arrows move by where things are, Tab by reading order** — the
+    // interior declares it (`fresh_ui::Directional`), so the tree's own
+    // traversal answers both inside every panel, and nothing outside the
+    // panel is affected.
     let n = fresh_ui::focusable(body)
         .w(w)
         .h(h)
         .key(interior_key(slot))
-        .skip_traversal();
+        .skip_traversal()
+        .traversal(fresh_ui::Directional);
     let n = match capture {
         Some(c) => n.on_key_capture(move |e: &fresh_ui::Event| c(e)),
         None => n,
@@ -543,6 +548,17 @@ pub fn interior_capturing(
         true => n.autofocus(),
         false => n,
     };
+    // **Whether the panel's keyboard is where the keys go, as the tree has
+    // it.** A panel keeps its keyboard layer while another layer is open over
+    // it (a dialog over the dock), and the tree's focus leaves the interior
+    // and comes back without the panel's own focus fact changing. The runtime
+    // hears both moves from here (`Editor::panel_keyboard_changed`).
+    let n = n.on_focus_within_change(move |e: &fresh_ui::Event| {
+        Some(UiMsg::Ui(UiFact::PanelKeyboard {
+            slot,
+            held: e.kind == fresh_ui::GestureKind::FocusGained,
+        }))
+    });
     n.on_key(move |e: &fresh_ui::Event| {
         // **Tab too.** It used to be declined here so the tree's ring moved
         // focus before anything else saw it — which meant the focused

@@ -3143,6 +3143,7 @@ impl Editor {
                     Grip::SectionDivider(_) => self.end_sidebar_section_drag(),
                 }
             }
+            UiFact::PanelKeyboard { slot, held } => self.panel_keyboard_changed(slot, held),
             UiFact::DockBlur => {
                 if self.dock.as_ref().is_some_and(|f| f.focused) {
                     self.blur_floating_panel(crate::app::PanelSlot::Dock);

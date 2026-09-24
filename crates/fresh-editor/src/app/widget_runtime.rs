@@ -1047,10 +1047,11 @@ impl Editor {
                 // **An arrow nothing used moves focus by where things are**
                 // (`docs/internal/widget-controls-own-interaction.md` R4): the
                 // focused control and the panel's mode have both passed it, so
-                // it goes to the nearest control on screen in its direction
-                // (`fresh_ui::focus::spatial`) — not the next one in Tab order,
+                // it goes to the nearest control on screen in its direction —
+                // the traversal policy the panel's interior declares
+                // (`fresh_ui::Directional`), not the next stop in Tab order,
                 // which in a two-column menu or a form's footer is the wrong
-                // one. Tab stays reading order.
+                // one. Tab stays reading order under the same policy.
                 //
                 // The one exception is the typed-filter panel: ↑/↓ from its
                 // single-line filter field reach the panel's picker (a List
@@ -1087,12 +1088,12 @@ impl Editor {
                     }
                 }
                 let dir = match key.code() {
-                    KeyCode::Up => fresh_ui::focus::spatial::Direction::Up,
-                    KeyCode::Down => fresh_ui::focus::spatial::Direction::Down,
-                    KeyCode::Left => fresh_ui::focus::spatial::Direction::Left,
-                    _ => fresh_ui::focus::spatial::Direction::Right,
+                    KeyCode::Up => fresh_ui::FocusDir::Up,
+                    KeyCode::Down => fresh_ui::FocusDir::Down,
+                    KeyCode::Left => fresh_ui::FocusDir::Left,
+                    _ => fresh_ui::FocusDir::Right,
                 };
-                self.move_panel_focus_spatially(panel_key, dir);
+                self.move_panel_focus(panel_key, dir, 1);
             }
             KeyCode::Enter => match widget {
                 Some(fresh_core::api::WidgetSpec::Text { .. }) => {
@@ -1120,57 +1121,6 @@ impl Editor {
                 _ => {}
             },
             _ => {} // unrecognised key — quietly ignore
-        }
-    }
-
-    /// Move this panel's focus to the nearest control on screen in `dir`
-    /// from the focused one, by the rectangles the tree laid them out at
-    /// (`fresh_ui::Ui::spatial_neighbour`). Returns whether focus moved.
-    ///
-    /// Confined to the focused control's nearest focus scope inside the
-    /// panel, the same confinement Tab has. Nothing that way: nothing moves.
-    fn move_panel_focus_spatially(
-        &mut self,
-        panel_key: &crate::widgets::PanelKey,
-        dir: fresh_ui::focus::spatial::Direction,
-    ) -> bool {
-        self.lay_out_shell_if_stale();
-        let focus_key = self
-            .widget_registry
-            .focus_key(panel_key)
-            .map(str::to_string)
-            .unwrap_or_default();
-        if focus_key.is_empty() {
-            return false;
-        }
-        let target = {
-            let Some(ui) = self.shell_ui.as_ref() else {
-                return false;
-            };
-            let Some(root) = self.panel_subtree_root(ui, panel_key) else {
-                return false;
-            };
-            let Some(from) = ui
-                .find_by_key(&crate::view::shell::widgets::widget_focus_key(&focus_key))
-                .filter(|f| ui.contains(root, *f))
-            else {
-                return false;
-            };
-            let scope = ui
-                .enclosing_focus_scope(from)
-                .filter(|s| ui.contains(root, *s))
-                .unwrap_or(root);
-            ui.spatial_neighbour(scope, from, dir)
-                .and_then(|to| ui.key_of(to))
-                .and_then(|k| crate::view::shell::widgets::widget_key_of(&k).map(str::to_string))
-        };
-        match target {
-            Some(key) if key != focus_key => {
-                self.set_panel_focus_and_notify(panel_key, key);
-                self.rerender_widget_panel(panel_key);
-                true
-            }
-            _ => false,
         }
     }
 
@@ -1203,11 +1153,30 @@ impl Editor {
     /// (`c89d25f`), and the runtime cannot know whether the tree's focus is
     /// where its ring would start.
     fn handle_widget_focus_advance(&mut self, panel_key: &crate::widgets::PanelKey, delta: i32) {
+        let dir = match delta < 0 {
+            true => fresh_ui::FocusDir::Prev,
+            false => fresh_ui::FocusDir::Next,
+        };
+        self.move_panel_focus(panel_key, dir, delta.unsigned_abs());
+    }
+
+    /// Move this panel's focus `steps` stops in `dir` — Tab's ring for
+    /// Next/Prev, the arrows' directions for the rest. Which stop a direction
+    /// reaches is the traversal policy the panel's interior declares
+    /// (`fresh_ui::Directional`: by where things are laid out), answered by
+    /// the tree on either path below — its own `move_focus` when it holds the
+    /// panel's focus, `next_in` over the same registrations when it does not.
+    fn move_panel_focus(
+        &mut self,
+        panel_key: &crate::widgets::PanelKey,
+        dir: fresh_ui::FocusDir,
+        steps: u32,
+    ) {
         // The ring is read off the tree, so the tree has to carry the panel
         // as it is now — a mount or a spec update since the last frame is
         // laid out first. See `Editor::shell_description_stale`.
         self.lay_out_shell_if_stale();
-        if self.advance_panel_focus_in_tree(panel_key, delta) {
+        if self.advance_panel_focus_in_tree(panel_key, dir, steps) {
             return;
         }
         // **The tree does not hold this panel's focus** — a mounted but
@@ -1243,10 +1212,6 @@ impl Editor {
             .and_then(|f| ui.enclosing_focus_scope(f))
             .filter(|s| ui.contains(interior, *s))
             .unwrap_or(interior);
-        let dir = match delta < 0 {
-            true => fresh_ui::FocusDir::Prev,
-            false => fresh_ui::FocusDir::Next,
-        };
         // "Nothing focused" sits *outside* the ring: the first Tab lands on
         // the first widget and the first Shift+Tab on the last, which is what
         // `next_in` answers for a `from` it does not find.
@@ -1259,7 +1224,13 @@ impl Editor {
         // on the startup switch. So the ring is seeded from where the reader
         // is, and Tab goes on from there.
         let seed = match from.is_none() && follows_reader {
-            true => self.page_ring_seed(panel_key, delta >= 0),
+            true => self.page_ring_seed(
+                panel_key,
+                matches!(
+                    dir,
+                    fresh_ui::FocusDir::Next | fresh_ui::FocusDir::Down | fresh_ui::FocusDir::Right
+                ),
+            ),
             false => None,
         };
         let from = seed
@@ -1268,7 +1239,7 @@ impl Editor {
             .filter(|f| ui.contains(interior, *f))
             .or(from);
         let mut cur = from;
-        for _ in 0..delta.unsigned_abs() {
+        for _ in 0..steps {
             match ui.next_in(root, cur, dir) {
                 Some(n) => cur = Some(n),
                 None => break,
@@ -1368,7 +1339,8 @@ impl Editor {
     fn advance_panel_focus_in_tree(
         &mut self,
         panel_key: &crate::widgets::PanelKey,
-        delta: i32,
+        dir: fresh_ui::FocusDir,
+        steps: u32,
     ) -> bool {
         use crate::view::shell::msg::{UiFact, UiMsg};
         use crate::view::shell::widgets::Slot;
@@ -1407,16 +1379,10 @@ impl Editor {
         // applying messages in the middle of one. Anything else that ever
         // lands in this queue would have to be reconsidered here.
         let _superseded = ui.take_messages();
-        let dir = match delta < 0 {
-            true => fresh_ui::FocusDir::Prev,
-            false => fresh_ui::FocusDir::Next,
-        };
-        // `delta` is a count of tab stops, not a direction — the arena moves
-        // `|delta|` of them in one go, and answers a zero delta by staying
-        // put — so the tree is stepped exactly that many times.
-        // `WidgetAction::FocusAdvance`'s own doc only defines ±1, and nothing
-        // bundled sends more.
-        for _ in 0..delta.unsigned_abs() {
+        // `steps` is a count of stops — a zero stays put — so the tree is
+        // stepped exactly that many times. `WidgetAction::FocusAdvance`'s own
+        // doc only defines ±1, and nothing bundled sends more.
+        for _ in 0..steps {
             if !ui.move_focus(dir) {
                 break;
             }
@@ -2844,6 +2810,11 @@ impl Editor {
         if let Some(f) = self.panel_mut(slot) {
             f.focused = true;
         }
+        // Refocused on purpose, and the plugin is told so below: whatever a
+        // layer over the dock had covered is moot.
+        if slot == super::PanelSlot::Dock {
+            self.dock_covered = false;
+        }
         // The panel's keyboard is a fact the description reads (its keys
         // layer, its marks), so the tree is stale until it is rebuilt.
         self.shell_description_stale = true;
@@ -2879,6 +2850,11 @@ impl Editor {
         };
         if let Some(f) = self.panel_mut(slot) {
             f.focused = false;
+        }
+        // Blurred on purpose, and the plugin is told so below; a cover a
+        // layer over the dock had put on it is over with the layer's keyboard.
+        if slot == super::PanelSlot::Dock {
+            self.dock_covered = false;
         }
         // The blur is a focus write: the description marks the pane behind
         // the panel now, and the tree must say so before the next key is
@@ -3278,44 +3254,59 @@ impl Editor {
             *o = None;
         }
         let _ = self.widget_registry.unmount(&panel_key);
-        if slot == super::PanelSlot::Floating {
-            self.floating_slot_closed();
-        }
     }
 
-    /// **Focus returns to what opened the panel.** The floating slot just
-    /// emptied; if a dock widget held the keyboard when it mounted
-    /// (`Editor::floating_opener`), the dock takes the keyboard back and
-    /// its focus returns to that widget — or stays where it is, if the
-    /// widget is gone from the dock's spec by now.
+    /// **The tree's focus entered or left a panel's interior** — for the dock,
+    /// the one panel another layer opens over while it keeps its keyboard.
     ///
-    /// Deliberately the host's, and the one path for every way a panel
-    /// closes — Esc, a press outside an anchored menu, the plugin's own
-    /// unmount: each plugin used to hand the keyboard back itself, and
-    /// each of its closing paths had to remember to.
-    pub(super) fn floating_slot_closed(&mut self) {
-        // The slot must really be empty: a panel mounted in the same breath
-        // (a dialog replacing a dialog) keeps the keyboard, and the opener
-        // waits for the last of them.
-        if self.floating_widget_panel.is_some() {
+    /// A focused dock stays focused under a centred panel (its layer is
+    /// covered, not dropped), so the move out and back in is the tree's alone
+    /// and the owning plugin hears it the way it always heard a dock losing
+    /// and regaining the keyboard: a `blur`, then a `focus` marked
+    /// `previous: "(re-focus)"`. A dock that is not focused was blurred on
+    /// purpose, and that path told the plugin already.
+    pub(super) fn panel_keyboard_changed(
+        &mut self,
+        slot: crate::view::shell::widgets::Slot,
+        held: bool,
+    ) {
+        if slot != crate::view::shell::widgets::Slot::Dock {
             return;
         }
-        let Some((dock_key, widget)) = self.floating_opener.take() else {
+        let Some(dock) = self.dock.as_ref() else {
             return;
         };
-        // The dock that opened it must still be the dock.
-        if self.dock.as_ref().map(|f| &f.panel_key) != Some(&dock_key) {
+        if !dock.focused {
+            self.dock_covered = false;
             return;
         }
-        let still_there = !widget.is_empty()
-            && self
-                .widget_registry
-                .get(&dock_key)
-                .is_some_and(|p| crate::widgets::find_widget_by_key(&p.spec, &widget).is_some());
-        if still_there {
-            self.set_panel_focus_and_notify(&dock_key, widget);
+        let panel_key = dock.panel_key.clone();
+        let widget_key = self
+            .widget_registry
+            .focus_key(&panel_key)
+            .map(str::to_string)
+            .unwrap_or_default();
+        match (held, self.dock_covered) {
+            (false, false) => {
+                self.dock_covered = true;
+                self.fire_widget_event(
+                    &panel_key,
+                    widget_key,
+                    "blur".to_string(),
+                    serde_json::json!({ "covered": true }),
+                );
+            }
+            (true, true) => {
+                self.dock_covered = false;
+                self.fire_widget_event(
+                    &panel_key,
+                    widget_key,
+                    "focus".to_string(),
+                    serde_json::json!({ "previous": "(re-focus)" }),
+                );
+            }
+            _ => {}
         }
-        self.refocus_floating_panel(super::PanelSlot::Dock);
     }
 }
 
@@ -3677,7 +3668,7 @@ mod tests {
         frame_the_shell(&mut editor);
         assert!(
             !editor.is_dock_focused(),
-            "mounting a centred modal blurs the dock"
+            "mounting a centred modal takes the keyboard from the dock"
         );
 
         // Submitting it closes the form — the host gives the dock its
@@ -4760,12 +4751,18 @@ mod tests {
         );
     }
 
-    /// **Focus returns to what opened the panel.** A centred panel mounted
-    /// over a focused dock records the dock's focused widget; when the
-    /// floating slot empties, the dock takes the keyboard back on exactly
-    /// that widget — not wherever a plugin would have guessed.
+    /// **A panel closing over a focused dock gives the keyboard back to the
+    /// dock widget that opened it — by the tree's own rule.**
+    ///
+    /// The dock keeps its keyboard layer while a centred panel is up; the
+    /// panel's layer is above it, so the tree's focus moves into the panel and
+    /// the dock is told it is covered (a `blur`). When the panel goes, the
+    /// dock's layer is the keyboard's again and the tree settles on the widget
+    /// the dock's description marks — the one that had focus. Nothing on the
+    /// editor remembers an opener.
+    #[cfg(feature = "plugins")]
     #[test]
-    fn closing_a_floating_panel_returns_focus_to_the_dock_widget_that_opened_it() {
+    fn closing_a_panel_over_the_dock_returns_focus_to_the_widget_that_opened_it() {
         let (mut editor, _t) = make_editor();
         let dock_key = crate::widgets::PanelKey::new("test-plugin", 1);
         let spec = WidgetSpec::Col {
@@ -4783,42 +4780,64 @@ mod tests {
             false,
             false,
         );
-        let mut dock = dock_panel(dock_key.clone());
-        dock.focused = false;
-        editor.dock = Some(dock);
-        // The Menu button opened a panel, which then moved the dock's focus.
-        editor.floating_opener = Some((dock_key.clone(), "menu".to_string()));
+        editor.dock = Some(dock_panel(dock_key.clone()));
+        editor.set_panel_focus_and_notify(&dock_key, "menu".to_string());
+        frame_the_shell(&mut editor);
+        editor.apply_settled_shell_messages();
+        let menu = |e: &Editor| {
+            let ui = e.shell_ui.as_ref().expect("the tree");
+            (
+                ui.focused(),
+                ui.find_by_key(&crate::view::shell::widgets::widget_focus_key("menu")),
+            )
+        };
+        let (at, want) = menu(&editor);
+        assert_eq!(at, want, "the Menu button has the keyboard");
+
         editor
-            .widget_registry
-            .decide_focus(&dock_key, "list".to_string());
-
-        editor.floating_slot_closed();
-
-        assert_eq!(editor.widget_registry.focus_key(&dock_key), Some("menu"));
+            .handle_plugin_command(fresh_core::api::PluginCommand::MountFloatingWidget {
+                plugin: "test-plugin".to_string(),
+                panel_id: 2,
+                spec: list_of(3),
+                width_pct: 60,
+                height_pct: 60,
+                as_dock: false,
+                focus_marker: false,
+                label_align: Default::default(),
+                title: None,
+                closable: false,
+                start_blurred: false,
+                mode: None,
+            })
+            .unwrap();
+        frame_the_shell(&mut editor);
+        editor.apply_settled_shell_messages();
         assert!(
             editor.dock.as_ref().is_some_and(|d| d.focused),
-            "the dock has the keyboard"
+            "the dock keeps its layer under the panel"
         );
-        assert!(editor.floating_opener.is_none(), "the opener is spent");
-    }
+        assert!(!editor.is_dock_focused(), "the panel has the keyboard");
+        assert!(editor.dock_covered, "and the dock was told it is covered");
 
-    /// A panel replaced by another in the same breath keeps the keyboard: the
-    /// slot is not empty, so the opener waits for the last one to close.
-    #[test]
-    fn a_floating_panel_still_up_keeps_the_keyboard() {
-        let (mut editor, _t) = make_editor();
-        let dock_key = crate::widgets::PanelKey::new("test-plugin", 1);
-        let mut dock = dock_panel(dock_key.clone());
-        dock.focused = false;
-        editor.dock = Some(dock);
-        editor.floating_widget_panel =
-            Some(dock_panel(crate::widgets::PanelKey::new("test-plugin", 2)));
-        editor.floating_opener = Some((dock_key, "menu".to_string()));
-
-        editor.floating_slot_closed();
-
-        assert!(editor.dock.as_ref().is_some_and(|d| !d.focused));
-        assert!(editor.floating_opener.is_some(), "the opener waits");
+        editor
+            .handle_plugin_command(fresh_core::api::PluginCommand::UnmountFloatingWidget {
+                plugin: "test-plugin".to_string(),
+                panel_id: 2,
+            })
+            .unwrap();
+        frame_the_shell(&mut editor);
+        editor.apply_settled_shell_messages();
+        let (at, want) = menu(&editor);
+        assert_eq!(
+            at, want,
+            "focus is back on the widget that opened the panel"
+        );
+        assert!(editor.is_dock_focused());
+        assert!(
+            !editor.dock_covered,
+            "and the dock was told it has the keyboard back"
+        );
+        assert_eq!(editor.widget_registry.focus_key(&dock_key), Some("menu"));
     }
 }
 

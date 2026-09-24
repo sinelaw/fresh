@@ -236,6 +236,54 @@ pub struct BoxProps {
     /// The box's ground is this cluster, tiled across its rect, rather than a
     /// blank fill. See [`Node::rule`].
     pub rule: Option<std::rc::Rc<str>>,
+    /// A row whose children are the cells of a table row. See
+    /// [`Node::columns`].
+    pub columns: Option<Rc<Columns>>,
+}
+
+/// **The columns a table's rows lay their cells on.** Every row that shares
+/// one is given the same widths for the same room, so the cells of a column
+/// line up down the whole table without any row measuring another.
+///
+/// The natural widths are the description's to say: a table's rows are
+/// usually a windowed list, which builds only the rows on screen, and a
+/// column measured from those alone would change width as it scrolled. Layout
+/// fits them to the room each row actually has ([`Columns::fit`]).
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
+pub struct Columns {
+    /// Each column's natural width — its widest cell, capped as the table
+    /// sees fit.
+    pub natural: Vec<u16>,
+    /// The narrowest a column is squeezed to when the table must fit.
+    pub floor: u16,
+}
+
+impl Columns {
+    pub fn new(natural: Vec<u16>, floor: u16) -> Self {
+        Columns { natural, floor }
+    }
+
+    /// The widths the columns take in `room` cells (gaps already taken out).
+    ///
+    /// Too wide, the widest column gives one cell at a time — so a long path
+    /// is cut before a short name is — and none goes below `floor` (nor below
+    /// its own natural width, if that is smaller). Ties go to the leftmost.
+    pub fn fit(&self, room: u16) -> Vec<u16> {
+        let mut w = self.natural.clone();
+        let total = |w: &[u16]| w.iter().map(|&v| v as u32).sum::<u32>();
+        while total(&w) > room as u32 {
+            let widest = w
+                .iter()
+                .enumerate()
+                .filter(|(_, &v)| v > self.floor)
+                .max_by_key(|(i, &v)| (v, std::cmp::Reverse(*i)));
+            match widest {
+                Some((i, _)) => w[i] -= 1,
+                None => break,
+            }
+        }
+        w
+    }
 }
 
 /// How a run gives up cells it was not given.
@@ -554,8 +602,13 @@ pub struct FocusProps<M> {
     pub on_focus_change: Option<Handler<M>>,
     /// Rebuild this element when focus enters or leaves its subtree.
     pub focus_within: bool,
+    /// Called with `FocusGained` when focus enters this subtree and
+    /// `FocusLost` when it leaves. See [`Node::on_focus_within_change`].
+    pub on_focus_within_change: Option<Handler<M>>,
     /// The stop traversal enters this subtree at. See [`Node::enters_at`].
     pub entry: Option<crate::key::Key>,
+    /// How traversal moves inside this subtree. See [`Node::traversal`].
+    pub traversal: Option<Rc<dyn crate::focus::TraversalPolicy>>,
 }
 
 impl<M> Default for FocusProps<M> {
@@ -571,7 +624,9 @@ impl<M> Default for FocusProps<M> {
             actions: Vec::new(),
             on_focus_change: None,
             focus_within: false,
+            on_focus_within_change: None,
             entry: None,
+            traversal: None,
         }
     }
 }
@@ -1104,7 +1159,9 @@ impl<M> Clone for FocusProps<M> {
             actions: self.actions.clone(),
             on_focus_change: self.on_focus_change.clone(),
             focus_within: self.focus_within,
+            on_focus_within_change: self.on_focus_within_change.clone(),
             entry: self.entry.clone(),
+            traversal: self.traversal.clone(),
         }
     }
 }
@@ -1755,6 +1812,19 @@ impl<M> Node<M> {
         self
     }
 
+    /// Lay this row's children on `columns`: child *i* is as wide as column
+    /// *i* comes out at the width this row is laid out at, whatever its own
+    /// sizing says, with the box's [`gap`](Self::gap) between them. Children
+    /// past the last column are sized as usual.
+    ///
+    /// Give every row of a table — and its header — the same `Rc`, and their
+    /// cells line up. A cell that does not fit its column is cut the way its
+    /// own text says ([`Elide`]).
+    pub fn columns(mut self, columns: Rc<Columns>) -> Self {
+        self.box_props().columns = Some(columns);
+        self
+    }
+
     /// Settle a wrapping box's lines against the end of the main axis.
     ///
     /// The answer to "flush right while they fit, wrapped from the left when
@@ -2064,9 +2134,38 @@ impl<M> Node<M> {
         self
     }
 
+    /// Traversal inside this subtree follows `policy` — Tab, Shift+Tab and the
+    /// arrows alike, from any element in it.
+    ///
+    /// Which stop a move reaches is a property of the surface, not of the
+    /// application: a form reads in order, a grid of buttons or a two-column
+    /// dialog moves by where things are. The nearest ancestor that declares a
+    /// policy decides; with none declared, the one installed with
+    /// [`crate::Ui::set_traversal_policy`] does.
+    pub fn traversal(mut self, policy: impl crate::focus::TraversalPolicy + 'static) -> Self {
+        self.focus_props().traversal = Some(Rc::new(policy));
+        self
+    }
+
     /// Rebuild when focus enters or leaves this subtree.
     pub fn focus_within(mut self) -> Self {
         self.focus_props().focus_within = true;
+        self
+    }
+
+    /// Be told when focus enters this subtree (`FocusGained`) or leaves it
+    /// (`FocusLost`) — a move *within* the subtree is neither. Implies
+    /// [`Self::focus_within`].
+    ///
+    /// [`Self::on_focus_change`] answers for this element alone. A surface
+    /// whose keyboard is a subtree — a panel, whose controls are its
+    /// descendants — asks this instead: a layer opening over it takes focus
+    /// out of the subtree without any control in it changing, and closing
+    /// that layer brings focus back in the same way.
+    pub fn on_focus_within_change(mut self, f: impl Fn(&Event) -> Option<M> + 'static) -> Self {
+        let p = self.focus_props();
+        p.focus_within = true;
+        p.on_focus_within_change = Some(Rc::new(f));
         self
     }
 

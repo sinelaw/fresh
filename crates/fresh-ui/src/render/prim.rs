@@ -815,9 +815,17 @@ impl RenderObject for BoxRender {
             o
         };
 
+        // **A table row's cells are as wide as their columns** — fitted to this
+        // row's room, the same numbers every row sharing the columns gets —
+        // whatever the cells' own sizing says. See `Node::columns`.
+        let column_widths: Vec<u16> = match (&p.columns, dir) {
+            (Some(cols), Dir::Row) => cols.fit(avail),
+            _ => Vec::new(),
+        };
         // Everything that is not flex resolves first; flex divides what is left.
         for i in order {
             let (sw, sh) = cx.sizing(kids[i]);
+            let sw = column_widths.get(i).map_or(sw, |&w| Sizing::Cells(w));
             let (s_main, s_cross) = match dir {
                 Dir::Row => (sw, sh),
                 Dir::Col => (sh, sw),
