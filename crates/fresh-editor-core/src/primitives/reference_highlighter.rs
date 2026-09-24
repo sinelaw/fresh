@@ -224,6 +224,7 @@ impl ReferenceHighlighter {
     }
 
     /// Set the minimum word length
+    #[cfg(test)]
     pub fn with_min_length(mut self, length: usize) -> Self {
         self.min_word_length = length;
         self

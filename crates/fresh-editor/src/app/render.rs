@@ -21,7 +21,6 @@ struct ExplorerSection {
     title_theme: String,
     border_theme: String,
     close_theme: String,
-    rows: u16,
     focused: bool,
 }
 
@@ -3253,7 +3252,6 @@ impl Editor {
             title_theme,
             border_theme,
             close_theme: fe::close_theme(close_hovered),
-            rows,
             focused,
         }
     }

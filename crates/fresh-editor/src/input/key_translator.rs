@@ -220,6 +220,7 @@ impl KeyTranslator {
     }
 
     /// Check if a translation exists for the given key
+    #[cfg(test)]
     pub fn has_translation(&self, raw: &KeyEvent) -> bool {
         let key = KeyEventKey::from_key_event(raw);
         self.translations.contains_key(&key)
@@ -230,12 +231,6 @@ impl KeyTranslator {
         let raw_key = KeyEventKey::from_key_event(&raw);
         let expected_key = KeyEventKey::from_key_event(&expected);
         self.translations.insert(raw_key, expected_key);
-    }
-
-    /// Remove a translation mapping
-    pub fn remove_translation(&mut self, raw: &KeyEvent) {
-        let key = KeyEventKey::from_key_event(raw);
-        self.translations.remove(&key);
     }
 
     /// Get the number of translations

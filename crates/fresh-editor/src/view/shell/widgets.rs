@@ -4465,7 +4465,6 @@ fn ink_of(o: &OverlayOptions, under: &Ink) -> Ink {
 pub(crate) mod tests {
     use super::super::msg::UiFact;
     use super::*;
-    use fresh_core::api::HintEntry;
     use fresh_ui::{Size, Ui};
 
     const WIDTH: u16 = 40;
@@ -4509,13 +4508,6 @@ pub(crate) mod tests {
         tree_text(spec, &cx())
     }
 
-    fn hint(keys: &str, label: &str) -> HintEntry {
-        HintEntry {
-            keys: keys.into(),
-            label: label.into(),
-        }
-    }
-
     fn raw(text: &str) -> TextPropertyEntry {
         TextPropertyEntry::text(text)
     }
@@ -4523,33 +4515,6 @@ pub(crate) mod tests {
     fn col_of(children: Vec<WidgetSpec>) -> WidgetSpec {
         WidgetSpec::Col {
             children,
-            key: None,
-        }
-    }
-
-    /// A multi-line `Text` at a row budget, with no key and no state — the
-    /// spec is the whole of it, on both paths.
-    fn area(value: &str, rows: u32, label: &str) -> WidgetSpec {
-        WidgetSpec::Text {
-            value: value.into(),
-            cursor_byte: -1,
-            focused: false,
-            label: label.into(),
-            placeholder: None,
-            rows,
-            field_width: 0,
-            max_visible_chars: 0,
-            full_width: false,
-            completions: Vec::new(),
-            completions_visible_rows: 0,
-            min_rows: 0,
-            max_rows: 0,
-            block_caret: false,
-            sel_start: -1,
-            sel_end: -1,
-            label_width: 0,
-            read_only: false,
-            markdown: false,
             key: None,
         }
     }
@@ -6091,32 +6056,6 @@ pub(crate) mod tests {
                 rendered.button_range.0,
             ),
         )
-    }
-
-    /// Every line the layers paint, grouped by row the way [`rows_of`] groups
-    /// the in-flow half.
-    fn layer_rows(ui: &Ui<UiMsg>) -> Vec<String> {
-        let mut pieces: Vec<(i32, i32, String)> = Vec::new();
-        for item in ui.spec().layers() {
-            if let fresh_ui::Draw::Lines(lines) = &item.draw {
-                for (i, l) in lines.iter().enumerate() {
-                    pieces.push((item.rect.y + i as i32, item.rect.x, l.to_string()));
-                }
-            }
-        }
-        pieces.sort_by_key(|(y, x, _)| (*y, *x));
-        let mut out: Vec<String> = Vec::new();
-        let mut at: Option<i32> = None;
-        for (y, _, s) in pieces {
-            match at {
-                Some(prev) if prev == y => out.last_mut().unwrap().push_str(&s),
-                _ => {
-                    out.push(s);
-                    at = Some(y);
-                }
-            }
-        }
-        out
     }
 
     fn facts(got: fresh_ui::Dispatch<UiMsg>) -> Vec<UiFact> {

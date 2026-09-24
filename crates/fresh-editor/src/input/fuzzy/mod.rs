@@ -170,28 +170,6 @@ pub fn fuzzy_match_prepared(pattern: &PreparedPattern, target: &str) -> FuzzyMat
     matcher::match_prepared(pattern, target)
 }
 
-/// Filter a list of items using fuzzy matching, returning sorted results.
-///
-/// Items are sorted by match quality (best matches first).
-/// Non-matching items are excluded.
-pub fn fuzzy_filter<T, F>(query: &str, items: &[T], get_text: F) -> Vec<(usize, FuzzyMatch)>
-where
-    F: Fn(&T) -> &str,
-{
-    let pattern = PreparedPattern::new(query);
-    let mut results: Vec<(usize, FuzzyMatch)> = items
-        .iter()
-        .enumerate()
-        .map(|(idx, item)| (idx, fuzzy_match_prepared(&pattern, get_text(item))))
-        .filter(|(_, m)| m.matched)
-        .collect();
-
-    // Sort by score descending (best matches first)
-    results.sort_by_key(|b| std::cmp::Reverse(b.1.score));
-
-    results
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -293,17 +271,6 @@ mod tests {
         assert!(result.matched);
         // 'F' is at a camelCase boundary
         assert!(result.score > 0);
-    }
-
-    #[test]
-    fn test_fuzzy_filter() {
-        let items = vec!["Save File", "Open File", "Save As", "Quit"];
-        let results = fuzzy_filter("sf", &items, |s| s);
-
-        assert!(!results.is_empty());
-        // "Save File" should match
-        let matched_texts: Vec<&str> = results.iter().map(|(idx, _)| items[*idx]).collect();
-        assert!(matched_texts.contains(&"Save File"));
     }
 
     #[test]

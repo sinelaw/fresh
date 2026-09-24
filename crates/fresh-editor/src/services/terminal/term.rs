@@ -740,6 +740,7 @@ impl TerminalState {
     }
 
     /// Mark as clean after rendering
+    #[cfg(test)]
     pub fn mark_clean(&mut self) {
         self.dirty = false;
     }
@@ -867,11 +868,6 @@ impl TerminalState {
     /// Get the title (if set by escape sequence)
     pub fn title(&self) -> &str {
         &self.terminal_title
-    }
-
-    /// Set the terminal title (called when escape sequence is received)
-    pub fn set_title(&mut self, title: String) {
-        self.terminal_title = title;
     }
 
     /// Scroll to the bottom of the terminal (display offset = 0)
@@ -1362,6 +1358,7 @@ impl TerminalState {
     }
 
     /// Reset sync state (e.g., when starting fresh or after truncation).
+    #[cfg(test)]
     pub fn reset_sync_state(&mut self) {
         self.synced_history_lines = 0;
         self.synced_logical_lines = 0;

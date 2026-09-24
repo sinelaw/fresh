@@ -1193,6 +1193,7 @@ impl SettingsState {
     }
 
     /// Set the target layer for saving changes.
+    #[cfg(test)]
     pub fn set_target_layer(&mut self, layer: ConfigLayer) {
         if layer != ConfigLayer::System {
             // Cannot target System layer (read-only)

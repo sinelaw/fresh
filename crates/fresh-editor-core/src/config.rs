@@ -2858,18 +2858,6 @@ impl BufferConfig {
 
         config
     }
-
-    /// Get the effective indentation string for this buffer.
-    ///
-    /// Returns a tab character if `use_tabs` is true, otherwise returns
-    /// `tab_size` spaces.
-    pub fn indent_string(&self) -> String {
-        if self.use_tabs {
-            "\t".to_string()
-        } else {
-            " ".repeat(self.tab_size)
-        }
-    }
 }
 
 /// Menu bar configuration
@@ -9196,28 +9184,6 @@ mod tests {
         let md = BufferConfig::resolve(&config, Some("markdown"));
         assert!(md.auto_close);
         assert!(!md.auto_surround);
-    }
-
-    #[test]
-    fn test_buffer_config_indent_string() {
-        let config = Config::default();
-
-        // Spaces indent
-        let spaces_config = BufferConfig::resolve(&config, None);
-        assert_eq!(spaces_config.indent_string(), "    "); // 4 spaces
-
-        // Tabs indent - create a language that uses tabs
-        let mut config_with_tabs = Config::default();
-        config_with_tabs.languages.insert(
-            "makefile".to_string(),
-            LanguageConfig {
-                use_tabs: Some(true),
-                tab_size: Some(8),
-                ..Default::default()
-            },
-        );
-        let tabs_config = BufferConfig::resolve(&config_with_tabs, Some("makefile"));
-        assert_eq!(tabs_config.indent_string(), "\t");
     }
 
     #[test]

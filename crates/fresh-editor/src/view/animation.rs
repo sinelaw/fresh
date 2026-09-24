@@ -1258,18 +1258,6 @@ impl AnimationRunner {
     pub fn next_deadline(&self) -> Option<Instant> {
         self.active.iter().map(|e| e.deadline).min()
     }
-
-    /// True if `(col, row)` falls inside the area of any running effect.
-    /// Use this to suppress click routing during an animation.
-    pub fn is_animating_at(&self, col: u16, row: u16) -> bool {
-        self.active.iter().any(|e| {
-            e.status == EffectStatus::Running
-                && col >= e.area.x
-                && col < e.area.x.saturating_add(e.area.width)
-                && row >= e.area.y
-                && row < e.area.y.saturating_add(e.area.height)
-        })
-    }
 }
 
 #[cfg(test)]
@@ -1325,24 +1313,6 @@ mod tests {
                 }
             }
         }
-    }
-
-    /// Paint one glyph row per entry, left-aligned in `area`.
-    fn paint_rows(buf: &mut Buffer, area: Rect, rows: &[&str], fg: Color, bg: Color) {
-        for (dy, row) in rows.iter().enumerate() {
-            let mut chars = row.chars();
-            for dx in 0..area.width {
-                if let Some(cell) = buf.cell_mut((area.x + dx, area.y + dy as u16)) {
-                    cell.set_symbol(&chars.next().unwrap_or(' ').to_string());
-                    cell.set_fg(fg);
-                    cell.set_bg(bg);
-                }
-            }
-        }
-    }
-
-    fn fg_at(buf: &Buffer, x: u16, y: u16) -> Color {
-        buf.cell((x, y)).unwrap().fg
     }
 
     #[test]
@@ -2084,24 +2054,5 @@ mod tests {
         // Cancelling with nothing dismissable running owes nothing.
         runner.cancel_dismissable();
         assert!(!runner.take_settle_frame());
-    }
-
-    #[test]
-    fn is_animating_at_covers_area() {
-        let area = Rect::new(10, 5, 3, 2);
-        let mut runner = AnimationRunner::new();
-        runner.start(
-            area,
-            AnimationKind::SlideIn {
-                from: Edge::Bottom,
-                duration: Duration::from_millis(500),
-                delay: Duration::ZERO,
-            },
-        );
-        assert!(runner.is_animating_at(10, 5));
-        assert!(runner.is_animating_at(12, 6));
-        assert!(!runner.is_animating_at(9, 5));
-        assert!(!runner.is_animating_at(13, 5));
-        assert!(!runner.is_animating_at(10, 7));
     }
 }

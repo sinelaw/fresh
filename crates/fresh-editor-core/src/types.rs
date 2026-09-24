@@ -173,22 +173,6 @@ pub enum LspFeature {
     DocumentHighlight,
 }
 
-impl LspFeature {
-    /// Whether this feature produces merged results from all eligible servers.
-    /// Merged features send requests to all servers and combine the results.
-    /// Non-merged (exclusive) features use only the first eligible server.
-    pub fn is_merged(&self) -> bool {
-        matches!(
-            self,
-            LspFeature::Diagnostics
-                | LspFeature::Completion
-                | LspFeature::CodeAction
-                | LspFeature::DocumentSymbols
-                | LspFeature::WorkspaceSymbols
-        )
-    }
-}
-
 /// Feature filter for an LSP server, controlling which features it handles.
 ///
 /// - `All`: The server handles all features (default).
@@ -449,26 +433,6 @@ impl LspServerConfig {
 mod tests {
     use super::*;
     use std::collections::HashSet;
-
-    #[test]
-    fn test_lsp_feature_is_merged() {
-        assert!(LspFeature::Diagnostics.is_merged());
-        assert!(LspFeature::Completion.is_merged());
-        assert!(LspFeature::CodeAction.is_merged());
-        assert!(LspFeature::DocumentSymbols.is_merged());
-        assert!(LspFeature::WorkspaceSymbols.is_merged());
-
-        assert!(!LspFeature::Hover.is_merged());
-        assert!(!LspFeature::Definition.is_merged());
-        assert!(!LspFeature::References.is_merged());
-        assert!(!LspFeature::Format.is_merged());
-        assert!(!LspFeature::Rename.is_merged());
-        assert!(!LspFeature::SignatureHelp.is_merged());
-        assert!(!LspFeature::InlayHints.is_merged());
-        assert!(!LspFeature::FoldingRange.is_merged());
-        assert!(!LspFeature::SemanticTokens.is_merged());
-        assert!(!LspFeature::DocumentHighlight.is_merged());
-    }
 
     #[test]
     fn test_feature_filter_all() {

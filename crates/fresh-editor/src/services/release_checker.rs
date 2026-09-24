@@ -219,12 +219,6 @@ pub fn start_periodic_update_check_with_interval(
     start_periodic_update_check(releases_url, time_source, data_dir)
 }
 
-/// Compare two versions; `true` if `latest` is newer than `current`.
-/// Delegates to `fresh_update::version`.
-pub fn is_newer_version(current: &str, latest: &str) -> bool {
-    fresh_update::version::is_newer(current, latest)
-}
-
 /// Detect how this copy of `fresh` was installed.
 ///
 /// Delegates entirely to `fresh_update::resolve()` (override → receipt →
@@ -305,31 +299,6 @@ pub fn check_for_update(releases_url: &str) -> Result<ReleaseCheckResult, String
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_is_newer_version() {
-        // (current, latest, expected_newer)
-        let cases = [
-            ("0.1.26", "1.0.0", true),        // major bump
-            ("0.1.26", "0.2.0", true),        // minor bump
-            ("0.1.26", "0.1.27", true),       // patch bump
-            ("0.1.26", "0.1.26", false),      // same
-            ("0.1.26", "0.1.25", false),      // older patch
-            ("0.2.0", "0.1.26", false),       // older minor
-            ("1.0.0", "0.1.26", false),       // older major
-            ("0.1.26-alpha", "0.1.27", true), // prerelease current
-            ("0.1.26", "0.1.27-beta", true),  // prerelease latest
-        ];
-        for (current, latest, expected) in cases {
-            assert_eq!(
-                is_newer_version(current, latest),
-                expected,
-                "is_newer_version({:?}, {:?})",
-                current,
-                latest
-            );
-        }
-    }
 
     // Install-method detection lives in `fresh_update::provenance` (see that
     // crate's tests). release_checker only delegates, so there is nothing to

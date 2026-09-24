@@ -45,6 +45,7 @@ impl CaptureBackend {
     }
 
     /// Clear the buffer without returning it
+    #[cfg(test)]
     pub fn clear_buffer(&mut self) {
         self.buffer.clear();
     }

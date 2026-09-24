@@ -231,23 +231,6 @@ pub enum ControlMessage {
     Server(ServerControl),
 }
 
-/// Read a JSON control message from a reader
-pub fn read_control_message<R: std::io::BufRead>(reader: &mut R) -> std::io::Result<String> {
-    let mut line = String::new();
-    reader.read_line(&mut line)?;
-    Ok(line)
-}
-
-/// Write a JSON control message to a writer
-pub fn write_control_message<W: std::io::Write>(
-    writer: &mut W,
-    msg: &impl Serialize,
-) -> std::io::Result<()> {
-    let json = serde_json::to_string(msg).map_err(|e| std::io::Error::other(e.to_string()))?;
-    writeln!(writer, "{}", json)?;
-    writer.flush()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

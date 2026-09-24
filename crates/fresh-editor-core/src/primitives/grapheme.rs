@@ -80,23 +80,6 @@ pub fn next_grapheme_boundary(s: &str, pos: usize) -> usize {
     cursor.next_boundary(s, 0).ok().flatten().unwrap_or(s.len())
 }
 
-/// Get the grapheme cluster at the given position.
-///
-/// Returns the grapheme cluster that starts at or contains the given byte position,
-/// along with its start and end byte offsets.
-///
-/// Returns `None` if the position is at or beyond the end of the string.
-#[inline]
-pub fn grapheme_at(s: &str, pos: usize) -> Option<(&str, usize, usize)> {
-    if pos >= s.len() || s.is_empty() {
-        return None;
-    }
-
-    let start = snap_to_grapheme_boundary(s, pos);
-    let end = next_grapheme_boundary(s, start);
-    Some((&s[start..end], start, end))
-}
-
 /// Snap a byte position **down** to the nearest grapheme-cluster
 /// boundary at or before it.
 ///
@@ -242,37 +225,5 @@ mod tests {
         assert_eq!(prev_grapheme_boundary(s, 11), 10); // before 'b'
         assert_eq!(prev_grapheme_boundary(s, 10), 1); // before Thai
         assert_eq!(prev_grapheme_boundary(s, 1), 0); // before 'a'
-    }
-
-    #[test]
-    fn test_grapheme_at() {
-        let s = "aที่b";
-
-        let (g, start, end) = grapheme_at(s, 0).unwrap();
-        assert_eq!(g, "a");
-        assert_eq!((start, end), (0, 1));
-
-        let (g, start, end) = grapheme_at(s, 1).unwrap();
-        assert_eq!(g, "ที่");
-        assert_eq!((start, end), (1, 10));
-
-        let (g, start, end) = grapheme_at(s, 5).unwrap(); // middle of Thai
-        assert_eq!(g, "ที่");
-        assert_eq!((start, end), (1, 10));
-
-        let (g, start, end) = grapheme_at(s, 10).unwrap();
-        assert_eq!(g, "b");
-        assert_eq!((start, end), (10, 11));
-
-        assert!(grapheme_at(s, 11).is_none()); // past end
-    }
-
-    #[test]
-    fn test_empty_string() {
-        let s = "";
-        assert_eq!(prev_grapheme_boundary(s, 0), 0);
-        assert_eq!(next_grapheme_boundary(s, 0), 0);
-        assert_eq!(grapheme_count(s), 0);
-        assert!(grapheme_at(s, 0).is_none());
     }
 }

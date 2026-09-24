@@ -268,11 +268,13 @@ impl MenuState {
     }
 
     /// Check if we're currently in a submenu
+    #[cfg(test)]
     pub fn in_submenu(&self) -> bool {
         !self.submenu_path.is_empty()
     }
 
     /// Get the current submenu depth (0 = top level menu)
+    #[cfg(test)]
     pub fn submenu_depth(&self) -> usize {
         self.submenu_path.len()
     }

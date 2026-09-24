@@ -37,10 +37,10 @@
 //! events the kind reports are written to the model.
 
 use super::items::{
-    json_is_unset, json_is_valid, map_display_value, object_array_row, SettingControl, SettingItem,
+    json_is_unset, json_is_valid, map_display_value, object_array_row, SettingControl,
 };
 use fresh_core::api::{ButtonKind, DualListOption, OverlayColorSpec, OverlayOptions, WidgetSpec};
-use fresh_core::text_property::{InlineOverlay, OffsetUnit, StyledSegment, TextPropertyEntry};
+use fresh_core::text_property::{StyledSegment, TextPropertyEntry};
 
 /// Accent color for the "key" column (key combo / map key). Matches the
 /// widget framework's help-key accent and the historical `MapColors::key`.
@@ -624,7 +624,8 @@ pub(crate) fn column_title(display_field: &str) -> String {
 /// divider between sections) at each `is_section_start` boundary. This
 /// is the tree Settings hands to `widgets::render_spec` once it renders
 /// through the widget framework.
-pub fn settings_items_to_widget(items: &[SettingItem]) -> WidgetSpec {
+#[cfg(test)]
+pub fn settings_items_to_widget(items: &[super::items::SettingItem]) -> WidgetSpec {
     let mut children: Vec<WidgetSpec> = Vec::with_capacity(items.len());
     for item in items {
         if item.is_section_start {
@@ -648,7 +649,9 @@ pub fn settings_items_to_widget(items: &[SettingItem]) -> WidgetSpec {
 }
 
 /// A styled section-header row (`Raw`, accent fg + bold).
+#[cfg(test)]
 fn section_header(section: &str) -> WidgetSpec {
+    use fresh_core::text_property::{InlineOverlay, OffsetUnit};
     let mut entry = TextPropertyEntry::text(section);
     entry.inline_overlays.push(InlineOverlay {
         start: 0,
@@ -669,6 +672,7 @@ fn section_header(section: &str) -> WidgetSpec {
 
 #[cfg(test)]
 mod tests {
+    use super::super::items::SettingItem;
     use super::*;
 
     #[test]

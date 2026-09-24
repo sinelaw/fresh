@@ -152,6 +152,7 @@ impl IgnorePatterns {
     /// Get the ignore status of a path
     ///
     /// This is useful for rendering (e.g., gray out ignored files)
+    #[cfg(test)]
     pub fn get_status(&self, path: &Path, is_dir: bool) -> IgnoreStatus {
         if is_hidden_name(path) {
             return IgnoreStatus::Hidden;
@@ -269,6 +270,7 @@ impl IgnorePatterns {
     }
 
     /// Get number of loaded .gitignore files
+    #[cfg(test)]
     pub fn gitignore_count(&self) -> usize {
         self.gitignores.len()
     }

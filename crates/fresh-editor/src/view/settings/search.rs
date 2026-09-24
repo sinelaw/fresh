@@ -348,20 +348,6 @@ pub fn matches_query(item: &SettingItem, query: &str) -> bool {
         || item.path.to_lowercase().contains(&query_lower)
 }
 
-/// Get indices of categories that have matching items
-pub fn matching_categories(pages: &[SettingsPage], query: &str) -> Vec<usize> {
-    if query.is_empty() {
-        return Vec::new();
-    }
-
-    pages
-        .iter()
-        .enumerate()
-        .filter(|(_, page)| page.items.iter().any(|item| matches_query(item, query)))
-        .map(|(idx, _)| idx)
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -489,23 +475,6 @@ mod tests {
 
         let results = search_settings(&pages, "editor");
         assert_eq!(results.len(), 1);
-    }
-
-    #[test]
-    fn test_matching_categories() {
-        let pages = vec![
-            make_page(
-                "Editor",
-                vec![make_item("Line Numbers", None, "/line_numbers")],
-            ),
-            make_page("Theme", vec![make_item("Theme Name", None, "/theme")]),
-        ];
-
-        let matches = matching_categories(&pages, "line");
-        assert_eq!(matches, vec![0]);
-
-        let matches = matching_categories(&pages, "theme");
-        assert_eq!(matches, vec![1]);
     }
 
     #[test]
