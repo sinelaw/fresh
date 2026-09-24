@@ -169,10 +169,18 @@ would have re-triggered it never reached the box.
 
 An arrow the focused control passed and the panel's mode did not bind now goes
 to the nearest focusable in its direction, measured from the rectangles layout
-gave them (`fresh_ui::focus::spatial::nearest`, reached through
-`Ui::spatial_neighbour`): only controls wholly past this one's edge that way,
-those in its "beam" (overlapping across the arrow's axis) first, then the
-smallest gap, then the nearest centre. Tab stays reading order. ←/→ join ↑/↓ —
+gave them: only controls wholly past this one's edge that way, those in its
+"beam" (overlapping across the arrow's axis) first, then the smallest gap, then
+the nearest centre. Tab stays reading order.
+
+This is fresh-ui's own traversal, not a rule of the editor's: the rule is
+`fresh_ui::Directional`, and a surface declares the policy its subtree moves by
+(`Node::traversal`; the nearest declaring ancestor wins, else the `Ui`'s
+installed policy). The panel interior declares `Directional`, and the panel's
+arrow default is the same walk as its Tab (`Editor::move_panel_focus`: the
+tree's `move_focus` when it holds the panel's focus, `next_in` when it does
+not). A first cut kept the rule in a separate `focus::spatial` module beside
+`Directional`; it is folded in. ←/→ join ↑/↓ —
 a button row's neighbours are to its sides. The typed-filter panel keeps its
 one special case: ↑/↓ from its single-line filter field reach the picker (a
 List moves its selection, a Tree takes focus). The `arrows_advance_focus`

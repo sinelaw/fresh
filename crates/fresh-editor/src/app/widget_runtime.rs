@@ -1047,10 +1047,11 @@ impl Editor {
                 // **An arrow nothing used moves focus by where things are**
                 // (`docs/internal/widget-controls-own-interaction.md` R4): the
                 // focused control and the panel's mode have both passed it, so
-                // it goes to the nearest control on screen in its direction
-                // (`fresh_ui::focus::spatial`) — not the next one in Tab order,
+                // it goes to the nearest control on screen in its direction —
+                // the traversal policy the panel's interior declares
+                // (`fresh_ui::Directional`), not the next stop in Tab order,
                 // which in a two-column menu or a form's footer is the wrong
-                // one. Tab stays reading order.
+                // one. Tab stays reading order under the same policy.
                 //
                 // The one exception is the typed-filter panel: ↑/↓ from its
                 // single-line filter field reach the panel's picker (a List
@@ -1087,12 +1088,12 @@ impl Editor {
                     }
                 }
                 let dir = match key.code() {
-                    KeyCode::Up => fresh_ui::focus::spatial::Direction::Up,
-                    KeyCode::Down => fresh_ui::focus::spatial::Direction::Down,
-                    KeyCode::Left => fresh_ui::focus::spatial::Direction::Left,
-                    _ => fresh_ui::focus::spatial::Direction::Right,
+                    KeyCode::Up => fresh_ui::FocusDir::Up,
+                    KeyCode::Down => fresh_ui::FocusDir::Down,
+                    KeyCode::Left => fresh_ui::FocusDir::Left,
+                    _ => fresh_ui::FocusDir::Right,
                 };
-                self.move_panel_focus_spatially(panel_key, dir);
+                self.move_panel_focus(panel_key, dir, 1);
             }
             KeyCode::Enter => match widget {
                 Some(fresh_core::api::WidgetSpec::Text { .. }) => {
@@ -1120,57 +1121,6 @@ impl Editor {
                 _ => {}
             },
             _ => {} // unrecognised key — quietly ignore
-        }
-    }
-
-    /// Move this panel's focus to the nearest control on screen in `dir`
-    /// from the focused one, by the rectangles the tree laid them out at
-    /// (`fresh_ui::Ui::spatial_neighbour`). Returns whether focus moved.
-    ///
-    /// Confined to the focused control's nearest focus scope inside the
-    /// panel, the same confinement Tab has. Nothing that way: nothing moves.
-    fn move_panel_focus_spatially(
-        &mut self,
-        panel_key: &crate::widgets::PanelKey,
-        dir: fresh_ui::focus::spatial::Direction,
-    ) -> bool {
-        self.lay_out_shell_if_stale();
-        let focus_key = self
-            .widget_registry
-            .focus_key(panel_key)
-            .map(str::to_string)
-            .unwrap_or_default();
-        if focus_key.is_empty() {
-            return false;
-        }
-        let target = {
-            let Some(ui) = self.shell_ui.as_ref() else {
-                return false;
-            };
-            let Some(root) = self.panel_subtree_root(ui, panel_key) else {
-                return false;
-            };
-            let Some(from) = ui
-                .find_by_key(&crate::view::shell::widgets::widget_focus_key(&focus_key))
-                .filter(|f| ui.contains(root, *f))
-            else {
-                return false;
-            };
-            let scope = ui
-                .enclosing_focus_scope(from)
-                .filter(|s| ui.contains(root, *s))
-                .unwrap_or(root);
-            ui.spatial_neighbour(scope, from, dir)
-                .and_then(|to| ui.key_of(to))
-                .and_then(|k| crate::view::shell::widgets::widget_key_of(&k).map(str::to_string))
-        };
-        match target {
-            Some(key) if key != focus_key => {
-                self.set_panel_focus_and_notify(panel_key, key);
-                self.rerender_widget_panel(panel_key);
-                true
-            }
-            _ => false,
         }
     }
 
@@ -1203,11 +1153,30 @@ impl Editor {
     /// (`c89d25f`), and the runtime cannot know whether the tree's focus is
     /// where its ring would start.
     fn handle_widget_focus_advance(&mut self, panel_key: &crate::widgets::PanelKey, delta: i32) {
+        let dir = match delta < 0 {
+            true => fresh_ui::FocusDir::Prev,
+            false => fresh_ui::FocusDir::Next,
+        };
+        self.move_panel_focus(panel_key, dir, delta.unsigned_abs());
+    }
+
+    /// Move this panel's focus `steps` stops in `dir` — Tab's ring for
+    /// Next/Prev, the arrows' directions for the rest. Which stop a direction
+    /// reaches is the traversal policy the panel's interior declares
+    /// (`fresh_ui::Directional`: by where things are laid out), answered by
+    /// the tree on either path below — its own `move_focus` when it holds the
+    /// panel's focus, `next_in` over the same registrations when it does not.
+    fn move_panel_focus(
+        &mut self,
+        panel_key: &crate::widgets::PanelKey,
+        dir: fresh_ui::FocusDir,
+        steps: u32,
+    ) {
         // The ring is read off the tree, so the tree has to carry the panel
         // as it is now — a mount or a spec update since the last frame is
         // laid out first. See `Editor::shell_description_stale`.
         self.lay_out_shell_if_stale();
-        if self.advance_panel_focus_in_tree(panel_key, delta) {
+        if self.advance_panel_focus_in_tree(panel_key, dir, steps) {
             return;
         }
         // **The tree does not hold this panel's focus** — a mounted but
@@ -1243,10 +1212,6 @@ impl Editor {
             .and_then(|f| ui.enclosing_focus_scope(f))
             .filter(|s| ui.contains(interior, *s))
             .unwrap_or(interior);
-        let dir = match delta < 0 {
-            true => fresh_ui::FocusDir::Prev,
-            false => fresh_ui::FocusDir::Next,
-        };
         // "Nothing focused" sits *outside* the ring: the first Tab lands on
         // the first widget and the first Shift+Tab on the last, which is what
         // `next_in` answers for a `from` it does not find.
@@ -1259,7 +1224,13 @@ impl Editor {
         // on the startup switch. So the ring is seeded from where the reader
         // is, and Tab goes on from there.
         let seed = match from.is_none() && follows_reader {
-            true => self.page_ring_seed(panel_key, delta >= 0),
+            true => self.page_ring_seed(
+                panel_key,
+                matches!(
+                    dir,
+                    fresh_ui::FocusDir::Next | fresh_ui::FocusDir::Down | fresh_ui::FocusDir::Right
+                ),
+            ),
             false => None,
         };
         let from = seed
@@ -1268,7 +1239,7 @@ impl Editor {
             .filter(|f| ui.contains(interior, *f))
             .or(from);
         let mut cur = from;
-        for _ in 0..delta.unsigned_abs() {
+        for _ in 0..steps {
             match ui.next_in(root, cur, dir) {
                 Some(n) => cur = Some(n),
                 None => break,
@@ -1368,7 +1339,8 @@ impl Editor {
     fn advance_panel_focus_in_tree(
         &mut self,
         panel_key: &crate::widgets::PanelKey,
-        delta: i32,
+        dir: fresh_ui::FocusDir,
+        steps: u32,
     ) -> bool {
         use crate::view::shell::msg::{UiFact, UiMsg};
         use crate::view::shell::widgets::Slot;
@@ -1407,16 +1379,10 @@ impl Editor {
         // applying messages in the middle of one. Anything else that ever
         // lands in this queue would have to be reconsidered here.
         let _superseded = ui.take_messages();
-        let dir = match delta < 0 {
-            true => fresh_ui::FocusDir::Prev,
-            false => fresh_ui::FocusDir::Next,
-        };
-        // `delta` is a count of tab stops, not a direction — the arena moves
-        // `|delta|` of them in one go, and answers a zero delta by staying
-        // put — so the tree is stepped exactly that many times.
-        // `WidgetAction::FocusAdvance`'s own doc only defines ±1, and nothing
-        // bundled sends more.
-        for _ in 0..delta.unsigned_abs() {
+        // `steps` is a count of stops — a zero stays put — so the tree is
+        // stepped exactly that many times. `WidgetAction::FocusAdvance`'s own
+        // doc only defines ±1, and nothing bundled sends more.
+        for _ in 0..steps {
             if !ui.move_focus(dir) {
                 break;
             }

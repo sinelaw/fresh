@@ -556,6 +556,8 @@ pub struct FocusProps<M> {
     pub focus_within: bool,
     /// The stop traversal enters this subtree at. See [`Node::enters_at`].
     pub entry: Option<crate::key::Key>,
+    /// How traversal moves inside this subtree. See [`Node::traversal`].
+    pub traversal: Option<Rc<dyn crate::focus::TraversalPolicy>>,
 }
 
 impl<M> Default for FocusProps<M> {
@@ -572,6 +574,7 @@ impl<M> Default for FocusProps<M> {
             on_focus_change: None,
             focus_within: false,
             entry: None,
+            traversal: None,
         }
     }
 }
@@ -1105,6 +1108,7 @@ impl<M> Clone for FocusProps<M> {
             on_focus_change: self.on_focus_change.clone(),
             focus_within: self.focus_within,
             entry: self.entry.clone(),
+            traversal: self.traversal.clone(),
         }
     }
 }
@@ -2061,6 +2065,19 @@ impl<M> Node<M> {
     /// would have.
     pub fn enters_at(mut self, key: crate::key::Key) -> Self {
         self.focus_props().entry = Some(key);
+        self
+    }
+
+    /// Traversal inside this subtree follows `policy` — Tab, Shift+Tab and the
+    /// arrows alike, from any element in it.
+    ///
+    /// Which stop a move reaches is a property of the surface, not of the
+    /// application: a form reads in order, a grid of buttons or a two-column
+    /// dialog moves by where things are. The nearest ancestor that declares a
+    /// policy decides; with none declared, the one installed with
+    /// [`crate::Ui::set_traversal_policy`] does.
+    pub fn traversal(mut self, policy: impl crate::focus::TraversalPolicy + 'static) -> Self {
+        self.focus_props().traversal = Some(Rc::new(policy));
         self
     }
 

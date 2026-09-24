@@ -524,11 +524,16 @@ pub fn interior_capturing(
     body: Node<UiMsg>,
 ) -> Node<UiMsg> {
     let (w, h) = (body.w, body.h);
+    // **Arrows move by where things are, Tab by reading order** — the
+    // interior declares it (`fresh_ui::Directional`), so the tree's own
+    // traversal answers both inside every panel, and nothing outside the
+    // panel is affected.
     let n = fresh_ui::focusable(body)
         .w(w)
         .h(h)
         .key(interior_key(slot))
-        .skip_traversal();
+        .skip_traversal()
+        .traversal(fresh_ui::Directional);
     let n = match capture {
         Some(c) => n.on_key_capture(move |e: &fresh_ui::Event| c(e)),
         None => n,

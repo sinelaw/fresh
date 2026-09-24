@@ -10,7 +10,6 @@
 
 pub mod intent;
 pub mod policy;
-pub mod spatial;
 pub mod tree;
 
 pub use intent::{default_shortcuts, Intent, Shortcut};
@@ -417,21 +416,6 @@ impl<M: 'static> Ui<M> {
         self.scope_under(root).ordered()
     }
 
-    /// The focusable under `root` an arrow in `dir` reaches from `from`, by
-    /// where things are laid out rather than by reading order — see
-    /// [`spatial`]. `None` when nothing under `root` lies that way.
-    pub fn spatial_neighbour(
-        &self,
-        root: ElementId,
-        from: ElementId,
-        dir: spatial::Direction,
-    ) -> Option<ElementId> {
-        let ring = self.traversal_order(root);
-        let rects: Vec<crate::render::geom::Rect> = ring.iter().map(|&e| self.rect_of(e)).collect();
-        let i = spatial::nearest(self.rect_of(from), &rects, dir)?;
-        ring.get(i).copied()
-    }
-
     /// The element traversal reaches from `from` moving `dir` within `root`'s
     /// subtree. `from` outside the subtree, or `None`, starts from the edge —
     /// the first focusable going forward, the last going back.
@@ -442,7 +426,38 @@ impl<M: 'static> Ui<M> {
         dir: FocusDir,
     ) -> Option<ElementId> {
         let scope = self.scope_under(root);
-        self.traversal.next(&scope, from, dir)
+        self.traverse(&scope, from.or(Some(root)), from, dir)
+    }
+
+    /// One step of traversal over `scope`, by the policy that governs
+    /// `site`: the nearest element at or above it that declares one
+    /// ([`crate::Node::traversal`]), else the installed policy.
+    fn traverse(
+        &self,
+        scope: &FocusScope,
+        site: Option<ElementId>,
+        from: Option<ElementId>,
+        dir: FocusDir,
+    ) -> Option<ElementId> {
+        match self.declared_traversal(site) {
+            Some(policy) => policy.next(scope, from, dir),
+            None => self.traversal.next(scope, from, dir),
+        }
+    }
+
+    /// The traversal policy the nearest element at or above `site` declares.
+    fn declared_traversal(&self, site: Option<ElementId>) -> Option<Rc<dyn TraversalPolicy>> {
+        let mut cur = site;
+        while let Some(e) = cur {
+            let el = self.arena.get(e)?;
+            if let Desc::Focusable(f) = &resolve(&el.desc).desc {
+                if let Some(p) = &f.traversal {
+                    return Some(p.clone());
+                }
+            }
+            cur = el.parent;
+        }
+        None
     }
 
     fn scope_under(&self, root: ElementId) -> FocusScope {
@@ -633,7 +648,14 @@ impl<M: 'static> Ui<M> {
     /// Move focus in a direction, using the installed traversal policy.
     pub fn move_focus(&mut self, dir: FocusDir) -> bool {
         let scope = self.focus_scope();
-        match self.traversal.next(&scope, self.focus, dir) {
+        // The policy is the one governing where focus is — or, with nothing
+        // focused, the scope traversal is confined to.
+        let site = self.focus.or_else(|| {
+            self.active_scope()
+                .and_then(|f| self.focus_tree.get(f))
+                .map(|n| n.element)
+        });
+        match self.traverse(&scope, site, self.focus, dir) {
             // **Landing where you started is not a move.**
             //
             // Reading order wraps, so a scope holding one focusable answers
