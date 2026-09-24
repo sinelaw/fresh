@@ -2183,10 +2183,16 @@ type WidgetSpec = {
 	markdown: boolean;
 	/**
 	* A single-line field that offers a list of values to pick from as
-	* well as free text — a combo box. Drawn with a `▼` in the last cell
-	* inside its `]` (`▲` while its completion list is open), so the
-	* field says it has a list before it is focused. The list itself is
-	* still the plugin's `completions`. Defaults to `false`.
+	* well as free text — a combo box (the ARIA combobox pattern). Drawn
+	* with a `▼` in the last cell inside its `]` (`▲` while its
+	* completion list is open), so the field says it has a list before
+	* it is focused. The list itself is still the plugin's
+	* `completions`: with the list closed, ↓ / Alt+↓ or a press on the
+	* arrow fires `completion_request`, which the plugin answers with
+	* `setCompletions`; a press on the arrow with the list open closes
+	* it (`completion_dismiss`). Opening on focus is left out on
+	* purpose — a list that opens as a form is walked covers the fields
+	* under it. Defaults to `false`.
 	*/
 	combo: boolean;
 	key?: string | null;

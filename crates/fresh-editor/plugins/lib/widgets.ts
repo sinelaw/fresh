@@ -847,7 +847,9 @@ export function text(
     /** A single-line field that offers a list (its `completions`) as
      * well as free text — a combo box. Drawn with a `▼` inside its `]`
      * (`▲` while the list is open), so the field says it has a list
-     * before it is focused. */
+     * before it is focused. With the list closed, ↓ / Alt+↓ or a click
+     * on the arrow fires `completion_request`: answer it with
+     * `setCompletions`. Don't open the list on focus. */
     combo?: boolean;
     key?: string;
   } = {},

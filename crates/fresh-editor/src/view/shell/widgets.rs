@@ -3006,14 +3006,29 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                     let surface = surface.clone();
                     windowed(state.clone(), seed, move |window| {
                         let mut line = build_line(window, w32);
-                        if combo {
-                            tx::mark_combo(&mut line, list_open);
-                        }
+                        let arrow = match combo {
+                            true => tx::mark_combo(&mut line, list_open),
+                            false => None,
+                        };
                         let next = line.scroll;
-                        let hits: Vec<((usize, usize), crate::widgets::WidgetEvent)> = line
-                            .event
+                        // A combo box's arrow is a press of its own — it toggles
+                        // the list rather than placing the caret — listed first
+                        // so it wins the cell over the row's `focus`.
+                        let toggle = arrow.zip(line.event.clone()).map(|(at, e)| {
+                            let toggle = crate::widgets::WidgetEvent {
+                                event_type: "combo_toggle",
+                                payload: serde_json::json!({}),
+                                ..e
+                            };
+                            (at, toggle)
+                        });
+                        let hits: Vec<((usize, usize), crate::widgets::WidgetEvent)> = toggle
                             .into_iter()
-                            .map(|event| ((0, line.entry.text.len()), event))
+                            .chain(
+                                line.event
+                                    .into_iter()
+                                    .map(|event| ((0, line.entry.text.len()), event)),
+                            )
                             .collect();
                         let node = match hits.is_empty() && line.caret.is_none() {
                             true => entry_row(&line.entry, &surface),
@@ -3096,14 +3111,40 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
             // section chrome they paint over, so the float starts `escape`
             // columns left of the child — see [`Site::escape`].
             let ground = Ink::new(Paint::key(BASE_FG), Paint::key("ui.popup_bg")).to_string();
+            // Which rows are candidates: a section-joined list leads with its
+            // separator row; a box's rows are all candidates. A candidate row
+            // of a keyed field answers a press by accepting it
+            // (`completion_pick`), naming its absolute index.
+            let first_item = match frame {
+                tx::CompletionFrame::Section => 1,
+                tx::CompletionFrame::Box => 0,
+            };
+            let pick = |i: usize| -> Option<crate::widgets::WidgetEvent> {
+                let k = key.filter(|k| !k.is_empty())?;
+                let at = i.checked_sub(first_item)?;
+                (at < popup.visible as usize).then(|| crate::widgets::WidgetEvent {
+                    row_target: true,
+                    context_click: false,
+                    widget_key: k.to_string(),
+                    widget_kind: "text",
+                    payload: serde_json::json!({ "index": popup.scroll as usize + at }),
+                    event_type: "completion_pick",
+                    owner_key: None,
+                })
+            };
+            let ground_ink = Ink::new(Paint::key(BASE_FG), Paint::key("ui.popup_bg"));
             let box_rows: Vec<Node<UiMsg>> = popup
                 .rows
                 .iter()
-                .map(|e| {
-                    row()
-                        .h(Sizing::Cells(1))
-                        .theme(ground.clone())
-                        .child(entry_row(e, &cx.surface))
+                .enumerate()
+                .map(|(i, e)| {
+                    let body = match pick(i) {
+                        Some(hit) => {
+                            entry_row_hit_boxed(e, (0, e.text.len()), cx.slot, &ground_ink, hit)
+                        }
+                        None => entry_row(e, &cx.surface),
+                    };
+                    row().h(Sizing::Cells(1)).theme(ground.clone()).child(body)
                 })
                 .collect();
             // Section-joined rows carry their own walls; a box's walls are its
@@ -3135,8 +3176,20 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                 // when the frame has no room below; and a press outside the
                 // list closes it (`UiFact::WidgetPopupDismiss`), as Escape
                 // does from the keyboard.
+                //
+                // **Except a press on the field itself.** Anchored on the
+                // field's own focus wrapper (the row it lays out in), the
+                // layer counts its field as its trigger rather than as
+                // outside: a press there is the field's — the caret moves, or
+                // the combo arrow toggles the list — and does not also close
+                // the list first, which left the arrow reopening a list the
+                // same press had just closed. An unkeyed field has no wrapper
+                // to name and keeps the parent.
                 fresh_ui::layer()
-                    .anchor(fresh_ui::Anchor::Parent)
+                    .anchor(match key.filter(|k| !k.is_empty()) {
+                        Some(k) => fresh_ui::Anchor::Node(widget_focus_key(k)),
+                        None => fresh_ui::Anchor::Parent,
+                    })
                     .place(fresh_ui::Place::Below)
                     .offset(float_x, 0)
                     .fit(fresh_ui::Fit::FLIP.or(fresh_ui::Fit::CLAMP))

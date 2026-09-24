@@ -5709,14 +5709,19 @@ impl Editor {
                         ..
                     }) = panel.instance_states.get_mut(&widget_key)
                     {
+                        // A combo box's ↓ asked for this list and marked the
+                        // empty one entered, so its first candidate is
+                        // highlighted as it arrives (`kinds::text` — an empty
+                        // list is otherwise never entered).
+                        let stepped_in = completions.is_empty() && *completion_navigated;
                         *completions = items;
                         *completion_selected_index = 0;
                         *completion_scroll_offset = 0;
-                        // A (re)opened popup is not yet "entered": Tab /
-                        // Enter act on the form until the user steps in
-                        // with ↑/↓. (Closing — empty `items` — also
-                        // resets it, harmlessly.)
-                        *completion_navigated = false;
+                        // Otherwise a (re)opened popup is not yet "entered":
+                        // Tab / Enter act on the form until the user steps in
+                        // with ↑/↓. (Closing — empty `items` — also resets
+                        // it, harmlessly.)
+                        *completion_navigated = stepped_in && !completions.is_empty();
                     }
                 }
             }

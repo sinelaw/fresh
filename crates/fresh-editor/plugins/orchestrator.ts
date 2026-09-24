@@ -9690,11 +9690,12 @@ function openMachineDialog(
   });
   editor.floatingPanelControl(machinePanel.id(), "fullscreen", 1);
   editor.setEditorMode(MACHINE_DIALOG_MODE);
-  // Straight to what the machine reaches; for a new ssh machine the Host
-  // field opens with the config hosts to pick from.
+  // Straight to what the machine reaches. For a new ssh machine the Host
+  // field is a combo box of the config hosts, closed until asked: typing,
+  // ↓ / Alt+↓, or its arrow opens it (`completion_request`) — a list that
+  // opened on focus would cover the fields under it as the form is walked.
   const first = machineDialog.kind === "ssh" ? "machine-target" : "machine-context";
   machinePanel.setFocusKey(first);
-  suggestMachineHosts();
 }
 
 function blankMachine(): Machine {
@@ -10010,8 +10011,13 @@ function handleMachineDialogEvent(e: WidgetEvt): void {
     return;
   }
   if (e.event_type === "focus") {
-    if (e.widget_key === "machine-target") suggestMachineHosts();
-    else setMachineHostSuggestions([]);
+    // Focus alone does not open the Host list; leaving Host closes it.
+    if (e.widget_key !== "machine-target") setMachineHostSuggestions([]);
+    return;
+  }
+  if (e.event_type === "completion_request" && e.widget_key === "machine-target") {
+    // ↓ / Alt+↓ or the arrow on a closed Host list.
+    suggestMachineHosts();
     return;
   }
   if (e.event_type === "completion_accept" && e.widget_key === "machine-target") {

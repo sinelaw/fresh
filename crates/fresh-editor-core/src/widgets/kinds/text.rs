@@ -80,6 +80,32 @@ impl WidgetImpl for Text {
                 _ => Pass,
             };
         }
+        // **A closed combo box opens on ↓ or Alt+↓** (the ARIA combobox
+        // pattern). The list is the plugin's, so the field asks for it
+        // (`completion_request`); the plugin answers with `setCompletions`.
+        // ↓ also steps onto the first candidate once it arrives, Alt+↓ only
+        // opens — so the field marks the empty list as entered, and
+        // `SetCompletions` keeps that mark for the items it brings (an empty
+        // list is otherwise never entered: accepting and dismissing both
+        // clear the mark). A field that is not a combo keeps ↓ for the form.
+        if is_combo(spec)
+            && key.code() == KeyCode::Down
+            && (bare || key.mods() == crossterm::event::KeyModifiers::ALT)
+            && !completions_open(widget_key, panel)
+        {
+            ensure_text_state(spec, widget_key, panel);
+            if let Some(WidgetInstanceState::Text {
+                completion_selected_index,
+                completion_navigated,
+                ..
+            }) = panel.instance_states.get_mut(widget_key)
+            {
+                *completion_selected_index = 0;
+                *completion_navigated = bare;
+            }
+            request_completions(fx);
+            return Consumed;
+        }
         // The editing vocabulary. Caret motion, mutation, selection
         // chords, clipboard, and multi-line paging are the field's
         // own; what stays panel policy is the single-line field's
@@ -217,13 +243,48 @@ impl WidgetImpl for Text {
     /// event still fires — plugins mirror the caret from it.
     fn on_pointer(
         &self,
-        _spec: &WidgetSpec,
-        _widget_key: &str,
-        _panel: &mut crate::widgets::WidgetPanelState,
+        spec: &WidgetSpec,
+        widget_key: &str,
+        panel: &mut crate::widgets::WidgetPanelState,
         event_type: &str,
-        _payload: &serde_json::Value,
+        payload: &serde_json::Value,
         fx: &mut super::PointerFx,
     ) -> super::PointerDisposition {
+        // **A press on a candidate row accepts it**, as ↓ to it and Enter
+        // would: the value goes in the field, the list closes, and the plugin
+        // hears `change` then `completion_accept`.
+        if event_type == "completion_pick" {
+            if let (
+                Some(index),
+                Some(WidgetInstanceState::Text {
+                    completions,
+                    completion_selected_index,
+                    completion_navigated,
+                    ..
+                }),
+            ) = (
+                payload.get("index").and_then(|v| v.as_u64()),
+                panel.instance_states.get_mut(widget_key),
+            ) {
+                if (index as usize) < completions.len() {
+                    *completion_selected_index = index as usize;
+                    *completion_navigated = true;
+                    accept_completion(spec, widget_key, panel, &mut fx.key);
+                }
+            }
+            return super::PointerDisposition::Consumed;
+        }
+        // **A combo box's arrow toggles its list** — closing an open one the
+        // way Esc does, asking the plugin for a closed one's the way ↓ does.
+        // The press has already given the field focus; the caret stays where
+        // it was, since the arrow is not a place in the value.
+        if event_type == "combo_toggle" {
+            match completions_open(widget_key, panel) {
+                true => dismiss_completions(widget_key, panel, &mut fx.key),
+                false => request_completions(&mut fx.key),
+            }
+            return super::PointerDisposition::Consumed;
+        }
         if event_type == "focus" {
             fx.place_caret = true;
         }
@@ -828,14 +889,13 @@ fn replace_cell(line: &mut SingleLine, at: usize, glyph: &str) {
 /// turns the arrow over, as the dropdown's does. The arrow takes the cell only
 /// while it is blank — the trailing pad the value cell always keeps — so a
 /// value long enough to reach it is never covered. The overlays and the caret
-/// after that cell move with the wider glyph.
-pub fn mark_combo(line: &mut SingleLine, open: bool) {
+/// after that cell move with the wider glyph. Returns the arrow's byte range,
+/// which the description gives a press of its own (`combo_toggle`).
+pub fn mark_combo(line: &mut SingleLine, open: bool) -> Option<(usize, usize)> {
     let text = &line.entry.text;
-    let Some(close) = text.rfind(']') else {
-        return;
-    };
+    let close = text.rfind(']')?;
     let Some((at, ' ')) = text[..close].char_indices().last() else {
-        return;
+        return None;
     };
     let glyph = if open { "▲" } else { "▼" };
     replace_cell(line, at, glyph);
@@ -851,6 +911,7 @@ pub fn mark_combo(line: &mut SingleLine, open: bool) {
         properties: Default::default(),
         unit: OffsetUnit::Byte,
     });
+    Some((at, at + glyph.len()))
 }
 
 /// **The single-line field's row: label column, value cell, focus gutter,
@@ -1294,6 +1355,18 @@ pub fn dismiss_completion_list(
     let open = completions_open(widget_key, panel);
     dismiss_completions(widget_key, panel, fx);
     open
+}
+
+/// Whether `spec` is a combo box: a single-line field that offers a list.
+fn is_combo(spec: &WidgetSpec) -> bool {
+    matches!(spec, WidgetSpec::Text { combo: true, rows, .. } if *rows <= 1)
+}
+
+/// Ask the plugin for a combo box's list: `completion_request`, answered with
+/// `setCompletions`. The host has no candidates of its own to show.
+fn request_completions(fx: &mut super::KeyFx) {
+    fx.events
+        .push(("completion_request".into(), serde_json::json!({})));
 }
 
 /// Close the popup and queue `completion_dismiss` so the plugin can
