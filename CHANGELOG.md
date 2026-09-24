@@ -13,9 +13,14 @@ Fresh is now licensed **GPL-3.0-or-later**, up from GPL-2.0-only (#3328).
 * **Orchestrator mode** - a bare `fresh`, with no file or flags, reopens the workspace you were last in, dock and all, running as a background daemon. On by default, toggle it in Settings (#3306)
 * **New CLI commands** - `workspace list`, and `agent list` / `get` / `explain` / `wait` / `start`, for scripting Orchestrator workspaces and agents without reading the dock
 * **Confirmations are a modal dialog now, not a line on the bottom row** - a centred card with each outcome spelled out as its own button, answering to arrows, Tab, Enter, Esc, the mouse and the letter underlined in the label; an outcome that loses work is in the error colour and never opens armed (#3320)
-* **Find and rejoin the agent sessions other tools are running** - `Orchestrator: Import sessions` scans any machine you can reach for tmux, Claude Code, Codex, screen and zellij sessions, groups them by project, and rejoins one on Enter (#3332)
+* **Find and rejoin the agent sessions other tools are running** - `Orchestrator: Import sessions` scans any machine you can reach for tmux, Claude Code, Codex CLI, ChatGPT (Codex), Orca, screen and zellij sessions, groups them by project, and rejoins one on Enter (#3332, #3361)
+* **Orchestrator: a Repositories registry tracks one main clone per project per machine** - the New Workspace / Run Agent dialog resolves paths from it, warns when a machine has none, and confirms before cloning; its fields now fold behind one-line summaries instead of staying open all at once (#3360)
+* **Orchestrator: workspaces run on a saved machine, chosen from one consistent list** - the dock's `⋯` is a labeled `Menu` now, and the Machines dialog matches the look of the Projects dialog (#3361)
+* **`Ctrl+Q` in a daemon session asks Detach / Quit / Cancel** instead of always stopping the daemon and every terminal and agent it hosts; Detach is the default, Quit and Stop All continue into the normal quit path
 * **Tokyo Night and Gruvbox ship as built-in themes**, which the homepage already promised (#3107, reported by @sgon00)
 * **Alt+Shift+N / Alt+Shift+P cycle the keyboard through the sidebar**, so a plugin panel like the Markdown outline is reachable without the palette (#3326)
+* **Search folds case by default everywhere** - Find/Replace, Live Grep, the Search & Replace panel and Git Grep all match `todo` against `TODO` now; each keeps its own toggle, and `editor.search` seeds the default for a workspace that hasn't set its own (#3349, requested by @Korkman)
+* **Settings reorganized** - new Keybindings and Syntax & Languages pages, plugin settings nested under Plugins, a more compact category tree, and shorter descriptions (#3357)
 
 ### Bug Fixes
 
@@ -51,6 +56,14 @@ Fresh is now licensed **GPL-3.0-or-later**, up from GPL-2.0-only (#3328).
 * **The install script refuses to replace a directory that is not a Fresh install.** `FRESH_INSTALL_DIR` is removed wholesale during an install, and the only guards were against `""`, `/` and `$HOME` — so `FRESH_INSTALL_DIR=$HOME/.local` wiped it without a prompt. An existing directory now has to be empty or hold a Fresh binary, receipt or file manifest
 * **Rust highlighting is on a current grammar now** - an unspaced `<` before a string, as in `ensure!(limit<=MAX_OUTPUT,"...")`, used to be read as the start of a generic argument list; recovering from it ate the string's opening quote, so the string body rendered as code and every line after it was painted as a string literal until the next quote. The Rust grammar bundled inside syntect was years out of date, so Fresh now ships its own copy of the current upstream one - which also brings better type, constant and macro colouring across Rust files (#3325, reported by @asukaminato0721)
 * **File Explorer: the scrollbar no longer steals a row's hit targets** - hovering the bar could pop the tooltip of the file hidden behind it, and the selection caret covered its own row so that row's status marker answered nothing (#2859, by @asukaminato0721)
+* **Search, replace and goto-line history persists across restarts again** - it silently stopped saving, and a plain `fresh file.rs` (which skips workspace restore by default) could even overwrite what was already stored
+* **A block (column) selection no longer stays active after you move the cursor without selecting** - Alt+Shift+Arrow then a plain arrow left a stale rectangle painted, and the next keystroke fanned out into one cursor per rectangle line
+* **Terminal id mix-ups across windows fixed** - an exit in a background window's terminal could mark or kill the active window's same-numbered terminal instead; ids are now unique across the whole editor
+* **LSP: semantic-token highlighting refreshes when a language server asks for it**, instead of staying stale until you next edit the buffer
+* **Custom LSP notifications (e.g. clangd's file-status) reach plugins again**, instead of being logged and dropped
+* **Settings dialog keybindings fire again** - a custom binding scoped to the settings context was silently dropped instead of reaching the dialog
+* **File Explorer resize divider tracks the pointer accurately**, and its grip sits on the correct wall when the explorer is docked on the right
+* **Plugin API: killing a background process now actually kills it and reports whether it's still running**, instead of leaving it orphaned with its promise never settling
 
 ### Internals
 
