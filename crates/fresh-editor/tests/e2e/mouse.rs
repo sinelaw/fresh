@@ -2331,3 +2331,94 @@ fn test_scrollbar_track_hover_then_click_clears_highlight() {
         click_row, post_click_style.bg
     );
 }
+
+/// A harness with unwrapped lines far wider than the pane and the
+/// horizontal scrollbar on. Each line starts `Line {i}:` and ends `TAIL`.
+fn horizontal_scroll_harness() -> (EditorTestHarness, TestFixture) {
+    let mut config = fresh::config::Config::default();
+    config.editor.line_wrap = false;
+    config.editor.show_horizontal_scrollbar = true;
+    let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
+    let content: String = (0..10)
+        .map(|i| {
+            let prefix = format!("Line {i}: ");
+            format!("{prefix}{}TAIL\n", "x".repeat(300 - prefix.len() - 4))
+        })
+        .collect();
+    let fixture = harness.load_buffer_from_text(&content).unwrap();
+    harness.render().unwrap();
+    (harness, fixture)
+}
+
+/// The horizontal scrollbar's row and the columns its thumb covers, read off
+/// the screen: the row near the bottom of the content area with the most
+/// scrollbar cells (the vertical bar crosses every row in one cell).
+fn horizontal_scrollbar(harness: &EditorTestHarness) -> (u16, std::ops::RangeInclusive<u16>) {
+    let (_, last) = harness.content_area_rows();
+    let width = harness.buffer().area.width;
+    let cells = |row: u16| {
+        (0..width)
+            .filter(|&c| {
+                harness.is_scrollbar_thumb_at(c, row) || harness.is_scrollbar_track_at(c, row)
+            })
+            .count()
+    };
+    let row = [last as u16, last as u16 + 1]
+        .into_iter()
+        .max_by_key(|&r| cells(r))
+        .unwrap();
+    assert!(cells(row) > 10, "a horizontal scrollbar is drawn");
+    let thumb: Vec<u16> = (0..width - 1)
+        .filter(|&c| harness.is_scrollbar_thumb_at(c, row))
+        .collect();
+    (row, *thumb.first().unwrap()..=*thumb.last().unwrap())
+}
+
+/// A press on the horizontal scrollbar's track jumps the view there: at the
+/// far end of the track the lines' ends are on screen and their starts are
+/// not.
+#[test]
+fn test_horizontal_scrollbar_track_click_jumps() {
+    let (mut harness, _fixture) = horizontal_scroll_harness();
+    harness.assert_screen_contains("Line 0:");
+    harness.assert_screen_not_contains("TAIL");
+
+    let (row, thumb) = horizontal_scrollbar(&harness);
+    // The last track cell left of the vertical bar's column.
+    let end = harness.buffer().area.width - 2;
+    assert!(
+        end > *thumb.end(),
+        "the press lands on the track, not the thumb"
+    );
+    harness.mouse_click(end, row).unwrap();
+    harness.render().unwrap();
+
+    harness.assert_screen_contains("TAIL");
+    harness.assert_screen_not_contains("Line 0:");
+    let (_, moved) = horizontal_scrollbar(&harness);
+    assert!(
+        moved.start() > thumb.start(),
+        "the thumb follows the view: {thumb:?} -> {moved:?}"
+    );
+}
+
+/// Dragging the horizontal scrollbar's thumb scrolls by how far it moved,
+/// not to where the pointer is: ten columns of drag leave the view part of
+/// the way along, and the thumb moves with the pointer.
+#[test]
+fn test_horizontal_scrollbar_thumb_drag_scrolls() {
+    let (mut harness, _fixture) = horizontal_scroll_harness();
+    let (row, thumb) = horizontal_scrollbar(&harness);
+    let grab = *thumb.start() + 1;
+    harness.mouse_drag(grab, row, grab + 10, row).unwrap();
+
+    harness.assert_screen_not_contains("Line 0:");
+    harness.assert_screen_not_contains("TAIL");
+    let (_, moved) = horizontal_scrollbar(&harness);
+    // The scroll is rounded to whole columns and the thumb back to whole
+    // cells, so it may land a cell either side of the pointer.
+    assert!(
+        moved.start().abs_diff(thumb.start() + 10) <= 1,
+        "the thumb tracks the pointer: {thumb:?} -> {moved:?}"
+    );
+}
