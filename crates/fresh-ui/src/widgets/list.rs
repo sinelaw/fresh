@@ -229,6 +229,9 @@ enum Sel {
     Empty,
 }
 
+/// What a row's activation sends: its index and the event that activated it.
+pub type ActivateHandler<M> = Rc<dyn Fn(usize, &Event) -> Option<M>>;
+
 pub struct List<M> {
     source: Source<M>,
     selection: Sel,
@@ -239,7 +242,7 @@ pub struct List<M> {
     scroll: Option<usize>,
     on_scroll: Option<Rc<dyn Fn(usize) -> M>>,
     pinned: Rc<[usize]>,
-    on_activate: Option<Rc<dyn Fn(usize, &Event) -> Option<M>>>,
+    on_activate: Option<ActivateHandler<M>>,
     activate_on: Activate,
     focusable: bool,
     autofocus: bool,
@@ -434,7 +437,7 @@ impl<M: 'static> List<M> {
     /// Keyboard activation passes the key press, so a handler that reads
     /// `clicks` sees zero there — which is the honest answer for an activation
     /// no mouse made.
-    pub fn on_activate_handler(mut self, f: Rc<dyn Fn(usize, &Event) -> Option<M>>) -> Self {
+    pub fn on_activate_handler(mut self, f: ActivateHandler<M>) -> Self {
         self.on_activate = Some(f);
         self
     }

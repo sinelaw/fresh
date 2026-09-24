@@ -960,21 +960,6 @@ impl Editor {
         }
     }
 
-    /// Handle mouse wheel scroll over a prompt's suggestion list (command
-    /// palette, Select Locale, quick open, every other bottom-anchored
-    /// dropdown).
-    ///
-    /// The wheel scrolls the **view only** — it never moves the selection.
-    /// That is the editor-wide rule (and what VS Code does): the highlighted
-    /// entry may scroll out of sight, and pressing Enter still commits it.
-    /// Wheeling used to walk `selected_suggestion` instead, which also
-    /// rewrote the prompt input under the user and — once the scrollbar
-    /// could latch the offset — made the list jump, because the wheel
-    /// released the latch and the renderer snapped the view back to a
-    /// selection that had never visibly moved.
-    ///
-    /// Returns true if scroll was handled, false if no prompt is active or has no suggestions.
-
     /// Get the confirmed input and prompt type, consuming the prompt
     /// For command palette, returns the selected suggestion if available, otherwise the raw input
     /// Returns (input, prompt_type, selected_index)

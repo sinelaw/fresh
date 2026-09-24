@@ -4114,8 +4114,7 @@ impl Window {
         state.overlays.clear_namespace(&ns, &mut state.marker_list);
 
         let visible_start = top_byte;
-        let mut visible_end = top_byte;
-        visible_end = state
+        let visible_end = state
             .buffer
             .advance_lines_within(top_byte, visible_height as usize, VISIBLE_WINDOW_SCAN_BYTES)
             .min(state.buffer.len());

@@ -758,8 +758,8 @@ mod tests {
 
     /// Regression test for the blocking-mode bug: a real nested `fresh` sends
     /// its command some time *after* the handshake completes (process startup
-    /// + socket round-trip), so the server's post-handshake read runs against
-    /// an empty socket. `accept()` leaves the socket non-blocking and
+    /// plus a socket round-trip), so the server's post-handshake read runs
+    /// against an empty socket. `accept()` leaves the socket non-blocking and
     /// `write_control` flips it back to non-blocking after the `ServerHello`,
     /// so without re-asserting blocking mode the handler's `read_line` would
     /// return `WouldBlock`, drop the connection, and the command would never

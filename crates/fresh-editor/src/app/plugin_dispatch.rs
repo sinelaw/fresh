@@ -6043,6 +6043,7 @@ impl Editor {
     /// The panel state is the same `FloatingWidgetState`; what differs is
     /// where it lives (`Editor::sidebar_sections`, see `app::sidebar`) and
     /// the sentinel buffer its registry entry names (`PanelSlot::Sidebar`).
+    #[allow(clippy::too_many_arguments)]
     fn handle_mount_sidebar_section(
         &mut self,
         panel_key: crate::widgets::PanelKey,

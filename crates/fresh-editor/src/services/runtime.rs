@@ -135,6 +135,7 @@ impl LiveRuntime {
     /// it is what lets `plugin_offloop` assert that off-loop work does not
     /// hold an owning reference to the editor's runtime.
     #[cfg(test)]
+    #[cfg(feature = "plugins")]
     pub(crate) fn live_clones(&self) -> usize {
         Arc::strong_count(&self.0)
     }

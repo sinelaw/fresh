@@ -435,17 +435,6 @@ impl Editor {
         self.warning_log = Some((receiver, path));
     }
 
-    /// Take the warning-log receiver+path out of this editor.
-    ///
-    /// The receiver is single-consumer and lives for the process's
-    /// lifetime; on a destructive editor restart (e.g. authority swap)
-    /// `main.rs` lifts it from the old editor and re-installs it on the
-    /// new one so warnings keep flowing post-restart instead of vanishing
-    /// with the dropped editor.
-    pub fn take_warning_log(&mut self) -> Option<(std::sync::mpsc::Receiver<()>, PathBuf)> {
-        self.warning_log.take()
-    }
-
     /// Set the status message log path
     pub fn set_status_log_path(&mut self, path: PathBuf) {
         self.status_log_path = Some(path);
@@ -740,6 +729,7 @@ impl Editor {
 
     /// Whether `window_id` holds a live connection with a keepalive, rather than
     /// a plain local backend or a dormant session's shell.
+    #[cfg(feature = "plugins")]
     pub(crate) fn window_connection_is_live(&self, window_id: fresh_core::WindowId) -> bool {
         self.windows
             .get(&window_id)

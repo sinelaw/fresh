@@ -1486,6 +1486,7 @@ pub fn fit_label(label: &str, width: usize, align: LabelAlign) -> String {
 /// the byte range of the `[v]` chip for the click hit area.
 /// `indeterminate` renders a neutral `[-]` chip — the value is unset
 /// and inherits from a lower layer (issue #2345).
+#[allow(clippy::too_many_arguments)]
 pub fn render_toggle_form(
     checked: bool,
     indeterminate: bool,
@@ -1678,6 +1679,7 @@ pub struct RenderedRadio {
 /// selected glyph takes the same ink a checked `Toggle` chip does, so
 /// "on" reads the same across the form; focus bands the whole row, as
 /// every other form control's does.
+#[allow(clippy::too_many_arguments)]
 pub fn render_radio(
     options: &[String],
     selected_index: i32,

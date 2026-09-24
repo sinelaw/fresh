@@ -6051,22 +6051,13 @@ fn real_main() -> AnyhowResult<()> {
         ),
     });
 
-    // Status-message log path is just a clone-able path — capture it
-    // once and re-bind to every restarted editor instance. Without
-    // this, the post-`setAuthority` editor has no path to point the
-    // "click status bar to view log" action at, and the user sees
-    // "status log not available" for every status message after the
-    // restart.
+    // The tracing log paths the status bar's and the warning indicator's
+    // clicks open, handed to the editor once it is built.
     let status_log_path: Option<PathBuf> = tracing_handles.as_ref().map(|h| h.status.path.clone());
 
-    // Warning-log channel survives across restarts the same way,
-    // except the `Receiver<()>` is single-consumer and can't be
-    // cloned: lift the whole `(receiver, path)` pair out of the
-    // editor before we drop it, and reinstall it on the next one.
-    // Seeded here from `tracing_handles` (which then no longer carries
-    // the warning slot), and topped up post-iteration via
-    // `editor.take_warning_log()`.
-    let mut warning_log_slot: Option<(std::sync::mpsc::Receiver<()>, PathBuf)> = tracing_handles
+    // The warning log's single-consumer receiver moves out of
+    // `tracing_handles` and into the editor.
+    let warning_log_slot: Option<(std::sync::mpsc::Receiver<()>, PathBuf)> = tracing_handles
         .take()
         .map(|h| (h.warning.receiver, h.warning.path));
 
@@ -6180,14 +6171,10 @@ fn real_main() -> AnyhowResult<()> {
         // editor instance (authority-swap restarts rebuild the editor).
         editor.set_mouse_capture(terminal_modes.mouse_capture_enabled());
 
-        // Re-wire the tracing log paths into every editor instance,
-        // not just the first. Status-bar click → open log, warning
-        // indicator click → open log all break otherwise after the
-        // first authority swap restart.
-        if let Some(p) = status_log_path.as_ref() {
-            editor.set_status_log_path(p.clone());
+        if let Some(p) = status_log_path {
+            editor.set_status_log_path(p);
         }
-        if let Some((rx, p)) = warning_log_slot.take() {
+        if let Some((rx, p)) = warning_log_slot {
             editor.set_warning_log(rx, p);
         }
 
@@ -6240,14 +6227,6 @@ fn real_main() -> AnyhowResult<()> {
 
         let update_result = iteration.update_result;
         let loop_result = iteration.loop_result;
-
-        // If a plugin called `editor.setAuthority(...)` (or cleared it)
-        // during this iteration, the editor parked the replacement in
-        // `pending_authority` and triggered a restart. Move it into
-        // the loop-local var *before* dropping the editor so the next
-        // iteration builds against the new backend.
-        // Pluck the warning-log channel back out so the shutdown path can reach it.
-        warning_log_slot = editor.take_warning_log();
 
         drop(editor);
 

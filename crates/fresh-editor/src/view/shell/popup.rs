@@ -975,7 +975,8 @@ mod tests {
     #[test]
     fn the_cursor_relative_placements() {
         // caret, size, expected origin.
-        let at_cursor: &[((u16, u16), (u16, u16), (u16, u16))] = &[
+        type Case = ((u16, u16), (u16, u16), (u16, u16));
+        let at_cursor: &[Case] = &[
             ((0, 0), (20, 5), (0, 0)),
             ((1, 1), (20, 5), (1, 1)),
             // Wider than the frame: pinned to the left edge, not hanging off
@@ -998,7 +999,7 @@ mod tests {
             );
         }
 
-        let below: &[((u16, u16), (u16, u16), (u16, u16))] = &[
+        let below: &[Case] = &[
             // The row *after* the caret's, which is what makes the anchor a
             // cell rather than a point.
             ((0, 0), (20, 5), (0, 1)),

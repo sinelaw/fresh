@@ -226,6 +226,10 @@ impl<M> Index<ElementId> for Arena<M> {
 /// through leaves the last committed content intact; three separate rules
 /// depend on it — the error policy, deferred disposal, and unwinding a failed
 /// constructor.
+// `Desc` holds the displaced description by value so an abort puts it back
+// without a copy; the buffer lives for one transaction, and boxing it would
+// add an allocation to every mutation of a reconcile.
+#[allow(clippy::large_enum_variant)]
 pub(crate) enum Undo<M> {
     Created(ElementId),
     Root(Option<ElementId>),

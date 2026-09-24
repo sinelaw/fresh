@@ -104,6 +104,9 @@ pub struct TtyReader {
 
 impl TtyReader {
     /// Install the `SIGWINCH` handler and take ownership of stdin input.
+    ///
+    /// Not `Default`: constructing one has process-wide side effects.
+    #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
         install_sigwinch_handler();
         RAW_INPUT_ACTIVE.store(true, Ordering::Relaxed);

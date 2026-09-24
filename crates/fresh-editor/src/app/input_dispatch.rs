@@ -433,6 +433,7 @@ impl Editor {
     /// the plugin's panel `PROMPT_TOOLBAR_PANEL_ID`, so the events reach it
     /// tagged `panel_id: 0`, and the checked state the events carry is what
     /// the plugin re-emits its spec with.
+    #[cfg(feature = "plugins")]
     pub(crate) fn toggle_overlay_toolbar_widget(&mut self, key: &str) {
         if key.is_empty() {
             return;
@@ -522,6 +523,7 @@ impl Editor {
     /// panel's update does (`resolve_described_panel`). The toolbar never
     /// had a text projection: it is described in the card's header band, so
     /// nothing is rendered into a buffer here.
+    #[cfg(any(feature = "plugins", test))]
     pub(crate) fn mount_prompt_toolbar(
         &mut self,
         key: &crate::widgets::PanelKey,

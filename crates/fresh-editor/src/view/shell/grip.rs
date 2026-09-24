@@ -25,7 +25,7 @@
 
 use std::rc::Rc;
 
-use fresh_ui::{gesture, Event, GestureKind, MouseButton, Node};
+use fresh_ui::{gesture, Event, GestureKind, Handler, MouseButton, Node};
 
 use super::msg::{Grip, UiFact, UiMsg};
 
@@ -41,11 +41,7 @@ use super::msg::{Grip, UiFact, UiMsg};
 /// wrapping `n`, and the gesture node is the one that hit-tests and the one a
 /// key names. Left unconstrained it stretches to its parent's bounds with the
 /// one-cell child parked inside it, and takes every press in that parent.
-pub fn draggable(
-    which: Grip,
-    n: Node<UiMsg>,
-    press: Rc<dyn Fn(&Event) -> Option<UiMsg>>,
-) -> Node<UiMsg> {
+pub fn draggable(which: Grip, n: Node<UiMsg>, press: Handler<UiMsg>) -> Node<UiMsg> {
     gesture(n)
         .on(
             GestureKind::Press,

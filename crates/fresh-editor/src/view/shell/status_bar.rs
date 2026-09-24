@@ -314,6 +314,10 @@ pub fn clickable_rects(
         .collect()
 }
 
+/// One run of the status bar as the theme inspector reads it: x, y, width,
+/// and the theme keys of its foreground and background.
+pub type ProvenanceRun = (u16, u16, u16, Option<String>, Option<String>);
+
 /// The theme-key provenance of every painted cell on the bar, in paint order:
 /// the bar's own ground first, then each element and separator over it.
 ///
@@ -324,7 +328,7 @@ pub fn provenance_runs(
     bar: &StatusBar,
     size: ratatui::layout::Rect,
     row: ratatui::layout::Rect,
-) -> Vec<(u16, u16, u16, Option<String>, Option<String>)> {
+) -> Vec<ProvenanceRun> {
     let mut out = vec![(
         row.x,
         row.y,

@@ -302,11 +302,6 @@ the shape is what stops it growing back.
   *metrics*, the indented-card box, and per-side padding.
 - **Smaller residue** — `Paint::Lit`, no palette-resolve cache,
   `EntryDialogState`, and the pointer's legacy walk (see *The one asymmetry*).
-- **Warnings only the no-plugins build sees** — `cargo check
-  --no-default-features --features runtime` reports about a dozen items only
-  plugin code reaches (`diff_baselines`, `cancel_remote_attaches`,
-  `dock_cols_if_open`, …). They are not dead; they want `#[cfg(feature =
-  "plugins")]`, which is a feature-gating decision rather than a deletion.
 
 ### The markdown document view
 

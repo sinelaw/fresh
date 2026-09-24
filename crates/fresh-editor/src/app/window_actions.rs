@@ -1621,6 +1621,7 @@ impl crate::app::Editor {
     /// only a `dormant_remote` descriptor (no authority). The active window is
     /// left unchanged until the connection lands, so the editor never shows a
     /// window without its real backend.
+    #[cfg(feature = "plugins")]
     pub(crate) fn bring_dormant_remote_online(&mut self, id: WindowId) {
         let Some(descriptor) = self.dormant_remote.get(&id) else {
             return;

@@ -27,6 +27,8 @@ use fresh_core::{BufferId, WindowId};
 /// for by name, so no section inherits the dock's global lifetime by
 /// accident again (sinelaw/fresh#3326, D).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+// `Buffer` is only a plugin-mounted section's scope.
+#[cfg_attr(not(feature = "plugins"), allow(dead_code))]
 pub(crate) enum SectionScope {
     /// Every window, always. What the dock is; what a section has to ask for.
     Editor,
@@ -632,6 +634,7 @@ impl super::Editor {
     /// its identity — a restored placeholder, or a remount — or a new one
     /// appended after the last. Shows the sidebar if it is hidden. Returns
     /// the section's index.
+    #[cfg(feature = "plugins")]
     pub(crate) fn place_panel_in_sidebar(
         &mut self,
         mut panel: super::FloatingWidgetState,
@@ -725,6 +728,7 @@ impl super::Editor {
 
     /// Take a plugin section's panel out of the column, dropping the
     /// section. The caller re-anchors it elsewhere.
+    #[cfg(feature = "plugins")]
     pub(crate) fn take_panel_from_sidebar(
         &mut self,
         index: usize,

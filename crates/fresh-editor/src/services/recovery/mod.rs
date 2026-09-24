@@ -446,7 +446,7 @@ mod tests {
 
         service
             .end_session_accounting(
-                &[still_dirty.clone()],
+                std::slice::from_ref(&still_dirty),
                 &[still_dirty.clone(), resolved.clone()],
             )
             .unwrap();

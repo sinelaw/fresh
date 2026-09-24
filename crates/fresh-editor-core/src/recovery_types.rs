@@ -160,6 +160,7 @@ impl RecoveryMetadata {
     pub const FORMAT_VERSION: u32 = 2;
 
     /// Create new metadata
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         original_path: Option<PathBuf>,
         buffer_name: Option<String>,

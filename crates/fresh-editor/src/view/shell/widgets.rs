@@ -2188,15 +2188,17 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
             // the table's columns, and a header row of titles stands over
             // them. See [`TreeTable`].
             let table = TreeTable::of(columns, &nodes, indent, checkable);
-            // One row, at the width it is laid out at.
-            let build_row: Rc<
+            // One row, at the width it is laid out at: the node, its index,
+            // its state, and the width.
+            type BuildRow = Rc<
                 dyn Fn(
                     &fresh_core::api::TreeNode,
                     usize,
                     fresh_ui::widgets::RowState,
                     u16,
                 ) -> Node<UiMsg>,
-            > = {
+            >;
+            let build_row: BuildRow = {
                 let keys = keys.clone();
                 let tree_key = tree_key.clone();
                 let expanded = expanded.clone();

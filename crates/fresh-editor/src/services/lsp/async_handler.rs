@@ -44,6 +44,9 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{ChildStdin, ChildStdout};
 use tokio::sync::{mpsc, oneshot};
 
+/// An LSP range as `((start_line, start_char), (end_line, end_char))`.
+type LspRange = ((u32, u32), (u32, u32));
+
 /// Maps an in-flight LSP request id to the request method and the channel
 /// awaiting its response. The method is retained so error responses can be
 /// classified per-method (see `log_response_error`).
@@ -1993,7 +1996,7 @@ impl LspState {
     /// that routine outcome from surfacing as an ERROR-level parse
     /// failure. An empty `contents` string means the same and is reported
     /// as no-hover.
-    fn parse_hover_response(result: Value) -> (String, bool, Option<((u32, u32), (u32, u32))>) {
+    fn parse_hover_response(result: Value) -> (String, bool, Option<LspRange>) {
         let no_contents = result
             .as_object()
             .is_some_and(|obj| !obj.contains_key("contents"));

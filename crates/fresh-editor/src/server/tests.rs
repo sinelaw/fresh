@@ -894,18 +894,20 @@ mod integration_tests {
     // codes don't leak into the document as literal text.
     // ===========================================================================
 
-    /// Helper: start an EditorServer, connect a client, wait for initial render.
-    /// Returns (client_conn, accumulated_output, shutdown_handle, server_thread, socket_paths, temp_dir).
-    fn setup_editor_server_e2e(
-        test_name: &str,
-    ) -> (
+    /// What `setup_editor_server_e2e` hands back: (client_conn,
+    /// accumulated_output, shutdown_handle, server_thread, socket_paths,
+    /// temp_dir).
+    type ServerRig = (
         ClientConnection,
         Vec<u8>,
         std::sync::Arc<std::sync::atomic::AtomicBool>,
         thread::JoinHandle<std::io::Result<()>>,
         SocketPaths,
         std::path::PathBuf,
-    ) {
+    );
+
+    /// Helper: start an EditorServer, connect a client, wait for initial render.
+    fn setup_editor_server_e2e(test_name: &str) -> ServerRig {
         use crate::server::editor_server::EditorServer;
         use std::sync::mpsc;
 

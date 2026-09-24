@@ -579,15 +579,15 @@ fn wrap_in(
     let mut lines: Vec<(usize, usize)> = Vec::new(); // [start, end)
     let mut start = 0usize;
     let mut used = 0u16;
-    for i in 0..n {
+    for (i, &main) in mains.iter().enumerate().take(n) {
         let with_gap = match i == start {
-            true => mains[i],
-            false => mains[i].saturating_add(gap),
+            true => main,
+            false => main.saturating_add(gap),
         };
         if i > start && used.saturating_add(with_gap) > avail {
             lines.push((start, i));
             start = i;
-            used = mains[i];
+            used = main;
         } else {
             used = used.saturating_add(with_gap);
         }

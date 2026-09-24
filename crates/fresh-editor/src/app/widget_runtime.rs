@@ -1955,6 +1955,7 @@ impl Editor {
     /// `initialCursorLine` and the display-buffer path both used to call
     /// `set_buffer_cursor_in_splits` themselves, into buffers that can
     /// perfectly well carry a focus-following panel; they call this now.
+    #[cfg(feature = "plugins")]
     pub(super) fn seat_buffer_cursor(&mut self, buffer_id: BufferId, position: usize) {
         self.seat_buffer_cursor_selecting(buffer_id, position, false);
     }
@@ -3045,14 +3046,6 @@ impl Editor {
 /// survives here is what a *node* cannot answer: a drag through text inside a
 /// widget, and closing the panel.
 impl Editor {
-    /// Extend an armed widget-text drag selection to the pointer.
-    ///
-    /// Translates the screen position into the document's (rendered
-    /// line, byte-in-line) through the widget's recorded scroll region
-    /// — the same geometry wheel routing hit-tests — then hands the
-    /// caret move to the runtime. Rows above/below the region clamp to
-    /// its edges so a drag that overshoots keeps selecting.
-
     /// Right-click hit-test against a floating widget panel. Resolves the
     /// cell under the cursor to a widget and — only when it lands on a
     /// `list` row — fires a `widget_event` with `event_type: "context"`
@@ -3784,17 +3777,6 @@ mod tests {
         assert_eq!((vp.items, vp.rows), (legacy, legacy), "the spec's window");
     }
 
-    /// **A described panel re-renders without producing a text projection.**
-    ///
-    /// The rows, the hit areas and the box arena are what the collector is
-    /// *for*, and for a panel the tree describes each of them has no reader:
-    /// its rows are nodes, its presses are those nodes', and its arena answers
-    /// no wheel. What a re-render still has to do is the three walks of
-    /// `resolve_panel` — carry the state, clamp the focus, publish the ring —
-    /// and this pins that it does them and produces nothing else.
-    ///
-    /// The same panel outside a slot, with no described interior, keeps the
-    /// collector: the assertion at the end is the half that must not change.
     // ---- the markdown document view -----------------------------------
 
     /// A markdown document as the prose column of a dock panel: long enough
