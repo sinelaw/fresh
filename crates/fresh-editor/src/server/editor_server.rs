@@ -1646,6 +1646,7 @@ mod wave_dismiss_tests {
             label_width: 0,
             read_only: false,
             markdown: false,
+            combo: false,
             key: Some("field".to_string()),
         };
         editor.widget_registry.mount(

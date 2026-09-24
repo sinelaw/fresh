@@ -127,6 +127,7 @@ pub mod issue_2953_search_replace_double_open;
 pub mod issue_2969_wheel_over_chrome;
 pub mod issue_3006_drag_beyond_text_area;
 pub mod issue_3006_shift_select_at_buffer_edges;
+pub mod issue_3009_h_header_cpp;
 pub mod issue_3021_diff_hunk_header_bg;
 pub mod issue_3031_stale_fold_hides_block_header;
 pub mod issue_3077_tab_padding_markers;

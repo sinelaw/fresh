@@ -93,6 +93,29 @@ impl Editor {
     ///
     /// `None` when the press carries no byte at all — the web's by-index
     /// route, and a keyboard activation.
+    /// **A double-click on a list row activates it**, the way Enter does:
+    /// the first press selected the row (its `select`), the second fires the
+    /// list's `activate` for the selection — opening a folder in a file
+    /// browser, choosing an entry in a picker. Other widgets take a second
+    /// press as another single one.
+    pub(crate) fn activate_on_double_click(
+        &mut self,
+        panel_key: &crate::widgets::PanelKey,
+        hit: &crate::widgets::WidgetEvent,
+    ) {
+        if hit.widget_kind != "list" || hit.event_type != "select" {
+            return;
+        }
+        let owner = hit.owner().to_string();
+        let ev = self.widget_registry.get(panel_key).and_then(|p| {
+            let spec = crate::widgets::find_widget_by_key(&p.spec, &owner)?;
+            crate::widgets::kinds::list::activate_event(spec, &owner, p)
+        });
+        if let Some((event_type, payload)) = ev {
+            self.fire_widget_event(panel_key, owner, event_type, payload);
+        }
+    }
+
     pub(crate) fn deliver_widget_hit(
         &mut self,
         panel_key: &crate::widgets::PanelKey,
@@ -3289,6 +3312,7 @@ mod tests {
             selected_index: 0,
             visible_rows: Some(4),
             focusable: true,
+            type_ahead: false,
             key: Some("lst".into()),
         }
     }
@@ -3304,6 +3328,7 @@ mod tests {
                 item_keys,
                 selected_index,
                 focusable,
+                type_ahead,
                 key,
                 ..
             } => WidgetSpec::List {
@@ -3313,6 +3338,7 @@ mod tests {
                 selected_index,
                 visible_rows: None,
                 focusable,
+                type_ahead,
                 key,
             },
             other => other,
@@ -3373,6 +3399,7 @@ mod tests {
             label_width: 0,
             read_only: false,
             markdown: false,
+            combo: false,
             key: Some("field".into()),
         };
         let out = crate::widgets::resolve_panel(&spec, &Default::default(), "field", true, None);
@@ -3792,6 +3819,7 @@ mod tests {
             label_width: 0,
             read_only: true,
             markdown: true,
+            combo: false,
             key: key.map(str::to_string),
         }
     }

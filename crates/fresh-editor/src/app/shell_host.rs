@@ -1998,12 +1998,18 @@ impl Editor {
                         self.focus_pane(pane);
                         if let Some(panel_key) = self.pane_panel_key(pane) {
                             self.deliver_widget_hit(&panel_key, &hit, clicked_byte);
+                            if clicks >= 2 {
+                                self.activate_on_double_click(&panel_key, &hit);
+                            }
                         }
                         return;
                     }
                 };
                 if let Some(panel_key) = self.panel(slot).map(|p| p.panel_key.clone()) {
                     self.deliver_widget_hit(&panel_key, &hit, clicked_byte);
+                    if clicks >= 2 {
+                        self.activate_on_double_click(&panel_key, &hit);
+                    }
                 }
             }
             UiFact::SettingsItem(idx) => {

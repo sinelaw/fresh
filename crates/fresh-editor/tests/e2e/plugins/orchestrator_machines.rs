@@ -161,11 +161,12 @@ fn a_config_host_is_added_through_add_machine() {
     open_machines_dialog(&mut harness);
     harness.assert_screen_not_contains("this computer");
     add_from_machines_dialog(&mut harness);
-    // The Host field opens with the config host to pick: ↓ then Enter.
+    // The Host field is a combo box of the config hosts, closed until asked:
+    // ↓ opens it on the first host (the ARIA combobox pattern), Enter takes it.
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     harness
         .wait_until(|h| h.screen_to_string().matches("plantedbox").count() >= 1)
         .unwrap();
-    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();

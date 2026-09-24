@@ -2430,6 +2430,12 @@ pub enum WidgetSpec {
         /// before this field was read on that path it stayed flush left.
         #[serde(default)]
         label_width: u32,
+        /// The keyboard accelerator's letter, underlined where it first
+        /// appears in `label` (case-insensitively) — the classic menu-bar
+        /// mnemonic, so `Alt+L` reads as the `l` in `Files`. Absent, or a
+        /// letter the label does not contain, underlines nothing.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        mnemonic: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         key: Option<String>,
     },
@@ -2837,6 +2843,14 @@ pub enum WidgetSpec {
         /// dispatch.
         #[serde(default = "default_true")]
         focusable: bool,
+        /// Typing jumps the selection to the next item whose text starts
+        /// with what was typed (the listbox pattern's type-ahead). Off by
+        /// default: a list that is a command surface — Git Log's `q`, a
+        /// dock's single-key actions — binds those letters in its mode, and
+        /// the focused widget is asked first. Turn it on for a list of names
+        /// to find, such as a file browser.
+        #[serde(default)]
+        type_ahead: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         key: Option<String>,
     },
@@ -3117,6 +3131,19 @@ pub enum WidgetSpec {
         /// changes via a spec update.
         #[serde(default)]
         markdown: bool,
+        /// A single-line field that offers a list of values to pick from as
+        /// well as free text — a combo box (the ARIA combobox pattern). Drawn
+        /// with a `▼` in the last cell inside its `]` (`▲` while its
+        /// completion list is open), so the field says it has a list before
+        /// it is focused. The list itself is still the plugin's
+        /// `completions`: with the list closed, ↓ / Alt+↓ or a press on the
+        /// arrow fires `completion_request`, which the plugin answers with
+        /// `setCompletions`; a press on the arrow with the list open closes
+        /// it (`completion_dismiss`). Opening on focus is left out on
+        /// purpose — a list that opens as a form is walked covers the fields
+        /// under it. Defaults to `false`.
+        #[serde(default)]
+        combo: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         key: Option<String>,
     },
@@ -4675,6 +4702,13 @@ pub enum PluginCommand {
     /// uses this for hotkey-hint rows. Empty vec clears the
     /// footer. Has no visible effect on non-overlay prompts.
     SetPromptFooter { footer: Vec<StyledText> },
+
+    /// Centre the floating-overlay prompt's card on the whole frame (90% of
+    /// it, over the dock and sidebar, as the Settings dialog is) instead of
+    /// on the chrome area beside the dock — the prompt's counterpart of
+    /// `FloatingPanelControl`'s `fullscreen`.
+    /// Has no visible effect on non-overlay prompts.
+    SetPromptFullscreen { fullscreen: bool },
 
     /// Plugin-supplied toolbar for the floating-overlay prompt's header
     /// band, as a `WidgetSpec` (a `Row`/`Col` of `Toggle`s/`Button`s). Unlike
@@ -7806,6 +7840,12 @@ impl PluginApi {
     /// the bottom of the results pane. Empty vec clears.
     pub fn set_prompt_footer(&self, footer: Vec<StyledText>) -> Result<(), String> {
         self.send_command(PluginCommand::SetPromptFooter { footer })
+    }
+
+    /// Centre the floating-overlay prompt's card on the whole frame
+    /// (`true`) or on the chrome area beside the dock (`false`).
+    pub fn set_prompt_fullscreen(&self, fullscreen: bool) -> Result<(), String> {
+        self.send_command(PluginCommand::SetPromptFullscreen { fullscreen })
     }
 
     /// Set the floating-overlay prompt's toolbar as a `WidgetSpec` (real,

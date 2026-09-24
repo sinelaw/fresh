@@ -505,10 +505,42 @@ impl Editor {
         code: crossterm::event::KeyCode,
         modifiers: crossterm::event::KeyModifiers,
     ) -> bool {
-        match self.prompt_toolbar_key() {
-            Some(pk) => self.dispatch_widget_panel_key(&pk, None, true, code, modifiers),
-            None => false,
+        let Some(pk) = self.prompt_toolbar_key() else {
+            return false;
+        };
+        // Esc on a dropdown whose list is up closes the list (restoring the
+        // selection it opened on); only a second Esc reaches the prompt and
+        // closes the overlay.
+        if code == crossterm::event::KeyCode::Esc && self.prompt_toolbar_list_open(&pk) {
+            self.handle_widget_command(
+                &pk,
+                fresh_core::api::WidgetAction::Key {
+                    key: crate::input::keybindings::KeySeq::one(
+                        crate::input::keybindings::Key::new(
+                            code,
+                            crossterm::event::KeyModifiers::NONE,
+                        ),
+                    )
+                    .to_string(),
+                },
+            );
+            return true;
         }
+        self.dispatch_widget_panel_key(&pk, None, true, code, modifiers)
+    }
+
+    /// Whether the toolbar's focused control is a dropdown with its option
+    /// list open.
+    fn prompt_toolbar_list_open(&self, pk: &crate::widgets::PanelKey) -> bool {
+        let Some(focus) = self.widget_registry.focus_key(pk).filter(|f| !f.is_empty()) else {
+            return false;
+        };
+        matches!(
+            self.widget_registry
+                .instance_states(pk)
+                .and_then(|s| s.get(focus)),
+            Some(crate::widgets::WidgetInstanceState::Dropdown { open: true, .. })
+        )
     }
 
     pub(super) fn dispatch_pane_panel_key(

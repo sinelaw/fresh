@@ -854,6 +854,53 @@ pub trait FileSystem: Send + Sync {
         on_entry: &mut dyn FnMut(WalkEntry<'_>) -> bool,
     ) -> io::Result<()>;
 
+    /// Every ancestor of `start` (and `start` itself) that directly contains
+    /// one of `markers`, nearest first.
+    ///
+    /// This is the "climb until you find the project root" question that
+    /// several features ask: the nearest `compile_commands.json` for a `.h`
+    /// header, an LSP server's root markers, and so on. Callers that want
+    /// only the closest match take `.first()`; callers that must inspect the
+    /// contents of each candidate — where an outer directory can still be the
+    /// answer if the nearest one does not qualify — iterate.
+    ///
+    /// A marker is matched by *existence*, not by kind, so directory markers
+    /// such as `.git` count.
+    ///
+    /// `max_dirs` bounds how many directories are examined, counting `start`
+    /// itself; `None` climbs to the filesystem root. Missing or unreadable
+    /// directories are skipped rather than reported as errors, so the result
+    /// is "what we could see", and an empty vector means "no marker found".
+    ///
+    /// The default implementation walks the ancestors itself, which is right
+    /// for any filesystem whose metadata calls are cheap. **A remote
+    /// implementation should override it with a single server-side request**:
+    /// the default costs one round trip per directory per marker, and this
+    /// runs on latency-sensitive paths like opening a file. This is the same
+    /// reasoning that puts the tree walk behind [`Self::walk`] rather than
+    /// leaving callers to recurse with `read_dir`.
+    fn find_up(
+        &self,
+        start: &Path,
+        markers: &[&str],
+        max_dirs: Option<usize>,
+    ) -> io::Result<Vec<PathBuf>> {
+        let mut found = Vec::new();
+        let mut current = Some(start);
+        let mut visited = 0usize;
+        while let Some(dir) = current {
+            if max_dirs.is_some_and(|max| visited >= max) {
+                break;
+            }
+            if markers.iter().any(|m| self.exists(&dir.join(m))) {
+                found.push(dir.to_path_buf());
+            }
+            visited += 1;
+            current = dir.parent();
+        }
+        Ok(found)
+    }
+
     /// Walk `root`, reporting every non-hidden file. A provided method over
     /// [`Self::walk`], so a filesystem implements one method, not two.
     fn walk_files(

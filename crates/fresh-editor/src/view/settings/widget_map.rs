@@ -117,6 +117,7 @@ pub fn setting_control_to_widget_aligned(
             indeterminate: *inherited,
             label_first: true,
             label_width: lw,
+            mnemonic: None,
             key,
         },
         // The value as the JSON carries it; the kind formats a percent as
@@ -196,6 +197,7 @@ pub fn setting_control_to_widget_aligned(
             label_width: lw,
             read_only: false,
             markdown: false,
+            combo: false,
             key,
         },
         // The included set is the model's; which column the keyboard
@@ -384,6 +386,7 @@ pub fn setting_control_to_widget_aligned(
                     label_width: 0,
                     read_only: false,
                     markdown: false,
+                    combo: false,
                     key,
                 },
             ];
@@ -461,6 +464,7 @@ fn text_list_row(field_key: &str, row: Option<usize>, value: &str) -> WidgetSpec
             label_width: 0,
             read_only: false,
             markdown: false,
+            combo: false,
             key: Some(SettingControl::text_list_row_key(field_key, row)),
         },
     ];
@@ -530,6 +534,7 @@ fn rows_list(
         selected_index: cursor.map(|c| c as i32).unwrap_or(-1),
         visible_rows: Some(visible),
         focusable: true,
+        type_ahead: false,
         key: Some(field_key.to_string()),
     }
 }

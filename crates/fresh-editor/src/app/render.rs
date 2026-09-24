@@ -2193,6 +2193,7 @@ impl Editor {
                         label_width: 0,
                         read_only: false,
                         markdown: false,
+                        combo: false,
                         key: None,
                     }),
                     suffix: vec![
@@ -3565,7 +3566,13 @@ impl Editor {
         self.shell_frame_status_bar = status_bar_items.clone();
         let menu_keys = self.menu_shortcuts();
         let suggestions = self.suggestions_description();
-        let card = self.overlay_card_description(chrome_area);
+        // A fullscreen card is placed on the whole frame, the dock beside the
+        // chrome included.
+        let frame_area = match dock_area {
+            Some(dock) => chrome_area.union(dock),
+            None => chrome_area,
+        };
+        let card = self.overlay_card_description(chrome_area, frame_area);
         let popups = self.popup_descriptions(chrome_area);
         let theme_info = self.theme_info_description();
         // The grid's shape, for the tree to lay out. Cloned rather than
@@ -3890,13 +3897,23 @@ impl Editor {
     fn overlay_card_description(
         &self,
         chrome: ratatui::layout::Rect,
+        frame: ratatui::layout::Rect,
     ) -> Option<crate::view::shell::overlay_prompt::Card> {
         use crate::view::shell::overlay_prompt::Card;
         let prompt = self.active_window().prompt.as_ref()?;
         if !prompt.overlay {
             return None;
         }
-        let at = Self::centered_overlay_rect(chrome, 90, 90);
+        // A fullscreen card is centred on the whole frame, as the Settings
+        // dialog is, rather than on the chrome beside the dock.
+        let at = Self::centered_overlay_rect(
+            match prompt.fullscreen {
+                true => frame,
+                false => chrome,
+            },
+            90,
+            90,
+        );
         let toolbar = self.prompt_toolbar_interior();
         let default_title;
         let title_segs: &[fresh_core::api::StyledText] = if prompt.title.is_empty() {
