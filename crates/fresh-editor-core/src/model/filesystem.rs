@@ -704,18 +704,11 @@ pub trait FileSystem: Send + Sync {
     /// Create a new, uniquely named temp file next to `path` for an atomic
     /// write-then-rename. Never opens a file that already exists.
     fn create_temp_file_for(&self, path: &Path) -> io::Result<(PathBuf, Box<dyn FileWriter>)> {
-        const ATTEMPTS: usize = 16;
-        let mut attempt = 0;
-        loop {
+        retry_on_name_clash(|| {
             let temp_path = self.temp_path_for(path);
-            match self.create_new_file(&temp_path) {
-                Ok(file) => return Ok((temp_path, file)),
-                Err(e) if e.kind() == io::ErrorKind::AlreadyExists && attempt + 1 < ATTEMPTS => {
-                    attempt += 1;
-                }
-                Err(e) => return Err(e),
-            }
-        }
+            let file = self.create_new_file(&temp_path)?;
+            Ok((temp_path, file))
+        })
     }
 
     /// Get a unique temporary file path (using timestamp and PID)
@@ -1031,6 +1024,21 @@ pub trait FileSystemExt: FileSystem {
 
 /// Blanket implementation: all FileSystem types automatically get async methods
 impl<T: FileSystem> FileSystemExt for T {}
+
+/// Run `create`, which creates a file under a freshly picked temp name, again
+/// while the name it picked turns out to exist already.
+fn retry_on_name_clash<T>(mut create: impl FnMut() -> io::Result<T>) -> io::Result<T> {
+    const ATTEMPTS: usize = 16;
+    let mut attempt = 0;
+    loop {
+        match create() {
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists && attempt + 1 < ATTEMPTS => {
+                attempt += 1;
+            }
+            result => return result,
+        }
+    }
+}
 
 /// A temp-file path in the same directory as `path`, for write-then-rename.
 ///
@@ -1442,6 +1450,34 @@ impl StdFileSystem {
         crate::model::buffer::save::write_in_place_staged(self, path, data)
     }
 
+    /// Like [`FileSystem::create_temp_file_for`], but on unix the file is
+    /// created with at most the permission bits of `mode` (the file it will
+    /// replace), not the umask default. The new content is written before
+    /// the original's permissions are copied over, and a file created e.g.
+    /// 0644 next to a 0600 original could be opened by anyone in between
+    /// and read through that handle afterwards.
+    #[cfg_attr(not(unix), allow(unused_variables))]
+    fn create_temp_file_with_mode(
+        &self,
+        path: &Path,
+        mode: Option<u32>,
+    ) -> io::Result<(PathBuf, Box<dyn FileWriter>)> {
+        retry_on_name_clash(|| {
+            let temp_path = self.temp_path_for(path);
+            let mut options = std::fs::OpenOptions::new();
+            options.write(true).create_new(true);
+            #[cfg(unix)]
+            if let Some(mode) = mode {
+                std::os::unix::fs::OpenOptionsExt::mode(&mut options, mode & 0o777);
+            }
+            let file = options.open(&temp_path)?;
+            Ok((
+                temp_path,
+                Box::new(StdFileWriter(file)) as Box<dyn FileWriter>,
+            ))
+        })
+    }
+
     /// Give `temp` the owner, group and extended attributes (on Linux these
     /// include POSIX ACLs) of `original`, which describes `path`, so renaming
     /// it over `path` doesn't change them (issue #3348).
@@ -1692,7 +1728,13 @@ impl FileSystem for StdFileSystem {
             return self.write_in_place(path, data);
         }
 
-        let (temp_path, mut file) = self.create_temp_file_for(path)?;
+        #[cfg(unix)]
+        let mode = original
+            .as_ref()
+            .map(|m| std::os::unix::fs::PermissionsExt::mode(&m.permissions()));
+        #[cfg(not(unix))]
+        let mode = None;
+        let (temp_path, mut file) = self.create_temp_file_with_mode(path, mode)?;
         // Ok(false): the temp file can't stand in for the original.
         let result = (|| {
             file.write_all(data)?;
@@ -2487,6 +2529,24 @@ mod tests {
             xattr::get(&path, "user.fresh_test").unwrap().as_deref(),
             Some(&b"kept"[..])
         );
+    }
+
+    /// A save's temp file must never be more readable than the file it
+    /// replaces, not even before its permissions are copied over.
+    #[cfg(unix)]
+    #[test]
+    fn atomic_write_temp_file_is_created_with_the_original_mode() {
+        use std::os::unix::fs::PermissionsExt;
+        let fs = StdFileSystem;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("secret.txt");
+
+        let (temp_path, _file) = fs
+            .create_temp_file_with_mode(&path, Some(0o100600))
+            .unwrap();
+
+        let mode = std::fs::metadata(&temp_path).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
     }
 
     /// Which xattr failures merely drop that attribute: those caused by it
