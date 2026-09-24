@@ -12,7 +12,7 @@ use fresh::config::{Config, Keybinding, TerminalShellConfig};
 use fresh::server::input_parser::{Event, InputParser};
 use portable_pty::{native_pty_system, PtySize};
 
-fn pty_available() -> bool {
+pub(crate) fn pty_available() -> bool {
     native_pty_system()
         .openpty(PtySize {
             rows: 1,
@@ -31,7 +31,7 @@ fn dumper_config() -> Config {
 
 /// [`dumper_config`] whose child first writes `setup` — terminal mode
 /// requests, as a TUI would make them — before reporting `READY`.
-fn dumper_config_with_setup(setup: &str) -> Config {
+pub(crate) fn dumper_config_with_setup(setup: &str) -> Config {
     let mut config = Config::default();
     config.active_keybinding_map = fresh::config::KeybindingMapName("default".to_string());
     config.terminal.shell = Some(TerminalShellConfig {
@@ -51,7 +51,7 @@ fn dumper_config_with_setup(setup: &str) -> Config {
 }
 
 /// Open the dumper terminal and wait until it is reading.
-fn open_dumper(config: Config) -> EditorTestHarness {
+pub(crate) fn open_dumper(config: Config) -> EditorTestHarness {
     let mut harness = EditorTestHarness::with_temp_project_and_config(100, 30, config).unwrap();
     harness.editor_mut().open_terminal();
     harness.wait_for_screen_contains("READY").unwrap();
@@ -69,7 +69,7 @@ fn send_bytes(harness: &mut EditorTestHarness, bytes: &[u8]) {
 }
 
 /// Press the sentinel and wait for the child to report it.
-fn send_sentinel(harness: &mut EditorTestHarness) {
+pub(crate) fn send_sentinel(harness: &mut EditorTestHarness) {
     harness
         .send_key(KeyCode::Char('z'), KeyModifiers::NONE)
         .unwrap();
