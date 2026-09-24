@@ -2870,7 +2870,7 @@ impl Editor {
                 if let Err(e) = self.open_file(&path) {
                     tracing::warn!("CreateFile: failed to open created file {:?}: {}", path, e);
                 }
-                return Ok(true);
+                Ok(true)
             }
             lsp_types::ResourceOp::Rename(rename) => {
                 let old_path = to_host(&rename.old_uri);
@@ -2923,7 +2923,7 @@ impl Editor {
                 }
                 std::fs::rename(&old_path, &new_path)?;
                 tracing::info!("RenameFile: {:?} -> {:?}", old_path, new_path);
-                return Ok(true);
+                Ok(true)
             }
             lsp_types::ResourceOp::Delete(delete) => {
                 // Fresh does not delete files because a language server asked.
@@ -2942,7 +2942,7 @@ impl Editor {
                     .map(|n| n.to_string_lossy().to_string())
                     .unwrap_or_else(|| path.display().to_string());
                 self.set_status_message(t!("lsp.delete_refused", name = &name).to_string());
-                return Ok(false);
+                Ok(false)
             }
         }
     }

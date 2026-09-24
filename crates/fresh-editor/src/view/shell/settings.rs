@@ -1141,7 +1141,7 @@ fn cat_row(
                     // Indented past the parent's chevron, dot and icon, so the
                     // label lines up with the parent's section rows.
                     true => text("    "),
-                    false => text(chevron.to_string()),
+                    false => text(chevron),
                 },
                 None,
             ));
@@ -1151,10 +1151,7 @@ fn cat_row(
             });
             kids.push(match nested {
                 true => paint(text(" "), None),
-                false => paint(
-                    text(icon.to_string()),
-                    Some(pair("ui.popup_border_fg", "ui.popup_bg")),
-                ),
+                false => paint(text(icon), Some(pair("ui.popup_border_fg", "ui.popup_bg"))),
             });
             // A name longer than the tree is wide is clipped: `Sizing::Flex`
             // gives the label the rest of the row and the fold clips it.
@@ -1643,9 +1640,9 @@ fn keyhints(text_: &str) -> Vec<Node<UiMsg>> {
         match seg.find(':') {
             Some(at) => {
                 out.push(text(format!(" {} ", &seg[..at])).theme(key.clone()));
-                out.push(text(seg[at + 1..].to_string()).theme(desc.clone()));
+                out.push(text(&seg[at + 1..]).theme(desc.clone()));
             }
-            None => out.push(text(seg.to_string()).theme(desc.clone())),
+            None => out.push(text(seg).theme(desc.clone())),
         }
     }
     out

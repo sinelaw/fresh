@@ -70,6 +70,7 @@ struct World {
     h: EditorTestHarness,
 }
 
+#[derive(Default)]
 struct Setup {
     /// A `~/.ssh/config` host `gpu`, added as a machine, whose commands run
     /// in a local folder, with a clone of the project at `~/src/api` there.
@@ -78,11 +79,6 @@ struct Setup {
     seed: Vec<(&'static str, String)>,
 }
 
-impl Default for Setup {
-    fn default() -> Self {
-        Setup { ssh_host: false, seed: Vec::new() }
-    }
-}
 
 fn world(setup: Setup) -> World {
     fresh::i18n::set_locale("en");

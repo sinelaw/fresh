@@ -988,7 +988,7 @@ mod integration_tests {
             for col in 0..80 {
                 let cell = screen.cell(row, col);
                 if let Some(cell) = cell {
-                    result.push_str(&cell.contents());
+                    result.push_str(cell.contents());
                 } else {
                     result.push(' ');
                 }

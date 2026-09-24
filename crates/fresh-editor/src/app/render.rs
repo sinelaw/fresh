@@ -2403,11 +2403,12 @@ impl Editor {
             let p = s.current_page();
             st::Page {
                 title: p.map(|p| p.name.clone()).unwrap_or_default(),
-                clear: p
-                    .is_some_and(|p| p.nullable)
-                    .then(|| s.current_category_has_values())
-                    .unwrap_or(false)
-                    .then(|| format!("[{}]", t!("settings.btn_clear_category"))),
+                clear: if p.is_some_and(|p| p.nullable) {
+                    s.current_category_has_values()
+                } else {
+                    false
+                }
+                .then(|| format!("[{}]", t!("settings.btn_clear_category"))),
                 clear_hovered: matches!(
                     s.hover_hit,
                     Some(crate::view::settings::SettingsHit::ClearCategoryButton)
@@ -6378,7 +6379,7 @@ impl Editor {
         self.prose_reveal
             .borrow_mut()
             .entry(key.clone())
-            .or_insert_with(fresh_ui::behavior::anchor::Anchor::new)
+            .or_default()
             .clone()
     }
 

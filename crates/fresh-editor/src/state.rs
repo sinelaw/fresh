@@ -738,7 +738,7 @@ impl EditorState {
             // `theme: None` — the index measures and never draws, so a
             // continuation prefix contributes its width here but no colour.
             self.soft_breaks
-                .query_viewport_rendered(0, end, &self.marker_list, &no_cursors, None)
+                .query_viewport_rendered(0, end, &self.marker_list, no_cursors, None)
         };
 
         let is_compose = matches!(view_mode, CacheViewMode::Compose);
@@ -748,7 +748,7 @@ impl EditorState {
         } else {
             let exclude = (!is_compose).then(crate::view::compose_only::md_syntax_namespace);
             self.conceals
-                .query_viewport_excluding(0, end, &self.marker_list, exclude.as_ref(), &no_cursors)
+                .query_viewport_excluding(0, end, &self.marker_list, exclude.as_ref(), no_cursors)
                 .into_iter()
                 .map(|(r, t)| (r, t.map(str::to_owned)))
                 .collect()

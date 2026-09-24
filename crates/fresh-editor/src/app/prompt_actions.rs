@@ -1739,8 +1739,7 @@ impl Editor {
                     .and_then(|view_states| {
                         view_states.iter().find_map(|(split_id, vs)| {
                             vs.open_buffers
-                                .iter()
-                                .any(|t| *t == crate::view::split::TabTarget::Group(group_leaf))
+                                .contains(&crate::view::split::TabTarget::Group(group_leaf))
                                 .then_some(*split_id)
                         })
                     });

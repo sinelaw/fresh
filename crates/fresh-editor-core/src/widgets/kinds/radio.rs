@@ -213,14 +213,14 @@ mod tests {
         states: &HashMap<String, WidgetInstanceState>,
         width: u32,
     ) -> RenderedRadio {
-        let (WidgetSpec::Radio {
+        let WidgetSpec::Radio {
             options,
             selected_index,
             label,
             label_width,
             key,
             ..
-        }) = spec
+        } = spec
         else {
             unreachable!("a radio")
         };

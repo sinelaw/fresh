@@ -661,7 +661,7 @@ fn test_large_file_edits_beginning_middle_end() {
         .unwrap();
     harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
     harness.type_text("END_EDIT").unwrap();
-    expected_lines.push(format!("END_EDIT"));
+    expected_lines.push("END_EDIT".to_string());
 
     // Save
     harness

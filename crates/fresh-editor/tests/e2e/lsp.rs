@@ -8354,8 +8354,7 @@ log("STOPPED")
     // Also check the log for the final document content
     let final_content_line = log_content
         .lines()
-        .filter(|l| l.starts_with("DID_CHANGE_CONTENT:") || l.starts_with("DID_OPEN_CONTENT:"))
-        .last()
+        .rfind(|l| l.starts_with("DID_CHANGE_CONTENT:") || l.starts_with("DID_OPEN_CONTENT:"))
         .unwrap_or("");
     println!("Final server document: {}", final_content_line);
 

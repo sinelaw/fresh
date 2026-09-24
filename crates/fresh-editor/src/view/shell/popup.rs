@@ -663,7 +663,7 @@ fn description(text: &str) -> Node<UiMsg> {
         // The `- 2` the painter wrapped to was padding it then had to leave
         // room for by hand; `pad` states it and the wrap follows the width it
         // is given.
-        fresh_ui::text(text.to_string())
+        fresh_ui::text(text)
             .wrap_hanging()
             .theme(pair("ui.help_separator_fg", "ui.popup_bg")),
         row().h(Sizing::Cells(1)),
@@ -690,14 +690,14 @@ fn list_row(item: &PopupListItem, row_theme: &str, hint: Option<&str>) -> Node<U
         .unwrap_or_else(|| row_theme.to_string());
     let mut cells: Vec<Node<UiMsg>> = Vec::new();
     if let Some(icon) = &item.icon {
-        cells.push(fresh_ui::text(format!("{icon} ")).theme(row_theme.to_string()));
+        cells.push(fresh_ui::text(format!("{icon} ")).theme(row_theme));
     }
     // Leading whitespace is kept out of the underline: an indented row is a
     // nested one, and underlining its indent makes the link look ragged.
     let trimmed = item.text.trim_start();
     let indent = item.text.len() - trimmed.len();
     if indent > 0 {
-        cells.push(fresh_ui::text(&item.text[..indent]).theme(row_theme.to_string()));
+        cells.push(fresh_ui::text(&item.text[..indent]).theme(row_theme));
     }
     // A row with a `data` payload acts on click, so it reads as a link; a
     // disabled one recedes and takes the muted foreground with it.
@@ -785,7 +785,7 @@ pub fn content(c: &PopupContent, selected_hint: Option<&str>) -> Node<UiMsg> {
                     Some(it) => list_row(
                         it,
                         &row_theme(i == sel, st == RowState::Hover),
-                        (i == sel).then(|| hint.as_deref()).flatten(),
+                        (i == sel).then_some(hint.as_deref()).flatten(),
                     ),
                     None => row().h(Sizing::Cells(1)),
                 },

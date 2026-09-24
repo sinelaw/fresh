@@ -339,47 +339,6 @@ fn convert_kind(kind: MouseEventKind) -> TerminalMouseEventKind {
     }
 }
 
-#[cfg(test)]
-mod convert_kind_tests {
-    use super::*;
-
-    #[test]
-    fn horizontal_wheel_has_a_wire_representation() {
-        assert_eq!(
-            convert_kind(MouseEventKind::ScrollLeft),
-            TerminalMouseEventKind::ScrollLeft
-        );
-        assert_eq!(
-            convert_kind(MouseEventKind::ScrollRight),
-            TerminalMouseEventKind::ScrollRight
-        );
-    }
-
-    #[test]
-    fn other_kinds_are_unchanged() {
-        assert_eq!(
-            convert_kind(MouseEventKind::Down(MouseButton::Left)),
-            TerminalMouseEventKind::Down(TerminalMouseButton::Left)
-        );
-        assert_eq!(
-            convert_kind(MouseEventKind::Drag(MouseButton::Middle)),
-            TerminalMouseEventKind::Drag(TerminalMouseButton::Middle)
-        );
-        assert_eq!(
-            convert_kind(MouseEventKind::Moved),
-            TerminalMouseEventKind::Moved
-        );
-        assert_eq!(
-            convert_kind(MouseEventKind::ScrollUp),
-            TerminalMouseEventKind::ScrollUp
-        );
-        assert_eq!(
-            convert_kind(MouseEventKind::ScrollDown),
-            TerminalMouseEventKind::ScrollDown
-        );
-    }
-}
-
 impl super::Editor {
     /// Begin a text-selection drag on a terminal split that was showing the
     /// live PTY grid when the mouse went down (see
@@ -608,8 +567,7 @@ impl super::Editor {
         let grid_row = row.saturating_sub(content_rect.y) as usize;
         // Account for horizontal scroll (a pinned view starts at 0, but an
         // explicit scrollback view may have been scrolled right).
-        let grid_col =
-            col.saturating_sub(content_rect.x) as usize + vs.viewport.left_column as usize;
+        let grid_col = col.saturating_sub(content_rect.x) as usize + vs.viewport.left_column;
 
         // Grid-wrapped scroll-back (fresh#2649): visual rows are exact-column
         // wrap segments of the logical lines, so walk the segments from the
@@ -667,5 +625,46 @@ impl super::Editor {
             .buffer
             .line_col_to_position(top_line + grid_row, grid_col);
         Some(state.buffer.snap_to_char_boundary(pos))
+    }
+}
+
+#[cfg(test)]
+mod convert_kind_tests {
+    use super::*;
+
+    #[test]
+    fn horizontal_wheel_has_a_wire_representation() {
+        assert_eq!(
+            convert_kind(MouseEventKind::ScrollLeft),
+            TerminalMouseEventKind::ScrollLeft
+        );
+        assert_eq!(
+            convert_kind(MouseEventKind::ScrollRight),
+            TerminalMouseEventKind::ScrollRight
+        );
+    }
+
+    #[test]
+    fn other_kinds_are_unchanged() {
+        assert_eq!(
+            convert_kind(MouseEventKind::Down(MouseButton::Left)),
+            TerminalMouseEventKind::Down(TerminalMouseButton::Left)
+        );
+        assert_eq!(
+            convert_kind(MouseEventKind::Drag(MouseButton::Middle)),
+            TerminalMouseEventKind::Drag(TerminalMouseButton::Middle)
+        );
+        assert_eq!(
+            convert_kind(MouseEventKind::Moved),
+            TerminalMouseEventKind::Moved
+        );
+        assert_eq!(
+            convert_kind(MouseEventKind::ScrollUp),
+            TerminalMouseEventKind::ScrollUp
+        );
+        assert_eq!(
+            convert_kind(MouseEventKind::ScrollDown),
+            TerminalMouseEventKind::ScrollDown
+        );
     }
 }

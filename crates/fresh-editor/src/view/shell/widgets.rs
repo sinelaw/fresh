@@ -3897,8 +3897,7 @@ fn extended_ground(entry: &TextPropertyEntry, base: &Ink) -> Option<Ink> {
     entry
         .inline_overlays
         .iter()
-        .filter(|o| o.style.extend_to_line_end && o.style.bg.is_some())
-        .next_back()
+        .rfind(|o| o.style.extend_to_line_end && o.style.bg.is_some())
         .map(|o| ink_of(&o.style, base))
 }
 
@@ -4007,8 +4006,7 @@ fn button_node(
     match [declared_hover, resting]
         .into_iter()
         .flatten()
-        .filter(|o| o.extend_to_line_end && o.bg.is_some())
-        .next_back()
+        .rfind(|o| o.extend_to_line_end && o.bg.is_some())
         .filter(|_| !disabled)
     {
         // `Auto` wide, not `Flex`: on a column's cross axis a flexible child

@@ -945,7 +945,7 @@ fn test_gutter_click_folds_correct_block_in_large_file_mode() {
         content.push_str(&format!("    a{i}\n")); // lines 1..11
     }
     content.push_str("}\n"); // line 12
-    content.push_str("\n"); // line 13 (blank)
+    content.push('\n'); // line 13 (blank)
 
     let beta_byte = content.len();
     content.push_str("fn beta() {\n"); // line 14
@@ -953,7 +953,7 @@ fn test_gutter_click_folds_correct_block_in_large_file_mode() {
         content.push_str(&format!("    b{i}\n")); // lines 15..17
     }
     content.push_str("}\n"); // line 18
-    content.push_str("\n"); // line 19 (blank)
+    content.push('\n'); // line 19 (blank)
     content.push_str("fn gamma() {\n"); // line 20
     for i in 1..=3 {
         content.push_str(&format!("    g{i}\n")); // lines 21..23

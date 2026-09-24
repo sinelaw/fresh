@@ -8360,6 +8360,22 @@ pub(crate) fn parse_config_jsonc(contents: &str) -> Result<serde_json::Value, Co
     })
 }
 
+/// The JSON source of a built-in keymap, or `None` for an unknown name.
+///
+/// The keymap files ship with this crate because `Config` resolves
+/// `keymap: "emacs"` here; `fresh-editor`'s keybinding tests read them back
+/// through this function rather than re-embedding the same files.
+pub fn builtin_keymap_json(name: &str) -> Option<&'static str> {
+    Some(match name {
+        "default" => include_str!("../keymaps/default.json"),
+        "emacs" => include_str!("../keymaps/emacs.json"),
+        "vscode" => include_str!("../keymaps/vscode.json"),
+        "macos" => include_str!("../keymaps/macos.json"),
+        "macos-gui" => include_str!("../keymaps/macos-gui.json"),
+        _ => return None,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -9407,20 +9423,4 @@ mod tests {
             );
         }
     }
-}
-
-/// The JSON source of a built-in keymap, or `None` for an unknown name.
-///
-/// The keymap files ship with this crate because `Config` resolves
-/// `keymap: "emacs"` here; `fresh-editor`'s keybinding tests read them back
-/// through this function rather than re-embedding the same files.
-pub fn builtin_keymap_json(name: &str) -> Option<&'static str> {
-    Some(match name {
-        "default" => include_str!("../keymaps/default.json"),
-        "emacs" => include_str!("../keymaps/emacs.json"),
-        "vscode" => include_str!("../keymaps/vscode.json"),
-        "macos" => include_str!("../keymaps/macos.json"),
-        "macos-gui" => include_str!("../keymaps/macos-gui.json"),
-        _ => return None,
-    })
 }

@@ -2359,10 +2359,10 @@ mod rebuild_pristine_saved_root_tests {
         while out.len() < size {
             let remaining = size - out.len();
             if remaining >= line_len {
-                out.extend(std::iter::repeat(b'x').take(line_len - 1));
+                out.extend(std::iter::repeat_n(b'x', line_len - 1));
                 out.push(b'\n');
             } else {
-                out.extend(std::iter::repeat(b'x').take(remaining));
+                out.extend(std::iter::repeat_n(b'x', remaining));
             }
         }
         out

@@ -181,7 +181,7 @@ fn para(s: &str, theme: String) -> Node<UiMsg> {
     col()
         .pad(1, 0)
         .h(Sizing::Auto)
-        .children([text(s.to_string()).wrap().theme(theme).h(Sizing::Auto)])
+        .children([text(s).wrap().theme(theme).h(Sizing::Auto)])
 }
 
 fn line(s: String, theme: String) -> Node<UiMsg> {

@@ -402,7 +402,7 @@ mod tests {
     #[test]
     fn wrap_str_to_width_no_word_boundaries_falls_back_to_hard_cap() {
         // 64 of the same char — no word boundary — must hard-cap at 32.
-        let text: String = std::iter::repeat('A').take(64).collect();
+        let text: String = std::iter::repeat_n('A', 64).collect();
         let chunks = wrap_str_to_width(&text, 32);
         assert_eq!(chunks.len(), 2);
         assert_eq!(chunks[0].len(), 32);

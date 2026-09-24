@@ -62,6 +62,7 @@ pub struct StyleScenario {
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
+#[derive(Default)]
 pub enum Inspect {
     Cell {
         row: u16,
@@ -79,13 +80,8 @@ pub enum Inspect {
         rows: u16,
         cols: u16,
     },
+    #[default]
     FullFrame,
-}
-
-impl Default for Inspect {
-    fn default() -> Self {
-        Inspect::FullFrame
-    }
 }
 
 pub fn check_style_scenario(_s: StyleScenario) -> Result<(), ScenarioFailure> {

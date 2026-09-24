@@ -18,7 +18,7 @@
 //!     post-move cursor, not the last visited match index.
 //!   - test_find_next_respects_cursor_position_large_file — uses a
 //!     >1MB file to exercise the large-file search path (large-file
-//!     mode is not configurable via BufferScenario).
+//!     > mode is not configurable via BufferScenario).
 //!   - test_find_previous_from_end_of_large_file_issue_1305 — a >3MB
 //!     file with NEEDLEs near EOF; same large-file-mode gap.
 

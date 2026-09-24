@@ -134,7 +134,7 @@ fn test_enter_continues_unordered_list() {
     harness
         .wait_until(|h| {
             h.get_buffer_content()
-                .map_or(false, |c| c.contains("  - nested\n  - "))
+                .is_some_and(|c| c.contains("  - nested\n  - "))
         })
         .unwrap();
     harness.assert_no_plugin_errors();
@@ -162,7 +162,7 @@ fn test_enter_continues_ordered_list() {
     harness
         .wait_until(|h| {
             h.get_buffer_content()
-                .map_or(false, |c| c.contains("2. second\n3. "))
+                .is_some_and(|c| c.contains("2. second\n3. "))
         })
         .unwrap();
     harness.assert_no_plugin_errors();
@@ -188,7 +188,7 @@ fn test_enter_continues_checkbox() {
     harness
         .wait_until(|h| {
             h.get_buffer_content()
-                .map_or(false, |c| c.contains("- [x] done task\n- [ ] "))
+                .is_some_and(|c| c.contains("- [x] done task\n- [ ] "))
         })
         .unwrap();
     harness.assert_no_plugin_errors();
@@ -216,7 +216,7 @@ fn test_enter_clears_empty_bullet() {
     harness
         .wait_until(|h| {
             h.get_buffer_content()
-                .map_or(false, |c| c.contains("- item\n\n"))
+                .is_some_and(|c| c.contains("- item\n\n"))
         })
         .unwrap();
     harness.assert_no_plugin_errors();
@@ -247,7 +247,7 @@ fn test_enter_no_indent_on_unindented_line() {
     harness
         .wait_until(|h| {
             h.get_buffer_content()
-                .map_or(false, |c| c.contains("Hello world\n\n"))
+                .is_some_and(|c| c.contains("Hello world\n\n"))
         })
         .unwrap();
 
@@ -289,7 +289,7 @@ fn test_enter_deep_indent() {
     harness
         .wait_until(|h| {
             h.get_buffer_content()
-                .map_or(false, |c| c.contains("deep indent text\n        "))
+                .is_some_and(|c| c.contains("deep indent text\n        "))
         })
         .unwrap();
     harness.assert_no_plugin_errors();
@@ -318,7 +318,7 @@ fn test_tab_inserts_spaces() {
     harness
         .wait_until(|h| {
             h.get_buffer_content()
-                .map_or(false, |c| c.starts_with("    text"))
+                .is_some_and(|c| c.starts_with("    text"))
         })
         .unwrap();
     harness.assert_no_plugin_errors();
@@ -343,7 +343,7 @@ fn test_multiple_tabs() {
     harness
         .wait_until(|h| {
             h.get_buffer_content()
-                .map_or(false, |c| c.starts_with("        x"))
+                .is_some_and(|c| c.starts_with("        x"))
         })
         .unwrap();
     harness.assert_no_plugin_errors();
@@ -372,7 +372,7 @@ fn test_tab_cycles_bullet_on_blank_item() {
     harness
         .wait_until(|h| {
             h.get_buffer_content()
-                .map_or(false, |c| c.starts_with("    - "))
+                .is_some_and(|c| c.starts_with("    - "))
         })
         .unwrap();
     harness.assert_no_plugin_errors();
@@ -410,7 +410,7 @@ fn test_shift_tab_reverse_cycles_bullet_on_blank_item() {
     harness
         .wait_until(|h| {
             h.get_buffer_content()
-                .map_or(false, |c| c.starts_with("* \n"))
+                .is_some_and(|c| c.starts_with("* \n"))
         })
         .unwrap();
     harness.assert_no_plugin_errors();
@@ -445,7 +445,7 @@ fn test_tab_shift_tab_full_round_trip() {
     harness
         .wait_until(|h| {
             h.get_buffer_content()
-                .map_or(false, |c| c.starts_with("    - \n"))
+                .is_some_and(|c| c.starts_with("    - \n"))
         })
         .unwrap();
     drain(&mut harness);
@@ -455,7 +455,7 @@ fn test_tab_shift_tab_full_round_trip() {
     harness
         .wait_until(|h| {
             h.get_buffer_content()
-                .map_or(false, |c| c.starts_with("        + \n"))
+                .is_some_and(|c| c.starts_with("        + \n"))
         })
         .unwrap();
     drain(&mut harness);
@@ -465,7 +465,7 @@ fn test_tab_shift_tab_full_round_trip() {
     harness
         .wait_until(|h| {
             h.get_buffer_content()
-                .map_or(false, |c| c.starts_with("            * \n"))
+                .is_some_and(|c| c.starts_with("            * \n"))
         })
         .unwrap();
     drain(&mut harness);
@@ -479,7 +479,7 @@ fn test_tab_shift_tab_full_round_trip() {
     harness
         .wait_until(|h| {
             h.get_buffer_content()
-                .map_or(false, |c| c.starts_with("        + \n"))
+                .is_some_and(|c| c.starts_with("        + \n"))
         })
         .unwrap();
     drain(&mut harness);
@@ -491,7 +491,7 @@ fn test_tab_shift_tab_full_round_trip() {
     harness
         .wait_until(|h| {
             h.get_buffer_content()
-                .map_or(false, |c| c.starts_with("    - \n"))
+                .is_some_and(|c| c.starts_with("    - \n"))
         })
         .unwrap();
     drain(&mut harness);
@@ -503,7 +503,7 @@ fn test_tab_shift_tab_full_round_trip() {
     harness
         .wait_until(|h| {
             h.get_buffer_content()
-                .map_or(false, |c| c.starts_with("* \n"))
+                .is_some_and(|c| c.starts_with("* \n"))
         })
         .unwrap();
 
@@ -630,7 +630,7 @@ fn test_enter_then_type_workflow() {
     harness
         .wait_until(|h| {
             h.get_buffer_content()
-                .map_or(false, |c| c.contains("- item\n- "))
+                .is_some_and(|c| c.contains("- item\n- "))
         })
         .unwrap();
 
@@ -683,7 +683,7 @@ fn test_multi_cursor_enter_inserts_at_all_cursors() {
     harness
         .wait_until(|h| {
             h.get_buffer_content()
-                .map_or(false, |c| c.lines().count() >= 5)
+                .is_some_and(|c| c.lines().count() >= 5)
         })
         .unwrap();
 
@@ -701,7 +701,7 @@ fn test_multi_cursor_enter_inserts_at_all_cursors() {
     harness
         .wait_until(|h| {
             h.get_buffer_content()
-                .map_or(false, |c| c.matches('X').count() == 2)
+                .is_some_and(|c| c.matches('X').count() == 2)
         })
         .unwrap();
 
@@ -744,7 +744,7 @@ fn test_multi_cursor_enter_on_list_items() {
     harness
         .wait_until(|h| {
             h.get_buffer_content()
-                .map_or(false, |c| c.lines().count() >= 5)
+                .is_some_and(|c| c.lines().count() >= 5)
         })
         .unwrap();
 
@@ -762,7 +762,7 @@ fn test_multi_cursor_enter_on_list_items() {
     harness
         .wait_until(|h| {
             h.get_buffer_content()
-                .map_or(false, |c| c.matches('X').count() == 2)
+                .is_some_and(|c| c.matches('X').count() == 2)
         })
         .unwrap();
 

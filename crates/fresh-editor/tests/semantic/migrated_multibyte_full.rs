@@ -106,7 +106,7 @@ fn migrated_cursor_right_steps_over_full_chinese_codepoint() {
     // assertions, and a fifth scenario reproduces the insert check.
     for (rights, expected_byte) in [(1usize, 3usize), (2, 6), (3, 9), (4, 12)] {
         let mut actions = vec![Action::MoveLineStart];
-        actions.extend(std::iter::repeat(Action::MoveRight).take(rights));
+        actions.extend(std::iter::repeat_n(Action::MoveRight, rights));
         assert_buffer_scenario(BufferScenario {
             description: format!("MoveRight ×{rights} on '你好世界' lands at byte {expected_byte}"),
             initial_text: "你好世界".into(),

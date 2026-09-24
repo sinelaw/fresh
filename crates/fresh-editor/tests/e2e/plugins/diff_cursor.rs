@@ -1024,7 +1024,7 @@ fn test_diff_scrollbar_click() {
     // Modify middle lines
     let mut new_content = String::new();
     for i in 1..=100 {
-        if i >= 45 && i <= 55 {
+        if (45..=55).contains(&i) {
             new_content.push_str(&format!("MODIFIED Line {}\n", i));
         } else {
             new_content.push_str(&format!("Line {}: some content here\n", i));

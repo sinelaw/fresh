@@ -2104,10 +2104,7 @@ fn the_rows_a_run_was_wrapped_into_are_readable_after_layout() {
 
 /// Ten tabs of four cells in a window eight wide.
 fn strip(a: Rc<fresh_ui::behavior::anchor::Anchor>, keys: &[Key]) -> Node<()> {
-    let cells: Vec<Node<()>> = keys
-        .iter()
-        .map(|k| text("abcd".to_string()).key(k.clone()))
-        .collect();
+    let cells: Vec<Node<()>> = keys.iter().map(|k| text("abcd").key(k.clone())).collect();
     viewport(fresh_ui::row().children(cells))
         .scroll_axis(fresh_ui::Axis::Horizontal)
         .scrollbar()
@@ -2246,7 +2243,7 @@ fn a_window_states_how_wide_its_caps_are() {
         viewport(
             fresh_ui::row().children(
                 keys.iter()
-                    .map(|k| text("abcd".to_string()).key(k.clone()))
+                    .map(|k| text("abcd").key(k.clone()))
                     .collect::<Vec<_>>(),
             ),
         )

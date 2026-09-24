@@ -1378,213 +1378,6 @@ pub mod shell_theme {
     }
 }
 
-#[cfg(test)]
-mod shell_theme_tests {
-    use super::shell_theme::{literal, names, pair, resolve, Attrs, Ink, Paint};
-    use ratatui::style::Color;
-
-    fn theme() -> crate::view::theme::Theme {
-        crate::view::theme::Theme::from_json(r#"{"name":"test"}"#)
-            .expect("a theme of nothing but defaults")
-    }
-
-    /// **A block caret is an attribute the grammar has to carry.** A form
-    /// control on a modal overlay draws its caret as one reverse-video cell —
-    /// there is no hardware cursor to place there — and a word the grammar
-    /// does not know is dropped on the way in, so the caret simply did not
-    /// appear. Reading is forgiving on purpose; that is exactly why the word
-    /// has to exist.
-    #[test]
-    fn a_reversed_cell_survives_the_written_form_and_reaches_the_style() {
-        let ink = Ink::keys("editor.fg", "editor.bg").plus(Attrs::REVERSED);
-        let written = ink.to_string();
-        assert!(written.ends_with("+reversed"), "{written:?}");
-        assert_eq!(Ink::parse(&written), Some(ink));
-        let style = resolve(&written, &theme());
-        assert!(
-            style
-                .add_modifier
-                .contains(ratatui::style::Modifier::REVERSED),
-            "the caret's cell reverses: {style:?}"
-        );
-    }
-
-    /// **What is written is what is read.** The name is a serialisation, so
-    /// the only thing that makes it safe to keep passing strings through
-    /// `fresh-ui` is that the round trip is lossless — including for the parts
-    /// the string form used to lose.
-    #[test]
-    fn an_ink_survives_the_written_form() {
-        for ink in [
-            Ink::keys("editor.fg", "editor.bg"),
-            Ink::keys("editor.fg", "editor.bg").plus(Attrs::BOLD | Attrs::DIM),
-            Ink::new(
-                Paint::Lit(Color::Rgb(126, 231, 135)),
-                Paint::key("editor.bg"),
-            ),
-            Ink::new(Paint::key("editor.fg"), Paint::Lit(Color::Indexed(42)))
-                .plus(Attrs::UNDERLINE),
-            Ink::new(Paint::Lit(Color::Yellow), Paint::Lit(Color::Black))
-                .plus(Attrs::ITALIC | Attrs::STRIKETHROUGH),
-            Ink::keys("editor.fg", "editor.bg").plus(Attrs::REVERSED),
-        ] {
-            let written = ink.to_string();
-            assert_eq!(
-                Ink::parse(&written),
-                Some(ink.clone()),
-                "{written:?} did not read back"
-            );
-        }
-    }
-
-    /// **Swapping one half leaves the other alone — attributes included.**
-    ///
-    /// This is the divergence the type exists to remove. The string form had
-    /// two spellings of "layer something over this name" and they disagreed:
-    /// swapping a background re-spliced the `+attrs` tail back on while setting
-    /// attributes dropped it, so a plugin span that named both a background and
-    /// an attribute silently un-dimmed a disabled suggestion row.
-    #[test]
-    fn layering_over_an_ink_keeps_what_it_does_not_mention() {
-        let row = Ink::keys("ui.suggestion_fg", "ui.suggestion_bg").plus(Attrs::DIM);
-        let both = row
-            .clone()
-            .with_bg(Paint::key("ui.menu_hover_bg"))
-            .plus(Attrs::BOLD);
-        assert_eq!(both.fg, row.fg, "the foreground was not mentioned");
-        assert!(both.attrs.contains(Attrs::DIM), "the row's dim survived");
-        assert!(both.attrs.contains(Attrs::BOLD), "the span's bold applied");
-    }
-
-    /// A word the grammar does not know is dropped rather than failing the
-    /// whole name: the alternative turns one typo into a surface painted in
-    /// the editor's plain ground. Nothing can *write* such a word — [`Attrs`]
-    /// has five constants and no other constructor — so this is the reading
-    /// half being forgiving, not the writing half being loose.
-    #[test]
-    fn an_unknown_attribute_is_dropped_not_fatal() {
-        let ink = Ink::parse("editor.fg/editor.bg+bold+wobble").expect("the pair is readable");
-        assert_eq!(ink.attrs, Attrs::BOLD);
-        assert_eq!(
-            resolve("editor.fg/editor.bg+wobble", &theme()).fg,
-            Some(theme().editor_fg)
-        );
-    }
-
-    /// **A plugin's key that the theme does not know leaves the rest of the
-    /// run alone.** `Ink::style` is all-or-nothing, so before `Paint::Asked`
-    /// existed one such name — `git_history.ts` colours commit hashes
-    /// `syntax.number`, which no theme has ever had — dropped the whole run to
-    /// the editor's plain ground, and tripped `resolve`'s assertion on the way
-    /// past. The painter's behaviour was to leave the row's own foreground in
-    /// place, and that is what this reproduces.
-    #[test]
-    fn a_plugin_key_the_theme_does_not_know_falls_back_to_what_was_under_it() {
-        let t = theme();
-        let asked = |k: &str| {
-            Ink::new(
-                Paint::asked(k.to_string(), Paint::key("ui.suggestion_fg")),
-                Paint::key("ui.suggestion_bg"),
-            )
-        };
-        let unknown = asked("syntax.number");
-        let style = resolve(&unknown.to_string(), &t);
-        assert_eq!(
-            style.fg,
-            Some(t.suggestion_fg),
-            "an unknown plugin key leaves the row's own foreground"
-        );
-        assert_eq!(
-            style.bg,
-            Some(t.suggestion_bg),
-            "and does not take the background down with it"
-        );
-
-        // One the theme *does* know still wins over what is under it.
-        let known = asked("syntax.keyword");
-        assert_eq!(resolve(&known.to_string(), &t).fg, Some(t.syntax_keyword));
-
-        // And the whole thing survives the written form, fallback included.
-        for ink in [unknown, known] {
-            let written = ink.to_string();
-            assert_eq!(
-                Ink::parse(&written),
-                Some(ink),
-                "{written:?} did not read back"
-            );
-        }
-    }
-
-    /// A literal has no name by construction, and the inspector should say so
-    /// rather than attributing a plugin's colour to a theme entry.
-    #[test]
-    fn a_literal_half_reports_no_name() {
-        let ink = Ink::new(Paint::Lit(Color::Rgb(1, 2, 3)), Paint::key("editor.bg"));
-        assert_eq!(ink.names(), (None, Some("editor.bg")));
-        let (fg, bg) = names(&ink.to_string());
-        assert_eq!((fg, bg), (None, Some("editor.bg".to_string())));
-    }
-
-    /// **Every colour round-trips.** The literal form exists because a plugin's
-    /// colour arrives already resolved, with no key to name it; it is only
-    /// honest if it loses nothing.
-    ///
-    /// It did lose something. An earlier version answered `editor.fg` for
-    /// anything that was not `Color::Rgb`, and theme colours are frequently one
-    /// of the sixteen names — `file_status_modified_fg` is `Yellow` in the
-    /// built-in dark theme — so every plugin-decorated row in the file explorer
-    /// silently painted in the panel's ordinary ink instead of its status
-    /// colour. Nothing failed; it just looked undecorated.
-    #[test]
-    fn a_literal_colour_survives_the_round_trip() {
-        let theme = crate::view::theme::Theme::from_json(r#"{"name":"test"}"#)
-            .expect("a theme of nothing but defaults");
-        for c in [
-            Color::Rgb(126, 231, 135),
-            Color::Rgb(0, 0, 0),
-            Color::Yellow,
-            Color::LightMagenta,
-            Color::Black,
-            Color::White,
-            Color::Reset,
-            Color::Indexed(0),
-            Color::Indexed(42),
-            Color::Indexed(255),
-        ] {
-            let style = resolve(&pair(&literal(c), "editor.bg"), &theme);
-            assert_eq!(style.fg, Some(c), "{c:?} did not survive {:?}", literal(c));
-        }
-    }
-
-    /// A literal composes with the rest of the grammar, so a plugin colour can
-    /// still be bold or underlined.
-    #[test]
-    fn a_literal_composes_with_attributes() {
-        use ratatui::style::Modifier;
-        let theme = crate::view::theme::Theme::from_json(r#"{"name":"test"}"#)
-            .expect("a theme of nothing but defaults");
-        let style = resolve("#7ee787/editor.bg+bold", &theme);
-        assert_eq!(style.fg, Some(Color::Rgb(126, 231, 135)));
-        assert!(style.add_modifier.contains(Modifier::BOLD));
-    }
-
-    /// A malformed literal falls back to the editor's ground rather than to a
-    /// colour nobody asked for.
-    #[test]
-    fn a_malformed_literal_falls_back() {
-        let theme = crate::view::theme::Theme::from_json(r#"{"name":"test"}"#)
-            .expect("a theme of nothing but defaults");
-        for bad in [
-            "#zzzzzz/editor.bg",
-            "#12345/editor.bg",
-            "#NotAColour/editor.bg",
-        ] {
-            let style = resolve(bad, &theme);
-            assert_eq!(style.fg, Some(theme.editor_fg), "{bad}");
-        }
-    }
-}
-
 impl Editor {
     /// Snapshot the colours the shell's themes resolve to this frame.
     pub(crate) fn shell_palette(&self) -> ShellPalette {
@@ -3698,6 +3491,213 @@ impl Editor {
                     self.close_menu_with_auto_hide();
                 }
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod shell_theme_tests {
+    use super::shell_theme::{literal, names, pair, resolve, Attrs, Ink, Paint};
+    use ratatui::style::Color;
+
+    fn theme() -> crate::view::theme::Theme {
+        crate::view::theme::Theme::from_json(r#"{"name":"test"}"#)
+            .expect("a theme of nothing but defaults")
+    }
+
+    /// **A block caret is an attribute the grammar has to carry.** A form
+    /// control on a modal overlay draws its caret as one reverse-video cell —
+    /// there is no hardware cursor to place there — and a word the grammar
+    /// does not know is dropped on the way in, so the caret simply did not
+    /// appear. Reading is forgiving on purpose; that is exactly why the word
+    /// has to exist.
+    #[test]
+    fn a_reversed_cell_survives_the_written_form_and_reaches_the_style() {
+        let ink = Ink::keys("editor.fg", "editor.bg").plus(Attrs::REVERSED);
+        let written = ink.to_string();
+        assert!(written.ends_with("+reversed"), "{written:?}");
+        assert_eq!(Ink::parse(&written), Some(ink));
+        let style = resolve(&written, &theme());
+        assert!(
+            style
+                .add_modifier
+                .contains(ratatui::style::Modifier::REVERSED),
+            "the caret's cell reverses: {style:?}"
+        );
+    }
+
+    /// **What is written is what is read.** The name is a serialisation, so
+    /// the only thing that makes it safe to keep passing strings through
+    /// `fresh-ui` is that the round trip is lossless — including for the parts
+    /// the string form used to lose.
+    #[test]
+    fn an_ink_survives_the_written_form() {
+        for ink in [
+            Ink::keys("editor.fg", "editor.bg"),
+            Ink::keys("editor.fg", "editor.bg").plus(Attrs::BOLD | Attrs::DIM),
+            Ink::new(
+                Paint::Lit(Color::Rgb(126, 231, 135)),
+                Paint::key("editor.bg"),
+            ),
+            Ink::new(Paint::key("editor.fg"), Paint::Lit(Color::Indexed(42)))
+                .plus(Attrs::UNDERLINE),
+            Ink::new(Paint::Lit(Color::Yellow), Paint::Lit(Color::Black))
+                .plus(Attrs::ITALIC | Attrs::STRIKETHROUGH),
+            Ink::keys("editor.fg", "editor.bg").plus(Attrs::REVERSED),
+        ] {
+            let written = ink.to_string();
+            assert_eq!(
+                Ink::parse(&written),
+                Some(ink.clone()),
+                "{written:?} did not read back"
+            );
+        }
+    }
+
+    /// **Swapping one half leaves the other alone — attributes included.**
+    ///
+    /// This is the divergence the type exists to remove. The string form had
+    /// two spellings of "layer something over this name" and they disagreed:
+    /// swapping a background re-spliced the `+attrs` tail back on while setting
+    /// attributes dropped it, so a plugin span that named both a background and
+    /// an attribute silently un-dimmed a disabled suggestion row.
+    #[test]
+    fn layering_over_an_ink_keeps_what_it_does_not_mention() {
+        let row = Ink::keys("ui.suggestion_fg", "ui.suggestion_bg").plus(Attrs::DIM);
+        let both = row
+            .clone()
+            .with_bg(Paint::key("ui.menu_hover_bg"))
+            .plus(Attrs::BOLD);
+        assert_eq!(both.fg, row.fg, "the foreground was not mentioned");
+        assert!(both.attrs.contains(Attrs::DIM), "the row's dim survived");
+        assert!(both.attrs.contains(Attrs::BOLD), "the span's bold applied");
+    }
+
+    /// A word the grammar does not know is dropped rather than failing the
+    /// whole name: the alternative turns one typo into a surface painted in
+    /// the editor's plain ground. Nothing can *write* such a word — [`Attrs`]
+    /// has five constants and no other constructor — so this is the reading
+    /// half being forgiving, not the writing half being loose.
+    #[test]
+    fn an_unknown_attribute_is_dropped_not_fatal() {
+        let ink = Ink::parse("editor.fg/editor.bg+bold+wobble").expect("the pair is readable");
+        assert_eq!(ink.attrs, Attrs::BOLD);
+        assert_eq!(
+            resolve("editor.fg/editor.bg+wobble", &theme()).fg,
+            Some(theme().editor_fg)
+        );
+    }
+
+    /// **A plugin's key that the theme does not know leaves the rest of the
+    /// run alone.** `Ink::style` is all-or-nothing, so before `Paint::Asked`
+    /// existed one such name — `git_history.ts` colours commit hashes
+    /// `syntax.number`, which no theme has ever had — dropped the whole run to
+    /// the editor's plain ground, and tripped `resolve`'s assertion on the way
+    /// past. The painter's behaviour was to leave the row's own foreground in
+    /// place, and that is what this reproduces.
+    #[test]
+    fn a_plugin_key_the_theme_does_not_know_falls_back_to_what_was_under_it() {
+        let t = theme();
+        let asked = |k: &str| {
+            Ink::new(
+                Paint::asked(k.to_string(), Paint::key("ui.suggestion_fg")),
+                Paint::key("ui.suggestion_bg"),
+            )
+        };
+        let unknown = asked("syntax.number");
+        let style = resolve(&unknown.to_string(), &t);
+        assert_eq!(
+            style.fg,
+            Some(t.suggestion_fg),
+            "an unknown plugin key leaves the row's own foreground"
+        );
+        assert_eq!(
+            style.bg,
+            Some(t.suggestion_bg),
+            "and does not take the background down with it"
+        );
+
+        // One the theme *does* know still wins over what is under it.
+        let known = asked("syntax.keyword");
+        assert_eq!(resolve(&known.to_string(), &t).fg, Some(t.syntax_keyword));
+
+        // And the whole thing survives the written form, fallback included.
+        for ink in [unknown, known] {
+            let written = ink.to_string();
+            assert_eq!(
+                Ink::parse(&written),
+                Some(ink),
+                "{written:?} did not read back"
+            );
+        }
+    }
+
+    /// A literal has no name by construction, and the inspector should say so
+    /// rather than attributing a plugin's colour to a theme entry.
+    #[test]
+    fn a_literal_half_reports_no_name() {
+        let ink = Ink::new(Paint::Lit(Color::Rgb(1, 2, 3)), Paint::key("editor.bg"));
+        assert_eq!(ink.names(), (None, Some("editor.bg")));
+        let (fg, bg) = names(&ink.to_string());
+        assert_eq!((fg, bg), (None, Some("editor.bg".to_string())));
+    }
+
+    /// **Every colour round-trips.** The literal form exists because a plugin's
+    /// colour arrives already resolved, with no key to name it; it is only
+    /// honest if it loses nothing.
+    ///
+    /// It did lose something. An earlier version answered `editor.fg` for
+    /// anything that was not `Color::Rgb`, and theme colours are frequently one
+    /// of the sixteen names — `file_status_modified_fg` is `Yellow` in the
+    /// built-in dark theme — so every plugin-decorated row in the file explorer
+    /// silently painted in the panel's ordinary ink instead of its status
+    /// colour. Nothing failed; it just looked undecorated.
+    #[test]
+    fn a_literal_colour_survives_the_round_trip() {
+        let theme = crate::view::theme::Theme::from_json(r#"{"name":"test"}"#)
+            .expect("a theme of nothing but defaults");
+        for c in [
+            Color::Rgb(126, 231, 135),
+            Color::Rgb(0, 0, 0),
+            Color::Yellow,
+            Color::LightMagenta,
+            Color::Black,
+            Color::White,
+            Color::Reset,
+            Color::Indexed(0),
+            Color::Indexed(42),
+            Color::Indexed(255),
+        ] {
+            let style = resolve(&pair(&literal(c), "editor.bg"), &theme);
+            assert_eq!(style.fg, Some(c), "{c:?} did not survive {:?}", literal(c));
+        }
+    }
+
+    /// A literal composes with the rest of the grammar, so a plugin colour can
+    /// still be bold or underlined.
+    #[test]
+    fn a_literal_composes_with_attributes() {
+        use ratatui::style::Modifier;
+        let theme = crate::view::theme::Theme::from_json(r#"{"name":"test"}"#)
+            .expect("a theme of nothing but defaults");
+        let style = resolve("#7ee787/editor.bg+bold", &theme);
+        assert_eq!(style.fg, Some(Color::Rgb(126, 231, 135)));
+        assert!(style.add_modifier.contains(Modifier::BOLD));
+    }
+
+    /// A malformed literal falls back to the editor's ground rather than to a
+    /// colour nobody asked for.
+    #[test]
+    fn a_malformed_literal_falls_back() {
+        let theme = crate::view::theme::Theme::from_json(r#"{"name":"test"}"#)
+            .expect("a theme of nothing but defaults");
+        for bad in [
+            "#zzzzzz/editor.bg",
+            "#12345/editor.bg",
+            "#NotAColour/editor.bg",
+        ] {
+            let style = resolve(bad, &theme);
+            assert_eq!(style.fg, Some(theme.editor_fg), "{bad}");
         }
     }
 }
