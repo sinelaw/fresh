@@ -824,3 +824,31 @@ fn test_successful_inplace_write_cleans_up_recovery() {
         "File should have been saved correctly"
     );
 }
+
+/// Issue #3348: saving an emptied buffer skipped the in-place decision and
+/// always replaced the file via temp file + rename, so a file owned by
+/// another user took the saver's owner and group (root:root under sudo).
+/// It must be rewritten in place like any other save of a file we don't own.
+#[test]
+#[cfg(unix)]
+fn test_emptying_not_owned_file_writes_in_place() {
+    use std::os::unix::fs::MetadataExt;
+
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("not_mine.txt");
+    std::fs::write(&file_path, "some content\n").unwrap();
+    let ino = std::fs::metadata(&file_path).unwrap().ino();
+
+    let not_owner_fs = Arc::new(NotOwnerFileSystem::new(Arc::new(StdFileSystem)));
+    let mut buffer = TextBuffer::load_from_file(&file_path, 1024 * 1024, not_owner_fs).unwrap();
+    let len = buffer.len();
+    buffer.delete_bytes(0, len);
+    buffer.save().unwrap();
+
+    assert_eq!(std::fs::read(&file_path).unwrap(), b"");
+    assert_eq!(
+        std::fs::metadata(&file_path).unwrap().ino(),
+        ino,
+        "an emptied file we don't own must be truncated in place, not replaced"
+    );
+}
