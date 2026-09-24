@@ -1432,16 +1432,14 @@ impl StdFileSystem {
             .is_some_and(|n| n.starts_with('.'))
     }
 
-    /// Overwrite `path` in place (truncate + write), keeping its inode and with
-    /// it the owner, group, hard links, xattrs and ACLs. Not atomic, so only
-    /// used when a write-then-rename can't reproduce the original file.
-    fn write_in_place(path: &Path, data: &[u8]) -> io::Result<()> {
-        let mut file = std::fs::OpenOptions::new()
-            .write(true)
-            .truncate(true)
-            .open(path)?;
-        file.write_all(data)?;
-        file.sync_all()
+    /// Overwrite `path` in place, keeping its inode and with it the owner,
+    /// group, hard links, xattrs and ACLs. Not atomic, so only used when a
+    /// write-then-rename can't reproduce the original file; the new content
+    /// is staged in the recovery directory first, so a write that fails
+    /// part-way doesn't lose it (see
+    /// [`crate::model::buffer::save::write_in_place_staged`]).
+    fn write_in_place(&self, path: &Path, data: &[u8]) -> io::Result<()> {
+        crate::model::buffer::save::write_in_place_staged(self, path, data)
     }
 
     /// Give `temp` the owner, group and extended attributes (on Linux these
@@ -1691,7 +1689,7 @@ impl FileSystem for StdFileSystem {
         {
             // Renaming a new file over one with other hard links would leave
             // those links on the old content (issue #3348).
-            return Self::write_in_place(path, data);
+            return self.write_in_place(path, data);
         }
 
         let (temp_path, mut file) = self.create_temp_file_for(path)?;
@@ -1722,7 +1720,7 @@ impl FileSystem for StdFileSystem {
         }
         match result {
             Ok(true) => Ok(()),
-            Ok(false) => Self::write_in_place(path, data),
+            Ok(false) => self.write_in_place(path, data),
             Err(e) => Err(e),
         }
     }
@@ -2432,10 +2430,13 @@ mod tests {
         };
         std::os::unix::fs::chown(&path, Some(uid), Some(gid)).unwrap();
         let ino = std::fs::metadata(&path).unwrap().ino();
+        let data_dir = tempfile::tempdir().unwrap();
+        let previous = crate::data_dir::set_data_dir_override(Some(data_dir.path().into()));
 
         FAIL_CHOWN.with(|f| f.set(true));
         let result = fs.write_file(&path, b"new\n");
         FAIL_CHOWN.with(|f| f.set(false));
+        crate::data_dir::set_data_dir_override(previous);
         result.unwrap();
 
         let meta = std::fs::metadata(&path).unwrap();
@@ -2444,6 +2445,12 @@ mod tests {
         assert_eq!((meta.uid(), meta.gid()), (uid, gid));
         let names: Vec<_> = std::fs::read_dir(dir.path()).unwrap().collect();
         assert_eq!(names.len(), 1, "the temp file must not be left behind");
+        // The in-place write was staged in the recovery dir and cleaned up.
+        let staged: Vec<_> = std::fs::read_dir(data_dir.path().join("recovery"))
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert!(staged.is_empty(), "left behind: {staged:?}");
     }
 
     /// An xattr this process may not set (e.g. a system-managed one on macOS)

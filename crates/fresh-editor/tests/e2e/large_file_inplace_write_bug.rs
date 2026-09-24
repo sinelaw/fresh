@@ -852,3 +852,70 @@ fn test_emptying_not_owned_file_writes_in_place() {
         "an emptied file we don't own must be truncated in place, not replaced"
     );
 }
+
+/// A small (fully loaded) file written in place used to be truncated and
+/// rewritten from memory with no staged copy, so a write failing part-way
+/// left the file empty or partial with the new content nowhere on disk. It
+/// must be staged in the recovery directory first, like the large-file path.
+#[test]
+#[cfg(unix)]
+fn test_small_file_inplace_write_failure_keeps_staged_copy() {
+    let data_dir = TempDir::new().unwrap();
+    let _pin = crate::common::global_state::pin_data_dir(data_dir.path());
+
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("small.txt");
+    std::fs::write(&file_path, "original line\n").unwrap();
+    let crash_fs = Arc::new(CrashDuringStreamFileSystem::new(
+        Arc::new(StdFileSystem),
+        file_path.clone(),
+    ));
+    let mut buffer = TextBuffer::load_from_file(&file_path, 1024 * 1024, crash_fs).unwrap();
+    assert!(!buffer.is_large_file());
+    buffer.insert_bytes(0, b"EDITED: ".to_vec());
+
+    assert!(buffer.save().is_err(), "the simulated failure must surface");
+
+    let hash = fresh::services::recovery::path_hash(&file_path);
+    let meta_path = data_dir
+        .path()
+        .join("recovery")
+        .join(format!("{}.inplace.json", hash));
+    let meta = std::fs::read_to_string(&meta_path)
+        .unwrap_or_else(|e| panic!("no in-place recovery metadata at {meta_path:?}: {e}"));
+    let recovery: fresh::services::recovery::InplaceWriteRecovery =
+        serde_json::from_str(&meta).unwrap();
+    assert_eq!(recovery.dest_path, file_path);
+    assert_eq!(
+        std::fs::read_to_string(&recovery.temp_path).unwrap(),
+        "EDITED: original line\n",
+        "the staged copy must hold the complete new content"
+    );
+}
+
+/// A successful small in-place write leaves nothing behind in the recovery
+/// directory.
+#[test]
+#[cfg(unix)]
+fn test_small_file_inplace_write_cleans_up_staged_copy() {
+    let data_dir = TempDir::new().unwrap();
+    let _pin = crate::common::global_state::pin_data_dir(data_dir.path());
+
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("small.txt");
+    std::fs::write(&file_path, "original line\n").unwrap();
+    let not_owner_fs = Arc::new(NotOwnerFileSystem::new(Arc::new(StdFileSystem)));
+    let mut buffer = TextBuffer::load_from_file(&file_path, 1024 * 1024, not_owner_fs).unwrap();
+    buffer.insert_bytes(0, b"EDITED: ".to_vec());
+
+    buffer.save().unwrap();
+
+    assert_eq!(
+        std::fs::read_to_string(&file_path).unwrap(),
+        "EDITED: original line\n"
+    );
+    let leftovers: Vec<_> = std::fs::read_dir(data_dir.path().join("recovery"))
+        .map(|dir| dir.map(|e| e.unwrap().file_name()).collect())
+        .unwrap_or_default();
+    assert!(leftovers.is_empty(), "left behind: {leftovers:?}");
+}
