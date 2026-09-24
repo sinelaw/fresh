@@ -1218,3 +1218,72 @@ fn test_live_diff_near_total_rewrite_degrades_but_renders() {
         })
         .unwrap();
 }
+
+/// A Shift-JIS file that matches HEAD except for one appended ASCII line
+/// must show exactly that one line as changed. The baseline (`git show`
+/// output / the file on disk) used to be decoded as UTF-8 regardless of
+/// the buffer's encoding, so every Japanese line differed from the buffer
+/// and was shown as changed, with mojibake on the old side. Issue #3246.
+#[test]
+#[cfg_attr(target_os = "windows", ignore)]
+fn test_live_diff_shift_jis_file_diffs_against_decoded_baseline() {
+    let repo = GitTestRepo::new();
+    repo.setup_live_diff_plugin();
+
+    let head_text = "#include \"pch.h\"\n\
+        // コンフィグウィンドウ：ベース\n\
+        // 初期化\n\
+        bool on_init()\n\
+        {\n\
+        \t// ウィンドウ表示\n\
+        \treturn true;\n\
+        }\n";
+    let sjis = |text: &str| encoding_rs::SHIFT_JIS.encode(text).0.into_owned();
+    let path = repo.path.join("cfg_wnd_base.cpp");
+    std::fs::write(&path, sjis(head_text)).unwrap();
+    repo.git_add(&["cfg_wnd_base.cpp"]);
+    repo.git_commit("init");
+
+    let _guard = repo.change_to_repo_dir();
+    std::fs::write(&path, sjis(&format!("{head_text}int appended_marker;\n"))).unwrap();
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    enable_live_diff_globally(&mut harness);
+    open_file(&mut harness, &repo.path, "cfg_wnd_base.cpp");
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Shift-JIS"))
+        .unwrap();
+
+    // The appended line is flagged once the diff has been computed.
+    harness
+        .wait_until(|h| has_glyph(&h.screen_to_string(), '+'))
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen.contains('\u{FFFD}'),
+        "the old side must be decoded as Shift-JIS, not show mojibake:\n{screen}"
+    );
+    // Rows whose gutter (the part before the `│` separator) carries a
+    // diff glyph; virtual old-side lines count too.
+    let changed: Vec<&str> = content_lines(&screen)
+        .into_iter()
+        .filter(|l| {
+            l.split_once('│')
+                .is_some_and(|(gutter, _)| gutter.contains(['+', '~', '-']))
+        })
+        .collect();
+    assert_eq!(
+        changed.len(),
+        1,
+        "only the appended line differs from HEAD:\n{screen}"
+    );
+    assert!(changed[0].contains("appended_marker"), "{screen}");
+}

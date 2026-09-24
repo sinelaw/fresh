@@ -91,6 +91,26 @@ pub struct SpawnResult {
     pub exit_code: i32,
 }
 
+/// Result of [`ProcessSpawner::spawn_raw`]: like [`SpawnResult`], but with
+/// stdout kept as the bytes the process wrote, for callers that decode it
+/// themselves (e.g. `git show` of a file that isn't UTF-8).
+#[derive(Debug, Clone)]
+pub struct RawSpawnResult {
+    pub stdout: Vec<u8>,
+    pub stderr: String,
+    pub exit_code: i32,
+}
+
+impl From<RawSpawnResult> for SpawnResult {
+    fn from(raw: RawSpawnResult) -> Self {
+        Self {
+            stdout: String::from_utf8_lossy(&raw.stdout).into_owned(),
+            stderr: raw.stderr,
+            exit_code: raw.exit_code,
+        }
+    }
+}
+
 /// Error from spawning a process
 #[derive(Debug, thiserror::Error)]
 pub enum SpawnError {
@@ -117,6 +137,23 @@ pub trait ProcessSpawner: Send + Sync {
         args: Vec<String>,
         cwd: Option<String>,
     ) -> Result<SpawnResult, SpawnError>;
+
+    /// Spawn a process and wait for completion, keeping stdout as raw
+    /// bytes. The default goes through [`Self::spawn`], so a backend that
+    /// doesn't override it hands back stdout already decoded as UTF-8.
+    async fn spawn_raw(
+        &self,
+        command: String,
+        args: Vec<String>,
+        cwd: Option<String>,
+    ) -> Result<RawSpawnResult, SpawnError> {
+        let result = self.spawn(command, args, cwd).await?;
+        Ok(RawSpawnResult {
+            stdout: result.stdout.into_bytes(),
+            stderr: result.stderr,
+            exit_code: result.exit_code,
+        })
+    }
 
     /// Spawn a process, piping stdout directly to a file instead of
     /// buffering it in memory. Default impl buffers and writes; concrete
@@ -203,6 +240,15 @@ impl ProcessSpawner for LocalProcessSpawner {
         args: Vec<String>,
         cwd: Option<String>,
     ) -> Result<SpawnResult, SpawnError> {
+        self.spawn_raw(command, args, cwd).await.map(Into::into)
+    }
+
+    async fn spawn_raw(
+        &self,
+        command: String,
+        args: Vec<String>,
+        cwd: Option<String>,
+    ) -> Result<RawSpawnResult, SpawnError> {
         gate(&self.trust, &command, cwd.as_deref())?;
         let mut cmd = tokio::process::Command::new(resolve_program(&command).as_ref());
         cmd.args(&args);
@@ -218,8 +264,8 @@ impl ProcessSpawner for LocalProcessSpawner {
             .await
             .map_err(|e| SpawnError::Process(e.to_string()))?;
 
-        Ok(SpawnResult {
-            stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+        Ok(RawSpawnResult {
+            stdout: output.stdout,
             stderr: String::from_utf8_lossy(&output.stderr).to_string(),
             exit_code: output.status.code().unwrap_or(-1),
         })
@@ -516,6 +562,15 @@ impl ProcessSpawner for RemoteProcessSpawner {
         args: Vec<String>,
         cwd: Option<String>,
     ) -> Result<SpawnResult, SpawnError> {
+        self.spawn_raw(command, args, cwd).await.map(Into::into)
+    }
+
+    async fn spawn_raw(
+        &self,
+        command: String,
+        args: Vec<String>,
+        cwd: Option<String>,
+    ) -> Result<RawSpawnResult, SpawnError> {
         gate(&self.trust, &command, cwd.as_deref())?;
         let captured = self.captured_env().await;
         let (eff_cmd, eff_args) = env_wrap(&captured, &command, &args);
@@ -580,8 +635,8 @@ impl ProcessSpawner for RemoteProcessSpawner {
             .map(|c| c as i32)
             .unwrap_or(-1);
 
-        Ok(SpawnResult {
-            stdout: String::from_utf8_lossy(&stdout).to_string(),
+        Ok(RawSpawnResult {
+            stdout,
             stderr: String::from_utf8_lossy(&stderr).to_string(),
             exit_code,
         })
