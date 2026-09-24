@@ -313,20 +313,25 @@ pub fn clickable_rects(
         .collect()
 }
 
-/// Every element in screen order with its name, text and cells — the bar's
-/// semantic model, which the web renders directly instead of scraping cells.
+/// Every element with visible text, in screen order, with its name, trimmed
+/// text and cells — the bar's semantic model, which the web renders directly
+/// instead of scraping cells.
 pub fn segments(
     ui: &fresh_ui::Ui<UiMsg>,
     bar: &StatusBar,
     size: ratatui::layout::Rect,
-) -> Vec<crate::view::ui::status_bar::StatusSegmentInfo> {
+) -> Vec<crate::view::scene::StatusSegment> {
     sides(bar)
         .filter_map(|(side, i, it)| {
+            let text = it.text().trim().to_string();
+            if text.is_empty() {
+                return None;
+            }
             let r = rect_of(ui, &item_key(side, i), size)?;
-            Some(crate::view::ui::status_bar::StatusSegmentInfo {
+            Some(crate::view::scene::StatusSegment {
                 name: it.name,
                 key: it.token_key.clone(),
-                text: it.text(),
+                text,
                 x: r.x,
                 w: r.width,
                 side: side.name(),
