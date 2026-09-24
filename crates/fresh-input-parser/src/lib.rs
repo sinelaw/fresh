@@ -1393,13 +1393,14 @@ fn utf8_char_width(first_byte: u8) -> usize {
     }
 }
 
-/// CONTROL for C0 control characters — except Tab, LF, CR and Esc, which are
-/// their own keys and carry no modifier.
+/// CONTROL for C0 control characters — except Tab, CR and Esc, which are
+/// their own keys and carry no modifier. LF is Ctrl+J: a terminal in raw mode
+/// sends CR for Enter, and LF only for Ctrl+J.
 ///
 /// Shared by the ground-state mapping and the `ESC <byte>` (Alt+key) mapping so
 /// both agree that `0x10` is Ctrl+P.
 fn c0_control_modifier(byte: u8) -> KeyModifiers {
-    if byte < 32 && byte != 9 && byte != 10 && byte != 13 && byte != 27 {
+    if byte < 32 && byte != 9 && byte != 13 && byte != 27 {
         KeyModifiers::CONTROL
     } else {
         KeyModifiers::empty()
@@ -1407,8 +1408,7 @@ fn c0_control_modifier(byte: u8) -> KeyModifiers {
 }
 
 /// Convert a single ground-state byte to a key event, attaching CONTROL for
-/// C0 control characters (except Tab, LF, CR and Esc, which are their own
-/// keys).
+/// C0 control characters (except Tab, CR and Esc, which are their own keys).
 fn byte_to_event(byte: u8) -> Event {
     Event::key(KeyEvent::new(
         byte_to_keycode(byte),
@@ -1421,7 +1421,10 @@ fn byte_to_keycode(byte: u8) -> KeyCode {
     match byte {
         0 => KeyCode::Char('@'), // Ctrl+@
         9 => KeyCode::Tab,
-        10 | 13 => KeyCode::Enter,                          // LF or CR
+        // Only CR is Enter. LF is Ctrl+J (the `1..=26` arm), which programs in
+        // the integrated terminal tell apart from Enter — e.g. to insert a
+        // newline rather than submit (sinelaw/fresh#3169).
+        13 => KeyCode::Enter,
         1..=26 => KeyCode::Char((b'a' + byte - 1) as char), // Ctrl+A..Ctrl+Z
         27 => KeyCode::Esc,
         28..=30 => KeyCode::Char((b'\\' + byte - 28) as char), // Ctrl+\, Ctrl+], Ctrl+^
