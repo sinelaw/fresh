@@ -1464,6 +1464,7 @@
   "status.save_all": "บันทึกแล้ว %{count} ไฟล์",
   "status.save_all_none": "ไม่มีไฟล์ที่แก้ไขให้บันทึก",
   "status.save_all_partial": "บันทึกแล้ว %{saved} ไฟล์ ล้มเหลว %{failed} ไฟล์",
+  "status.not_saved_changed_on_disk": "ไม่ได้บันทึก ไฟล์มีการเปลี่ยนแปลงบนดิสก์: %{files}",
   "status.line_col": "บรรทัด %{line}, คอลัมน์ %{col}",
   "status.modified": "[+]",
   "status.moved_tab": "ย้ายแท็บไปยังส่วนแบ่งแล้ว",

@@ -1427,8 +1427,16 @@ impl Editor {
         if first_char == save_first {
             // Save all modified file-backed buffers to disk first.
             match self.save_all_on_exit() {
-                Ok(count) => {
-                    tracing::info!("Saved {} buffer(s) on exit", count);
+                Ok(outcome) if !outcome.changed_on_disk.is_empty() => {
+                    // Quitting now would drop the edits we refused to write
+                    // over someone else's change; stay so the user can decide.
+                    self.set_status_message(Self::not_saved_changed_on_disk_message(
+                        &outcome.changed_on_disk,
+                    ));
+                    return true;
+                }
+                Ok(outcome) => {
+                    tracing::info!("Saved {} buffer(s) on exit", outcome.saved);
                 }
                 Err(e) => {
                     self.set_status_message(

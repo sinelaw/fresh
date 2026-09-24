@@ -1464,6 +1464,7 @@
   "status.save_all": "%{count} fichiers enregistrés",
   "status.save_all_none": "Aucun fichier modifié à enregistrer",
   "status.save_all_partial": "%{saved} fichiers enregistrés, %{failed} échecs",
+  "status.not_saved_changed_on_disk": "Non enregistré, modifié sur le disque : %{files}",
   "status.line_col": "Lig %{line}, Col %{col}",
   "status.modified": "[+]",
   "status.moved_tab": "Onglet déplacé vers la division",

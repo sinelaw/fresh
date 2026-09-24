@@ -1464,6 +1464,7 @@
   "status.save_all": "Đã lưu %{count} tệp",
   "status.save_all_none": "Không có tệp nào đã sửa đổi để lưu",
   "status.save_all_partial": "Đã lưu %{saved} tệp, %{failed} thất bại",
+  "status.not_saved_changed_on_disk": "Chưa lưu, đã thay đổi trên đĩa: %{files}",
   "status.line_col": "Dòng %{line}, Cột %{col}",
   "status.modified": "[+]",
   "status.moved_tab": "Đã di chuyển thẻ sang chia màn hình",

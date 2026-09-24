@@ -1464,6 +1464,7 @@
   "status.save_all": "Uloženo %{count} souborů",
   "status.save_all_none": "Žádné změněné soubory k uložení",
   "status.save_all_partial": "Uloženo %{saved} souborů, %{failed} selhalo",
+  "status.not_saved_changed_on_disk": "Neuloženo, změněno na disku: %{files}",
   "status.line_col": "Řádek %{line}, Sloupec %{col}",
   "status.modified": "[+]",
   "status.moved_tab": "Přesunuta karta do rozdělení",

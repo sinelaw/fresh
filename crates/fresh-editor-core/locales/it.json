@@ -1464,6 +1464,7 @@
   "status.save_all": "Salvati %{count} file",
   "status.save_all_none": "Nessun file modificato da salvare",
   "status.save_all_partial": "Salvati %{saved} file, %{failed} non riusciti",
+  "status.not_saved_changed_on_disk": "Non salvato, modificato su disco: %{files}",
   "status.line_col": "Rg %{line}, Col %{col}",
   "status.modified": "[+]",
   "status.moved_tab": "Scheda spostata nella divisione",
