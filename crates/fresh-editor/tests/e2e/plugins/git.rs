@@ -2300,8 +2300,14 @@ fn test_git_blame_q_unwinds_history_before_closing() {
     harness
         .send_key(KeyCode::Char('q'), KeyModifiers::NONE)
         .unwrap();
+    // The unwound revision reloads asynchronously ("Loading blame at HEAD..."),
+    // and its text shows before the blame headers do, so wait until either the
+    // headers are back or the blame tab is gone before judging which happened.
     harness
-        .wait_until(|h| h.screen_to_string().contains("v2"))
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            screen.contains("v2") && (screen.contains("──") || !screen.contains("*blame:"))
+        })
         .unwrap();
     assert!(
         harness.screen_to_string().contains("──"),
