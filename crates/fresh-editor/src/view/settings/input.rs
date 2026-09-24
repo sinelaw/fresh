@@ -5,6 +5,7 @@
 
 use super::items::SettingControl;
 use super::state::{FocusPanel, FocusTarget, SettingsState};
+use super::surface::SettingsSurface;
 use crate::input::handler::{DeferredAction, InputContext, InputHandler, InputResult};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 

@@ -8,6 +8,7 @@ use super::items::{
 };
 use super::live;
 use super::schema::{SettingSchema, SettingType};
+use super::surface::SettingsSurface;
 use fresh_i18n::t;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
@@ -140,6 +141,34 @@ struct FieldEditSnapshot {
 /// value is not an object (a language's server list): the entry's root,
 /// with nothing to join onto the entry path.
 pub const SINGLE_VALUE_PATH: &str = "/";
+
+impl SettingsSurface for EntryDialogState {
+    fn controls(&self) -> &crate::widgets::WidgetPanelState {
+        &self.controls
+    }
+    fn controls_mut(&mut self) -> &mut crate::widgets::WidgetPanelState {
+        &mut self.controls
+    }
+    fn current_item(&self) -> Option<&SettingItem> {
+        EntryDialogState::current_item(self)
+    }
+    fn current_item_mut(&mut self) -> Option<&mut SettingItem> {
+        EntryDialogState::current_item_mut(self)
+    }
+    fn live_control(&self) -> Option<String> {
+        EntryDialogState::live_control(self)
+    }
+    fn absorb(&mut self, key: &str, events: &[(String, Value)]) {
+        EntryDialogState::absorb(self, key, events)
+    }
+    /// A field the reader gave a value is no longer inherited.
+    fn value_changed(&mut self) {
+        self.mark_field_edited();
+    }
+    fn edit_list_row(&mut self, row: Option<usize>) {
+        EntryDialogState::edit_list_row(self, row)
+    }
+}
 
 impl EntryDialogState {
     /// Create a dialog from a schema definition
@@ -1128,23 +1157,6 @@ impl EntryDialogState {
         }
     }
 
-    /// The selected field's control as its kind sees it, keyed by its path.
-    fn current_spec(&self) -> Option<(String, fresh_core::api::WidgetSpec)> {
-        let item = self.current_item()?;
-        Some((item.path.clone(), self.spec_for(&item.path)?))
-    }
-
-    /// The node of the selected field's description that carries `key`:
-    /// the control's own, or one of a text list's rows.
-    fn spec_for(&self, key: &str) -> Option<fresh_core::api::WidgetSpec> {
-        let item = self.current_item()?;
-        Some(super::widget_map::live_widget(
-            &item.path,
-            &item.control,
-            key,
-        ))
-    }
-
     /// The key of the live control: the selected field's, or one of its
     /// rows', when the store's focus names it.
     pub fn live_control(&self) -> Option<String> {
@@ -1250,13 +1262,6 @@ impl EntryDialogState {
 
     // =========== Text lists: rows as fields ===========
 
-    /// The row of the selected text list whose field is live: `Some(i)`
-    /// an item's, `None` the add row's.
-    pub fn live_list_row(&self) -> Option<Option<usize>> {
-        let item = self.current_item()?;
-        live::text_list::live_row(&self.controls, &item.path)
-    }
-
     /// Open a row of the selected text list for editing — an item's field,
     /// or the add row's for `None` — the caret at the end, with a snapshot
     /// for Escape. A draft in the add row becomes an item first.
@@ -1286,24 +1291,6 @@ impl EntryDialogState {
             self.body_anchor
                 .reveal_key(item.control.row_tree_key(&item.path, row.unwrap_or(n)));
         }
-    }
-
-    /// The add row's draft becomes an item. Returns whether one did.
-    fn commit_list_draft(&mut self) -> bool {
-        let Some(item) = self.current_item() else {
-            return false;
-        };
-        let path = item.path.clone();
-        let Some(text) = live::text_list::take_draft(&mut self.controls, &path) else {
-            return false;
-        };
-        self.mark_field_edited();
-        if let Some(SettingControl::TextList { items, .. }) =
-            self.current_item_mut().map(|i| &mut i.control)
-        {
-            items.push(text);
-        }
-        true
     }
 
     /// Up or Down in a live text list field: the adjacent row's field
@@ -1342,58 +1329,6 @@ impl EntryDialogState {
         }
     }
 
-    /// Remove item `i` of the selected text list. A field live on it moves
-    /// to the row that takes its place.
-    pub fn remove_list_row(&mut self, i: usize) {
-        let live = self.live_list_row();
-        let Some(SettingControl::TextList { items, .. }) =
-            self.current_item_mut().map(|it| &mut it.control)
-        else {
-            return;
-        };
-        if i >= items.len() {
-            return;
-        }
-        items.remove(i);
-        let n = items.len();
-        self.mark_field_edited();
-        if let Some(row) = live {
-            if let Some(item) = self.current_item() {
-                let path = item.path.clone();
-                live::text_list::leave(&mut self.controls, &path);
-            }
-            let row = match row {
-                Some(r) if r > i => Some(r - 1),
-                Some(r) if r == i => (r < n).then_some(r),
-                other => other,
-            };
-            self.edit_list_row(row);
-        }
-    }
-
-    /// A press on a row of the selected field's list: the list takes the
-    /// keyboard with its cursor on the row.
-    pub fn select_list_row(&mut self, row: usize) {
-        let Some((path, spec)) = self.current_spec() else {
-            return;
-        };
-        if !self
-            .current_item()
-            .is_some_and(|i| i.control.has_list_rows())
-        {
-            return;
-        }
-        self.controls.focus_key = path.clone();
-        let o = live::pointer(
-            &mut self.controls,
-            &spec,
-            &path,
-            "select",
-            &serde_json::json!({ "index": row }),
-        );
-        self.absorb(&path, &o.fx.events);
-    }
-
     /// Open the selected text field or JSON editor, the caret at the end.
     /// An unset JSON value opens empty, so what is typed is the value
     /// rather than an edit of the `null` literal.
@@ -1429,20 +1364,6 @@ impl EntryDialogState {
         self.absorb(&key, &outcome.fx.events);
         self.ensure_cursor_visible();
         Some(outcome)
-    }
-
-    /// Type into the live field: a paste, or the character that began the
-    /// edit.
-    fn live_text(&mut self, text: &str) -> bool {
-        let Some(key) = self.live_control() else {
-            return false;
-        };
-        let Some(spec) = self.spec_for(&key) else {
-            return false;
-        };
-        let outcome = live::text(&mut self.controls, &spec, &key, text);
-        self.absorb(&key, &outcome.fx.events);
-        true
     }
 
     /// Typing on a field that is not yet live: the field becomes live and

@@ -9,6 +9,7 @@ use super::items::{control_to_value, SettingControl, SettingItem, SettingsPage};
 use super::live;
 use super::schema::{parse_schema, SettingCategory, SettingSchema};
 use super::search::{search_settings, DeepMatch, SearchResult};
+use super::surface::SettingsSurface;
 use crate::config::Config;
 use crate::config_io::ConfigLayer;
 use std::collections::HashMap;
@@ -325,6 +326,34 @@ pub enum TreeRow {
         cat_idx: usize,
         section_idx: usize,
     },
+}
+
+impl SettingsSurface for SettingsState {
+    fn controls(&self) -> &crate::widgets::WidgetPanelState {
+        &self.controls
+    }
+    fn controls_mut(&mut self) -> &mut crate::widgets::WidgetPanelState {
+        &mut self.controls
+    }
+    fn current_item(&self) -> Option<&SettingItem> {
+        SettingsState::current_item(self)
+    }
+    fn current_item_mut(&mut self) -> Option<&mut SettingItem> {
+        SettingsState::current_item_mut(self)
+    }
+    fn live_control(&self) -> Option<String> {
+        SettingsState::live_control(self)
+    }
+    fn absorb(&mut self, key: &str, events: &[(String, serde_json::Value)]) {
+        SettingsState::absorb(self, key, events)
+    }
+    /// The change is recorded against the target layer as pending.
+    fn value_changed(&mut self) {
+        self.on_value_changed();
+    }
+    fn edit_list_row(&mut self, row: Option<usize>) {
+        SettingsState::edit_list_row(self, row)
+    }
 }
 
 impl SettingsState {
@@ -2132,23 +2161,6 @@ impl SettingsState {
         self.activate_control();
     }
 
-    /// The selected card's control as its kind sees it, keyed by its path.
-    fn current_spec(&self) -> Option<(String, fresh_core::api::WidgetSpec)> {
-        let item = self.current_item()?;
-        Some((item.path.clone(), self.spec_for(&item.path)?))
-    }
-
-    /// The node of the selected card's description that carries `key`: the
-    /// control's own, or one of a text list's rows.
-    fn spec_for(&self, key: &str) -> Option<fresh_core::api::WidgetSpec> {
-        let item = self.current_item()?;
-        Some(super::widget_map::live_widget(
-            &item.path,
-            &item.control,
-            key,
-        ))
-    }
-
     /// The key of the live control: the selected card's, or one of its
     /// rows', when the store's focus names it.
     pub fn live_control(&self) -> Option<String> {
@@ -2352,29 +2364,6 @@ impl SettingsState {
 
     // =========== Lists: a map's or an object array's rows ===========
 
-    /// A press on a row of the selected card's list: the list takes the
-    /// keyboard with its cursor on the row.
-    pub fn select_list_row(&mut self, row: usize) {
-        let Some((path, spec)) = self.current_spec() else {
-            return;
-        };
-        if !self
-            .current_item()
-            .is_some_and(|i| i.control.has_list_rows())
-        {
-            return;
-        }
-        self.controls.focus_key = path.clone();
-        let o = live::pointer(
-            &mut self.controls,
-            &spec,
-            &path,
-            "select",
-            &serde_json::json!({ "index": row }),
-        );
-        self.absorb(&path, &o.fx.events);
-    }
-
     /// The list's cursor row was activated: an entry's dialog opens, or
     /// the add row's.
     fn composite_activate(&mut self, index: usize) {
@@ -2395,13 +2384,6 @@ impl SettingsState {
 
     // =========== Text lists: rows as fields ===========
 
-    /// The row of the selected text list whose field is live: `Some(i)`
-    /// an item's, `None` the add row's.
-    pub fn live_list_row(&self) -> Option<Option<usize>> {
-        let item = self.current_item()?;
-        live::text_list::live_row(&self.controls, &item.path)
-    }
-
     /// Open a row of the selected text list for editing — an item's field,
     /// or the add row's for `None` — the caret at the end. A draft in the
     /// add row becomes an item first.
@@ -2418,24 +2400,6 @@ impl SettingsState {
         let (path, items) = (item.path.clone(), items.clone());
         live::text_list::edit_row(&mut self.controls, &path, &items, row);
         self.ensure_visible();
-    }
-
-    /// The add row's draft becomes an item. Returns whether one did.
-    fn commit_list_draft(&mut self) -> bool {
-        let Some(item) = self.current_item() else {
-            return false;
-        };
-        let path = item.path.clone();
-        let Some(text) = live::text_list::take_draft(&mut self.controls, &path) else {
-            return false;
-        };
-        if let Some(SettingControl::TextList { items, .. }) =
-            self.current_item_mut().map(|i| &mut i.control)
-        {
-            items.push(text);
-        }
-        self.on_value_changed();
-        true
     }
 
     /// Up or Down in a live text list field: the adjacent row's field
@@ -2482,35 +2446,6 @@ impl SettingsState {
         if let Some(item) = self.current_item() {
             let path = item.path.clone();
             live::text_list::leave(&mut self.controls, &path);
-        }
-    }
-
-    /// Remove item `i` of the selected text list. A field live on it moves
-    /// to the row that takes its place.
-    pub fn remove_list_row(&mut self, i: usize) {
-        let live = self.live_list_row();
-        let Some(SettingControl::TextList { items, .. }) =
-            self.current_item_mut().map(|it| &mut it.control)
-        else {
-            return;
-        };
-        if i >= items.len() {
-            return;
-        }
-        items.remove(i);
-        let n = items.len();
-        self.on_value_changed();
-        if let Some(row) = live {
-            if let Some(item) = self.current_item() {
-                let path = item.path.clone();
-                live::text_list::leave(&mut self.controls, &path);
-            }
-            let row = match row {
-                Some(r) if r > i => Some(r - 1),
-                Some(r) if r == i => (r < n).then_some(r),
-                other => other,
-            };
-            self.edit_list_row(row);
         }
     }
 
@@ -2566,19 +2501,6 @@ impl SettingsState {
         // cursor row after an arrow, as it holds the card after a step off it.
         self.ensure_visible();
         Some(outcome)
-    }
-
-    /// Type into the live control: a paste.
-    fn live_text(&mut self, text: &str) -> bool {
-        let Some(key) = self.live_control() else {
-            return false;
-        };
-        let Some(spec) = self.spec_for(&key) else {
-            return false;
-        };
-        let outcome = live::text(&mut self.controls, &spec, &key, text);
-        self.absorb(&key, &outcome.fx.events);
-        true
     }
 
     /// Escape on the live text field or JSON editor: what was typed is
