@@ -106,9 +106,7 @@ impl WidgetImpl for List {
         super::KeyDisposition::Consumed
     }
     /// Pointer model: a row click syncs the host-owned selection to
-    /// the clicked index — preserving scroll, re-arming
-    /// scroll-follows-selection (a deliberate selection snaps a
-    /// scrolled-away view back) — then lets the recorded `select`
+    /// the clicked index, then lets the recorded `select`
     /// event fire against the List's own key, identical to keyboard
     /// nav plus the `via: "click"` marker. Right-click `context`
     /// hits pass through untouched.
@@ -131,7 +129,6 @@ impl WidgetImpl for List {
                     widget_key.to_string(),
                     WidgetInstanceState::List {
                         selected_index: clamp_selection(idx as i32, total_items(spec)),
-                        user_scrolled: false,
                     },
                 );
             }
@@ -147,8 +144,6 @@ pub struct Resolved {
     /// The selection clamped into the current dataset, or `-1` for none
     /// (an empty list, or a list nobody has selected in).
     pub selected: i32,
-    /// Whether the user has taken the window off the selection by mouse.
-    pub user_scrolled: bool,
 }
 
 /// **Where a `List`'s selection actually comes from.**
@@ -173,16 +168,12 @@ pub fn resolve(
     key: Option<&str>,
     prev: &HashMap<String, WidgetInstanceState>,
 ) -> Resolved {
-    let (stored, user_scrolled) = match key.filter(|k| !k.is_empty()).and_then(|k| prev.get(k)) {
-        Some(WidgetInstanceState::List {
-            selected_index,
-            user_scrolled,
-        }) => (*selected_index, *user_scrolled),
-        _ => (spec_selected, false),
+    let stored = match key.filter(|k| !k.is_empty()).and_then(|k| prev.get(k)) {
+        Some(WidgetInstanceState::List { selected_index }) => *selected_index,
+        _ => spec_selected,
     };
     Resolved {
         selected: clamp_selection(stored, total),
-        user_scrolled,
     }
 }
 
@@ -232,11 +223,9 @@ pub fn total_items(spec: &WidgetSpec) -> u32 {
 }
 
 /// Move the host-owned selection by `delta` (clamped to the item
-/// range), re-arming scroll-follows-selection, and queue `select` —
-/// but only when the index actually moved: a clamped move at the
-/// list's top/bottom edge still repaints (re-arming `user_scrolled`
-/// snaps a scrolled-away view back to the selection) but must not
-/// spam the plugin with same-index selections — each one re-runs the
+/// range) and queue `select` — but only when the index actually moved:
+/// a clamped move at the list's top/bottom edge still repaints but must
+/// not spam the plugin with same-index selections — each one re-runs the
 /// plugin's preview / live-switch work.
 pub fn select_move(
     spec: &WidgetSpec,
@@ -260,9 +249,6 @@ pub fn select_move(
         widget_key.to_string(),
         WidgetInstanceState::List {
             selected_index: new_sel,
-            // Keyboard nav re-arms scroll-follows-selection so the
-            // renderer brings the new selection back into view.
-            user_scrolled: false,
         },
     );
     if new_sel != cur_sel {

@@ -4299,10 +4299,7 @@ mod tests {
             .instance_states
             .insert(
                 "lst".to_string(),
-                crate::widgets::WidgetInstanceState::List {
-                    selected_index: 7,
-                    user_scrolled: true,
-                },
+                crate::widgets::WidgetInstanceState::List { selected_index: 7 },
             );
 
         editor.rerender_widget_panel(&described);
@@ -4312,10 +4309,7 @@ mod tests {
         assert!(
             matches!(
                 panel.instance_states.get("lst"),
-                Some(crate::widgets::WidgetInstanceState::List {
-                    selected_index: 7,
-                    user_scrolled: true,
-                })
+                Some(crate::widgets::WidgetInstanceState::List { selected_index: 7 })
             ),
             "and the state was carried, not re-seeded from the spec"
         );

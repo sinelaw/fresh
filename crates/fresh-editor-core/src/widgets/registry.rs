@@ -166,18 +166,7 @@ pub enum WidgetInstanceState {
     /// and the measured card height used to sit in this variant, and
     /// none of them is the widget's state: they are the viewport's, and
     /// the tree's viewport element holds them.
-    List {
-        selected_index: i32,
-        /// True once the user has scrolled the list by mouse (wheel or
-        /// scrollbar) without moving the selection. While set, the
-        /// renderer respects the painted offset as-is instead of
-        /// snapping it back to keep `selected_index` in view — so a
-        /// mouse scroll can push the selected card off-screen. Cleared
-        /// whenever the selection itself moves (keyboard nav, click, or
-        /// a plugin `SetSelectedIndex`), which re-arms
-        /// scroll-follows-selection.
-        user_scrolled: bool,
-    },
+    List { selected_index: i32 },
     /// `Text` instance state: host-owned `TextEdit` (value + cursor
     /// row/col + selection anchor + multiline flag), plus a viewport
     /// scroll offset. For multi-line (`rows > 1`) variants that's the
@@ -245,13 +234,6 @@ pub enum WidgetInstanceState {
         /// row. The first ↓ flips it true — the dropdown is now
         /// navigable, the selected row highlights, and Enter accepts.
         completion_navigated: bool,
-        /// True once the user wheel-scrolled a multi-line (markdown)
-        /// text viewport without moving the caret. While set, the
-        /// renderer respects `scroll` as-is instead of snapping it
-        /// back to keep the caret visible. Cleared whenever the caret
-        /// itself moves (keys or click), re-arming follow-the-caret.
-        /// Same contract as `List`/`Tree`'s flag.
-        user_scrolled: bool,
     },
     /// `Tree` instance state: host-owned selected index and the set
     /// of expanded item keys. Both become authoritative once a
@@ -267,18 +249,6 @@ pub enum WidgetInstanceState {
     Tree {
         selected_index: i32,
         expanded_keys: HashSet<String>,
-        /// True once the user has scrolled the tree by mouse (wheel or
-        /// scrollbar) without moving the selection. While set, the
-        /// renderer respects the painted offset as-is instead of snapping
-        /// it back to keep `selected_index` in view — so a mouse scroll
-        /// can push the selected node off-screen. Cleared whenever the
-        /// selection itself moves (keyboard nav, click, or a plugin
-        /// `SetSelectedIndex` to a *different* index), which re-arms
-        /// scroll-follows-selection. Same semantics as `List`'s flag —
-        /// without it, a background spec refresh that re-pins the same
-        /// selection (the orchestrator dock's probe poll) yanked a
-        /// wheel-scrolled dock back to the selected card.
-        user_scrolled: bool,
     },
     /// `Number` instance state: the host-owned current value. Becomes
     /// authoritative after first render — the spec's `value` is a
@@ -499,14 +469,6 @@ impl WidgetPanelState {
                 crate::widgets::kinds::tree::resolve(spec, widget_key, &self.instance_states);
             let new_state = WidgetInstanceState::Tree {
                 expanded_keys: current.expanded,
-                // Re-pinning the *same* index (which the orchestrator
-                // dock's `refreshOpenDialog` does on every probe-poll
-                // repaint) must preserve a user scroll — otherwise the
-                // refresh would snap the view back to the selection a
-                // beat after a mouse scroll. Only an actual selection
-                // change re-arms scroll-follows-selection. Mirrors the
-                // List branch below.
-                user_scrolled: current.user_scrolled && index == current.selected,
                 selected_index: index,
             };
             self.instance_states
@@ -514,35 +476,15 @@ impl WidgetPanelState {
             return;
         }
         let new_state = match self.instance_states.get(widget_key) {
-            Some(WidgetInstanceState::Tree {
-                selected_index,
-                expanded_keys,
-                user_scrolled,
-            }) => WidgetInstanceState::Tree {
+            Some(WidgetInstanceState::Tree { expanded_keys, .. }) => WidgetInstanceState::Tree {
                 expanded_keys: expanded_keys.clone(),
                 // A key with no spec mounted here: nothing to resolve
                 // against, so the stored shape is all there is.
-                user_scrolled: *user_scrolled && index == *selected_index,
                 selected_index: index,
             },
-            other => {
-                let (prev_index, prev_user_scrolled) = match other {
-                    Some(WidgetInstanceState::List {
-                        selected_index,
-                        user_scrolled,
-                    }) => (*selected_index, *user_scrolled),
-                    _ => (-1, false),
-                };
-                // Re-pinning the *same* index (which `refreshOpenDialog`
-                // does on every repaint) must preserve a user scroll —
-                // otherwise a probe-poll refresh would snap the view back
-                // to the selection a beat after a mouse scroll. Only an
-                // actual selection change re-arms scroll-follows-selection.
-                WidgetInstanceState::List {
-                    selected_index: index,
-                    user_scrolled: prev_user_scrolled && index == prev_index,
-                }
-            }
+            _ => WidgetInstanceState::List {
+                selected_index: index,
+            },
         };
         self.instance_states
             .insert(widget_key.to_string(), new_state);

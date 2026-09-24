@@ -118,7 +118,6 @@ impl WidgetImpl for Text {
                 // keeps a visual anchor across pages.
                 let page = rows.saturating_sub(1).max(1) as i32;
                 let down = key.code() == KeyCode::PageDown;
-                clear_user_scrolled(widget_key, panel);
                 apply_edit(spec, widget_key, panel, fx, |editor| {
                     for _ in 0..page.unsigned_abs() {
                         if down {
@@ -496,8 +495,7 @@ pub fn push_block_caret_overlay(entry: &mut TextPropertyEntry, byte: usize) {
 /// exactly what's on screen — never on markdown markers, and never on
 /// the chrome of sibling widgets sharing a merged row. The shadow (and
 /// with it the caret) resets whenever the rendered text changes (new
-/// value or new width); scroll state and `user_scrolled` follow the
-/// List/Tree contract.
+/// value or new width).
 #[allow(clippy::too_many_arguments)]
 /// The whole markdown document as **one** styled entry: the rendered text with
 /// one inline overlay per span, unwrapped.
@@ -973,7 +971,6 @@ pub fn ensure_text_state(
             completion_selected_index: 0,
             completion_scroll_offset: 0,
             completion_navigated: false,
-            user_scrolled: false,
         },
     );
     true
@@ -1011,18 +1008,6 @@ pub fn apply_edit(
         json!({ "value": after_value, "cursorByte": after_cursor as i64, }),
     ));
     true
-}
-
-/// Clear the widget's `user_scrolled` flag (re-arming
-/// keep-caret-visible). Returns true when the flag was set.
-pub fn clear_user_scrolled(widget_key: &str, panel: &mut crate::widgets::WidgetPanelState) -> bool {
-    match panel.instance_states.get_mut(widget_key) {
-        Some(WidgetInstanceState::Text { user_scrolled, .. }) if *user_scrolled => {
-            *user_scrolled = false;
-            true
-        }
-        _ => false,
-    }
 }
 
 /// The widget's current selection, if its editor holds one.
@@ -1087,11 +1072,6 @@ pub fn text_key(
     if is_read_only && key_mutates(&event) {
         return;
     }
-    // A key-driven caret move re-arms follow-the-caret: even if the
-    // caret was already at a boundary (the op below no-ops), the
-    // viewport must snap back from a wheel-scrolled position on the
-    // repaint that follows.
-    clear_user_scrolled(widget_key, panel);
     apply_edit(spec, widget_key, panel, fx, |editor| {
         crate::primitives::text_key::apply_text_key(
             editor,
