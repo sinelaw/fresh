@@ -36,8 +36,7 @@ impl Editor {
         let shell = detect_shell();
 
         // Execute the command
-        let mut child = Command::new(&shell)
-            .args([command_flag_for_shell(&shell), command])
+        let mut child = shell_command(&shell, command)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -277,21 +276,33 @@ fn detect_shell() -> String {
     "sh".to_string()
 }
 
-/// The flag that makes `shell` run one command string and exit.
+/// Build a `Command` that runs `command` through `shell` and exits.
 ///
-/// POSIX shells take `-c`; cmd.exe only understands `/c` — handing it `-c`
-/// drops it into interactive mode, whose banner then leaks into the captured
-/// output as if it were the command's (issue #3279).
-fn command_flag_for_shell(shell: &str) -> &'static str {
-    let name = std::path::Path::new(shell)
-        .file_name()
-        .map(|n| n.to_string_lossy().to_ascii_lowercase())
-        .unwrap_or_default();
-    if matches!(name.as_str(), "cmd" | "cmd.exe" | "command.com") {
-        "/c"
+/// cmd.exe takes `/c`, not `-c`, and parses its own command line, so the
+/// command is passed raw rather than with Rust's argv escaping.
+pub(super) fn shell_command(shell: &str, command: &str) -> Command {
+    let mut cmd = Command::new(shell);
+    if is_cmd_shell(shell) {
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            // `/S` makes cmd strip exactly the outer quotes, keeping inner ones.
+            cmd.args(["/S", "/C"]).raw_arg(format!("\"{}\"", command));
+        }
+        #[cfg(not(windows))]
+        cmd.args(["/c", command]);
     } else {
-        "-c"
+        cmd.args(["-c", command]);
     }
+    cmd
+}
+
+fn is_cmd_shell(shell: &str) -> bool {
+    let name = shell.rsplit(['/', '\\']).next().unwrap_or(shell);
+    matches!(
+        name.to_ascii_lowercase().as_str(),
+        "cmd" | "cmd.exe" | "command.com"
+    )
 }
 
 /// Truncate a command string for display purposes.
@@ -312,7 +323,17 @@ fn truncate_command(command: &str, max_len: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::truncate_command;
+    use super::{is_cmd_shell, truncate_command};
+
+    #[test]
+    fn is_cmd_shell_detects_cmd_by_file_name() {
+        assert!(is_cmd_shell("cmd.exe"));
+        assert!(is_cmd_shell(r"C:\Windows\System32\CMD.EXE"));
+        assert!(is_cmd_shell("cmd"));
+        assert!(!is_cmd_shell("/bin/bash"));
+        assert!(!is_cmd_shell(r"C:\Program Files\Git\bin\bash.exe"));
+        assert!(!is_cmd_shell("/usr/bin/cmdshell"));
+    }
 
     #[test]
     fn truncate_command_ascii_fits() {
