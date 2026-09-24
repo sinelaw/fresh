@@ -9656,6 +9656,10 @@ function openMachineDialog(
       onPick: (path) => {
         d.identity = fieldOf(tildePath(path));
       },
+      // What sits beside the keys in `~/.ssh` but is not one: the public
+      // halves, and ssh's own files. Listed, but dimmed.
+      dim: (name) => name.endsWith(".pub") || SSH_DIR_NON_KEYS.has(name),
+      hint: (value) => (value.endsWith(".pub") ? editor.t("machine.identity_pub_hint") : null),
       render: () => {
         if (machineDialog === d) renderMachineDialog();
       },
@@ -9690,12 +9694,16 @@ function openMachineDialog(
   });
   editor.floatingPanelControl(machinePanel.id(), "fullscreen", 1);
   editor.setEditorMode(MACHINE_DIALOG_MODE);
-  // Straight to what the machine reaches; for a new ssh machine the Host
-  // field opens with the config hosts to pick from.
+  // Straight to what the machine reaches. For a new ssh machine the Host
+  // field is a combo box of the config hosts, closed until asked: typing,
+  // ↓ / Alt+↓, or its arrow opens it (`completion_request`) — a list that
+  // opened on focus would cover the fields under it as the form is walked.
   const first = machineDialog.kind === "ssh" ? "machine-target" : "machine-context";
   machinePanel.setFocusKey(first);
-  suggestMachineHosts();
 }
+
+/** Files `~/.ssh` holds that are not a private key. */
+const SSH_DIR_NON_KEYS = new Set(["known_hosts", "known_hosts.old", "config", "authorized_keys", "environment"]);
 
 function blankMachine(): Machine {
   return {
@@ -9804,7 +9812,12 @@ function buildMachineDialogSpec(): WidgetSpec {
   }
   if (d.kind === "ssh") {
     children.push(
-      ...field(formLabel("machine.host"), d.target, { key: "machine-target" }),
+      ...field(formLabel("machine.host"), d.target, {
+        key: "machine-target",
+        // A new SSH machine's Host offers the `~/.ssh/config` hosts not yet
+        // added (`suggestMachineHosts`): say so with the combo arrow.
+        combo: d.id === null && unaddedSshHosts().length > 0,
+      }),
     );
     const h = d.hosts.find((x) => x.alias === d.target.value.trim());
     if (h) children.push(machineFact("machine.resolves_to", [{ text: sshResolvedTarget(h) }]));
@@ -10005,8 +10018,15 @@ function handleMachineDialogEvent(e: WidgetEvt): void {
     return;
   }
   if (e.event_type === "focus") {
-    if (e.widget_key === "machine-target") suggestMachineHosts();
-    else setMachineHostSuggestions([]);
+    // Focus alone does not open the Host list; leaving Host closes it.
+    if (e.widget_key !== "machine-target") setMachineHostSuggestions([]);
+    // Leaving the identity file's browser closes it.
+    d.identityPicker.focusMoved(e.widget_key ?? "");
+    return;
+  }
+  if (e.event_type === "completion_request" && e.widget_key === "machine-target") {
+    // ↓ / Alt+↓ or the arrow on a closed Host list.
+    suggestMachineHosts();
     return;
   }
   if (e.event_type === "completion_accept" && e.widget_key === "machine-target") {
@@ -11099,6 +11119,11 @@ async function listMachineDir(
 ): Promise<{ entries: RepoBrowseEntry[]; error: string }> {
   if (machineKey === "local") {
     const base = expandHome(dir);
+    // A folder that is not there lists as nothing at all; say so, as the
+    // remote listing's `NODIR` does, so the browser can go up to one that is.
+    if (!editor.fileExists(editor.localPath(base))) {
+      return { entries: [], error: editor.t("repo.no_such_dir") };
+    }
     const out: RepoBrowseEntry[] = [];
     const found: RepoBrowseEntry[] = [];
     for (const e of editor.readDir(editor.localPath(base))) {
@@ -11342,6 +11367,9 @@ function handleRepoDialogEvent(e: WidgetEvt): void {
     return;
   }
   if (e.event_type === "focus") {
+    // Leaving a folder browser closes it.
+    d.browse.focusMoved(e.widget_key ?? "");
+    d.place?.browse.focusMoved(e.widget_key ?? "");
     return;
   }
   if (d.place && handlePlaceEvent(d.place, repoPlaceHost(d), e)) return;
@@ -12236,7 +12264,7 @@ function fieldNote(text: string, style: Partial<OverlayOptions> = NOTE_STYLE): W
 function field(
   lbl: string,
   slot: { value: string; cursor: number },
-  o: { key?: string; placeholder?: string; note?: string | undefined },
+  o: { key?: string; placeholder?: string; note?: string | undefined; combo?: boolean },
 ): WidgetSpec[] {
   const out: WidgetSpec[] = [
     text({
@@ -12246,6 +12274,7 @@ function field(
       placeholder: o.placeholder,
       fullWidth: true,
       labelWidth: FORM_LABEL_W,
+      combo: o.combo,
       key: o.key,
     }),
   ];
@@ -13335,13 +13364,15 @@ function buildFormSpec(): WidgetSpec {
     ...gap(),
     launchModeRow(),
     ...gap(),
-    sectionHeader("form.section_prompt"),
-    ...gap(),
-    promptBox(f),
-    ...gap(),
+    // The agent first, then what to tell it: whether there is a prompt at
+    // all, and what it means, depend on the agent chosen above it.
     sectionHeader("form.section_agent"),
     ...gap(),
     ...agentRowFields(f),
+    ...gap(),
+    sectionHeader("form.section_prompt"),
+    ...gap(),
+    promptBox(f),
     ...gap(),
   ];
   if (creating) {
@@ -16992,6 +17023,8 @@ editor.on("widget_event", (e) => {
     // The launch-time "where is it?" question owns its own widgets.
     if (form.place && e.event_type !== "focus" && handlePlaceEvent(form.place, formPlaceHost(form), e as WidgetEvt)) return;
     if (e.event_type === "focus") {
+      // Leaving the where-is-it question's folder browser closes it.
+      form.place?.browse.focusMoved(e.widget_key ?? "");
       // Leaving a field (Shift+Tab, a click) closes its suggestions.
       if (form.completion.field !== null && form.completion.field !== e.widget_key) {
         closeCompletion();

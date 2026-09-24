@@ -271,6 +271,12 @@ pub struct Prompt {
     /// session_preview delegate region was already provided by
     /// Primitive #1 — `editor.previewWindowInRect`).
     pub footer: Vec<fresh_core::api::StyledText>,
+    /// Centre the overlay's card on the whole frame (90% of it, over the
+    /// dock and sidebar, as Settings is) rather than on the chrome beside
+    /// the dock. Plugin-controlled
+    /// via `editor.setPromptFullscreen(on)`; no effect on non-overlay
+    /// prompts.
+    pub fullscreen: bool,
     /// The plugin's toolbar for the overlay's header band, when it set one
     /// (`editor.setPromptToolbar(spec)`): the key of the registry panel that
     /// holds its spec, its widgets' state and its focus fact. Described in the
@@ -327,6 +333,7 @@ impl Prompt {
             overlay: false,
             title: Vec::new(),
             footer: Vec::new(),
+            fullscreen: false,
             toolbar: None,
             status: String::new(),
             confirm: None,
@@ -361,6 +368,7 @@ impl Prompt {
             overlay: false,
             title: Vec::new(),
             footer: Vec::new(),
+            fullscreen: false,
             toolbar: None,
             status: String::new(),
             confirm: None,
@@ -414,6 +422,7 @@ impl Prompt {
             overlay: false,
             title: Vec::new(),
             footer: Vec::new(),
+            fullscreen: false,
             toolbar: None,
             status: String::new(),
             confirm: None,

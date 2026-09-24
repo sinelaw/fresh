@@ -155,7 +155,7 @@ fn open_live_grep_with_results(width: u16, height: u16, n: usize) -> EditorTestH
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
     harness
-        .wait_until(|h| h.screen_to_string().contains("Search in:"))
+        .wait_until(|h| h.screen_to_string().contains("Scope "))
         .unwrap();
 
     // Type the needle and wait for results + a preview to render.

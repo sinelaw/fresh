@@ -314,6 +314,7 @@ mod tests {
             indeterminate: false,
             label_first: false,
             label_width: 0,
+            mnemonic: None,
             checked: false,
             label: "T".into(),
             focused: false,
