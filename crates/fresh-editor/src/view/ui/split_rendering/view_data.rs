@@ -258,8 +258,7 @@ pub(super) fn build_view_data(
         content_width
             .max(1)
             .saturating_mul(2)
-            .min(MAX_SAFE_LINE_WIDTH)
-            .max(1)
+            .clamp(1, MAX_SAFE_LINE_WIDTH)
     } else if line_wrap_enabled {
         effective_width
     } else {

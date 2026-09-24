@@ -41,6 +41,7 @@ pub mod modal;
 pub mod msg;
 pub mod overlay_prompt;
 pub mod panel;
+pub mod path_display;
 pub mod popup;
 pub mod prompt;
 pub mod prompt_line;

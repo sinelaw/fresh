@@ -257,7 +257,7 @@ impl Editor {
     /// blocks waiting for that invisible buffer to be closed, so the
     /// terminal appears to hang. Un-maximize so the focused buffer shows.
     fn reveal_active_split_if_hidden_by_maximize(&mut self) {
-        let mgr = self.split_manager();
+        let mgr = self.active_window().split_manager();
         let active: crate::model::event::SplitId = mgr.active_split().into();
         let hidden = matches!(mgr.maximized_split(), Some(maximized) if maximized != active);
         if !hidden {
@@ -265,7 +265,8 @@ impl Editor {
         }
         // `unmaximize_split` only errors when nothing is maximized, which
         // the `hidden` guard above already excludes.
-        self.split_manager_mut()
+        self.active_window_mut()
+            .split_manager_mut()
             .unmaximize_split()
             .expect("a split is maximized (checked above)");
         self.relayout();
@@ -419,7 +420,7 @@ impl Editor {
         if let Some(view_state) = self
             .windows
             .get_mut(&self.active_window)
-            .and_then(|w| w.split_view_states_mut())
+            .and_then(|w| w.buffers.split_view_states_mut())
             .expect("active window must have a populated split layout")
             .get_mut(&target_split)
         {
@@ -494,18 +495,10 @@ impl Editor {
         }
 
         // Reset cursor to start in the split view state
-        let split_id = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(mgr, _)| mgr)
-            .expect("active window must have a populated split layout")
-            .active_split();
+        let split_id = self.active_window().split_manager().active_split();
         if let Some(view_state) = self
-            .windows
-            .get_mut(&self.active_window)
-            .and_then(|w| w.split_view_states_mut())
-            .expect("active window must have a populated split layout")
+            .active_window_mut()
+            .split_view_states_mut()
             .get_mut(&split_id)
         {
             if let Some(buf_state) = view_state.keyed_states.get_mut(&buffer_id) {
@@ -609,7 +602,7 @@ impl Editor {
         if let Some(view_state) = self
             .windows
             .get_mut(&self.active_window)
-            .and_then(|w| w.split_view_states_mut())
+            .and_then(|w| w.buffers.split_view_states_mut())
             .expect("active window must have a populated split layout")
             .get_mut(&target_split)
         {
@@ -856,7 +849,7 @@ impl Editor {
         if let Some(view_state) = self
             .windows
             .get_mut(&self.active_window)
-            .and_then(|w| w.split_view_states_mut())
+            .and_then(|w| w.buffers.split_view_states_mut())
             .expect("active window must have a populated split layout")
             .get_mut(&target_split)
         {
@@ -1241,11 +1234,7 @@ impl crate::app::window::Window {
         // Snapshot config values before taking the mutable view-states borrow
         // so the closure body doesn't have to re-borrow `self.resources`.
         let cfg = self.resources.config.editor.clone();
-        if let Some(view_state) = self
-            .split_view_states_mut()
-            .expect("active window must have a populated split layout")
-            .get_mut(&target_split)
-        {
+        if let Some(view_state) = self.split_view_states_mut().get_mut(&target_split) {
             view_state.add_buffer(buffer_id);
             // Initialize per-buffer view state for the new buffer with config defaults
             let buf_state = view_state.ensure_buffer_state(buffer_id);

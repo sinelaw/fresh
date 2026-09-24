@@ -849,7 +849,7 @@ impl WhitespaceVisibility {
 /// - `"{warnings}"` — general warning badge
 /// - `"{update}"` — update available indicator
 /// - `"{palette}"` — command palette shortcut hint
-/// - `"{clock}"` — current time (HH:MM) with blinking colon separator
+/// - `"{clock}"` — current time (HH:MM)
 /// - `"{remote}"` — remote authority indicator (Local / SSH / Container / Disconnected)
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
@@ -891,7 +891,7 @@ pub enum StatusBarElement {
     TerminalRestart,
     /// Command palette shortcut hint
     Palette,
-    /// Current time (HH:MM) with blinking colon separator
+    /// Current time (HH:MM)
     Clock,
     /// Remote authority indicator: shows "Local", the active SSH/Container
     /// authority label, or a disconnected marker. Intended for placement at
@@ -2857,18 +2857,6 @@ impl BufferConfig {
         }
 
         config
-    }
-
-    /// Get the effective indentation string for this buffer.
-    ///
-    /// Returns a tab character if `use_tabs` is true, otherwise returns
-    /// `tab_size` spaces.
-    pub fn indent_string(&self) -> String {
-        if self.use_tabs {
-            "\t".to_string()
-        } else {
-            " ".repeat(self.tab_size)
-        }
     }
 }
 
@@ -8372,6 +8360,22 @@ pub(crate) fn parse_config_jsonc(contents: &str) -> Result<serde_json::Value, Co
     })
 }
 
+/// The JSON source of a built-in keymap, or `None` for an unknown name.
+///
+/// The keymap files ship with this crate because `Config` resolves
+/// `keymap: "emacs"` here; `fresh-editor`'s keybinding tests read them back
+/// through this function rather than re-embedding the same files.
+pub fn builtin_keymap_json(name: &str) -> Option<&'static str> {
+    Some(match name {
+        "default" => include_str!("../keymaps/default.json"),
+        "emacs" => include_str!("../keymaps/emacs.json"),
+        "vscode" => include_str!("../keymaps/vscode.json"),
+        "macos" => include_str!("../keymaps/macos.json"),
+        "macos-gui" => include_str!("../keymaps/macos-gui.json"),
+        _ => return None,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -9199,28 +9203,6 @@ mod tests {
     }
 
     #[test]
-    fn test_buffer_config_indent_string() {
-        let config = Config::default();
-
-        // Spaces indent
-        let spaces_config = BufferConfig::resolve(&config, None);
-        assert_eq!(spaces_config.indent_string(), "    "); // 4 spaces
-
-        // Tabs indent - create a language that uses tabs
-        let mut config_with_tabs = Config::default();
-        config_with_tabs.languages.insert(
-            "makefile".to_string(),
-            LanguageConfig {
-                use_tabs: Some(true),
-                tab_size: Some(8),
-                ..Default::default()
-            },
-        );
-        let tabs_config = BufferConfig::resolve(&config_with_tabs, Some("makefile"));
-        assert_eq!(tabs_config.indent_string(), "\t");
-    }
-
-    #[test]
     fn test_buffer_config_global_use_tabs_inherited() {
         // When editor.use_tabs is true, buffers without a language-specific
         // override should inherit the global setting.
@@ -9441,20 +9423,4 @@ mod tests {
             );
         }
     }
-}
-
-/// The JSON source of a built-in keymap, or `None` for an unknown name.
-///
-/// The keymap files ship with this crate because `Config` resolves
-/// `keymap: "emacs"` here; `fresh-editor`'s keybinding tests read them back
-/// through this function rather than re-embedding the same files.
-pub fn builtin_keymap_json(name: &str) -> Option<&'static str> {
-    Some(match name {
-        "default" => include_str!("../keymaps/default.json"),
-        "emacs" => include_str!("../keymaps/emacs.json"),
-        "vscode" => include_str!("../keymaps/vscode.json"),
-        "macos" => include_str!("../keymaps/macos.json"),
-        "macos-gui" => include_str!("../keymaps/macos-gui.json"),
-        _ => return None,
-    })
 }

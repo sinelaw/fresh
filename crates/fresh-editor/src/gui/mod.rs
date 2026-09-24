@@ -85,8 +85,8 @@ pub fn run_gui(
     // Configure wgpu reset colors and ANSI color table based on theme.
     // Load the theme to check its editor_bg luminance rather than relying
     // on the theme name — this works for custom themes too.
-    let is_light = crate::view::theme::Theme::load_builtin(&loaded_config.theme)
-        .map_or(false, |t| t.is_light());
+    let is_light =
+        crate::view::theme::Theme::load_builtin(&loaded_config.theme).is_some_and(|t| t.is_light());
     let gui_config = {
         let mut cfg = GuiConfig::default();
         if is_light {

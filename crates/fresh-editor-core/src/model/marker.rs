@@ -622,8 +622,8 @@ mod tests {
                 // Create some markers at various positions
                 let markers: Vec<_> = unique_positions
                     .iter()
-                    .enumerate()
-                    .map(|(_i, &pos)| list.create(pos))
+
+                    .map(|&pos| list.create(pos))
                     .collect();
 
                 // Apply random operations

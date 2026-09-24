@@ -781,7 +781,6 @@ impl Editor {
             sidebar_drag: None,
             prose_drag: None,
             prose_reveal: std::cell::RefCell::new(HashMap::new()),
-            widget_panel_render_heights: std::collections::HashMap::new(),
         };
 
         // The plugin per-window filesystem registry is populated on the first
@@ -1407,7 +1406,6 @@ impl Editor {
         let recovery_service = {
             let recovery_config = RecoveryConfig {
                 enabled: recovery_enabled,
-                ..RecoveryConfig::default()
             };
             // Default to a CWD-scoped recovery directory so each working
             // directory keeps its own hot-exit recovery files. If this
@@ -2281,11 +2279,7 @@ impl Editor {
     /// regression tests can assert on the structure directly.
     #[doc(hidden)]
     pub fn split_manager_for_tests(&self) -> &crate::view::split::SplitManager {
-        self.windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(mgr, _)| mgr)
-            .expect("active window must have a populated split layout")
+        self.active_window().split_manager()
     }
 
     /// Test-only accessor for a leaf's `SplitViewState`, so tab-list
@@ -2297,12 +2291,7 @@ impl Editor {
         &self,
         leaf: crate::model::event::LeafId,
     ) -> Option<&crate::view::split::SplitViewState> {
-        self.windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(_, vs)| vs)
-            .expect("active window must have a populated split layout")
-            .get(&leaf)
+        self.active_window().split_view_states().get(&leaf)
     }
 
     /// Refresh the plugin-readable keybinding-label snapshot from

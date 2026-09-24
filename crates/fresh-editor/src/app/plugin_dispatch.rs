@@ -762,10 +762,11 @@ impl Editor {
                 self.handle_set_split_ratio(split_id, ratio);
             }
             PluginCommand::SetSplitLabel { split_id, label } => {
-                self.handle_set_split_label(split_id, label);
+                self.active_window_mut()
+                    .handle_set_split_label(split_id, label);
             }
             PluginCommand::ClearSplitLabel { split_id } => {
-                self.handle_clear_split_label(split_id);
+                self.active_window_mut().handle_clear_split_label(split_id);
             }
             PluginCommand::GetSplitByLabel { label, request_id } => {
                 self.handle_get_split_by_label(label, request_id);
@@ -805,7 +806,8 @@ impl Editor {
                 self.handle_set_line_numbers_default(buffer_id, enabled);
             }
             PluginCommand::SetFoldIndicators { buffer_id, enabled } => {
-                self.handle_set_fold_indicators(buffer_id, enabled);
+                self.active_window_mut()
+                    .handle_set_fold_indicators(buffer_id, enabled);
             }
             PluginCommand::SetIndentationGuide { buffer_id, enabled } => {
                 self.handle_set_indentation_guide(buffer_id, enabled);
@@ -818,14 +820,16 @@ impl Editor {
                 split_id,
                 enabled,
             } => {
-                self.handle_set_line_wrap(buffer_id, split_id, enabled);
+                self.active_window_mut()
+                    .handle_set_line_wrap(buffer_id, split_id, enabled);
             }
             PluginCommand::SetViewState {
                 buffer_id,
                 key,
                 value,
             } => {
-                self.handle_set_view_state(buffer_id, key, value);
+                self.active_window_mut()
+                    .handle_set_view_state(buffer_id, key, value);
             }
             PluginCommand::SetGlobalState {
                 plugin_name,
@@ -1288,10 +1292,10 @@ impl Editor {
             }
 
             PluginCommand::MoveTabLeft => {
-                self.handle_move_tab_left();
+                self.active_window_mut().handle_move_tab_left();
             }
             PluginCommand::MoveTabRight => {
-                self.handle_move_tab_right();
+                self.active_window_mut().handle_move_tab_right();
             }
 
             // ==================== Animation Commands ====================
@@ -2298,22 +2302,6 @@ impl Editor {
 
     // ── Handlers extracted from the dispatch match ───────────────────────
 
-    fn handle_set_split_label(&mut self, split_id: SplitId, label: String) {
-        self.windows
-            .get_mut(&self.active_window)
-            .and_then(|w| w.split_manager_mut())
-            .expect("active window must have a populated split layout")
-            .set_label(LeafId(split_id), label);
-    }
-
-    fn handle_clear_split_label(&mut self, split_id: SplitId) {
-        self.windows
-            .get_mut(&self.active_window)
-            .and_then(|w| w.split_manager_mut())
-            .expect("active window must have a populated split layout")
-            .clear_label(split_id);
-    }
-
     fn handle_reload_themes(&mut self, apply_theme: Option<String>) {
         self.reload_themes();
         if let Some(theme_name) = apply_theme {
@@ -2535,7 +2523,7 @@ impl Editor {
     ) {
         // Capture the source split *before* create_virtual_buffer tabs the
         // new buffer into it; we drop that phantom tab after the dock attach.
-        let source_split_before_create = self.split_manager().active_split();
+        let source_split_before_create = self.active_window().split_manager().active_split();
         let buffer_id =
             self.active_window_mut()
                 .create_virtual_buffer(name.clone(), mode, read_only);
@@ -2555,7 +2543,9 @@ impl Editor {
             return;
         }
         // Swap the dock leaf's active buffer to the new one and add it as a tab.
-        self.split_manager_mut().set_active_split(dock_leaf);
+        self.active_window_mut()
+            .split_manager_mut()
+            .set_active_split(dock_leaf);
         self.active_window_mut()
             .set_pane_buffer(dock_leaf, buffer_id);
         // `show_line_numbers` is per (split, buffer), and the dock leaf's view
@@ -2567,10 +2557,8 @@ impl Editor {
         // lacked. The gutter also stole the columns the panel had already laid
         // its widgets out for, so the content wrapped.
         if let Some(view_state) = self
-            .windows
-            .get_mut(&self.active_window)
-            .and_then(|w| w.split_view_states_mut())
-            .expect("active window must have a populated split layout")
+            .active_window_mut()
+            .split_view_states_mut()
             .get_mut(&dock_leaf)
         {
             view_state.ensure_buffer_state(buffer_id).show_line_numbers = show_line_numbers;
@@ -2578,10 +2566,8 @@ impl Editor {
         // Drop the phantom tab from the source split.
         if dock_leaf != source_split_before_create {
             if let Some(source_view_state) = self
-                .windows
-                .get_mut(&self.active_window)
-                .and_then(|w| w.split_view_states_mut())
-                .expect("active window must have a populated split layout")
+                .active_window_mut()
+                .split_view_states_mut()
                 .get_mut(&source_split_before_create)
             {
                 source_view_state.remove_buffer(buffer_id);
@@ -2617,9 +2603,14 @@ impl Editor {
             Ok(()) => tracing::info!("Updated existing panel '{}' content", panel_name),
             Err(e) => tracing::error!("Failed to update panel content: {}", e),
         }
-        let splits = self.split_manager().splits_for_buffer(existing_buffer_id);
+        let splits = self
+            .active_window()
+            .split_manager()
+            .splits_for_buffer(existing_buffer_id);
         if let Some(&split_id) = splits.first() {
-            self.split_manager_mut().set_active_split(split_id);
+            self.active_window_mut()
+                .split_manager_mut()
+                .set_active_split(split_id);
             // Route through set_pane_buffer so tree + SVS stay consistent.
             self.active_window_mut()
                 .set_pane_buffer(split_id, existing_buffer_id);
@@ -3291,18 +3282,10 @@ impl Editor {
             meta.hidden_from_tabs = true;
             meta.auto_revert_enabled = false;
         }
-        let active_split = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(mgr, _)| mgr)
-            .expect("active window must have a populated split layout")
-            .active_split();
+        let active_split = self.active_window().split_manager().active_split();
         if let Some(vs) = self
-            .windows
-            .get_mut(&self.active_window)
-            .and_then(|w| w.split_view_states_mut())
-            .expect("active window must have a populated split layout")
+            .active_window_mut()
+            .split_view_states_mut()
             .get_mut(&active_split)
         {
             use crate::view::split::TabTarget;
@@ -3416,12 +3399,7 @@ impl Editor {
         line: usize,
     ) {
         let actual_split_id = if split_id.0 == 0 {
-            self.windows
-                .get(&self.active_window)
-                .and_then(|w| w.buffers.splits())
-                .map(|(mgr, _)| mgr)
-                .expect("active window must have a populated split layout")
-                .active_split()
+            self.active_window().split_manager().active_split()
         } else {
             LeafId(split_id)
         };
@@ -3429,11 +3407,8 @@ impl Editor {
 
         // Get viewport height
         let viewport_height = if let Some(view_state) = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(_, vs)| vs)
-            .expect("active window must have a populated split layout")
+            .active_window()
+            .split_view_states()
             .get(&actual_split_id)
         {
             view_state.viewport.height as usize
@@ -3477,23 +3452,8 @@ impl Editor {
         let mut target_leaves: Vec<LeafId> = Vec::new();
 
         // Main tree: walk its leaves.
-        for leaf_id in self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(mgr, _)| mgr)
-            .expect("active window must have a populated split layout")
-            .root()
-            .leaf_split_ids()
-        {
-            if let Some(vs) = self
-                .windows
-                .get(&self.active_window)
-                .and_then(|w| w.buffers.splits())
-                .map(|(_, vs)| vs)
-                .expect("active window must have a populated split layout")
-                .get(&leaf_id)
-            {
+        for leaf_id in self.active_window().split_manager().root().leaf_split_ids() {
+            if let Some(vs) = self.active_window().split_view_states().get(&leaf_id) {
                 if vs.active_buffer == buffer_id {
                     target_leaves.push(leaf_id);
                 }
@@ -3504,14 +3464,7 @@ impl Editor {
         for (_group_leaf_id, node) in self.active_window().grouped_subtrees.iter() {
             if let crate::view::split::SplitNode::Grouped { layout, .. } = node {
                 for inner_leaf in layout.leaf_split_ids() {
-                    if let Some(vs) = self
-                        .windows
-                        .get(&self.active_window)
-                        .and_then(|w| w.buffers.splits())
-                        .map(|(_, vs)| vs)
-                        .expect("active window must have a populated split layout")
-                        .get(&inner_leaf)
-                    {
+                    if let Some(vs) = self.active_window().split_view_states().get(&inner_leaf) {
                         if vs.active_buffer == buffer_id && !target_leaves.contains(&inner_leaf) {
                             target_leaves.push(inner_leaf);
                         }
@@ -3862,12 +3815,10 @@ impl Editor {
             }
         }
         if !hidden_from_tabs {
-            let active_split = self.split_manager().active_split();
+            let active_split = self.active_window().split_manager().active_split();
             if let Some(view_state) = self
-                .windows
-                .get_mut(&self.active_window)
-                .and_then(|w| w.split_view_states_mut())
-                .expect("active window must have a populated split layout")
+                .active_window_mut()
+                .split_view_states_mut()
                 .get_mut(&active_split)
             {
                 let bs = view_state.ensure_buffer_state(buffer_id);
@@ -3951,11 +3902,8 @@ impl Editor {
                         })
                         .unwrap_or(0);
                     let splits: Vec<super::LeafId> = self
-                        .windows
-                        .get(&self.active_window)
-                        .and_then(|w| w.buffers.splits())
-                        .map(|(mgr, _)| mgr)
-                        .expect("active window must have a populated split layout")
+                        .active_window()
+                        .split_manager()
                         .splits_for_buffer(buffer_id);
                     self.active_window_mut()
                         .set_buffer_cursor_in_splits(buffer_id, byte, &splits);
@@ -4021,7 +3969,8 @@ impl Editor {
         // Path 1 — Utility-dock fast path (issue #1796 / Section 2 of the design):
         // if a leaf with this role already exists, attach the new buffer there
         // instead of spawning a fresh split.
-        if let Some(dock_leaf) = split_role.and_then(|r| self.split_manager().find_leaf_by_role(r))
+        if let Some(dock_leaf) =
+            split_role.and_then(|r| self.active_window().split_manager().find_leaf_by_role(r))
         {
             return self.route_vbuf_to_existing_dock(
                 dock_leaf,
@@ -4069,7 +4018,7 @@ impl Editor {
         // `create_virtual_buffer` unconditionally adds the new buffer as a tab
         // to the currently active split, which is wrong for a panel that lives
         // in its own dedicated split (it would appear in BOTH splits — bug #3).
-        let source_split_before_create = self.split_manager().active_split();
+        let source_split_before_create = self.active_window().split_manager().active_split();
 
         let buffer_id =
             self.active_window_mut()
@@ -4109,10 +4058,12 @@ impl Editor {
         // *root* so the dock spans the full width — splitting the active leaf
         // would nest it under whichever pane was focused.
         let split_result = if split_role == Some(crate::view::split::SplitRole::UtilityDock) {
-            self.split_manager_mut()
+            self.active_window_mut()
+                .split_manager_mut()
                 .split_root_positioned(split_dir, buffer_id, ratio, before)
         } else {
-            self.split_manager_mut()
+            self.active_window_mut()
+                .split_manager_mut()
                 .split_active_positioned(split_dir, buffer_id, ratio, before)
         };
 
@@ -4123,10 +4074,8 @@ impl Editor {
                 // otherwise we'd leave the buffer with no display.
                 if new_split_id != source_split_before_create {
                     if let Some(src_vs) = self
-                        .windows
-                        .get_mut(&self.active_window)
-                        .and_then(|w| w.split_view_states_mut())
-                        .expect("active window must have a populated split layout")
+                        .active_window_mut()
+                        .split_view_states_mut()
                         .get_mut(&source_split_before_create)
                     {
                         src_vs.remove_buffer(buffer_id);
@@ -4152,20 +4101,23 @@ impl Editor {
                     scroll_offset: self.config.editor.scroll_offset,
                 });
                 view_state.ensure_buffer_state(buffer_id).show_line_numbers = show_line_numbers;
-                self.windows
-                    .get_mut(&self.active_window)
-                    .and_then(|w| w.split_view_states_mut())
-                    .expect("active window must have a populated split layout")
+                self.active_window_mut()
+                    .split_view_states_mut()
                     .insert(new_split_id, view_state);
 
-                self.split_manager_mut().set_active_split(new_split_id);
+                self.active_window_mut()
+                    .split_manager_mut()
+                    .set_active_split(new_split_id);
 
                 // Tag the new leaf with the requested role so the next
                 // utility-dock open lands here. Clear any stale role first
                 // to maintain the one-leaf-per-role invariant.
                 if let Some(target_role) = split_role {
-                    self.split_manager_mut().clear_role(target_role);
-                    self.split_manager_mut()
+                    self.active_window_mut()
+                        .split_manager_mut()
+                        .clear_role(target_role);
+                    self.active_window_mut()
+                        .split_manager_mut()
                         .set_leaf_role(new_split_id, Some(target_role));
                     tracing::info!(
                         "Tagged new dock leaf {:?} with role {:?}",
@@ -4278,10 +4230,8 @@ impl Editor {
         // Show the buffer in the target split. set_pane_buffer
         // covers the tree + SVS updates the old code did by hand.
         let leaf_id = LeafId(split_id);
-        self.windows
-            .get_mut(&self.active_window)
-            .and_then(|w| w.split_manager_mut())
-            .expect("active window must have a populated split layout")
+        self.active_window_mut()
+            .split_manager_mut()
             .set_active_split(leaf_id);
         self.active_window_mut().set_pane_buffer(leaf_id, buffer_id);
 
@@ -4291,10 +4241,8 @@ impl Editor {
         // already called switch_buffer, but the downstream code
         // also nudges open_buffers and focus_history.
         if let Some(view_state) = self
-            .windows
-            .get_mut(&self.active_window)
-            .and_then(|w| w.split_view_states_mut())
-            .expect("active window must have a populated split layout")
+            .active_window_mut()
+            .split_view_states_mut()
             .get_mut(&leaf_id)
         {
             view_state.switch_buffer(buffer_id);
@@ -4832,11 +4780,8 @@ impl Editor {
 
     fn handle_get_split_by_label(&mut self, label: String, request_id: u64) {
         let split_id = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(mgr, _)| mgr)
-            .expect("active window must have a populated split layout")
+            .active_window()
+            .split_manager()
             .find_split_by_label(&label);
         let callback_id = fresh_core::api::JsCallbackId::from(request_id);
         let json =
@@ -5480,7 +5425,6 @@ impl Editor {
         // so a plugin that re-mounts (e.g. reopening a panel with
         // a fresh prefill) sees its spec values take effect. To
         // *preserve* state across renders, the plugin uses Update.
-        let avail_height = self.widget_panel_height(buffer_id);
         let ink = self.markdown_ink();
         let out = crate::widgets::resolve_panel(
             &spec,
@@ -5489,7 +5433,6 @@ impl Editor {
             options.auto_focus_first(),
             Some(ink.ctx()),
         );
-        self.record_widget_panel_render_height(&panel_key, avail_height);
         self.widget_registry.mount(
             panel_key.clone(),
             buffer_id,
@@ -5549,12 +5492,6 @@ impl Editor {
             .focus_key(panel_key)
             .map(|s| s.to_string())
             .unwrap_or_default();
-        let buffer_id = self
-            .widget_registry
-            .buffer_and_spec(panel_key)
-            .map(|(b, _)| b)
-            .unwrap_or(BufferId(0));
-        let avail_height = self.widget_panel_height(buffer_id);
         // The policy the mount set, not a fresh default: a repaint that
         // resolved focus differently from the mount is exactly the drift
         // `auto_focus_first` exists to prevent.
@@ -5571,7 +5508,6 @@ impl Editor {
             auto_focus_first,
             Some(ink.ctx()),
         );
-        self.record_widget_panel_render_height(panel_key, avail_height);
         match self
             .widget_registry
             .update(panel_key, spec, out.instance_states, out.focus_key)
@@ -5668,7 +5604,6 @@ impl Editor {
                             completion_selected_index: sel_idx,
                             completion_scroll_offset: scroll_off,
                             completion_navigated: navigated,
-                            user_scrolled: false,
                         },
                     );
                 }
@@ -5798,12 +5733,12 @@ impl Editor {
             WidgetMutation::SetExpandedKeys { widget_key, keys } => {
                 // Tree expanded_keys lives in instance state.
                 if let Some(panel) = self.widget_registry.get_mut(panel_key) {
-                    // Selection and the scroll latch carry through the one
-                    // resolver, so a mutation on a tree nobody has touched
-                    // keeps the spec's seeded selection instead of blanking
-                    // it. The scroll offset is not here at all any more —
-                    // it is the paint's window.
-                    let (prev_sel, prev_user_scrolled) =
+                    // Selection carries through the one resolver, so a
+                    // mutation on a tree nobody has touched keeps the spec's
+                    // seeded selection instead of blanking it. The scroll
+                    // offset is not here at all any more — it is the
+                    // viewport's.
+                    let prev_sel =
                         match crate::widgets::find_widget_by_key(&panel.spec, &widget_key) {
                             Some(spec) => {
                                 let r = crate::widgets::kinds::tree::resolve(
@@ -5811,9 +5746,9 @@ impl Editor {
                                     &widget_key,
                                     &panel.instance_states,
                                 );
-                                (r.selected, r.user_scrolled)
+                                r.selected
                             }
-                            None => (-1, false),
+                            None => -1,
                         };
                     let expanded: std::collections::HashSet<String> = keys.into_iter().collect();
                     panel.instance_states.insert(
@@ -5821,7 +5756,6 @@ impl Editor {
                         crate::widgets::WidgetInstanceState::Tree {
                             selected_index: prev_sel,
                             expanded_keys: expanded,
-                            user_scrolled: prev_user_scrolled,
                         },
                     );
                 }
@@ -6054,6 +5988,7 @@ impl Editor {
     /// The panel state is the same `FloatingWidgetState`; what differs is
     /// where it lives (`Editor::sidebar_sections`, see `app::sidebar`) and
     /// the sentinel buffer its registry entry names (`PanelSlot::Sidebar`).
+    #[allow(clippy::too_many_arguments)]
     fn handle_mount_sidebar_section(
         &mut self,
         panel_key: crate::widgets::PanelKey,
@@ -6198,7 +6133,6 @@ impl Editor {
                 "UpdateFloatingWidget for unknown panel {} ignored (not in registry)",
                 panel_key
             );
-            return;
         }
     }
 
@@ -6442,11 +6376,8 @@ impl Editor {
             .get(&buffer_id)
         {
             let cursor_pos = self
-                .windows
-                .get(&self.active_window)
-                .and_then(|w| w.buffers.splits())
-                .map(|(_, vs)| vs)
-                .expect("active window must have a populated split layout")
+                .active_window()
+                .split_view_states()
                 .values()
                 .find_map(|vs| vs.buffer_state(buffer_id))
                 .map(|bs| bs.cursors.primary().position)
@@ -6788,168 +6719,6 @@ fn clamp_buffer_text_range(start: usize, end: usize, len: usize) -> (usize, usiz
     (start, end)
 }
 
-#[cfg(test)]
-mod tests {
-    //! Focused tests for the SpawnHostProcess kill mechanism.
-    //!
-    //! These don't exercise the full `handle_plugin_command` dispatcher
-    //! (which would require scaffolding an Editor with a real tokio
-    //! runtime and async_bridge); they replicate the inner
-    //! `tokio::select!` pattern directly on a real subprocess. A
-    //! regression in the select arms or in the kill-then-wait
-    //! sequencing would reproduce here.
-    //!
-    //! The dispatcher-level integration coverage comes from the e2e
-    //! attach-cancel test in `tests/e2e/` — this unit test is the
-    //! lower-level pin.
-    use tokio::io::{AsyncReadExt, BufReader};
-    use tokio::process::Command as TokioCommand;
-    use tokio::time::{timeout, Duration};
-
-    /// A long-sleep child that runs `tokio::select! { wait | kill_rx }`
-    /// terminates when the kill channel fires, and the terminal exit
-    /// code reflects signal termination (non-zero / None).
-    ///
-    /// Spawns `sleep` directly rather than through `sh -c` so SIGKILL
-    /// reaches the process whose pipe our reader futures hold —
-    /// `sh -c sleep` leaks the sleep child on SIGKILL (Q-C2), the
-    /// pipe stays open, and the reader future hangs. That's a
-    /// deliberate known limitation of start_kill; this test
-    /// exercises the clean path.
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn kill_via_oneshot_terminates_long_running_child() {
-        let mut cmd = TokioCommand::new("sleep");
-        cmd.args(["30"]);
-        cmd.stdout(std::process::Stdio::piped());
-        cmd.stderr(std::process::Stdio::piped());
-
-        let mut child = cmd.spawn().expect("spawn sh -c sleep 30");
-        let pid = child.id().expect("child has a pid");
-
-        let (kill_tx, mut kill_rx) = tokio::sync::oneshot::channel::<()>();
-        let stdout_pipe = child.stdout.take();
-        let stderr_pipe = child.stderr.take();
-
-        let stdout_fut = async {
-            let mut buf = String::new();
-            if let Some(s) = stdout_pipe {
-                #[allow(clippy::let_underscore_must_use)]
-                let _ = BufReader::new(s).read_to_string(&mut buf).await;
-            }
-            buf
-        };
-        let stderr_fut = async {
-            let mut buf = String::new();
-            if let Some(s) = stderr_pipe {
-                #[allow(clippy::let_underscore_must_use)]
-                let _ = BufReader::new(s).read_to_string(&mut buf).await;
-            }
-            buf
-        };
-        let wait_fut = async {
-            tokio::select! {
-                status = child.wait() => {
-                    status.map(|s| s.code().unwrap_or(-1)).unwrap_or(-1)
-                }
-                _ = &mut kill_rx => {
-                    #[allow(clippy::let_underscore_must_use)]
-                    let _ = child.start_kill();
-                    child
-                        .wait()
-                        .await
-                        .map(|s| s.code().unwrap_or(-1))
-                        .unwrap_or(-1)
-                }
-            }
-        };
-
-        // Give the shell a moment to install itself — firing kill
-        // against an not-yet-existent child is still valid (SIGKILL
-        // to a zombie is a no-op) but we want to actually exercise
-        // the running-child path.
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        kill_tx.send(()).expect("kill channel send");
-
-        let result = timeout(Duration::from_secs(5), async {
-            tokio::join!(stdout_fut, stderr_fut, wait_fut)
-        })
-        .await;
-
-        let (_stdout, _stderr, exit_code) = result.expect(
-            "kill path must resolve within 5s — if this times out the \
-             select! arm order or kill-then-wait logic is broken",
-        );
-        // The cross-platform invariant is "the child did not complete
-        // its 30s sleep" — i.e. the exit code is non-success. Platform
-        // specifics:
-        //   - Unix: `start_kill()` sends SIGKILL; `ExitStatus::code()`
-        //     returns None for signal-terminated processes, which our
-        //     dispatcher maps to -1 via `.unwrap_or(-1)`.
-        //   - Windows: `start_kill()` calls `TerminateProcess(..., 1)`;
-        //     `code()` returns `Some(1)`, mapped to 1 by the same
-        //     `.unwrap_or(-1)`.
-        // A successful 30s sleep would yield 0 — that's the
-        // regression case we're guarding against.
-        assert_ne!(
-            exit_code, 0,
-            "killed child must exit non-success (got 0 — did the \
-             kill arm fire too late, or did sleep somehow complete?)"
-        );
-
-        // Sanity: on Unix the child must be gone. `kill -0 <pid>`
-        // returns 0 iff the process still exists; we expect non-zero
-        // (No such process) after wait(). This catches a zombie /
-        // leaked child that would indicate we skipped the wait() on
-        // the kill path. Skipped on Windows — `kill` isn't available
-        // and `tasklist` output parsing is more noise than signal
-        // for this one-shot check; the wait() having returned is
-        // already evidence of reap there.
-        #[cfg(unix)]
-        {
-            let still_alive = std::process::Command::new("kill")
-                .args(["-0", &pid.to_string()])
-                .status()
-                .map(|s| s.success())
-                .unwrap_or(false);
-            assert!(
-                !still_alive,
-                "process {pid} must be reaped after wait() — a still-\
-                 alive check means the kill path leaked the child"
-            );
-        }
-        #[cfg(not(unix))]
-        {
-            // Touch `pid` so the unused-variable lint doesn't fire on
-            // non-Unix builds.
-            let _ = pid;
-        }
-    }
-
-    use super::clamp_buffer_text_range;
-
-    #[test]
-    fn clamp_text_range_passes_through_in_bounds() {
-        assert_eq!(clamp_buffer_text_range(0, 165, 165), (0, 165));
-        assert_eq!(clamp_buffer_text_range(10, 50, 165), (10, 50));
-    }
-
-    /// The reported regression: `getBufferLength` returned a snapshot
-    /// length one byte ahead of the live buffer (the file was shrinking
-    /// under concurrent editor + external edits), so `getBufferText`
-    /// requested `0..len+1`. Pre-fix this produced "Invalid range
-    /// 0..165003 for buffer of length 165002"; now the end clamps down.
-    #[test]
-    fn clamp_text_range_clamps_stale_end_past_buffer() {
-        assert_eq!(clamp_buffer_text_range(0, 165_003, 165_002), (0, 165_002));
-    }
-
-    #[test]
-    fn clamp_text_range_pins_overlarge_start_to_empty() {
-        // start beyond the live length must not yield start > end.
-        assert_eq!(clamp_buffer_text_range(200, 250, 165), (165, 165));
-    }
-}
-
 impl Window {
     /// Populate the per-window fields of the plugin state snapshot.
     ///
@@ -7021,10 +6790,7 @@ impl Window {
                 .collect()
         };
 
-        let (mgr_ref, vs_ref) = self
-            .buffers
-            .splits()
-            .expect("active window must have a populated split layout");
+        let (mgr_ref, vs_ref) = self.splits();
         let active_split = mgr_ref.active_split();
         snapshot.active_split_id = active_split.0 .0;
 
@@ -7402,5 +7168,177 @@ impl VariantNameSink {
             return "PluginCommand";
         }
         std::str::from_utf8(&self.buf[..self.len]).unwrap_or("PluginCommand")
+    }
+}
+
+impl crate::app::window::Window {
+    fn handle_set_split_label(&mut self, split_id: SplitId, label: String) {
+        self.split_manager_mut().set_label(LeafId(split_id), label);
+    }
+
+    fn handle_clear_split_label(&mut self, split_id: SplitId) {
+        self.split_manager_mut().clear_label(split_id);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! Focused tests for the SpawnHostProcess kill mechanism.
+    //!
+    //! These don't exercise the full `handle_plugin_command` dispatcher
+    //! (which would require scaffolding an Editor with a real tokio
+    //! runtime and async_bridge); they replicate the inner
+    //! `tokio::select!` pattern directly on a real subprocess. A
+    //! regression in the select arms or in the kill-then-wait
+    //! sequencing would reproduce here.
+    //!
+    //! The dispatcher-level integration coverage comes from the e2e
+    //! attach-cancel test in `tests/e2e/` — this unit test is the
+    //! lower-level pin.
+    use tokio::io::{AsyncReadExt, BufReader};
+    use tokio::process::Command as TokioCommand;
+    use tokio::time::{timeout, Duration};
+
+    /// A long-sleep child that runs `tokio::select! { wait | kill_rx }`
+    /// terminates when the kill channel fires, and the terminal exit
+    /// code reflects signal termination (non-zero / None).
+    ///
+    /// Spawns `sleep` directly rather than through `sh -c` so SIGKILL
+    /// reaches the process whose pipe our reader futures hold —
+    /// `sh -c sleep` leaks the sleep child on SIGKILL (Q-C2), the
+    /// pipe stays open, and the reader future hangs. That's a
+    /// deliberate known limitation of start_kill; this test
+    /// exercises the clean path.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn kill_via_oneshot_terminates_long_running_child() {
+        let mut cmd = TokioCommand::new("sleep");
+        cmd.args(["30"]);
+        cmd.stdout(std::process::Stdio::piped());
+        cmd.stderr(std::process::Stdio::piped());
+
+        let mut child = cmd.spawn().expect("spawn sh -c sleep 30");
+        let pid = child.id().expect("child has a pid");
+
+        let (kill_tx, mut kill_rx) = tokio::sync::oneshot::channel::<()>();
+        let stdout_pipe = child.stdout.take();
+        let stderr_pipe = child.stderr.take();
+
+        let stdout_fut = async {
+            let mut buf = String::new();
+            if let Some(s) = stdout_pipe {
+                #[allow(clippy::let_underscore_must_use)]
+                let _ = BufReader::new(s).read_to_string(&mut buf).await;
+            }
+            buf
+        };
+        let stderr_fut = async {
+            let mut buf = String::new();
+            if let Some(s) = stderr_pipe {
+                #[allow(clippy::let_underscore_must_use)]
+                let _ = BufReader::new(s).read_to_string(&mut buf).await;
+            }
+            buf
+        };
+        let wait_fut = async {
+            tokio::select! {
+                status = child.wait() => {
+                    status.map(|s| s.code().unwrap_or(-1)).unwrap_or(-1)
+                }
+                _ = &mut kill_rx => {
+                    #[allow(clippy::let_underscore_must_use)]
+                    let _ = child.start_kill();
+                    child
+                        .wait()
+                        .await
+                        .map(|s| s.code().unwrap_or(-1))
+                        .unwrap_or(-1)
+                }
+            }
+        };
+
+        // Give the shell a moment to install itself — firing kill
+        // against an not-yet-existent child is still valid (SIGKILL
+        // to a zombie is a no-op) but we want to actually exercise
+        // the running-child path.
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        kill_tx.send(()).expect("kill channel send");
+
+        let result = timeout(Duration::from_secs(5), async {
+            tokio::join!(stdout_fut, stderr_fut, wait_fut)
+        })
+        .await;
+
+        let (_stdout, _stderr, exit_code) = result.expect(
+            "kill path must resolve within 5s — if this times out the \
+             select! arm order or kill-then-wait logic is broken",
+        );
+        // The cross-platform invariant is "the child did not complete
+        // its 30s sleep" — i.e. the exit code is non-success. Platform
+        // specifics:
+        //   - Unix: `start_kill()` sends SIGKILL; `ExitStatus::code()`
+        //     returns None for signal-terminated processes, which our
+        //     dispatcher maps to -1 via `.unwrap_or(-1)`.
+        //   - Windows: `start_kill()` calls `TerminateProcess(..., 1)`;
+        //     `code()` returns `Some(1)`, mapped to 1 by the same
+        //     `.unwrap_or(-1)`.
+        // A successful 30s sleep would yield 0 — that's the
+        // regression case we're guarding against.
+        assert_ne!(
+            exit_code, 0,
+            "killed child must exit non-success (got 0 — did the \
+             kill arm fire too late, or did sleep somehow complete?)"
+        );
+
+        // Sanity: on Unix the child must be gone. `kill -0 <pid>`
+        // returns 0 iff the process still exists; we expect non-zero
+        // (No such process) after wait(). This catches a zombie /
+        // leaked child that would indicate we skipped the wait() on
+        // the kill path. Skipped on Windows — `kill` isn't available
+        // and `tasklist` output parsing is more noise than signal
+        // for this one-shot check; the wait() having returned is
+        // already evidence of reap there.
+        #[cfg(unix)]
+        {
+            let still_alive = std::process::Command::new("kill")
+                .args(["-0", &pid.to_string()])
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false);
+            assert!(
+                !still_alive,
+                "process {pid} must be reaped after wait() — a still-\
+                 alive check means the kill path leaked the child"
+            );
+        }
+        #[cfg(not(unix))]
+        {
+            // Touch `pid` so the unused-variable lint doesn't fire on
+            // non-Unix builds.
+            let _ = pid;
+        }
+    }
+
+    use super::clamp_buffer_text_range;
+
+    #[test]
+    fn clamp_text_range_passes_through_in_bounds() {
+        assert_eq!(clamp_buffer_text_range(0, 165, 165), (0, 165));
+        assert_eq!(clamp_buffer_text_range(10, 50, 165), (10, 50));
+    }
+
+    /// The reported regression: `getBufferLength` returned a snapshot
+    /// length one byte ahead of the live buffer (the file was shrinking
+    /// under concurrent editor + external edits), so `getBufferText`
+    /// requested `0..len+1`. Pre-fix this produced "Invalid range
+    /// 0..165003 for buffer of length 165002"; now the end clamps down.
+    #[test]
+    fn clamp_text_range_clamps_stale_end_past_buffer() {
+        assert_eq!(clamp_buffer_text_range(0, 165_003, 165_002), (0, 165_002));
+    }
+
+    #[test]
+    fn clamp_text_range_pins_overlarge_start_to_empty() {
+        // start beyond the live length must not yield start > end.
+        assert_eq!(clamp_buffer_text_range(200, 250, 165), (165, 165));
     }
 }

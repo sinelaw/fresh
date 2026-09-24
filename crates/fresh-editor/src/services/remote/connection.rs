@@ -392,7 +392,7 @@ pub fn spawn_reconnect_task(
 /// and tests (with a fake connection factory). The `connect_fn` is called each
 /// time a reconnection attempt is made. It should return a [`Carrier`].
 ///
-/// The task owns the carrier it installs, in `installed`, for as long as its
+/// The task owns the carrier it installs, in `_installed`, for as long as its
 /// transport is the one in use: nothing else holds the process.
 pub fn spawn_reconnect_task_with<F, Fut>(
     channel: std::sync::Arc<AgentChannel>,
@@ -405,7 +405,8 @@ where
     Fut: std::future::Future<Output = Result<Carrier, SshError>> + Send,
 {
     tokio::spawn(async move {
-        let mut installed: Option<Child> = None;
+        // Held for its `Drop` (see above): never read.
+        let mut _installed: Option<Child> = None;
         loop {
             // Wait until disconnected
             while channel.is_connected() {
@@ -436,7 +437,7 @@ where
                             .replace_transport(carrier.reader, carrier.writer)
                             .await;
                         // After the swap, so the process let go of is the one no longer in use.
-                        installed = carrier.process;
+                        _installed = carrier.process;
                         break;
                     }
                     Err(e) => {

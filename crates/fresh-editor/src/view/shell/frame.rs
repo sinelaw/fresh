@@ -1030,6 +1030,79 @@ pub fn region_rects(
     regions_of(&ui, size)
 }
 
+/// **Which keyboard vocabulary a focused element is under**, read off a
+/// key on its focus chain.
+///
+/// Every surface with a key section of its own puts a key on the node that
+/// holds focus while it has the keyboard — the settings box, a modal's seam,
+/// a popup's keyboard seam, the prompt's sink, a panel's interior or sink —
+/// and this is the one table from those keys to the `KeyContext` the keymap
+/// resolves against. `Editor::get_key_context` walks the chain from the
+/// focused element outward and takes the first answer; a chain with none is
+/// the editor's own content, whose context is the window's.
+///
+/// This replaced a ranked stack of layer declarations (`app::overlay`'s
+/// `Layer`, `LayerKind` and `chrome::layer_rank`) that each surface had to
+/// keep in step with the tree by hand: which surface has the keyboard is
+/// where focus is, and the tree already knows.
+///
+/// A surface with a custom dispatcher — the keybinding editor, the
+/// calibration wizard, the workspace-trust prompt, event debug — answers
+/// nothing and the walk continues outward, exactly as its `key_context:
+/// None` layer was skipped. A pane-mounted panel is the buffer's, and
+/// answers nothing for the same reason its keys are the buffer's mode's.
+pub fn key_context_of(k: &fresh_ui::Key) -> Option<crate::input::keybindings::KeyContext> {
+    use crate::input::keybindings::KeyContext as C;
+    use fresh_ui::Key;
+    let named = |s: &str| match s {
+        "keys:settings" => Some(C::Settings),
+        "keys:prompt" => Some(C::Prompt),
+        "keys:search_prompt" => Some(C::SearchPrompt),
+        "keys:popup" => Some(C::Popup),
+        "keys:completion" => Some(C::Completion),
+        "keys:dock" => Some(C::Dock),
+        "keys:floating_panel" => Some(C::Normal),
+        _ => None,
+    };
+    match k {
+        Key::Str(s) => {
+            if let Some(c) = named(s) {
+                return Some(c);
+            }
+            if *k == super::settings::key() || *k == super::settings::dialog_key() {
+                return Some(C::Settings);
+            }
+            None
+        }
+        Key::Pair(name, _) => match &**name {
+            "settings_entry" => Some(C::Settings),
+            "menu_dropdown" => Some(C::Menu),
+            "explorer_header" => Some(C::FileExplorer),
+            "keys:sidebar" | "sidebar_header" => Some(C::Dock),
+            "panel_interior" => {
+                if *k == super::panel::interior_key(super::widgets::Slot::Dock) {
+                    Some(C::Dock)
+                } else if *k == super::panel::interior_key(super::widgets::Slot::Floating) {
+                    Some(C::Normal)
+                } else if *k == super::panel::interior_key(super::widgets::Slot::Settings)
+                    || *k == super::panel::interior_key(super::widgets::Slot::SettingsEntry)
+                {
+                    Some(C::Settings)
+                } else if *k == super::panel::interior_key(super::widgets::Slot::PromptToolbar) {
+                    // A focused toolbar control is still the prompt's
+                    // keyboard: the toolbar sits on the prompt's ring.
+                    Some(C::Prompt)
+                } else {
+                    // A sidebar section's interior.
+                    Some(C::Dock)
+                }
+            }
+            _ => None,
+        },
+        Key::Int(_) => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1676,78 +1749,5 @@ mod tests {
             serde_json::from_str::<DockWidthRule>(r#"{"cols": 30}"#).is_err(),
             "an unknown field is a typo"
         );
-    }
-}
-
-/// **Which keyboard vocabulary a focused element is under**, read off a
-/// key on its focus chain.
-///
-/// Every surface with a key section of its own puts a key on the node that
-/// holds focus while it has the keyboard — the settings box, a modal's seam,
-/// a popup's keyboard seam, the prompt's sink, a panel's interior or sink —
-/// and this is the one table from those keys to the `KeyContext` the keymap
-/// resolves against. `Editor::get_key_context` walks the chain from the
-/// focused element outward and takes the first answer; a chain with none is
-/// the editor's own content, whose context is the window's.
-///
-/// This replaced a ranked stack of layer declarations (`app::overlay`'s
-/// `Layer`, `LayerKind` and `chrome::layer_rank`) that each surface had to
-/// keep in step with the tree by hand: which surface has the keyboard is
-/// where focus is, and the tree already knows.
-///
-/// A surface with a custom dispatcher — the keybinding editor, the
-/// calibration wizard, the workspace-trust prompt, event debug — answers
-/// nothing and the walk continues outward, exactly as its `key_context:
-/// None` layer was skipped. A pane-mounted panel is the buffer's, and
-/// answers nothing for the same reason its keys are the buffer's mode's.
-pub fn key_context_of(k: &fresh_ui::Key) -> Option<crate::input::keybindings::KeyContext> {
-    use crate::input::keybindings::KeyContext as C;
-    use fresh_ui::Key;
-    let named = |s: &str| match s {
-        "keys:settings" => Some(C::Settings),
-        "keys:prompt" => Some(C::Prompt),
-        "keys:search_prompt" => Some(C::SearchPrompt),
-        "keys:popup" => Some(C::Popup),
-        "keys:completion" => Some(C::Completion),
-        "keys:dock" => Some(C::Dock),
-        "keys:floating_panel" => Some(C::Normal),
-        _ => None,
-    };
-    match k {
-        Key::Str(s) => {
-            if let Some(c) = named(s) {
-                return Some(c);
-            }
-            if *k == super::settings::key() || *k == super::settings::dialog_key() {
-                return Some(C::Settings);
-            }
-            None
-        }
-        Key::Pair(name, _) => match &**name {
-            "settings_entry" => Some(C::Settings),
-            "menu_dropdown" => Some(C::Menu),
-            "explorer_header" => Some(C::FileExplorer),
-            "keys:sidebar" | "sidebar_header" => Some(C::Dock),
-            "panel_interior" => {
-                if *k == super::panel::interior_key(super::widgets::Slot::Dock) {
-                    Some(C::Dock)
-                } else if *k == super::panel::interior_key(super::widgets::Slot::Floating) {
-                    Some(C::Normal)
-                } else if *k == super::panel::interior_key(super::widgets::Slot::Settings)
-                    || *k == super::panel::interior_key(super::widgets::Slot::SettingsEntry)
-                {
-                    Some(C::Settings)
-                } else if *k == super::panel::interior_key(super::widgets::Slot::PromptToolbar) {
-                    // A focused toolbar control is still the prompt's
-                    // keyboard: the toolbar sits on the prompt's ring.
-                    Some(C::Prompt)
-                } else {
-                    // A sidebar section's interior.
-                    Some(C::Dock)
-                }
-            }
-            _ => None,
-        },
-        Key::Int(_) => None,
     }
 }

@@ -68,18 +68,6 @@ pub fn get_js_execution_state() -> String {
         .unwrap_or_else(|_| "(mutex poisoned)".to_string())
 }
 
-/// Global callback for dumping JavaScript state on signal
-static JS_DUMP_CALLBACK: Mutex<Option<Box<dyn Fn() + Send + Sync>>> = Mutex::new(None);
-
-/// Register a callback to dump JavaScript state when a signal is received.
-/// This is called by the plugin manager to register its dump function.
-pub fn register_js_dump_callback<F>(callback: F)
-where
-    F: Fn() + Send + Sync + 'static,
-{
-    *JS_DUMP_CALLBACK.lock().unwrap() = Some(Box::new(callback));
-}
-
 /// Dump JavaScript state.
 ///
 /// Called from the reporting thread, never from a handler: it takes two
@@ -90,12 +78,6 @@ pub fn dump_js_state() {
         tracing::error!("Current JS execution: {}", state);
     } else {
         tracing::error!("JS execution state: (idle or not tracked)");
-    }
-
-    if let Ok(guard) = JS_DUMP_CALLBACK.lock() {
-        if let Some(ref callback) = *guard {
-            callback();
-        }
     }
 }
 

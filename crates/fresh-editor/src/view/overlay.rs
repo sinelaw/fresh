@@ -1056,7 +1056,7 @@ mod tests {
         );
         mgr.check_invariants();
         assert!(
-            mgr.namespace_to_idx.get(&scratch).is_none(),
+            !mgr.namespace_to_idx.contains_key(&scratch),
             "the cleared namespace leaves no index entry behind"
         );
         // Every surviving overlay must be findable at its recorded index.

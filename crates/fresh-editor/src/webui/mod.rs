@@ -430,11 +430,6 @@ impl WebBridge {
         !self.ws.is_empty() || !self.pending.is_empty()
     }
 
-    /// How many browsers are connected.
-    pub fn client_count(&self) -> usize {
-        self.ws.len()
-    }
-
     /// The grid size that fits every connected browser: the element-wise MIN of
     /// their wanted (cols, rows), so each can see the whole grid (bigger
     /// windows letterbox). Clients that haven't reported a size yet
@@ -547,7 +542,8 @@ impl WebBridge {
                         &self.bind_host,
                         self.allow_reset,
                     ) {
-                        Ok(Served::WsClient(mut session)) => {
+                        Ok(Served::WsClient(session)) => {
+                            let mut session = *session;
                             // A new client mirrors the same editor. Seed its
                             // wanted size from the current effective grid so it
                             // doesn't momentarily shrink everyone to the default
@@ -836,7 +832,8 @@ fn try_parse_request(buf: &[u8]) -> Option<HttpRequest> {
 /// Outcome of serving one complete request.
 enum Served {
     /// The request was a successful `/ws` upgrade — this is the new client.
-    WsClient(WsSession),
+    /// Boxed: a session is large, and every other request answers `Http`.
+    WsClient(Box<WsSession>),
     /// A plain HTTP exchange; `mutated` = the route may have changed editor
     /// state (input routes, /step, /reset), so a connected WS client should
     /// get a diff pushed without waiting for the tick deadline.
@@ -875,7 +872,7 @@ fn serve_request(
             .is_some_and(|u| u.to_ascii_lowercase().contains("websocket"));
     if wants_ws {
         return match upgrade_ws(stream, req, editor, *cols, *rows, clip, bind_host)? {
-            Some(session) => Ok(Served::WsClient(session)),
+            Some(session) => Ok(Served::WsClient(Box::new(session))),
             None => Ok(Served::Http { mutated: false }),
         };
     }
@@ -1078,13 +1075,10 @@ fn apply_paste(editor: &mut Editor, v: &Value) {
 /// panel on the page to have clicked. See
 /// `docs/internal/retained-mode-ui.md` "The web".
 fn apply_widget(editor: &mut Editor, v: &Value) {
-    match v.get("surface").and_then(|s| s.as_str()) {
-        Some("toolbar") => {
-            if let Some(key) = v.get("key").and_then(|k| k.as_str()) {
-                editor.toggle_overlay_toolbar_widget(key);
-            }
+    if let Some("toolbar") = v.get("surface").and_then(|s| s.as_str()) {
+        if let Some(key) = v.get("key").and_then(|k| k.as_str()) {
+            editor.toggle_overlay_toolbar_widget(key);
         }
-        _ => {}
     }
 }
 
@@ -1596,8 +1590,7 @@ impl WsSession {
     /// buffering unboundedly.
     fn flush(&mut self) -> std::io::Result<()> {
         if self.outbuf.len() > WS_OUTBUF_CAP {
-            return Err(std::io::Error::new(
-                ErrorKind::Other,
+            return Err(std::io::Error::other(
                 "ws outbound backlog exceeded cap; peer not draining",
             ));
         }

@@ -78,8 +78,7 @@ fn test_clock_element_renders() {
     harness.render().unwrap();
 
     let status = harness.get_status_bar();
-    // Clock renders as HH:MM with hardware blink on the colon.
-    // Match DD:DD pattern anywhere in the status bar.
+    // Clock renders as HH:MM; match DD:DD anywhere in the status bar.
     let has_time = {
         let bytes = status.as_bytes();
         bytes.windows(5).any(|w| {
@@ -401,5 +400,111 @@ fn test_both_sides_empty() {
     assert!(
         !status.contains("Ln"),
         "No cursor info expected.\nStatus bar: {status}"
+    );
+}
+
+/// Ctrl+Right-click a status-bar cell and return the inspector's text.
+fn inspect_status_cell(harness: &mut EditorTestHarness, col: u16) -> String {
+    use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+    let row = crate::common::harness::layout::status_bar_row(harness.terminal_height()) as u16;
+    for kind in [
+        MouseEventKind::Down(MouseButton::Right),
+        MouseEventKind::Up(MouseButton::Right),
+    ] {
+        harness
+            .send_mouse(MouseEvent {
+                kind,
+                column: col,
+                row,
+                modifiers: KeyModifiers::CONTROL,
+            })
+            .unwrap();
+    }
+    harness.render().unwrap();
+    harness.screen_to_string()
+}
+
+/// The theme inspector names the keys a status-bar cell was painted with:
+/// the bar's own for an element, the separator's for the separator. Both
+/// come from the fold's provenance, read off the runs' theme names.
+#[test]
+fn test_theme_inspector_names_status_bar_keys() {
+    let mut config = config_with_status_bar(
+        vec![StatusBarElement::Filename],
+        vec![StatusBarElement::LineEnding, StatusBarElement::Encoding],
+    );
+    config.editor.status_bar.separator = "|".to_string();
+    let mut harness = EditorTestHarness::with_temp_project_and_config(100, 24, config).unwrap();
+    let dir = harness.project_dir().unwrap();
+    let file = dir.join("named.txt");
+    fs::write(&file, "hello\n").unwrap();
+    harness.open_file(&file).unwrap();
+    harness.render().unwrap();
+
+    let status = harness.get_status_bar();
+    let col = |needle: &str| {
+        status
+            .find(needle)
+            .unwrap_or_else(|| panic!("{needle:?} on the bar: {status}")) as u16
+    };
+    let (name_col, sep_col) = (col("named.txt"), col("LF |") + 3);
+
+    let shown = inspect_status_cell(&mut harness, name_col);
+    assert!(
+        shown.contains("ui.status_bar_fg") && shown.contains("ui.status_bar_bg"),
+        "the filename is painted in the bar's keys:\n{shown}"
+    );
+
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    let shown = inspect_status_cell(&mut harness, sep_col);
+    assert!(
+        shown.contains("ui.status_separator_fg") && shown.contains("ui.status_separator_bg"),
+        "the separator is painted in its own keys:\n{shown}"
+    );
+}
+
+/// A popup opened from a status-bar element hangs directly above that
+/// element. The read-only menu used to be anchored to the first element on
+/// the right side whatever opened it, so an `[RO]` on the left opened its
+/// menu across the bar from it.
+#[test]
+fn test_status_bar_popup_opens_above_its_own_segment() {
+    let config = config_with_status_bar(
+        vec![StatusBarElement::Cursor, StatusBarElement::ReadOnly],
+        vec![StatusBarElement::Encoding, StatusBarElement::LineEnding],
+    );
+    let mut harness = EditorTestHarness::with_temp_project_and_config(120, 30, config).unwrap();
+    let dir = harness.project_dir().unwrap();
+    let file = dir.join("locked.txt");
+    fs::write(&file, "hello\n").unwrap();
+    harness.open_file(&file).unwrap();
+    let buffer_id = harness.editor().active_buffer();
+    harness
+        .editor_mut()
+        .active_window_mut()
+        .mark_buffer_read_only(buffer_id, true);
+    harness.render().unwrap();
+
+    let status = harness.get_status_bar();
+    let ro_col = status
+        .find("[RO]")
+        .unwrap_or_else(|| panic!("[RO] on the bar: {status}")) as u16;
+    let row = crate::common::harness::layout::status_bar_row(harness.terminal_height()) as u16;
+    harness.mouse_click(ro_col, row).unwrap();
+    harness.render().unwrap();
+
+    let (item_col, item_row) = harness
+        .find_text_on_screen("Enable editing")
+        .unwrap_or_else(|| panic!("the read-only menu:\n{}", harness.screen_to_string()));
+    assert!(item_row < row, "the menu sits above the bar");
+    // The segment starts one cell before `[RO]` (its padding); the item's
+    // text sits inside the popup's border and its four-space indent.
+    let seg_x = ro_col - 1;
+    assert!(
+        (seg_x..seg_x + 8).contains(&item_col),
+        "the menu hangs off `[RO]` at column {seg_x}, but its item is at \
+         column {item_col}:\n{}",
+        harness.screen_to_string()
     );
 }

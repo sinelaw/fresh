@@ -159,7 +159,7 @@ impl CoordMap {
 
     /// Number of retained deltas (for tests/diagnostics).
     #[cfg(test)]
-    pub fn len(&self) -> usize {
+    pub fn retained_deltas(&self) -> usize {
         self.deltas.len()
     }
 }
@@ -284,7 +284,7 @@ mod tests {
         m.record_insert(1, 0, 1);
         m.record_insert(2, 0, 1);
         m.record_insert(3, 0, 1); // evicts version-1 delta
-        assert_eq!(m.len(), 2);
+        assert_eq!(m.retained_deltas(), 2);
         assert_eq!(
             m.map(0, 0),
             None,

@@ -185,7 +185,7 @@ fn plugin_config_round_trip_toggles_visible_behavior() {
         "The plugin's category should be indented past \"Plugins\". Screen:\n{after_open}"
     );
 
-    focus_category(&mut harness, &PLUGIN_NAME.to_string());
+    focus_category(&mut harness, PLUGIN_NAME);
     let after_focus = harness.screen_to_string();
     assert!(
         after_focus.contains("Prefix"),
@@ -240,7 +240,7 @@ fn plugin_config_round_trip_toggles_visible_behavior() {
     // schema map, so the persisted value should still be reflected
     // (toggle still renders checked as [v]).
     harness.open_settings().unwrap();
-    focus_category(&mut harness, &PLUGIN_NAME.to_string());
+    focus_category(&mut harness, PLUGIN_NAME);
     let after_reopen = harness.screen_to_string();
     assert!(
         after_reopen.contains("Uppercase")

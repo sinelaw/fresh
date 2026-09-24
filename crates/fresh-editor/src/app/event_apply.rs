@@ -175,11 +175,8 @@ impl Editor {
             let split_id = self.effective_active_split();
             let active_buf = self.active_buffer();
             debug_assert!(
-                self.windows
-                    .get(&self.active_window)
-                    .and_then(|w| w.buffers.splits())
-                    .map(|(_, vs)| vs)
-                    .expect("active window must have a populated split layout")
+                self.active_window()
+                    .split_view_states()
                     .get(&split_id)
                     .is_some_and(|vs| vs.keyed_states.contains_key(&active_buf)),
                 "pane-buffer invariant violated: split {:?} resolves to buffer {:?} \
@@ -405,11 +402,8 @@ impl Editor {
 
         // Capture old cursor states from SplitViewState (sole source of truth)
         let old_cursors: Vec<(CursorId, usize, Option<usize>)> = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(_, vs)| vs)
-            .expect("active window must have a populated split layout")
+            .active_window()
+            .split_view_states()
             .get(&split_id)
             .unwrap()
             .keyed_states
@@ -633,6 +627,7 @@ impl Editor {
         // Update cursors in SplitViewState (sole source of truth)
         let primary_position = {
             let cursors = &mut self
+                .active_window_mut()
                 .split_view_states_mut()
                 .get_mut(&split_id)
                 .unwrap()

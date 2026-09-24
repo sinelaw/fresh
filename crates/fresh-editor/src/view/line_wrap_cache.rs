@@ -94,6 +94,7 @@ impl PipelineInputs {
     /// Do the decoration components (everything except the buffer text)
     /// match? The buffer half has its own repair channel, so this is the
     /// question `ensure_built` asks to pick diff-repair over rebuild.
+    #[cfg(test)]
     pub fn decorations_match(&self, other: &PipelineInputs) -> bool {
         self.soft_breaks == other.soft_breaks
             && self.conceals == other.conceals
@@ -450,6 +451,7 @@ pub fn count_visual_rows_for_text_grid(line_text: &str, cols: usize) -> u32 {
 ///
 /// Drives the same machine as the renderer, so the byte mapping and the drawn
 /// rows cannot disagree (fresh#2649).
+#[cfg(test)]
 pub fn grid_segment_source_bytes(line_text: &str, line_start: usize, cols: usize) -> Vec<usize> {
     use crate::view::wrap_machine::{WrapMachine, WrapRule};
     use fresh_core::api::ViewTokenWire;
@@ -923,7 +925,7 @@ mod tests {
                 &text, line_start, &good, width, gutter, hanging,
             );
             assert!(
-                rows as usize >= good.len() + 1,
+                rows as usize > good.len(),
                 "rows={rows} < segments={}: text={text:?} breaks={good:?} \
                  width={width} gutter={gutter} hanging={hanging}",
                 good.len() + 1,

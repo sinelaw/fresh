@@ -2278,26 +2278,53 @@ impl Window {
             });
     }
 
-    /// Mutable handle to this window's split tree (or `None` when
-    /// the layout hasn't been seeded yet). Useful at sites where
-    /// the caller already has a `&mut Window` from a direct
-    /// `self.windows.get_mut(&id)` and wants the split layout
-    /// without going back through Editor's accessor.
-    pub fn split_manager_mut(&mut self) -> Option<&mut SplitManager> {
-        self.buffers.split_manager_mut()
+    /// This window's split tree.
+    ///
+    /// Panics if the layout hasn't been seeded. A window in use always
+    /// has one: `set_active_window` seeds it on first dive and editor init
+    /// hands the base window its initial layout. Code that has to handle a
+    /// window without one asks `self.buffers`, whose accessors return
+    /// `Option`.
+    pub fn split_manager(&self) -> &SplitManager {
+        self.splits().0
     }
 
-    /// Mutable handle to this window's per-leaf view state map.
-    pub fn split_view_states_mut(&mut self) -> Option<&mut HashMap<LeafId, SplitViewState>> {
-        self.buffers.split_view_states_mut()
+    /// Mutable handle to this window's split tree. Panics as
+    /// [`Self::split_manager`] does.
+    pub fn split_manager_mut(&mut self) -> &mut SplitManager {
+        self.splits_mut().0
     }
 
-    /// Both halves of the split layout at once. Returns `None` if
-    /// the layout hasn't been seeded yet.
-    pub fn splits_mut(
-        &mut self,
-    ) -> Option<(&mut SplitManager, &mut HashMap<LeafId, SplitViewState>)> {
-        self.buffers.splits_mut().map(|(m, vs)| (m, vs))
+    /// This window's per-leaf view state map. Panics as
+    /// [`Self::split_manager`] does.
+    pub fn split_view_states(&self) -> &HashMap<LeafId, SplitViewState> {
+        self.splits().1
+    }
+
+    /// Mutable handle to this window's per-leaf view state map. Panics as
+    /// [`Self::split_manager`] does.
+    pub fn split_view_states_mut(&mut self) -> &mut HashMap<LeafId, SplitViewState> {
+        self.splits_mut().1
+    }
+
+    /// Both halves of the split layout at once. Panics as
+    /// [`Self::split_manager`] does.
+    pub fn splits(&self) -> (&SplitManager, &HashMap<LeafId, SplitViewState>) {
+        let (m, vs) = self
+            .buffers
+            .splits()
+            .expect("active window must have a populated split layout");
+        (m, vs)
+    }
+
+    /// Both halves of the split layout at once, mutably. Panics as
+    /// [`Self::split_manager`] does.
+    pub fn splits_mut(&mut self) -> (&mut SplitManager, &mut HashMap<LeafId, SplitViewState>) {
+        let (m, vs) = self
+            .buffers
+            .splits_mut()
+            .expect("active window must have a populated split layout");
+        (m, vs)
     }
 
     /// Construct a window.
@@ -2593,10 +2620,7 @@ impl Window {
     /// focused but any of those invariants doesn't hold for the inner
     /// leaf. Mirrors `Editor::effective_active_pair`.
     pub fn effective_active_pair(&self) -> (LeafId, BufferId) {
-        let (mgr, vs_map) = self
-            .buffers
-            .splits()
-            .expect("active window must have a populated split layout");
+        let (mgr, vs_map) = self.splits();
         let active_split = mgr.active_split();
         if let Some(vs) = vs_map.get(&active_split) {
             if vs.active_group_tab.is_some() {
@@ -2916,7 +2940,7 @@ impl Window {
         self.tab_reveal
             .borrow_mut()
             .entry(pane)
-            .or_insert_with(fresh_ui::behavior::Anchor::new)
+            .or_default()
             .clone()
     }
 
@@ -3102,9 +3126,7 @@ impl Window {
     pub fn active_cursors(&self) -> &crate::model::cursor::Cursors {
         let split_id = self.effective_active_split();
         &self
-            .buffers
             .splits()
-            .expect("active window must have a populated split layout")
             .1
             .get(&split_id)
             .expect("active split must be in view-state map")
@@ -3115,9 +3137,7 @@ impl Window {
     pub fn active_cursors_mut(&mut self) -> &mut crate::model::cursor::Cursors {
         let split_id = self.effective_active_split();
         &mut self
-            .buffers
             .splits_mut()
-            .expect("active window must have a populated split layout")
             .1
             .get_mut(&split_id)
             .expect("active split must be in view-state map")
@@ -3634,9 +3654,7 @@ impl Window {
         if target == active {
             return;
         }
-        self.split_manager_mut()
-            .expect("active window must have a populated split layout")
-            .set_active_split(target);
+        self.split_manager_mut().set_active_split(target);
     }
 
     /// Restore per-file state (cursors, scroll, etc.) for a buffer in a
@@ -3681,13 +3699,7 @@ impl Window {
             .file_path()?
             .to_path_buf();
 
-        let view_state = self
-            .buffers
-            .splits()
-            .expect("active window must have a populated split layout")
-            .1
-            .values()
-            .find(|vs| vs.has_buffer(buffer_id));
+        let view_state = self.splits().1.values().find(|vs| vs.has_buffer(buffer_id));
 
         let view_state = view_state?;
         let buf_state = view_state.keyed_states.get(&buffer_id)?;
@@ -3989,11 +4001,7 @@ impl Window {
         // Snapshot config values before taking the mutable view-states borrow
         // so the closure body doesn't have to re-borrow `self`.
         let cfg = self.config().editor.clone();
-        if let Some(view_state) = self
-            .split_view_states_mut()
-            .expect("active window must have a populated split layout")
-            .get_mut(&target_split)
-        {
+        if let Some(view_state) = self.split_view_states_mut().get_mut(&target_split) {
             view_state.add_buffer(buffer_id);
             let buf_state = view_state.ensure_buffer_state(buffer_id);
             buf_state.apply_config_defaults(crate::view::split::ViewConfigDefaults {
@@ -4102,9 +4110,7 @@ impl Window {
 
         let active_split = self.effective_active_split();
         let (top_byte, visible_height) = self
-            .buffers
             .splits()
-            .expect("active window must have a populated split layout")
             .1
             .get(&active_split)
             .map(|vs| (vs.viewport.top_byte(), vs.viewport.height.saturating_sub(2)))
@@ -4114,8 +4120,7 @@ impl Window {
         state.overlays.clear_namespace(&ns, &mut state.marker_list);
 
         let visible_start = top_byte;
-        let mut visible_end = top_byte;
-        visible_end = state
+        let visible_end = state
             .buffer
             .advance_lines_within(top_byte, visible_height as usize, VISIBLE_WINDOW_SCAN_BYTES)
             .min(state.buffer.len());
@@ -4920,7 +4925,7 @@ impl Window {
         {
             let left = group.left_split;
             let right = group.right_split;
-            if let Some(vs_map) = self.split_view_states_mut() {
+            if let Some(vs_map) = self.buffers.split_view_states_mut() {
                 if let Some(vs) = vs_map.get_mut(&LeafId(left)) {
                     vs.viewport.set_skip_ensure_visible();
                 }
@@ -5027,10 +5032,7 @@ impl Window {
     /// `file_explorer.follow_active_buffer` setting included, is
     /// [`Window::follow_path_in_explorer`]'s to decide.
     pub fn set_pane_buffer(&mut self, leaf: LeafId, buffer_id: BufferId) {
-        let (mgr, vs_map) = self
-            .buffers
-            .splits_mut()
-            .expect("active window must have a populated split layout");
+        let (mgr, vs_map) = self.splits_mut();
         mgr.set_split_buffer(leaf, buffer_id);
         if let Some(view_state) = vs_map.get_mut(&leaf) {
             view_state.switch_buffer(buffer_id);
@@ -5040,6 +5042,52 @@ impl Window {
             self.follow_file_explorer_to_active_file();
         }
     }
+}
+
+/// Byte ranges the renderer hides for `buffer_id`'s collapsed folds, in the
+/// form the viewport scroll primitives consume. A scroll that counts these
+/// lines spends its budget on rows nobody sees, so the viewport stalls while
+/// the cursor runs ahead into the hidden region.
+fn collapsed_hidden_ranges(
+    view_state: &crate::view::split::SplitViewState,
+    state: &crate::state::EditorState,
+    buffer_id: BufferId,
+) -> Vec<(usize, usize)> {
+    let Some(folds) = view_state.keyed_states.get(&buffer_id).map(|bs| &bs.folds) else {
+        return Vec::new();
+    };
+    state
+        .fold_ranges(folds)
+        .into_iter()
+        .map(|r| (r.start, r.end))
+        .collect()
+}
+
+/// The wrap-index geometry for a split, when one is already built for it.
+///
+/// `None` means the byte-walking scroll path must be used — before the first
+/// render there is nothing to read row positions from, and building an index
+/// here would trade a cheap walk for an O(buffer) pass.
+fn wrap_scroll_geometry(
+    view_state: &crate::view::split::SplitViewState,
+    state: &crate::state::EditorState,
+) -> Option<crate::view::wrap_index::WrapIndexGeometry> {
+    if !view_state.viewport.line_wrap_enabled || state.wrap_indices.is_empty() {
+        return None;
+    }
+    let inputs = state.pipeline_inputs();
+    let geometry = crate::view::ui::split_rendering::wrap_index_geometry_for(
+        &view_state.viewport,
+        &state.buffer,
+        view_state.viewport.line_wrap_enabled,
+        &crate::state::ViewMode::Source,
+        crate::view::wrap_index::fold_signature(&state.fold_ranges(&view_state.folds)),
+    );
+    state
+        .wrap_indices
+        .get(&geometry)
+        .is_some_and(|index| index.is_built_for(&geometry, inputs))
+        .then_some(geometry)
 }
 
 // Label-defaulting unit tests (`empty_label_defaults_to_root_basename`,
@@ -5110,50 +5158,4 @@ mod exited_terminal_tests {
         assert!(!e.resumes_agent());
         assert_eq!(e.program_name(), Some("bash"));
     }
-}
-
-/// Byte ranges the renderer hides for `buffer_id`'s collapsed folds, in the
-/// form the viewport scroll primitives consume. A scroll that counts these
-/// lines spends its budget on rows nobody sees, so the viewport stalls while
-/// the cursor runs ahead into the hidden region.
-fn collapsed_hidden_ranges(
-    view_state: &crate::view::split::SplitViewState,
-    state: &crate::state::EditorState,
-    buffer_id: BufferId,
-) -> Vec<(usize, usize)> {
-    let Some(folds) = view_state.keyed_states.get(&buffer_id).map(|bs| &bs.folds) else {
-        return Vec::new();
-    };
-    state
-        .fold_ranges(folds)
-        .into_iter()
-        .map(|r| (r.start, r.end))
-        .collect()
-}
-
-/// The wrap-index geometry for a split, when one is already built for it.
-///
-/// `None` means the byte-walking scroll path must be used — before the first
-/// render there is nothing to read row positions from, and building an index
-/// here would trade a cheap walk for an O(buffer) pass.
-fn wrap_scroll_geometry(
-    view_state: &crate::view::split::SplitViewState,
-    state: &crate::state::EditorState,
-) -> Option<crate::view::wrap_index::WrapIndexGeometry> {
-    if !view_state.viewport.line_wrap_enabled || state.wrap_indices.is_empty() {
-        return None;
-    }
-    let inputs = state.pipeline_inputs();
-    let geometry = crate::view::ui::split_rendering::wrap_index_geometry_for(
-        &view_state.viewport,
-        &state.buffer,
-        view_state.viewport.line_wrap_enabled,
-        &crate::state::ViewMode::Source,
-        crate::view::wrap_index::fold_signature(&state.fold_ranges(&view_state.folds)),
-    );
-    state
-        .wrap_indices
-        .get(&geometry)
-        .is_some_and(|index| index.is_built_for(&geometry, inputs))
-        .then_some(geometry)
 }

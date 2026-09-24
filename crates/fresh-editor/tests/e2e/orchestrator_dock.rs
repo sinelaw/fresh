@@ -2676,8 +2676,8 @@ fn dock_card_tree_wheel_scrolls_when_overflowing() {
     // selection on every repaint, and it runs asynchronously off the
     // git probe poll — under CI load a probe completing *after* the
     // wheel used to snap the view back to the top and `bb12` vanished
-    // forever (the tree had no `user_scrolled` suppression, unlike
-    // List). Settle all pending refreshes and require the tail to
+    // forever. The viewport now owns the offset and moves it only when
+    // the selection itself moves. Settle all pending refreshes and require the tail to
     // still be on screen.
     h.wait_until_stable(|_| true).unwrap();
     assert!(
@@ -3280,8 +3280,8 @@ fn open_new_session_form(h: &mut EditorTestHarness) {
 }
 
 /// The New-Session ("New Workspace") form is a centered floating panel that
-/// now wears the native modal-frame chrome: its "New Workspace" title bar
-/// + border come from the host (`mount({ title,
+/// now wears the native modal-frame chrome: its "New Workspace" title
+/// bar + border come from the host (`mount({ title,
 /// closable })`), replacing the in-body styled header banner the form used
 /// to draw itself. This asserts, on rendered cells, that (a) the title
 /// renders in the native title bar (the frame's top border) and (b) a

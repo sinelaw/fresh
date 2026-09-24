@@ -315,7 +315,7 @@ fn every_wide_line_is_drawn_not_every_other_one() {
         .write_all(content.as_bytes())
         .unwrap();
 
-    let mut harness = opened(&path, false);
+    let harness = opened(&path, false);
     let screen = harness.screen_to_string();
 
     // Every line from the top of the file, in order, one per row.

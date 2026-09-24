@@ -635,6 +635,7 @@ impl FileOpenState {
     }
 
     /// Count matching entries
+    #[cfg(test)]
     pub fn matching_count(&self) -> usize {
         self.entries.iter().filter(|e| e.matches_filter).count()
     }

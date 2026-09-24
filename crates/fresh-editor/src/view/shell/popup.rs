@@ -31,8 +31,7 @@
 //! The last one is the ledger's finding A: it looks like it needs an anchor
 //! that is a node on one axis and a point on the other, and it does not. The
 //! status bar is migrated and its elements are keyed, so the popup hangs off
-//! *the segment that opened it* — which is what the feature means. Its `x` and
-//! `status_row` parameters exist only because a popup could not name a node.
+//! *the segment that opened it* — which is what the feature means.
 
 use std::rc::Rc;
 
@@ -137,8 +136,7 @@ pub fn placed(position: &PopupPosition, at: CaretAnchor) -> Node<UiMsg> {
             .align_to_anchor(Align::End)
             .fit(Fit::CLAMP),
         // The segment that opened it. See the module docs and the ledger's
-        // finding A; the two numbers in this variant are a rectangle the caller
-        // already had and threw away.
+        // finding A.
         //
         // **Confined to the area left of the editor's scrollbar.** Clamping to
         // the frame puts this popup's right border on the scrollbar's column —
@@ -146,11 +144,8 @@ pub fn placed(position: &PopupPosition, at: CaretAnchor) -> Node<UiMsg> {
         // saying why. Naming the region says the same thing without the
         // arithmetic, and it is the only strategy that reserves anything, so it
         // is the only one that names it.
-        PopupPosition::AboveStatusBarAt { .. } => l
-            .anchor(Anchor::Node(super::status_bar::item_key(
-                super::status_bar::Side::Right,
-                0,
-            )))
+        PopupPosition::AboveStatusBarAt(id) => l
+            .anchor(Anchor::Node(super::status_bar::clickable_key(*id)))
             .place(Place::Above)
             .within(clear_of_scrollbar_key())
             .fit(Fit::FLIP.or(Fit::CLAMP)),
@@ -663,7 +658,7 @@ fn description(text: &str) -> Node<UiMsg> {
         // The `- 2` the painter wrapped to was padding it then had to leave
         // room for by hand; `pad` states it and the wrap follows the width it
         // is given.
-        fresh_ui::text(text.to_string())
+        fresh_ui::text(text)
             .wrap_hanging()
             .theme(pair("ui.help_separator_fg", "ui.popup_bg")),
         row().h(Sizing::Cells(1)),
@@ -690,14 +685,14 @@ fn list_row(item: &PopupListItem, row_theme: &str, hint: Option<&str>) -> Node<U
         .unwrap_or_else(|| row_theme.to_string());
     let mut cells: Vec<Node<UiMsg>> = Vec::new();
     if let Some(icon) = &item.icon {
-        cells.push(fresh_ui::text(format!("{icon} ")).theme(row_theme.to_string()));
+        cells.push(fresh_ui::text(format!("{icon} ")).theme(row_theme));
     }
     // Leading whitespace is kept out of the underline: an indented row is a
     // nested one, and underlining its indent makes the link look ragged.
     let trimmed = item.text.trim_start();
     let indent = item.text.len() - trimmed.len();
     if indent > 0 {
-        cells.push(fresh_ui::text(&item.text[..indent]).theme(row_theme.to_string()));
+        cells.push(fresh_ui::text(&item.text[..indent]).theme(row_theme));
     }
     // A row with a `data` payload acts on click, so it reads as a link; a
     // disabled one recedes and takes the muted foreground with it.
@@ -785,7 +780,7 @@ pub fn content(c: &PopupContent, selected_hint: Option<&str>) -> Node<UiMsg> {
                     Some(it) => list_row(
                         it,
                         &row_theme(i == sel, st == RowState::Hover),
-                        (i == sel).then(|| hint.as_deref()).flatten(),
+                        (i == sel).then_some(hint.as_deref()).flatten(),
                     ),
                     None => row().h(Sizing::Cells(1)),
                 },
@@ -975,7 +970,8 @@ mod tests {
     #[test]
     fn the_cursor_relative_placements() {
         // caret, size, expected origin.
-        let at_cursor: &[((u16, u16), (u16, u16), (u16, u16))] = &[
+        type Case = ((u16, u16), (u16, u16), (u16, u16));
+        let at_cursor: &[Case] = &[
             ((0, 0), (20, 5), (0, 0)),
             ((1, 1), (20, 5), (1, 1)),
             // Wider than the frame: pinned to the left edge, not hanging off
@@ -998,7 +994,7 @@ mod tests {
             );
         }
 
-        let below: &[((u16, u16), (u16, u16), (u16, u16))] = &[
+        let below: &[Case] = &[
             // The row *after* the caret's, which is what makes the anchor a
             // cell rather than a point.
             ((0, 0), (20, 5), (0, 1)),

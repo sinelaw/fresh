@@ -141,7 +141,7 @@ fn settings_save_fires_config_changed_with_the_new_value() {
 
     // Flip `loud` false → true in the Settings UI and save.
     harness.open_settings().unwrap();
-    focus_category(&mut harness, &PLUGIN_NAME.to_string());
+    focus_category(&mut harness, PLUGIN_NAME);
     harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
     harness

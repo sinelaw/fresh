@@ -306,6 +306,7 @@ impl FileTreeView {
     /// Resolve a screen row in the explorer body to the displayed tree node.
     /// Sticky ancestor rows and ordinary scrolled rows deliberately share this
     /// mapping so render, click, hover, and context-menu targeting cannot drift.
+    #[cfg(test)]
     pub fn get_display_node_at_viewport_row(&self, row: usize) -> Option<(NodeId, usize)> {
         let display = self.get_display_nodes();
         let display_index = self.viewport_display_indices().get(row).copied()?;
@@ -791,6 +792,7 @@ impl FileTreeView {
     }
 
     /// Get the sort mode
+    #[cfg(test)]
     pub fn get_sort_mode(&self) -> SortMode {
         self.sort_mode
     }

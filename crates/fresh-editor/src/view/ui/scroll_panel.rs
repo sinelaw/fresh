@@ -45,6 +45,7 @@ impl ScrollState {
     }
 
     /// Update content height (call when items change)
+    #[cfg(test)]
     pub fn set_content_height(&mut self, height: u16) {
         self.content_height = height;
         self.clamp_offset();
@@ -86,12 +87,6 @@ impl ScrollState {
             self.offset = self.offset.saturating_add(delta as u16);
         }
         self.clamp_offset();
-    }
-
-    /// Scroll to a ratio (0.0 = top, 1.0 = bottom)
-    pub fn scroll_to_ratio(&mut self, ratio: f32) {
-        let ratio = ratio.clamp(0.0, 1.0);
-        self.offset = (ratio * self.max_offset() as f32) as u16;
     }
 
     /// Check if scrolling is needed
@@ -186,20 +181,5 @@ mod tests {
         // Item at y=22 is already visible
         state.ensure_visible(22, 3);
         assert_eq!(state.offset, 20); // No change
-    }
-
-    #[test]
-    fn test_scroll_to_ratio() {
-        let mut state = ScrollState::new(10);
-        state.set_content_height(100);
-
-        state.scroll_to_ratio(0.0);
-        assert_eq!(state.offset, 0);
-
-        state.scroll_to_ratio(1.0);
-        assert_eq!(state.offset, 90);
-
-        state.scroll_to_ratio(0.5);
-        assert_eq!(state.offset, 45);
     }
 }

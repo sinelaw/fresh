@@ -1005,7 +1005,10 @@ fn test_terminal_buffer_cursor_movement() {
     // Get initial cursor position. Exiting terminal mode anchors the cursor
     // at the top of the just-exited visible screen (see
     // `sync_terminal_to_buffer`), so navigate downward into the content.
-    let initial_pos = harness.editor().get_cursor_position(buffer_id);
+    let initial_pos = harness
+        .editor()
+        .active_window()
+        .get_cursor_position(buffer_id);
 
     // Move cursor down
     harness
@@ -1013,7 +1016,10 @@ fn test_terminal_buffer_cursor_movement() {
         .handle_key(KeyCode::Down, KeyModifiers::NONE)
         .unwrap();
 
-    let pos_after_down = harness.editor().get_cursor_position(buffer_id);
+    let pos_after_down = harness
+        .editor()
+        .active_window()
+        .get_cursor_position(buffer_id);
 
     // Cursor should have moved (arrow keys do buffer navigation, not PTY input,
     // once terminal mode is disabled).
@@ -4058,7 +4064,7 @@ fn test_arrow_keys_in_less() {
             }
 
             // Periodic progress logging (every ~5s)
-            if iter % 100 == 0 && iter > 0 {
+            if iter.is_multiple_of(100) && iter > 0 {
                 let screen = harness.screen_to_string();
                 let elapsed = start.elapsed();
                 tracing::info!(

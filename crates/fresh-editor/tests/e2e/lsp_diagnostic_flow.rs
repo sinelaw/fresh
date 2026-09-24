@@ -170,7 +170,7 @@ echo "SERVER: exiting" >> "$LOG_FILE"
 /// Test that push diagnostics (publishDiagnostics) from rust-analyzer are displayed.
 ///
 /// This test replays actual rust-analyzer responses for a file with a type error:
-/// ```rust
+/// ```text
 /// fn main() {
 ///     let x: i32 = "hello";
 ///     println!("{}", x);

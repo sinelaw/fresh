@@ -35,26 +35,6 @@ use super::Editor;
 /// positionless wheel to pick which widget inside a panel absorbs
 /// the scroll. No kind matching here: the capability is the kind's
 /// declaration.
-/// Whether `spec` contains a `List`/`Tree` that omitted `visible_rows` —
-/// the widgets whose row window is the host's to size, and so the only
-/// ones a change of panel height can leave laid out wrongly.
-fn spec_has_auto_sized_list(spec: &fresh_core::api::WidgetSpec) -> bool {
-    use fresh_core::api::WidgetSpec;
-    if matches!(
-        spec,
-        WidgetSpec::List {
-            visible_rows: None,
-            ..
-        } | WidgetSpec::Tree {
-            visible_rows: None,
-            ..
-        }
-    ) {
-        return true;
-    }
-    spec.children().any(spec_has_auto_sized_list)
-}
-
 fn find_scrollable_widget_key(spec: &fresh_core::api::WidgetSpec) -> Option<String> {
     let meta = crate::widgets::kinds::behavior(spec).box_meta(spec);
     if meta.picker_scroll_target {
@@ -326,33 +306,6 @@ impl Editor {
         }
     }
 
-    /// Mark every view of `buffer_id` as non-horizontally-scrollable.
-    ///
-    /// Called on each widget-panel repaint rather than once at mount:
-    /// a panel that is hidden and shown again gets a fresh
-    /// `SplitViewState`, and the flag has to land on that one too.
-    pub(super) fn pin_widget_panel_horizontal_scroll(&mut self, buffer_id: BufferId) {
-        for vs in self
-            .windows
-            .get_mut(&self.active_window)
-            .and_then(|w| w.split_view_states_mut())
-            .expect("active window must have a populated split layout")
-            .values_mut()
-        {
-            if vs.buffer_state(buffer_id).is_none() {
-                continue;
-            }
-            if vs.active_buffer == buffer_id {
-                vs.viewport.horizontal_scroll_enabled = false;
-                vs.viewport.left_column = 0;
-            }
-            if let Some(bs) = vs.keyed_states.get_mut(&buffer_id) {
-                bs.viewport.horizontal_scroll_enabled = false;
-                bs.viewport.left_column = 0;
-            }
-        }
-    }
-
     /// The described page in the pane that holds the keyboard, if there is
     /// one.
     pub(crate) fn active_page_panel(&self) -> Option<crate::widgets::PanelKey> {
@@ -496,103 +449,6 @@ impl Editor {
             .and_then(|b| b.compose_width)
     }
 
-    /// The viewport
-    /// height of a split currently rendering this buffer, or `None`
-    /// when the buffer isn't on screen (auto-sized widgets then keep
-    /// the legacy fallback until it is). No padding is subtracted —
-    /// the viewport height is already the buffer's usable rows.
-    pub(super) fn widget_panel_height(&self, buffer_id: BufferId) -> Option<u32> {
-        // Prefer the rect the last draw actually gave this panel. The
-        // split view-state's viewport is a seed the layout pass computes,
-        // and for a buffer-group panel it can only be a guess: the group's
-        // inner tree is stashed out of the main split tree, so
-        // `apply_layout` finds no rect for those leaves and falls back to
-        // the whole editor height. Sizing a list to that overshoots the
-        // panel and clips its last rows.
-        if let Some(painted) = self.painted_panel_height(buffer_id) {
-            return Some(painted);
-        }
-        self.windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(_, vs)| vs)
-            .and_then(|vs| {
-                vs.values()
-                    .find(|vs| vs.buffer_state(buffer_id).is_some() && vs.viewport.height > 0)
-                    .map(|vs| vs.viewport.height as u32)
-            })
-    }
-
-    /// Height of the content rect the last draw gave `buffer_id`, or
-    /// `None` when it wasn't painted into a split at all (hidden panel,
-    /// a group slot pointing at some other buffer).
-    fn painted_panel_height(&self, buffer_id: BufferId) -> Option<u32> {
-        self.pane_content_rect_for_buffer(buffer_id)
-            .map(|content_rect| content_rect.height as u32)
-            .filter(|h| *h > 0)
-    }
-
-    /// Buffer-mounted widget panels whose split no longer matches the row
-    /// budget their auto-sized (`visible_rows: None`) lists and trees were
-    /// windowed to — a resize, a divider drag, a panel becoming visible.
-    ///
-    /// Deliberately narrow, because the repaint it drives happens mid-draw:
-    ///
-    /// * only panels currently painted into a split (a panel whose buffer
-    ///   has been swapped out of its group's slot has no geometry to be
-    ///   stale against, and must not be rewritten underneath the plugin);
-    /// * only panels that actually *have* an auto-sized list or tree —
-    ///   a spec that pins every `visible_rows` lays out the same at any
-    ///   height, so repainting it would be work with no visible effect;
-    /// * and the comparison is against the height the panel was last
-    ///   *rendered* against, not the previous frame's viewport, so a panel
-    ///   is repainted once per size change rather than once per frame.
-    pub(super) fn widget_panels_with_stale_height(&self) -> Vec<crate::widgets::PanelKey> {
-        self.widget_registry
-            .panel_keys()
-            .into_iter()
-            .filter(|key| {
-                let Some((buffer_id, spec)) = self.widget_registry.buffer_and_spec_ref(key) else {
-                    return false;
-                };
-                // Floating and dock panels size themselves to their own
-                // frame (`floating_panel_inner_height`) and are re-rendered
-                // by the paths that move them; only the split-mounted ones
-                // take their budget from a split.
-                if Self::slot_for_panel_buffer(buffer_id).is_some() {
-                    return false;
-                }
-                if !spec_has_auto_sized_list(spec) {
-                    return false;
-                }
-                let Some(painted) = self.painted_panel_height(buffer_id) else {
-                    return false;
-                };
-                self.widget_panel_render_heights.get(key) != Some(&painted)
-            })
-            .collect()
-    }
-
-    /// Record the row budget `panel_key` was just rendered against. Called
-    /// from every path that renders a buffer-mounted panel, so
-    /// [`Self::widget_panels_with_stale_height`] can tell a panel that has
-    /// seen the current geometry from one that has not.
-    pub(super) fn record_widget_panel_render_height(
-        &mut self,
-        panel_key: &crate::widgets::PanelKey,
-        avail_height: Option<u32>,
-    ) {
-        match avail_height {
-            Some(h) => {
-                self.widget_panel_render_heights
-                    .insert(panel_key.clone(), h);
-            }
-            None => {
-                self.widget_panel_render_heights.remove(panel_key);
-            }
-        }
-    }
-
     /// Forget every panel mounted into `buffer_id`, because that buffer is
     /// being closed.
     ///
@@ -615,7 +471,6 @@ impl Editor {
             self.page_anchors.remove(&panel_key);
             self.pane_mirrors.remove(&panel_key);
             self.prose_reveal.borrow_mut().remove(&panel_key);
-            self.widget_panel_render_heights.remove(&panel_key);
             self.widget_registry.unmount(&panel_key);
             // The description names the panels, so losing one changes it.
             self.shell_description_stale = true;
@@ -663,7 +518,6 @@ impl Editor {
         if !self.panel_is_the_trees(panel_key) {
             return false;
         }
-        let slot = self.slot_of_panel(panel_key);
         let Some(state) = self.widget_registry.get(panel_key) else {
             return false;
         };
@@ -680,16 +534,6 @@ impl Editor {
             state.auto_focus_first,
             Some(ink.ctx()),
         );
-        // The row budget this panel was resolved against, for the resize
-        // bookkeeping that decides when a pane-mounted panel has to be
-        // re-rendered. A described panel auto-sizes in layout, so the number
-        // no longer decides a window — but the record has to stay truthful or
-        // `widget_panels_with_stale_height` reports the same panel forever.
-        let avail_height = match slot {
-            Some(slot) => self.floating_panel_inner_height(slot),
-            None => state.buffer_id.and_then(|b| self.widget_panel_height(b)),
-        };
-        self.record_widget_panel_render_height(panel_key, avail_height);
         if self
             .widget_registry
             .update_side_effects(panel_key, out.instance_states, out.focus_key)
@@ -1095,8 +939,8 @@ impl Editor {
                 };
                 self.move_panel_focus(panel_key, dir, 1);
             }
-            KeyCode::Enter => match widget {
-                Some(fresh_core::api::WidgetSpec::Text { .. }) => {
+            KeyCode::Enter => {
+                if let Some(fresh_core::api::WidgetSpec::Text { .. }) = widget {
                     // Multi-line Enter (newline, or markdown
                     // activate) is kind-owned in on_key; what
                     // reaches here is a single-line field.
@@ -1118,8 +962,7 @@ impl Editor {
                         self.handle_widget_focus_advance(panel_key, 1);
                     }
                 }
-                _ => {}
-            },
+            }
             _ => {} // unrecognised key — quietly ignore
         }
     }
@@ -1814,11 +1657,13 @@ impl Editor {
         // every move of the pointer under the same capture extends from here
         // (`drag_moved_the_page_selection`), and the release leaves the
         // selection standing for Copy.
-        let ms = &mut self.active_window_mut().mouse_state;
-        ms.dragging_text_selection = true;
-        ms.drag_selection_split = Some(pane);
-        ms.drag_selection_by_words = false;
-        ms.drag_selection_word_end = None;
+        self.active_window_mut().mouse_state.drag = Some(
+            crate::app::types::PointerDrag::Selection(crate::app::types::SelectionDrag {
+                pane,
+                anchor: None,
+                word_end: None,
+            }),
+        );
     }
 
     /// The page panel a pane holds, if it holds one whose focus follows its
@@ -1875,8 +1720,12 @@ impl Editor {
         let Some(panel_key) = self.page_panel_of_pane(pane) else {
             return false;
         };
-        let ms = &self.active_window().mouse_state;
-        if !ms.dragging_text_selection || ms.drag_selection_split != Some(pane) {
+        if self
+            .active_window()
+            .mouse_state
+            .selection_in(pane)
+            .is_none()
+        {
             return true;
         }
         let Some(at) = self.page_point_at(&panel_key, x, y, true) else {
@@ -2041,11 +1890,7 @@ impl Editor {
     /// group host owns the outer leaf — so a panel buffer shown inside
     /// one would keep a stale caret without this.
     pub(super) fn splits_showing_buffer(&self, buffer_id: BufferId) -> Vec<LeafId> {
-        let (manager, view_states) = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .expect("active window must have a populated split layout");
+        let (manager, view_states) = self.active_window().splits();
         let mut splits = manager.splits_for_buffer(buffer_id);
         for node in self.active_window().grouped_subtrees.values() {
             if let crate::view::split::SplitNode::Grouped { layout, .. } = node {
@@ -2079,6 +1924,7 @@ impl Editor {
     /// `initialCursorLine` and the display-buffer path both used to call
     /// `set_buffer_cursor_in_splits` themselves, into buffers that can
     /// perfectly well carry a focus-following panel; they call this now.
+    #[cfg(feature = "plugins")]
     pub(super) fn seat_buffer_cursor(&mut self, buffer_id: BufferId, position: usize) {
         self.seat_buffer_cursor_selecting(buffer_id, position, false);
     }
@@ -2884,18 +2730,14 @@ impl Editor {
         // Plugin sends arbitrary SplitId — convert to LeafId at the boundary
         let leaf_id = LeafId(split_id);
         match self
-            .windows
-            .get_mut(&self.active_window)
-            .and_then(|w| w.split_manager_mut())
-            .expect("active window must have a populated split layout")
+            .active_window_mut()
+            .split_manager_mut()
             .close_split(leaf_id)
         {
             Ok(()) => {
                 // Clean up the view state for the closed split
-                self.windows
-                    .get_mut(&self.active_window)
-                    .and_then(|w| w.split_view_states_mut())
-                    .expect("active window must have a populated split layout")
+                self.active_window_mut()
+                    .split_view_states_mut()
                     .remove(&leaf_id);
                 // Drop the closed split from every terminal's scrollback set.
                 self.active_window_mut()
@@ -3169,14 +3011,6 @@ impl Editor {
 /// survives here is what a *node* cannot answer: a drag through text inside a
 /// widget, and closing the panel.
 impl Editor {
-    /// Extend an armed widget-text drag selection to the pointer.
-    ///
-    /// Translates the screen position into the document's (rendered
-    /// line, byte-in-line) through the widget's recorded scroll region
-    /// — the same geometry wheel routing hit-tests — then hands the
-    /// caret move to the runtime. Rows above/below the region clamp to
-    /// its edges so a drag that overshoots keeps selecting.
-
     /// Right-click hit-test against a floating widget panel. Resolves the
     /// cell under the cursor to a widget and — only when it lands on a
     /// `list` row — fires a `widget_event` with `event_type: "context"`
@@ -3306,6 +3140,61 @@ impl Editor {
                 );
             }
             _ => {}
+        }
+    }
+}
+
+/// The display column a byte offset sits at within `line`.
+///
+/// The page's rows are text and its spans are cells, and these two are where
+/// the one becomes the other. A byte column is what a buffer cursor is; a
+/// display column is what the tree laid out, what a press lands on, and what
+/// a selection is washed across.
+fn display_col_of(line: &str, byte: usize) -> u16 {
+    use unicode_width::UnicodeWidthChar;
+    let mut cols = 0usize;
+    for (at, ch) in line.char_indices() {
+        if at >= byte {
+            break;
+        }
+        cols += ch.width().unwrap_or(0);
+    }
+    cols.min(u16::MAX as usize) as u16
+}
+
+/// The byte offset at display column `col` of `line` — the start of the
+/// character covering that cell, and the line's length past its end.
+pub(super) fn byte_at_display_col(line: &str, col: u16) -> usize {
+    use unicode_width::UnicodeWidthChar;
+    let mut cols = 0usize;
+    for (at, ch) in line.char_indices() {
+        if cols >= col as usize {
+            return at;
+        }
+        cols += ch.width().unwrap_or(0);
+    }
+    line.len()
+}
+
+impl crate::app::window::Window {
+    /// Mark every view of `buffer_id` as non-horizontally-scrollable.
+    ///
+    /// Called on each widget-panel repaint rather than once at mount:
+    /// a panel that is hidden and shown again gets a fresh
+    /// `SplitViewState`, and the flag has to land on that one too.
+    pub(super) fn pin_widget_panel_horizontal_scroll(&mut self, buffer_id: BufferId) {
+        for vs in self.split_view_states_mut().values_mut() {
+            if vs.buffer_state(buffer_id).is_none() {
+                continue;
+            }
+            if vs.active_buffer == buffer_id {
+                vs.viewport.horizontal_scroll_enabled = false;
+                vs.viewport.left_column = 0;
+            }
+            if let Some(bs) = vs.keyed_states.get_mut(&buffer_id) {
+                bs.viewport.horizontal_scroll_enabled = false;
+                bs.viewport.left_column = 0;
+            }
         }
     }
 }
@@ -3876,17 +3765,6 @@ mod tests {
         assert_eq!((vp.items, vp.rows), (legacy, legacy), "the spec's window");
     }
 
-    /// **A described panel re-renders without producing a text projection.**
-    ///
-    /// The rows, the hit areas and the box arena are what the collector is
-    /// *for*, and for a panel the tree describes each of them has no reader:
-    /// its rows are nodes, its presses are those nodes', and its arena answers
-    /// no wheel. What a re-render still has to do is the three walks of
-    /// `resolve_panel` — carry the state, clamp the focus, publish the ring —
-    /// and this pins that it does them and produces nothing else.
-    ///
-    /// The same panel outside a slot, with no described interior, keeps the
-    /// collector: the assertion at the end is the half that must not change.
     // ---- the markdown document view -----------------------------------
 
     /// A markdown document as the prose column of a dock panel: long enough
@@ -4299,10 +4177,7 @@ mod tests {
             .instance_states
             .insert(
                 "lst".to_string(),
-                crate::widgets::WidgetInstanceState::List {
-                    selected_index: 7,
-                    user_scrolled: true,
-                },
+                crate::widgets::WidgetInstanceState::List { selected_index: 7 },
             );
 
         editor.rerender_widget_panel(&described);
@@ -4312,10 +4187,7 @@ mod tests {
         assert!(
             matches!(
                 panel.instance_states.get("lst"),
-                Some(crate::widgets::WidgetInstanceState::List {
-                    selected_index: 7,
-                    user_scrolled: true,
-                })
+                Some(crate::widgets::WidgetInstanceState::List { selected_index: 7 })
             ),
             "and the state was carried, not re-seeded from the spec"
         );
@@ -4345,7 +4217,6 @@ mod tests {
         let panel_key = crate::widgets::PanelKey::new("welcome_screen", 1);
         let buffer = editor.active_buffer();
         mount_list_panel(&mut editor, &panel_key, buffer);
-        editor.record_widget_panel_render_height(&panel_key, Some(20));
         assert!(
             editor.widget_registry.get(&panel_key).is_some(),
             "mounted to begin with"
@@ -4358,10 +4229,6 @@ mod tests {
         assert!(
             editor.widget_registry.get(&panel_key).is_none(),
             "the panel went with its buffer"
-        );
-        assert!(
-            !editor.widget_panel_render_heights.contains_key(&panel_key),
-            "and so did the row budget it was last rendered against"
         );
     }
 
@@ -4839,36 +4706,4 @@ mod tests {
         );
         assert_eq!(editor.widget_registry.focus_key(&dock_key), Some("menu"));
     }
-}
-
-/// The display column a byte offset sits at within `line`.
-///
-/// The page's rows are text and its spans are cells, and these two are where
-/// the one becomes the other. A byte column is what a buffer cursor is; a
-/// display column is what the tree laid out, what a press lands on, and what
-/// a selection is washed across.
-fn display_col_of(line: &str, byte: usize) -> u16 {
-    use unicode_width::UnicodeWidthChar;
-    let mut cols = 0usize;
-    for (at, ch) in line.char_indices() {
-        if at >= byte {
-            break;
-        }
-        cols += ch.width().unwrap_or(0);
-    }
-    cols.min(u16::MAX as usize) as u16
-}
-
-/// The byte offset at display column `col` of `line` — the start of the
-/// character covering that cell, and the line's length past its end.
-pub(super) fn byte_at_display_col(line: &str, col: u16) -> usize {
-    use unicode_width::UnicodeWidthChar;
-    let mut cols = 0usize;
-    for (at, ch) in line.char_indices() {
-        if cols >= col as usize {
-            return at;
-        }
-        cols += ch.width().unwrap_or(0);
-    }
-    line.len()
 }

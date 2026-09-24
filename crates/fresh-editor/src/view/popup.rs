@@ -35,13 +35,9 @@ pub enum PopupPosition {
     CenteredOverlay { width_pct: u8, height_pct: u8 },
     /// Bottom right corner (above status bar)
     BottomRight,
-    /// Anchored above the status bar at a specific column (left-aligned at x).
-    /// Used by the LSP-status popup so it appears directly above the LSP
-    /// segment that opened it. `status_row` is the actual row of the status
-    /// bar in the current frame — passing it in lets the popup hug the
-    /// status bar regardless of whether the prompt line is visible (which
-    /// shifts the status bar by a row when it auto-hides).
-    AboveStatusBarAt { x: u16, status_row: u16 },
+    /// Directly above the status-bar element that opened it — the LSP,
+    /// remote, read-only and update menus.
+    AboveStatusBarAt(crate::view::ui::status_bar::StatusBarClickable),
 }
 
 /// Kind of popup - determines input handling behavior
@@ -193,11 +189,6 @@ impl PopupListItem {
 
     pub fn with_detail(mut self, detail: String) -> Self {
         self.detail = Some(detail);
-        self
-    }
-
-    pub fn with_icon(mut self, icon: String) -> Self {
-        self.icon = Some(icon);
         self
     }
 
@@ -367,30 +358,6 @@ impl Popup {
     /// Set the title
     pub fn with_title(mut self, title: String) -> Self {
         self.title = Some(title);
-        self
-    }
-
-    /// Mark this popup as transient (will be dismissed on focus loss)
-    pub fn with_transient(mut self, transient: bool) -> Self {
-        self.transient = transient;
-        self
-    }
-
-    /// Set the position
-    pub fn with_position(mut self, position: PopupPosition) -> Self {
-        self.position = position;
-        self
-    }
-
-    /// Set the width
-    pub fn with_width(mut self, width: u16) -> Self {
-        self.width = width;
-        self
-    }
-
-    /// Set the max height
-    pub fn with_max_height(mut self, max_height: u16) -> Self {
-        self.max_height = max_height;
         self
     }
 
@@ -943,13 +910,10 @@ mod tests {
 
     #[test]
     fn test_popup_list_item() {
-        let item = PopupListItem::new("test".to_string())
-            .with_detail("detail".to_string())
-            .with_icon("📄".to_string());
+        let item = PopupListItem::new("test".to_string()).with_detail("detail".to_string());
 
         assert_eq!(item.text, "test");
         assert_eq!(item.detail, Some("detail".to_string()));
-        assert_eq!(item.icon, Some("📄".to_string()));
     }
 
     #[test]

@@ -23,6 +23,8 @@
 //! leaf is what belongs to no pane: the pass they share, and the separators
 //! between them.
 
+use crate::app::types::PointerDrag;
+use crate::view::settings::surface::SettingsSurface as _;
 use std::collections::HashSet;
 
 use ratatui::buffer::Buffer;
@@ -1376,213 +1378,6 @@ pub mod shell_theme {
     }
 }
 
-#[cfg(test)]
-mod shell_theme_tests {
-    use super::shell_theme::{literal, names, pair, resolve, Attrs, Ink, Paint};
-    use ratatui::style::Color;
-
-    fn theme() -> crate::view::theme::Theme {
-        crate::view::theme::Theme::from_json(r#"{"name":"test"}"#)
-            .expect("a theme of nothing but defaults")
-    }
-
-    /// **A block caret is an attribute the grammar has to carry.** A form
-    /// control on a modal overlay draws its caret as one reverse-video cell —
-    /// there is no hardware cursor to place there — and a word the grammar
-    /// does not know is dropped on the way in, so the caret simply did not
-    /// appear. Reading is forgiving on purpose; that is exactly why the word
-    /// has to exist.
-    #[test]
-    fn a_reversed_cell_survives_the_written_form_and_reaches_the_style() {
-        let ink = Ink::keys("editor.fg", "editor.bg").plus(Attrs::REVERSED);
-        let written = ink.to_string();
-        assert!(written.ends_with("+reversed"), "{written:?}");
-        assert_eq!(Ink::parse(&written), Some(ink));
-        let style = resolve(&written, &theme());
-        assert!(
-            style
-                .add_modifier
-                .contains(ratatui::style::Modifier::REVERSED),
-            "the caret's cell reverses: {style:?}"
-        );
-    }
-
-    /// **What is written is what is read.** The name is a serialisation, so
-    /// the only thing that makes it safe to keep passing strings through
-    /// `fresh-ui` is that the round trip is lossless — including for the parts
-    /// the string form used to lose.
-    #[test]
-    fn an_ink_survives_the_written_form() {
-        for ink in [
-            Ink::keys("editor.fg", "editor.bg"),
-            Ink::keys("editor.fg", "editor.bg").plus(Attrs::BOLD | Attrs::DIM),
-            Ink::new(
-                Paint::Lit(Color::Rgb(126, 231, 135)),
-                Paint::key("editor.bg"),
-            ),
-            Ink::new(Paint::key("editor.fg"), Paint::Lit(Color::Indexed(42)))
-                .plus(Attrs::UNDERLINE),
-            Ink::new(Paint::Lit(Color::Yellow), Paint::Lit(Color::Black))
-                .plus(Attrs::ITALIC | Attrs::STRIKETHROUGH),
-            Ink::keys("editor.fg", "editor.bg").plus(Attrs::REVERSED),
-        ] {
-            let written = ink.to_string();
-            assert_eq!(
-                Ink::parse(&written),
-                Some(ink.clone()),
-                "{written:?} did not read back"
-            );
-        }
-    }
-
-    /// **Swapping one half leaves the other alone — attributes included.**
-    ///
-    /// This is the divergence the type exists to remove. The string form had
-    /// two spellings of "layer something over this name" and they disagreed:
-    /// swapping a background re-spliced the `+attrs` tail back on while setting
-    /// attributes dropped it, so a plugin span that named both a background and
-    /// an attribute silently un-dimmed a disabled suggestion row.
-    #[test]
-    fn layering_over_an_ink_keeps_what_it_does_not_mention() {
-        let row = Ink::keys("ui.suggestion_fg", "ui.suggestion_bg").plus(Attrs::DIM);
-        let both = row
-            .clone()
-            .with_bg(Paint::key("ui.menu_hover_bg"))
-            .plus(Attrs::BOLD);
-        assert_eq!(both.fg, row.fg, "the foreground was not mentioned");
-        assert!(both.attrs.contains(Attrs::DIM), "the row's dim survived");
-        assert!(both.attrs.contains(Attrs::BOLD), "the span's bold applied");
-    }
-
-    /// A word the grammar does not know is dropped rather than failing the
-    /// whole name: the alternative turns one typo into a surface painted in
-    /// the editor's plain ground. Nothing can *write* such a word — [`Attrs`]
-    /// has five constants and no other constructor — so this is the reading
-    /// half being forgiving, not the writing half being loose.
-    #[test]
-    fn an_unknown_attribute_is_dropped_not_fatal() {
-        let ink = Ink::parse("editor.fg/editor.bg+bold+wobble").expect("the pair is readable");
-        assert_eq!(ink.attrs, Attrs::BOLD);
-        assert_eq!(
-            resolve("editor.fg/editor.bg+wobble", &theme()).fg,
-            Some(theme().editor_fg)
-        );
-    }
-
-    /// **A plugin's key that the theme does not know leaves the rest of the
-    /// run alone.** `Ink::style` is all-or-nothing, so before `Paint::Asked`
-    /// existed one such name — `git_history.ts` colours commit hashes
-    /// `syntax.number`, which no theme has ever had — dropped the whole run to
-    /// the editor's plain ground, and tripped `resolve`'s assertion on the way
-    /// past. The painter's behaviour was to leave the row's own foreground in
-    /// place, and that is what this reproduces.
-    #[test]
-    fn a_plugin_key_the_theme_does_not_know_falls_back_to_what_was_under_it() {
-        let t = theme();
-        let asked = |k: &str| {
-            Ink::new(
-                Paint::asked(k.to_string(), Paint::key("ui.suggestion_fg")),
-                Paint::key("ui.suggestion_bg"),
-            )
-        };
-        let unknown = asked("syntax.number");
-        let style = resolve(&unknown.to_string(), &t);
-        assert_eq!(
-            style.fg,
-            Some(t.suggestion_fg),
-            "an unknown plugin key leaves the row's own foreground"
-        );
-        assert_eq!(
-            style.bg,
-            Some(t.suggestion_bg),
-            "and does not take the background down with it"
-        );
-
-        // One the theme *does* know still wins over what is under it.
-        let known = asked("syntax.keyword");
-        assert_eq!(resolve(&known.to_string(), &t).fg, Some(t.syntax_keyword));
-
-        // And the whole thing survives the written form, fallback included.
-        for ink in [unknown, known] {
-            let written = ink.to_string();
-            assert_eq!(
-                Ink::parse(&written),
-                Some(ink),
-                "{written:?} did not read back"
-            );
-        }
-    }
-
-    /// A literal has no name by construction, and the inspector should say so
-    /// rather than attributing a plugin's colour to a theme entry.
-    #[test]
-    fn a_literal_half_reports_no_name() {
-        let ink = Ink::new(Paint::Lit(Color::Rgb(1, 2, 3)), Paint::key("editor.bg"));
-        assert_eq!(ink.names(), (None, Some("editor.bg")));
-        let (fg, bg) = names(&ink.to_string());
-        assert_eq!((fg, bg), (None, Some("editor.bg".to_string())));
-    }
-
-    /// **Every colour round-trips.** The literal form exists because a plugin's
-    /// colour arrives already resolved, with no key to name it; it is only
-    /// honest if it loses nothing.
-    ///
-    /// It did lose something. An earlier version answered `editor.fg` for
-    /// anything that was not `Color::Rgb`, and theme colours are frequently one
-    /// of the sixteen names — `file_status_modified_fg` is `Yellow` in the
-    /// built-in dark theme — so every plugin-decorated row in the file explorer
-    /// silently painted in the panel's ordinary ink instead of its status
-    /// colour. Nothing failed; it just looked undecorated.
-    #[test]
-    fn a_literal_colour_survives_the_round_trip() {
-        let theme = crate::view::theme::Theme::from_json(r#"{"name":"test"}"#)
-            .expect("a theme of nothing but defaults");
-        for c in [
-            Color::Rgb(126, 231, 135),
-            Color::Rgb(0, 0, 0),
-            Color::Yellow,
-            Color::LightMagenta,
-            Color::Black,
-            Color::White,
-            Color::Reset,
-            Color::Indexed(0),
-            Color::Indexed(42),
-            Color::Indexed(255),
-        ] {
-            let style = resolve(&pair(&literal(c), "editor.bg"), &theme);
-            assert_eq!(style.fg, Some(c), "{c:?} did not survive {:?}", literal(c));
-        }
-    }
-
-    /// A literal composes with the rest of the grammar, so a plugin colour can
-    /// still be bold or underlined.
-    #[test]
-    fn a_literal_composes_with_attributes() {
-        use ratatui::style::Modifier;
-        let theme = crate::view::theme::Theme::from_json(r#"{"name":"test"}"#)
-            .expect("a theme of nothing but defaults");
-        let style = resolve("#7ee787/editor.bg+bold", &theme);
-        assert_eq!(style.fg, Some(Color::Rgb(126, 231, 135)));
-        assert!(style.add_modifier.contains(Modifier::BOLD));
-    }
-
-    /// A malformed literal falls back to the editor's ground rather than to a
-    /// colour nobody asked for.
-    #[test]
-    fn a_malformed_literal_falls_back() {
-        let theme = crate::view::theme::Theme::from_json(r#"{"name":"test"}"#)
-            .expect("a theme of nothing but defaults");
-        for bad in [
-            "#zzzzzz/editor.bg",
-            "#12345/editor.bg",
-            "#NotAColour/editor.bg",
-        ] {
-            let style = resolve(bad, &theme);
-            assert_eq!(style.fg, Some(theme.editor_fg), "{bad}");
-        }
-    }
-}
-
 impl Editor {
     /// Snapshot the colours the shell's themes resolve to this frame.
     pub(crate) fn shell_palette(&self) -> ShellPalette {
@@ -2790,11 +2585,16 @@ impl Editor {
             // `mouse_state.dragging_scrollbar` on every event to decide whose
             // drag it was, ranked against nine other flags.
             UiFact::PaneScrollbarDrag { pane, axis, x, y } => {
-                let ms = &self.active_window().mouse_state;
-                let dragging = match axis {
-                    fresh_ui::Axis::Vertical => ms.dragging_scrollbar.is_some(),
-                    fresh_ui::Axis::Horizontal => ms.dragging_horizontal_scrollbar.is_some(),
-                };
+                let dragging = matches!(
+                    (&self.active_window().mouse_state.drag, axis),
+                    (
+                        Some(PointerDrag::VerticalScrollbar { .. }),
+                        fresh_ui::Axis::Vertical
+                    ) | (
+                        Some(PointerDrag::HorizontalScrollbar { .. }),
+                        fresh_ui::Axis::Horizontal
+                    )
+                );
                 if !dragging {
                     if axis == fresh_ui::Axis::Vertical {
                         self.shell_hover = self.scrollbar_hover(pane, y);
@@ -2811,21 +2611,7 @@ impl Editor {
             }
             // The finalizer the blanket clear used to run for this grab. The
             // release is the captured bar's, so it never reaches that walk.
-            UiFact::PaneScrollbarRelease { pane: _, axis } => {
-                let ms = &mut self.active_window_mut().mouse_state;
-                match axis {
-                    fresh_ui::Axis::Vertical => {
-                        ms.dragging_scrollbar = None;
-                        ms.drag_start_row = None;
-                        ms.drag_start_top_byte = None;
-                    }
-                    fresh_ui::Axis::Horizontal => {
-                        ms.dragging_horizontal_scrollbar = None;
-                        ms.drag_start_hcol = None;
-                        ms.drag_start_left_column = None;
-                    }
-                }
-            }
+            UiFact::PaneScrollbarRelease { .. } => self.active_window_mut().mouse_state.drag = None,
             UiFact::PaneWheel { pane, x, y, delta } => {
                 // A live terminal that asked for the mouse gets the notch —
                 // the same gate the content's press asks, for the same reason.
@@ -3043,12 +2829,12 @@ impl Editor {
             UiFact::SectionClose { index } => self.close_sidebar_section(index),
             UiFact::SectionFocus { index } => self.focus_sidebar_section(index),
             UiFact::SidebarBlur => self.blur_sidebar_panels(),
-            UiFact::ExplorerResizeBegin { x, y } => {
-                let w = self.active_window().file_explorer_width;
-                let st = &mut self.active_window_mut().mouse_state;
-                st.dragging_file_explorer = true;
-                st.drag_start_position = Some((x, y));
-                st.drag_start_explorer_width = Some(w);
+            UiFact::ExplorerResizeBegin { x, .. } => {
+                let start_width = self.active_window().file_explorer_width;
+                self.active_window_mut().mouse_state.drag = Some(PointerDrag::ExplorerBorder {
+                    press_x: x,
+                    start_width,
+                });
             }
             // The dock's column, all four of its gestures. Each body is the
             // arm `chrome::Dock::on_pointer` ran; what is gone is the pair of
@@ -3090,18 +2876,20 @@ impl Editor {
             // ladder these three replace read `chrome::pointer_grab` on every
             // event to decide whose drag it was; the node says so.
             //
-            // The gate is still here and still belongs here: a grip's `Move`
-            // fires on a bare hover too, and whether a drag is in progress is
-            // state the editor holds. What is gone is deciding *which* drag
-            // from that state.
+            // A grip's `Move` only fires while it holds the pointer, so a
+            // bare hover never arrives here. Each arm still reads its own
+            // gesture's state, because that state carries what the drag
+            // needs (the press and the width or ratio it started from); a
+            // move with none, after the state was lost, does nothing.
             UiFact::GripDrag { which, x, y } => {
                 use crate::view::shell::msg::Grip;
                 match which {
                     Grip::DockWidth if self.dock_resizing => self.handle_dock_resize_drag(x),
                     Grip::Separator => {
-                        if let Some((id, dir)) = self.active_window().mouse_state.dragging_separator
+                        if let Some(PointerDrag::Separator(drag)) =
+                            self.active_window().mouse_state.drag
                         {
-                            if let Err(e) = self.handle_separator_drag(x, y, id, dir) {
+                            if let Err(e) = self.handle_separator_drag(x, y, drag) {
                                 tracing::warn!("separator drag failed: {e}");
                             }
                         }
@@ -3129,14 +2917,10 @@ impl Editor {
                     // A finished separator drag changed the ratios, so the
                     // frame reflows through the one layout funnel.
                     Grip::Separator => {
-                        self.active_window_mut().mouse_state.dragging_separator = None;
+                        self.active_window_mut().mouse_state.drag = None;
                         self.relayout();
                     }
-                    Grip::ExplorerWidth => {
-                        let ms = &mut self.active_window_mut().mouse_state;
-                        ms.dragging_file_explorer = false;
-                        ms.drag_start_explorer_width = None;
-                    }
+                    Grip::ExplorerWidth => self.active_window_mut().mouse_state.drag = None,
                     // A release where the press landed is a click, and a click
                     // on a header toggles the section; either way the drag is
                     // over and the rows it set stay set.
@@ -3152,8 +2936,9 @@ impl Editor {
             // A split divider. The node is the container, so there is no hit
             // test: `handle_click_split_separator` walked a recorded list of
             // separator rectangles comparing the click against each in turn,
-            // to arrive at the identity the node already had. The drag it arms
-            // is still the legacy grab.
+            // to arrive at the identity the node already had. The press also
+            // records the whole gesture in one value, which the release
+            // takes; a container with no ratio to move records nothing.
             UiFact::SeparatorPress {
                 container,
                 direction,
@@ -3161,15 +2946,18 @@ impl Editor {
                 y,
             } => {
                 let ratio = self
+                    .active_window_mut()
                     .split_manager_mut()
                     .get_ratio(container.into())
                     .or_else(|| self.grouped_split_ratio(container));
-                let st = &mut self.active_window_mut().mouse_state;
-                st.dragging_separator = Some((container, direction));
-                st.drag_start_position = Some((x, y));
-                if let Some(ratio) = ratio {
-                    self.active_window_mut().mouse_state.drag_start_ratio = Some(ratio);
-                }
+                self.active_window_mut().mouse_state.drag = ratio.map(|start_ratio| {
+                    PointerDrag::Separator(crate::app::types::SeparatorDrag {
+                        container,
+                        direction,
+                        press: (x, y),
+                        start_ratio,
+                    })
+                });
             }
             UiFact::SeparatorHover(at) => {
                 // The tree's field, not the walk's. The walk runs after this on
@@ -3704,6 +3492,213 @@ impl Editor {
                     self.close_menu_with_auto_hide();
                 }
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod shell_theme_tests {
+    use super::shell_theme::{literal, names, pair, resolve, Attrs, Ink, Paint};
+    use ratatui::style::Color;
+
+    fn theme() -> crate::view::theme::Theme {
+        crate::view::theme::Theme::from_json(r#"{"name":"test"}"#)
+            .expect("a theme of nothing but defaults")
+    }
+
+    /// **A block caret is an attribute the grammar has to carry.** A form
+    /// control on a modal overlay draws its caret as one reverse-video cell —
+    /// there is no hardware cursor to place there — and a word the grammar
+    /// does not know is dropped on the way in, so the caret simply did not
+    /// appear. Reading is forgiving on purpose; that is exactly why the word
+    /// has to exist.
+    #[test]
+    fn a_reversed_cell_survives_the_written_form_and_reaches_the_style() {
+        let ink = Ink::keys("editor.fg", "editor.bg").plus(Attrs::REVERSED);
+        let written = ink.to_string();
+        assert!(written.ends_with("+reversed"), "{written:?}");
+        assert_eq!(Ink::parse(&written), Some(ink));
+        let style = resolve(&written, &theme());
+        assert!(
+            style
+                .add_modifier
+                .contains(ratatui::style::Modifier::REVERSED),
+            "the caret's cell reverses: {style:?}"
+        );
+    }
+
+    /// **What is written is what is read.** The name is a serialisation, so
+    /// the only thing that makes it safe to keep passing strings through
+    /// `fresh-ui` is that the round trip is lossless — including for the parts
+    /// the string form used to lose.
+    #[test]
+    fn an_ink_survives_the_written_form() {
+        for ink in [
+            Ink::keys("editor.fg", "editor.bg"),
+            Ink::keys("editor.fg", "editor.bg").plus(Attrs::BOLD | Attrs::DIM),
+            Ink::new(
+                Paint::Lit(Color::Rgb(126, 231, 135)),
+                Paint::key("editor.bg"),
+            ),
+            Ink::new(Paint::key("editor.fg"), Paint::Lit(Color::Indexed(42)))
+                .plus(Attrs::UNDERLINE),
+            Ink::new(Paint::Lit(Color::Yellow), Paint::Lit(Color::Black))
+                .plus(Attrs::ITALIC | Attrs::STRIKETHROUGH),
+            Ink::keys("editor.fg", "editor.bg").plus(Attrs::REVERSED),
+        ] {
+            let written = ink.to_string();
+            assert_eq!(
+                Ink::parse(&written),
+                Some(ink.clone()),
+                "{written:?} did not read back"
+            );
+        }
+    }
+
+    /// **Swapping one half leaves the other alone — attributes included.**
+    ///
+    /// This is the divergence the type exists to remove. The string form had
+    /// two spellings of "layer something over this name" and they disagreed:
+    /// swapping a background re-spliced the `+attrs` tail back on while setting
+    /// attributes dropped it, so a plugin span that named both a background and
+    /// an attribute silently un-dimmed a disabled suggestion row.
+    #[test]
+    fn layering_over_an_ink_keeps_what_it_does_not_mention() {
+        let row = Ink::keys("ui.suggestion_fg", "ui.suggestion_bg").plus(Attrs::DIM);
+        let both = row
+            .clone()
+            .with_bg(Paint::key("ui.menu_hover_bg"))
+            .plus(Attrs::BOLD);
+        assert_eq!(both.fg, row.fg, "the foreground was not mentioned");
+        assert!(both.attrs.contains(Attrs::DIM), "the row's dim survived");
+        assert!(both.attrs.contains(Attrs::BOLD), "the span's bold applied");
+    }
+
+    /// A word the grammar does not know is dropped rather than failing the
+    /// whole name: the alternative turns one typo into a surface painted in
+    /// the editor's plain ground. Nothing can *write* such a word — [`Attrs`]
+    /// has five constants and no other constructor — so this is the reading
+    /// half being forgiving, not the writing half being loose.
+    #[test]
+    fn an_unknown_attribute_is_dropped_not_fatal() {
+        let ink = Ink::parse("editor.fg/editor.bg+bold+wobble").expect("the pair is readable");
+        assert_eq!(ink.attrs, Attrs::BOLD);
+        assert_eq!(
+            resolve("editor.fg/editor.bg+wobble", &theme()).fg,
+            Some(theme().editor_fg)
+        );
+    }
+
+    /// **A plugin's key that the theme does not know leaves the rest of the
+    /// run alone.** `Ink::style` is all-or-nothing, so before `Paint::Asked`
+    /// existed one such name — `git_history.ts` colours commit hashes
+    /// `syntax.number`, which no theme has ever had — dropped the whole run to
+    /// the editor's plain ground, and tripped `resolve`'s assertion on the way
+    /// past. The painter's behaviour was to leave the row's own foreground in
+    /// place, and that is what this reproduces.
+    #[test]
+    fn a_plugin_key_the_theme_does_not_know_falls_back_to_what_was_under_it() {
+        let t = theme();
+        let asked = |k: &str| {
+            Ink::new(
+                Paint::asked(k.to_string(), Paint::key("ui.suggestion_fg")),
+                Paint::key("ui.suggestion_bg"),
+            )
+        };
+        let unknown = asked("syntax.number");
+        let style = resolve(&unknown.to_string(), &t);
+        assert_eq!(
+            style.fg,
+            Some(t.suggestion_fg),
+            "an unknown plugin key leaves the row's own foreground"
+        );
+        assert_eq!(
+            style.bg,
+            Some(t.suggestion_bg),
+            "and does not take the background down with it"
+        );
+
+        // One the theme *does* know still wins over what is under it.
+        let known = asked("syntax.keyword");
+        assert_eq!(resolve(&known.to_string(), &t).fg, Some(t.syntax_keyword));
+
+        // And the whole thing survives the written form, fallback included.
+        for ink in [unknown, known] {
+            let written = ink.to_string();
+            assert_eq!(
+                Ink::parse(&written),
+                Some(ink),
+                "{written:?} did not read back"
+            );
+        }
+    }
+
+    /// A literal has no name by construction, and the inspector should say so
+    /// rather than attributing a plugin's colour to a theme entry.
+    #[test]
+    fn a_literal_half_reports_no_name() {
+        let ink = Ink::new(Paint::Lit(Color::Rgb(1, 2, 3)), Paint::key("editor.bg"));
+        assert_eq!(ink.names(), (None, Some("editor.bg")));
+        let (fg, bg) = names(&ink.to_string());
+        assert_eq!((fg, bg), (None, Some("editor.bg".to_string())));
+    }
+
+    /// **Every colour round-trips.** The literal form exists because a plugin's
+    /// colour arrives already resolved, with no key to name it; it is only
+    /// honest if it loses nothing.
+    ///
+    /// It did lose something. An earlier version answered `editor.fg` for
+    /// anything that was not `Color::Rgb`, and theme colours are frequently one
+    /// of the sixteen names — `file_status_modified_fg` is `Yellow` in the
+    /// built-in dark theme — so every plugin-decorated row in the file explorer
+    /// silently painted in the panel's ordinary ink instead of its status
+    /// colour. Nothing failed; it just looked undecorated.
+    #[test]
+    fn a_literal_colour_survives_the_round_trip() {
+        let theme = crate::view::theme::Theme::from_json(r#"{"name":"test"}"#)
+            .expect("a theme of nothing but defaults");
+        for c in [
+            Color::Rgb(126, 231, 135),
+            Color::Rgb(0, 0, 0),
+            Color::Yellow,
+            Color::LightMagenta,
+            Color::Black,
+            Color::White,
+            Color::Reset,
+            Color::Indexed(0),
+            Color::Indexed(42),
+            Color::Indexed(255),
+        ] {
+            let style = resolve(&pair(&literal(c), "editor.bg"), &theme);
+            assert_eq!(style.fg, Some(c), "{c:?} did not survive {:?}", literal(c));
+        }
+    }
+
+    /// A literal composes with the rest of the grammar, so a plugin colour can
+    /// still be bold or underlined.
+    #[test]
+    fn a_literal_composes_with_attributes() {
+        use ratatui::style::Modifier;
+        let theme = crate::view::theme::Theme::from_json(r#"{"name":"test"}"#)
+            .expect("a theme of nothing but defaults");
+        let style = resolve("#7ee787/editor.bg+bold", &theme);
+        assert_eq!(style.fg, Some(Color::Rgb(126, 231, 135)));
+        assert!(style.add_modifier.contains(Modifier::BOLD));
+    }
+
+    /// A malformed literal falls back to the editor's ground rather than to a
+    /// colour nobody asked for.
+    #[test]
+    fn a_malformed_literal_falls_back() {
+        let theme = crate::view::theme::Theme::from_json(r#"{"name":"test"}"#)
+            .expect("a theme of nothing but defaults");
+        for bad in [
+            "#zzzzzz/editor.bg",
+            "#12345/editor.bg",
+            "#NotAColour/editor.bg",
+        ] {
+            let style = resolve(bad, &theme);
+            assert_eq!(style.fg, Some(theme.editor_fg), "{bad}");
         }
     }
 }

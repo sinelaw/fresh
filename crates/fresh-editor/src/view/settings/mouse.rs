@@ -12,6 +12,7 @@
 use crate::app::Editor;
 
 use super::state::FocusTarget;
+use super::surface::SettingsSurface;
 use super::SettingsHit;
 use crate::widgets::kinds::dual_list::DualOp;
 

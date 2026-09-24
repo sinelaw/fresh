@@ -21,6 +21,7 @@ mod composite_buffer_actions;
 pub mod confirm_dialog;
 mod dabbrev_actions;
 mod diagnostic_jumps;
+#[cfg(feature = "plugins")]
 pub(crate) mod diff_baselines;
 mod editor_accessors;
 mod editor_init;
@@ -474,6 +475,7 @@ pub struct PerfCounters {
 ///
 /// An `AuthorityPayload` can only describe a local filesystem, so a remote
 /// machine is reached by borrowing the connection of a window attached to it.
+#[cfg_attr(not(feature = "plugins"), allow(dead_code))]
 pub(crate) enum OpenMachineKind {
     /// Built from a plugin payload; a reference into the connection registry.
     Owned(Arc<crate::services::authority::Connection>),
@@ -481,6 +483,7 @@ pub(crate) enum OpenMachineKind {
     Window(fresh_core::WindowId),
 }
 
+#[cfg_attr(not(feature = "plugins"), allow(dead_code))]
 pub(crate) struct OpenMachine {
     pub(crate) kind: OpenMachineKind,
     /// Set when the handle is closed. Off-loop work still running against the
@@ -489,6 +492,7 @@ pub(crate) struct OpenMachine {
 }
 
 impl OpenMachine {
+    #[cfg(feature = "plugins")]
     pub(crate) fn new(kind: OpenMachineKind) -> Self {
         Self {
             kind,
@@ -504,8 +508,10 @@ pub struct Editor {
     pub(crate) connections: crate::services::authority::ConnectionRegistry,
     /// Machines a plugin opened with `openMachine`, by handle id. Held until
     /// the plugin closes the handle, so a scan connects once rather than per call.
+    #[cfg_attr(not(feature = "plugins"), allow(dead_code))]
     pub(crate) open_machines: std::collections::HashMap<u64, OpenMachine>,
     /// Source of `open_machines` keys. Starts at 1 so 0 can mean "active window" on the wire.
+    #[cfg_attr(not(feature = "plugins"), allow(dead_code))]
     pub(crate) next_machine_id: u64,
     /// See [`PerfCounters`]. Cheap to maintain (two increments on a path
     /// that is already copying), and the only way an assertion can tell a
@@ -570,10 +576,12 @@ pub struct Editor {
     config: Arc<Config>,
 
     /// Clone of `config` captured at the last plugin-snapshot refresh.
+    #[cfg_attr(not(feature = "plugins"), allow(dead_code))]
     config_snapshot_anchor: Arc<Config>,
 
     /// Serialized JSON of `*self.config` as of the last time
     /// `ptr_eq(&self.config, &self.config_snapshot_anchor)` was false.
+    #[cfg_attr(not(feature = "plugins"), allow(dead_code))]
     config_cached_json: Arc<serde_json::Value>,
 
     /// Cached raw user config (for plugins, avoids re-reading file on every frame).
@@ -1552,14 +1560,6 @@ pub struct Editor {
     pub(crate) prose_reveal: std::cell::RefCell<
         HashMap<crate::widgets::PanelKey, std::rc::Rc<fresh_ui::behavior::anchor::Anchor>>,
     >,
-    /// Row budget each buffer-mounted widget panel was last rendered
-    /// against, so a panel whose split has since changed size can be
-    /// re-rendered once — and only once — against the new one. Comparing
-    /// against what was *rendered* (rather than against the previous
-    /// frame's viewport) is what keeps that a single repaint instead of a
-    /// per-frame one.
-    pub(crate) widget_panel_render_heights:
-        std::collections::HashMap<crate::widgets::PanelKey, u32>,
 }
 
 /// Sentinel `BufferId` registered with the widget registry for the
@@ -1581,11 +1581,13 @@ pub(crate) const DOCK_PANEL_BUFFER_ID: BufferId = BufferId(usize::MAX - 1);
 /// `PanelSlot::Sidebar`.
 pub(crate) const SIDEBAR_PANEL_BUFFER_BASE: BufferId = BufferId(usize::MAX - 2);
 /// How many sidebar sections the sentinel range spans.
+#[cfg_attr(not(feature = "plugins"), allow(dead_code))]
 pub(crate) const SIDEBAR_PANEL_BUFFER_SPAN: usize = 256;
 /// The buffer id the overlay prompt's toolbar panel is registered against.
 /// No buffer has it: the toolbar is described in the prompt card's header
 /// band and never had a text projection to write anywhere. Below the sidebar
-/// sections' span, so `slot_for_panel_buffer` answers `None` for it.
+/// sections' span, so it never names a section's buffer.
+#[cfg_attr(not(feature = "plugins"), allow(dead_code))]
 pub(crate) const PROMPT_TOOLBAR_BUFFER_ID: BufferId =
     BufferId(SIDEBAR_PANEL_BUFFER_BASE.0 - SIDEBAR_PANEL_BUFFER_SPAN - 1);
 
@@ -1624,7 +1626,7 @@ impl PanelSlot {
 // handlers, but they are matched throughout the shared widget runtime and
 // render/input code, so the enum itself stays un-gated. Suppress the
 // "never constructed" lint in plugin-less builds.
-#[cfg_attr(not(any(feature = "plugins", test)), allow(dead_code))]
+#[cfg_attr(not(feature = "plugins"), allow(dead_code))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PanelPlacement {
     /// Centered modal overlay sized by `width_pct`/`height_pct`
@@ -1916,11 +1918,8 @@ impl Editor {
     pub fn active_cursors(&self) -> &Cursors {
         let split_id = self.effective_active_split();
         &self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(_, vs)| vs)
-            .expect("active window must have a populated split layout")
+            .active_window()
+            .split_view_states()
             .get(&split_id)
             .unwrap()
             .cursors
@@ -1930,10 +1929,8 @@ impl Editor {
     pub fn active_cursors_mut(&mut self) -> &mut Cursors {
         let split_id = self.effective_active_split();
         &mut self
-            .windows
-            .get_mut(&self.active_window)
-            .and_then(|w| w.split_view_states_mut())
-            .expect("active window must have a populated split layout")
+            .active_window_mut()
+            .split_view_states_mut()
             .get_mut(&split_id)
             .unwrap()
             .cursors
@@ -1951,45 +1948,6 @@ impl Editor {
                 .map(crate::app::window::LspCompletionCandidate::unattributed)
                 .collect(),
         );
-    }
-
-    /// Get the viewport for the active split
-    pub fn active_viewport(&self) -> &crate::view::viewport::Viewport {
-        let active_split = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(mgr, _)| mgr)
-            .expect("active window must have a populated split layout")
-            .active_split();
-        &self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(_, vs)| vs)
-            .expect("active window must have a populated split layout")
-            .get(&active_split)
-            .unwrap()
-            .viewport
-    }
-
-    /// Get the viewport for the active split (mutable)
-    pub fn active_viewport_mut(&mut self) -> &mut crate::view::viewport::Viewport {
-        let active_split = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(mgr, _)| mgr)
-            .expect("active window must have a populated split layout")
-            .active_split();
-        &mut self
-            .windows
-            .get_mut(&self.active_window)
-            .and_then(|w| w.split_view_states_mut())
-            .expect("active window must have a populated split layout")
-            .get_mut(&active_split)
-            .unwrap()
-            .viewport
     }
 
     /// Width (in cells) of the line-number gutter for a given split leaf, or 0
@@ -2159,6 +2117,28 @@ impl Editor {
                 values.retain(|k, _| !k.starts_with(&prefix));
             }
         }
+    }
+}
+
+impl crate::app::window::Window {
+    /// Get the viewport for the active split
+    pub fn active_viewport(&self) -> &crate::view::viewport::Viewport {
+        let active_split = self.split_manager().active_split();
+        &self
+            .split_view_states()
+            .get(&active_split)
+            .unwrap()
+            .viewport
+    }
+
+    /// Get the viewport for the active split (mutable)
+    pub fn active_viewport_mut(&mut self) -> &mut crate::view::viewport::Viewport {
+        let active_split = self.split_manager().active_split();
+        &mut self
+            .split_view_states_mut()
+            .get_mut(&active_split)
+            .unwrap()
+            .viewport
     }
 }
 
@@ -4256,7 +4236,7 @@ mod tests {
             test_filesystem(),
         )
         .unwrap();
-        let source = editor.active_split_id();
+        let source = editor.active_window().split_manager().active_split();
         assert_eq!(
             editor.pane_beside(source),
             None,
@@ -4491,7 +4471,7 @@ mod tests {
             test_filesystem(),
         )
         .unwrap();
-        let split_id = editor.split_manager().active_split();
+        let split_id = editor.active_window().split_manager().active_split();
 
         // Open enough long-named buffers that the strip would scroll on a
         // realistic terminal width.
@@ -4517,10 +4497,13 @@ mod tests {
         editor
             .active_window_mut()
             .split_manager_mut()
-            .unwrap()
             .set_split_buffer(split_id, keep);
         {
-            let view_state = editor.split_view_states_mut().get_mut(&split_id).unwrap();
+            let view_state = editor
+                .active_window_mut()
+                .split_view_states_mut()
+                .get_mut(&split_id)
+                .unwrap();
             view_state.open_buffers = buffers
                 .iter()
                 .map(|b| TabTarget::Buffer(*b))
@@ -4532,7 +4515,11 @@ mod tests {
         // Only the kept tab remains, which is what the strip is asked to
         // reveal. Where that puts its window is the window's answer and is
         // pinned in `shell::tabs`, not here.
-        let view_state = editor.split_view_states().get(&split_id).unwrap();
+        let view_state = editor
+            .active_window()
+            .split_view_states()
+            .get(&split_id)
+            .unwrap();
         assert_eq!(
             view_state.buffer_tab_ids_vec(),
             vec![keep],

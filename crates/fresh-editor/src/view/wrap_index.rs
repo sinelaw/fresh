@@ -64,6 +64,14 @@ pub fn fold_signature(folds: &[std::ops::Range<usize>]) -> u64 {
     h.finish() | 1
 }
 
+/// One line's decorations: its soft breaks, its conceals (the byte range and
+/// what replaces it), and its inline hints.
+type LineDecorations<'a> = (
+    Vec<SoftBreakRender>,
+    Vec<(std::ops::Range<usize>, Option<&'a str>)>,
+    Vec<crate::view::ui::split_rendering::transforms::InlineHint>,
+);
+
 /// Plugin decorations that move row boundaries, snapshotted for one build.
 ///
 /// Owned data rather than a borrow of the managers, because the build holds
@@ -288,15 +296,7 @@ impl IndexDecorations {
     /// The decorations touching `line_start..line_end`, as the transforms want
     /// them. Conceals are kept whenever they *overlap* the line rather than
     /// start inside it: one spanning a line break still hides part of this line.
-    fn for_line(
-        &self,
-        line_start: usize,
-        line_end: usize,
-    ) -> (
-        Vec<SoftBreakRender>,
-        Vec<(std::ops::Range<usize>, Option<&str>)>,
-        Vec<crate::view::ui::split_rendering::transforms::InlineHint>,
-    ) {
+    fn for_line(&self, line_start: usize, line_end: usize) -> LineDecorations<'_> {
         let breaks = self
             .soft_breaks
             .iter()
@@ -2483,7 +2483,10 @@ mod tests {
     /// indistinguishable from one built from scratch.
     #[test]
     fn repair_equals_rebuild() {
-        let cases: &[(&str, &[(usize, usize, &str)])] = &[
+        // A line of text, and the edits (position, removed, inserted) made
+        // to it.
+        type Case<'a> = (&'a str, &'a [(usize, usize, &'a str)]);
+        let cases: &[Case] = &[
             (
                 "alpha beta gamma delta epsilon",
                 &[(0, 0, "x"), (10, 0, "yy"), (5, 3, "")],

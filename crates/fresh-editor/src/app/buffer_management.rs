@@ -80,10 +80,7 @@ impl crate::app::window::Window {
     /// If the active split has no label, use it (normal case).
     /// Otherwise find an unlabeled leaf so files don't open in labeled splits (e.g., sidebars).
     pub(crate) fn preferred_split_for_file(&self) -> LeafId {
-        let (mgr, _) = self
-            .buffers
-            .splits()
-            .expect("active window must have a populated split layout");
+        let (mgr, _) = self.splits();
         let active = mgr.active_split();
         if mgr.get_label(active.into()).is_none() {
             return active;
@@ -282,7 +279,7 @@ impl Editor {
             editor
                 .windows
                 .get_mut(&editor.active_window)
-                .and_then(|w| w.split_manager_mut())
+                .and_then(|w| w.buffers.split_manager_mut())
                 .is_some_and(|mgr| mgr.set_active_split(split))
         };
 
@@ -596,13 +593,7 @@ impl Editor {
                 new_sticky_column: Some(end_col_0),
             };
 
-            let split_id = self
-                .windows
-                .get(&self.active_window)
-                .and_then(|w| w.buffers.splits())
-                .map(|(mgr, _)| mgr)
-                .expect("active window must have a populated split layout")
-                .active_split();
+            let split_id = self.active_window().split_manager().active_split();
             self.active_window_mut()
                 .apply_event_to_buffer(buffer_id, split_id, &event);
         }
@@ -703,13 +694,7 @@ impl Editor {
         // Initialize per-buffer view state with config defaults.
         // Must happen AFTER set_active_buffer, because switch_buffer creates
         // the new BufferViewState with defaults (show_line_numbers=true).
-        let active_split = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(mgr, _)| mgr)
-            .expect("active window must have a populated split layout")
-            .active_split();
+        let active_split = self.active_window().split_manager().active_split();
         let line_wrap = self.active_window().resolve_line_wrap_for_buffer(buffer_id);
         let wrap_column = self
             .active_window()
@@ -717,7 +702,7 @@ impl Editor {
         if let Some(view_state) = self
             .windows
             .get_mut(&self.active_window)
-            .and_then(|w| w.split_view_states_mut())
+            .and_then(|w| w.buffers.split_view_states_mut())
             .expect("active window must have a populated split layout")
             .get_mut(&active_split)
         {

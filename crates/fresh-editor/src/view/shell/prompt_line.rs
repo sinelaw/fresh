@@ -24,9 +24,9 @@ use fresh_ui::{
 use unicode_segmentation::UnicodeSegmentation;
 
 use super::msg::{UiFact, UiMsg};
+use super::path_display::{path_display_sep, truncate_path, TruncatedPath};
 use crate::app::shell_host::shell_theme::pair;
 use crate::primitives::display_width::str_width;
-use crate::view::ui::status_bar::{input_hscroll, path_display_sep, truncate_path, TruncatedPath};
 
 /// What the row shows: the prompt's message, its query, and — for the
 /// file-open prompts — the directory the query completes in.
@@ -196,6 +196,22 @@ fn label_runs(p: &PromptRow, width: u16) -> Vec<Run> {
     runs
 }
 
+/// Horizontal scroll (in display cells) for a single-line input rendered
+/// in a viewport `width` cells wide, so the cursor at display column
+/// `cursor_cells` is always visible (issue #2876). Returns 0 while the
+/// cursor fits; otherwise scrolls just enough that the cursor lands on
+/// the viewport's last column.
+///
+/// Invariant (for `width > 0`): `scroll <= cursor_cells` and
+/// `cursor_cells - scroll < width`.
+fn input_hscroll(cursor_cells: usize, width: usize) -> usize {
+    if width == 0 {
+        0
+    } else {
+        cursor_cells.saturating_sub(width - 1)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -343,5 +359,31 @@ mod tests {
             themed.iter().any(|(t, th)| t == "el" && th == &selection()),
             "{themed:?}"
         );
+    }
+
+    /// Invariant of the prompt-input horizontal scroll window (issue #2876):
+    /// for any viewport width > 0 the cursor always lands inside the
+    /// viewport (`cursor - scroll < width`), scrolling never overshoots the
+    /// cursor, and no scrolling happens while the cursor already fits.
+    #[test]
+    fn test_input_hscroll_keeps_cursor_visible() {
+        for width in 1usize..=120 {
+            for cursor in 0usize..=200 {
+                let scroll = input_hscroll(cursor, width);
+                assert!(scroll <= cursor, "scroll {scroll} > cursor {cursor}");
+                assert!(
+                    cursor - scroll < width,
+                    "cursor not visible: cursor={cursor} scroll={scroll} width={width}"
+                );
+                if cursor < width {
+                    assert_eq!(
+                        scroll, 0,
+                        "no scroll needed at cursor={cursor} width={width}"
+                    );
+                }
+            }
+        }
+        // Degenerate zero-width viewport must not underflow.
+        assert_eq!(input_hscroll(50, 0), 0);
     }
 }

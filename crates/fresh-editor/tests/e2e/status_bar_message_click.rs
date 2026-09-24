@@ -168,31 +168,3 @@ fn status_log_path_can_be_rebound_after_editor_rebuild() -> anyhow::Result<()> {
     );
     Ok(())
 }
-
-/// `take_warning_log` returns the path that was last set, and a
-/// freshly-created editor without `set_warning_log` returns None.
-/// Pins the round-trip used by `main.rs` to forward the warning
-/// channel across editor restarts.
-#[test]
-fn take_warning_log_returns_set_value() -> anyhow::Result<()> {
-    let mut harness = EditorTestHarness::new(80, 24)?;
-    assert!(
-        harness.editor_mut().take_warning_log().is_none(),
-        "new editor has no warning log channel installed"
-    );
-
-    let (_tx, rx) = std::sync::mpsc::channel::<()>();
-    let path = std::path::PathBuf::from("/tmp/fake-warning-log");
-    harness.editor_mut().set_warning_log(rx, path.clone());
-
-    let taken = harness
-        .editor_mut()
-        .take_warning_log()
-        .expect("warning log was set, must be returned by take");
-    assert_eq!(taken.1, path);
-    assert!(
-        harness.editor_mut().take_warning_log().is_none(),
-        "subsequent take returns None — single-consumer semantics"
-    );
-    Ok(())
-}

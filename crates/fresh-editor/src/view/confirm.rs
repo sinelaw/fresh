@@ -723,7 +723,7 @@ mod tests {
             );
         }
         // The retreat is numbered first, so it is 1 wherever it appears.
-        assert_eq!(c.by_mnemonic('1').map(|i| i), Some(2));
+        assert_eq!(c.by_mnemonic('1'), Some(2));
     }
 
     /// A Latin label is left alone — numbering is the fallback, not the rule.

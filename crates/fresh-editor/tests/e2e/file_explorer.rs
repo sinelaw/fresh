@@ -4203,16 +4203,6 @@ fn test_file_explorer_duplicate_refreshes_git_decorations() {
         .unwrap();
 }
 
-/// Returns `true` when `name` appears on a screen line that also contains a
-/// tree connector, matching the existing `wait_for_file_explorer_item`
-/// heuristic. Reads only rendered output.
-fn explorer_tree_contains(harness: &EditorTestHarness, name: &str) -> bool {
-    harness
-        .screen_to_string()
-        .lines()
-        .any(|line| line.contains(name) && line.contains('│'))
-}
-
 /// The file-explorer sidebar's content rectangle, located from the panel's
 /// own border glyphs: `(first content column, one past the last content
 /// column, first content row, one past the last content row)`.

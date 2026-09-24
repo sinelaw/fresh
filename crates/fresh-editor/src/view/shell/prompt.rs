@@ -101,10 +101,11 @@ pub struct SuggestionRow {
 /// the same painter with a `with_border` flag between them and two copies of
 /// the placement arithmetic — one in `render`, one in `chrome::Prompt::collect`
 /// — that had to agree for a click to land.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub enum Place {
     /// Above the prompt row, in its own bordered popup, flipping below when
     /// there is no room above.
+    #[default]
     AbovePrompt,
     /// Filling the overlay card's results band, with no frame of its own.
     ///
@@ -114,12 +115,6 @@ pub enum Place {
     /// this one is placed, and nothing has to be measured twice or passed
     /// between two passes.
     InCard,
-}
-
-impl Default for Place {
-    fn default() -> Self {
-        Place::AbovePrompt
-    }
 }
 
 impl Place {
@@ -299,7 +294,7 @@ fn every_theme_name() -> Vec<String> {
 /// losing the row.
 fn span_run(sp: &DescriptionSpan, row: &str) -> Run {
     let Some(mut ink) = Ink::parse(row) else {
-        return Run::themed(sp.text.clone(), row.to_string());
+        return Run::themed(sp.text.clone(), row);
     };
     if let Some(fg) = &sp.fg {
         ink = ink.with_fg(Paint::key(fg.clone()));
@@ -362,16 +357,16 @@ impl Columns {
             // Fixed, and present whenever *any* row has one: a row without a
             // keybinding still leaves the space, or the descriptions stop
             // lining up.
-            keybinding: rows
-                .iter()
-                .any(|r| r.keybinding.is_some())
-                .then_some(KEYBINDING_W)
-                .unwrap_or(0),
-            source: rows
-                .iter()
-                .any(|r| r.source.is_some())
-                .then_some(SOURCE_W)
-                .unwrap_or(0),
+            keybinding: if rows.iter().any(|r| r.keybinding.is_some()) {
+                KEYBINDING_W
+            } else {
+                0
+            },
+            source: if rows.iter().any(|r| r.source.is_some()) {
+                SOURCE_W
+            } else {
+                0
+            },
         }
     }
 }
@@ -520,10 +515,10 @@ pub fn suggestions(s: &Suggestions) -> Node<UiMsg> {
         }
     };
 
-    let mut list = fresh_ui::widgets::List::windowed(
-        rows_for_key.len(),
-        move |i| row_key(i),
-        move |i| match rows_for_row.get(i) {
+    let mut list =
+        fresh_ui::widgets::List::windowed(rows_for_key.len(), row_key, move |i| match rows_for_row
+            .get(i)
+        {
             Some(r) => node_row(
                 i,
                 r,
@@ -536,45 +531,44 @@ pub fn suggestions(s: &Suggestions) -> Node<UiMsg> {
                 cols,
             ),
             None => row().h(Sizing::Cells(1)),
-        },
-    )
-    .row_theme(move |i, st| {
-        let st = hover_state(i, st);
-        theme(rows_for_theme.get(i).is_some_and(|r| r.disabled), st)
-    })
-    // **The bar rides the popup's right border, and the column is always
-    // reserved for it.** Both halves of that are what the painter did:
-    // `render` drew the shared scrollbar widget over `outer.right() - 1`, the
-    // ring's own column, and laid the rows out in the inner rect either way —
-    // so a list that grew past ten entries did not reflow its columns by a
-    // cell. A gutter that came and went would leave the bar *beside* the ring
-    // rather than on it, which is the one thing the ring column cannot say.
-    .scrollbar_gutter()
-    // Named apart from the rows, because the bar is not part of the list's
-    // ground: it is the editor's one scrollbar, in the editor's one pair of
-    // scrollbar colours, wherever it appears.
-    .scrollbar_theme(pair("ui.scrollbar_thumb_fg", "ui.scrollbar_track_fg"))
-    // A click reports the row; what that *means* is the prompt type's
-    // business — `select_suggestion` confirms when `click_confirms()` says a
-    // click commits, and otherwise syncs the input. That decision was already
-    // editor-side; what the list removes is the coordinate hit-test in front
-    // of it (`handle_click_suggestions` recovering an index the row knew).
-    //
-    // A double click always commits, `click_confirms` or not: it is the
-    // mouse-only commit path for the prompts that preview on a single click.
-    // Both handlers can be set now that `activate_on` says *which* click
-    // activates — before it, the widget fired activation on the first and let
-    // it win, so setting both confirmed every click.
-    .activate_on(fresh_ui::widgets::Activate::DoubleClick)
-    // **The keyboard belongs to the prompt's input line, which is not in this
-    // tree.** The editor sets the selection every frame and handles every key
-    // the prompt answers — Up, Down, Enter, Tab-completion — so a list that
-    // joined the focus ring would only be somewhere for Tab to land, and Tab
-    // in a command palette completes the query. The mouse is unaffected: a
-    // list that declines focus still answers clicks and the wheel.
-    .focusable(false)
-    .on_select(|i| UiMsg::Ui(UiFact::SuggestionSelect(i)))
-    .on_activate(|i| UiMsg::Ui(UiFact::SuggestionConfirm(i)));
+        })
+        .row_theme(move |i, st| {
+            let st = hover_state(i, st);
+            theme(rows_for_theme.get(i).is_some_and(|r| r.disabled), st)
+        })
+        // **The bar rides the popup's right border, and the column is always
+        // reserved for it.** Both halves of that are what the painter did:
+        // `render` drew the shared scrollbar widget over `outer.right() - 1`, the
+        // ring's own column, and laid the rows out in the inner rect either way —
+        // so a list that grew past ten entries did not reflow its columns by a
+        // cell. A gutter that came and went would leave the bar *beside* the ring
+        // rather than on it, which is the one thing the ring column cannot say.
+        .scrollbar_gutter()
+        // Named apart from the rows, because the bar is not part of the list's
+        // ground: it is the editor's one scrollbar, in the editor's one pair of
+        // scrollbar colours, wherever it appears.
+        .scrollbar_theme(pair("ui.scrollbar_thumb_fg", "ui.scrollbar_track_fg"))
+        // A click reports the row; what that *means* is the prompt type's
+        // business — `select_suggestion` confirms when `click_confirms()` says a
+        // click commits, and otherwise syncs the input. That decision was already
+        // editor-side; what the list removes is the coordinate hit-test in front
+        // of it (`handle_click_suggestions` recovering an index the row knew).
+        //
+        // A double click always commits, `click_confirms` or not: it is the
+        // mouse-only commit path for the prompts that preview on a single click.
+        // Both handlers can be set now that `activate_on` says *which* click
+        // activates — before it, the widget fired activation on the first and let
+        // it win, so setting both confirmed every click.
+        .activate_on(fresh_ui::widgets::Activate::DoubleClick)
+        // **The keyboard belongs to the prompt's input line, which is not in this
+        // tree.** The editor sets the selection every frame and handles every key
+        // the prompt answers — Up, Down, Enter, Tab-completion — so a list that
+        // joined the focus ring would only be somewhere for Tab to land, and Tab
+        // in a command palette completes the query. The mouse is unaffected: a
+        // list that declines focus still answers clicks and the wheel.
+        .focusable(false)
+        .on_select(|i| UiMsg::Ui(UiFact::SuggestionSelect(i)))
+        .on_activate(|i| UiMsg::Ui(UiFact::SuggestionConfirm(i)));
     if let Some(i) = selected {
         list = list.selected(i);
     }
@@ -700,7 +694,7 @@ fn hints_row(text_of: &str) -> Node<UiMsg> {
     );
     row().h(Sizing::Cells(1)).theme(t.clone()).children([
         row().w(Sizing::Cells(LEFT_MARGIN)),
-        text(text_of.to_string()).theme(t).elide(Elide::Tail),
+        text(text_of).theme(t).elide(Elide::Tail),
     ])
 }
 
@@ -746,6 +740,7 @@ pub fn suggestions_list_rect(spec: &fresh_ui::LayoutSpec) -> Option<fresh_ui::Re
 /// when `total > visible` — and cached it in `ChromeLayout` for the drag
 /// handlers. The viewport emits the bar as an item when it needs one, so its
 /// presence and its rectangle are the same answer.
+#[cfg(test)]
 pub fn suggestions_scrollbar_rect(spec: &fresh_ui::LayoutSpec) -> Option<fresh_ui::Rect> {
     let key = LIST_KEY.with(|k| k.clone());
     let range = spec.index.iter().find(|(k, _)| *k == key)?.1.clone();

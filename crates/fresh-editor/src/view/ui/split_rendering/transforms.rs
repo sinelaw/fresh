@@ -795,17 +795,16 @@ pub fn splice_inline_virtual_text(
     // order. `before` stores the raw hint text — its leading-space padding
     // depends on whether the anchor cell is a newline, decided while
     // walking the token stream below.
-    let mut before: HashMap<usize, Vec<(String, Option<ViewTokenStyle>, Option<u32>)>> =
-        HashMap::new();
+    let mut before: HashMap<usize, Vec<InlineHintCell>> = HashMap::new();
     let mut after: HashMap<usize, Vec<InlineHintCell>> = HashMap::new();
     for hint in hints {
         match hint.position {
             VirtualTextPosition::BeforeChar => {
-                before.entry(hint.anchor).or_default().push((
-                    hint.text.clone(),
-                    hint.style.clone(),
-                    hint.pad_to_column,
-                ));
+                before.entry(hint.anchor).or_default().push(InlineHintCell {
+                    text: hint.text.clone(),
+                    style: hint.style.clone(),
+                    pad_to_column: hint.pad_to_column,
+                });
             }
             VirtualTextPosition::AfterChar => {
                 after.entry(hint.anchor).or_default().push(InlineHintCell {
@@ -858,7 +857,12 @@ pub fn splice_inline_virtual_text(
                             });
                         }
                         seg_start = anchor;
-                        for (text, style, target) in hints {
+                        for InlineHintCell {
+                            text,
+                            style,
+                            pad_to_column: target,
+                        } in hints
+                        {
                             match target {
                                 Some(t) => out.defer_to_row_end(text.clone(), style.clone(), *t),
                                 None => out.push(virt(format!("{text} "), style.clone())),
@@ -908,7 +912,12 @@ pub fn splice_inline_virtual_text(
                 let anchor_is_newline = matches!(kind, ViewTokenWireKind::Newline);
                 let empty_line = anchor_is_newline && line_start_cell;
                 if let Some(hints) = before.get(&anchor) {
-                    for (text, style, target) in hints {
+                    for InlineHintCell {
+                        text,
+                        style,
+                        pad_to_column: target,
+                    } in hints
+                    {
                         if let Some(t) = target {
                             out.defer_to_row_end(text.clone(), style.clone(), *t);
                             continue;

@@ -738,7 +738,7 @@ impl EditorState {
             // `theme: None` — the index measures and never draws, so a
             // continuation prefix contributes its width here but no colour.
             self.soft_breaks
-                .query_viewport_rendered(0, end, &self.marker_list, &no_cursors, None)
+                .query_viewport_rendered(0, end, &self.marker_list, no_cursors, None)
         };
 
         let is_compose = matches!(view_mode, CacheViewMode::Compose);
@@ -748,7 +748,7 @@ impl EditorState {
         } else {
             let exclude = (!is_compose).then(crate::view::compose_only::md_syntax_namespace);
             self.conceals
-                .query_viewport_excluding(0, end, &self.marker_list, exclude.as_ref(), &no_cursors)
+                .query_viewport_excluding(0, end, &self.marker_list, exclude.as_ref(), no_cursors)
                 .into_iter()
                 .map(|(r, t)| (r, t.map(str::to_owned)))
                 .collect()
@@ -1567,13 +1567,6 @@ impl EditorState {
         }
     }
 
-    /// Apply multiple events in sequence
-    pub fn apply_many(&mut self, cursors: &mut Cursors, events: &[Event]) {
-        for event in events {
-            self.apply(cursors, event);
-        }
-    }
-
     /// Called when this buffer loses focus (e.g., switching to another buffer,
     /// opening a prompt, focusing file explorer, etc.)
     /// Dismisses transient popups like Hover and Signature Help.
@@ -1717,9 +1710,6 @@ pub(crate) fn convert_popup_data_to_popup(
         PopupPositionData::Fixed { x, y } => PopupPosition::Fixed { x, y },
         PopupPositionData::Centered => PopupPosition::Centered,
         PopupPositionData::BottomRight => PopupPosition::BottomRight,
-        PopupPositionData::AboveStatusBarAt { x, status_row } => {
-            PopupPosition::AboveStatusBarAt { x, status_row }
-        }
     };
 
     // Map the explicit kind hint to PopupKind for input handling
@@ -1905,81 +1895,9 @@ impl EditorState {
         }
     }
 
-    /// Get the content of a line by its byte offset
-    ///
-    /// Returns the line containing the given offset, along with its start position.
-    /// This uses DocumentModel's viewport functionality for consistent behavior.
-    ///
-    /// # Returns
-    /// `Some((line_start_offset, line_content))` if successful, `None` if offset is invalid
-    pub fn get_line_at_offset(&mut self, offset: usize) -> Option<(usize, String)> {
-        use crate::model::document_model::DocumentModel;
-
-        // Find the start of the line containing this offset
-        // Scan backwards to find the previous newline or start of buffer
-        let mut line_start = offset;
-        while line_start > 0 {
-            if let Ok(text) = self.buffer.get_text_range_mut(line_start - 1, 1) {
-                if text.first() == Some(&b'\n') {
-                    break;
-                }
-                line_start -= 1;
-            } else {
-                break;
-            }
-        }
-
-        // Get a single line viewport starting at the line start
-        let viewport = self
-            .get_viewport_content(
-                crate::model::document_model::DocumentPosition::byte(line_start),
-                1,
-            )
-            .ok()?;
-
-        viewport
-            .lines
-            .first()
-            .map(|line| (line.byte_offset, line.content.clone()))
-    }
-
-    /// Get text from current cursor position to end of line
-    ///
-    /// This is a common pattern in editing operations. Uses DocumentModel
-    /// for consistent behavior across file sizes.
-    pub fn get_text_to_end_of_line(&mut self, cursor_pos: usize) -> Result<String> {
-        use crate::model::document_model::DocumentModel;
-
-        // Get the line containing cursor
-        let viewport = self.get_viewport_content(
-            crate::model::document_model::DocumentPosition::byte(cursor_pos),
-            1,
-        )?;
-
-        if let Some(line) = viewport.lines.first() {
-            let line_start = line.byte_offset;
-            let line_end = line_start + line.content.len();
-
-            if cursor_pos >= line_start && cursor_pos <= line_end {
-                let offset_in_line = cursor_pos - line_start;
-                // Use get() to safely handle potential non-char-boundary offsets
-                Ok(line.content.get(offset_in_line..).unwrap_or("").to_string())
-            } else {
-                Ok(String::new())
-            }
-        } else {
-            Ok(String::new())
-        }
-    }
-
     /// Replace cached semantic tokens with a new store.
     pub fn set_semantic_tokens(&mut self, store: SemanticTokenStore) {
         self.semantic_tokens = Some(store);
-    }
-
-    /// Clear cached semantic tokens (e.g., when tokens are invalidated).
-    pub fn clear_semantic_tokens(&mut self) {
-        self.semantic_tokens = None;
     }
 
     /// Mark cached semantic tokens as needing a re-pull even though the
@@ -2536,35 +2454,6 @@ mod tests {
     }
 
     #[test]
-    fn test_apply_many() {
-        let mut state = EditorState::new(
-            80,
-            24,
-            crate::config::LARGE_FILE_THRESHOLD_BYTES as usize,
-            test_fs(),
-        );
-        let mut cursors = Cursors::new();
-        let cursor_id = cursors.primary_id();
-
-        let events = vec![
-            Event::Insert {
-                position: 0,
-                text: "hello ".to_string(),
-                cursor_id,
-            },
-            Event::Insert {
-                position: 6,
-                text: "world".to_string(),
-                cursor_id,
-            },
-        ];
-
-        state.apply_many(&mut cursors, &events);
-
-        assert_eq!(state.buffer.to_string().unwrap(), "hello world");
-    }
-
-    #[test]
     fn test_cursor_adjustment_after_insert() {
         let mut state = EditorState::new(
             80,
@@ -2815,59 +2704,6 @@ mod tests {
             // Test middle range
             let text2 = state.get_text_range(6, 11);
             assert_eq!(text2, "world");
-        }
-
-        #[test]
-        fn test_helper_get_line_at_offset() {
-            let mut state = EditorState::new(
-                80,
-                24,
-                crate::config::LARGE_FILE_THRESHOLD_BYTES as usize,
-                test_fs(),
-            );
-            state.buffer = Buffer::from_str_test("line1\nline2\nline3");
-
-            // Get first line (offset 0)
-            let (offset, content) = state.get_line_at_offset(0).unwrap();
-            assert_eq!(offset, 0);
-            assert_eq!(content, "line1");
-
-            // Get second line (offset in middle of line)
-            let (offset2, content2) = state.get_line_at_offset(8).unwrap();
-            assert_eq!(offset2, 6); // Line starts at byte 6
-            assert_eq!(content2, "line2");
-
-            // Get last line
-            let (offset3, content3) = state.get_line_at_offset(12).unwrap();
-            assert_eq!(offset3, 12);
-            assert_eq!(content3, "line3");
-        }
-
-        #[test]
-        fn test_helper_get_text_to_end_of_line() {
-            let mut state = EditorState::new(
-                80,
-                24,
-                crate::config::LARGE_FILE_THRESHOLD_BYTES as usize,
-                test_fs(),
-            );
-            state.buffer = Buffer::from_str_test("hello world\nline2");
-
-            // From beginning of line
-            let text = state.get_text_to_end_of_line(0).unwrap();
-            assert_eq!(text, "hello world");
-
-            // From middle of line
-            let text2 = state.get_text_to_end_of_line(6).unwrap();
-            assert_eq!(text2, "world");
-
-            // From end of line
-            let text3 = state.get_text_to_end_of_line(11).unwrap();
-            assert_eq!(text3, "");
-
-            // From second line
-            let text4 = state.get_text_to_end_of_line(12).unwrap();
-            assert_eq!(text4, "line2");
         }
     }
 

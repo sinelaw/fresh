@@ -105,7 +105,7 @@ impl Editor {
             let buffer_id = self.active_buffer();
             if let Some(line) = self.cursor_line_in_active_buffer() {
                 if let Some(target) = self.line_target_at(buffer_id, line) {
-                    let source = self.active_split_id();
+                    let source = self.active_window().split_manager().active_split();
                     self.follow_line_target(target, source);
                     return Ok(());
                 }
@@ -587,20 +587,11 @@ impl Editor {
             Action::ToggleUtilityDock => {
                 use crate::view::split::SplitRole;
                 if let Some(dock_leaf) = self
-                    .windows
-                    .get(&self.active_window)
-                    .and_then(|w| w.buffers.splits())
-                    .map(|(mgr, _)| mgr)
-                    .expect("active window must have a populated split layout")
+                    .active_window()
+                    .split_manager()
                     .find_leaf_by_role(SplitRole::UtilityDock)
                 {
-                    let active = self
-                        .windows
-                        .get(&self.active_window)
-                        .and_then(|w| w.buffers.splits())
-                        .map(|(mgr, _)| mgr)
-                        .expect("active window must have a populated split layout")
-                        .active_split();
+                    let active = self.active_window().split_manager().active_split();
                     if active == dock_leaf {
                         // Already focused — no editor-leaf history yet,
                         // so just cycle to the next leaf via the
@@ -608,10 +599,8 @@ impl Editor {
                         // proper "previous editor split" pointer.
                         self.next_split();
                     } else {
-                        self.windows
-                            .get_mut(&self.active_window)
-                            .and_then(|w| w.split_manager_mut())
-                            .expect("active window must have a populated split layout")
+                        self.active_window_mut()
+                            .split_manager_mut()
                             .set_active_split(dock_leaf);
                     }
                 } else {
@@ -660,24 +649,16 @@ impl Editor {
 
                 // Update all viewports to reflect the new line wrap setting,
                 // respecting per-language overrides
-                let active_split = self
-                    .windows
-                    .get(&self.active_window)
-                    .and_then(|w| w.buffers.splits())
-                    .map(|(mgr, _)| mgr)
-                    .expect("active window must have a populated split layout")
-                    .active_split();
+                let active_split = self.active_window().split_manager().active_split();
                 let leaf_ids: Vec<_> = self
-                    .windows
-                    .get(&self.active_window)
-                    .and_then(|w| w.buffers.splits())
-                    .map(|(_, vs)| vs)
-                    .expect("active window must have a populated split layout")
+                    .active_window()
+                    .split_view_states()
                     .keys()
                     .copied()
                     .collect();
                 for leaf_id in leaf_ids {
                     let buffer_id = self
+                        .active_window_mut()
                         .split_manager_mut()
                         .get_buffer_id(leaf_id.into())
                         .unwrap_or(BufferId(0));
@@ -689,7 +670,7 @@ impl Editor {
                     if let Some(view_state) = self
                         .windows
                         .get_mut(&self.active_window)
-                        .and_then(|w| w.split_view_states_mut())
+                        .and_then(|w| w.buffers.split_view_states_mut())
                         .expect("active window must have a populated split layout")
                         .get_mut(&leaf_id)
                     {
@@ -726,21 +707,12 @@ impl Editor {
             Action::ToggleCurrentLineHighlight => {
                 let new_value = !self.config.editor.highlight_current_line;
                 self.config_mut().editor.highlight_current_line = new_value;
-                let active_split = self
-                    .windows
-                    .get(&self.active_window)
-                    .and_then(|w| w.buffers.splits())
-                    .map(|(mgr, _)| mgr)
-                    .expect("active window must have a populated split layout")
-                    .active_split();
+                let active_split = self.active_window().split_manager().active_split();
 
                 // Update all splits
                 let leaf_ids: Vec<_> = self
-                    .windows
-                    .get(&self.active_window)
-                    .and_then(|w| w.buffers.splits())
-                    .map(|(_, vs)| vs)
-                    .expect("active window must have a populated split layout")
+                    .active_window()
+                    .split_view_states()
                     .keys()
                     .copied()
                     .collect();
@@ -748,7 +720,7 @@ impl Editor {
                     if let Some(view_state) = self
                         .windows
                         .get_mut(&self.active_window)
-                        .and_then(|w| w.split_view_states_mut())
+                        .and_then(|w| w.buffers.split_view_states_mut())
                         .expect("active window must have a populated split layout")
                         .get_mut(&leaf_id)
                     {
@@ -852,19 +824,10 @@ impl Editor {
                 self.active_window_mut().handle_toggle_page_view();
             }
             Action::SetPageWidth => {
-                let active_split = self
-                    .windows
-                    .get(&self.active_window)
-                    .and_then(|w| w.buffers.splits())
-                    .map(|(mgr, _)| mgr)
-                    .expect("active window must have a populated split layout")
-                    .active_split();
+                let active_split = self.active_window().split_manager().active_split();
                 let current = self
-                    .windows
-                    .get(&self.active_window)
-                    .and_then(|w| w.buffers.splits())
-                    .map(|(_, vs)| vs)
-                    .expect("active window must have a populated split layout")
+                    .active_window()
+                    .split_view_states()
                     .get(&active_split)
                     .and_then(|v| v.compose_width.map(|w| w.to_string()))
                     .unwrap_or_default();
@@ -1042,13 +1005,7 @@ impl Editor {
 
             // Tab scrolling (manual scroll - don't auto-adjust)
             Action::ScrollTabsLeft => {
-                let active_split_id = self
-                    .windows
-                    .get(&self.active_window)
-                    .and_then(|w| w.buffers.splits())
-                    .map(|(mgr, _)| mgr)
-                    .expect("active window must have a populated split layout")
-                    .active_split();
+                let active_split_id = self.active_window().split_manager().active_split();
                 // A message to the pane's strip, which is a window and
                 // clamps itself. The editor kept the offset and this arm
                 // added five to it.
@@ -1056,13 +1013,7 @@ impl Editor {
                 self.set_status_message(t!("status.scrolled_tabs_left").to_string());
             }
             Action::ScrollTabsRight => {
-                let active_split_id = self
-                    .windows
-                    .get(&self.active_window)
-                    .and_then(|w| w.buffers.splits())
-                    .map(|(mgr, _)| mgr)
-                    .expect("active window must have a populated split layout")
-                    .active_split();
+                let active_split_id = self.active_window().split_manager().active_split();
                 // A message to the pane's strip, which is a window and
                 // clamps itself. The editor kept the offset and this arm
                 // added five to it.
@@ -1303,13 +1254,7 @@ impl Editor {
                     self.apply_event_to_active_buffer(&batch);
 
                     // Ensure the primary cursor is visible after removing secondary cursors
-                    let active_split = self
-                        .windows
-                        .get(&self.active_window)
-                        .and_then(|w| w.buffers.splits())
-                        .map(|(mgr, _)| mgr)
-                        .expect("active window must have a populated split layout")
-                        .active_split();
+                    let active_split = self.active_window().split_manager().active_split();
                     let active_buffer = self.active_buffer();
                     self.active_window_mut()
                         .ensure_cursor_visible_for_split(active_buffer, active_split);
@@ -2079,18 +2024,13 @@ impl Editor {
         use crate::view::split::SplitRole;
 
         if let Some(dock_leaf) = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(mgr, _)| mgr)
-            .expect("active window must have a populated split layout")
+            .active_window()
+            .split_manager()
             .find_leaf_by_role(SplitRole::UtilityDock)
         {
             // Existing dock — focus it and let the regular open_terminal path attach a new tab.
-            self.windows
-                .get_mut(&self.active_window)
-                .and_then(|w| w.split_manager_mut())
-                .expect("active window must have a populated split layout")
+            self.active_window_mut()
+                .split_manager_mut()
                 .set_active_split(dock_leaf);
             self.open_terminal();
             return Ok(());
@@ -2106,10 +2046,8 @@ impl Editor {
 
         // Split at the root so the dock spans the full width below any pre-existing side-by-side panes.
         let new_leaf = self
-            .windows
-            .get_mut(&self.active_window)
-            .and_then(|w| w.split_manager_mut())
-            .expect("active window must have a populated split layout")
+            .active_window_mut()
+            .split_manager_mut()
             .split_root_positioned(SplitDirection::Horizontal, buffer_id, 0.7, false)
             .map_err(|e| {
                 self.set_status_message(format!("Failed to create dock for terminal: {}", e));
@@ -2139,20 +2077,14 @@ impl Editor {
         // Terminals don't wrap — keep escape sequences intact.
         view_state.viewport.line_wrap_enabled = false;
 
-        self.windows
-            .get_mut(&self.active_window)
-            .and_then(|w| w.split_view_states_mut())
-            .expect("active window must have a populated split layout")
+        self.active_window_mut()
+            .split_view_states_mut()
             .insert(new_leaf, view_state);
-        self.windows
-            .get_mut(&self.active_window)
-            .and_then(|w| w.split_manager_mut())
-            .expect("active window must have a populated split layout")
+        self.active_window_mut()
+            .split_manager_mut()
             .set_leaf_role(new_leaf, Some(SplitRole::UtilityDock));
-        self.windows
-            .get_mut(&self.active_window)
-            .and_then(|w| w.split_manager_mut())
-            .expect("active window must have a populated split layout")
+        self.active_window_mut()
+            .split_manager_mut()
             .set_active_split(new_leaf);
 
         // Mirror open_terminal's post-attach bookkeeping. The buffer was

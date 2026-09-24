@@ -140,8 +140,10 @@ fn caret_position(harness: &mut EditorTestHarness) -> (u16, u16) {
     let mut previous = None;
     for _ in 0..40 {
         let seen = harness.render_observing_cursor().unwrap();
-        if seen.is_some() && seen == previous {
-            return seen.expect("checked above");
+        if let Some(pos) = seen {
+            if seen == previous {
+                return pos;
+            }
         }
         previous = seen;
         harness.wait_for_async_quiescence(1).unwrap();

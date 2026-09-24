@@ -77,17 +77,6 @@ impl WrapConfig {
         }
     }
 
-    /// Create a "no wrap" configuration (infinite widths).
-    pub fn no_wrap(gutter_width: usize) -> Self {
-        Self {
-            first_line_width: usize::MAX,
-            continuation_line_width: usize::MAX,
-            gutter_width,
-            hanging_indent: false,
-            grid_cols: None,
-        }
-    }
-
     /// Terminal-grid wrap configuration: exact-column breaks every `cols`
     /// columns, no gutter, no hanging indent (fresh#2649). The line widths
     /// are set to `cols` so width-only consumers (e.g. "does this line
@@ -128,12 +117,5 @@ mod tests {
         // Saturating — no underflow.
         let cfg = WrapConfig::new(3, 6, true, false);
         assert_eq!(cfg.first_line_width, 0);
-    }
-
-    #[test]
-    fn no_wrap_returns_max_widths() {
-        let cfg = WrapConfig::no_wrap(6);
-        assert_eq!(cfg.first_line_width, usize::MAX);
-        assert_eq!(cfg.continuation_line_width, usize::MAX);
     }
 }

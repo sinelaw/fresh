@@ -1293,20 +1293,15 @@ impl crate::app::Editor {
         // so it doesn't surface as a stray tab — the target
         // session owns it.
         let leaf_ids: Vec<_> = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(_, vs)| vs)
-            .expect("active window must have a populated split layout")
+            .active_window()
+            .split_view_states()
             .keys()
             .copied()
             .collect();
         for leaf_id in leaf_ids {
             if let Some(view_state) = self
-                .windows
-                .get_mut(&self.active_window)
-                .and_then(|w| w.split_view_states_mut())
-                .expect("active window must have a populated split layout")
+                .active_window_mut()
+                .split_view_states_mut()
                 .get_mut(&leaf_id)
             {
                 view_state.remove_buffer(buffer_id);
@@ -1621,6 +1616,7 @@ impl crate::app::Editor {
     /// only a `dormant_remote` descriptor (no authority). The active window is
     /// left unchanged until the connection lands, so the editor never shows a
     /// window without its real backend.
+    #[cfg(feature = "plugins")]
     pub(crate) fn bring_dormant_remote_online(&mut self, id: WindowId) {
         let Some(descriptor) = self.dormant_remote.get(&id) else {
             return;

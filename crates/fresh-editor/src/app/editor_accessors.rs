@@ -435,17 +435,6 @@ impl Editor {
         self.warning_log = Some((receiver, path));
     }
 
-    /// Take the warning-log receiver+path out of this editor.
-    ///
-    /// The receiver is single-consumer and lives for the process's
-    /// lifetime; on a destructive editor restart (e.g. authority swap)
-    /// `main.rs` lifts it from the old editor and re-installs it on the
-    /// new one so warnings keep flowing post-restart instead of vanishing
-    /// with the dropped editor.
-    pub fn take_warning_log(&mut self) -> Option<(std::sync::mpsc::Receiver<()>, PathBuf)> {
-        self.warning_log.take()
-    }
-
     /// Set the status message log path
     pub fn set_status_log_path(&mut self, path: PathBuf) {
         self.status_log_path = Some(path);
@@ -740,6 +729,7 @@ impl Editor {
 
     /// Whether `window_id` holds a live connection with a keepalive, rather than
     /// a plain local backend or a dormant session's shell.
+    #[cfg(feature = "plugins")]
     pub(crate) fn window_connection_is_live(&self, window_id: fresh_core::WindowId) -> bool {
         self.windows
             .get(&window_id)
@@ -791,7 +781,7 @@ impl Editor {
         // there is no separate editor-wide copy. Each window owns its
         // authority outright (no `Clone`), so a session's backend/trust/env
         // can never be shared into another window (issue #2280).
-        &self.active_window().authority()
+        self.active_window().authority()
     }
 
     /// Move the active window's connection out, leaving a local placeholder.
@@ -1116,19 +1106,6 @@ impl Editor {
         }
     }
 
-    /// Map a panel sentinel buffer-id back to its slot.
-    pub(crate) fn slot_for_panel_buffer(buffer_id: BufferId) -> Option<crate::app::PanelSlot> {
-        if buffer_id == crate::app::FLOATING_PANEL_BUFFER_ID {
-            Some(crate::app::PanelSlot::Floating)
-        } else if buffer_id == crate::app::DOCK_PANEL_BUFFER_ID {
-            Some(crate::app::PanelSlot::Dock)
-        } else {
-            let base = crate::app::SIDEBAR_PANEL_BUFFER_BASE.0;
-            (buffer_id.0 <= base && buffer_id.0 > base - crate::app::SIDEBAR_PANEL_BUFFER_SPAN)
-                .then(|| crate::app::PanelSlot::Sidebar(base - buffer_id.0))
-        }
-    }
-
     /// The active window's layout-cache (split-leaf rects, tab rects,
     /// file-explorer rect, view-line mappings). Mouse hit-testing and
     /// visual-line motion read from here.
@@ -1295,59 +1272,6 @@ impl Editor {
     /// `self.windows.get_mut(&self.active_window).map(|w| &mut w.lsp)`.
     pub(crate) fn lsp_mut(&mut self) -> Option<&mut crate::services::lsp::manager::LspManager> {
         Some(&mut self.active_window_mut().lsp)
-    }
-
-    /// Active window's split tree. Panics if the window has no
-    /// layout yet — the invariant is "the active window always has
-    /// `splits` populated", upheld by `set_active_window` (which
-    /// seeds the layout on first dive) and by editor init (which
-    /// hands the initial layout to the base window).
-    pub(crate) fn split_manager(&self) -> &crate::view::split::SplitManager {
-        &self
-            .active_window()
-            .buffers
-            .splits()
-            .expect("active window must have a populated split layout")
-            .0
-    }
-
-    /// Mutable handle to the active window's split tree.
-    pub(crate) fn split_manager_mut(&mut self) -> &mut crate::view::split::SplitManager {
-        &mut self
-            .active_window_mut()
-            .buffers
-            .splits_mut()
-            .expect("active window must have a populated split layout")
-            .0
-    }
-
-    /// Active window's per-leaf view state map.
-    #[cfg(test)]
-    pub(crate) fn split_view_states(
-        &self,
-    ) -> &std::collections::HashMap<crate::model::event::LeafId, crate::view::split::SplitViewState>
-    {
-        &self
-            .active_window()
-            .buffers
-            .splits()
-            .expect("active window must have a populated split layout")
-            .1
-    }
-
-    /// Mutable handle to the active window's per-leaf view state map.
-    pub(crate) fn split_view_states_mut(
-        &mut self,
-    ) -> &mut std::collections::HashMap<
-        crate::model::event::LeafId,
-        crate::view::split::SplitViewState,
-    > {
-        &mut self
-            .active_window_mut()
-            .buffers
-            .splits_mut()
-            .expect("active window must have a populated split layout")
-            .1
     }
 
     /// Return buffer ids whose on-disk path sits at or under `root`.

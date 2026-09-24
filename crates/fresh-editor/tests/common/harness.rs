@@ -1754,7 +1754,7 @@ impl EditorTestHarness {
             for col in 0..self.term_width {
                 let cell = screen.cell(row, col);
                 if let Some(cell) = cell {
-                    result.push_str(&cell.contents());
+                    result.push_str(cell.contents());
                 } else {
                     result.push(' ');
                 }
@@ -2383,60 +2383,50 @@ impl EditorTestHarness {
                 self.shadow_string.insert(self.shadow_cursor, ch);
                 self.shadow_cursor = redo_cursor;
             }
-            KeyCode::Backspace => {
-                if self.shadow_cursor > 0 {
-                    // Smart backspace dedent: if cursor is preceded only by whitespace
-                    // on the current line, remove up to tab_size spaces at once.
-                    let line_start = self.shadow_string[..self.shadow_cursor]
-                        .rfind('\n')
-                        .map(|pos| pos + 1)
-                        .unwrap_or(0);
-                    let prefix = &self.shadow_string[line_start..self.shadow_cursor];
-                    let all_whitespace =
-                        !prefix.is_empty() && prefix.bytes().all(|b| b == b' ' || b == b'\t');
+            KeyCode::Backspace if self.shadow_cursor > 0 => {
+                // Smart backspace dedent: if cursor is preceded only by whitespace
+                // on the current line, remove up to tab_size spaces at once.
+                let line_start = self.shadow_string[..self.shadow_cursor]
+                    .rfind('\n')
+                    .map(|pos| pos + 1)
+                    .unwrap_or(0);
+                let prefix = &self.shadow_string[line_start..self.shadow_cursor];
+                let all_whitespace =
+                    !prefix.is_empty() && prefix.bytes().all(|b| b == b' ' || b == b'\t');
 
-                    let chars_to_remove = if all_whitespace {
-                        let last_byte = prefix.as_bytes()[prefix.len() - 1];
-                        if last_byte == b'\t' {
-                            1
-                        } else {
-                            let trailing_spaces =
-                                prefix.bytes().rev().take_while(|&b| b == b' ').count();
-                            let tab_size = 4; // default tab_size
-                            trailing_spaces.min(tab_size)
-                        }
-                    } else {
+                let chars_to_remove = if all_whitespace {
+                    let last_byte = prefix.as_bytes()[prefix.len() - 1];
+                    if last_byte == b'\t' {
                         1
-                    };
+                    } else {
+                        let trailing_spaces =
+                            prefix.bytes().rev().take_while(|&b| b == b' ').count();
+                        let tab_size = 4; // default tab_size
+                        trailing_spaces.min(tab_size)
+                    }
+                } else {
+                    1
+                };
 
-                    let undo_cursor = self.shadow_cursor;
-                    let redo_cursor = self.shadow_cursor - chars_to_remove;
-                    self.shadow_undo_stack.push((
-                        self.shadow_string.clone(),
-                        undo_cursor,
-                        redo_cursor,
-                    ));
-                    self.shadow_redo_stack.clear();
-                    // Remove chars_to_remove characters before cursor
-                    self.shadow_string.drain(redo_cursor..self.shadow_cursor);
-                    self.shadow_cursor = redo_cursor;
-                }
+                let undo_cursor = self.shadow_cursor;
+                let redo_cursor = self.shadow_cursor - chars_to_remove;
+                self.shadow_undo_stack
+                    .push((self.shadow_string.clone(), undo_cursor, redo_cursor));
+                self.shadow_redo_stack.clear();
+                // Remove chars_to_remove characters before cursor
+                self.shadow_string.drain(redo_cursor..self.shadow_cursor);
+                self.shadow_cursor = redo_cursor;
             }
-            KeyCode::Delete => {
-                if self.shadow_cursor < self.shadow_string.len() {
-                    // Forward delete: undo inserts text back, which shifts cursor right
-                    // undo_cursor = P + 1 (adjust_for_edit shifts cursor on undo-insert)
-                    // redo_cursor = P (cursor stays on forward delete)
-                    let undo_cursor = self.shadow_cursor + 1;
-                    let redo_cursor = self.shadow_cursor;
-                    self.shadow_undo_stack.push((
-                        self.shadow_string.clone(),
-                        undo_cursor,
-                        redo_cursor,
-                    ));
-                    self.shadow_redo_stack.clear();
-                    self.shadow_string.remove(self.shadow_cursor);
-                }
+            KeyCode::Delete if self.shadow_cursor < self.shadow_string.len() => {
+                // Forward delete: undo inserts text back, which shifts cursor right
+                // undo_cursor = P + 1 (adjust_for_edit shifts cursor on undo-insert)
+                // redo_cursor = P (cursor stays on forward delete)
+                let undo_cursor = self.shadow_cursor + 1;
+                let redo_cursor = self.shadow_cursor;
+                self.shadow_undo_stack
+                    .push((self.shadow_string.clone(), undo_cursor, redo_cursor));
+                self.shadow_redo_stack.clear();
+                self.shadow_string.remove(self.shadow_cursor);
             }
             KeyCode::Enter => {
                 // Enter (insert newline): undo_cursor = pre-action, redo_cursor = post-action
@@ -2448,15 +2438,11 @@ impl EditorTestHarness {
                 self.shadow_string.insert(self.shadow_cursor, '\n');
                 self.shadow_cursor = redo_cursor;
             }
-            KeyCode::Left => {
-                if self.shadow_cursor > 0 {
-                    self.shadow_cursor -= 1;
-                }
+            KeyCode::Left if self.shadow_cursor > 0 => {
+                self.shadow_cursor -= 1;
             }
-            KeyCode::Right => {
-                if self.shadow_cursor < self.shadow_string.len() {
-                    self.shadow_cursor += 1;
-                }
+            KeyCode::Right if self.shadow_cursor < self.shadow_string.len() => {
+                self.shadow_cursor += 1;
             }
             KeyCode::Home => {
                 // Smart home: toggle between first non-whitespace and line start
@@ -2695,7 +2681,7 @@ impl EditorTestHarness {
 
     /// Get the top line number currently visible in the viewport
     pub fn top_line_number(&mut self) -> usize {
-        let top_byte = self.editor.active_viewport().top_byte();
+        let top_byte = self.editor.active_window().active_viewport().top_byte();
         self.editor
             .active_state_mut()
             .buffer
@@ -2704,22 +2690,25 @@ impl EditorTestHarness {
 
     /// Get the top byte position of the viewport
     pub fn top_byte(&self) -> usize {
-        self.editor.active_viewport().top_byte()
+        self.editor.active_window().active_viewport().top_byte()
     }
 
     /// Get the top view line offset (number of view lines to skip)
     pub fn top_view_line_offset(&self) -> usize {
-        self.editor.active_viewport().top_view_line_offset()
+        self.editor
+            .active_window()
+            .active_viewport()
+            .top_view_line_offset()
     }
 
     /// The viewport's horizontal scroll offset, in columns.
     pub fn left_column(&self) -> usize {
-        self.editor.active_viewport().left_column
+        self.editor.active_window().active_viewport().left_column
     }
 
     /// Get the viewport height (number of content lines that can be displayed)
     pub fn viewport_height(&self) -> usize {
-        self.editor.active_viewport().height as usize
+        self.editor.active_window().active_viewport().height as usize
     }
 
     /// Get the content area row range on screen (start_row, end_row inclusive)

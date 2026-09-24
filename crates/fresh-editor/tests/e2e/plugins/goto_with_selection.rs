@@ -122,7 +122,7 @@ fn verify_selection_contains_only(harness: &mut EditorTestHarness, expected_line
     // Verify NO other LINE* content exists (strict)
     for i in 1..=5 {
         let line = format!("LINE{}", i);
-        let expected = expected_lines.iter().any(|&e| e == line.as_str());
+        let expected = expected_lines.contains(&line.as_str());
         if !expected {
             assert!(
                 !screen.contains(&line),

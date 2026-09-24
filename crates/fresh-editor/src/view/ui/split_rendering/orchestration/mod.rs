@@ -561,11 +561,20 @@ fn text_pane_content(
     }
     // The widest line is the bar's fact, settled before the frame
     // (`Editor::settle_pane_bars`); here the viewport is settled to it.
+    let text_width = reconcile::pane_text_width(
+        state,
+        view_prefs.show_line_numbers,
+        &view_prefs.view_mode,
+        view_prefs.compose_width,
+        bvs.viewport.width,
+        bvs.viewport.height,
+    );
     let _ = settle_pane(
         state,
         &mut bvs.viewport,
         layout.left_column,
         show_horizontal_scrollbar,
+        text_width,
     );
     Some(PaneContent {
         rect: content_rect,

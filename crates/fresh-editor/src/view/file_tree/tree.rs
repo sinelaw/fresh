@@ -327,6 +327,7 @@ impl FileTree {
     }
 
     /// Find node by relative path from root
+    #[cfg(test)]
     pub fn find_by_relative_path(&self, relative_path: &Path) -> Option<NodeId> {
         let full_path = self.root_path.join(relative_path);
         self.path_to_node.get(&full_path).copied()
@@ -364,6 +365,7 @@ impl FileTree {
     }
 
     /// Get number of nodes currently in memory
+    #[cfg(test)]
     pub fn node_count(&self) -> usize {
         self.nodes.len()
     }

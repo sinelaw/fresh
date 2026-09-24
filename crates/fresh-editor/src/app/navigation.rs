@@ -70,18 +70,9 @@ impl crate::app::window::Window {
     /// build the event themselves and call
     /// [`Editor::ensure_active_cursor_visible_for_navigation`] afterwards.
     pub fn jump_active_cursor_to(&mut self, position: usize, opts: JumpOptions) {
-        let active_split = self
-            .buffers
-            .splits()
-            .map(|(mgr, _)| mgr)
-            .expect("active window must have a populated split layout")
-            .active_split();
+        let active_split = self.split_manager().active_split();
         let active_buffer = self.active_buffer();
-        if let Some(view_state) = Some(&mut *self)
-            .and_then(|w| w.split_view_states_mut())
-            .expect("active window must have a populated split layout")
-            .get_mut(&active_split)
-        {
+        if let Some(view_state) = self.split_view_states_mut().get_mut(&active_split) {
             view_state.cursors.primary_mut().position = position;
             if opts.clear_anchor {
                 view_state.cursors.primary_mut().anchor = None;

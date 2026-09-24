@@ -25,7 +25,11 @@ fn harness() -> EditorTestHarness {
 /// Foreground colour of the cell at `col` of content row `line`.
 fn fg_at(harness: &EditorTestHarness, line: u16, col: u16) -> (String, ratatui::style::Color) {
     let buffer = &harness.editor().active_state().buffer;
-    let gutter = harness.editor().active_viewport().gutter_width(buffer) as u16;
+    let gutter = harness
+        .editor()
+        .active_window()
+        .active_viewport()
+        .gutter_width(buffer) as u16;
     let (first_row, _) = harness.content_area_rows();
     let x = gutter + col;
     let y = first_row as u16 + line;

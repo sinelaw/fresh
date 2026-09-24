@@ -859,7 +859,7 @@ fn test_buffer_large_file_edits_at_beginning_middle_and_end_through_remote() {
     // Define the edits we'll make
     // We need to work backwards (end -> middle -> beginning) to avoid offset shifts
     // affecting subsequent edit positions
-    let mut expected_lines = Vec::from(original_lines);
+    let mut expected_lines = original_lines;
 
     let steps = 4;
     let mut offset = 0;
@@ -1073,7 +1073,7 @@ fn test_buffer_huge_file_multi_save_cycle_through_remote() {
     let threshold = 1024 * 1024;
     let mut buffer = TextBuffer::load_from_file(&file_path, threshold, fs).unwrap();
 
-    for target_line in vec![5000, 3] {
+    for target_line in [5000, 3] {
         let edit_text = format!("ITER_{}_", target_line);
         let byte_pos = line_starts[target_line];
 
@@ -1400,7 +1400,7 @@ fn test_concurrent_count_lf_requests() {
     let num_lines = 10_000; // 1MB file
     let mut content = Vec::with_capacity(line_len * num_lines);
     for _ in 0..num_lines {
-        content.extend(std::iter::repeat(b'A').take(line_len - 1));
+        content.extend(std::iter::repeat_n(b'A', line_len - 1));
         content.push(b'\n');
     }
     let file_path = temp_dir.path().join("concurrent_lf.bin");
@@ -1505,9 +1505,11 @@ fn test_concurrent_mixed_requests() {
         ReadRange { idx: usize, expected: Vec<u8> },
     }
 
+    /// One request's outcome: its index, the bytes read, the LF count.
+    type Outcome = std::io::Result<(usize, Vec<u8>, usize)>;
+
     let (expectations, results): (Vec<Expected>, Vec<std::io::Result<()>>) = rt.block_on(async {
-        let mut handles: Vec<tokio::task::JoinHandle<std::io::Result<(usize, Vec<u8>, usize)>>> =
-            Vec::new();
+        let mut handles: Vec<tokio::task::JoinHandle<Outcome>> = Vec::new();
         let mut expectations = Vec::new();
 
         for i in 0..num_each {
@@ -1558,8 +1560,7 @@ fn test_concurrent_mixed_requests() {
             match (exp, result) {
                 (Expected::CountLf { idx, expected }, Ok((_i, _data, count))) => {
                     if count != expected {
-                        results.push(Err(std::io::Error::new(
-                            std::io::ErrorKind::Other,
+                        results.push(Err(std::io::Error::other(
                             format!(
                                 "count_lf chunk {}: got {}, expected {}",
                                 idx, count, expected
@@ -1571,8 +1572,7 @@ fn test_concurrent_mixed_requests() {
                 }
                 (Expected::ReadRange { idx, expected }, Ok((_i, data, _count))) => {
                     if data != expected {
-                        results.push(Err(std::io::Error::new(
-                            std::io::ErrorKind::Other,
+                        results.push(Err(std::io::Error::other(
                             format!(
                                 "read_range chunk {}: got {} bytes, expected {} bytes",
                                 idx,
@@ -1585,8 +1585,7 @@ fn test_concurrent_mixed_requests() {
                     }
                 }
                 (_, Err(e)) => {
-                    results.push(Err(std::io::Error::new(
-                        std::io::ErrorKind::Other,
+                    results.push(Err(std::io::Error::other(
                         format!("request failed: {}", e),
                     )));
                 }

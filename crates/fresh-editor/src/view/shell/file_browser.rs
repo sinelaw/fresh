@@ -36,10 +36,10 @@ use fresh_ui::{
     GestureKind, Key, LayoutInfo, MouseButton, Node, Place, PointerMode, Run, Sizing,
 };
 
+use super::path_display::truncate_path;
 use crate::app::file_open::{BrowserPart, SortMode, Toggle};
 use crate::app::shell_host::shell_theme::{attrs, pair};
 use crate::app::types::HoverTarget;
-use crate::view::ui::status_bar::truncate_path;
 
 use super::frame::{region_key, HostRegion};
 use super::msg::{UiFact, UiMsg};

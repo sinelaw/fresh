@@ -1082,7 +1082,7 @@ fn test_search_replace_multiple_matches_same_line() {
         harness
             .wait_until(|h| {
                 wait_iters += 1;
-                if wait_iters % 20 == 0 {
+                if wait_iters.is_multiple_of(20) {
                     eprintln!(
                         "[DEBUG wait_until Search:] iteration {}, screen:\n{}",
                         wait_iters,
@@ -1166,7 +1166,7 @@ fn test_search_replace_multiple_matches_same_line() {
         harness
             .wait_until(|h| {
                 wait_iters += 1;
-                if wait_iters % 20 == 0 {
+                if wait_iters.is_multiple_of(20) {
                     eprintln!(
                         "[DEBUG wait_until Replaced] iteration {}, screen:\n{}",
                         wait_iters,
@@ -2711,7 +2711,7 @@ fn cursor_sits_on(h: &EditorTestHarness, needle: &str) -> bool {
     match h.get_buffer_content() {
         Some(content) => content
             .get(h.cursor_position()..)
-            .map_or(false, |tail| tail.starts_with(needle)),
+            .is_some_and(|tail| tail.starts_with(needle)),
         None => false,
     }
 }

@@ -189,105 +189,6 @@ pub fn visual_width(s: &str, start_col: usize) -> usize {
     col - start_col
 }
 
-/// Convert byte offset to visual column (ANSI-aware, tab-aware)
-///
-/// Given a byte offset within the string, returns the visual column at that position.
-pub fn byte_to_visual_col(s: &str, byte_offset: usize) -> usize {
-    let clamped_offset = byte_offset.min(s.len());
-
-    if !s.contains('\x1b') && !s.contains('\t') {
-        // Fast path: just calculate width of the prefix
-        return crate::primitives::display_width::str_width(&s[..clamped_offset]);
-    }
-
-    let mut col = 0;
-    let mut current_byte = 0;
-    let mut parser = AnsiParser::new();
-
-    for ch in s.chars() {
-        if current_byte >= clamped_offset {
-            break;
-        }
-
-        if parser.parse_char(ch).is_some() {
-            // Visible character
-            if ch == '\t' {
-                col += tab_expansion_width(col);
-            } else {
-                col += char_width(ch);
-            }
-        }
-        // ANSI chars don't add to visual column
-
-        current_byte += ch.len_utf8();
-    }
-
-    col
-}
-
-/// Convert visual column to byte offset (ANSI-aware, tab-aware)
-///
-/// Given a visual column, returns the byte offset of the character at or after that column.
-/// If the visual column is beyond the string's width, returns the string's length.
-pub fn visual_col_to_byte(s: &str, target_visual_col: usize) -> usize {
-    if !s.contains('\x1b') && !s.contains('\t') {
-        // Fast path: use simple character iteration (no ANSI, no tabs)
-        let mut col = 0;
-        for (byte_idx, ch) in s.char_indices() {
-            let width = char_width(ch);
-            // Check if target falls within this character's visual range [col, col+width)
-            if target_visual_col < col + width {
-                return byte_idx;
-            }
-            col += width;
-        }
-        return s.len();
-    }
-
-    let mut col = 0;
-    let mut parser = AnsiParser::new();
-
-    for (byte_idx, ch) in s.char_indices() {
-        if parser.parse_char(ch).is_some() {
-            // Visible character - check if target falls within this char's range
-            let width = if ch == '\t' {
-                tab_expansion_width(col)
-            } else {
-                char_width(ch)
-            };
-
-            // Target is within [col, col+width) range of this character
-            if target_visual_col < col + width {
-                return byte_idx;
-            }
-
-            col += width;
-        }
-        // ANSI chars: don't add to visual column, don't match target
-    }
-
-    s.len()
-}
-
-/// Build complete line mappings from text and source byte information
-///
-/// This is used when constructing ViewLine during token processing.
-pub fn build_line_mappings(
-    text: &str,
-    source_bytes: impl Iterator<Item = Option<usize>>,
-    has_ansi: bool,
-) -> LineMappings {
-    let mut builder = LineMappingsBuilder::new(has_ansi);
-    let mut source_iter = source_bytes;
-
-    for ch in text.chars() {
-        let source_byte = source_iter.next().flatten();
-        builder.add_char(ch, source_byte);
-    }
-
-    builder.finish()
-}
-
 /// How many columns of look-back from a hard cap a word-boundary split is
 /// still considered acceptable. Rows shorter than `wrap_width / 2` fall
 /// back to char-wrap so a boundary near the start doesn't strand most of
@@ -387,61 +288,6 @@ mod tests {
         // CJK characters are 2 columns each
         assert_eq!(visual_width("你好", 0), 4);
         assert_eq!(visual_width("Hello你好", 0), 9);
-    }
-
-    #[test]
-    fn test_byte_to_visual_col_simple() {
-        let s = "Hello";
-        assert_eq!(byte_to_visual_col(s, 0), 0);
-        assert_eq!(byte_to_visual_col(s, 1), 1);
-        assert_eq!(byte_to_visual_col(s, 5), 5);
-    }
-
-    #[test]
-    fn test_byte_to_visual_col_with_ansi() {
-        // "\x1b[31m" is 5 bytes, "Red" is 3 bytes
-        let s = "\x1b[31mRed";
-        assert_eq!(byte_to_visual_col(s, 0), 0); // At ESC
-        assert_eq!(byte_to_visual_col(s, 5), 0); // At 'R' (ANSI prefix has 0 width)
-        assert_eq!(byte_to_visual_col(s, 6), 1); // At 'e'
-        assert_eq!(byte_to_visual_col(s, 8), 3); // Past end
-    }
-
-    #[test]
-    fn test_byte_to_visual_col_with_cjk() {
-        // "你" is 3 bytes and 2 columns
-        let s = "a你b";
-        assert_eq!(byte_to_visual_col(s, 0), 0); // 'a'
-        assert_eq!(byte_to_visual_col(s, 1), 1); // '你' start
-        assert_eq!(byte_to_visual_col(s, 4), 3); // 'b'
-    }
-
-    #[test]
-    fn test_visual_col_to_byte_simple() {
-        let s = "Hello";
-        assert_eq!(visual_col_to_byte(s, 0), 0);
-        assert_eq!(visual_col_to_byte(s, 3), 3);
-        assert_eq!(visual_col_to_byte(s, 5), 5);
-        assert_eq!(visual_col_to_byte(s, 10), 5); // Past end
-    }
-
-    #[test]
-    fn test_visual_col_to_byte_with_ansi() {
-        // "\x1b[31m" is 5 bytes, "Red" is 3 bytes
-        let s = "\x1b[31mRed";
-        assert_eq!(visual_col_to_byte(s, 0), 5); // Visual col 0 = 'R' at byte 5
-        assert_eq!(visual_col_to_byte(s, 1), 6); // Visual col 1 = 'e' at byte 6
-        assert_eq!(visual_col_to_byte(s, 3), 8); // Past end
-    }
-
-    #[test]
-    fn test_visual_col_to_byte_with_cjk() {
-        // "a你b" - 'a' at 0, '你' at 1-3, 'b' at 4
-        let s = "a你b";
-        assert_eq!(visual_col_to_byte(s, 0), 0); // 'a'
-        assert_eq!(visual_col_to_byte(s, 1), 1); // '你' (both cols 1 and 2 map to byte 1)
-        assert_eq!(visual_col_to_byte(s, 2), 1); // Still '你'
-        assert_eq!(visual_col_to_byte(s, 3), 4); // 'b'
     }
 
     #[test]
@@ -556,7 +402,7 @@ mod tests {
     #[test]
     fn wrap_str_to_width_no_word_boundaries_falls_back_to_hard_cap() {
         // 64 of the same char — no word boundary — must hard-cap at 32.
-        let text: String = std::iter::repeat('A').take(64).collect();
+        let text: String = std::iter::repeat_n('A', 64).collect();
         let chunks = wrap_str_to_width(&text, 32);
         assert_eq!(chunks.len(), 2);
         assert_eq!(chunks[0].len(), 32);

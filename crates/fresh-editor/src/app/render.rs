@@ -1,6 +1,7 @@
 use super::lsp_status::compose_lsp_status;
 use super::*;
 use crate::config::FileExplorerSide;
+use crate::view::settings::surface::SettingsSurface as _;
 
 /// The bottom-row visibility facts (see [`Editor::bottom_row_flags`]):
 /// one computation consumed by the paint-time frame split and every
@@ -20,7 +21,6 @@ struct ExplorerSection {
     title_theme: String,
     border_theme: String,
     close_theme: String,
-    rows: u16,
     focused: bool,
 }
 
@@ -126,9 +126,8 @@ fn flow_run_start(buffer: &crate::model::buffer::Buffer, top_byte: usize) -> usi
 /// understood — not inside `view::shell::fold`, which is meant to know nothing
 /// about the editor's theme vocabulary.
 ///
-/// One recorder for the whole display list, replacing the per-surface
-/// `provenance_runs` walks that each newly described surface would otherwise
-/// have had to grow. Later items overwrite earlier ones, which is the paint
+/// One recorder for the whole display list, so no surface keeps a provenance
+/// walk of its own. Later items overwrite earlier ones, which is the paint
 /// order the inspector wants.
 ///
 /// **The region is generic on purpose.** `ThemeRun::region` is a surface label
@@ -285,21 +284,6 @@ impl Editor {
             self.update_search_highlights(&query);
         }
 
-        // Hide status bar when suggestions popup or file browser
-        // popup is shown — those popups float just above the prompt
-        // line, and a visible status bar wedged between them looks
-        // wrong. Floating-overlay prompts (Live Grep, issue #1796)
-        // are exempt because their suggestions live inside the
-        // centred frame, not above the bottom row.
-        // The prompt-row flag is read by `shell_frame`, which owns the frame's
-        // shape; the two below are read directly for painting decisions.
-        let BottomRowFlags {
-            prompt_is_overlay: _,
-            has_suggestions,
-            has_file_browser,
-            prompt_row_visible: _,
-        } = self.bottom_row_flags();
-
         // The frame's geometry comes from the migration shell: one `fresh-ui`
         // description, laid out once, giving every region its rectangle. This
         // replaced a vertical `Layout` over five rows plus a horizontal carve
@@ -351,7 +335,6 @@ impl Editor {
             .shell_ui
             .as_ref()
             .expect("the shell tree is taken and returned within one frame");
-        let regions = crate::view::shell::frame::regions_of(ui, size);
         // **The frame's one geometry pass, for the panes.** Every pane's box
         // and content slot, off the tree just laid out. The plugin hooks below,
         // the body painter's pass and the pane `Host`s all read this; nothing
@@ -362,13 +345,6 @@ impl Editor {
         // Retained for the callers that ask between frames where a pane is —
         // the same rects this frame paints with. See `Window::pane_rects`.
         self.active_window_mut().set_pane_rects(pane_rects.clone());
-        let region = |r: crate::view::shell::frame::HostRegion| -> ratatui::layout::Rect {
-            regions
-                .iter()
-                .find(|(k, _)| *k == r)
-                .map(|(_, rect)| *rect)
-                .unwrap_or_default()
-        };
         // The shell's BACKGROUND band: everything the tree owns that is not a
         // `Layer`, painted *before* every legacy painter so they land on top
         // of it — the mirror of the overlay band at the end of this method.
@@ -385,9 +361,6 @@ impl Editor {
         // Nothing between the two points writes a cell, so deferring the
         // paint changes no pixel; what it buys is one paint of the body
         // instead of a live one here and an unreached copy behind the seam.
-
-        use crate::view::shell::frame::HostRegion;
-        let status_bar_area = region(HostRegion::StatusBar);
 
         // The chrome each pane has, resolved with the shell's description of
         // the same grid — read by the reconcile below and by the body's
@@ -450,25 +423,15 @@ impl Editor {
             let hooks_start = std::time::Instant::now();
             // Get visible buffers and their areas — the boxes the tree placed
             // them in.
-            let visible_buffers = pane_rects.visible(
-                &self
-                    .windows
-                    .get(&self.active_window)
-                    .and_then(|w| w.buffers.splits())
-                    .map(|(mgr, _)| mgr)
-                    .expect("active window must have a populated split layout")
-                    .visible_leaves(),
-            );
+            let visible_buffers =
+                pane_rects.visible(&self.active_window().split_manager().visible_leaves());
 
             let mut total_new_lines = 0usize;
             for (split_id, buffer_id, split_area) in visible_buffers {
                 // Get viewport from SplitViewState (the authoritative source)
                 let viewport_top_byte = self
-                    .windows
-                    .get(&self.active_window)
-                    .and_then(|w| w.buffers.splits())
-                    .map(|(_, vs)| vs)
-                    .expect("active window must have a populated split layout")
+                    .active_window()
+                    .split_view_states()
                     .get(&split_id)
                     .map(|vs| vs.viewport.top_byte())
                     .unwrap_or(0);
@@ -481,14 +444,8 @@ impl Editor {
                 // `getBufferInfo()` would be reading a mirror that is refreshed
                 // on the editor thread's own schedule, and would silently drop
                 // its only decoration pass whenever it read too early (#2968).
-                let composing_in_any_split = self
-                    .windows
-                    .get(&self.active_window)
-                    .and_then(|w| w.buffers.splits())
-                    .map(|(_, vs)| vs)
-                    .expect("active window must have a populated split layout")
-                    .values()
-                    .any(|vs| {
+                let composing_in_any_split =
+                    self.active_window().split_view_states().values().any(|vs| {
                         vs.buffer_state(buffer_id)
                             .map(|bs| matches!(bs.view_mode, crate::state::ViewMode::PageView))
                             .unwrap_or(false)
@@ -614,10 +571,7 @@ impl Editor {
                         // the run's lead-in, which must not eat the viewport's
                         // line budget.
                         let mut lead_in = 0usize;
-                        loop {
-                            let Some((line_start, line_content)) = iter.next_line() else {
-                                break;
-                            };
+                        while let Some((line_start, line_content)) = iter.next_line() {
                             let byte_end = line_start + line_content.len();
                             walked_end = byte_end;
                             walked_bytes += line_content.len();
@@ -926,13 +880,7 @@ impl Editor {
         // panes or moved more than two rows within the same pane. The
         // trail crosses pane separators when the jump is across splits —
         // that's the intended "follow the focus" cue.
-        let active_split = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(mgr, _)| mgr)
-            .expect("active window must have a populated split layout")
-            .active_split();
+        let active_split = self.active_window().split_manager().active_split();
         let pane_caret = self.active_window().pane_caret();
         self.maybe_start_cursor_jump_animation(pane_caret, active_split);
 
@@ -962,13 +910,7 @@ impl Editor {
             }
         };
         if viewport_plugins_active {
-            for (split_id, view_state) in self
-                .windows
-                .get(&self.active_window)
-                .and_then(|w| w.buffers.splits())
-                .map(|(_, vs)| vs)
-                .expect("active window must have a populated split layout")
-            {
+            for (split_id, view_state) in self.active_window().split_view_states() {
                 if !on_screen.contains(split_id) {
                     continue;
                 }
@@ -1002,11 +944,8 @@ impl Editor {
                     // scrolled or been resized. Fall back to the grouped
                     // subtrees for those leaves.
                     let buffer_id = self
-                        .windows
-                        .get(&self.active_window)
-                        .and_then(|w| w.buffers.splits())
-                        .map(|(mgr, _)| mgr)
-                        .expect("active window must have a populated split layout")
+                        .active_window()
+                        .split_manager()
                         .get_buffer_id((*split_id).into())
                         .or_else(|| {
                             self.active_window()
@@ -1091,10 +1030,7 @@ impl Editor {
         if !skip_viewport_snapshot {
             __vp_win.previous_viewports.clear();
         }
-        let (_, __vp_vs_map) = __vp_win
-            .buffers
-            .splits()
-            .expect("active window must have a populated split layout");
+        let (_, __vp_vs_map) = __vp_win.splits();
         let snapshot: Vec<(LeafId, (usize, u16, u16))> = __vp_vs_map
             .iter()
             .filter(|(split_id, _)| on_screen.contains(split_id))
@@ -1126,24 +1062,6 @@ impl Editor {
         // When S5 puts the split grid in the tree the buffer's leaf has a
         // rectangle at layout time, the caret becomes an ordinary keyed
         // element, and this call site goes with it.
-        // A split that changed size takes any widget panel mounted in it
-        // with it: an auto-sized (`visible_rows: None`) list or tree was
-        // windowed to the old row budget, and the rects published just
-        // above are the first place the panel's new geometry is known.
-        // Re-render those panels against it and ask for the frame that
-        // shows the result, rather than leaving a grown panel with blank
-        // rows under its short list until something else repaints it.
-        // Must stay below the frame's layout (`set_pane_rects`):
-        // `widget_panels_with_stale_height` reads this frame's rects, and
-        // against the previous frame's it would find nothing stale on the
-        // one frame that matters.
-        let restaled_panels = self.widget_panels_with_stale_height();
-        if !restaled_panels.is_empty() {
-            for panel_key in &restaled_panels {
-                self.rerender_widget_panel(panel_key);
-            }
-            self.request_plugin_render();
-        }
 
         // Promote any deferred virtual-buffer animations whose Rect is now
         // known. Done here (after the frame's layout retained the pane
@@ -1167,10 +1085,6 @@ impl Editor {
         // writes when the title actually changes so we don't flood stdout
         // with OSC sequences every frame.
         self.update_terminal_title(&display_name);
-
-        // Status bar (hidden when toggled off, or when a suggestions/file-
-        // browser popup covers the bottom row).
-        self.publish_status_bar(status_bar_area, has_suggestions, has_file_browser);
 
         // Render file browser popup or suggestions popup AFTER status bar + prompt,
         // so they overlay on top of both (fixes bottom border being overwritten by status bar)
@@ -1421,41 +1335,24 @@ impl Editor {
         Some(crate::view::shell::search_options::option_spans(ui, size))
     }
 
-    /// Where layout put each clickable status-bar element, read off the
-    /// retained tree.
-    ///
-    /// This replaces `status_bar_layout_now`, which re-ran the whole placement
-    /// walk on live state every time a pointer event or a popup anchor needed
-    /// a column — a second derivation that could disagree with the painted one
-    /// whenever the state behind it had moved. The tree that painted is the
-    /// one answering.
-    pub(crate) fn status_bar_clickable_rects_now(
+    /// Where a popup opened from a status-bar element goes: above that
+    /// element while it is on the bar, the bottom-right corner otherwise.
+    pub(crate) fn popup_above_status_bar(
         &self,
-    ) -> Vec<(
-        crate::view::ui::status_bar::StatusBarClickable,
-        ratatui::layout::Rect,
-    )> {
-        let Some(ui) = self.shell_ui.as_ref() else {
-            return Vec::new();
-        };
-        let Some(bar) = self.shell_frame_status_bar.as_ref() else {
-            return Vec::new();
-        };
-        let frame = self.active_chrome().last_frame;
-        let size = ratatui::layout::Rect::new(0, 0, frame.width, frame.height);
-        crate::view::shell::status_bar::clickable_rects(ui, bar, size)
-    }
-
-    /// Screen area `(row, start_col, end_col)` of one clickable element, for
-    /// the popups that anchor to their indicator.
-    pub(crate) fn status_bar_clickable_area_now(
-        &mut self,
         id: crate::view::ui::status_bar::StatusBarClickable,
-    ) -> Option<(u16, u16, u16)> {
-        self.status_bar_clickable_rects_now()
-            .into_iter()
-            .find(|(cid, _)| *cid == id)
-            .map(|(_, r)| (r.y, r.x, r.x.saturating_add(r.width)))
+    ) -> crate::view::popup::PopupPosition {
+        use crate::view::popup::PopupPosition;
+        let on_bar = self.shell_frame_status_bar.as_ref().is_some_and(|bar| {
+            bar.left
+                .iter()
+                .chain(&bar.right)
+                .any(|it| it.clickable == Some(id))
+        });
+        if on_bar {
+            PopupPosition::AboveStatusBarAt(id)
+        } else {
+            PopupPosition::BottomRight
+        }
     }
 
     /// The prompt row's description: the prompt's message, its query and the
@@ -1630,13 +1527,7 @@ impl Editor {
         // to visually indicate that focus is exclusively on the terminal
         if self.active_window().keyboard_capture && self.active_window().focused_terminal_live() {
             // Find the active split's content area
-            let active_split = self
-                .windows
-                .get(&self.active_window)
-                .and_then(|w| w.buffers.splits())
-                .map(|(mgr, _)| mgr)
-                .expect("active window must have a populated split layout")
-                .active_split();
+            let active_split = self.active_window().split_manager().active_split();
             let active_split_area = self.pane_content_rect(active_split);
 
             if let Some(terminal_area) = active_split_area {
@@ -2421,11 +2312,12 @@ impl Editor {
             let p = s.current_page();
             st::Page {
                 title: p.map(|p| p.name.clone()).unwrap_or_default(),
-                clear: p
-                    .is_some_and(|p| p.nullable)
-                    .then(|| s.current_category_has_values())
-                    .unwrap_or(false)
-                    .then(|| format!("[{}]", t!("settings.btn_clear_category"))),
+                clear: if p.is_some_and(|p| p.nullable) {
+                    s.current_category_has_values()
+                } else {
+                    false
+                }
+                .then(|| format!("[{}]", t!("settings.btn_clear_category"))),
                 clear_hovered: matches!(
                     s.hover_hit,
                     Some(crate::view::settings::SettingsHit::ClearCategoryButton)
@@ -2946,7 +2838,7 @@ impl Editor {
                 .filter(|desc| {
                     desc.to_lowercase() != d.action_text.replace('_', " ").to_lowercase()
                 });
-            return Some(kb::Dialog::Edit(kb::Edit {
+            return Some(kb::Dialog::Edit(Box::new(kb::Edit {
                 title: match d.editing_index.is_some() {
                     true => t!("keybinding_editor.dialog_edit_title").to_string(),
                     false => t!("keybinding_editor.dialog_add_title").to_string(),
@@ -3008,7 +2900,7 @@ impl Editor {
                         suggestions: d.autocomplete_suggestions.clone(),
                         selected: d.autocomplete_selected,
                     }),
-            }));
+            })));
         }
 
         if e.showing_confirm_dialog {
@@ -3118,12 +3010,6 @@ impl Editor {
             max_height: size.height.saturating_sub(2),
         })
     }
-
-    /// Whether a file-explorer sidebar is showing, and if so how many columns
-    /// it wants and which side it sits on.
-    ///
-    /// A *decision*, not a layout: the shell turns this into rectangles (see
-    /// the frame layout at the top of `render`). Splitting the two is what let
 
     /// The sidebar's content THIS instant: its chrome, and one row per visible
     /// tree node.
@@ -3270,7 +3156,6 @@ impl Editor {
             title_theme,
             border_theme,
             close_theme: fe::close_theme(close_hovered),
-            rows,
             focused,
         }
     }
@@ -3439,307 +3324,6 @@ impl Editor {
             }
         }
         out
-    }
-
-    /// Returns the cell the sidebar wants the hardware caret parked on (its
-    /// selected row) when it owns the keyboard, for the caller to commit at
-    /// the end of the draw. See `view::shell::file_explorer`.
-    /// Render the status bar into `area`, unless it's toggled off or a
-    /// suggestions / file-browser popup is occupying the bottom row. The
-    /// bar's inputs are gathered by [`Self::with_status_bar_ctx`], shared
-    /// with the event-time layout derivation
-    /// ([`Self::status_bar_layout_now`]).
-    /// Record the status bar's theme-key provenance for the inspector.
-    ///
-    /// `StatusBarRenderer::render_status_bar` placed every element, drew it,
-    /// and recorded provenance in one walk. The tree places, the fold draws,
-    /// and this is the only part left.
-    ///
-    /// It used to publish a `StatusBarChrome` capture beside the runs, so the
-    /// web `Scene` could read the segments back. The `Scene` asks the tree
-    /// directly now ([`Self::shell_status_segments`]), which is why the
-    /// early-return below no longer has a capture to clear.
-    fn publish_status_bar(
-        &mut self,
-        area: ratatui::layout::Rect,
-        has_suggestions: bool,
-        has_file_browser: bool,
-    ) {
-        if !(self.active_window().status_bar_visible && !has_suggestions && !has_file_browser) {
-            // No bar this frame — the user hid it, or a suggestions / file-
-            // browser popup took the row. Nothing to record.
-            return;
-        }
-        // **There is no second side to check here, and there must not be.**
-        // This used to assert `status_bar_area_now() == Some(area)` under the
-        // claim that "the retained tree and a fresh one must lay the frame out
-        // alike". Neither side was fresh: `area` is
-        // `frame::regions_of(ui, size)` on `self.shell_ui`, and
-        // `status_bar_area_now` resolves through `shell_region_now` to
-        // `frame::regions_of(ui, size)` on the same retained `Ui` — whose own
-        // doc forbids building a throwaway one. It compared one read of the
-        // tree against another read of the same tree.
-        //
-        // The property is real and worth holding; the place for it is a test,
-        // where laying the frame out twice is a fair question. See
-        // `frame::tests::a_retained_tree_lays_the_frame_out_like_a_fresh_one`.
-
-        let Some(bar) = self.shell_frame_status_bar.clone() else {
-            return;
-        };
-        let frame_rect = {
-            let f = self.active_chrome().last_frame;
-            ratatui::layout::Rect::new(0, 0, f.width, f.height)
-        };
-        let runs = {
-            let Some(ui) = self.shell_ui.as_ref() else {
-                return;
-            };
-            crate::view::shell::status_bar::provenance_runs(ui, &bar, frame_rect, area)
-                .into_iter()
-                .map(|(x, y, w, fg, bg)| crate::app::types::ThemeRun {
-                    x,
-                    y,
-                    w,
-                    // Validated and given back as `'static` in one step: a
-                    // name that is not a real theme key reports `None`, which
-                    // is what the inspector should say about it.
-                    fg_key: fg
-                        .as_deref()
-                        .and_then(crate::view::theme::Theme::static_theme_key)
-                        .map(std::borrow::Cow::Borrowed),
-                    bg_key: bg
-                        .as_deref()
-                        .and_then(crate::view::theme::Theme::static_theme_key)
-                        .map(std::borrow::Cow::Borrowed),
-                    region: std::borrow::Cow::Borrowed("Status Bar"),
-                })
-                .collect::<Vec<_>>()
-        };
-        self.active_chrome_mut().apply_theme_runs(&runs);
-    }
-
-    /// Gather every status-bar input from live editor state and run `f`
-    /// with the assembled [`crate::view::ui::status_bar::StatusBarContext`]
-    /// and the user's status-bar config. Shared by the paint pass
-    /// ([`Self::render_status_bar_row`]) and the event-time layout
-    /// derivation ([`Self::status_bar_layout_now`]) so both see the SAME
-    /// strings — the bar's geometry is content-dependent (rendered label
-    /// widths: encoding, LSP state, cursor position, messages), so any
-    /// drift between the two would move the clickable segments. Returns
-    /// `None` when the active buffer is missing from the window's buffer
-    /// map (teardown).
-    pub(crate) fn with_status_bar_ctx<R>(
-        &mut self,
-        f: impl FnOnce(
-            &mut crate::view::ui::status_bar::StatusBarContext<'_>,
-            &crate::config::StatusBarConfig,
-        ) -> R,
-    ) -> Option<R> {
-        let display_name_owned = self
-            .active_window()
-            .buffer_metadata
-            .get(&self.active_buffer())
-            .map(|m| m.display_name.clone())
-            .unwrap_or_else(|| "[No Name]".to_string());
-        let display_name = display_name_owned.as_str();
-        let status_message = self.active_window().status_message.clone();
-        let plugin_status_message = self.active_window().plugin_status_message.clone();
-        // Compute a simple buffer-aware LSP indicator.
-        // Compose the LSP status-bar segment for the active buffer. This
-        // runs every render — the editor has no precomputed LSP-status
-        // string cached anywhere else, so there is a single source of
-        // truth for what the user sees.
-        //
-        // Priority order (first non-empty wins):
-        //
-        //   1. Active `$/progress` work for this language — e.g.
-        //      "LSP (cpp): indexing (42%)". Conveys the transient
-        //      startup/indexing phase.
-        //   2. A running server — "LSP". Short because detail belongs
-        //      in LSP-specific UI, not the compact status bar pill.
-        //   3. Configured `auto_start=true` servers that haven't started
-        //      (error / crashed / pending) — "LSP off".
-        //   4. Configured `enabled && !auto_start` servers that the user
-        //      has to opt into — "LSP: off (N)".
-        //   5. Nothing.
-        //
-        // Rules 3 and 4 address heuristic eval H-1: without them, a
-        // configured-but-dormant server is indistinguishable from "no
-        // LSP at all."
-        let current_language = self
-            .buffers()
-            .get(&self.active_buffer())
-            .map(|s| s.language.clone())
-            .unwrap_or_default();
-        let buffer_lsp_disabled_reason = self
-            .active_window()
-            .buffer_metadata
-            .get(&self.active_buffer())
-            .filter(|m| !m.lsp_enabled)
-            .and_then(|m| m.lsp_disabled_reason.as_deref());
-        let (lsp_status, lsp_indicator_state) = compose_lsp_status(
-            &current_language,
-            buffer_lsp_disabled_reason,
-            &self.active_window().lsp_progress,
-            &self.active_window().lsp_server_statuses,
-            &self.config.lsp,
-            &self.active_window().user_dismissed_lsp_languages,
-            self.config.lsp_enabled,
-        );
-        let chord_state_cloned = self.active_window().chord_state.clone(); // Clone the chord state
-
-        // Get update availability info
-        let update_available = self.latest_version().map(|v| v.to_string());
-        let self_update_phase = self.self_update_phase();
-
-        // Get warning level for colored indicator (respects config setting)
-        // LSP warning level is scoped to the current buffer's language
-        let (warning_level, general_warning_count) = if self.config.warnings.show_status_indicator {
-            let lsp_level = {
-                use crate::services::async_bridge::LspServerStatus;
-                let mut level = WarningLevel::None;
-                for ((lang, _), status) in &self.active_window().lsp_server_statuses {
-                    if lang == &current_language {
-                        match status {
-                            LspServerStatus::Error => {
-                                level = WarningLevel::Error;
-                                break;
-                            }
-                            LspServerStatus::Starting
-                            | LspServerStatus::Initializing
-                            // A server that stopped answering requests is
-                            // a warning, not a healthy "on" (issue #2197).
-                            | LspServerStatus::Unresponsive
-                                if level != WarningLevel::Error =>
-                            {
-                                level = WarningLevel::Warning;
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-                level
-            };
-            (
-                lsp_level,
-                self.active_window().warning_domains.general.count,
-            )
-        } else {
-            (WarningLevel::None, 0)
-        };
-
-        // Which clickable status-bar segment (if any) the mouse is over —
-        // drives hover styling generically (one variant for the whole bar).
-        let status_bar_hovered = match &self.hovered() {
-            Some(HoverTarget::StatusBarClickable(id)) => Some(*id),
-            _ => None,
-        };
-
-        let remote_connection = self.connection_display_string();
-        // Active window's last failed-reconnect error (drives a core
-        // FailedAttach indicator for a dormant remote workspace).
-        let remote_reconnect_error = self.active_window().remote_reconnect_error.clone();
-        // The active window is a remote session whose window-derived
-        // connect (dive / retry; see `start_remote_reconnect`'s request-id
-        // scheme) is still in flight — its shell shows `Connecting`.
-        let remote_connecting = self
-            .remote_attach_inflight
-            .contains(&(u64::MAX - self.active_window_id().0))
-            && self.active_window().authority_spec.is_remote();
-
-        // Get session label for display (only in session mode). The display
-        // name, not `session_name`: an unnamed working-directory daemon has
-        // no daemon name but is still labelled with its directory.
-        let session_name = self.session_display_name().map(|s| s.to_string());
-
-        let active_split = self.effective_active_split();
-        let active_buf = self.active_buffer();
-        let default_cursors = crate::model::cursor::Cursors::new();
-        let is_read_only = self
-            .active_window()
-            .buffer_metadata
-            .get(&active_buf)
-            .map(|m| m.read_only)
-            .unwrap_or(false);
-        let is_synthetic_placeholder = self
-            .active_window()
-            .buffer_metadata
-            .get(&active_buf)
-            .map(|m| m.synthetic_placeholder)
-            .unwrap_or(false);
-        // Compute plugin-provided status-bar values before taking the
-        // mutable window borrow below.
-        let dynamic_status_bar_elements = self.get_status_bar_element_values(active_buf);
-        // Active session's trust level for the always-present `{trust}`
-        // indicator — read here (Copy) before the mutable window borrow.
-        let workspace_trust_level = self.authority().workspace_trust.level();
-        // Restart affordance for a terminal buffer whose process quit.
-        // `exited_terminal` is `Some` only in exactly that state, so the
-        // indicator can't offer to restart a live agent.
-        let terminal_restart = self.active_window().exited_terminal(active_buf).map(|e| {
-            crate::view::ui::status_bar::TerminalRestartState {
-                program: e.program_name().map(str::to_string),
-                exit_code: e.exit_code,
-                resumes_agent: e.resumes_agent() && self.config.terminal.resume_agents,
-            }
-        });
-        // Shared chrome inputs, locked here (rather than passed in) so
-        // the event-time caller needs no per-frame clones. Field-level
-        // borrows: the guards borrow `self.theme` / `self.keybindings`,
-        // disjoint from the `self.windows` borrow below.
-        let theme_guard = self.theme.read().unwrap();
-        let theme = &*theme_guard;
-        let keybindings_guard = self.keybindings.read().unwrap();
-        let keybindings = &*keybindings_guard;
-        // Single window borrow, split into buffers + cursors so the
-        // status-bar context can hold both.
-        let __active_id = self.active_window;
-        let __win = self
-            .windows
-            .get_mut(&__active_id)
-            .expect("active window must exist");
-        __win
-            .buffers
-            .with_buffer_and_view_states(active_buf, |state, vs_map| {
-                let cursors = vs_map
-                    .get(&active_split)
-                    .map(|v| &v.cursors)
-                    .unwrap_or(&default_cursors);
-                let mut status_ctx = crate::view::ui::status_bar::StatusBarContext {
-                    state,
-                    cursors,
-                    status_message: &status_message,
-                    plugin_status_message: &plugin_status_message,
-                    lsp_status: &lsp_status,
-                    lsp_indicator_state,
-                    theme,
-                    display_name,
-                    keybindings,
-                    chord_state: &chord_state_cloned,
-                    update_available: update_available.as_deref(),
-                    update_phase: self_update_phase,
-                    warning_level,
-                    general_warning_count,
-                    hovered: status_bar_hovered,
-                    remote_connection: remote_connection.as_deref(),
-                    session_name: session_name.as_deref(),
-                    read_only: is_read_only,
-                    remote_state_override: self.remote_indicator_override.as_ref(),
-                    remote_reconnect_error: remote_reconnect_error.as_deref(),
-                    remote_connecting,
-                    is_synthetic_placeholder,
-                    // Filled in by `render_status` from the user's
-                    // status_bar config; the value here is just a
-                    // safe default for the rare path that builds the
-                    // ctx but doesn't run `render_status`.
-                    remote_indicator_on_bar: false,
-                    dynamic_status_bar_elements: dynamic_status_bar_elements.clone(),
-                    workspace_trust_level,
-                    terminal_restart: terminal_restart.clone(),
-                };
-                f(&mut status_ctx, &self.config.editor.status_bar)
-            })
     }
 
     /// The bottom-row visibility facts, computed ONCE: whether the
@@ -4044,8 +3628,7 @@ impl Editor {
                 drop_zone: self
                     .active_window()
                     .mouse_state
-                    .dragging_tab
-                    .as_ref()
+                    .tab_drag()
                     .filter(|d| d.is_dragging())
                     .and_then(|d| d.drop_zone),
                 hosts,
@@ -4623,28 +4206,6 @@ impl Editor {
         crate::view::shell::context_menu::menu_rect(self.shell_ui.as_ref()?.spec())
     }
 
-    /// The status bar's segments, read off the retained tree.
-    ///
-    /// The third of the same family as [`Self::shell_region_now`] and
-    /// [`Self::shell_menu_rect`]: layout placed these, and this reads the
-    /// answer back. It replaced a `StatusBarChrome` capture that `render`
-    /// filled from this very walk and the web `Scene` read back a moment
-    /// later — a second copy of an answer the tree already held, which had to
-    /// be cleared by hand on the frames where the bar is hidden (a suggestions
-    /// or file-browser popup owns the row) or the web kept drawing a bar the
-    /// TUI no longer had.
-    pub(crate) fn shell_status_segments(
-        &self,
-    ) -> Vec<crate::view::ui::status_bar::StatusSegmentInfo> {
-        let (Some(ui), Some(bar)) = (self.shell_ui.as_ref(), self.shell_frame_status_bar.as_ref())
-        else {
-            return Vec::new();
-        };
-        let f = self.active_chrome().last_frame;
-        let size = ratatui::layout::Rect::new(0, 0, f.width, f.height);
-        crate::view::shell::status_bar::segments(ui, bar, size)
-    }
-
     /// The status bar's screen area THIS instant, derived from live state:
     /// the same visibility conditions and vertical frame split `render`
     /// uses ([`Self::shell_frame`]; asserted against the paint pass in
@@ -4902,13 +4463,7 @@ impl Editor {
     /// produce a one-frame lag on cursor moves that trigger a scroll-sync anchor
     /// change (e.g. `G` in a side-by-side diff).
     fn pre_sync_and_scroll_sync(&mut self) {
-        let active_split = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(mgr, _)| mgr)
-            .expect("active window must have a populated split layout")
-            .active_split();
+        let active_split = self.active_window().split_manager().active_split();
         {
             let _span = tracing::info_span!("pre_sync_ensure_visible").entered();
             self.active_window_mut()
@@ -4927,19 +4482,10 @@ impl Editor {
             std::collections::HashMap::new();
         {
             let _span = tracing::info_span!("compute_semantic_ranges").entered();
-            for (split_id, view_state) in self
-                .windows
-                .get(&self.active_window)
-                .and_then(|w| w.buffers.splits())
-                .map(|(_, vs)| vs)
-                .expect("active window must have a populated split layout")
-            {
+            for (split_id, view_state) in self.active_window().split_view_states() {
                 if let Some(buffer_id) = self
-                    .windows
-                    .get(&self.active_window)
-                    .and_then(|w| w.buffers.splits())
-                    .map(|(mgr, _)| mgr)
-                    .expect("active window must have a populated split layout")
+                    .active_window()
+                    .split_manager()
                     .get_buffer_id((*split_id).into())
                 {
                     if let Some(state) = self
@@ -4987,10 +4533,7 @@ impl Editor {
                 .windows
                 .get(&active_id)
                 .expect("active window must exist");
-            let (mgr, vs_map) = win
-                .buffers
-                .splits()
-                .expect("active window must have a populated split layout");
+            let (mgr, vs_map) = win.splits();
             vs_map
                 .iter()
                 .filter_map(|(split_id, vs)| {
@@ -5313,13 +4856,7 @@ impl Editor {
             // effects of `open_file_no_focus` (it adds the buffer to
             // the active split's tabs and may switch its active
             // buffer to the loaded file).
-            let source_split = self
-                .windows
-                .get(&self.active_window)
-                .and_then(|w| w.buffers.splits())
-                .map(|(mgr, _)| mgr)
-                .expect("active window must have a populated split layout")
-                .active_split();
+            let source_split = self.active_window().split_manager().active_split();
             // `open_file_for_preview` always allocates a fresh buffer
             // — never repurposes the "no name" empty buffer the user
             // is currently looking at — so the background view stays
@@ -5338,20 +4875,15 @@ impl Editor {
                 // overlay's standalone view-state — it doesn't need
                 // to be in `open_buffers`.
                 let leaf_ids: Vec<_> = self
-                    .windows
-                    .get(&self.active_window)
-                    .and_then(|w| w.buffers.splits())
-                    .map(|(_, vs)| vs)
-                    .expect("active window must have a populated split layout")
+                    .active_window()
+                    .split_view_states()
                     .keys()
                     .copied()
                     .collect();
                 for leaf_id in leaf_ids {
                     if let Some(view_state) = self
-                        .windows
-                        .get_mut(&self.active_window)
-                        .and_then(|w| w.split_view_states_mut())
-                        .expect("active window must have a populated split layout")
+                        .active_window_mut()
+                        .split_view_states_mut()
                         .get_mut(&leaf_id)
                     {
                         view_state.remove_buffer(buffer_id);
@@ -5371,10 +4903,7 @@ impl Editor {
                     .get_mut(&__active_id)
                     .expect("active window must exist");
                 let __buffer_keys: Vec<BufferId> = __win.buffers.ids();
-                let (__mgr, __vs_map) = __win
-                    .buffers
-                    .splits_mut()
-                    .expect("active window must have a populated split layout");
+                let (__mgr, __vs_map) = __win.splits_mut();
                 if let Some(source_state) = __vs_map.get_mut(&source_split) {
                     if source_state.active_buffer == buffer_id {
                         let fallback = source_state
@@ -5393,10 +4922,8 @@ impl Editor {
                         }
                     }
                 }
-                self.windows
-                    .get_mut(&self.active_window)
-                    .and_then(|w| w.split_manager_mut())
-                    .expect("active window must have a populated split layout")
+                self.active_window_mut()
+                    .split_manager_mut()
                     .set_active_split(source_split);
             }
             buffer_id
@@ -5806,13 +5333,7 @@ impl Editor {
         let size = ratatui::layout::Rect::new(0, 0, width, height);
 
         // Replicate the pre-render sync steps from render()
-        let active_split = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(mgr, _)| mgr)
-            .expect("active window must have a populated split layout")
-            .active_split();
+        let active_split = self.active_window().split_manager().active_split();
         self.active_window_mut()
             .pre_sync_ensure_visible(active_split);
         self.active_window_mut().sync_scroll_groups();
@@ -6398,7 +5919,7 @@ impl Editor {
         self.prose_reveal
             .borrow_mut()
             .entry(key.clone())
-            .or_insert_with(fresh_ui::behavior::anchor::Anchor::new)
+            .or_default()
             .clone()
     }
 
@@ -6514,173 +6035,230 @@ impl Editor {
 
 /// Building the status bar's description from live state.
 impl Editor {
-    /// The bar's elements, in the order they sit on the row.
-    ///
-    /// This is the half of `render_status` that decides *what is on the bar*.
-    /// The other half — where each element lands — is the tree's now; see
-    /// `view::shell::status_bar`.
+    /// What is on the status bar, in the order it sits on the row, gathered
+    /// from live state. Where each element lands is the tree's; see
+    /// `view::shell::status_bar`. `None` when the active buffer is missing
+    /// from the window's buffer map (teardown).
     pub(crate) fn status_bar_description(
         &mut self,
         width: u16,
     ) -> Option<crate::view::shell::status_bar::StatusBar> {
-        use crate::app::shell_host::shell_theme::{attrs, literal};
+        use crate::app::shell_host::shell_theme::pair;
         use crate::view::shell::status_bar as sb;
-        use crate::view::ui::status_bar::{element_kind_name, StatusBarRenderer};
+        use crate::view::ui::status_bar::StatusBarRenderer;
 
-        let (bar_fg, bar_bg, sep_fg, sep_bg) = {
-            let t = self.theme.read().unwrap();
-            (
-                t.status_bar_fg,
-                t.status_bar_bg,
-                t.status_separator_fg,
-                t.status_separator_bg,
-            )
+        let display_name_owned = self
+            .active_window()
+            .buffer_metadata
+            .get(&self.active_buffer())
+            .map(|m| m.display_name.clone())
+            .unwrap_or_else(|| "[No Name]".to_string());
+        let display_name = display_name_owned.as_str();
+        let status_message = self.active_window().status_message.clone();
+        let plugin_status_message = self.active_window().plugin_status_message.clone();
+        // Compute a simple buffer-aware LSP indicator.
+        // Compose the LSP status-bar segment for the active buffer. This
+        // runs every render — the editor has no precomputed LSP-status
+        // string cached anywhere else, so there is a single source of
+        // truth for what the user sees.
+        //
+        // Priority order (first non-empty wins):
+        //
+        //   1. Active `$/progress` work for this language — e.g.
+        //      "LSP (cpp): indexing (42%)". Conveys the transient
+        //      startup/indexing phase.
+        //   2. A running server — "LSP". Short because detail belongs
+        //      in LSP-specific UI, not the compact status bar pill.
+        //   3. Configured `auto_start=true` servers that haven't started
+        //      (error / crashed / pending) — "LSP off".
+        //   4. Configured `enabled && !auto_start` servers that the user
+        //      has to opt into — "LSP: off (N)".
+        //   5. Nothing.
+        //
+        // Rules 3 and 4 address heuristic eval H-1: without them, a
+        // configured-but-dormant server is indistinguishable from "no
+        // LSP at all."
+        let current_language = self
+            .buffers()
+            .get(&self.active_buffer())
+            .map(|s| s.language.clone())
+            .unwrap_or_default();
+        let buffer_lsp_disabled_reason = self
+            .active_window()
+            .buffer_metadata
+            .get(&self.active_buffer())
+            .filter(|m| !m.lsp_enabled)
+            .and_then(|m| m.lsp_disabled_reason.as_deref());
+        let (lsp_status, lsp_indicator_state) = compose_lsp_status(
+            &current_language,
+            buffer_lsp_disabled_reason,
+            &self.active_window().lsp_progress,
+            &self.active_window().lsp_server_statuses,
+            &self.config.lsp,
+            &self.active_window().user_dismissed_lsp_languages,
+            self.config.lsp_enabled,
+        );
+        let chord_state_cloned = self.active_window().chord_state.clone(); // Clone the chord state
+
+        // Get update availability info
+        let update_available = self.latest_version().map(|v| v.to_string());
+        let self_update_phase = self.self_update_phase();
+
+        let general_warning_count = if self.config.warnings.show_status_indicator {
+            self.active_window().warning_domains.general.count
+        } else {
+            0
         };
-        // What a theme key resolves to, for deciding whether a span's colour
-        // *is* the one its element's key names. Snapshotted here so the read
-        // guard does not have to be held across the description build.
-        let theme_snapshot = self.theme.read().unwrap().clone();
-        let theme_of = move |key: &str| theme_snapshot.resolve_theme_key(key);
-        self.with_status_bar_ctx(|ctx, config| {
-            let lsp_state = ctx.lsp_indicator_state;
-            // Whether the dedicated remote indicator is on the bar, so the
-            // filename branch can drop its now-redundant prefix. Read before
-            // the sides are rendered, exactly as before.
-            ctx.remote_indicator_on_bar = config
-                .left
-                .iter()
-                .chain(config.right.iter())
-                .any(|e| matches!(e, crate::config::StatusBarElement::RemoteIndicator));
 
-            let left = StatusBarRenderer::render_side(&config.left, ctx);
-            let mut right = StatusBarRenderer::render_side(&config.right, ctx);
+        // Which clickable status-bar segment (if any) the mouse is over —
+        // drives hover styling generically (one variant for the whole bar).
+        let status_bar_hovered = match &self.hovered() {
+            Some(HoverTarget::StatusBarClickable(id)) => Some(*id),
+            _ => None,
+        };
 
-            // **Which right-hand elements survive** — a content decision, made
-            // from measured text, kept verbatim from `render_status`. Reserve
-            // a sane minimum for the left side so the buffer name and cursor
-            // position are not truncated to a single character on a narrow
-            // terminal, then drop low-priority right elements (configured
-            // right-most first) until the rest fits alongside it. The *first*
-            // right element is never dropped, so a user who configured any
-            // right-side status keeps some of it.
-            let available = width as usize;
-            let sep_w = crate::primitives::display_width::str_width(&config.separator);
-            let total_right: usize = right.iter().map(|(_, w, _, _)| *w).sum::<usize>()
-                + sep_w * right.len().saturating_sub(1);
-            let left_min_target = available.saturating_mul(2).saturating_div(5).min(40);
-            let right_budget = available.saturating_sub(left_min_target + 1);
-            // How many right elements are kept whatever happens. Normally one,
-            // so a user who configured any right-side status keeps some of it.
-            // On a bar too narrow to host both sides — `sb::BOTH_SIDES_MIN`,
-            // the boundary `render_status` drew and `left_budget` kept — it is
-            // none: the left side is what survives there, which is what
-            // "reserve nothing for the right" amounted to when the right was
-            // then clipped to whatever the left had not taken. Said as which
-            // elements are on the bar, because that is the decision it is.
-            let keep = usize::from(available >= sb::BOTH_SIDES_MIN);
-            if total_right > right_budget && right.len() > keep {
-                let mut current = total_right;
-                while current > right_budget && right.len() > keep {
-                    let Some(dropped) = right.pop() else { break };
-                    current = current.saturating_sub(dropped.1).saturating_sub(sep_w);
-                }
+        let remote_connection = self.connection_display_string();
+        // Active window's last failed-reconnect error (drives a core
+        // FailedAttach indicator for a dormant remote workspace).
+        let remote_reconnect_error = self.active_window().remote_reconnect_error.clone();
+        // The active window is a remote session whose window-derived
+        // connect (dive / retry; see `start_remote_reconnect`'s request-id
+        // scheme) is still in flight — its shell shows `Connecting`.
+        let remote_connecting = self
+            .remote_attach_inflight
+            .contains(&(u64::MAX - self.active_window_id().0))
+            && self.active_window().authority_spec.is_remote();
+
+        // Get session label for display (only in session mode). The display
+        // name, not `session_name`: an unnamed working-directory daemon has
+        // no daemon name but is still labelled with its directory.
+        let session_name = self.session_display_name().map(|s| s.to_string());
+
+        let active_split = self.effective_active_split();
+        let active_buf = self.active_buffer();
+        let default_cursors = crate::model::cursor::Cursors::new();
+        let is_read_only = self
+            .active_window()
+            .buffer_metadata
+            .get(&active_buf)
+            .map(|m| m.read_only)
+            .unwrap_or(false);
+        let is_synthetic_placeholder = self
+            .active_window()
+            .buffer_metadata
+            .get(&active_buf)
+            .map(|m| m.synthetic_placeholder)
+            .unwrap_or(false);
+        // Compute plugin-provided status-bar values before taking the
+        // mutable window borrow below.
+        let dynamic_status_bar_elements = self.get_status_bar_element_values(active_buf);
+        // Active session's trust level for the always-present `{trust}`
+        // indicator — read here (Copy) before the mutable window borrow.
+        let workspace_trust_level = self.authority().workspace_trust.level();
+        // Restart affordance for a terminal buffer whose process quit.
+        // `exited_terminal` is `Some` only in exactly that state, so the
+        // indicator can't offer to restart a live agent.
+        let terminal_restart = self.active_window().exited_terminal(active_buf).map(|e| {
+            crate::view::ui::status_bar::TerminalRestartState {
+                program: e.program_name().map(str::to_string),
+                exit_code: e.exit_code,
+                resumes_agent: e.resumes_agent() && self.config.terminal.resume_agents,
             }
-
-            // **The left side is not pre-fitted here, and that is the
-            // point.** `render_status` reserved the right side, spent what was
-            // left on the left, truncated the element that straddled the
-            // boundary and dropped the rest; the migration ported that
-            // arithmetic into `sb::left_budget` and ran it over measured text
-            // before the description existed, which is a picture with a
-            // pre-fitted string in it.
-            //
-            // The description states what is on the bar; who yields and where
-            // the cut falls are `Node::priority` and `Elide::Tail` — see
-            // `sb::yields_last`. The regression the budget existed for (a long
-            // message costing the right side its place) is the priority, and
-            // the cut is made at paint against the width layout settled on.
-
-            let item = |(spans, _w, kind, token_key): (
-                Vec<ratatui::text::Span<'static>>,
-                usize,
-                crate::view::ui::status_bar::ElementKind,
-                Option<String>,
-            )| {
-                // **Names where a name exists.** Every colour on this bar comes
-                // from a named theme field — `element_spans` resolves
-                // `status_error_indicator_fg` and friends into a `Style`, and
-                // re-encoding that as `#rrggbb` threw the name away, which is
-                // why provenance had to be carried in a second field beside
-                // the paint.
-                //
-                // A span whose colours are the ones `element_keys` names for
-                // this element carries those names; anything else is a colour
-                // with no name and carries a literal. That is the honest
-                // distinction, and it is the same one the grammar already
-                // draws — so provenance is *read back out of* the run's theme
-                // rather than duplicated next to it.
-                let (kfg, kbg) = StatusBarRenderer::element_keys(kind, lsp_state);
-                let named = |c: ratatui::style::Color,
-                             key: &'static str,
-                             fallback: ratatui::style::Color|
-                 -> String {
-                    let resolved = theme_of(key).unwrap_or(fallback);
-                    if c == resolved {
-                        key.to_string()
-                    } else {
-                        literal(c)
-                    }
+        });
+        // A field-level borrow, disjoint from the `self.windows` borrow below.
+        let keybindings_guard = self.keybindings.read().unwrap();
+        let keybindings = &*keybindings_guard;
+        // Single window borrow, split into buffers + cursors so the
+        // status-bar context can hold both.
+        let __active_id = self.active_window;
+        let __win = self
+            .windows
+            .get_mut(&__active_id)
+            .expect("active window must exist");
+        __win
+            .buffers
+            .with_buffer_and_view_states(active_buf, |state, vs_map| {
+                let cursors = vs_map
+                    .get(&active_split)
+                    .map(|v| &v.cursors)
+                    .unwrap_or(&default_cursors);
+                let config = &self.config.editor.status_bar;
+                let mut status_ctx = crate::view::ui::status_bar::StatusBarContext {
+                    state,
+                    cursors,
+                    status_message: &status_message,
+                    plugin_status_message: &plugin_status_message,
+                    lsp_status: &lsp_status,
+                    lsp_indicator_state,
+                    display_name,
+                    keybindings,
+                    chord_state: &chord_state_cloned,
+                    update_available: update_available.as_deref(),
+                    update_phase: self_update_phase,
+                    general_warning_count,
+                    hovered: status_bar_hovered,
+                    remote_connection: remote_connection.as_deref(),
+                    session_name: session_name.as_deref(),
+                    read_only: is_read_only,
+                    remote_state_override: self.remote_indicator_override.as_ref(),
+                    remote_reconnect_error: remote_reconnect_error.as_deref(),
+                    remote_connecting,
+                    is_synthetic_placeholder,
+                    // So the filename can drop its now-redundant prefix.
+                    remote_indicator_on_bar: config
+                        .left
+                        .iter()
+                        .chain(config.right.iter())
+                        .any(|e| matches!(e, crate::config::StatusBarElement::RemoteIndicator)),
+                    dynamic_status_bar_elements,
+                    workspace_trust_level,
+                    terminal_restart,
                 };
-                let runs = spans
-                    .into_iter()
-                    .map(|s| {
-                        let fg = named(s.style.fg.unwrap_or(bar_fg), kfg, bar_fg);
-                        let bg = named(s.style.bg.unwrap_or(bar_bg), kbg, bar_bg);
-                        let mut mods: Vec<&str> = Vec::new();
-                        if s.style
-                            .add_modifier
-                            .contains(ratatui::style::Modifier::BOLD)
-                        {
-                            mods.push("bold");
-                        }
-                        if s.style
-                            .add_modifier
-                            .contains(ratatui::style::Modifier::ITALIC)
-                        {
-                            mods.push("italic");
-                        }
-                        if s.style
-                            .add_modifier
-                            .contains(ratatui::style::Modifier::UNDERLINED)
-                        {
-                            mods.push("underlined");
-                        }
-                        (s.content.to_string(), attrs(&fg, &bg, &mods))
-                    })
-                    .collect();
-                sb::Item {
-                    runs,
-                    name: element_kind_name(kind),
-                    clickable: StatusBarRenderer::clickable_for_kind(kind),
-                    token_key,
-                }
-            };
 
-            sb::StatusBar {
-                left: left.into_iter().map(item).collect(),
-                right: right.into_iter().map(item).collect(),
-                separator: config.separator.clone(),
-                base_theme: crate::app::shell_host::shell_theme::pair(
-                    "ui.status_bar_fg",
-                    "ui.status_bar_bg",
-                ),
-                sep_theme: crate::app::shell_host::shell_theme::attrs(
-                    &literal(sep_fg),
-                    &literal(sep_bg),
-                    &[],
-                ),
-            }
-        })
+                let left = StatusBarRenderer::render_side(&config.left, &mut status_ctx);
+                let mut right = StatusBarRenderer::render_side(&config.right, &mut status_ctx);
+
+                // **Which right-hand elements survive** — a content decision, made
+                // from measured text. Reserve
+                // a sane minimum for the left side so the buffer name and cursor
+                // position are not truncated to a single character on a narrow
+                // terminal, then drop low-priority right elements (configured
+                // right-most first) until the rest fits alongside it. The *first*
+                // right element is never dropped, so a user who configured any
+                // right-side status keeps some of it.
+                let available = width as usize;
+                let sep_w = crate::primitives::display_width::str_width(&config.separator);
+                let width_of =
+                    |it: &sb::Item| crate::primitives::display_width::str_width(&it.text());
+                let total_right: usize = right.iter().map(width_of).sum::<usize>()
+                    + sep_w * right.len().saturating_sub(1);
+                let left_min_target = available.saturating_mul(2).saturating_div(5).min(40);
+                let right_budget = available.saturating_sub(left_min_target + 1);
+                // How many right elements are kept whatever happens. Normally one,
+                // so a user who configured any right-side status keeps some of it.
+                // On a bar too narrow to host both sides (`sb::BOTH_SIDES_MIN`) it
+                // is none: the left side is what survives there.
+                let keep = usize::from(available >= sb::BOTH_SIDES_MIN);
+                if total_right > right_budget && right.len() > keep {
+                    let mut current = total_right;
+                    while current > right_budget && right.len() > keep {
+                        let Some(dropped) = right.pop() else { break };
+                        current = current
+                            .saturating_sub(width_of(&dropped))
+                            .saturating_sub(sep_w);
+                    }
+                }
+
+                // The left side is not pre-fitted: who yields and where the cut
+                // falls are layout's (`sb::yields_last`, `Elide::Tail`).
+                sb::StatusBar {
+                    left,
+                    right,
+                    separator: config.separator.clone(),
+                    base_theme: pair("ui.status_bar_fg", "ui.status_bar_bg"),
+                    sep_theme: pair("ui.status_separator_fg", "ui.status_separator_bg"),
+                }
+            })
     }
 }
 
@@ -6801,8 +6379,11 @@ mod dock_reservation_tests {
         let rule = DockWidthRule::default().width(COLS);
         let switched_off = orchestrator_config(true, serde_json::json!({ "autoOpenDock": false }));
         let disabled = orchestrator_config(false, serde_json::Value::Null);
+        // The case, the plugin's manifest, the config, whether the editor
+        // runs in orchestrator mode (a bare `fresh`), and the width expected.
+        type Case<'a> = (&'a str, Option<&'a str>, Config, bool, Option<u16>);
         #[rustfmt::skip]
-        let cases: [(&str, Option<&str>, Config, bool, Option<u16>); 7] = [
+        let cases: [Case; 7] = [
             ("a declared dock, at the rule's width", Some(DECLARES_DOCK), Config::default(), false, Some(rule)),
             ("no manifest", None, Config::default(), false, None),
             ("a manifest with no dock", Some(r#"{"chrome":{}}"#), Config::default(), false, None),

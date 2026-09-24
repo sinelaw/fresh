@@ -68,7 +68,6 @@ impl Editor {
             };
             let recovery_config = RecoveryConfig {
                 enabled: self.recovery_service.lock().unwrap().is_enabled(),
-                ..RecoveryConfig::default()
             };
             // Replace the shared service's contents in place — the
             // `Arc<Mutex>` is cloned into every window, so we must not
@@ -100,7 +99,7 @@ impl Editor {
     pub fn session_display_name(&self) -> Option<&str> {
         self.session_display_name
             .as_deref()
-            .or_else(|| self.session_name.as_deref())
+            .or(self.session_name.as_deref())
     }
 
     /// Queue escape sequences to be sent to the client (session mode only)
@@ -659,7 +658,7 @@ impl crate::app::window::Window {
             .iter()
             .map(|(split_id, _, area)| (*split_id, *area))
             .collect();
-        if let Some(view_states) = self.split_view_states_mut() {
+        if let Some(view_states) = self.buffers.split_view_states_mut() {
             for (split_id, view_state) in view_states.iter_mut() {
                 match visible_rects.get(split_id) {
                     Some(area) => view_state.viewport.resize(area.width, area.height),

@@ -333,12 +333,15 @@ pub(super) fn scrollbar_visual_row_counts(
 /// Compute the maximum line length encountered so far (in display columns).
 /// Only scans the currently visible lines (plus a small margin) and updates
 /// the running maximum stored in the viewport.
+///
+/// The widest line itself, not floored at any width: the caller knows how
+/// many columns of text its pane shows (`pane_text_width`), and
+/// `viewport.width` is not that number — it counts the gutter.
 pub(crate) fn compute_max_line_length(state: &mut EditorState, viewport: &mut Viewport) -> usize {
     let buffer_len = state.buffer.len();
-    let visible_width = viewport.width as usize;
 
     if buffer_len == 0 {
-        return viewport.max_line_length_seen.max(visible_width);
+        return viewport.max_line_length_seen;
     }
 
     let visible_lines = viewport.height as usize + 5;
@@ -360,7 +363,7 @@ pub(crate) fn compute_max_line_length(state: &mut EditorState, viewport: &mut Vi
         }
     }
 
-    viewport.max_line_length_seen.max(visible_width)
+    viewport.max_line_length_seen
 }
 
 /// Resolve a marker's colour spec against the live theme.

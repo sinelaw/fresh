@@ -474,7 +474,7 @@ pub fn strip(pane: LeafId, s: &Strip, c: Cluster) -> Node<UiMsg> {
     let mut cells: Vec<Node<UiMsg>> = Vec::new();
     for (i, t) in s.tabs.iter().enumerate() {
         if i > 0 {
-            cells.push(text(" ".to_string()).theme(ground()));
+            cells.push(text(" ").theme(ground()));
         }
         let (name_ink, close_ink) = tab_ink(s, i);
         // The name and its `×` in one keyed span, so `reveal_key` brings the
@@ -498,7 +498,7 @@ pub fn strip(pane: LeafId, s: &Strip, c: Cluster) -> Node<UiMsg> {
     // the overflow, which is the window's own answer and not something a
     // description can know.
     if !s.tabs.is_empty() {
-        cells.push(text(" ".to_string()).theme(ground()));
+        cells.push(text(" ").theme(ground()));
     }
     cells.push(
         plus_node(pane, s.hover_plus, PLUS.to_string())
@@ -987,7 +987,6 @@ mod tests {
     /// `layout_reader`. A window can show what does not fit, so the cap is a
     /// rule about tab names rather than about the room they have: it stops one
     /// 151-character name from being a scroll of its own (issue #2650).
-    #[test]
     /// **A name is capped when the names do not fit, and whole when they do.**
     ///
     /// This asserted the cap applied at every width, which is what the strip

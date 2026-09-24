@@ -1020,6 +1020,8 @@ mod tests {
     }
 
     #[test]
+    // A slice of byte ranges is the argument, not a range of values.
+    #[allow(clippy::single_range_in_vec_init)]
     fn test_find_matching_bracket_skips_comment_bracket() {
         // `( # ) )` — the first `)` sits inside a "comment" range and must be
         // ignored, so the opening `(` matches the second `)`.
@@ -1041,6 +1043,8 @@ mod tests {
     }
 
     #[test]
+    // A slice of byte ranges is the argument, not a range of values.
+    #[allow(clippy::single_range_in_vec_init)]
     fn test_nesting_depth_skips_comment_brackets() {
         // `((x))` with the inner `(` at byte 1 treated as a comment bracket.
         let buffer = Buffer::from_str_test("((x))");

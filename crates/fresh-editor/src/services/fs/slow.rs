@@ -152,11 +152,6 @@ impl SlowFileSystem {
         &self.metrics
     }
 
-    /// Reset metrics to zero
-    pub fn reset_metrics(&self) {
-        self.metrics.reset();
-    }
-
     /// Add delay
     fn add_delay(&self, delay: Duration) {
         if !delay.is_zero() {
@@ -383,28 +378,6 @@ mod tests {
         assert_eq!(slow.metrics().metadata_calls.load(Ordering::SeqCst), 1);
         assert_eq!(slow.metrics().other_calls.load(Ordering::SeqCst), 1);
         assert_eq!(slow.metrics().total_calls(), 3);
-    }
-
-    #[test]
-    fn test_reset_metrics() {
-        let temp_dir = TempDir::new().unwrap();
-        let temp_path = temp_dir.path();
-
-        let inner = Arc::new(StdFileSystem);
-        let slow = SlowFileSystem::new(inner, SlowFsConfig::none());
-
-        // Perform some operations
-        drop(slow.read_dir(temp_path));
-        drop(slow.metadata(temp_path));
-
-        // Verify metrics are non-zero
-        assert!(slow.metrics().total_calls() > 0);
-
-        // Reset
-        slow.reset_metrics();
-
-        // Verify metrics are zero
-        assert_eq!(slow.metrics().total_calls(), 0);
     }
 
     #[test]

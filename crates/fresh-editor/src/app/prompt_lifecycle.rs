@@ -406,13 +406,7 @@ impl Editor {
         }
 
         let buffer_id = self.active_buffer();
-        let split_id = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(mgr, _)| mgr)
-            .expect("active window must have a populated split layout")
-            .active_split();
+        let split_id = self.active_window().split_manager().active_split();
         let (cursor_id, position, anchor, sticky_column) = {
             let cursors = self.active_cursors();
             let primary = cursors.primary();
@@ -424,7 +418,7 @@ impl Editor {
             )
         };
         let (viewport_top_byte, viewport_top_view_line_offset, viewport_left_column) = {
-            let vp = self.active_viewport();
+            let vp = self.active_window().active_viewport();
             (vp.top_byte(), vp.top_view_line_offset(), vp.left_column)
         };
 
@@ -461,14 +455,7 @@ impl Editor {
         // If the active buffer/split has changed (shouldn't happen during a
         // quick-open prompt, but be defensive), just drop the snapshot.
         if self.active_buffer() != snap.buffer_id
-            || self
-                .windows
-                .get(&self.active_window)
-                .and_then(|w| w.buffers.splits())
-                .map(|(mgr, _)| mgr)
-                .expect("active window must have a populated split layout")
-                .active_split()
-                != snap.split_id
+            || self.active_window().split_manager().active_split() != snap.split_id
         {
             return;
         }
@@ -497,9 +484,7 @@ impl Editor {
 
         if let Some(view_state) = self
             .active_window_mut()
-            .buffers
             .splits_mut()
-            .expect("active window must have a populated split layout")
             .1
             .get_mut(&snap.split_id)
         {
@@ -959,21 +944,6 @@ impl Editor {
             self.preview_theme(&original_theme);
         }
     }
-
-    /// Handle mouse wheel scroll over a prompt's suggestion list (command
-    /// palette, Select Locale, quick open, every other bottom-anchored
-    /// dropdown).
-    ///
-    /// The wheel scrolls the **view only** — it never moves the selection.
-    /// That is the editor-wide rule (and what VS Code does): the highlighted
-    /// entry may scroll out of sight, and pressing Enter still commits it.
-    /// Wheeling used to walk `selected_suggestion` instead, which also
-    /// rewrote the prompt input under the user and — once the scrollbar
-    /// could latch the offset — made the list jump, because the wheel
-    /// released the latch and the renderer snapped the view back to a
-    /// selection that had never visibly moved.
-    ///
-    /// Returns true if scroll was handled, false if no prompt is active or has no suggestions.
 
     /// Get the confirmed input and prompt type, consuming the prompt
     /// For command palette, returns the selected suggestion if available, otherwise the raw input

@@ -14,6 +14,7 @@ use crate::common::blog_showcase::BlogShowcase;
 use crate::common::fixtures::TestFixture;
 use crate::common::git_test_helper::{git_command, GitTestRepo};
 use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness, HarnessOptions};
+#[cfg(feature = "plugins")]
 use crate::common::launch_form::FORM_TITLE;
 use crossterm::event::{KeyCode, KeyModifiers};
 use lsp_types::FoldingRange;
@@ -4600,9 +4601,7 @@ fn blog_showcase_fresh_0_4_0_workspace_trust() {
     // build.rs) starts Restricted and raises the full-screen trust prompt.
     let store_path = {
         let editor = h.editor();
-        editor
-            .dir_context()
-            .project_state_dir(&editor.working_dir().to_path_buf())
+        editor.dir_context().project_state_dir(editor.working_dir())
     };
     let store = fresh::services::workspace_trust::TrustStore::for_project_dir(&store_path);
     h.editor()

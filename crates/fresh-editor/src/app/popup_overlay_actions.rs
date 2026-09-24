@@ -92,21 +92,6 @@ impl Editor {
         }
     }
 
-    /// Show a popup and attach a confirm/cancel resolver to it. The
-    /// `PopupData` event doesn't carry the resolver (it's a view-layer
-    /// concern that doesn't need event-log replay); we set it on the
-    /// resulting `Popup` immediately after `show_popup` pushes it.
-    pub fn show_popup_with_resolver(
-        &mut self,
-        popup: crate::model::event::PopupData,
-        resolver: crate::view::popup::PopupResolver,
-    ) {
-        self.show_popup(popup);
-        if let Some(top) = self.active_state_mut().popups.top_mut() {
-            top.resolver = resolver;
-        }
-    }
-
     /// Hide the topmost popup
     pub fn hide_popup(&mut self) {
         // Editor-level popups take precedence: dismiss them first if any are
