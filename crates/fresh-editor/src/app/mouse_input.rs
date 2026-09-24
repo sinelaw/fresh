@@ -684,21 +684,14 @@ impl Editor {
         let line_info = cached_mappings
             .as_ref()
             .and_then(|mappings| mappings.get(visual_row))
-            .map(|line_mapping| {
-                (
-                    line_mapping.visual_to_char.len(),
-                    line_mapping.line_end_byte,
-                )
-            });
+            .map(|line_mapping| (line_mapping.content_end_col(), line_mapping.line_end_byte));
 
+        // Past the last content cell (the newline and decoration cells
+        // don't count, so an empty line is always "past") there is no
+        // symbol to hover. The cell count can't be used here: a
+        // one-character line has one cell (issue #3351).
         let is_past_line_end_or_empty = line_info
-            .map(|(line_len, _)| {
-                // Empty lines (just newline) should not trigger hover
-                if line_len <= 1 {
-                    return true;
-                }
-                text_col >= line_len
-            })
+            .map(|(content_end_col, _)| text_col >= content_end_col)
             // If mouse is below all mapped lines (no mapping), don't trigger hover
             .unwrap_or(true);
 
