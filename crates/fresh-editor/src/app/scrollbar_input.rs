@@ -160,32 +160,30 @@ impl crate::app::window::Window {
     pub(super) fn handle_scrollbar_drag_relative(
         &mut self,
         row: u16,
+        grab: crate::app::types::VerticalGrab,
         split_id: LeafId,
         buffer_id: BufferId,
         scrollbar_rect: ratatui::layout::Rect,
     ) -> AnyhowResult<()> {
-        let drag_start_row = match self.mouse_state.drag_start_row {
-            Some(r) => r,
-            None => return Ok(()), // No drag start, shouldn't happen
+        use crate::app::types::VerticalScroll;
+        let drag_start_row = grab.row;
+        let (drag_start_top_byte, drag_start_view_line_offset) = match grab.from {
+            // A composite view scrolls by row.
+            VerticalScroll::Composite { scroll_row } => {
+                return self.handle_composite_scrollbar_drag_relative(
+                    row,
+                    drag_start_row,
+                    scroll_row,
+                    split_id,
+                    buffer_id,
+                    scrollbar_rect,
+                );
+            }
+            VerticalScroll::Buffer {
+                top_byte,
+                view_line_offset,
+            } => (top_byte, view_line_offset),
         };
-
-        // Handle composite buffers - use row-based scrolling
-        if self.is_composite_buffer(buffer_id) {
-            return self.handle_composite_scrollbar_drag_relative(
-                row,
-                drag_start_row,
-                split_id,
-                buffer_id,
-                scrollbar_rect,
-            );
-        }
-
-        let drag_start_top_byte = match self.mouse_state.drag_start_top_byte {
-            Some(b) => b,
-            None => return Ok(()), // No drag start, shouldn't happen
-        };
-
-        let drag_start_view_line_offset = self.mouse_state.drag_start_view_line_offset.unwrap_or(0);
 
         // Calculate the offset in rows (still used for large files)
         let row_offset = (row as i32) - (drag_start_row as i32);
@@ -584,15 +582,11 @@ impl crate::app::window::Window {
         &mut self,
         row: u16,
         drag_start_row: u16,
+        drag_start_scroll_row: usize,
         split_id: LeafId,
         buffer_id: BufferId,
         scrollbar_rect: ratatui::layout::Rect,
     ) -> AnyhowResult<()> {
-        let drag_start_scroll_row = match self.mouse_state.drag_start_composite_scroll_row {
-            Some(r) => r,
-            None => return Ok(()),
-        };
-
         let total_rows = self
             .composite_buffers
             .get(&buffer_id)

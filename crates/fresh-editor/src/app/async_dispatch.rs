@@ -995,7 +995,7 @@ impl Editor {
         // jump_to_end_on_output is enabled, snap it back to the live grid.
         //
         // ...but never yank the view away from a text selection: a drag that
-        // just started on the live grid (`terminal_drag_pending`), an
+        // just started on the live grid (`PointerDrag::TerminalPress`), an
         // in-progress selection drag, or a completed selection waiting to be
         // copied all pin the scrollback view. A chatty program would
         // otherwise destroy the selection the instant its next output
@@ -1004,17 +1004,21 @@ impl Editor {
         // gone (Ctrl+Space, typing, or a click that collapses it).
         let selection_active = {
             let win = self.active_window();
-            win.mouse_state.dragging_text_selection
-                || win.mouse_state.terminal_drag_pending.is_some()
-                || win
-                    .buffers
-                    .splits()
-                    .and_then(|(mgr, view_states)| view_states.get(&mgr.active_split()))
-                    .map(|vs| {
-                        let c = vs.cursors.primary();
-                        c.anchor.is_some_and(|a| a != c.position)
-                    })
-                    .unwrap_or(false)
+            matches!(
+                win.mouse_state.drag,
+                Some(
+                    crate::app::types::PointerDrag::Selection(_)
+                        | crate::app::types::PointerDrag::TerminalPress { .. }
+                )
+            ) || win
+                .buffers
+                .splits()
+                .and_then(|(mgr, view_states)| view_states.get(&mgr.active_split()))
+                .map(|vs| {
+                    let c = vs.cursors.primary();
+                    c.anchor.is_some_and(|a| a != c.position)
+                })
+                .unwrap_or(false)
         };
         if self.config.terminal.jump_to_end_on_output
             && !self.active_window().focused_terminal_live()

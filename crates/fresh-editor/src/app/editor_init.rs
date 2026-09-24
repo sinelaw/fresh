@@ -779,7 +779,6 @@ impl Editor {
             sidebar_placeholder_expiry: None,
             sidebar_layout_hints: std::collections::HashMap::new(),
             sidebar_drag: None,
-            separator_drag: None,
             prose_drag: None,
             prose_reveal: std::cell::RefCell::new(HashMap::new()),
         };

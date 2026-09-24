@@ -1,18 +1,26 @@
 use super::drag::TabDragState;
 use crate::config::ExplorerWidth;
-use crate::model::event::{BufferId, LeafId};
+use crate::model::event::{BufferId, ContainerId, LeafId, SplitDirection};
 
 /// Mouse state tracking
 #[derive(Debug, Clone, Default)]
 pub struct MouseState {
-    /// Whether we're currently dragging a vertical scrollbar
-    pub dragging_scrollbar: Option<LeafId>,
-    /// Whether we're currently dragging a horizontal scrollbar
-    pub dragging_horizontal_scrollbar: Option<LeafId>,
-    /// Initial mouse column when starting horizontal scrollbar drag
-    pub drag_start_hcol: Option<u16>,
-    /// Initial left_column when starting horizontal scrollbar drag
-    pub drag_start_left_column: Option<usize>,
+    /// The press the pointer is holding, from the press to its release.
+    ///
+    /// **One value, because one press is held at a time.** The shell's own
+    /// surfaces — the dock's width, the sidebar's dividers, a markdown
+    /// document's selection — keep theirs on the editor, beside the surface
+    /// they belong to. Every drag is
+    /// routed by a node's pointer capture, so the moves and the release come
+    /// back to the node that took the press; this is what that node's
+    /// gesture has to remember in between. It used to be seventeen loose
+    /// fields — `dragging_scrollbar`, `drag_start_row`, `drag_selection_*`,
+    /// … — that each gesture set a few of and a blanket sweep cleared, so a
+    /// gesture could read a field another one had left behind, and some
+    /// release arms cleared three of a gesture's five. See
+    /// `docs/internal/retained-mode-ui.md`, *A drag's state is the
+    /// gesture's*.
+    pub drag: Option<PointerDrag>,
     /// Mouse hover for LSP: byte position being hovered, timer start, screen
     /// position, and the buffer the mouse is over.
     /// Format: (byte_position, hover_start_instant, screen_x, screen_y, buffer_id)
@@ -26,42 +34,137 @@ pub struct MouseState {
     pub lsp_hover_state: Option<(usize, std::time::Instant, u16, u16, BufferId)>,
     /// Whether we've already sent a hover request for the current position
     pub lsp_hover_request_sent: bool,
-    /// Initial mouse row when starting to drag the scrollbar thumb
-    /// Used to calculate relative movement rather than jumping
-    pub drag_start_row: Option<u16>,
-    /// Initial viewport top_byte when starting to drag the scrollbar thumb
-    pub drag_start_top_byte: Option<usize>,
-    /// Initial viewport top_view_line_offset when starting to drag the scrollbar thumb
-    /// This is needed for proper visual row calculation when scrolled into a wrapped line
-    pub drag_start_view_line_offset: Option<usize>,
-    /// Initial mouse position when starting to drag the file explorer border
-    pub drag_start_position: Option<(u16, u16)>,
-    /// Whether we're currently dragging the file explorer border
-    pub dragging_file_explorer: bool,
-    /// File explorer width at the moment the drag started. Drag
-    /// preserves the active variant: a drag that begins in `Percent`
-    /// stays in `Percent`, and likewise for `Columns`.
-    pub drag_start_explorer_width: Option<ExplorerWidth>,
-    /// Whether we're currently doing a text selection drag
-    pub dragging_text_selection: bool,
-    /// The split where text selection started
-    pub drag_selection_split: Option<LeafId>,
-    /// The buffer byte position where the selection anchor is
-    pub drag_selection_anchor: Option<usize>,
-    /// When true, dragging extends selection by whole words (set by double-click)
-    pub drag_selection_by_words: bool,
-    /// The end of the initially double-clicked word (used as anchor when dragging backward)
-    pub drag_selection_word_end: Option<usize>,
-    /// Tab drag state (for drag-to-split functionality)
-    pub dragging_tab: Option<TabDragState>,
-    /// Initial composite scroll_row when starting to drag the scrollbar thumb
-    /// Used for composite buffer scrollbar drag
-    pub drag_start_composite_scroll_row: Option<usize>,
-    /// A left press on a live terminal grid: (split, buffer, col, row).
-    /// Not a selection yet — a bare click keeps the terminal live
-    /// (click-to-focus-and-type). If a `Drag(Left)` follows,
-    /// `Editor::begin_terminal_grid_selection` drops that split into
-    /// read-only scrollback and starts a real text-selection drag anchored
-    /// at this origin. Cleared on mouse-up.
-    pub terminal_drag_pending: Option<(LeafId, BufferId, u16, u16)>,
+}
+
+impl MouseState {
+    /// The tab being dragged, if that is the held press.
+    pub fn tab_drag(&self) -> Option<&TabDragState> {
+        match &self.drag {
+            Some(PointerDrag::Tab(t)) => Some(t),
+            _ => None,
+        }
+    }
+
+    pub fn tab_drag_mut(&mut self) -> Option<&mut TabDragState> {
+        match &mut self.drag {
+            Some(PointerDrag::Tab(t)) => Some(t),
+            _ => None,
+        }
+    }
+
+    /// End the tab drag, if that is the held press, and hand it back.
+    pub fn take_tab_drag(&mut self) -> Option<TabDragState> {
+        match self.drag.take() {
+            Some(PointerDrag::Tab(t)) => Some(t),
+            other => {
+                self.drag = other;
+                None
+            }
+        }
+    }
+
+    /// The text selection being dragged in `pane`, if that is the held press.
+    pub fn selection_in(&self, pane: LeafId) -> Option<&SelectionDrag> {
+        match &self.drag {
+            Some(PointerDrag::Selection(s)) if s.pane == pane => Some(s),
+            _ => None,
+        }
+    }
+}
+
+/// One held press: what each gesture needs between its press and its
+/// release. The press builds the value whole, the captured moves read it,
+/// and the release takes it.
+#[derive(Debug, Clone)]
+pub enum PointerDrag {
+    /// A pane's vertical scrollbar. `grab` is set when the press landed on
+    /// the thumb, which then moves by how far the pointer has travelled; a
+    /// press on the track jumps, and so does every move after it.
+    VerticalScrollbar {
+        pane: LeafId,
+        grab: Option<VerticalGrab>,
+    },
+    /// A pane's horizontal scrollbar, on the same terms.
+    HorizontalScrollbar {
+        pane: LeafId,
+        grab: Option<HorizontalGrab>,
+    },
+    /// The file explorer's border. Width is measured from the press, and a
+    /// drag keeps the variant the width started in (`Percent` or `Columns`).
+    ExplorerBorder {
+        press_x: u16,
+        start_width: ExplorerWidth,
+    },
+    /// A split separator.
+    Separator(SeparatorDrag),
+    /// A text selection being swept across a pane.
+    Selection(SelectionDrag),
+    /// A press on a live terminal grid, not yet a selection. A bare click
+    /// keeps the terminal live (click to focus and type); the first move
+    /// drops the split into read-only scrollback and becomes a
+    /// [`PointerDrag::Selection`] anchored here
+    /// (`Editor::begin_terminal_grid_selection`).
+    TerminalPress {
+        pane: LeafId,
+        buffer: BufferId,
+        col: u16,
+        row: u16,
+    },
+    /// A tab being dragged to another split or position.
+    Tab(TabDragState),
+}
+
+/// Where a vertical scrollbar's thumb was taken.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VerticalGrab {
+    /// The screen row the press landed on.
+    pub row: u16,
+    /// Where the pane was scrolled to at the press.
+    pub from: VerticalScroll,
+}
+
+/// A pane's vertical scroll position, in whichever unit the pane scrolls in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VerticalScroll {
+    /// A buffer: its top byte, and the wrapped row within that line.
+    Buffer {
+        top_byte: usize,
+        view_line_offset: usize,
+    },
+    /// A composite view, which scrolls by row.
+    Composite { scroll_row: usize },
+}
+
+/// Where a horizontal scrollbar's thumb was taken.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HorizontalGrab {
+    /// The screen column the press landed on.
+    pub col: u16,
+    /// The pane's first visible column at the press.
+    pub left_column: usize,
+}
+
+/// A split separator drag.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SeparatorDrag {
+    /// The container whose divider was pressed.
+    pub container: ContainerId,
+    pub direction: SplitDirection,
+    /// Where the press landed. A move's delta is measured from here.
+    pub press: (u16, u16),
+    /// The container's ratio at the press.
+    pub start_ratio: f32,
+}
+
+/// A text selection drag.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SelectionDrag {
+    pub pane: LeafId,
+    /// The byte the selection is anchored at. `None` for a page, whose
+    /// selection follows its reader rather than an anchor in the buffer.
+    pub anchor: Option<usize>,
+    /// Set after a double click: the drag extends by whole words, and this
+    /// is the end of the word that was clicked, which is the anchor when
+    /// the drag goes backwards.
+    pub word_end: Option<usize>,
 }

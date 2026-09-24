@@ -253,26 +253,10 @@ impl Editor {
             // not — the markdown document's drag-to-select — is the run's.
             MouseEventKind::Drag(MouseButton::Left) => {}
             MouseEventKind::Up(MouseButton::Left) => {
-                // Release is GRAB-KEYED like the Drag arm: the derived
-                // `pointer_grab` names which press-to-release routing is
-                // ending, and its arm runs that grab's finalizer — no
-                // more per-surface field-poke ladder that had to be kept
-                // in sync with the grab roster by hand. Grabs without a
-                // finalizer just fall to the blanket clear below.
-                // A tab drop was finalized here, keyed on its grab. The
-                // tab's node holds the pointer for the drag now, so the
-                // release comes back to it (`UiFact::PaneTabDrop`) and never
-                // reaches this walk.
-
-                // Blanket sweep: every remaining drag flag drops here,
-                // so no grab can outlive its release even if its
-                // finalizer above was skipped.
-                self.clear_active_window_drag_state();
-
-                // The separator's reflow was here, keyed on its grab. It is
-                // the divider node's own release now — the grip keeps the
-                // pointer it took, so its release never reaches this walk.
-
+                // A release ends whatever press was held. Every gesture's own
+                // release is captured by the node that took the press and
+                // never reaches this walk; this is for a press that was not.
+                self.active_window_mut().mouse_state.drag = None;
                 needs_render = true;
             }
             MouseEventKind::Moved => {
@@ -928,28 +912,6 @@ impl Editor {
             }
         }
         self.try_open_terminal_link(col, row, mouse_event)
-    }
-
-    /// Clear all in-progress drag state on the active window's mouse state.
-    /// The active text/popup selection is intentionally preserved — only the
-    /// drag bookkeeping fields are reset.
-    pub(crate) fn clear_active_window_drag_state(&mut self) {
-        let ms = &mut self.active_window_mut().mouse_state;
-        ms.dragging_scrollbar = None;
-        ms.drag_start_row = None;
-        ms.drag_start_top_byte = None;
-        ms.dragging_horizontal_scrollbar = None;
-        ms.drag_start_hcol = None;
-        ms.drag_start_left_column = None;
-        ms.drag_start_position = None;
-        ms.dragging_file_explorer = false;
-        ms.drag_start_explorer_width = None;
-        ms.dragging_text_selection = false;
-        ms.drag_selection_split = None;
-        ms.drag_selection_anchor = None;
-        ms.drag_selection_by_words = false;
-        ms.drag_selection_word_end = None;
-        ms.terminal_drag_pending = None;
     }
 }
 

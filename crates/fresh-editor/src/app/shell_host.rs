@@ -23,6 +23,7 @@
 //! leaf is what belongs to no pane: the pass they share, and the separators
 //! between them.
 
+use crate::app::types::PointerDrag;
 use crate::view::settings::surface::SettingsSurface as _;
 use std::collections::HashSet;
 
@@ -2791,11 +2792,16 @@ impl Editor {
             // `mouse_state.dragging_scrollbar` on every event to decide whose
             // drag it was, ranked against nine other flags.
             UiFact::PaneScrollbarDrag { pane, axis, x, y } => {
-                let ms = &self.active_window().mouse_state;
-                let dragging = match axis {
-                    fresh_ui::Axis::Vertical => ms.dragging_scrollbar.is_some(),
-                    fresh_ui::Axis::Horizontal => ms.dragging_horizontal_scrollbar.is_some(),
-                };
+                let dragging = matches!(
+                    (&self.active_window().mouse_state.drag, axis),
+                    (
+                        Some(PointerDrag::VerticalScrollbar { .. }),
+                        fresh_ui::Axis::Vertical
+                    ) | (
+                        Some(PointerDrag::HorizontalScrollbar { .. }),
+                        fresh_ui::Axis::Horizontal
+                    )
+                );
                 if !dragging {
                     if axis == fresh_ui::Axis::Vertical {
                         self.shell_hover = self.scrollbar_hover(pane, y);
@@ -2812,21 +2818,7 @@ impl Editor {
             }
             // The finalizer the blanket clear used to run for this grab. The
             // release is the captured bar's, so it never reaches that walk.
-            UiFact::PaneScrollbarRelease { pane: _, axis } => {
-                let ms = &mut self.active_window_mut().mouse_state;
-                match axis {
-                    fresh_ui::Axis::Vertical => {
-                        ms.dragging_scrollbar = None;
-                        ms.drag_start_row = None;
-                        ms.drag_start_top_byte = None;
-                    }
-                    fresh_ui::Axis::Horizontal => {
-                        ms.dragging_horizontal_scrollbar = None;
-                        ms.drag_start_hcol = None;
-                        ms.drag_start_left_column = None;
-                    }
-                }
-            }
+            UiFact::PaneScrollbarRelease { .. } => self.active_window_mut().mouse_state.drag = None,
             UiFact::PaneWheel { pane, x, y, delta } => {
                 // A live terminal that asked for the mouse gets the notch —
                 // the same gate the content's press asks, for the same reason.
@@ -3044,12 +3036,12 @@ impl Editor {
             UiFact::SectionClose { index } => self.close_sidebar_section(index),
             UiFact::SectionFocus { index } => self.focus_sidebar_section(index),
             UiFact::SidebarBlur => self.blur_sidebar_panels(),
-            UiFact::ExplorerResizeBegin { x, y } => {
-                let w = self.active_window().file_explorer_width;
-                let st = &mut self.active_window_mut().mouse_state;
-                st.dragging_file_explorer = true;
-                st.drag_start_position = Some((x, y));
-                st.drag_start_explorer_width = Some(w);
+            UiFact::ExplorerResizeBegin { x, .. } => {
+                let start_width = self.active_window().file_explorer_width;
+                self.active_window_mut().mouse_state.drag = Some(PointerDrag::ExplorerBorder {
+                    press_x: x,
+                    start_width,
+                });
             }
             // The dock's column, all four of its gestures. Each body is the
             // arm `chrome::Dock::on_pointer` ran; what is gone is the pair of
@@ -3091,16 +3083,19 @@ impl Editor {
             // ladder these three replace read `chrome::pointer_grab` on every
             // event to decide whose drag it was; the node says so.
             //
-            // The gate is still here and still belongs here: a grip's `Move`
-            // fires on a bare hover too, and whether a drag is in progress is
-            // state the editor holds. What is gone is deciding *which* drag
-            // from that state.
+            // A grip's `Move` only fires while it holds the pointer, so a
+            // bare hover never arrives here. Each arm still reads its own
+            // gesture's state, because that state carries what the drag
+            // needs (the press and the width or ratio it started from); a
+            // move with none, after the state was lost, does nothing.
             UiFact::GripDrag { which, x, y } => {
                 use crate::view::shell::msg::Grip;
                 match which {
                     Grip::DockWidth if self.dock_resizing => self.handle_dock_resize_drag(x),
                     Grip::Separator => {
-                        if let Some(drag) = self.separator_drag {
+                        if let Some(PointerDrag::Separator(drag)) =
+                            self.active_window().mouse_state.drag
+                        {
                             if let Err(e) = self.handle_separator_drag(x, y, drag) {
                                 tracing::warn!("separator drag failed: {e}");
                             }
@@ -3129,14 +3124,10 @@ impl Editor {
                     // A finished separator drag changed the ratios, so the
                     // frame reflows through the one layout funnel.
                     Grip::Separator => {
-                        self.separator_drag = None;
+                        self.active_window_mut().mouse_state.drag = None;
                         self.relayout();
                     }
-                    Grip::ExplorerWidth => {
-                        let ms = &mut self.active_window_mut().mouse_state;
-                        ms.dragging_file_explorer = false;
-                        ms.drag_start_explorer_width = None;
-                    }
+                    Grip::ExplorerWidth => self.active_window_mut().mouse_state.drag = None,
                     // A release where the press landed is a click, and a click
                     // on a header toggles the section; either way the drag is
                     // over and the rows it set stay set.
@@ -3165,13 +3156,14 @@ impl Editor {
                     .split_manager_mut()
                     .get_ratio(container.into())
                     .or_else(|| self.grouped_split_ratio(container));
-                self.separator_drag =
-                    ratio.map(|start_ratio| crate::app::chrome::splits::SeparatorDrag {
+                self.active_window_mut().mouse_state.drag = ratio.map(|start_ratio| {
+                    PointerDrag::Separator(crate::app::types::SeparatorDrag {
                         container,
                         direction,
                         press: (x, y),
                         start_ratio,
-                    });
+                    })
+                });
             }
             UiFact::SeparatorHover(at) => {
                 // The tree's field, not the walk's. The walk runs after this on

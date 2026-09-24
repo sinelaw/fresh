@@ -15,7 +15,7 @@
 //! put each tab — and the pane's own content rectangle, which is read from the
 //! node that defines it.
 
-use crate::app::types::{HoverTarget, TabContextMenu};
+use crate::app::types::{HoverTarget, PointerDrag, SelectionDrag, TabContextMenu};
 use crate::app::BufferId;
 use crate::input::keybindings::Action;
 use crate::model::event::{CursorId, LeafId, SplitDirection};
@@ -23,31 +23,6 @@ use anyhow::Result as AnyhowResult;
 use fresh_i18n::t;
 
 use super::Editor;
-
-/// A split separator drag, from the divider's press to its release.
-///
-/// **One value per gesture, owned by the capture.** The divider's node
-/// captures the pointer on its press (`view::shell::grip::draggable`), so
-/// every move and the release come back to it, and only a move that arrived
-/// by capture is a drag. The press builds this value whole; each captured
-/// move reads it; the release takes it. It used to be three loose
-/// `MouseState` fields — `dragging_separator`, `drag_start_position`,
-/// `drag_start_ratio` — cleared by the blanket sweep in the pointer's legacy
-/// walk, which a captured release never reaches.
-///
-/// Nothing sweeps it. A capture that ends without a release (the divider
-/// unmounted mid-drag) leaves the value behind, and that is harmless: no
-/// captured move can arrive without a new press, and the press replaces it.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct SeparatorDrag {
-    /// The container whose divider was pressed.
-    pub container: crate::model::event::ContainerId,
-    pub direction: SplitDirection,
-    /// Where the press landed. A move's delta is measured from here.
-    pub press: (u16, u16),
-    /// The container's ratio at the press.
-    pub start_ratio: f32,
-}
 
 impl Editor {
     /// Double-click on a split's content rect: the Splits component's
@@ -151,11 +126,12 @@ impl Editor {
             // anchor when dragging forward (use word start) vs backward (use word end).
             let sel_start = cursor.selection_start();
             let sel_end = cursor.selection_end();
-            self.active_window_mut().mouse_state.dragging_text_selection = true;
-            self.active_window_mut().mouse_state.drag_selection_split = Some(split_id);
-            self.active_window_mut().mouse_state.drag_selection_anchor = Some(sel_start);
-            self.active_window_mut().mouse_state.drag_selection_by_words = true;
-            self.active_window_mut().mouse_state.drag_selection_word_end = Some(sel_end);
+            self.active_window_mut().mouse_state.drag =
+                Some(PointerDrag::Selection(SelectionDrag {
+                    pane: split_id,
+                    anchor: Some(sel_start),
+                    word_end: Some(sel_end),
+                }));
         }
 
         Ok(())
@@ -333,35 +309,33 @@ impl Editor {
         self.active_window_mut()
             .set_split_terminal_drag_scrollback(split_id, buffer_id, false);
         if is_on_thumb {
-            self.active_window_mut().mouse_state.dragging_scrollbar = Some(split_id);
-            self.active_window_mut().mouse_state.drag_start_row = Some(row);
-            if self.active_window().is_composite_buffer(buffer_id) {
-                if let Some(vs) = self
-                    .active_window()
+            use crate::app::types::{VerticalGrab, VerticalScroll};
+            let from = if self.active_window().is_composite_buffer(buffer_id) {
+                self.active_window()
                     .composite_view_states
                     .get(&(split_id, buffer_id))
-                {
-                    self.active_window_mut()
-                        .mouse_state
-                        .drag_start_composite_scroll_row = Some(vs.scroll_row);
-                }
+                    .map(|vs| VerticalScroll::Composite {
+                        scroll_row: vs.scroll_row,
+                    })
             } else {
-                let snap = self
-                    .windows
+                self.windows
                     .get(&self.active_window)
                     .and_then(|w| w.buffers.splits())
-                    .map(|(_, vs)| vs)
-                    .expect("active window must have a populated split layout")
-                    .get(&split_id)
-                    .map(|vs| (vs.viewport.top_byte(), vs.viewport.top_view_line_offset()));
-                if let Some((top_byte, top_view_line_offset)) = snap {
-                    let ms = &mut self.active_window_mut().mouse_state;
-                    ms.drag_start_top_byte = Some(top_byte);
-                    ms.drag_start_view_line_offset = Some(top_view_line_offset);
-                }
-            }
+                    .and_then(|(_, vs)| vs.get(&split_id))
+                    .map(|vs| VerticalScroll::Buffer {
+                        top_byte: vs.viewport.top_byte(),
+                        view_line_offset: vs.viewport.top_view_line_offset(),
+                    })
+            };
+            self.active_window_mut().mouse_state.drag = Some(PointerDrag::VerticalScrollbar {
+                pane: split_id,
+                grab: from.map(|from| VerticalGrab { row, from }),
+            });
         } else {
-            self.active_window_mut().mouse_state.dragging_scrollbar = Some(split_id);
+            self.active_window_mut().mouse_state.drag = Some(PointerDrag::VerticalScrollbar {
+                pane: split_id,
+                grab: None,
+            });
             if let Err(e) = self.active_window_mut().handle_scrollbar_jump(
                 col,
                 row,
@@ -417,25 +391,23 @@ impl Editor {
         };
 
         self.focus_split(split_id, buffer_id);
-        self.active_window_mut()
-            .mouse_state
-            .dragging_horizontal_scrollbar = Some(split_id);
-        if is_on_thumb {
-            self.active_window_mut().mouse_state.drag_start_hcol = Some(col);
-            if let Some(vs) = self
-                .windows
-                .get(&self.active_window)
-                .and_then(|w| w.buffers.splits())
-                .map(|(_, vs)| vs)
-                .expect("active window must have a populated split layout")
-                .get(&split_id)
-            {
-                self.active_window_mut().mouse_state.drag_start_left_column =
-                    Some(vs.viewport.left_column);
-            }
-        } else {
-            self.active_window_mut().mouse_state.drag_start_hcol = None;
-            self.active_window_mut().mouse_state.drag_start_left_column = None;
+        let grab = is_on_thumb
+            .then(|| {
+                self.windows
+                    .get(&self.active_window)
+                    .and_then(|w| w.buffers.splits())
+                    .and_then(|(_, vs)| vs.get(&split_id))
+                    .map(|vs| crate::app::types::HorizontalGrab {
+                        col,
+                        left_column: vs.viewport.left_column,
+                    })
+            })
+            .flatten();
+        self.active_window_mut().mouse_state.drag = Some(PointerDrag::HorizontalScrollbar {
+            pane: split_id,
+            grab,
+        });
+        if !is_on_thumb {
             let relative_col = col.saturating_sub(hscrollbar_rect.x) as f64;
             let track_width = hscrollbar_rect.width as f64;
             let ratio = if track_width > 1.0 {
@@ -545,27 +517,30 @@ impl Editor {
         if self.drag_moved_the_page_selection(pane, col, row) {
             return Ok(());
         }
-        let ms = &self.active_window().mouse_state;
-        if let Some((split_id, buffer_id, ocol, orow)) = ms.terminal_drag_pending {
+        match self.active_window().mouse_state.drag {
             // The press landed on a live terminal grid and this is the first
             // motion: selection intent. Drop the split into read-only
             // scrollback and start a text-selection drag anchored at the
             // press.
-            if split_id == pane {
-                return self
-                    .begin_terminal_grid_selection(split_id, buffer_id, ocol, orow, col, row);
+            Some(PointerDrag::TerminalPress {
+                pane: split_id,
+                buffer,
+                col: ocol,
+                row: orow,
+            }) if split_id == pane => {
+                self.begin_terminal_grid_selection(split_id, buffer, ocol, orow, col, row)
             }
+            Some(PointerDrag::Selection(drag)) if drag.pane == pane => {
+                self.handle_text_selection_drag(drag, col, row)
+            }
+            _ => Ok(()),
         }
-        if ms.dragging_text_selection && ms.drag_selection_split == Some(pane) {
-            self.handle_text_selection_drag(col, row)?;
-        }
-        Ok(())
     }
 
     /// The pane's content released the pointer it captured: whatever drag
     /// the press armed is over. The selection it made stays.
     pub(crate) fn release_pane_content(&mut self, _pane: LeafId) {
-        self.clear_active_window_drag_state();
+        self.active_window_mut().mouse_state.drag = None;
     }
 
     /// Move the keyboard to a pane, without placing a caret in it.
@@ -936,8 +911,9 @@ impl Editor {
                 self.focus_split(pane, buffer_id);
                 self.active_window_mut()
                     .promote_buffer_from_preview(buffer_id);
-                self.active_window_mut().mouse_state.dragging_tab =
-                    Some(crate::app::types::TabDragState::new(buffer_id, pane, at));
+                self.active_window_mut().mouse_state.drag = Some(PointerDrag::Tab(
+                    crate::app::types::TabDragState::new(buffer_id, pane, at),
+                ));
             }
             crate::view::split::TabTarget::Group(group_leaf) => {
                 self.activate_group_tab(pane, group_leaf);
@@ -1083,7 +1059,11 @@ impl Editor {
     /// grabbed split. Reached from `UiFact::PaneScrollbarDrag` — the bar
     /// captured the pointer on its press, so the move is its own.
     pub(crate) fn handle_vscrollbar_drag(&mut self, col: u16, row: u16) -> AnyhowResult<()> {
-        if let Some(dragging_split_id) = self.active_window_mut().mouse_state.dragging_scrollbar {
+        if let Some(PointerDrag::VerticalScrollbar {
+            pane: dragging_split_id,
+            grab,
+        }) = self.active_window().mouse_state.drag
+        {
             // The bar is where the tree put it, and the buffer is the one the
             // pane is showing — neither is a fact about the last paint. The
             // scan this replaces read both out of `split_areas`, one entry of
@@ -1096,14 +1076,15 @@ impl Editor {
             if let (Some(bar), Some(buffer_id)) = (bar, buffer) {
                 // A drag that started on the thumb moves relative to where it
                 // was grabbed; one that started on the track jumps.
-                match self.active_window().mouse_state.drag_start_row.is_some() {
-                    true => self.active_window_mut().handle_scrollbar_drag_relative(
+                match grab {
+                    Some(grab) => self.active_window_mut().handle_scrollbar_drag_relative(
                         row,
+                        grab,
                         dragging_split_id,
                         buffer_id,
                         bar,
                     )?,
-                    false => self.active_window_mut().handle_scrollbar_jump(
+                    None => self.active_window_mut().handle_scrollbar_jump(
                         col,
                         row,
                         dragging_split_id,
@@ -1119,10 +1100,10 @@ impl Editor {
     /// Horizontal scrollbar drag: relative thumb drag or track jump on the
     /// grabbed split. Reached from `UiFact::PaneScrollbarDrag`, as above.
     pub(crate) fn handle_hscrollbar_drag(&mut self, col: u16, _row: u16) -> AnyhowResult<()> {
-        if let Some(dragging_split_id) = self
-            .active_window_mut()
-            .mouse_state
-            .dragging_horizontal_scrollbar
+        if let Some(PointerDrag::HorizontalScrollbar {
+            pane: dragging_split_id,
+            grab,
+        }) = self.active_window().mouse_state.drag
         {
             // The bar is the tree's, and the thumb and the content width are
             // the bar's own facts — read before the view state is borrowed
@@ -1147,10 +1128,11 @@ impl Editor {
                         return Ok(());
                     }
 
-                    if let (Some(drag_start_hcol), Some(drag_start_left_column)) = (
-                        self.active_window_mut().mouse_state.drag_start_hcol,
-                        self.active_window_mut().mouse_state.drag_start_left_column,
-                    ) {
+                    if let Some(crate::app::types::HorizontalGrab {
+                        col: drag_start_hcol,
+                        left_column: drag_start_left_column,
+                    }) = grab
+                    {
                         // Relative drag from thumb - move proportionally to mouse offset
                         // Use thumb size to compute the correct ratio so thumb tracks with mouse
                         let col_offset = (col as i32) - (drag_start_hcol as i32);
@@ -1201,15 +1183,17 @@ impl Editor {
     }
 
     /// Handle text selection drag - extends selection from anchor to current position
-    pub(crate) fn handle_text_selection_drag(&mut self, col: u16, row: u16) -> AnyhowResult<()> {
+    pub(crate) fn handle_text_selection_drag(
+        &mut self,
+        drag: SelectionDrag,
+        col: u16,
+        row: u16,
+    ) -> AnyhowResult<()> {
         use crate::model::event::Event;
         use crate::primitives::word_navigation::{find_word_end, find_word_start};
 
-        let Some(split_id) = self.active_window_mut().mouse_state.drag_selection_split else {
-            return Ok(());
-        };
-        let Some(anchor_position) = self.active_window_mut().mouse_state.drag_selection_anchor
-        else {
+        let split_id = drag.pane;
+        let Some(anchor_position) = drag.anchor else {
             return Ok(());
         };
 
@@ -1252,8 +1236,6 @@ impl Editor {
         // Calculate the target position and selection geometry by
         // reading buffer state directly, then dispatch the move via
         // Window helpers.
-        let drag_by_words = self.active_window_mut().mouse_state.drag_selection_by_words;
-        let drag_word_end = self.active_window_mut().mouse_state.drag_selection_word_end;
 
         // Terminal scrollback views are unwrapped and gutter-free, so a
         // screen cell maps to a byte exactly (viewport top line + row).
@@ -1318,18 +1300,16 @@ impl Editor {
                         )
                     }
                 };
-                let (new_position, anchor_pos) = if drag_by_words {
-                    if target_position >= anchor_position {
-                        (
-                            find_word_end(&state.buffer, target_position),
-                            anchor_position,
-                        )
-                    } else {
-                        let word_end = drag_word_end.unwrap_or(anchor_position);
-                        (find_word_start(&state.buffer, target_position), word_end)
-                    }
-                } else {
-                    (target_position, anchor_position)
+                // After a double click the drag extends by whole words, and
+                // going backwards it keeps the clicked word by anchoring at
+                // its end.
+                let (new_position, anchor_pos) = match drag.word_end {
+                    Some(_) if target_position >= anchor_position => (
+                        find_word_end(&state.buffer, target_position),
+                        anchor_position,
+                    ),
+                    Some(word_end) => (find_word_start(&state.buffer, target_position), word_end),
+                    None => (target_position, anchor_position),
                 };
                 // Visual column, not byte column — see `visual_column_of`.
                 let new_sticky_column =
@@ -1397,9 +1377,9 @@ impl Editor {
         &mut self,
         col: u16,
         row: u16,
-        drag: SeparatorDrag,
+        drag: crate::app::types::SeparatorDrag,
     ) -> AnyhowResult<()> {
-        let SeparatorDrag {
+        let crate::app::types::SeparatorDrag {
             container: split_id,
             direction,
             press: (start_col, start_row),

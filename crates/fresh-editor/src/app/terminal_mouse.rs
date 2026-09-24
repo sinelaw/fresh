@@ -383,7 +383,7 @@ mod convert_kind_tests {
 impl super::Editor {
     /// Begin a text-selection drag on a terminal split that was showing the
     /// live PTY grid when the mouse went down (see
-    /// `MouseState::terminal_drag_pending` — a bare click only focuses).
+    /// `PointerDrag::TerminalPress` — a bare click only focuses).
     ///
     /// Live terminals have no cursor/selection model of their own, so the
     /// split is dropped into read-only scrollback first — exactly the
@@ -406,7 +406,7 @@ impl super::Editor {
         col: u16,
         row: u16,
     ) -> AnyhowResult<()> {
-        self.active_window_mut().mouse_state.terminal_drag_pending = None;
+        self.active_window_mut().mouse_state.drag = None;
 
         let Some(content_rect) =
             self.drop_terminal_grid_into_selection_scrollback(split_id, buffer_id)
@@ -438,10 +438,13 @@ impl super::Editor {
         }
 
         // Hand off to the standard drag machinery for subsequent motion.
-        let ms = &mut self.active_window_mut().mouse_state;
-        ms.dragging_text_selection = true;
-        ms.drag_selection_split = Some(split_id);
-        ms.drag_selection_anchor = Some(anchor);
+        self.active_window_mut().mouse_state.drag = Some(
+            crate::app::types::PointerDrag::Selection(crate::app::types::SelectionDrag {
+                pane: split_id,
+                anchor: Some(anchor),
+                word_end: None,
+            }),
+        );
         Ok(())
     }
 
@@ -457,7 +460,7 @@ impl super::Editor {
         col: u16,
         row: u16,
     ) -> AnyhowResult<()> {
-        self.active_window_mut().mouse_state.terminal_drag_pending = None;
+        self.active_window_mut().mouse_state.drag = None;
 
         let Some(content_rect) =
             self.drop_terminal_grid_into_selection_scrollback(split_id, buffer_id)
@@ -492,12 +495,13 @@ impl super::Editor {
                 (c.selection_start(), c.selection_end())
             })
         {
-            let ms = &mut self.active_window_mut().mouse_state;
-            ms.dragging_text_selection = true;
-            ms.drag_selection_split = Some(split_id);
-            ms.drag_selection_anchor = Some(sel_start);
-            ms.drag_selection_by_words = true;
-            ms.drag_selection_word_end = Some(sel_end);
+            self.active_window_mut().mouse_state.drag = Some(
+                crate::app::types::PointerDrag::Selection(crate::app::types::SelectionDrag {
+                    pane: split_id,
+                    anchor: Some(sel_start),
+                    word_end: Some(sel_end),
+                }),
+            );
         }
         Ok(())
     }
@@ -511,7 +515,7 @@ impl super::Editor {
         col: u16,
         row: u16,
     ) -> AnyhowResult<()> {
-        self.active_window_mut().mouse_state.terminal_drag_pending = None;
+        self.active_window_mut().mouse_state.drag = None;
 
         let Some(content_rect) =
             self.drop_terminal_grid_into_selection_scrollback(split_id, buffer_id)

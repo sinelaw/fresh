@@ -298,8 +298,13 @@ impl Editor {
             // inert under drags: the click still focuses (above), no
             // selection origin is recorded.
             if self.config.terminal.mouse_drag_selects {
-                self.active_window_mut().mouse_state.terminal_drag_pending =
-                    Some((split_id, buffer_id, col, row));
+                self.active_window_mut().mouse_state.drag =
+                    Some(crate::app::types::PointerDrag::TerminalPress {
+                        pane: split_id,
+                        buffer: buffer_id,
+                        col,
+                        row,
+                    });
             }
             return Ok(());
         }
@@ -634,10 +639,13 @@ impl Editor {
         }
 
         // Start text selection drag for potential mouse drag
-        self.active_window_mut().mouse_state.dragging_text_selection = true;
-        self.active_window_mut().mouse_state.drag_selection_split = Some(split_id);
-        self.active_window_mut().mouse_state.drag_selection_anchor =
-            Some(new_anchor.unwrap_or(target_position));
+        self.active_window_mut().mouse_state.drag = Some(
+            crate::app::types::PointerDrag::Selection(crate::app::types::SelectionDrag {
+                pane: split_id,
+                anchor: Some(new_anchor.unwrap_or(target_position)),
+                word_end: None,
+            }),
+        );
 
         Ok(())
     }

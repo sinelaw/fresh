@@ -444,15 +444,10 @@ impl Editor {
 
     /// Handle file explorer border drag for resizing
     pub(crate) fn handle_file_explorer_border_drag(&mut self, col: u16) -> AnyhowResult<()> {
-        let Some((start_col, _start_row)) =
-            self.active_window_mut().mouse_state.drag_start_position
-        else {
-            return Ok(());
-        };
-        let Some(start_width) = self
-            .active_window_mut()
-            .mouse_state
-            .drag_start_explorer_width
+        let Some(crate::app::types::PointerDrag::ExplorerBorder {
+            press_x: start_col,
+            start_width,
+        }) = self.active_window().mouse_state.drag
         else {
             return Ok(());
         };

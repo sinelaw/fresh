@@ -1405,9 +1405,8 @@ impl Editor {
             view_state.clear_selection();
         }
 
-        // Store state for potential text selection drag
-        self.active_window_mut().mouse_state.dragging_text_selection = false; // Disable regular text selection for composite
-        self.active_window_mut().mouse_state.drag_selection_split = Some(split_id);
+        // A composite view has no buffer selection for a drag to extend.
+        self.active_window_mut().mouse_state.drag = None;
 
         // Sync cursor position to EditorState for status bar display
         self.active_window_mut()

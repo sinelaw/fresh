@@ -620,10 +620,10 @@ pub enum UiFact {
     ///
     /// **The grip captured the pointer on its press**, so this arrives
     /// wherever the pointer has travelled to — which is the whole of what
-    /// `chrome::PointerGrab` and its ladder were arranging by hand. It fires
-    /// on a bare hover over the grip too; whether a drag is actually in
-    /// progress is state the applier holds, and it is the applier that says
-    /// so.
+    /// `chrome::PointerGrab` and its ladder were arranging by hand. Only a
+    /// captured move is reported — a bare hover over the grip is not a
+    /// drag — and the applier reads the gesture's own state for where it
+    /// started.
     GripDrag {
         which: Grip,
         x: u16,
