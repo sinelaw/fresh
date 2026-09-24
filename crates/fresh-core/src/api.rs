@@ -3123,6 +3123,13 @@ pub enum WidgetSpec {
         /// changes via a spec update.
         #[serde(default)]
         markdown: bool,
+        /// A single-line field that offers a list of values to pick from as
+        /// well as free text — a combo box. Drawn with a `▼` in the last cell
+        /// inside its `]` (`▲` while its completion list is open), so the
+        /// field says it has a list before it is focused. The list itself is
+        /// still the plugin's `completions`. Defaults to `false`.
+        #[serde(default)]
+        combo: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         key: Option<String>,
     },

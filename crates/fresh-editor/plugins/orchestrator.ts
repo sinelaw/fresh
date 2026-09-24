@@ -9804,7 +9804,12 @@ function buildMachineDialogSpec(): WidgetSpec {
   }
   if (d.kind === "ssh") {
     children.push(
-      ...field(formLabel("machine.host"), d.target, { key: "machine-target" }),
+      ...field(formLabel("machine.host"), d.target, {
+        key: "machine-target",
+        // A new SSH machine's Host offers the `~/.ssh/config` hosts not yet
+        // added (`suggestMachineHosts`): say so with the combo arrow.
+        combo: d.id === null && unaddedSshHosts().length > 0,
+      }),
     );
     const h = d.hosts.find((x) => x.alias === d.target.value.trim());
     if (h) children.push(machineFact("machine.resolves_to", [{ text: sshResolvedTarget(h) }]));
@@ -12236,7 +12241,7 @@ function fieldNote(text: string, style: Partial<OverlayOptions> = NOTE_STYLE): W
 function field(
   lbl: string,
   slot: { value: string; cursor: number },
-  o: { key?: string; placeholder?: string; note?: string | undefined },
+  o: { key?: string; placeholder?: string; note?: string | undefined; combo?: boolean },
 ): WidgetSpec[] {
   const out: WidgetSpec[] = [
     text({
@@ -12246,6 +12251,7 @@ function field(
       placeholder: o.placeholder,
       fullWidth: true,
       labelWidth: FORM_LABEL_W,
+      combo: o.combo,
       key: o.key,
     }),
   ];

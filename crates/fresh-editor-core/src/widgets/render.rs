@@ -660,12 +660,13 @@ pub fn render_completion_item_overlay(
     total_cols: usize,
     scrollbar: Option<char>,
     lead: usize,
+    gutter: bool,
 ) -> TextPropertyEntry {
     let inner = total_cols.saturating_sub(2).max(1);
     // Reuse the inline-row builder for the body — same layout
     // rules (`lead` + 2 leading chars, item text, pad-to-(inner-1),
     // scrollbar in the last column).
-    let body_entry = render_completion_item(item, kind, selected, inner, scrollbar, lead);
+    let body_entry = render_completion_item(item, kind, selected, inner, scrollbar, lead, gutter);
     // Build the wrapped text: `│` + body content + `│`. We
     // strip the body's trailing newline first so the borders
     // sit on the same line.
@@ -787,7 +788,12 @@ fn render_completion_item(
     total_cols: usize,
     scrollbar: Option<char>,
     lead: usize,
+    gutter: bool,
 ) -> TextPropertyEntry {
+    // `gutter` is the two leading chars below (a space, then the history
+    // marker's cell). A combo box's list has none: its rows start in the
+    // value's own column, so a candidate lines up with what is typed.
+    let gutter_cols = if gutter { 2 } else { 0 };
     // Build the row up to `total_cols - 1` so the scrollbar (or
     // a trailing space when there isn't one) lands at exactly
     // `total_cols - 1`. The wrapping section pads/truncates the
@@ -811,7 +817,9 @@ fn render_completion_item(
     // put a CJK path or an emoji branch name past the popup's right edge and
     // shifted the scrollbar off its column, by one cell per wide character.
     use crate::primitives::display_width::str_width;
-    let text_budget = total_cols.saturating_sub(2 + lead).saturating_sub(1);
+    let text_budget = total_cols
+        .saturating_sub(gutter_cols + lead)
+        .saturating_sub(1);
     let visible_item: String = if str_width(item) <= text_budget {
         item.to_string()
     } else {
@@ -855,12 +863,12 @@ fn render_completion_item(
     for _ in 0..lead {
         text.push(' ');
     }
-    text.push(' ');
-    let marker_start_byte = text.len();
-    if is_history {
-        text.push(history_marker);
-    } else {
+    if gutter {
         text.push(' ');
+    }
+    let marker_start_byte = text.len();
+    if gutter {
+        text.push(if is_history { history_marker } else { ' ' });
     }
     let marker_end_byte = text.len();
     let item_start_byte = text.len();
@@ -869,7 +877,7 @@ fn render_completion_item(
     // Pad with spaces between the candidate text and the
     // scrollbar column so all rows have the scrollbar glyph in
     // the same column regardless of candidate length.
-    let used_cols = 2 + lead + str_width(&visible_item);
+    let used_cols = gutter_cols + lead + str_width(&visible_item);
     let pad_cols = total_cols.saturating_sub(used_cols).saturating_sub(1);
     for _ in 0..pad_cols {
         text.push(' ');
@@ -902,7 +910,7 @@ fn render_completion_item(
     // theme key (so it reads as chrome, not item content) and
     // italicize the item text. Same dim fg key the scrollbar
     // uses so all popup chrome stays in one theme slot.
-    if is_history {
+    if is_history && gutter {
         inline_overlays.push(InlineOverlay {
             start: marker_start_byte,
             end: marker_end_byte,
@@ -3836,10 +3844,24 @@ pub mod tests {
         use crate::primitives::display_width::str_width;
         const COLS: usize = 24;
 
-        let narrow =
-            render_completion_item("src/components/index.ts", None, false, COLS, Some('|'), 0);
-        let wide =
-            render_completion_item("プロジェクト/設定/索引.ts", None, false, COLS, Some('|'), 0);
+        let narrow = render_completion_item(
+            "src/components/index.ts",
+            None,
+            false,
+            COLS,
+            Some('|'),
+            0,
+            true,
+        );
+        let wide = render_completion_item(
+            "プロジェクト/設定/索引.ts",
+            None,
+            false,
+            COLS,
+            Some('|'),
+            0,
+            true,
+        );
 
         for (what, entry) in [("ascii", &narrow), ("cjk", &wide)] {
             let row = entry.text.trim_end_matches('\n');
@@ -3859,7 +3881,7 @@ pub mod tests {
     /// standing in a column the row does not have.
     #[test]
     fn a_completion_row_with_no_text_budget_shows_no_ellipsis() {
-        let entry = render_completion_item("anything", None, false, 3, None, 0);
+        let entry = render_completion_item("anything", None, false, 3, None, 0, true);
         let row = entry.text.trim_end_matches('\n');
         assert!(
             !row.contains('\u{2026}'),
@@ -5033,6 +5055,7 @@ pub mod tests {
             max_rows: 0,
             read_only: false,
             markdown: false,
+            combo: false,
             key: key.map(|s| s.into()),
         }
     }
@@ -5109,6 +5132,7 @@ pub mod tests {
             max_rows: 0,
             read_only: false,
             markdown: false,
+            combo: false,
             key: key.map(|s| s.into()),
         }
     }

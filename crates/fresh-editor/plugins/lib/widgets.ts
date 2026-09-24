@@ -844,6 +844,11 @@ export function text(
      * word-wraps to the widget's width. Forcibly read-only; the caret,
      * selection, and Copy operate on the rendered plain text. */
     markdown?: boolean;
+    /** A single-line field that offers a list (its `completions`) as
+     * well as free text — a combo box. Drawn with a `▼` inside its `]`
+     * (`▲` while the list is open), so the field says it has a list
+     * before it is focused. */
+    combo?: boolean;
     key?: string;
   } = {},
 ): WidgetSpec {
@@ -867,6 +872,7 @@ export function text(
     labelWidth: options.labelWidth ?? 0,
     readOnly: options.readOnly ?? false,
     markdown: options.markdown ?? false,
+    combo: options.combo ?? false,
     key: options.key,
   };
 }
@@ -916,6 +922,8 @@ export function textInput(
     fieldWidth?: number;
     /** See `text({ fullWidth })`. */
     fullWidth?: boolean;
+    /** See `text({ combo })`. */
+    combo?: boolean;
     key?: string;
   },
 ): WidgetSpec {
@@ -929,6 +937,7 @@ export function textInput(
     fieldWidth: options?.fieldWidth,
     maxVisibleChars: options?.maxVisibleChars,
     fullWidth: options?.fullWidth,
+    combo: options?.combo,
     key: options?.key,
   });
 }

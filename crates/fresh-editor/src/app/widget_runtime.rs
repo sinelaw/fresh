@@ -3373,6 +3373,7 @@ mod tests {
             label_width: 0,
             read_only: false,
             markdown: false,
+            combo: false,
             key: Some("field".into()),
         };
         let out = crate::widgets::resolve_panel(&spec, &Default::default(), "field", true, None);
@@ -3792,6 +3793,7 @@ mod tests {
             label_width: 0,
             read_only: true,
             markdown: true,
+            combo: false,
             key: key.map(str::to_string),
         }
     }

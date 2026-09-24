@@ -2193,6 +2193,7 @@ impl Editor {
                         label_width: 0,
                         read_only: false,
                         markdown: false,
+                        combo: false,
                         key: None,
                     }),
                     suffix: vec![

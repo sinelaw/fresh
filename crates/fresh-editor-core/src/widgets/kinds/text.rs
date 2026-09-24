@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 
-use fresh_core::api::{OverlayOptions, WidgetSpec};
+use fresh_core::api::{OverlayColorSpec, OverlayOptions, WidgetSpec};
 use fresh_core::text_property::{InlineOverlay, OffsetUnit, TextPropertyEntry};
 use serde_json::json;
 
@@ -384,6 +384,7 @@ pub fn completion_popup(
     navigated: bool,
     prev_scroll: u32,
     lead: usize,
+    frame: CompletionFrame,
 ) -> Option<CompletionPopup> {
     if completions.is_empty() {
         return None;
@@ -393,7 +394,10 @@ pub fn completion_popup(
     } else {
         completions_visible_rows
     };
-    let popup_total = (panel_width as usize).saturating_add(4); // re-add section chrome
+    let popup_total = match frame {
+        CompletionFrame::Section => (panel_width as usize).saturating_add(4), // re-add section chrome
+        CompletionFrame::Box => panel_width as usize,
+    };
     let total = completions.len() as u32;
     // The shared pop-up list's window, from the highlight, every layout —
     // both ways, so a highlight above the window pulls it back up as surely
@@ -407,7 +411,11 @@ pub fn completion_popup(
     let (scroll, visible) = (scroll as u32, visible as u32);
 
     let mut rows = Vec::with_capacity(visible as usize + 2);
-    rows.push(render_completion_dim_separator_overlay(popup_total));
+    // A box's top is the field itself (`open_combo_field` turns its `[` `]`
+    // into the box's walls), so it has no lid of its own.
+    if frame == CompletionFrame::Section {
+        rows.push(render_completion_dim_separator_overlay(popup_total));
+    }
     let needs_scrollbar = total > visible;
     let end = (scroll + visible).min(total) as usize;
     for (visible_row, i) in (scroll as usize..end).enumerate() {
@@ -428,6 +436,7 @@ pub fn completion_popup(
             popup_total,
             thumb,
             lead,
+            frame == CompletionFrame::Section,
         ));
     }
     rows.push(render_completion_bottom_border(popup_total));
@@ -436,6 +445,22 @@ pub fn completion_popup(
         scroll,
         visible,
     })
+}
+
+/// How a completion list is framed, which depends on where its field stands.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CompletionFrame {
+    /// Inside a `LabeledSection`: the list is `panel_width + 4` wide and its
+    /// first row is a dashed separator painted over the section's bottom
+    /// border, so section and list read as one frame.
+    Section,
+    /// Anywhere else: the field and its list are one box, exactly
+    /// `panel_width` wide (the caller passes the field's `[…]` span). The
+    /// field row is the box's top — its `[` `]` become the walls
+    /// (`open_combo_field`) — so the list has no lid, and its rows carry no
+    /// gutter: a candidate starts in the value's own column. A list wider
+    /// than its field ran past the dialog's edge.
+    Box,
 }
 
 /// **Where a candidate row's text starts, so it sits under the value.**
@@ -752,6 +777,102 @@ pub struct SingleLine {
     /// after the gutter and the `label: [` — where a completion list
     /// lines its candidates up ([`completion_lead`]).
     pub value_col: u32,
+}
+
+/// Put `glyph` in the one-char cell at byte `at` of the field's row, moving
+/// the overlays and the caret after it by the difference in width.
+fn replace_cell(line: &mut SingleLine, at: usize, glyph: &str) {
+    let old = line.entry.text[at..]
+        .chars()
+        .next()
+        .map_or(0, char::len_utf8);
+    line.entry.text.replace_range(at..at + old, glyph);
+    let grow = glyph.len() as isize - old as isize;
+    let shift = |b: &mut usize| {
+        if *b > at {
+            *b = (*b as isize + grow) as usize;
+        }
+    };
+    for io in &mut line.entry.inline_overlays {
+        if io.unit == OffsetUnit::Byte {
+            shift(&mut io.start);
+            shift(&mut io.end);
+        }
+    }
+    if let Some(c) = &mut line.caret {
+        shift(c);
+    }
+}
+
+/// **An open combo box's field row is the top of its list's box.**
+///
+/// The `[` and `]` become the box's side walls, in the list's border colour,
+/// so the field and the candidates under it read as one control — the walls
+/// run from the field down to the list's `╰─╯`, with no border between. The
+/// brackets' focus band goes with them: the caret, the field's own ground and
+/// the list under it already say where the keys go.
+pub fn open_combo_field(line: &mut SingleLine) {
+    let text = &line.entry.text;
+    let (Some(close), Some(open)) = (text.rfind(']'), text.find('[')) else {
+        return;
+    };
+    let wall = "│";
+    // Right first, so the left's byte offset still holds.
+    replace_cell(line, close, wall);
+    replace_cell(line, open, wall);
+    let close = close + wall.len() - 1;
+    // The brackets' own overlays (the focus band) no longer describe them.
+    let walls = [(open, open + wall.len()), (close, close + wall.len())];
+    line.entry
+        .inline_overlays
+        .retain(|io| !walls.iter().any(|&(s, e)| io.start == s && io.end == e));
+    for (start, end) in walls {
+        line.entry.inline_overlays.push(InlineOverlay {
+            start,
+            end,
+            style: OverlayOptions {
+                fg: Some(OverlayColorSpec::theme_key(
+                    crate::widgets::render::KEY_COMPLETION_BORDER_FG,
+                )),
+                bg: Some(OverlayColorSpec::theme_key("ui.popup_bg")),
+                ..Default::default()
+            },
+            properties: Default::default(),
+            unit: OffsetUnit::Byte,
+        });
+    }
+}
+
+/// **Mark a combo field: `▼` in the last cell inside its `]`.**
+///
+/// A field that offers a list as well as free text says so before it is
+/// focused, the way a dropdown's `[value ▼]` does; `open` (its list is up)
+/// turns the arrow over, as the dropdown's does. The arrow takes the cell only
+/// while it is blank — the trailing pad the value cell always keeps — so a
+/// value long enough to reach it is never covered. The overlays and the caret
+/// after that cell move with the wider glyph.
+pub fn mark_combo(line: &mut SingleLine, open: bool) {
+    let text = &line.entry.text;
+    let Some(close) = text.rfind(']') else {
+        return;
+    };
+    let Some((at, ' ')) = text[..close].char_indices().last() else {
+        return;
+    };
+    let glyph = if open { "▲" } else { "▼" };
+    replace_cell(line, at, glyph);
+    line.entry.inline_overlays.push(InlineOverlay {
+        start: at,
+        end: at + glyph.len(),
+        style: OverlayOptions {
+            fg: Some(OverlayColorSpec::theme_key(
+                crate::widgets::render::KEY_HELP_KEY_FG,
+            )),
+            ..Default::default()
+        },
+        properties: Default::default(),
+        unit: OffsetUnit::Byte,
+    });
 }
 
 /// **The single-line field's row: label column, value cell, focus gutter,
@@ -1328,6 +1449,7 @@ mod key_contract_tests {
             max_rows: 0,
             read_only,
             markdown,
+            combo: false,
             key: Some("t".into()),
         }
     }

@@ -375,14 +375,16 @@ fn new_session_form_hints_existing_worktree() {
     // Typing an existing directory opens the path-completion popup, whose
     // candidate rows overlay the lines directly under Folder field — where the
     // attach hint now sits. Wait until either the hint is already visible OR
-    // the popup is up (its dim `┄` separator), THEN close the popup. Gating the
+    // the popup is up (the `╰─…─╯` row closing its box), THEN close the popup. Gating the
     // Esc on the popup actually being open is load-bearing: pressing Esc before
     // the popup renders (a race on a slow/loaded CI runner) would cancel the
     // whole dialog instead of just the popup, and the hint would never appear.
     harness
         .wait_until(|h| {
             let s = h.screen_to_string();
-            s.contains("existing worktree") || s.contains('┄')
+            s.contains("existing worktree")
+                || s.lines()
+                    .any(|l| l.contains("╰────────") && l.contains('╯'))
         })
         .unwrap();
     if !harness.screen_to_string().contains("existing worktree") {

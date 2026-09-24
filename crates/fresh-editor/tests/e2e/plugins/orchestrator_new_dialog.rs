@@ -157,21 +157,20 @@ fn project_path_field_value(screen: &str) -> String {
     );
 }
 
-/// True when the rendered screen contains a dim `┄┄┄...┄┄┄`
-/// separator row — the host-rendered popup's replacement for
-/// the input field's normal `╰─...─╯` bottom border. Its
-/// presence is the load-bearing visual cue that input + popup
-/// are part of one unified box: above the separator is the
-/// active input, below it (and inside the labeled section's
-/// side borders) are the candidate rows.
-fn screen_has_completion_dim_separator(screen: &str) -> bool {
+/// True when the rendered screen shows the completion list closing the box
+/// its field opens: a `╰─...─╯` row. A field outside a labeled section is a
+/// combo box while its list is up — the field's `[` `]` become the box's
+/// walls, the candidates hang under it with no border between, and this row
+/// closes it — so the row is the load-bearing cue that input + popup are one
+/// box.
+pub(crate) fn screen_has_completion_box(screen: &str) -> bool {
     screen.lines().any(|l| {
-        if let Some(start) = l.find('┄') {
-            let rest = &l[start..];
-            let run: String = rest.chars().take_while(|c| *c == '┄').collect();
-            return run.chars().count() >= 8;
-        }
-        false
+        let Some(start) = l.find('╰') else {
+            return false;
+        };
+        let rest = &l[start + '╰'.len_utf8()..];
+        let run = rest.chars().take_while(|c| *c == '─').count();
+        run >= 8 && rest.chars().nth(run) == Some('╯')
     })
 }
 
@@ -194,13 +193,12 @@ fn type_alpha_prefix_and_wait(
     prefix
 }
 
-/// The host-rendered popup integrates with the wrapping
-/// labeled-section chrome: the input field's normal bottom
-/// border becomes a dim `┄┄┄...┄┄┄` separator (cueing that the
-/// box has extended downward), and the side borders continue
-/// past the input through the candidate rows.
+/// The host-rendered popup and its field are one box: the field's
+/// brackets become the box's side walls, which continue past the input
+/// through the candidate rows to a `╰─...─╯` row, with no border between
+/// the input and the candidates.
 #[test]
-fn completion_popup_renders_with_dim_separator() {
+fn completion_popup_renders_as_one_box_with_its_field() {
     let (_temp, workspace) = set_up_workspace();
     let mut harness = EditorTestHarness::with_working_dir(160, 50, workspace.clone()).unwrap();
     harness.tick_and_render().unwrap();
@@ -211,9 +209,14 @@ fn completion_popup_renders_with_dim_separator() {
 
     let screen = harness.screen_to_string();
     assert!(
-        screen_has_completion_dim_separator(&screen),
-        "completion popup must render with a dim `┄┄┄...┄┄┄` separator \
-         between input and candidates. Screen:\n{}",
+        screen_has_completion_box(&screen),
+        "completion popup must close the field's box with a `╰─...─╯` row. \
+         Screen:\n{}",
+        screen,
+    );
+    assert!(
+        !screen.contains('┄'),
+        "no separator between the input and its candidates. Screen:\n{}",
         screen,
     );
 }
