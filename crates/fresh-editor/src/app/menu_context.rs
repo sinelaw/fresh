@@ -173,10 +173,7 @@ impl Editor {
 impl crate::app::window::Window {
     /// Check if line numbers are visible in the active split.
     pub(crate) fn is_line_numbers_visible(&self) -> bool {
-        let (mgr, vs) = self
-            .buffers
-            .splits()
-            .expect("active window must have a populated split layout");
+        let (mgr, vs) = self.splits();
         vs.get(&mgr.active_split())
             .map(|vs| vs.show_line_numbers)
             .unwrap_or(true)
@@ -184,10 +181,7 @@ impl crate::app::window::Window {
 
     /// Check if line wrap is enabled in the active split.
     pub(crate) fn is_line_wrap_enabled(&self) -> bool {
-        let (mgr, vs) = self
-            .buffers
-            .splits()
-            .expect("active window must have a populated split layout");
+        let (mgr, vs) = self.splits();
         vs.get(&mgr.active_split())
             .map(|vs| vs.viewport.line_wrap_enabled)
             .unwrap_or(false)
@@ -195,10 +189,7 @@ impl crate::app::window::Window {
 
     /// Check if compose mode is active in the current buffer.
     pub(crate) fn is_page_view(&self) -> bool {
-        let (mgr, vs) = self
-            .buffers
-            .splits()
-            .expect("active window must have a populated split layout");
+        let (mgr, vs) = self.splits();
         vs.get(&mgr.active_split())
             .map(|vs| vs.view_mode == crate::state::ViewMode::PageView)
             .unwrap_or(false)
@@ -247,10 +238,7 @@ impl crate::app::window::Window {
 
     /// Check if the active buffer is shown in more than one visible split.
     pub(crate) fn has_same_buffer_splits(&self) -> bool {
-        let (mgr, vs) = self
-            .buffers
-            .splits()
-            .expect("active window must have a populated split layout");
+        let (mgr, vs) = self.splits();
         let active_split = mgr.active_split();
         let active_buf_id = mgr.buffer_for_split(active_split);
         if let Some(buf_id) = active_buf_id {

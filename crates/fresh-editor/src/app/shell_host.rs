@@ -2946,6 +2946,7 @@ impl Editor {
                 y,
             } => {
                 let ratio = self
+                    .active_window_mut()
                     .split_manager_mut()
                     .get_ratio(container.into())
                     .or_else(|| self.grouped_split_ratio(container));

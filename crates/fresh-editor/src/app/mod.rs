@@ -1918,11 +1918,8 @@ impl Editor {
     pub fn active_cursors(&self) -> &Cursors {
         let split_id = self.effective_active_split();
         &self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(_, vs)| vs)
-            .expect("active window must have a populated split layout")
+            .active_window()
+            .split_view_states()
             .get(&split_id)
             .unwrap()
             .cursors
@@ -1932,10 +1929,8 @@ impl Editor {
     pub fn active_cursors_mut(&mut self) -> &mut Cursors {
         let split_id = self.effective_active_split();
         &mut self
-            .windows
-            .get_mut(&self.active_window)
-            .and_then(|w| w.split_view_states_mut())
-            .expect("active window must have a populated split layout")
+            .active_window_mut()
+            .split_view_states_mut()
             .get_mut(&split_id)
             .unwrap()
             .cursors
@@ -1953,45 +1948,6 @@ impl Editor {
                 .map(crate::app::window::LspCompletionCandidate::unattributed)
                 .collect(),
         );
-    }
-
-    /// Get the viewport for the active split
-    pub fn active_viewport(&self) -> &crate::view::viewport::Viewport {
-        let active_split = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(mgr, _)| mgr)
-            .expect("active window must have a populated split layout")
-            .active_split();
-        &self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(_, vs)| vs)
-            .expect("active window must have a populated split layout")
-            .get(&active_split)
-            .unwrap()
-            .viewport
-    }
-
-    /// Get the viewport for the active split (mutable)
-    pub fn active_viewport_mut(&mut self) -> &mut crate::view::viewport::Viewport {
-        let active_split = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(mgr, _)| mgr)
-            .expect("active window must have a populated split layout")
-            .active_split();
-        &mut self
-            .windows
-            .get_mut(&self.active_window)
-            .and_then(|w| w.split_view_states_mut())
-            .expect("active window must have a populated split layout")
-            .get_mut(&active_split)
-            .unwrap()
-            .viewport
     }
 
     /// Width (in cells) of the line-number gutter for a given split leaf, or 0
@@ -2161,6 +2117,28 @@ impl Editor {
                 values.retain(|k, _| !k.starts_with(&prefix));
             }
         }
+    }
+}
+
+impl crate::app::window::Window {
+    /// Get the viewport for the active split
+    pub fn active_viewport(&self) -> &crate::view::viewport::Viewport {
+        let active_split = self.split_manager().active_split();
+        &self
+            .split_view_states()
+            .get(&active_split)
+            .unwrap()
+            .viewport
+    }
+
+    /// Get the viewport for the active split (mutable)
+    pub fn active_viewport_mut(&mut self) -> &mut crate::view::viewport::Viewport {
+        let active_split = self.split_manager().active_split();
+        &mut self
+            .split_view_states_mut()
+            .get_mut(&active_split)
+            .unwrap()
+            .viewport
     }
 }
 
@@ -4258,7 +4236,7 @@ mod tests {
             test_filesystem(),
         )
         .unwrap();
-        let source = editor.active_split_id();
+        let source = editor.active_window().split_manager().active_split();
         assert_eq!(
             editor.pane_beside(source),
             None,
@@ -4493,7 +4471,7 @@ mod tests {
             test_filesystem(),
         )
         .unwrap();
-        let split_id = editor.split_manager().active_split();
+        let split_id = editor.active_window().split_manager().active_split();
 
         // Open enough long-named buffers that the strip would scroll on a
         // realistic terminal width.
@@ -4519,10 +4497,13 @@ mod tests {
         editor
             .active_window_mut()
             .split_manager_mut()
-            .unwrap()
             .set_split_buffer(split_id, keep);
         {
-            let view_state = editor.split_view_states_mut().get_mut(&split_id).unwrap();
+            let view_state = editor
+                .active_window_mut()
+                .split_view_states_mut()
+                .get_mut(&split_id)
+                .unwrap();
             view_state.open_buffers = buffers
                 .iter()
                 .map(|b| TabTarget::Buffer(*b))
@@ -4534,7 +4515,11 @@ mod tests {
         // Only the kept tab remains, which is what the strip is asked to
         // reveal. Where that puts its window is the window's answer and is
         // pinned in `shell::tabs`, not here.
-        let view_state = editor.split_view_states().get(&split_id).unwrap();
+        let view_state = editor
+            .active_window()
+            .split_view_states()
+            .get(&split_id)
+            .unwrap();
         assert_eq!(
             view_state.buffer_tab_ids_vec(),
             vec![keep],

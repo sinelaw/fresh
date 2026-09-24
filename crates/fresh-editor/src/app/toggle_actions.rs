@@ -52,19 +52,11 @@ impl Editor {
     /// they are built never to have. Other views pick the new default up from
     /// `apply_config_defaults`, the path that owns that stamping.
     pub fn toggle_line_numbers(&mut self) {
-        let active_split = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(mgr, _)| mgr)
-            .expect("active window must have a populated split layout")
-            .active_split();
+        let active_split = self.active_window().split_manager().active_split();
         let new_value = !self.config.editor.line_numbers;
         let Some(resolved) = self
-            .windows
-            .get_mut(&self.active_window)
-            .and_then(|w| w.split_view_states_mut())
-            .expect("active window must have a populated split layout")
+            .active_window_mut()
+            .split_view_states_mut()
             .get_mut(&active_split)
             .map(|vs| {
                 // The user is expressing a global intent on this view, so drop
@@ -112,18 +104,10 @@ impl Editor {
     /// view state, which is persisted in the per-file workspace state so the
     /// choice survives a restart (issue #474 follow-up).
     pub fn toggle_line_numbers_current_buffer(&mut self) {
-        let active_split = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(mgr, _)| mgr)
-            .expect("active window must have a populated split layout")
-            .active_split();
+        let active_split = self.active_window().split_manager().active_split();
         let Some(new_value) = self
-            .windows
-            .get_mut(&self.active_window)
-            .and_then(|w| w.split_view_states_mut())
-            .expect("active window must have a populated split layout")
+            .active_window_mut()
+            .split_view_states_mut()
             .get_mut(&active_split)
             .map(|vs| {
                 // Deref reaches the active buffer's BufferViewState, so this
@@ -152,23 +136,15 @@ impl Editor {
     /// other buffers. Records an explicit per-buffer override, persisted in the
     /// per-file workspace state.
     pub fn toggle_line_wrap_current_buffer(&mut self) {
-        let active_split = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(mgr, _)| mgr)
-            .expect("active window must have a populated split layout")
-            .active_split();
+        let active_split = self.active_window().split_manager().active_split();
         let buffer_id = self.active_buffer();
         let wrap_column = self
             .active_window()
             .resolve_wrap_column_for_buffer(buffer_id);
         let wrap_indent = self.config.editor.wrap_indent;
         let Some(new_value) = self
-            .windows
-            .get_mut(&self.active_window)
-            .and_then(|w| w.split_view_states_mut())
-            .expect("active window must have a populated split layout")
+            .active_window_mut()
+            .split_view_states_mut()
             .get_mut(&active_split)
             .map(|vs| {
                 let new_value = !vs.viewport.line_wrap_enabled;
@@ -265,18 +241,10 @@ impl Editor {
         // The pin lives on the split's view state (like line numbers and the
         // current-line highlight), so the same buffer in another split keeps
         // its own choice.
-        let active_split = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(mgr, _)| mgr)
-            .expect("active window must have a populated split layout")
-            .active_split();
+        let active_split = self.active_window().split_manager().active_split();
         let Some(new_value) = self
-            .windows
-            .get_mut(&self.active_window)
-            .and_then(|w| w.split_view_states_mut())
-            .expect("active window must have a populated split layout")
+            .active_window_mut()
+            .split_view_states_mut()
             .get_mut(&active_split)
             .map(|vs| {
                 let currently_on = resolve_indentation_guide_mode(IndentationGuideInputs {
@@ -308,18 +276,10 @@ impl Editor {
     /// setting. `BufferViewState` already stores the flag per (split, buffer),
     /// so this pins it there and records the intent for persistence.
     pub fn toggle_current_line_highlight_current_buffer(&mut self) {
-        let active_split = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(mgr, _)| mgr)
-            .expect("active window must have a populated split layout")
-            .active_split();
+        let active_split = self.active_window().split_manager().active_split();
         let Some(new_value) = self
-            .windows
-            .get_mut(&self.active_window)
-            .and_then(|w| w.split_view_states_mut())
-            .expect("active window must have a populated split layout")
+            .active_window_mut()
+            .split_view_states_mut()
             .get_mut(&active_split)
             .map(|vs| {
                 // Deref reaches the active buffer's BufferViewState, so this
@@ -390,18 +350,10 @@ impl Editor {
         // The pin lives on the split's view state (like line numbers and the
         // current-line highlight), so the same buffer in another split keeps
         // its own choice.
-        let active_split = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(mgr, _)| mgr)
-            .expect("active window must have a populated split layout")
-            .active_split();
+        let active_split = self.active_window().split_manager().active_split();
         let Some(new_value) = self
-            .windows
-            .get_mut(&self.active_window)
-            .and_then(|w| w.split_view_states_mut())
-            .expect("active window must have a populated split layout")
+            .active_window_mut()
+            .split_view_states_mut()
             .get_mut(&active_split)
             .map(|vs| {
                 let new_value = !vs.fold_indicators_visible();
@@ -727,22 +679,24 @@ impl Editor {
             .active_window()
             .resolve_wrap_column_for_buffer(buffer_id);
         let leaf_ids: Vec<_> = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(_, vs)| vs)
-            .expect("active window must have a populated split layout")
+            .active_window()
+            .split_view_states()
             .keys()
             .copied()
             .collect();
         for leaf_id in leaf_ids {
-            if self.split_manager_mut().get_buffer_id(leaf_id.into()) != Some(buffer_id) {
+            if self
+                .active_window_mut()
+                .split_manager_mut()
+                .get_buffer_id(leaf_id.into())
+                != Some(buffer_id)
+            {
                 continue;
             }
             if let Some(view_state) = self
                 .windows
                 .get_mut(&self.active_window)
-                .and_then(|w| w.split_view_states_mut())
+                .and_then(|w| w.buffers.split_view_states_mut())
                 .expect("active window must have a populated split layout")
                 .get_mut(&leaf_id)
             {

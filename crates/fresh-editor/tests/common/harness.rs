@@ -2681,7 +2681,7 @@ impl EditorTestHarness {
 
     /// Get the top line number currently visible in the viewport
     pub fn top_line_number(&mut self) -> usize {
-        let top_byte = self.editor.active_viewport().top_byte();
+        let top_byte = self.editor.active_window().active_viewport().top_byte();
         self.editor
             .active_state_mut()
             .buffer
@@ -2690,22 +2690,25 @@ impl EditorTestHarness {
 
     /// Get the top byte position of the viewport
     pub fn top_byte(&self) -> usize {
-        self.editor.active_viewport().top_byte()
+        self.editor.active_window().active_viewport().top_byte()
     }
 
     /// Get the top view line offset (number of view lines to skip)
     pub fn top_view_line_offset(&self) -> usize {
-        self.editor.active_viewport().top_view_line_offset()
+        self.editor
+            .active_window()
+            .active_viewport()
+            .top_view_line_offset()
     }
 
     /// The viewport's horizontal scroll offset, in columns.
     pub fn left_column(&self) -> usize {
-        self.editor.active_viewport().left_column
+        self.editor.active_window().active_viewport().left_column
     }
 
     /// Get the viewport height (number of content lines that can be displayed)
     pub fn viewport_height(&self) -> usize {
-        self.editor.active_viewport().height as usize
+        self.editor.active_window().active_viewport().height as usize
     }
 
     /// Get the content area row range on screen (start_row, end_row inclusive)

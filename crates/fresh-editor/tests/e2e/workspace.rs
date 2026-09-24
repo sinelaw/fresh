@@ -921,7 +921,7 @@ fn test_session_cursor_visible_in_splits_after_restore() {
 
         // Get cursor and scroll BEFORE first render from EditorState
         let cursor_before_render = harness.cursor_position();
-        let viewport_before = harness.editor().active_viewport().clone();
+        let viewport_before = harness.editor().active_window().active_viewport().clone();
         let (line_before, _) = harness
             .editor()
             .active_state()
@@ -940,7 +940,7 @@ fn test_session_cursor_visible_in_splits_after_restore() {
 
         // Get cursor and scroll AFTER render
         let cursor_after_render = harness.cursor_position();
-        let viewport_after = harness.editor().active_viewport().clone();
+        let viewport_after = harness.editor().active_window().active_viewport().clone();
         let (line_after, _) = harness
             .editor()
             .active_state()
@@ -2406,17 +2406,8 @@ fn test_hidden_from_tabs_external_files_not_persisted() {
             meta.hidden_from_tabs = true;
             meta.auto_revert_enabled = false;
         }
-        let active_split = win
-            .buffers
-            .splits()
-            .map(|(mgr, _)| mgr)
-            .expect("split layout present")
-            .active_split();
-        if let Some(vs) = win
-            .split_view_states_mut()
-            .expect("split view states present")
-            .get_mut(&active_split)
-        {
+        let active_split = win.split_manager().active_split();
+        if let Some(vs) = win.split_view_states_mut().get_mut(&active_split) {
             vs.open_buffers.retain(
                 |t| !matches!(t, fresh::view::split::TabTarget::Buffer(b) if *b == transient_id),
             );

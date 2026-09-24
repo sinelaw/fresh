@@ -793,19 +793,10 @@ impl Editor {
 
     /// Start the remove ruler prompt with current rulers as suggestions
     pub(super) fn start_remove_ruler_prompt(&mut self) {
-        let active_split = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(mgr, _)| mgr)
-            .expect("active window must have a populated split layout")
-            .active_split();
+        let active_split = self.active_window().split_manager().active_split();
         let rulers = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(_, vs)| vs)
-            .expect("active window must have a populated split layout")
+            .active_window()
+            .split_view_states()
             .get(&active_split)
             .map(|vs| vs.rulers.clone())
             .unwrap_or_default();

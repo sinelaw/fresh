@@ -246,19 +246,10 @@ impl Editor {
         let other_buffers = self.collect_other_buffer_slices(active_buf_id);
 
         // Get viewport bounds for proximity scoring.
-        let split_id = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(mgr, _)| mgr)
-            .expect("active window must have a populated split layout")
-            .active_split();
+        let split_id = self.active_window().split_manager().active_split();
         let viewport_top_byte = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(_, vs)| vs)
-            .expect("active window must have a populated split layout")
+            .active_window()
+            .split_view_states()
             .get(&split_id)
             .map(|sv| sv.viewport.top_byte())
             .unwrap_or(0);

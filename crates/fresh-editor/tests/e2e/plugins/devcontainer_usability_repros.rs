@@ -688,7 +688,7 @@ fn rebuild_reuses_build_log_split_instead_of_stacking() {
     harness
         .wait_until(|h| h.screen_to_string().contains("devcontainer-logs/build-"))
         .unwrap();
-    let splits_after_attach = harness.editor().get_split_count();
+    let splits_after_attach = harness.editor().active_window().get_split_count();
 
     // 2. Trigger Rebuild via the palette — produces a new
     // log file with a different timestamp.
@@ -713,7 +713,7 @@ fn rebuild_reuses_build_log_split_instead_of_stacking() {
         harness.advance_time(Duration::from_millis(25));
     }
 
-    let splits_after_rebuild = harness.editor().get_split_count();
+    let splits_after_rebuild = harness.editor().active_window().get_split_count();
     assert_eq!(
         splits_after_rebuild, splits_after_attach,
         "Rebuild must reuse the build-log split, not stack a new one. \
@@ -760,7 +760,7 @@ fn show_panels_reuse_single_split_instead_of_stacking() {
     harness
         .wait_until(|h| h.screen_to_string().contains("devcontainer-logs/build-"))
         .unwrap();
-    let baseline = harness.editor().get_split_count();
+    let baseline = harness.editor().active_window().get_split_count();
 
     // Show Container Info — should reuse the panel slot.
     harness
@@ -780,7 +780,7 @@ fn show_panels_reuse_single_split_instead_of_stacking() {
         std::thread::sleep(Duration::from_millis(25));
         harness.advance_time(Duration::from_millis(25));
     }
-    let after_info = harness.editor().get_split_count();
+    let after_info = harness.editor().active_window().get_split_count();
 
     // Show Container Logs — should also reuse the panel slot.
     harness
@@ -802,7 +802,7 @@ fn show_panels_reuse_single_split_instead_of_stacking() {
         std::thread::sleep(Duration::from_millis(25));
         harness.advance_time(Duration::from_millis(25));
     }
-    let after_logs = harness.editor().get_split_count();
+    let after_logs = harness.editor().active_window().get_split_count();
 
     assert_eq!(
         after_info, baseline,

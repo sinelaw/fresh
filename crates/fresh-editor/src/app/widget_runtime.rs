@@ -306,33 +306,6 @@ impl Editor {
         }
     }
 
-    /// Mark every view of `buffer_id` as non-horizontally-scrollable.
-    ///
-    /// Called on each widget-panel repaint rather than once at mount:
-    /// a panel that is hidden and shown again gets a fresh
-    /// `SplitViewState`, and the flag has to land on that one too.
-    pub(super) fn pin_widget_panel_horizontal_scroll(&mut self, buffer_id: BufferId) {
-        for vs in self
-            .windows
-            .get_mut(&self.active_window)
-            .and_then(|w| w.split_view_states_mut())
-            .expect("active window must have a populated split layout")
-            .values_mut()
-        {
-            if vs.buffer_state(buffer_id).is_none() {
-                continue;
-            }
-            if vs.active_buffer == buffer_id {
-                vs.viewport.horizontal_scroll_enabled = false;
-                vs.viewport.left_column = 0;
-            }
-            if let Some(bs) = vs.keyed_states.get_mut(&buffer_id) {
-                bs.viewport.horizontal_scroll_enabled = false;
-                bs.viewport.left_column = 0;
-            }
-        }
-    }
-
     /// The described page in the pane that holds the keyboard, if there is
     /// one.
     pub(crate) fn active_page_panel(&self) -> Option<crate::widgets::PanelKey> {
@@ -1917,11 +1890,7 @@ impl Editor {
     /// group host owns the outer leaf — so a panel buffer shown inside
     /// one would keep a stale caret without this.
     pub(super) fn splits_showing_buffer(&self, buffer_id: BufferId) -> Vec<LeafId> {
-        let (manager, view_states) = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .expect("active window must have a populated split layout");
+        let (manager, view_states) = self.active_window().splits();
         let mut splits = manager.splits_for_buffer(buffer_id);
         for node in self.active_window().grouped_subtrees.values() {
             if let crate::view::split::SplitNode::Grouped { layout, .. } = node {
@@ -2761,18 +2730,14 @@ impl Editor {
         // Plugin sends arbitrary SplitId — convert to LeafId at the boundary
         let leaf_id = LeafId(split_id);
         match self
-            .windows
-            .get_mut(&self.active_window)
-            .and_then(|w| w.split_manager_mut())
-            .expect("active window must have a populated split layout")
+            .active_window_mut()
+            .split_manager_mut()
             .close_split(leaf_id)
         {
             Ok(()) => {
                 // Clean up the view state for the closed split
-                self.windows
-                    .get_mut(&self.active_window)
-                    .and_then(|w| w.split_view_states_mut())
-                    .expect("active window must have a populated split layout")
+                self.active_window_mut()
+                    .split_view_states_mut()
                     .remove(&leaf_id);
                 // Drop the closed split from every terminal's scrollback set.
                 self.active_window_mut()
@@ -3209,6 +3174,29 @@ pub(super) fn byte_at_display_col(line: &str, col: u16) -> usize {
         cols += ch.width().unwrap_or(0);
     }
     line.len()
+}
+
+impl crate::app::window::Window {
+    /// Mark every view of `buffer_id` as non-horizontally-scrollable.
+    ///
+    /// Called on each widget-panel repaint rather than once at mount:
+    /// a panel that is hidden and shown again gets a fresh
+    /// `SplitViewState`, and the flag has to land on that one too.
+    pub(super) fn pin_widget_panel_horizontal_scroll(&mut self, buffer_id: BufferId) {
+        for vs in self.split_view_states_mut().values_mut() {
+            if vs.buffer_state(buffer_id).is_none() {
+                continue;
+            }
+            if vs.active_buffer == buffer_id {
+                vs.viewport.horizontal_scroll_enabled = false;
+                vs.viewport.left_column = 0;
+            }
+            if let Some(bs) = vs.keyed_states.get_mut(&buffer_id) {
+                bs.viewport.horizontal_scroll_enabled = false;
+                bs.viewport.left_column = 0;
+            }
+        }
+    }
 }
 
 #[cfg(test)]

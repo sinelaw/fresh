@@ -120,13 +120,7 @@ impl Editor {
 
     /// Inspect the theme key at the current cursor's screen position and open the theme editor.
     pub(super) fn inspect_theme_at_cursor(&mut self) {
-        let active_split = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(mgr, _)| mgr)
-            .expect("active window must have a populated split layout")
-            .active_split();
+        let active_split = self.active_window().split_manager().active_split();
         let active_buffer = self.active_buffer();
 
         // Where the active pane's content is, from the tree. The scan this
@@ -151,14 +145,7 @@ impl Editor {
                 .get(&active_buffer)
                 .map(|s| s.margins.left_total_width() as u16)
                 .unwrap_or(0);
-            let vs = match self
-                .windows
-                .get(&self.active_window)
-                .and_then(|w| w.buffers.splits())
-                .map(|(_, vs)| vs)
-                .expect("active window must have a populated split layout")
-                .get(&active_split)
-            {
+            let vs = match self.active_window().split_view_states().get(&active_split) {
                 Some(vs) => vs,
                 None => return,
             };
@@ -169,12 +156,7 @@ impl Editor {
         // Clone the viewport via the Window accessor so we can later
         // pass `&mut buffer` to cursor_screen_position without
         // overlapping with the splits read.
-        let viewport = self
-            .active_window()
-            .buffers
-            .splits()
-            .expect("active window must have a populated split layout")
-            .1[&active_split]
+        let viewport = self.active_window().splits().1[&active_split]
             .viewport
             .clone();
         let state = match self.active_window_mut().buffers.get_mut(&active_buffer) {

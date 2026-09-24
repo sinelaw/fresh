@@ -645,11 +645,8 @@ impl Editor {
 
         // Get compose width for this split
         let compose_width = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(_, vs)| vs)
-            .expect("active window must have a populated split layout")
+            .active_window()
+            .split_view_states()
             .get(&split_id)
             .and_then(|vs| vs.compose_width);
 

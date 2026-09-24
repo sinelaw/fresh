@@ -13,10 +13,7 @@ use fresh_i18n::t;
 impl Window {
     /// Toggle between Compose and Source view modes for the active split.
     pub fn handle_toggle_page_view(&mut self) {
-        let (mgr, _) = self
-            .buffers
-            .splits()
-            .expect("active window must have a populated split layout");
+        let (mgr, _) = self.splits();
         let active_split = mgr.active_split();
         let active_buffer = mgr
             .get_buffer_id(active_split.into())
@@ -31,10 +28,7 @@ impl Window {
             .or(self.config().editor.page_width);
 
         let view_mode = {
-            let (_, vs_map) = self
-                .buffers
-                .splits()
-                .expect("active window must have a populated split layout");
+            let (_, vs_map) = self.splits();
             let current = vs_map
                 .get(&active_split)
                 .map(|vs| vs.view_mode.clone())
@@ -46,11 +40,7 @@ impl Window {
         };
 
         // Update split view state (source of truth for view mode and line numbers)
-        if let Some(vs) = self
-            .split_view_states_mut()
-            .expect("active window must have a populated split layout")
-            .get_mut(&active_split)
-        {
+        if let Some(vs) = self.split_view_states_mut().get_mut(&active_split) {
             vs.view_mode = view_mode.clone();
             // In Compose mode, disable builtin line wrap - the plugin handles
             // wrapping by inserting Break tokens in the view transform pipeline.

@@ -762,10 +762,11 @@ impl Editor {
                 self.handle_set_split_ratio(split_id, ratio);
             }
             PluginCommand::SetSplitLabel { split_id, label } => {
-                self.handle_set_split_label(split_id, label);
+                self.active_window_mut()
+                    .handle_set_split_label(split_id, label);
             }
             PluginCommand::ClearSplitLabel { split_id } => {
-                self.handle_clear_split_label(split_id);
+                self.active_window_mut().handle_clear_split_label(split_id);
             }
             PluginCommand::GetSplitByLabel { label, request_id } => {
                 self.handle_get_split_by_label(label, request_id);
@@ -805,7 +806,8 @@ impl Editor {
                 self.handle_set_line_numbers_default(buffer_id, enabled);
             }
             PluginCommand::SetFoldIndicators { buffer_id, enabled } => {
-                self.handle_set_fold_indicators(buffer_id, enabled);
+                self.active_window_mut()
+                    .handle_set_fold_indicators(buffer_id, enabled);
             }
             PluginCommand::SetIndentationGuide { buffer_id, enabled } => {
                 self.handle_set_indentation_guide(buffer_id, enabled);
@@ -818,14 +820,16 @@ impl Editor {
                 split_id,
                 enabled,
             } => {
-                self.handle_set_line_wrap(buffer_id, split_id, enabled);
+                self.active_window_mut()
+                    .handle_set_line_wrap(buffer_id, split_id, enabled);
             }
             PluginCommand::SetViewState {
                 buffer_id,
                 key,
                 value,
             } => {
-                self.handle_set_view_state(buffer_id, key, value);
+                self.active_window_mut()
+                    .handle_set_view_state(buffer_id, key, value);
             }
             PluginCommand::SetGlobalState {
                 plugin_name,
@@ -1288,10 +1292,10 @@ impl Editor {
             }
 
             PluginCommand::MoveTabLeft => {
-                self.handle_move_tab_left();
+                self.active_window_mut().handle_move_tab_left();
             }
             PluginCommand::MoveTabRight => {
-                self.handle_move_tab_right();
+                self.active_window_mut().handle_move_tab_right();
             }
 
             // ==================== Animation Commands ====================
@@ -2298,22 +2302,6 @@ impl Editor {
 
     // ── Handlers extracted from the dispatch match ───────────────────────
 
-    fn handle_set_split_label(&mut self, split_id: SplitId, label: String) {
-        self.windows
-            .get_mut(&self.active_window)
-            .and_then(|w| w.split_manager_mut())
-            .expect("active window must have a populated split layout")
-            .set_label(LeafId(split_id), label);
-    }
-
-    fn handle_clear_split_label(&mut self, split_id: SplitId) {
-        self.windows
-            .get_mut(&self.active_window)
-            .and_then(|w| w.split_manager_mut())
-            .expect("active window must have a populated split layout")
-            .clear_label(split_id);
-    }
-
     fn handle_reload_themes(&mut self, apply_theme: Option<String>) {
         self.reload_themes();
         if let Some(theme_name) = apply_theme {
@@ -2535,7 +2523,7 @@ impl Editor {
     ) {
         // Capture the source split *before* create_virtual_buffer tabs the
         // new buffer into it; we drop that phantom tab after the dock attach.
-        let source_split_before_create = self.split_manager().active_split();
+        let source_split_before_create = self.active_window().split_manager().active_split();
         let buffer_id =
             self.active_window_mut()
                 .create_virtual_buffer(name.clone(), mode, read_only);
@@ -2555,7 +2543,9 @@ impl Editor {
             return;
         }
         // Swap the dock leaf's active buffer to the new one and add it as a tab.
-        self.split_manager_mut().set_active_split(dock_leaf);
+        self.active_window_mut()
+            .split_manager_mut()
+            .set_active_split(dock_leaf);
         self.active_window_mut()
             .set_pane_buffer(dock_leaf, buffer_id);
         // `show_line_numbers` is per (split, buffer), and the dock leaf's view
@@ -2567,10 +2557,8 @@ impl Editor {
         // lacked. The gutter also stole the columns the panel had already laid
         // its widgets out for, so the content wrapped.
         if let Some(view_state) = self
-            .windows
-            .get_mut(&self.active_window)
-            .and_then(|w| w.split_view_states_mut())
-            .expect("active window must have a populated split layout")
+            .active_window_mut()
+            .split_view_states_mut()
             .get_mut(&dock_leaf)
         {
             view_state.ensure_buffer_state(buffer_id).show_line_numbers = show_line_numbers;
@@ -2578,10 +2566,8 @@ impl Editor {
         // Drop the phantom tab from the source split.
         if dock_leaf != source_split_before_create {
             if let Some(source_view_state) = self
-                .windows
-                .get_mut(&self.active_window)
-                .and_then(|w| w.split_view_states_mut())
-                .expect("active window must have a populated split layout")
+                .active_window_mut()
+                .split_view_states_mut()
                 .get_mut(&source_split_before_create)
             {
                 source_view_state.remove_buffer(buffer_id);
@@ -2617,9 +2603,14 @@ impl Editor {
             Ok(()) => tracing::info!("Updated existing panel '{}' content", panel_name),
             Err(e) => tracing::error!("Failed to update panel content: {}", e),
         }
-        let splits = self.split_manager().splits_for_buffer(existing_buffer_id);
+        let splits = self
+            .active_window()
+            .split_manager()
+            .splits_for_buffer(existing_buffer_id);
         if let Some(&split_id) = splits.first() {
-            self.split_manager_mut().set_active_split(split_id);
+            self.active_window_mut()
+                .split_manager_mut()
+                .set_active_split(split_id);
             // Route through set_pane_buffer so tree + SVS stay consistent.
             self.active_window_mut()
                 .set_pane_buffer(split_id, existing_buffer_id);
@@ -3291,18 +3282,10 @@ impl Editor {
             meta.hidden_from_tabs = true;
             meta.auto_revert_enabled = false;
         }
-        let active_split = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(mgr, _)| mgr)
-            .expect("active window must have a populated split layout")
-            .active_split();
+        let active_split = self.active_window().split_manager().active_split();
         if let Some(vs) = self
-            .windows
-            .get_mut(&self.active_window)
-            .and_then(|w| w.split_view_states_mut())
-            .expect("active window must have a populated split layout")
+            .active_window_mut()
+            .split_view_states_mut()
             .get_mut(&active_split)
         {
             use crate::view::split::TabTarget;
@@ -3416,12 +3399,7 @@ impl Editor {
         line: usize,
     ) {
         let actual_split_id = if split_id.0 == 0 {
-            self.windows
-                .get(&self.active_window)
-                .and_then(|w| w.buffers.splits())
-                .map(|(mgr, _)| mgr)
-                .expect("active window must have a populated split layout")
-                .active_split()
+            self.active_window().split_manager().active_split()
         } else {
             LeafId(split_id)
         };
@@ -3429,11 +3407,8 @@ impl Editor {
 
         // Get viewport height
         let viewport_height = if let Some(view_state) = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(_, vs)| vs)
-            .expect("active window must have a populated split layout")
+            .active_window()
+            .split_view_states()
             .get(&actual_split_id)
         {
             view_state.viewport.height as usize
@@ -3477,23 +3452,8 @@ impl Editor {
         let mut target_leaves: Vec<LeafId> = Vec::new();
 
         // Main tree: walk its leaves.
-        for leaf_id in self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(mgr, _)| mgr)
-            .expect("active window must have a populated split layout")
-            .root()
-            .leaf_split_ids()
-        {
-            if let Some(vs) = self
-                .windows
-                .get(&self.active_window)
-                .and_then(|w| w.buffers.splits())
-                .map(|(_, vs)| vs)
-                .expect("active window must have a populated split layout")
-                .get(&leaf_id)
-            {
+        for leaf_id in self.active_window().split_manager().root().leaf_split_ids() {
+            if let Some(vs) = self.active_window().split_view_states().get(&leaf_id) {
                 if vs.active_buffer == buffer_id {
                     target_leaves.push(leaf_id);
                 }
@@ -3504,14 +3464,7 @@ impl Editor {
         for (_group_leaf_id, node) in self.active_window().grouped_subtrees.iter() {
             if let crate::view::split::SplitNode::Grouped { layout, .. } = node {
                 for inner_leaf in layout.leaf_split_ids() {
-                    if let Some(vs) = self
-                        .windows
-                        .get(&self.active_window)
-                        .and_then(|w| w.buffers.splits())
-                        .map(|(_, vs)| vs)
-                        .expect("active window must have a populated split layout")
-                        .get(&inner_leaf)
-                    {
+                    if let Some(vs) = self.active_window().split_view_states().get(&inner_leaf) {
                         if vs.active_buffer == buffer_id && !target_leaves.contains(&inner_leaf) {
                             target_leaves.push(inner_leaf);
                         }
@@ -3862,12 +3815,10 @@ impl Editor {
             }
         }
         if !hidden_from_tabs {
-            let active_split = self.split_manager().active_split();
+            let active_split = self.active_window().split_manager().active_split();
             if let Some(view_state) = self
-                .windows
-                .get_mut(&self.active_window)
-                .and_then(|w| w.split_view_states_mut())
-                .expect("active window must have a populated split layout")
+                .active_window_mut()
+                .split_view_states_mut()
                 .get_mut(&active_split)
             {
                 let bs = view_state.ensure_buffer_state(buffer_id);
@@ -3951,11 +3902,8 @@ impl Editor {
                         })
                         .unwrap_or(0);
                     let splits: Vec<super::LeafId> = self
-                        .windows
-                        .get(&self.active_window)
-                        .and_then(|w| w.buffers.splits())
-                        .map(|(mgr, _)| mgr)
-                        .expect("active window must have a populated split layout")
+                        .active_window()
+                        .split_manager()
                         .splits_for_buffer(buffer_id);
                     self.active_window_mut()
                         .set_buffer_cursor_in_splits(buffer_id, byte, &splits);
@@ -4021,7 +3969,8 @@ impl Editor {
         // Path 1 — Utility-dock fast path (issue #1796 / Section 2 of the design):
         // if a leaf with this role already exists, attach the new buffer there
         // instead of spawning a fresh split.
-        if let Some(dock_leaf) = split_role.and_then(|r| self.split_manager().find_leaf_by_role(r))
+        if let Some(dock_leaf) =
+            split_role.and_then(|r| self.active_window().split_manager().find_leaf_by_role(r))
         {
             return self.route_vbuf_to_existing_dock(
                 dock_leaf,
@@ -4069,7 +4018,7 @@ impl Editor {
         // `create_virtual_buffer` unconditionally adds the new buffer as a tab
         // to the currently active split, which is wrong for a panel that lives
         // in its own dedicated split (it would appear in BOTH splits — bug #3).
-        let source_split_before_create = self.split_manager().active_split();
+        let source_split_before_create = self.active_window().split_manager().active_split();
 
         let buffer_id =
             self.active_window_mut()
@@ -4109,10 +4058,12 @@ impl Editor {
         // *root* so the dock spans the full width — splitting the active leaf
         // would nest it under whichever pane was focused.
         let split_result = if split_role == Some(crate::view::split::SplitRole::UtilityDock) {
-            self.split_manager_mut()
+            self.active_window_mut()
+                .split_manager_mut()
                 .split_root_positioned(split_dir, buffer_id, ratio, before)
         } else {
-            self.split_manager_mut()
+            self.active_window_mut()
+                .split_manager_mut()
                 .split_active_positioned(split_dir, buffer_id, ratio, before)
         };
 
@@ -4123,10 +4074,8 @@ impl Editor {
                 // otherwise we'd leave the buffer with no display.
                 if new_split_id != source_split_before_create {
                     if let Some(src_vs) = self
-                        .windows
-                        .get_mut(&self.active_window)
-                        .and_then(|w| w.split_view_states_mut())
-                        .expect("active window must have a populated split layout")
+                        .active_window_mut()
+                        .split_view_states_mut()
                         .get_mut(&source_split_before_create)
                     {
                         src_vs.remove_buffer(buffer_id);
@@ -4152,20 +4101,23 @@ impl Editor {
                     scroll_offset: self.config.editor.scroll_offset,
                 });
                 view_state.ensure_buffer_state(buffer_id).show_line_numbers = show_line_numbers;
-                self.windows
-                    .get_mut(&self.active_window)
-                    .and_then(|w| w.split_view_states_mut())
-                    .expect("active window must have a populated split layout")
+                self.active_window_mut()
+                    .split_view_states_mut()
                     .insert(new_split_id, view_state);
 
-                self.split_manager_mut().set_active_split(new_split_id);
+                self.active_window_mut()
+                    .split_manager_mut()
+                    .set_active_split(new_split_id);
 
                 // Tag the new leaf with the requested role so the next
                 // utility-dock open lands here. Clear any stale role first
                 // to maintain the one-leaf-per-role invariant.
                 if let Some(target_role) = split_role {
-                    self.split_manager_mut().clear_role(target_role);
-                    self.split_manager_mut()
+                    self.active_window_mut()
+                        .split_manager_mut()
+                        .clear_role(target_role);
+                    self.active_window_mut()
+                        .split_manager_mut()
                         .set_leaf_role(new_split_id, Some(target_role));
                     tracing::info!(
                         "Tagged new dock leaf {:?} with role {:?}",
@@ -4278,10 +4230,8 @@ impl Editor {
         // Show the buffer in the target split. set_pane_buffer
         // covers the tree + SVS updates the old code did by hand.
         let leaf_id = LeafId(split_id);
-        self.windows
-            .get_mut(&self.active_window)
-            .and_then(|w| w.split_manager_mut())
-            .expect("active window must have a populated split layout")
+        self.active_window_mut()
+            .split_manager_mut()
             .set_active_split(leaf_id);
         self.active_window_mut().set_pane_buffer(leaf_id, buffer_id);
 
@@ -4291,10 +4241,8 @@ impl Editor {
         // already called switch_buffer, but the downstream code
         // also nudges open_buffers and focus_history.
         if let Some(view_state) = self
-            .windows
-            .get_mut(&self.active_window)
-            .and_then(|w| w.split_view_states_mut())
-            .expect("active window must have a populated split layout")
+            .active_window_mut()
+            .split_view_states_mut()
             .get_mut(&leaf_id)
         {
             view_state.switch_buffer(buffer_id);
@@ -4832,11 +4780,8 @@ impl Editor {
 
     fn handle_get_split_by_label(&mut self, label: String, request_id: u64) {
         let split_id = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(mgr, _)| mgr)
-            .expect("active window must have a populated split layout")
+            .active_window()
+            .split_manager()
             .find_split_by_label(&label);
         let callback_id = fresh_core::api::JsCallbackId::from(request_id);
         let json =
@@ -6431,11 +6376,8 @@ impl Editor {
             .get(&buffer_id)
         {
             let cursor_pos = self
-                .windows
-                .get(&self.active_window)
-                .and_then(|w| w.buffers.splits())
-                .map(|(_, vs)| vs)
-                .expect("active window must have a populated split layout")
+                .active_window()
+                .split_view_states()
                 .values()
                 .find_map(|vs| vs.buffer_state(buffer_id))
                 .map(|bs| bs.cursors.primary().position)
@@ -6848,10 +6790,7 @@ impl Window {
                 .collect()
         };
 
-        let (mgr_ref, vs_ref) = self
-            .buffers
-            .splits()
-            .expect("active window must have a populated split layout");
+        let (mgr_ref, vs_ref) = self.splits();
         let active_split = mgr_ref.active_split();
         snapshot.active_split_id = active_split.0 .0;
 
@@ -7229,6 +7168,16 @@ impl VariantNameSink {
             return "PluginCommand";
         }
         std::str::from_utf8(&self.buf[..self.len]).unwrap_or("PluginCommand")
+    }
+}
+
+impl crate::app::window::Window {
+    fn handle_set_split_label(&mut self, split_id: SplitId, label: String) {
+        self.split_manager_mut().set_label(LeafId(split_id), label);
+    }
+
+    fn handle_clear_split_label(&mut self, split_id: SplitId) {
+        self.split_manager_mut().clear_label(split_id);
     }
 }
 
