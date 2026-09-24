@@ -306,8 +306,8 @@ pub(super) fn create_temp_file(
 
 /// Create a temporary file in the recovery directory for in-place writes.
 /// This allows recovery if a crash occurs during the in-place write operation.
-pub(super) fn create_recovery_temp_file(
-    fs: &Arc<dyn FileSystem + Send + Sync>,
+fn create_recovery_temp_file(
+    fs: &dyn FileSystem,
     dest_path: &Path,
 ) -> io::Result<(PathBuf, Box<dyn FileWriter>)> {
     // Get recovery directory: $XDG_DATA_HOME/fresh/recovery or ~/.local/share/fresh/recovery
@@ -342,7 +342,7 @@ pub(super) fn create_recovery_temp_file(
 
 /// Get the path for in-place write recovery metadata.
 /// Uses the same recovery directory as temp files.
-pub(super) fn inplace_recovery_meta_path(dest_path: &Path) -> PathBuf {
+fn inplace_recovery_meta_path(dest_path: &Path) -> PathBuf {
     let recovery_dir = crate::data_dir::get_data_dir()
         .map(|d| d.join("recovery"))
         .unwrap_or_else(|_| std::env::temp_dir());
@@ -353,8 +353,8 @@ pub(super) fn inplace_recovery_meta_path(dest_path: &Path) -> PathBuf {
 
 /// Write in-place recovery metadata using fs.
 /// This is called before the dangerous streaming step so we can recover on crash.
-pub(super) fn write_inplace_recovery_meta(
-    fs: &Arc<dyn FileSystem + Send + Sync>,
+fn write_inplace_recovery_meta(
+    fs: &dyn FileSystem,
     meta_path: &Path,
     dest_path: &Path,
     temp_path: &Path,
@@ -417,7 +417,7 @@ pub(super) fn save_with_inplace_write(
     // Step 1: Write recipe to a temp file in the recovery directory
     // This reads Copy chunks from the original file (still intact) and writes to temp.
     // Using the recovery directory allows crash recovery if the operation fails.
-    let (temp_path, mut temp_file) = create_recovery_temp_file(fs, dest_path)?;
+    let (temp_path, mut temp_file) = create_recovery_temp_file(&**fs, dest_path)?;
     if let Err(e) = write_recipe_to_file(fs, &mut temp_file, recipe) {
         // Best-effort cleanup of temp file on write failure
         #[allow(clippy::let_underscore_must_use)]
@@ -433,7 +433,7 @@ pub(super) fn save_with_inplace_write(
     // Best effort - don't fail the save if we can't write recovery metadata
     #[allow(clippy::let_underscore_must_use)]
     let _ = write_inplace_recovery_meta(
-        fs,
+        &**fs,
         &recovery_meta_path,
         dest_path,
         &temp_path,
@@ -477,12 +477,8 @@ pub(super) fn write_data_inplace(
     data: &[u8],
     original_metadata: Option<FileMetadata>,
 ) -> anyhow::Result<()> {
-    match fs.open_file_for_write(dest_path) {
-        Ok(mut out_file) => {
-            out_file.write_all(data)?;
-            out_file.sync_all()?;
-            Ok(())
-        }
+    match write_in_place_staged(&**fs, dest_path, data) {
+        Ok(()) => Ok(()),
         Err(e) if e.kind() == io::ErrorKind::PermissionDenied => {
             // Create temp file for sudo fallback
             let (temp_path, mut temp_file) = create_temp_file(fs, dest_path)?;
@@ -493,6 +489,59 @@ pub(super) fn write_data_inplace(
         }
         Err(e) => Err(e.into()),
     }
+}
+
+/// Overwrite `dest_path` in place with `data`, keeping its inode and with it
+/// the owner, group, hard links, xattrs and ACLs.
+///
+/// Between truncating the file and finishing the write it holds neither the
+/// old content nor the new, so `data` is first staged in the recovery
+/// directory with [`crate::recovery_types::InplaceWriteRecovery`] metadata
+/// pointing at it, as [`save_with_inplace_write`] does. The staged copy is
+/// removed once the write succeeds (or if the file can't be opened, so
+/// nothing was truncated) and kept if the write fails part-way.
+pub(crate) fn write_in_place_staged(
+    fs: &dyn FileSystem,
+    dest_path: &Path,
+    data: &[u8],
+) -> io::Result<()> {
+    let original_metadata = fs.metadata_if_exists(dest_path);
+    let (temp_path, mut temp_file) = create_recovery_temp_file(fs, dest_path)?;
+    let staged = temp_file
+        .write_all(data)
+        .and_then(|()| temp_file.sync_all());
+    drop(temp_file);
+    if let Err(e) = staged {
+        // Best-effort cleanup; the write error is what the caller needs
+        #[allow(clippy::let_underscore_must_use)]
+        let _ = fs.remove_file(&temp_path);
+        return Err(e);
+    }
+    let meta_path = inplace_recovery_meta_path(dest_path);
+    // Best effort - the staged copy alone is still worth having
+    #[allow(clippy::let_underscore_must_use)]
+    let _ = write_inplace_recovery_meta(fs, &meta_path, dest_path, &temp_path, &original_metadata);
+    let discard_staged = || {
+        // Best-effort cleanup of files that are no longer needed
+        #[allow(clippy::let_underscore_must_use)]
+        let _ = fs.remove_file(&temp_path);
+        #[allow(clippy::let_underscore_must_use)]
+        let _ = fs.remove_file(&meta_path);
+    };
+
+    let mut out_file = match fs.open_file_for_write(dest_path) {
+        Ok(file) => file,
+        Err(e) => {
+            discard_staged();
+            return Err(e);
+        }
+    };
+    // On failure from here on, keep the staged copy for recovery.
+    out_file.write_all(data)?;
+    out_file.sync_all()?;
+    drop(out_file);
+    discard_staged();
+    Ok(())
 }
 
 /// Stream a file's content to a writer in chunks to avoid memory issues with large files.
