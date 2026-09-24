@@ -2672,16 +2672,25 @@ impl KeybindingResolver {
             event.modifiers
         );
 
-        // Check Terminal context bindings first (highest priority for terminal mode)
-        for bindings in [&self.bindings, &self.default_bindings] {
-            if let Some(terminal_bindings) = bindings.get(&KeyContext::Terminal) {
-                if let Some(action) = terminal_bindings.get(&norm) {
-                    if Self::is_terminal_ui_action(action) {
-                        tracing::trace!("  -> Found UI action in terminal bindings: {:?}", action);
-                        return action.clone();
-                    }
-                }
+        // Check Terminal context bindings first (highest priority for terminal
+        // mode). A key bound in the Terminal context itself ends the lookup:
+        // the user's binding first, then the keymap's. One that is not a UI
+        // action — notably a `noop` override — leaves the key to the PTY
+        // rather than falling through to a Global/Normal binding (issue
+        // #3270: `noop` on Ctrl+Q in `terminal` still quit the editor).
+        if let Some(action) = [&self.bindings, &self.default_bindings]
+            .into_iter()
+            .find_map(|bindings| bindings.get(&KeyContext::Terminal)?.get(&norm))
+        {
+            if Self::is_terminal_ui_action(action) {
+                tracing::trace!("  -> Found UI action in terminal bindings: {:?}", action);
+                return action.clone();
             }
+            tracing::trace!(
+                "  -> Terminal binding {:?} leaves the key to the PTY",
+                action
+            );
+            return Action::None;
         }
 
         // Check Global bindings (work in all contexts)
