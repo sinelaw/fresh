@@ -842,7 +842,7 @@ pub(crate) fn wrap_index_geometry_for(
     } else if line_wrap {
         let gutter_width = viewport.gutter_width(buffer);
         let wrap_config = WrapConfig::new(
-            viewport.width as usize,
+            viewport.wrap_area_width(viewport.width as usize),
             gutter_width,
             true,
             viewport.wrap_indent,
