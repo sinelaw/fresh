@@ -26,18 +26,25 @@ fn pty_available() -> bool {
 /// A config whose terminal runs the byte dumper, on the default keymap
 /// (`Config::default()` picks `macos` on macOS).
 fn dumper_config() -> Config {
+    dumper_config_with_setup("")
+}
+
+/// [`dumper_config`] whose child first writes `setup` — terminal mode
+/// requests, as a TUI would make them — before reporting `READY`.
+fn dumper_config_with_setup(setup: &str) -> Config {
     let mut config = Config::default();
     config.active_keybinding_map = fresh::config::KeybindingMapName("default".to_string());
     config.terminal.shell = Some(TerminalShellConfig {
         command: "/bin/sh".into(),
         args: vec![
             "-c".into(),
-            "stty raw -echo; printf 'READY\\r\\n'; \
-             while :; do \
-               b=$(dd bs=1 count=1 2>/dev/null | od -An -tx1 | tr -d ' \\n'); \
-               printf ' %s' \"$b\"; \
-             done"
-                .into(),
+            format!(
+                "stty raw -echo; printf '{setup}READY\\r\\n'; \
+                 while :; do \
+                   b=$(dd bs=1 count=1 2>/dev/null | od -An -tx1 | tr -d ' \\n'); \
+                   printf ' %s' \"$b\"; \
+                 done"
+            ),
         ],
     });
     config
@@ -127,5 +134,58 @@ fn ctrl_j_reaches_the_child_as_lf_and_enter_as_cr() {
     assert!(
         screen.contains(" 0a 0d 7a"),
         "Ctrl+J must reach the child as LF (0a) and Enter as CR (0d).\nScreen:\n{screen}"
+    );
+}
+
+/// Issue #3323: a TUI that turns on the kitty keyboard protocol (`CSI > 1 u`)
+/// must be able to tell Shift+Enter from Enter — it arrives as `CSI 13;2u`
+/// (`1b 5b 31 33 3b 32 75`), while plain Enter stays a CR. The child's
+/// protocol query (`CSI ? u`) is answered first with the pushed flags
+/// (`CSI ? 1 u`), which is how a TUI learns it can ask for this at all.
+#[test]
+#[cfg(unix)]
+fn shift_enter_reaches_a_kitty_protocol_child_as_csi_u() {
+    if !pty_available() {
+        eprintln!("Skipping: PTY not available in this environment");
+        return;
+    }
+    let mut harness = open_dumper(dumper_config_with_setup("\\033[>1u\\033[?u"));
+
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::SHIFT)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    send_sentinel(&mut harness);
+
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains(" 1b 5b 3f 31 75 1b 5b 31 33 3b 32 75 0d 7a"),
+        "Shift+Enter must reach a kitty-protocol child as CSI 13;2u, and Enter \
+         as CR.\nScreen:\n{screen}"
+    );
+}
+
+/// The control: a child that never asked for the kitty protocol keeps the
+/// legacy encoding, where Shift+Enter has no form of its own and is a CR.
+#[test]
+#[cfg(unix)]
+fn shift_enter_stays_cr_for_a_legacy_child() {
+    if !pty_available() {
+        eprintln!("Skipping: PTY not available in this environment");
+        return;
+    }
+    let mut harness = open_dumper(dumper_config());
+
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::SHIFT)
+        .unwrap();
+    send_sentinel(&mut harness);
+
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains(" 0d 7a"),
+        "Without the kitty protocol, Shift+Enter must stay a plain CR.\nScreen:\n{screen}"
     );
 }

@@ -9,10 +9,11 @@ use crossterm::event::{KeyCode, KeyModifiers};
 /// This handles special keys and modifier combinations that need
 /// to be sent as escape sequences or control characters.
 ///
-/// The encoding is the legacy xterm one: fresh's terminal emulator does not
-/// speak the kitty keyboard protocol to the child, so a modified key is
-/// expressed by the `1 + bits` modifier parameter of its escape sequence
-/// ([`xterm_modifier_param`]) rather than a CSI-u form.
+/// The encoding is the legacy xterm one: a modified key is expressed by the
+/// `1 + bits` modifier parameter of its escape sequence
+/// ([`xterm_modifier_param`]) rather than a CSI-u form. A child that turned on
+/// the kitty keyboard protocol gets CSI-u for the keys legacy encoding cannot
+/// modify — see [`kitty_disambiguated_key`], which callers try first.
 ///
 /// When `app_cursor` is true (DECCKM mode), unmodified arrow keys use SS3
 /// sequences (`\x1bOA`) instead of CSI (`\x1b[A`). Programs like less and
@@ -120,6 +121,47 @@ pub fn key_to_pty_bytes(
     }
 }
 
+/// The kitty keyboard protocol's CSI-u form of a key whose legacy encoding
+/// cannot carry its modifiers, for a child that enabled the protocol's
+/// "disambiguate escape codes" level (`CSI > 1 u`).
+///
+/// Enter, Tab and Backspace have one legacy byte each, so Shift+Enter reached
+/// the child as a bare CR and TUIs that bind it (a newline in an agent's input
+/// box, say) could not see it (sinelaw/fresh#3323). Under the protocol they are
+/// `CSI 13;<mods> u`, `CSI 9;<mods> u` and `CSI 127;<mods> u`. Unmodified,
+/// they keep their legacy bytes, as the protocol's first level specifies.
+///
+/// `None` for every other key: its legacy encoding already says what it is,
+/// and the caller falls back to [`key_to_pty_bytes`].
+pub fn kitty_disambiguated_key(code: KeyCode, modifiers: KeyModifiers) -> Option<Vec<u8>> {
+    let codepoint = match code {
+        KeyCode::Enter => 13,
+        KeyCode::Tab => 9,
+        KeyCode::Backspace => 127,
+        _ => return None,
+    };
+    let param = kitty_modifier_param(modifiers)?;
+    Some(csi(&format!("{codepoint};{param}"), b'u'))
+}
+
+/// The kitty protocol's modifier parameter: `1 + bits`, with shift = 1,
+/// alt = 2, ctrl = 4, super = 8, hyper = 16, meta = 32. Unlike the legacy
+/// [`xterm_modifier_param`], Super and Hyper survive. `None` when unmodified.
+fn kitty_modifier_param(modifiers: KeyModifiers) -> Option<u8> {
+    let bits = [
+        (KeyModifiers::SHIFT, 1),
+        (KeyModifiers::ALT, 2),
+        (KeyModifiers::CONTROL, 4),
+        (KeyModifiers::SUPER, 8),
+        (KeyModifiers::HYPER, 16),
+        (KeyModifiers::META, 32),
+    ]
+    .into_iter()
+    .filter(|(modifier, _)| modifiers.contains(*modifier))
+    .fold(0u8, |bits, (_, bit)| bits | bit);
+    (bits != 0).then_some(1 + bits)
+}
+
 /// The control byte for Ctrl + this character, or `None` when the combination
 /// has no control-character equivalent (the key is then sent as itself).
 fn control_byte(c: char) -> Option<u8> {
@@ -189,8 +231,7 @@ fn csi(params: &str, final_byte: u8) -> Vec<u8> {
 /// as a lesser chord.
 ///
 /// Super and Hyper have no legacy xterm encoding and are dropped — the kitty
-/// protocol is where they would survive, and fresh's emulator does not speak it
-/// to the child.
+/// protocol is where they survive ([`kitty_modifier_param`]).
 fn xterm_modifier_param(modifiers: KeyModifiers) -> Option<u8> {
     let mut bits = 0u8;
     if modifiers.contains(KeyModifiers::SHIFT) {
@@ -507,6 +548,50 @@ mod tests {
         assert_eq!(
             key_to_pty_bytes(KeyCode::Char('é'), KeyModifiers::ALT, false),
             Some(expected)
+        );
+    }
+
+    /// Under the kitty protocol, the modified keys legacy encoding flattens
+    /// get their CSI-u form, with every modifier bit (Super included).
+    #[test]
+    fn kitty_encodes_modified_enter_tab_and_backspace_as_csi_u() {
+        let kitty = |code, mods| {
+            String::from_utf8(kitty_disambiguated_key(code, mods).expect("key was dropped"))
+                .unwrap()
+        };
+        assert_eq!(kitty(KeyCode::Enter, KeyModifiers::SHIFT), "\x1b[13;2u");
+        assert_eq!(kitty(KeyCode::Enter, KeyModifiers::CONTROL), "\x1b[13;5u");
+        assert_eq!(
+            kitty(KeyCode::Enter, KeyModifiers::ALT | KeyModifiers::SHIFT),
+            "\x1b[13;4u"
+        );
+        assert_eq!(kitty(KeyCode::Enter, KeyModifiers::SUPER), "\x1b[13;9u");
+        assert_eq!(kitty(KeyCode::Tab, KeyModifiers::CONTROL), "\x1b[9;5u");
+        assert_eq!(
+            kitty(KeyCode::Backspace, KeyModifiers::CONTROL),
+            "\x1b[127;5u"
+        );
+    }
+
+    /// Unmodified keys, and keys whose legacy form already carries their
+    /// modifiers, are left to the legacy encoder.
+    #[test]
+    fn kitty_leaves_unmodified_and_other_keys_to_legacy() {
+        assert_eq!(
+            kitty_disambiguated_key(KeyCode::Enter, KeyModifiers::NONE),
+            None
+        );
+        assert_eq!(
+            kitty_disambiguated_key(KeyCode::Tab, KeyModifiers::NONE),
+            None
+        );
+        assert_eq!(
+            kitty_disambiguated_key(KeyCode::Up, KeyModifiers::SHIFT),
+            None
+        );
+        assert_eq!(
+            kitty_disambiguated_key(KeyCode::Char('a'), KeyModifiers::CONTROL),
+            None
         );
     }
 }
