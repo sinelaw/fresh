@@ -117,7 +117,16 @@ impl Editor {
                         // in the window.
                         return BarFacts::plain(0, 0, BarWindow::Cells(1));
                     }
-                    let visible = bvs.viewport.width as usize;
+                    // The text's window, not the pane's: the gutter does
+                    // not scroll.
+                    let visible = crate::view::ui::split_rendering::pane_text_width(
+                        state,
+                        bvs.show_line_numbers,
+                        &bvs.view_mode,
+                        bvs.compose_width,
+                        bvs.viewport.width,
+                        bvs.viewport.height,
+                    );
                     let widest = compute_max_line_length(state, &mut bvs.viewport).max(visible);
                     BarFacts::plain(
                         bvs.viewport.left_column.min(u32::MAX as usize) as u32,
