@@ -3206,6 +3206,76 @@ mod tests {
         );
     }
 
+    /// A comment after a value (`name = "x" # Umbriel's ...`) wasn't
+    /// recognised as a comment, so its apostrophe opened a literal string
+    /// that never closed and painted the rest of the file as a string.
+    /// Regression test for issue #3358.
+    #[test]
+    fn test_toml_trailing_comment_with_quote_does_not_open_string() {
+        let registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
+        let theme = Theme::load_builtin(theme::THEME_LIGHT).unwrap();
+
+        for first_line in [
+            "name = \"umbriel\" # Prefer Umbriel's border-only decoration\n",
+            "list = [\"a\", \"b\"] # Umbriel's list\n",
+            "a = 1 # say \"hi\n",
+            "t = { k = 1 } # Umbriel's table\n",
+            // Single-line strings can't span lines: an unterminated one
+            // must end at its line, not swallow the rest of the file.
+            "broken = 'unterminated\n",
+            "broken = \"unterminated\n",
+        ] {
+            let mut engine = HighlightEngine::for_file(Path::new("config.toml"), None, &registry);
+            let content = format!("{first_line}border = true\n\n[colors]\nfg = \"#ffffff\"\n");
+            let buffer = Buffer::from_str(&content, 0, test_fs());
+            engine.highlight_viewport(&buffer, 0, buffer.len(), &theme, 0);
+
+            if let Some(hash) = first_line.find(" # ") {
+                assert_eq!(
+                    engine.category_at_position(hash + 3),
+                    Some(HighlightCategory::Comment),
+                    "trailing comment in {first_line:?} should be a comment"
+                );
+            }
+            for (needle, category) in [
+                ("\nborder", HighlightCategory::Property),
+                ("\nfg", HighlightCategory::Property),
+                ("true\n", HighlightCategory::Number),
+            ] {
+                let position =
+                    content.find(needle).unwrap() + usize::from(needle.starts_with('\n'));
+                assert_eq!(
+                    engine.category_at_position(position),
+                    Some(category),
+                    "{needle:?} after {first_line:?} should not be inside a string"
+                );
+            }
+            assert_eq!(
+                engine.category_at_position(content.find("#ffffff").unwrap()),
+                Some(HighlightCategory::String),
+                "the string on the last line after {first_line:?} should still be a string"
+            );
+        }
+
+        // Multi-line strings still span lines.
+        let mut engine = HighlightEngine::for_file(Path::new("config.toml"), None, &registry);
+        let content = "a = \"\"\"\nfirst # not a comment\n\"\"\"\nb = '''\nsecond\n'''\nc = 1\n";
+        let buffer = Buffer::from_str(content, 0, test_fs());
+        engine.highlight_viewport(&buffer, 0, buffer.len(), &theme, 0);
+        for needle in ["first", "# not", "second"] {
+            assert_eq!(
+                engine.category_at_position(content.find(needle).unwrap()),
+                Some(HighlightCategory::String),
+                "{needle:?} is inside a multi-line string"
+            );
+        }
+        assert_eq!(
+            engine.category_at_position(content.find("c = 1").unwrap()),
+            Some(HighlightCategory::Property)
+        );
+    }
+
     /// An unspaced `<` before a string literal used to be read as the start of
     /// a generic argument list, and the recovery rule ate the string's opening
     /// quote on the way out. That inverted quote parity: the string body
