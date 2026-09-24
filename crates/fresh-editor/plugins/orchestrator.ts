@@ -9656,6 +9656,10 @@ function openMachineDialog(
       onPick: (path) => {
         d.identity = fieldOf(tildePath(path));
       },
+      // What sits beside the keys in `~/.ssh` but is not one: the public
+      // halves, and ssh's own files. Listed, but dimmed.
+      dim: (name) => name.endsWith(".pub") || SSH_DIR_NON_KEYS.has(name),
+      hint: (value) => (value.endsWith(".pub") ? editor.t("machine.identity_pub_hint") : null),
       render: () => {
         if (machineDialog === d) renderMachineDialog();
       },
@@ -9697,6 +9701,9 @@ function openMachineDialog(
   const first = machineDialog.kind === "ssh" ? "machine-target" : "machine-context";
   machinePanel.setFocusKey(first);
 }
+
+/** Files `~/.ssh` holds that are not a private key. */
+const SSH_DIR_NON_KEYS = new Set(["known_hosts", "known_hosts.old", "config", "authorized_keys", "environment"]);
 
 function blankMachine(): Machine {
   return {
@@ -10013,6 +10020,8 @@ function handleMachineDialogEvent(e: WidgetEvt): void {
   if (e.event_type === "focus") {
     // Focus alone does not open the Host list; leaving Host closes it.
     if (e.widget_key !== "machine-target") setMachineHostSuggestions([]);
+    // Leaving the identity file's browser closes it.
+    d.identityPicker.focusMoved(e.widget_key ?? "");
     return;
   }
   if (e.event_type === "completion_request" && e.widget_key === "machine-target") {
@@ -11110,6 +11119,11 @@ async function listMachineDir(
 ): Promise<{ entries: RepoBrowseEntry[]; error: string }> {
   if (machineKey === "local") {
     const base = expandHome(dir);
+    // A folder that is not there lists as nothing at all; say so, as the
+    // remote listing's `NODIR` does, so the browser can go up to one that is.
+    if (!editor.fileExists(editor.localPath(base))) {
+      return { entries: [], error: editor.t("repo.no_such_dir") };
+    }
     const out: RepoBrowseEntry[] = [];
     const found: RepoBrowseEntry[] = [];
     for (const e of editor.readDir(editor.localPath(base))) {
@@ -11353,6 +11367,9 @@ function handleRepoDialogEvent(e: WidgetEvt): void {
     return;
   }
   if (e.event_type === "focus") {
+    // Leaving a folder browser closes it.
+    d.browse.focusMoved(e.widget_key ?? "");
+    d.place?.browse.focusMoved(e.widget_key ?? "");
     return;
   }
   if (d.place && handlePlaceEvent(d.place, repoPlaceHost(d), e)) return;
@@ -17004,6 +17021,8 @@ editor.on("widget_event", (e) => {
     // The launch-time "where is it?" question owns its own widgets.
     if (form.place && e.event_type !== "focus" && handlePlaceEvent(form.place, formPlaceHost(form), e as WidgetEvt)) return;
     if (e.event_type === "focus") {
+      // Leaving the where-is-it question's folder browser closes it.
+      form.place?.browse.focusMoved(e.widget_key ?? "");
       // Leaving a field (Shift+Tab, a click) closes its suggestions.
       if (form.completion.field !== null && form.completion.field !== e.widget_key) {
         closeCompletion();

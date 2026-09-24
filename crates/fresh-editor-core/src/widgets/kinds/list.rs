@@ -96,12 +96,49 @@ impl WidgetImpl for List {
                 };
                 select_move(spec, widget_key, panel, delta, fx);
             }
+            // Home / End: the first and the last item (the listbox pattern).
+            KeyCode::Home | KeyCode::End => {
+                let to = match key.code() {
+                    KeyCode::Home => 0,
+                    _ => total_items(spec) as i32 - 1,
+                };
+                select_to(spec, widget_key, panel, to, fx);
+            }
             KeyCode::Enter | KeyCode::Char(' ') => {
                 if let Some(ev) = activate_event(spec, widget_key, panel) {
                     fx.events.push(ev);
                 }
             }
             _ => return super::KeyDisposition::Pass,
+        }
+        super::KeyDisposition::Consumed
+    }
+
+    /// **Type-ahead** (the listbox pattern): characters typed in quick
+    /// succession build a prefix, and the selection moves to the next item
+    /// whose text starts with it — case-insensitively, wrapping. The same
+    /// character typed again cycles through the items it starts. A pause
+    /// longer than [`TYPE_AHEAD_PAUSE`] starts a new prefix.
+    fn on_text(
+        &self,
+        spec: &WidgetSpec,
+        widget_key: &str,
+        panel: &mut crate::widgets::WidgetPanelState,
+        text: &str,
+        fx: &mut super::KeyFx,
+    ) -> super::KeyDisposition {
+        let typed: String = text.chars().filter(|c| !c.is_control()).collect();
+        if typed.is_empty() {
+            return super::KeyDisposition::Pass;
+        }
+        let labels = item_labels(spec);
+        if labels.is_empty() {
+            return super::KeyDisposition::Pass;
+        }
+        let prefix = type_ahead_prefix(widget_key, &typed);
+        let cur = resolve_in(spec, widget_key, &panel.instance_states).selected;
+        if let Some(to) = type_ahead_match(&labels, cur, &prefix) {
+            select_to(spec, widget_key, panel, to as i32, fx);
         }
         super::KeyDisposition::Consumed
     }
@@ -257,6 +294,80 @@ pub fn select_move(
     }
 }
 
+/// Move the selection to `to` (clamped), firing `select` when it moved.
+fn select_to(
+    spec: &WidgetSpec,
+    widget_key: &str,
+    panel: &mut crate::widgets::WidgetPanelState,
+    to: i32,
+    fx: &mut super::KeyFx,
+) {
+    let cur = resolve_in(spec, widget_key, &panel.instance_states)
+        .selected
+        .max(0);
+    select_move(spec, widget_key, panel, to - cur, fx);
+}
+
+/// How long a pause starts a new type-ahead prefix.
+pub const TYPE_AHEAD_PAUSE: std::time::Duration = std::time::Duration::from_millis(1000);
+
+thread_local! {
+    /// Per list: the type-ahead prefix so far and when it was last extended.
+    /// Transient input state, like a key chord in progress — not part of the
+    /// list's model, so it stays out of the instance-state map.
+    static TYPE_AHEAD: std::cell::RefCell<HashMap<String, (std::time::Instant, String)>> =
+        std::cell::RefCell::new(HashMap::new());
+}
+
+/// Extend `widget_key`'s type-ahead prefix with `typed`, or start a new one
+/// after a pause. Returns the prefix to search for.
+fn type_ahead_prefix(widget_key: &str, typed: &str) -> String {
+    let now = std::time::Instant::now();
+    TYPE_AHEAD.with(|m| {
+        let mut m = m.borrow_mut();
+        let prefix = match m.get(widget_key) {
+            Some((at, p)) if now.duration_since(*at) < TYPE_AHEAD_PAUSE => format!("{p}{typed}"),
+            _ => typed.to_string(),
+        };
+        m.insert(widget_key.to_string(), (now, prefix.clone()));
+        prefix
+    })
+}
+
+/// The item a type-ahead `prefix` selects, from the selection `cur`: the
+/// next item (wrapping) whose label starts with it. A prefix of one repeated
+/// character (`"ii"`) cycles through the items that character starts; a
+/// longer prefix stays on the current item while it still matches, so
+/// typing a name out does not skip past it.
+pub fn type_ahead_match(labels: &[String], cur: i32, prefix: &str) -> Option<usize> {
+    let lower = prefix.to_lowercase();
+    let mut chars = lower.chars();
+    let first = chars.next()?;
+    let repeated = chars.all(|c| c == first);
+    let (needle, from_next) = match repeated {
+        true => (first.to_string(), true),
+        false => (lower, false),
+    };
+    let n = labels.len();
+    let start = match (cur < 0, from_next) {
+        (true, _) => 0,
+        (false, true) => (cur as usize + 1) % n,
+        (false, false) => cur as usize % n,
+    };
+    (0..n)
+        .map(|i| (start + i) % n)
+        .find(|&i| labels[i].trim_start().to_lowercase().starts_with(&needle))
+}
+
+/// Each item's text, for type-ahead: a classic row's text, or a card's
+/// first text.
+fn item_labels(spec: &WidgetSpec) -> Vec<String> {
+    let WidgetSpec::List { items, .. } = spec else {
+        return Vec::new();
+    };
+    items.iter().map(|e| e.text.clone()).collect()
+}
+
 /// The `activate` event for the currently-selected item, if any.
 /// Shared by Enter/Space in [`List::on_key`] and the panel-level
 /// picker forwarding (Enter on a sibling filter input activates the
@@ -283,4 +394,33 @@ pub fn activate_event(
     }
     let item_key = item_keys.get(sel as usize).cloned().unwrap_or_default();
     Some(("activate".into(), json!({ "index": sel, "key": item_key, })))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::type_ahead_match;
+
+    fn labels(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn a_prefix_finds_the_next_item_it_starts() {
+        let l = labels(&["..", "work/", "config", "id_ed25519", "id_rsa"]);
+        assert_eq!(type_ahead_match(&l, 0, "i"), Some(3));
+        // Typing the name out stays on the item while it still matches…
+        assert_eq!(type_ahead_match(&l, 3, "id"), Some(3));
+        // …and moves on once only another item does.
+        assert_eq!(type_ahead_match(&l, 3, "id_r"), Some(4));
+        // Case-insensitive, and nothing matched leaves nothing to select.
+        assert_eq!(type_ahead_match(&l, 0, "W"), Some(1));
+        assert_eq!(type_ahead_match(&l, 0, "zz"), None);
+    }
+
+    #[test]
+    fn a_repeated_character_cycles_the_items_it_starts() {
+        let l = labels(&["..", "id_ed25519", "config", "id_rsa"]);
+        assert_eq!(type_ahead_match(&l, 1, "ii"), Some(3));
+        assert_eq!(type_ahead_match(&l, 3, "iii"), Some(1));
+    }
 }
