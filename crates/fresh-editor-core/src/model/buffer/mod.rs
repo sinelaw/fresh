@@ -761,9 +761,18 @@ impl TextBuffer {
         let dest_path = path.as_ref();
         let total = self.total_bytes();
 
-        // Handle empty files
+        // Handle empty files. Same ownership rule as below: a file we don't
+        // own must be truncated in place, or it would take our owner/group.
         if total == 0 {
-            self.persistence.fs().write_file(dest_path, &[])?;
+            let fs = self.persistence.fs();
+            if fs.remote_connection_info().is_none()
+                && save::should_use_inplace_write(fs, dest_path)
+            {
+                let original_metadata = fs.metadata_if_exists(dest_path);
+                save::write_data_inplace(fs, dest_path, &[], original_metadata)?;
+            } else {
+                fs.write_file(dest_path, &[])?;
+            }
             self.finalize_save(dest_path)?;
             return Ok(());
         }

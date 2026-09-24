@@ -1432,6 +1432,55 @@ impl StdFileSystem {
             .is_some_and(|n| n.starts_with('.'))
     }
 
+    /// Overwrite `path` in place (truncate + write), keeping its inode and with
+    /// it the owner, group, hard links, xattrs and ACLs. Not atomic, so only
+    /// used when a write-then-rename can't reproduce the original file.
+    fn write_in_place(path: &Path, data: &[u8]) -> io::Result<()> {
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .open(path)?;
+        file.write_all(data)?;
+        file.sync_all()
+    }
+
+    /// Give `temp` the owner, group and extended attributes (incl. POSIX
+    /// ACLs) of `original`, which describes `path`, so renaming it over
+    /// `path` doesn't change them (issue #3348). Fails when this process may
+    /// not set them, e.g. a group the user isn't a member of.
+    #[cfg(unix)]
+    fn copy_owner_and_xattrs(
+        original: &std::fs::Metadata,
+        path: &Path,
+        temp: &Path,
+    ) -> io::Result<()> {
+        use std::os::unix::fs::MetadataExt;
+        let created = std::fs::metadata(temp)?;
+        let uid = (created.uid() != original.uid()).then_some(original.uid());
+        let gid = (created.gid() != original.gid()).then_some(original.gid());
+        if uid.is_some() || gid.is_some() {
+            std::os::unix::fs::chown(temp, uid, gid)?;
+        }
+
+        let names = match xattr::list_deref(path) {
+            Ok(names) => names,
+            // Nothing to carry over on a filesystem without xattrs.
+            Err(e) if e.kind() == io::ErrorKind::Unsupported => return Ok(()),
+            Err(e) => return Err(e),
+        };
+        for name in names {
+            let Some(value) = xattr::get_deref(path, &name)? else {
+                continue;
+            };
+            // A new file often already has the same label/ACL; setting it
+            // again could need privileges the save doesn't otherwise need.
+            if xattr::get(temp, &name)?.as_deref() != Some(value.as_slice()) {
+                xattr::set(temp, &name, &value)?;
+            }
+        }
+        Ok(())
+    }
+
     /// Get the current user's effective UID and all group IDs (primary + supplementary).
     #[cfg(unix)]
     pub fn current_user_groups() -> (u32, Vec<u32>) {
@@ -1563,27 +1612,48 @@ impl FileSystem for StdFileSystem {
     }
 
     fn write_file(&self, path: &Path, data: &[u8]) -> io::Result<()> {
-        let original_metadata = self.metadata_if_exists(path);
+        let original = std::fs::metadata(path).ok();
+        #[cfg(unix)]
+        if original
+            .as_ref()
+            .is_some_and(|m| std::os::unix::fs::MetadataExt::nlink(m) > 1)
+        {
+            // Renaming a new file over one with other hard links would leave
+            // those links on the old content (issue #3348).
+            return Self::write_in_place(path, data);
+        }
+
         let (temp_path, mut file) = self.create_temp_file_for(path)?;
+        // Ok(false): the temp file can't stand in for the original.
         let result = (|| {
             file.write_all(data)?;
             file.sync_all()?;
             drop(file);
-            if let Some(ref meta) = original_metadata {
-                if let Some(ref perms) = meta.permissions {
-                    // Best-effort permission restore; rename will proceed regardless
-                    #[allow(clippy::let_underscore_must_use)]
-                    let _ = self.set_permissions(&temp_path, perms);
+            if let Some(ref meta) = original {
+                #[cfg(unix)]
+                if let Err(e) = Self::copy_owner_and_xattrs(meta, path, &temp_path) {
+                    tracing::debug!(
+                        "Can't carry owner/xattrs of {} over to a new file ({e}); writing in place",
+                        path.display()
+                    );
+                    return Ok(false);
                 }
+                // Best-effort permission restore; rename will proceed regardless
+                #[allow(clippy::let_underscore_must_use)]
+                let _ = std::fs::set_permissions(&temp_path, meta.permissions());
             }
-            self.rename(&temp_path, path)
+            self.rename(&temp_path, path).map(|()| true)
         })();
-        if result.is_err() {
+        if !matches!(result, Ok(true)) {
             // Best-effort cleanup; the original error is what the caller needs
             #[allow(clippy::let_underscore_must_use)]
             let _ = self.remove_file(&temp_path);
         }
-        result
+        match result {
+            Ok(true) => Ok(()),
+            Ok(false) => Self::write_in_place(path, data),
+            Err(e) => Err(e),
+        }
     }
 
     fn create_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
@@ -2169,6 +2239,97 @@ mod tests {
             .collect();
         names.sort();
         assert_eq!(names, ["foo.tmp", "foo.txt"]);
+    }
+
+    /// An owner/group for `path` that differs from what a file this process
+    /// creates would get, and that this process is allowed to set: any ids as
+    /// root, otherwise our own uid plus a supplementary group. `None` when the
+    /// environment has no such group (non-root with a single group).
+    #[cfg(unix)]
+    fn foreign_owner_for(path: &Path) -> Option<(u32, u32)> {
+        use std::os::unix::fs::MetadataExt;
+        let meta = std::fs::metadata(path).unwrap();
+        let (euid, groups) = StdFileSystem::current_user_groups();
+        if euid == 0 {
+            let other = |id: u32| if id == 4242 { 4243 } else { 4242 };
+            return Some((other(meta.uid()), other(meta.gid())));
+        }
+        groups
+            .into_iter()
+            .find(|&g| g != meta.gid())
+            .map(|g| (meta.uid(), g))
+    }
+
+    /// Issue #3348: an atomic save replaced the file with a temp file created
+    /// by the saving process, so the file's group (and, as root, its owner)
+    /// became the saver's.
+    #[cfg(unix)]
+    #[test]
+    fn atomic_write_preserves_owner_and_group() {
+        use std::os::unix::fs::MetadataExt;
+        let fs = StdFileSystem;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("owned.txt");
+        std::fs::write(&path, b"line one\n").unwrap();
+        let Some((uid, gid)) = foreign_owner_for(&path) else {
+            eprintln!("skipping: no second group available to test with");
+            return;
+        };
+        std::os::unix::fs::chown(&path, Some(uid), Some(gid)).unwrap();
+        fs.set_permissions(&path, &FilePermissions::from_mode(0o664))
+            .unwrap();
+
+        fs.write_file(&path, b"line one\nline two\n").unwrap();
+
+        let meta = std::fs::metadata(&path).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"line one\nline two\n");
+        assert_eq!((meta.uid(), meta.gid()), (uid, gid));
+        assert_eq!(meta.mode() & 0o7777, 0o664);
+    }
+
+    /// Issue #3348: replacing the file via rename detached it from its other
+    /// hard links, which kept the old content.
+    #[cfg(unix)]
+    #[test]
+    fn atomic_write_keeps_hard_links_together() {
+        use std::os::unix::fs::MetadataExt;
+        let fs = StdFileSystem;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.txt");
+        let link = dir.path().join("b.txt");
+        std::fs::write(&path, b"old\n").unwrap();
+        std::fs::hard_link(&path, &link).unwrap();
+        let ino = std::fs::metadata(&path).unwrap().ino();
+
+        fs.write_file(&path, b"new\n").unwrap();
+
+        assert_eq!(std::fs::read(&link).unwrap(), b"new\n");
+        let meta = std::fs::metadata(&path).unwrap();
+        assert_eq!(meta.ino(), ino);
+        assert_eq!(meta.nlink(), 2);
+    }
+
+    /// Issue #3348: extended attributes (and POSIX ACLs, which are stored as
+    /// xattrs) of the original file were dropped by the atomic replace.
+    #[cfg(unix)]
+    #[test]
+    fn atomic_write_preserves_extended_attributes() {
+        let fs = StdFileSystem;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tagged.txt");
+        std::fs::write(&path, b"old\n").unwrap();
+        if let Err(e) = xattr::set(&path, "user.fresh_test", b"kept") {
+            eprintln!("skipping: user xattrs unsupported here ({e})");
+            return;
+        }
+
+        fs.write_file(&path, b"new\n").unwrap();
+
+        assert_eq!(std::fs::read(&path).unwrap(), b"new\n");
+        assert_eq!(
+            xattr::get(&path, "user.fresh_test").unwrap().as_deref(),
+            Some(&b"kept"[..])
+        );
     }
 
     #[test]

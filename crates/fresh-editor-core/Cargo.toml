@@ -87,6 +87,10 @@ sha2 = { version = "0.10", optional = true }
 syntect = { version = "5.3", default-features = false, optional = true }
 tempfile = { version = "3.25", optional = true }
 
+[target.'cfg(unix)'.dependencies]
+# Carry a file's extended attributes (incl. POSIX ACLs) across an atomic save.
+xattr = "1.6"
+
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
