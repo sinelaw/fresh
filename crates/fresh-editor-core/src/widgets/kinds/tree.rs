@@ -252,7 +252,6 @@ impl WidgetImpl for Tree {
                 let Resolved {
                     selected: cur_sel,
                     mut expanded,
-                    user_scrolled: cur_user_scrolled,
                 } = resolve(spec, widget_key, &panel.instance_states);
                 let now_expanded = if expanded.contains(item_key) {
                     expanded.remove(item_key);
@@ -266,9 +265,6 @@ impl WidgetImpl for Tree {
                     WidgetInstanceState::Tree {
                         selected_index: cur_sel,
                         expanded_keys: expanded,
-                        // A disclosure click doesn't move the selection —
-                        // keep the user's scroll suppression as-is.
-                        user_scrolled: cur_user_scrolled,
                     },
                 );
                 fx.key.events.push((
@@ -289,11 +285,8 @@ impl WidgetImpl for Tree {
                 ) else {
                     return super::PointerDisposition::Default;
                 };
-                let Resolved {
-                    selected: cur_sel,
-                    mut expanded,
-                    user_scrolled: cur_user_scrolled,
-                } = resolve(spec, widget_key, &panel.instance_states);
+                let Resolved { mut expanded, .. } =
+                    resolve(spec, widget_key, &panel.instance_states);
                 let now_expanded = if expanded.remove(item_key) {
                     false
                 } else {
@@ -305,9 +298,6 @@ impl WidgetImpl for Tree {
                     WidgetInstanceState::Tree {
                         selected_index: idx as i32,
                         expanded_keys: expanded,
-                        // As `set_selected_index`: only a moved selection
-                        // re-arms scroll-follows-selection.
-                        user_scrolled: cur_user_scrolled && idx as i32 == cur_sel,
                     },
                 );
                 fx.key.events.push((
@@ -372,8 +362,6 @@ pub struct Resolved {
     /// The expanded-key set: the stored one once anything has expanded
     /// or collapsed a node, the spec's seed until then.
     pub expanded: HashSet<String>,
-    /// Whether the user has taken the window off the selection by mouse.
-    pub user_scrolled: bool,
 }
 
 /// **Where a `Tree`'s selection and expansion actually come from.**
@@ -414,16 +402,13 @@ pub fn resolve_seeded(
         Some(WidgetInstanceState::Tree {
             selected_index,
             expanded_keys,
-            user_scrolled,
         }) => Resolved {
             selected: *selected_index,
             expanded: expanded_keys.clone(),
-            user_scrolled: *user_scrolled,
         },
         _ => Resolved {
             selected: spec_selected,
             expanded: spec_expanded.iter().cloned().collect(),
-            user_scrolled: false,
         },
     }
 }
@@ -431,8 +416,7 @@ pub fn resolve_seeded(
 /// Move the host-owned selection by `delta` along the visible-flat
 /// order (descendants of collapsed nodes are skipped — selection is
 /// the *absolute* `nodes` index, so we walk the visible order to
-/// find the neighbour), re-arming scroll-follows-selection, and
-/// queue `select`. Also requests the host's scrollbar flash so
+/// find the neighbour), and queue `select`. Also requests the host's scrollbar flash so
 /// keyboard nav in an overflowing dock list stays oriented.
 pub fn select_move(
     spec: &WidgetSpec,
@@ -480,9 +464,6 @@ pub fn select_move(
         WidgetInstanceState::Tree {
             selected_index: new_abs as i32,
             expanded_keys: expanded,
-            // Keyboard nav is a deliberate selection move —
-            // re-arm scroll-follows-selection.
-            user_scrolled: false,
         },
     );
     fx.flash_scrollbar = true;
@@ -520,7 +501,6 @@ pub fn lateral(
     let Resolved {
         selected: cur_sel,
         mut expanded,
-        user_scrolled: cur_user_scrolled,
     } = resolve(spec, widget_key, &panel.instance_states);
     if cur_sel < 0 {
         return;
@@ -555,10 +535,6 @@ pub fn lateral(
         WidgetInstanceState::Tree {
             selected_index: new_sel,
             expanded_keys: expanded,
-            // Jumping to the parent is a deliberate selection
-            // move (re-arm follow); a pure expansion flip keeps
-            // the user's scroll intact.
-            user_scrolled: cur_user_scrolled && new_sel == cur_sel,
         },
     );
     if let Some(now_expanded) = expansion_changed {

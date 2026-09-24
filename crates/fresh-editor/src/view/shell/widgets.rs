@@ -7164,7 +7164,6 @@ pub(crate) mod tests {
                 completion_selected_index: selected,
                 completion_scroll_offset: scroll,
                 completion_navigated: navigated,
-                user_scrolled: false,
             },
         );
         m

@@ -367,7 +367,6 @@ fn carry_instance_states(
                         completion_selected_index: 0,
                         completion_scroll_offset: 0,
                         completion_navigated: false,
-                        user_scrolled: false,
                     }),
                 );
                 return;

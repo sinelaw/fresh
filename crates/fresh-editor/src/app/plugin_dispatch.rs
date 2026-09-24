@@ -5668,7 +5668,6 @@ impl Editor {
                             completion_selected_index: sel_idx,
                             completion_scroll_offset: scroll_off,
                             completion_navigated: navigated,
-                            user_scrolled: false,
                         },
                     );
                 }
@@ -5798,12 +5797,12 @@ impl Editor {
             WidgetMutation::SetExpandedKeys { widget_key, keys } => {
                 // Tree expanded_keys lives in instance state.
                 if let Some(panel) = self.widget_registry.get_mut(panel_key) {
-                    // Selection and the scroll latch carry through the one
-                    // resolver, so a mutation on a tree nobody has touched
-                    // keeps the spec's seeded selection instead of blanking
-                    // it. The scroll offset is not here at all any more —
-                    // it is the paint's window.
-                    let (prev_sel, prev_user_scrolled) =
+                    // Selection carries through the one resolver, so a
+                    // mutation on a tree nobody has touched keeps the spec's
+                    // seeded selection instead of blanking it. The scroll
+                    // offset is not here at all any more — it is the
+                    // viewport's.
+                    let prev_sel =
                         match crate::widgets::find_widget_by_key(&panel.spec, &widget_key) {
                             Some(spec) => {
                                 let r = crate::widgets::kinds::tree::resolve(
@@ -5811,9 +5810,9 @@ impl Editor {
                                     &widget_key,
                                     &panel.instance_states,
                                 );
-                                (r.selected, r.user_scrolled)
+                                r.selected
                             }
-                            None => (-1, false),
+                            None => -1,
                         };
                     let expanded: std::collections::HashSet<String> = keys.into_iter().collect();
                     panel.instance_states.insert(
@@ -5821,7 +5820,6 @@ impl Editor {
                         crate::widgets::WidgetInstanceState::Tree {
                             selected_index: prev_sel,
                             expanded_keys: expanded,
-                            user_scrolled: prev_user_scrolled,
                         },
                     );
                 }
