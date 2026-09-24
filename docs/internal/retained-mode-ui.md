@@ -278,9 +278,11 @@ Everything still owed, one line each. The sections below give each of these
 its reasoning, and also record what **closed** — kept because the argument for
 the shape is what stops it growing back.
 
-- **Composite buffer panes** — never migrated at all: `compute_pane_layout`
-  writes `pane_widths`, four hand-rolled hit tests read it back, a fifth site
-  hardcodes `gutter_width = 4`. The largest piece, and its own change.
+- **Composite buffer panes** — still painted, not described. Their geometry
+  is no longer a record of the last paint (`view::composite_view::PaneLayout`,
+  one function the painter and the readers share), but the panes, headers
+  and gutters are still cells, so the hit tests are still arithmetic. The
+  largest piece, and its own change.
 - **The keyed geometry index** — `Ui::find_by_key` is still a depth-first walk
   with ~180 editor call sites, some inside per-item loops. The live asymptotic
   hole.
@@ -300,10 +302,11 @@ the shape is what stops it growing back.
   *metrics*, the indented-card box, and per-side padding.
 - **Smaller residue** — `Paint::Lit`, no palette-resolve cache,
   `EntryDialogState`, and the pointer's legacy walk (see *The one asymmetry*).
-- **Drag state lives twice** — every drag is routed by a node's capture, but
-  all except the split separator still keep their gesture in `MouseState` and
-  rely on the legacy walk's blanket sweep. See *A drag's state is the
-  gesture's*.
+- **Warnings only the no-plugins build sees** — `cargo check
+  --no-default-features --features runtime` reports about a dozen items only
+  plugin code reaches (`diff_baselines`, `cancel_remote_attaches`,
+  `dock_cols_if_open`, …). They are not dead; they want `#[cfg(feature =
+  "plugins")]`, which is a feature-gating decision rather than a deletion.
 
 ### The markdown document view
 
@@ -690,22 +693,31 @@ web all read tab rectangles off the tree by key (`chrome::splits::tab_rects`,
 `scene::tab_bar_view`), and `resolve_tab_names` and `elided_tab_name` were
 never paint.
 
-### Composite buffer panes never migrated
+### Composite buffer panes
 
-**Open.** Not a leftover — this surface has no description at all.
-`orchestration::render_composite` computes a hand-rolled column split
-(`compute_pane_layout`: ratio times available width, round, reserve a
-separator) and writes it into `CompositeViewState::pane_widths`. Four
-event-time readers then hand-roll a hit test over that vector:
-`input::composite_router::click_to_pane`, two identical walks inside
-`composite_buffer_actions::handle_composite_click`, and `pane_width` with an
-`.unwrap_or(40)`; a fifth site hardcodes `let gutter_width = 4`.
+**Narrowed; the description is still open.** The panes are painted by
+`orchestration::render_composite`, not described. What changed is where their
+geometry lives. The painter used to compute the column split and store it on
+the view state (`CompositeViewState::pane_widths`) for four event-time readers
+to walk, each with its own idea of the separator. The click walk added one
+column per pane whether or not the layout drew one, so without a separator
+every pane after the first was hit a column to the right of the pointer
+(`test_composite_click_without_separator_lands_on_the_clicked_column`). Cursor
+movement fell back to a made-up width of 40 before the first paint, and the
+gutter was a literal `4` in five places.
 
-That is the `screen_space` class exactly, and composite panes are not on
-`app::types::layout`'s closed roster — which says adding a surface there
-requires a ruling. The work is a pane-strip description under `view::shell::`
-and four keyed tree queries in place of the walks. It is the largest piece
-left and wants its own change.
+Now `view::composite_view::PaneLayout` is a pure function of the composite and
+the width it is drawn in, which the painter and each reader build for
+themselves (`pane_at`, `pane_x`, `text_width`). The width comes from the tree's
+content rectangle, and `PANE_GUTTER_WIDTH` names the gutter. The five copies
+of "scroll every pane to the cursor" are one
+`CompositeViewState::reveal_cursor_column`.
+
+What is left is the real migration: a pane-strip description under
+`view::shell::` (headers, gutters and rows as nodes), after which the hit
+tests become keyed tree queries and `PaneLayout` becomes the layout's own
+answer. Composite panes are not on `app::types::layout`'s closed roster, and
+adding them needs a ruling.
 
 ### The status bar does layout by hand
 
@@ -937,15 +949,17 @@ Still open:
 - No palette-resolve cache.
 - `EntryDialogState` still carries the settings entry dialog's own state model.
 
-- `SettingsState` and `EntryDialogState` are still two models of one thing.
-  Their shared list-row gestures now live once, on
-  `view::settings::surface::SettingsSurface` (`select_list_row`,
-  `commit_list_draft`, `remove_list_row`, `live_text`, `spec_for`,
-  `current_spec`, `live_list_row`). Every copy was reachable: a coverage run
-  showed `state.rs::remove_list_row` and `entry_dialog.rs::select_list_row`
-  never executing, but that was a test gap, not dead code. What each type
-  still does its own way is what a value change means and how a text-list
-  row opens.
+- `SettingsState` and `EntryDialogState` are still two models of one thing,
+  but what they did identically now lives once, on
+  `view::settings::surface::SettingsSurface`: which control is live, what an
+  item paints as focused, a list's cursor row, a press on a list row, typing
+  into a live field, and a text list's rows. Every copy was reachable: a
+  coverage run showed `state.rs::remove_list_row` and
+  `entry_dialog.rs::select_list_row` never executing, but that was a test
+  gap, not dead code. What each type still does its own way is what a value
+  change means, how a text-list row opens, what else can hold its keyboard
+  (`items_have_keyboard`), and `begin_text_edit`'s snapshot, which is shaped
+  differently on each.
 
 Closed, and worth keeping the reasoning for:
 
@@ -1040,43 +1054,65 @@ was on the same list but has callers in split rendering, and stays. To
 catch this class, count callers outside `#[cfg(test)]` modules and
 `tests/`, not names.
 
+**So the second pass did.** It counted callers outside test modules and
+`tests/` across every crate, and counted a candidate as dead only when the
+workspace's non-test targets still compiled without it. What happened to each
+candidate depended on what its tests tested:
+
+- **Deleted with its tests** when the tests were about the function itself:
+  the `apply_event_with_hooks` path, recovery's `cleanup_orphans`, the whole
+  `SessionConfig` type (the session *layer* is still read, as a
+  `PartialConfig`; nothing wrote the typed form),
+  `save_to_layer_with_baseline`, `Viewport::ensure_line_visible`, the
+  visual-column pair, `fuzzy_filter`, and about forty small accessors and
+  setters.
+- **Gated with `#[cfg(test)]`, tests kept** when the tests exercise live code
+  through the function: builders (`with_debounce`, `with_min_length`),
+  observers (`has_explicit_binding`, the file tree's `node_count`), and
+  oracles (`get_overlapping` against the bounded lookup, `parse_ansi_string`
+  over the live `AnsiParser`, `normalize_explorer_plugin_path` for
+  `ExplorerRoot::admit`). The coverage stays, and the function leaves the
+  binary.
+- **Left alone:** accessors integration tests observe the editor through
+  (`get_split_ratio`, the `*_for_test` family), and anything marked
+  `#[allow(dead_code)]` (`apply_hyperlink_overlays` is parked for OSC 8
+  links, with a test's TODO pointing at it).
+
+About 1,700 lines went. The pass ran to the fixed point this section
+describes, and the deletions exposed a few dead test helpers along the way.
+
 ---
 
 ### A drag's state is the gesture's
 
-**Open for five drags, done for one.** Since the pointer migration, every drag
-is routed by a node's pointer capture: the pane scrollbars, the split
-separator, the file explorer's border, tabs, and text selection. The routing
-moved, but the state did not. Most gestures still keep it in the window's
-`MouseState` (`dragging_scrollbar`, `drag_start_row`, `drag_start_top_byte`,
-`dragging_horizontal_scrollbar`, `drag_start_hcol`, `drag_start_left_column`,
-`dragging_file_explorer`, `drag_start_position`, `drag_start_explorer_width`,
-the `drag_selection_*` fields, …). `clear_active_window_drag_state` clears
-them in the legacy walk's `Up` arm and in `release_pane_content`. A captured
-release never reaches that walk, so the sweep is either redundant or covering
-for a release a finalizer forgot.
+**Closed.** Every drag is routed by the pointer capture of the node that took
+its press: the pane scrollbars, the split separators, the file explorer's
+border, tabs, text selection, and a press on a live terminal grid. Their state
+used to live in seventeen loose `MouseState` fields (`dragging_scrollbar`,
+`drag_start_row`, `drag_start_top_byte`, `drag_selection_*`, …). Each gesture
+set a few of them, and a blanket sweep cleared them all in the legacy walk's
+`Up` arm. So one gesture could read a field another had left behind, and a
+release could clear part of its own state: the vertical scrollbar's cleared
+three of its five fields.
 
-**The pattern, from the split separator** (`app::chrome::splits::SeparatorDrag`)
-and the sidebar divider before it (`app::sidebar::SidebarDrag`):
+Now `MouseState::drag` is one `Option<PointerDrag>`, with one variant per
+gesture. Only one press is held at a time, so a mixture of two gestures' state
+cannot be written. The rules, which the sidebar divider's `SidebarDrag` on the
+`Editor` follows as well:
 
-1. One value per gesture, typed. Build it whole on the press: what is being
-   dragged, where the press landed, and whatever the gesture measures from
-   (the separator's ratio at the press). Store it as
-   `Option<ThatDrag>` on the `Editor`, not as loose fields.
-2. Each captured move reads it. The grip reports only moves that came to it
-   by capture (`Event::captured`, in `view::shell::grip::draggable`), so a
-   hover is never mistaken for a drag, whatever is stored.
-3. The release takes it (`Option::take`, or `= None`).
-4. Nothing sweeps it. A capture that ends without a release, because the
-   node unmounted, leaves a value no move can read, and the next press
-   replaces it.
-
-**What is left to follow it:** the file explorer's border (the last user of
-`drag_start_position`), both scrollbars (`PaneScrollbarDrag` still gates on
-`dragging_*scrollbar` because the vertical bar's uncaptured move is its hover
-highlight; split the two by `captured` the way the grip does), and the pane
-content's text-selection and terminal-grid drags. When the last one moves,
-`clear_active_window_drag_state` and the `Up` arm's sweep go with them.
+1. The press builds the value whole: what is being dragged, where the press
+   landed, and whatever the gesture measures from (the separator's ratio, the
+   scrollbar's scroll position in the pane's own unit).
+2. Each captured move matches on it. A grip reports only moves that came to
+   it by capture (`Event::captured`, in `view::shell::grip::draggable`), so a
+   hover over a grip is never taken for a drag. The pane scrollbar's
+   uncaptured move is its hover highlight, and it is told apart by the held
+   press's variant.
+3. The release sets it to `None`. The legacy walk's `Up` arm does the same,
+   for a press that was not captured.
+4. Nothing else clears it. A capture that ends without a release (the node
+   unmounted) leaves a value no move can reach, and the next press replaces
+   it.
 
 ---
 
