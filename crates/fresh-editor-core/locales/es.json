@@ -1464,6 +1464,7 @@
   "status.save_all": "Se guardaron %{count} archivos",
   "status.save_all_none": "No hay archivos modificados para guardar",
   "status.save_all_partial": "Se guardaron %{saved} archivos, %{failed} fallaron",
+  "status.not_saved_changed_on_disk": "No guardado, modificado en disco: %{files}",
   "status.line_col": "Lín %{line}, Col %{col}",
   "status.modified": "[+]",
   "status.moved_tab": "Pestaña movida al panel",

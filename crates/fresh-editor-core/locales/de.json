@@ -1464,6 +1464,7 @@
   "status.save_all": "%{count} Dateien gespeichert",
   "status.save_all_none": "Keine geänderten Dateien zum Speichern",
   "status.save_all_partial": "%{saved} Dateien gespeichert, %{failed} fehlgeschlagen",
+  "status.not_saved_changed_on_disk": "Nicht gespeichert, auf Festplatte geändert: %{files}",
   "status.line_col": "Zeile %{line}, Spalte %{col}",
   "status.modified": "[+]",
   "status.moved_tab": "Tab zu Split verschoben",

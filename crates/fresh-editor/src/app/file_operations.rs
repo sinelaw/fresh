@@ -42,6 +42,18 @@ fn unnamed_modified_buffers_in(window: &crate::app::window::Window) -> Vec<Buffe
         .collect()
 }
 
+/// What a bulk save ([`Editor::save_all`], [`Editor::save_all_on_exit`]) did.
+#[derive(Debug, Default)]
+pub struct SaveAllOutcome {
+    /// Buffers written to disk.
+    pub saved: usize,
+    /// Buffers whose write failed (permissions, lost remote, ...).
+    pub failed: usize,
+    /// Buffers left unsaved because their file changed on disk since it was
+    /// loaded or saved; overwriting it needs an explicit Save (issue #3346).
+    pub changed_on_disk: Vec<PathBuf>,
+}
+
 impl Editor {
     /// Save the active buffer
     pub fn save(&mut self) -> anyhow::Result<()> {
@@ -281,7 +293,15 @@ impl Editor {
         }
 
         let mut count = 0;
+        let mut changed_on_disk = Vec::new();
         for (id, path) in to_save {
+            // Never overwrite someone else's change unasked; auto-save can't
+            // prompt, so leave the buffer dirty and say so.
+            if self.changed_on_disk(&path).is_some() {
+                tracing::warn!("Auto-save skipped for {}: changed on disk", path.display());
+                changed_on_disk.push(path);
+                continue;
+            }
             if let Some(state) = self
                 .windows
                 .get_mut(&self.active_window)
@@ -307,6 +327,11 @@ impl Editor {
                     }
                 }
             }
+        }
+
+        if !changed_on_disk.is_empty() {
+            self.active_window_mut().status_message =
+                Some(Self::not_saved_changed_on_disk_message(&changed_on_disk));
         }
 
         Ok(count)
@@ -401,22 +426,30 @@ impl Editor {
     /// Save all modified file-backed buffers to disk (called on exit when auto_save is enabled).
     /// Unlike `auto_save_persistent_buffers`, this skips the interval check and only saves
     /// named file-backed buffers (not unnamed buffers).
-    pub fn save_all_on_exit(&mut self) -> anyhow::Result<usize> {
+    ///
+    /// Buffers whose file changed on disk are left unsaved and listed in
+    /// [`SaveAllOutcome::changed_on_disk`].
+    pub fn save_all_on_exit(&mut self) -> anyhow::Result<SaveAllOutcome> {
         // Exiting closes every workspace, so "save on the way out" must mean
         // all of them (issue #3189). Retargeted per window so the per-buffer
         // finalize (LSP didSave, event-log marker, recovery delete) lands on
         // the right window's state.
-        let mut count = 0;
+        let mut outcome = SaveAllOutcome::default();
         for window_id in self.window_ids_sorted() {
-            count += self.with_window_retargeted(window_id, |editor| {
+            let window_outcome = self.with_window_retargeted(window_id, |editor| {
                 editor.save_all_on_exit_in_active_window()
             })?;
+            outcome.saved += window_outcome.saved;
+            outcome.failed += window_outcome.failed;
+            outcome
+                .changed_on_disk
+                .extend(window_outcome.changed_on_disk);
         }
-        Ok(count)
+        Ok(outcome)
     }
 
     /// The single-workspace half of [`Editor::save_all_on_exit`].
-    fn save_all_on_exit_in_active_window(&mut self) -> anyhow::Result<usize> {
+    fn save_all_on_exit_in_active_window(&mut self) -> anyhow::Result<SaveAllOutcome> {
         let mut to_save = Vec::new();
         for (id, state) in self
             .windows
@@ -433,8 +466,16 @@ impl Editor {
             }
         }
 
-        let mut count = 0;
+        let mut outcome = SaveAllOutcome::default();
         for (id, path) in to_save {
+            if self.changed_on_disk(&path).is_some() {
+                tracing::warn!(
+                    "Auto-save on exit skipped for {}: changed on disk",
+                    path.display()
+                );
+                outcome.changed_on_disk.push(path);
+                continue;
+            }
             if let Some(state) = self
                 .windows
                 .get_mut(&self.active_window)
@@ -445,9 +486,10 @@ impl Editor {
                 match state.buffer.save() {
                     Ok(()) => {
                         self.finalize_save_buffer(id, Some(path), true)?;
-                        count += 1;
+                        outcome.saved += 1;
                     }
                     Err(e) => {
+                        outcome.failed += 1;
                         if e.downcast_ref::<SudoSaveRequired>().is_some() {
                             tracing::debug!(
                                 "Auto-save on exit skipped for {} (sudo required)",
@@ -465,7 +507,7 @@ impl Editor {
             }
         }
 
-        Ok(count)
+        Ok(outcome)
     }
 
     /// Save every modified, file-backed buffer in the active window to disk.
@@ -478,9 +520,10 @@ impl Editor {
     /// so LSP notifications, recovery cleanup, and the modified marker are all
     /// kept in sync, just like a single-buffer save.
     ///
-    /// Returns `(saved, failed)`: the number of buffers written successfully
-    /// and the number whose write failed (e.g. permissions, lost remote).
-    pub fn save_all(&mut self) -> anyhow::Result<(usize, usize)> {
+    /// Buffers whose file changed on disk since it was loaded or saved are
+    /// left unsaved (and listed in the outcome) rather than overwriting the
+    /// other change; a plain Save on that buffer asks first.
+    pub fn save_all(&mut self) -> anyhow::Result<SaveAllOutcome> {
         // Collect ids + paths up front so we don't hold an immutable borrow of
         // `windows` while mutably saving each buffer below.
         let mut to_save = Vec::new();
@@ -500,9 +543,12 @@ impl Editor {
             }
         }
 
-        let mut saved = 0;
-        let mut failed = 0;
+        let mut outcome = SaveAllOutcome::default();
         for (id, path) in to_save {
+            if self.changed_on_disk(&path).is_some() {
+                outcome.changed_on_disk.push(path);
+                continue;
+            }
             let result = self
                 .windows
                 .get_mut(&self.active_window)
@@ -513,17 +559,17 @@ impl Editor {
             match result {
                 Some(Ok(())) => {
                     self.finalize_save_buffer(id, Some(path), true)?;
-                    saved += 1;
+                    outcome.saved += 1;
                 }
                 Some(Err(e)) => {
-                    failed += 1;
+                    outcome.failed += 1;
                     tracing::warn!("Save All failed for {}: {}", path.display(), e);
                 }
                 None => {}
             }
         }
 
-        Ok((saved, failed))
+        Ok(outcome)
     }
 
     /// Revert the active buffer to the last saved version on disk
@@ -1369,13 +1415,14 @@ impl Editor {
                 None => continue, // Can't read file, skip
             };
 
-            let dominated_by_stored = self
+            // Any difference counts: a replacement can carry an older mtime
+            // (issue #3346).
+            let matches_stored = self
                 .file_mod_times()
                 .get(&path)
-                .map(|stored| current_mtime <= *stored)
-                .unwrap_or(false);
+                .is_some_and(|stored| current_mtime == *stored);
 
-            if dominated_by_stored {
+            if matches_stored {
                 continue;
             }
 
@@ -1397,8 +1444,7 @@ impl Editor {
                 let still_needs_revert = self
                     .file_mod_times()
                     .get(&path)
-                    .map(|stored| current_mtime > *stored)
-                    .unwrap_or(true);
+                    .is_none_or(|stored| current_mtime != *stored);
 
                 if !still_needs_revert {
                     continue;
@@ -1434,23 +1480,40 @@ impl Editor {
     /// Returns Some(current_mtime) if there's a conflict, None otherwise
     pub fn check_save_conflict(&self) -> Option<std::time::SystemTime> {
         let path = self.active_state().buffer.file_path()?;
+        self.changed_on_disk(path)
+    }
 
-        // Get current file modification time
+    /// Whether `path` changed on disk since this window last loaded or saved
+    /// it. Returns the file's current mtime if so.
+    ///
+    /// Any mtime difference counts, not only a newer one: a replacement file
+    /// can carry an *older* timestamp (`cp -p`, `rsync -t`, `tar x`, `mv` of
+    /// an older file) and is still someone else's content (issue #3346).
+    pub(crate) fn changed_on_disk(&self, path: &Path) -> Option<std::time::SystemTime> {
         let current_mtime = self
             .authority()
             .filesystem
             .metadata(path)
             .ok()
             .and_then(|m| m.modified)?;
+        let recorded_mtime = self.file_mod_times().get(path)?;
+        (current_mtime != *recorded_mtime).then_some(current_mtime)
+    }
 
-        // Compare with our recorded modification time
-        match self.file_mod_times().get(path) {
-            Some(recorded_mtime) if current_mtime > *recorded_mtime => {
-                // File was modified externally since we last loaded/saved it
-                Some(current_mtime)
-            }
-            _ => None,
-        }
+    /// Report buffers a bulk save left alone because their file changed on
+    /// disk (see [`Editor::changed_on_disk`]).
+    pub(crate) fn not_saved_changed_on_disk_message(paths: &[PathBuf]) -> String {
+        let files = paths
+            .iter()
+            .map(|p| {
+                p.file_name()
+                    .unwrap_or(p.as_os_str())
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        t!("status.not_saved_changed_on_disk", files = files).to_string()
     }
 }
 

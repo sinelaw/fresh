@@ -1517,6 +1517,7 @@
   "status.save_all": "Saved %{count} files",
   "status.save_all_none": "No modified files to save",
   "status.save_all_partial": "Saved %{saved} files, %{failed} failed",
+  "status.not_saved_changed_on_disk": "Not saved, changed on disk: %{files}",
   "status.line_col": "Ln %{line}, Col %{col}",
   "status.modified": "[+]",
   "status.moved_tab": "Moved tab to split",

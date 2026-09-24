@@ -739,9 +739,15 @@ impl Editor {
         };
 
         if self.config().editor.auto_save_enabled {
-            let saved = self.save_all_on_exit().map(|count| {
-                if count > 0 {
-                    tracing::info!("Auto-saved {} buffer(s) on exit", count);
+            let saved = self.save_all_on_exit().map(|outcome| {
+                if outcome.saved > 0 {
+                    tracing::info!("Auto-saved {} buffer(s) on exit", outcome.saved);
+                }
+                if !outcome.changed_on_disk.is_empty() {
+                    tracing::warn!(
+                        "Not auto-saved on exit, changed on disk: {:?}",
+                        outcome.changed_on_disk
+                    );
                 }
             });
             record("auto-save", saved);

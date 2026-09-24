@@ -210,8 +210,9 @@ impl Editor {
             }
             Action::SaveAll => {
                 let msg = match self.save_all() {
-                    Ok((saved, failed)) => {
-                        if failed > 0 {
+                    Ok(outcome) => {
+                        let (saved, failed) = (outcome.saved, outcome.failed);
+                        let counts = if failed > 0 {
                             t!(
                                 "status.save_all_partial",
                                 saved = saved.to_string(),
@@ -222,6 +223,17 @@ impl Editor {
                             t!("status.save_all_none").to_string()
                         } else {
                             t!("status.save_all", count = saved.to_string()).to_string()
+                        };
+                        if outcome.changed_on_disk.is_empty() {
+                            counts
+                        } else {
+                            let skipped =
+                                Self::not_saved_changed_on_disk_message(&outcome.changed_on_disk);
+                            if saved == 0 && failed == 0 {
+                                skipped
+                            } else {
+                                format!("{counts}; {skipped}")
+                            }
                         }
                     }
                     Err(e) => t!("file.save_failed", error = &format!("{}", e)).to_string(),

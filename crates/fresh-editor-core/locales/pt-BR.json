@@ -1464,6 +1464,7 @@
   "status.save_all": "%{count} arquivos salvos",
   "status.save_all_none": "Nenhum arquivo modificado para salvar",
   "status.save_all_partial": "%{saved} arquivos salvos, %{failed} com falha",
+  "status.not_saved_changed_on_disk": "Não salvo, modificado no disco: %{files}",
   "status.line_col": "Lín %{line}, Col %{col}",
   "status.modified": "[+]",
   "status.moved_tab": "Aba movida para divisão",

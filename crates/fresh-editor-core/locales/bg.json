@@ -1537,6 +1537,7 @@
   "status.save_all": "Записани %{count} файла",
   "status.save_all_none": "Няма променени файлове за запис",
   "status.save_all_partial": "Записани %{saved} файла, %{failed} не успяха",
+  "status.not_saved_changed_on_disk": "Не е записано, променено на диска: %{files}",
   "status.scrolled_tabs_left": "Превъртяни раздели наляво",
   "status.scrolled_tabs_right": "Превъртяни раздели надясно",
   "status.shell_command_completed": "Shell командата завърши",

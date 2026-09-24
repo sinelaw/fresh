@@ -1464,6 +1464,7 @@
   "status.save_all": "Збережено файлів: %{count}",
   "status.save_all_none": "Немає змінених файлів для збереження",
   "status.save_all_partial": "Збережено %{saved}, не вдалося %{failed}",
+  "status.not_saved_changed_on_disk": "Не збережено, змінено на диску: %{files}",
   "status.line_col": "Рядок %{line}, Стовпець %{col}",
   "status.modified": "[+]",
   "status.moved_tab": "Вкладку переміщено до розділення",
