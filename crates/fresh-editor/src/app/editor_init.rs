@@ -781,7 +781,6 @@ impl Editor {
             sidebar_drag: None,
             prose_drag: None,
             prose_reveal: std::cell::RefCell::new(HashMap::new()),
-            widget_panel_render_heights: std::collections::HashMap::new(),
         };
 
         // The plugin per-window filesystem registry is populated on the first
