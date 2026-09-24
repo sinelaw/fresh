@@ -681,17 +681,26 @@ impl RecoveryStorage {
     /// page cache survives), but system crashes/power loss could leave corrupted recovery
     /// files. Async I/O would let us have both safety and performance.
     fn atomic_write(&self, target: &Path, content: &[u8]) -> io::Result<()> {
-        let temp_path = target.with_extension("tmp");
+        // A unique sibling name: `with_extension("tmp")` made `<id>.chunk.0` and
+        // `<id>.chunk.1` share `<id>.chunk.tmp` (which also matches the chunk
+        // listing prefix if left behind).
+        let temp_path = crate::model::filesystem::sibling_temp_path(target);
 
-        // Write to temp file
-        let mut file = File::create(&temp_path)?;
-        file.write_all(content)?;
+        // Write to temp file (never an existing one)
+        let mut file = File::options()
+            .write(true)
+            .create_new(true)
+            .open(&temp_path)?;
+        let written = file.write_all(content);
         drop(file);
-
         // Atomic rename
-        fs::rename(&temp_path, target)?;
-
-        Ok(())
+        let result = written.and_then(|()| fs::rename(&temp_path, target));
+        if result.is_err() {
+            // Best-effort cleanup; the write error is what matters
+            #[allow(clippy::let_underscore_must_use)]
+            let _ = fs::remove_file(&temp_path);
+        }
+        result
     }
 }
 
@@ -819,9 +828,12 @@ mod tests {
         let read_content = fs::read(&target).unwrap();
         assert_eq!(read_content, content);
 
-        // Temp file should not exist
-        let temp_path = target.with_extension("tmp");
-        assert!(!temp_path.exists());
+        // No temp file should be left behind
+        let names: Vec<_> = fs::read_dir(&storage.recovery_dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(names, ["test.txt"]);
     }
 
     // ========================================================================
