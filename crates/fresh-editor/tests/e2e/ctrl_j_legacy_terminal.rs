@@ -150,6 +150,7 @@ fn esc_lf_is_alt_enter() {
 /// the buffer (merge_conflict's `merge-result` binds `C-j` to the next
 /// conflict). A prompt never resolves the buffer's mode, so there LF still
 /// confirms (sinelaw/fresh#3384).
+#[cfg(feature = "plugins")]
 #[test]
 fn a_modes_ctrl_j_does_not_stop_it_confirming_a_prompt() {
     use crossterm::event::{KeyCode, KeyModifiers};
