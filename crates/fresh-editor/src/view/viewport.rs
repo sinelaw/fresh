@@ -831,6 +831,67 @@ impl Viewport {
         starts.get(offset).copied().unwrap_or(walk_end)
     }
 
+    /// The byte a page motion lands the caret on: on the row `rows` rows
+    /// below the row that starts at `from` (the new top row), at visual
+    /// column `goal_col` of that row, or at the row's last position when the
+    /// row is shorter.
+    ///
+    /// Walks the rows the frame draws (`row_walk`, over the same collapsed
+    /// folds), so the caret lands on the screen row asked for. Plugin soft
+    /// breaks and virtual lines are invisible to the walk, as they are to
+    /// [`Self::top_visual_row_source_byte`], and shift the landing by the
+    /// rows they add. The column is counted as the vertical motions' own
+    /// off-screen fallback counts it: a continuation row's hanging indent is
+    /// padding before its text.
+    pub fn byte_at_row_below(
+        &mut self,
+        buffer: &mut Buffer,
+        from: usize,
+        rows: usize,
+        goal_col: usize,
+        hidden_ranges: &[(usize, usize)],
+    ) -> usize {
+        use crate::primitives::display_width::byte_offset_at_visual_column;
+        use crate::view::row_walk;
+        use crate::view::wrap_machine::WrapRule;
+
+        let rule = if self.grid_wrap || self.line_wrap_enabled {
+            self.wrap_rule(buffer)
+        } else {
+            WrapRule::Chop {
+                chars: crate::view::ui::split_rendering::MAX_SAFE_LINE_WIDTH,
+            }
+        };
+        let folds = Self::fold_skip(hidden_ranges);
+        let starts = row_walk::row_starts_from(buffer, from, rule, rows.saturating_add(2), &folds);
+        let idx = rows.min(starts.len().saturating_sub(1));
+        let row_start = starts.get(idx).copied().unwrap_or(from);
+        let next_row = starts.get(idx + 1).copied();
+
+        // The row's text, cut at its line's end.
+        let read_end = next_row
+            .unwrap_or_else(|| row_start.saturating_add(MAX_LINE_BYTES))
+            .min(buffer.len());
+        let bytes = buffer.slice_bytes(row_start..read_end);
+        let Ok(text) = std::str::from_utf8(&bytes) else {
+            return row_start;
+        };
+        let (text, row_continues) = match text.find(['\n', '\r']) {
+            Some(end) => (&text[..end], false),
+            // No line break before the next row: the line wraps there, and the
+            // next row draws the byte it starts with.
+            None => (text, next_row.is_some()),
+        };
+        let last = if row_continues {
+            text.char_indices().last().map_or(0, |(i, _)| i)
+        } else {
+            text.len()
+        };
+        let indent = row_walk::carry_at(buffer, row_start, rule).line_indent;
+        let offset = byte_offset_at_visual_column(text, goal_col.saturating_sub(indent));
+        row_start + offset.min(last)
+    }
+
     /// Scroll by `delta` visual rows using the wrap index — the whole of wheel
     /// scrolling, as arithmetic.
     ///

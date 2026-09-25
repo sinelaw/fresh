@@ -136,6 +136,24 @@ impl crate::app::window::Window {
             Some((vp.top_byte(), vp.top_view_line_offset()))
         };
 
+        // Where the primary caret is on screen, and the column it is aiming
+        // for. The page keeps both: the caret lands on the same screen row of
+        // the new page, at the same goal column, the way Up and Down keep the
+        // column. Landing it on the page's first row instead put it inside the
+        // scroll-off margin, so the very next Down or Right scrolled the view
+        // back to restore the margin, and it reset the column to 1 (#3398).
+        let (caret_row, goal_col) = {
+            let primary = *self.split_view_states().get(&split_id)?.cursors.primary();
+            let row = self
+                .pane_view(split_id)
+                .and_then(|view| view.find_visual_row(primary.position));
+            let col = primary
+                .sticky_column
+                .or_else(|| self.byte_to_visual_column(split_id, primary.position))
+                .unwrap_or(0);
+            (row, col)
+        };
+
         let old_pos = viewport_pos(self)?;
         // Scroll *this* leaf: `split_id` is the effective active split, which
         // for a grouped buffer's inner panel is not the split manager's
@@ -153,12 +171,16 @@ impl crate::app::window::Window {
             return None;
         }
 
-        // Byte of the visual row now shown at the very top of the viewport.
-        // For a soft-wrapped line this is `top_byte` advanced by
-        // `top_view_line_offset` wrap segments — NOT `top_byte` itself,
-        // which on a single hugely-wrapped line is always the document
-        // start (landing the cursor there would re-introduce the overshoot
-        // / jump-to-top bugs).
+        // The caret's landing, counted from the visual row now shown at the
+        // very top of the viewport. For a soft-wrapped line that row starts
+        // at `top_byte` advanced by `top_view_line_offset` wrap segments —
+        // NOT `top_byte` itself, which on a single hugely-wrapped line is
+        // always the document start (counting from there would re-introduce
+        // the overshoot / jump-to-top bugs).
+        //
+        // The row is the caret's old screen row, kept out of the scroll-off
+        // margins so the next ordinary motion does not have to scroll; a
+        // caret that was off screen lands on the first row past the margin.
         let target_byte = {
             let buffer_id = self.buffer_for_leaf(split_id)?;
             self.buffers
@@ -173,19 +195,31 @@ impl crate::app::window::Window {
                         .into_iter()
                         .map(|r| (r.start_byte, r.end_byte))
                         .collect();
-                    vs.viewport.top_visual_row_source_byte(
+                    let top_row_byte = vs.viewport.top_visual_row_source_byte(
                         &mut state.buffer,
                         &soft_breaks,
                         &virtual_lines,
+                        &hidden_ranges,
+                    );
+                    let height = vs.viewport.visible_line_count().max(1);
+                    let margin = vs.viewport.scroll_offset.min((height - 1) / 2);
+                    let row = caret_row
+                        .unwrap_or(margin)
+                        .clamp(margin, height - 1 - margin);
+                    vs.viewport.byte_at_row_below(
+                        &mut state.buffer,
+                        top_row_byte,
+                        row,
+                        goal_col,
                         &hidden_ranges,
                     )
                 })?
         };
 
-        // Emit a MoveCursor event placing each cursor at the new viewport
-        // top.  The cursor is guaranteed visible (it's at row 0 of the new
-        // viewport) and each press advances by exactly a full page of view
-        // rows — the same way it does when line wrap is off.
+        // Emit a MoveCursor event placing each cursor at the landing. The
+        // cursor is on screen by construction, and each press advances the
+        // view by exactly a full page of rows — the same way it does when
+        // line wrap is off.
         let cursors = &self.split_view_states().get(&split_id)?.cursors;
         let events: Vec<Event> = cursors
             .iter()
@@ -204,7 +238,7 @@ impl crate::app::window::Window {
                     old_anchor: cursor.anchor,
                     new_anchor,
                     old_sticky_column: cursor.sticky_column,
-                    new_sticky_column: cursor.sticky_column,
+                    new_sticky_column: Some(goal_col),
                 }
             })
             .collect();
