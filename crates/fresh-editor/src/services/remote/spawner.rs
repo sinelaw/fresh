@@ -130,29 +130,26 @@ pub enum SpawnError {
 /// to spawn processes transparently on either local or remote filesystems.
 #[async_trait::async_trait]
 pub trait ProcessSpawner: Send + Sync {
-    /// Spawn a process and wait for completion
-    async fn spawn(
-        &self,
-        command: String,
-        args: Vec<String>,
-        cwd: Option<String>,
-    ) -> Result<SpawnResult, SpawnError>;
-
-    /// Spawn a process and wait for completion, keeping stdout as raw
-    /// bytes. The default goes through [`Self::spawn`], so a backend that
-    /// doesn't override it hands back stdout already decoded as UTF-8.
+    /// Spawn a process and wait for completion, keeping stdout as the raw
+    /// bytes it wrote. The one method every backend implements: the others
+    /// derive from it, so none of them can hand back stdout that was already
+    /// decoded (lossily) on the way.
     async fn spawn_raw(
         &self,
         command: String,
         args: Vec<String>,
         cwd: Option<String>,
-    ) -> Result<RawSpawnResult, SpawnError> {
-        let result = self.spawn(command, args, cwd).await?;
-        Ok(RawSpawnResult {
-            stdout: result.stdout.into_bytes(),
-            stderr: result.stderr,
-            exit_code: result.exit_code,
-        })
+    ) -> Result<RawSpawnResult, SpawnError>;
+
+    /// Spawn a process and wait for completion, with stdout decoded as UTF-8
+    /// (invalid sequences replaced).
+    async fn spawn(
+        &self,
+        command: String,
+        args: Vec<String>,
+        cwd: Option<String>,
+    ) -> Result<SpawnResult, SpawnError> {
+        self.spawn_raw(command, args, cwd).await.map(Into::into)
     }
 
     /// Spawn a process, piping stdout directly to a file instead of
@@ -170,9 +167,9 @@ pub trait ProcessSpawner: Send + Sync {
     ) -> Result<SpawnResult, SpawnError> {
         // Fallback: collect in memory then write. Concrete impls override
         // to pipe directly.
-        let result = self.spawn(command, args, cwd).await?;
+        let result = self.spawn_raw(command, args, cwd).await?;
         if result.exit_code == 0 || !result.stdout.is_empty() {
-            std::fs::write(&stdout_to, result.stdout.as_bytes())
+            std::fs::write(&stdout_to, &result.stdout)
                 .map_err(|e| SpawnError::Process(format!("write {:?}: {}", stdout_to, e)))?;
         }
         Ok(SpawnResult {
@@ -234,15 +231,6 @@ impl LocalProcessSpawner {
 
 #[async_trait::async_trait]
 impl ProcessSpawner for LocalProcessSpawner {
-    async fn spawn(
-        &self,
-        command: String,
-        args: Vec<String>,
-        cwd: Option<String>,
-    ) -> Result<SpawnResult, SpawnError> {
-        self.spawn_raw(command, args, cwd).await.map(Into::into)
-    }
-
     async fn spawn_raw(
         &self,
         command: String,
@@ -556,15 +544,6 @@ impl RemoteProcessSpawner {
 
 #[async_trait::async_trait]
 impl ProcessSpawner for RemoteProcessSpawner {
-    async fn spawn(
-        &self,
-        command: String,
-        args: Vec<String>,
-        cwd: Option<String>,
-    ) -> Result<SpawnResult, SpawnError> {
-        self.spawn_raw(command, args, cwd).await.map(Into::into)
-    }
-
     async fn spawn_raw(
         &self,
         command: String,

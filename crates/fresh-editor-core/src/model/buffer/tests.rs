@@ -2501,6 +2501,18 @@ mod rebuild_pristine_saved_root_tests {
             ) -> std::io::Result<Box<dyn crate::model::filesystem::FileWriter>> {
                 self.inner.create_file(path)
             }
+            fn create_new_file(
+                &self,
+                path: &Path,
+            ) -> std::io::Result<Box<dyn crate::model::filesystem::FileWriter>> {
+                self.inner.create_new_file(path)
+            }
+            fn create_new_private_file(
+                &self,
+                path: &Path,
+            ) -> std::io::Result<Box<dyn crate::model::filesystem::FileWriter>> {
+                self.inner.create_new_private_file(path)
+            }
             fn open_file(
                 &self,
                 path: &Path,

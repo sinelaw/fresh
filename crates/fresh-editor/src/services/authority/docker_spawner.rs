@@ -128,15 +128,6 @@ impl DockerExecSpawner {
 
 #[async_trait]
 impl ProcessSpawner for DockerExecSpawner {
-    async fn spawn(
-        &self,
-        command: String,
-        args: Vec<String>,
-        cwd: Option<String>,
-    ) -> Result<SpawnResult, SpawnError> {
-        self.spawn_raw(command, args, cwd).await.map(Into::into)
-    }
-
     async fn spawn_raw(
         &self,
         command: String,

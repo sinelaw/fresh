@@ -247,6 +247,12 @@ impl FileSystem for RemoteTreeFs {
     fn create_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
         self.inner.create_file(&self.map(path))
     }
+    fn create_new_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
+        self.inner.create_new_file(&self.map(path))
+    }
+    fn create_new_private_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
+        self.inner.create_new_private_file(&self.map(path))
+    }
     fn open_file(&self, path: &Path) -> io::Result<Box<dyn FileReader>> {
         self.inner.open_file(&self.map(path))
     }
