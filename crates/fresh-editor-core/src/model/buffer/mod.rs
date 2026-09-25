@@ -717,10 +717,10 @@ impl TextBuffer {
         })
     }
 
-    /// Save the buffer to its associated file
-    pub fn save(&mut self) -> anyhow::Result<()> {
+    /// Save the buffer to its associated file (see [`Self::save_to_file`]).
+    pub fn save(&mut self, recovery_dir: &Path) -> anyhow::Result<()> {
         if let Some(path) = self.persistence.file_path_owned() {
-            self.save_to_file(path)
+            self.save_to_file(path, recovery_dir)
         } else {
             anyhow::bail!(io::Error::new(
                 io::ErrorKind::NotFound,
@@ -753,11 +753,17 @@ impl TextBuffer {
     /// the file server-side, avoiding transfer of unchanged content.
     ///
     /// A local file is replaced atomically where that keeps it the same file,
-    /// and written in place otherwise (see [`save::save_local`]).
+    /// and written in place otherwise (see [`save::save_local`]), after
+    /// staging a copy of the new content in `recovery_dir` — the editor's
+    /// recovery directory (`DirectoryContext::recovery_dir`).
     ///
     /// If the line ending format has been changed (via set_line_ending), all content
     /// will be converted to the new format during save.
-    pub fn save_to_file<P: AsRef<Path>>(&mut self, path: P) -> anyhow::Result<()> {
+    pub fn save_to_file<P: AsRef<Path>>(
+        &mut self,
+        path: P,
+        recovery_dir: &Path,
+    ) -> anyhow::Result<()> {
         let dest_path = path.as_ref();
 
         // An emptied buffer is written as zero bytes: no BOM, nothing to copy.
@@ -775,7 +781,7 @@ impl TextBuffer {
 
         let fs = self.persistence.fs();
         if fs.remote_connection_info().is_none() {
-            save::save_local(fs, dest_path, &recipe)?;
+            save::save_local(fs, dest_path, &recipe, recovery_dir)?;
         } else if recipe.has_copy_ops() {
             // Remote with Copy ops: the agent rebuilds the file server-side
             let src_for_patch = recipe.src_path.as_deref().unwrap_or(dest_path);

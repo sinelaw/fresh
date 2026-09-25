@@ -201,13 +201,17 @@ impl WriteRecipe {
 /// When the file (or, for the atomic write, its directory) can't be written
 /// at all, the content is staged for the sudo prompt instead
 /// ([`SudoSaveRequired`]).
+///
+/// `recovery_dir` is the editor's recovery directory (its top level, not a
+/// session's scoped one), where an in-place write stages its copy.
 pub(super) fn save_local(
     fs: &Arc<dyn FileSystem + Send + Sync>,
     dest_path: &Path,
     recipe: &WriteRecipe,
+    recovery_dir: &Path,
 ) -> anyhow::Result<()> {
     if !fs.is_owner(dest_path) {
-        return save_with_inplace_write(fs, dest_path, recipe);
+        return save_with_inplace_write(fs, dest_path, recipe, recovery_dir);
     }
 
     let mut data = Vec::new();
@@ -217,7 +221,7 @@ pub(super) fn save_local(
         Err(ReplaceError::IdentityNotPreserved(loss)) => {
             tracing::debug!("Writing {} in place: {loss}", dest_path.display());
             let original_metadata = fs.metadata_if_exists(dest_path);
-            write_data_inplace(fs, dest_path, &data, original_metadata)
+            write_data_inplace(fs, dest_path, &data, original_metadata, recovery_dir)
         }
         Err(ReplaceError::Io(e)) if e.kind() == io::ErrorKind::PermissionDenied => {
             let original_metadata = fs.metadata_if_exists(dest_path);
@@ -412,15 +416,6 @@ fn create_temp_file(
     Ok((SudoSaveTempFile::new(fs, temp_path), file))
 }
 
-/// Where in-place writes stage their content and recovery metadata:
-/// `$XDG_DATA_HOME/fresh/recovery` (or `~/.local/share/fresh/recovery`) —
-/// the top of the recovery tree, not a session's scoped directory.
-fn inplace_recovery_dir() -> PathBuf {
-    crate::data_dir::get_data_dir()
-        .map(|d| d.join("recovery"))
-        .unwrap_or_else(|_| std::env::temp_dir())
-}
-
 /// Create a temporary file in the recovery directory for in-place writes.
 /// This allows recovery if a crash occurs during the in-place write operation.
 ///
@@ -428,12 +423,11 @@ fn inplace_recovery_dir() -> PathBuf {
 /// file's directory, so the file's own permissions don't guard it.
 fn create_recovery_temp_file(
     fs: &dyn FileSystem,
+    recovery_dir: &Path,
     dest_path: &Path,
 ) -> io::Result<(PathBuf, Box<dyn FileWriter>)> {
-    let recovery_dir = inplace_recovery_dir();
-
     // Ensure directory exists
-    fs.create_dir_all(&recovery_dir)?;
+    fs.create_dir_all(recovery_dir)?;
 
     // Create unique filename based on destination file and timestamp
     let file_name = dest_path
@@ -464,13 +458,6 @@ fn is_staged_copy_in(path: &Path, dir: &Path) -> bool {
             .file_name()
             .and_then(|n| n.to_str())
             .is_some_and(|n| n.starts_with(".inplace-") && n.ends_with(".tmp"))
-}
-
-/// Get the path for in-place write recovery metadata.
-/// Uses the same recovery directory as temp files.
-fn inplace_recovery_meta_path(dest_path: &Path) -> PathBuf {
-    let hash = crate::recovery_types::path_hash(dest_path);
-    inplace_recovery_dir().join(format!("{}.inplace.json", hash))
 }
 
 /// Write in-place recovery metadata using fs.
@@ -568,11 +555,12 @@ impl<'a> StagedCopy<'a> {
     /// copy of the content about to be written to it.
     fn new(
         fs: &'a dyn FileSystem,
+        recovery_dir: &Path,
         dest_path: &Path,
         temp_path: PathBuf,
         original_metadata: &Option<FileMetadata>,
     ) -> Self {
-        let meta_path = inplace_recovery_meta_path(dest_path);
+        let meta_path = InplaceWriteRecovery::meta_path(recovery_dir, dest_path);
         // Best effort - the staged copy alone is still worth having
         let meta =
             write_inplace_recovery_meta(fs, &meta_path, dest_path, &temp_path, original_metadata)
@@ -643,8 +631,10 @@ impl<'a> StagedCopy<'a> {
 /// this the copy outlives the save (a file that needs sudo never gets the
 /// non-sudo in-place write that would clear it), and every session start
 /// warns about it. Entries of another running process are left alone.
-pub fn resolve_inplace_write_recovery(fs: &dyn FileSystem, dest_path: &Path) {
-    let meta_path = inplace_recovery_meta_path(dest_path);
+///
+/// `recovery_dir` is the one the save staged in (see [`save_local`]).
+pub fn resolve_inplace_write_recovery(fs: &dyn FileSystem, recovery_dir: &Path, dest_path: &Path) {
+    let meta_path = InplaceWriteRecovery::meta_path(recovery_dir, dest_path);
     let Ok(json) = fs.read_file(&meta_path) else {
         return;
     };
@@ -657,10 +647,7 @@ pub fn resolve_inplace_write_recovery(fs: &dyn FileSystem, dest_path: &Path) {
         return;
     }
     // Best-effort cleanup of files the completed save made obsolete
-    if meta_path
-        .parent()
-        .is_some_and(|dir| is_staged_copy_in(&recovery.temp_path, dir))
-    {
+    if is_staged_copy_in(&recovery.temp_path, recovery_dir) {
         #[allow(clippy::let_underscore_must_use)]
         let _ = fs.remove_file(&recovery.temp_path);
     }
@@ -669,61 +656,37 @@ pub fn resolve_inplace_write_recovery(fs: &dyn FileSystem, dest_path: &Path) {
 }
 
 /// Clean up after in-place writes (see [`write_in_place_staged`]) whose
-/// process died before it could, in the directory they are staged in:
+/// process died before it could, in `recovery_dir`, where they stage:
 ///
 /// * a staged copy whose destination now holds exactly its content (the
 ///   write got that far, or the file was saved again since), with its
 ///   metadata;
 /// * metadata whose staged copy is gone;
 /// * the temp files of metadata writes a crash interrupted
-///   (`.<hash>.inplace.json.<pid>.<n>.tmp`).
+///   (see [`crate::recovery_types::remove_orphaned_temp_files`]).
 ///
 /// A staged copy that differs from its destination may be the only intact
 /// copy of what was being saved, so it is kept and logged, never aged out.
 /// Entries of a process still running are left alone. Returns how many files
 /// were removed.
-pub fn clean_up_inplace_write_recoveries() -> usize {
-    let dir = inplace_recovery_dir();
-    let Ok(entries) = std::fs::read_dir(&dir) else {
-        return 0;
-    };
-    let mut removed = 0;
-    let mut remove = |path: &Path| match std::fs::remove_file(path) {
+pub fn clean_up_inplace_write_recoveries(fs: &dyn FileSystem, recovery_dir: &Path) -> usize {
+    let mut removed =
+        crate::recovery_types::remove_orphaned_temp_files(fs, recovery_dir).unwrap_or(0);
+    let mut remove = |path: &Path| match fs.remove_file(path) {
         Ok(()) => removed += 1,
         Err(e) => tracing::debug!("Failed to remove {}: {}", path.display(), e),
     };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
-            continue;
-        };
-        if name.contains(".inplace.json.") {
-            let dead = crate::model::filesystem::sibling_temp_pid(name)
-                .is_some_and(|pid| !crate::recovery_types::is_process_running(pid));
-            if dead {
-                remove(&path);
-            }
-            continue;
-        }
-        if !name.ends_with(".inplace.json") {
-            continue;
-        }
-        let Some(recovery) = std::fs::read(&path)
-            .ok()
-            .and_then(|json| serde_json::from_slice::<InplaceWriteRecovery>(&json).ok())
-        else {
-            continue;
-        };
+    for (meta_path, recovery) in InplaceWriteRecovery::scan(fs, recovery_dir) {
         if recovery.is_in_progress() {
             continue;
         }
-        if !recovery.temp_path.exists() {
-            remove(&path);
-        } else if is_staged_copy_in(&recovery.temp_path, &dir)
-            && same_content(&recovery.temp_path, &recovery.dest_path).unwrap_or(false)
+        if !fs.exists(&recovery.temp_path) {
+            remove(&meta_path);
+        } else if is_staged_copy_in(&recovery.temp_path, recovery_dir)
+            && same_content(fs, &recovery.temp_path, &recovery.dest_path).unwrap_or(false)
         {
             remove(&recovery.temp_path);
-            remove(&path);
+            remove(&meta_path);
         } else {
             tracing::warn!(
                 "An interrupted save of {} left the content being saved in {}",
@@ -736,35 +699,21 @@ pub fn clean_up_inplace_write_recoveries() -> usize {
 }
 
 /// Whether two files hold the same bytes.
-fn same_content(a: &Path, b: &Path) -> io::Result<bool> {
-    use std::io::Read;
-    if std::fs::metadata(a)?.len() != std::fs::metadata(b)?.len() {
+fn same_content(fs: &dyn FileSystem, a: &Path, b: &Path) -> io::Result<bool> {
+    const CHUNK: u64 = 64 * 1024;
+    let len = fs.metadata(a)?.size;
+    if fs.metadata(b)?.size != len {
         return Ok(false);
     }
-    let fill = |file: &mut std::fs::File, buf: &mut [u8]| -> io::Result<usize> {
-        let mut filled = 0;
-        while filled < buf.len() {
-            match file.read(&mut buf[filled..]) {
-                Ok(0) => break,
-                Ok(n) => filled += n,
-                Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
-                Err(e) => return Err(e),
-            }
-        }
-        Ok(filled)
-    };
-    let (mut file_a, mut file_b) = (std::fs::File::open(a)?, std::fs::File::open(b)?);
-    let (mut buf_a, mut buf_b) = (vec![0u8; 64 * 1024], vec![0u8; 64 * 1024]);
-    loop {
-        let n = fill(&mut file_a, &mut buf_a)?;
-        let m = fill(&mut file_b, &mut buf_b)?;
-        if buf_a[..n] != buf_b[..m] {
+    let mut offset = 0;
+    while offset < len {
+        let n = (len - offset).min(CHUNK) as usize;
+        if fs.read_range(a, offset, n)? != fs.read_range(b, offset, n)? {
             return Ok(false);
         }
-        if n == 0 {
-            return Ok(true);
-        }
+        offset += n as u64;
     }
+    Ok(true)
 }
 
 /// Write using in-place mode to preserve file ownership.
@@ -783,6 +732,7 @@ fn save_with_inplace_write(
     fs: &Arc<dyn FileSystem + Send + Sync>,
     dest_path: &Path,
     recipe: &WriteRecipe,
+    recovery_dir: &Path,
 ) -> anyhow::Result<()> {
     let original_metadata = fs.metadata_if_exists(dest_path);
 
@@ -790,13 +740,13 @@ fn save_with_inplace_write(
     // (same as the non-inplace path for small files)
     if !recipe.has_copy_ops() {
         let data = recipe.flatten_inserts();
-        return write_data_inplace(fs, dest_path, &data, original_metadata);
+        return write_data_inplace(fs, dest_path, &data, original_metadata, recovery_dir);
     }
 
     // Step 1: Write recipe to a temp file in the recovery directory
     // This reads Copy chunks from the original file (still intact) and writes to temp.
     // Using the recovery directory allows crash recovery if the operation fails.
-    let (temp_path, mut temp_file) = create_recovery_temp_file(&**fs, dest_path)?;
+    let (temp_path, mut temp_file) = create_recovery_temp_file(&**fs, recovery_dir, dest_path)?;
     if let Err(e) = write_recipe(fs, &mut temp_file, recipe) {
         // Best-effort cleanup of temp file on write failure
         #[allow(clippy::let_underscore_must_use)]
@@ -808,7 +758,13 @@ fn save_with_inplace_write(
 
     // Step 1.5: Save recovery metadata before the dangerous step
     // If we crash during step 2, this metadata + temp file allows recovery
-    let mut staged = StagedCopy::new(&**fs, dest_path, temp_path, &original_metadata);
+    let mut staged = StagedCopy::new(
+        &**fs,
+        recovery_dir,
+        dest_path,
+        temp_path,
+        &original_metadata,
+    );
 
     // Step 2: Stream temp file content to destination
     // Now it's safe to truncate the destination since all data is in temp
@@ -844,8 +800,9 @@ fn write_data_inplace(
     dest_path: &Path,
     data: &[u8],
     original_metadata: Option<FileMetadata>,
+    recovery_dir: &Path,
 ) -> anyhow::Result<()> {
-    match write_in_place_staged(&**fs, dest_path, data) {
+    match write_in_place_staged(&**fs, recovery_dir, dest_path, data) {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == io::ErrorKind::PermissionDenied => {
             Err(stage_for_sudo(fs, dest_path, data, original_metadata)?)
@@ -889,8 +846,13 @@ fn stage_for_sudo(
 /// *file* needing sudo. Only running out of space stops the write, since the
 /// file is probably on the same full disk, and truncating it then would lose
 /// its content with no copy of the new one anywhere.
-fn write_in_place_staged(fs: &dyn FileSystem, dest_path: &Path, data: &[u8]) -> io::Result<()> {
-    let mut staged = match stage_in_place_write(fs, dest_path, data) {
+fn write_in_place_staged(
+    fs: &dyn FileSystem,
+    recovery_dir: &Path,
+    dest_path: &Path,
+    data: &[u8],
+) -> io::Result<()> {
+    let mut staged = match stage_in_place_write(fs, recovery_dir, dest_path, data) {
         Ok(staged) => Some(staged),
         Err(e) if is_out_of_space(&e) => return Err(e),
         Err(e) => {
@@ -928,11 +890,12 @@ fn write_in_place_staged(fs: &dyn FileSystem, dest_path: &Path, data: &[u8]) -> 
 /// recovery directory and (best effort) the metadata pointing at it.
 fn stage_in_place_write<'a>(
     fs: &'a dyn FileSystem,
+    recovery_dir: &Path,
     dest_path: &Path,
     data: &[u8],
 ) -> io::Result<StagedCopy<'a>> {
     let original_metadata = fs.metadata_if_exists(dest_path);
-    let (temp_path, mut temp_file) = create_recovery_temp_file(fs, dest_path)?;
+    let (temp_path, mut temp_file) = create_recovery_temp_file(fs, recovery_dir, dest_path)?;
     let staged = temp_file
         .write_all(data)
         .and_then(|()| temp_file.sync_all());
@@ -945,6 +908,7 @@ fn stage_in_place_write<'a>(
     }
     Ok(StagedCopy::new(
         fs,
+        recovery_dir,
         dest_path,
         temp_path,
         &original_metadata,

@@ -2672,7 +2672,10 @@ impl Editor {
             .get_mut(&buffer_id)
         {
             // Save to the specified path
-            match state.buffer.save_to_file(&path) {
+            match state
+                .buffer
+                .save_to_file(&path, &self.dir_context.recovery_dir())
+            {
                 Ok(()) => {
                     // save_to_file already updates file_path internally via finalize_save
                     // Run on-save actions (formatting, etc.)

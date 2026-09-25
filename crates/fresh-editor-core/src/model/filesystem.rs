@@ -2631,23 +2631,19 @@ mod tests {
         std::fs::write(&path, b"old\n").unwrap();
         std::fs::hard_link(&path, &link).unwrap();
         let ino = std::fs::metadata(&path).unwrap().ino();
-        // The in-place write stages in the recovery dir: not the real one.
-        let data_dir = tempfile::tempdir().unwrap();
-        let previous = crate::data_dir::set_data_dir_override(Some(data_dir.path().into()));
+        let recovery_dir = tempfile::tempdir().unwrap();
 
         let fs: std::sync::Arc<dyn FileSystem + Send + Sync> = std::sync::Arc::new(StdFileSystem);
         let mut buffer =
             crate::model::buffer::TextBuffer::load_from_file(&path, 1 << 20, fs).unwrap();
         buffer.insert_bytes(0, b"NEW ".to_vec());
-        let result = buffer.save();
-        crate::data_dir::set_data_dir_override(previous);
-        result.unwrap();
+        buffer.save(recovery_dir.path()).unwrap();
 
         assert_eq!(std::fs::read(&link).unwrap(), b"NEW old\n");
         let meta = std::fs::metadata(&path).unwrap();
         assert_eq!(meta.ino(), ino);
         assert_eq!(meta.nlink(), 2);
-        let staged: Vec<_> = std::fs::read_dir(data_dir.path().join("recovery"))
+        let staged: Vec<_> = std::fs::read_dir(recovery_dir.path())
             .unwrap()
             .map(|e| e.unwrap().file_name())
             .collect();
@@ -2741,20 +2737,19 @@ mod tests {
         std::fs::create_dir(&recovery_dir).unwrap();
         std::fs::set_permissions(&recovery_dir, std::fs::Permissions::from_mode(0o555)).unwrap();
 
-        let (thread_path, thread_data_dir) = (path.clone(), data_dir.path().to_path_buf());
+        let (thread_path, thread_recovery_dir) = (path.clone(), recovery_dir.clone());
         let saved = std::thread::spawn(move || {
             // SAFETY: geteuid has no failure modes.
             if unsafe { libc::geteuid() } == 0 && !drop_file_access_overrides_on_this_thread() {
                 return None;
             }
-            crate::data_dir::set_data_dir_override(Some(thread_data_dir));
             let fs: std::sync::Arc<dyn FileSystem + Send + Sync> =
                 std::sync::Arc::new(StdFileSystem);
             let mut buffer =
                 crate::model::buffer::TextBuffer::load_from_file(&thread_path, 1 << 20, fs)
                     .unwrap();
             buffer.insert_bytes(0, b"NEW ".to_vec());
-            Some(buffer.save().map_err(|e| e.to_string()))
+            Some(buffer.save(&thread_recovery_dir).map_err(|e| e.to_string()))
         })
         .join()
         .unwrap();

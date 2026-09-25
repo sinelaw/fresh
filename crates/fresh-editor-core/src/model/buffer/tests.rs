@@ -952,7 +952,9 @@ mod large_file_support {
 
         // Save to a new file (to avoid issues with reading while writing same file)
         let save_path = temp_dir.path().join("saved.txt");
-        buffer.save_to_file(&save_path).unwrap();
+        buffer
+            .save_to_file(&save_path, &temp_dir.path().join("recovery"))
+            .unwrap();
 
         // Verify the saved file
         let saved_content = std::fs::read(&save_path).unwrap();
@@ -1018,7 +1020,9 @@ mod large_file_support {
 
         // Save
         let save_path = temp_dir.path().join("multi_edit_saved.txt");
-        buffer.save_to_file(&save_path).unwrap();
+        buffer
+            .save_to_file(&save_path, &temp_dir.path().join("recovery"))
+            .unwrap();
 
         // Verify
         let saved = std::fs::read_to_string(&save_path).unwrap();
@@ -1406,7 +1410,9 @@ fn test_cr_file_roundtrips_on_save() {
     assert_eq!(buffer.line_count(), Some(4));
 
     // Saving an unchanged CR buffer must write `\r`, never `\n`.
-    buffer.save_to_file(&file_path).unwrap();
+    buffer
+        .save_to_file(&file_path, &temp_dir.path().join("recovery"))
+        .unwrap();
     let saved = std::fs::read(&file_path).unwrap();
     assert_eq!(&saved, b"Line 1\rLine 2\rLine 3\r");
     assert!(
@@ -1442,7 +1448,9 @@ fn test_cr_enter_inserts_row_and_saves_cr() {
         "Enter in a CR buffer must create a new row"
     );
 
-    buffer.save_to_file(&file_path).unwrap();
+    buffer
+        .save_to_file(&file_path, &temp_dir.path().join("recovery"))
+        .unwrap();
     let saved = std::fs::read(&file_path).unwrap();
     assert_eq!(&saved, b"Line 1\r\rLine 2");
 }
@@ -1466,7 +1474,9 @@ fn test_new_buffer_default_cr_saves_cr_separators() {
     // The buffer split into two rows despite being CR mode.
     assert_eq!(buffer.line_count(), Some(2));
 
-    buffer.save_to_file(&file_path).unwrap();
+    buffer
+        .save_to_file(&file_path, &temp_dir.path().join("recovery"))
+        .unwrap();
     let saved = std::fs::read(&file_path).unwrap();
     assert_eq!(&saved, b"line one\rline two");
 }
@@ -1638,7 +1648,9 @@ mod line_ending_conversion {
         assert!(buffer.is_modified());
 
         // Save the file
-        buffer.save_to_file(&file_path).unwrap();
+        buffer
+            .save_to_file(&file_path, &temp_dir.path().join("recovery"))
+            .unwrap();
 
         // Read back and verify CRLF
         let saved_bytes = std::fs::read(&file_path).unwrap();
@@ -1671,7 +1683,9 @@ mod line_ending_conversion {
         assert!(buffer.is_modified());
 
         // Save the file
-        buffer.save_to_file(&file_path).unwrap();
+        buffer
+            .save_to_file(&file_path, &temp_dir.path().join("recovery"))
+            .unwrap();
 
         // Read back and verify LF (no CRLF)
         let saved_bytes = std::fs::read(&file_path).unwrap();
@@ -1702,7 +1716,7 @@ mod line_ending_conversion {
         std::fs::set_permissions(&unwritable_dir, Permissions::from_mode(0o555))?;
 
         let mut buffer = TextBuffer::from_bytes(b"new content".to_vec(), test_fs());
-        let result = buffer.save_to_file(&file_path);
+        let result = buffer.save_to_file(&file_path, &temp_dir.path().join("recovery"));
 
         // Verify that it returns SudoSaveRequired
         match result {
@@ -1747,7 +1761,7 @@ mod line_ending_conversion {
         std::fs::set_permissions(&unwritable_dir, Permissions::from_mode(0o555))?;
 
         let mut buffer = TextBuffer::from_bytes(b"content".to_vec(), test_fs());
-        let result = buffer.save_to_file(&file_path);
+        let result = buffer.save_to_file(&file_path, &temp_dir.path().join("recovery"));
 
         match result {
             Err(e) => {

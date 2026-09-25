@@ -548,7 +548,7 @@ fn test_large_file_save_preserves_unloaded_regions() {
     buffer.insert_bytes(0, b"EDITED: ".to_vec());
 
     // Save the file
-    buffer.save().unwrap();
+    buffer.save(&temp_dir.path().join("recovery")).unwrap();
 
     // Read back and verify
     let saved_content = fs::read_to_string(&file_path).unwrap();
