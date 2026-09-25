@@ -905,6 +905,7 @@ impl Editor {
                 }
             }
             Err(e) => {
+                self.discard_sudo_save_temp(&e);
                 self.active_window_mut().pending_close_buffer = None;
                 // A failed Save-As during the save-and-quit chain means we
                 // can't honor the user's intent to save everything; abandon

@@ -333,7 +333,7 @@ impl Editor {
                     }
                     Err(e) => {
                         // Skip if sudo is required (auto-save can't handle prompts)
-                        if e.downcast_ref::<SudoSaveRequired>().is_some() {
+                        if self.discard_sudo_save_temp(&e) {
                             tracing::debug!(
                                 "Auto-save skipped for {:?} (sudo required)",
                                 path.display()
@@ -507,7 +507,7 @@ impl Editor {
                     }
                     Err(e) => {
                         outcome.failed += 1;
-                        if e.downcast_ref::<SudoSaveRequired>().is_some() {
+                        if self.discard_sudo_save_temp(&e) {
                             tracing::debug!(
                                 "Auto-save on exit skipped for {} (sudo required)",
                                 path.display()
@@ -580,6 +580,7 @@ impl Editor {
                 }
                 Some(Err(e)) => {
                     outcome.failed += 1;
+                    self.discard_sudo_save_temp(&e);
                     tracing::warn!("Save All failed for {}: {}", path.display(), e);
                 }
                 None => {}
@@ -1508,6 +1509,24 @@ impl Editor {
     /// an older file) and is still someone else's content (issue #3346).
     pub(crate) fn changed_on_disk(&self, path: &Path) -> Option<std::time::SystemTime> {
         changed_on_disk_in(self.active_window(), path)
+    }
+
+    /// A save that needs sudo leaves the new content in a temp file for the
+    /// sudo prompt to write ([`SudoSaveRequired::temp_path`]). A caller that
+    /// can't offer that prompt must delete it, or every attempt leaves another
+    /// temp file behind. Returns whether `e` was such an error.
+    pub(crate) fn discard_sudo_save_temp(&self, e: &anyhow::Error) -> bool {
+        let Some(info) = e.downcast_ref::<SudoSaveRequired>() else {
+            return false;
+        };
+        if let Err(err) = self.authority().filesystem.remove_file(&info.temp_path) {
+            tracing::debug!(
+                "Failed to remove sudo-save temp file {}: {}",
+                info.temp_path.display(),
+                err
+            );
+        }
+        true
     }
 
     /// Report buffers a bulk save left alone because their file changed on

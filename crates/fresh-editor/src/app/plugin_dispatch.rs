@@ -2682,6 +2682,7 @@ impl Editor {
                     tracing::debug!("Saved buffer {:?} to path", buffer_id);
                 }
                 Err(e) => {
+                    self.discard_sudo_save_temp(&e);
                     self.handle_set_status(format!("Error saving: {}", e));
                     tracing::error!("Failed to save buffer to path: {}", e);
                 }

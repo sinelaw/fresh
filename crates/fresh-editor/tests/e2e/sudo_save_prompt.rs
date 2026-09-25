@@ -20,8 +20,16 @@
 // (to create files owned by another user). These tests cover the atomic write
 // path which correctly handles permission denied errors.
 
-use crate::common::harness::EditorTestHarness;
+use crate::common::harness::{EditorTestHarness, HarnessOptions};
 use crossterm::event::{KeyCode, KeyModifiers};
+use fresh::config::Config;
+use fresh::model::filesystem::{
+    DirEntry, FileMetadata, FilePermissions, FileReader, FileSystem, FileWriter, StdFileSystem,
+};
+use std::io;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::Duration;
 use tempfile::TempDir;
 
 #[cfg(unix)]
@@ -305,5 +313,255 @@ fn test_save_root_owned_file_shows_sudo_prompt() {
         !screen.contains(" *"),
         "Editing should be disabled for files the current user cannot write. Screen:\n{}",
         screen
+    );
+}
+
+/// A local filesystem on which writing `denied` fails with PermissionDenied,
+/// as it does for a file the user may not write — the case that turns a
+/// save into [`fresh::model::buffer::SudoSaveRequired`]. (Real permissions
+/// can't produce it when the tests run as root.)
+struct WriteDeniedFileSystem {
+    inner: Arc<dyn FileSystem>,
+    denied: PathBuf,
+}
+
+impl FileSystem for WriteDeniedFileSystem {
+    fn read_file(&self, path: &Path) -> io::Result<Vec<u8>> {
+        self.inner.read_file(path)
+    }
+
+    fn read_range(&self, path: &Path, offset: u64, len: usize) -> io::Result<Vec<u8>> {
+        self.inner.read_range(path, offset, len)
+    }
+
+    fn write_file(&self, path: &Path, data: &[u8]) -> io::Result<()> {
+        if path == self.denied {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "simulated: permission denied",
+            ));
+        }
+        self.inner.write_file(path, data)
+    }
+
+    fn create_new_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
+        self.inner.create_new_file(path)
+    }
+
+    fn create_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
+        self.inner.create_file(path)
+    }
+
+    fn open_file(&self, path: &Path) -> io::Result<Box<dyn FileReader>> {
+        self.inner.open_file(path)
+    }
+
+    fn open_file_for_write(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
+        self.inner.open_file_for_write(path)
+    }
+
+    fn open_file_for_append(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
+        self.inner.open_file_for_append(path)
+    }
+
+    fn set_file_length(&self, path: &Path, len: u64) -> io::Result<()> {
+        self.inner.set_file_length(path, len)
+    }
+
+    fn rename(&self, from: &Path, to: &Path) -> io::Result<()> {
+        self.inner.rename(from, to)
+    }
+
+    fn copy(&self, from: &Path, to: &Path) -> io::Result<u64> {
+        self.inner.copy(from, to)
+    }
+
+    fn remove_file(&self, path: &Path) -> io::Result<()> {
+        self.inner.remove_file(path)
+    }
+
+    fn remove_dir(&self, path: &Path) -> io::Result<()> {
+        self.inner.remove_dir(path)
+    }
+
+    fn metadata(&self, path: &Path) -> io::Result<FileMetadata> {
+        self.inner.metadata(path)
+    }
+
+    fn symlink_metadata(&self, path: &Path) -> io::Result<FileMetadata> {
+        self.inner.symlink_metadata(path)
+    }
+
+    fn is_dir(&self, path: &Path) -> io::Result<bool> {
+        self.inner.is_dir(path)
+    }
+
+    fn is_file(&self, path: &Path) -> io::Result<bool> {
+        self.inner.is_file(path)
+    }
+
+    fn set_permissions(&self, path: &Path, permissions: &FilePermissions) -> io::Result<()> {
+        self.inner.set_permissions(path, permissions)
+    }
+
+    fn read_dir(&self, path: &Path) -> io::Result<Vec<DirEntry>> {
+        self.inner.read_dir(path)
+    }
+
+    fn create_dir(&self, path: &Path) -> io::Result<()> {
+        self.inner.create_dir(path)
+    }
+
+    fn create_dir_all(&self, path: &Path) -> io::Result<()> {
+        self.inner.create_dir_all(path)
+    }
+
+    fn canonicalize(&self, path: &Path) -> io::Result<PathBuf> {
+        self.inner.canonicalize(path)
+    }
+
+    fn current_uid(&self) -> u32 {
+        self.inner.current_uid()
+    }
+
+    fn sudo_write(
+        &self,
+        path: &Path,
+        data: &[u8],
+        mode: u32,
+        uid: u32,
+        gid: u32,
+    ) -> io::Result<()> {
+        self.inner.sudo_write(path, data, mode, uid, gid)
+    }
+
+    fn search_file(
+        &self,
+        path: &Path,
+        pattern: &str,
+        opts: &fresh::model::filesystem::FileSearchOptions,
+        cursor: &mut fresh::model::filesystem::FileSearchCursor,
+    ) -> io::Result<Vec<fresh::model::filesystem::SearchMatch>> {
+        fresh::model::filesystem::default_search_file(&*self.inner, path, pattern, opts, cursor)
+    }
+
+    fn walk(
+        &self,
+        root: &Path,
+        opts: &fresh::model::filesystem::WalkOptions<'_>,
+        cancel: &std::sync::atomic::AtomicBool,
+        on_entry: &mut dyn FnMut(fresh::model::filesystem::WalkEntry<'_>) -> bool,
+    ) -> std::io::Result<()> {
+        self.inner.walk(root, opts, cancel, on_entry)
+    }
+}
+
+/// A project with `notes.txt` opened and edited, on a filesystem that
+/// refuses to write it, so every save of it needs sudo.
+fn dirty_unwritable_file(config: Config) -> (EditorTestHarness, TempDir, PathBuf) {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("notes.txt");
+    std::fs::write(&file_path, "original content\n").unwrap();
+    let fs = Arc::new(WriteDeniedFileSystem {
+        inner: Arc::new(StdFileSystem),
+        denied: file_path.clone(),
+    });
+    let mut harness = EditorTestHarness::create(
+        120,
+        24,
+        HarnessOptions::new()
+            .with_config(config)
+            .with_filesystem(fs)
+            .with_working_dir(temp_dir.path().to_path_buf()),
+    )
+    .unwrap();
+    harness.open_file(&file_path).unwrap();
+    harness.type_text("modified ").unwrap();
+    harness.render().unwrap();
+    (harness, temp_dir, file_path)
+}
+
+/// Temp files (`.<name>.<pid>.<n>.tmp`) a save left behind in `dir`.
+fn leftover_temp_files(dir: &Path) -> Vec<std::ffi::OsString> {
+    std::fs::read_dir(dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .filter(|name| name.to_string_lossy().ends_with(".tmp"))
+        .collect()
+}
+
+/// A save that needs sudo writes the new content to a temp file for the
+/// sudo prompt. Auto-save can't prompt, so it must delete that file, or each
+/// attempt leaves another one behind.
+#[test]
+fn auto_save_needing_sudo_leaves_no_temp_file() {
+    let mut config = Config::default();
+    config.editor.auto_save_enabled = true;
+    config.editor.auto_save_interval_secs = 2;
+    let (mut harness, dir, file_path) = dirty_unwritable_file(config);
+
+    for _ in 0..2 {
+        harness.advance_time(Duration::from_secs(3));
+        harness.tick_and_render().unwrap();
+    }
+
+    assert_eq!(
+        std::fs::read_to_string(&file_path).unwrap(),
+        "original content\n"
+    );
+    assert_eq!(
+        leftover_temp_files(dir.path()),
+        Vec::<std::ffi::OsString>::new()
+    );
+}
+
+/// Same for Save All, which doesn't prompt for sudo either.
+#[test]
+fn save_all_needing_sudo_leaves_no_temp_file() {
+    let (mut harness, dir, file_path) = dirty_unwritable_file(Config::default());
+
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.type_text("Save All").unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("Save All");
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    assert_eq!(
+        std::fs::read_to_string(&file_path).unwrap(),
+        "original content\n"
+    );
+    assert_eq!(
+        leftover_temp_files(dir.path()),
+        Vec::<std::ffi::OsString>::new()
+    );
+}
+
+/// Same for "Save and Quit" (the save on exit).
+#[test]
+fn save_and_quit_needing_sudo_leaves_no_temp_file() {
+    let (mut harness, dir, file_path) = dirty_unwritable_file(Config::default());
+
+    harness
+        .send_key(KeyCode::Char('q'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("[ Save and Quit ]");
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    assert_eq!(
+        std::fs::read_to_string(&file_path).unwrap(),
+        "original content\n"
+    );
+    assert_eq!(
+        leftover_temp_files(dir.path()),
+        Vec::<std::ffi::OsString>::new()
     );
 }
