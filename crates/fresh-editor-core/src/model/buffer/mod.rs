@@ -26,7 +26,7 @@ pub mod save;
 pub mod search;
 pub use file_kind::BufferFileKind;
 pub use format::{BufferFormat, LineEnding};
-pub use persistence::Persistence;
+pub use persistence::{Persistence, SavedContent};
 pub use save::SudoSaveRequired;
 #[cfg(test)]
 pub(crate) use save::{RecipeAction, WriteRecipe};
@@ -797,6 +797,15 @@ impl TextBuffer {
             )?
         };
 
+        // What is about to be written, when every byte of it is in hand:
+        // cheaper than reading the file back to learn it (issue #3380).
+        let written = (!recipe.has_copy_ops()).then(|| {
+            SavedContent::of_chunks(recipe.actions.iter().filter_map(|action| match action {
+                save::RecipeAction::Insert { index } => Some(recipe.insert_data[*index].as_slice()),
+                save::RecipeAction::Copy { .. } => None,
+            }))
+        });
+
         if local {
             if let Err(e) = save::save_local(&fs, dest_path, &recipe, recovery_dir) {
                 // Tore the very file the unloaded parts are read from
@@ -814,6 +823,7 @@ impl TextBuffer {
         }
 
         self.finalize_save(dest_path)?;
+        self.persistence.set_saved_content(written);
         Ok(())
     }
 
@@ -829,6 +839,19 @@ impl TextBuffer {
                     BufferData::Loaded { .. } => None,
                 },
             )
+    }
+
+    /// The size and hash of what the last save of this buffer wrote, or
+    /// `None` when it wrote nothing yet, or streamed part of the file from
+    /// the old one, or an external writer (sudo) did the writing.
+    pub fn saved_content(&self) -> Option<SavedContent> {
+        self.persistence.saved_content()
+    }
+
+    /// Forget [`Self::saved_content`], once the file is known to hold
+    /// something else, so nothing reads the file again to compare.
+    pub fn forget_saved_content(&mut self) {
+        self.persistence.set_saved_content(None);
     }
 
     /// Finalize save state after successful write.
@@ -858,6 +881,7 @@ impl TextBuffer {
     /// This updates the saved snapshot and file size to match the new state on disk.
     pub fn finalize_external_save(&mut self, dest_path: PathBuf) -> anyhow::Result<()> {
         let new_size = self.persistence.fs().metadata(&dest_path)?.size as usize;
+        self.persistence.set_saved_content(None);
         self.persistence.set_saved_file_size(Some(new_size));
         self.persistence.set_file_path(dest_path.clone());
         // Consolidated below onto the file just written

@@ -18,6 +18,7 @@ pub mod buffer_settings_commands;
 pub mod capslock_shortcuts;
 pub mod caret_with_a_virtual_line_below;
 pub mod cargo_config_editing;
+pub mod changed_on_disk_clock_skew;
 pub mod code_tour_dock;
 pub mod command_palette;
 pub mod conceal_spanning_line_break;

@@ -854,11 +854,7 @@ impl Editor {
                     self.active_event_log().len()
                 );
 
-                if let Ok(metadata) = self.authority().filesystem.metadata(&full_path) {
-                    if let Some(mtime) = metadata.modified {
-                        self.file_mod_times_mut().insert(full_path.clone(), mtime);
-                    }
-                }
+                self.active_window_mut().record_saved_file(&full_path);
 
                 self.active_window_mut().notify_lsp_save();
 
