@@ -972,9 +972,12 @@ async function recompute(bufferId: number): Promise<void> {
   const state = states.get(bufferId);
   if (!state) return;
   if (!isEnabledForBuffer(state)) return;
-  // Buffer commands act on the active window only: one of another window's
-  // buffers — a HEAD move refreshes every buffer tracked here — is not found
-  // there. Wait for its window, keeping any reference reload pending.
+  // Reading a buffer (`getBufferText`) and diffing it (`diffAgainstBaseline`)
+  // act on the active window only: one of another window's buffers — a HEAD
+  // move refreshes every buffer tracked here — is not found there. Wait for
+  // its window, keeping any reference reload pending. (A baseline's own load
+  // runs through the window that registered it, so a reload is not what
+  // needs the wait.)
   if (editor.getBufferInfo(bufferId) === null) {
     state.deferred = true;
     return;
