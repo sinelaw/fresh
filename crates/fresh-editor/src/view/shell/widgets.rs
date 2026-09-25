@@ -4255,6 +4255,22 @@ pub fn entry_row_hits(
     row_pieces(entry, slot, surface, hits, None, Fill::ToRowEnd, false)
 }
 
+/// Whether the widget `focus_key` names draws a caret that takes the hardware
+/// cursor while its surface holds the keyboard ([`places_cursor`]): a text
+/// field, or a text area that is not a markdown document — a document's caret
+/// is a block wash, not the terminal's cursor.
+///
+/// Asked by a surface that has a caret of its own to draw, so that it can
+/// leave the cursor to the focused control rather than race it for the cell
+/// (`splits::page_layers`, the page reader's caret).
+pub fn focus_places_cursor(spec: &WidgetSpec, focus_key: &str) -> bool {
+    !focus_key.is_empty()
+        && matches!(
+            crate::widgets::find_widget_by_key(spec, focus_key),
+            Some(WidgetSpec::Text { rows, markdown, .. }) if !(*rows > 1 && *markdown)
+        )
+}
+
 /// Whether a surface's caret marker places the hardware cursor: the surface
 /// owns the keyboard, and it is one whose field takes a terminal caret — a
 /// pane's panel, the dock's, the floating panel's. The settings surfaces and

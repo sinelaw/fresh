@@ -1719,14 +1719,10 @@ fn page_layers(
     if reading.is_none() && selection.is_empty() {
         return widgets;
     }
-    // **The reader's caret goes under the content, not over it.** The last
-    // caret painted in a frame takes the hardware cursor, and a focused text
-    // field in the page paints its own at its insertion point. Stacked over
-    // the widgets, the reader's caret — seated on the field's first cell when
-    // it took focus — always won, so typing into a page's field showed the
-    // cursor parked before its label (issue #3234). Painted first, it stands
-    // only when nothing in the page claims the cursor. It paints no cells, so
-    // being under the content hides nothing.
+    // The reader's caret is absent while a control places the cursor — the
+    // caller leaves `reading` out then (`panel_content`) — so it never has to
+    // outrank the field's by paint order. It paints no cells, so being under
+    // the content hides nothing.
     let mut layers = Vec::new();
     if let Some((at_row, at_col)) = reading {
         layers.push(
@@ -1802,7 +1798,15 @@ fn panel_content(id: LeafId, i: super::panel::Interior, active: bool) -> Node<Ui
     // sweep rather than a set of controls to click.
     let is_page = i.page.is_some();
     let page = i.page.clone();
-    let reading = i.reading;
+    // **The caret is the focused control's when it places one** (R2): a text
+    // field in the page draws its own at its insertion point, and the
+    // reader's — seated on the field's first cell when it took focus — is
+    // left out rather than painted under it. Stacked over the widgets, the
+    // reader's used to win, so typing into a page's field showed the cursor
+    // parked before its label (issue #3234).
+    let reading = i
+        .reading
+        .filter(|_| !(active && super::widgets::focus_places_cursor(&i.spec, &i.focus_key)));
     let selection = i.selection.clone();
     let compose = i.compose;
     let body = fresh_ui::layout_reader(move |info: fresh_ui::LayoutInfo| {
