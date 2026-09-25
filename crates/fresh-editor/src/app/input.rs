@@ -120,14 +120,37 @@ impl Editor {
     pub fn handle_key_press(&mut self, press: fresh_input_parser::KeyPress) -> AnyhowResult<()> {
         // The decision is the router's ([`router::layout_reading`]); this
         // shell only supplies the keymap and the current context.
-        let layout = {
-            let context = self.get_key_context();
-            self.keybindings
-                .read()
-                .ok()
-                .and_then(|kb| router::layout_reading(&press, &kb, context))
-        };
+        let context = self.get_key_context();
+        let layout = self
+            .keybindings
+            .read()
+            .ok()
+            .and_then(|kb| router::layout_reading(&press, &kb, context.clone()));
         let (code, modifiers) = layout.unwrap_or((press.code, press.modifiers));
+        // An unbound Ctrl+J is Enter outside the terminal — see
+        // [`router::ctrl_j_reading`]. The modes it asks about are every one
+        // that could be resolving this key: the buffer's (or window's), and
+        // that of a mounted panel.
+        let modes: Vec<String> = [
+            self.effective_mode().map(str::to_owned),
+            self.panel(super::PanelSlot::Floating)
+                .and_then(|p| p.mode.clone()),
+            self.panel(super::PanelSlot::Dock)
+                .and_then(|p| p.mode.clone()),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        let modes: Vec<&str> = modes.iter().map(String::as_str).collect();
+        let chord_pending = !self.active_window().chord_state.is_empty();
+        let (code, modifiers) = self
+            .keybindings
+            .read()
+            .ok()
+            .and_then(|kb| {
+                router::ctrl_j_reading(code, modifiers, &kb, &context, chord_pending, &modes)
+            })
+            .unwrap_or((code, modifiers));
         self.handle_key(code, modifiers)
     }
 
