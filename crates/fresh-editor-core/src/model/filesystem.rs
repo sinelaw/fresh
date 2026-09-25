@@ -701,6 +701,26 @@ pub trait FileSystem: Send + Sync {
         self.create_file(path)
     }
 
+    /// Like [`FileSystem::create_new_file`], but readable and writable only
+    /// by its owner (0600 on unix) — for a copy of some file's content kept
+    /// away from that file, where its permissions no longer guard it.
+    ///
+    /// The default narrows the permissions right after creating the file,
+    /// before anything is written to it; implementations that can create it
+    /// that way (`O_CREAT` with a mode) should override it.
+    fn create_new_private_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
+        let file = self.create_new_file(path)?;
+        #[cfg(unix)]
+        if let Err(e) = self.set_permissions(path, &FilePermissions::from_mode(0o600)) {
+            drop(file);
+            // Best-effort cleanup; the permission error is what matters
+            #[allow(clippy::let_underscore_must_use)]
+            let _ = self.remove_file(path);
+            return Err(e);
+        }
+        Ok(file)
+    }
+
     /// Create a new, uniquely named temp file next to `path` for an atomic
     /// write-then-rename. Never opens a file that already exists.
     fn create_temp_file_for(&self, path: &Path) -> io::Result<(PathBuf, Box<dyn FileWriter>)> {
@@ -1067,6 +1087,18 @@ pub fn sibling_temp_path(path: &Path) -> PathBuf {
         .collect();
     let n = COUNTER.fetch_add(1, Ordering::Relaxed);
     path.with_file_name(format!(".{short_name}.{}.{n}.tmp", std::process::id()))
+}
+
+/// The pid in a name [`sibling_temp_path`] makes (`.<name>.<pid>.<n>.tmp`),
+/// or `None` for any other file name. Lets a sweep of a directory tell a temp
+/// file left by a process that died mid-write from one being written now.
+pub fn sibling_temp_pid(file_name: &str) -> Option<u32> {
+    let rest = file_name.strip_prefix('.')?.strip_suffix(".tmp")?;
+    let mut parts = rest.rsplitn(3, '.');
+    parts.next()?.parse::<u64>().ok()?;
+    let pid = parts.next()?.parse().ok()?;
+    parts.next().filter(|name| !name.is_empty())?;
+    Some(pid)
 }
 
 // ============================================================================
@@ -1790,6 +1822,14 @@ impl FileSystem for StdFileSystem {
             .create_new(true)
             .open(path)?;
         Ok(Box::new(StdFileWriter(file)))
+    }
+
+    fn create_new_private_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+        Ok(Box::new(StdFileWriter(options.open(path)?)))
     }
 
     fn open_file(&self, path: &Path) -> io::Result<Box<dyn FileReader>> {
