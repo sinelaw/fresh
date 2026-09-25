@@ -60,78 +60,72 @@ impl crate::app::window::Window {
     }
 
     /// Whether `path`, whose mtime no longer matches the one recorded,
-    /// still holds exactly the bytes this window last saved to it.
+    /// still holds exactly the bytes this window's buffer of it last saved.
     ///
     /// On a network filesystem the mtime read right after our own write can
     /// differ from one read later, with no one else touching the file: the
     /// client's cached attributes give way to the server's, and a skewed
     /// server clock stamps something else (issue #3380). Telling that from a
-    /// real change takes the content. Only for a save this window made and
-    /// fingerprinted, and whose fingerprint still belongs to the recorded
-    /// mtime (a revert or reload since then records a different one); only
-    /// when the size matches, so a real change almost never costs a read.
+    /// real change takes the content, compared with what the save wrote
+    /// ([`TextBuffer::saved_content`]). Only for a buffer this window saved
+    /// itself, below the large-file threshold, and only when the size
+    /// matches, so a real change almost never costs a read; and a mismatch
+    /// is remembered ([`Self::forget_saved_content`]), so it costs one at
+    /// most. A revert or reload makes a new buffer, which saved nothing.
+    ///
+    /// [`TextBuffer::saved_content`]: crate::model::buffer::TextBuffer::saved_content
     pub(crate) fn holds_what_was_saved(&self, path: &Path, size: u64) -> bool {
-        let Some(saved) = self.saved_fingerprints.get(path) else {
+        let Some(saved) = self
+            .buffers
+            .as_map()
+            .values()
+            .find(|state| state.buffer.file_path() == Some(path))
+            .and_then(|state| state.buffer.saved_content())
+        else {
             return false;
         };
-        if Some(&saved.mtime) != self.file_mod_times.get(path) || saved.size != size {
+        if saved.size != size || size > self.resources.config.editor.large_file_threshold_bytes {
             return false;
         }
         self.authority()
             .filesystem
             .read_file(path)
-            .is_ok_and(|bytes| content_hash(&bytes) == saved.hash)
+            .is_ok_and(|bytes| crate::model::buffer::SavedContent::of(&bytes) == saved)
     }
 
-    /// Record `path`'s mtime after this window wrote it, with a fingerprint
-    /// of what it wrote, read back from the file, for
-    /// [`Self::holds_what_was_saved`]. Files above the large-file threshold
-    /// get no fingerprint, and an mtime change on them still counts.
+    /// `path` holds something other than what its buffer last saved: stop
+    /// comparing against that, which would read the file on every check.
+    pub(crate) fn forget_saved_content(&mut self, path: &Path) {
+        for state in self.buffers.as_map_mut().values_mut() {
+            if state.buffer.file_path() == Some(path) {
+                state.buffer.forget_saved_content();
+            }
+        }
+    }
+
+    /// [`Self::changed_on_disk`], forgetting what was saved to `path` once
+    /// the file turns out to hold something else.
+    pub(crate) fn detect_change_on_disk(&mut self, path: &Path) -> Option<std::time::SystemTime> {
+        let changed = self.changed_on_disk(path);
+        if changed.is_some() {
+            self.forget_saved_content(path);
+        }
+        changed
+    }
+
+    /// Record `path`'s mtime after this window wrote it, re-read from the
+    /// file rather than predicted.
     pub(crate) fn record_saved_file(&mut self, path: &Path) {
-        let Ok(metadata) = self.authority().filesystem.metadata(path) else {
-            return;
-        };
-        let Some(mtime) = metadata.modified else {
-            return;
-        };
-        self.file_mod_times.insert(path.to_path_buf(), mtime);
-        let limit = self.resources.config.editor.large_file_threshold_bytes;
-        let fingerprint = (metadata.size <= limit)
-            .then(|| self.authority().filesystem.read_file(path).ok())
-            .flatten()
-            .filter(|bytes| bytes.len() as u64 == metadata.size)
-            .map(|bytes| crate::app::window::SavedFingerprint {
-                mtime,
-                size: metadata.size,
-                hash: content_hash(&bytes),
-            });
-        match fingerprint {
-            Some(fingerprint) => {
-                self.saved_fingerprints
-                    .insert(path.to_path_buf(), fingerprint);
-            }
-            None => {
-                self.saved_fingerprints.remove(path);
-            }
+        if let Some(mtime) = self
+            .authority()
+            .filesystem
+            .metadata(path)
+            .ok()
+            .and_then(|m| m.modified)
+        {
+            self.file_mod_times.insert(path.to_path_buf(), mtime);
         }
     }
-
-    /// The file's mtime moved but its content is what was saved: take the
-    /// new mtime as the recorded one, so later checks are cheap again.
-    pub(crate) fn adopt_drifted_mtime(&mut self, path: &Path, mtime: std::time::SystemTime) {
-        self.file_mod_times.insert(path.to_path_buf(), mtime);
-        if let Some(saved) = self.saved_fingerprints.get_mut(path) {
-            saved.mtime = mtime;
-        }
-    }
-}
-
-/// A fingerprint of a file's content, compared only within this process.
-fn content_hash(bytes: &[u8]) -> u64 {
-    use std::hash::{Hash, Hasher};
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    bytes.hash(&mut hasher);
-    hasher.finish()
 }
 
 /// What Save All ([`Editor::save_all`]) did.
@@ -458,7 +452,11 @@ impl Editor {
         for (id, path) in to_save {
             // Never overwrite someone else's change unasked; auto-save can't
             // prompt, so leave the buffer dirty and say so.
-            if self.changed_on_disk(&path).is_some() {
+            if self
+                .active_window_mut()
+                .detect_change_on_disk(&path)
+                .is_some()
+            {
                 tracing::warn!("Auto-save skipped for {}: changed on disk", path.display());
                 changed_on_disk.push(path);
                 continue;
@@ -711,7 +709,11 @@ impl Editor {
 
         let mut outcome = SaveAllOutcome::default();
         for (id, path) in to_save {
-            if self.changed_on_disk(&path).is_some() {
+            if self
+                .active_window_mut()
+                .detect_change_on_disk(&path)
+                .is_some()
+            {
                 outcome.changed_on_disk.push(path);
                 continue;
             }
@@ -1567,6 +1569,8 @@ impl Editor {
                 None => continue,
             };
 
+            let is_modified = state.buffer.is_modified();
+
             // Check if the file actually changed (compare mod times)
             // We use optimistic concurrency: check mtime, and if we decide to revert,
             // re-check to handle the race where a save completed between our checks.
@@ -1595,16 +1599,18 @@ impl Editor {
                 .metadata(&path)
                 .map_or(u64::MAX, |m| m.size);
             if self.active_window().holds_what_was_saved(&path, size) {
-                self.active_window_mut()
-                    .adopt_drifted_mtime(&path, current_mtime);
+                // Take the new mtime, so later checks are cheap again.
+                self.file_mod_times_mut()
+                    .insert(path.clone(), current_mtime);
                 continue;
             }
+            self.active_window_mut().forget_saved_content(&path);
 
             // If buffer has local modifications, show a warning (don't auto-revert).
             // Once per change: the poll finds this same change on every pass
             // until the buffer is saved or reverted, and repeating it would
             // keep overwriting whatever the status bar has shown since.
-            if state.buffer.is_modified() {
+            if is_modified {
                 let change = stored_mtime.map(|stored| (stored, current_mtime));
                 let reported = match change {
                     Some(change) => self

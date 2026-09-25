@@ -19,6 +19,7 @@ use fresh::model::filesystem::{
 };
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tempfile::TempDir;
@@ -29,6 +30,9 @@ use tempfile::TempDir;
 struct SkewedClockFileSystem {
     inner: Arc<dyn FileSystem>,
     skew: Mutex<Duration>,
+    /// How many times `notes.txt` was read whole. On a remote filesystem
+    /// each is a download of the file.
+    notes_reads: AtomicUsize,
 }
 
 impl SkewedClockFileSystem {
@@ -41,6 +45,9 @@ impl SkewedClockFileSystem {
 
 impl FileSystem for SkewedClockFileSystem {
     fn read_file(&self, path: &Path) -> io::Result<Vec<u8>> {
+        if path.file_name().is_some_and(|name| name == "notes.txt") {
+            self.notes_reads.fetch_add(1, Ordering::SeqCst);
+        }
         self.inner.read_file(path)
     }
     fn read_range(&self, path: &Path, offset: u64, len: usize) -> io::Result<Vec<u8>> {
@@ -169,6 +176,7 @@ fn saved_then_skewed_clean() -> (
     let fs = Arc::new(SkewedClockFileSystem {
         inner: Arc::new(StdFileSystem),
         skew: Mutex::new(Duration::ZERO),
+        notes_reads: AtomicUsize::new(0),
     });
     let mut harness = EditorTestHarness::create(
         160,
@@ -284,4 +292,71 @@ fn the_file_poll_does_not_reload_a_file_whose_mtime_only_drifted() {
         .unwrap();
     harness.render().unwrap();
     harness.assert_screen_not_contains("first original");
+}
+
+/// Saving doesn't read the file back to learn what it holds: on a remote
+/// filesystem that downloaded the whole file after every Ctrl+S and every
+/// auto-save. What the save wrote is known from the save itself.
+#[test]
+fn saving_does_not_read_the_file_back() {
+    let (mut harness, _dir, file, fs) = saved_then_skewed();
+    // No drift this time, which the save's own check would read the file
+    // to tell apart.
+    *fs.skew.lock().unwrap() = Duration::ZERO;
+    fs.notes_reads.store(0, Ordering::SeqCst);
+
+    harness
+        .send_key(KeyCode::Char('s'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    assert_eq!(
+        std::fs::read_to_string(&file).unwrap(),
+        "first second original\n"
+    );
+    assert_eq!(fs.notes_reads.load(Ordering::SeqCst), 0);
+}
+
+/// A same-size change under a modified buffer is read once to tell it from
+/// a moved timestamp, not again on every poll after: once the file is
+/// known to hold something else, what was saved is no longer compared.
+#[test]
+fn a_same_size_change_is_read_once_not_on_every_poll() {
+    let (mut harness, dir, file, fs) = saved_then_skewed();
+    // A second file in a split of its own, whose reload shows when a poll
+    // has run over both.
+    let other = dir.path().join("other.txt");
+    std::fs::write(&other, "other\n").unwrap();
+    harness.open_file(&other).unwrap();
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.type_text("Split Vertical").unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.open_file(&file).unwrap();
+    // Wide enough for the poll's "File <full path> changed on disk (...)"
+    // whole, however long the temp dir's path (macOS, Windows).
+    let path_len = file.canonicalize().unwrap().display().to_string().len() as u16;
+    harness.resize(160 + path_len, 24).unwrap();
+    harness.render().unwrap();
+    fs.notes_reads.store(0, Ordering::SeqCst);
+
+    std::fs::write(&file, "FIRST ORIGINAL\n").unwrap();
+    harness
+        .wait_until(|h| {
+            h.get_status_bar()
+                .contains("changed on disk (buffer has unsaved")
+        })
+        .unwrap();
+    for pass in ["reloaded once\n", "reloaded twice\n"] {
+        std::fs::write(&other, pass).unwrap();
+        harness
+            .wait_until(|h| h.screen_to_string().contains(pass.trim_end()))
+            .unwrap();
+    }
+
+    assert_eq!(fs.notes_reads.load(Ordering::SeqCst), 1);
 }
