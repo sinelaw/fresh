@@ -346,9 +346,16 @@ impl Editor {
             }
         }
 
-        if !changed_on_disk.is_empty() {
-            self.active_window_mut().status_message =
-                Some(Self::not_saved_changed_on_disk_message(&changed_on_disk));
+        // Say so when the set of skipped files changes, not every interval:
+        // repeating it would keep overwriting whatever the status bar has
+        // shown since.
+        changed_on_disk.sort();
+        if changed_on_disk != self.active_window().auto_save_changed_on_disk {
+            if !changed_on_disk.is_empty() {
+                self.active_window_mut().status_message =
+                    Some(Self::not_saved_changed_on_disk_message(&changed_on_disk));
+            }
+            self.active_window_mut().auto_save_changed_on_disk = changed_on_disk;
         }
 
         Ok(count)
