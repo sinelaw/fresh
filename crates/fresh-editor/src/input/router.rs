@@ -87,7 +87,8 @@ pub fn layout_reading(
 }
 
 /// The reading of a Ctrl+J the editor should act on: Enter, unless something
-/// wants Ctrl+J itself. `None` keeps the key as it came.
+/// wants Ctrl+J itself. `None` keeps the key as it came. Ctrl+Alt+J, which
+/// is ESC LF, is likewise Alt+Enter.
 ///
 /// Ctrl+J is LF. The parser reports a raw LF as Ctrl+J so a program in the
 /// integrated terminal can tell it from Enter's CR (sinelaw/fresh#3169), but
@@ -95,7 +96,10 @@ pub fn layout_reading(
 /// confirm in a prompt — and no built-in keymap binds it. So it is read as
 /// Enter except where it is going to a terminal's child (the `Terminal`
 /// context forwards it as 0x0A), where it continues a chord, or where the
-/// keymap or one of `modes` binds it.
+/// keymap or one of `modes` claims it: binds it (a `noop` too), or starts a
+/// chord with it. Asking only for a single-key action missed the last two:
+/// a `noop` on Ctrl+J turned into Enter, and a `C-j …` chord could never
+/// start because its first key arrived as Enter.
 pub fn ctrl_j_reading(
     code: KeyCode,
     modifiers: KeyModifiers,
@@ -104,23 +108,21 @@ pub fn ctrl_j_reading(
     chord_pending: bool,
     modes: &[&str],
 ) -> Option<(KeyCode, KeyModifiers)> {
-    if code != KeyCode::Char('j') || modifiers != KeyModifiers::CONTROL {
+    let ctrl = KeyModifiers::CONTROL;
+    if code != KeyCode::Char('j') || (modifiers != ctrl && modifiers != ctrl | KeyModifiers::ALT) {
         return None;
     }
     if *context == KeyContext::Terminal || chord_pending {
         return None;
     }
     let event = KeyEvent::new(code, modifiers);
-    if kb.resolve(&event, context.clone()) != Action::None {
-        return None;
-    }
-    let mode_binds = modes.iter().any(|mode| {
-        kb.explicit_binding(&event, &KeyContext::Mode((*mode).to_string()))
-            .is_some()
-    });
-    match mode_binds {
+    let claimed = kb.claims_key(&event, context)
+        || modes
+            .iter()
+            .any(|mode| kb.claims_key(&event, &KeyContext::Mode((*mode).to_string())));
+    match claimed {
         true => None,
-        false => Some((KeyCode::Enter, KeyModifiers::NONE)),
+        false => Some((KeyCode::Enter, modifiers - ctrl)),
     }
 }
 
@@ -721,10 +723,22 @@ mod tests {
             ctrl_j_reading(j, ctrl, &kb, &KeyContext::Normal, true, &[]),
             None
         );
+        // Ctrl+Alt+J (ESC LF) is Alt+Enter.
+        assert_eq!(
+            ctrl_j_reading(
+                j,
+                ctrl | KeyModifiers::ALT,
+                &kb,
+                &KeyContext::Normal,
+                false,
+                &[]
+            ),
+            Some((KeyCode::Enter, KeyModifiers::ALT))
+        );
         // Only Ctrl+J itself.
         for (code, mods) in [
             (j, KeyModifiers::NONE),
-            (j, ctrl | KeyModifiers::ALT),
+            (j, ctrl | KeyModifiers::SHIFT),
             (KeyCode::Char('k'), ctrl),
         ] {
             assert_eq!(
@@ -732,6 +746,24 @@ mod tests {
                 None
             );
         }
+        // A mode chord that starts with it holds it for the chord.
+        let chord_mode = KeyContext::Mode("chorded".to_string());
+        kb.load_plugin_chord_default(
+            chord_mode,
+            vec![(j, ctrl), (KeyCode::Char('k'), ctrl)],
+            Action::SelectAll,
+        );
+        assert_eq!(
+            ctrl_j_reading(j, ctrl, &kb, &KeyContext::Normal, false, &["chorded"]),
+            None
+        );
+        // So does a `noop` that disables it.
+        let quiet = KeyContext::Mode("quiet".to_string());
+        kb.load_plugin_default(quiet, j, ctrl, Action::None);
+        assert_eq!(
+            ctrl_j_reading(j, ctrl, &kb, &KeyContext::Normal, false, &["quiet"]),
+            None
+        );
         // A mode that binds it (merge_conflict's `C-j`) keeps it.
         let mode = KeyContext::Mode("merge-conflict".to_string());
         kb.load_plugin_default(mode, j, ctrl, Action::MoveDown);

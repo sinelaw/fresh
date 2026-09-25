@@ -11,7 +11,7 @@
 //! on what ends up rendered.
 
 use crate::common::harness::{EditorTestHarness, HarnessOptions};
-use fresh::config::Config;
+use fresh::config::{Config, Keybinding};
 use fresh::server::input_parser::{Event, InputParser};
 use tempfile::TempDir;
 
@@ -26,12 +26,28 @@ fn send_bytes(harness: &mut EditorTestHarness, bytes: &[u8]) {
 }
 
 fn harness_with_file(content: &str) -> (TempDir, EditorTestHarness) {
+    harness_with_bindings(content, &[])
+}
+
+/// The same, with the user's own `(chord, action)` bindings added.
+fn harness_with_bindings(content: &str, bindings: &[(&str, &str)]) -> (TempDir, EditorTestHarness) {
     let temp_dir = TempDir::new().unwrap();
     let file_path = temp_dir.path().join("notes.txt");
     std::fs::write(&file_path, content).unwrap();
     let mut config = Config::default();
     // Pin the "default" keymap; `Config::default()` picks `macos` on macOS.
     config.active_keybinding_map = fresh::config::KeybindingMapName("default".to_string());
+    for (chord, action) in bindings {
+        config.keybindings.push(Keybinding {
+            key: String::new(),
+            modifiers: Vec::new(),
+            keys: Vec::new(),
+            chord: chord.to_string(),
+            action: action.to_string(),
+            args: Default::default(),
+            when: None,
+        });
+    }
     let mut harness =
         EditorTestHarness::create(80, 24, HarnessOptions::new().with_config(config)).unwrap();
     harness.open_file(&file_path).unwrap();
@@ -70,4 +86,60 @@ fn ctrl_j_confirms_a_prompt() {
 
     harness.wait_for_prompt_closed().unwrap();
     harness.assert_screen_contains("Ln 3, Col 1");
+}
+
+/// The buffer's only line once the keys have run: `X` alone means Select
+/// All ran and the `X` replaced everything.
+fn assert_select_all_ran(harness: &EditorTestHarness) {
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen.contains("one") && !screen.contains("two") && screen.contains("X"),
+        "the bound key must run Select All, which `X` then replaces:\n{screen}"
+    );
+}
+
+/// A user's chord that starts with Ctrl+J runs: LF must reach the chord
+/// resolver as Ctrl+J, not as the Enter an unbound Ctrl+J reads as.
+#[test]
+fn a_ctrl_j_chord_runs_from_a_legacy_terminal() {
+    let (_temp_dir, mut harness) =
+        harness_with_bindings("one\ntwo\n", &[("C-j C-k", "select_all")]);
+
+    // LF, then Ctrl+K (0x0B), then an `X` to replace the selection.
+    send_bytes(&mut harness, b"\n");
+    send_bytes(&mut harness, &[0x0b]);
+    send_bytes(&mut harness, b"X");
+    harness.render().unwrap();
+
+    assert_select_all_ran(&harness);
+}
+
+/// A `noop` on Ctrl+J disables the key; it must not turn into Enter.
+#[test]
+fn a_noop_ctrl_j_does_nothing() {
+    let (_temp_dir, mut harness) = harness_with_bindings("onetwo\n", &[("C-j", "noop")]);
+
+    send_bytes(&mut harness, b"\x1b[C\x1b[C\x1b[C");
+    send_bytes(&mut harness, b"\n");
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("onetwo") && screen.contains("Ln 1, Col 4"),
+        "a noop Ctrl+J must leave the line whole:\n{screen}"
+    );
+}
+
+/// ESC LF, which some terminals send for Alt+Enter, parses as Ctrl+Alt+J;
+/// unbound, it is Alt+Enter, as it was when LF parsed as Enter.
+#[test]
+fn esc_lf_is_alt_enter() {
+    let (_temp_dir, mut harness) =
+        harness_with_bindings("one\ntwo\n", &[("M-Enter", "select_all")]);
+
+    send_bytes(&mut harness, b"\x1b\n");
+    send_bytes(&mut harness, b"X");
+    harness.render().unwrap();
+
+    assert_select_all_ran(&harness);
 }
