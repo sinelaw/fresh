@@ -135,3 +135,28 @@ fn test_save_all_via_command_palette() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+/// One saved file is "1 file", not "1 files" (issue #3399): the count takes
+/// the grammatical number it needs rather than a fixed plural.
+#[test]
+fn test_save_all_reports_one_file_in_the_singular() -> anyhow::Result<()> {
+    let mut harness = EditorTestHarness::with_temp_project(100, 24)?;
+    let dir = harness.project_dir().unwrap();
+    let a = dir.join("only.txt");
+    fs::write(&a, "one")?;
+    harness.open_file(&a)?;
+    harness.type_text("X")?;
+
+    harness.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)?;
+    harness.type_text("Save All")?;
+    harness.render()?;
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE)?;
+    harness.render()?;
+
+    let status = harness.get_status_bar();
+    assert!(
+        status.contains("Saved 1 file") && !status.contains("Saved 1 files"),
+        "one saved file must read in the singular, got: {status:?}"
+    );
+    Ok(())
+}

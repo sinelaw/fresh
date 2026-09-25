@@ -5,6 +5,7 @@
 use super::*;
 use crate::view::confirm::{Choice, Confirm, Tone};
 use fresh_core::WindowId;
+use fresh_i18n::tn;
 
 impl Editor {
     /// Check if the editor should quit
@@ -273,11 +274,9 @@ impl Editor {
         // hot-exit variants differed only in offering a third way out,
         // which is one more `Choice` rather than another whole phrasing
         // of the question.
-        let body = match (&where_clause, modified_count) {
-            (Some(w), 1) => t!("prompt.quit_modified_one_where", where = w).to_string(),
-            (Some(w), n) => t!("prompt.quit_modified_many_where", count = n, where = w).to_string(),
-            (None, 1) => t!("prompt.quit_modified_one").to_string(),
-            (None, n) => t!("prompt.quit_modified_many", count = n).to_string(),
+        let body = match &where_clause {
+            Some(w) => tn!("prompt.quit_modified_where", modified_count, where = w).to_string(),
+            None => tn!("prompt.quit_modified", modified_count).to_string(),
         };
         let mut choices = vec![
             Choice::new(

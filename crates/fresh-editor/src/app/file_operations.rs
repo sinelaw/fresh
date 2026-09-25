@@ -14,7 +14,7 @@ use crate::view::file_tree::FileTreeView;
 use crate::view::prompt::PromptType;
 use std::path::{Path, PathBuf};
 
-use fresh_i18n::t;
+use fresh_i18n::{t, tn};
 use lsp_types::TextDocumentContentChangeEvent;
 
 use crate::model::event::{BufferId, EventLog};
@@ -1569,27 +1569,31 @@ impl Editor {
     /// The status line for Save All: how many files it saved and failed to
     /// save, and those it left alone because they changed on disk.
     pub(crate) fn save_all_message(outcome: &SaveAllOutcome) -> String {
-        let saved = outcome.saved.to_string();
         let failed = outcome.failed.len();
         let changed = file_names(&outcome.changed_on_disk);
+        // The counts are separate plural-aware fragments ("Saved 1 file",
+        // "2 failed"), each inflected for its own number, which the locale's
+        // templates then join.
+        let saved_text = tn!("status.saved_files", outcome.saved);
+        let failed_text = tn!("status.save_all_failed", failed);
         match (failed > 0, outcome.saved > 0, changed.is_empty()) {
             (true, _, true) => t!(
                 "status.save_all_partial",
-                saved = saved,
-                failed = failed.to_string()
+                saved = saved_text,
+                failed = failed_text
             ),
             (true, _, false) => t!(
                 "status.save_all_partial_changed_on_disk",
-                saved = saved,
-                failed = failed.to_string(),
+                saved = saved_text,
+                failed = failed_text,
                 files = changed
             ),
             (false, false, true) => t!("status.save_all_none"),
             (false, false, false) => t!("status.not_saved_changed_on_disk", files = changed),
-            (false, true, true) => t!("status.save_all", count = saved),
+            (false, true, true) => saved_text,
             (false, true, false) => t!(
                 "status.save_all_changed_on_disk",
-                count = saved,
+                saved = saved_text,
                 files = changed
             ),
         }
