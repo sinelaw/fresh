@@ -145,3 +145,42 @@ fn esc_lf_is_alt_enter() {
 
     assert_select_all_ran(&harness);
 }
+
+/// A mode that binds Ctrl+J holds it only where that mode resolves keys:
+/// the buffer (merge_conflict's `merge-result` binds `C-j` to the next
+/// conflict). A prompt never resolves the buffer's mode, so there LF still
+/// confirms (sinelaw/fresh#3384).
+#[test]
+fn a_modes_ctrl_j_does_not_stop_it_confirming_a_prompt() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    use fresh::input::keybindings::{Action, KeyContext};
+    let (_temp_dir, mut harness) = harness_with_file("a\nb\nc\nd\n");
+    {
+        let kb = harness.editor().keybindings_for_tests();
+        kb.write().unwrap().load_plugin_default(
+            KeyContext::Mode("merge-result".to_string()),
+            KeyCode::Char('j'),
+            KeyModifiers::CONTROL,
+            Action::PluginAction("merge_next_conflict".to_string()),
+        );
+    }
+    harness
+        .editor_mut()
+        .handle_plugin_command(fresh_core::api::PluginCommand::SetEditorMode {
+            mode: Some("merge-result".to_string()),
+        })
+        .unwrap();
+
+    // Ctrl+G (0x07) opens Go to Line.
+    send_bytes(&mut harness, &[0x07]);
+    harness.wait_for_prompt().unwrap();
+    send_bytes(&mut harness, b"3");
+    send_bytes(&mut harness, b"\n");
+
+    harness.render().unwrap();
+    assert!(
+        !harness.editor().is_prompting(),
+        "Ctrl+J must confirm the prompt, the buffer's mode notwithstanding"
+    );
+    harness.assert_screen_contains("Ln 3, Col 1");
+}
