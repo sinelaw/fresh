@@ -906,3 +906,23 @@ fn save_and_quit_is_not_held_by_a_hidden_buffer() {
         "modified original content\n"
     );
 }
+
+/// The quit prompt that auto-save falls back to says *why* it is asking
+/// (issue #3400): the file's save just failed, which a bare "1 buffer has
+/// unsaved changes" hid until the user tried Save and Quit.
+#[test]
+fn quit_with_auto_save_names_the_file_it_could_not_save() {
+    let mut config = Config::default();
+    config.editor.auto_save_enabled = true;
+    config.editor.hot_exit = false;
+    config.editor.confirm_quit = false;
+    let (mut harness, _dir, _file_path) = dirty_unwritable_file(config);
+
+    harness
+        .send_key(KeyCode::Char('q'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    harness.assert_screen_contains("[ Save and Quit ]");
+    harness.assert_screen_contains("notes.txt — could not be saved");
+}

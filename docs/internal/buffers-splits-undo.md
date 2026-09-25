@@ -291,7 +291,9 @@ fully window-pure.
 
 Quit counts modified buffers needing a prompt (excluding unnamed buffers under hot-exit and
 file-backed buffers under auto-save). With dirty buffers it shows a confirm-quit-with-modified
-prompt; when hot-exit is enabled the prompt includes a "Quit (recoverable)" option that exits
+prompt, which lists the buffers (by tab name, at most six, then "…and N more") with why each
+holds the quit — unsaved, changed on disk, or could not be saved by the auto-save that just ran —
+read off `exit_save_plan`; when hot-exit is enabled the prompt includes a "Quit (recoverable)" option that exits
 without saving and lets the recovery session preserve the changes. On confirmation: **Save**
 runs the save-all-on-exit path then a SaveAs chain for unnamed buffers; **Discard** clears the
 modified and recovery-pending flags on all buffers (so nothing is preserved); **Quit** sets

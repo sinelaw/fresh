@@ -747,3 +747,62 @@ fn the_unsaved_count_takes_the_form_its_number_needs_in_russian() {
     harness.assert_screen_contains("2 буфера имеют несохранённые изменения");
     harness.assert_screen_not_contains("2 буферов");
 }
+
+/// **The quit prompt names what holds the quit, and why** (issue #3400):
+/// a count alone left the user to hunt through tabs — or other workspaces —
+/// for which buffers, and gave no hint that one of them had changed on disk
+/// and would not be written by Save and Quit.
+#[test]
+fn the_quit_prompt_lists_each_unsaved_buffer_with_its_reason() {
+    let _pin = pin();
+    let mut config = Config::default();
+    config.editor.hot_exit = false;
+    let (mut harness, _file) = dirty_buffer(config);
+    let dir = harness.project_dir().expect("project dir");
+
+    // A second file edited, then changed on disk behind the editor's back.
+    let other = dir.join("other.txt");
+    std::fs::write(&other, "other\n").unwrap();
+    harness.open_file(&other).unwrap();
+    harness.type_text("EDITED").unwrap();
+    std::fs::write(&other, "changed by someone else\n").unwrap();
+    let later = std::time::SystemTime::now() + std::time::Duration::from_secs(60);
+    std::fs::File::options()
+        .write(true)
+        .open(&other)
+        .unwrap()
+        .set_times(std::fs::FileTimes::new().set_modified(later))
+        .unwrap();
+    harness.render().unwrap();
+
+    quit(&mut harness);
+    harness.assert_screen_contains("2 buffers have unsaved changes.");
+    harness.assert_screen_contains("notes.txt — unsaved changes");
+    harness.assert_screen_contains("other.txt — changed on disk");
+}
+
+/// Past a handful, the list stops and says how many more there are; the
+/// count in the question stays exact.
+#[test]
+fn the_quit_prompt_trims_a_long_list() {
+    let _pin = pin();
+    let mut config = Config::default();
+    config.editor.hot_exit = false;
+    let mut harness =
+        EditorTestHarness::with_temp_project_and_config(WIDTH, HEIGHT, config).expect("harness");
+    let dir = harness.project_dir().expect("project dir");
+    for i in 1..=8 {
+        let file = dir.join(format!("f{i}.txt"));
+        std::fs::write(&file, "x\n").unwrap();
+        harness.open_file(&file).unwrap();
+        harness.type_text("EDITED").unwrap();
+    }
+    harness.render().unwrap();
+
+    quit(&mut harness);
+    harness.assert_screen_contains("8 buffers have unsaved changes.");
+    harness.assert_screen_contains("f1.txt — unsaved changes");
+    harness.assert_screen_contains("f6.txt — unsaved changes");
+    harness.assert_screen_not_contains("f7.txt — unsaved changes");
+    harness.assert_screen_contains("…and 2 more");
+}

@@ -212,7 +212,7 @@ impl Editor {
             .iter()
             .any(|entry| !(auto_save && matches!(entry.save, ExitSave::Write(_))));
         if needs_prompt {
-            self.prompt_unsaved_changes(asked.len());
+            self.prompt_unsaved_changes(&[]);
         } else if confirm_clean {
             // No dirty buffers (or only ones auto-save will write), but the
             // user has opted into a safety-net confirmation for a stray
@@ -251,18 +251,33 @@ impl Editor {
     /// [`Self::persist_on_exit`] runs for every exit), run here ahead of it:
     /// once the quit is committed nothing can call it off any more.
     pub(crate) fn quit_after_auto_save(&mut self) {
-        if let Err(e) = self.auto_save_on_exit() {
-            tracing::warn!("Auto-save on quit failed: {e}");
-        }
+        let failed = match self.auto_save_on_exit() {
+            Ok(outcome) => outcome.failed,
+            Err(e) => {
+                tracing::warn!("Auto-save on quit failed: {e}");
+                Vec::new()
+            }
+        };
         match self.count_modified_buffers_needing_prompt() {
             0 => self.should_quit = true,
-            modified_count => self.prompt_unsaved_changes(modified_count),
+            _ => self.prompt_unsaved_changes(&failed),
         }
     }
 
-    /// Ask what to do about the `modified_count` unsaved buffers before
-    /// quitting: save them, discard them, keep them for hot exit, or cancel.
-    fn prompt_unsaved_changes(&mut self, modified_count: usize) {
+    /// Ask what to do about the unsaved buffers before quitting: save them,
+    /// discard them, keep them for hot exit, or cancel.
+    ///
+    /// `failed` are the files a save on the way out just tried and failed
+    /// to write, which the dialog reports as such rather than as merely
+    /// unsaved.
+    fn prompt_unsaved_changes(&mut self, failed: &[std::path::PathBuf]) {
+        let asked: Vec<ExitSaveEntry> = self
+            .exit_save_plan()
+            .into_iter()
+            .filter(|entry| entry.asked)
+            .collect();
+        let modified_count = asked.len();
+        let detail = self.unsaved_buffer_list(&asked, failed);
         // When some of the unsaved work is in a workspace the user is not
         // looking at, a bare count is the wrong thing to show: it says
         // there is something to lose without saying where, and the whole
@@ -304,8 +319,47 @@ impl Editor {
             t!("dialog.title.unsaved_changes").into_owned(),
             body.clone(),
             choices,
-        );
+        )
+        .detail(detail);
         self.start_confirm_prompt(body, PromptType::ConfirmQuitWithModified, confirm);
+    }
+
+    /// The quit prompt's list of what holds the quit, one buffer per line
+    /// with why it needs attention: unsaved, changed on disk (the save on
+    /// exit leaves it alone, issue #3346), or not saved because writing it
+    /// just failed (e.g. it needs sudo). Named as its tab is.
+    ///
+    /// At most [`QUIT_PROMPT_LISTED`] lines, then how many more there are:
+    /// the count in the question above stays exact either way.
+    fn unsaved_buffer_list(
+        &self,
+        asked: &[ExitSaveEntry],
+        failed: &[std::path::PathBuf],
+    ) -> String {
+        let mut lines: Vec<String> = asked
+            .iter()
+            .take(QUIT_PROMPT_LISTED)
+            .map(|entry| {
+                let name = self
+                    .windows
+                    .get(&entry.window)
+                    .and_then(|w| w.buffer_metadata.get(&entry.buffer))
+                    .map(|meta| meta.display_name.clone())
+                    .unwrap_or_else(|| t!("buffer.no_name").to_string());
+                let reason = match &entry.save {
+                    ExitSave::ChangedOnDisk(_) => t!("prompt.quit_reason.changed_on_disk"),
+                    ExitSave::Write(path) if failed.contains(path) => {
+                        t!("prompt.quit_reason.not_saved")
+                    }
+                    ExitSave::Write(_) | ExitSave::NoFile => t!("prompt.quit_reason.unsaved"),
+                };
+                t!("prompt.quit_buffer_line", name = name, reason = reason).to_string()
+            })
+            .collect();
+        if asked.len() > QUIT_PROMPT_LISTED {
+            lines.push(tn!("prompt.quit_more", asked.len() - QUIT_PROMPT_LISTED).to_string());
+        }
+        lines.join("\n")
     }
 
     /// Count modified buffers that would require a save prompt on quit.
@@ -641,8 +695,12 @@ impl crate::app::window::Window {
     /// What exiting means for each of this window's modified buffers:
     /// whether the save on exit writes it, and whether the quit prompt asks
     /// about it. See [`Editor::exit_save_plan`].
+    ///
+    /// In the order the buffers were opened, so the quit prompt lists them
+    /// the same way every time.
     pub(crate) fn exit_save_plan(&self, window_id: WindowId, hot_exit: bool) -> Vec<ExitSaveEntry> {
-        self.buffers
+        let mut plan: Vec<ExitSaveEntry> = self
+            .buffers
             .iter()
             .filter(|(_, state)| state.buffer.is_modified())
             .map(|(buffer_id, state)| {
@@ -672,7 +730,9 @@ impl crate::app::window::Window {
                     asked: !(self.quit_skips_buffer(*buffer_id) || recovered_unasked),
                 }
             })
-            .collect()
+            .collect();
+        plan.sort_by_key(|entry| entry.buffer.0);
+        plan
     }
 
     /// Whether quitting leaves `buffer_id` out of the unsaved-changes
@@ -765,6 +825,11 @@ impl crate::app::window::Window {
         }
     }
 }
+
+/// How many buffers the quit prompt names before summarising the rest as a
+/// count: enough for the common case, few enough that the dialog stays well
+/// inside a small terminal.
+const QUIT_PROMPT_LISTED: usize = 6;
 
 /// What the save on exit does with one modified buffer.
 #[derive(Debug, Clone, PartialEq, Eq)]
