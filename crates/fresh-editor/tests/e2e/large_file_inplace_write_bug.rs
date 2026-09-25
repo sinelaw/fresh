@@ -1647,6 +1647,11 @@ fn test_large_file_retry_after_torn_inplace_write_is_refused() {
             .contains(&recovery.temp_path.display().to_string()),
         "the error must say where the copy is: {err}"
     );
+    assert!(
+        err.to_string().contains("Review Interrupted Saves")
+            && err.to_string().contains("Revert File"),
+        "the error must say how to get out: {err}"
+    );
     assert_eq!(
         std::fs::read(&file_path).unwrap(),
         torn,

@@ -286,6 +286,11 @@ pub(super) fn refuse_read_from_torn_file(
             copy.display()
         ));
     }
+    // The way out: decide on the kept copy, then reload the buffer from
+    // the file as it now is (its unloaded parts point at stale offsets)
+    message.push_str(
+        ". Run Review Interrupted Saves to restore or discard it, then Revert File to reload this buffer",
+    );
     Err(anyhow::anyhow!(message))
 }
 
