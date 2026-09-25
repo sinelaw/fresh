@@ -305,3 +305,57 @@ fn dock_context_menu_navigates_with_vi_mode_on() {
     h.wait_until(|h| h.screen_to_string().contains("Top level"))
         .unwrap();
 }
+
+/// The Import sessions (Discover) dialog, opened and closed, hands vi its
+/// mode back: it took the window's one mode slot for its keymap on open and
+/// emptied it on close, so afterwards a `j` typed a `j`.
+#[test]
+fn vi_mode_survives_the_discover_dialog() {
+    use fresh::input::keybindings::Action::PluginAction;
+
+    init_tracing_from_env();
+    let temp = tempfile::TempDir::new().unwrap();
+    let project_root = temp.path().join("project_root");
+    let plugins_dir = project_root.join("plugins");
+    fs::create_dir_all(&plugins_dir).unwrap();
+    copy_plugin(&plugins_dir, "vi_mode");
+    copy_plugin(&plugins_dir, "agent_discovery");
+    copy_plugin_lib(&plugins_dir);
+    let file = project_root.join("two_lines.txt");
+    fs::write(&file, "alpha\nbeta\n").unwrap();
+
+    let mut config = Config::default();
+    config.plugins.insert(
+        "vi_mode".to_string(),
+        PluginConfig {
+            enabled: true,
+            path: None,
+            settings: serde_json::json!({ "autoStart": true }),
+        },
+    );
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, config, project_root).unwrap();
+    h.wait_until(|h| {
+        let cmds = h.editor().command_registry().read().unwrap().get_all();
+        ["vi_mode_toggle", "agent_discovery_open"]
+            .iter()
+            .all(|name| {
+                cmds.iter()
+                    .any(|c| c.action == PluginAction(name.to_string()))
+            })
+    })
+    .unwrap();
+    h.open_file(&file).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("two_lines.txt"))
+        .unwrap();
+
+    h.editor_mut()
+        .dispatch_action_for_tests(PluginAction("agent_discovery_open".to_string()));
+    h.wait_until(|h| h.screen_to_string().contains("Import sessions"))
+        .unwrap();
+    h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| !h.screen_to_string().contains("Import sessions"))
+        .unwrap();
+
+    assert_vi_j_moves_down(&mut h);
+}
