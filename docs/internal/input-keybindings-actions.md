@@ -101,6 +101,29 @@ PLANNED/orthogonal: the kitty keyboard protocol enhancement flags
 terminal layer so capable terminals can report `Shift+Up`, etc.; unsupported
 terminals degrade rather than getting a custom fallback.
 
+### 2.4 Ctrl+J outside the terminal
+
+The input parser reports a raw LF as `Ctrl+J` and `ESC LF` as `Ctrl+Alt+J`
+(terminal-input-parsing.md §5), so a program in the integrated terminal can tell
+LF from Enter's CR. To the editor an LF has always been a second Enter, so
+`router::ctrl_j_reading` — asked by `Editor::handle_key_press` for every key the
+parser produced — reads an **unbound** `Ctrl+J` as Enter and `Ctrl+Alt+J` as
+Alt+Enter. The key is kept as it came when:
+
+- the context is `Terminal` — the child gets `0x0A`;
+- a chord is pending — `Ctrl+J` may continue it;
+- the keymap binds it in the current context, or one of the modes the focused
+  surface resolves keys against does (`Editor::focused_modes`: a focused
+  panel's mode, and the buffer's while the buffer has the keyboard — never a
+  buffer's mode under a prompt). "Binds" is `KeybindingResolver::binds_key`:
+  an action, a `noop`, or the first key of a chord. Typing doesn't count
+  (on Windows `Ctrl+Alt+<char>` resolves to AltGr text).
+
+In the `Terminal` context a key bound *there* ends the terminal's key lookup
+(`resolve_terminal_ui_action`): a Terminal binding that is not a UI action — a
+`noop` included — leaves the key to the PTY instead of falling through to a
+Global or Normal binding (#3270).
+
 ---
 
 ## 3. Modal dispatch priority
