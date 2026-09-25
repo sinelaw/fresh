@@ -4,6 +4,7 @@
 
 use fresh_i18n::t;
 
+use super::file_operations::SaveProgress;
 use super::normalize_path;
 use super::BufferId;
 use super::BufferMetadata;
@@ -334,7 +335,11 @@ impl Editor {
                     self.set_status_message(t!("buffer.save_cancelled").to_string());
                 }
             }
-            PromptType::ConfirmSudoSave { info } => {
+            PromptType::ConfirmSudoSave {
+                info,
+                buffer_id,
+                close_after_save,
+            } => {
                 // `info` owns the save's temp file: it is deleted when `info`
                 // drops at the end of this arm, whatever the answer.
                 let input_lower = input.trim().to_lowercase();
@@ -364,26 +369,11 @@ impl Editor {
                     })();
 
                     match result {
-                        Ok(_) => {
-                            if let Err(e) = self
-                                .active_state_mut()
-                                .buffer
-                                .finalize_external_save(info.dest_path.clone())
-                            {
-                                tracing::warn!("Failed to finalize sudo save: {}", e);
-                                self.set_status_message(
-                                    t!("prompt.sudo_save_failed", error = e.to_string())
-                                        .to_string(),
-                                );
-                            } else if let Err(e) = self.finalize_save(Some(info.dest_path.clone()))
-                            {
-                                tracing::warn!("Failed to finalize save after sudo: {}", e);
-                                self.set_status_message(
-                                    t!("prompt.sudo_save_failed", error = e.to_string())
-                                        .to_string(),
-                                );
-                            }
-                        }
+                        Ok(_) => self.finish_sudo_save(
+                            buffer_id,
+                            info.dest_path.clone(),
+                            close_after_save,
+                        ),
                         Err(e) => {
                             tracing::warn!("Sudo save failed: {}", e);
                             self.set_status_message(
@@ -1345,6 +1335,54 @@ impl Editor {
         }
     }
 
+    /// Mark `buffer_id` saved to `path` after the sudo write put its
+    /// content there, and close it when the save was Save on closing its
+    /// tab.
+    ///
+    /// By id, not "the active buffer": the prompt may have been opened for a
+    /// buffer other than the one active now. The finalize (on-save actions
+    /// included) runs with it active, as for any save.
+    fn finish_sudo_save(
+        &mut self,
+        buffer_id: BufferId,
+        path: std::path::PathBuf,
+        close_after_save: bool,
+    ) {
+        let Some(state) = self.buffers_mut().get_mut(&buffer_id) else {
+            // Gone while the prompt was open; the file is written regardless.
+            tracing::warn!("Buffer {buffer_id:?} closed before its sudo save finished");
+            return;
+        };
+        if let Err(e) = state.buffer.finalize_external_save(path.clone()) {
+            tracing::warn!("Failed to finalize sudo save: {}", e);
+            self.set_status_message(
+                t!("prompt.sudo_save_failed", error = e.to_string()).to_string(),
+            );
+            return;
+        }
+        let old_active = self.active_buffer();
+        self.set_active_buffer(buffer_id);
+        let finalized = self.finalize_save(Some(path));
+        if old_active != buffer_id && self.buffers().contains_key(&old_active) {
+            self.set_active_buffer(old_active);
+        }
+        if let Err(e) = finalized {
+            tracing::warn!("Failed to finalize save after sudo: {}", e);
+            self.set_status_message(
+                t!("prompt.sudo_save_failed", error = e.to_string()).to_string(),
+            );
+            return;
+        }
+        if close_after_save {
+            match self.force_close_buffer(buffer_id) {
+                Ok(()) => self.set_status_message(t!("buffer.saved_and_closed").to_string()),
+                Err(e) => self.set_status_message(
+                    t!("file.saved_cannot_close", error = e.to_string()).to_string(),
+                ),
+            }
+        }
+    }
+
     /// Handle ConfirmCloseBuffer prompt. Returns true if early return is needed.
     fn handle_confirm_close_buffer(&mut self, input: &str, buffer_id: BufferId) -> bool {
         let input_lower = input.trim().to_lowercase();
@@ -1379,12 +1417,21 @@ impl Editor {
             if has_path {
                 let old_active = self.active_buffer();
                 self.set_active_buffer(buffer_id);
-                if let Err(e) = self.save() {
-                    self.set_status_message(
-                        t!("file.save_failed", error = e.to_string()).to_string(),
-                    );
-                    self.set_active_buffer(old_active);
-                    return true; // Early return
+                match self.save_active(true) {
+                    Ok(SaveProgress::Saved) => {}
+                    // The save waits on a prompt (sudo, a missing
+                    // directory): closing now would drop the edits before
+                    // they are written. The sudo prompt closes the buffer
+                    // itself once saved; it stays on screen meanwhile, as
+                    // what the prompt is about.
+                    Ok(SaveProgress::Pending) => return true,
+                    Err(e) => {
+                        self.set_status_message(
+                            t!("file.save_failed", error = e.to_string()).to_string(),
+                        );
+                        self.set_active_buffer(old_active);
+                        return true; // Early return
+                    }
                 }
                 self.set_active_buffer(old_active);
                 if let Err(e) = self.force_close_buffer(buffer_id) {
