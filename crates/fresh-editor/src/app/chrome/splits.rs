@@ -1180,6 +1180,21 @@ impl Editor {
 
         let leaf_id = split_id;
 
+        // A text row on the screen's own edge — the menu, tab or status bar
+        // hidden — has nothing past it for the pointer to reach, so it is
+        // where a drag past that edge happens: it counts as one row beyond
+        // the text area (#3006) rather than as a row inside it, where the
+        // view holds still (#3329).
+        let edge_rows: isize = if row == 0 && row == content_rect.y {
+            -1
+        } else if row == self.terminal_height.saturating_sub(1)
+            && row == content_rect.bottom().saturating_sub(1)
+        {
+            1
+        } else {
+            0
+        };
+
         // Get fallback from SplitViewState viewport
         let fallback = self
             .active_window()
@@ -1253,8 +1268,9 @@ impl Editor {
                         // effect of the scroll-off margin, so a configured
                         // `scroll_offset = 0` means dragging past the edge
                         // does nothing at all.
-                        let rows_past_edge =
-                            target.row_overshoot as isize - target.row_undershoot as isize;
+                        let rows_past_edge = target.row_overshoot as isize
+                            - target.row_undershoot as isize
+                            + edge_rows;
                         crate::app::click_geometry::position_offset_by_lines(
                             &state.buffer,
                             target.position,
@@ -1322,14 +1338,19 @@ impl Editor {
         // the selection head but the viewport stayed frozen, in *both*
         // directions (issue #3006).
         //
-        // Inside the text area the head is the cell under the pointer, which
-        // is on screen by construction, so the view must stay put. Letting
-        // ensure-visible run there applied the scroll-off margin to the head:
-        // a drag within `scroll_offset` rows of an edge scrolled the view,
-        // the next motion at the same screen row then named a line further
-        // along, and the selection ran away from the pointer — backwards
-        // from the anchor on a drag along the top rows (issue #3329).
-        let pointer_in_text_area = crate::app::chrome::in_rect(col, row, content_rect);
+        // Inside the text area the head is the cell under the pointer, on a
+        // row that is on screen by construction, so the rows must stay put.
+        // Letting ensure-visible place them applied the scroll-off margin to
+        // the head: a drag within `scroll_offset` rows of an edge scrolled
+        // the view, the next motion at the same screen row then named a line
+        // further along, and the selection ran away from the pointer —
+        // backwards from the anchor on a drag along the top rows (issue
+        // #3329). The columns still follow the head: with no wrap its cell
+        // can be the gutter's (the line's first visible column) or the last
+        // one, and scrolling sideways from there is how a drag reaches the
+        // rest of a long line.
+        let pointer_in_text_area =
+            crate::app::chrome::in_rect(col, row, content_rect) && edge_rows == 0;
         if let Some(view_state) = self
             .windows
             .get_mut(&self.active_window)
@@ -1337,7 +1358,7 @@ impl Editor {
             .and_then(|states| states.get_mut(&leaf_id))
         {
             if pointer_in_text_area {
-                view_state.viewport.set_skip_ensure_visible();
+                view_state.viewport.set_skip_vertical_ensure_visible();
             } else {
                 view_state.viewport.clear_skip_ensure_visible();
             }
