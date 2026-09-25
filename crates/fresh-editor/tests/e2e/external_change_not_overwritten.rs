@@ -163,6 +163,82 @@ fn quit_with_auto_save_does_not_ask_when_nothing_changed_on_disk() {
     assert!(harness.should_quit());
 }
 
+/// Auto-save on, and `confirm_quit` to catch a stray `Ctrl+Q` (issue
+/// #2030).
+fn auto_save_with_confirm_quit() -> Config {
+    let mut config = auto_save_without_hot_exit();
+    config.editor.confirm_quit = true;
+    config
+}
+
+/// The auto-save on quit ran before the "Quit?" confirmation, so a stray
+/// `Ctrl+Q` the user then cancelled had already written their files.
+/// Nothing may be written until the quit is confirmed.
+#[test]
+fn cancelled_quit_confirmation_writes_nothing_with_auto_save() {
+    let (mut harness, files) = dirty_buffers(auto_save_with_confirm_quit(), &["notes.txt"]);
+
+    harness
+        .send_key(KeyCode::Char('q'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("Quit Fresh?");
+    assert_eq!(
+        std::fs::read_to_string(&files[0]).unwrap(),
+        "orig1\norig2\n",
+        "nothing may be written while the quit is still being confirmed"
+    );
+
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    assert!(!harness.should_quit());
+    assert_eq!(
+        std::fs::read_to_string(&files[0]).unwrap(),
+        "orig1\norig2\n",
+        "a cancelled quit must not have saved anything"
+    );
+}
+
+/// Confirming it saves and quits, as auto-save promises.
+#[test]
+fn confirmed_quit_auto_saves_and_quits() {
+    let (mut harness, files) = dirty_buffers(auto_save_with_confirm_quit(), &["notes.txt"]);
+
+    harness
+        .send_key(KeyCode::Char('q'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("Quit Fresh?");
+    harness
+        .send_key(KeyCode::Char('q'), KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    assert!(harness.should_quit());
+    assert_eq!(
+        std::fs::read_to_string(&files[0]).unwrap(),
+        "EDIT orig1\norig2\n"
+    );
+}
+
+/// A file changed on disk, which the auto-save would leave alone, is known
+/// before anything is written: the quit asks about it straight away rather
+/// than confirming a quit it would then have to interrupt.
+#[test]
+fn quit_confirmation_with_auto_save_asks_first_about_a_file_changed_on_disk() {
+    let (mut harness, files) = dirty_buffers(auto_save_with_confirm_quit(), &["notes.txt"]);
+    change_externally(&files[0], "external\n");
+
+    harness
+        .send_key(KeyCode::Char('q'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    assert!(!harness.should_quit());
+    harness.assert_screen_contains("[ Save and Quit ]");
+    assert_eq!(std::fs::read_to_string(&files[0]).unwrap(), "external\n");
+}
+
 #[test]
 fn save_on_close_keeps_the_buffer_when_its_file_changed_on_disk() {
     let (mut harness, files) = dirty_buffers(Config::default(), &["notes.txt"]);

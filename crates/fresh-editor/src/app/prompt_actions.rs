@@ -1420,7 +1420,9 @@ impl Editor {
         let first_char = input_trim.chars().next();
         let confirms = first_char == quit_first || first_char == Some('y') || input_trim == "yes";
         if confirms {
-            self.should_quit = true;
+            // Only now, with the quit confirmed, does auto-save write
+            // anything; what it can't write is asked about instead.
+            self.quit_after_auto_save();
         } else {
             self.set_status_message(t!("buffer.close_cancelled").to_string());
         }
