@@ -61,15 +61,32 @@ impl crate::app::window::Window {
     }
 }
 
-/// What a bulk save ([`Editor::save_all`], [`Editor::save_all_on_exit`]) did.
+/// What Save All ([`Editor::save_all`]) did.
 #[derive(Debug, Default)]
 pub struct SaveAllOutcome {
     /// Buffers written to disk.
     pub saved: usize,
-    /// Buffers whose write failed (needs sudo, lost remote, ...).
+    /// Every buffer whose write failed (needs sudo, lost remote, ...).
     pub failed: Vec<PathBuf>,
     /// Buffers left unsaved because their file changed on disk since it was
     /// loaded or saved; overwriting it needs an explicit Save (issue #3346).
+    pub changed_on_disk: Vec<PathBuf>,
+}
+
+/// What the save on exit ([`Editor::save_all_on_exit`]) did.
+///
+/// Unlike [`SaveAllOutcome`], what it left unsaved is listed only for the
+/// buffers the quit prompt asks about: a buffer hidden from the tabs is
+/// saved where it can be, but one it can't save doesn't hold the quit
+/// ([`Window::quit_skips_buffer`](crate::app::window::Window::quit_skips_buffer)).
+#[derive(Debug, Default)]
+pub struct ExitSaveOutcome {
+    /// Buffers written to disk, hidden ones included.
+    pub saved: usize,
+    /// Asked-about buffers whose write failed (needs sudo, lost remote, ...).
+    pub failed: Vec<PathBuf>,
+    /// Asked-about buffers left unsaved because their file changed on disk
+    /// (issue #3346).
     pub changed_on_disk: Vec<PathBuf>,
 }
 
@@ -460,13 +477,13 @@ impl Editor {
     /// named file-backed buffers (not unnamed buffers).
     ///
     /// Buffers whose file changed on disk are left unsaved and listed in
-    /// [`SaveAllOutcome::changed_on_disk`].
-    pub fn save_all_on_exit(&mut self) -> anyhow::Result<SaveAllOutcome> {
+    /// [`ExitSaveOutcome::changed_on_disk`].
+    pub fn save_all_on_exit(&mut self) -> anyhow::Result<ExitSaveOutcome> {
         // Exiting closes every workspace, so "save on the way out" must mean
         // all of them (issue #3189). Retargeted per window so the per-buffer
         // finalize (LSP didSave, event-log marker, recovery delete) lands on
         // the right window's state.
-        let mut outcome = SaveAllOutcome::default();
+        let mut outcome = ExitSaveOutcome::default();
         for window_id in self.window_ids_sorted() {
             let window_outcome = self.with_window_retargeted(window_id, |editor| {
                 editor.save_all_on_exit_in_active_window()
@@ -486,7 +503,7 @@ impl Editor {
     /// one a plugin's replace-in-file opened) is saved too where it can be,
     /// but isn't reported when it can't: quitting doesn't wait on a buffer
     /// the user was never asked about ([`Window::quit_skips_buffer`](crate::app::window::Window::quit_skips_buffer)).
-    fn save_all_on_exit_in_active_window(&mut self) -> anyhow::Result<SaveAllOutcome> {
+    fn save_all_on_exit_in_active_window(&mut self) -> anyhow::Result<ExitSaveOutcome> {
         let window = self
             .windows
             .get(&self.active_window)
@@ -503,7 +520,7 @@ impl Editor {
             }
         }
 
-        let mut outcome = SaveAllOutcome::default();
+        let mut outcome = ExitSaveOutcome::default();
         for (id, path, reported) in to_save {
             if self.changed_on_disk(&path).is_some() {
                 tracing::warn!(
@@ -1540,9 +1557,10 @@ impl Editor {
         .to_string()
     }
 
-    /// What a bulk save didn't write, if anything: the files it failed to
-    /// save and those it left alone because they changed on disk.
-    pub(crate) fn not_saved_message(outcome: &SaveAllOutcome) -> Option<String> {
+    /// What the save on exit didn't write that the quit prompt asks about,
+    /// if anything: the files it failed to save and those it left alone
+    /// because they changed on disk.
+    pub(crate) fn not_saved_message(outcome: &ExitSaveOutcome) -> Option<String> {
         let failed = (!outcome.failed.is_empty())
             .then(|| t!("file.save_failed", error = file_names(&outcome.failed)).to_string());
         let changed = (!outcome.changed_on_disk.is_empty())
