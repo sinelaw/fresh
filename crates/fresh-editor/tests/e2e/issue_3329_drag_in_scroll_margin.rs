@@ -157,6 +157,61 @@ fn test_drag_along_bottom_row_selects_suffix_without_scrolling() {
     );
 }
 
+/// Dragging off the side of the pane leaves the text area, but the pointer
+/// is still level with the row it pressed on: that row's line is on screen,
+/// so the view holds still just as it does inside the text area. Letting
+/// ensure-visible place the head there applied the scroll-off margin to the
+/// top row, and each motion at the same screen row then named a line higher
+/// up, so a sideways drag selected a run of lines above the anchor.
+#[test]
+fn test_drag_off_the_side_of_the_pane_along_top_row_does_not_scroll() {
+    let (mut harness, _fixture, first_row, _, text_col) = scrolled_fixture();
+    let before = harness.screen_to_string();
+    let line = gutter_line(&harness, first_row).unwrap();
+    let right = harness.buffer().area.width - 1;
+
+    let a_col = text_col + 8;
+    mouse(
+        &mut harness,
+        MouseEventKind::Down(MouseButton::Left),
+        a_col,
+        first_row,
+    );
+    mouse(
+        &mut harness,
+        MouseEventKind::Drag(MouseButton::Left),
+        a_col + 3,
+        first_row,
+    );
+    for _ in 0..4 {
+        mouse(
+            &mut harness,
+            MouseEventKind::Drag(MouseButton::Left),
+            right,
+            first_row,
+        );
+    }
+    mouse(
+        &mut harness,
+        MouseEventKind::Up(MouseButton::Left),
+        right,
+        first_row,
+    );
+
+    assert_eq!(
+        gutter_line(&harness, first_row),
+        Some(line),
+        "a drag off the side of the pane must not scroll the view.\nBefore:\n{before}\nAfter:\n{}",
+        harness.screen_to_string()
+    );
+    assert_eq!(
+        selected_rows(&harness),
+        vec![(line, "a text".to_string())],
+        "only the suffix of the dragged line is selected.\nAfter:\n{}",
+        harness.screen_to_string()
+    );
+}
+
 // ---------------------------------------------------------------------------
 // What holding the view inside the text area must not take away: the drag
 // still follows the head sideways, and a text area with no chrome beyond an

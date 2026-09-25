@@ -1329,7 +1329,7 @@ impl Editor {
         if let Some(event_log) = self.active_window_mut().event_logs.get_mut(&buffer_id) {
             event_log.append(event.clone());
         }
-        // Past the text area's edge, a drag is cursor motion that owns
+        // Above or below the text rows, a drag is cursor motion that owns
         // vertical placement — exactly like a key press, which clears this
         // same flag in `handle_key`. A wheel or scrollbar scroll sets
         // `skip_ensure_visible` so the render pass won't yank the viewport
@@ -1338,26 +1338,27 @@ impl Editor {
         // the selection head but the viewport stayed frozen, in *both*
         // directions (issue #3006).
         //
-        // Inside the text area the head is the cell under the pointer, on a
-        // row that is on screen by construction, so the rows must stay put.
-        // Letting ensure-visible place them applied the scroll-off margin to
-        // the head: a drag within `scroll_offset` rows of an edge scrolled
-        // the view, the next motion at the same screen row then named a line
+        // Level with the text rows the head is on the pointer's row, which is
+        // on screen by construction, so the rows must stay put — whether the
+        // pointer is over the text or has left the pane sideways. Letting
+        // ensure-visible place them applied the scroll-off margin to the
+        // head: a drag within `scroll_offset` rows of an edge scrolled the
+        // view, the next motion at the same screen row then named a line
         // further along, and the selection ran away from the pointer —
         // backwards from the anchor on a drag along the top rows (issue
         // #3329). The columns still follow the head: with no wrap its cell
         // can be the gutter's (the line's first visible column) or the last
         // one, and scrolling sideways from there is how a drag reaches the
         // rest of a long line.
-        let pointer_in_text_area =
-            crate::app::chrome::in_rect(col, row, content_rect) && edge_rows == 0;
+        let pointer_level_with_text =
+            (content_rect.y..content_rect.bottom()).contains(&row) && edge_rows == 0;
         if let Some(view_state) = self
             .windows
             .get_mut(&self.active_window)
             .and_then(|w| w.buffers.split_view_states_mut())
             .and_then(|states| states.get_mut(&leaf_id))
         {
-            if pointer_in_text_area {
+            if pointer_level_with_text {
                 view_state.viewport.set_skip_vertical_ensure_visible();
             } else {
                 view_state.viewport.clear_skip_ensure_visible();
