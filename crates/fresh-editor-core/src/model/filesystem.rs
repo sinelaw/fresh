@@ -1475,8 +1475,8 @@ impl StdFileSystem {
     /// Overwrite `path` in place, keeping its inode and with it the owner,
     /// group, hard links, xattrs and ACLs. Not atomic, so only used when a
     /// write-then-rename can't reproduce the original file; the new content
-    /// is staged in the recovery directory first, so a write that fails
-    /// part-way doesn't lose it (see
+    /// is staged in the recovery directory first where it can be, so a write
+    /// that fails part-way doesn't lose it (see
     /// [`crate::model::buffer::save::write_in_place_staged`]).
     fn write_in_place(&self, path: &Path, data: &[u8]) -> io::Result<()> {
         crate::model::buffer::save::write_in_place_staged(self, path, data)
@@ -2550,6 +2550,56 @@ mod tests {
             xattr::get(&path, "user.fresh_test").unwrap().as_deref(),
             Some(&b"kept"[..])
         );
+    }
+
+    /// A recovery directory the user can't write (e.g. under `su` with
+    /// `$HOME` still another user's) made saving a hard-linked file fail with
+    /// the staging error, a `PermissionDenied` that the buffer then reported
+    /// as the *file* needing sudo. The file itself is writable, so it is
+    /// written in place without a staged copy.
+    #[cfg(unix)]
+    #[test]
+    fn save_of_hard_linked_file_does_not_need_sudo_when_staging_is_denied() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.txt");
+        let link = dir.path().join("b.txt");
+        std::fs::write(&path, b"old\n").unwrap();
+        std::fs::hard_link(&path, &link).unwrap();
+        let data_dir = tempfile::tempdir().unwrap();
+        let recovery_dir = data_dir.path().join("recovery");
+        std::fs::create_dir(&recovery_dir).unwrap();
+        std::fs::set_permissions(&recovery_dir, std::fs::Permissions::from_mode(0o555)).unwrap();
+
+        let (thread_path, thread_data_dir) = (path.clone(), data_dir.path().to_path_buf());
+        let saved = std::thread::spawn(move || {
+            // SAFETY: geteuid has no failure modes.
+            if unsafe { libc::geteuid() } == 0 && !drop_file_access_overrides_on_this_thread() {
+                return None;
+            }
+            crate::data_dir::set_data_dir_override(Some(thread_data_dir));
+            let fs: std::sync::Arc<dyn FileSystem + Send + Sync> =
+                std::sync::Arc::new(StdFileSystem);
+            let mut buffer =
+                crate::model::buffer::TextBuffer::load_from_file(&thread_path, 1 << 20, fs)
+                    .unwrap();
+            buffer.insert_bytes(0, b"NEW ".to_vec());
+            Some(buffer.save().map_err(|e| e.to_string()))
+        })
+        .join()
+        .unwrap();
+        let Some(saved) = saved else {
+            eprintln!("skipping: running as root and can't drop CAP_DAC_OVERRIDE");
+            return;
+        };
+
+        assert_eq!(saved, Ok(()));
+        assert_eq!(std::fs::read(&link).unwrap(), b"NEW old\n");
+        let leftovers: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(leftovers.len(), 2, "no temp file left: {leftovers:?}");
     }
 
     /// Drop the capabilities that let root ignore file permissions from the

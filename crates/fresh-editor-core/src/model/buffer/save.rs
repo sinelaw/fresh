@@ -606,7 +606,9 @@ pub(super) fn save_with_inplace_write(
     }
 }
 
-/// Write data directly to a file in-place, with sudo fallback on permission denied.
+/// Write data directly to a file in-place, with sudo fallback when the file
+/// itself can't be written (see [`write_in_place_staged`] for why a
+/// recovery directory that can't be written doesn't count).
 pub(super) fn write_data_inplace(
     fs: &Arc<dyn FileSystem + Send + Sync>,
     dest_path: &Path,
@@ -636,11 +638,63 @@ pub(super) fn write_data_inplace(
 /// pointing at it, as [`save_with_inplace_write`] does. The staged copy is
 /// removed once the write succeeds (or if the file can't be opened, so
 /// nothing was truncated) and kept if the write fails part-way.
+///
+/// If the copy can't be staged — say the recovery directory isn't writable,
+/// as under `su` with `$HOME` still another user's — the file is written in
+/// place without one, like before staging existed: the error is about the
+/// recovery directory, and passing a `PermissionDenied` on would read as the
+/// *file* needing sudo. Only running out of space stops the write, since the
+/// file is probably on the same full disk, and truncating it then would lose
+/// its content with no copy of the new one anywhere.
 pub(crate) fn write_in_place_staged(
     fs: &dyn FileSystem,
     dest_path: &Path,
     data: &[u8],
 ) -> io::Result<()> {
+    let staged = match stage_in_place_write(fs, dest_path, data) {
+        Ok(staged) => Some(staged),
+        Err(e) if is_out_of_space(&e) => return Err(e),
+        Err(e) => {
+            tracing::warn!(
+                "Can't stage a copy of {} in the recovery directory ({e}); writing it in place without one",
+                dest_path.display()
+            );
+            None
+        }
+    };
+    let discard_staged = || {
+        if let Some((temp_path, meta_path)) = &staged {
+            // Best-effort cleanup of files that are no longer needed
+            #[allow(clippy::let_underscore_must_use)]
+            let _ = fs.remove_file(temp_path);
+            #[allow(clippy::let_underscore_must_use)]
+            let _ = fs.remove_file(meta_path);
+        }
+    };
+
+    let mut out_file = match fs.open_file_for_write(dest_path) {
+        Ok(file) => file,
+        Err(e) => {
+            discard_staged();
+            return Err(e);
+        }
+    };
+    // On failure from here on, keep the staged copy for recovery.
+    out_file.write_all(data)?;
+    out_file.sync_all()?;
+    drop(out_file);
+    discard_staged();
+    Ok(())
+}
+
+/// Stage `data` for [`write_in_place_staged`]: write it to a new file in the
+/// recovery directory and (best effort) the metadata pointing at it.
+/// Returns the paths of both.
+fn stage_in_place_write(
+    fs: &dyn FileSystem,
+    dest_path: &Path,
+    data: &[u8],
+) -> io::Result<(PathBuf, PathBuf)> {
     let original_metadata = fs.metadata_if_exists(dest_path);
     let (temp_path, mut temp_file) = create_recovery_temp_file(fs, dest_path)?;
     let staged = temp_file
@@ -657,27 +711,15 @@ pub(crate) fn write_in_place_staged(
     // Best effort - the staged copy alone is still worth having
     #[allow(clippy::let_underscore_must_use)]
     let _ = write_inplace_recovery_meta(fs, &meta_path, dest_path, &temp_path, &original_metadata);
-    let discard_staged = || {
-        // Best-effort cleanup of files that are no longer needed
-        #[allow(clippy::let_underscore_must_use)]
-        let _ = fs.remove_file(&temp_path);
-        #[allow(clippy::let_underscore_must_use)]
-        let _ = fs.remove_file(&meta_path);
-    };
+    Ok((temp_path, meta_path))
+}
 
-    let mut out_file = match fs.open_file_for_write(dest_path) {
-        Ok(file) => file,
-        Err(e) => {
-            discard_staged();
-            return Err(e);
-        }
-    };
-    // On failure from here on, keep the staged copy for recovery.
-    out_file.write_all(data)?;
-    out_file.sync_all()?;
-    drop(out_file);
-    discard_staged();
-    Ok(())
+/// Whether `e` means the disk (or the user's quota on it) is full.
+fn is_out_of_space(e: &io::Error) -> bool {
+    matches!(
+        e.kind(),
+        io::ErrorKind::StorageFull | io::ErrorKind::QuotaExceeded
+    )
 }
 
 /// Stream a file's content to a writer in chunks to avoid memory issues with large files.
