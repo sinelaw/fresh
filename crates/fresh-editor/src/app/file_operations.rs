@@ -42,20 +42,23 @@ fn unnamed_modified_buffers_in(window: &crate::app::window::Window) -> Vec<Buffe
         .collect()
 }
 
-/// [`Editor::changed_on_disk`] for `path` as opened in `window`, which need
-/// not be the active one.
-pub(crate) fn changed_on_disk_in(
-    window: &crate::app::window::Window,
-    path: &Path,
-) -> Option<std::time::SystemTime> {
-    let current_mtime = window
-        .authority()
-        .filesystem
-        .metadata(path)
-        .ok()
-        .and_then(|m| m.modified)?;
-    let recorded_mtime = window.file_mod_times.get(path)?;
-    (current_mtime != *recorded_mtime).then_some(current_mtime)
+impl crate::app::window::Window {
+    /// Whether `path` changed on disk since this window last loaded or saved
+    /// it. Returns the file's current mtime if so.
+    ///
+    /// Any mtime difference counts, not only a newer one: a replacement file
+    /// can carry an *older* timestamp (`cp -p`, `rsync -t`, `tar x`, `mv` of
+    /// an older file) and is still someone else's content (issue #3346).
+    pub(crate) fn changed_on_disk(&self, path: &Path) -> Option<std::time::SystemTime> {
+        let current_mtime = self
+            .authority()
+            .filesystem
+            .metadata(path)
+            .ok()
+            .and_then(|m| m.modified)?;
+        let recorded_mtime = self.file_mod_times.get(path)?;
+        (current_mtime != *recorded_mtime).then_some(current_mtime)
+    }
 }
 
 /// What a bulk save ([`Editor::save_all`], [`Editor::save_all_on_exit`]) did.
@@ -482,7 +485,7 @@ impl Editor {
     /// A buffer the quit prompt doesn't ask about (hidden from the tabs, say
     /// one a plugin's replace-in-file opened) is saved too where it can be,
     /// but isn't reported when it can't: quitting doesn't wait on a buffer
-    /// the user was never asked about ([`super::lifecycle::quit_skips_buffer`]).
+    /// the user was never asked about ([`Window::quit_skips_buffer`](crate::app::window::Window::quit_skips_buffer)).
     fn save_all_on_exit_in_active_window(&mut self) -> anyhow::Result<SaveAllOutcome> {
         let window = self
             .windows
@@ -493,7 +496,7 @@ impl Editor {
             if state.buffer.is_modified() {
                 if let Some(path) = state.buffer.file_path() {
                     if !path.as_os_str().is_empty() {
-                        let reported = !super::lifecycle::quit_skips_buffer(window, *id);
+                        let reported = !window.quit_skips_buffer(*id);
                         to_save.push((*id, path.to_path_buf(), reported));
                     }
                 }
@@ -1521,14 +1524,10 @@ impl Editor {
         self.changed_on_disk(path)
     }
 
-    /// Whether `path` changed on disk since this window last loaded or saved
-    /// it. Returns the file's current mtime if so.
-    ///
-    /// Any mtime difference counts, not only a newer one: a replacement file
-    /// can carry an *older* timestamp (`cp -p`, `rsync -t`, `tar x`, `mv` of
-    /// an older file) and is still someone else's content (issue #3346).
+    /// [`Window::changed_on_disk`](crate::app::window::Window::changed_on_disk)
+    /// in the active window.
     pub(crate) fn changed_on_disk(&self, path: &Path) -> Option<std::time::SystemTime> {
-        changed_on_disk_in(self.active_window(), path)
+        self.active_window().changed_on_disk(path)
     }
 
     /// Report buffers a bulk save left alone because their file changed on
