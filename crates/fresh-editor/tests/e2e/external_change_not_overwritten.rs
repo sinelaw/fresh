@@ -203,6 +203,34 @@ fn auto_save_skips_a_file_changed_on_disk() {
     );
 }
 
+/// Auto-save reports a skipped file once, not every interval: repeating it
+/// kept overwriting whatever the status bar showed since.
+#[test]
+fn auto_save_reports_a_file_changed_on_disk_once() {
+    let mut config = Config::default();
+    config.editor.auto_save_enabled = true;
+    config.editor.auto_save_interval_secs = 2;
+    // Keep the file-change poll, which has its own message, out of the way.
+    config.editor.auto_revert_poll_interval_ms = 3_600_000;
+    let (mut harness, files) = dirty_buffers(config, &["notes.txt"]);
+    change_externally(&files[0], "external\n");
+    harness.advance_time(Duration::from_secs(3));
+    harness.tick_and_render().unwrap();
+    assert!(harness.get_status_bar().contains("Not saved"));
+
+    harness
+        .editor_mut()
+        .set_status_message("something else".to_string());
+    harness.advance_time(Duration::from_secs(3));
+    harness.tick_and_render().unwrap();
+
+    let status = harness.get_status_bar();
+    assert!(
+        status.contains("something else") && !status.contains("Not saved"),
+        "status was {status:?}"
+    );
+}
+
 #[test]
 fn a_clean_buffer_reloads_when_replaced_by_an_older_file() {
     let mut harness = EditorTestHarness::with_temp_project(WIDTH, HEIGHT).unwrap();

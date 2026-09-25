@@ -1098,6 +1098,10 @@ pub struct Window {
     /// in this window.
     pub last_auto_recovery_save: std::time::Instant,
     pub last_persistent_auto_save: std::time::Instant,
+    /// The files the last persistent auto-save left unsaved because they
+    /// changed on disk, as reported in the status bar; it's only reported
+    /// again once that changes, rather than every interval.
+    pub auto_save_changed_on_disk: Vec<std::path::PathBuf>,
 
     /// Warning domain registry for this window's status indicator.
     pub warning_domains: crate::app::warning_domains::WarningDomainRegistry,
@@ -2536,6 +2540,7 @@ impl Window {
             prompt_line_visible: resources.config.editor.show_prompt_line,
             last_auto_recovery_save: now,
             last_persistent_auto_save: now,
+            auto_save_changed_on_disk: Vec::new(),
             warning_domains: crate::app::warning_domains::WarningDomainRegistry::default(),
             tab_context_menu: None,
             new_tab_menu: None,
