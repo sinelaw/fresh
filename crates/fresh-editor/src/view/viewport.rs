@@ -466,19 +466,28 @@ impl Viewport {
     /// `max_scroll_row` ends up wrong on wide viewports with a narrow
     /// page width.
     ///
-    /// Also capped at `wrap_column`, as the renderer caps it — see
-    /// [`Self::wrap_area_width`].
+    /// Also capped by `wrap_column`, as the renderer caps it — see
+    /// [`Self::wrap_area_width`], which is why this needs the pane's
+    /// `gutter_width`.
     #[inline]
-    pub fn effective_width(&self) -> u16 {
+    pub fn effective_width(&self, gutter_width: usize) -> u16 {
         let width = match self.compose_width {
             Some(cw) => cw.min(self.width).max(1),
             None => self.width,
         };
-        self.wrap_area_width(width as usize) as u16
+        self.wrap_area_width(width as usize, gutter_width) as u16
     }
 
     /// The width a wrapped row is laid out in, gutter included, for a pane
-    /// `width` columns wide: `width` capped at `wrap_column`.
+    /// `width` columns wide whose gutter is `gutter_width` columns.
+    ///
+    /// `wrap_column` counts *text* columns, the way a fill column does in
+    /// other editors: `wrap_column: 80` fits 80 characters on a row whatever
+    /// the gutter's width (issue #3405). So the area is capped at the gutter,
+    /// plus `wrap_column`, plus the one column every wrapped row keeps free
+    /// for the end-of-line cursor (see `WrapConfig::new` and
+    /// `view_data::effective_wrap_width`). A pane narrower than that wraps
+    /// at its own width, as without `wrap_column`.
     ///
     /// The one statement of what `wrap_column` does to the wrap. The
     /// renderer (`view_data::effective_wrap_width`) and every scroll and
@@ -489,12 +498,19 @@ impl Viewport {
     /// #3294). Terminal-grid wrap keeps its grid width in `wrap_column` and
     /// reads it through [`Self::grid_cols`] instead, so it is not capped here.
     #[inline]
-    pub fn wrap_area_width(&self, width: usize) -> usize {
+    pub fn wrap_area_width(&self, width: usize, gutter_width: usize) -> usize {
         match self.wrap_column {
-            Some(col) if !self.grid_wrap => col.min(width),
+            Some(col) if !self.grid_wrap => col
+                .saturating_add(gutter_width)
+                .saturating_add(Self::EOL_CURSOR_COLUMNS)
+                .min(width),
             _ => width,
         }
     }
+
+    /// Columns a wrapped row keeps free past its last character, where the
+    /// cursor sits at the end of a full row.
+    const EOL_CURSOR_COLUMNS: usize = 1;
 
     /// Get the number of visible lines
     pub fn visible_line_count(&self) -> usize {
@@ -2263,7 +2279,7 @@ impl Viewport {
         }
         let gutter_width = self.gutter_width(buffer);
         WrapConfig::new(
-            self.effective_width() as usize,
+            self.effective_width(gutter_width) as usize,
             gutter_width,
             true,
             self.wrap_indent,

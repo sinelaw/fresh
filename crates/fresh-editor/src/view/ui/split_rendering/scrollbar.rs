@@ -270,7 +270,7 @@ pub(super) fn scrollbar_visual_row_counts(
     } else {
         let gutter_width = viewport.gutter_width(&state.buffer);
         let wrap_config = WrapConfig::new(
-            viewport.wrap_area_width(viewport.width as usize),
+            viewport.wrap_area_width(viewport.width as usize, gutter_width),
             gutter_width,
             true,
             viewport.wrap_indent,

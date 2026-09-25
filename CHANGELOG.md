@@ -34,6 +34,7 @@ Fresh is now licensed **GPL-3.0-or-later**, up from GPL-2.0-only (#3328).
 * **Code tour: clicking the prose takes the keyboard**, and its caret stays visible past the end of a line (#3318)
 * **A tab after CJK text no longer eats the character before it** - the tab marker was placed by visual column against an index counted in characters, so a double-width glyph put it one character early and the `→` took that glyph's place: `你好⇥world` drew as `你→    world`. The file was never touched (#3218, reported by @sgon00)
 * **Highlighted lines** (diff view, code tour) no longer hide inlay hints at the end of the line (#3314)
+* **`wrap_column` counts text columns** - `wrap_column: 80` now fits 80 characters on a row whatever the width of the line-number gutter. It used to cap the whole pane, gutter included, so it left about 72 and a file of 76-column lines wrapped every one of them (#3405)
 * **`editor.scroll_offset` fixed** for files under 5000 lines with line wrap off (#3248)
 * **Markdown code block borders** no longer break while you type inside them (#3247)
 * **LSP now finds the right project folder on Windows** (#3067, reported by @Bearmancer; fixed by @56steve)

@@ -1170,7 +1170,8 @@ pub struct EditorConfig {
     #[schemars(extend("x-section" = "Display"))]
     pub wrap_indent: bool,
 
-    /// Column to wrap lines at (e.g. `80`). Never wider than the window.
+    /// Number of text columns to wrap lines at (e.g. `80`), not counting the
+    /// line-number gutter. Never wider than the window.
     /// `null` or `0` (default) wraps at the window edge.
     #[serde(default)]
     #[schemars(extend("x-section" = "Display"))]
@@ -2561,7 +2562,8 @@ pub struct LanguageConfig {
     #[serde(default)]
     pub line_wrap: Option<bool>,
 
-    /// Column to wrap lines at. `null` or `0` uses `editor.wrap_column`.
+    /// Number of text columns to wrap lines at, not counting the line-number
+    /// gutter. `null` or `0` uses `editor.wrap_column`.
     #[serde(default)]
     pub wrap_column: Option<usize>,
 
@@ -2706,7 +2708,7 @@ pub struct BufferConfig {
     /// Whether line wrapping is enabled for this buffer
     pub line_wrap: bool,
 
-    /// Column at which to wrap lines (None = viewport width)
+    /// Text columns at which to wrap lines, gutter excluded (None = viewport width)
     pub wrap_column: Option<usize>,
 
     /// Resolved whitespace indicator visibility

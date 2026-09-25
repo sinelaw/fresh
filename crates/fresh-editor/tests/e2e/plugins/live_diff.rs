@@ -854,13 +854,13 @@ fn test_live_diff_removed_line_not_split_per_char_at_tiny_width() {
         "pub fn greet() {\n    panic!(\"COMPLETELY_DIFFERENT_REWRITE_PAYLOAD_DROPPING_SIMILARITY_FAR_BELOW_THE_THRESHOLD\");\n}\n",
     );
 
-    // `wrap_column = 2` drives the per-row content width below the gutter
+    // `wrap_column = 1` drives the per-row content width below 2
     // (`effective_width - gutter_width < 2`) regardless of the 120-col
     // window — the same degenerate condition a narrow split pane or a
     // very wide gutter would reach.
     let mut config = Config::default();
     config.editor.line_wrap = true;
-    config.editor.wrap_column = Some(2);
+    config.editor.wrap_column = Some(1);
 
     let mut harness =
         EditorTestHarness::with_config_and_working_dir(120, 40, config, repo.path.clone()).unwrap();
