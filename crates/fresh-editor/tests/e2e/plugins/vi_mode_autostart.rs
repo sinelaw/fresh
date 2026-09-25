@@ -264,6 +264,42 @@ fn vi_mode_survives_an_orchestrator_dialog_opened_from_the_dock() {
     assert_vi_j_moves_down(&mut h);
 }
 
+/// Switching windows with an Orchestrator dialog up leaves vi's mode alone.
+/// The host used to clear the outgoing window's editor mode on any switch
+/// made with a floating panel mounted — a guard from when dialogs kept their
+/// keymap there — so after switching away and back and closing the dialog,
+/// a `j` typed a `j`.
+#[test]
+fn vi_mode_survives_a_window_switch_under_an_orchestrator_dialog() {
+    let (mut h, _tmp) = vi_with_orchestrator_dock();
+    let window_a = h.editor().active_window_id();
+    let other_root = tempfile::TempDir::new().unwrap();
+    let window_b = h
+        .editor_mut()
+        .create_window_at(other_root.path().to_path_buf(), "other".into());
+
+    focus_dock(&mut h);
+    h.send_key(KeyCode::Char('n'), KeyModifiers::ALT).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("New Workspace"))
+        .unwrap();
+
+    // Away and back while the dialog's floating panel is mounted.
+    h.editor_mut().set_active_window(window_b);
+    h.editor_mut().set_active_window(window_a);
+    h.render().unwrap();
+
+    // Esc cancels the form and hands the keyboard back to the dock…
+    h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| {
+        !h.screen_to_string().contains("New Workspace") && h.editor().is_dock_focused()
+    })
+    .unwrap();
+    // …and a second Esc leaves the dock for the editor.
+    h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| !h.editor().is_dock_focused()).unwrap();
+    assert_vi_j_moves_down(&mut h);
+}
+
 /// Enter on the dock's session row hands the keyboard to the editor and
 /// must leave vi's mode in place (it used to empty the mode slot).
 #[test]

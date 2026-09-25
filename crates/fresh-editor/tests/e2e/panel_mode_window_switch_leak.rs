@@ -1,31 +1,25 @@
-//! Regression test: a floating-panel-scoped editor mode must not
-//! leak onto a window the user switches *away* from.
+//! Regression test: switching windows while a floating panel is mounted
+//! neither leaks the panel's mode onto a window nor takes a window's own
+//! editor mode away.
 //!
-//! Bug: after using the Orchestrator (which mounts a floating widget
-//! panel — the session picker / new-session form — and sets a
-//! per-window `editor_mode` via `setEditorMode`), then interacting
-//! with a session's terminal and opening a file via quick-open, the
-//! newly opened buffer ignored *all* keyboard input — no cursor
-//! movement, no edits, no status-bar feedback — until the user
-//! "switched orchestrator sessions back and forth".
+//! History (#2237 / #2234 item 4): the Orchestrator used to key its picker
+//! and new-session form through the window's editor mode
+//! (`setEditorMode("orchestrator-open")`). `setEditorMode` writes to
+//! whichever window is active, and the "dive" switched windows before the
+//! dialog cleared the mode, so the source window was left in the dialog's
+//! mode and swallowed every printable key. The host papered over it by
+//! clearing the outgoing window's editor mode on every switch made with a
+//! floating panel up.
 //!
-//! Root cause: `setEditorMode` writes to whichever window is active
-//! when the plugin calls it. The orchestrator "dive" switches the
-//! active window (`setActiveWindow(target)`) *before* it clears the
-//! mode (`closeOpenDialog()` → `setEditorMode(null)`), so the clear
-//! lands on the destination window and the source window is left
-//! stuck in the panel's mode. That mode is masked while the window
-//! sits in terminal mode and then silently swallows every printable
-//! key once the user leaves terminal mode (opens a file).
+//! A panel now names its keymap at mount (`mount({ mode })`,
+//! `FloatingWidgetState::mode`): editor-wide, travelling with the panel,
+//! never written to a window. There is nothing left to leak, and clearing
+//! the outgoing window's mode only wiped whatever really lived there — vi's
+//! "vi-normal", so afterwards `j` typed a `j` (follow-up to #3386).
 //!
-//! Fix: `set_active_window` clears the outgoing window's `editor_mode`
-//! whenever a floating widget panel is mounted — a panel-scoped mode
-//! belongs to the (global) panel, not the window it was opened over.
-//!
-//! This test reproduces the leak with a minimal plugin-command
-//! sequence: mount a panel + set a mode on window A, switch to B,
-//! switch back to A, and assert A's mode was cleared (it would still
-//! be `Some(...)` — and thus eat input — without the fix).
+//! The test mounts a panel with its own mode over window A, which holds a
+//! mode of its own, switches to B and back, and asserts B never picks up
+//! either mode and A keeps its own throughout.
 
 use crate::common::harness::EditorTestHarness;
 use fresh_core::api::{PluginCommand, WidgetSpec};
@@ -33,8 +27,13 @@ use fresh_core::api::{PluginCommand, WidgetSpec};
 const WIDTH: u16 = 120;
 const HEIGHT: u16 = 40;
 
+/// The window's own mode — what vi_mode keeps in the slot.
+const WINDOW_MODE: &str = "vi-normal";
+/// The panel's keymap, declared at mount.
+const PANEL_MODE: &str = "orchestrator-open";
+
 /// Minimal valid panel spec — its contents don't matter, only that a
-/// floating widget panel is mounted (`floating_widget_panel.is_some()`).
+/// floating widget panel is mounted.
 fn minimal_panel_spec() -> WidgetSpec {
     WidgetSpec::Spacer {
         cols: 1,
@@ -47,19 +46,26 @@ fn minimal_panel_spec() -> WidgetSpec {
 fn panel_mode_does_not_leak_onto_window_switched_away_from() {
     let mut harness = EditorTestHarness::with_temp_project(WIDTH, HEIGHT).unwrap();
 
-    // Window A is the base window (id 1), active at boot. Window B is
-    // a second project window we create but do NOT activate yet.
-    // Keep the tempdir alive for the test's duration (dropping it
-    // would delete B's root out from under the harness).
+    // Window A is the base window, active at boot. Window B is a second
+    // project window we create but do NOT activate yet. Keep the tempdir
+    // alive for the test's duration (dropping it would delete B's root out
+    // from under the harness).
+    let window_a = harness.editor().active_window_id();
     let win_b_dir = tempfile::tempdir().unwrap();
     let win_b = harness
         .editor_mut()
         .create_window_at(win_b_dir.path().to_path_buf(), "session-b".into());
 
-    // Simulate the Orchestrator picker on window A: mount a floating
-    // widget panel and set a panel-scoped editor mode. This is exactly
-    // what `openControlRoom` does (`setEditorMode("orchestrator-open")`
-    // + a mounted picker panel).
+    // Window A holds a mode of its own (vi's), set before any dialog opens.
+    harness
+        .editor_mut()
+        .handle_plugin_command(PluginCommand::SetEditorMode {
+            mode: Some(WINDOW_MODE.into()),
+        })
+        .unwrap();
+
+    // The Orchestrator picker over window A: a floating panel that declares
+    // its keymap at mount, as `openControlRoom` does.
     harness
         .editor_mut()
         .handle_plugin_command(PluginCommand::MountFloatingWidget {
@@ -74,39 +80,50 @@ fn panel_mode_does_not_leak_onto_window_switched_away_from() {
             title: None,
             closable: false,
             start_blurred: false,
-            mode: None,
+            mode: Some(PANEL_MODE.into()),
         })
         .unwrap();
-    harness
-        .editor_mut()
-        .handle_plugin_command(PluginCommand::SetEditorMode {
-            mode: Some("orchestrator-open".into()),
-        })
-        .unwrap();
-
     assert_eq!(
         harness.editor().editor_mode(),
-        Some("orchestrator-open".to_string()),
-        "precondition: window A should hold the panel-scoped mode"
+        Some(WINDOW_MODE.to_string()),
+        "mounting a panel with its own mode leaves the window's mode alone"
     );
 
-    // The "dive": switch the active window while the panel is still
-    // mounted (mirrors the orchestrator calling `setActiveWindow`
-    // before `closeOpenDialog`'s `setEditorMode(null)`).
+    // The "dive": switch the active window while the panel is still up.
     harness.editor_mut().set_active_window(win_b);
-
-    // Return to window A by any non-picker route (the host
-    // Next/Prev Window cycle, a tab click, etc. — none of which clear
-    // a plugin mode). Without the fix, A is still stuck in
-    // "orchestrator-open" here.
-    harness
-        .editor_mut()
-        .set_active_window(fresh_core::WindowId(1));
-
     assert_eq!(
         harness.editor().editor_mode(),
         None,
-        "panel-scoped mode leaked onto window A after switching away \
-         and back — it would silently swallow all buffer input"
+        "window B picked up a mode it never set"
+    );
+
+    // Return to window A by any non-picker route (the host Next/Prev Window
+    // cycle, a tab click, ...).
+    harness.editor_mut().set_active_window(window_a);
+    assert_eq!(
+        harness.editor().editor_mode(),
+        Some(WINDOW_MODE.to_string()),
+        "switching away with a floating panel up wiped window A's own mode"
+    );
+
+    // Closing the dialog hands nothing back and takes nothing away: A keeps
+    // its mode, B still has none.
+    harness
+        .editor_mut()
+        .handle_plugin_command(PluginCommand::UnmountFloatingWidget {
+            plugin: "test-plugin".to_string(),
+            panel_id: 1,
+        })
+        .unwrap();
+    assert_eq!(
+        harness.editor().editor_mode(),
+        Some(WINDOW_MODE.to_string()),
+        "closing the panel changed window A's mode"
+    );
+    harness.editor_mut().set_active_window(win_b);
+    assert_eq!(
+        harness.editor().editor_mode(),
+        None,
+        "the panel's mode leaked onto window B"
     );
 }
