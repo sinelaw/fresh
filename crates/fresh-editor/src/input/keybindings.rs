@@ -2660,6 +2660,23 @@ impl KeybindingResolver {
         .find_map(|table| table.get(context).and_then(|b| b.get(&norm)).cloned())
     }
 
+    /// Whether anything in `context` claims `event` for itself: a binding
+    /// that resolves to an action, a `noop` that disables the key there, or a
+    /// live chord the key starts. [`Self::resolve`] alone answers
+    /// `Action::None` for both "unbound" and `noop`, and never looks at
+    /// chords.
+    pub fn claims_key(&self, event: &KeyEvent, context: &KeyContext) -> bool {
+        let norm = normalize_key(event.code, event.modifiers);
+        self.resolve(event, context.clone()) != Action::None
+            || self.probe_order(context).iter().any(|(source, ctx)| {
+                self.single_key_map(*source)
+                    .get(ctx)
+                    .and_then(|bindings| bindings.get(&norm))
+                    .is_some_and(|action| !self.is_suppressed(&norm, action))
+            })
+            || self.resolve_chord(&[], event, context.clone()) != ChordResolution::NoMatch
+    }
+
     /// Resolve a key event to a UI action for terminal mode.
     /// Only returns actions the terminal yields to the editor
     /// ([`Self::is_terminal_ui_action`]).
