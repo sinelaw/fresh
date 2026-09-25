@@ -769,6 +769,56 @@ pub fn resolve_inplace_write_recovery(fs: &dyn FileSystem, recovery_dir: &Path, 
     let _ = fs.remove_file(&meta_path);
 }
 
+/// The copies interrupted in-place writes kept in `recovery_dir` (see
+/// [`clean_up_inplace_write_recoveries`]) that the user has yet to decide
+/// about: a staged copy that is still there and differs from its file, of a
+/// write no longer in progress. Oldest first.
+pub fn kept_inplace_write_recoveries(
+    fs: &dyn FileSystem,
+    recovery_dir: &Path,
+) -> Vec<InplaceWriteRecovery> {
+    InplaceWriteRecovery::scan(fs, recovery_dir)
+        .into_iter()
+        .filter(|(meta_path, recovery)| {
+            *meta_path == InplaceWriteRecovery::meta_path(recovery_dir, &recovery.dest_path)
+        })
+        .map(|(_, recovery)| recovery)
+        .filter(|recovery| {
+            !recovery.is_in_progress()
+                && is_staged_copy(&recovery.temp_path, recovery_dir, &recovery.dest_path)
+                && fs.exists(&recovery.temp_path)
+                && !same_content(fs, &recovery.temp_path, &recovery.dest_path).unwrap_or(false)
+        })
+        .collect()
+}
+
+/// Finish the interrupted in-place write of `dest_path` whose copy
+/// `recovery_dir` kept: overwrite the file in place with the copy, as that
+/// write would have, then remove the copy and its metadata.
+pub fn restore_inplace_write_recovery(
+    fs: &dyn FileSystem,
+    recovery_dir: &Path,
+    dest_path: &Path,
+) -> io::Result<()> {
+    let meta_path = InplaceWriteRecovery::meta_path(recovery_dir, dest_path);
+    let recovery = serde_json::from_slice::<InplaceWriteRecovery>(&fs.read_file(&meta_path)?)
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    if recovery.dest_path != dest_path
+        || !is_staged_copy(&recovery.temp_path, recovery_dir, dest_path)
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "the recovery metadata doesn't point at a copy staged for this file",
+        ));
+    }
+    let mut out_file = fs.open_file_for_write(dest_path)?;
+    stream_file_to_writer(fs, &recovery.temp_path, &mut out_file)?;
+    out_file.sync_all()?;
+    drop(out_file);
+    resolve_inplace_write_recovery(fs, recovery_dir, dest_path);
+    Ok(())
+}
+
 /// Clean up after in-place writes (see [`write_in_place_staged`]) whose
 /// process died before it could, in `recovery_dir`, where they stage:
 ///
@@ -780,7 +830,9 @@ pub fn resolve_inplace_write_recovery(fs: &dyn FileSystem, recovery_dir: &Path, 
 ///   (see [`crate::recovery_types::remove_orphaned_temp_files`]).
 ///
 /// A staged copy that differs from its destination may be the only intact
-/// copy of what was being saved, so it is kept and logged, never aged out.
+/// copy of what was being saved, so it is kept, never aged out;
+/// the editor offers it to the user (see
+/// [`kept_inplace_write_recoveries`]), who decides what becomes of it.
 /// Entries of a process still running are left alone. Returns how many files
 /// were removed.
 pub fn clean_up_inplace_write_recoveries(fs: &dyn FileSystem, recovery_dir: &Path) -> usize {
@@ -802,7 +854,8 @@ pub fn clean_up_inplace_write_recoveries(fs: &dyn FileSystem, recovery_dir: &Pat
             remove(&recovery.temp_path);
             remove(&meta_path);
         } else {
-            tracing::warn!(
+            // Not a warning: the editor asks the user about it
+            tracing::info!(
                 "An interrupted save of {} left the content being saved in {}",
                 recovery.dest_path.display(),
                 recovery.temp_path.display()
@@ -895,7 +948,7 @@ fn save_with_inplace_write(
         Ok(mut out_file) => {
             staged.supersede_previous();
             // On failure from here on, keep the staged copy for recovery
-            stream_file_to_writer(fs, &staged.temp_path, &mut out_file)?;
+            stream_file_to_writer(&**fs, &staged.temp_path, &mut out_file)?;
             out_file.sync_all()?;
             drop(out_file);
             staged.finish();
@@ -1048,7 +1101,7 @@ fn is_out_of_space(e: &io::Error) -> bool {
 
 /// Stream a file's content to a writer in chunks to avoid memory issues with large files.
 fn stream_file_to_writer(
-    fs: &Arc<dyn FileSystem + Send + Sync>,
+    fs: &dyn FileSystem,
     src_path: &Path,
     out_file: &mut Box<dyn FileWriter>,
 ) -> io::Result<()> {

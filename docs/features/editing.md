@@ -60,6 +60,10 @@ Rows past the end of the buffer keep the theme's editor background, so the empty
 
 Enable `auto_save_enabled` in settings to automatically save modified buffers to disk at a configurable interval (default 30 seconds). This is separate from the crash-recovery auto-save, which runs independently every 2 seconds to a recovery directory.
 
+## Interrupted Saves
+
+A file that can't be replaced by a new one without losing something (it belongs to another user, has other hard links, or carries attributes that can't be copied) is overwritten in place. Before truncating it, Fresh keeps a complete copy of the new content in its recovery directory. If the write fails part-way, or Fresh dies during it, the file may be left damaged; the next session then opens an **Interrupted Save** dialog for it: **Restore** writes the kept copy into the file, **Show Diff** closes the dialog and opens the file on disk beside the kept copy (keeping the copy, so the diff can be read at leisure), **Discard** deletes the copy, and **Later** keeps it and shows where it is. A copy that is still waiting is asked about again at the next start, or any time with **Review Interrupted Saves** from the command palette. While such a copy is kept, a large file (opened without loading it whole) can't be saved again, since its unchanged parts would be read back from the damaged file.
+
 ## Code Folding
 
 Fold and unfold code blocks via gutter indicators or "Toggle Fold" from the command palette. Up/Down navigation skips folded regions. Each split view maintains its own fold state. Folding works in two modes:
