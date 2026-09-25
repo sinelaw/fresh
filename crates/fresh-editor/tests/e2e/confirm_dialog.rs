@@ -724,3 +724,26 @@ fn cancelling_the_save_as_of_save_and_quit_reports_a_cancelled_quit() {
     harness.assert_screen_contains("Quit cancelled");
     harness.assert_screen_not_contains("Close cancelled");
 }
+
+/// **The count agrees with its noun in the user's language** (issue #3399).
+/// Russian has three integer forms — 1 буфер, 2 буфера, 5 буферов — and a
+/// single "many" string read "2 буферов", wrong the way "1 files" is wrong in
+/// English.
+#[test]
+fn the_unsaved_count_takes_the_form_its_number_needs_in_russian() {
+    let _pin = pin();
+    let mut config = Config::default();
+    config.editor.hot_exit = false;
+    config.locale = Some("ru").into();
+    let (mut harness, _file) = dirty_buffer(config);
+    let dir = harness.project_dir().expect("project dir");
+    let second = dir.join("second.txt");
+    std::fs::write(&second, "second\n").unwrap();
+    harness.open_file(&second).unwrap();
+    harness.type_text("EDITED").unwrap();
+    harness.render().unwrap();
+
+    quit(&mut harness);
+    harness.assert_screen_contains("2 буфера имеют несохранённые изменения");
+    harness.assert_screen_not_contains("2 буферов");
+}
