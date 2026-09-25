@@ -357,6 +357,7 @@ impl Editor {
                         // is obsolete.
                         crate::model::buffer::save::resolve_inplace_write_recovery(
                             &*self.authority().filesystem,
+                            &self.dir_context.recovery_dir(),
                             &info.dest_path,
                         );
                         Ok(())
@@ -786,7 +787,12 @@ impl Editor {
             before_len
         );
 
-        match self.active_state_mut().buffer.save_to_file(&full_path) {
+        let recovery_dir = self.dir_context.recovery_dir();
+        match self
+            .active_state_mut()
+            .buffer
+            .save_to_file(&full_path, &recovery_dir)
+        {
             Ok(()) => {
                 let after_save_idx = self.active_event_log().current_index();
                 let after_save_len = self.active_event_log().len();

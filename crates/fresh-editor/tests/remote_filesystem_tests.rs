@@ -664,7 +664,7 @@ fn test_buffer_save_new_file_through_remote() {
     let mut buffer = TextBuffer::from_bytes(b"Hello, World!\nLine 2\n".to_vec(), fs);
 
     // Save to new file
-    buffer.save_to_file(&file_path).unwrap();
+    buffer.save_to_file(&file_path, &temp_dir.path().join("recovery")).unwrap();
 
     // Verify file content
     let content = std::fs::read(&file_path).unwrap();
@@ -691,7 +691,7 @@ fn test_buffer_save_edited_file_through_remote() {
     buffer.insert_bytes(3, b"XXX".to_vec()); // Insert "XXX"
 
     // Save back
-    buffer.save_to_file(&file_path).unwrap();
+    buffer.save_to_file(&file_path, &temp_dir.path().join("recovery")).unwrap();
 
     // Verify
     let content = std::fs::read(&file_path).unwrap();
@@ -721,7 +721,7 @@ fn test_buffer_save_with_copy_ops_through_remote() {
     buffer.insert_bytes(edit_pos, b"EDITED".to_vec());
 
     // Save back
-    buffer.save_to_file(&file_path).unwrap();
+    buffer.save_to_file(&file_path, &temp_dir.path().join("recovery")).unwrap();
 
     // Verify content
     let content = std::fs::read(&file_path).unwrap();
@@ -757,7 +757,7 @@ fn test_buffer_save_as_different_path_through_remote() {
     buffer.insert_bytes(0, b"Modified: ".to_vec());
 
     // Save to different path
-    buffer.save_to_file(&new_path).unwrap();
+    buffer.save_to_file(&new_path, &temp_dir.path().join("recovery")).unwrap();
 
     // Verify new file has modified content
     let new_content = std::fs::read(&new_path).unwrap();
@@ -790,7 +790,7 @@ fn test_buffer_save_with_line_ending_conversion_through_remote() {
     buffer.set_line_ending(LineEnding::LF);
 
     // Save back
-    buffer.save_to_file(&file_path).unwrap();
+    buffer.save_to_file(&file_path, &temp_dir.path().join("recovery")).unwrap();
 
     // Verify LF line endings (no CR)
     let content = std::fs::read(&file_path).unwrap();
@@ -811,7 +811,7 @@ fn test_buffer_save_empty_file_through_remote() {
     let mut buffer = TextBuffer::from_bytes(Vec::new(), fs);
 
     // Save to file
-    buffer.save_to_file(&file_path).unwrap();
+    buffer.save_to_file(&file_path, &temp_dir.path().join("recovery")).unwrap();
 
     // Verify empty file
     let content = std::fs::read(&file_path).unwrap();
@@ -855,7 +855,7 @@ fn test_buffer_multiple_edits_then_save_through_remote() {
     // Now: "The slow red fox jumps over the energetic dog."
 
     // Save back
-    buffer.save_to_file(&file_path).unwrap();
+    buffer.save_to_file(&file_path, &temp_dir.path().join("recovery")).unwrap();
 
     // Verify
     let content = std::fs::read(&file_path).unwrap();
@@ -885,7 +885,7 @@ fn test_buffer_save_large_file_with_small_edit_through_remote() {
     buffer.insert_bytes(edit_pos, b"END".to_vec());
 
     // Save back
-    buffer.save_to_file(&file_path).unwrap();
+    buffer.save_to_file(&file_path, &temp_dir.path().join("recovery")).unwrap();
 
     // Verify
     let content = std::fs::read(&file_path).unwrap();
@@ -963,7 +963,7 @@ fn test_buffer_large_file_edits_at_beginning_middle_and_end_through_remote() {
     }
 
     // Save back through remote filesystem
-    buffer.save_to_file(&file_path).unwrap();
+    buffer.save_to_file(&file_path, &temp_dir.path().join("recovery")).unwrap();
 
     // Read back the saved file
     let content = std::fs::read(&file_path).unwrap();
@@ -1050,7 +1050,7 @@ fn test_buffer_large_file_multiple_scattered_edits_through_remote() {
     }
 
     // Save
-    buffer.save_to_file(&file_path).unwrap();
+    buffer.save_to_file(&file_path, &temp_dir.path().join("recovery")).unwrap();
 
     // Build expected content
     let mut expected = Vec::with_capacity(size + 200);
@@ -1165,7 +1165,7 @@ fn test_buffer_huge_file_multi_save_cycle_through_remote() {
         expected_lines[target_line] = format!("{}{}", edit_text, expected_lines[target_line]);
 
         // Save
-        buffer.save_to_file(&file_path).unwrap();
+        buffer.save_to_file(&file_path, &temp_dir.path().join("recovery")).unwrap();
 
         // Verify
         let content = std::fs::read(&file_path).unwrap();
@@ -1302,7 +1302,7 @@ fn test_buffer_shadow_random_ops_through_remote() {
         // Periodic save-and-verify cycle
         if (op_idx + 1) % SAVE_EVERY == 0 {
             // Save through remote filesystem
-            buffer.save_to_file(&file_path).unwrap();
+            buffer.save_to_file(&file_path, &temp_dir.path().join("recovery")).unwrap();
 
             // Read back directly from disk
             let on_disk = std::fs::read(&file_path).unwrap();
@@ -1358,7 +1358,7 @@ fn test_buffer_shadow_random_ops_through_remote() {
     }
 
     // Final save and verify
-    buffer.save_to_file(&file_path).unwrap();
+    buffer.save_to_file(&file_path, &temp_dir.path().join("recovery")).unwrap();
     let final_content = std::fs::read(&file_path).unwrap();
     assert_eq!(
         final_content.len(),
@@ -1436,7 +1436,7 @@ fn test_regression_1059_streaming_read_backpressure() {
     let insert_pos = 50_000 * LINE_LEN;
     let insert_data = b"INSERTED LINE\n".to_vec();
     buffer.insert_bytes(insert_pos, insert_data.clone());
-    buffer.save_to_file(&file_path).unwrap();
+    buffer.save_to_file(&file_path, &temp_dir.path().join("recovery")).unwrap();
 
     let saved = std::fs::read(&file_path).unwrap();
     let mut expected = original.clone();

@@ -189,9 +189,8 @@ impl FileSystem for NotOwnerFileSystem {
 fn test_large_file_inplace_write_corruption() {
     use std::fs;
 
-    // In-place writes stage in the recovery dir: keep them out of the real one.
     let data_dir = TempDir::new().unwrap();
-    let _pin = crate::common::global_state::pin_data_dir(data_dir.path());
+    let recovery_dir = data_dir.path().join("recovery");
 
     let temp_dir = TempDir::new().unwrap();
     let file_path = temp_dir.path().join("large_inplace_test.txt");
@@ -229,7 +228,7 @@ fn test_large_file_inplace_write_corruption() {
     // Save the file - this is where the bug manifests
     // With the bug: file is truncated, then Copy ops read from truncated file = corruption
     // Without the bug: all content should be preserved
-    let save_result = buffer.save();
+    let save_result = buffer.save(&recovery_dir);
 
     // The bug can manifest in two ways:
     // 1. Save fails with "failed to fill whole buffer" because Copy ops can't read truncated file
@@ -291,9 +290,8 @@ fn test_large_file_inplace_write_corruption() {
 fn test_large_file_inplace_write_multiple_edits() {
     use std::fs;
 
-    // In-place writes stage in the recovery dir: keep them out of the real one.
     let data_dir = TempDir::new().unwrap();
-    let _pin = crate::common::global_state::pin_data_dir(data_dir.path());
+    let recovery_dir = data_dir.path().join("recovery");
 
     let temp_dir = TempDir::new().unwrap();
     let file_path = temp_dir.path().join("large_multi_edit_test.txt");
@@ -324,7 +322,7 @@ fn test_large_file_inplace_write_multiple_edits() {
     buffer.insert_bytes(middle_pos, b"<<<MIDDLE>>>".to_vec());
 
     // Save - may fail due to the bug
-    let save_result = buffer.save();
+    let save_result = buffer.save(&recovery_dir);
     if let Err(e) = save_result {
         panic!(
             "BUG CONFIRMED: Save failed with error: {}\n\
@@ -567,9 +565,8 @@ impl FileSystem for CrashDuringStreamFileSystem {
 fn test_inplace_write_crash_recovery() {
     use std::fs;
 
-    // In-place writes stage in the recovery dir: keep them out of the real one.
     let data_dir = TempDir::new().unwrap();
-    let _pin = crate::common::global_state::pin_data_dir(data_dir.path());
+    let recovery_dir = data_dir.path().join("recovery");
 
     let temp_dir = TempDir::new().unwrap();
     let file_path = temp_dir.path().join("crash_test.txt");
@@ -601,15 +598,13 @@ fn test_inplace_write_crash_recovery() {
     buffer.insert_bytes(0, b"EDITED: ".to_vec());
 
     // Save should fail due to simulated crash
-    let save_result = buffer.save();
+    let save_result = buffer.save(&recovery_dir);
     assert!(
         save_result.is_err(),
         "Save should fail due to simulated crash"
     );
 
-    // Verify recovery files exist directly (can't use list_inplace_write_recoveries
-    // because it filters out entries from still-running processes - i.e., this test)
-    let recovery_dir = fresh::services::recovery::RecoveryStorage::get_recovery_dir().unwrap();
+    // Verify recovery files exist directly
     let hash = fresh::services::recovery::path_hash(&file_path);
     let meta_path = recovery_dir.join(format!("{}.inplace.json", hash));
 
@@ -690,9 +685,8 @@ fn test_inplace_write_crash_recovery() {
 fn test_inplace_write_recovery_restores_file() {
     use std::fs;
 
-    // In-place writes stage in the recovery dir: keep them out of the real one.
     let data_dir = TempDir::new().unwrap();
-    let _pin = crate::common::global_state::pin_data_dir(data_dir.path());
+    let recovery_dir = data_dir.path().join("recovery");
 
     let temp_dir = TempDir::new().unwrap();
     let file_path = temp_dir.path().join("recovery_test.txt");
@@ -725,7 +719,7 @@ fn test_inplace_write_recovery_restores_file() {
     buffer.insert_bytes(0, edit_prefix.to_vec());
 
     // Save should fail due to simulated crash
-    let save_result = buffer.save();
+    let save_result = buffer.save(&recovery_dir);
     assert!(
         save_result.is_err(),
         "Save should fail due to simulated crash"
@@ -735,7 +729,6 @@ fn test_inplace_write_recovery_restores_file() {
     // but the temp file should have the complete content.
 
     // Find the recovery entry
-    let recovery_dir = fresh::services::recovery::RecoveryStorage::get_recovery_dir().unwrap();
     let hash = fresh::services::recovery::path_hash(&file_path);
     let meta_path = recovery_dir.join(format!("{}.inplace.json", hash));
 
@@ -811,12 +804,11 @@ fn test_inplace_write_recovery_restores_file() {
 #[test]
 #[cfg(unix)]
 fn test_successful_inplace_write_cleans_up_recovery() {
-    use fresh::services::recovery::RecoveryStorage;
+    use fresh::services::recovery::InplaceWriteRecovery;
     use std::fs;
 
-    // In-place writes stage in the recovery dir: keep them out of the real one.
     let data_dir = TempDir::new().unwrap();
-    let _pin = crate::common::global_state::pin_data_dir(data_dir.path());
+    let recovery_dir = data_dir.path().join("recovery");
 
     let temp_dir = TempDir::new().unwrap();
     let file_path = temp_dir.path().join("success_test.txt");
@@ -840,13 +832,14 @@ fn test_successful_inplace_write_cleans_up_recovery() {
     buffer.insert_bytes(0, b"SUCCESS: ".to_vec());
 
     // Save should succeed
-    buffer.save().unwrap();
+    buffer.save(&recovery_dir).unwrap();
 
     // Verify NO recovery files remain for this path
-    let recovery_storage = RecoveryStorage::default();
-    let inplace_recoveries = recovery_storage.list_inplace_write_recoveries().unwrap();
+    let inplace_recoveries = InplaceWriteRecovery::scan(&StdFileSystem, &recovery_dir);
 
-    let our_recovery = inplace_recoveries.iter().find(|r| r.dest_path == file_path);
+    let our_recovery = inplace_recoveries
+        .iter()
+        .find(|(_, r)| r.dest_path == file_path);
 
     assert!(
         our_recovery.is_none(),
@@ -871,9 +864,8 @@ fn test_successful_inplace_write_cleans_up_recovery() {
 fn test_emptying_not_owned_file_writes_in_place() {
     use std::os::unix::fs::MetadataExt;
 
-    // In-place writes stage in the recovery dir: keep them out of the real one.
     let data_dir = TempDir::new().unwrap();
-    let _pin = crate::common::global_state::pin_data_dir(data_dir.path());
+    let recovery_dir = data_dir.path().join("recovery");
 
     let temp_dir = TempDir::new().unwrap();
     let file_path = temp_dir.path().join("not_mine.txt");
@@ -884,7 +876,7 @@ fn test_emptying_not_owned_file_writes_in_place() {
     let mut buffer = TextBuffer::load_from_file(&file_path, 1024 * 1024, not_owner_fs).unwrap();
     let len = buffer.len();
     buffer.delete_bytes(0, len);
-    buffer.save().unwrap();
+    buffer.save(&recovery_dir).unwrap();
 
     assert_eq!(std::fs::read(&file_path).unwrap(), b"");
     assert_eq!(
@@ -902,7 +894,7 @@ fn test_emptying_not_owned_file_writes_in_place() {
 #[cfg(unix)]
 fn test_small_file_inplace_write_failure_keeps_staged_copy() {
     let data_dir = TempDir::new().unwrap();
-    let _pin = crate::common::global_state::pin_data_dir(data_dir.path());
+    let recovery_dir = data_dir.path().join("recovery");
 
     let temp_dir = TempDir::new().unwrap();
     let file_path = temp_dir.path().join("small.txt");
@@ -915,7 +907,10 @@ fn test_small_file_inplace_write_failure_keeps_staged_copy() {
     assert!(!buffer.is_large_file());
     buffer.insert_bytes(0, b"EDITED: ".to_vec());
 
-    assert!(buffer.save().is_err(), "the simulated failure must surface");
+    assert!(
+        buffer.save(&recovery_dir).is_err(),
+        "the simulated failure must surface"
+    );
 
     let hash = fresh::services::recovery::path_hash(&file_path);
     let meta_path = data_dir
@@ -940,7 +935,7 @@ fn test_small_file_inplace_write_failure_keeps_staged_copy() {
 #[cfg(unix)]
 fn test_small_file_inplace_write_cleans_up_staged_copy() {
     let data_dir = TempDir::new().unwrap();
-    let _pin = crate::common::global_state::pin_data_dir(data_dir.path());
+    let recovery_dir = data_dir.path().join("recovery");
 
     let temp_dir = TempDir::new().unwrap();
     let file_path = temp_dir.path().join("small.txt");
@@ -949,7 +944,7 @@ fn test_small_file_inplace_write_cleans_up_staged_copy() {
     let mut buffer = TextBuffer::load_from_file(&file_path, 1024 * 1024, not_owner_fs).unwrap();
     buffer.insert_bytes(0, b"EDITED: ".to_vec());
 
-    buffer.save().unwrap();
+    buffer.save(&recovery_dir).unwrap();
 
     assert_eq!(
         std::fs::read_to_string(&file_path).unwrap(),
@@ -982,7 +977,7 @@ fn staged_copies(recovery_dir: &Path) -> Vec<PathBuf> {
 fn test_inplace_staged_copy_is_private() {
     use std::os::unix::fs::PermissionsExt;
     let data_dir = TempDir::new().unwrap();
-    let _pin = crate::common::global_state::pin_data_dir(data_dir.path());
+    let recovery_dir = data_dir.path().join("recovery");
 
     let temp_dir = TempDir::new().unwrap();
     let file_path = temp_dir.path().join("secret.txt");
@@ -994,7 +989,10 @@ fn test_inplace_staged_copy_is_private() {
     ));
     let mut buffer = TextBuffer::load_from_file(&file_path, 1024 * 1024, crash_fs).unwrap();
     buffer.insert_bytes(0, b"EDITED: ".to_vec());
-    assert!(buffer.save().is_err(), "the simulated failure must surface");
+    assert!(
+        buffer.save(&recovery_dir).is_err(),
+        "the simulated failure must surface"
+    );
 
     let staged = staged_copies(&data_dir.path().join("recovery"));
     assert_eq!(staged.len(), 1, "staged: {staged:?}");
@@ -1010,7 +1008,6 @@ fn test_inplace_staged_copy_is_private() {
 #[cfg(unix)]
 fn test_repeated_inplace_write_failures_keep_one_staged_copy() {
     let data_dir = TempDir::new().unwrap();
-    let _pin = crate::common::global_state::pin_data_dir(data_dir.path());
     let recovery_dir = data_dir.path().join("recovery");
 
     let temp_dir = TempDir::new().unwrap();
@@ -1023,7 +1020,10 @@ fn test_repeated_inplace_write_failures_keep_one_staged_copy() {
     let mut buffer = TextBuffer::load_from_file(&file_path, 1024 * 1024, crash_fs).unwrap();
     for attempt in 0..3 {
         buffer.insert_bytes(0, format!("{attempt}").into_bytes());
-        assert!(buffer.save().is_err(), "the simulated failure must surface");
+        assert!(
+            buffer.save(&recovery_dir).is_err(),
+            "the simulated failure must surface"
+        );
     }
 
     let staged = staged_copies(&recovery_dir);
@@ -1051,7 +1051,6 @@ fn test_repeated_inplace_write_failures_keep_one_staged_copy() {
 fn test_session_start_cleans_up_resolved_inplace_recoveries() {
     use fresh::services::recovery::{path_hash, InplaceWriteRecovery};
     let data_dir = TempDir::new().unwrap();
-    let _pin = crate::common::global_state::pin_data_dir(data_dir.path());
     let recovery_dir = data_dir.path().join("recovery");
     std::fs::create_dir_all(&recovery_dir).unwrap();
     let files = TempDir::new().unwrap();
@@ -1082,7 +1081,10 @@ fn test_session_start_cleans_up_resolved_inplace_recoveries() {
     ));
     std::fs::write(&live_meta_temp, "{").unwrap();
 
-    let removed = fresh::model::buffer::save::clean_up_inplace_write_recoveries();
+    let removed = fresh::model::buffer::save::clean_up_inplace_write_recoveries(
+        &StdFileSystem,
+        &recovery_dir,
+    );
 
     for gone in [&done_temp, &done_meta, &gone_meta, &meta_temp] {
         assert!(!gone.exists(), "{gone:?} should have been removed");
@@ -1108,7 +1110,6 @@ fn test_session_start_cleans_up_resolved_inplace_recoveries() {
 fn check_refused_retry_keeps_earlier_copy(large: bool, refusal: io::ErrorKind) {
     use fresh::services::recovery::{path_hash, InplaceWriteRecovery};
     let data_dir = TempDir::new().unwrap();
-    let _pin = crate::common::global_state::pin_data_dir(data_dir.path());
     let recovery_dir = data_dir.path().join("recovery");
     let meta_path = |file: &Path| recovery_dir.join(format!("{}.inplace.json", path_hash(file)));
 
@@ -1147,13 +1148,18 @@ fn check_refused_retry_keeps_earlier_copy(large: bool, refusal: io::ErrorKind) {
     } else {
         // Attempt 1: the write fails part-way.
         buffer.insert_bytes(0, b"first ".to_vec());
-        assert!(buffer.save().is_err(), "the simulated failure must surface");
+        assert!(
+            buffer.save(&recovery_dir).is_err(),
+            "the simulated failure must surface"
+        );
     }
 
     // Attempt 2: the file can't be opened for writing at all.
     fs.refuse_open(refusal);
     buffer.insert_bytes(0, b"second ".to_vec());
-    let err = buffer.save().expect_err("the refusal must surface");
+    let err = buffer
+        .save(&recovery_dir)
+        .expect_err("the refusal must surface");
     // A sudo prompt the user cancels deletes the copy handed to it, as
     // dropping the error does.
     drop(err);
@@ -1206,7 +1212,6 @@ fn test_refused_retry_keeps_earlier_copy_large_file_sudo() {
 fn test_completed_sudo_save_resolves_earlier_staged_copy() {
     use fresh::services::recovery::{path_hash, InplaceWriteRecovery};
     let data_dir = TempDir::new().unwrap();
-    let _pin = crate::common::global_state::pin_data_dir(data_dir.path());
     let recovery_dir = data_dir.path().join("recovery");
     std::fs::create_dir_all(&recovery_dir).unwrap();
 
@@ -1220,7 +1225,11 @@ fn test_completed_sudo_save_resolves_earlier_staged_copy() {
     let recovery = InplaceWriteRecovery::new(file_path.clone(), copy.clone(), 0, 0, 0o644);
     std::fs::write(&meta_path, serde_json::to_string(&recovery).unwrap()).unwrap();
 
-    fresh::model::buffer::save::resolve_inplace_write_recovery(&StdFileSystem, &file_path);
+    fresh::model::buffer::save::resolve_inplace_write_recovery(
+        &StdFileSystem,
+        &recovery_dir,
+        &file_path,
+    );
 
     assert!(!meta_path.exists(), "the recovery metadata must be removed");
     assert!(!copy.exists(), "the obsolete staged copy must be removed");

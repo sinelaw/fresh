@@ -34,8 +34,13 @@ impl Editor {
     /// recovery directory and no longer need, whether or not recovery is on:
     /// saves stage there regardless (see
     /// [`crate::model::buffer::save::clean_up_inplace_write_recoveries`]).
+    /// That directory is on this host, so it is swept through the local
+    /// filesystem even when editing a remote one.
     pub fn start_recovery_session(&mut self) -> AnyhowResult<()> {
-        let removed = crate::model::buffer::save::clean_up_inplace_write_recoveries();
+        let removed = crate::model::buffer::save::clean_up_inplace_write_recoveries(
+            &*self.local_filesystem,
+            &self.dir_context.recovery_dir(),
+        );
         if removed > 0 {
             tracing::info!("Removed {removed} leftover in-place save file(s)");
         }

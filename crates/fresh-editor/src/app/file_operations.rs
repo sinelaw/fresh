@@ -110,7 +110,8 @@ impl Editor {
             .file_path()
             .map(|p| p.to_path_buf());
 
-        match self.active_state_mut().buffer.save() {
+        let recovery_dir = self.dir_context.recovery_dir();
+        match self.active_state_mut().buffer.save(&recovery_dir) {
             Ok(()) => self.finalize_save(path),
             Err(e) => match e.downcast::<SudoSaveRequired>() {
                 // The prompt takes the temp file over: it lives as long as
@@ -351,7 +352,7 @@ impl Editor {
                 .expect("active window present")
                 .get_mut(&id)
             {
-                match state.buffer.save() {
+                match state.buffer.save(&self.dir_context.recovery_dir()) {
                     Ok(()) => {
                         self.finalize_save_buffer(id, Some(path), true)?;
                         count += 1;
@@ -534,7 +535,7 @@ impl Editor {
             else {
                 continue;
             };
-            match state.buffer.save() {
+            match state.buffer.save(&self.dir_context.recovery_dir()) {
                 Ok(()) => {
                     self.finalize_save_buffer(entry.buffer, Some(path), true)?;
                     outcome.saved += 1;
@@ -602,7 +603,7 @@ impl Editor {
                 .map(|w| &mut w.buffers)
                 .expect("active window present")
                 .get_mut(&id)
-                .map(|state| state.buffer.save());
+                .map(|state| state.buffer.save(&self.dir_context.recovery_dir()));
             match result {
                 Some(Ok(())) => {
                     self.finalize_save_buffer(id, Some(path), true)?;

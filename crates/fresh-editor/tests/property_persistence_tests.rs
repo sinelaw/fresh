@@ -298,7 +298,7 @@ proptest! {
 
         // Save to a new file
         let save_path = temp_dir.path().join("saved.txt");
-        buffer.save_to_file(&save_path).unwrap();
+        buffer.save_to_file(&save_path, &temp_dir.path().join("recovery")).unwrap();
 
         // Reload from the saved file
         let mut reloaded = TextBuffer::load_from_file(&save_path, 0, test_fs()).unwrap();
@@ -342,7 +342,7 @@ proptest! {
         let content_before_save = read_buffer_content(&mut buffer);
 
         // Save to the SAME file (overwrite)
-        buffer.save_to_file(&file_path).unwrap();
+        buffer.save_to_file(&file_path, &temp_dir.path().join("recovery")).unwrap();
 
         // Reload
         let mut reloaded = TextBuffer::load_from_file(&file_path, 0, test_fs()).unwrap();
@@ -374,7 +374,7 @@ proptest! {
             op.apply(&mut buffer);
             op.apply_to_shadow(&mut shadow);
         }
-        buffer.save_to_file(&file_path).unwrap();
+        buffer.save_to_file(&file_path, &temp_dir.path().join("recovery")).unwrap();
 
         // Round 2: load, edit, save
         let mut buffer = TextBuffer::load_from_file(&file_path, 0, test_fs()).unwrap();
@@ -382,7 +382,7 @@ proptest! {
             op.apply(&mut buffer);
             op.apply_to_shadow(&mut shadow);
         }
-        buffer.save_to_file(&file_path).unwrap();
+        buffer.save_to_file(&file_path, &temp_dir.path().join("recovery")).unwrap();
 
         // Round 3: load, edit, save
         let mut buffer = TextBuffer::load_from_file(&file_path, 0, test_fs()).unwrap();
@@ -390,7 +390,7 @@ proptest! {
             op.apply(&mut buffer);
             op.apply_to_shadow(&mut shadow);
         }
-        buffer.save_to_file(&file_path).unwrap();
+        buffer.save_to_file(&file_path, &temp_dir.path().join("recovery")).unwrap();
 
         // Final verification
         let mut final_buffer = TextBuffer::load_from_file(&file_path, 0, test_fs()).unwrap();
@@ -436,7 +436,7 @@ proptest! {
         prop_assert_eq!(&content_before_save, &shadow, "Shadow mismatch before save");
 
         let save_path = temp_dir.path().join("saved.txt");
-        buffer.save_to_file(&save_path).unwrap();
+        buffer.save_to_file(&save_path, &temp_dir.path().join("recovery")).unwrap();
 
         let mut reloaded = TextBuffer::load_from_file(&save_path, 0, test_fs()).unwrap();
         let reloaded_content = read_buffer_content(&mut reloaded);
@@ -484,7 +484,7 @@ proptest! {
 
         let content_before_save = read_buffer_content(&mut buffer);
         let save_path = temp_dir.path().join("saved.txt");
-        buffer.save_to_file(&save_path).unwrap();
+        buffer.save_to_file(&save_path, &temp_dir.path().join("recovery")).unwrap();
 
         let mut reloaded = TextBuffer::load_from_file(&save_path, 0, test_fs()).unwrap();
         let reloaded_content = read_buffer_content(&mut reloaded);
@@ -532,7 +532,7 @@ proptest! {
         prop_assert_eq!(&content_before_save, &shadow, "Shadow mismatch");
 
         let save_path = temp_dir.path().join("saved.txt");
-        buffer.save_to_file(&save_path).unwrap();
+        buffer.save_to_file(&save_path, &temp_dir.path().join("recovery")).unwrap();
 
         let mut reloaded = TextBuffer::load_from_file(&save_path, 0, test_fs()).unwrap();
         let reloaded_content = read_buffer_content(&mut reloaded);
@@ -593,7 +593,7 @@ proptest! {
 
         // Save
         let save_path = temp_dir.path().join("saved.txt");
-        buffer.save_to_file(&save_path).unwrap();
+        buffer.save_to_file(&save_path, &temp_dir.path().join("recovery")).unwrap();
 
         // Reload (as small file to verify full content)
         let mut reloaded = TextBuffer::load_from_file(&save_path, 0, test_fs()).unwrap();
@@ -643,7 +643,7 @@ proptest! {
 
         // Save and reload
         let save_path = temp_dir.path().join("saved.txt");
-        buffer.save_to_file(&save_path).unwrap();
+        buffer.save_to_file(&save_path, &temp_dir.path().join("recovery")).unwrap();
 
         let mut reloaded = TextBuffer::load_from_file(&save_path, 0, test_fs()).unwrap();
         let reloaded_content = read_buffer_content(&mut reloaded);
@@ -672,7 +672,7 @@ proptest! {
         expected.extend(&initial_content);
 
         let save_path = temp_dir.path().join("saved.txt");
-        buffer.save_to_file(&save_path).unwrap();
+        buffer.save_to_file(&save_path, &temp_dir.path().join("recovery")).unwrap();
 
         let mut reloaded = TextBuffer::load_from_file(&save_path, 0, test_fs()).unwrap();
         let reloaded_content = read_buffer_content(&mut reloaded);
@@ -697,7 +697,7 @@ proptest! {
         expected.extend(&insert_content);
 
         let save_path = temp_dir.path().join("saved.txt");
-        buffer.save_to_file(&save_path).unwrap();
+        buffer.save_to_file(&save_path, &temp_dir.path().join("recovery")).unwrap();
 
         let mut reloaded = TextBuffer::load_from_file(&save_path, 0, test_fs()).unwrap();
         let reloaded_content = read_buffer_content(&mut reloaded);
@@ -737,7 +737,7 @@ proptest! {
         prop_assert_eq!(&content_before_save, &shadow, "Shadow mismatch");
 
         let save_path = temp_dir.path().join("saved.txt");
-        buffer.save_to_file(&save_path).unwrap();
+        buffer.save_to_file(&save_path, &temp_dir.path().join("recovery")).unwrap();
 
         let mut reloaded = TextBuffer::load_from_file(&save_path, 0, test_fs()).unwrap();
         let reloaded_content = read_buffer_content(&mut reloaded);
@@ -768,7 +768,7 @@ proptest! {
         prop_assert_eq!(buffer.total_bytes(), 0, "Buffer should be empty");
 
         let save_path = temp_dir.path().join("saved.txt");
-        buffer.save_to_file(&save_path).unwrap();
+        buffer.save_to_file(&save_path, &temp_dir.path().join("recovery")).unwrap();
 
         let reloaded = TextBuffer::load_from_file(&save_path, 0, test_fs()).unwrap();
         prop_assert_eq!(reloaded.total_bytes(), 0, "Reloaded buffer should be empty");
@@ -807,7 +807,7 @@ proptest! {
         expected.extend(&additional);
 
         let save_path = temp_dir.path().join("saved.txt");
-        buffer.save_to_file(&save_path).unwrap();
+        buffer.save_to_file(&save_path, &temp_dir.path().join("recovery")).unwrap();
 
         let mut reloaded = TextBuffer::load_from_file(&save_path, 0, test_fs()).unwrap();
         let reloaded_content = read_buffer_content(&mut reloaded);
@@ -834,7 +834,7 @@ proptest! {
         let expected: Vec<u8> = initial_content[delete_amount..].to_vec();
 
         let save_path = temp_dir.path().join("saved.txt");
-        buffer.save_to_file(&save_path).unwrap();
+        buffer.save_to_file(&save_path, &temp_dir.path().join("recovery")).unwrap();
 
         let mut reloaded = TextBuffer::load_from_file(&save_path, 0, test_fs()).unwrap();
         let reloaded_content = read_buffer_content(&mut reloaded);
@@ -864,7 +864,7 @@ fn test_single_byte_file_roundtrip() {
     buffer.insert_bytes(0, b"Y".to_vec());
 
     let save_path = temp_dir.path().join("saved.txt");
-    buffer.save_to_file(&save_path).unwrap();
+    buffer.save_to_file(&save_path, &temp_dir.path().join("recovery")).unwrap();
 
     let mut reloaded = TextBuffer::load_from_file(&save_path, 0, test_fs()).unwrap();
     let content = read_buffer_content(&mut reloaded);
@@ -882,7 +882,7 @@ fn test_newline_only_file_roundtrip() {
     buffer.insert_bytes(1, b"text".to_vec());
 
     let save_path = temp_dir.path().join("saved.txt");
-    buffer.save_to_file(&save_path).unwrap();
+    buffer.save_to_file(&save_path, &temp_dir.path().join("recovery")).unwrap();
 
     let mut reloaded = TextBuffer::load_from_file(&save_path, 0, test_fs()).unwrap();
     let content = read_buffer_content(&mut reloaded);
@@ -909,7 +909,7 @@ fn test_binary_like_content_roundtrip() {
     expected.splice(128..128, b"MIDDLE".iter().cloned());
 
     let save_path = temp_dir.path().join("saved.bin");
-    buffer.save_to_file(&save_path).unwrap();
+    buffer.save_to_file(&save_path, &temp_dir.path().join("recovery")).unwrap();
 
     let mut reloaded = TextBuffer::load_from_file(&save_path, 0, test_fs()).unwrap();
     let content = read_buffer_content(&mut reloaded);
@@ -933,7 +933,7 @@ fn test_cr_preserved_in_binary_content() {
 
     // Save and reload
     let save_path = temp_dir.path().join("saved.txt");
-    buffer.save_to_file(&save_path).unwrap();
+    buffer.save_to_file(&save_path, &temp_dir.path().join("recovery")).unwrap();
 
     let mut reloaded = TextBuffer::load_from_file(&save_path, 0, test_fs()).unwrap();
     let reloaded_content = read_buffer_content(&mut reloaded);
@@ -955,7 +955,7 @@ fn test_repeated_save_load_cycles() {
         buffer.insert_bytes(buffer.total_bytes(), marker.clone());
         content.extend(&marker);
 
-        buffer.save_to_file(&file_path).unwrap();
+        buffer.save_to_file(&file_path, &temp_dir.path().join("recovery")).unwrap();
     }
 
     let mut final_buffer = TextBuffer::load_from_file(&file_path, 0, test_fs()).unwrap();
@@ -983,7 +983,7 @@ fn test_large_file_edit_in_middle_preserves_unloaded() {
     expected.splice(mid..mid, b"[MIDDLE]".iter().cloned());
 
     let save_path = temp_dir.path().join("saved.txt");
-    buffer.save_to_file(&save_path).unwrap();
+    buffer.save_to_file(&save_path, &temp_dir.path().join("recovery")).unwrap();
 
     // Verify the entire file content
     let saved = fs::read(&save_path).unwrap();
@@ -1087,7 +1087,7 @@ proptest! {
 
         // Save the file
         let save_path = temp_dir.path().join("saved.txt");
-        buffer.save_to_file(&save_path).unwrap();
+        buffer.save_to_file(&save_path, &temp_dir.path().join("recovery")).unwrap();
 
         // The saved file should match exactly what was in the buffer
         let saved_bytes = fs::read(&save_path).unwrap();
@@ -1126,7 +1126,7 @@ proptest! {
         let content_before_save = read_buffer_content(&mut buffer);
 
         let save_path = temp_dir.path().join("saved.txt");
-        buffer.save_to_file(&save_path).unwrap();
+        buffer.save_to_file(&save_path, &temp_dir.path().join("recovery")).unwrap();
 
         // Verify saved file has only LF, no CR
         let saved_bytes = fs::read(&save_path).unwrap();
@@ -1174,7 +1174,7 @@ proptest! {
         prop_assert_eq!(&content_before_save, &expected, "Buffer should match expected");
 
         let save_path = temp_dir.path().join("saved.txt");
-        buffer.save_to_file(&save_path).unwrap();
+        buffer.save_to_file(&save_path, &temp_dir.path().join("recovery")).unwrap();
 
         let mut reloaded = TextBuffer::load_from_file(&save_path, 0, test_fs()).unwrap();
         let reloaded_content = read_buffer_content(&mut reloaded);
@@ -1204,7 +1204,7 @@ fn test_crlf_preserved_after_edit() {
     buffer.insert_bytes(7, b"inserted\r\n".to_vec());
 
     let save_path = temp_dir.path().join("saved.txt");
-    buffer.save_to_file(&save_path).unwrap();
+    buffer.save_to_file(&save_path, &temp_dir.path().join("recovery")).unwrap();
 
     let saved = fs::read(&save_path).unwrap();
 
@@ -1225,7 +1225,7 @@ fn test_lf_file_no_crlf_after_save() {
     buffer.insert_bytes(6, b"inserted\n".to_vec());
 
     let save_path = temp_dir.path().join("saved.txt");
-    buffer.save_to_file(&save_path).unwrap();
+    buffer.save_to_file(&save_path, &temp_dir.path().join("recovery")).unwrap();
 
     let saved = fs::read(&save_path).unwrap();
 
@@ -1251,7 +1251,7 @@ fn test_empty_lines_with_crlf() {
     buffer.insert_bytes(7, b"X".to_vec());
 
     let save_path = temp_dir.path().join("saved.txt");
-    buffer.save_to_file(&save_path).unwrap();
+    buffer.save_to_file(&save_path, &temp_dir.path().join("recovery")).unwrap();
 
     let saved = fs::read(&save_path).unwrap();
     assert_eq!(saved, b"line1\r\nX\r\n\r\nline2\r\n");

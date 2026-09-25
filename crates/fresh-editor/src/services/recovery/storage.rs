@@ -7,7 +7,6 @@ use super::types::{
     generate_buffer_id, path_hash, ChunkedRecoveryData, ChunkedRecoveryIndex, RecoveryChunk,
     RecoveryEntry, RecoveryMetadata, SessionInfo,
 };
-use crate::input::input_history::get_data_dir;
 use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -69,12 +68,6 @@ impl RecoveryStorage {
             }
         };
         Self { recovery_dir }
-    }
-
-    /// Get the recovery directory path
-    pub fn get_recovery_dir() -> io::Result<PathBuf> {
-        let data_dir = get_data_dir()?;
-        Ok(data_dir.join("recovery"))
     }
 
     /// Migrate old flat-layout recovery files into a scoped directory.
@@ -619,86 +612,15 @@ impl RecoveryStorage {
         Ok(entries)
     }
 
-    // ========================================================================
-    // In-place write recovery
-    // ========================================================================
-
-    /// List all in-place write recovery entries that need attention.
-    ///
-    /// Returns entries where:
-    /// - The process that created them is no longer running (crash occurred)
-    /// - The temp file still exists (has data to recover)
-    pub fn list_inplace_write_recoveries(
-        &self,
-    ) -> io::Result<Vec<super::types::InplaceWriteRecovery>> {
-        if !self.recovery_dir.exists() {
-            return Ok(Vec::new());
-        }
-
-        let mut entries = Vec::new();
-
-        for entry in fs::read_dir(&self.recovery_dir)? {
-            let entry = entry?;
-            let path = entry.path();
-
-            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                if name.ends_with(".inplace.json") {
-                    // Try to parse the metadata
-                    if let Ok(content) = fs::read_to_string(&path) {
-                        if let Ok(recovery) =
-                            serde_json::from_str::<super::types::InplaceWriteRecovery>(&content)
-                        {
-                            // Only include if:
-                            // 1. The creating process is not running (crashed)
-                            // 2. The temp file still exists
-                            if !recovery.is_in_progress() && recovery.temp_path.exists() {
-                                entries.push(recovery);
-                            } else if !recovery.temp_path.exists() {
-                                // Clean up orphaned metadata (temp file was deleted)
-                                if let Err(e) = fs::remove_file(&path) {
-                                    tracing::warn!("Failed to remove orphaned inplace recovery metadata {}: {}", path.display(), e);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Sort by start time (oldest first)
-        entries.sort_by_key(|e| e.started_at);
-        Ok(entries)
-    }
-
     /// Remove temp files [`Self::atomic_write`] left behind when its process
     /// died between creating and renaming them; nothing else ever deletes
     /// them. One whose process is still running (another editor sharing this
     /// directory, mid-write) is left alone. Returns how many were removed.
     pub fn remove_stale_temp_files(&self) -> io::Result<usize> {
-        let entries = match fs::read_dir(&self.recovery_dir) {
-            Ok(entries) => entries,
-            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(0),
-            Err(e) => return Err(e),
-        };
-        let mut removed = 0;
-        for entry in entries {
-            let entry = entry?;
-            let Some(pid) = entry.file_name().to_str().and_then(atomic_write_temp_pid) else {
-                continue;
-            };
-            if super::types::is_process_running(pid) {
-                continue;
-            }
-            match fs::remove_file(entry.path()) {
-                Ok(()) => removed += 1,
-                Err(e) => tracing::debug!(
-                    "Failed to remove stale recovery temp file {}: {}",
-                    entry.path().display(),
-                    e
-                ),
-            }
-        }
-        Ok(removed)
+        super::types::remove_orphaned_temp_files(
+            &crate::model::filesystem::StdFileSystem,
+            &self.recovery_dir,
+        )
     }
 
     // ========================================================================
@@ -732,28 +654,6 @@ impl RecoveryStorage {
             let _ = fs::remove_file(&temp_path);
         }
         result
-    }
-}
-
-/// The pid in the name of a temp file [`RecoveryStorage::atomic_write`]
-/// creates (`.<name>.<pid>.<n>.tmp`, see
-/// [`crate::model::filesystem::sibling_temp_path`]), or `None` for any other
-/// file — including the `.inplace-*.tmp` copies staged for in-place writes,
-/// which are recovery data themselves.
-fn atomic_write_temp_pid(file_name: &str) -> Option<u32> {
-    if file_name.starts_with(".inplace-") {
-        return None;
-    }
-    crate::model::filesystem::sibling_temp_pid(file_name)
-}
-
-impl Default for RecoveryStorage {
-    /// The legacy unscoped flat layout, kept for tests that just need
-    /// somewhere to write. Production uses the scoped constructors.
-    fn default() -> Self {
-        let recovery_dir = Self::get_recovery_dir()
-            .unwrap_or_else(|_| std::env::temp_dir().join("fresh-recovery"));
-        Self { recovery_dir }
     }
 }
 

@@ -726,7 +726,9 @@ fn sudo_save_temp_file_is_private() {
         let mut buffer = TextBuffer::load_from_file(&file_path, 1024 * 1024, fs).unwrap();
         buffer.insert_bytes(0, b"modified ".to_vec());
 
-        let err = buffer.save().expect_err("the save must need sudo");
+        let err = buffer
+            .save(&temp_dir.path().join("recovery"))
+            .expect_err("the save must need sudo");
         let info = err
             .downcast::<SudoSaveRequired>()
             .unwrap_or_else(|err| panic!("not a sudo save: {err}"));

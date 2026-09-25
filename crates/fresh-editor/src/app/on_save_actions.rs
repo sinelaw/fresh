@@ -49,7 +49,8 @@ impl Editor {
 
         // If whitespace cleanup made changes, re-save
         if ran_any_action {
-            if let Err(e) = self.active_state_mut().buffer.save() {
+            let recovery_dir = self.dir_context.recovery_dir();
+            if let Err(e) = self.active_state_mut().buffer.save(&recovery_dir) {
                 return Err(format!("Failed to re-save after whitespace cleanup: {}", e));
             }
             self.active_event_log_mut().mark_saved();
@@ -76,7 +77,8 @@ impl Editor {
                     ActionResult::Success(output) => {
                         self.replace_buffer_with_output(&output)?;
                         // Re-save after formatting
-                        if let Err(e) = self.active_state_mut().buffer.save() {
+                        let recovery_dir = self.dir_context.recovery_dir();
+                        if let Err(e) = self.active_state_mut().buffer.save(&recovery_dir) {
                             return Err(format!("Failed to re-save after format: {}", e));
                         }
                         self.active_event_log_mut().mark_saved();
