@@ -413,6 +413,7 @@
   "buffer.cannot_open_directory": "디렉토리를 파일로 열 수 없습니다",
   "buffer.changes_discarded": "버퍼 닫힘 (변경사항 삭제됨)",
   "buffer.close_cancelled": "닫기 취소됨",
+  "buffer.quit_cancelled": "종료 취소됨",
   "buffer.closed": "버퍼 닫힘",
   "buffer.closed_tabs": "%{count}개 탭 닫힘",
   "buffer.closed_tabs_skipped": "%{closed}개 탭 닫힘, %{skipped}개 수정됨 건너뜀",

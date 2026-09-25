@@ -654,3 +654,73 @@ fn hovering_a_button_lights_it_without_arming_it() {
         "Enter must have saved, not discarded"
     );
 }
+
+/// **Backing out of a quit says so, not "Close cancelled"** (issue #3404).
+/// That message belongs to closing a tab; after `Ctrl+Q` then Esc it told
+/// the user they had cancelled something they never started.
+#[test]
+fn cancelling_the_unsaved_changes_quit_prompt_reports_a_cancelled_quit() {
+    let _pin = pin();
+    let (mut harness, _file) = dirty_buffer(Config::default());
+    quit(&mut harness);
+    harness.assert_screen_contains("Unsaved Changes");
+
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    assert!(!harness.should_quit());
+    harness.assert_screen_contains("Quit cancelled");
+    harness.assert_screen_not_contains("Close cancelled");
+}
+
+/// The same for the `confirm_quit` question asked of a clean session, and
+/// for its Cancel button rather than Esc.
+#[test]
+fn cancelling_the_quit_confirmation_reports_a_cancelled_quit() {
+    let _pin = pin();
+    let mut config = Config::default();
+    config.editor.confirm_quit = true;
+    let mut harness =
+        EditorTestHarness::with_temp_project_and_config(WIDTH, HEIGHT, config).expect("harness");
+    harness.render().unwrap();
+
+    quit(&mut harness);
+    harness.assert_screen_contains("Quit Fresh");
+    harness
+        .send_key(KeyCode::Char('c'), KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    assert!(!harness.should_quit());
+    harness.assert_screen_contains("Quit cancelled");
+    harness.assert_screen_not_contains("Close cancelled");
+}
+
+/// Save and Quit with an unnamed buffer asks for its name; cancelling that
+/// Save As calls the quit off, and the status has to say it was the quit.
+#[test]
+fn cancelling_the_save_as_of_save_and_quit_reports_a_cancelled_quit() {
+    let _pin = pin();
+    let mut config = Config::default();
+    config.editor.hot_exit = false;
+    let mut harness =
+        EditorTestHarness::with_temp_project_and_config(WIDTH, HEIGHT, config).expect("harness");
+    harness.new_buffer().unwrap();
+    harness.type_text("unnamed work").unwrap();
+    harness.render().unwrap();
+
+    quit(&mut harness);
+    harness.assert_screen_contains("Unsaved Changes");
+    harness
+        .send_key(KeyCode::Char('s'), KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("Save as:");
+
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    assert!(!harness.should_quit());
+    harness.assert_screen_contains("Quit cancelled");
+    harness.assert_screen_not_contains("Close cancelled");
+}

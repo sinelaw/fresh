@@ -827,6 +827,9 @@ impl Editor {
         // plugin hooks, file_open_state) don't
         // conflict with the borrow on self.active_window().prompt.
         let prompt_clone = self.active_window().prompt.clone();
+        // What the status line says once the prompt is gone; a prompt whose
+        // cancellation means something more specific replaces it below.
+        let mut cancelled_message = t!("search.cancelled").to_string();
         if let Some(prompt) = prompt_clone {
             let prompt = &prompt;
             // Reset history navigation for this prompt type
@@ -881,7 +884,7 @@ impl Editor {
                         && self.has_pending_quit_unnamed_save()
                     {
                         self.clear_pending_quit_unnamed_save();
-                        self.set_status_message(t!("buffer.close_cancelled").to_string());
+                        cancelled_message = t!("buffer.quit_cancelled").to_string();
                     }
                 }
                 PromptType::AsyncPrompt => {
@@ -937,7 +940,7 @@ impl Editor {
 
         self.drop_prompt();
         self.active_window_mut().pending_search_range = None;
-        self.active_window_mut().status_message = Some(t!("search.cancelled").to_string());
+        self.active_window_mut().status_message = Some(cancelled_message);
 
         // Restore original theme if we were in SelectTheme prompt
         if let Some(original_theme) = theme_to_restore {
