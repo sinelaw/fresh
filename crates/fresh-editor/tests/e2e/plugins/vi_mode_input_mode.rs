@@ -153,7 +153,7 @@ fn wait_for_editor_mode(s: &mut Setup, mode: &str) {
             .dispatch_action_for_tests(PluginAction("tim_report_mode".to_string()));
         s.h.wait_until(|h| h.get_status_bar().contains(&prefix))
             .unwrap();
-        if s.h.get_status_bar().contains(&format!("{prefix}{mode} ")) {
+        if s.h.get_status_bar().contains(&format!("{prefix}{mode};")) {
             return;
         }
     }

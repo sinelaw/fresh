@@ -13,7 +13,7 @@ const editor = getEditor();
  *   closes it. The panel's mode must not reach another window, and closing
  *   it must leave vi as it was.
  * - `tim_report_mode` shows the active window's editor mode in the status
- *   bar (`MODE<n>=<mode>`, numbered per report), so a test can
+ *   bar (`MODE<n>=<mode>;`, numbered per report), so a test can
  *   wait on screen for another plugin to have set or cleared it.
  */
 
@@ -62,7 +62,7 @@ registerHandler("tim_close_panel", tim_close_panel);
 let modeReports = 0;
 function tim_report_mode(): void {
   modeReports += 1;
-  editor.setStatus(`MODE${modeReports}=${editor.getEditorMode() ?? "none"}`);
+  editor.setStatus(`MODE${modeReports}=${editor.getEditorMode() ?? "none"};`);
 }
 registerHandler("tim_report_mode", tim_report_mode);
 
