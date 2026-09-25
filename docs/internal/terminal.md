@@ -85,7 +85,14 @@ The PTY spawner builds a terminal as follows:
      message).
    - **Wait**: blocks on the child, firing the exit event **exactly once**. The
      reader deliberately does *not* fire exit, to avoid a racing
-     `exit_code: None`.
+     `exit_code: None`. Before firing, it waits for the reader to drain the PTY
+     to EOF (a drain channel the reader pings per chunk and drops at EOF), so
+     the child's last output is in the grid and backing file before the exit
+     turns the terminal into read-only scrollback (#3379). The wait gives up
+     after 500 ms without reader progress or 5 s overall, for PTYs a
+     background job keeps open. On Windows the wait thread first has the
+     writer drop the master: ConPTY only ends its output pipe once the
+     pseudoconsole is closed.
    - **Writer**: owns the master, applies queued write/resize commands, and kills
      the child on shutdown.
 
