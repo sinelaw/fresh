@@ -2666,8 +2666,31 @@ impl KeybindingResolver {
     /// `Action::None` for both "unbound" and `noop`, and never looks at
     /// chords.
     pub fn claims_key(&self, event: &KeyEvent, context: &KeyContext) -> bool {
+        self.claims_key_as(event, context, true)
+    }
+
+    /// Like [`Self::claims_key`], but the resolver's "nothing bound, just
+    /// type it" answer ([`Action::InsertChar`] for a character with
+    /// [`is_text_input_modifier`] modifiers in a text context) does not
+    /// count: only a binding, a `noop` or a chord does.
+    ///
+    /// That answer includes Ctrl+Alt+<char> on Windows, where it is how
+    /// AltGr arrives from crossterm and the GUI. A key the VT input parser
+    /// reported as Ctrl+Alt+<char> is ESC plus a control byte instead —
+    /// there AltGr text arrives as the character it types — so for such a
+    /// key the question is only whether something binds it.
+    pub fn binds_key(&self, event: &KeyEvent, context: &KeyContext) -> bool {
+        self.claims_key_as(event, context, false)
+    }
+
+    fn claims_key_as(&self, event: &KeyEvent, context: &KeyContext, typing_claims: bool) -> bool {
         let norm = normalize_key(event.code, event.modifiers);
-        self.resolve(event, context.clone()) != Action::None
+        let resolved = match self.resolve(event, context.clone()) {
+            Action::None => false,
+            Action::InsertChar(_) => typing_claims,
+            _ => true,
+        };
+        resolved
             || self.probe_order(context).iter().any(|(source, ctx)| {
                 self.single_key_map(*source)
                     .get(ctx)
@@ -6254,5 +6277,33 @@ mod tests {
         {
             assert_eq!(name, &name.to_lowercase(), "{name:?} is not lowercase");
         }
+    }
+
+    /// Typing a key claims it; only a binding, a `noop` or a chord binds
+    /// it. On Windows, Ctrl+Alt+<char> is typed (AltGr), yet an unbound
+    /// Ctrl+Alt+J — ESC LF, from the input parser — must still be free to
+    /// read as Alt+Enter (`router::ctrl_j_reading`).
+    #[test]
+    fn typing_a_key_claims_but_does_not_bind_it() {
+        let config = Config {
+            active_keybinding_map: "default".into(),
+            ..Config::default()
+        };
+        let resolver = KeybindingResolver::new(&config);
+        let typed = KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE);
+        assert!(resolver.claims_key(&typed, &KeyContext::Normal));
+        assert!(!resolver.binds_key(&typed, &KeyContext::Normal));
+        let ctrl_alt_j = KeyEvent::new(
+            KeyCode::Char('j'),
+            KeyModifiers::CONTROL | KeyModifiers::ALT,
+        );
+        assert_eq!(
+            resolver.claims_key(&ctrl_alt_j, &KeyContext::Normal),
+            cfg!(windows),
+            "Ctrl+Alt+J is typed only where Ctrl+Alt is AltGr"
+        );
+        assert!(!resolver.binds_key(&ctrl_alt_j, &KeyContext::Normal));
+        let bound = KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL);
+        assert!(resolver.binds_key(&bound, &KeyContext::Normal));
     }
 }

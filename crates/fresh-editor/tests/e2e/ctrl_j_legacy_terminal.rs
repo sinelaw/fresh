@@ -131,11 +131,10 @@ fn a_noop_ctrl_j_does_nothing() {
 }
 
 /// ESC LF, which some terminals send for Alt+Enter, parses as Ctrl+Alt+J;
-/// unbound, it is Alt+Enter, as it was when LF parsed as Enter. Not on
-/// Windows, where Ctrl+Alt is AltGr and Ctrl+Alt+J is text (see
-/// `router::ctrl_j_reading`).
+/// unbound, it is Alt+Enter, as it was when LF parsed as Enter. On Windows
+/// too, where the keymap types Ctrl+Alt+<char> as AltGr text: from the
+/// parser, a Ctrl+Alt+J is ESC LF, never AltGr (see `router::ctrl_j_reading`).
 #[test]
-#[cfg(not(windows))]
 fn esc_lf_is_alt_enter() {
     let (_temp_dir, mut harness) =
         harness_with_bindings("one\ntwo\n", &[("M-Enter", "select_all")]);
