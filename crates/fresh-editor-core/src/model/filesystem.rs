@@ -2480,8 +2480,13 @@ mod tests {
         std::fs::write(&path, b"old\n").unwrap();
         std::fs::hard_link(&path, &link).unwrap();
         let ino = std::fs::metadata(&path).unwrap().ino();
+        // The in-place write stages in the recovery dir: not the real one.
+        let data_dir = tempfile::tempdir().unwrap();
+        let previous = crate::data_dir::set_data_dir_override(Some(data_dir.path().into()));
 
-        fs.write_file(&path, b"new\n").unwrap();
+        let result = fs.write_file(&path, b"new\n");
+        crate::data_dir::set_data_dir_override(previous);
+        result.unwrap();
 
         assert_eq!(std::fs::read(&link).unwrap(), b"new\n");
         let meta = std::fs::metadata(&path).unwrap();

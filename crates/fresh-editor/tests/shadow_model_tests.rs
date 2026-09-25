@@ -480,6 +480,9 @@ struct TestContext {
     model: ShadowModel,
     sut: TextBufferSUT,
     fs: Arc<ConfigurableFileSystem>,
+    /// Saves of a file we don't own stage in the recovery dir: keep them in
+    /// `_temp_dir`, out of the real one.
+    _data_dir_pin: crate::common::global_state::DataDirPin,
     _temp_dir: TempDir,
     save_path: PathBuf,
     step: usize,
@@ -516,6 +519,7 @@ impl TestContext {
     ) -> Self {
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
         let save_path = temp_dir.path().join("buffer.txt");
+        let data_dir_pin = crate::common::global_state::pin_data_dir(temp_dir.path().join("data"));
         let fs = Arc::new(ConfigurableFileSystem::new(simulate_owner));
 
         let (model, sut) = if content.is_empty() {
@@ -531,6 +535,7 @@ impl TestContext {
             model,
             sut,
             fs,
+            _data_dir_pin: data_dir_pin,
             _temp_dir: temp_dir,
             save_path,
             step: 0,
@@ -1097,6 +1102,10 @@ fn test_large_file_mode_with_edits() {
 fn test_large_file_inplace_write() {
     use std::fs::File;
     use std::io::Write;
+
+    // In-place writes stage in the recovery dir: keep them out of the real one.
+    let data_dir = TempDir::new().unwrap();
+    let _pin = crate::common::global_state::pin_data_dir(data_dir.path());
 
     let temp_dir = TempDir::new().expect("Failed to create temp directory");
     let file_path = temp_dir.path().join("large_inplace_test.txt");

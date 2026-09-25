@@ -189,6 +189,10 @@ impl FileSystem for NotOwnerFileSystem {
 fn test_large_file_inplace_write_corruption() {
     use std::fs;
 
+    // In-place writes stage in the recovery dir: keep them out of the real one.
+    let data_dir = TempDir::new().unwrap();
+    let _pin = crate::common::global_state::pin_data_dir(data_dir.path());
+
     let temp_dir = TempDir::new().unwrap();
     let file_path = temp_dir.path().join("large_inplace_test.txt");
 
@@ -286,6 +290,10 @@ fn test_large_file_inplace_write_corruption() {
 #[cfg(unix)]
 fn test_large_file_inplace_write_multiple_edits() {
     use std::fs;
+
+    // In-place writes stage in the recovery dir: keep them out of the real one.
+    let data_dir = TempDir::new().unwrap();
+    let _pin = crate::common::global_state::pin_data_dir(data_dir.path());
 
     let temp_dir = TempDir::new().unwrap();
     let file_path = temp_dir.path().join("large_multi_edit_test.txt");
@@ -559,6 +567,10 @@ impl FileSystem for CrashDuringStreamFileSystem {
 fn test_inplace_write_crash_recovery() {
     use std::fs;
 
+    // In-place writes stage in the recovery dir: keep them out of the real one.
+    let data_dir = TempDir::new().unwrap();
+    let _pin = crate::common::global_state::pin_data_dir(data_dir.path());
+
     let temp_dir = TempDir::new().unwrap();
     let file_path = temp_dir.path().join("crash_test.txt");
 
@@ -677,6 +689,10 @@ fn test_inplace_write_crash_recovery() {
 #[cfg(unix)]
 fn test_inplace_write_recovery_restores_file() {
     use std::fs;
+
+    // In-place writes stage in the recovery dir: keep them out of the real one.
+    let data_dir = TempDir::new().unwrap();
+    let _pin = crate::common::global_state::pin_data_dir(data_dir.path());
 
     let temp_dir = TempDir::new().unwrap();
     let file_path = temp_dir.path().join("recovery_test.txt");
@@ -798,6 +814,10 @@ fn test_successful_inplace_write_cleans_up_recovery() {
     use fresh::services::recovery::RecoveryStorage;
     use std::fs;
 
+    // In-place writes stage in the recovery dir: keep them out of the real one.
+    let data_dir = TempDir::new().unwrap();
+    let _pin = crate::common::global_state::pin_data_dir(data_dir.path());
+
     let temp_dir = TempDir::new().unwrap();
     let file_path = temp_dir.path().join("success_test.txt");
 
@@ -850,6 +870,10 @@ fn test_successful_inplace_write_cleans_up_recovery() {
 #[cfg(unix)]
 fn test_emptying_not_owned_file_writes_in_place() {
     use std::os::unix::fs::MetadataExt;
+
+    // In-place writes stage in the recovery dir: keep them out of the real one.
+    let data_dir = TempDir::new().unwrap();
+    let _pin = crate::common::global_state::pin_data_dir(data_dir.path());
 
     let temp_dir = TempDir::new().unwrap();
     let file_path = temp_dir.path().join("not_mine.txt");
