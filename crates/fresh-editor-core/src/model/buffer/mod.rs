@@ -752,84 +752,36 @@ impl TextBuffer {
     /// For remote filesystems, the recipe is sent to the agent which reconstructs
     /// the file server-side, avoiding transfer of unchanged content.
     ///
-    /// For local filesystems with ownership concerns (file owned by another user),
-    /// uses in-place writing to preserve ownership. Otherwise uses atomic writes.
+    /// A local file is replaced atomically where that keeps it the same file,
+    /// and written in place otherwise (see [`save::save_local`]).
     ///
     /// If the line ending format has been changed (via set_line_ending), all content
     /// will be converted to the new format during save.
     pub fn save_to_file<P: AsRef<Path>>(&mut self, path: P) -> anyhow::Result<()> {
         let dest_path = path.as_ref();
-        let total = self.total_bytes();
 
-        // Handle empty files. Same ownership rule as below: a file we don't
-        // own must be truncated in place, or it would take our owner/group.
-        if total == 0 {
-            let fs = self.persistence.fs();
-            if fs.remote_connection_info().is_none()
-                && save::should_use_inplace_write(fs, dest_path)
-            {
-                let original_metadata = fs.metadata_if_exists(dest_path);
-                save::write_data_inplace(fs, dest_path, &[], original_metadata)?;
-            } else {
-                fs.write_file(dest_path, &[])?;
-            }
-            self.finalize_save(dest_path)?;
-            return Ok(());
-        }
-
-        // Build the write recipe (unified for all filesystem types)
-        let recipe = save::build_write_recipe(
-            &self.piece_tree,
-            &self.buffers,
-            &self.format,
-            &self.file_kind,
-            &self.persistence,
-        )?;
-        let ops = recipe.to_write_ops();
-
-        // Check if we need in-place writing to preserve file ownership (local only)
-        // Remote filesystems handle this differently
-        let fs = self.persistence.fs();
-        let is_local = fs.remote_connection_info().is_none();
-        let use_inplace = is_local && save::should_use_inplace_write(fs, dest_path);
-
-        if use_inplace {
-            // In-place write: write directly to preserve ownership
-            save::save_with_inplace_write(fs, dest_path, &recipe)?;
-        } else if !recipe.has_copy_ops() && !is_local {
-            // Remote with no Copy ops: use write_file directly (more efficient)
-            let data = recipe.flatten_inserts();
-            fs.write_file(dest_path, &data)?;
-        } else if is_local {
-            // Local: use write_file or write_patched with sudo fallback
-            let write_result = if !recipe.has_copy_ops() {
-                let data = recipe.flatten_inserts();
-                fs.write_file(dest_path, &data)
-            } else {
-                let src_for_patch = recipe.src_path.as_deref().unwrap_or(dest_path);
-                fs.write_patched(src_for_patch, dest_path, &ops)
-            };
-
-            if let Err(e) = write_result {
-                if e.kind() == io::ErrorKind::PermissionDenied {
-                    // Create temp file and return sudo error
-                    let original_metadata = fs.metadata_if_exists(dest_path);
-                    let (temp_file, mut writer) = save::create_temp_file(fs, dest_path)?;
-                    save::write_recipe_to_file(fs, &mut writer, &recipe)?;
-                    writer.sync_all()?;
-                    drop(writer);
-                    return Err(save::make_sudo_error(
-                        temp_file,
-                        dest_path,
-                        original_metadata,
-                    ));
-                }
-                return Err(e.into());
-            }
+        // An emptied buffer is written as zero bytes: no BOM, nothing to copy.
+        let recipe = if self.total_bytes() == 0 {
+            save::WriteRecipe::empty()
         } else {
-            // Remote with Copy ops: use write_patched
+            save::build_write_recipe(
+                &self.piece_tree,
+                &self.buffers,
+                &self.format,
+                &self.file_kind,
+                &self.persistence,
+            )?
+        };
+
+        let fs = self.persistence.fs();
+        if fs.remote_connection_info().is_none() {
+            save::save_local(fs, dest_path, &recipe)?;
+        } else if recipe.has_copy_ops() {
+            // Remote with Copy ops: the agent rebuilds the file server-side
             let src_for_patch = recipe.src_path.as_deref().unwrap_or(dest_path);
-            fs.write_patched(src_for_patch, dest_path, &ops)?;
+            fs.write_patched(src_for_patch, dest_path, &recipe.to_write_ops())?;
+        } else {
+            fs.write_file(dest_path, &recipe.flatten_inserts())?;
         }
 
         self.finalize_save(dest_path)?;
