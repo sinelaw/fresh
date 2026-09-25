@@ -715,7 +715,7 @@ impl crate::app::window::Window {
         }
         let gutter = vs.viewport.gutter_width(&state.buffer);
         let wrap = WrapConfig::new(
-            vs.viewport.effective_width() as usize,
+            vs.viewport.effective_width(gutter) as usize,
             gutter,
             true,
             vs.viewport.wrap_indent,
