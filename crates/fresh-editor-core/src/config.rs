@@ -1453,8 +1453,8 @@ pub struct EditorConfig {
     #[schemars(extend("x-section" = "Completion"))]
     pub completion_popup_auto_show: bool,
 
-    /// Suggest completions on any typing, not just after `.` or `::`.
-    /// Needs `completion_popup_auto_show`. Default: true
+    /// Request completion suggestions or inline ghost text while typing,
+    /// not just after `.` or `::`. Default: true
     #[serde(default = "default_true")]
     #[schemars(extend("x-section" = "Completion"))]
     pub quick_suggestions: bool,
@@ -1464,6 +1464,14 @@ pub struct EditorConfig {
     #[serde(default = "default_quick_suggestions_delay")]
     #[schemars(extend("x-section" = "Completion"))]
     pub quick_suggestions_delay_ms: u64,
+
+    /// Show LSP inline completion ghost text from textDocument/inlineCompletion.
+    /// This renders a dimmed Copilot-style suggestion directly in the buffer,
+    /// independently of the completion popup.
+    /// Default: true
+    #[serde(default = "default_true")]
+    #[schemars(extend("x-section" = "Completion"))]
+    pub enable_ghost_text: bool,
 
     /// Show completions right away after `.`, `::` or `->`, with no delay. Default: true
     #[serde(default = "default_true")]
@@ -1817,6 +1825,7 @@ impl Default for EditorConfig {
             completion_popup_auto_show: false,
             quick_suggestions: true,
             quick_suggestions_delay_ms: default_quick_suggestions_delay(),
+            enable_ghost_text: true,
             suggest_on_trigger_characters: true,
             show_menu_bar: true,
             screensaver_enabled: false,

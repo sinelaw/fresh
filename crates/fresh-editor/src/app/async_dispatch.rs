@@ -262,6 +262,9 @@ impl Editor {
                         tracing::error!("Error handling completion response: {}", e);
                     }
                 }
+                AsyncMessage::LspInlineCompletion { request_id, items } => {
+                    self.handle_inline_completion_response(request_id, items);
+                }
                 AsyncMessage::LspGotoDefinition {
                     request_id,
                     locations,
