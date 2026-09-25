@@ -54,6 +54,13 @@ impl SudoSaveRequired {
     pub fn read_content(&self) -> io::Result<Vec<u8>> {
         self.temp_file.fs.read_file(&self.temp_file.path)
     }
+
+    /// Delete the temp file now, for an exit that runs no destructors (a
+    /// terminating signal while the sudo prompt is open). Dropping this
+    /// afterwards tries again, which is harmless.
+    pub fn remove_temp_file(&self) -> io::Result<()> {
+        self.temp_file.fs.remove_file(&self.temp_file.path)
+    }
 }
 
 impl std::fmt::Display for SudoSaveRequired {

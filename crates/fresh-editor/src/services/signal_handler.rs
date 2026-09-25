@@ -1,8 +1,13 @@
 //! What the editor reports when it is asked to stop.
 //!
-//! `SIGINT` and `SIGTERM` dump the running JavaScript state and every
-//! thread's backtrace before the process ends, which is how a hung editor
-//! gets diagnosed after the fact.
+//! `SIGINT`, `SIGTERM` and `SIGHUP` dump the running JavaScript state and
+//! every thread's backtrace before the process ends, which is how a hung
+//! editor gets diagnosed after the fact.
+//!
+//! Before that, they run the [termination cleanups](register_termination_cleanup):
+//! files the editor would delete on a normal exit, which the signal exit —
+//! `process::exit`, no destructors — would otherwise leave behind. The sudo
+//! save's temp file next to the user's file is one (issue #3396).
 //!
 //! **None of that happens in the signal handler.** A handler runs on
 //! whichever thread the kernel interrupted, wherever that thread happened to
@@ -81,7 +86,42 @@ pub fn dump_js_state() {
     }
 }
 
-/// Install the `SIGINT`/`SIGTERM` handlers and the machinery behind them.
+/// Something to undo before a terminating signal ends the process, which it
+/// does without running destructors.
+pub trait TerminationCleanup: Send + Sync {
+    fn on_termination(&self);
+}
+
+/// The registered cleanups. Weak, so registering never keeps an object
+/// alive: one that has been dropped (its normal cleanup done) is skipped.
+static TERMINATION_CLEANUPS: Mutex<Vec<std::sync::Weak<dyn TerminationCleanup>>> =
+    Mutex::new(Vec::new());
+
+/// Run `cleanup` if a terminating signal ends the process while it is still
+/// alive.
+///
+/// Runs on the reporting thread, not in the signal handler, so it may
+/// allocate, lock and do I/O like any other code. It runs before the
+/// diagnostic dump, and within the watchdog's deadline like the rest.
+pub fn register_termination_cleanup(cleanup: std::sync::Weak<dyn TerminationCleanup>) {
+    if let Ok(mut cleanups) = TERMINATION_CLEANUPS.lock() {
+        cleanups.retain(|c| c.strong_count() > 0);
+        cleanups.push(cleanup);
+    }
+}
+
+/// Run every registered cleanup whose object is still alive.
+pub(crate) fn run_termination_cleanups() {
+    let live: Vec<_> = match TERMINATION_CLEANUPS.lock() {
+        Ok(cleanups) => cleanups.iter().filter_map(|c| c.upgrade()).collect(),
+        Err(_) => return,
+    };
+    for cleanup in live {
+        cleanup.on_termination();
+    }
+}
+
+/// Install the `SIGINT`/`SIGTERM`/`SIGHUP` handlers and the machinery behind them.
 ///
 /// Idempotent: the editor calls this once, and a couple of dozen tests call
 /// it too, so repeated calls must not stack up threads or handlers.
@@ -119,7 +159,7 @@ mod unix {
     /// again, which takes the escape path in the handler.
     const DUMP_DEADLINE: Duration = Duration::from_secs(2);
 
-    /// Ctrl+C's conventional status, reported for both signals. Unchanged
+    /// Ctrl+C's conventional status, reported for every one of them. Unchanged
     /// from before this file was rewritten; scripts may be reading it.
     const EXIT_CODE: i32 = 130;
 
@@ -160,7 +200,7 @@ mod unix {
                     // is what the editor had before this facility existed.
                     tracing::warn!(
                         "Could not create the signal relays; \
-                         leaving SIGINT/SIGTERM at their default disposition"
+                         leaving SIGINT/SIGTERM/SIGHUP at their default disposition"
                     );
                     return;
                 }
@@ -260,6 +300,8 @@ mod unix {
     /// allowed to allocate, lock, log and call into plugin code.
     fn report_and_exit(signal: libc::c_int) -> ! {
         restore_terminal();
+        // Ahead of the dump, which may wedge and leave it to the watchdog.
+        super::run_termination_cleanups();
 
         tracing::error!("=== SIGNAL {signal} RECEIVED - Dumping debug info ===");
 
@@ -318,6 +360,46 @@ mod unix {
             if let Err(e) = sigaction(Signal::SIGTERM, &action) {
                 tracing::error!("Failed to set SIGTERM handler: {}", e);
             }
+            // Closing the terminal the editor runs in. Its default action
+            // ends the process on the spot, skipping the cleanups above.
+            if let Err(e) = sigaction(Signal::SIGHUP, &action) {
+                tracing::error!("Failed to set SIGHUP handler: {}", e);
+            }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    struct Counter(AtomicUsize);
+    impl TerminationCleanup for Counter {
+        fn on_termination(&self) {
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    /// A live registration runs; one whose object is gone does not, and
+    /// registering never keeps an object alive.
+    #[test]
+    fn termination_cleanups_run_only_for_live_objects() {
+        let live = Arc::new(Counter(AtomicUsize::new(0)));
+        let gone = Arc::new(Counter(AtomicUsize::new(0)));
+        let live_weak: std::sync::Weak<dyn TerminationCleanup> = Arc::downgrade(&live) as _;
+        let gone_weak: std::sync::Weak<dyn TerminationCleanup> = Arc::downgrade(&gone) as _;
+        register_termination_cleanup(live_weak);
+        register_termination_cleanup(gone_weak);
+        let gone_probe = Arc::downgrade(&gone);
+        drop(gone);
+        assert!(
+            gone_probe.upgrade().is_none(),
+            "registering must not keep it alive"
+        );
+
+        run_termination_cleanups();
+        assert_eq!(live.0.load(Ordering::SeqCst), 1);
     }
 }

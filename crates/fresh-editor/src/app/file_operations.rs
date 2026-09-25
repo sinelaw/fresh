@@ -90,6 +90,23 @@ pub struct ExitSaveOutcome {
     pub changed_on_disk: Vec<PathBuf>,
 }
 
+use crate::services::signal_handler::TerminationCleanup;
+
+/// A sudo save's temp file holds the unsaved content next to the user's
+/// file; on a signal exit with the sudo prompt still open it must go, as it
+/// does when the prompt is answered or dismissed (issue #3396).
+impl TerminationCleanup for SudoSaveRequired {
+    fn on_termination(&self) {
+        if let Err(e) = self.remove_temp_file() {
+            tracing::warn!(
+                "Failed to remove sudo-save temp file {}: {}",
+                self.temp_path().display(),
+                e
+            );
+        }
+    }
+}
+
 /// How far an interactive save of the active buffer got.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SaveProgress {
@@ -152,8 +169,14 @@ impl Editor {
                         ],
                     )
                     .detail(info.dest_path.display().to_string());
+                    let info = std::sync::Arc::new(info);
+                    // Dropping the prompt deletes the temp file, but a
+                    // signal ends the process without dropping anything.
+                    let cleanup: std::sync::Weak<dyn TerminationCleanup> =
+                        std::sync::Arc::downgrade(&info) as _;
+                    crate::services::signal_handler::register_termination_cleanup(cleanup);
                     let prompt = PromptType::ConfirmSudoSave {
-                        info: std::sync::Arc::new(info),
+                        info,
                         buffer_id: self.active_buffer(),
                         close_after_save,
                     };
