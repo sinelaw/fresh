@@ -458,15 +458,10 @@ impl Editor {
             // Column is also 1-indexed, convert to 0-indexed
             let target_col = column.map(|c| c.saturating_sub(1)).unwrap_or(0);
 
-            // Track the known exact line number for scanned large files,
-            // since offset_to_position may not be able to reverse-resolve it accurately.
-            let mut known_line: Option<usize> = None;
-
             let position = if has_line_scan && has_line_index {
                 // Scanned large file: use tree metadata to find exact line offset
                 let max_line = state.buffer.line_count().unwrap_or(1).saturating_sub(1);
                 let actual_line = target_line.min(max_line);
-                known_line = Some(actual_line);
                 // Need mutable access to potentially read chunk data from disk
                 if let Some(state) = self
                     .windows
@@ -514,15 +509,6 @@ impl Editor {
             // plugin that follows the cursor (the Markdown contents section
             // among them) kept showing where it had been.
             self.apply_event_to_active_buffer(&event);
-
-            // For scanned large files, override the line number with the known exact value
-            // since offset_to_position may fall back to proportional estimation.
-            if let Some(line) = known_line {
-                if let Some(state) = self.active_window_mut().buffers.get_mut(&buffer_id) {
-                    state.primary_cursor_line_number =
-                        crate::model::buffer::LineNumber::Absolute(line);
-                }
-            }
 
             // Center the target line in the viewport. The default
             // `ensure_visible` behavior only scrolls just enough to reveal

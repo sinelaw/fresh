@@ -629,9 +629,7 @@ fn blog_showcase_productivity_flash_jump() {
     })
     .unwrap();
     // Two extra renders so the status bar's cursor snapshot catches
-    // up before capture.  (Pre-existing Fresh quirk: the status's
-    // `Ln` value reads from a cached `primary_cursor_line_number`
-    // that lags one tick behind `setBufferCursor`.)
+    // up before capture.
     h.render().unwrap();
     h.render().unwrap();
     snap(&mut h, &mut s, Some("m"), 700);

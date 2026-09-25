@@ -23,8 +23,6 @@
 //! `ensure_cursor_visible` path — they want the "don't undo a deliberate
 //! scroll" behavior of the skip flag.
 
-use crate::model::buffer::LineNumber;
-
 /// Whether the active cursor should be vertically recentered when a jump
 /// causes the viewport to scroll, and whether the selection anchor should
 /// be reset.
@@ -71,16 +69,10 @@ impl crate::app::window::Window {
     /// [`Editor::ensure_active_cursor_visible_for_navigation`] afterwards.
     pub fn jump_active_cursor_to(&mut self, position: usize, opts: JumpOptions) {
         let active_split = self.split_manager().active_split();
-        let active_buffer = self.active_buffer();
         if let Some(view_state) = self.split_view_states_mut().get_mut(&active_split) {
             view_state.cursors.primary_mut().position = position;
             if opts.clear_anchor {
                 view_state.cursors.primary_mut().anchor = None;
-            }
-            if let Some(state) = self.buffers.get_mut(&active_buffer) {
-                if let Some(pos) = state.buffer.offset_to_position(position) {
-                    state.primary_cursor_line_number = LineNumber::Absolute(pos.line);
-                }
             }
         }
         self.ensure_active_cursor_visible_for_navigation(opts.recenter_on_scroll);

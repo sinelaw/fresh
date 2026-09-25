@@ -187,6 +187,9 @@ pub enum LspIndicatorState {
 pub struct StatusBarContext<'a> {
     pub state: &'a mut EditorState,
     pub cursors: &'a crate::model::cursor::Cursors,
+    /// 0-indexed line of the primary cursor in `cursors`, as
+    /// `Editor::primary_cursor_line` derives it for this frame.
+    pub primary_cursor_line: usize,
     pub status_message: &'a Option<String>,
     pub plugin_status_message: &'a Option<String>,
     pub lsp_status: &'a str,
@@ -483,7 +486,7 @@ impl StatusBarRenderer {
                 let cursor = *ctx.cursors.primary();
                 let line_count = ctx.state.buffer.line_count();
                 let text = if let Some(lc) = line_count {
-                    let line = ctx.state.primary_cursor_line_number.value();
+                    let line = ctx.primary_cursor_line;
                     let col = cursor_column(&mut ctx.state.buffer, cursor.position);
                     let mode = ctx.state.buffer_settings.virtual_space;
                     let (line, col) = virtual_space_adjusted_position(
@@ -506,7 +509,7 @@ impl StatusBarRenderer {
                 let cursor = *ctx.cursors.primary();
                 let line_count = ctx.state.buffer.line_count();
                 let text = if let Some(lc) = line_count {
-                    let line = ctx.state.primary_cursor_line_number.value();
+                    let line = ctx.primary_cursor_line;
                     let col = cursor_column(&mut ctx.state.buffer, cursor.position);
                     let mode = ctx.state.buffer_settings.virtual_space;
                     let (line, col) = virtual_space_adjusted_position(

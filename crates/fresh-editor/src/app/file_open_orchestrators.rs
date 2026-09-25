@@ -75,11 +75,6 @@ impl Editor {
         let buffer_len = state.buffer.len();
         let clamped_position = final_position.min(buffer_len);
 
-        // Update the cached line number so the status bar shows the correct
-        // position. Without this, the status bar reads a stale value from
-        // state.primary_cursor_line_number which was set before the jump.
-        state.primary_cursor_line_number = crate::model::buffer::LineNumber::Absolute(target_line);
-
         // Funnel through the navigation primitive so the cursor is guaranteed
         // visible in the viewport (#1689 — without this, jump_to_line_column
         // could land off-screen if a prior scroll set skip_ensure_visible).
