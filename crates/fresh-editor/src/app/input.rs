@@ -236,11 +236,19 @@ impl Editor {
         // scrollBufferToLine, etc.) sets `skip_ensure_visible` on the panel
         // and subsequent key presses never clear it, so cursor motion stops
         // scrolling the viewport.
+        //
+        // A bare modifier press (kitty "report all keys" sends Shift, Ctrl,
+        // Alt and Super on their own) is not a keystroke the editor acts on:
+        // it only precedes the chord that is. Clearing the flag for it
+        // snapped a wheel-scrolled view back to the cursor the moment the
+        // user reached for Ctrl (issue #3324).
+        let is_bare_modifier = matches!(code, crossterm::event::KeyCode::Modifier(_));
         let active_split = self.effective_active_split();
         if let Some(view_state) = self
             .active_window_mut()
             .split_view_states_mut()
             .get_mut(&active_split)
+            .filter(|_| !is_bare_modifier)
         {
             view_state.viewport.clear_skip_ensure_visible();
         }
