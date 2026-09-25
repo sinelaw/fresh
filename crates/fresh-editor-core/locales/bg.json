@@ -363,6 +363,7 @@
   "buffer.cannot_open_directory": "Директорията не може да се отвори като файл",
   "buffer.changes_discarded": "Буферът е затворен (промените са отхвърлени)",
   "buffer.close_cancelled": "Затварянето е отменено",
+  "buffer.quit_cancelled": "Изходът е отменен",
   "buffer.closed": "Буферът е затворен",
   "buffer.closed_tabs": "Затворени %{count} раздел(а)",
   "buffer.closed_tabs_skipped": "Затворени %{closed} раздел(а), пропуснати %{skipped} променени",

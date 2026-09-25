@@ -413,6 +413,7 @@
   "buffer.cannot_open_directory": "Невозможно открыть каталог как файл",
   "buffer.changes_discarded": "Буфер закрыт (изменения отменены)",
   "buffer.close_cancelled": "Закрытие отменено",
+  "buffer.quit_cancelled": "Выход отменён",
   "buffer.closed": "Буфер закрыт",
   "buffer.closed_tabs": "Закрыто %{count} вкладок",
   "buffer.closed_tabs_skipped": "Закрыто %{closed} вкладок, пропущено %{skipped} изменённых",
