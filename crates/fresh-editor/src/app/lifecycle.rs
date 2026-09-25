@@ -269,8 +269,7 @@ impl Editor {
             .get(&buffer_id)
             .and_then(|state| state.buffer.file_path())
             .is_some_and(|path| {
-                !path.as_os_str().is_empty()
-                    && super::file_operations::changed_on_disk_in(window, path).is_none()
+                !path.as_os_str().is_empty() && window.changed_on_disk(path).is_none()
             })
     }
 
@@ -395,7 +394,7 @@ impl Editor {
                 continue;
             };
             for (buffer_id, state) in window.buffers.iter() {
-                if !state.buffer.is_modified() || quit_skips_buffer(window, *buffer_id) {
+                if !state.buffer.is_modified() || window.quit_skips_buffer(*buffer_id) {
                     continue;
                 }
                 if let Some(meta) = window.buffer_metadata.get(buffer_id) {
@@ -664,6 +663,24 @@ impl Editor {
 }
 
 impl crate::app::window::Window {
+    /// Whether quitting leaves `buffer_id` out of the unsaved-changes
+    /// question: composite, hidden and plugin-virtual buffers, which the
+    /// prompt can't name and the user can't act on (see
+    /// [`Editor::modified_buffers_needing_prompt`]).
+    ///
+    /// [`Editor::save_all_on_exit`] still saves a hidden one it can, as it
+    /// always has, but one it can't doesn't hold the quit either — the two
+    /// must agree on which buffers the user is answering for.
+    pub(crate) fn quit_skips_buffer(&self, buffer_id: BufferId) -> bool {
+        self.buffers
+            .get(&buffer_id)
+            .is_some_and(|state| state.is_composite_buffer)
+            || self
+                .buffer_metadata
+                .get(&buffer_id)
+                .is_some_and(|meta| meta.hidden_from_tabs || meta.is_virtual())
+    }
+
     /// Adopt the screen dimensions and the editor-global dock width handed
     /// down by [`Editor::relayout`] — the first half of what `apply_layout`
     /// did, split off because the layout that places this window's panes
@@ -735,23 +752,4 @@ impl crate::app::window::Window {
             self.reveal_active_tab(split_id);
         }
     }
-}
-
-/// Whether quitting leaves `buffer_id` of `window` out of the unsaved-changes
-/// question: composite, hidden and plugin-virtual buffers, which the prompt
-/// can't name and the user can't act on (see
-/// [`Editor::modified_buffers_needing_prompt`]).
-///
-/// [`Editor::save_all_on_exit`] still saves a hidden one it can, as it
-/// always has, but one it can't doesn't hold the quit either — the two must
-/// agree on which buffers the user is answering for.
-pub(crate) fn quit_skips_buffer(window: &crate::app::window::Window, buffer_id: BufferId) -> bool {
-    window
-        .buffers
-        .get(&buffer_id)
-        .is_some_and(|state| state.is_composite_buffer)
-        || window
-            .buffer_metadata
-            .get(&buffer_id)
-            .is_some_and(|meta| meta.hidden_from_tabs || meta.is_virtual())
 }
