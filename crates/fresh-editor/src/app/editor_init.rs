@@ -695,6 +695,9 @@ impl Editor {
             last_window_title: None,
             mode_registry: ModeRegistry::new(),
             remote_indicator_override: None,
+            file_explorer_leading_rules: HashMap::new(),
+            file_explorer_leading_rule_cache:
+                crate::view::file_tree::FileExplorerLeadingRuleCache::default(),
             menus: crate::config::MenuConfig::translated(),
             background_process_handles: HashMap::new(),
             host_process_handles: HashMap::new(),
