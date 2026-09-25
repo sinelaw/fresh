@@ -27,6 +27,8 @@ struct Setup {
     window_a: WindowId,
     other_root: PathBuf,
     b_file: PathBuf,
+    /// Reports `tim_report_mode` has made so far (see `wait_for_editor_mode`).
+    mode_reports: usize,
     _temp: tempfile::TempDir,
 }
 
@@ -100,6 +102,7 @@ fn setup_with(extra_plugins: &[&str], auto_start: bool) -> Setup {
         window_a,
         other_root,
         b_file,
+        mode_reports: 0,
         _temp: temp,
     }
 }
@@ -136,6 +139,24 @@ fn press_j(h: &mut EditorTestHarness, line: usize) -> String {
     })
     .unwrap();
     h.screen_to_string()
+}
+
+/// Wait until the status bar shows the active window's editor mode to be
+/// `mode` ("none" for none), as reported by `tim_report_mode`. Each report
+/// is numbered, so a stale one is never taken for the answer; the mode is
+/// set by another plugin's hook, so ask again until it has taken effect.
+fn wait_for_editor_mode(s: &mut Setup, mode: &str) {
+    loop {
+        s.mode_reports += 1;
+        let prefix = format!("MODE{}=", s.mode_reports);
+        s.h.editor_mut()
+            .dispatch_action_for_tests(PluginAction("tim_report_mode".to_string()));
+        s.h.wait_until(|h| h.get_status_bar().contains(&prefix))
+            .unwrap();
+        if s.h.get_status_bar().contains(&format!("{prefix}{mode} ")) {
+            return;
+        }
+    }
 }
 
 fn assert_vi_j_moves_to(h: &mut EditorTestHarness, line: usize, where_: &str) {
@@ -259,8 +280,7 @@ fn turning_vi_on_in_a_markdown_file_gives_vi_the_keys() {
     s.h.wait_until(|h| h.screen_to_string().contains("notes.md"))
         .unwrap();
     // Synchronisation only: markdown-source has claimed the window.
-    s.h.wait_until(|h| h.editor().editor_mode().as_deref() == Some("markdown-source"))
-        .unwrap();
+    wait_for_editor_mode(&mut s, "markdown-source");
 
     s.h.editor_mut()
         .dispatch_action_for_tests(PluginAction("vi_mode_toggle".to_string()));
@@ -268,7 +288,6 @@ fn turning_vi_on_in_a_markdown_file_gives_vi_the_keys() {
         .unwrap();
     // Synchronisation only: markdown-source hears `input_mode_changed`
     // through the plugin queue, after vi's status line is already up.
-    s.h.wait_until(|h| h.editor().editor_mode().is_none())
-        .unwrap();
+    wait_for_editor_mode(&mut s, "none");
     assert_vi_j_moves_to(&mut s.h, 2, "a markdown file, vi turned on there");
 }
