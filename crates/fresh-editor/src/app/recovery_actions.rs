@@ -1015,28 +1015,37 @@ impl Editor {
     /// recorded for it, so it counts as changed on disk, and saving it asks
     /// first.
     fn reload_buffers_of_restored_file(&mut self, path: &std::path::Path) {
+        // The kept copy's metadata may name the file by another spelling
+        // than the buffer does (a symlinked directory, e.g. macOS's
+        // /var -> /private/var), so match on the resolved path.
+        let local_fs = std::sync::Arc::clone(&self.local_filesystem);
+        let resolve =
+            |p: &std::path::Path| local_fs.canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+        let target = resolve(path);
         let active_window = self.active_window;
         for window_id in self.window_ids_sorted() {
             self.with_window_retargeted(window_id, |editor| {
                 // Restored through the local filesystem: a remote buffer
                 // with the same path is another file
-                let unmodified: Vec<BufferId> = editor
+                let unmodified: Vec<(BufferId, std::path::PathBuf)> = editor
                     .buffers()
                     .iter()
                     .filter(|(_, state)| {
-                        state.buffer.file_path() == Some(path)
-                            && state.buffer.filesystem().remote_connection_info().is_none()
+                        state.buffer.filesystem().remote_connection_info().is_none()
                             && !state.buffer.is_modified()
                     })
-                    .map(|(id, _)| *id)
+                    .filter_map(|(id, state)| {
+                        let own = state.buffer.file_path()?;
+                        (resolve(own) == target).then(|| (*id, own.to_path_buf()))
+                    })
                     .collect();
-                for buffer_id in unmodified {
+                for (buffer_id, own_path) in unmodified {
                     // The active buffer's reload keeps its view where it is
                     let reloaded =
                         if window_id == active_window && buffer_id == editor.active_buffer() {
                             editor.revert_file().map(|_| ())
                         } else {
-                            editor.revert_buffer_by_id(buffer_id, path)
+                            editor.revert_buffer_by_id(buffer_id, &own_path)
                         };
                     if let Err(e) = reloaded {
                         tracing::warn!("Failed to reload restored {}: {e}", path.display());
