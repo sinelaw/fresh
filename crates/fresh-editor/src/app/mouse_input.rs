@@ -211,11 +211,15 @@ impl Editor {
         // dispatch and the legacy walk — which meant it applied only to the
         // notches the tree *declined*, and once a surface's wheel became a node
         // that was none of that surface's.
-        let wheel_lines = self.arm_wheel_walk(mouse_event, col, row, wheel_lines);
-        if let Some(input) =
+        //
+        // The walk is only *armed* once routing has said where the notch went
+        // (`arm_wheel_walk`, below): a terminal child takes a notch whole.
+        let (wheel_lines, walk) = self.plan_wheel_walk(mouse_event, col, row, wheel_lines);
+        let dispatched =
             crate::view::shell::input::mouse(mouse_event, clicks, wheel_lines, WHEEL_COLUMNS)
-        {
-            let d = self.shell_dispatch(input);
+                .map(|input| self.shell_dispatch(input));
+        self.arm_wheel_walk(walk, dispatched.map(|d| d.applied).unwrap_or_default());
+        if let Some(d) = dispatched {
             if d.claimed {
                 return Ok(true);
             }
@@ -350,20 +354,26 @@ impl Editor {
         (is_double, is_triple)
     }
 
-    /// Split one wheel notch into the line that lands now and the lines the
-    /// walk still owes, returning the first. `lines` is the notch's full worth.
+    /// Split one wheel notch into the line that lands now and the walk that
+    /// would owe the rest, returning both. `lines` is the notch's full worth.
     ///
     /// A notch is worth `mouse_wheel_scroll_lines`. The first lands with the
     /// event itself, so the view answers the wheel on the same frame; the rest
     /// are owed and walked one at a time by [`Self::step_pending_wheel_scroll`],
-    /// which is what makes a multi-line notch slide rather than jump.
-    fn arm_wheel_walk(
+    /// which is what makes a multi-line notch slide rather than jump. The walk
+    /// is returned, not armed: whether the notch's surface wants its lines one
+    /// at a time is known only once the notch is routed
+    /// ([`Self::arm_wheel_walk`]).
+    ///
+    /// A gesture still playing out is settled here, before the notch is
+    /// routed: its lines carry into this walk, or are delivered now.
+    fn plan_wheel_walk(
         &mut self,
         ev: crossterm::event::MouseEvent,
         col: u16,
         row: u16,
         lines: i32,
-    ) -> i32 {
+    ) -> (i32, Option<PendingWheelScroll>) {
         use crossterm::event::{KeyModifiers, MouseEventKind};
         // Only a vertical notch walks. Anything else — a press, a motion, a
         // sideways wheel — leaves the gesture in progress alone; it plays out
@@ -371,7 +381,7 @@ impl Editor {
         let direction = match ev.kind {
             MouseEventKind::ScrollDown => 1,
             MouseEventKind::ScrollUp => -1,
-            _ => return lines,
+            _ => return (lines, None),
         };
         // Shift turns the wheel horizontal. That pans by columns, which the
         // line-oriented setting has nothing to say about and there is no
@@ -386,7 +396,7 @@ impl Editor {
             && self.config.editor.animations;
         if !walk {
             self.flush_pending_wheel_scroll();
-            return lines;
+            return (lines, None);
         }
 
         // A flick sends notches faster than they can be walked, so the lines
@@ -408,15 +418,32 @@ impl Editor {
             }
             None => 0,
         };
-        self.pending_wheel_scroll = Some(PendingWheelScroll {
+        let walk = PendingWheelScroll {
             col,
             row,
             direction,
             remaining: carried + lines - 1,
             max_backlog: lines * 2,
             last_step: Instant::now(),
-        });
-        1
+        };
+        (1, Some(walk))
+    }
+
+    /// Arm the walk a notch planned, now that routing has said where the
+    /// notch went. A live terminal whose child takes the mouse got the notch
+    /// forwarded whole — the child scrolls by its own rule, one report per
+    /// notch — so it has no lines owed; a replay would forward it again.
+    fn arm_wheel_walk(
+        &mut self,
+        walk: Option<PendingWheelScroll>,
+        applied: crate::app::shell_host::Applied,
+    ) {
+        if applied.wheel_forwarded {
+            return;
+        }
+        if let Some(walk) = walk {
+            self.pending_wheel_scroll = Some(walk);
+        }
     }
 
     /// Hand a gesture the lines it still owes, all at once, to the
@@ -440,7 +467,13 @@ impl Editor {
     /// came from did, so the surface that took the first line takes the rest
     /// — rather than the walk having a delivery path of its own that could
     /// route somewhere else.
-    fn deliver_wheel(&mut self, col: u16, row: u16, direction: i32, lines: u32) {
+    fn deliver_wheel(
+        &mut self,
+        col: u16,
+        row: u16,
+        direction: i32,
+        lines: u32,
+    ) -> crate::app::shell_host::Applied {
         use crossterm::event::{KeyModifiers, MouseEvent, MouseEventKind};
         let ev = MouseEvent {
             kind: match direction {
@@ -451,9 +484,9 @@ impl Editor {
             row,
             modifiers: KeyModifiers::empty(),
         };
-        if let Some(input) = crate::view::shell::input::mouse(ev, 1, lines as i32, WHEEL_COLUMNS) {
-            self.shell_dispatch(input);
-        }
+        crate::view::shell::input::mouse(ev, 1, lines as i32, WHEEL_COLUMNS)
+            .map(|input| self.shell_dispatch(input).applied)
+            .unwrap_or_default()
     }
 
     /// End any playing-out gesture, delivering what it still owes rather
@@ -507,7 +540,12 @@ impl Editor {
             self.pending_wheel_scroll = None;
         }
 
-        self.deliver_wheel(col, row, direction, due);
+        // The surface under the walk can stop wanting its lines one at a
+        // time — a terminal's child that turned the mouse on mid-walk takes
+        // the line whole — and then the rest of the walk is not owed either.
+        if self.deliver_wheel(col, row, direction, due).wheel_forwarded {
+            self.pending_wheel_scroll = None;
+        }
     }
 
     /// Update LSP hover state based on mouse position

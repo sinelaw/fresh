@@ -96,6 +96,19 @@ pub(crate) struct Dispatched {
     pub claimed: bool,
     /// The tree changed something, so the frame is stale.
     pub changed: bool,
+    /// What applying the event's messages reported back.
+    pub applied: Applied,
+}
+
+/// What the host learned while applying one event's messages, for the
+/// caller that routed the event.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct Applied {
+    /// A wheel notch reached a live terminal whose child takes the mouse,
+    /// and was forwarded to it. The child scrolls by its own rule, one report
+    /// per notch, so the notch's remaining lines are not walked: a replay
+    /// would forward it again. See `Editor::arm_wheel_walk`.
+    pub wheel_forwarded: bool,
 }
 
 /// The split grid's painter, for the length of one fold.
@@ -1682,7 +1695,7 @@ impl Editor {
         let changed = tree_stale || !result.msgs.is_empty();
         let mut msgs = result.msgs;
         msgs.extend(settled);
-        self.apply_shell_messages(msgs, facts);
+        let applied = self.apply_shell_messages(msgs, facts);
         // **The claim is the tree's word, and only the tree's.** A seam that
         // hands a key to a host interior — the prompt's, a focused panel's —
         // `stop()`s it, because the key *is* that surface's: what the surface
@@ -1691,7 +1704,11 @@ impl Editor {
         // (`Editor::hand_key_to_editor`, from the applier). There is no
         // second verdict folded in after the fact; the `Option<bool>` that
         // used to carry one is gone (L2).
-        Dispatched { claimed, changed }
+        Dispatched {
+            claimed,
+            changed,
+            applied,
+        }
     }
 
     /// A key a surface holding the keyboard does not bind is still the
@@ -1761,7 +1778,8 @@ impl Editor {
         &mut self,
         msgs: Vec<crate::view::shell::msg::UiMsg>,
         facts: EventFacts,
-    ) {
+    ) -> Applied {
+        let mut applied = Applied::default();
         // A message is a change to something the description reads — that
         // is what a `UiFact` is for — so the description is stale once one
         // has been applied, and the next reader lays it out again. Except
@@ -1789,12 +1807,15 @@ impl Editor {
                         tracing::warn!("shell action {action:?} failed: {e}");
                     }
                 }
-                crate::view::shell::msg::UiMsg::Ui(fact) => self.apply_ui_fact(fact, facts),
+                crate::view::shell::msg::UiMsg::Ui(fact) => {
+                    self.apply_ui_fact(fact, facts, &mut applied)
+                }
             }
             if stales {
                 self.shell_description_stale = true;
             }
         }
+        applied
     }
 
     /// Whether a wheel notch over a pane's content was taken by a live
@@ -1897,7 +1918,12 @@ impl Editor {
 
     /// Apply a positional fact — the half of a message that never becomes a
     /// keybinding.
-    fn apply_ui_fact(&mut self, fact: crate::view::shell::msg::UiFact, ev: EventFacts) {
+    fn apply_ui_fact(
+        &mut self,
+        fact: crate::view::shell::msg::UiFact,
+        ev: EventFacts,
+        applied: &mut Applied,
+    ) {
         use crate::view::shell::msg::UiFact;
         match fact {
             UiFact::ChordPending { code, modifiers } => {
@@ -2165,6 +2191,7 @@ impl Editor {
                             widget: widget.clone(),
                         },
                         ev,
+                        applied,
                     );
                 }
                 self.move_prose_caret(&pk, &widget, byte, mods.shift);
@@ -2622,11 +2649,9 @@ impl Editor {
                 // A live terminal that asked for the mouse gets the notch —
                 // the same gate the content's press asks, for the same reason.
                 // The child scrolls by its own rule, one report per notch, so
-                // the lines the smooth-scroll walk armed for this notch are
-                // not owed: replaying them would forward the notch again
-                // (`deliver_wheel` dispatches back through here).
+                // this says so, and the notch's other lines are not walked.
                 if self.pane_content_took_wheel(x, y) {
-                    self.pending_wheel_scroll = None;
+                    applied.wheel_forwarded = true;
                     return;
                 }
                 // A plugin's panel inside the pane's content scrolls itself:
