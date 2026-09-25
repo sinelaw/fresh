@@ -1129,10 +1129,14 @@ impl Editor {
         }
     }
 
-    /// Get the current global editor mode (e.g., "vi-normal", "vi-insert")
-    /// Returns None if no special mode is active
+    /// The active window's editor mode (e.g. "markdown-source"), if any.
     pub fn editor_mode(&self) -> Option<String> {
         self.active_window().editor_mode.clone()
+    }
+
+    /// The editor-wide input mode (e.g. "vi-normal", "vi-insert"), if any.
+    pub fn input_mode(&self) -> Option<String> {
+        self.input_mode.clone()
     }
 
     /// Get access to the command registry

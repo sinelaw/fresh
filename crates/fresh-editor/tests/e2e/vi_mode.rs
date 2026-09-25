@@ -93,7 +93,7 @@ fn enable_vi_mode(harness: &mut EditorTestHarness) {
 
     // Wait for vi mode to be enabled (semantic: editor_mode is set to vi-normal)
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-normal".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-normal".to_string()))
         .unwrap();
 }
 
@@ -110,7 +110,7 @@ fn send_vi_key(harness: &mut EditorTestHarness, c: char) {
 fn send_vi_operator_motion(harness: &mut EditorTestHarness, operator: char, motion: char) {
     send_vi_key(harness, operator);
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-operator-pending".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-operator-pending".to_string()))
         .unwrap();
     send_vi_key(harness, motion);
     let expected_mode = if operator == 'c' {
@@ -119,7 +119,7 @@ fn send_vi_operator_motion(harness: &mut EditorTestHarness, operator: char, moti
         "vi-normal"
     };
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some(expected_mode.to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some(expected_mode.to_string()))
         .unwrap();
 }
 
@@ -163,10 +163,7 @@ fn test_vi_hjkl_navigation() {
     enable_vi_mode(&mut harness);
 
     // Verify vi mode is enabled (semantic check)
-    assert_eq!(
-        harness.editor().editor_mode(),
-        Some("vi-normal".to_string())
-    );
+    assert_eq!(harness.editor().input_mode(), Some("vi-normal".to_string()));
 
     // Get initial cursor position (should be 0)
     let initial_pos = harness.cursor_position();
@@ -347,12 +344,12 @@ fn test_vi_vim_compat_change_word_motion_honors_count() {
 
     send_vi_key(&mut harness, 'c');
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-operator-pending".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-operator-pending".to_string()))
         .unwrap();
     send_vi_key(&mut harness, '2');
     send_vi_key(&mut harness, 'W');
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-insert".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-insert".to_string()))
         .unwrap();
     harness.type_text("X").unwrap();
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
@@ -378,7 +375,7 @@ fn test_vi_vim_compat_repeat_change_word_keeps_change_semantics() {
     // keys — otherwise a not-yet-processed Esc means the following `W` is typed
     // as a literal character in insert mode.
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-normal".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-normal".to_string()))
         .unwrap();
     harness.assert_buffer_content("X three four.five\n");
 
@@ -455,12 +452,12 @@ fn test_vi_vim_compat_change_lower_word_honors_count() {
 
     send_vi_key(&mut harness, 'c');
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-operator-pending".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-operator-pending".to_string()))
         .unwrap();
     send_vi_key(&mut harness, '2');
     send_vi_key(&mut harness, 'w');
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-insert".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-insert".to_string()))
         .unwrap();
     harness.type_text("X").unwrap();
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
@@ -485,7 +482,7 @@ fn test_vi_vim_compat_repeat_change_lower_word_keeps_change_semantics() {
     harness.type_text("X").unwrap();
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-normal".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-normal".to_string()))
         .unwrap();
     harness.assert_buffer_content("X world foo bar\n");
 
@@ -509,12 +506,12 @@ fn test_vi_vim_compat_repeat_uses_original_operator_count() {
 
     send_vi_key(&mut harness, 'd');
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-operator-pending".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-operator-pending".to_string()))
         .unwrap();
     send_vi_key(&mut harness, '3');
     send_vi_key(&mut harness, 'W');
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-normal".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-normal".to_string()))
         .unwrap();
     harness.assert_buffer_content("four five six seven\n");
 
@@ -534,12 +531,12 @@ fn test_vi_vim_compat_repeat_prefix_count_overrides_original_operator_count() {
 
     send_vi_key(&mut harness, 'd');
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-operator-pending".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-operator-pending".to_string()))
         .unwrap();
     send_vi_key(&mut harness, '3');
     send_vi_key(&mut harness, 'W');
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-normal".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-normal".to_string()))
         .unwrap();
     harness.assert_buffer_content("four five six seven\n");
 
@@ -990,10 +987,7 @@ fn test_vi_insert_mode() {
     enable_vi_mode(&mut harness);
 
     // Verify we're in normal mode (semantic check)
-    assert_eq!(
-        harness.editor().editor_mode(),
-        Some("vi-normal".to_string())
-    );
+    assert_eq!(harness.editor().input_mode(), Some("vi-normal".to_string()));
 
     // Enter insert mode with 'i'
     harness
@@ -1003,7 +997,7 @@ fn test_vi_insert_mode() {
 
     // Wait for insert mode (semantic check)
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-insert".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-insert".to_string()))
         .unwrap();
 
     // Type some text
@@ -1016,7 +1010,7 @@ fn test_vi_insert_mode() {
 
     // Wait for normal mode (semantic check)
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-normal".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-normal".to_string()))
         .unwrap();
 
     // Verify text was inserted (semantic waiting)
@@ -1042,7 +1036,7 @@ fn test_vi_insert_after() {
 
     // Wait for insert mode (semantic check)
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-insert".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-insert".to_string()))
         .unwrap();
 
     // Type some text
@@ -1055,7 +1049,7 @@ fn test_vi_insert_after() {
 
     // Wait for normal mode (semantic check)
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-normal".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-normal".to_string()))
         .unwrap();
 
     // 'X' should be inserted after 'a' (semantic waiting)
@@ -1081,7 +1075,7 @@ fn test_vi_open_below() {
 
     // Wait for insert mode (semantic check)
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-insert".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-insert".to_string()))
         .unwrap();
 
     // Type some text
@@ -1094,7 +1088,7 @@ fn test_vi_open_below() {
 
     // Wait for normal mode (semantic check)
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-normal".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-normal".to_string()))
         .unwrap();
 
     // Verify new line was inserted (semantic waiting)
@@ -1145,7 +1139,7 @@ fn test_vi_delete_line() {
         .unwrap();
     // Wait for operator-pending mode before sending second key
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-operator-pending".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-operator-pending".to_string()))
         .unwrap();
 
     harness
@@ -1174,7 +1168,7 @@ fn test_vi_delete_word() {
         .unwrap();
     // Wait for operator-pending mode before sending motion
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-operator-pending".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-operator-pending".to_string()))
         .unwrap();
 
     harness
@@ -1241,7 +1235,7 @@ fn test_vi_yank_paste_line() {
 
     // Wait for operator-pending mode
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-operator-pending".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-operator-pending".to_string()))
         .unwrap();
 
     // Second y completes the yy command (yank line)
@@ -1252,7 +1246,7 @@ fn test_vi_yank_paste_line() {
 
     // Wait to return to normal mode (yy is complete)
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-normal".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-normal".to_string()))
         .unwrap();
 
     // Paste below with 'p'
@@ -1294,7 +1288,7 @@ fn test_vi_paste_before_line() {
         .unwrap();
     // Wait for operator-pending mode before sending second key
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-operator-pending".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-operator-pending".to_string()))
         .unwrap();
 
     harness
@@ -1302,7 +1296,7 @@ fn test_vi_paste_before_line() {
         .unwrap();
     // Wait for mode to return to normal after yy completes
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-normal".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-normal".to_string()))
         .unwrap();
 
     // Paste above with 'P'
@@ -1422,11 +1416,11 @@ fn test_vi_linewise_changes_respect_read_only_buffers() {
         // entering insert would leave the caret in a mode that cannot type.
         send_vi_key(&mut harness, 'c');
         harness
-            .wait_until(|h| h.editor().editor_mode() == Some("vi-operator-pending".to_string()))
+            .wait_until(|h| h.editor().input_mode() == Some("vi-operator-pending".to_string()))
             .unwrap();
         send_vi_key(&mut harness, 'c');
         harness
-            .wait_until(|h| h.editor().editor_mode() == Some("vi-normal".to_string()))
+            .wait_until(|h| h.editor().input_mode() == Some("vi-normal".to_string()))
             .unwrap();
 
         harness.assert_buffer_content("AAA\nBBB\n");
@@ -1486,7 +1480,7 @@ fn test_vi_counted_change_line_replaces_deleted_lines() {
     send_vi_key(&mut harness, '3');
     send_vi_operator_motion(&mut harness, 'c', 'c');
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-insert".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-insert".to_string()))
         .unwrap();
 
     harness.type_text("NEW").unwrap();
@@ -1494,7 +1488,7 @@ fn test_vi_counted_change_line_replaces_deleted_lines() {
 
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-normal".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-normal".to_string()))
         .unwrap();
 
     wait_for_rendered_lines_in_order(&mut harness, &["NEW", "DDD", "EEE"]);
@@ -1517,7 +1511,7 @@ fn test_vi_change_line_preserves_crlf_line_endings() {
 
     send_vi_operator_motion(&mut harness, 'c', 'c');
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-insert".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-insert".to_string()))
         .unwrap();
 
     harness.type_text("NEW").unwrap();
@@ -1525,7 +1519,7 @@ fn test_vi_change_line_preserves_crlf_line_endings() {
 
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-normal".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-normal".to_string()))
         .unwrap();
 
     harness.assert_buffer_content("NEW\r\nBBB\r\nCCC\r\n");
@@ -1695,11 +1689,11 @@ fn test_vi_delete_inner_word_paste_uses_deleted_text() {
 
     send_vi_key(&mut harness, 'd');
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-operator-pending".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-operator-pending".to_string()))
         .unwrap();
     send_vi_key(&mut harness, 'i');
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-text-object".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-text-object".to_string()))
         .unwrap();
     send_vi_key(&mut harness, 'w');
     wait_for_rendered_lines_in_order(&mut harness, &["hello  test"]);
@@ -1727,7 +1721,7 @@ fn test_vi_visual_delete() {
         .unwrap();
     harness.render().unwrap();
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-visual".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-visual".to_string()))
         .unwrap();
 
     // Extend selection with 'w' (select word) - wait for cursor to move
@@ -1783,7 +1777,7 @@ fn test_vi_visual_line_delete() {
         .unwrap();
     harness.render().unwrap();
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-visual-line".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-visual-line".to_string()))
         .unwrap();
 
     // Delete with 'd'
@@ -1808,7 +1802,7 @@ fn test_vi_visual_word_end_yanks_selected_text() {
 
     send_vi_key(&mut harness, 'v');
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-visual".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-visual".to_string()))
         .unwrap();
     // The vi-mode plugin applies the WORD-end motion asynchronously; yanking
     // before it lands would capture a too-short selection. The inclusive visual
@@ -1818,7 +1812,7 @@ fn test_vi_visual_word_end_yanks_selected_text() {
     harness.wait_until(|h| h.cursor_position() == 8).unwrap();
     send_vi_key(&mut harness, 'y');
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-normal".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-normal".to_string()))
         .unwrap();
     send_vi_key(&mut harness, '$');
     send_vi_key(&mut harness, 'p');
@@ -1840,7 +1834,7 @@ fn test_vi_visual_word_forward_yanks_selected_text() {
 
     send_vi_key(&mut harness, 'v');
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-visual".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-visual".to_string()))
         .unwrap();
     // The vi-mode plugin applies the WORD motion asynchronously; yanking before
     // it lands would capture a too-short selection. The inclusive visual
@@ -1850,7 +1844,7 @@ fn test_vi_visual_word_forward_yanks_selected_text() {
     harness.wait_until(|h| h.cursor_position() == 10).unwrap();
     send_vi_key(&mut harness, 'y');
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-normal".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-normal".to_string()))
         .unwrap();
     send_vi_key(&mut harness, '$');
     send_vi_key(&mut harness, 'p');
@@ -1872,7 +1866,7 @@ fn test_vi_visual_word_forward_accumulates_from_visual_head() {
 
     send_vi_key(&mut harness, 'v');
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-visual".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-visual".to_string()))
         .unwrap();
     // The vi-mode plugin applies each WORD motion asynchronously, so yanking
     // before both `W`s land would capture a too-short selection. The inclusive
@@ -1885,7 +1879,7 @@ fn test_vi_visual_word_forward_accumulates_from_visual_head() {
     harness.wait_until(|h| h.cursor_position() == 16).unwrap();
     send_vi_key(&mut harness, 'y');
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-normal".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-normal".to_string()))
         .unwrap();
     send_vi_key(&mut harness, '$');
     send_vi_key(&mut harness, 'p');
@@ -1911,13 +1905,13 @@ fn test_vi_visual_word_back_yanks_selected_text() {
 
     send_vi_key(&mut harness, 'v');
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-visual".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-visual".to_string()))
         .unwrap();
     send_vi_key(&mut harness, 'B');
     harness.wait_until(|h| h.cursor_position() == 6).unwrap();
     send_vi_key(&mut harness, 'y');
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-normal".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-normal".to_string()))
         .unwrap();
     send_vi_key(&mut harness, '$');
     send_vi_key(&mut harness, 'p');
@@ -1943,7 +1937,7 @@ fn test_vi_visual_yank() {
         .unwrap();
     harness.render().unwrap();
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-visual".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-visual".to_string()))
         .unwrap();
 
     // Extend selection with 'e' (to end of word) - wait for cursor to move
@@ -1962,7 +1956,7 @@ fn test_vi_visual_yank() {
         .unwrap();
     harness.render().unwrap();
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-normal".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-normal".to_string()))
         .unwrap();
 
     // Move to start of "world" - wait for cursor to move
@@ -2013,7 +2007,7 @@ fn test_vi_delete_inner_word() {
         .unwrap();
     // Wait for operator-pending mode
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-operator-pending".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-operator-pending".to_string()))
         .unwrap();
 
     harness
@@ -2021,7 +2015,7 @@ fn test_vi_delete_inner_word() {
         .unwrap();
     // Wait for text-object mode
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-text-object".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-text-object".to_string()))
         .unwrap();
 
     harness
@@ -2056,7 +2050,7 @@ fn test_vi_change_inner_quotes() {
 
     // Wait for find-char mode
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-find-char".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-find-char".to_string()))
         .unwrap();
 
     harness
@@ -2077,7 +2071,7 @@ fn test_vi_change_inner_quotes() {
 
     // Wait for operator-pending mode
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-operator-pending".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-operator-pending".to_string()))
         .unwrap();
 
     harness
@@ -2087,7 +2081,7 @@ fn test_vi_change_inner_quotes() {
 
     // Wait for text-object mode
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-text-object".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-text-object".to_string()))
         .unwrap();
 
     harness
@@ -2097,7 +2091,7 @@ fn test_vi_change_inner_quotes() {
 
     // Wait for insert mode (ci" deletes content and enters insert)
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-insert".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-insert".to_string()))
         .unwrap();
 
     // Now in insert mode, type replacement
@@ -2107,7 +2101,7 @@ fn test_vi_change_inner_quotes() {
     // Escape back to normal mode
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-normal".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-normal".to_string()))
         .unwrap();
 
     // Content inside quotes replaced with "Hi" (semantic waiting)
@@ -2136,7 +2130,7 @@ fn test_vi_colon_write() {
         .send_key(KeyCode::Char('i'), KeyModifiers::NONE)
         .unwrap();
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-insert".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-insert".to_string()))
         .unwrap();
 
     harness.type_text("X").unwrap();
@@ -2145,7 +2139,7 @@ fn test_vi_colon_write() {
     // Return to normal mode
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-normal".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-normal".to_string()))
         .unwrap();
 
     // Verify file is modified
@@ -2232,7 +2226,7 @@ fn test_vi_colon_force_quit() {
         .send_key(KeyCode::Char('i'), KeyModifiers::NONE)
         .unwrap();
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-insert".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-insert".to_string()))
         .unwrap();
 
     harness.type_text("X").unwrap();
@@ -2241,7 +2235,7 @@ fn test_vi_colon_force_quit() {
     // Return to normal mode
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-normal".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-normal".to_string()))
         .unwrap();
 
     // Verify we're on test2.txt
@@ -2286,7 +2280,7 @@ fn test_vi_colon_write_quit() {
         .send_key(KeyCode::Char('i'), KeyModifiers::NONE)
         .unwrap();
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-insert".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-insert".to_string()))
         .unwrap();
 
     harness.type_text("X").unwrap();
@@ -2295,7 +2289,7 @@ fn test_vi_colon_write_quit() {
     // Return to normal mode
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-normal".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-normal".to_string()))
         .unwrap();
 
     // Verify we're on test2.txt
@@ -2369,7 +2363,7 @@ fn test_vi_colon_goto_line() {
         .send_key(KeyCode::Char('i'), KeyModifiers::NONE)
         .unwrap();
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-insert".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-insert".to_string()))
         .unwrap();
 
     harness.type_text("INSERTED_").unwrap();
@@ -2378,7 +2372,7 @@ fn test_vi_colon_goto_line() {
     // Return to normal mode
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-normal".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-normal".to_string()))
         .unwrap();
 
     // Verify the complete modified line is visible - proves goto AND edit worked
@@ -2531,7 +2525,7 @@ fn test_vi_escape_from_insert_moves_cursor_left() {
         .unwrap();
     harness.render().unwrap();
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-insert".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-insert".to_string()))
         .unwrap();
 
     harness.type_text("AB").unwrap();
@@ -2542,7 +2536,7 @@ fn test_vi_escape_from_insert_moves_cursor_left() {
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-normal".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-normal".to_string()))
         .unwrap();
     harness.wait_until(|h| h.cursor_position() == 1).unwrap();
 
@@ -2572,12 +2566,12 @@ fn a_confirmation_dialog_takes_the_keyboard_from_vi_mode() {
     // Something unsaved, typed in vi's own insert mode.
     send_vi_key(&mut harness, 'i');
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-insert".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-insert".to_string()))
         .unwrap();
     harness.type_text("EDITED").unwrap();
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-normal".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-normal".to_string()))
         .unwrap();
     let before = harness.get_buffer_content();
 
@@ -2637,12 +2631,12 @@ fn a_dialog_accelerator_beats_a_vi_operator() {
 
     send_vi_key(&mut harness, 'i');
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-insert".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-insert".to_string()))
         .unwrap();
     harness.type_text("EDITED").unwrap();
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-normal".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-normal".to_string()))
         .unwrap();
 
     harness

@@ -304,7 +304,7 @@ function switchMode(newMode: ViMode): void {
 
   // All modes use vi-{mode} naming, including insert mode
   // vi-insert has read_only=false so normal typing works, but Escape is bound
-  editor.setEditorMode(`vi-${newMode}`);
+  editor.setInputMode(`vi-${newMode}`);
   editor.setStatus(getModeIndicator(newMode));
 }
 
@@ -2359,7 +2359,7 @@ async function vi_replace_char(): Promise<void> {
   // `vi-<mode>` and so cannot produce the `vi-replace-char` editor mode this
   // needs. The vi-side mode is borrowed purely for the status indicator.
   state.mode = "find-char"; // reuse find-char state slot for status
-  editor.setEditorMode("vi-replace-char");
+  editor.setInputMode("vi-replace-char");
   editor.setStatus("-- REPLACE CHAR --");
 
   editor.beginKeyCapture();
@@ -3859,14 +3859,14 @@ registerHandler("vi_to_cancel", vi_to_cancel);
 // Implemented via `editor.getNextKey()` (plugin API #1) — the editor
 // hands the next keypress to this awaiting handler before any other
 // dispatch, which means the mode itself does not need any per-key
-// bindings.  Keeps `setEditorMode("vi-find-char")` set across the
+// bindings.  Keeps `setInputMode("vi-find-char")` set across the
 // await purely for the status-bar indicator.
 async function enterFindCharMode(findType: FindCharType): Promise<void> {
   state.pendingFindChar = findType;
   // Set directly rather than through `switchMode`, which would clear the
   // count that `3fx` must still be holding when the target key arrives.
   state.mode = "find-char";
-  editor.setEditorMode("vi-find-char");
+  editor.setInputMode("vi-find-char");
   editor.setStatus(getModeIndicator("find-char"));
 
   // Capture the key losslessly — without this, a user pressing the
@@ -4114,7 +4114,7 @@ async function enterFindCharOperatorMode(findType: FindCharType): Promise<void> 
   // `state.pending` and so blank the operator out of the status indicator
   // while the target key is awaited.
   state.mode = "find-char";
-  editor.setEditorMode("vi-find-char");
+  editor.setInputMode("vi-find-char");
   editor.setStatus(getModeIndicator("find-char"));
 
   editor.beginKeyCapture();
@@ -4394,7 +4394,7 @@ function defineViModes(): void {
 
   // vi-find-char and vi-replace-char modes do not need bindings:
   // their entry-point handlers (vi_find_char_f/t/F/T, vi_replace_char) call
-  // editor.getNextKey() to read the next character.  setEditorMode(...) is
+  // editor.getNextKey() to read the next character.  setInputMode(...) is
   // still set across the await purely so the status bar shows the mode.
 
   // Define vi-operator-pending mode
@@ -5537,6 +5537,13 @@ editor.on("prompt_confirmed", async (args) => {
 // Toggle Command
 // ============================================================================
 
+// Vi is an editor-wide input mode (`editor.setInputMode`), not a window's
+// editor mode. "Vi is on" is a preference about how the user types, so it
+// holds in every window — one created after vi was enabled included — and no
+// window-scoped code (a dialog, a window switch, another plugin's per-window
+// mode) can clear it. The sub-mode (normal/insert/visual/…) is the input
+// mode's value: one for the whole editor, applied wherever the keyboard is,
+// the same way `state` below is one for the plugin.
 let viModeEnabled = false;
 
 function enableVi(): void {
@@ -5549,7 +5556,7 @@ function enableVi(): void {
 function disableVi(): void {
   if (!viModeEnabled) return;
   viModeEnabled = false;
-  editor.setEditorMode(null);
+  editor.setInputMode(null);
   resetModalState();
   editor.setStatus(editor.t("status.disabled"));
 }
@@ -5699,7 +5706,7 @@ editor.on("buffer_activated", (args) => {
   // would land on — and at offset 0 actually move — the cursor in the buffer
   // just opened.
   if (leaving !== "normal") {
-    editor.setEditorMode("vi-normal");
+    editor.setInputMode("vi-normal");
   }
   // Unconditional: `resetModalState` also drops a half-typed count, which the
   // indicator is showing.

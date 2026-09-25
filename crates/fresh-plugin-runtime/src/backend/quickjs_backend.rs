@@ -5654,10 +5654,26 @@ impl JsEditorApi {
             .is_ok()
     }
 
-    /// Set the global editor mode
+    /// Set the active window's editor mode — a plugin mode scoped to that
+    /// window, such as `markdown-source`. It outranks the editor-wide input
+    /// mode in that window and is invisible in every other. `null` clears
+    /// it. A modal-editing personality that should apply everywhere (vi)
+    /// belongs in `setInputMode` instead.
     pub fn set_editor_mode(&self, mode: Option<String>) -> bool {
         self.command_sender
             .send(PluginCommand::SetEditorMode { mode })
+            .is_ok()
+    }
+
+    /// Set the editor-wide input mode — a modal-editing personality such as
+    /// vi (`"vi-normal"`, `"vi-insert"`, …). It applies in every window,
+    /// including windows created later, and nothing window-scoped clears it.
+    /// Keys resolve against a focused panel's mode, then the buffer's, then
+    /// the window's editor mode, then this, then the base keymap. `null`
+    /// turns it off.
+    pub fn set_input_mode(&self, mode: Option<String>) -> bool {
+        self.command_sender
+            .send(PluginCommand::SetInputMode { mode })
             .is_ok()
     }
 
@@ -5681,12 +5697,20 @@ impl JsEditorApi {
             .unwrap_or_default()
     }
 
-    /// Get the current editor mode
+    /// Get the active window's editor mode (see `setEditorMode`)
     pub fn get_editor_mode(&self) -> Option<String> {
         self.state_snapshot
             .read()
             .ok()
             .and_then(|s| s.editor_mode.clone())
+    }
+
+    /// Get the editor-wide input mode (see `setInputMode`)
+    pub fn get_input_mode(&self) -> Option<String> {
+        self.state_snapshot
+            .read()
+            .ok()
+            .and_then(|s| s.input_mode.clone())
     }
 
     // === Splits ===
@@ -10910,6 +10934,33 @@ mod tests {
                 assert_eq!(mode, Some("vi-normal".to_string()));
             }
             _ => panic!("Expected SetEditorMode, got {:?}", cmd),
+        }
+    }
+
+    #[test]
+    fn test_api_set_and_clear_input_mode() {
+        let (mut backend, rx) = create_test_backend();
+
+        backend
+            .execute_js(
+                r#"
+            const editor = getEditor();
+            editor.setInputMode("vi-normal");
+            editor.setInputMode(null);
+        "#,
+                "test.js",
+            )
+            .unwrap();
+
+        match rx.try_recv().unwrap() {
+            PluginCommand::SetInputMode { mode } => {
+                assert_eq!(mode, Some("vi-normal".to_string()));
+            }
+            cmd => panic!("Expected SetInputMode, got {:?}", cmd),
+        }
+        match rx.try_recv().unwrap() {
+            PluginCommand::SetInputMode { mode } => assert!(mode.is_none()),
+            cmd => panic!("Expected SetInputMode with None, got {:?}", cmd),
         }
     }
 

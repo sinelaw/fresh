@@ -83,8 +83,9 @@ function fieldNote(note: string): WidgetSpec {
 
 // The dialog's keymap rides on its panel (the `mount` option `mode`), never
 // on the window's editor mode: that is one slot per window, shared with every
-// plugin — vi_mode keeps "vi-normal" there — so taking it on open and
-// emptying it on close left vi off after the dialog (issue #3305).
+// plugin, and a dialog that took it on open and emptied it on close wiped
+// whatever lived there — vi's mode, before vi moved to the editor-wide input
+// mode (issues #3305, #3395).
 const DISCOVER_MODE = "agent-discovery";
 
 

@@ -228,6 +228,7 @@ impl Editor {
 
         snapshot.clipboard = self.clipboard.get_internal().to_string();
         snapshot.working_dir = self.working_dir().to_path_buf();
+        snapshot.input_mode = self.input_mode.clone();
 
         // Total terminal dimensions (full screen, not the active
         // split's viewport). Plugins read this via `getScreenSize()`
@@ -1637,6 +1638,9 @@ impl Editor {
             }
             PluginCommand::SetEditorMode { mode } => {
                 self.handle_set_editor_mode(mode);
+            }
+            PluginCommand::SetInputMode { mode } => {
+                self.handle_set_input_mode(mode);
             }
 
             // ==================== LSP Helper Commands ====================
@@ -3143,10 +3147,31 @@ impl Editor {
         }
     }
 
-    /// Set the global editor mode (for vi mode)
+    /// Set the active window's editor mode — a window-scoped plugin mode.
     fn handle_set_editor_mode(&mut self, mode: Option<String>) {
         self.active_window_mut().editor_mode = mode.clone();
         tracing::debug!("Set editor mode: {:?}", mode);
+    }
+
+    /// Set the editor-wide input mode (vi, or another modal-editing
+    /// personality). Held on the editor, not on a window, so it is the same
+    /// in every window and no window-scoped code path can clear it.
+    fn handle_set_input_mode(&mut self, mode: Option<String>) {
+        if self.input_mode == mode {
+            return;
+        }
+        self.input_mode = mode.clone();
+        tracing::debug!("Set input mode: {:?}", mode);
+        #[cfg(feature = "plugins")]
+        {
+            // Snapshot first, so a handler that reads `getInputMode()` sees
+            // the value the hook announces.
+            self.update_plugin_state_snapshot();
+            self.plugin_manager.read().unwrap().run_hook(
+                "input_mode_changed",
+                crate::services::plugins::hooks::HookArgs::InputModeChanged { mode },
+            );
+        }
     }
 
     /// Normalize a plugin-supplied `BufferId`: treat id 0 as "use the active buffer".

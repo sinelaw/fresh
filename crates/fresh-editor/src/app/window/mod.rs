@@ -856,9 +856,12 @@ pub struct Window {
     /// per-window — different windows can prompt independently.
     pub user_dismissed_lsp_languages: std::collections::HashSet<String>,
 
-    /// Active editor mode (e.g. "search", "replace", "macro-record").
-    /// Per-window because the modes drive UI affordances that belong
-    /// to one window's UX flow.
+    /// This window's plugin editor mode (`setEditorMode`, e.g.
+    /// "markdown-source", flash's label mode). Per-window because such
+    /// modes drive affordances that belong to one window's flow. A modal
+    /// editing personality that should hold in every window (vi) is the
+    /// editor-wide input mode instead (`Editor::input_mode`), which this
+    /// outranks in this window.
     pub editor_mode: Option<String>,
 
     /// Per-window prompt histories (one ring per `PromptType`). Each
