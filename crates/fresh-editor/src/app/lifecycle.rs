@@ -200,12 +200,18 @@ impl Editor {
     /// unsaved work, the prompt asks about all of it, auto-save or not.
     pub(crate) fn quit_with_prompts(&mut self, confirm_clean: bool) {
         let auto_save = self.config.editor.auto_save_enabled;
-        let modified = self.modified_buffers_needing_prompt();
-        let needs_prompt = modified.iter().any(|(window_id, buffer_id)| {
-            !(auto_save && self.saved_on_exit(*window_id, *buffer_id))
-        });
+        let asked: Vec<ExitSaveEntry> = self
+            .exit_save_plan()
+            .into_iter()
+            .filter(|entry| entry.asked)
+            .collect();
+        // What the save on exit will write needs no question when auto-save
+        // does it; everything else asked about does.
+        let needs_prompt = asked
+            .iter()
+            .any(|entry| !(auto_save && matches!(entry.save, ExitSave::Write(_))));
         if needs_prompt {
-            self.prompt_unsaved_changes(modified.len());
+            self.prompt_unsaved_changes(asked.len());
         } else if confirm_clean {
             // No dirty buffers (or only ones auto-save will write), but the
             // user has opted into a safety-net confirmation for a stray
@@ -239,38 +245,18 @@ impl Editor {
     /// Whatever it can't write (a file that needs sudo, one changed on
     /// disk) is still modified afterwards, and is asked about instead of the
     /// exit dropping it.
+    ///
+    /// The save is the exit's own ([`Self::auto_save_on_exit`], which
+    /// [`Self::persist_on_exit`] runs for every exit), run here ahead of it:
+    /// once the quit is committed nothing can call it off any more.
     pub(crate) fn quit_after_auto_save(&mut self) {
-        if self.config.editor.auto_save_enabled {
-            match self.save_all_on_exit() {
-                Ok(outcome) if outcome.saved > 0 => {
-                    tracing::info!("Auto-saved {} buffer(s) on quit", outcome.saved);
-                }
-                Ok(_) => {}
-                Err(e) => tracing::warn!("Auto-save on quit failed: {e}"),
-            }
+        if let Err(e) = self.auto_save_on_exit() {
+            tracing::warn!("Auto-save on quit failed: {e}");
         }
         match self.count_modified_buffers_needing_prompt() {
             0 => self.should_quit = true,
             modified_count => self.prompt_unsaved_changes(modified_count),
         }
-    }
-
-    /// Whether the auto-save on exit ([`Self::save_all_on_exit`]) is
-    /// expected to write `buffer_id` of `window_id`, found without writing
-    /// anything: it is backed by a named file, and not one that changed on
-    /// disk, which the save leaves alone. (A save that fails only once
-    /// attempted, say for want of sudo, is asked about after it.)
-    fn saved_on_exit(&self, window_id: WindowId, buffer_id: BufferId) -> bool {
-        let Some(window) = self.windows.get(&window_id) else {
-            return false;
-        };
-        window
-            .buffers
-            .get(&buffer_id)
-            .and_then(|state| state.buffer.file_path())
-            .is_some_and(|path| {
-                !path.as_os_str().is_empty() && window.changed_on_disk(path).is_none()
-            })
     }
 
     /// Ask what to do about the `modified_count` unsaved buffers before
@@ -376,45 +362,35 @@ impl Editor {
     }
 
     /// Every `(window, buffer)` that must be resolved before the editor may
-    /// exit, across all workspaces.
+    /// exit, across all workspaces: the entries of
+    /// [`Self::exit_save_plan`] the quit prompt asks about.
     ///
     /// Cross-window because `Ctrl+Q` quits the editor, not the workspace on
     /// screen (issue #3189).
-    ///
-    /// Composite, hidden and plugin-virtual buffers are skipped: they can be
-    /// neither saved nor recovered, so a prompt naming them offers nothing to
-    /// act on. Background workspaces are full of them, which is why this
-    /// matters once every window counts.
     pub(crate) fn modified_buffers_needing_prompt(&self) -> Vec<(WindowId, BufferId)> {
-        let hot_exit = self.config.editor.hot_exit;
+        self.exit_save_plan()
+            .into_iter()
+            .filter(|entry| entry.asked)
+            .map(|entry| (entry.window, entry.buffer))
+            .collect()
+    }
 
-        let mut out = Vec::new();
-        for window_id in self.window_ids_sorted() {
-            let Some(window) = self.windows.get(&window_id) else {
-                continue;
-            };
-            for (buffer_id, state) in window.buffers.iter() {
-                if !state.buffer.is_modified() || window.quit_skips_buffer(*buffer_id) {
-                    continue;
-                }
-                if let Some(meta) = window.buffer_metadata.get(buffer_id) {
-                    // A file-backed buffer counts even with auto-save on:
-                    // asked after the auto-save (`quit_after_auto_save`), it
-                    // is one that couldn't be saved — it needs sudo, or its
-                    // file changed on disk (issue #3346) — and quitting
-                    // unasked would drop the edits. `quit_with_prompts`
-                    // leaves such buffers out before the save.
-                    let is_unnamed = meta
-                        .file_path()
-                        .is_some_and(|path| path.as_os_str().is_empty());
-                    if is_unnamed && hot_exit {
-                        continue; // unnamed buffer, auto-recovered via hot exit
-                    }
-                }
-                out.push((window_id, *buffer_id));
-            }
-        }
-        out
+    /// What exiting means for every modified buffer, across all workspaces
+    /// (see [`Window::exit_save_plan`](crate::app::window::Window::exit_save_plan)).
+    ///
+    /// The one place that decides it: the quit prompt reads it, to know what
+    /// to ask about, and the save on exit ([`Self::save_all_on_exit`])
+    /// carries it out.
+    pub(crate) fn exit_save_plan(&self) -> Vec<ExitSaveEntry> {
+        let hot_exit = self.config.editor.hot_exit;
+        self.window_ids_sorted()
+            .into_iter()
+            .filter_map(|window_id| {
+                let window = self.windows.get(&window_id)?;
+                Some(window.exit_save_plan(window_id, hot_exit))
+            })
+            .flatten()
+            .collect()
     }
 
     /// Handle terminal focus gained event
@@ -663,6 +639,43 @@ impl Editor {
 }
 
 impl crate::app::window::Window {
+    /// What exiting means for each of this window's modified buffers:
+    /// whether the save on exit writes it, and whether the quit prompt asks
+    /// about it. See [`Editor::exit_save_plan`].
+    pub(crate) fn exit_save_plan(&self, window_id: WindowId, hot_exit: bool) -> Vec<ExitSaveEntry> {
+        self.buffers
+            .iter()
+            .filter(|(_, state)| state.buffer.is_modified())
+            .map(|(buffer_id, state)| {
+                let save = match state
+                    .buffer
+                    .file_path()
+                    .filter(|path| !path.as_os_str().is_empty())
+                {
+                    Some(path) if self.changed_on_disk(path).is_some() => {
+                        ExitSave::ChangedOnDisk(path.to_path_buf())
+                    }
+                    Some(path) => ExitSave::Write(path.to_path_buf()),
+                    None => ExitSave::NoFile,
+                };
+                // An unnamed buffer is auto-recovered by hot exit, so that
+                // keeps it without asking.
+                let recovered_unasked = hot_exit
+                    && self
+                        .buffer_metadata
+                        .get(buffer_id)
+                        .and_then(|meta| meta.file_path())
+                        .is_some_and(|path| path.as_os_str().is_empty());
+                ExitSaveEntry {
+                    window: window_id,
+                    buffer: *buffer_id,
+                    save,
+                    asked: !(self.quit_skips_buffer(*buffer_id) || recovered_unasked),
+                }
+            })
+            .collect()
+    }
+
     /// Whether quitting leaves `buffer_id` out of the unsaved-changes
     /// question: composite, hidden and plugin-virtual buffers, which the
     /// prompt can't name and the user can't act on (see
@@ -752,4 +765,33 @@ impl crate::app::window::Window {
             self.reveal_active_tab(split_id);
         }
     }
+}
+
+/// What the save on exit does with one modified buffer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ExitSave {
+    /// It is backed by a named file, which the save writes.
+    Write(std::path::PathBuf),
+    /// Its file changed on disk since the window loaded or saved it, so the
+    /// save leaves it alone: overwriting it needs an explicit Save (issue
+    /// #3346).
+    ChangedOnDisk(std::path::PathBuf),
+    /// There is no file to write it to (an unnamed buffer): only the quit
+    /// prompt's Save As, Discard or hot exit resolves it.
+    NoFile,
+}
+
+/// One modified buffer of [`Editor::exit_save_plan`].
+#[derive(Debug, Clone)]
+pub(crate) struct ExitSaveEntry {
+    pub window: WindowId,
+    pub buffer: BufferId,
+    pub save: ExitSave,
+    /// Whether the quit prompt asks about it while it is unsaved: not for a
+    /// buffer hidden from the tabs ([`Window::quit_skips_buffer`]
+    /// (crate::app::window::Window::quit_skips_buffer)), which the prompt
+    /// can't name and the user can't act on, nor for an unnamed one hot exit
+    /// recovers. A hidden buffer is still saved where it can be, but one that
+    /// can't be doesn't hold the quit.
+    pub asked: bool,
 }

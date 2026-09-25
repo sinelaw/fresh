@@ -472,100 +472,89 @@ impl Editor {
         }
     }
 
-    /// Save all modified file-backed buffers to disk (called on exit when auto_save is enabled).
-    /// Unlike `auto_save_persistent_buffers`, this skips the interval check and only saves
-    /// named file-backed buffers (not unnamed buffers).
+    /// Carry out the exit save plan ([`Editor::exit_save_plan`]): write every
+    /// modified buffer backed by a named file, in every workspace, except one
+    /// whose file changed on disk. Unnamed buffers are left to the quit
+    /// prompt.
     ///
-    /// Buffers whose file changed on disk are left unsaved and listed in
-    /// [`ExitSaveOutcome::changed_on_disk`].
+    /// Run by the auto-save on exit ([`Editor::auto_save_on_exit`]) and by
+    /// the quit prompt's "Save and Quit".
     pub fn save_all_on_exit(&mut self) -> anyhow::Result<ExitSaveOutcome> {
         // Exiting closes every workspace, so "save on the way out" must mean
         // all of them (issue #3189). Retargeted per window so the per-buffer
         // finalize (LSP didSave, event-log marker, recovery delete) lands on
-        // the right window's state.
+        // the right window's state. Each window's part of the plan is read
+        // just before it is carried out: a file open in two workspaces is
+        // saved by the first, and has changed on disk for the second.
+        let hot_exit = self.config.editor.hot_exit;
         let mut outcome = ExitSaveOutcome::default();
         for window_id in self.window_ids_sorted() {
-            let window_outcome = self.with_window_retargeted(window_id, |editor| {
-                editor.save_all_on_exit_in_active_window()
+            let Some(plan) = self
+                .windows
+                .get(&window_id)
+                .map(|window| window.exit_save_plan(window_id, hot_exit))
+            else {
+                continue;
+            };
+            self.with_window_retargeted(window_id, |editor| {
+                editor.carry_out_exit_save(plan, &mut outcome)
             })?;
-            outcome.saved += window_outcome.saved;
-            outcome.failed.extend(window_outcome.failed);
-            outcome
-                .changed_on_disk
-                .extend(window_outcome.changed_on_disk);
         }
         Ok(outcome)
     }
 
-    /// The single-workspace half of [`Editor::save_all_on_exit`].
-    ///
-    /// A buffer the quit prompt doesn't ask about (hidden from the tabs, say
-    /// one a plugin's replace-in-file opened) is saved too where it can be,
-    /// but isn't reported when it can't: quitting doesn't wait on a buffer
-    /// the user was never asked about ([`Window::quit_skips_buffer`](crate::app::window::Window::quit_skips_buffer)).
-    fn save_all_on_exit_in_active_window(&mut self) -> anyhow::Result<ExitSaveOutcome> {
-        let window = self
-            .windows
-            .get(&self.active_window)
-            .expect("active window present");
-        let mut to_save = Vec::new();
-        for (id, state) in &window.buffers {
-            if state.buffer.is_modified() {
-                if let Some(path) = state.buffer.file_path() {
-                    if !path.as_os_str().is_empty() {
-                        let reported = !window.quit_skips_buffer(*id);
-                        to_save.push((*id, path.to_path_buf(), reported));
+    /// The active window's part of [`Editor::save_all_on_exit`].
+    fn carry_out_exit_save(
+        &mut self,
+        plan: Vec<super::lifecycle::ExitSaveEntry>,
+        outcome: &mut ExitSaveOutcome,
+    ) -> anyhow::Result<()> {
+        use super::lifecycle::ExitSave;
+        for entry in plan {
+            let path = match entry.save {
+                ExitSave::NoFile => continue,
+                ExitSave::ChangedOnDisk(path) => {
+                    tracing::warn!(
+                        "Auto-save on exit skipped for {}: changed on disk",
+                        path.display()
+                    );
+                    if entry.asked {
+                        outcome.changed_on_disk.push(path);
                     }
+                    continue;
                 }
-            }
-        }
-
-        let mut outcome = ExitSaveOutcome::default();
-        for (id, path, reported) in to_save {
-            if self.changed_on_disk(&path).is_some() {
-                tracing::warn!(
-                    "Auto-save on exit skipped for {}: changed on disk",
-                    path.display()
-                );
-                if reported {
-                    outcome.changed_on_disk.push(path);
-                }
-                continue;
-            }
-            if let Some(state) = self
+                ExitSave::Write(path) => path,
+            };
+            let Some(state) = self
                 .windows
                 .get_mut(&self.active_window)
                 .map(|w| &mut w.buffers)
                 .expect("active window present")
-                .get_mut(&id)
-            {
-                match state.buffer.save() {
-                    Ok(()) => {
-                        self.finalize_save_buffer(id, Some(path), true)?;
-                        outcome.saved += 1;
+                .get_mut(&entry.buffer)
+            else {
+                continue;
+            };
+            match state.buffer.save() {
+                Ok(()) => {
+                    self.finalize_save_buffer(entry.buffer, Some(path), true)?;
+                    outcome.saved += 1;
+                }
+                Err(e) => {
+                    if e.is::<SudoSaveRequired>() {
+                        tracing::debug!(
+                            "Auto-save on exit skipped for {} (sudo required)",
+                            path.display()
+                        );
+                    } else {
+                        tracing::warn!("Auto-save on exit failed for {}: {}", path.display(), e);
                     }
-                    Err(e) => {
-                        if e.is::<SudoSaveRequired>() {
-                            tracing::debug!(
-                                "Auto-save on exit skipped for {} (sudo required)",
-                                path.display()
-                            );
-                        } else {
-                            tracing::warn!(
-                                "Auto-save on exit failed for {}: {}",
-                                path.display(),
-                                e
-                            );
-                        }
-                        if reported {
-                            outcome.failed.push(path);
-                        }
+                    if entry.asked {
+                        outcome.failed.push(path);
                     }
                 }
             }
         }
-
-        Ok(outcome)
+        Ok(())
     }
 
     /// Save every modified, file-backed buffer in the active window to disk.
