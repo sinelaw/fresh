@@ -144,6 +144,7 @@ pub mod issue_3218_cjk_tab_marker;
 pub mod issue_3294_wrap_column_cursor_visible;
 pub mod issue_3329_drag_in_scroll_margin;
 pub mod issue_3351_click_past_one_char_line;
+pub mod issue_3397_status_bar_line_in_second_window;
 pub mod issue_623_prompt_dropdown_scrollbar;
 pub mod issue_722_inlay_hint_split_drift;
 pub mod issue_779_after_eof_shade;
