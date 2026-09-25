@@ -12,7 +12,7 @@
 //!
 //! In `save_with_inplace_write()` (buffer.rs):
 //! 1. File is opened with `truncate(true)` - this empties the file
-//! 2. `write_recipe_to_file()` iterates through the recipe
+//! 2. `write_recipe()` iterates through the recipe
 //! 3. For Copy actions, it tries to read from the source file (same file we just truncated!)
 //! 4. Result: reads fail or return empty data = corruption
 //!

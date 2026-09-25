@@ -90,6 +90,14 @@ impl FileSystem for ConfigurableFileSystem {
         self.inner.write_file(path, data)
     }
 
+    fn replace_file_preserving_identity(
+        &self,
+        path: &Path,
+        data: &[u8],
+    ) -> Result<(), fresh::model::filesystem::ReplaceError> {
+        self.inner.replace_file_preserving_identity(path, data)
+    }
+
     fn create_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
         self.inner.create_file(path)
     }

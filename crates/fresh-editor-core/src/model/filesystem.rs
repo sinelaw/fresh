@@ -495,8 +495,33 @@ pub trait FileSystem: Send + Sync {
         Ok(data.iter().filter(|&&b| b == b'\n').count())
     }
 
-    /// Write data to file atomically (temp file + rename)
+    /// Write data to file atomically (temp file + rename).
+    ///
+    /// The original's permissions are carried over, and — where the backend
+    /// can — its owner, group and extended attributes. When those can't be
+    /// kept, or the file has other hard links, the file is still replaced:
+    /// right for the editor's own files (config, workspace, recovery data).
+    /// Saving a user's file goes through
+    /// [`FileSystem::replace_file_preserving_identity`] instead.
     fn write_file(&self, path: &Path, data: &[u8]) -> io::Result<()>;
+
+    /// Replace `path` with `data` atomically (temp file + rename), but only
+    /// if the new file can stand in for the old one: the same owner, group,
+    /// permissions and extended attributes, and no other hard links left
+    /// pointing at the old content. Otherwise returns
+    /// [`ReplaceError::IdentityNotPreserved`] without having changed `path`,
+    /// so the caller can overwrite it in place instead.
+    ///
+    /// The default is [`FileSystem::write_file`], for backends that keep a
+    /// file's identity themselves or can't tell (remote hosts, test
+    /// filesystems); wrappers forward it to what they wrap.
+    fn replace_file_preserving_identity(
+        &self,
+        path: &Path,
+        data: &[u8],
+    ) -> Result<(), ReplaceError> {
+        self.write_file(path, data).map_err(ReplaceError::Io)
+    }
 
     /// Create a file for writing, returns a writer handle
     fn create_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>>;
@@ -1050,6 +1075,54 @@ pub trait FileSystemExt: FileSystem {
 /// Blanket implementation: all FileSystem types automatically get async methods
 impl<T: FileSystem> FileSystemExt for T {}
 
+/// Why replacing a file with a new one (write-then-rename) would not leave
+/// the same file behind.
+#[derive(Debug)]
+pub enum IdentityLoss {
+    /// The file has other hard links, which would keep the old content.
+    HardLinks,
+    /// The new file can't be given the original's owner/group or one of its
+    /// extended attributes (e.g. a group the user isn't a member of).
+    Attributes(io::Error),
+}
+
+impl std::fmt::Display for IdentityLoss {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::HardLinks => write!(f, "the file has other hard links"),
+            Self::Attributes(e) => write!(f, "can't carry owner/xattrs over to a new file ({e})"),
+        }
+    }
+}
+
+/// Error from [`FileSystem::replace_file_preserving_identity`].
+#[derive(Debug)]
+pub enum ReplaceError {
+    /// The file was left untouched: a replacement wouldn't be the same file.
+    IdentityNotPreserved(IdentityLoss),
+    /// The write itself failed.
+    Io(io::Error),
+}
+
+impl From<io::Error> for ReplaceError {
+    fn from(e: io::Error) -> Self {
+        Self::Io(e)
+    }
+}
+
+impl std::fmt::Display for ReplaceError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::IdentityNotPreserved(loss) => {
+                write!(f, "replacing the file would not preserve it: {loss}")
+            }
+            Self::Io(e) => e.fmt(f),
+        }
+    }
+}
+
+impl std::error::Error for ReplaceError {}
+
 /// Run `create`, which creates a file under a freshly picked temp name, again
 /// while the name it picked turns out to exist already.
 fn retry_on_name_clash<T>(mut create: impl FnMut() -> io::Result<T>) -> io::Result<T> {
@@ -1469,6 +1542,16 @@ pub fn default_search_file(
 #[derive(Debug, Clone, Copy, Default)]
 pub struct StdFileSystem;
 
+/// Whether [`StdFileSystem::replace_atomically`] must keep the file's
+/// identity or may give it up.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Identity {
+    /// Refuse to replace the file rather than lose it.
+    Required,
+    /// Keep what can be kept, replace the file regardless.
+    BestEffort,
+}
+
 impl StdFileSystem {
     /// Check if a file is hidden (platform-specific)
     fn is_hidden(path: &Path) -> bool {
@@ -1477,14 +1560,67 @@ impl StdFileSystem {
             .is_some_and(|n| n.starts_with('.'))
     }
 
-    /// Overwrite `path` in place, keeping its inode and with it the owner,
-    /// group, hard links, xattrs and ACLs. Not atomic, so only used when a
-    /// write-then-rename can't reproduce the original file; the new content
-    /// is staged in the recovery directory first where it can be, so a write
-    /// that fails part-way doesn't lose it (see
-    /// [`crate::model::buffer::save::write_in_place_staged`]).
-    fn write_in_place(&self, path: &Path, data: &[u8]) -> io::Result<()> {
-        crate::model::buffer::save::write_in_place_staged(self, path, data)
+    /// Replace `path` with `data` via a temp file renamed over it, giving the
+    /// temp file the original's permissions, owner, group and extended
+    /// attributes first (issue #3348).
+    ///
+    /// With `identity` [`Identity::Required`], a replacement that wouldn't
+    /// keep the file's identity — other hard links, or an owner/group/xattr
+    /// that can't be carried over — fails with
+    /// [`ReplaceError::IdentityNotPreserved`] and leaves `path` untouched;
+    /// with [`Identity::BestEffort`] the file is replaced anyway.
+    #[cfg_attr(not(unix), allow(unused_variables))]
+    fn replace_atomically(
+        &self,
+        path: &Path,
+        data: &[u8],
+        identity: Identity,
+    ) -> Result<(), ReplaceError> {
+        let original = std::fs::metadata(path).ok();
+        #[cfg(unix)]
+        if identity == Identity::Required
+            && original
+                .as_ref()
+                .is_some_and(|m| std::os::unix::fs::MetadataExt::nlink(m) > 1)
+        {
+            // Renaming a new file over one with other hard links would leave
+            // those links on the old content.
+            return Err(ReplaceError::IdentityNotPreserved(IdentityLoss::HardLinks));
+        }
+
+        #[cfg(unix)]
+        let mode = original.as_ref().map(|m| {
+            Self::temp_file_mode(std::os::unix::fs::PermissionsExt::mode(&m.permissions()))
+        });
+        #[cfg(not(unix))]
+        let mode = None;
+        let (temp_path, mut file) = self.create_temp_file_with_mode(path, mode)?;
+        let result = (|| {
+            file.write_all(data)?;
+            file.sync_all()?;
+            drop(file);
+            if let Some(ref meta) = original {
+                #[cfg(unix)]
+                if let Err(e) = Self::copy_owner_and_xattrs(meta, path, &temp_path) {
+                    if identity == Identity::Required {
+                        return Err(ReplaceError::IdentityNotPreserved(
+                            IdentityLoss::Attributes(e),
+                        ));
+                    }
+                    tracing::debug!("Replacing {} without its owner/xattrs: {e}", path.display());
+                }
+                // Best-effort permission restore; rename will proceed regardless
+                #[allow(clippy::let_underscore_must_use)]
+                let _ = std::fs::set_permissions(&temp_path, meta.permissions());
+            }
+            Ok(self.rename(&temp_path, path)?)
+        })();
+        if result.is_err() {
+            // Best-effort cleanup; the original error is what the caller needs
+            #[allow(clippy::let_underscore_must_use)]
+            let _ = self.remove_file(&temp_path);
+        }
+        result
     }
 
     /// Create a new, uniquely named temp file next to `path` for an atomic
@@ -1766,54 +1902,20 @@ impl FileSystem for StdFileSystem {
     }
 
     fn write_file(&self, path: &Path, data: &[u8]) -> io::Result<()> {
-        let original = std::fs::metadata(path).ok();
-        #[cfg(unix)]
-        if original
-            .as_ref()
-            .is_some_and(|m| std::os::unix::fs::MetadataExt::nlink(m) > 1)
-        {
-            // Renaming a new file over one with other hard links would leave
-            // those links on the old content (issue #3348).
-            return self.write_in_place(path, data);
+        match self.replace_atomically(path, data, Identity::BestEffort) {
+            Ok(()) => Ok(()),
+            Err(ReplaceError::Io(e)) => Err(e),
+            // Not produced with `BestEffort`.
+            Err(e @ ReplaceError::IdentityNotPreserved(_)) => Err(io::Error::other(e)),
         }
+    }
 
-        #[cfg(unix)]
-        let mode = original.as_ref().map(|m| {
-            Self::temp_file_mode(std::os::unix::fs::PermissionsExt::mode(&m.permissions()))
-        });
-        #[cfg(not(unix))]
-        let mode = None;
-        let (temp_path, mut file) = self.create_temp_file_with_mode(path, mode)?;
-        // Ok(false): the temp file can't stand in for the original.
-        let result = (|| {
-            file.write_all(data)?;
-            file.sync_all()?;
-            drop(file);
-            if let Some(ref meta) = original {
-                #[cfg(unix)]
-                if let Err(e) = Self::copy_owner_and_xattrs(meta, path, &temp_path) {
-                    tracing::debug!(
-                        "Can't carry owner/xattrs of {} over to a new file ({e}); writing in place",
-                        path.display()
-                    );
-                    return Ok(false);
-                }
-                // Best-effort permission restore; rename will proceed regardless
-                #[allow(clippy::let_underscore_must_use)]
-                let _ = std::fs::set_permissions(&temp_path, meta.permissions());
-            }
-            self.rename(&temp_path, path).map(|()| true)
-        })();
-        if !matches!(result, Ok(true)) {
-            // Best-effort cleanup; the original error is what the caller needs
-            #[allow(clippy::let_underscore_must_use)]
-            let _ = self.remove_file(&temp_path);
-        }
-        match result {
-            Ok(true) => Ok(()),
-            Ok(false) => self.write_in_place(path, data),
-            Err(e) => Err(e),
-        }
+    fn replace_file_preserving_identity(
+        &self,
+        path: &Path,
+        data: &[u8],
+    ) -> Result<(), ReplaceError> {
+        self.replace_atomically(path, data, Identity::Required)
     }
 
     fn create_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
@@ -2468,12 +2570,61 @@ mod tests {
     }
 
     /// Issue #3348: replacing the file via rename detached it from its other
-    /// hard links, which kept the old content.
+    /// hard links, which kept the old content. A save must not do that, so
+    /// the identity-preserving replace refuses, leaving the file untouched.
     #[cfg(unix)]
     #[test]
-    fn atomic_write_keeps_hard_links_together() {
+    fn replace_refuses_to_break_hard_links() {
         use std::os::unix::fs::MetadataExt;
         let fs = StdFileSystem;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.txt");
+        let link = dir.path().join("b.txt");
+        std::fs::write(&path, b"old\n").unwrap();
+        std::fs::hard_link(&path, &link).unwrap();
+        let ino = std::fs::metadata(&path).unwrap().ino();
+
+        let result = fs.replace_file_preserving_identity(&path, b"new\n");
+
+        assert!(
+            matches!(
+                result,
+                Err(ReplaceError::IdentityNotPreserved(IdentityLoss::HardLinks))
+            ),
+            "{result:?}"
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), b"old\n");
+        assert_eq!(std::fs::metadata(&path).unwrap().ino(), ino);
+        let names: Vec<_> = std::fs::read_dir(dir.path()).unwrap().collect();
+        assert_eq!(names.len(), 2, "no temp file may be left behind");
+    }
+
+    /// The editor's own files (config, workspace, recovery data) are written
+    /// with `write_file`, which replaces the file atomically even when that
+    /// detaches it from other hard links, as it always has.
+    #[cfg(unix)]
+    #[test]
+    fn write_file_replaces_a_hard_linked_file() {
+        let fs = StdFileSystem;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.txt");
+        let link = dir.path().join("b.txt");
+        std::fs::write(&path, b"old\n").unwrap();
+        std::fs::hard_link(&path, &link).unwrap();
+
+        fs.write_file(&path, b"new\n").unwrap();
+
+        assert_eq!(std::fs::read(&path).unwrap(), b"new\n");
+        assert_eq!(std::fs::read(&link).unwrap(), b"old\n");
+    }
+
+    /// Issue #3348: saving a file with other hard links must update all of
+    /// them — the save writes it in place, keeping its inode, and cleans up
+    /// the copy it staged in the recovery dir.
+    #[cfg(unix)]
+    #[test]
+    fn save_keeps_hard_links_together() {
+        use std::os::unix::fs::MetadataExt;
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("a.txt");
         let link = dir.path().join("b.txt");
@@ -2484,14 +2635,23 @@ mod tests {
         let data_dir = tempfile::tempdir().unwrap();
         let previous = crate::data_dir::set_data_dir_override(Some(data_dir.path().into()));
 
-        let result = fs.write_file(&path, b"new\n");
+        let fs: std::sync::Arc<dyn FileSystem + Send + Sync> = std::sync::Arc::new(StdFileSystem);
+        let mut buffer =
+            crate::model::buffer::TextBuffer::load_from_file(&path, 1 << 20, fs).unwrap();
+        buffer.insert_bytes(0, b"NEW ".to_vec());
+        let result = buffer.save();
         crate::data_dir::set_data_dir_override(previous);
         result.unwrap();
 
-        assert_eq!(std::fs::read(&link).unwrap(), b"new\n");
+        assert_eq!(std::fs::read(&link).unwrap(), b"NEW old\n");
         let meta = std::fs::metadata(&path).unwrap();
         assert_eq!(meta.ino(), ino);
         assert_eq!(meta.nlink(), 2);
+        let staged: Vec<_> = std::fs::read_dir(data_dir.path().join("recovery"))
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert!(staged.is_empty(), "left behind: {staged:?}");
     }
 
     /// Issue #3348: extended attributes (and, on Linux, POSIX ACLs, which are
@@ -2655,11 +2815,12 @@ mod tests {
     }
 
     /// An owner/group the saving process can't give the new file (a group a
-    /// non-root user isn't in) must not be dropped: the file is rewritten in
-    /// place instead, keeping its inode and with it owner and group.
+    /// non-root user isn't in) must not be dropped: the identity-preserving
+    /// replace refuses, leaving the file as it was for the save to rewrite in
+    /// place (as [`save_keeps_hard_links_together`] shows it does).
     #[cfg(unix)]
     #[test]
-    fn atomic_write_falls_back_to_in_place_when_owner_cannot_be_set() {
+    fn replace_refuses_when_owner_cannot_be_set() {
         use std::os::unix::fs::MetadataExt;
         let fs = StdFileSystem;
         let dir = tempfile::tempdir().unwrap();
@@ -2671,27 +2832,50 @@ mod tests {
         };
         std::os::unix::fs::chown(&path, Some(uid), Some(gid)).unwrap();
         let ino = std::fs::metadata(&path).unwrap().ino();
-        let data_dir = tempfile::tempdir().unwrap();
-        let previous = crate::data_dir::set_data_dir_override(Some(data_dir.path().into()));
+
+        FAIL_CHOWN.with(|f| f.set(true));
+        let result = fs.replace_file_preserving_identity(&path, b"new\n");
+        FAIL_CHOWN.with(|f| f.set(false));
+
+        assert!(
+            matches!(
+                result,
+                Err(ReplaceError::IdentityNotPreserved(
+                    IdentityLoss::Attributes(_)
+                ))
+            ),
+            "{result:?}"
+        );
+        let meta = std::fs::metadata(&path).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"old\n");
+        assert_eq!(meta.ino(), ino);
+        assert_eq!((meta.uid(), meta.gid()), (uid, gid));
+        let names: Vec<_> = std::fs::read_dir(dir.path()).unwrap().collect();
+        assert_eq!(names.len(), 1, "the temp file must not be left behind");
+    }
+
+    /// `write_file` still replaces a file whose owner/group it can't carry
+    /// over, as it always has: the editor's own files need the atomic write
+    /// more than their group.
+    #[cfg(unix)]
+    #[test]
+    fn write_file_replaces_when_owner_cannot_be_set() {
+        let fs = StdFileSystem;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("owned.txt");
+        std::fs::write(&path, b"old\n").unwrap();
+        let Some((uid, gid)) = foreign_owner_for(&path) else {
+            eprintln!("skipping: no second group available to test with");
+            return;
+        };
+        std::os::unix::fs::chown(&path, Some(uid), Some(gid)).unwrap();
 
         FAIL_CHOWN.with(|f| f.set(true));
         let result = fs.write_file(&path, b"new\n");
         FAIL_CHOWN.with(|f| f.set(false));
-        crate::data_dir::set_data_dir_override(previous);
         result.unwrap();
 
-        let meta = std::fs::metadata(&path).unwrap();
         assert_eq!(std::fs::read(&path).unwrap(), b"new\n");
-        assert_eq!(meta.ino(), ino, "must be rewritten in place");
-        assert_eq!((meta.uid(), meta.gid()), (uid, gid));
-        let names: Vec<_> = std::fs::read_dir(dir.path()).unwrap().collect();
-        assert_eq!(names.len(), 1, "the temp file must not be left behind");
-        // The in-place write was staged in the recovery dir and cleaned up.
-        let staged: Vec<_> = std::fs::read_dir(data_dir.path().join("recovery"))
-            .unwrap()
-            .map(|e| e.unwrap().file_name())
-            .collect();
-        assert!(staged.is_empty(), "left behind: {staged:?}");
     }
 
     /// An xattr this process may not set (e.g. a system-managed one on macOS)

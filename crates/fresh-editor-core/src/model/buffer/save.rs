@@ -8,7 +8,7 @@ use super::file_kind::BufferFileKind;
 use super::format::{self, BufferFormat};
 use super::persistence::Persistence;
 use crate::model::encoding::Encoding;
-use crate::model::filesystem::{FileMetadata, FileSystem, FileWriter, WriteOp};
+use crate::model::filesystem::{FileMetadata, FileSystem, FileWriter, ReplaceError, WriteOp};
 use crate::model::piece_tree::{BufferData, BufferLocation, PieceTree, StringBuffer};
 use crate::recovery_types::InplaceWriteRecovery;
 use std::io::{self, Write};
@@ -133,6 +133,15 @@ pub(crate) enum RecipeAction {
 }
 
 impl WriteRecipe {
+    /// The recipe for an empty file.
+    pub(crate) fn empty() -> Self {
+        Self {
+            src_path: None,
+            insert_data: Vec::new(),
+            actions: Vec::new(),
+        }
+    }
+
     /// Convert the recipe to WriteOp slice for use with filesystem write_patched
     pub(crate) fn to_write_ops(&self) -> Vec<WriteOp<'_>> {
         self.actions
@@ -173,17 +182,49 @@ impl WriteRecipe {
 // Free functions (extracted from impl TextBuffer)
 // ---------------------------------------------------------------------------
 
-/// Check if we should use in-place writing to preserve file ownership.
-/// Returns true if the file exists and is owned by a different user.
-/// On Unix, only root or the file owner can change file ownership with chown.
-/// When the current user is not the file owner, using atomic write (temp file + rename)
-/// would change the file's ownership to the current user. To preserve ownership,
-/// we must write directly to the existing file instead.
-pub(super) fn should_use_inplace_write(
+/// Write `recipe` to `dest_path` on the local filesystem.
+///
+/// The one place a save chooses between replacing the file atomically and
+/// overwriting it in place. A write-then-rename is the default, since a
+/// crash then leaves either the old content or the new; but it leaves a
+/// *new* file behind, so when that can't stand in for the original the file
+/// is overwritten in place instead, its content staged in the recovery
+/// directory first (see [`write_in_place_staged`]):
+///
+/// * the file is owned by another user — only root may give a new file
+///   their ownership. Known before anything is written, so the recipe is
+///   streamed straight in (see [`save_with_inplace_write`]);
+/// * the filesystem reports that a replacement wouldn't keep the file's
+///   identity ([`crate::model::filesystem::IdentityLoss`]): other hard links, or an owner, group or
+///   extended attribute it can't carry over (issue #3348).
+///
+/// When the file (or, for the atomic write, its directory) can't be written
+/// at all, the content is staged for the sudo prompt instead
+/// ([`SudoSaveRequired`]).
+pub(super) fn save_local(
     fs: &Arc<dyn FileSystem + Send + Sync>,
     dest_path: &Path,
-) -> bool {
-    !fs.is_owner(dest_path)
+    recipe: &WriteRecipe,
+) -> anyhow::Result<()> {
+    if !fs.is_owner(dest_path) {
+        return save_with_inplace_write(fs, dest_path, recipe);
+    }
+
+    let mut data = Vec::new();
+    write_recipe(fs, &mut data, recipe)?;
+    match fs.replace_file_preserving_identity(dest_path, &data) {
+        Ok(()) => Ok(()),
+        Err(ReplaceError::IdentityNotPreserved(loss)) => {
+            tracing::debug!("Writing {} in place: {loss}", dest_path.display());
+            let original_metadata = fs.metadata_if_exists(dest_path);
+            write_data_inplace(fs, dest_path, &data, original_metadata)
+        }
+        Err(ReplaceError::Io(e)) if e.kind() == io::ErrorKind::PermissionDenied => {
+            let original_metadata = fs.metadata_if_exists(dest_path);
+            Err(stage_for_sudo(fs, dest_path, &data, original_metadata)?)
+        }
+        Err(ReplaceError::Io(e)) => Err(e.into()),
+    }
 }
 
 /// Build a write recipe from the piece tree for saving.
@@ -353,7 +394,7 @@ pub(super) fn build_write_recipe(
 /// Readable only by its owner either way: it holds the file's content until
 /// the prompt is answered, and the file's own permissions don't carry over
 /// to it (the sudo write sets them on the destination itself).
-pub(super) fn create_temp_file(
+fn create_temp_file(
     fs: &Arc<dyn FileSystem + Send + Sync>,
     dest_path: &Path,
 ) -> io::Result<(SudoSaveTempFile, Box<dyn FileWriter>)> {
@@ -738,7 +779,7 @@ fn same_content(a: &Path, b: &Path) -> io::Result<bool> {
 ///
 /// This avoids the bug where truncating the destination before reading Copy chunks
 /// would corrupt the file. It also works for huge files since we stream in chunks.
-pub(super) fn save_with_inplace_write(
+fn save_with_inplace_write(
     fs: &Arc<dyn FileSystem + Send + Sync>,
     dest_path: &Path,
     recipe: &WriteRecipe,
@@ -756,7 +797,7 @@ pub(super) fn save_with_inplace_write(
     // This reads Copy chunks from the original file (still intact) and writes to temp.
     // Using the recovery directory allows crash recovery if the operation fails.
     let (temp_path, mut temp_file) = create_recovery_temp_file(&**fs, dest_path)?;
-    if let Err(e) = write_recipe_to_file(fs, &mut temp_file, recipe) {
+    if let Err(e) = write_recipe(fs, &mut temp_file, recipe) {
         // Best-effort cleanup of temp file on write failure
         #[allow(clippy::let_underscore_must_use)]
         let _ = fs.remove_file(&temp_path);
@@ -798,7 +839,7 @@ pub(super) fn save_with_inplace_write(
 /// Write data directly to a file in-place, with sudo fallback when the file
 /// itself can't be written (see [`write_in_place_staged`] for why a
 /// recovery directory that can't be written doesn't count).
-pub(super) fn write_data_inplace(
+fn write_data_inplace(
     fs: &Arc<dyn FileSystem + Send + Sync>,
     dest_path: &Path,
     data: &[u8],
@@ -807,15 +848,25 @@ pub(super) fn write_data_inplace(
     match write_in_place_staged(&**fs, dest_path, data) {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == io::ErrorKind::PermissionDenied => {
-            // Create temp file for sudo fallback
-            let (temp_file, mut writer) = create_temp_file(fs, dest_path)?;
-            writer.write_all(data)?;
-            writer.sync_all()?;
-            drop(writer);
-            Err(make_sudo_error(temp_file, dest_path, original_metadata))
+            Err(stage_for_sudo(fs, dest_path, data, original_metadata)?)
         }
         Err(e) => Err(e.into()),
     }
+}
+
+/// `dest_path` can't be written: put `data` in a temp file for the sudo
+/// prompt and return the [`SudoSaveRequired`] error that hands it over.
+fn stage_for_sudo(
+    fs: &Arc<dyn FileSystem + Send + Sync>,
+    dest_path: &Path,
+    data: &[u8],
+    original_metadata: Option<FileMetadata>,
+) -> io::Result<anyhow::Error> {
+    let (temp_file, mut writer) = create_temp_file(fs, dest_path)?;
+    writer.write_all(data)?;
+    writer.sync_all()?;
+    drop(writer);
+    Ok(make_sudo_error(temp_file, dest_path, original_metadata))
 }
 
 /// Overwrite `dest_path` in place with `data`, keeping its inode and with it
@@ -838,11 +889,7 @@ pub(super) fn write_data_inplace(
 /// *file* needing sudo. Only running out of space stops the write, since the
 /// file is probably on the same full disk, and truncating it then would lose
 /// its content with no copy of the new one anywhere.
-pub(crate) fn write_in_place_staged(
-    fs: &dyn FileSystem,
-    dest_path: &Path,
-    data: &[u8],
-) -> io::Result<()> {
+fn write_in_place_staged(fs: &dyn FileSystem, dest_path: &Path, data: &[u8]) -> io::Result<()> {
     let mut staged = match stage_in_place_write(fs, dest_path, data) {
         Ok(staged) => Some(staged),
         Err(e) if is_out_of_space(&e) => return Err(e),
@@ -913,7 +960,7 @@ fn is_out_of_space(e: &io::Error) -> bool {
 }
 
 /// Stream a file's content to a writer in chunks to avoid memory issues with large files.
-pub(super) fn stream_file_to_writer(
+fn stream_file_to_writer(
     fs: &Arc<dyn FileSystem + Send + Sync>,
     src_path: &Path,
     out_file: &mut Box<dyn FileWriter>,
@@ -934,10 +981,10 @@ pub(super) fn stream_file_to_writer(
     Ok(())
 }
 
-/// Write the recipe content to a file writer.
-pub(super) fn write_recipe_to_file(
+/// Write the recipe's content to `out` (a file, or a buffer).
+fn write_recipe<W: Write + ?Sized>(
     fs: &Arc<dyn FileSystem + Send + Sync>,
-    out_file: &mut Box<dyn FileWriter>,
+    out: &mut W,
     recipe: &WriteRecipe,
 ) -> io::Result<()> {
     for action in &recipe.actions {
@@ -948,10 +995,10 @@ pub(super) fn write_recipe_to_file(
                     io::Error::new(io::ErrorKind::InvalidData, "Copy action without source")
                 })?;
                 let data = fs.read_range(src_path, *offset, *len as usize)?;
-                out_file.write_all(&data)?;
+                out.write_all(&data)?;
             }
             RecipeAction::Insert { index } => {
-                out_file.write_all(&recipe.insert_data[*index])?;
+                out.write_all(&recipe.insert_data[*index])?;
             }
         }
     }
@@ -959,7 +1006,7 @@ pub(super) fn write_recipe_to_file(
 }
 
 /// Internal helper to create a SudoSaveRequired error.
-pub(super) fn make_sudo_error(
+fn make_sudo_error(
     temp_file: SudoSaveTempFile,
     dest_path: &Path,
     original_metadata: Option<FileMetadata>,
