@@ -88,7 +88,11 @@ pub fn layout_reading(
 
 /// The reading of a Ctrl+J the editor should act on: Enter, unless something
 /// wants Ctrl+J itself. `None` keeps the key as it came. Ctrl+Alt+J, which
-/// is ESC LF, is likewise Alt+Enter.
+/// is ESC LF, is likewise Alt+Enter — except on Windows, where Ctrl+Alt is
+/// how AltGr arrives and Ctrl+Alt+<char> is typed text
+/// ([`crate::input::keybindings::is_text_input_modifier`]); rewriting it
+/// there would turn an AltGr keystroke into Alt+Enter, so it stays as it
+/// came.
 ///
 /// Ctrl+J is LF. The parser reports a raw LF as Ctrl+J so a program in the
 /// integrated terminal can tell it from Enter's CR (sinelaw/fresh#3169), but
@@ -109,7 +113,8 @@ pub fn ctrl_j_reading(
     modes: &[&str],
 ) -> Option<(KeyCode, KeyModifiers)> {
     let ctrl = KeyModifiers::CONTROL;
-    if code != KeyCode::Char('j') || (modifiers != ctrl && modifiers != ctrl | KeyModifiers::ALT) {
+    let alt_enter = cfg!(not(windows)) && modifiers == ctrl | KeyModifiers::ALT;
+    if code != KeyCode::Char('j') || (modifiers != ctrl && !alt_enter) {
         return None;
     }
     if *context == KeyContext::Terminal || chord_pending {
@@ -723,7 +728,9 @@ mod tests {
             ctrl_j_reading(j, ctrl, &kb, &KeyContext::Normal, true, &[]),
             None
         );
-        // Ctrl+Alt+J (ESC LF) is Alt+Enter.
+        // Ctrl+Alt+J (ESC LF) is Alt+Enter, but not on Windows, where
+        // Ctrl+Alt is AltGr and Ctrl+Alt+J stays the text it types.
+        let alt_enter = (!cfg!(windows)).then_some((KeyCode::Enter, KeyModifiers::ALT));
         assert_eq!(
             ctrl_j_reading(
                 j,
@@ -733,7 +740,7 @@ mod tests {
                 false,
                 &[]
             ),
-            Some((KeyCode::Enter, KeyModifiers::ALT))
+            alt_enter
         );
         // Only Ctrl+J itself.
         for (code, mods) in [
