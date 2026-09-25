@@ -1612,12 +1612,9 @@ impl Editor {
             // keep overwriting whatever the status bar has shown since.
             if is_modified {
                 let change = stored_mtime.map(|stored| (stored, current_mtime));
-                let reported = match change {
-                    Some(change) => self
-                        .active_window_mut()
-                        .disk_change_reported
-                        .insert(path.clone(), change),
-                    None => None,
+                let reported = match (change, self.buffers_mut().get_mut(&buffer_id)) {
+                    (Some(change), Some(state)) => state.disk_change_reported.replace(change),
+                    _ => None,
                 };
                 if change.is_none() || reported != change {
                     self.active_window_mut().status_message = Some(format!(

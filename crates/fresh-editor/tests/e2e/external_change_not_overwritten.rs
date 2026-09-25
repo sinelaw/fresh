@@ -59,6 +59,18 @@ fn dirty_buffers(config: Config, names: &[&str]) -> (EditorTestHarness, Vec<Path
     (harness, files)
 }
 
+/// Widen the screen so the file-change poll's "File <path> changed on disk
+/// (buffer has unsaved changes)" fits whole in the status bar. It names the
+/// file's full, canonical path, and the temp dirs on macOS
+/// (`/private/var/folders/…`) and Windows (`C:\Users\…\AppData\Local\Temp`)
+/// are long enough to cut it off at a fixed width, before the part a test
+/// waits for.
+fn fit_poll_message(harness: &mut EditorTestHarness, path: &Path) {
+    let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let width = WIDTH.max(canonical.display().to_string().len() as u16 + 160);
+    harness.resize(width, HEIGHT).unwrap();
+}
+
 fn run_command(harness: &mut EditorTestHarness, name: &str) {
     harness
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
@@ -350,6 +362,7 @@ fn saving_over_an_older_replacement_asks_first() {
 #[test]
 fn the_file_change_poll_reports_a_modified_buffers_change_once() {
     let (mut harness, files) = dirty_buffers(Config::default(), &["notes.txt"]);
+    fit_poll_message(&mut harness, &files[0]);
     // A clean file whose reload shows on screen when a later poll has run:
     // in a split of its own, since reloading the active buffer has a status
     // message of its own.
@@ -386,4 +399,68 @@ fn the_file_change_poll_reports_a_modified_buffers_change_once() {
         status.contains("Not saved, changed on disk: notes.txt"),
         "the poll must not repeat its message over Save All's; status was {status:?}"
     );
+}
+
+/// **What the poll has reported goes with the buffer** (issue #3403): a
+/// buffer closed and opened again is told about a change to its file even
+/// when the change carries the same timestamps as one reported to the
+/// buffer before it. The report used to be kept per file in the window,
+/// outliving the buffer, and silenced the new one.
+#[test]
+fn a_reopened_buffer_is_told_of_a_change_its_predecessor_was_told_of() {
+    let mut harness =
+        EditorTestHarness::with_temp_project_and_config(WIDTH, HEIGHT, Config::default()).unwrap();
+    let file = &harness.project_dir().unwrap().join("notes.txt");
+    std::fs::write(file, "").unwrap();
+    fit_poll_message(&mut harness, file);
+    let before = SystemTime::now() - Duration::from_secs(600);
+    let after = SystemTime::now() + Duration::from_secs(600);
+    let reported = |h: &EditorTestHarness| {
+        h.get_status_bar()
+            .contains("changed on disk (buffer has unsaved")
+    };
+    // The same change twice: `orig` at `before` becomes `external` at `after`.
+    let change = |file: &Path| {
+        std::fs::write(file, "external\n").unwrap();
+        set_mtime(file, after);
+    };
+
+    // The buffer recorded `before` when it was opened, and is told once
+    // the file changes.
+    // Another file, for the editor to show once notes.txt is closed.
+    let other = harness.project_dir().unwrap().join("other.txt");
+    std::fs::write(&other, "other\n").unwrap();
+    harness.open_file(&other).unwrap();
+    std::fs::write(file, "orig1\norig2\n").unwrap();
+    set_mtime(file, before);
+    harness.open_file(file).unwrap();
+    harness.type_text("EDIT ").unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("EDIT orig1");
+    change(file);
+    harness.wait_until(reported).unwrap();
+
+    // Closed without saving, the file put back as it was, and opened and
+    // edited again.
+    harness
+        .send_key(KeyCode::Char('w'), KeyModifiers::ALT)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("Discard");
+    harness
+        .send_key(KeyCode::Char('d'), KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_not_contains("EDIT orig1");
+    harness.assert_screen_contains("other");
+    std::fs::write(file, "orig1\norig2\n").unwrap();
+    set_mtime(file, before);
+    harness.open_file(file).unwrap();
+    harness.type_text("AGAIN ").unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("AGAIN");
+    assert!(!reported(&harness));
+
+    change(file);
+    harness.wait_until(reported).unwrap();
 }

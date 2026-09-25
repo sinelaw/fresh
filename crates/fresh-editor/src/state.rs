@@ -329,6 +329,14 @@ pub struct EditorState {
     /// but navigation, selection, and copy are still allowed
     pub editing_disabled: bool,
 
+    /// The change on disk the file-change poll last reported for this
+    /// buffer while it had unsaved changes: the mtime recorded for its file
+    /// and the one found on disk. The poll finds that same change on every
+    /// pass until the buffer is saved or reverted, and says so again only
+    /// once either side has moved (issue #3403). Kept on the buffer so it
+    /// goes with it when the buffer is closed or reverted.
+    pub disk_change_reported: Option<(std::time::SystemTime, std::time::SystemTime)>,
+
     /// Whether this buffer can be scrolled (default true). Fixed buffer-group
     /// panels (toolbars, headers, footers) set this to false so the mouse
     /// wheel is ignored and no scrollbar is drawn.
@@ -513,6 +521,7 @@ impl EditorState {
             pending_virtual_lines: Vec::new(),
             cursor_visibility_locked: false,
             editing_disabled: false,
+            disk_change_reported: None,
             scrollable: true,
             indentation_guide_override: None,
             interactive_widget_panel: false,
