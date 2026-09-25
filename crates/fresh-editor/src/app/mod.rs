@@ -1669,7 +1669,8 @@ pub(crate) struct FloatingWidgetState {
     pub focused: bool,
     /// The plugin mode whose bindings this panel's keys resolve against
     /// first — the panel's own keymap (`view::shell::panel::Keymap`),
-    /// declared at mount. `None`: the window's editor mode, as before.
+    /// declared at mount. `None`: no keymap — the panel's own defaults only,
+    /// never the window's editor mode.
     pub mode: Option<String>,
     /// The text projection's rows for this panel, refreshed on every spec /
     /// command / mutate.

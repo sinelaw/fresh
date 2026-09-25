@@ -633,12 +633,9 @@ const DOCK_MENU_KEY = "menu-pick";
 // option `mode`), never on the window's editor mode: that is one slot per
 // window, shared with every plugin — vi_mode keeps "vi-normal" there — and a
 // dialog that borrowed it had nothing to hand back on close, so clearing it
-// wiped vi's (issue #3305). A panel mounted without a mode resolves the keys
-// its focused control leaves against the window's mode instead, so even the
-// dock's menus, which bind nothing, name one: with vi on, its ↓ and Esc
-// would otherwise be vi's.
-const MENU_MODE = "orchestrator-menu";
-editor.defineMode(MENU_MODE, [], true, false);
+// wiped vi's (issue #3305). The dock's menus bind nothing, so they mount
+// without a mode: the keys their focused control leaves go to the panel's own
+// defaults, never to the window's mode.
 
 // The "New Folder" dialog — a small centered floating panel with a name
 // field, an "organize the current session under it" checkbox, and
@@ -5806,7 +5803,7 @@ function openMainMenu(): void {
   openDialog.dockMenu = { kind: "main" };
   if (!mainMenuPanel) mainMenuPanel = new FloatingWidgetPanel();
   // Sizes to its content; the percentages are unused for an anchored panel.
-  mainMenuPanel.mount(buildMainMenuSpec(), { widthPct: 50, heightPct: 44, mode: MENU_MODE });
+  mainMenuPanel.mount(buildMainMenuSpec(), { widthPct: 50, heightPct: 44 });
   // Under the title strip, which is its button.
   editor.floatingPanelControl(mainMenuPanel.id(), "anchor", packCell(0, 1));
   mainMenuPanel.setFocusKey(MAIN_MENU_PREFIX + "main:folder");
@@ -6376,7 +6373,6 @@ function mountDockMenu(): void {
   dockMenuPanel.mount(buildDockMenuSpec(dockMenuState), {
     widthPct: 50,
     heightPct: 44,
-    mode: MENU_MODE,
   });
   anchorDockMenu();
 }
@@ -6461,7 +6457,6 @@ function dockMenuEnterConfirm(action: "archive" | "delete"): void {
     heightPct: 44,
     title: confirmTitle({ action, ids: [dockMenuState.target.id] }),
     closable: true,
-    mode: MENU_MODE,
   });
   editor.floatingPanelControl(dockMenuPanel.id(), "fullscreen", 1);
   // Pin Cancel, exactly as the modal picker's `enterConfirm` does. Today the

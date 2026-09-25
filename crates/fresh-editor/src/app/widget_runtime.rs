@@ -2301,24 +2301,24 @@ impl Editor {
     /// The keymap a panel's keys resolve against once its focused control
     /// has passed them: the plugin mode its interior names.
     ///
-    /// Per slot, because a mode reaches a panel three ways. A dock or a
-    /// floating panel names the mode it mounted with, or else the active
-    /// window's editor mode (how a plugin that mounts a centred form declares
-    /// one). A pane's panel resolves against its buffer's mode
-    /// (`setBufferMode`). A sidebar section takes its keys through
-    /// `widget_event` and never through a mode, so it has none. Read by the
-    /// description (the capture leg's shortcuts) and by
-    /// `dispatch_widget_panel_key` (everything else) — one answer for both.
+    /// Per slot, because a mode reaches a panel two ways. A dock or a
+    /// floating panel names the mode it mounted with, and one mounted
+    /// without a mode has no keymap: the window's editor mode belongs to the
+    /// buffer (vi keeps "vi-normal" there), so a panel that borrowed it would
+    /// hand its arrows and Esc to whichever plugin owns that slot. A pane's
+    /// panel resolves against its buffer's mode (`setBufferMode`). A sidebar
+    /// section takes its keys through `widget_event` and never through a
+    /// mode, so it has none. Read by the description (the capture leg's
+    /// shortcuts) and by `dispatch_widget_panel_key` (everything else) — one
+    /// answer for both.
     pub(crate) fn panel_keymap(
         &self,
         panel_key: &crate::widgets::PanelKey,
     ) -> Option<crate::view::shell::panel::Keymap> {
         let mode = match self.slot_of_panel(panel_key) {
-            Some(slot @ (super::PanelSlot::Dock | super::PanelSlot::Floating)) => self
-                .panel(slot)?
-                .mode
-                .clone()
-                .or_else(|| self.active_window().editor_mode.clone())?,
+            Some(slot @ (super::PanelSlot::Dock | super::PanelSlot::Floating)) => {
+                self.panel(slot)?.mode.clone()?
+            }
             Some(super::PanelSlot::Sidebar(_)) => return None,
             None => {
                 let buffer = self.widget_registry.get(panel_key)?.buffer_id?;
