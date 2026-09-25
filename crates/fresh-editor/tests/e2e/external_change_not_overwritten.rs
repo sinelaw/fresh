@@ -120,6 +120,49 @@ fn save_and_quit_stays_open_when_a_file_changed_on_disk() {
     harness.assert_screen_contains("Not saved");
 }
 
+fn auto_save_without_hot_exit() -> Config {
+    let mut config = Config::default();
+    config.editor.auto_save_enabled = true;
+    config.editor.hot_exit = false;
+    config.editor.confirm_quit = false;
+    config
+}
+
+/// With auto-save on, quitting doesn't ask about file-backed buffers: they
+/// are saved on the way out. But that save skips a file changed on disk, and
+/// without hot exit nothing else keeps the edits, so quitting unasked would
+/// silently lose them. The quit must ask instead.
+#[test]
+fn quit_with_auto_save_asks_when_a_file_changed_on_disk() {
+    let (mut harness, files) = dirty_buffers(auto_save_without_hot_exit(), &["notes.txt"]);
+    change_externally(&files[0], "external\n");
+
+    harness
+        .send_key(KeyCode::Char('q'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    assert!(
+        !harness.should_quit(),
+        "quitting would silently drop the unsaved edits"
+    );
+    harness.assert_screen_contains("[ Save and Quit ]");
+    assert_eq!(std::fs::read_to_string(&files[0]).unwrap(), "external\n");
+}
+
+/// The unchanged case still quits without asking: auto-save covers it.
+#[test]
+fn quit_with_auto_save_does_not_ask_when_nothing_changed_on_disk() {
+    let (mut harness, _files) = dirty_buffers(auto_save_without_hot_exit(), &["notes.txt"]);
+
+    harness
+        .send_key(KeyCode::Char('q'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    assert!(harness.should_quit());
+}
+
 #[test]
 fn save_on_close_keeps_the_buffer_when_its_file_changed_on_disk() {
     let (mut harness, files) = dirty_buffers(Config::default(), &["notes.txt"]);

@@ -42,6 +42,22 @@ fn unnamed_modified_buffers_in(window: &crate::app::window::Window) -> Vec<Buffe
         .collect()
 }
 
+/// [`Editor::changed_on_disk`] for `path` as opened in `window`, which need
+/// not be the active one.
+pub(crate) fn changed_on_disk_in(
+    window: &crate::app::window::Window,
+    path: &Path,
+) -> Option<std::time::SystemTime> {
+    let current_mtime = window
+        .authority()
+        .filesystem
+        .metadata(path)
+        .ok()
+        .and_then(|m| m.modified)?;
+    let recorded_mtime = window.file_mod_times.get(path)?;
+    (current_mtime != *recorded_mtime).then_some(current_mtime)
+}
+
 /// What a bulk save ([`Editor::save_all`], [`Editor::save_all_on_exit`]) did.
 #[derive(Debug, Default)]
 pub struct SaveAllOutcome {
@@ -1491,14 +1507,7 @@ impl Editor {
     /// can carry an *older* timestamp (`cp -p`, `rsync -t`, `tar x`, `mv` of
     /// an older file) and is still someone else's content (issue #3346).
     pub(crate) fn changed_on_disk(&self, path: &Path) -> Option<std::time::SystemTime> {
-        let current_mtime = self
-            .authority()
-            .filesystem
-            .metadata(path)
-            .ok()
-            .and_then(|m| m.modified)?;
-        let recorded_mtime = self.file_mod_times().get(path)?;
-        (current_mtime != *recorded_mtime).then_some(current_mtime)
+        changed_on_disk_in(self.active_window(), path)
     }
 
     /// Report buffers a bulk save left alone because their file changed on

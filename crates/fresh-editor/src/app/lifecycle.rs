@@ -275,7 +275,8 @@ impl Editor {
     /// automatically recovered across restarts), but file-backed modified
     /// buffers still trigger a prompt with a "recoverable" option.
     /// When `auto_save_enabled` is true, file-backed buffers are excluded
-    /// (they will be saved to disk on exit).
+    /// (they will be saved to disk on exit), except those whose file changed
+    /// on disk, which the save on exit leaves alone.
     fn count_modified_buffers_needing_prompt(&self) -> usize {
         self.modified_buffers_needing_prompt().len()
     }
@@ -352,8 +353,17 @@ impl Editor {
                         if is_unnamed && hot_exit {
                             continue; // unnamed buffer, auto-recovered via hot exit
                         }
-                        if !is_unnamed && auto_save {
-                            continue; // file-backed, will be auto-saved on exit
+                        // File-backed: auto-saved on exit — unless its file
+                        // changed on disk, which that save skips rather than
+                        // overwrite (issue #3346). Quitting unasked would
+                        // then drop the edits, so the user has to decide.
+                        if !is_unnamed
+                            && auto_save
+                            && !state.buffer.file_path().is_some_and(|p| {
+                                crate::app::file_operations::changed_on_disk_in(window, p).is_some()
+                            })
+                        {
+                            continue;
                         }
                     }
                 }
