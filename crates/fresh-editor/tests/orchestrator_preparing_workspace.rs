@@ -183,3 +183,84 @@ fn finishing_a_background_create_leaves_the_user_where_they_are() {
         "a workspace with its terminal seeded is no longer 'being created'"
     );
 }
+
+/// Counts WARN events from `fresh::app::pane_mirror` on the thread it is
+/// installed on — the harness renders on the test thread, so a scoped
+/// subscriber sees exactly this test's layouts.
+struct PaneMirrorWarnings(std::sync::Arc<std::sync::atomic::AtomicUsize>);
+
+impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for PaneMirrorWarnings {
+    fn on_event(
+        &self,
+        event: &tracing::Event<'_>,
+        _ctx: tracing_subscriber::layer::Context<'_, S>,
+    ) {
+        let meta = event.metadata();
+        if *meta.level() == tracing::Level::WARN && meta.target() == "fresh::app::pane_mirror" {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+}
+
+/// The Orchestrator describes a building workspace's page itself, by mounting
+/// a widget panel on the placeholder window's seed buffer. That buffer is the
+/// window's hidden scratch buffer, not a plugin-composed one, so the pane
+/// mirror has nothing it may write there — and used to try on every layout,
+/// logging a warning each time for as long as the page was up (#3406).
+#[test]
+fn a_placeholder_page_panel_is_not_mirrored_into_the_seed_buffer() {
+    use tracing_subscriber::layer::SubscriberExt;
+
+    fresh::i18n::set_locale("en");
+    let base = tempfile::tempdir().unwrap();
+    let project = base.path().join("project");
+    std::fs::create_dir_all(&project).unwrap();
+    let project = project.canonicalize().unwrap();
+
+    let warnings = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let subscriber = tracing_subscriber::registry().with(PaneMirrorWarnings(warnings.clone()));
+    let _guard = tracing::subscriber::set_default(subscriber);
+
+    let mut h = harness_at(&project);
+    let placeholder = h.editor_mut().open_preparing_window(
+        project.clone(),
+        "wip-workspace".into(),
+        "Adding worktree…".into(),
+    );
+    h.editor_mut().set_active_window(placeholder);
+    h.process_async_and_render().unwrap();
+    let seed = h
+        .editor()
+        .session(placeholder)
+        .expect("the placeholder is a real window")
+        .active_buffer();
+
+    let spec: fresh_core::api::WidgetSpec = serde_json::from_value(serde_json::json!({
+        "kind": "label",
+        "text": "Plugin-described placeholder page",
+        "labelWidth": 0,
+    }))
+    .unwrap();
+    h.editor_mut()
+        .handle_plugin_command(PluginCommand::MountWidgetPanel {
+            plugin: "orchestrator".into(),
+            panel_id: 900_002,
+            buffer_id: seed,
+            spec,
+            options: Default::default(),
+        })
+        .unwrap();
+    h.wait_for_screen_contains("Plugin-described placeholder page")
+        .unwrap();
+    // A few more layouts, as the page would get while it is up.
+    for _ in 0..3 {
+        h.process_async_and_render().unwrap();
+    }
+
+    assert_eq!(
+        warnings.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "laying out a panel mounted on a placeholder's seed buffer must not \
+         try to mirror it into that buffer"
+    );
+}
