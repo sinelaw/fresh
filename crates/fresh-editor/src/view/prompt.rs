@@ -108,9 +108,11 @@ pub enum PromptType {
     ConfirmRevert,
     /// Confirm saving over a file that changed on disk
     ConfirmSaveConflict,
-    /// Confirm saving with sudo after permission denied
+    /// Confirm saving with sudo after permission denied. Holds the save's
+    /// temp file, which is deleted when the last copy of this prompt type
+    /// drops — however the prompt ends.
     ConfirmSudoSave {
-        info: crate::model::buffer::SudoSaveRequired,
+        info: std::sync::Arc<crate::model::buffer::SudoSaveRequired>,
     },
     /// Confirm overwriting an existing file during SaveAs
     ConfirmOverwriteFile { path: std::path::PathBuf },

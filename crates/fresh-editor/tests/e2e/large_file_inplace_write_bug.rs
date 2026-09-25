@@ -1154,10 +1154,9 @@ fn check_refused_retry_keeps_earlier_copy(large: bool, refusal: io::ErrorKind) {
     fs.refuse_open(refusal);
     buffer.insert_bytes(0, b"second ".to_vec());
     let err = buffer.save().expect_err("the refusal must surface");
-    // A sudo prompt the user cancels deletes the copy handed to it.
-    if let Some(sudo) = err.downcast_ref::<fresh::model::buffer::SudoSaveRequired>() {
-        std::fs::remove_file(&sudo.temp_path).unwrap();
-    }
+    // A sudo prompt the user cancels deletes the copy handed to it, as
+    // dropping the error does.
+    drop(err);
 
     let meta = std::fs::read_to_string(meta_path(&file_path))
         .expect("the torn file's recovery metadata must be kept");

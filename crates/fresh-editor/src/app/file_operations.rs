@@ -92,9 +92,10 @@ impl Editor {
 
         match self.active_state_mut().buffer.save() {
             Ok(()) => self.finalize_save(path),
-            Err(e) => {
-                if let Some(sudo_info) = e.downcast_ref::<SudoSaveRequired>() {
-                    let info = sudo_info.clone();
+            Err(e) => match e.downcast::<SudoSaveRequired>() {
+                // The prompt takes the temp file over: it lives as long as
+                // the prompt does, and is deleted however the prompt ends.
+                Ok(info) => {
                     let body = t!("prompt.sudo_save_confirm").to_string();
                     let confirm = crate::view::confirm::Confirm::new(
                         t!("dialog.title.permission_denied").into_owned(),
@@ -109,37 +110,41 @@ impl Editor {
                         ],
                     )
                     .detail(info.dest_path.display().to_string());
+                    let info = std::sync::Arc::new(info);
                     self.start_confirm_prompt(body, PromptType::ConfirmSudoSave { info }, confirm);
                     Ok(())
-                } else if let Some(path) = path {
-                    // Check if failure is due to non-existent parent directory
-                    let is_not_found = e
-                        .downcast_ref::<std::io::Error>()
-                        .is_some_and(|io_err| io_err.kind() == std::io::ErrorKind::NotFound);
-                    if is_not_found {
-                        if let Some(parent) = path.parent() {
-                            if !self.authority().filesystem.exists(parent) {
-                                let dir_name = parent
-                                    .strip_prefix(self.working_dir())
-                                    .unwrap_or(parent)
-                                    .display()
-                                    .to_string();
-                                let confirm =
-                                    crate::app::confirm_dialog::create_directory(&dir_name);
-                                self.start_confirm_prompt(
-                                    confirm.body.clone(),
-                                    PromptType::ConfirmCreateDirectory { path },
-                                    confirm,
-                                );
-                                return Ok(());
+                }
+                Err(e) => {
+                    if let Some(path) = path {
+                        // Check if failure is due to non-existent parent directory
+                        let is_not_found = e
+                            .downcast_ref::<std::io::Error>()
+                            .is_some_and(|io_err| io_err.kind() == std::io::ErrorKind::NotFound);
+                        if is_not_found {
+                            if let Some(parent) = path.parent() {
+                                if !self.authority().filesystem.exists(parent) {
+                                    let dir_name = parent
+                                        .strip_prefix(self.working_dir())
+                                        .unwrap_or(parent)
+                                        .display()
+                                        .to_string();
+                                    let confirm =
+                                        crate::app::confirm_dialog::create_directory(&dir_name);
+                                    self.start_confirm_prompt(
+                                        confirm.body.clone(),
+                                        PromptType::ConfirmCreateDirectory { path },
+                                        confirm,
+                                    );
+                                    return Ok(());
+                                }
                             }
                         }
+                        Err(e)
+                    } else {
+                        Err(e)
                     }
-                    Err(e)
-                } else {
-                    Err(e)
                 }
-            }
+            },
         }
     }
 
@@ -333,7 +338,7 @@ impl Editor {
                     }
                     Err(e) => {
                         // Skip if sudo is required (auto-save can't handle prompts)
-                        if self.discard_sudo_save_temp(&e) {
+                        if e.is::<SudoSaveRequired>() {
                             tracing::debug!(
                                 "Auto-save skipped for {:?} (sudo required)",
                                 path.display()
@@ -520,7 +525,7 @@ impl Editor {
                         outcome.saved += 1;
                     }
                     Err(e) => {
-                        if self.discard_sudo_save_temp(&e) {
+                        if e.is::<SudoSaveRequired>() {
                             tracing::debug!(
                                 "Auto-save on exit skipped for {} (sudo required)",
                                 path.display()
@@ -595,7 +600,6 @@ impl Editor {
                     outcome.saved += 1;
                 }
                 Some(Err(e)) => {
-                    self.discard_sudo_save_temp(&e);
                     tracing::warn!("Save All failed for {}: {}", path.display(), e);
                     outcome.failed.push(path);
                 }
@@ -1525,24 +1529,6 @@ impl Editor {
     /// an older file) and is still someone else's content (issue #3346).
     pub(crate) fn changed_on_disk(&self, path: &Path) -> Option<std::time::SystemTime> {
         changed_on_disk_in(self.active_window(), path)
-    }
-
-    /// A save that needs sudo leaves the new content in a temp file for the
-    /// sudo prompt to write ([`SudoSaveRequired::temp_path`]). A caller that
-    /// can't offer that prompt must delete it, or every attempt leaves another
-    /// temp file behind. Returns whether `e` was such an error.
-    pub(crate) fn discard_sudo_save_temp(&self, e: &anyhow::Error) -> bool {
-        let Some(info) = e.downcast_ref::<SudoSaveRequired>() else {
-            return false;
-        };
-        if let Err(err) = self.authority().filesystem.remove_file(&info.temp_path) {
-            tracing::debug!(
-                "Failed to remove sudo-save temp file {}: {}",
-                info.temp_path.display(),
-                err
-            );
-        }
-        true
     }
 
     /// Report buffers a bulk save left alone because their file changed on

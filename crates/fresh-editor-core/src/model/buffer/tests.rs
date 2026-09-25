@@ -1709,9 +1709,11 @@ mod line_ending_conversion {
             Err(e) => {
                 if let Some(sudo_err) = e.downcast_ref::<SudoSaveRequired>() {
                     assert_eq!(sudo_err.dest_path, file_path);
-                    assert!(sudo_err.temp_path.exists());
-                    // Cleanup temp file
-                    drop(std::fs::remove_file(&sudo_err.temp_path));
+                    let temp_path = sudo_err.temp_path().to_path_buf();
+                    assert!(temp_path.exists());
+                    // Dropping the error deletes its temp file
+                    drop(e);
+                    assert!(!temp_path.exists());
                 } else {
                     panic!("Expected SudoSaveRequired error, got: {:?}", e);
                 }
@@ -1751,11 +1753,9 @@ mod line_ending_conversion {
             Err(e) => {
                 if let Some(sudo_err) = e.downcast_ref::<SudoSaveRequired>() {
                     assert_eq!(sudo_err.dest_path, file_path);
-                    assert!(sudo_err.temp_path.exists());
+                    assert!(sudo_err.temp_path().exists());
                     // It should be in /tmp because the directory was not writable
-                    assert!(sudo_err.temp_path.starts_with(std::env::temp_dir()));
-                    // Cleanup
-                    drop(std::fs::remove_file(&sudo_err.temp_path));
+                    assert!(sudo_err.temp_path().starts_with(std::env::temp_dir()));
                 } else {
                     panic!("Expected SudoSaveRequired error, got: {:?}", e);
                 }
