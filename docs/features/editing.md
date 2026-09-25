@@ -95,6 +95,8 @@ Diagnostic messages can be displayed at the end of each line, right-aligned, wit
 
 When line wrap is enabled (`line_wrap` in settings), wrapped continuation lines preserve the indentation of their parent line (hanging indent).
 
+Lines wrap at the window edge, or at `wrap_column` when it is set and the window is wider. `wrap_column` counts text columns, not the line-number gutter: `"wrap_column": 80` fits 80 characters on a row with or without line numbers. It can be set per language, e.g. to wrap Markdown at 80 while code wraps at the window edge.
+
 **Per-buffer overrides** — **Toggle Line Wrap (Current Buffer)** and **Toggle Line Numbers (Current Buffer)** flip these for the active buffer only, leaving the global default and other buffers untouched. The override persists across restarts; the editor-wide **Toggle Line Wrap** / **Toggle Line Numbers** commands still change the default for everything else and save it to your config. See [Per-Buffer Overrides](../configuration/index.md#per-buffer-overrides) for the naming convention every settings toggle follows.
 
 ## Multiple Cursors
