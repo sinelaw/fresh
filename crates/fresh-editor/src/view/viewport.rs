@@ -121,6 +121,13 @@ pub struct Viewport {
     /// from being immediately undone by ensure_visible
     skip_ensure_visible: bool,
 
+    /// Whether to skip only the *vertical* half of ensure_visible: the rows
+    /// stay where they are while the horizontal scroll still follows the
+    /// cursor. Set by a drag-select inside the text area, whose head is on a
+    /// row already on screen but may be in a column scrolled out of view.
+    /// `skip_ensure_visible` implies it.
+    skip_vertical_ensure_visible: bool,
+
     /// Maximum line length encountered so far (in display columns).
     /// Updated incrementally as visible lines are rendered, avoiding full-file scans.
     pub max_line_length_seen: usize,
@@ -275,6 +282,7 @@ impl Viewport {
             needs_sync: false,
             skip_resize_sync: false,
             skip_ensure_visible: false,
+            skip_vertical_ensure_visible: false,
             max_line_length_seen: 0,
             sync_scroll_to_end: false,
             // The scroll hot paths only ever touch a handful of nearby
@@ -385,10 +393,18 @@ impl Viewport {
         self.skip_ensure_visible
     }
 
+    /// Hold the rows on the next render but let the horizontal scroll follow
+    /// the cursor (see `skip_vertical_ensure_visible`). Replaces a full skip.
+    pub fn set_skip_vertical_ensure_visible(&mut self) {
+        self.skip_ensure_visible = false;
+        self.skip_vertical_ensure_visible = true;
+    }
+
     /// Clear the skip_ensure_visible flag
     /// This should be called after all ensure_visible calls in a render pass
     pub fn clear_skip_ensure_visible(&mut self) {
         self.skip_ensure_visible = false;
+        self.skip_vertical_ensure_visible = false;
     }
 
     /// Set the scroll offset
@@ -1393,7 +1409,10 @@ impl Viewport {
         cursor_byte: usize,
         expansion: Option<&CursorLineExpansion>,
     ) -> bool {
-        if self.should_skip_resize_sync() || self.should_skip_ensure_visible() {
+        if self.should_skip_resize_sync()
+            || self.should_skip_ensure_visible()
+            || self.skip_vertical_ensure_visible
+        {
             return false;
         }
         let viewport_height = self.visible_line_count();
@@ -2031,7 +2050,9 @@ impl Viewport {
         if !self.row_pass_owns_placement
             && crate::view::row_walk::addresses_rows_by_byte(buffer, self.line_wrap_enabled)
         {
-            self.ensure_visible_anchored(buffer, cursor, hidden_ranges);
+            if !self.skip_vertical_ensure_visible {
+                self.ensure_visible_anchored(buffer, cursor, hidden_ranges);
+            }
             self.left_column = 0;
             return;
         }
@@ -2058,31 +2079,33 @@ impl Viewport {
             .unwrap_or(0);
         let effective_offset = self.scroll_offset.min(viewport_lines / 2);
 
-        let (cursor_is_visible, cursor_near_top) = if self.row_pass_owns_placement {
-            // Vertical placement belongs to the row pass; claiming the cursor
-            // is visible short-circuits every scroll below while the
-            // horizontal handling further down still runs.
-            (true, false)
-        } else if cursor_line_start < self.top_byte() {
-            (false, true)
-        } else if self.line_wrap_enabled {
-            self.check_wrapped_visibility(
-                buffer,
-                cursor,
-                cursor_line_start,
-                viewport_lines,
-                effective_offset,
-                hidden_ranges,
-            )
-        } else {
-            self.check_nowrap_visibility(
-                buffer,
-                cursor_line_start,
-                viewport_lines,
-                effective_offset,
-                hidden_ranges,
-            )
-        };
+        let (cursor_is_visible, cursor_near_top) =
+            if self.row_pass_owns_placement || self.skip_vertical_ensure_visible {
+                // Vertical placement belongs to the row pass (or the rows are
+                // held); claiming the cursor is visible short-circuits every
+                // scroll below while the horizontal handling further down still
+                // runs.
+                (true, false)
+            } else if cursor_line_start < self.top_byte() {
+                (false, true)
+            } else if self.line_wrap_enabled {
+                self.check_wrapped_visibility(
+                    buffer,
+                    cursor,
+                    cursor_line_start,
+                    viewport_lines,
+                    effective_offset,
+                    hidden_ranges,
+                )
+            } else {
+                self.check_nowrap_visibility(
+                    buffer,
+                    cursor_line_start,
+                    viewport_lines,
+                    effective_offset,
+                    hidden_ranges,
+                )
+            };
 
         tracing::trace!(
             "ensure_visible: cursor_line_start={}, cursor_is_visible={}",
