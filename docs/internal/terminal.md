@@ -125,11 +125,25 @@ and the `BackTab` variant.
 
 **Kitty keyboard protocol for the child** (not on Windows/ConPTY): the emulator
 answers `CSI ? u` and tracks the flags a child pushes and pops, read at send
-time like DECCKM. Once a child has enabled disambiguation (`CSI > 1 u`), the
-modified keys whose legacy byte can't carry a modifier — Enter, Tab, Backspace
-— are sent as `CSI <code>;<mods> u`, so a TUI can tell Shift+Enter from Enter
-(#3323). Unmodified keys, and children that never enable the protocol, keep
-the legacy bytes.
+time like DECCKM (`TerminalState::kitty_key_flags`). `pty::kitty_encoded_key`
+follows kitty's reference encoder for every flag the emulator accepts:
+
+- *disambiguate* (`CSI > 1 u`): Esc is `CSI 27u`; a text key with Ctrl, Alt,
+  Super… is `CSI <unshifted key>;<mods> u` (Ctrl+I ≠ Tab, Alt+[ ≠ CSI,
+  Ctrl+Shift+A ≠ Ctrl+A); modified Enter/Tab/Backspace (and Shift+Tab) are
+  CSI u (#3323); functional keys always use their CSI form (`CSI A` even
+  under DECCKM, F3 as `CSI 13~`); F13+, Menu, lock and media keys get their
+  protocol codes. Plain and Shift-only text, and unmodified
+  Enter/Tab/Backspace, keep their legacy bytes.
+- *report all keys* (`8`): text keys and unmodified Enter/Tab/Backspace are
+  CSI u too, and modifier keys are reported on their own.
+- *alternate keys* (`4`) adds `:<shifted>` for Shift+letter; *associated
+  text* (`16`) appends the typed text.
+- *event types* (`2`): only presses reach the child (the editor never forwards
+  releases, and repeats arrive as presses); a press carries no event-type
+  field, so the encoding is valid, but releases are never reported.
+
+Children that never enable the protocol keep the legacy bytes (#3408).
 
 A **paste** is not key encoding and does not go through it: every route into a
 live terminal (`Ev::Paste` and the web/daemon pastes via `Editor::paste_text`,
@@ -375,7 +389,7 @@ emulator or PTY.
   incremental scrollback streaming with reflow re-anchor; per-buffer
   `TerminalBuffer` live/scrollback fold; OSC 7 cwd sniffing; Ctrl+Click links
   (live + scrollback); alt-screen mouse forwarding; alternate-scroll guard;
-  kitty keyboard protocol for children (CSI-u modified Enter/Tab/Backspace);
+  kitty keyboard protocol for children (all flags; press events only);
   embedded-program & host titles; `fresh-winterm` (VT input, corrupt-mouse strip,
   relay, size); OSC 52 set-clipboard for session mode; authority-routed spawning
   and reconnect respawn preserving scrollback + mode.
