@@ -44,6 +44,15 @@ pub struct Persistence {
     /// saving.
     saved_file_size: Option<usize>,
 
+    /// An in-place save of the file this buffer reads its unloaded parts
+    /// from failed after it began overwriting it, so the file may be torn
+    /// and those parts' offsets no longer name the bytes the buffer loaded
+    /// (issue #3382). Refuses saves that would read them (see
+    /// `save::refuse_read_from_torn_file`) even when no recovery metadata
+    /// could be written to say so. A save that succeeds re-points the
+    /// buffer at what it wrote, and clears it.
+    source_torn: bool,
+
     /// Bumped by every write to `saved_root` or `modified`.
     ///
     /// [`Self::diff_since_saved`]'s answer depends on both, and a save
@@ -78,6 +87,7 @@ impl Persistence {
             recovery_pending: false,
             saved_root,
             saved_file_size,
+            source_torn: false,
             save_state_version: 0,
             saved_diff_memo: std::sync::RwLock::new(None),
         }
@@ -158,6 +168,14 @@ impl Persistence {
 
     pub fn set_saved_file_size(&mut self, size: Option<usize>) {
         self.saved_file_size = size;
+    }
+
+    pub fn is_source_torn(&self) -> bool {
+        self.source_torn
+    }
+
+    pub fn set_source_torn(&mut self, torn: bool) {
+        self.source_torn = torn;
     }
 
     // ---------- snapshot / diff operations ----------

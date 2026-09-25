@@ -1586,6 +1586,88 @@ fn test_large_file_retry_after_torn_inplace_write_is_refused() {
     );
 }
 
+/// Issue #3382: the unchanged parts a save reads back come from the file the
+/// buffer was loaded from, whichever file it writes. Save As of a buffer on
+/// a file another buffer's save tore wrote the torn bytes into the new file,
+/// since only recovery metadata for the destination was looked at. It must
+/// be refused, and the new file left unwritten.
+#[test]
+#[cfg(unix)]
+fn test_large_file_save_as_after_torn_inplace_write_is_refused() {
+    let data_dir = TempDir::new().unwrap();
+    let recovery_dir = data_dir.path().join("recovery");
+    let fs = Arc::new(FaultyFileSystem::new());
+    let (dir, file_path, mut buffer, expected) = edited_large_file(fs.clone());
+    let original_len = expected.len() - "EDITED ".len();
+    // Another buffer on the same file, loaded before the tear
+    let mut other = TextBuffer::load_from_file(&file_path, 1024, fs.clone()).unwrap();
+    assert!(other.is_large_file());
+    other.insert_bytes(0, b"OTHER ".to_vec());
+
+    fs.tear_after(&file_path, original_len + 3);
+    assert!(buffer.save(&recovery_dir).is_err());
+    *fs.tear.lock().unwrap() = None;
+
+    // Saved over an existing file, which this filesystem writes in place
+    let save_as = dir.path().join("copy.txt");
+    std::fs::write(&save_as, "old content\n").unwrap();
+    let err = other
+        .save_to_file(&save_as, &recovery_dir)
+        .expect_err("Save As reading from the torn file must be refused");
+
+    assert!(
+        err.to_string().contains(&file_path.display().to_string()),
+        "the error must name the torn file: {err}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&save_as).unwrap(),
+        "old content\n",
+        "nothing is written"
+    );
+}
+
+/// Issue #3382: when the recovery directory can't be written, a large
+/// file's in-place save stages its copy elsewhere (issue #3381) with no
+/// metadata pointing at it, so nothing on disk says the file is torn if the
+/// write then fails part-way. The buffer remembers it, and refuses a retry
+/// (or a Save As) that would read the torn file, instead of writing the
+/// shifted bytes out as a "complete" file.
+#[test]
+#[cfg(unix)]
+fn test_large_file_retry_after_torn_write_without_metadata_is_refused() {
+    let data_dir = TempDir::new().unwrap();
+    let recovery_dir = data_dir.path().join("recovery");
+    let fs = Arc::new(FaultyFileSystem::new());
+    fs.deny_create_in(&recovery_dir, io::ErrorKind::PermissionDenied);
+    let (dir, file_path, mut buffer, expected) = edited_large_file(fs.clone());
+    let original_len = expected.len() - "EDITED ".len();
+
+    fs.tear_after(&file_path, original_len + 3);
+    let first = buffer.save(&recovery_dir).expect_err("the write tears");
+    assert!(
+        first.to_string().contains(".inplace-"),
+        "the failure must say where the copy of what was being saved is: {first}"
+    );
+    let torn = std::fs::read(&file_path).unwrap();
+    *fs.tear.lock().unwrap() = None;
+
+    let err = buffer
+        .save(&recovery_dir)
+        .expect_err("a retry reading from the torn file must be refused");
+    assert!(err.to_string().contains("failed part-way"), "{err}");
+    assert_eq!(
+        std::fs::read(&file_path).unwrap(),
+        torn,
+        "nothing more is written"
+    );
+
+    let save_as = dir.path().join("copy.txt");
+    buffer
+        .save_to_file(&save_as, &recovery_dir)
+        .expect_err("so must a Save As");
+    assert!(!save_as.exists());
+}
+
 /// Recovery metadata whose copy the file already matches (the write did
 /// finish) doesn't hold up a large file's save.
 #[test]

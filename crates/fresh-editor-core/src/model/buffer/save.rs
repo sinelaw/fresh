@@ -217,9 +217,6 @@ pub(super) fn save_local(
     recipe: &WriteRecipe,
     recovery_dir: &Path,
 ) -> anyhow::Result<()> {
-    if recipe.has_copy_ops() {
-        refuse_copy_from_torn_file(&**fs, recovery_dir, dest_path)?;
-    }
     if !fs.is_owner(dest_path) {
         return save_with_inplace_write(fs, dest_path, recipe, recovery_dir);
     }
@@ -241,42 +238,90 @@ pub(super) fn save_local(
     }
 }
 
-/// A recipe with Copy ops (a large file's) reads the unchanged parts of the
-/// file back from the file itself, as it was when the buffer loaded it. An
-/// in-place write that failed part-way (or a crash during one) leaves the
-/// file torn: its start holds new content, so the same offsets now read the
-/// wrong bytes, and a save would write a "complete" file with them
-/// (issue #3382). Such a write leaves recovery metadata pointing at a
-/// complete copy of what it was writing; while that is there and the file
-/// doesn't match it, refuse, and say where the copy is. The copy is offered
-/// to the user when the editor starts, and removed once they decide.
+/// A large file's save reads the parts of the buffer it never loaded back
+/// from `src_path`, the file it was loaded from, at the offsets they had
+/// then (Copy ops, or the reads of a conversion). An in-place write of that
+/// file that failed part-way (or a crash during one) leaves it torn: its
+/// start holds new content, so the same offsets now read the wrong bytes,
+/// and a save would write a "complete" file with them (issue #3382) —
+/// whichever file it writes to, so Save As too.
+///
+/// Refuse such a save while `src_path` may be torn: when this buffer's own
+/// earlier save tore it (`torn_by_this_buffer`, remembered in memory since
+/// the recovery metadata may not have been writable), or when recovery
+/// metadata points at a complete copy of what an in-place write was putting
+/// in it, and the file doesn't match that copy (another buffer's save, or
+/// an earlier session's). Say where the copy is, if there is one: it is
+/// offered to the user, and removed once they decide.
 ///
 /// Metadata whose copy is gone, or matches the file (the write finished
 /// after all), says nothing about the file.
-fn refuse_copy_from_torn_file(
+pub(super) fn refuse_read_from_torn_file(
     fs: &dyn FileSystem,
     recovery_dir: &Path,
-    dest_path: &Path,
+    src_path: &Path,
+    torn_by_this_buffer: bool,
 ) -> anyhow::Result<()> {
-    let meta_path = InplaceWriteRecovery::meta_path(recovery_dir, dest_path);
-    let Some(recovery) = fs
+    let meta_path = InplaceWriteRecovery::meta_path(recovery_dir, src_path);
+    let kept_copy = fs
         .read_file(&meta_path)
         .ok()
         .and_then(|json| serde_json::from_slice::<InplaceWriteRecovery>(&json).ok())
-    else {
-        return Ok(());
+        .filter(|recovery| {
+            recovery.dest_path == src_path
+                && fs.exists(&recovery.temp_path)
+                && !same_content(fs, &recovery.temp_path, src_path).unwrap_or(false)
+        })
+        .map(|recovery| recovery.temp_path);
+    let mut message = match (&kept_copy, torn_by_this_buffer) {
+        (None, false) => return Ok(()),
+        (_, true) => format!(
+            "Not saved: an earlier save of {} failed part-way, so the file may be damaged, and this save would read from it",
+            src_path.display()
+        ),
+        (Some(_), false) => format!(
+            "Not saved: an earlier save of {} was interrupted, so the file may be damaged, and this save would read from it",
+            src_path.display()
+        ),
     };
-    if recovery.dest_path != dest_path
-        || !fs.exists(&recovery.temp_path)
-        || same_content(fs, &recovery.temp_path, dest_path).unwrap_or(false)
-    {
-        return Ok(());
+    if let Some(copy) = kept_copy {
+        message.push_str(&format!(
+            ". What that save was writing is kept in {}",
+            copy.display()
+        ));
     }
-    Err(anyhow::anyhow!(
-        "Not saved: an earlier save of {} was interrupted, so the file may be damaged, and this save would read from it. What that save was writing is kept in {}",
-        dest_path.display(),
-        recovery.temp_path.display()
-    ))
+    Err(anyhow::anyhow!(message))
+}
+
+/// An in-place write that failed after it opened the file for writing: the
+/// file may now be torn, holding part of the new content over the old.
+/// Tells the buffer whose file it was that its unloaded parts can't be read
+/// back from it any more (see [`refuse_read_from_torn_file`]).
+#[derive(Debug)]
+pub struct TornWrite {
+    source: io::Error,
+    /// The complete copy of what was being written, if one was staged.
+    copy: Option<PathBuf>,
+}
+
+impl std::fmt::Display for TornWrite {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}; the file may be damaged", self.source)?;
+        if let Some(copy) = &self.copy {
+            write!(
+                f,
+                ", and what was being saved is kept in {}",
+                copy.display()
+            )?;
+        }
+        Ok(())
+    }
+}
+
+impl std::error::Error for TornWrite {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.source)
+    }
 }
 
 /// Build a write recipe from the piece tree for saving.
@@ -955,9 +1000,16 @@ fn save_with_inplace_write(
         Ok(mut out_file) => {
             staged.supersede_previous();
             // On failure from here on, keep the staged copy for recovery
-            stream_file_to_writer(&**fs, &staged.temp_path, &mut out_file)?;
-            out_file.sync_all()?;
+            let written = stream_file_to_writer(&**fs, &staged.temp_path, &mut out_file)
+                .and_then(|()| out_file.sync_all());
             drop(out_file);
+            if let Err(source) = written {
+                return Err(TornWrite {
+                    source,
+                    copy: Some(staged.temp_path),
+                }
+                .into());
+            }
             staged.finish();
             Ok(())
         }
@@ -987,10 +1039,13 @@ fn write_data_inplace(
 ) -> anyhow::Result<()> {
     match write_in_place_staged(&**fs, recovery_dir, dest_path, data) {
         Ok(()) => Ok(()),
-        Err(e) if e.kind() == io::ErrorKind::PermissionDenied => {
+        Err(e)
+            if e.downcast_ref::<io::Error>()
+                .is_some_and(|e| e.kind() == io::ErrorKind::PermissionDenied) =>
+        {
             Err(stage_for_sudo(fs, dest_path, data, original_metadata)?)
         }
-        Err(e) => Err(e.into()),
+        Err(e) => Err(e),
     }
 }
 
@@ -1034,10 +1089,10 @@ fn write_in_place_staged(
     recovery_dir: &Path,
     dest_path: &Path,
     data: &[u8],
-) -> io::Result<()> {
+) -> anyhow::Result<()> {
     let mut staged = match stage_in_place_write(fs, recovery_dir, dest_path, data) {
         Ok(staged) => Some(staged),
-        Err(e) if is_out_of_space(&e) => return Err(e),
+        Err(e) if is_out_of_space(&e) => return Err(e.into()),
         Err(e) => {
             tracing::warn!(
                 "Can't stage a copy of {} ({e}); writing it in place without one",
@@ -1053,16 +1108,22 @@ fn write_in_place_staged(
             if let Some(staged) = staged {
                 staged.discard();
             }
-            return Err(e);
+            return Err(e.into());
         }
     };
     if let Some(staged) = staged.as_mut() {
         staged.supersede_previous();
     }
     // On failure from here on, keep the staged copy for recovery.
-    out_file.write_all(data)?;
-    out_file.sync_all()?;
+    let written = out_file.write_all(data).and_then(|()| out_file.sync_all());
     drop(out_file);
+    if let Err(source) = written {
+        return Err(TornWrite {
+            source,
+            copy: staged.map(|staged| staged.temp_path),
+        }
+        .into());
+    }
     if let Some(staged) = staged {
         staged.finish();
     }
