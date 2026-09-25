@@ -4254,9 +4254,6 @@ impl Editor {
             // wiping the event log we're about to append (see bug #1).
             if let Some(path) = state.buffer.file_path().map(|p| p.to_path_buf()) {
                 if let Err(e) = state.buffer.save_to_file(&path) {
-                    // No sudo prompt from here: drop the temp file a save
-                    // that needs one leaves behind.
-                    self.discard_sudo_save_temp(&e);
                     self.plugin_manager.read().unwrap().reject_callback(
                         callback_id,
                         format!("Failed to save file {:?}: {}", path, e),

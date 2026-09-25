@@ -728,19 +728,20 @@ fn sudo_save_temp_file_is_private() {
 
         let err = buffer.save().expect_err("the save must need sudo");
         let info = err
-            .downcast_ref::<SudoSaveRequired>()
-            .unwrap_or_else(|| panic!("not a sudo save: {err}"))
-            .clone();
-        let mode = std::fs::metadata(&info.temp_path)
-            .unwrap()
-            .permissions()
-            .mode();
-        std::fs::remove_file(&info.temp_path).unwrap();
+            .downcast::<SudoSaveRequired>()
+            .unwrap_or_else(|err| panic!("not a sudo save: {err}"));
+        let temp_path = info.temp_path().to_path_buf();
+        let mode = std::fs::metadata(&temp_path).unwrap().permissions().mode();
+        drop(info);
+        assert!(
+            !temp_path.exists(),
+            "dropping the error deletes its temp file"
+        );
         assert_eq!(
-            info.temp_path.parent() == Some(temp_dir.path()),
+            temp_path.parent() == Some(temp_dir.path()),
             dir_writable,
             "temp file at {:?}",
-            info.temp_path
+            temp_path
         );
         assert_eq!(
             mode & 0o777,
@@ -749,6 +750,80 @@ fn sudo_save_temp_file_is_private() {
             mode & 0o777
         );
     }
+}
+
+/// Save `notes.txt`, which needs sudo, and check the prompt is up with the
+/// save's temp file waiting for it.
+fn open_sudo_prompt(harness: &mut EditorTestHarness, dir: &Path) {
+    harness
+        .send_key(KeyCode::Char('s'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("Save with sudo");
+    assert_eq!(
+        leftover_temp_files(dir).len(),
+        1,
+        "the prompt holds the new content in a temp file"
+    );
+}
+
+/// The sudo prompt owns the save's temp file: however the prompt goes away
+/// without writing it — its Cancel button, Esc — the file goes with it.
+#[test]
+fn sudo_prompt_dismissed_leaves_no_temp_file() {
+    for key in [KeyCode::Char('c'), KeyCode::Esc] {
+        let (mut harness, dir, file_path) = dirty_unwritable_file(Config::default());
+        open_sudo_prompt(&mut harness, dir.path());
+
+        harness.send_key(key, KeyModifiers::NONE).unwrap();
+        harness.render().unwrap();
+
+        assert!(
+            !harness.editor().is_prompting(),
+            "{key:?} closes the prompt"
+        );
+        assert_eq!(
+            leftover_temp_files(dir.path()),
+            Vec::<std::ffi::OsString>::new(),
+            "after {key:?}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&file_path).unwrap(),
+            "original content\n"
+        );
+    }
+}
+
+/// Same when another prompt replaces the sudo prompt.
+#[test]
+fn sudo_prompt_replaced_by_another_prompt_leaves_no_temp_file() {
+    let (mut harness, dir, _file_path) = dirty_unwritable_file(Config::default());
+    open_sudo_prompt(&mut harness, dir.path());
+
+    harness.editor_mut().start_prompt(
+        "Go to line: ".to_string(),
+        fresh::view::prompt::PromptType::GotoLine,
+    );
+    harness.render().unwrap();
+
+    assert_eq!(
+        leftover_temp_files(dir.path()),
+        Vec::<std::ffi::OsString>::new()
+    );
+}
+
+/// Same when the editor shuts down with the sudo prompt still open.
+#[test]
+fn editor_closed_with_sudo_prompt_open_leaves_no_temp_file() {
+    let (mut harness, dir, _file_path) = dirty_unwritable_file(Config::default());
+    open_sudo_prompt(&mut harness, dir.path());
+
+    drop(harness);
+
+    assert_eq!(
+        leftover_temp_files(dir.path()),
+        Vec::<std::ffi::OsString>::new()
+    );
 }
 
 /// A plugin's replace in a file that isn't open (the project

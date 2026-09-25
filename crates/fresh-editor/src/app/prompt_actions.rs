@@ -335,6 +335,8 @@ impl Editor {
                 }
             }
             PromptType::ConfirmSudoSave { info } => {
+                // `info` owns the save's temp file: it is deleted when `info`
+                // drops at the end of this arm, whatever the answer.
                 let input_lower = input.trim().to_lowercase();
                 if input_lower == "y" || input_lower == "yes" {
                     // Hide prompt before starting blocking command to clear the line
@@ -342,7 +344,7 @@ impl Editor {
 
                     // Read temp file and write via sudo (works for both local and remote)
                     let result = (|| -> anyhow::Result<()> {
-                        let data = self.authority().filesystem.read_file(&info.temp_path)?;
+                        let data = info.read_content()?;
                         self.authority().filesystem.sudo_write(
                             &info.dest_path,
                             &data,
@@ -350,9 +352,6 @@ impl Editor {
                             info.uid,
                             info.gid,
                         )?;
-                        // Best-effort cleanup of temp file.
-                        #[allow(clippy::let_underscore_must_use)]
-                        let _ = self.authority().filesystem.remove_file(&info.temp_path);
                         // The file now holds the full content, so a copy an
                         // earlier interrupted in-place attempt staged for it
                         // is obsolete.
@@ -375,7 +374,8 @@ impl Editor {
                                     t!("prompt.sudo_save_failed", error = e.to_string())
                                         .to_string(),
                                 );
-                            } else if let Err(e) = self.finalize_save(Some(info.dest_path)) {
+                            } else if let Err(e) = self.finalize_save(Some(info.dest_path.clone()))
+                            {
                                 tracing::warn!("Failed to finalize save after sudo: {}", e);
                                 self.set_status_message(
                                     t!("prompt.sudo_save_failed", error = e.to_string())
@@ -388,16 +388,10 @@ impl Editor {
                             self.set_status_message(
                                 t!("prompt.sudo_save_failed", error = e.to_string()).to_string(),
                             );
-                            // Best-effort cleanup of temp file.
-                            #[allow(clippy::let_underscore_must_use)]
-                            let _ = self.authority().filesystem.remove_file(&info.temp_path);
                         }
                     }
                 } else {
                     self.set_status_message(t!("buffer.save_cancelled").to_string());
-                    // Best-effort cleanup of temp file.
-                    #[allow(clippy::let_underscore_must_use)]
-                    let _ = self.authority().filesystem.remove_file(&info.temp_path);
                 }
             }
             PromptType::ConfirmOverwriteFile { path } => {
@@ -912,7 +906,6 @@ impl Editor {
                 }
             }
             Err(e) => {
-                self.discard_sudo_save_temp(&e);
                 self.active_window_mut().pending_close_buffer = None;
                 // A failed Save-As during the save-and-quit chain means we
                 // can't honor the user's intent to save everything; abandon

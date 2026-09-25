@@ -23,10 +23,16 @@ use std::sync::Arc;
 ///
 /// This error contains all the information needed to perform the save via sudo
 /// in a single operation, preserving original file ownership and permissions.
-#[derive(Debug, Clone, PartialEq)]
+///
+/// It owns the temp file holding the new content: the file is deleted when
+/// the error is dropped, through the filesystem that created it. A caller
+/// that offers the sudo prompt takes the error out of the `anyhow::Error`
+/// (`downcast`) and keeps it for as long as the prompt is up; every other
+/// caller just drops it.
+#[derive(Debug, PartialEq)]
 pub struct SudoSaveRequired {
-    /// Path to the temporary file containing the new content
-    pub temp_path: PathBuf,
+    /// The temporary file containing the new content
+    temp_file: SudoSaveTempFile,
     /// Destination path where the file should be saved
     pub dest_path: PathBuf,
     /// Original file owner (UID)
@@ -35,6 +41,19 @@ pub struct SudoSaveRequired {
     pub gid: u32,
     /// Original file permissions (mode)
     pub mode: u32,
+}
+
+impl SudoSaveRequired {
+    /// Path of the temporary file containing the new content.
+    pub fn temp_path(&self) -> &Path {
+        &self.temp_file.path
+    }
+
+    /// The new content, read back from the temp file through the filesystem
+    /// that wrote it.
+    pub fn read_content(&self) -> io::Result<Vec<u8>> {
+        self.temp_file.fs.read_file(&self.temp_file.path)
+    }
 }
 
 impl std::fmt::Display for SudoSaveRequired {
@@ -48,6 +67,47 @@ impl std::fmt::Display for SudoSaveRequired {
 }
 
 impl std::error::Error for SudoSaveRequired {}
+
+/// A temp file a save created, deleted on drop through the filesystem that
+/// created it — never left to its holder to remember.
+pub(super) struct SudoSaveTempFile {
+    fs: Arc<dyn FileSystem + Send + Sync>,
+    path: PathBuf,
+}
+
+impl SudoSaveTempFile {
+    /// Own the file at `path`, which `fs` just created.
+    pub(super) fn new(fs: &Arc<dyn FileSystem + Send + Sync>, path: PathBuf) -> Self {
+        Self {
+            fs: Arc::clone(fs),
+            path,
+        }
+    }
+}
+
+impl Drop for SudoSaveTempFile {
+    fn drop(&mut self) {
+        if let Err(err) = self.fs.remove_file(&self.path) {
+            tracing::debug!(
+                "Failed to remove sudo-save temp file {}: {}",
+                self.path.display(),
+                err
+            );
+        }
+    }
+}
+
+impl std::fmt::Debug for SudoSaveTempFile {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("SudoSaveTempFile").field(&self.path).finish()
+    }
+}
+
+impl PartialEq for SudoSaveTempFile {
+    fn eq(&self, other: &Self) -> bool {
+        self.path == other.path
+    }
+}
 
 // ---------------------------------------------------------------------------
 // WriteRecipe / RecipeAction
@@ -284,7 +344,7 @@ pub(super) fn build_write_recipe(
 }
 
 /// Create a temporary file holding a save's new content for the sudo prompt
-/// ([`SudoSaveRequired::temp_path`]).
+/// ([`SudoSaveRequired::temp_path`]), deleted when the returned guard drops.
 ///
 /// Tries to create the file in the same directory as the destination file first.
 /// If that fails (e.g., due to directory permissions), falls back to the system
@@ -296,18 +356,19 @@ pub(super) fn build_write_recipe(
 pub(super) fn create_temp_file(
     fs: &Arc<dyn FileSystem + Send + Sync>,
     dest_path: &Path,
-) -> io::Result<(PathBuf, Box<dyn FileWriter>)> {
+) -> io::Result<(SudoSaveTempFile, Box<dyn FileWriter>)> {
     // Try creating in same directory first
-    match fs.create_private_temp_file_for(dest_path) {
-        Ok(created) => Ok(created),
+    let (temp_path, file) = match fs.create_private_temp_file_for(dest_path) {
+        Ok(created) => created,
         Err(e) if e.kind() == io::ErrorKind::PermissionDenied => {
             // Fallback to system temp directory
             let temp_path = fs.unique_temp_path(dest_path);
             let file = fs.create_new_private_file(&temp_path)?;
-            Ok((temp_path, file))
+            (temp_path, file)
         }
-        Err(e) => Err(e),
-    }
+        Err(e) => return Err(e),
+    };
+    Ok((SudoSaveTempFile::new(fs, temp_path), file))
 }
 
 /// Where in-place writes stage their content and recovery metadata:
@@ -723,8 +784,8 @@ pub(super) fn save_with_inplace_write(
         Err(e) if e.kind() == io::ErrorKind::PermissionDenied => {
             // Can't write to destination - trigger sudo fallback with the
             // staged copy, which it removes when done
-            let temp_path = staged.release();
-            Err(make_sudo_error(temp_path, dest_path, original_metadata))
+            let temp_file = SudoSaveTempFile::new(fs, staged.release());
+            Err(make_sudo_error(temp_file, dest_path, original_metadata))
         }
         Err(e) => {
             // Nothing was truncated, so nothing needs recovering
@@ -747,11 +808,11 @@ pub(super) fn write_data_inplace(
         Ok(()) => Ok(()),
         Err(e) if e.kind() == io::ErrorKind::PermissionDenied => {
             // Create temp file for sudo fallback
-            let (temp_path, mut temp_file) = create_temp_file(fs, dest_path)?;
-            temp_file.write_all(data)?;
-            temp_file.sync_all()?;
-            drop(temp_file);
-            Err(make_sudo_error(temp_path, dest_path, original_metadata))
+            let (temp_file, mut writer) = create_temp_file(fs, dest_path)?;
+            writer.write_all(data)?;
+            writer.sync_all()?;
+            drop(writer);
+            Err(make_sudo_error(temp_file, dest_path, original_metadata))
         }
         Err(e) => Err(e.into()),
     }
@@ -899,7 +960,7 @@ pub(super) fn write_recipe_to_file(
 
 /// Internal helper to create a SudoSaveRequired error.
 pub(super) fn make_sudo_error(
-    temp_path: PathBuf,
+    temp_file: SudoSaveTempFile,
     dest_path: &Path,
     original_metadata: Option<FileMetadata>,
 ) -> anyhow::Error {
@@ -922,7 +983,7 @@ pub(super) fn make_sudo_error(
     let _ = original_metadata; // suppress unused warning on non-Unix
 
     anyhow::anyhow!(SudoSaveRequired {
-        temp_path,
+        temp_file,
         dest_path: dest_path.to_path_buf(),
         uid,
         gid,

@@ -814,12 +814,12 @@ impl TextBuffer {
                 if e.kind() == io::ErrorKind::PermissionDenied {
                     // Create temp file and return sudo error
                     let original_metadata = fs.metadata_if_exists(dest_path);
-                    let (temp_path, mut temp_file) = save::create_temp_file(fs, dest_path)?;
-                    save::write_recipe_to_file(fs, &mut temp_file, &recipe)?;
-                    temp_file.sync_all()?;
-                    drop(temp_file);
+                    let (temp_file, mut writer) = save::create_temp_file(fs, dest_path)?;
+                    save::write_recipe_to_file(fs, &mut writer, &recipe)?;
+                    writer.sync_all()?;
+                    drop(writer);
                     return Err(save::make_sudo_error(
-                        temp_path,
+                        temp_file,
                         dest_path,
                         original_metadata,
                     ));
