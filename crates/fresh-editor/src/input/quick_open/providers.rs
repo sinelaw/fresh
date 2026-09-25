@@ -305,6 +305,15 @@ const IGNORED_DIRS: &[&str] = &[
 
 const MAX_FILES: usize = 50_000;
 
+fn walk_options(show_hidden: bool) -> crate::model::filesystem::WalkOptions<'static> {
+    crate::model::filesystem::WalkOptions {
+        skip_dirs: IGNORED_DIRS,
+        include_hidden: show_hidden,
+        max_entries: usize::MAX,
+        ..Default::default()
+    }
+}
+
 /// A single file entry in the Quick Open file list.
 #[derive(Clone, Debug)]
 pub struct FileEntry {
@@ -355,6 +364,7 @@ pub struct FileProvider {
     async_sender: Option<std::sync::mpsc::Sender<crate::services::async_bridge::AsyncMessage>>,
     /// Cancel flag shared with the background walk task.
     cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    show_hidden: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl FileProvider {
@@ -376,6 +386,17 @@ impl FileProvider {
             runtime,
             async_sender,
             cancel: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            show_hidden: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        }
+    }
+
+    /// Match the project explorer's hidden-file setting for non-Git walks.
+    /// A change makes the existing file list stale.
+    pub fn set_visibility(&self, show_hidden: bool) {
+        use std::sync::atomic::Ordering::Relaxed;
+        let hidden_changed = self.show_hidden.swap(show_hidden, Relaxed) != show_hidden;
+        if hidden_changed {
+            self.clear_cache();
         }
     }
 
@@ -593,6 +614,7 @@ impl FileProvider {
         let frecency = std::sync::Arc::clone(&self.frecency);
         let filesystem = std::sync::Arc::clone(&self.filesystem);
         let process_spawner = std::sync::Arc::clone(&self.process_spawner);
+        let show_hidden = self.show_hidden.load(std::sync::atomic::Ordering::Relaxed);
         let cwd = cwd.to_string();
 
         runtime.spawn_blocking(move || {
@@ -627,7 +649,7 @@ impl FileProvider {
 
             // Slow path: directory walk with periodic incremental updates so
             // the UI can show partial results while the scan continues.
-            walk_dir_with_updates(&*filesystem, &cwd, &cancel, &frecency, &sender);
+            walk_dir_with_updates(&*filesystem, &cwd, &cancel, &frecency, &sender, show_hidden);
         });
 
         None
@@ -639,7 +661,6 @@ impl FileProvider {
             .try_git_files(cwd)
             .or_else(|| self.try_walk_dir(cwd))
             .unwrap_or_default();
-
         let entries: Vec<FileEntry> = files
             .into_iter()
             .map(|path| FileEntry {
@@ -662,7 +683,12 @@ impl FileProvider {
     /// Synchronous `try_walk_dir` — used by the sync fallback path.
     fn try_walk_dir(&self, cwd: &str) -> Option<Vec<String>> {
         let cancel = std::sync::atomic::AtomicBool::new(false);
-        try_walk_dir_blocking(&*self.filesystem, cwd, &cancel)
+        try_walk_dir_blocking(
+            &*self.filesystem,
+            cwd,
+            &cancel,
+            self.show_hidden.load(std::sync::atomic::Ordering::Relaxed),
+        )
     }
 }
 
@@ -730,6 +756,7 @@ fn try_walk_dir_blocking(
     fs: &dyn crate::model::filesystem::FileSystem,
     cwd: &str,
     cancel: &std::sync::atomic::AtomicBool,
+    show_hidden: bool,
 ) -> Option<Vec<String>> {
     use std::path::Path;
 
@@ -738,8 +765,10 @@ fn try_walk_dir_blocking(
 
     // Errors (e.g., root doesn't exist) are treated as "no files found".
     drop(
-        fs.walk_files(base, IGNORED_DIRS, cancel, &mut |_path, rel| {
-            files.push(rel.to_string());
+        fs.walk(base, &walk_options(show_hidden), cancel, &mut |entry| {
+            if entry.entry_type == crate::model::filesystem::EntryType::File {
+                files.push(entry.rel.to_string());
+            }
             files.len() < MAX_FILES
         }),
     );
@@ -763,6 +792,7 @@ fn walk_dir_with_updates(
     cancel: &std::sync::atomic::AtomicBool,
     frecency: &std::sync::RwLock<std::collections::HashMap<String, FrecencyData>>,
     sender: &std::sync::mpsc::Sender<crate::services::async_bridge::AsyncMessage>,
+    show_hidden: bool,
 ) {
     use std::path::Path;
 
@@ -774,8 +804,11 @@ fn walk_dir_with_updates(
     // `walk_files` errors (e.g. root doesn't exist, permission denied at the
     // top level) are treated as "no files found" — any paths already
     // collected in `paths` are still surfaced via the final send below.
-    if let Err(e) = fs.walk_files(base, IGNORED_DIRS, cancel, &mut |_path, rel| {
-        paths.push(rel.to_string());
+    if let Err(e) = fs.walk(base, &walk_options(show_hidden), cancel, &mut |entry| {
+        if entry.entry_type != crate::model::filesystem::EntryType::File {
+            return true;
+        }
+        paths.push(entry.rel.to_string());
 
         // Send a partial snapshot at regular intervals.
         if last_send.elapsed() >= WALK_UPDATE_INTERVAL {
@@ -1435,6 +1468,36 @@ mod tests {
 
         assert_eq!(suggestions.len(), 1);
         assert_eq!(suggestions[0].value.as_deref(), Some("visible.txt"));
+    }
+
+    #[test]
+    fn test_file_provider_shows_hidden_files_in_non_git_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path();
+        std::fs::write(base.join("visible.txt"), b"").unwrap();
+        std::fs::write(base.join(".hidden"), b"").unwrap();
+        std::fs::create_dir(base.join(".config")).unwrap();
+        std::fs::write(base.join(".config/settings.json"), b"").unwrap();
+
+        let provider = make_file_provider();
+        let context = make_test_context(&base.display().to_string());
+        provider.set_visibility(true);
+        let suggestions = provider.suggestions("", &context);
+        let values: Vec<_> = suggestions
+            .iter()
+            .filter_map(|s| s.value.as_deref())
+            .collect();
+        assert!(values.contains(&".hidden"));
+        assert!(values.contains(&".config/settings.json"));
+
+        provider.set_visibility(false);
+        let suggestions = provider.suggestions("", &context);
+        let values: Vec<_> = suggestions
+            .iter()
+            .filter_map(|s| s.value.as_deref())
+            .collect();
+        assert!(!values.contains(&".hidden"));
+        assert!(!values.contains(&".config/settings.json"));
     }
 
     #[test]

@@ -1065,6 +1065,7 @@ impl Editor {
 
         // Persist to config so the setting survives across sessions
         self.config_mut().file_explorer.show_hidden = show_hidden;
+        self.quick_open_registry.set_file_visibility(show_hidden);
         self.persist_config_change(crate::config_keys::FILE_EXPLORER_SHOW_HIDDEN, show_hidden);
     }
 
