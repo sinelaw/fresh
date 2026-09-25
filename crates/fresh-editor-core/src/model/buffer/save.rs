@@ -267,11 +267,7 @@ pub(super) fn refuse_read_from_torn_file(
         .read_file(&meta_path)
         .ok()
         .and_then(|json| serde_json::from_slice::<InplaceWriteRecovery>(&json).ok())
-        .filter(|recovery| {
-            recovery.dest_path == src_path
-                && fs.exists(&recovery.temp_path)
-                && !same_content(fs, &recovery.temp_path, src_path).unwrap_or(false)
-        })
+        .filter(|recovery| recovery.dest_path == src_path && is_kept_copy(fs, recovery))
         .map(|recovery| recovery.temp_path);
     let mut message = match (&kept_copy, torn_by_this_buffer) {
         (None, false) => return Ok(()),
@@ -522,6 +518,9 @@ fn create_temp_file(
 /// file it overwrites. The recovery metadata points at the copy wherever it
 /// is.
 ///
+/// Only a place that isn't writable or is full moves the copy on to the
+/// next; any other error is returned as it is.
+///
 /// If no place works, the error says so, and is out of space only if the
 /// file's own directory is (so writing the file without a copy would
 /// probably fail part-way too), or the recovery directory is and nothing
@@ -568,7 +567,18 @@ fn create_staging_file(
                 }
                 return Ok((temp_path, file));
             }
-            Err(e) => errors.push((dir, e)),
+            // Only a place that can't take the copy moves it on to the
+            // next; any other error (a failing disk) is the save's to report
+            Err(e) if can_stage_elsewhere(&e) => errors.push((dir, e)),
+            Err(e) => {
+                return Err(io::Error::new(
+                    e.kind(),
+                    format!(
+                        "couldn't stage a copy of the new content in {}: {e}",
+                        dir.display()
+                    ),
+                ))
+            }
         }
     }
     let beside_file_full = errors.get(1).is_some_and(|(_, e)| is_out_of_space(e));
@@ -589,6 +599,16 @@ fn create_staging_file(
             describe_staging_errors(&errors)
         ),
     ))
+}
+
+/// Whether a copy [`create_staging_file`] couldn't create in one place may
+/// still be staged in the next: the place isn't writable (`su` keeps
+/// another user's `$HOME`; a read-only mount), or its disk or quota is full.
+fn can_stage_elsewhere(e: &io::Error) -> bool {
+    matches!(
+        e.kind(),
+        io::ErrorKind::PermissionDenied | io::ErrorKind::ReadOnlyFilesystem
+    ) || is_out_of_space(e)
 }
 
 /// Where [`create_staging_file`] tries to stage a copy for `dest_path`, in
@@ -614,18 +634,40 @@ fn describe_staging_errors(errors: &[(PathBuf, io::Error)]) -> String {
 const STAGED_PREFIX: &str = ".inplace-";
 const STAGED_SUFFIX: &str = ".tmp";
 
-/// Whether `path` is a copy [`create_staging_file`] staged for `dest_path`:
-/// named like one, in one of the places it stages. Recovery metadata is
-/// only trusted to name such a file for removal.
-fn is_staged_copy(path: &Path, recovery_dir: &Path, dest_path: &Path) -> bool {
+/// Whether `path` is named like a copy [`create_staging_file`] staged for
+/// `dest_path` (`.inplace-<name stem>-<pid>-<timestamp>.tmp`). Recovery
+/// metadata is only trusted to name such a file for removal.
+///
+/// Where the copy is isn't part of it: the places it is staged in move (the
+/// system temp dir follows `TMPDIR`), and a copy staged in one a later
+/// session no longer looks at must still count, or it would hold up saves
+/// of its file while never being offered or cleaned up.
+fn is_staged_copy(path: &Path, dest_path: &Path) -> bool {
+    let prefix = format!(
+        "{STAGED_PREFIX}{}-",
+        crate::model::filesystem::temp_name_stem(dest_path)
+    );
+    let is_number = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
     path.file_name()
         .and_then(|n| n.to_str())
-        .is_some_and(|n| n.starts_with(STAGED_PREFIX) && n.ends_with(STAGED_SUFFIX))
-        && path.parent().is_some_and(|parent| {
-            staging_dirs(recovery_dir, dest_path)
-                .iter()
-                .any(|dir| dir == parent)
-        })
+        .and_then(|n| n.strip_prefix(&prefix)?.strip_suffix(STAGED_SUFFIX))
+        .and_then(|rest| rest.split_once('-'))
+        .is_some_and(|(pid, timestamp)| is_number(pid) && is_number(timestamp))
+}
+
+/// Whether `recovery` points at a copy an interrupted in-place write kept,
+/// that the user has yet to decide about: one staged for its file, still
+/// there, and different from the file (or not comparable with it).
+///
+/// The one test the save refusal ([`refuse_read_from_torn_file`]), the
+/// offer ([`kept_inplace_write_recoveries`]) and the startup sweep
+/// ([`clean_up_inplace_write_recoveries`]) share, so a copy that holds up a
+/// file's saves is always one the user is offered, and the sweep keeps
+/// exactly those.
+fn is_kept_copy(fs: &dyn FileSystem, recovery: &InplaceWriteRecovery) -> bool {
+    is_staged_copy(&recovery.temp_path, &recovery.dest_path)
+        && fs.exists(&recovery.temp_path)
+        && !same_content(fs, &recovery.temp_path, &recovery.dest_path).unwrap_or(false)
 }
 
 /// Write in-place recovery metadata using fs.
@@ -675,9 +717,7 @@ fn write_inplace_recovery_meta(
             .ok()
             .filter(|previous| {
                 previous.temp_path != temp_path
-                    && meta_path.parent().is_some_and(|recovery_dir| {
-                        is_staged_copy(&previous.temp_path, recovery_dir, dest_path)
-                    })
+                    && is_staged_copy(&previous.temp_path, dest_path)
                     && (previous.is_ours() || !previous.is_in_progress())
             })
             .map(|previous| previous.temp_path);
@@ -813,7 +853,7 @@ pub fn resolve_inplace_write_recovery(fs: &dyn FileSystem, recovery_dir: &Path, 
         return;
     }
     // Best-effort cleanup of files the completed save made obsolete
-    if is_staged_copy(&recovery.temp_path, recovery_dir, dest_path) {
+    if is_staged_copy(&recovery.temp_path, dest_path) {
         #[allow(clippy::let_underscore_must_use)]
         let _ = fs.remove_file(&recovery.temp_path);
     }
@@ -835,12 +875,7 @@ pub fn kept_inplace_write_recoveries(
             *meta_path == InplaceWriteRecovery::meta_path(recovery_dir, &recovery.dest_path)
         })
         .map(|(_, recovery)| recovery)
-        .filter(|recovery| {
-            !recovery.is_in_progress()
-                && is_staged_copy(&recovery.temp_path, recovery_dir, &recovery.dest_path)
-                && fs.exists(&recovery.temp_path)
-                && !same_content(fs, &recovery.temp_path, &recovery.dest_path).unwrap_or(false)
-        })
+        .filter(|recovery| !recovery.is_in_progress() && is_kept_copy(fs, recovery))
         .collect()
 }
 
@@ -855,9 +890,7 @@ pub fn restore_inplace_write_recovery(
     let meta_path = InplaceWriteRecovery::meta_path(recovery_dir, dest_path);
     let recovery = serde_json::from_slice::<InplaceWriteRecovery>(&fs.read_file(&meta_path)?)
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-    if recovery.dest_path != dest_path
-        || !is_staged_copy(&recovery.temp_path, recovery_dir, dest_path)
-    {
+    if recovery.dest_path != dest_path || !is_staged_copy(&recovery.temp_path, dest_path) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             "the recovery metadata doesn't point at a copy staged for this file",
@@ -877,12 +910,14 @@ pub fn restore_inplace_write_recovery(
 /// * a staged copy whose destination now holds exactly its content (the
 ///   write got that far, or the file was saved again since), with its
 ///   metadata;
-/// * metadata whose staged copy is gone;
+/// * metadata whose staged copy is gone, or that names a file no in-place
+///   write staged for its destination;
 /// * the temp files of metadata writes a crash interrupted
 ///   (see [`crate::recovery_types::remove_orphaned_temp_files`]).
 ///
-/// A staged copy that differs from its destination may be the only intact
-/// copy of what was being saved, so it is kept, never aged out;
+/// A staged copy that differs from its destination ([`is_kept_copy`]) may
+/// be the only intact copy of what was being saved, so it is kept, never
+/// aged out;
 /// the editor offers it to the user (see
 /// [`kept_inplace_write_recoveries`]), who decides what becomes of it.
 /// Entries of a process still running are left alone. Returns how many files
@@ -898,21 +933,23 @@ pub fn clean_up_inplace_write_recoveries(fs: &dyn FileSystem, recovery_dir: &Pat
         if recovery.is_in_progress() {
             continue;
         }
-        if !fs.exists(&recovery.temp_path) {
-            remove(&meta_path);
-        } else if is_staged_copy(&recovery.temp_path, recovery_dir, &recovery.dest_path)
-            && same_content(fs, &recovery.temp_path, &recovery.dest_path).unwrap_or(false)
-        {
-            remove(&recovery.temp_path);
-            remove(&meta_path);
-        } else {
+        if is_kept_copy(fs, &recovery) {
             // Not a warning: the editor asks the user about it
             tracing::info!(
                 "An interrupted save of {} left the content being saved in {}",
                 recovery.dest_path.display(),
                 recovery.temp_path.display()
             );
+            continue;
         }
+        // The copy is gone, matches its file, or was never one staged for
+        // it (then only the metadata goes)
+        if is_staged_copy(&recovery.temp_path, &recovery.dest_path)
+            && fs.exists(&recovery.temp_path)
+        {
+            remove(&recovery.temp_path);
+        }
+        remove(&meta_path);
     }
     removed
 }

@@ -1538,6 +1538,74 @@ fn test_large_inplace_save_with_nowhere_to_stage_says_why() {
     assert_eq!(std::fs::read_to_string(&file_path).unwrap(), before);
 }
 
+/// Issue #3381: the copy moves on to the next place only when the recovery
+/// directory can't take it (not writable, or full). Any other error there —
+/// a failing disk — is the save's to report: it must not put a copy of the
+/// user's content next to their file, or in the temp dir, and carry on.
+#[test]
+#[cfg(unix)]
+fn test_large_inplace_save_with_failing_recovery_dir_is_refused() {
+    let data_dir = TempDir::new().unwrap();
+    let recovery_dir = data_dir.path().join("recovery");
+    let fs = Arc::new(FaultyFileSystem::new());
+    fs.deny_create_in(&recovery_dir, io::ErrorKind::Other);
+    let (dir, file_path, mut buffer, _) = edited_large_file(fs);
+    let before = std::fs::read_to_string(&file_path).unwrap();
+
+    let err = buffer
+        .save(&recovery_dir)
+        .expect_err("an I/O error staging the copy must fail the save");
+
+    let msg = err.to_string();
+    assert!(
+        msg.contains(&recovery_dir.display().to_string()) && msg.contains("simulated"),
+        "the error must be the recovery directory's: {msg}"
+    );
+    assert_eq!(std::fs::read_to_string(&file_path).unwrap(), before);
+    let left: Vec<_> = std::fs::read_dir(dir.path())
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    assert_eq!(left, vec![std::ffi::OsString::from("big.txt")]);
+}
+
+/// Issue #3381: a copy staged in a place a later session no longer stages
+/// in (the system temp dir, under another `TMPDIR`) held up its file's
+/// saves while never being offered, and the startup sweep only logged it,
+/// every session. Saves, the offer and the sweep now agree on it.
+#[test]
+#[cfg(unix)]
+fn test_kept_copy_staged_in_a_former_temp_dir_is_offered() {
+    use fresh::services::recovery::{path_hash, InplaceWriteRecovery};
+    // No process has this pid (it's above any pid_max), so it "crashed".
+    const DEAD_PID: u32 = 2_000_000_000;
+    let data_dir = TempDir::new().unwrap();
+    let recovery_dir = data_dir.path().join("recovery");
+    std::fs::create_dir_all(&recovery_dir).unwrap();
+    let former_tmp = TempDir::new().unwrap();
+    let fs = Arc::new(FaultyFileSystem::new());
+    let (_dir, file_path, mut buffer, expected) = edited_large_file(fs);
+    let copy = former_tmp
+        .path()
+        .join(format!(".inplace-big.txt-{DEAD_PID}-1.tmp"));
+    std::fs::write(&copy, &expected).unwrap();
+    let mut recovery = InplaceWriteRecovery::new(file_path.clone(), copy.clone(), 0, 0, 0o644);
+    recovery.pid = DEAD_PID;
+    let meta = recovery_dir.join(format!("{}.inplace.json", path_hash(&file_path)));
+    std::fs::write(&meta, serde_json::to_string(&recovery).unwrap()).unwrap();
+
+    fresh::model::buffer::save::clean_up_inplace_write_recoveries(&StdFileSystem, &recovery_dir);
+    assert!(copy.exists() && meta.exists(), "the sweep keeps it");
+    let offered =
+        fresh::model::buffer::save::kept_inplace_write_recoveries(&StdFileSystem, &recovery_dir);
+    assert_eq!(
+        offered.iter().map(|r| &r.temp_path).collect::<Vec<_>>(),
+        vec![&copy],
+        "a copy that holds up saves must be offered"
+    );
+    assert!(buffer.save(&recovery_dir).is_err(), "and it holds them up");
+}
+
 /// Issue #3382: a large file's save reads the unchanged parts back from the
 /// file, at the offsets it had when loaded. An in-place write that fails
 /// part-way leaves the file torn, with new content at its start; when the
