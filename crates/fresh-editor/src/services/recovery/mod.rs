@@ -150,6 +150,11 @@ impl RecoveryService {
         }
 
         self.storage.create_session_lock()?;
+        match self.storage.remove_stale_temp_files() {
+            Ok(0) => {}
+            Ok(n) => tracing::info!("Removed {} stale recovery temp file(s)", n),
+            Err(e) => tracing::warn!("Failed to clean up stale recovery temp files: {}", e),
+        }
         self.session_started = true;
         tracing::info!("Recovery session started");
         Ok(())
@@ -419,6 +424,22 @@ mod tests {
         // End session
         service.end_session_accounting(&[], &[]).unwrap();
         assert!(!service.session_started);
+    }
+
+    /// A recovery save interrupted by a crash leaves its hidden temp file in
+    /// the recovery directory, and nothing else ever removes it; the next
+    /// session does.
+    #[test]
+    fn start_session_removes_stale_recovery_temp_files() {
+        let (mut service, temp) = create_test_service();
+        let stale = temp
+            .path()
+            .join(format!(".abc.meta.json.{}.0.tmp", 2_000_000_000u32));
+        std::fs::write(&stale, b"partial").unwrap();
+
+        service.start_session().unwrap();
+
+        assert!(!stale.exists());
     }
 
     /// Issue #3189: a clean exit must not delete recovery data this session

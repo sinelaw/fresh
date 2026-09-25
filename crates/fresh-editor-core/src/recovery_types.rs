@@ -319,7 +319,7 @@ pub enum RecoveryResult {
 
 /// Check if a process with the given PID is running
 #[cfg(unix)]
-fn is_process_running(pid: u32) -> bool {
+pub fn is_process_running(pid: u32) -> bool {
     // On Unix, we can use kill with signal 0 to check if process exists
     // Returns 0 if process exists and we can signal it
     // Returns -1 with EPERM if process exists but we can't signal it
@@ -334,7 +334,7 @@ fn is_process_running(pid: u32) -> bool {
 }
 
 #[cfg(windows)]
-fn is_process_running(pid: u32) -> bool {
+pub fn is_process_running(pid: u32) -> bool {
     use windows_sys::Win32::Foundation::{CloseHandle, STILL_ACTIVE};
     use windows_sys::Win32::System::Threading::{
         GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
@@ -353,7 +353,7 @@ fn is_process_running(pid: u32) -> bool {
 }
 
 #[cfg(not(any(unix, windows)))]
-fn is_process_running(_pid: u32) -> bool {
+pub fn is_process_running(_pid: u32) -> bool {
     // On other platforms, assume not running (safer for recovery)
     false
 }
