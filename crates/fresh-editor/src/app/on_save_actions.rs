@@ -50,6 +50,7 @@ impl Editor {
         // If whitespace cleanup made changes, re-save
         if ran_any_action {
             if let Err(e) = self.active_state_mut().buffer.save() {
+                self.discard_sudo_save_temp(&e);
                 return Err(format!("Failed to re-save after whitespace cleanup: {}", e));
             }
             self.active_event_log_mut().mark_saved();
@@ -77,6 +78,7 @@ impl Editor {
                         self.replace_buffer_with_output(&output)?;
                         // Re-save after formatting
                         if let Err(e) = self.active_state_mut().buffer.save() {
+                            self.discard_sudo_save_temp(&e);
                             return Err(format!("Failed to re-save after format: {}", e));
                         }
                         self.active_event_log_mut().mark_saved();
