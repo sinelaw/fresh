@@ -166,6 +166,15 @@ mod tests {
         );
     }
 
+    /// The message a plural form belongs to: `Some("a.b")` for `"a.b.few"`
+    /// when `keys` also holds `"a.b.other"`, which every count-dependent
+    /// message has.
+    fn plural_base<'a>(key: &'a str, keys: &HashSet<String>) -> Option<&'a str> {
+        let (base, category) = key.rsplit_once('.')?;
+        let is_category = ["zero", "one", "two", "few", "many", "other"].contains(&category);
+        (is_category && keys.contains(&format!("{base}.other"))).then_some(base)
+    }
+
     /// Validate that all locale files have the same keys as the English locale.
     /// This ensures translations are complete and no keys are missing.
     #[test]
@@ -215,22 +224,48 @@ mod tests {
                 .cloned()
                 .collect();
 
-            // Find missing keys
-            let missing: Vec<_> = en_keys.difference(&locale_keys).collect();
+            // Find missing keys. A count-dependent message is a set of
+            // plural forms (`key.one`, `key.other`, ...), and each locale
+            // needs the forms *its* grammar uses rather than English's: every
+            // category its rule gives some count, plus `other`.
+            let mut missing: Vec<String> = en_keys
+                .iter()
+                .filter(|k| plural_base(k, &en_keys).is_none())
+                .filter(|k| !locale_keys.contains(*k))
+                .cloned()
+                .collect();
+            let plural_bases: HashSet<&str> = en_keys
+                .iter()
+                .filter_map(|k| plural_base(k, &en_keys))
+                .collect();
+            let categories: HashSet<&str> = (0..=1000u64)
+                .map(|n| fresh_i18n::plural_category(locale, n).suffix())
+                .chain(["other"])
+                .collect();
+            for base in &plural_bases {
+                for category in &categories {
+                    let key = format!("{base}.{category}");
+                    if !locale_keys.contains(&key) {
+                        missing.push(key);
+                    }
+                }
+            }
             if !missing.is_empty() {
                 // Sort for consistent error messages
-                let mut missing_sorted: Vec<_> = missing.into_iter().collect();
-                missing_sorted.sort();
+                missing.sort();
                 panic!(
                     "Locale '{}' is missing {} keys: {:?}",
                     locale,
-                    missing_sorted.len(),
-                    missing_sorted
+                    missing.len(),
+                    missing
                 );
             }
 
             // Optionally warn about extra keys (locale has keys not in English)
-            let extra: Vec<_> = locale_keys.difference(&en_keys).collect();
+            let extra: Vec<_> = locale_keys
+                .difference(&en_keys)
+                .filter(|k| plural_base(k, &locale_keys).is_none())
+                .collect();
             if !extra.is_empty() {
                 let mut extra_sorted: Vec<_> = extra.into_iter().collect();
                 extra_sorted.sort();
