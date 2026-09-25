@@ -1287,3 +1287,97 @@ fn test_live_diff_shift_jis_file_diffs_against_decoded_baseline() {
     );
     assert!(changed[0].contains("appended_marker"), "{screen}");
 }
+
+/// The WARN-and-above records emitted on this thread while `run` runs, as
+/// text. The editor handles plugin commands on the thread that ticks it.
+fn warnings_during(run: impl FnOnce()) -> String {
+    #[derive(Clone, Default)]
+    struct Captured(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+    impl std::io::Write for Captured {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Captured {
+        type Writer = Captured;
+        fn make_writer(&'a self) -> Self::Writer {
+            self.clone()
+        }
+    }
+
+    let captured = Captured::default();
+    let subscriber = tracing_subscriber::fmt()
+        .with_writer(captured.clone())
+        .with_max_level(tracing::Level::WARN)
+        .with_ansi(false)
+        .finish();
+    tracing::subscriber::with_default(subscriber, run);
+    let bytes = captured.0.lock().unwrap().clone();
+    String::from_utf8_lossy(&bytes).into_owned()
+}
+
+/// A HEAD move refreshes every buffer Live Diff tracks, including one in a
+/// background window. Its recompute then asked for the buffer's text, which
+/// buffer commands look up in the active window only: each refresh logged
+/// the cross-window warning and a "Buffer … not found" error. It waits for
+/// its window instead, and catches up when that window comes back.
+#[test]
+#[cfg_attr(target_os = "windows", ignore)]
+fn test_live_diff_waits_for_a_background_windows_buffer() {
+    let repo = GitTestRepo::new();
+    repo.setup_live_diff_plugin();
+    repo.create_file("src/demo.txt", "line one\nline two\n");
+    repo.git_add(&["src/demo.txt"]);
+    repo.git_commit("init");
+    let _guard = repo.change_to_repo_dir();
+    repo.modify_file("src/demo.txt", "line one\nline two\nline three ADDED\n");
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+    enable_live_diff_globally(&mut harness);
+    open_file(&mut harness, &repo.path, "src/demo.txt");
+    harness
+        .wait_until(|h| has_glyph(&h.screen_to_string(), '+'))
+        .unwrap();
+
+    // Move to another window, then commit the change and refocus.
+    let first = harness.editor().active_window_id();
+    let other = tempfile::TempDir::new().unwrap();
+    let second = harness
+        .editor_mut()
+        .create_window_at(other.path().to_path_buf(), "other".to_string());
+    harness.editor_mut().set_active_window(second);
+    harness
+        .wait_until(|h| !h.screen_to_string().contains("demo.txt"))
+        .unwrap();
+    repo.git_add_all();
+    repo.git_commit("commit the added line");
+
+    let warnings = warnings_during(|| {
+        harness.editor_mut().focus_gained();
+        harness.wait_for_async_quiescence(10).unwrap();
+    });
+    assert!(
+        !warnings.contains("another window"),
+        "a background window's buffer must not be recomputed through the active \
+         window:\n{warnings}"
+    );
+
+    // Back in its window, the buffer matches HEAD and the `+` clears.
+    harness.editor_mut().set_active_window(first);
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            screen.contains("line three ADDED") && !has_glyph(&screen, '+')
+        })
+        .unwrap();
+}
