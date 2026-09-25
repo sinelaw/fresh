@@ -670,6 +670,37 @@ impl RecoveryStorage {
         Ok(entries)
     }
 
+    /// Remove temp files [`Self::atomic_write`] left behind when its process
+    /// died between creating and renaming them; nothing else ever deletes
+    /// them. One whose process is still running (another editor sharing this
+    /// directory, mid-write) is left alone. Returns how many were removed.
+    pub fn remove_stale_temp_files(&self) -> io::Result<usize> {
+        let entries = match fs::read_dir(&self.recovery_dir) {
+            Ok(entries) => entries,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(0),
+            Err(e) => return Err(e),
+        };
+        let mut removed = 0;
+        for entry in entries {
+            let entry = entry?;
+            let Some(pid) = entry.file_name().to_str().and_then(atomic_write_temp_pid) else {
+                continue;
+            };
+            if super::types::is_process_running(pid) {
+                continue;
+            }
+            match fs::remove_file(entry.path()) {
+                Ok(()) => removed += 1,
+                Err(e) => tracing::debug!(
+                    "Failed to remove stale recovery temp file {}: {}",
+                    entry.path().display(),
+                    e
+                ),
+            }
+        }
+        Ok(removed)
+    }
+
     // ========================================================================
     // Helper methods
     // ========================================================================
@@ -702,6 +733,23 @@ impl RecoveryStorage {
         }
         result
     }
+}
+
+/// The pid in the name of a temp file [`RecoveryStorage::atomic_write`]
+/// creates (`.<name>.<pid>.<n>.tmp`, see
+/// [`crate::model::filesystem::sibling_temp_path`]), or `None` for any other
+/// file — including the `.inplace-*.tmp` copies staged for in-place writes,
+/// which are recovery data themselves.
+fn atomic_write_temp_pid(file_name: &str) -> Option<u32> {
+    if file_name.starts_with(".inplace-") {
+        return None;
+    }
+    let rest = file_name.strip_prefix('.')?.strip_suffix(".tmp")?;
+    let mut parts = rest.rsplitn(3, '.');
+    parts.next()?.parse::<u64>().ok()?;
+    let pid = parts.next()?.parse().ok()?;
+    parts.next().filter(|name| !name.is_empty())?;
+    Some(pid)
 }
 
 impl Default for RecoveryStorage {
@@ -812,6 +860,35 @@ mod tests {
 
         // Verify it's gone
         assert!(storage.load_entry(id).unwrap().is_none());
+    }
+
+    /// A temp file `atomic_write` left behind when its process died is
+    /// removed; one of a live process, and anything that isn't such a temp
+    /// file, is kept.
+    #[test]
+    fn remove_stale_temp_files_only_removes_dead_processes_temp_files() {
+        let (storage, temp) = create_test_storage();
+        let dir = temp.path();
+        // Far above any pid_max, so never a running process.
+        let dead = format!(".abc.chunk.0.{}.3.tmp", 2_000_000_000u32);
+        let live = format!(".abc.chunk.1.{}.4.tmp", std::process::id());
+        let kept = [
+            live.as_str(),
+            "abc.meta.json",
+            "foo.tmp",
+            ".inplace-notes.txt-2000000000-17.tmp",
+            ".2000000000.3.tmp",
+        ];
+        for name in kept.iter().chain([&dead.as_str()]) {
+            fs::write(dir.join(name), b"x").unwrap();
+        }
+
+        assert_eq!(storage.remove_stale_temp_files().unwrap(), 1);
+
+        assert!(!dir.join(&dead).exists());
+        for name in kept {
+            assert!(dir.join(name).exists(), "{name} must be kept");
+        }
     }
 
     #[test]
