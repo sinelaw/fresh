@@ -2303,9 +2303,10 @@ impl Editor {
     ///
     /// Per slot, because a mode reaches a panel two ways. A dock or a
     /// floating panel names the mode it mounted with, and one mounted
-    /// without a mode has no keymap: the window's editor mode belongs to the
-    /// buffer (vi keeps "vi-normal" there), so a panel that borrowed it would
-    /// hand its arrows and Esc to whichever plugin owns that slot. A pane's
+    /// without a mode has no keymap: the window's editor mode and the
+    /// editor-wide input mode (vi's) belong to the buffer, so a panel that
+    /// borrowed them would hand its arrows and Esc to whichever plugin owns
+    /// them. A pane's
     /// panel resolves against its buffer's mode (`setBufferMode`). A sidebar
     /// section takes its keys through `widget_event` and never through a
     /// mode, so it has none. Read by the description (the capture leg's

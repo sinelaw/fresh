@@ -1283,6 +1283,16 @@ pub struct Editor {
     /// nothing.
     pub(crate) pane_mirrors: HashMap<crate::widgets::PanelKey, Vec<String>>,
 
+    /// The editor-wide **input mode**: a modal-editing personality such as
+    /// vi, set by a plugin with `setInputMode`. Editor state, not window
+    /// state, because it is a preference about how the user types, not
+    /// about any one workspace: it applies in every window — one created
+    /// after it was set included — and nothing window-scoped can clear it.
+    /// A window's own `Window::editor_mode` outranks it there, and a
+    /// buffer's or a focused panel's mode outranks both
+    /// (`Editor::effective_mode`).
+    pub(crate) input_mode: Option<String>,
+
     /// Request the event loop to suspend the process (SIGTSTP on Unix).
     /// Consumed by the outer event loop after the current action returns.
     suspend_requested: bool,
