@@ -417,47 +417,122 @@ fn create_temp_file(
     Ok((SudoSaveTempFile::new(fs, temp_path), file))
 }
 
-/// Create a temporary file in the recovery directory for in-place writes.
-/// This allows recovery if a crash occurs during the in-place write operation.
+/// Create the file an in-place write stages its copy of the new content in
+/// (see [`write_in_place_staged`]), readable only by its owner: it holds the
+/// file's content where the file's own permissions don't guard it.
 ///
-/// Readable only by its owner: it holds the file's content, but not in the
-/// file's directory, so the file's own permissions don't guard it.
-fn create_recovery_temp_file(
+/// In the recovery directory, where a copy is found again after a crash —
+/// or, when that can't be written (under `su`, `$HOME` may still be another
+/// user's; its disk may be full), next to the file itself, or else in the
+/// system temp directory (issue #3381): a large file's save can't go ahead
+/// without a copy anywhere, since it reads the unchanged parts back from the
+/// file it overwrites. The recovery metadata points at the copy wherever it
+/// is.
+///
+/// If no place works, the error says so, and is out of space only if the
+/// file's own directory is (so writing the file without a copy would
+/// probably fail part-way too), or the recovery directory is and nothing
+/// says the file's isn't.
+fn create_staging_file(
     fs: &dyn FileSystem,
     recovery_dir: &Path,
     dest_path: &Path,
 ) -> io::Result<(PathBuf, Box<dyn FileWriter>)> {
-    // Ensure directory exists
-    fs.create_dir_all(recovery_dir)?;
-
-    // Create unique filename based on destination file and timestamp; only
-    // the start of a long file name, so the name stays within the limits of
-    // filesystems that allow short names (issue #3409)
+    // Named after the destination; only the start of a long file name, so
+    // the name stays within the limits of filesystems that allow short
+    // names (issue #3409)
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
-    let pid = std::process::id();
-
     let temp_name = format!(
-        ".inplace-{}-{}-{}.tmp",
+        "{STAGED_PREFIX}{}-{}-{timestamp}{STAGED_SUFFIX}",
         crate::model::filesystem::temp_name_stem(dest_path),
-        pid,
-        timestamp
+        std::process::id(),
     );
-    let temp_path = recovery_dir.join(temp_name);
 
-    let file = fs.create_new_private_file(&temp_path)?;
-    Ok((temp_path, file))
+    let mut errors = Vec::new();
+    for (i, dir) in staging_dirs(recovery_dir, dest_path)
+        .into_iter()
+        .enumerate()
+    {
+        let temp_path = dir.join(&temp_name);
+        // Only the recovery directory is ours to create
+        let created = if i == 0 {
+            fs.create_dir_all(&dir)
+        } else {
+            Ok(())
+        };
+        match created.and_then(|()| fs.create_new_private_file(&temp_path)) {
+            Ok(file) => {
+                if !errors.is_empty() {
+                    tracing::warn!(
+                        "Staged the copy of {} for its in-place save in {} ({})",
+                        dest_path.display(),
+                        dir.display(),
+                        describe_staging_errors(&errors)
+                    );
+                }
+                return Ok((temp_path, file));
+            }
+            Err(e) => errors.push((dir, e)),
+        }
+    }
+    let beside_file_full = errors.get(1).is_some_and(|(_, e)| is_out_of_space(e));
+    let beside_file_not_full = errors
+        .get(1)
+        .is_some_and(|(_, e)| e.kind() != io::ErrorKind::PermissionDenied && !is_out_of_space(e));
+    let kind = if beside_file_full
+        || (!beside_file_not_full && errors.first().is_some_and(|(_, e)| is_out_of_space(e)))
+    {
+        io::ErrorKind::StorageFull
+    } else {
+        io::ErrorKind::Other
+    };
+    Err(io::Error::new(
+        kind,
+        format!(
+            "couldn't stage a copy of the new content anywhere ({})",
+            describe_staging_errors(&errors)
+        ),
+    ))
 }
 
-/// Whether `path` is a copy [`create_recovery_temp_file`] staged in `dir`.
-fn is_staged_copy_in(path: &Path, dir: &Path) -> bool {
-    path.parent() == Some(dir)
-        && path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .is_some_and(|n| n.starts_with(".inplace-") && n.ends_with(".tmp"))
+/// Where [`create_staging_file`] tries to stage a copy for `dest_path`, in
+/// order: the recovery directory, the file's own directory, the system
+/// temp directory.
+fn staging_dirs(recovery_dir: &Path, dest_path: &Path) -> Vec<PathBuf> {
+    let mut dirs = vec![recovery_dir.to_path_buf()];
+    if let Some(parent) = dest_path.parent().filter(|p| !p.as_os_str().is_empty()) {
+        dirs.push(parent.to_path_buf());
+    }
+    dirs.push(std::env::temp_dir());
+    dirs
+}
+
+fn describe_staging_errors(errors: &[(PathBuf, io::Error)]) -> String {
+    errors
+        .iter()
+        .map(|(dir, e)| format!("{}: {e}", dir.display()))
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
+const STAGED_PREFIX: &str = ".inplace-";
+const STAGED_SUFFIX: &str = ".tmp";
+
+/// Whether `path` is a copy [`create_staging_file`] staged for `dest_path`:
+/// named like one, in one of the places it stages. Recovery metadata is
+/// only trusted to name such a file for removal.
+fn is_staged_copy(path: &Path, recovery_dir: &Path, dest_path: &Path) -> bool {
+    path.file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(|n| n.starts_with(STAGED_PREFIX) && n.ends_with(STAGED_SUFFIX))
+        && path.parent().is_some_and(|parent| {
+            staging_dirs(recovery_dir, dest_path)
+                .iter()
+                .any(|dir| dir == parent)
+        })
 }
 
 /// Write in-place recovery metadata using fs.
@@ -507,9 +582,9 @@ fn write_inplace_recovery_meta(
             .ok()
             .filter(|previous| {
                 previous.temp_path != temp_path
-                    && meta_path
-                        .parent()
-                        .is_some_and(|dir| is_staged_copy_in(&previous.temp_path, dir))
+                    && meta_path.parent().is_some_and(|recovery_dir| {
+                        is_staged_copy(&previous.temp_path, recovery_dir, dest_path)
+                    })
                     && (previous.is_ours() || !previous.is_in_progress())
             })
             .map(|previous| previous.temp_path);
@@ -645,7 +720,7 @@ pub fn resolve_inplace_write_recovery(fs: &dyn FileSystem, recovery_dir: &Path, 
         return;
     }
     // Best-effort cleanup of files the completed save made obsolete
-    if is_staged_copy_in(&recovery.temp_path, recovery_dir) {
+    if is_staged_copy(&recovery.temp_path, recovery_dir, dest_path) {
         #[allow(clippy::let_underscore_must_use)]
         let _ = fs.remove_file(&recovery.temp_path);
     }
@@ -680,7 +755,7 @@ pub fn clean_up_inplace_write_recoveries(fs: &dyn FileSystem, recovery_dir: &Pat
         }
         if !fs.exists(&recovery.temp_path) {
             remove(&meta_path);
-        } else if is_staged_copy_in(&recovery.temp_path, recovery_dir)
+        } else if is_staged_copy(&recovery.temp_path, recovery_dir, &recovery.dest_path)
             && same_content(fs, &recovery.temp_path, &recovery.dest_path).unwrap_or(false)
         {
             remove(&recovery.temp_path);
@@ -741,10 +816,19 @@ fn save_with_inplace_write(
         return write_data_inplace(fs, dest_path, &data, original_metadata, recovery_dir);
     }
 
-    // Step 1: Write recipe to a temp file in the recovery directory
+    // Step 1: Write recipe to a temp file in the recovery directory (or
+    // wherever it can be staged, see `create_staging_file`)
     // This reads Copy chunks from the original file (still intact) and writes to temp.
     // Using the recovery directory allows crash recovery if the operation fails.
-    let (temp_path, mut temp_file) = create_recovery_temp_file(&**fs, recovery_dir, dest_path)?;
+    // Unlike a fully loaded buffer's, this content can't be written without
+    // a staged copy: the Copy chunks come from the file being overwritten.
+    let (temp_path, mut temp_file) =
+        create_staging_file(&**fs, recovery_dir, dest_path).map_err(|e| {
+            anyhow::anyhow!(
+                "Can't save {} in place: it is written from a copy staged first, and {e}",
+                dest_path.display()
+            )
+        })?;
     if let Err(e) = write_recipe(fs, &mut temp_file, recipe) {
         // Best-effort cleanup of temp file on write failure
         #[allow(clippy::let_underscore_must_use)]
@@ -837,13 +921,13 @@ fn stage_for_sudo(
 /// then it may be the only complete copy of a file that attempt tore (see
 /// [`StagedCopy`]).
 ///
-/// If the copy can't be staged — say the recovery directory isn't writable,
-/// as under `su` with `$HOME` still another user's — the file is written in
-/// place without one, like before staging existed: the error is about the
-/// recovery directory, and passing a `PermissionDenied` on would read as the
-/// *file* needing sudo. Only running out of space stops the write, since the
-/// file is probably on the same full disk, and truncating it then would lose
-/// its content with no copy of the new one anywhere.
+/// The copy goes in the recovery directory, or wherever else it can be
+/// staged ([`create_staging_file`]). If it can't be staged anywhere, the
+/// file is written in place without one, like before staging existed: the
+/// error is about where copies go, not about the file. Only running out of
+/// space stops the write, since the file is probably on the same full disk,
+/// and truncating it then would lose its content with no copy of the new
+/// one anywhere.
 fn write_in_place_staged(
     fs: &dyn FileSystem,
     recovery_dir: &Path,
@@ -855,7 +939,7 @@ fn write_in_place_staged(
         Err(e) if is_out_of_space(&e) => return Err(e),
         Err(e) => {
             tracing::warn!(
-                "Can't stage a copy of {} in the recovery directory ({e}); writing it in place without one",
+                "Can't stage a copy of {} ({e}); writing it in place without one",
                 dest_path.display()
             );
             None
@@ -893,7 +977,7 @@ fn stage_in_place_write<'a>(
     data: &[u8],
 ) -> io::Result<StagedCopy<'a>> {
     let original_metadata = fs.metadata_if_exists(dest_path);
-    let (temp_path, mut temp_file) = create_recovery_temp_file(fs, recovery_dir, dest_path)?;
+    let (temp_path, mut temp_file) = create_staging_file(fs, recovery_dir, dest_path)?;
     let staged = temp_file
         .write_all(data)
         .and_then(|()| temp_file.sync_all());

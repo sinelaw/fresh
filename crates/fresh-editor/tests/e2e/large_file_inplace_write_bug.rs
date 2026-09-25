@@ -1276,3 +1276,260 @@ fn test_inplace_save_of_file_with_250_byte_name() {
     );
     assert!(staged_copies(&recovery_dir).is_empty());
 }
+
+/// A filesystem on which we own no file (so saves go in place), creating
+/// files in some directories fails, and writes to one file can be made to
+/// fail part-way.
+struct FaultyFileSystem {
+    inner: StdFileSystem,
+    /// Creating a file in (or creating) one of these fails with its error.
+    deny_create_in: std::sync::Mutex<Vec<(PathBuf, io::ErrorKind)>>,
+    /// Writes to this file fail once this many bytes have been written.
+    tear: std::sync::Mutex<Option<(PathBuf, usize)>>,
+}
+
+impl FaultyFileSystem {
+    fn new() -> Self {
+        Self {
+            inner: StdFileSystem,
+            deny_create_in: Default::default(),
+            tear: Default::default(),
+        }
+    }
+
+    fn deny_create_in(&self, dir: &Path, kind: io::ErrorKind) {
+        self.deny_create_in
+            .lock()
+            .unwrap()
+            .push((dir.to_path_buf(), kind));
+    }
+
+    fn check_create(&self, dir: Option<&Path>) -> io::Result<()> {
+        for (denied, kind) in self.deny_create_in.lock().unwrap().iter() {
+            if dir.is_some_and(|dir| dir.starts_with(denied)) {
+                return Err(io::Error::new(*kind, "simulated failure to create"));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Writes through to `inner` until `left` bytes are used up, then fails.
+struct TearingFileWriter {
+    inner: Box<dyn FileWriter>,
+    left: usize,
+}
+
+impl std::io::Write for TearingFileWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        if self.left == 0 {
+            return Err(io::Error::other("simulated failure part-way"));
+        }
+        let n = self.inner.write(&buf[..buf.len().min(self.left)])?;
+        self.left -= n;
+        Ok(n)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.inner.flush()
+    }
+}
+
+impl FileWriter for TearingFileWriter {
+    fn sync_all(&self) -> io::Result<()> {
+        self.inner.sync_all()
+    }
+}
+
+impl FileSystem for FaultyFileSystem {
+    fn is_owner(&self, _path: &Path) -> bool {
+        false
+    }
+    fn open_file_for_write(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
+        let inner = self.inner.open_file_for_write(path)?;
+        match &*self.tear.lock().unwrap() {
+            Some((file, left)) if file == path => {
+                Ok(Box::new(TearingFileWriter { inner, left: *left }))
+            }
+            _ => Ok(inner),
+        }
+    }
+    fn create_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
+        self.check_create(path.parent())?;
+        self.inner.create_file(path)
+    }
+    fn create_new_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
+        self.check_create(path.parent())?;
+        self.inner.create_new_file(path)
+    }
+    fn create_new_private_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
+        self.check_create(path.parent())?;
+        self.inner.create_new_private_file(path)
+    }
+    fn create_dir_all(&self, path: &Path) -> io::Result<()> {
+        self.check_create(Some(path))?;
+        self.inner.create_dir_all(path)
+    }
+    fn write_file(&self, path: &Path, data: &[u8]) -> io::Result<()> {
+        self.check_create(path.parent())?;
+        self.inner.write_file(path, data)
+    }
+
+    fn read_file(&self, path: &Path) -> io::Result<Vec<u8>> {
+        self.inner.read_file(path)
+    }
+    fn read_range(&self, path: &Path, offset: u64, len: usize) -> io::Result<Vec<u8>> {
+        self.inner.read_range(path, offset, len)
+    }
+    fn open_file(&self, path: &Path) -> io::Result<Box<dyn FileReader>> {
+        self.inner.open_file(path)
+    }
+    fn open_file_for_append(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
+        self.inner.open_file_for_append(path)
+    }
+    fn set_file_length(&self, path: &Path, len: u64) -> io::Result<()> {
+        self.inner.set_file_length(path, len)
+    }
+    fn rename(&self, from: &Path, to: &Path) -> io::Result<()> {
+        self.inner.rename(from, to)
+    }
+    fn copy(&self, from: &Path, to: &Path) -> io::Result<u64> {
+        self.inner.copy(from, to)
+    }
+    fn remove_file(&self, path: &Path) -> io::Result<()> {
+        self.inner.remove_file(path)
+    }
+    fn remove_dir(&self, path: &Path) -> io::Result<()> {
+        self.inner.remove_dir(path)
+    }
+    fn metadata(&self, path: &Path) -> io::Result<FileMetadata> {
+        self.inner.metadata(path)
+    }
+    fn symlink_metadata(&self, path: &Path) -> io::Result<FileMetadata> {
+        self.inner.symlink_metadata(path)
+    }
+    fn is_dir(&self, path: &Path) -> io::Result<bool> {
+        self.inner.is_dir(path)
+    }
+    fn is_file(&self, path: &Path) -> io::Result<bool> {
+        self.inner.is_file(path)
+    }
+    fn set_permissions(&self, path: &Path, permissions: &FilePermissions) -> io::Result<()> {
+        self.inner.set_permissions(path, permissions)
+    }
+    fn read_dir(&self, path: &Path) -> io::Result<Vec<DirEntry>> {
+        self.inner.read_dir(path)
+    }
+    fn create_dir(&self, path: &Path) -> io::Result<()> {
+        self.inner.create_dir(path)
+    }
+    fn canonicalize(&self, path: &Path) -> io::Result<PathBuf> {
+        self.inner.canonicalize(path)
+    }
+    fn current_uid(&self) -> u32 {
+        self.inner.current_uid()
+    }
+    fn sudo_write(
+        &self,
+        path: &Path,
+        data: &[u8],
+        mode: u32,
+        uid: u32,
+        gid: u32,
+    ) -> io::Result<()> {
+        self.inner.sudo_write(path, data, mode, uid, gid)
+    }
+    fn search_file(
+        &self,
+        path: &Path,
+        pattern: &str,
+        opts: &fresh::model::filesystem::FileSearchOptions,
+        cursor: &mut fresh::model::filesystem::FileSearchCursor,
+    ) -> io::Result<Vec<fresh::model::filesystem::SearchMatch>> {
+        fresh::model::filesystem::default_search_file(&self.inner, path, pattern, opts, cursor)
+    }
+    fn walk(
+        &self,
+        root: &Path,
+        opts: &fresh_editor_core::model::filesystem::WalkOptions<'_>,
+        cancel: &std::sync::atomic::AtomicBool,
+        on_entry: &mut dyn FnMut(fresh_editor_core::model::filesystem::WalkEntry<'_>) -> bool,
+    ) -> std::io::Result<()> {
+        self.inner.walk(root, opts, cancel, on_entry)
+    }
+}
+
+/// A large file of numbered lines in a new temp dir, opened lazily through
+/// `fs`, with "EDITED " inserted at its start. Returns the dir (to keep it
+/// alive), the file's path, and the content saving it should produce.
+fn edited_large_file(fs: Arc<FaultyFileSystem>) -> (TempDir, PathBuf, TextBuffer, String) {
+    let dir = TempDir::new().unwrap();
+    let file_path = dir.path().join("big.txt");
+    let original: String = (0..500).map(|i| format!("Line {i:04}\n")).collect();
+    std::fs::write(&file_path, &original).unwrap();
+    let mut buffer = TextBuffer::load_from_file(&file_path, 1024, fs).unwrap();
+    assert!(buffer.is_large_file());
+    buffer.insert_bytes(0, b"EDITED ".to_vec());
+    (dir, file_path, buffer, format!("EDITED {original}"))
+}
+
+/// Issue #3381: a large file saved in place stages a complete copy of the
+/// new content first, since it reads the unchanged parts back from the file
+/// it is overwriting. When the recovery directory can't take the copy — not
+/// writable (under `su`, `$HOME` may be another user's), or its disk full
+/// while the file's has room — the save failed, reporting a bare error that
+/// read as if it were about the file. It stages the copy elsewhere instead.
+fn check_large_inplace_save_stages_elsewhere(refusal: io::ErrorKind) {
+    let data_dir = TempDir::new().unwrap();
+    let recovery_dir = data_dir.path().join("recovery");
+    let fs = Arc::new(FaultyFileSystem::new());
+    fs.deny_create_in(&recovery_dir, refusal);
+    let (dir, file_path, mut buffer, expected) = edited_large_file(fs);
+
+    buffer
+        .save(&recovery_dir)
+        .expect("the file can be written, so the save must succeed");
+
+    assert_eq!(std::fs::read_to_string(&file_path).unwrap(), expected);
+    let left: Vec<_> = std::fs::read_dir(dir.path())
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    assert_eq!(left, vec![std::ffi::OsString::from("big.txt")]);
+}
+
+#[test]
+#[cfg(unix)]
+fn test_large_inplace_save_with_unwritable_recovery_dir() {
+    check_large_inplace_save_stages_elsewhere(io::ErrorKind::PermissionDenied);
+}
+
+#[test]
+#[cfg(unix)]
+fn test_large_inplace_save_with_full_recovery_dir() {
+    check_large_inplace_save_stages_elsewhere(io::ErrorKind::StorageFull);
+}
+
+/// Issue #3381: when a large file's copy can't be staged anywhere, its save
+/// is refused with an error that says so, rather than a bare "Permission
+/// denied" that points at the file; and the file is left alone.
+#[test]
+#[cfg(unix)]
+fn test_large_inplace_save_with_nowhere_to_stage_says_why() {
+    let data_dir = TempDir::new().unwrap();
+    let recovery_dir = data_dir.path().join("recovery");
+    let fs = Arc::new(FaultyFileSystem::new());
+    fs.deny_create_in(&recovery_dir, io::ErrorKind::PermissionDenied);
+    fs.deny_create_in(&std::env::temp_dir(), io::ErrorKind::PermissionDenied);
+    let (_dir, file_path, mut buffer, _) = edited_large_file(fs);
+    let before = std::fs::read_to_string(&file_path).unwrap();
+
+    let err = buffer.save(&recovery_dir).expect_err("nowhere to stage");
+
+    let msg = err.to_string();
+    assert!(
+        msg.contains("copy") && msg.contains(&recovery_dir.display().to_string()),
+        "the error must say the copy couldn't be staged, and where: {msg}"
+    );
+    assert_eq!(std::fs::read_to_string(&file_path).unwrap(), before);
+}
