@@ -455,15 +455,18 @@ impl FileSystem for WriteDeniedFileSystem {
         self.inner.current_uid()
     }
 
+    /// The elevated write succeeds, as `sudo` would after the password:
+    /// the file the user may not write gets the content. (Without running
+    /// `sudo`, which a test can't.)
     fn sudo_write(
         &self,
         path: &Path,
         data: &[u8],
-        mode: u32,
-        uid: u32,
-        gid: u32,
+        _mode: u32,
+        _uid: u32,
+        _gid: u32,
     ) -> io::Result<()> {
-        self.inner.sudo_write(path, data, mode, uid, gid)
+        self.inner.write_file(path, data)
     }
 
     fn search_file(
@@ -925,4 +928,84 @@ fn quit_with_auto_save_names_the_file_it_could_not_save() {
 
     harness.assert_screen_contains("[ Save and Quit ]");
     harness.assert_screen_contains("notes.txt — could not be saved");
+}
+
+/// Close `notes.txt` (the edited, sudo-only file) with its tab's Save, with
+/// a second file open so another buffer becomes active behind the prompt.
+fn close_unwritable_file_with_save(harness: &mut EditorTestHarness, dir: &Path) {
+    let other = dir.join("other.txt");
+    std::fs::write(&other, "other content\n").unwrap();
+    harness.open_file(&other).unwrap();
+    harness.open_file(&dir.join("notes.txt")).unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("modified original content");
+
+    harness
+        .send_key(KeyCode::Char('w'), KeyModifiers::ALT)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("Unsaved Changes");
+    harness
+        .send_key(KeyCode::Char('s'), KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("Save with sudo");
+}
+
+/// **Save on closing a tab that needs sudo waits for the sudo save**
+/// (issue #3385). The close handler took the prompt opening as a finished
+/// save and closed the tab at once; confirming sudo then marked *whichever
+/// buffer was active by then* as saved to notes.txt.
+#[test]
+fn close_with_save_needing_sudo_closes_only_after_the_save() {
+    let (mut harness, dir, file_path) = dirty_unwritable_file(Config::default());
+    close_unwritable_file_with_save(&mut harness, dir.path());
+
+    // While sudo is being asked about, the tab and its edits are still there.
+    let tabs = harness.screen_row_text(1);
+    assert!(
+        tabs.contains("notes.txt"),
+        "the tab must stay open until the save is done; tab bar: {tabs:?}"
+    );
+
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    assert_eq!(
+        std::fs::read_to_string(&file_path).unwrap(),
+        "modified original content\n",
+        "the sudo save writes the closed buffer's content"
+    );
+    let tabs = harness.screen_row_text(1);
+    assert!(
+        !tabs.contains("notes.txt"),
+        "once saved, the tab closes; tab bar: {tabs:?}"
+    );
+    // The buffer left behind is untouched: still other.txt, unmodified,
+    // not renamed to the saved path.
+    assert!(
+        tabs.contains("other.txt") && !tabs.contains("other.txt*"),
+        "the other buffer must not be finalized in its place; tab bar: {tabs:?}"
+    );
+    harness.assert_screen_contains("other content");
+}
+
+/// Cancelling the sudo prompt of a close-with-Save keeps the tab and its
+/// edits: nothing was saved, so nothing may be dropped.
+#[test]
+fn close_with_save_needing_sudo_cancelled_keeps_the_edits() {
+    let (mut harness, dir, file_path) = dirty_unwritable_file(Config::default());
+    close_unwritable_file_with_save(&mut harness, dir.path());
+
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    harness.assert_screen_contains("notes.txt*");
+    harness.assert_screen_contains("modified original content");
+    assert_eq!(
+        std::fs::read_to_string(&file_path).unwrap(),
+        "original content\n"
+    );
 }

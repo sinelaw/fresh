@@ -90,9 +90,30 @@ pub struct ExitSaveOutcome {
     pub changed_on_disk: Vec<PathBuf>,
 }
 
+/// How far an interactive save of the active buffer got.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SaveProgress {
+    /// The buffer is saved.
+    Saved,
+    /// A prompt is open that the save waits on (save with sudo, create the
+    /// missing directory): nothing is written yet, and the prompt's answer
+    /// decides whether anything will be.
+    Pending,
+}
+
 impl Editor {
     /// Save the active buffer
     pub fn save(&mut self) -> anyhow::Result<()> {
+        self.save_active(false).map(|_| ())
+    }
+
+    /// Save the active buffer, reporting whether the save finished or is
+    /// waiting on a prompt.
+    ///
+    /// `close_after_save` rides along to the sudo prompt, which closes the
+    /// buffer once it has written it: the close-with-Save flow must not
+    /// close a tab whose save has not happened (issue #3385).
+    pub(crate) fn save_active(&mut self, close_after_save: bool) -> anyhow::Result<SaveProgress> {
         // Fail fast if remote connection is down
         if !self.authority().filesystem.is_remote_connected() {
             anyhow::bail!(
@@ -112,7 +133,7 @@ impl Editor {
 
         let recovery_dir = self.dir_context.recovery_dir();
         match self.active_state_mut().buffer.save(&recovery_dir) {
-            Ok(()) => self.finalize_save(path),
+            Ok(()) => self.finalize_save(path).map(|()| SaveProgress::Saved),
             Err(e) => match e.downcast::<SudoSaveRequired>() {
                 // The prompt takes the temp file over: it lives as long as
                 // the prompt does, and is deleted however the prompt ends.
@@ -131,9 +152,13 @@ impl Editor {
                         ],
                     )
                     .detail(info.dest_path.display().to_string());
-                    let info = std::sync::Arc::new(info);
-                    self.start_confirm_prompt(body, PromptType::ConfirmSudoSave { info }, confirm);
-                    Ok(())
+                    let prompt = PromptType::ConfirmSudoSave {
+                        info: std::sync::Arc::new(info),
+                        buffer_id: self.active_buffer(),
+                        close_after_save,
+                    };
+                    self.start_confirm_prompt(body, prompt, confirm);
+                    Ok(SaveProgress::Pending)
                 }
                 Err(e) => {
                     if let Some(path) = path {
@@ -156,7 +181,7 @@ impl Editor {
                                         PromptType::ConfirmCreateDirectory { path },
                                         confirm,
                                     );
-                                    return Ok(());
+                                    return Ok(SaveProgress::Pending);
                                 }
                             }
                         }

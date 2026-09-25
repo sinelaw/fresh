@@ -111,8 +111,14 @@ pub enum PromptType {
     /// Confirm saving with sudo after permission denied. Holds the save's
     /// temp file, which is deleted when the last copy of this prompt type
     /// drops — however the prompt ends.
+    ///
+    /// `buffer_id` is the buffer being saved, which the sudo write finalizes
+    /// whichever buffer is active by then; with `close_after_save` it is
+    /// closed once saved (Save on closing its tab).
     ConfirmSudoSave {
         info: std::sync::Arc<crate::model::buffer::SudoSaveRequired>,
+        buffer_id: crate::model::event::BufferId,
+        close_after_save: bool,
     },
     /// Restore, show the difference from, or discard the copy an
     /// interrupted in-place save of `dest_path` kept (or decide later)
