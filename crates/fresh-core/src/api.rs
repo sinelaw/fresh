@@ -6192,8 +6192,9 @@ pub enum PluginCommand {
         /// resolve against first — the panel's own keymap, ahead of the
         /// widget that holds focus. A dock declares its chords here rather
         /// than through the window's editor mode, which is the buffer's
-        /// and would shadow or be shadowed by it. `None` keeps the
-        /// window's editor mode as the panel's keymap, as before.
+        /// and would shadow or be shadowed by it. `None`: the panel has no
+        /// keymap — the keys its focused control passes go to the panel's
+        /// own defaults (Tab, Esc), never to the window's editor mode.
         #[serde(default)]
         mode: Option<String>,
     },

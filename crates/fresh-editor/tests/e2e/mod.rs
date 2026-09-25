@@ -266,6 +266,8 @@ pub mod overlay_extend_to_line_end;
 pub mod pane_navigation;
 #[cfg(feature = "plugins")]
 pub mod panel_mode_window_switch_leak;
+#[cfg(feature = "plugins")]
+pub mod panel_without_mode;
 pub mod paste;
 pub mod per_buffer_view_settings;
 pub mod per_session_authority;
