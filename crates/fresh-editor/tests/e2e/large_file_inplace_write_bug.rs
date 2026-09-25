@@ -919,3 +919,135 @@ fn test_small_file_inplace_write_cleans_up_staged_copy() {
         .unwrap_or_default();
     assert!(leftovers.is_empty(), "left behind: {leftovers:?}");
 }
+
+/// The `.inplace-*.tmp` files staged in the recovery directory.
+fn staged_copies(recovery_dir: &Path) -> Vec<PathBuf> {
+    let mut staged: Vec<PathBuf> = std::fs::read_dir(recovery_dir)
+        .map(|dir| dir.map(|e| e.unwrap().path()).collect())
+        .unwrap_or_default();
+    staged.retain(|p| {
+        p.file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| n.starts_with(".inplace-"))
+    });
+    staged
+}
+
+/// The copy staged for an in-place write holds the file's content outside
+/// the file's own directory, so it must be readable by its owner only — not
+/// created with the umask default (0644) in a world-readable data dir.
+#[test]
+#[cfg(unix)]
+fn test_inplace_staged_copy_is_private() {
+    use std::os::unix::fs::PermissionsExt;
+    let data_dir = TempDir::new().unwrap();
+    let _pin = crate::common::global_state::pin_data_dir(data_dir.path());
+
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("secret.txt");
+    std::fs::write(&file_path, "original line\n").unwrap();
+    std::fs::set_permissions(&file_path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let crash_fs = Arc::new(CrashDuringStreamFileSystem::new(
+        Arc::new(StdFileSystem),
+        file_path.clone(),
+    ));
+    let mut buffer = TextBuffer::load_from_file(&file_path, 1024 * 1024, crash_fs).unwrap();
+    buffer.insert_bytes(0, b"EDITED: ".to_vec());
+    assert!(buffer.save().is_err(), "the simulated failure must surface");
+
+    let staged = staged_copies(&data_dir.path().join("recovery"));
+    assert_eq!(staged.len(), 1, "staged: {staged:?}");
+    let mode = std::fs::metadata(&staged[0]).unwrap().permissions().mode();
+    assert_eq!(mode & 0o777, 0o600, "staged copy mode {:o}", mode & 0o777);
+}
+
+/// Every failed in-place write of a file used to leave its own staged copy
+/// and point the file's metadata at the newest, orphaning the rest — one
+/// more copy per auto-save interval while the failure lasted. The latest
+/// copy supersedes the earlier ones, so only it is kept.
+#[test]
+#[cfg(unix)]
+fn test_repeated_inplace_write_failures_keep_one_staged_copy() {
+    let data_dir = TempDir::new().unwrap();
+    let _pin = crate::common::global_state::pin_data_dir(data_dir.path());
+    let recovery_dir = data_dir.path().join("recovery");
+
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("small.txt");
+    std::fs::write(&file_path, "original line\n").unwrap();
+    let crash_fs = Arc::new(CrashDuringStreamFileSystem::new(
+        Arc::new(StdFileSystem),
+        file_path.clone(),
+    ));
+    let mut buffer = TextBuffer::load_from_file(&file_path, 1024 * 1024, crash_fs).unwrap();
+    for attempt in 0..3 {
+        buffer.insert_bytes(0, format!("{attempt}").into_bytes());
+        assert!(buffer.save().is_err(), "the simulated failure must surface");
+    }
+
+    let staged = staged_copies(&recovery_dir);
+    assert_eq!(staged.len(), 1, "staged: {staged:?}");
+    let hash = fresh::services::recovery::path_hash(&file_path);
+    let meta = std::fs::read_to_string(recovery_dir.join(format!("{hash}.inplace.json"))).unwrap();
+    let recovery: fresh::services::recovery::InplaceWriteRecovery =
+        serde_json::from_str(&meta).unwrap();
+    assert_eq!(recovery.temp_path, staged[0]);
+    assert_eq!(
+        std::fs::read_to_string(&staged[0]).unwrap(),
+        "210original line\n",
+        "the copy kept is the latest attempt's"
+    );
+}
+
+/// What a crash in the middle of an in-place write leaves in the top-level
+/// recovery directory is cleaned up when a session starts — where nothing
+/// is lost by it: a staged copy its destination already matches, metadata
+/// whose staged copy is gone, and a half-written metadata temp file. A
+/// staged copy that differs from its destination may be the only copy of
+/// what was being saved, and is kept.
+#[test]
+#[cfg(unix)]
+fn test_session_start_cleans_up_resolved_inplace_recoveries() {
+    use fresh::services::recovery::{path_hash, InplaceWriteRecovery};
+    let data_dir = TempDir::new().unwrap();
+    let _pin = crate::common::global_state::pin_data_dir(data_dir.path());
+    let recovery_dir = data_dir.path().join("recovery");
+    std::fs::create_dir_all(&recovery_dir).unwrap();
+    let files = TempDir::new().unwrap();
+    // No process has this pid (it's above any pid_max), so it "crashed".
+    const DEAD_PID: u32 = 2_000_000_000;
+
+    let plant = |name: &str, on_disk: &str, staged: Option<&str>| -> (PathBuf, PathBuf) {
+        let dest = files.path().join(name);
+        std::fs::write(&dest, on_disk).unwrap();
+        let temp = recovery_dir.join(format!(".inplace-{name}-{DEAD_PID}-1.tmp"));
+        if let Some(staged) = staged {
+            std::fs::write(&temp, staged).unwrap();
+        }
+        let mut recovery = InplaceWriteRecovery::new(dest.clone(), temp.clone(), 0, 0, 0o644);
+        recovery.pid = DEAD_PID;
+        let meta = recovery_dir.join(format!("{}.inplace.json", path_hash(&dest)));
+        std::fs::write(&meta, serde_json::to_string(&recovery).unwrap()).unwrap();
+        (temp, meta)
+    };
+    let (done_temp, done_meta) = plant("done.txt", "new\n", Some("new\n"));
+    let (torn_temp, torn_meta) = plant("torn.txt", "ne", Some("new\n"));
+    let (_, gone_meta) = plant("gone.txt", "x\n", None);
+    let meta_temp = recovery_dir.join(format!(".0123456789abcdef.inplace.json.{DEAD_PID}.3.tmp"));
+    std::fs::write(&meta_temp, "{").unwrap();
+    let live_meta_temp = recovery_dir.join(format!(
+        ".0123456789abcdef.inplace.json.{}.4.tmp",
+        std::process::id()
+    ));
+    std::fs::write(&live_meta_temp, "{").unwrap();
+
+    let removed = fresh::model::buffer::save::clean_up_inplace_write_recoveries();
+
+    for gone in [&done_temp, &done_meta, &gone_meta, &meta_temp] {
+        assert!(!gone.exists(), "{gone:?} should have been removed");
+    }
+    for kept in [&torn_temp, &torn_meta, &live_meta_temp] {
+        assert!(kept.exists(), "{kept:?} must be kept");
+    }
+    assert_eq!(removed, 4);
+}

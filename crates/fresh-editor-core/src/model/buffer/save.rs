@@ -10,6 +10,7 @@ use super::persistence::Persistence;
 use crate::model::encoding::Encoding;
 use crate::model::filesystem::{FileMetadata, FileSystem, FileWriter, WriteOp};
 use crate::model::piece_tree::{BufferData, BufferLocation, PieceTree, StringBuffer};
+use crate::recovery_types::InplaceWriteRecovery;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -304,16 +305,25 @@ pub(super) fn create_temp_file(
     }
 }
 
+/// Where in-place writes stage their content and recovery metadata:
+/// `$XDG_DATA_HOME/fresh/recovery` (or `~/.local/share/fresh/recovery`) —
+/// the top of the recovery tree, not a session's scoped directory.
+fn inplace_recovery_dir() -> PathBuf {
+    crate::data_dir::get_data_dir()
+        .map(|d| d.join("recovery"))
+        .unwrap_or_else(|_| std::env::temp_dir())
+}
+
 /// Create a temporary file in the recovery directory for in-place writes.
 /// This allows recovery if a crash occurs during the in-place write operation.
+///
+/// Readable only by its owner: it holds the file's content, but not in the
+/// file's directory, so the file's own permissions don't guard it.
 fn create_recovery_temp_file(
     fs: &dyn FileSystem,
     dest_path: &Path,
 ) -> io::Result<(PathBuf, Box<dyn FileWriter>)> {
-    // Get recovery directory: $XDG_DATA_HOME/fresh/recovery or ~/.local/share/fresh/recovery
-    let recovery_dir = crate::data_dir::get_data_dir()
-        .map(|d| d.join("recovery"))
-        .unwrap_or_else(|_| std::env::temp_dir());
+    let recovery_dir = inplace_recovery_dir();
 
     // Ensure directory exists
     fs.create_dir_all(&recovery_dir)?;
@@ -336,19 +346,24 @@ fn create_recovery_temp_file(
     );
     let temp_path = recovery_dir.join(temp_name);
 
-    let file = fs.create_file(&temp_path)?;
+    let file = fs.create_new_private_file(&temp_path)?;
     Ok((temp_path, file))
+}
+
+/// Whether `path` is a copy [`create_recovery_temp_file`] staged in `dir`.
+fn is_staged_copy_in(path: &Path, dir: &Path) -> bool {
+    path.parent() == Some(dir)
+        && path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| n.starts_with(".inplace-") && n.ends_with(".tmp"))
 }
 
 /// Get the path for in-place write recovery metadata.
 /// Uses the same recovery directory as temp files.
 fn inplace_recovery_meta_path(dest_path: &Path) -> PathBuf {
-    let recovery_dir = crate::data_dir::get_data_dir()
-        .map(|d| d.join("recovery"))
-        .unwrap_or_else(|_| std::env::temp_dir());
-
     let hash = crate::recovery_types::path_hash(dest_path);
-    recovery_dir.join(format!("{}.inplace.json", hash))
+    inplace_recovery_dir().join(format!("{}.inplace.json", hash))
 }
 
 /// Write in-place recovery metadata using fs.
@@ -374,7 +389,7 @@ fn write_inplace_recovery_meta(
     #[cfg(not(unix))]
     let (uid, gid, mode) = (0u32, 0u32, 0o644u32);
 
-    let recovery = crate::recovery_types::InplaceWriteRecovery::new(
+    let recovery = InplaceWriteRecovery::new(
         dest_path.to_path_buf(),
         temp_path.to_path_buf(),
         uid,
@@ -385,7 +400,128 @@ fn write_inplace_recovery_meta(
     let json = serde_json::to_string_pretty(&recovery)
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
-    fs.write_file(meta_path, json.as_bytes())
+    let previous = fs
+        .read_file(meta_path)
+        .ok()
+        .and_then(|json| serde_json::from_slice::<InplaceWriteRecovery>(&json).ok());
+    fs.write_file(meta_path, json.as_bytes())?;
+
+    // One staged copy per destination: the metadata was the only pointer to
+    // the copy an earlier attempt left (a failed write, or a crash), and the
+    // complete copy just staged for the same file supersedes it. Without
+    // this, every failing auto-save left one more copy behind.
+    if let Some(previous) = previous {
+        let superseded = previous.temp_path != temp_path
+            && meta_path
+                .parent()
+                .is_some_and(|dir| is_staged_copy_in(&previous.temp_path, dir))
+            && (previous.pid == std::process::id() || !previous.is_in_progress());
+        if superseded {
+            // Best-effort cleanup of a copy nothing points at any more
+            #[allow(clippy::let_underscore_must_use)]
+            let _ = fs.remove_file(&previous.temp_path);
+        }
+    }
+    Ok(())
+}
+
+/// Clean up after in-place writes (see [`write_in_place_staged`]) whose
+/// process died before it could, in the directory they are staged in:
+///
+/// * a staged copy whose destination now holds exactly its content (the
+///   write got that far, or the file was saved again since), with its
+///   metadata;
+/// * metadata whose staged copy is gone;
+/// * the temp files of metadata writes a crash interrupted
+///   (`.<hash>.inplace.json.<pid>.<n>.tmp`).
+///
+/// A staged copy that differs from its destination may be the only intact
+/// copy of what was being saved, so it is kept and logged, never aged out.
+/// Entries of a process still running are left alone. Returns how many files
+/// were removed.
+pub fn clean_up_inplace_write_recoveries() -> usize {
+    let dir = inplace_recovery_dir();
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return 0;
+    };
+    let mut removed = 0;
+    let mut remove = |path: &Path| match std::fs::remove_file(path) {
+        Ok(()) => removed += 1,
+        Err(e) => tracing::debug!("Failed to remove {}: {}", path.display(), e),
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        if name.contains(".inplace.json.") {
+            let dead = crate::model::filesystem::sibling_temp_pid(name)
+                .is_some_and(|pid| !crate::recovery_types::is_process_running(pid));
+            if dead {
+                remove(&path);
+            }
+            continue;
+        }
+        if !name.ends_with(".inplace.json") {
+            continue;
+        }
+        let Some(recovery) = std::fs::read(&path)
+            .ok()
+            .and_then(|json| serde_json::from_slice::<InplaceWriteRecovery>(&json).ok())
+        else {
+            continue;
+        };
+        if recovery.is_in_progress() {
+            continue;
+        }
+        if !recovery.temp_path.exists() {
+            remove(&path);
+        } else if is_staged_copy_in(&recovery.temp_path, &dir)
+            && same_content(&recovery.temp_path, &recovery.dest_path).unwrap_or(false)
+        {
+            remove(&recovery.temp_path);
+            remove(&path);
+        } else {
+            tracing::warn!(
+                "An interrupted save of {} left the content being saved in {}",
+                recovery.dest_path.display(),
+                recovery.temp_path.display()
+            );
+        }
+    }
+    removed
+}
+
+/// Whether two files hold the same bytes.
+fn same_content(a: &Path, b: &Path) -> io::Result<bool> {
+    use std::io::Read;
+    if std::fs::metadata(a)?.len() != std::fs::metadata(b)?.len() {
+        return Ok(false);
+    }
+    let fill = |file: &mut std::fs::File, buf: &mut [u8]| -> io::Result<usize> {
+        let mut filled = 0;
+        while filled < buf.len() {
+            match file.read(&mut buf[filled..]) {
+                Ok(0) => break,
+                Ok(n) => filled += n,
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(filled)
+    };
+    let (mut file_a, mut file_b) = (std::fs::File::open(a)?, std::fs::File::open(b)?);
+    let (mut buf_a, mut buf_b) = (vec![0u8; 64 * 1024], vec![0u8; 64 * 1024]);
+    loop {
+        let n = fill(&mut file_a, &mut buf_a)?;
+        let m = fill(&mut file_b, &mut buf_b)?;
+        if buf_a[..n] != buf_b[..m] {
+            return Ok(false);
+        }
+        if n == 0 {
+            return Ok(true);
+        }
+    }
 }
 
 /// Write using in-place mode to preserve file ownership.

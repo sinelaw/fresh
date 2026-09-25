@@ -744,12 +744,7 @@ fn atomic_write_temp_pid(file_name: &str) -> Option<u32> {
     if file_name.starts_with(".inplace-") {
         return None;
     }
-    let rest = file_name.strip_prefix('.')?.strip_suffix(".tmp")?;
-    let mut parts = rest.rsplitn(3, '.');
-    parts.next()?.parse::<u64>().ok()?;
-    let pid = parts.next()?.parse().ok()?;
-    parts.next().filter(|name| !name.is_empty())?;
-    Some(pid)
+    crate::model::filesystem::sibling_temp_pid(file_name)
 }
 
 impl Default for RecoveryStorage {
