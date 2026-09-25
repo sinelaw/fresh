@@ -142,6 +142,10 @@ impl Editor {
             }
             PromptType::GotoLine => {
                 let buffer_id = self.active_buffer();
+                let current_line_1based = self
+                    .active_window()
+                    .primary_cursor_line(self.effective_active_split(), buffer_id)
+                    + 1;
                 if let Some(state) = self
                     .windows
                     .get(&self.active_window)
@@ -150,10 +154,10 @@ impl Editor {
                     .get(&buffer_id)
                 {
                     let max_line = state.buffer.line_count().unwrap_or(1);
-                    let current_line = state.primary_cursor_line_number.value() + 1;
                     match crate::input::quick_open::parse_goto_line_input(&input) {
                         Some(target) => {
-                            let line = resolve_goto_line_target(target, current_line, max_line);
+                            let line =
+                                resolve_goto_line_target(target, current_line_1based, max_line);
                             self.goto_line_col(line, None);
                             self.set_status_message(t!("goto.jumped", line = line).to_string());
                         }
@@ -1807,6 +1811,10 @@ impl Editor {
                     return PromptResult::Done;
                 }
                 let buffer_id = self.active_buffer();
+                let current_line_1based = self
+                    .active_window()
+                    .primary_cursor_line(self.effective_active_split(), buffer_id)
+                    + 1;
                 if let Some(state) = self
                     .windows
                     .get(&self.active_window)
@@ -1815,8 +1823,7 @@ impl Editor {
                     .get(&buffer_id)
                 {
                     let max_line = state.buffer.line_count().unwrap_or(1);
-                    let current_line = state.primary_cursor_line_number.value() + 1;
-                    let line = resolve_goto_line_target(target, current_line, max_line);
+                    let line = resolve_goto_line_target(target, current_line_1based, max_line);
                     self.goto_line_col(line, None);
                     self.set_status_message(t!("goto.jumped", line = line).to_string());
                 } else {

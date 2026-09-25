@@ -1,4 +1,4 @@
-use crate::model::buffer::{Buffer, LineNumber};
+use crate::model::buffer::Buffer;
 use crate::model::cursor::{Cursor, Cursors};
 use crate::model::document_model::{
     DocumentCapabilities, DocumentModel, DocumentPosition, ViewportContent, ViewportLine,
@@ -298,12 +298,6 @@ pub struct EditorState {
     /// Margins for line numbers, annotations, gutter symbols, etc.)
     pub margins: MarginManager,
 
-    /// Cached line number for primary cursor (0-indexed)
-    /// Maintained incrementally to avoid O(n) scanning on every render.
-    /// Every path that moves the primary cursor must refresh this, or the status
-    /// bar shows stale coordinates (see `set_buffer_cursor_in_splits`).
-    pub primary_cursor_line_number: LineNumber,
-
     /// Current mode (for modal editing, if implemented)
     pub mode: String,
 
@@ -513,7 +507,6 @@ impl EditorState {
             soft_breaks: SoftBreakManager::new(),
             popups: PopupManager::new(),
             margins: MarginManager::new(),
-            primary_cursor_line_number: LineNumber::Absolute(0),
             mode: "insert".to_string(),
             text_properties: TextPropertyManager::new(),
             show_cursors: true,
@@ -854,7 +847,6 @@ impl EditorState {
         text: &str,
         cursor_id: crate::model::event::CursorId,
     ) {
-        let newlines_inserted = text.matches('\n').count();
         let (line_before, line_start_before, line_end_before) =
             self.wrap_damage_coords(position, 0);
 
@@ -903,20 +895,6 @@ impl EditorState {
             cursor.sticky_column = None;
             cursor.virtual_lines_below = 0;
         }
-
-        // Update primary cursor line number if this was the primary cursor
-        if cursor_id == cursors.primary_id() {
-            self.primary_cursor_line_number = match self.primary_cursor_line_number {
-                LineNumber::Absolute(line) => LineNumber::Absolute(line + newlines_inserted),
-                LineNumber::Relative {
-                    line,
-                    from_cached_line,
-                } => LineNumber::Relative {
-                    line: line + newlines_inserted,
-                    from_cached_line,
-                },
-            };
-        }
     }
 
     /// Handle a Delete event - adjusts markers, buffer, highlighter, cursors, and line numbers
@@ -925,25 +903,10 @@ impl EditorState {
         cursors: &mut Cursors,
         range: &std::ops::Range<usize>,
         cursor_id: crate::model::event::CursorId,
-        deleted_text: &str,
     ) {
         let len = range.len();
         let (line_before, line_start_before, line_end_before) =
             self.wrap_damage_coords(range.start, len);
-
-        // Count newlines deleted BEFORE the primary cursor's original position.
-        // For backspace: cursor was at range.end, so all deleted newlines are before it.
-        // For forward delete: cursor was at range.start, so no deleted newlines are before it.
-        let primary_newlines_removed = if cursor_id == cursors.primary_id() {
-            let cursor_pos = cursors.get(cursor_id).map_or(range.start, |c| c.position);
-            let bytes_before_cursor = cursor_pos
-                .saturating_sub(range.start)
-                .min(len)
-                .min(deleted_text.len());
-            deleted_text[..bytes_before_cursor].matches('\n').count()
-        } else {
-            0
-        };
 
         // Drop virtual texts whose anchors are being erased. This is what
         // makes inlay hints disappear immediately when the range containing
@@ -994,22 +957,6 @@ impl EditorState {
             cursor.sticky_column = None;
             cursor.virtual_lines_below = 0;
         }
-
-        // Update primary cursor line number if this was the primary cursor
-        if cursor_id == cursors.primary_id() && primary_newlines_removed > 0 {
-            self.primary_cursor_line_number = match self.primary_cursor_line_number {
-                LineNumber::Absolute(line) => {
-                    LineNumber::Absolute(line.saturating_sub(primary_newlines_removed))
-                }
-                LineNumber::Relative {
-                    line,
-                    from_cached_line,
-                } => LineNumber::Relative {
-                    line: line.saturating_sub(primary_newlines_removed),
-                    from_cached_line,
-                },
-            };
-        }
     }
 
     /// Apply an event to the state - THE ONLY WAY TO MODIFY STATE
@@ -1023,10 +970,8 @@ impl EditorState {
             } => self.apply_insert(cursors, *position, text, *cursor_id),
 
             Event::Delete {
-                range,
-                cursor_id,
-                deleted_text,
-            } => self.apply_delete(cursors, range, *cursor_id, deleted_text),
+                range, cursor_id, ..
+            } => self.apply_delete(cursors, range, *cursor_id),
 
             Event::MoveCursor {
                 cursor_id,
@@ -1050,8 +995,6 @@ impl EditorState {
 
             Event::RemoveCursor { cursor_id, .. } => {
                 cursors.remove(*cursor_id);
-                // Removing the primary hands the role to another cursor.
-                self.sync_primary_cursor_line_number(cursors.primary().position);
             }
 
             // View events (Scroll, Recenter) are now handled at Editor level
@@ -1261,36 +1204,19 @@ impl EditorState {
                 cursor.virtual_lines_below = vlines;
             }
         }
-
-        // Update primary cursor line number if this is the primary cursor.
-        if cursor_id == cursors.primary_id() {
-            self.sync_primary_cursor_line_number(new_position);
-        }
     }
 
-    /// Recompute the cached primary cursor line number from
-    /// `primary_position`, the primary cursor's current byte offset.
+    /// The 0-indexed line `position` is on.
     ///
-    /// `primary_cursor_line_number` is a cache the status bar (and the
-    /// relative line-number gutter) read instead of resolving the primary
-    /// cursor's line on every frame. [`Self::apply_move_cursor`] keeps it in
-    /// step for the cursor it moves, but only while that cursor is the
-    /// primary. Anything that changes *which* cursor is primary — adding one
-    /// (the new cursor becomes primary), removing one — or that writes cursor
-    /// positions without a `MoveCursor` (the multi-cursor bulk-edit path)
-    /// must call this too, or the status bar keeps reporting the line of a
-    /// cursor that is no longer the primary, while the column, read live,
-    /// is right (#3167).
-    pub(crate) fn sync_primary_cursor_line_number(&mut self, primary_position: usize) {
-        // Try to get exact line number from buffer, or estimate for large files.
-        self.primary_cursor_line_number = match self.buffer.offset_to_position(primary_position) {
-            Some(pos) => LineNumber::Absolute(pos.line),
-            None => {
-                // Large file without line metadata - estimate line number
-                // using the default estimated_line_length of 80 bytes.
-                LineNumber::Absolute(primary_position / 80)
-            }
-        };
+    /// Derived on demand rather than cached: the piece tree keeps line-feed
+    /// counts per node, so this is a tree descent, not a scan. The status bar
+    /// used to read a per-buffer cache of the primary cursor's line instead,
+    /// which every path that placed a cursor had to refresh by hand; each one
+    /// that did not left the bar showing the wrong line (#2301, #3167,
+    /// #3397). A buffer loaded without line metadata has no exact answer, so
+    /// the line is estimated from the configured average line length.
+    pub fn line_of_position(&self, position: usize) -> usize {
+        self.buffer.get_line_number(position)
     }
 
     /// Insert a cursor under the exact id carried by the event. The id is
@@ -1315,9 +1241,6 @@ impl EditorState {
                 crate::model::virtual_space::cursor_virtual_lines(mode, &self.buffer, c),
             )
         });
-        // The added cursor is now the primary (or, if normalization merged
-        // it away, whichever cursor took over): the cached line must follow.
-        self.sync_primary_cursor_line_number(cursors.primary().position);
     }
 
     /// Materialize an `AddOverlay` event into a tracked [`Overlay`].
@@ -1470,9 +1393,6 @@ impl EditorState {
 
         // Invalidate highlight cache for entire buffer
         self.highlighter.invalidate_all();
-
-        // Update primary cursor line number
-        self.sync_primary_cursor_line_number(cursors.primary().position);
     }
 
     /// Replay the marker and margin position adjustments recorded for a bulk

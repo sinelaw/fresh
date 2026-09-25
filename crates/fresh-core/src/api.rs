@@ -1590,8 +1590,7 @@ pub struct EditorStateSnapshot {
     /// Primary cursor position for the active buffer
     pub primary_cursor: Option<CursorInfo>,
     /// Primary cursor's line number (0-indexed) for the active buffer.
-    /// Mirrors the editor's `primary_cursor_line_number` cache so plugins
-    /// can read "what line is the cursor on" without scanning the buffer.
+    /// The line the status bar's `Ln` shows (see `Editor::primary_cursor_line`).
     /// `None` when there is no active view state (e.g. before the first
     /// buffer is loaded).
     #[serde(default)]

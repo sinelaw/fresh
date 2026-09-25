@@ -2372,7 +2372,7 @@ fn test_plain_click_collapses_multiple_cursors() {
 /// The status bar's line number must follow the primary cursor when cursors
 /// are added or removed, not only when one is moved (#3167).
 ///
-/// `primary_cursor_line_number` is a cache that `MoveCursor` refreshed but
+/// `primary_cursor_line_number` was a cache that `MoveCursor` refreshed but
 /// `AddCursor` / `RemoveCursor` and the multi-cursor bulk-edit path did not,
 /// so after `Ctrl+Alt+Down` the bar kept the old cursor's line next to the
 /// new cursor's column, and the first arrow key appeared to jump two lines.

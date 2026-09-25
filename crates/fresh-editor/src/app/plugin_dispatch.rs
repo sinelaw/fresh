@@ -6973,6 +6973,7 @@ impl Window {
         // which is what `editor.getCursorPosition()` then sees.
         let active_buf_id = snapshot.active_buffer_id;
         let active_split_id = self.effective_active_pair().0;
+        let primary_cursor_line = self.primary_cursor_line(active_split_id, active_buf_id) as u32;
         // Captured before the closure borrows `self`: the panes' rects are
         // derived from the same area the renderer lays out into, so the
         // geometry a plugin reads matches the cells actually drawn.
@@ -7010,16 +7011,9 @@ impl Window {
                         line: line_of(primary_position),
                     });
 
-                    // Mirror the editor's cached primary cursor line number so
-                    // `getCursorLine()` returns a meaningful value without the
-                    // plugin runtime having to scan the buffer. Falls back to
-                    // 0 if the active buffer state isn't available.
-                    snapshot.primary_cursor_line = Some(
-                        buffers_mut
-                            .get(&active_buf_id)
-                            .map(|s| s.primary_cursor_line_number.value() as u32)
-                            .unwrap_or(0),
-                    );
+                    // What the status bar's `Ln` shows, so `getCursorLine()`
+                    // agrees with it — a composite view's source line included.
+                    snapshot.primary_cursor_line = Some(primary_cursor_line);
 
                     snapshot.all_cursors = active_cursors
                         .iter()
