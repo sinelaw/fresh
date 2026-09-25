@@ -368,13 +368,16 @@ fn inplace_recovery_meta_path(dest_path: &Path) -> PathBuf {
 
 /// Write in-place recovery metadata using fs.
 /// This is called before the dangerous streaming step so we can recover on crash.
+///
+/// Returns what the metadata held before, for [`StagedCopy`] to restore if
+/// the write never touches the file, or to supersede once it does.
 fn write_inplace_recovery_meta(
     fs: &dyn FileSystem,
     meta_path: &Path,
     dest_path: &Path,
     temp_path: &Path,
     original_metadata: &Option<FileMetadata>,
-) -> io::Result<()> {
+) -> io::Result<Option<PreviousMeta>> {
     #[cfg(unix)]
     let (uid, gid, mode) = original_metadata
         .as_ref()
@@ -400,29 +403,131 @@ fn write_inplace_recovery_meta(
     let json = serde_json::to_string_pretty(&recovery)
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
-    let previous = fs
-        .read_file(meta_path)
-        .ok()
-        .and_then(|json| serde_json::from_slice::<InplaceWriteRecovery>(&json).ok());
+    let previous = fs.read_file(meta_path).ok().map(|json| {
+        // One staged copy per destination: the metadata is the only pointer
+        // to the copy an earlier attempt left (a failed write, or a crash),
+        // and a complete copy staged for the same file supersedes it once
+        // the file is being overwritten with it. Without this, every
+        // failing auto-save left one more copy behind.
+        let superseded_copy = serde_json::from_slice::<InplaceWriteRecovery>(&json)
+            .ok()
+            .filter(|previous| {
+                previous.temp_path != temp_path
+                    && meta_path
+                        .parent()
+                        .is_some_and(|dir| is_staged_copy_in(&previous.temp_path, dir))
+                    && (previous.pid == std::process::id() || !previous.is_in_progress())
+            })
+            .map(|previous| previous.temp_path);
+        PreviousMeta {
+            json,
+            superseded_copy,
+        }
+    });
     fs.write_file(meta_path, json.as_bytes())?;
+    Ok(previous)
+}
 
-    // One staged copy per destination: the metadata was the only pointer to
-    // the copy an earlier attempt left (a failed write, or a crash), and the
-    // complete copy just staged for the same file supersedes it. Without
-    // this, every failing auto-save left one more copy behind.
-    if let Some(previous) = previous {
-        let superseded = previous.temp_path != temp_path
-            && meta_path
-                .parent()
-                .is_some_and(|dir| is_staged_copy_in(&previous.temp_path, dir))
-            && (previous.pid == std::process::id() || !previous.is_in_progress());
-        if superseded {
-            // Best-effort cleanup of a copy nothing points at any more
-            #[allow(clippy::let_underscore_must_use)]
-            let _ = fs.remove_file(&previous.temp_path);
+/// The recovery metadata a [`StagedCopy`] replaced.
+struct PreviousMeta {
+    /// Its content, to put back if the new copy is discarded.
+    json: Vec<u8>,
+    /// The earlier staged copy it pointed at, if the new one may supersede
+    /// it (see [`write_inplace_recovery_meta`]).
+    superseded_copy: Option<PathBuf>,
+}
+
+/// A complete copy of what an in-place write is about to put in a file,
+/// staged in the recovery directory, with the recovery metadata pointing at
+/// it (when that could be written).
+///
+/// The file may already be torn by an earlier attempt, with the metadata
+/// pointing at *that* attempt's copy — then the only complete copy on disk.
+/// So the earlier copy is removed only once the file has been opened for
+/// writing ([`StagedCopy::supersede_previous`]), when the new copy is what
+/// the file needs to be recovered to; if the file is never opened, the new
+/// copy goes and the metadata is put back as it was.
+struct StagedCopy<'a> {
+    fs: &'a dyn FileSystem,
+    temp_path: PathBuf,
+    meta_path: PathBuf,
+    /// `None` if the metadata couldn't be written, so it still describes
+    /// whatever was staged before; otherwise what it held before.
+    meta: Option<Option<PreviousMeta>>,
+}
+
+impl<'a> StagedCopy<'a> {
+    /// Point the recovery metadata of `dest_path` at `temp_path`, a complete
+    /// copy of the content about to be written to it.
+    fn new(
+        fs: &'a dyn FileSystem,
+        dest_path: &Path,
+        temp_path: PathBuf,
+        original_metadata: &Option<FileMetadata>,
+    ) -> Self {
+        let meta_path = inplace_recovery_meta_path(dest_path);
+        // Best effort - the staged copy alone is still worth having
+        let meta =
+            write_inplace_recovery_meta(fs, &meta_path, dest_path, &temp_path, original_metadata)
+                .ok();
+        Self {
+            fs,
+            temp_path,
+            meta_path,
+            meta,
         }
     }
-    Ok(())
+
+    /// The file is open for writing, so about to be truncated: from here on
+    /// this copy is the one to recover it to, and the one staged before it
+    /// can go.
+    fn supersede_previous(&mut self) {
+        if let Some(Some(previous)) = self.meta.as_mut() {
+            if let Some(copy) = previous.superseded_copy.take() {
+                // Best-effort cleanup of a copy nothing points at any more
+                #[allow(clippy::let_underscore_must_use)]
+                let _ = self.fs.remove_file(&copy);
+            }
+        }
+    }
+
+    /// The write completed: neither the copy nor its metadata is needed.
+    fn finish(self) {
+        // Best-effort cleanup of files that are no longer needed
+        #[allow(clippy::let_underscore_must_use)]
+        let _ = self.fs.remove_file(&self.temp_path);
+        if self.meta.is_some() {
+            #[allow(clippy::let_underscore_must_use)]
+            let _ = self.fs.remove_file(&self.meta_path);
+        }
+    }
+
+    /// The file was never opened, so this attempt truncated nothing: remove
+    /// the copy and put the metadata back as it was.
+    fn discard(self) {
+        let fs = self.fs;
+        let temp_path = self.release();
+        // Best-effort cleanup of a copy that is no longer needed
+        #[allow(clippy::let_underscore_must_use)]
+        let _ = fs.remove_file(&temp_path);
+    }
+
+    /// Like [`StagedCopy::discard`], but keep the copy and hand it over
+    /// (to the sudo fallback, which removes it when done).
+    fn release(self) -> PathBuf {
+        // Best effort: at worst the metadata keeps pointing at this copy
+        #[allow(clippy::let_underscore_must_use)]
+        match self.meta {
+            Some(Some(previous)) => {
+                let _ = self.fs.write_file(&self.meta_path, &previous.json);
+            }
+            Some(None) => {
+                let _ = self.fs.remove_file(&self.meta_path);
+            }
+            None => {}
+        }
+        self.temp_path
+    }
 }
 
 /// Clean up after in-place writes (see [`write_in_place_staged`]) whose
@@ -565,42 +670,29 @@ pub(super) fn save_with_inplace_write(
 
     // Step 1.5: Save recovery metadata before the dangerous step
     // If we crash during step 2, this metadata + temp file allows recovery
-    let recovery_meta_path = inplace_recovery_meta_path(dest_path);
-    // Best effort - don't fail the save if we can't write recovery metadata
-    #[allow(clippy::let_underscore_must_use)]
-    let _ = write_inplace_recovery_meta(
-        &**fs,
-        &recovery_meta_path,
-        dest_path,
-        &temp_path,
-        &original_metadata,
-    );
+    let mut staged = StagedCopy::new(&**fs, dest_path, temp_path, &original_metadata);
 
     // Step 2: Stream temp file content to destination
     // Now it's safe to truncate the destination since all data is in temp
     match fs.open_file_for_write(dest_path) {
         Ok(mut out_file) => {
-            if let Err(e) = stream_file_to_writer(fs, &temp_path, &mut out_file) {
-                // Don't delete temp file or recovery metadata - allow recovery
-                return Err(e.into());
-            }
+            staged.supersede_previous();
+            // On failure from here on, keep the staged copy for recovery
+            stream_file_to_writer(fs, &staged.temp_path, &mut out_file)?;
             out_file.sync_all()?;
-            // Success! Clean up temp file and recovery metadata (best-effort)
-            #[allow(clippy::let_underscore_must_use)]
-            let _ = fs.remove_file(&temp_path);
-            #[allow(clippy::let_underscore_must_use)]
-            let _ = fs.remove_file(&recovery_meta_path);
+            drop(out_file);
+            staged.finish();
             Ok(())
         }
         Err(e) if e.kind() == io::ErrorKind::PermissionDenied => {
-            // Can't write to destination - trigger sudo fallback
-            // Keep temp file for sudo to use, clean up recovery metadata (best-effort)
-            #[allow(clippy::let_underscore_must_use)]
-            let _ = fs.remove_file(&recovery_meta_path);
+            // Can't write to destination - trigger sudo fallback with the
+            // staged copy, which it removes when done
+            let temp_path = staged.release();
             Err(make_sudo_error(temp_path, dest_path, original_metadata))
         }
         Err(e) => {
-            // Don't delete temp file or recovery metadata - allow recovery
+            // Nothing was truncated, so nothing needs recovering
+            staged.discard();
             Err(e.into())
         }
     }
@@ -637,7 +729,10 @@ pub(super) fn write_data_inplace(
 /// directory with [`crate::recovery_types::InplaceWriteRecovery`] metadata
 /// pointing at it, as [`save_with_inplace_write`] does. The staged copy is
 /// removed once the write succeeds (or if the file can't be opened, so
-/// nothing was truncated) and kept if the write fails part-way.
+/// nothing was truncated) and kept if the write fails part-way. A copy an
+/// earlier attempt staged is only superseded once the file is open — until
+/// then it may be the only complete copy of a file that attempt tore (see
+/// [`StagedCopy`]).
 ///
 /// If the copy can't be staged — say the recovery directory isn't writable,
 /// as under `su` with `$HOME` still another user's — the file is written in
@@ -651,7 +746,7 @@ pub(crate) fn write_in_place_staged(
     dest_path: &Path,
     data: &[u8],
 ) -> io::Result<()> {
-    let staged = match stage_in_place_write(fs, dest_path, data) {
+    let mut staged = match stage_in_place_write(fs, dest_path, data) {
         Ok(staged) => Some(staged),
         Err(e) if is_out_of_space(&e) => return Err(e),
         Err(e) => {
@@ -662,39 +757,36 @@ pub(crate) fn write_in_place_staged(
             None
         }
     };
-    let discard_staged = || {
-        if let Some((temp_path, meta_path)) = &staged {
-            // Best-effort cleanup of files that are no longer needed
-            #[allow(clippy::let_underscore_must_use)]
-            let _ = fs.remove_file(temp_path);
-            #[allow(clippy::let_underscore_must_use)]
-            let _ = fs.remove_file(meta_path);
-        }
-    };
 
     let mut out_file = match fs.open_file_for_write(dest_path) {
         Ok(file) => file,
         Err(e) => {
-            discard_staged();
+            if let Some(staged) = staged {
+                staged.discard();
+            }
             return Err(e);
         }
     };
+    if let Some(staged) = staged.as_mut() {
+        staged.supersede_previous();
+    }
     // On failure from here on, keep the staged copy for recovery.
     out_file.write_all(data)?;
     out_file.sync_all()?;
     drop(out_file);
-    discard_staged();
+    if let Some(staged) = staged {
+        staged.finish();
+    }
     Ok(())
 }
 
 /// Stage `data` for [`write_in_place_staged`]: write it to a new file in the
 /// recovery directory and (best effort) the metadata pointing at it.
-/// Returns the paths of both.
-fn stage_in_place_write(
-    fs: &dyn FileSystem,
+fn stage_in_place_write<'a>(
+    fs: &'a dyn FileSystem,
     dest_path: &Path,
     data: &[u8],
-) -> io::Result<(PathBuf, PathBuf)> {
+) -> io::Result<StagedCopy<'a>> {
     let original_metadata = fs.metadata_if_exists(dest_path);
     let (temp_path, mut temp_file) = create_recovery_temp_file(fs, dest_path)?;
     let staged = temp_file
@@ -707,11 +799,12 @@ fn stage_in_place_write(
         let _ = fs.remove_file(&temp_path);
         return Err(e);
     }
-    let meta_path = inplace_recovery_meta_path(dest_path);
-    // Best effort - the staged copy alone is still worth having
-    #[allow(clippy::let_underscore_must_use)]
-    let _ = write_inplace_recovery_meta(fs, &meta_path, dest_path, &temp_path, &original_metadata);
-    Ok((temp_path, meta_path))
+    Ok(StagedCopy::new(
+        fs,
+        dest_path,
+        temp_path,
+        &original_metadata,
+    ))
 }
 
 /// Whether `e` means the disk (or the user's quota on it) is full.
