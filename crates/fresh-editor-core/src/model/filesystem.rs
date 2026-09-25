@@ -1478,6 +1478,18 @@ impl StdFileSystem {
         })
     }
 
+    /// The mode to create a save's temp file with, given the original's: its
+    /// permission bits, plus owner read and write. Linux lets only a process
+    /// that may write a file set its `user.*` xattrs (and read them only if
+    /// it may read it), so a temp file created e.g. 0444 like a read-only
+    /// original would silently lose them in [`Self::copy_owner_and_xattrs`].
+    /// Adding owner bits exposes nothing — the owner could chmod the file
+    /// anyway — and the original's exact mode is set once the xattrs are.
+    #[cfg(unix)]
+    fn temp_file_mode(original_mode: u32) -> u32 {
+        (original_mode & 0o777) | 0o600
+    }
+
     /// Give `temp` the owner, group and extended attributes (on Linux these
     /// include POSIX ACLs) of `original`, which describes `path`, so renaming
     /// it over `path` doesn't change them (issue #3348).
@@ -1729,9 +1741,9 @@ impl FileSystem for StdFileSystem {
         }
 
         #[cfg(unix)]
-        let mode = original
-            .as_ref()
-            .map(|m| std::os::unix::fs::PermissionsExt::mode(&m.permissions()));
+        let mode = original.as_ref().map(|m| {
+            Self::temp_file_mode(std::os::unix::fs::PermissionsExt::mode(&m.permissions()))
+        });
         #[cfg(not(unix))]
         let mode = None;
         let (temp_path, mut file) = self.create_temp_file_with_mode(path, mode)?;
@@ -2453,6 +2465,93 @@ mod tests {
             xattr::get(&path, "user.fresh_test").unwrap().as_deref(),
             Some(&b"kept"[..])
         );
+    }
+
+    /// A read-only file's `user.*` xattrs survive a save: Linux lets only a
+    /// process that may write a file set them, so a temp file created with
+    /// the original's 0444 lost every one of them.
+    ///
+    /// Root may write any file, so as root this drops the capabilities that
+    /// let it, for the test's own thread only (capabilities are per-thread on
+    /// Linux; a raw `capset` doesn't broadcast to the others).
+    #[cfg(unix)]
+    #[test]
+    fn atomic_write_preserves_extended_attributes_of_a_read_only_file() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("readonly.txt");
+        std::fs::write(&path, b"old\n").unwrap();
+        if let Err(e) = xattr::set(&path, "user.fresh_test", b"kept") {
+            eprintln!("skipping: user xattrs unsupported here ({e})");
+            return;
+        }
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o444)).unwrap();
+
+        let thread_path = path.clone();
+        let saved = std::thread::spawn(move || {
+            // SAFETY: geteuid has no failure modes.
+            if unsafe { libc::geteuid() } == 0 && !drop_file_access_overrides_on_this_thread() {
+                return None;
+            }
+            Some(StdFileSystem.write_file(&thread_path, b"new\n"))
+        })
+        .join()
+        .unwrap();
+        let Some(saved) = saved else {
+            eprintln!("skipping: running as root and can't drop CAP_DAC_OVERRIDE");
+            return;
+        };
+        saved.unwrap();
+
+        assert_eq!(std::fs::read(&path).unwrap(), b"new\n");
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o444, "the exact mode is restored");
+        assert_eq!(
+            xattr::get(&path, "user.fresh_test").unwrap().as_deref(),
+            Some(&b"kept"[..])
+        );
+    }
+
+    /// Drop the capabilities that let root ignore file permissions from the
+    /// calling thread's effective set. Returns whether that worked.
+    #[cfg(unix)]
+    fn drop_file_access_overrides_on_this_thread() -> bool {
+        #[cfg(target_os = "linux")]
+        {
+            #[repr(C)]
+            struct CapHeader {
+                version: u32,
+                pid: i32,
+            }
+            #[repr(C)]
+            #[derive(Clone, Copy, Default)]
+            struct CapData {
+                effective: u32,
+                permitted: u32,
+                inheritable: u32,
+            }
+            const LINUX_CAPABILITY_VERSION_3: u32 = 0x2008_0522;
+            const CAP_DAC_OVERRIDE: u32 = 1;
+            const CAP_DAC_READ_SEARCH: u32 = 2;
+            const CAP_FOWNER: u32 = 3;
+            let mut header = CapHeader {
+                version: LINUX_CAPABILITY_VERSION_3,
+                pid: 0,
+            };
+            let mut data = [CapData::default(); 2];
+            // SAFETY: `header` and the two-element `data` array are what the
+            // v3 capget/capset ABI reads and writes; pid 0 is this thread.
+            unsafe {
+                if libc::syscall(libc::SYS_capget, &mut header, data.as_mut_ptr()) != 0 {
+                    return false;
+                }
+                data[0].effective &=
+                    !(1 << CAP_DAC_OVERRIDE | 1 << CAP_DAC_READ_SEARCH | 1 << CAP_FOWNER);
+                libc::syscall(libc::SYS_capset, &mut header, data.as_ptr()) == 0
+            }
+        }
+        #[cfg(not(target_os = "linux"))]
+        false
     }
 
     /// An owner/group the saving process can't give the new file (a group a
