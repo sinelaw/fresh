@@ -323,6 +323,9 @@ fn test_save_root_owned_file_shows_sudo_prompt() {
 struct WriteDeniedFileSystem {
     inner: Arc<dyn FileSystem>,
     denied: PathBuf,
+    /// Also refuse to create files in this directory, as for a file in a
+    /// directory the user may not write.
+    denied_dir: Option<PathBuf>,
 }
 
 impl WriteDeniedFileSystem {
@@ -355,6 +358,12 @@ impl FileSystem for WriteDeniedFileSystem {
     }
 
     fn create_new_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
+        if self.denied_dir.is_some() && path.parent() == self.denied_dir.as_deref() {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "simulated: permission denied",
+            ));
+        }
         self.inner.create_new_file(path)
     }
 
@@ -475,6 +484,7 @@ fn dirty_unwritable_file(config: Config) -> (EditorTestHarness, TempDir, PathBuf
     let fs = Arc::new(WriteDeniedFileSystem {
         inner: Arc::new(StdFileSystem),
         denied: file_path.clone(),
+        denied_dir: None,
     });
     let mut harness = EditorTestHarness::create(
         120,
@@ -660,4 +670,51 @@ fn plugin_replace_needing_sudo_leaves_no_temp_file() {
         leftover_temp_files(dir.path()),
         Vec::<std::ffi::OsString>::new()
     );
+}
+
+/// A save that needs sudo leaves the new content in a temp file until the
+/// sudo prompt is answered — next to the file, or in the system temp
+/// directory when the file's own directory can't be written. It was created
+/// with the umask's mode (0644), so a file only its owner could read had its
+/// new content readable by everyone meanwhile. It must be private.
+#[test]
+#[cfg(unix)]
+fn sudo_save_temp_file_is_private() {
+    use fresh::model::buffer::{SudoSaveRequired, TextBuffer};
+    for dir_writable in [true, false] {
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("secret.txt");
+        std::fs::write(&file_path, "original content\n").unwrap();
+        std::fs::set_permissions(&file_path, Permissions::from_mode(0o600)).unwrap();
+        let fs = Arc::new(WriteDeniedFileSystem {
+            inner: Arc::new(StdFileSystem),
+            denied: file_path.clone(),
+            denied_dir: (!dir_writable).then(|| temp_dir.path().to_path_buf()),
+        });
+        let mut buffer = TextBuffer::load_from_file(&file_path, 1024 * 1024, fs).unwrap();
+        buffer.insert_bytes(0, b"modified ".to_vec());
+
+        let err = buffer.save().expect_err("the save must need sudo");
+        let info = err
+            .downcast_ref::<SudoSaveRequired>()
+            .unwrap_or_else(|| panic!("not a sudo save: {err}"))
+            .clone();
+        let mode = std::fs::metadata(&info.temp_path)
+            .unwrap()
+            .permissions()
+            .mode();
+        std::fs::remove_file(&info.temp_path).unwrap();
+        assert_eq!(
+            info.temp_path.parent() == Some(temp_dir.path()),
+            dir_writable,
+            "temp file at {:?}",
+            info.temp_path
+        );
+        assert_eq!(
+            mode & 0o777,
+            0o600,
+            "temp file mode {:o} (file's directory writable: {dir_writable})",
+            mode & 0o777
+        );
+    }
 }

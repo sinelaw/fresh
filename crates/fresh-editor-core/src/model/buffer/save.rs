@@ -283,22 +283,27 @@ pub(super) fn build_write_recipe(
     })
 }
 
-/// Create a temporary file for saving.
+/// Create a temporary file holding a save's new content for the sudo prompt
+/// ([`SudoSaveRequired::temp_path`]).
 ///
-/// Tries to create the file in the same directory as the destination file first
-/// to allow for an atomic rename. If that fails (e.g., due to directory permissions),
-/// falls back to the system temporary directory.
+/// Tries to create the file in the same directory as the destination file first.
+/// If that fails (e.g., due to directory permissions), falls back to the system
+/// temporary directory.
+///
+/// Readable only by its owner either way: it holds the file's content until
+/// the prompt is answered, and the file's own permissions don't carry over
+/// to it (the sudo write sets them on the destination itself).
 pub(super) fn create_temp_file(
     fs: &Arc<dyn FileSystem + Send + Sync>,
     dest_path: &Path,
 ) -> io::Result<(PathBuf, Box<dyn FileWriter>)> {
     // Try creating in same directory first
-    match fs.create_temp_file_for(dest_path) {
+    match fs.create_private_temp_file_for(dest_path) {
         Ok(created) => Ok(created),
         Err(e) if e.kind() == io::ErrorKind::PermissionDenied => {
             // Fallback to system temp directory
             let temp_path = fs.unique_temp_path(dest_path);
-            let file = fs.create_new_file(&temp_path)?;
+            let file = fs.create_new_private_file(&temp_path)?;
             Ok((temp_path, file))
         }
         Err(e) => Err(e),
