@@ -413,6 +413,7 @@
   "buffer.cannot_open_directory": "Không thể mở thư mục như tệp",
   "buffer.changes_discarded": "Đã đóng buffer (bỏ thay đổi)",
   "buffer.close_cancelled": "Đã hủy đóng",
+  "buffer.quit_cancelled": "Đã hủy thoát",
   "buffer.closed": "Đã đóng buffer",
   "buffer.closed_tabs": "Đã đóng %{count} thẻ",
   "buffer.closed_tabs_skipped": "Đã đóng %{closed} thẻ, bỏ qua %{skipped} thẻ đã sửa đổi",

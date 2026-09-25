@@ -430,6 +430,7 @@
   "buffer.cannot_open_directory": "Cannot open directory as file",
   "buffer.changes_discarded": "Buffer closed (changes discarded)",
   "buffer.close_cancelled": "Close cancelled",
+  "buffer.quit_cancelled": "Quit cancelled",
   "buffer.closed": "Buffer closed",
   "buffer.closed_tabs": "Closed %{count} tab(s)",
   "buffer.closed_tabs_skipped": "Closed %{closed} tab(s), skipped %{skipped} modified",

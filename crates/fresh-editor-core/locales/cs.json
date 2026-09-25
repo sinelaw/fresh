@@ -413,6 +413,7 @@
   "buffer.cannot_open_directory": "Nelze otevřít adresář jako soubor",
   "buffer.changes_discarded": "Buffer zavřen (změny zahozeny)",
   "buffer.close_cancelled": "Zavření zrušeno",
+  "buffer.quit_cancelled": "Ukončení zrušeno",
   "buffer.closed": "Vyrovnávací paměť uzavřena",
   "buffer.closed_tabs": "Zavřeno %{count} karet",
   "buffer.closed_tabs_skipped": "Zavřeno %{closed} karet, přeskočeno %{skipped} upravených",

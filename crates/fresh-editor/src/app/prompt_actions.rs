@@ -438,7 +438,7 @@ impl Editor {
             PromptType::ConfirmQuitDaemon => match input.trim() {
                 "detach" => self.should_detach = true,
                 "quit" => self.quit_with_prompts(false),
-                _ => self.set_status_message(t!("buffer.close_cancelled").to_string()),
+                _ => self.set_status_message(t!("buffer.quit_cancelled").to_string()),
             },
             PromptType::LspRename {
                 original_text,
@@ -1433,7 +1433,7 @@ impl Editor {
             // anything; what it can't write is asked about instead.
             self.quit_after_auto_save();
         } else {
-            self.set_status_message(t!("buffer.close_cancelled").to_string());
+            self.set_status_message(t!("buffer.quit_cancelled").to_string());
         }
     }
 
@@ -1500,7 +1500,7 @@ impl Editor {
             self.should_quit = true;
         } else {
             // Cancel (default)
-            self.set_status_message(t!("buffer.close_cancelled").to_string());
+            self.set_status_message(t!("buffer.quit_cancelled").to_string());
         }
         false
     }

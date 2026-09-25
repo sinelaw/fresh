@@ -413,6 +413,7 @@
   "buffer.cannot_open_directory": "Não é possível abrir diretório como arquivo",
   "buffer.changes_discarded": "Buffer fechado (alterações descartadas)",
   "buffer.close_cancelled": "Fechamento cancelado",
+  "buffer.quit_cancelled": "Saída cancelada",
   "buffer.closed": "Buffer fechado",
   "buffer.closed_tabs": "Fechadas %{count} aba(s)",
   "buffer.closed_tabs_skipped": "Fechadas %{closed} aba(s), ignoradas %{skipped} modificadas",
