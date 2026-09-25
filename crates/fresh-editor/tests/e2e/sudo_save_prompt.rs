@@ -643,6 +643,38 @@ fn quit_with_auto_save_asks_when_a_save_needs_sudo() {
     );
 }
 
+/// With `confirm_quit` on too, nothing is saved until the quit is
+/// confirmed; a save that then fails for want of sudo is asked about
+/// instead of the exit dropping the edits.
+#[test]
+fn confirmed_quit_with_auto_save_asks_when_a_save_needs_sudo() {
+    let mut config = Config::default();
+    config.editor.auto_save_enabled = true;
+    config.editor.hot_exit = false;
+    config.editor.confirm_quit = true;
+    let (mut harness, _dir, file_path) = dirty_unwritable_file(config);
+
+    harness
+        .send_key(KeyCode::Char('q'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("Quit Fresh?");
+    harness
+        .send_key(KeyCode::Char('q'), KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    assert!(
+        !harness.should_quit(),
+        "quitting would silently drop the unsaved edits"
+    );
+    harness.assert_screen_contains("[ Save and Quit ]");
+    assert_eq!(
+        std::fs::read_to_string(&file_path).unwrap(),
+        "original content\n"
+    );
+}
+
 /// Same for a plugin's replace-in-file (the project search-and-replace),
 /// which saves the file it edits and can't prompt either.
 #[cfg(feature = "plugins")]
