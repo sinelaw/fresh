@@ -615,7 +615,9 @@ impl RecoveryStorage {
     /// Remove temp files [`Self::atomic_write`] left behind when its process
     /// died between creating and renaming them; nothing else ever deletes
     /// them. One whose process is still running (another editor sharing this
-    /// directory, mid-write) is left alone. Returns how many were removed.
+    /// directory, mid-write), or was made on another host sharing it, is left
+    /// alone (see [`super::types::remove_orphaned_temp_files`]). Returns how
+    /// many were removed.
     pub fn remove_stale_temp_files(&self) -> io::Result<usize> {
         super::types::remove_orphaned_temp_files(
             &crate::model::filesystem::StdFileSystem,

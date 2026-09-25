@@ -510,7 +510,7 @@ fn write_inplace_recovery_meta(
                     && meta_path
                         .parent()
                         .is_some_and(|dir| is_staged_copy_in(&previous.temp_path, dir))
-                    && (previous.pid == std::process::id() || !previous.is_in_progress())
+                    && (previous.is_ours() || !previous.is_in_progress())
             })
             .map(|previous| previous.temp_path);
         PreviousMeta {
@@ -641,9 +641,7 @@ pub fn resolve_inplace_write_recovery(fs: &dyn FileSystem, recovery_dir: &Path, 
     let Ok(recovery) = serde_json::from_slice::<InplaceWriteRecovery>(&json) else {
         return;
     };
-    if recovery.dest_path != dest_path
-        || (recovery.pid != std::process::id() && recovery.is_in_progress())
-    {
+    if recovery.dest_path != dest_path || (!recovery.is_ours() && recovery.is_in_progress()) {
         return;
     }
     // Best-effort cleanup of files the completed save made obsolete

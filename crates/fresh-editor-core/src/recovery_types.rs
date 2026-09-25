@@ -410,6 +410,13 @@ pub struct InplaceWriteRecovery {
 
     /// Process ID that was performing the write
     pub pid: u32,
+
+    /// [`crate::model::filesystem::host_id`] of the host that process ran
+    /// on: the recovery directory may be shared with other hosts, whose pids
+    /// mean nothing here. `None` in metadata from before it was recorded,
+    /// taken to be this host's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
 }
 
 impl InplaceWriteRecovery {
@@ -428,12 +435,24 @@ impl InplaceWriteRecovery {
             mode,
             started_at: now,
             pid: std::process::id(),
+            host: Some(crate::model::filesystem::host_id().to_string()),
         }
     }
 
-    /// Check if the process that created this is still running
+    /// Whether this process wrote it.
+    pub fn is_ours(&self) -> bool {
+        self.pid == std::process::id() && is_this_host(self.host.as_deref())
+    }
+
+    /// Whether the process that wrote it may still be running. One on
+    /// another host can't be checked, so it counts as running until its
+    /// write is older than [`OTHER_HOST_STALE_AGE`].
     pub fn is_in_progress(&self) -> bool {
-        is_process_running(self.pid)
+        if is_this_host(self.host.as_deref()) {
+            return is_process_running(self.pid);
+        }
+        let started = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(self.started_at);
+        !is_older_than(started, OTHER_HOST_STALE_AGE)
     }
 
     /// Where the recovery metadata of an in-place write to `dest_path` is
@@ -466,14 +485,35 @@ impl InplaceWriteRecovery {
     }
 }
 
+/// How old a temp file or in-place write of another host sharing the
+/// recovery directory must be before a sweep here takes its process for
+/// dead: there is no way to ask that host, and no write takes this long.
+pub const OTHER_HOST_STALE_AGE: std::time::Duration =
+    std::time::Duration::from_secs(7 * 24 * 60 * 60);
+
+/// Whether `host` (a [`crate::model::filesystem::host_id`], or `None` when
+/// the writer didn't record one) is this host.
+fn is_this_host(host: Option<&str>) -> bool {
+    host.is_none_or(|host| host == crate::model::filesystem::host_id())
+}
+
+/// Whether `time` is more than `age` ago.
+fn is_older_than(time: SystemTime, age: std::time::Duration) -> bool {
+    SystemTime::now()
+        .duration_since(time)
+        .is_ok_and(|elapsed| elapsed > age)
+}
+
 /// Remove the temp files that writes-then-renames into `dir` left behind
 /// when their process died between the two steps — names
-/// [`crate::model::filesystem::sibling_temp_path`] makes, whose pid is no
+/// [`crate::model::filesystem::sibling_temp_path`] makes, whose process is no
 /// longer running. Nothing else ever deletes them. A temp file of a process
 /// still running (another editor sharing the directory, mid-write) and
 /// anything that isn't such a temp file — including the `.inplace-*.tmp`
 /// copies in-place saves stage, which are recovery data themselves — is
-/// left alone. Returns how many were removed.
+/// left alone. So is one made on another host sharing the directory, whose
+/// pid can't be checked here, until it is older than
+/// [`OTHER_HOST_STALE_AGE`]. Returns how many were removed.
 pub fn remove_orphaned_temp_files(fs: &dyn FileSystem, dir: &Path) -> io::Result<usize> {
     let entries = match fs.read_dir(dir) {
         Ok(entries) => entries,
@@ -482,10 +522,18 @@ pub fn remove_orphaned_temp_files(fs: &dyn FileSystem, dir: &Path) -> io::Result
     };
     let mut removed = 0;
     for entry in entries {
-        let Some(pid) = crate::model::filesystem::sibling_temp_pid(&entry.name) else {
+        let Some((pid, host)) = crate::model::filesystem::sibling_temp_owner(&entry.name) else {
             continue;
         };
-        if is_process_running(pid) {
+        let orphaned = if is_this_host(host) {
+            !is_process_running(pid)
+        } else {
+            fs.metadata(&entry.path)
+                .ok()
+                .and_then(|meta| meta.modified)
+                .is_some_and(|modified| is_older_than(modified, OTHER_HOST_STALE_AGE))
+        };
+        if !orphaned {
             continue;
         }
         match fs.remove_file(&entry.path) {
@@ -569,5 +617,85 @@ mod tests {
             assert!(!is_process_running(1));
             assert!(!is_process_running(999999999));
         }
+    }
+
+    /// A host id that isn't this one.
+    fn other_host() -> &'static str {
+        if crate::model::filesystem::host_id() == "00000000" {
+            "11111111"
+        } else {
+            "00000000"
+        }
+    }
+
+    /// No process has this pid (it's above any pid_max), so on this host it
+    /// "crashed"; on another it may be running.
+    const DEAD_PID: u32 = 2_000_000_000;
+
+    /// Issue #3410: the recovery directory may be shared with other hosts
+    /// (an NFS home, containers with their own pid namespaces), where a pid
+    /// that isn't running here may be a live editor mid-write. Their temp
+    /// files are kept until they are too old to be anyone's write; this
+    /// host's, and ones from before hosts were recorded, go when their
+    /// process is gone.
+    #[test]
+    fn orphaned_temp_sweep_keeps_other_hosts_temp_files() {
+        use crate::model::filesystem::{host_id, sibling_temp_owner, sibling_temp_path};
+        let dir = tempfile::TempDir::new().unwrap();
+        let fs = crate::model::filesystem::StdFileSystem;
+        let file = |name: String| {
+            let path = dir.path().join(name);
+            std::fs::write(&path, "x").unwrap();
+            path
+        };
+        let ours = file(format!(".a.{DEAD_PID}@{}.1.tmp", host_id()));
+        let legacy = file(format!(".a.{DEAD_PID}.2.tmp"));
+        let other = file(format!(".a.{DEAD_PID}@{}.3.tmp", other_host()));
+        let other_old = file(format!(".a.{DEAD_PID}@{}.4.tmp", other_host()));
+        std::fs::File::options()
+            .write(true)
+            .open(&other_old)
+            .unwrap()
+            .set_modified(SystemTime::now() - OTHER_HOST_STALE_AGE * 2)
+            .unwrap();
+
+        assert_eq!(remove_orphaned_temp_files(&fs, dir.path()).unwrap(), 3);
+
+        assert!(
+            other.exists(),
+            "another host's recent temp file must be kept"
+        );
+        for gone in [&ours, &legacy, &other_old] {
+            assert!(!gone.exists(), "{gone:?} should have been removed");
+        }
+        // The temp names this process makes say which host made them.
+        let made = sibling_temp_path(&dir.path().join("a"));
+        assert_eq!(
+            sibling_temp_owner(made.file_name().unwrap().to_str().unwrap()),
+            Some((std::process::id(), Some(host_id())))
+        );
+    }
+
+    /// Issue #3410: an in-place write another host sharing the recovery
+    /// directory started counts as in progress (so its staged copy and
+    /// metadata are left alone) until it is too old to still be running.
+    #[test]
+    fn other_hosts_inplace_write_counts_as_in_progress() {
+        let mut recovery =
+            InplaceWriteRecovery::new(PathBuf::from("/d/f"), PathBuf::from("/r/c"), 0, 0, 0o644);
+        recovery.pid = DEAD_PID;
+        assert!(!recovery.is_in_progress(), "a dead process on this host");
+        recovery.host = None;
+        assert!(
+            !recovery.is_in_progress(),
+            "unrecorded host counts as this one"
+        );
+
+        recovery.host = Some(other_host().to_string());
+        assert!(recovery.is_in_progress(), "another host's recent write");
+        recovery.pid = std::process::id();
+        assert!(!recovery.is_ours(), "the same pid on another host");
+        recovery.started_at -= OTHER_HOST_STALE_AGE.as_secs() * 2;
+        assert!(!recovery.is_in_progress(), "another host's stale write");
     }
 }
