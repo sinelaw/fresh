@@ -1246,3 +1246,33 @@ fn test_completed_sudo_save_resolves_earlier_staged_copy() {
     assert!(!meta_path.exists(), "the recovery metadata must be removed");
     assert!(!copy.exists(), "the obsolete staged copy must be removed");
 }
+
+/// Issue #3409: the copy an in-place save stages is named after the file,
+/// and adding its prefix, pid and timestamp to a name near the filesystem's
+/// limit (255 bytes here; ~143 on eCryptfs) made the staged name too long,
+/// so a large file with such a name couldn't be saved in place at all.
+#[test]
+#[cfg(unix)]
+fn test_inplace_save_of_file_with_250_byte_name() {
+    let data_dir = TempDir::new().unwrap();
+    let recovery_dir = data_dir.path().join("recovery");
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("n".repeat(250));
+    let original: String = (0..500).map(|i| format!("Line {i:04}\n")).collect();
+    std::fs::write(&file_path, &original).unwrap();
+
+    let fs = Arc::new(NotOwnerFileSystem::new(Arc::new(StdFileSystem)));
+    let mut buffer = TextBuffer::load_from_file(&file_path, 1024, fs).unwrap();
+    assert!(buffer.is_large_file());
+    buffer.insert_bytes(0, b"EDITED ".to_vec());
+
+    buffer
+        .save(&recovery_dir)
+        .expect("a file with a long name must be saveable");
+
+    assert_eq!(
+        std::fs::read_to_string(&file_path).unwrap(),
+        format!("EDITED {original}")
+    );
+    assert!(staged_copies(&recovery_dir).is_empty());
+}

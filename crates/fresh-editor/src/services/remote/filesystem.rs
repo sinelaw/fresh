@@ -635,16 +635,13 @@ impl FileSystem for RemoteFileSystem {
             .sys_info()
             .map(|i| i.temp_dir)
             .unwrap_or_else(|| PathBuf::from("/tmp"));
-        let file_name = dest_path
-            .file_name()
-            .unwrap_or_else(|| std::ffi::OsStr::new("fresh-save"));
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos())
             .unwrap_or(0);
         temp_dir.join(format!(
             "{}-{}-{}.tmp",
-            file_name.to_string_lossy(),
+            crate::model::filesystem::temp_name_stem(dest_path),
             std::process::id(),
             timestamp
         ))
