@@ -326,7 +326,7 @@ impl Editor {
                         continue;
                     }
                 },
-                None => self.new_buffer(),
+                None => self.buffer_for_recovered_unnamed(),
             };
             {
                 let state = self.active_state_mut();
@@ -355,6 +355,20 @@ impl Editor {
             );
         }
         Ok(adopted)
+    }
+
+    /// The buffer an unnamed buffer's recovered content goes into: the
+    /// launch's own empty scratch buffer while it is the active one and
+    /// untouched, the way opening a file takes it over, else a new one.
+    /// A new one beside it left an extra empty "[No Name]" tab after every
+    /// restore (issue #3401).
+    fn buffer_for_recovered_unnamed(&mut self) -> BufferId {
+        let active = self.active_buffer();
+        if self.active_window().is_pristine_scratch(active) {
+            active
+        } else {
+            self.new_buffer()
+        }
     }
 
     /// Check if there are files to recover from a crash
@@ -450,7 +464,7 @@ impl Editor {
                         // Unnamed buffer with content — create a fresh
                         // buffer, drop the recovery ID into metadata so
                         // future hot-exit saves hit the same file.
-                        let buffer_id = self.new_buffer();
+                        let buffer_id = self.buffer_for_recovered_unnamed();
                         {
                             let state = self.active_state_mut();
                             state.buffer.insert(0, &text);
