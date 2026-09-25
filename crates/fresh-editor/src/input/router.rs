@@ -86,6 +86,44 @@ pub fn layout_reading(
     }
 }
 
+/// The reading of a Ctrl+J the editor should act on: Enter, unless something
+/// wants Ctrl+J itself. `None` keeps the key as it came.
+///
+/// Ctrl+J is LF. The parser reports a raw LF as Ctrl+J so a program in the
+/// integrated terminal can tell it from Enter's CR (sinelaw/fresh#3169), but
+/// to the editor it has always been a second Enter — a newline in the buffer,
+/// confirm in a prompt — and no built-in keymap binds it. So it is read as
+/// Enter except where it is going to a terminal's child (the `Terminal`
+/// context forwards it as 0x0A), where it continues a chord, or where the
+/// keymap or one of `modes` binds it.
+pub fn ctrl_j_reading(
+    code: KeyCode,
+    modifiers: KeyModifiers,
+    kb: &KeybindingResolver,
+    context: &KeyContext,
+    chord_pending: bool,
+    modes: &[&str],
+) -> Option<(KeyCode, KeyModifiers)> {
+    if code != KeyCode::Char('j') || modifiers != KeyModifiers::CONTROL {
+        return None;
+    }
+    if *context == KeyContext::Terminal || chord_pending {
+        return None;
+    }
+    let event = KeyEvent::new(code, modifiers);
+    if kb.resolve(&event, context.clone()) != Action::None {
+        return None;
+    }
+    let mode_binds = modes.iter().any(|mode| {
+        kb.explicit_binding(&event, &KeyContext::Mode((*mode).to_string()))
+            .is_some()
+    });
+    match mode_binds {
+        true => None,
+        false => Some((KeyCode::Enter, KeyModifiers::NONE)),
+    }
+}
+
 /// Keybinding precedence for a key aimed at an *unfocused* popup: the
 /// user's bound `popup_cancel` (default Esc) and `popup_focus` (default
 /// Alt+T) keys must still take effect even though the popup isn't
@@ -660,6 +698,57 @@ mod tests {
         assert_eq!(
             unfocused_popup_action(KeyContext::Normal, &kb, &char_a),
             None
+        );
+    }
+
+    /// An unbound Ctrl+J is read as Enter, except where it goes to a
+    /// terminal's child or something binds it.
+    #[test]
+    fn ctrl_j_reads_as_enter_unless_terminal_or_bound() {
+        let (j, ctrl) = (KeyCode::Char('j'), KeyModifiers::CONTROL);
+        let enter = Some((KeyCode::Enter, KeyModifiers::NONE));
+        let mut kb = resolver();
+        for context in [KeyContext::Normal, KeyContext::Prompt, KeyContext::Popup] {
+            assert_eq!(ctrl_j_reading(j, ctrl, &kb, &context, false, &[]), enter);
+        }
+        // The terminal forwards it to its child as LF (0x0A).
+        assert_eq!(
+            ctrl_j_reading(j, ctrl, &kb, &KeyContext::Terminal, false, &[]),
+            None
+        );
+        // The second key of a chord in progress.
+        assert_eq!(
+            ctrl_j_reading(j, ctrl, &kb, &KeyContext::Normal, true, &[]),
+            None
+        );
+        // Only Ctrl+J itself.
+        for (code, mods) in [
+            (j, KeyModifiers::NONE),
+            (j, ctrl | KeyModifiers::ALT),
+            (KeyCode::Char('k'), ctrl),
+        ] {
+            assert_eq!(
+                ctrl_j_reading(code, mods, &kb, &KeyContext::Normal, false, &[]),
+                None
+            );
+        }
+        // A mode that binds it (merge_conflict's `C-j`) keeps it.
+        let mode = KeyContext::Mode("merge-conflict".to_string());
+        kb.load_plugin_default(mode, j, ctrl, Action::MoveDown);
+        assert_eq!(
+            ctrl_j_reading(
+                j,
+                ctrl,
+                &kb,
+                &KeyContext::Normal,
+                false,
+                &["merge-conflict"]
+            ),
+            None
+        );
+        assert_eq!(
+            ctrl_j_reading(j, ctrl, &kb, &KeyContext::Normal, false, &["other"]),
+            enter
         );
     }
 
