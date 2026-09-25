@@ -57,6 +57,21 @@ impl Editor {
             let Some(buffer) = self.widget_registry.get(&key).and_then(|p| p.buffer_id) else {
                 continue;
             };
+            // Only a plugin-composed buffer is the panel's to report from. A
+            // panel may also be drawn over a buffer that is not — the
+            // Orchestrator describes a building workspace's page by mounting
+            // one on the placeholder window's hidden seed buffer — and there
+            // the tree is the whole of what the pane shows: the buffer's text
+            // is nobody's to rewrite, and a caret seated from the panel's rows
+            // would point into text that is not there (#3406).
+            let composed = self
+                .active_window()
+                .buffer_metadata
+                .get(&buffer)
+                .is_some_and(|meta| meta.is_virtual());
+            if !composed {
+                continue;
+            }
             // The panel's own subtree, resolved the way every other by-key
             // read into a panel is — a buffer group's inner panes share the
             // outer leaf, so the leaf alone does not name the panel.
