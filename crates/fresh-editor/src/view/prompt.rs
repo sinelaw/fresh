@@ -114,6 +114,9 @@ pub enum PromptType {
     ConfirmSudoSave {
         info: std::sync::Arc<crate::model::buffer::SudoSaveRequired>,
     },
+    /// Restore, show the difference from, or discard the copy an
+    /// interrupted in-place save of `dest_path` kept (or decide later)
+    ConfirmInterruptedSave { dest_path: std::path::PathBuf },
     /// Confirm overwriting an existing file during SaveAs
     ConfirmOverwriteFile { path: std::path::PathBuf },
     /// Confirm creating parent directories for a save target

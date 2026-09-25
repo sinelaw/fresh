@@ -289,6 +289,9 @@ impl Editor {
             Action::ToggleAutoRevert => {
                 self.toggle_auto_revert();
             }
+            Action::ReviewInterruptedSaves => {
+                self.review_interrupted_saves();
+            }
             Action::OpenUpdateLog => {
                 self.show_self_update_output();
             }

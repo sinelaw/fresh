@@ -395,6 +395,9 @@ impl Editor {
                     self.set_status_message(t!("buffer.save_cancelled").to_string());
                 }
             }
+            PromptType::ConfirmInterruptedSave { dest_path } => {
+                self.handle_interrupted_save_choice(dest_path, input.trim());
+            }
             PromptType::ConfirmOverwriteFile { path } => {
                 let input_lower = input.trim().to_lowercase();
                 if input_lower == "o" || input_lower == "overwrite" {

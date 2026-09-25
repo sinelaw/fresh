@@ -77,6 +77,7 @@ pub mod indent_dedent;
 pub mod indentation_guide;
 pub mod inlay_hints_wrap_scroll;
 pub mod inline_diagnostics;
+pub mod interrupted_save_recovery;
 pub mod issue_1288_word_select_whitespace;
 pub mod issue_1540_tab_click_focus;
 pub mod issue_1554_scrollbar_theme_color;
