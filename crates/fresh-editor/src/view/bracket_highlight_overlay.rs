@@ -178,6 +178,9 @@ pub struct BracketHighlightOverlay {
     pub rainbow_colors: [Color; 6],
     /// Default bracket match highlight color (when rainbow is disabled)
     pub match_color: Color,
+    /// The attributes that mark the matched pair when rainbow is on (the
+    /// theme's `editor.bracket_rainbow_match_modifier`).
+    pub rainbow_match_modifier: Modifier,
     /// Last cursor position where we computed brackets
     last_cursor_pos: Option<usize>,
     /// Whether `<`/`>` counted as brackets when the pair overlays were last
@@ -226,6 +229,7 @@ impl BracketHighlightOverlay {
         Self {
             rainbow_colors: DEFAULT_BRACKET_COLORS,
             match_color: Color::Rgb(255, 215, 0), // Gold
+            rainbow_match_modifier: Modifier::BOLD | Modifier::UNDERLINED,
             last_cursor_pos: None,
             last_angle_brackets: None,
             colorization_active: false,
@@ -262,11 +266,14 @@ impl BracketHighlightOverlay {
             theme.bracket_rainbow_5,
             theme.bracket_rainbow_6,
         ];
-        let colors_changed =
-            self.match_color != new_match_color || self.rainbow_colors != new_rainbow_colors;
+        let new_rainbow_match_modifier = theme.bracket_rainbow_match_modifier;
+        let colors_changed = self.match_color != new_match_color
+            || self.rainbow_colors != new_rainbow_colors
+            || self.rainbow_match_modifier != new_rainbow_match_modifier;
         if colors_changed {
             self.match_color = new_match_color;
             self.rainbow_colors = new_rainbow_colors;
+            self.rainbow_match_modifier = new_rainbow_match_modifier;
         }
 
         let mut updated = false;
@@ -366,10 +373,11 @@ impl BracketHighlightOverlay {
         // re-painting the pair in that color changed nothing on screen
         // (issue #3084). Keep the color the colorization pass gave them — so
         // the two passes can't disagree about depth — and emphasize the pair
-        // instead. With rainbow off, the pair gets the match color.
+        // instead, with the theme's attributes. With rainbow off, the pair
+        // gets the match color.
         let face = if settings.rainbow {
             OverlayFace::Style {
-                style: Style::default().add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+                style: Style::default().add_modifier(self.rainbow_match_modifier),
             }
         } else {
             OverlayFace::Foreground {
