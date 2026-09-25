@@ -473,31 +473,38 @@ impl Editor {
     }
 
     /// The single-workspace half of [`Editor::save_all_on_exit`].
+    ///
+    /// A buffer the quit prompt doesn't ask about (hidden from the tabs, say
+    /// one a plugin's replace-in-file opened) is saved too where it can be,
+    /// but isn't reported when it can't: quitting doesn't wait on a buffer
+    /// the user was never asked about ([`super::lifecycle::quit_skips_buffer`]).
     fn save_all_on_exit_in_active_window(&mut self) -> anyhow::Result<SaveAllOutcome> {
-        let mut to_save = Vec::new();
-        for (id, state) in self
+        let window = self
             .windows
             .get(&self.active_window)
-            .map(|w| &w.buffers)
-            .expect("active window present")
-        {
+            .expect("active window present");
+        let mut to_save = Vec::new();
+        for (id, state) in &window.buffers {
             if state.buffer.is_modified() {
                 if let Some(path) = state.buffer.file_path() {
                     if !path.as_os_str().is_empty() {
-                        to_save.push((*id, path.to_path_buf()));
+                        let reported = !super::lifecycle::quit_skips_buffer(window, *id);
+                        to_save.push((*id, path.to_path_buf(), reported));
                     }
                 }
             }
         }
 
         let mut outcome = SaveAllOutcome::default();
-        for (id, path) in to_save {
+        for (id, path, reported) in to_save {
             if self.changed_on_disk(&path).is_some() {
                 tracing::warn!(
                     "Auto-save on exit skipped for {}: changed on disk",
                     path.display()
                 );
-                outcome.changed_on_disk.push(path);
+                if reported {
+                    outcome.changed_on_disk.push(path);
+                }
                 continue;
             }
             if let Some(state) = self
@@ -525,7 +532,9 @@ impl Editor {
                                 e
                             );
                         }
-                        outcome.failed.push(path);
+                        if reported {
+                            outcome.failed.push(path);
+                        }
                     }
                 }
             }

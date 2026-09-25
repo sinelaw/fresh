@@ -718,3 +718,70 @@ fn sudo_save_temp_file_is_private() {
         );
     }
 }
+
+/// A plugin's replace in a file that isn't open (the project
+/// search-and-replace) edits it in a buffer hidden from the tabs, and a
+/// save of it that needs sudo leaves that buffer modified. The quit prompt
+/// doesn't count hidden buffers, yet "Save and Quit" refused to quit over
+/// it, naming a file the user has no tab for. Both must agree: a hidden
+/// buffer's failed save doesn't hold the quit.
+#[cfg(feature = "plugins")]
+#[test]
+fn save_and_quit_is_not_held_by_a_hidden_buffer() {
+    let temp_dir = TempDir::new().unwrap();
+    let notes = temp_dir.path().join("notes.txt");
+    let hidden = temp_dir.path().join("hidden.txt");
+    std::fs::write(&notes, "original content\n").unwrap();
+    std::fs::write(&hidden, "original content\n").unwrap();
+    let fs = Arc::new(WriteDeniedFileSystem {
+        inner: Arc::new(StdFileSystem),
+        denied: hidden.clone(),
+        denied_dir: None,
+    });
+    let mut harness = EditorTestHarness::create(
+        120,
+        24,
+        HarnessOptions::new()
+            .with_filesystem(fs)
+            .with_working_dir(temp_dir.path().to_path_buf()),
+    )
+    .unwrap();
+    harness.open_file(&notes).unwrap();
+    harness.type_text("modified ").unwrap();
+    harness
+        .editor_mut()
+        .handle_plugin_command(fresh_core::api::PluginCommand::ReplaceInBuffer {
+            file_path: hidden.clone(),
+            buffer_id: 0,
+            matches: vec![(0, "original".len())],
+            replacement: "replaced".to_string(),
+            callback_id: fresh_core::api::JsCallbackId::from(1),
+        })
+        .unwrap();
+    harness.render().unwrap();
+    assert_eq!(
+        std::fs::read_to_string(&hidden).unwrap(),
+        "original content\n",
+        "the replace's own save needs sudo"
+    );
+
+    harness
+        .send_key(KeyCode::Char('q'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("[ Save and Quit ]");
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    assert!(
+        harness.should_quit(),
+        "a hidden buffer the prompt didn't ask about must not hold the quit:\n{}",
+        harness.screen_to_string()
+    );
+    assert_eq!(
+        std::fs::read_to_string(&notes).unwrap(),
+        "modified original content\n"
+    );
+}

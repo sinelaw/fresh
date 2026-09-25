@@ -353,13 +353,10 @@ impl Editor {
                 continue;
             };
             for (buffer_id, state) in window.buffers.iter() {
-                if !state.buffer.is_modified() || state.is_composite_buffer {
+                if !state.buffer.is_modified() || quit_skips_buffer(window, *buffer_id) {
                     continue;
                 }
                 if let Some(meta) = window.buffer_metadata.get(buffer_id) {
-                    if meta.hidden_from_tabs || meta.is_virtual() {
-                        continue;
-                    }
                     // A file-backed buffer counts even with auto-save on:
                     // `quit_with_prompts` has already auto-saved, so this one
                     // couldn't be — it needs sudo, or its file changed on disk
@@ -694,4 +691,23 @@ impl crate::app::window::Window {
             self.reveal_active_tab(split_id);
         }
     }
+}
+
+/// Whether quitting leaves `buffer_id` of `window` out of the unsaved-changes
+/// question: composite, hidden and plugin-virtual buffers, which the prompt
+/// can't name and the user can't act on (see
+/// [`Editor::modified_buffers_needing_prompt`]).
+///
+/// [`Editor::save_all_on_exit`] still saves a hidden one it can, as it
+/// always has, but one it can't doesn't hold the quit either — the two must
+/// agree on which buffers the user is answering for.
+pub(crate) fn quit_skips_buffer(window: &crate::app::window::Window, buffer_id: BufferId) -> bool {
+    window
+        .buffers
+        .get(&buffer_id)
+        .is_some_and(|state| state.is_composite_buffer)
+        || window
+            .buffer_metadata
+            .get(&buffer_id)
+            .is_some_and(|meta| meta.hidden_from_tabs || meta.is_virtual())
 }
