@@ -81,6 +81,10 @@ function fieldNote(note: string): WidgetSpec {
   return label(`↳ ${note}`, { labelWidth: FORM_LABEL_W, style: NOTE_STYLE });
 }
 
+// The dialog's keymap rides on its panel (the `mount` option `mode`), never
+// on the window's editor mode: that is one slot per window, shared with every
+// plugin — vi_mode keeps "vi-normal" there — so taking it on open and
+// emptying it on close left vi off after the dialog (issue #3305).
 const DISCOVER_MODE = "agent-discovery";
 
 
@@ -364,12 +368,12 @@ function mountDiscoverPanel(): void {
     labelAlign: "right",
     title: editor.t("discover.title"),
     closable: true,
+    mode: DISCOVER_MODE,
   });
   // Widen the panel's layer to the whole frame so it is centred on the
   // screen. Otherwise a centred panel is clipped to the area beside the dock
   // and centred there. The panel keeps its own size.
   editor.floatingPanelControl(discoverPanel.id(), "fullscreen", 1);
-  editor.setEditorMode(DISCOVER_MODE);
 }
 
 // `+ Add machine`: set the dialog aside for Add Machine and come back to it,
@@ -386,7 +390,6 @@ function addMachineFromDiscover(): void {
   }
   discoverPanel?.unmount();
   discoverPanel = null;
-  editor.setEditorMode(null);
   h.addMachine((savedKey) => {
     if (discoverState !== st) return;
     mountDiscoverPanel();
@@ -411,7 +414,6 @@ function closeDiscoverDialog(): void {
     discoverPanel = null;
   }
   discoverState = null;
-  editor.setEditorMode(null);
 }
 
 // Scan the selected machine through the `agent-sessions` hub. A machine with
