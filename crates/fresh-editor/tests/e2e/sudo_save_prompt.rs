@@ -325,6 +325,16 @@ struct WriteDeniedFileSystem {
     denied: PathBuf,
 }
 
+impl WriteDeniedFileSystem {
+    /// Compare canonical paths: the editor saves to the canonicalized path,
+    /// which differs from the temp dir's spelling where it sits behind a
+    /// symlink (macOS `/var` -> `/private/var`).
+    fn is_denied(&self, path: &Path) -> bool {
+        let canonical = |p: &Path| p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
+        path == self.denied || canonical(path) == canonical(&self.denied)
+    }
+}
+
 impl FileSystem for WriteDeniedFileSystem {
     fn read_file(&self, path: &Path) -> io::Result<Vec<u8>> {
         self.inner.read_file(path)
@@ -335,7 +345,7 @@ impl FileSystem for WriteDeniedFileSystem {
     }
 
     fn write_file(&self, path: &Path, data: &[u8]) -> io::Result<()> {
-        if path == self.denied {
+        if self.is_denied(path) {
             return Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,
                 "simulated: permission denied",
