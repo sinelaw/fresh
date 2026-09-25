@@ -1550,14 +1550,49 @@ impl Editor {
     /// if anything: the files it failed to save and those it left alone
     /// because they changed on disk.
     pub(crate) fn not_saved_message(outcome: &ExitSaveOutcome) -> Option<String> {
-        let failed = (!outcome.failed.is_empty())
-            .then(|| t!("file.save_failed", error = file_names(&outcome.failed)).to_string());
-        let changed = (!outcome.changed_on_disk.is_empty())
-            .then(|| Self::not_saved_changed_on_disk_message(&outcome.changed_on_disk));
-        match (failed, changed) {
-            (Some(failed), Some(changed)) => Some(format!("{failed}; {changed}")),
-            (failed, changed) => failed.or(changed),
+        let failed = file_names(&outcome.failed);
+        let changed = file_names(&outcome.changed_on_disk);
+        let msg = match (failed.is_empty(), changed.is_empty()) {
+            (true, true) => return None,
+            (false, true) => t!("status.not_saved_failed", files = failed),
+            (true, false) => t!("status.not_saved_changed_on_disk", files = changed),
+            (false, false) => t!(
+                "status.not_saved_failed_changed_on_disk",
+                failed = failed,
+                changed = changed
+            ),
+        };
+        Some(msg.to_string())
+    }
+
+    /// The status line for Save All: how many files it saved and failed to
+    /// save, and those it left alone because they changed on disk.
+    pub(crate) fn save_all_message(outcome: &SaveAllOutcome) -> String {
+        let saved = outcome.saved.to_string();
+        let failed = outcome.failed.len();
+        let changed = file_names(&outcome.changed_on_disk);
+        match (failed > 0, outcome.saved > 0, changed.is_empty()) {
+            (true, _, true) => t!(
+                "status.save_all_partial",
+                saved = saved,
+                failed = failed.to_string()
+            ),
+            (true, _, false) => t!(
+                "status.save_all_partial_changed_on_disk",
+                saved = saved,
+                failed = failed.to_string(),
+                files = changed
+            ),
+            (false, false, true) => t!("status.save_all_none"),
+            (false, false, false) => t!("status.not_saved_changed_on_disk", files = changed),
+            (false, true, true) => t!("status.save_all", count = saved),
+            (false, true, false) => t!(
+                "status.save_all_changed_on_disk",
+                count = saved,
+                files = changed
+            ),
         }
+        .to_string()
     }
 }
 
