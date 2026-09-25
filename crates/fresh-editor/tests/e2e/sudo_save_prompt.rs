@@ -576,6 +576,63 @@ fn save_and_quit_needing_sudo_leaves_no_temp_file() {
     );
 }
 
+/// "Save and Quit" can't prompt for sudo either, so a file that needs it is
+/// left unsaved — and quitting anyway dropped the edits. It must stay open
+/// and say what it couldn't save, as it does for a file changed on disk.
+#[test]
+fn save_and_quit_needing_sudo_stays_open() {
+    let (mut harness, _dir, file_path) = dirty_unwritable_file(Config::default());
+
+    harness
+        .send_key(KeyCode::Char('q'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("[ Save and Quit ]");
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    assert!(
+        !harness.should_quit(),
+        "quitting would drop the edits the save couldn't write"
+    );
+    harness.assert_screen_contains("Failed to save: notes.txt");
+    harness.assert_screen_contains("modified original content");
+    assert_eq!(
+        std::fs::read_to_string(&file_path).unwrap(),
+        "original content\n"
+    );
+}
+
+/// With auto-save on, quitting didn't ask about file-backed buffers,
+/// trusting the save on exit to write them. It can't write one that needs
+/// sudo, and with hot exit off nothing else keeps the edits: they were lost
+/// without a word. The quit must ask instead.
+#[test]
+fn quit_with_auto_save_asks_when_a_save_needs_sudo() {
+    let mut config = Config::default();
+    config.editor.auto_save_enabled = true;
+    config.editor.hot_exit = false;
+    config.editor.confirm_quit = false;
+    let (mut harness, _dir, file_path) = dirty_unwritable_file(config);
+
+    harness
+        .send_key(KeyCode::Char('q'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    assert!(
+        !harness.should_quit(),
+        "quitting would silently drop the unsaved edits"
+    );
+    harness.assert_screen_contains("[ Save and Quit ]");
+    assert_eq!(
+        std::fs::read_to_string(&file_path).unwrap(),
+        "original content\n"
+    );
+}
+
 /// Same for a plugin's replace-in-file (the project search-and-replace),
 /// which saves the file it edits and can't prompt either.
 #[cfg(feature = "plugins")]

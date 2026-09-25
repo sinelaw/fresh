@@ -191,6 +191,19 @@ impl Editor {
     /// unsaved buffers, else (when `confirm_clean` asks for it) confirm the
     /// clean quit, else quit.
     pub(crate) fn quit_with_prompts(&mut self, confirm_clean: bool) {
+        if self.config.editor.auto_save_enabled {
+            // Do the auto-save on exit now rather than after deciding not to
+            // ask: whatever it can't write (a file that needs sudo, one
+            // changed on disk) is still modified afterwards, and the prompt
+            // below asks about it instead of the exit dropping it.
+            match self.save_all_on_exit() {
+                Ok(outcome) if outcome.saved > 0 => {
+                    tracing::info!("Auto-saved {} buffer(s) on quit", outcome.saved);
+                }
+                Ok(_) => {}
+                Err(e) => tracing::warn!("Auto-save on quit failed: {e}"),
+            }
+        }
         // Check for unsaved buffers (all are auto-persisted when hot_exit is enabled)
         let modified_count = self.count_modified_buffers_needing_prompt();
         if modified_count == 0 && confirm_clean {
@@ -274,9 +287,9 @@ impl Editor {
     /// When `hot_exit` is enabled, unnamed buffers are excluded (they are
     /// automatically recovered across restarts), but file-backed modified
     /// buffers still trigger a prompt with a "recoverable" option.
-    /// When `auto_save_enabled` is true, file-backed buffers are excluded
-    /// (they will be saved to disk on exit), except those whose file changed
-    /// on disk, which the save on exit leaves alone.
+    /// With `auto_save_enabled`, [`Self::quit_with_prompts`] saves
+    /// file-backed buffers before asking, so the ones still modified here are
+    /// those it couldn't save.
     fn count_modified_buffers_needing_prompt(&self) -> usize {
         self.modified_buffers_needing_prompt().len()
     }
@@ -333,7 +346,6 @@ impl Editor {
     /// matters once every window counts.
     pub(crate) fn modified_buffers_needing_prompt(&self) -> Vec<(WindowId, BufferId)> {
         let hot_exit = self.config.editor.hot_exit;
-        let auto_save = self.config.editor.auto_save_enabled;
 
         let mut out = Vec::new();
         for window_id in self.window_ids_sorted() {
@@ -348,23 +360,15 @@ impl Editor {
                     if meta.hidden_from_tabs || meta.is_virtual() {
                         continue;
                     }
-                    if let Some(path) = meta.file_path() {
-                        let is_unnamed = path.as_os_str().is_empty();
-                        if is_unnamed && hot_exit {
-                            continue; // unnamed buffer, auto-recovered via hot exit
-                        }
-                        // File-backed: auto-saved on exit — unless its file
-                        // changed on disk, which that save skips rather than
-                        // overwrite (issue #3346). Quitting unasked would
-                        // then drop the edits, so the user has to decide.
-                        if !is_unnamed
-                            && auto_save
-                            && !state.buffer.file_path().is_some_and(|p| {
-                                crate::app::file_operations::changed_on_disk_in(window, p).is_some()
-                            })
-                        {
-                            continue;
-                        }
+                    // A file-backed buffer counts even with auto-save on:
+                    // `quit_with_prompts` has already auto-saved, so this one
+                    // couldn't be — it needs sudo, or its file changed on disk
+                    // (issue #3346) — and quitting unasked would drop the edits.
+                    let is_unnamed = meta
+                        .file_path()
+                        .is_some_and(|path| path.as_os_str().is_empty());
+                    if is_unnamed && hot_exit {
+                        continue; // unnamed buffer, auto-recovered via hot exit
                     }
                 }
                 out.push((window_id, *buffer_id));
