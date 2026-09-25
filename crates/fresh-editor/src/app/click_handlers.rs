@@ -598,6 +598,17 @@ impl Editor {
 
         self.active_event_log_mut().append(event.clone());
         self.apply_event_to_active_buffer(&event);
+        // The click named a cell on screen: keep the rows where they are
+        // rather than applying the scroll-off margin to a caret on an edge
+        // row, which scrolled the text out from under the pointer (#3407).
+        // The margin comes back with the next key that moves the caret.
+        if let Some(view_state) = self
+            .active_window_mut()
+            .split_view_states_mut()
+            .get_mut(&split_id)
+        {
+            view_state.viewport.hold_rows_while_head_at(target_position);
+        }
         // Position history follows the move, not the removals.
         let moved = match &event {
             Event::Batch { events, .. } => events.last().expect("the batch ends with the move"),

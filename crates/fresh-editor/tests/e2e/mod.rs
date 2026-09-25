@@ -146,6 +146,7 @@ pub mod issue_3329_drag_in_scroll_margin;
 pub mod issue_3351_click_past_one_char_line;
 pub mod issue_3397_status_bar_line_in_second_window;
 pub mod issue_3398_page_motion_keeps_row_and_column;
+pub mod issue_3407_click_on_edge_row_does_not_scroll;
 pub mod issue_623_prompt_dropdown_scrollbar;
 pub mod issue_722_inlay_hint_split_drift;
 pub mod issue_779_after_eof_shade;
