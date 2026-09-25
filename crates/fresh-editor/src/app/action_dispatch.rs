@@ -211,7 +211,7 @@ impl Editor {
             Action::SaveAll => {
                 let msg = match self.save_all() {
                     Ok(outcome) => {
-                        let (saved, failed) = (outcome.saved, outcome.failed);
+                        let (saved, failed) = (outcome.saved, outcome.failed.len());
                         let counts = if failed > 0 {
                             t!(
                                 "status.save_all_partial",

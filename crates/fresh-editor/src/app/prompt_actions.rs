@@ -1441,12 +1441,15 @@ impl Editor {
         if first_char == save_first {
             // Save all modified file-backed buffers to disk first.
             match self.save_all_on_exit() {
-                Ok(outcome) if !outcome.changed_on_disk.is_empty() => {
-                    // Quitting now would drop the edits we refused to write
-                    // over someone else's change; stay so the user can decide.
-                    self.set_status_message(Self::not_saved_changed_on_disk_message(
-                        &outcome.changed_on_disk,
-                    ));
+                Ok(outcome)
+                    if !outcome.failed.is_empty() || !outcome.changed_on_disk.is_empty() =>
+                {
+                    // Quitting now would drop the edits that couldn't be
+                    // written (a file that needs sudo, one changed on disk
+                    // we refused to overwrite); stay so the user can decide.
+                    if let Some(msg) = Self::not_saved_message(&outcome) {
+                        self.set_status_message(msg);
+                    }
                     return true;
                 }
                 Ok(outcome) => {

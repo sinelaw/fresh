@@ -22,7 +22,7 @@ fn test_save_all_writes_every_modified_buffer() -> anyhow::Result<()> {
     harness.type_text("B")?;
 
     let outcome = harness.editor_mut().save_all()?;
-    let (saved, failed) = (outcome.saved, outcome.failed);
+    let (saved, failed) = (outcome.saved, outcome.failed.len());
     assert_eq!((saved, failed), (2, 0), "both modified files should save");
 
     // Both files on disk reflect the edits.
@@ -49,7 +49,7 @@ fn test_save_all_no_modified_buffers() -> anyhow::Result<()> {
     harness.open_file(&a)?;
 
     let outcome = harness.editor_mut().save_all()?;
-    let (saved, failed) = (outcome.saved, outcome.failed);
+    let (saved, failed) = (outcome.saved, outcome.failed.len());
     assert_eq!((saved, failed), (0, 0), "clean buffer must not be saved");
     assert_eq!(fs::read_to_string(&a)?, "untouched");
 
@@ -74,7 +74,7 @@ fn test_save_all_skips_unnamed_buffer() -> anyhow::Result<()> {
     assert!(harness.editor().active_state().buffer.is_modified());
 
     let outcome = harness.editor_mut().save_all()?;
-    let (saved, failed) = (outcome.saved, outcome.failed);
+    let (saved, failed) = (outcome.saved, outcome.failed.len());
     assert_eq!(
         (saved, failed),
         (1, 0),

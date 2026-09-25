@@ -63,8 +63,8 @@ pub(crate) fn changed_on_disk_in(
 pub struct SaveAllOutcome {
     /// Buffers written to disk.
     pub saved: usize,
-    /// Buffers whose write failed (permissions, lost remote, ...).
-    pub failed: usize,
+    /// Buffers whose write failed (needs sudo, lost remote, ...).
+    pub failed: Vec<PathBuf>,
     /// Buffers left unsaved because their file changed on disk since it was
     /// loaded or saved; overwriting it needs an explicit Save (issue #3346).
     pub changed_on_disk: Vec<PathBuf>,
@@ -457,7 +457,7 @@ impl Editor {
                 editor.save_all_on_exit_in_active_window()
             })?;
             outcome.saved += window_outcome.saved;
-            outcome.failed += window_outcome.failed;
+            outcome.failed.extend(window_outcome.failed);
             outcome
                 .changed_on_disk
                 .extend(window_outcome.changed_on_disk);
@@ -506,7 +506,6 @@ impl Editor {
                         outcome.saved += 1;
                     }
                     Err(e) => {
-                        outcome.failed += 1;
                         if self.discard_sudo_save_temp(&e) {
                             tracing::debug!(
                                 "Auto-save on exit skipped for {} (sudo required)",
@@ -519,6 +518,7 @@ impl Editor {
                                 e
                             );
                         }
+                        outcome.failed.push(path);
                     }
                 }
             }
@@ -579,9 +579,9 @@ impl Editor {
                     outcome.saved += 1;
                 }
                 Some(Err(e)) => {
-                    outcome.failed += 1;
                     self.discard_sudo_save_temp(&e);
                     tracing::warn!("Save All failed for {}: {}", path.display(), e);
+                    outcome.failed.push(path);
                 }
                 None => {}
             }
@@ -1532,18 +1532,39 @@ impl Editor {
     /// Report buffers a bulk save left alone because their file changed on
     /// disk (see [`Editor::changed_on_disk`]).
     pub(crate) fn not_saved_changed_on_disk_message(paths: &[PathBuf]) -> String {
-        let files = paths
-            .iter()
-            .map(|p| {
-                p.file_name()
-                    .unwrap_or(p.as_os_str())
-                    .to_string_lossy()
-                    .into_owned()
-            })
-            .collect::<Vec<_>>()
-            .join(", ");
-        t!("status.not_saved_changed_on_disk", files = files).to_string()
+        t!(
+            "status.not_saved_changed_on_disk",
+            files = file_names(paths)
+        )
+        .to_string()
     }
+
+    /// What a bulk save didn't write, if anything: the files it failed to
+    /// save and those it left alone because they changed on disk.
+    pub(crate) fn not_saved_message(outcome: &SaveAllOutcome) -> Option<String> {
+        let failed = (!outcome.failed.is_empty())
+            .then(|| t!("file.save_failed", error = file_names(&outcome.failed)).to_string());
+        let changed = (!outcome.changed_on_disk.is_empty())
+            .then(|| Self::not_saved_changed_on_disk_message(&outcome.changed_on_disk));
+        match (failed, changed) {
+            (Some(failed), Some(changed)) => Some(format!("{failed}; {changed}")),
+            (failed, changed) => failed.or(changed),
+        }
+    }
+}
+
+/// `paths`' file names, comma-separated, for a status message.
+fn file_names(paths: &[PathBuf]) -> String {
+    paths
+        .iter()
+        .map(|p| {
+            p.file_name()
+                .unwrap_or(p.as_os_str())
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// Stat and read `dir/.gitignore` via the filesystem authority and install

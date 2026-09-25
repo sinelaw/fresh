@@ -233,7 +233,7 @@ fn save_all_sends_each_buffer_its_own_text() -> anyhow::Result<()> {
     harness.render()?;
     harness.type_text("// edit\n")?;
 
-    let failed = harness.editor_mut().save_all()?.failed;
+    let failed = harness.editor_mut().save_all()?.failed.len();
     assert_eq!(failed, 0, "no buffer should fail to save");
 
     let alpha_on_disk = fs::read_to_string(&alpha)?;
