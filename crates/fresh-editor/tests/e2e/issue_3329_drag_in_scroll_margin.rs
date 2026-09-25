@@ -212,6 +212,44 @@ fn test_drag_off_the_side_of_the_pane_along_top_row_does_not_scroll() {
     );
 }
 
+/// The rows are held for the drag's head, not for good: a paste after the
+/// drag moves the cursor 60 lines down, and the view follows it there as it
+/// does after a plain click. The hold used to outlive the drag until the
+/// next key press, so the view stayed on the first screen with the cursor
+/// far below it.
+#[test]
+fn test_paste_after_a_drag_scrolls_to_the_cursor() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    let _fixture = harness
+        .load_buffer_from_text(&format!("{LINE}\n").repeat(50))
+        .unwrap();
+    harness.render().unwrap();
+    let (text_col, first_row) = harness.find_text_on_screen(LINE).unwrap();
+    let row = first_row + 4;
+    assert_eq!(gutter_line(&harness, row), Some(5));
+
+    drag_along_row(&mut harness, row, text_col);
+    assert_eq!(
+        selected_rows(&harness),
+        vec![(5, "a text".to_string())],
+        "{}",
+        harness.screen_to_string()
+    );
+
+    harness.send_paste(&"pasted\n".repeat(60)).unwrap();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("Ln 65,"),
+        "the paste leaves the cursor on line 65:\n{screen}"
+    );
+    assert!(
+        (0..harness.buffer().area.height).any(|row| gutter_line(&harness, row) == Some(65)),
+        "the view follows the cursor to line 65 after the paste:\n{screen}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // What holding the view inside the text area must not take away: the drag
 // still follows the head sideways, and a text area with no chrome beyond an
