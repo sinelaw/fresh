@@ -1518,10 +1518,12 @@ impl crate::app::Editor {
                 );
             }
         }
-        // The sections about its buffers go with the buffers, the ones about
-        // the window with the window.
+        // The sections and diff baselines about its buffers go with the
+        // buffers, the ones about the window with the window.
         for buffer_id in closed.buffers.ids() {
             self.drop_sidebar_sections_for_buffer(buffer_id);
+            #[cfg(feature = "plugins")]
+            self.diff_baselines.drop_for_buffer(buffer_id);
         }
         drop(closed);
         self.drop_sidebar_sections_for_window(id);

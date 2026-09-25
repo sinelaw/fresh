@@ -105,6 +105,14 @@ fn search_file_glob_matches(file_glob: &str, relative_path: &str) -> bool {
     !has_pattern
 }
 
+/// What a diff-baseline load reads through: the owning window's backend and
+/// its buffer's encoding (`Editor::baseline_source`).
+struct BaselineSource {
+    filesystem: Arc<dyn crate::model::filesystem::FileSystem + Send + Sync>,
+    spawner: Arc<dyn crate::services::remote::ProcessSpawner>,
+    encoding: crate::model::encoding::Encoding,
+}
+
 impl Editor {
     // ==================== Menu Helpers ====================
 
@@ -2816,10 +2824,13 @@ impl Editor {
         use super::diff_baselines::{BaselineEntry, BaselineSpec};
 
         let buffer_id = self.resolve_buffer_id(buffer_id);
+        // Like every buffer command, registration names one of the active
+        // window's buffers; that window owns the baseline from here on.
+        let window_id = self.active_window;
         let path = {
             let Some(state) = self
                 .windows
-                .get_mut(&self.active_window)
+                .get_mut(&window_id)
                 .expect("active window present")
                 .buffer_state_mut(buffer_id)
             else {
@@ -2886,6 +2897,7 @@ impl Editor {
                 baseline_id,
                 BaselineEntry {
                     buffer_id,
+                    window_id,
                     spec: spec.clone(),
                     generation: 0,
                     content: None,
@@ -2905,18 +2917,14 @@ impl Editor {
         self.spawn_baseline_load(baseline_id, spec, callback_id, true);
     }
 
-    /// The encoding `buffer_id`'s bytes were decoded with, in whichever window
-    /// holds it. A baseline load is not only for the active window's buffers:
-    /// a HEAD move or regained focus refreshes every buffer's baseline, a
-    /// background workspace's too. Buffer ids are unique across windows.
-    fn buffer_encoding(&self, buffer_id: BufferId) -> Option<crate::model::encoding::Encoding> {
-        self.windows
-            .values()
-            .find_map(|window| window.buffer_state(buffer_id))
-            .map(|state| state.buffer.encoding())
-    }
-
     /// Shared off-loop launch for registration and refresh loads.
+    ///
+    /// Everything the load reads comes from the window that owns the
+    /// baseline (`BaselineEntry::window_id`): the encoding its buffer's bytes
+    /// were decoded with, and the filesystem and process spawner of that
+    /// window's authority. A refresh can run while another window is active —
+    /// a HEAD move refreshes every buffer's baseline — and must still read
+    /// the file from the backend the buffer came from.
     fn spawn_baseline_load(
         &mut self,
         baseline_id: u64,
@@ -2941,32 +2949,51 @@ impl Editor {
                 .reject_callback(callback_id, "No async bridge available".to_string());
             return;
         };
-        // Decode the baseline the way the buffer's own bytes were decoded.
-        let encoding = self
-            .diff_baselines
-            .inner
-            .lock()
-            .ok()
-            .and_then(|inner| inner.entries.get(&baseline_id).map(|e| e.buffer_id))
-            .and_then(|buffer_id| self.buffer_encoding(buffer_id))
-            .unwrap_or_default();
+        let Some(source) = self.baseline_source(baseline_id) else {
+            self.plugin_manager.read().unwrap().reject_callback(
+                callback_id,
+                format!("baseline {baseline_id}'s window is gone"),
+            );
+            return;
+        };
         super::plugin_offloop::load_diff_baseline(
             &runtime,
             super::plugin_offloop::OffLoop {
-                filesystem: self.authority().filesystem.clone(),
+                filesystem: source.filesystem,
                 sender,
                 cancel: Arc::default(),
             },
             super::plugin_offloop::BaselineLoadRequest {
                 baseline_id,
                 spec,
-                spawner: self.authority().process_spawner.clone(),
+                spawner: source.spawner,
                 store: self.diff_baselines.clone(),
                 callback_id,
-                encoding,
+                encoding: source.encoding,
                 is_registration,
             },
         );
+    }
+
+    /// What a load of `baseline_id` reads through, taken from the window
+    /// that owns it. `None` when the baseline or its window is gone.
+    fn baseline_source(&self, baseline_id: u64) -> Option<BaselineSource> {
+        let (window_id, buffer_id) = {
+            let inner = self.diff_baselines.inner.lock().ok()?;
+            let entry = inner.entries.get(&baseline_id)?;
+            (entry.window_id, entry.buffer_id)
+        };
+        let window = self.windows.get(&window_id)?;
+        let authority = window.authority();
+        Some(BaselineSource {
+            filesystem: authority.filesystem.clone(),
+            spawner: authority.process_spawner.clone(),
+            // Decode the baseline the way the buffer's own bytes were decoded.
+            encoding: window
+                .buffer_state(buffer_id)
+                .map(|state| state.buffer.encoding())
+                .unwrap_or_default(),
+        })
     }
 
     /// Diff a buffer's live content against a registered baseline.
@@ -4578,12 +4605,14 @@ mod tests {
         (editor, temp_dir)
     }
 
-    /// A Live Diff baseline is decoded with its buffer's encoding even when
-    /// the buffer is in a background window: a HEAD move refreshes the
-    /// baselines of every window's buffers, and a lookup in the active window
-    /// alone fell back to UTF-8 for the rest.
+    /// A Live Diff baseline loads through the window that owns it, whichever
+    /// window is active: a HEAD move refreshes the baselines of every window's
+    /// buffers, and a load that looked at the active window decoded with the
+    /// wrong encoding (UTF-8 for a buffer it did not hold) and read through
+    /// the wrong backend.
     #[test]
-    fn buffer_encoding_finds_a_buffer_in_a_background_window() {
+    fn a_baseline_loads_through_the_window_that_owns_it() {
+        use crate::app::diff_baselines::{BaselineEntry, BaselineSpec};
         use crate::model::encoding::Encoding;
         let (mut editor, temp) = make_editor();
         let path = temp.path().join("wide.txt");
@@ -4593,7 +4622,17 @@ mod tests {
             .collect();
         std::fs::write(&path, utf16).unwrap();
         let buffer_id = editor.open_file(&path).unwrap();
-        assert_eq!(editor.buffer_encoding(buffer_id), Some(Encoding::Utf16Le));
+        let owner = editor.active_window_id();
+        editor.diff_baselines.inner.lock().unwrap().entries.insert(
+            1,
+            BaselineEntry {
+                buffer_id,
+                window_id: owner,
+                spec: BaselineSpec::Disk { path },
+                generation: 0,
+                content: None,
+            },
+        );
 
         let other_root = temp.path().join("other");
         std::fs::create_dir(&other_root).unwrap();
@@ -4601,7 +4640,28 @@ mod tests {
         editor.set_active_window(other);
         assert_eq!(editor.active_window_id(), other);
 
-        assert_eq!(editor.buffer_encoding(buffer_id), Some(Encoding::Utf16Le));
+        let source = editor.baseline_source(1).expect("the owner is open");
+        assert_eq!(source.encoding, Encoding::Utf16Le);
+        let owner_spawner = &editor.windows[&owner].authority().process_spawner;
+        assert!(
+            !Arc::ptr_eq(owner_spawner, &editor.authority().process_spawner),
+            "each window has its own backend"
+        );
+        assert!(
+            Arc::ptr_eq(&source.spawner, owner_spawner),
+            "the load spawns through the owner's backend, not the active one's"
+        );
+
+        // A closed owner takes its baselines with it.
+        assert!(editor.close_window(owner));
+        assert!(editor.baseline_source(1).is_none());
+        assert!(editor
+            .diff_baselines
+            .inner
+            .lock()
+            .unwrap()
+            .entries
+            .is_empty());
     }
 
     #[test]

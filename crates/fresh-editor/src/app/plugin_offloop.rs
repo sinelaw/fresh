@@ -768,6 +768,7 @@ mod tests {
             7,
             BaselineEntry {
                 buffer_id: BufferId(1),
+                window_id: fresh_core::WindowId(1),
                 spec: BaselineSpec::Disk { path: path.clone() },
                 generation: 0,
                 content: None,
@@ -847,6 +848,7 @@ mod tests {
             3,
             BaselineEntry {
                 buffer_id: BufferId(1),
+                window_id: fresh_core::WindowId(1),
                 spec: BaselineSpec::Disk { path: path.clone() },
                 generation: 0,
                 content: None,
