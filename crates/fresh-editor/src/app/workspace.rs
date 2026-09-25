@@ -714,15 +714,23 @@ impl Editor {
         }
     }
 
-    /// Everything the editor persists when it quits, in order: auto-save,
-    /// end the recovery session (flushes dirty buffers and assigns the
-    /// recovery ids the workspace then records), the workspaces, the global
-    /// prompt histories, editor-global plugin state and the dock chrome.
+    /// Everything the editor persists when it quits, in order: auto-save
+    /// ([`Self::auto_save_on_exit`]), end the recovery session (flushes dirty
+    /// buffers and assigns the recovery ids the workspace then records), the
+    /// workspaces, the global prompt histories, editor-global plugin state
+    /// and the dock chrome.
     ///
     /// The one exit path shared by the terminal event loop (`main.rs`), the
     /// GUI, the daemon and the test harness, so no front end — and no test —
     /// can drift from the others by dropping a step; the prompt-history save
     /// went missing from all of them exactly that way.
+    ///
+    /// It owns the auto-save on exit, whatever ended the session: a quit, a
+    /// Force Quit, the GUI window closing, the daemon shutting down. A quit
+    /// the user confirms runs that same save first
+    /// (`Editor::quit_after_auto_save`), while a buffer it can't write can
+    /// still hold the quit; what it wrote is no longer modified, so the run
+    /// here only meets what the user chose to leave unsaved.
     ///
     /// `save_workspaces` is the front end's own gate on the per-window
     /// workspace files; `--no-restore` is honoured separately, inside every
@@ -738,20 +746,8 @@ impl Editor {
             }
         };
 
-        if self.config().editor.auto_save_enabled {
-            let saved = self.save_all_on_exit().map(|outcome| {
-                if outcome.saved > 0 {
-                    tracing::info!("Auto-saved {} buffer(s) on exit", outcome.saved);
-                }
-                if !outcome.changed_on_disk.is_empty() {
-                    tracing::warn!(
-                        "Not auto-saved on exit, changed on disk: {:?}",
-                        outcome.changed_on_disk
-                    );
-                }
-            });
-            record("auto-save", saved);
-        }
+        let saved = self.auto_save_on_exit();
+        record("auto-save", saved);
         let ended = self.end_recovery_session();
         record("end recovery session", ended);
         if save_workspaces {
@@ -765,6 +761,26 @@ impl Editor {
         self.save_dock_chrome();
 
         first_err.map_or(Ok(()), Err)
+    }
+
+    /// The auto-save on exit: with `auto_save_enabled`, carry out the exit
+    /// save plan ([`Self::save_all_on_exit`]) and log what it did. Nothing
+    /// otherwise. Owned by [`Self::persist_on_exit`].
+    pub(crate) fn auto_save_on_exit(&mut self) -> anyhow::Result<()> {
+        if !self.config().editor.auto_save_enabled {
+            return Ok(());
+        }
+        let outcome = self.save_all_on_exit()?;
+        if outcome.saved > 0 {
+            tracing::info!("Auto-saved {} buffer(s) on exit", outcome.saved);
+        }
+        if !outcome.changed_on_disk.is_empty() {
+            tracing::warn!(
+                "Not auto-saved on exit, changed on disk: {:?}",
+                outcome.changed_on_disk
+            );
+        }
+        Ok(())
     }
 
     /// Save the prompt-history rings (search / replace / goto-line) to the
