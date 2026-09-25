@@ -360,11 +360,23 @@ struct CrashDuringStreamFileSystem {
     inner: Arc<dyn FileSystem>,
     /// Path to the destination file (writes to this path will fail)
     dest_path: PathBuf,
+    /// When set, opening the destination for writing fails with this error
+    /// instead (it is never opened, so never truncated).
+    refuse_open: std::sync::Mutex<Option<io::ErrorKind>>,
 }
 
 impl CrashDuringStreamFileSystem {
     fn new(inner: Arc<dyn FileSystem>, dest_path: PathBuf) -> Self {
-        Self { inner, dest_path }
+        Self {
+            inner,
+            dest_path,
+            refuse_open: std::sync::Mutex::new(None),
+        }
+    }
+
+    /// Make opening the destination for writing fail with `kind` from now on.
+    fn refuse_open(&self, kind: io::ErrorKind) {
+        *self.refuse_open.lock().unwrap() = Some(kind);
     }
 }
 
@@ -400,6 +412,11 @@ impl FileSystem for CrashDuringStreamFileSystem {
     }
 
     fn open_file_for_write(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
+        if path == self.dest_path {
+            if let Some(kind) = *self.refuse_open.lock().unwrap() {
+                return Err(io::Error::new(kind, "simulated refusal to open"));
+            }
+        }
         let inner = self.inner.open_file_for_write(path)?;
         if path == self.dest_path {
             // Wrap with crashing writer for destination file
@@ -1050,4 +1067,110 @@ fn test_session_start_cleans_up_resolved_inplace_recoveries() {
         assert!(kept.exists(), "{kept:?} must be kept");
     }
     assert_eq!(removed, 4);
+}
+
+/// A write that fails part-way leaves the file torn and its complete new
+/// content in a staged copy — the only complete copy on disk. A later
+/// attempt that can't even open the file (read-only remount, permission
+/// revoked) truncated nothing, yet it used to delete that copy as soon as
+/// it staged its own, then discard its own because the open failed (or
+/// hand it to a sudo prompt that deletes it when cancelled), leaving the
+/// torn file with no copy of anything anywhere.
+///
+/// A small file's first attempt fails for real. A large file's recipe
+/// reads the unchanged parts back from the file itself, which a torn write
+/// has truncated, so its earlier copy is planted as one a crashed session
+/// left behind.
+fn check_refused_retry_keeps_earlier_copy(large: bool, refusal: io::ErrorKind) {
+    use fresh::services::recovery::{path_hash, InplaceWriteRecovery};
+    let data_dir = TempDir::new().unwrap();
+    let _pin = crate::common::global_state::pin_data_dir(data_dir.path());
+    let recovery_dir = data_dir.path().join("recovery");
+    let meta_path = |file: &Path| recovery_dir.join(format!("{}.inplace.json", path_hash(file)));
+
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("torn.txt");
+    let original: String = if large {
+        (0..500)
+            .map(|i| format!("Line {i:04}: original\n"))
+            .collect()
+    } else {
+        "original line\n".into()
+    };
+    std::fs::write(&file_path, &original).unwrap();
+    let fs = Arc::new(CrashDuringStreamFileSystem::new(
+        Arc::new(StdFileSystem),
+        file_path.clone(),
+    ));
+    let threshold = if large { 1024 } else { 1024 * 1024 };
+    let mut buffer = TextBuffer::load_from_file(&file_path, threshold, fs.clone()).unwrap();
+    assert_eq!(buffer.is_large_file(), large);
+
+    let first = format!("first {original}");
+    if large {
+        // No process has this pid (it's above any pid_max), so it "crashed".
+        const DEAD_PID: u32 = 2_000_000_000;
+        std::fs::create_dir_all(&recovery_dir).unwrap();
+        let copy = recovery_dir.join(format!(".inplace-torn.txt-{DEAD_PID}-1.tmp"));
+        std::fs::write(&copy, &first).unwrap();
+        let mut recovery = InplaceWriteRecovery::new(file_path.clone(), copy, 0, 0, 0o644);
+        recovery.pid = DEAD_PID;
+        std::fs::write(
+            meta_path(&file_path),
+            serde_json::to_string(&recovery).unwrap(),
+        )
+        .unwrap();
+    } else {
+        // Attempt 1: the write fails part-way.
+        buffer.insert_bytes(0, b"first ".to_vec());
+        assert!(buffer.save().is_err(), "the simulated failure must surface");
+    }
+
+    // Attempt 2: the file can't be opened for writing at all.
+    fs.refuse_open(refusal);
+    buffer.insert_bytes(0, b"second ".to_vec());
+    let err = buffer.save().expect_err("the refusal must surface");
+    // A sudo prompt the user cancels deletes the copy handed to it.
+    if let Some(sudo) = err.downcast_ref::<fresh::model::buffer::SudoSaveRequired>() {
+        std::fs::remove_file(&sudo.temp_path).unwrap();
+    }
+
+    let meta = std::fs::read_to_string(meta_path(&file_path))
+        .expect("the torn file's recovery metadata must be kept");
+    let recovery: InplaceWriteRecovery = serde_json::from_str(&meta).unwrap();
+    let kept = std::fs::read_to_string(&recovery.temp_path).ok();
+    assert!(
+        kept.as_deref() == Some(first.as_str()),
+        "the metadata must still point at the earlier complete copy, not {:?}",
+        recovery.temp_path
+    );
+    assert_eq!(
+        staged_copies(&recovery_dir),
+        vec![recovery.temp_path],
+        "nothing else is left staged"
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn test_refused_retry_keeps_earlier_copy_small_file() {
+    check_refused_retry_keeps_earlier_copy(false, io::ErrorKind::ReadOnlyFilesystem);
+}
+
+#[test]
+#[cfg(unix)]
+fn test_refused_retry_keeps_earlier_copy_small_file_sudo() {
+    check_refused_retry_keeps_earlier_copy(false, io::ErrorKind::PermissionDenied);
+}
+
+#[test]
+#[cfg(unix)]
+fn test_refused_retry_keeps_earlier_copy_large_file() {
+    check_refused_retry_keeps_earlier_copy(true, io::ErrorKind::ReadOnlyFilesystem);
+}
+
+#[test]
+#[cfg(unix)]
+fn test_refused_retry_keeps_earlier_copy_large_file_sudo() {
+    check_refused_retry_keeps_earlier_copy(true, io::ErrorKind::PermissionDenied);
 }
