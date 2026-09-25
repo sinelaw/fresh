@@ -88,11 +88,17 @@ pub fn layout_reading(
 
 /// The reading of a Ctrl+J the editor should act on: Enter, unless something
 /// wants Ctrl+J itself. `None` keeps the key as it came. Ctrl+Alt+J, which
-/// is ESC LF, is likewise Alt+Enter — except on Windows, where Ctrl+Alt is
-/// how AltGr arrives and Ctrl+Alt+<char> is typed text
-/// ([`crate::input::keybindings::is_text_input_modifier`]); rewriting it
-/// there would turn an AltGr keystroke into Alt+Enter, so it stays as it
-/// came.
+/// is ESC LF, is likewise Alt+Enter.
+///
+/// Only something *binding* the key keeps it
+/// ([`KeybindingResolver::binds_key`]), not the keymap merely typing it: on
+/// Windows Ctrl+Alt+<char> resolves to typed text, since crossterm and the
+/// GUI report AltGr that way
+/// ([`crate::input::keybindings::is_text_input_modifier`]). This reading is
+/// only asked of keys the input parser produced (`Editor::handle_key_press`),
+/// and there — Windows included, whose console is read in VT input mode —
+/// AltGr text arrives as the character it types, so a Ctrl+Alt+J can only
+/// be ESC LF.
 ///
 /// Ctrl+J is LF. The parser reports a raw LF as Ctrl+J so a program in the
 /// integrated terminal can tell it from Enter's CR (sinelaw/fresh#3169), but
@@ -113,18 +119,17 @@ pub fn ctrl_j_reading(
     modes: &[&str],
 ) -> Option<(KeyCode, KeyModifiers)> {
     let ctrl = KeyModifiers::CONTROL;
-    let alt_enter = cfg!(not(windows)) && modifiers == ctrl | KeyModifiers::ALT;
-    if code != KeyCode::Char('j') || (modifiers != ctrl && !alt_enter) {
+    if code != KeyCode::Char('j') || (modifiers != ctrl && modifiers != ctrl | KeyModifiers::ALT) {
         return None;
     }
     if *context == KeyContext::Terminal || chord_pending {
         return None;
     }
     let event = KeyEvent::new(code, modifiers);
-    let claimed = kb.claims_key(&event, context)
+    let claimed = kb.binds_key(&event, context)
         || modes
             .iter()
-            .any(|mode| kb.claims_key(&event, &KeyContext::Mode((*mode).to_string())));
+            .any(|mode| kb.binds_key(&event, &KeyContext::Mode((*mode).to_string())));
     match claimed {
         true => None,
         false => Some((KeyCode::Enter, modifiers - ctrl)),
@@ -728,20 +733,15 @@ mod tests {
             ctrl_j_reading(j, ctrl, &kb, &KeyContext::Normal, true, &[]),
             None
         );
-        // Ctrl+Alt+J (ESC LF) is Alt+Enter, but not on Windows, where
-        // Ctrl+Alt is AltGr and Ctrl+Alt+J stays the text it types.
-        let alt_enter = (!cfg!(windows)).then_some((KeyCode::Enter, KeyModifiers::ALT));
-        assert_eq!(
-            ctrl_j_reading(
-                j,
-                ctrl | KeyModifiers::ALT,
-                &kb,
-                &KeyContext::Normal,
-                false,
-                &[]
-            ),
-            alt_enter
-        );
+        // Ctrl+Alt+J (ESC LF) is Alt+Enter, Windows included: there the
+        // keymap would type it (Ctrl+Alt is AltGr to it), which is not a
+        // binding.
+        for context in [KeyContext::Normal, KeyContext::Prompt] {
+            assert_eq!(
+                ctrl_j_reading(j, ctrl | KeyModifiers::ALT, &kb, &context, false, &[]),
+                Some((KeyCode::Enter, KeyModifiers::ALT))
+            );
+        }
         // Only Ctrl+J itself.
         for (code, mods) in [
             (j, KeyModifiers::NONE),
