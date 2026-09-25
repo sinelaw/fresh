@@ -189,3 +189,112 @@ fn shift_enter_stays_cr_for_a_legacy_child() {
         "Without the kitty protocol, Shift+Enter must stay a plain CR.\nScreen:\n{screen}"
     );
 }
+
+/// Issue #3408: the disambiguate level covers more than Enter/Tab/Backspace.
+/// Esc (`CSI 27u`), Ctrl+I — legacy Tab — (`CSI 105;5u`), Alt+A — legacy
+/// `ESC a` — (`CSI 97;3u`) and Shift+Tab (`CSI 9;2u`) must each reach a
+/// kitty-protocol child in their CSI-u form, while plain text (the sentinel)
+/// stays text.
+#[test]
+#[cfg(unix)]
+fn esc_and_ctrl_alt_chords_reach_a_kitty_protocol_child_as_csi_u() {
+    if !pty_available() {
+        eprintln!("Skipping: PTY not available in this environment");
+        return;
+    }
+    let mut harness = open_dumper(dumper_config_with_setup("\\033[>1u"));
+
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Char('i'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Char('a'), KeyModifiers::ALT)
+        .unwrap();
+    harness
+        .send_key(KeyCode::BackTab, KeyModifiers::NONE)
+        .unwrap();
+    send_sentinel(&mut harness);
+
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains(
+            " 1b 5b 32 37 75 \
+             1b 5b 31 30 35 3b 35 75 \
+             1b 5b 39 37 3b 33 75 \
+             1b 5b 39 3b 32 75 7a"
+        ),
+        "Esc, Ctrl+I, Alt+A and Shift+Tab must reach a kitty-protocol child as \
+         CSI 27u, CSI 105;5u, CSI 97;3u and CSI 9;2u.\nScreen:\n{screen}"
+    );
+}
+
+/// The control: without the protocol the same keys keep their legacy bytes
+/// (ESC, TAB, `ESC a`, `CSI Z`).
+#[test]
+#[cfg(unix)]
+fn esc_and_ctrl_alt_chords_stay_legacy_for_a_legacy_child() {
+    if !pty_available() {
+        eprintln!("Skipping: PTY not available in this environment");
+        return;
+    }
+    let mut harness = open_dumper(dumper_config());
+
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Char('i'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Char('a'), KeyModifiers::ALT)
+        .unwrap();
+    harness
+        .send_key(KeyCode::BackTab, KeyModifiers::NONE)
+        .unwrap();
+    send_sentinel(&mut harness);
+
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains(" 1b 09 1b 61 1b 5b 5a 7a"),
+        "Without the kitty protocol these keys must keep their legacy bytes.\n\
+         Screen:\n{screen}"
+    );
+}
+
+/// Issue #3408: a child that pushes "report all keys as escape codes"
+/// (`CSI > 9 u`, with disambiguate) gets text keys and plain Enter as CSI u
+/// too: `a` is `CSI 97u` and Enter `CSI 13u`. The sentinel `z` is itself
+/// `CSI 122u` (`31 32 32 75`) here.
+#[test]
+#[cfg(unix)]
+fn report_all_keys_sends_text_and_enter_as_csi_u() {
+    if !pty_available() {
+        eprintln!("Skipping: PTY not available in this environment");
+        return;
+    }
+    let mut harness = open_dumper(dumper_config_with_setup("\\033[>9u"));
+
+    harness
+        .send_key(KeyCode::Char('a'), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Char('z'), KeyModifiers::NONE)
+        .unwrap();
+    // The sentinel in either encoding, so a child handed legacy bytes fails
+    // the assertion below instead of never satisfying the wait.
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            screen.contains(" 31 32 32 75") || screen.contains(" 7a")
+        })
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains(" 1b 5b 39 37 75 1b 5b 31 33 75 1b 5b 31 32 32 75"),
+        "Under \"report all keys\", `a`, Enter and `z` must reach the child as \
+         CSI 97u, CSI 13u and CSI 122u.\nScreen:\n{screen}"
+    );
+}
