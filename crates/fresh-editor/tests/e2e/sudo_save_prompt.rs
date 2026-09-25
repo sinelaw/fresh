@@ -565,3 +565,31 @@ fn save_and_quit_needing_sudo_leaves_no_temp_file() {
         Vec::<std::ffi::OsString>::new()
     );
 }
+
+/// Same for a plugin's replace-in-file (the project search-and-replace),
+/// which saves the file it edits and can't prompt either.
+#[test]
+fn plugin_replace_needing_sudo_leaves_no_temp_file() {
+    let (mut harness, dir, file_path) = dirty_unwritable_file(Config::default());
+
+    harness
+        .editor_mut()
+        .handle_plugin_command(fresh_core::api::PluginCommand::ReplaceInBuffer {
+            file_path: file_path.clone(),
+            buffer_id: 0,
+            matches: vec![(0, "modified".len())],
+            replacement: "replaced".to_string(),
+            callback_id: fresh_core::api::JsCallbackId::from(1),
+        })
+        .unwrap();
+    harness.render().unwrap();
+
+    assert_eq!(
+        std::fs::read_to_string(&file_path).unwrap(),
+        "original content\n"
+    );
+    assert_eq!(
+        leftover_temp_files(dir.path()),
+        Vec::<std::ffi::OsString>::new()
+    );
+}
