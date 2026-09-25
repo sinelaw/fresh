@@ -15,6 +15,47 @@ pub struct ViewAnchor {
     pub row_offset: isize,
 }
 
+/// Whether the next placement brings the cursor into view.
+///
+/// One value, so a full hold and a row hold cannot both be pending: the last
+/// thing to scroll the view decides. The transitions are the viewport's
+/// `set_skip_ensure_visible` (→ `Hold`), `hold_rows_while_head_at`
+/// (→ `HoldRows`), `clear_skip_ensure_visible` (→ `Follow`), and
+/// `spend_row_hold`, which a placement runs to drop a row hold whose head the
+/// cursor has left. Everything else only asks.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+enum EnsureVisible {
+    /// Rows and columns follow the cursor.
+    #[default]
+    Follow,
+    /// Leave the view where a scroll put it (the wheel, the scrollbar,
+    /// Ctrl+Up/Down, a recenter), until a key or a jump moves the cursor.
+    Hold,
+    /// The rows stay where they are while the cursor is at `head`, and the
+    /// columns still follow it. Set by a drag-select level with the text
+    /// rows, whose head is on a row already on screen but may be in a column
+    /// scrolled out of view.
+    ///
+    /// Keyed to the head so it ends with the drag: once anything else moves
+    /// the cursor — a paste, a plugin's or LSP's jump — the next placement
+    /// drops it and places the rows as usual. Ending it on release instead
+    /// would apply the scroll-off margin to a head left on an edge row, and
+    /// the view would jump as the button came up.
+    HoldRows { head: usize },
+}
+
+impl EnsureVisible {
+    /// Nothing moves, rows or columns.
+    fn holds_all(self) -> bool {
+        self == Self::Hold
+    }
+
+    /// The rows stay put for a cursor at `cursor_byte`.
+    fn holds_rows_at(self, cursor_byte: usize) -> bool {
+        self == Self::HoldRows { head: cursor_byte }
+    }
+}
+
 /// The viewport - what portion of the buffer is visible
 #[derive(Debug, Clone)]
 pub struct Viewport {
@@ -116,23 +157,9 @@ pub struct Viewport {
     /// from being overwritten by ensure_visible during the first render
     skip_resize_sync: bool,
 
-    /// Whether to skip ensure_visible on next render
-    /// This is set after scroll actions (Ctrl+Up/Down) to prevent the scroll
-    /// from being immediately undone by ensure_visible
-    skip_ensure_visible: bool,
-
-    /// Skip only the *vertical* half of ensure_visible while the cursor is
-    /// at this byte: the rows stay where they are while the horizontal
-    /// scroll still follows the cursor. Set by a drag-select level with the
-    /// text rows, whose head is on a row already on screen but may be in a
-    /// column scrolled out of view. `skip_ensure_visible` implies it.
-    ///
-    /// Keyed to the head so it ends with the drag: once anything else moves
-    /// the cursor — a paste, a plugin's or LSP's jump — the next pass drops
-    /// it and places the rows as usual. Clearing it on release instead would
-    /// apply the scroll-off margin to a head left on an edge row, and the
-    /// view would jump as the button came up.
-    skip_vertical_ensure_visible: Option<usize>,
+    /// Whether the next placement brings the cursor into view — see
+    /// [`EnsureVisible`].
+    ensure_visible: EnsureVisible,
 
     /// Maximum line length encountered so far (in display columns).
     /// Updated incrementally as visible lines are rendered, avoiding full-file scans.
@@ -287,8 +314,7 @@ impl Viewport {
             show_line_numbers: true,
             needs_sync: false,
             skip_resize_sync: false,
-            skip_ensure_visible: false,
-            skip_vertical_ensure_visible: None,
+            ensure_visible: EnsureVisible::Follow,
             max_line_length_seen: 0,
             sync_scroll_to_end: false,
             // The scroll hot paths only ever touch a handful of nearby
@@ -389,42 +415,38 @@ impl Viewport {
     /// Mark viewport to skip ensure_visible on next render
     /// This is used after scroll actions to prevent the scroll from being undone
     pub fn set_skip_ensure_visible(&mut self) {
-        tracing::trace!("set_skip_ensure_visible: setting flag to true");
-        self.skip_ensure_visible = true;
+        tracing::trace!("set_skip_ensure_visible: holding the view");
+        self.ensure_visible = EnsureVisible::Hold;
     }
 
     /// Check if ensure_visible should be skipped (does NOT consume the flag)
     /// Returns true if ensure_visible should be skipped
     pub fn should_skip_ensure_visible(&self) -> bool {
-        self.skip_ensure_visible
+        self.ensure_visible.holds_all()
     }
 
     /// Hold the rows while the cursor stays at `head`, but let the
-    /// horizontal scroll follow it (see `skip_vertical_ensure_visible`).
-    /// Replaces a full skip.
-    pub fn set_skip_vertical_ensure_visible(&mut self, head: usize) {
-        self.skip_ensure_visible = false;
-        self.skip_vertical_ensure_visible = Some(head);
+    /// horizontal scroll follow it (see [`EnsureVisible::HoldRows`]).
+    /// Replaces a full hold.
+    pub fn hold_rows_while_head_at(&mut self, head: usize) {
+        self.ensure_visible = EnsureVisible::HoldRows { head };
     }
 
-    /// Whether the rows are held for a cursor at `cursor_byte`. A hold for a
-    /// head the cursor has since left is spent, and dropped.
-    fn rows_held_for(&mut self, cursor_byte: usize) -> bool {
-        match self.skip_vertical_ensure_visible {
-            Some(head) if head == cursor_byte => true,
-            Some(_) => {
-                self.skip_vertical_ensure_visible = None;
-                false
+    /// End a row hold the cursor has left: the drag that set it is over, and
+    /// something else moved the cursor. Run by a placement before it asks
+    /// whether the rows are held.
+    fn spend_row_hold(&mut self, cursor_byte: usize) {
+        if let EnsureVisible::HoldRows { head } = self.ensure_visible {
+            if head != cursor_byte {
+                self.ensure_visible = EnsureVisible::Follow;
             }
-            None => false,
         }
     }
 
-    /// Clear the skip_ensure_visible flag
-    /// This should be called after all ensure_visible calls in a render pass
+    /// Let the next placement bring the cursor into view again: a key press
+    /// or a jump is new intent, which no earlier scroll may suppress.
     pub fn clear_skip_ensure_visible(&mut self) {
-        self.skip_ensure_visible = false;
-        self.skip_vertical_ensure_visible = None;
+        self.ensure_visible = EnsureVisible::Follow;
     }
 
     /// Set the scroll offset
@@ -1429,10 +1451,11 @@ impl Viewport {
         cursor_byte: usize,
         expansion: Option<&CursorLineExpansion>,
     ) -> bool {
-        if self.should_skip_resize_sync()
-            || self.should_skip_ensure_visible()
-            || self.rows_held_for(cursor_byte)
-        {
+        if self.should_skip_resize_sync() || self.should_skip_ensure_visible() {
+            return false;
+        }
+        self.spend_row_hold(cursor_byte);
+        if self.ensure_visible.holds_rows_at(cursor_byte) {
             return false;
         }
         let viewport_height = self.visible_line_count();
@@ -1573,7 +1596,7 @@ impl Viewport {
     ) -> usize {
         // A restored session keeps its scroll position for one frame, and a
         // scroll action keeps its own (Ctrl+Up/Down); neither is undone here.
-        if self.skip_resize_sync || self.skip_ensure_visible {
+        if self.skip_resize_sync || self.ensure_visible.holds_all() {
             tracing::trace!("layout_column_scroll: SKIPPING (skip flag set)");
             return self.left_column;
         }
@@ -2047,11 +2070,12 @@ impl Viewport {
             return;
         }
         tracing::trace!(
-            "ensure_visible: NOT skipping, skip_ensure_visible={}",
-            self.skip_ensure_visible
+            "ensure_visible: NOT skipping, ensure_visible={:?}",
+            self.ensure_visible
         );
 
-        let rows_held = self.rows_held_for(cursor.position);
+        self.spend_row_hold(cursor.position);
+        let rows_held = self.ensure_visible.holds_rows_at(cursor.position);
         let viewport_lines = self.visible_line_count().max(1);
         tracing::trace!(
             "ensure_visible: cursor={}, top_byte={}, viewport_lines={}, line_wrap={}",
@@ -2850,6 +2874,42 @@ mod tests {
     use super::*;
     use crate::model::buffer::Buffer;
     use crate::model::cursor::Cursor;
+
+    /// One value says what the next placement does about the cursor: the
+    /// last thing to scroll the view decides, and a row hold ends when the
+    /// cursor leaves its head — not before, and not by being asked about.
+    #[test]
+    fn ensure_visible_is_one_value_with_its_transitions_in_one_place() {
+        let mut vp = Viewport::new(80, 24);
+        assert_eq!(vp.ensure_visible, EnsureVisible::Follow);
+
+        vp.hold_rows_while_head_at(7);
+        vp.set_skip_ensure_visible();
+        assert!(
+            vp.should_skip_ensure_visible(),
+            "a scroll after a drag holds all"
+        );
+        vp.hold_rows_while_head_at(7);
+        assert!(
+            !vp.should_skip_ensure_visible(),
+            "a drag after a scroll holds only the rows"
+        );
+
+        assert!(vp.ensure_visible.holds_rows_at(7));
+        assert!(!vp.ensure_visible.holds_rows_at(8));
+        assert!(vp.ensure_visible.holds_rows_at(7), "asking spends nothing");
+        vp.spend_row_hold(7);
+        assert!(
+            vp.ensure_visible.holds_rows_at(7),
+            "the cursor is still at the head"
+        );
+        vp.spend_row_hold(8);
+        assert_eq!(vp.ensure_visible, EnsureVisible::Follow);
+
+        vp.set_skip_ensure_visible();
+        vp.clear_skip_ensure_visible();
+        assert_eq!(vp.ensure_visible, EnsureVisible::Follow);
+    }
 
     /// The scroll clamp leaves the viewport where it was pointed when it
     /// cannot finish counting the rows below.
