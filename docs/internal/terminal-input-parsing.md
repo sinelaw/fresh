@@ -194,6 +194,12 @@ parser exists to prevent — each is covered by a test that fails without the fi
   emacs one) fired under kitty and nowhere else (#2933). `0x1C`/`0x1D`/`0x1E`
   keep `\`, `]`, `^`: those *are* the keys bound to them, and `ctrl+]` and
   `ctrl+\` are live bindings.
+- **LF (`0x0A`) reports as `Ctrl+J`, and `ESC LF` as `Ctrl+Alt+J`**, on the
+  same footing as `0x1F`: LF *is* Ctrl+J's byte, and Enter sends CR (`0x0D`).
+  Parsing LF as Enter left a program in the integrated terminal unable to tell
+  the two apart (#3169). The editor itself still reads an unbound Ctrl+J as
+  Enter (and Ctrl+Alt+J as Alt+Enter); that reading is the router's, not the
+  parser's — see [input-keybindings-actions.md](input-keybindings-actions.md) §2.
 - **Modifier decoding is complete.** Shift/Alt/Ctrl/Super/Hyper/Meta are all
   mapped, and the modifier field is parsed as `u16` so its maximum legal value
   (256) no longer overflows and fails closed. Caps Lock / Num Lock have no

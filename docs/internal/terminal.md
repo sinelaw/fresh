@@ -116,6 +116,14 @@ Application-cursor mode (DECCKM) switches unmodified arrows to SS3 form, selecte
 from the terminal state at send time. Shift+Tab is emitted for both `Tab+SHIFT`
 and the `BackTab` variant.
 
+**Kitty keyboard protocol for the child** (not on Windows/ConPTY): the emulator
+answers `CSI ? u` and tracks the flags a child pushes and pops, read at send
+time like DECCKM. Once a child has enabled disambiguation (`CSI > 1 u`), the
+modified keys whose legacy byte can't carry a modifier — Enter, Tab, Backspace
+— are sent as `CSI <code>;<mods> u`, so a TUI can tell Shift+Enter from Enter
+(#3323). Unmodified keys, and children that never enable the protocol, keep
+the legacy bytes.
+
 A **paste** is not key encoding and does not go through it: every route into a
 live terminal (`Ev::Paste` and the web/daemon pastes via `Editor::paste_text`,
 `Action::TerminalPaste`) ends at `Window::send_terminal_paste`, which reads the
@@ -155,7 +163,9 @@ history ends.
 **Flush** writes only logical lines that fully scrolled into history. Wrapped
 rows are *rejoined* into one unwrapped logical line so the editor can re-wrap them
 at any view width. SGR colors are threaded across wrapped rows as truecolor and
-reset once per logical line.
+reset once per logical line. Wide-character spacer cells (a CJK character's
+second column, and the blank left at a row's end when the next wide character
+wrapped) are not written, so a wide character gains no trailing space (#3235).
 
 **Resize reconciliation**: a pure height change leaves the streamed-history count
 alone (a flush guard suppresses pulled-back rows; spilled rows stream as new). A
@@ -224,7 +234,10 @@ char / Enter / Tab / Backspace resumes live; nav keys scroll instead; Ctrl+Space
 Mouse forwarding only happens when in terminal mode **and** the buffer is in
 **alternate screen** — i.e. full-screen programs own the mouse. Coordinates are
 content-rect-relative. Crossterm button/event kinds map to Fresh's enums;
-horizontal scroll is dropped.
+horizontal scroll is dropped. Each wheel notch is forwarded **once**: when the
+child takes it, the smooth-scroll lines armed for that notch are dropped rather
+than replayed through the same dispatch (which re-forwarded every one — three
+SGR reports, or nine alternate-scroll arrows, per notch).
 
 ---
 
@@ -355,6 +368,7 @@ emulator or PTY.
   incremental scrollback streaming with reflow re-anchor; per-buffer
   `TerminalBuffer` live/scrollback fold; OSC 7 cwd sniffing; Ctrl+Click links
   (live + scrollback); alt-screen mouse forwarding; alternate-scroll guard;
+  kitty keyboard protocol for children (CSI-u modified Enter/Tab/Backspace);
   embedded-program & host titles; `fresh-winterm` (VT input, corrupt-mouse strip,
   relay, size); OSC 52 set-clipboard for session mode; authority-routed spawning
   and reconnect respawn preserving scrollback + mode.

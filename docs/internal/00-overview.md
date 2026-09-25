@@ -85,7 +85,7 @@ Per-iteration loop structure:
 
 1. Pump local control — drain nested forward requests.
 2. Editor tick — shared per-tick housekeeping: drains async messages (§5), timers, auto-save, file-change polling.
-3. Quit handling: auto-save buffers, end recovery session, save every window's workspace, write orchestrator state, then break.
+3. Quit handling (`Editor::persist_on_exit`, shared with the GUI, the daemon and the test harness): auto-save buffers, end recovery session, save every window's workspace, write orchestrator state, then break. The quit itself is decided before this: with auto-save on, nothing is written until the quit is confirmed (`Ctrl+Q`, and the `confirm_quit` question when that is on); only then are the buffers saved, and one the save can't write — its file changed on disk, or the write failed (say, it needs sudo) — raises the unsaved-changes prompt instead of the exit dropping its edits. Buffers hidden from the tabs (a plugin's replace-in-file) are saved where they can be, but never hold the quit.
 4. Suspend handling — tears down terminal modes, raises `SIGTSTP`, restores on `SIGCONT`.
 5. Force a render if animations are active, an LSP `$/progress` spinner is live, or terminal titles need a poll — these are wall-clock-driven and need periodic frames even with no input.
 6. **Render gate**: render only when one is needed, the frame duration has elapsed since the last render, and rendering is not suppressed. The frame duration is the 60fps cap (~16ms). The draw is bracketed in the terminal's synchronized-update sequences so the terminal shows a coherent frame.
