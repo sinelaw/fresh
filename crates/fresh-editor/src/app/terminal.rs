@@ -2152,21 +2152,19 @@ impl Window {
 
     /// Send a key event to this window's active terminal. Picks
     /// "application cursor" vs "normal cursor" escape sequences, and
-    /// kitty CSI-u for modified keys when the child enabled that
-    /// protocol, based on the terminal's current state.
+    /// the kitty keyboard protocol encoding when the child enabled it,
+    /// based on the terminal's current state.
     pub fn send_terminal_key(
         &mut self,
         code: crossterm::event::KeyCode,
         modifiers: crossterm::event::KeyModifiers,
     ) {
-        use crate::services::terminal::pty::{key_to_pty_bytes, kitty_disambiguated_key};
+        use crate::services::terminal::pty::{key_to_pty_bytes, kitty_encoded_key, KittyKeyFlags};
         let (app_cursor, kitty) = self
             .get_active_terminal_state()
-            .map(|s| (s.is_app_cursor(), s.kitty_disambiguates_keys()))
-            .unwrap_or((false, false));
-        let bytes = kitty
-            .then(|| kitty_disambiguated_key(code, modifiers))
-            .flatten()
+            .map(|s| (s.is_app_cursor(), s.kitty_key_flags()))
+            .unwrap_or((false, KittyKeyFlags::empty()));
+        let bytes = kitty_encoded_key(code, modifiers, kitty)
             .or_else(|| key_to_pty_bytes(code, modifiers, app_cursor));
         if let Some(bytes) = bytes {
             self.send_terminal_input(&bytes);
