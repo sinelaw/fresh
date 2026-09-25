@@ -210,6 +210,9 @@ pub(super) fn save_local(
     recipe: &WriteRecipe,
     recovery_dir: &Path,
 ) -> anyhow::Result<()> {
+    if recipe.has_copy_ops() {
+        refuse_copy_from_torn_file(&**fs, recovery_dir, dest_path)?;
+    }
     if !fs.is_owner(dest_path) {
         return save_with_inplace_write(fs, dest_path, recipe, recovery_dir);
     }
@@ -229,6 +232,44 @@ pub(super) fn save_local(
         }
         Err(ReplaceError::Io(e)) => Err(e.into()),
     }
+}
+
+/// A recipe with Copy ops (a large file's) reads the unchanged parts of the
+/// file back from the file itself, as it was when the buffer loaded it. An
+/// in-place write that failed part-way (or a crash during one) leaves the
+/// file torn: its start holds new content, so the same offsets now read the
+/// wrong bytes, and a save would write a "complete" file with them
+/// (issue #3382). Such a write leaves recovery metadata pointing at a
+/// complete copy of what it was writing; while that is there and the file
+/// doesn't match it, refuse, and say where the copy is. The copy is offered
+/// to the user when the editor starts, and removed once they decide.
+///
+/// Metadata whose copy is gone, or matches the file (the write finished
+/// after all), says nothing about the file.
+fn refuse_copy_from_torn_file(
+    fs: &dyn FileSystem,
+    recovery_dir: &Path,
+    dest_path: &Path,
+) -> anyhow::Result<()> {
+    let meta_path = InplaceWriteRecovery::meta_path(recovery_dir, dest_path);
+    let Some(recovery) = fs
+        .read_file(&meta_path)
+        .ok()
+        .and_then(|json| serde_json::from_slice::<InplaceWriteRecovery>(&json).ok())
+    else {
+        return Ok(());
+    };
+    if recovery.dest_path != dest_path
+        || !fs.exists(&recovery.temp_path)
+        || same_content(fs, &recovery.temp_path, dest_path).unwrap_or(false)
+    {
+        return Ok(());
+    }
+    Err(anyhow::anyhow!(
+        "Not saved: an earlier save of {} was interrupted, so the file may be damaged, and this save would read from it. What that save was writing is kept in {}",
+        dest_path.display(),
+        recovery.temp_path.display()
+    ))
 }
 
 /// Build a write recipe from the piece tree for saving.

@@ -1304,6 +1304,10 @@ impl FaultyFileSystem {
             .push((dir.to_path_buf(), kind));
     }
 
+    fn tear_after(&self, file: &Path, bytes: usize) {
+        *self.tear.lock().unwrap() = Some((file.to_path_buf(), bytes));
+    }
+
     fn check_create(&self, dir: Option<&Path>) -> io::Result<()> {
         for (denied, kind) in self.deny_create_in.lock().unwrap().iter() {
             if dir.is_some_and(|dir| dir.starts_with(denied)) {
@@ -1532,4 +1536,77 @@ fn test_large_inplace_save_with_nowhere_to_stage_says_why() {
         "the error must say the copy couldn't be staged, and where: {msg}"
     );
     assert_eq!(std::fs::read_to_string(&file_path).unwrap(), before);
+}
+
+/// Issue #3382: a large file's save reads the unchanged parts back from the
+/// file, at the offsets it had when loaded. An in-place write that fails
+/// part-way leaves the file torn, with new content at its start; when the
+/// torn file was still long enough, a retry read the shifted bytes and
+/// wrote them out as a "complete" file. It must be refused, keeping the
+/// complete copy the failed write staged, and saying where that is.
+#[test]
+#[cfg(unix)]
+fn test_large_file_retry_after_torn_inplace_write_is_refused() {
+    use fresh::services::recovery::{path_hash, InplaceWriteRecovery};
+    let data_dir = TempDir::new().unwrap();
+    let recovery_dir = data_dir.path().join("recovery");
+    let fs = Arc::new(FaultyFileSystem::new());
+    let (_dir, file_path, mut buffer, expected) = edited_large_file(fs.clone());
+    let original_len = expected.len() - "EDITED ".len();
+
+    // Attempt 1 fails part-way, leaving a torn file longer than the
+    // original, so every Copy op of a retry can still read its range.
+    fs.tear_after(&file_path, original_len + 3);
+    assert!(buffer.save(&recovery_dir).is_err());
+    let torn = std::fs::read(&file_path).unwrap();
+    assert_eq!(torn.len(), original_len + 3);
+    *fs.tear.lock().unwrap() = None;
+
+    let err = buffer
+        .save(&recovery_dir)
+        .expect_err("a retry reading from the torn file must be refused");
+
+    let meta_path = recovery_dir.join(format!("{}.inplace.json", path_hash(&file_path)));
+    let recovery: InplaceWriteRecovery =
+        serde_json::from_str(&std::fs::read_to_string(meta_path).unwrap()).unwrap();
+    assert_eq!(
+        std::fs::read_to_string(&recovery.temp_path).unwrap(),
+        expected,
+        "the complete copy attempt 1 staged must be kept"
+    );
+    assert!(
+        err.to_string()
+            .contains(&recovery.temp_path.display().to_string()),
+        "the error must say where the copy is: {err}"
+    );
+    assert_eq!(
+        std::fs::read(&file_path).unwrap(),
+        torn,
+        "nothing more is written"
+    );
+}
+
+/// Recovery metadata whose copy the file already matches (the write did
+/// finish) doesn't hold up a large file's save.
+#[test]
+#[cfg(unix)]
+fn test_large_file_save_ignores_recovery_its_file_matches() {
+    use fresh::services::recovery::{path_hash, InplaceWriteRecovery};
+    let data_dir = TempDir::new().unwrap();
+    let recovery_dir = data_dir.path().join("recovery");
+    std::fs::create_dir_all(&recovery_dir).unwrap();
+    let fs = Arc::new(FaultyFileSystem::new());
+    let (_dir, file_path, mut buffer, expected) = edited_large_file(fs);
+    let copy = recovery_dir.join(".inplace-big.txt-1-1.tmp");
+    std::fs::copy(&file_path, &copy).unwrap();
+    let recovery = InplaceWriteRecovery::new(file_path.clone(), copy, 0, 0, 0o644);
+    std::fs::write(
+        recovery_dir.join(format!("{}.inplace.json", path_hash(&file_path))),
+        serde_json::to_string(&recovery).unwrap(),
+    )
+    .unwrap();
+
+    buffer.save(&recovery_dir).unwrap();
+
+    assert_eq!(std::fs::read_to_string(&file_path).unwrap(), expected);
 }
