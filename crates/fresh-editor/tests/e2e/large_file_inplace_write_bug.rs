@@ -1198,3 +1198,31 @@ fn test_refused_retry_keeps_earlier_copy_large_file() {
 fn test_refused_retry_keeps_earlier_copy_large_file_sudo() {
     check_refused_retry_keeps_earlier_copy(true, io::ErrorKind::PermissionDenied);
 }
+
+/// Once the sudo fallback has written the whole file, the copy an earlier,
+/// interrupted in-place attempt left for it is obsolete: its metadata and
+/// staged copy are removed rather than kept (and warned about) forever.
+#[test]
+#[cfg(unix)]
+fn test_completed_sudo_save_resolves_earlier_staged_copy() {
+    use fresh::services::recovery::{path_hash, InplaceWriteRecovery};
+    let data_dir = TempDir::new().unwrap();
+    let _pin = crate::common::global_state::pin_data_dir(data_dir.path());
+    let recovery_dir = data_dir.path().join("recovery");
+    std::fs::create_dir_all(&recovery_dir).unwrap();
+
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("torn.txt");
+    std::fs::write(&file_path, "complete content\n").unwrap();
+    // A copy an earlier attempt of this process staged and kept.
+    let copy = recovery_dir.join(format!(".inplace-torn.txt-{}-1.tmp", std::process::id()));
+    std::fs::write(&copy, "complete content\n").unwrap();
+    let meta_path = recovery_dir.join(format!("{}.inplace.json", path_hash(&file_path)));
+    let recovery = InplaceWriteRecovery::new(file_path.clone(), copy.clone(), 0, 0, 0o644);
+    std::fs::write(&meta_path, serde_json::to_string(&recovery).unwrap()).unwrap();
+
+    fresh::model::buffer::save::resolve_inplace_write_recovery(&StdFileSystem, &file_path);
+
+    assert!(!meta_path.exists(), "the recovery metadata must be removed");
+    assert!(!copy.exists(), "the obsolete staged copy must be removed");
+}

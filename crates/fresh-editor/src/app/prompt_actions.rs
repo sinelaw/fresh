@@ -353,6 +353,13 @@ impl Editor {
                         // Best-effort cleanup of temp file.
                         #[allow(clippy::let_underscore_must_use)]
                         let _ = self.authority().filesystem.remove_file(&info.temp_path);
+                        // The file now holds the full content, so a copy an
+                        // earlier interrupted in-place attempt staged for it
+                        // is obsolete.
+                        crate::model::buffer::save::resolve_inplace_write_recovery(
+                            &*self.authority().filesystem,
+                            &info.dest_path,
+                        );
                         Ok(())
                     })();
 
