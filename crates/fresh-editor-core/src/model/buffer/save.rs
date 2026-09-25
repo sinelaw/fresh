@@ -430,10 +430,9 @@ fn create_recovery_temp_file(
     // Ensure directory exists
     fs.create_dir_all(recovery_dir)?;
 
-    // Create unique filename based on destination file and timestamp
-    let file_name = dest_path
-        .file_name()
-        .unwrap_or_else(|| std::ffi::OsStr::new("fresh-save"));
+    // Create unique filename based on destination file and timestamp; only
+    // the start of a long file name, so the name stays within the limits of
+    // filesystems that allow short names (issue #3409)
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
@@ -442,7 +441,7 @@ fn create_recovery_temp_file(
 
     let temp_name = format!(
         ".inplace-{}-{}-{}.tmp",
-        file_name.to_string_lossy(),
+        crate::model::filesystem::temp_name_stem(dest_path),
         pid,
         timestamp
     );

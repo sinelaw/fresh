@@ -211,6 +211,8 @@ Writing the recipe is the save path's job, not the filesystem's (`model/buffer/s
 
 An in-place write first **stages** a complete copy of the new content, private to the user, in the recovery directory, with `<path hash>.inplace.json` metadata pointing at it; the copy goes once the write completes, and stays if it fails part-way. There is one staged copy per file: a new one supersedes the last only once the file is open for writing, since until then the earlier copy may be all that is left of a torn file. If nothing can be staged (e.g. an unwritable recovery dir) the file is still written in place, unless the disk is full. When the file or its directory can't be written at all, the content goes to a private temp file owned by the `SudoSaveRequired` error, and the sudo prompt writes it with the original owner/permissions (resolving any staged copy of that file). The recovery directory is the editor's (`DirectoryContext::recovery_dir`), passed to `TextBuffer::save`; at startup the editor sweeps it (through the local filesystem) for what crashed saves left and no longer need — a staged copy its file already matches, metadata whose copy is gone, dead processes' temp files — keeping and logging any staged copy that differs from its file.
 
+The names of these temp files and staged copies carry only the start of the file's name (`temp_name_stem`), so they stay within the name limit of filesystems that allow short names, such as eCryptfs (~143 bytes), for any file whose own name fits.
+
 `FileSystem::write_file` is a plain atomic replace for the editor's own files (config, workspace, recovery data): it keeps what owner/xattrs it can and replaces the file regardless, never writing in place.
 
 ### 7.3 Pristine-saved-root rebuild
