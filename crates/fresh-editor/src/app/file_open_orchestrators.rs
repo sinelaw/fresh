@@ -877,6 +877,22 @@ impl Editor {
 }
 
 impl crate::app::window::Window {
+    /// Whether `buffer_id` is an untouched scratch buffer — empty,
+    /// unmodified, with no file — which a file or recovered content can take
+    /// over rather than opening beside it. Not a composite buffer (they look
+    /// empty but are special views), nor one hosting a widget panel: its rows
+    /// are the tree's mirror (`app::pane_mirror`), written on the next frame,
+    /// so it is empty between its mount and that frame.
+    pub(crate) fn is_pristine_scratch(&self, buffer_id: BufferId) -> bool {
+        self.buffers.get(&buffer_id).is_some_and(|state| {
+            !state.is_composite_buffer
+                && !state.interactive_widget_panel
+                && state.buffer.is_empty()
+                && !state.buffer.is_modified()
+                && state.buffer.file_path().is_none()
+        })
+    }
+
     /// Open a file without switching focus to it.
     ///
     /// Window-scoped core of the open-file path: creates a new buffer
@@ -1155,14 +1171,7 @@ impl crate::app::window::Window {
         // `git show` opened from the same tick replaced.
         // Suppressed when `allow_replace_empty` is false — see
         // `open_file_for_preview` for the rationale.
-        let replace_current = allow_replace_empty && {
-            let current_state = self.buffers.get(&self.active_buffer()).unwrap();
-            !current_state.is_composite_buffer
-                && !current_state.interactive_widget_panel
-                && current_state.buffer.is_empty()
-                && !current_state.buffer.is_modified()
-                && current_state.buffer.file_path().is_none()
-        };
+        let replace_current = allow_replace_empty && self.is_pristine_scratch(self.active_buffer());
 
         let buffer_id = if replace_current {
             // Reuse the current empty buffer
