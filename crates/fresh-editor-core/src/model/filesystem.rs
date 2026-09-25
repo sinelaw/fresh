@@ -721,12 +721,17 @@ pub trait FileSystem: Send + Sync {
         Ok(file)
     }
 
-    /// Create a new, uniquely named temp file next to `path` for an atomic
-    /// write-then-rename. Never opens a file that already exists.
-    fn create_temp_file_for(&self, path: &Path) -> io::Result<(PathBuf, Box<dyn FileWriter>)> {
+    /// Create a new, uniquely named temp file next to `path`, readable only
+    /// by its owner (see [`FileSystem::create_new_private_file`]), to hold
+    /// content meant for `path` until it can be written there. Never opens a
+    /// file that already exists.
+    fn create_private_temp_file_for(
+        &self,
+        path: &Path,
+    ) -> io::Result<(PathBuf, Box<dyn FileWriter>)> {
         retry_on_name_clash(|| {
             let temp_path = self.temp_path_for(path);
-            let file = self.create_new_file(&temp_path)?;
+            let file = self.create_new_private_file(&temp_path)?;
             Ok((temp_path, file))
         })
     }
@@ -1482,9 +1487,9 @@ impl StdFileSystem {
         crate::model::buffer::save::write_in_place_staged(self, path, data)
     }
 
-    /// Like [`FileSystem::create_temp_file_for`], but on unix the file is
-    /// created with at most the permission bits of `mode` (the file it will
-    /// replace), not the umask default. The new content is written before
+    /// Create a new, uniquely named temp file next to `path` for an atomic
+    /// write-then-rename. On unix it is created with at most the permission
+    /// bits of `mode` (the file it will replace), not the umask default. The new content is written before
     /// the original's permissions are copied over, and a file created e.g.
     /// 0644 next to a 0600 original could be opened by anyone in between
     /// and read through that handle afterwards.
