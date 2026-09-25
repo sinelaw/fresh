@@ -164,8 +164,10 @@ Order of checks in `handle_key`:
      keys when the file explorer is focused. Completion popups consult the
      `Completion` keybinding context first; global popups outrank buffer popups.
      `Ignored` falls through.
-7. **Buffer-mode bindings** — only in `Normal`/`CompositeBuffer` context. Chord
-   then single-key resolution against the `Mode(name)` context.
+7. **Mode bindings** — only in `Normal`/`CompositeBuffer` context. Chord
+   then single-key resolution against the `Mode(name)` context of the
+   effective mode (§6: the buffer's, else the window's, else the editor-wide
+   input mode).
 8. **Composite-buffer routing** via `try_route_composite_key`.
 9. **Chord + single-key resolution** in the resolved context, then
    `handle_action(action)`.
@@ -375,11 +377,36 @@ without re-declaring them. The source is authoritative.
 
 ---
 
-## 6. Buffer modes
+## 6. Modes
 
-A buffer (or the global editor) can carry a named **mode**. `effective_mode()`
-returns the buffer-local mode if present else the global mode, so virtual-buffer
-modes aren't hijacked by a global mode. Mode handling in `handle_key`:
+A named **mode** can come from four places, each with its own scope:
+
+| Layer | Set by | Scope |
+|-------|--------|-------|
+| Panel mode | `mount({ mode })` | the mounted dock / floating panel, while it has the keyboard |
+| Buffer mode | the virtual buffer's `mode` | that buffer |
+| Window editor mode | `setEditorMode` → `Window::editor_mode` | the active window only |
+| Input mode | `setInputMode` → `Editor::input_mode` | every window, editor-wide |
+
+Keys resolve in that order, then against the base keymap. A focused panel's
+mode is its own keymap (`panel_keymap`) and never falls back to the others.
+For the editor content, `effective_mode()` is the **first** of buffer mode,
+window editor mode and input mode that is set — a single mode, not a chain —
+so a search-replace panel isn't hijacked by vi, flash's label mode outranks
+vi in its own window, and vi holds wherever nothing more specific does.
+
+The input mode is the layer for a modal-editing personality (vi, or an
+emacs-style plugin): a preference about how the user types, set once, the
+same in every window — including windows created after it was set — and not
+clearable by anything window-scoped. It sits beside the editor-wide
+`active_keybinding_map`. vi keeps its sub-mode (`vi-normal`, `vi-insert`, …)
+as the input mode's value. Per-window `Window::editor_mode` remains for
+genuinely window-scoped plugin modes (`markdown-source`, flash). Changing the
+input mode fires `input_mode_changed`, so a window mode that should step
+aside while one is on (markdown-source) can re-check.
+
+The read-only block below consults the mode beneath the buffer's (window
+editor mode, else input mode). Mode handling in `handle_key`:
 
 - Mode chord + single-key resolution against `Mode(name)`.
 - If the mode `allows_text_input` (e.g. `search-replace-list`), unbound printable

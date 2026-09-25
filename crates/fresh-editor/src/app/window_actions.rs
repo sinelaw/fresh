@@ -689,7 +689,8 @@ impl crate::app::Editor {
         let previous_authority_label = self.authority().display_label.clone();
 
         // The outgoing window keeps its editor mode, floating panel or not:
-        // that slot is its buffer's (vi keeps "vi-normal" there), and a
+        // that slot is its buffer's (a window-scoped plugin mode; vi's is the
+        // editor-wide input mode and never lives here), and a
         // mounted panel's keymap is the mode it was mounted with
         // (`FloatingWidgetState::mode`), which is editor-wide and goes
         // wherever the panel does.

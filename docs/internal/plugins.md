@@ -424,6 +424,12 @@ centred panel by calling `setEditorMode` before mounting it must now pass that
 mode as the mount's `mode` option (`FloatingWidgetPanel.mount(spec, { mode })`).
 The window's editor mode is the buffer's.
 
+**Window mode vs input mode.** `setEditorMode` sets the *active window's*
+mode: window-scoped, invisible in other windows. A modal-editing plugin that
+should apply everywhere (vi) calls `setInputMode` instead, which sets the
+editor-wide input mode; the window's mode outranks it where both are set.
+See input-keybindings-actions.md §6.
+
 ### 7.3 Events back to the plugin
 
 Key/mouse input is routed through the widget runtime (command handling, smart

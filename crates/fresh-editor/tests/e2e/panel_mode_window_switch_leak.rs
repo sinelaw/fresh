@@ -27,8 +27,9 @@ use fresh_core::api::{PluginCommand, WidgetSpec};
 const WIDTH: u16 = 120;
 const HEIGHT: u16 = 40;
 
-/// The window's own mode — what vi_mode keeps in the slot.
-const WINDOW_MODE: &str = "vi-normal";
+/// The window's own mode — a window-scoped plugin mode. (vi kept its mode
+/// here until it moved to the editor-wide input mode, #3395.)
+const WINDOW_MODE: &str = "test-window-mode";
 /// The panel's keymap, declared at mount.
 const PANEL_MODE: &str = "orchestrator-open";
 
@@ -56,7 +57,7 @@ fn panel_mode_does_not_leak_onto_window_switched_away_from() {
         .editor_mut()
         .create_window_at(win_b_dir.path().to_path_buf(), "session-b".into());
 
-    // Window A holds a mode of its own (vi's), set before any dialog opens.
+    // Window A holds a mode of its own, set before any dialog opens.
     harness
         .editor_mut()
         .handle_plugin_command(PluginCommand::SetEditorMode {

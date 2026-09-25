@@ -371,9 +371,9 @@ impl Editor {
     ) -> Option<AnyhowResult<()>> {
         use crate::input::router::ModeKeyDisposition;
 
-        // effective_mode() returns buffer-local mode if present, else
-        // global mode, so virtual buffer modes aren't hijacked by global
-        // modes.
+        // effective_mode() returns the buffer-local mode if present, else
+        // the window's editor mode, else the editor-wide input mode, so
+        // virtual buffer modes aren't hijacked by either.
         let effective_mode = self.effective_mode().map(|s| s.to_owned());
         let allows_text_input = effective_mode
             .as_deref()
@@ -381,9 +381,7 @@ impl Editor {
         let view = router::ModeKeyView {
             allows_text_input,
             global_mode_read_only: self
-                .active_window()
-                .editor_mode
-                .as_deref()
+                .window_or_input_mode()
                 .map(|m| self.mode_registry.is_read_only(m)),
             effective_mode,
         };

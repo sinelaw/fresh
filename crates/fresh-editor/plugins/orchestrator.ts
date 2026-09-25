@@ -631,9 +631,9 @@ const DOCK_MENU_KEY = "menu-pick";
 
 // Every orchestrator keymap rides on the panel it belongs to (the `mount`
 // option `mode`), never on the window's editor mode: that is one slot per
-// window, shared with every plugin — vi_mode keeps "vi-normal" there — and a
-// dialog that borrowed it had nothing to hand back on close, so clearing it
-// wiped vi's (issue #3305). The dock's menus bind nothing, so they mount
+// window, shared with every plugin, and a dialog that borrowed it had nothing
+// to hand back on close, so clearing it wiped whatever lived there — vi's
+// mode, before vi moved to the editor-wide input mode (issues #3305, #3395). The dock's menus bind nothing, so they mount
 // without a mode: the keys their focused control leaves go to the panel's own
 // defaults, never to the window's mode.
 

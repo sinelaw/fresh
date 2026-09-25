@@ -426,15 +426,17 @@ pub fn should_dismiss_transient_popup(
 /// Read-only view for [`mode_key_disposition`]: the mode-related state a
 /// key is judged against while the editor buffer has focus.
 pub struct ModeKeyView {
-    /// The effective mode (buffer-local if present, else global) —
-    /// virtual buffer modes must not be hijacked by global modes.
+    /// The effective mode (buffer-local if present, else the window's
+    /// editor mode, else the input mode) — virtual buffer modes must not be
+    /// hijacked by either.
     pub effective_mode: Option<String>,
     /// The effective mode declares `allow_text_input` (e.g.
     /// search-replace-list): character keys are captured, other unbound
     /// keys are blocked.
     pub allows_text_input: bool,
-    /// The *global* editor mode's read-only flag, when a global mode is
-    /// active (e.g. vi-normal blocks all unbound keys when read-only).
+    /// The read-only flag of the mode beneath the buffer's — the window's
+    /// editor mode, else the editor-wide input mode — when one is active
+    /// (e.g. vi-normal blocks all unbound keys when read-only).
     pub global_mode_read_only: Option<bool>,
 }
 

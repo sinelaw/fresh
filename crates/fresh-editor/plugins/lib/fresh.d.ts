@@ -4559,9 +4559,22 @@ interface EditorAPI {
 	*/
 	defineMode(name: string, bindingsArr: string[][], readOnly?: boolean, allowTextInput?: boolean, inheritNormalBindings?: boolean): boolean;
 	/**
-	* Set the global editor mode
+	* Set the active window's editor mode — a plugin mode scoped to that
+	* window, such as `markdown-source`. It outranks the editor-wide input
+	* mode in that window and is invisible in every other. `null` clears
+	* it. A modal-editing personality that should apply everywhere (vi)
+	* belongs in `setInputMode` instead.
 	*/
 	setEditorMode(mode: string | null): boolean;
+	/**
+	* Set the editor-wide input mode — a modal-editing personality such as
+	* vi (`"vi-normal"`, `"vi-insert"`, …). It applies in every window,
+	* including windows created later, and nothing window-scoped clears it.
+	* Keys resolve against a focused panel's mode, then the buffer's, then
+	* the window's editor mode, then this, then the base keymap. `null`
+	* turns it off.
+	*/
+	setInputMode(mode: string | null): boolean;
 	/**
 	* Which widget holds focus in one of this plugin's mounted panels —
 	* its key, or `""` when nothing is focused or the panel is not mounted.
@@ -4573,9 +4586,13 @@ interface EditorAPI {
 	*/
 	getPanelFocusKey(panelId: number): string;
 	/**
-	* Get the current editor mode
+	* Get the active window's editor mode (see `setEditorMode`)
 	*/
 	getEditorMode(): string | null;
+	/**
+	* Get the editor-wide input mode (see `setInputMode`)
+	*/
+	getInputMode(): string | null;
 	/**
 	* Close a split.
 	* 
@@ -5823,6 +5840,16 @@ interface HookEventMap {
 	* plugin's own `editor.setSetting(...)` writes.
 	*/
 	config_changed: Record<string, never>;
+	/**
+	* The editor-wide input mode (`editor.setInputMode`) changed — vi, or
+	* another modal-editing plugin, was turned on or off or switched between
+	* its sub-modes. `mode` is the new value (`null` when cleared). A plugin
+	* whose window-scoped editor mode should step aside while an input mode
+	* is on re-checks here, since a window's editor mode outranks it.
+	*/
+	input_mode_changed: {
+		mode: string | null;
+	};
 	// ── buffer lifecycle ─────────────────────────────────────────────────────
 	buffer_activated: {
 		buffer_id: number;

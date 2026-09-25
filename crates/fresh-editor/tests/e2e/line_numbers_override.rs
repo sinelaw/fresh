@@ -151,7 +151,7 @@ fn enable_vi_mode(harness: &mut EditorTestHarness) {
     harness.run_palette_command("Toggle Vi mode").unwrap();
     harness.wait_for_prompt_closed().unwrap();
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-normal".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-normal".to_string()))
         .unwrap();
 }
 
