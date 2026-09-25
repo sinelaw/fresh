@@ -1552,6 +1552,33 @@ enum Identity {
     BestEffort,
 }
 
+/// Setting a file's owner and extended attributes: what an atomic replace
+/// does to carry them over to the new file. [`SystemAttributes`] makes the
+/// real calls; tests substitute one that fails the way they do for a
+/// non-root user (a group they aren't in) or for a system-managed attribute,
+/// which a test environment can't be relied on to reproduce.
+trait SetAttributes {
+    #[cfg(unix)]
+    fn chown(&self, path: &Path, uid: Option<u32>, gid: Option<u32>) -> io::Result<()>;
+    #[cfg(unix)]
+    fn set_xattr(&self, path: &Path, name: &std::ffi::OsStr, value: &[u8]) -> io::Result<()>;
+}
+
+/// The system's own [`SetAttributes`].
+struct SystemAttributes;
+
+impl SetAttributes for SystemAttributes {
+    #[cfg(unix)]
+    fn chown(&self, path: &Path, uid: Option<u32>, gid: Option<u32>) -> io::Result<()> {
+        std::os::unix::fs::chown(path, uid, gid)
+    }
+
+    #[cfg(unix)]
+    fn set_xattr(&self, path: &Path, name: &std::ffi::OsStr, value: &[u8]) -> io::Result<()> {
+        xattr::set(path, name, value)
+    }
+}
+
 impl StdFileSystem {
     /// Check if a file is hidden (platform-specific)
     fn is_hidden(path: &Path) -> bool {
@@ -1568,13 +1595,15 @@ impl StdFileSystem {
     /// keep the file's identity — other hard links, or an owner/group/xattr
     /// that can't be carried over — fails with
     /// [`ReplaceError::IdentityNotPreserved`] and leaves `path` untouched;
-    /// with [`Identity::BestEffort`] the file is replaced anyway.
+    /// with [`Identity::BestEffort`] the file is replaced anyway. Owner and
+    /// xattrs are set through `attrs`.
     #[cfg_attr(not(unix), allow(unused_variables))]
     fn replace_atomically(
         &self,
         path: &Path,
         data: &[u8],
         identity: Identity,
+        attrs: &dyn SetAttributes,
     ) -> Result<(), ReplaceError> {
         let original = std::fs::metadata(path).ok();
         #[cfg(unix)]
@@ -1601,7 +1630,7 @@ impl StdFileSystem {
             drop(file);
             if let Some(ref meta) = original {
                 #[cfg(unix)]
-                if let Err(e) = Self::copy_owner_and_xattrs(meta, path, &temp_path) {
+                if let Err(e) = Self::copy_owner_and_xattrs(attrs, meta, path, &temp_path) {
                     if identity == Identity::Required {
                         return Err(ReplaceError::IdentityNotPreserved(
                             IdentityLoss::Attributes(e),
@@ -1675,6 +1704,7 @@ impl StdFileSystem {
     /// attributes are never copied (see [`Self::xattr_is_content_bound`]).
     #[cfg(unix)]
     fn copy_owner_and_xattrs(
+        attrs: &dyn SetAttributes,
         original: &std::fs::Metadata,
         path: &Path,
         temp: &Path,
@@ -1684,7 +1714,7 @@ impl StdFileSystem {
         let uid = (created.uid() != original.uid()).then_some(original.uid());
         let gid = (created.gid() != original.gid()).then_some(original.gid());
         if uid.is_some() || gid.is_some() {
-            Self::chown(temp, uid, gid)?;
+            attrs.chown(temp, uid, gid)?;
         }
 
         let names = match xattr::list_deref(path) {
@@ -1704,7 +1734,7 @@ impl StdFileSystem {
                 // A new file often already has the same label/ACL; setting it
                 // again could need privileges the save doesn't otherwise need.
                 if xattr::get(temp, &name)?.as_deref() != Some(value.as_slice()) {
-                    Self::set_xattr(temp, &name, &value)?;
+                    attrs.set_xattr(temp, &name, &value)?;
                 }
                 Ok(())
             });
@@ -1751,24 +1781,6 @@ impl StdFileSystem {
                     || code == libc::ENOTSUP
                     || code == libc::EOPNOTSUPP
             })
-    }
-
-    #[cfg(unix)]
-    fn chown(path: &Path, uid: Option<u32>, gid: Option<u32>) -> io::Result<()> {
-        #[cfg(test)]
-        if tests::FAIL_CHOWN.with(std::cell::Cell::get) {
-            return Err(io::Error::from_raw_os_error(libc::EPERM));
-        }
-        std::os::unix::fs::chown(path, uid, gid)
-    }
-
-    #[cfg(unix)]
-    fn set_xattr(path: &Path, name: &std::ffi::OsStr, value: &[u8]) -> io::Result<()> {
-        #[cfg(test)]
-        if tests::UNSETTABLE_XATTR.with(|n| n.borrow().as_deref() == Some(name)) {
-            return Err(io::Error::from_raw_os_error(libc::EPERM));
-        }
-        xattr::set(path, name, value)
     }
 
     /// Get the current user's effective UID and all group IDs (primary + supplementary).
@@ -1902,7 +1914,7 @@ impl FileSystem for StdFileSystem {
     }
 
     fn write_file(&self, path: &Path, data: &[u8]) -> io::Result<()> {
-        match self.replace_atomically(path, data, Identity::BestEffort) {
+        match self.replace_atomically(path, data, Identity::BestEffort, &SystemAttributes) {
             Ok(()) => Ok(()),
             Err(ReplaceError::Io(e)) => Err(e),
             // Not produced with `BestEffort`.
@@ -1915,7 +1927,7 @@ impl FileSystem for StdFileSystem {
         path: &Path,
         data: &[u8],
     ) -> Result<(), ReplaceError> {
-        self.replace_atomically(path, data, Identity::Required)
+        self.replace_atomically(path, data, Identity::Required, &SystemAttributes)
     }
 
     fn create_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
@@ -2378,16 +2390,37 @@ mod tests {
     use super::*;
     use tempfile::NamedTempFile;
 
-    thread_local! {
-        #[cfg(unix)]
-        /// Makes `StdFileSystem::chown` fail with EPERM on this thread, as it
-        /// does for a non-root user and a group they aren't in.
-        pub(super) static FAIL_CHOWN: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-        #[cfg(unix)]
-        /// Makes setting this xattr fail with EPERM on this thread, as it does
-        /// for attributes the system manages.
-        pub(super) static UNSETTABLE_XATTR: std::cell::RefCell<Option<std::ffi::OsString>> =
-            const { std::cell::RefCell::new(None) };
+    /// [`SetAttributes`] whose `chown` fails with EPERM, as it does for a
+    /// non-root user and a group they aren't in.
+    #[cfg(unix)]
+    struct ChownDenied;
+
+    #[cfg(unix)]
+    impl SetAttributes for ChownDenied {
+        fn chown(&self, _path: &Path, _uid: Option<u32>, _gid: Option<u32>) -> io::Result<()> {
+            Err(io::Error::from_raw_os_error(libc::EPERM))
+        }
+        fn set_xattr(&self, path: &Path, name: &std::ffi::OsStr, value: &[u8]) -> io::Result<()> {
+            SystemAttributes.set_xattr(path, name, value)
+        }
+    }
+
+    /// [`SetAttributes`] that may not set the xattr it names (EPERM), as for
+    /// attributes the system manages.
+    #[cfg(unix)]
+    struct XattrDenied(&'static str);
+
+    #[cfg(unix)]
+    impl SetAttributes for XattrDenied {
+        fn chown(&self, path: &Path, uid: Option<u32>, gid: Option<u32>) -> io::Result<()> {
+            SystemAttributes.chown(path, uid, gid)
+        }
+        fn set_xattr(&self, path: &Path, name: &std::ffi::OsStr, value: &[u8]) -> io::Result<()> {
+            if name == self.0 {
+                return Err(io::Error::from_raw_os_error(libc::EPERM));
+            }
+            SystemAttributes.set_xattr(path, name, value)
+        }
     }
 
     #[test]
@@ -2828,9 +2861,7 @@ mod tests {
         std::os::unix::fs::chown(&path, Some(uid), Some(gid)).unwrap();
         let ino = std::fs::metadata(&path).unwrap().ino();
 
-        FAIL_CHOWN.with(|f| f.set(true));
-        let result = fs.replace_file_preserving_identity(&path, b"new\n");
-        FAIL_CHOWN.with(|f| f.set(false));
+        let result = fs.replace_atomically(&path, b"new\n", Identity::Required, &ChownDenied);
 
         assert!(
             matches!(
@@ -2849,7 +2880,7 @@ mod tests {
         assert_eq!(names.len(), 1, "the temp file must not be left behind");
     }
 
-    /// `write_file` still replaces a file whose owner/group it can't carry
+    /// `write_file` (a best-effort replace) still replaces a file whose owner/group it can't carry
     /// over, as it always has: the editor's own files need the atomic write
     /// more than their group.
     #[cfg(unix)]
@@ -2865,10 +2896,8 @@ mod tests {
         };
         std::os::unix::fs::chown(&path, Some(uid), Some(gid)).unwrap();
 
-        FAIL_CHOWN.with(|f| f.set(true));
-        let result = fs.write_file(&path, b"new\n");
-        FAIL_CHOWN.with(|f| f.set(false));
-        result.unwrap();
+        fs.replace_atomically(&path, b"new\n", Identity::BestEffort, &ChownDenied)
+            .unwrap();
 
         assert_eq!(std::fs::read(&path).unwrap(), b"new\n");
     }
@@ -2892,10 +2921,13 @@ mod tests {
         }
         let ino = std::fs::metadata(&path).unwrap().ino();
 
-        UNSETTABLE_XATTR.with(|n| *n.borrow_mut() = Some("user.fresh_a_system".into()));
-        let result = fs.write_file(&path, b"new\n");
-        UNSETTABLE_XATTR.with(|n| *n.borrow_mut() = None);
-        result.unwrap();
+        fs.replace_atomically(
+            &path,
+            b"new\n",
+            Identity::Required,
+            &XattrDenied("user.fresh_a_system"),
+        )
+        .unwrap();
 
         assert_eq!(std::fs::read(&path).unwrap(), b"new\n");
         assert_ne!(
