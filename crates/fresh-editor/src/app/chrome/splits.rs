@@ -1359,9 +1359,7 @@ impl Editor {
             .and_then(|states| states.get_mut(&leaf_id))
         {
             if pointer_level_with_text {
-                view_state
-                    .viewport
-                    .set_skip_vertical_ensure_visible(new_position);
+                view_state.viewport.hold_rows_while_head_at(new_position);
             } else {
                 view_state.viewport.clear_skip_ensure_visible();
             }
