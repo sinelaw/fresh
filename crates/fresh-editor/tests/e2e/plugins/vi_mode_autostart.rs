@@ -141,12 +141,9 @@ fn vi_mode_autostart_false_leaves_vi_dormant() {
     );
 }
 
-/// autoStart with the Orchestrator dock up: the dock's mount (from `ready`,
-/// after vi_mode has enabled itself at load) used to reset the editor mode
-/// to none, so the status bar said vi was on while `j` typed a `j`
-/// (issue #3305).
-#[test]
-fn vi_mode_autostart_survives_the_orchestrator_dock_mount() {
+/// vi_mode (autoStart) and the Orchestrator together, the dock mounted from
+/// `ready` and `two_lines.txt` open in the editor.
+fn vi_with_orchestrator_dock() -> (EditorTestHarness, tempfile::TempDir) {
     use crate::common::harness::HarnessOptions;
 
     init_tracing_from_env();
@@ -160,6 +157,14 @@ fn vi_mode_autostart_survives_the_orchestrator_dock_mount() {
     copy_plugin_lib(&plugins_dir);
     let file = project_root.join("two_lines.txt");
     fs::write(&file, "alpha\nbeta\n").unwrap();
+    // A git project, so the dock lists this workspace as a session row.
+    let ok = std::process::Command::new("git")
+        .args(["init", "-q"])
+        .current_dir(&project_root)
+        .status()
+        .unwrap()
+        .success();
+    assert!(ok);
 
     let mut config = Config::default();
     config.plugins.insert(
@@ -200,6 +205,12 @@ fn vi_mode_autostart_survives_the_orchestrator_dock_mount() {
     h.open_file(&file).unwrap();
     h.wait_until(|h| h.screen_to_string().contains("two_lines.txt"))
         .unwrap();
+    (h, temp)
+}
+
+/// With the cursor on line 1 of `two_lines.txt` and the editor holding the
+/// keyboard, `j` must be vi-normal's move-down, not a typed `j`.
+fn assert_vi_j_moves_down(h: &mut EditorTestHarness) {
     h.send_key(KeyCode::Char('j'), KeyModifiers::NONE).unwrap();
     // Either outcome settles the question: the cursor moved, or a `j` was
     // typed into the buffer.
@@ -213,4 +224,84 @@ fn vi_mode_autostart_survives_the_orchestrator_dock_mount() {
         !screen.contains("jalpha") && screen.contains("Ln 2, Col 1"),
         "vi-normal `j` moves down instead of typing:\n{screen}"
     );
+}
+
+/// Give the dock the keyboard (Alt+O, vi-normal leaves it to the editor).
+fn focus_dock(h: &mut EditorTestHarness) {
+    h.send_key(KeyCode::Char('o'), KeyModifiers::ALT).unwrap();
+    h.wait_until(|h| h.editor().is_dock_focused()).unwrap();
+}
+
+/// autoStart with the Orchestrator dock up: the dock's mount (from `ready`,
+/// after vi_mode has enabled itself at load) used to reset the editor mode
+/// to none, so the status bar said vi was on while `j` typed a `j`
+/// (issue #3305).
+#[test]
+fn vi_mode_autostart_survives_the_orchestrator_dock_mount() {
+    let (mut h, _tmp) = vi_with_orchestrator_dock();
+    assert_vi_j_moves_down(&mut h);
+}
+
+/// An Orchestrator dialog opened and cancelled from the dock hands vi its
+/// mode back: the dialog used to take the window's one mode slot for its
+/// keymap and empty it on close, so after Alt+N, Esc, Esc a `j` typed a `j`.
+#[test]
+fn vi_mode_survives_an_orchestrator_dialog_opened_from_the_dock() {
+    let (mut h, _tmp) = vi_with_orchestrator_dock();
+    focus_dock(&mut h);
+    h.send_key(KeyCode::Char('n'), KeyModifiers::ALT).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("New Workspace"))
+        .unwrap();
+    // Esc cancels the form and hands the keyboard back to the dock…
+    h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| {
+        !h.screen_to_string().contains("New Workspace") && h.editor().is_dock_focused()
+    })
+    .unwrap();
+    // …and a second Esc leaves the dock for the editor.
+    h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| !h.editor().is_dock_focused()).unwrap();
+    assert_vi_j_moves_down(&mut h);
+}
+
+/// Enter on the dock's session row hands the keyboard to the editor and
+/// must leave vi's mode in place (it used to empty the mode slot).
+#[test]
+fn vi_mode_survives_enter_on_a_dock_row() {
+    let (mut h, _tmp) = vi_with_orchestrator_dock();
+    focus_dock(&mut h);
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| !h.editor().is_dock_focused()).unwrap();
+    assert_vi_j_moves_down(&mut h);
+}
+
+/// The dock's F2 context menu keeps its own keys with vi on: ↓ walks the
+/// entries and Esc closes it. The menu has no mode of its own, so the host
+/// resolved the keys it leaves against the window's mode — vi-normal's —
+/// and ↓ / Esc went to vi instead.
+#[test]
+fn dock_context_menu_navigates_with_vi_mode_on() {
+    let (mut h, _tmp) = vi_with_orchestrator_dock();
+    focus_dock(&mut h);
+
+    // Esc closes the menu.
+    h.send_key(KeyCode::F(2), KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Move to Folder"))
+        .unwrap();
+    h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| !h.screen_to_string().contains("Move to Folder"))
+        .unwrap();
+
+    // ↓↓ walks Visit… → Rename… → Move to Folder…, and Enter runs that one:
+    // the "move to" dropdown replaces the menu. Had ↓ gone to vi, Enter
+    // would have run Visit… instead.
+    h.wait_until(|h| h.editor().is_dock_focused()).unwrap();
+    h.send_key(KeyCode::F(2), KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Move to Folder"))
+        .unwrap();
+    h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Top level"))
+        .unwrap();
 }
