@@ -2905,6 +2905,17 @@ impl Editor {
         self.spawn_baseline_load(baseline_id, spec, callback_id, true);
     }
 
+    /// The encoding `buffer_id`'s bytes were decoded with, in whichever window
+    /// holds it. A baseline load is not only for the active window's buffers:
+    /// a HEAD move or regained focus refreshes every buffer's baseline, a
+    /// background workspace's too. Buffer ids are unique across windows.
+    fn buffer_encoding(&self, buffer_id: BufferId) -> Option<crate::model::encoding::Encoding> {
+        self.windows
+            .values()
+            .find_map(|window| window.buffer_state(buffer_id))
+            .map(|state| state.buffer.encoding())
+    }
+
     /// Shared off-loop launch for registration and refresh loads.
     fn spawn_baseline_load(
         &mut self,
@@ -2937,12 +2948,7 @@ impl Editor {
             .lock()
             .ok()
             .and_then(|inner| inner.entries.get(&baseline_id).map(|e| e.buffer_id))
-            .and_then(|buffer_id| {
-                self.windows
-                    .get(&self.active_window)?
-                    .buffer_state(buffer_id)
-                    .map(|state| state.buffer.encoding())
-            })
+            .and_then(|buffer_id| self.buffer_encoding(buffer_id))
             .unwrap_or_default();
         super::plugin_offloop::load_diff_baseline(
             &runtime,
@@ -4570,6 +4576,32 @@ mod tests {
         )
         .unwrap();
         (editor, temp_dir)
+    }
+
+    /// A Live Diff baseline is decoded with its buffer's encoding even when
+    /// the buffer is in a background window: a HEAD move refreshes the
+    /// baselines of every window's buffers, and a lookup in the active window
+    /// alone fell back to UTF-8 for the rest.
+    #[test]
+    fn buffer_encoding_finds_a_buffer_in_a_background_window() {
+        use crate::model::encoding::Encoding;
+        let (mut editor, temp) = make_editor();
+        let path = temp.path().join("wide.txt");
+        let utf16: Vec<u8> = [0xFF, 0xFE]
+            .into_iter()
+            .chain("hi\n".encode_utf16().flat_map(u16::to_le_bytes))
+            .collect();
+        std::fs::write(&path, utf16).unwrap();
+        let buffer_id = editor.open_file(&path).unwrap();
+        assert_eq!(editor.buffer_encoding(buffer_id), Some(Encoding::Utf16Le));
+
+        let other_root = temp.path().join("other");
+        std::fs::create_dir(&other_root).unwrap();
+        let other = editor.create_window_at(other_root, "other".to_string());
+        editor.set_active_window(other);
+        assert_eq!(editor.active_window_id(), other);
+
+        assert_eq!(editor.buffer_encoding(buffer_id), Some(Encoding::Utf16Le));
     }
 
     #[test]
