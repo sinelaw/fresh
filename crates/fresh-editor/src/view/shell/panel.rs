@@ -467,6 +467,39 @@ pub fn interior_key(slot: super::widgets::Slot) -> Key {
     Key::Pair("panel_interior".into(), n)
 }
 
+/// The slot whose panel `k` names — its interior ([`interior_key`]) or its
+/// keyboard sink ([`sink_key`]) — so the focus chain can say which panel
+/// holds the keyboard. A pane's content key answers the pane whether or not
+/// a panel is mounted there (it is that panel's interior when one is). The
+/// prompt's and settings' sinks name no panel.
+pub fn slot_of_key(k: &Key) -> Option<super::widgets::Slot> {
+    use super::widgets::Slot;
+    if let Some(leaf) = super::splits::pane_of_content_key(k) {
+        return Some(Slot::Pane(leaf));
+    }
+    match k {
+        Key::Str(s) => match &**s {
+            "keys:dock" => Some(Slot::Dock),
+            "keys:floating_panel" => Some(Slot::Floating),
+            _ => None,
+        },
+        Key::Pair(name, n) => match (&**name, *n) {
+            ("panel_interior", 0) => Some(Slot::Dock),
+            ("panel_interior", 1) => Some(Slot::Floating),
+            ("panel_interior", 2) => Some(Slot::Settings),
+            ("panel_interior", 3) => Some(Slot::SettingsEntry),
+            ("panel_interior", 4) => Some(Slot::PromptToolbar),
+            ("panel_interior", n) if n >= 16 => Some(Slot::Sidebar((n - 16) as usize)),
+            ("keys:sidebar", i) => Some(Slot::Sidebar(i as usize)),
+            ("keys:pane", leaf) => Some(Slot::Pane(crate::model::event::LeafId(
+                fresh_core::SplitId(leaf as usize),
+            ))),
+            _ => None,
+        },
+        Key::Int(_) => None,
+    }
+}
+
 /// The panel's described interior: the scope its keyboard layer names, and the
 /// fallback for every key its widgets decline.
 ///
@@ -824,6 +857,35 @@ mod tests {
     use crate::view::shell::frame::{frame_tree, Frame};
     use fresh_ui::{Input, Mods, MouseButton, Point, Size, Ui};
     use ratatui::layout::Rect;
+
+    /// `slot_of_key` inverts both keys a panel's slot names.
+    #[test]
+    fn slot_of_key_inverts_interior_and_sink_keys() {
+        use crate::view::shell::widgets::Slot;
+        let leaf = crate::model::event::LeafId(fresh_core::SplitId(7));
+        for slot in [
+            Slot::Dock,
+            Slot::Floating,
+            Slot::Settings,
+            Slot::SettingsEntry,
+            Slot::PromptToolbar,
+            Slot::Pane(leaf),
+            Slot::Sidebar(0),
+            Slot::Sidebar(3),
+        ] {
+            assert_eq!(slot_of_key(&interior_key(slot)), Some(slot), "{slot:?}");
+        }
+        for slot in [
+            Slot::Dock,
+            Slot::Floating,
+            Slot::Pane(leaf),
+            Slot::Sidebar(2),
+        ] {
+            assert_eq!(slot_of_key(&sink_key(slot)), Some(slot), "{slot:?}");
+        }
+        assert_eq!(slot_of_key(&sink_key(Slot::Settings)), None);
+        assert_eq!(slot_of_key(&sink_key(Slot::PromptToolbar)), None);
+    }
 
     const FRAME: Rect = Rect {
         x: 0,

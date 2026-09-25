@@ -107,7 +107,9 @@ pub fn layout_reading(
 /// Enter except where it is going to a terminal's child (the `Terminal`
 /// context forwards it as 0x0A), where it continues a chord, or where the
 /// keymap or one of `modes` claims it: binds it (a `noop` too), or starts a
-/// chord with it. Asking only for a single-key action missed the last two:
+/// chord with it. `modes` are the ones the focused surface resolves keys
+/// against (`Editor::focused_modes`): a mode the key never reaches — a
+/// buffer's, under a prompt — has no say (sinelaw/fresh#3384). Asking only for a single-key action missed the last two:
 /// a `noop` on Ctrl+J turned into Enter, and a `C-j …` chord could never
 /// start because its first key arrived as Enter.
 pub fn ctrl_j_reading(
