@@ -284,6 +284,15 @@ impl LspCompletionCandidate {
     }
 }
 
+/// A file's content as this window saved it: the mtime recorded for that
+/// save, and the size and hash of the bytes read back after writing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SavedFingerprint {
+    pub mtime: std::time::SystemTime,
+    pub size: u64,
+    pub hash: u64,
+}
+
 pub struct Window {
     /// Stable identifier. The base window is always `WindowId(1)`.
     pub id: WindowId,
@@ -349,6 +358,10 @@ pub struct Window {
     /// matching the user's mental model that a dormant window "is
     /// paused".
     pub file_mod_times: HashMap<PathBuf, std::time::SystemTime>,
+    /// What this window last saved to each file, so a later mtime that
+    /// differs over identical bytes is not taken for a change on disk
+    /// (issue #3380). See `Window::holds_what_was_saved`.
+    pub saved_fingerprints: HashMap<PathBuf, SavedFingerprint>,
 
     /// LSP manager (running language servers, configs, per-language
     /// root URIs). Each window owns its own LSP set, rooted at its
@@ -2391,6 +2404,7 @@ impl Window {
             connection,
             file_explorer: None,
             file_mod_times: HashMap::new(),
+            saved_fingerprints: HashMap::new(),
             plugin_state: HashMap::new(),
             authority_spec: crate::services::authority::SessionAuthoritySpec::Local,
             remote_reconnect_error: None,

@@ -48,17 +48,90 @@ impl crate::app::window::Window {
     ///
     /// Any mtime difference counts, not only a newer one: a replacement file
     /// can carry an *older* timestamp (`cp -p`, `rsync -t`, `tar x`, `mv` of
-    /// an older file) and is still someone else's content (issue #3346).
+    /// an older file) and is still someone else's content (issue #3346) —
+    /// unless the file still holds exactly what this window saved there
+    /// ([`Self::holds_what_was_saved`]), when only the timestamp moved.
     pub(crate) fn changed_on_disk(&self, path: &Path) -> Option<std::time::SystemTime> {
-        let current_mtime = self
-            .authority()
-            .filesystem
-            .metadata(path)
-            .ok()
-            .and_then(|m| m.modified)?;
+        let metadata = self.authority().filesystem.metadata(path).ok()?;
+        let current_mtime = metadata.modified?;
         let recorded_mtime = self.file_mod_times.get(path)?;
-        (current_mtime != *recorded_mtime).then_some(current_mtime)
+        (current_mtime != *recorded_mtime && !self.holds_what_was_saved(path, metadata.size))
+            .then_some(current_mtime)
     }
+
+    /// Whether `path`, whose mtime no longer matches the one recorded,
+    /// still holds exactly the bytes this window last saved to it.
+    ///
+    /// On a network filesystem the mtime read right after our own write can
+    /// differ from one read later, with no one else touching the file: the
+    /// client's cached attributes give way to the server's, and a skewed
+    /// server clock stamps something else (issue #3380). Telling that from a
+    /// real change takes the content. Only for a save this window made and
+    /// fingerprinted, and whose fingerprint still belongs to the recorded
+    /// mtime (a revert or reload since then records a different one); only
+    /// when the size matches, so a real change almost never costs a read.
+    pub(crate) fn holds_what_was_saved(&self, path: &Path, size: u64) -> bool {
+        let Some(saved) = self.saved_fingerprints.get(path) else {
+            return false;
+        };
+        if Some(&saved.mtime) != self.file_mod_times.get(path) || saved.size != size {
+            return false;
+        }
+        self.authority()
+            .filesystem
+            .read_file(path)
+            .is_ok_and(|bytes| content_hash(&bytes) == saved.hash)
+    }
+
+    /// Record `path`'s mtime after this window wrote it, with a fingerprint
+    /// of what it wrote, read back from the file, for
+    /// [`Self::holds_what_was_saved`]. Files above the large-file threshold
+    /// get no fingerprint, and an mtime change on them still counts.
+    pub(crate) fn record_saved_file(&mut self, path: &Path) {
+        let Ok(metadata) = self.authority().filesystem.metadata(path) else {
+            return;
+        };
+        let Some(mtime) = metadata.modified else {
+            return;
+        };
+        self.file_mod_times.insert(path.to_path_buf(), mtime);
+        let limit = self.resources.config.editor.large_file_threshold_bytes;
+        let fingerprint = (metadata.size <= limit)
+            .then(|| self.authority().filesystem.read_file(path).ok())
+            .flatten()
+            .filter(|bytes| bytes.len() as u64 == metadata.size)
+            .map(|bytes| crate::app::window::SavedFingerprint {
+                mtime,
+                size: metadata.size,
+                hash: content_hash(&bytes),
+            });
+        match fingerprint {
+            Some(fingerprint) => {
+                self.saved_fingerprints
+                    .insert(path.to_path_buf(), fingerprint);
+            }
+            None => {
+                self.saved_fingerprints.remove(path);
+            }
+        }
+    }
+
+    /// The file's mtime moved but its content is what was saved: take the
+    /// new mtime as the recorded one, so later checks are cheap again.
+    pub(crate) fn adopt_drifted_mtime(&mut self, path: &Path, mtime: std::time::SystemTime) {
+        self.file_mod_times.insert(path.to_path_buf(), mtime);
+        if let Some(saved) = self.saved_fingerprints.get_mut(path) {
+            saved.mtime = mtime;
+        }
+    }
+}
+
+/// A fingerprint of a file's content, compared only within this process.
+fn content_hash(bytes: &[u8]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    bytes.hash(&mut hasher);
+    hasher.finish()
 }
 
 /// What Save All ([`Editor::save_all`]) did.
@@ -264,13 +337,10 @@ impl Editor {
             event_log.mark_saved();
         }
 
-        // Update file modification time after save
+        // Record the file's mtime after the save, re-read from the file
+        // rather than predicted, with a fingerprint of what was written.
         if let Some(ref p) = path {
-            if let Ok(metadata) = self.authority().filesystem.metadata(p) {
-                if let Some(mtime) = metadata.modified {
-                    self.file_mod_times_mut().insert(p.clone(), mtime);
-                }
-            }
+            self.active_window_mut().record_saved_file(p);
         }
 
         // Reload .gitignore in the file explorer when the user saves one.
@@ -1515,6 +1585,18 @@ impl Editor {
             // (issue #3346).
             let stored_mtime = self.file_mod_times().get(&path).copied();
             if stored_mtime == Some(current_mtime) {
+                continue;
+            }
+            // ...but not a timestamp that moved over the very bytes we
+            // saved: a network filesystem's clock skew (issue #3380).
+            let size = self
+                .authority()
+                .filesystem
+                .metadata(&path)
+                .map_or(u64::MAX, |m| m.size);
+            if self.active_window().holds_what_was_saved(&path, size) {
+                self.active_window_mut()
+                    .adopt_drifted_mtime(&path, current_mtime);
                 continue;
             }
 
