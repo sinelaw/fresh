@@ -1490,21 +1490,30 @@ impl Editor {
 
             // Any difference counts: a replacement can carry an older mtime
             // (issue #3346).
-            let matches_stored = self
-                .file_mod_times()
-                .get(&path)
-                .is_some_and(|stored| current_mtime == *stored);
-
-            if matches_stored {
+            let stored_mtime = self.file_mod_times().get(&path).copied();
+            if stored_mtime == Some(current_mtime) {
                 continue;
             }
 
-            // If buffer has local modifications, show a warning (don't auto-revert)
+            // If buffer has local modifications, show a warning (don't auto-revert).
+            // Once per change: the poll finds this same change on every pass
+            // until the buffer is saved or reverted, and repeating it would
+            // keep overwriting whatever the status bar has shown since.
             if state.buffer.is_modified() {
-                self.active_window_mut().status_message = Some(format!(
-                    "File {} changed on disk (buffer has unsaved changes)",
-                    path.display()
-                ));
+                let change = stored_mtime.map(|stored| (stored, current_mtime));
+                let reported = match change {
+                    Some(change) => self
+                        .active_window_mut()
+                        .disk_change_reported
+                        .insert(path.clone(), change),
+                    None => None,
+                };
+                if change.is_none() || reported != change {
+                    self.active_window_mut().status_message = Some(format!(
+                        "File {} changed on disk (buffer has unsaved changes)",
+                        path.display()
+                    ));
+                }
                 continue;
             }
 

@@ -341,3 +341,49 @@ fn saving_over_an_older_replacement_asks_first() {
     harness.render().unwrap();
     assert_eq!(std::fs::read_to_string(&files[0]).unwrap(), "replacement\n");
 }
+
+/// **The file-change poll reports a change once, not on every poll**
+/// (issue #3403). It re-found the same changed file every couple of seconds
+/// and rewrote "changed on disk" into the status bar each time, so any other
+/// message — here Save All's own report — was gone moments after it
+/// appeared.
+#[test]
+fn the_file_change_poll_reports_a_modified_buffers_change_once() {
+    let (mut harness, files) = dirty_buffers(Config::default(), &["notes.txt"]);
+    // A clean file whose reload shows on screen when a later poll has run:
+    // in a split of its own, since reloading the active buffer has a status
+    // message of its own.
+    let other = harness.project_dir().unwrap().join("other.txt");
+    std::fs::write(&other, "other\n").unwrap();
+    harness.open_file(&other).unwrap();
+    run_command(&mut harness, "Split Vertical");
+    harness.open_file(&files[0]).unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("EDIT orig1");
+    harness.assert_screen_contains("other");
+
+    change_externally(&files[0], "external\n");
+    harness
+        .wait_until(|h| {
+            h.get_status_bar()
+                .contains("changed on disk (buffer has unsaved")
+        })
+        .unwrap();
+
+    run_command(&mut harness, "Save All");
+    assert!(harness
+        .get_status_bar()
+        .contains("Not saved, changed on disk: notes.txt"));
+
+    // A later poll: it reloads other.txt, and sees notes.txt still changed.
+    change_externally(&other, "reloaded\n");
+    harness
+        .wait_until(|h| h.screen_to_string().contains("reloaded"))
+        .unwrap();
+
+    let status = harness.get_status_bar();
+    assert!(
+        status.contains("Not saved, changed on disk: notes.txt"),
+        "the poll must not repeat its message over Save All's; status was {status:?}"
+    );
+}

@@ -1102,6 +1102,13 @@ pub struct Window {
     /// changed on disk, as reported in the status bar; it's only reported
     /// again once that changes, rather than every interval.
     pub auto_save_changed_on_disk: Vec<std::path::PathBuf>,
+    /// For each file whose change on disk the file-change poll has reported
+    /// under a modified buffer, the change it reported: the mtime the window
+    /// had recorded and the one found on disk. The poll finds that same
+    /// change on every pass until the buffer is saved or reverted, and says
+    /// so again only once either side has moved.
+    pub disk_change_reported:
+        HashMap<std::path::PathBuf, (std::time::SystemTime, std::time::SystemTime)>,
 
     /// Warning domain registry for this window's status indicator.
     pub warning_domains: crate::app::warning_domains::WarningDomainRegistry,
@@ -2541,6 +2548,7 @@ impl Window {
             last_auto_recovery_save: now,
             last_persistent_auto_save: now,
             auto_save_changed_on_disk: Vec::new(),
+            disk_change_reported: HashMap::new(),
             warning_domains: crate::app::warning_domains::WarningDomainRegistry::default(),
             tab_context_menu: None,
             new_tab_menu: None,
