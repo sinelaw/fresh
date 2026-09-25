@@ -403,16 +403,17 @@ fn create_temp_file(
     dest_path: &Path,
 ) -> io::Result<(SudoSaveTempFile, Box<dyn FileWriter>)> {
     // Try creating in same directory first
-    let (temp_path, file) = match fs.create_private_temp_file_for(dest_path) {
-        Ok(created) => created,
-        Err(e) if e.kind() == io::ErrorKind::PermissionDenied => {
-            // Fallback to system temp directory
-            let temp_path = fs.unique_temp_path(dest_path);
-            let file = fs.create_new_private_file(&temp_path)?;
-            (temp_path, file)
-        }
-        Err(e) => return Err(e),
-    };
+    let (temp_path, file) =
+        match crate::model::filesystem::create_private_temp_file_for(&**fs, dest_path) {
+            Ok(created) => created,
+            Err(e) if e.kind() == io::ErrorKind::PermissionDenied => {
+                // Fallback to system temp directory
+                let temp_path = fs.unique_temp_path(dest_path);
+                let file = fs.create_new_private_file(&temp_path)?;
+                (temp_path, file)
+            }
+            Err(e) => return Err(e),
+        };
     Ok((SudoSaveTempFile::new(fs, temp_path), file))
 }
 

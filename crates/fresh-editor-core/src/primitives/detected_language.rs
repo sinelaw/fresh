@@ -399,6 +399,12 @@ mod tests {
         fn create_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
             NoopFileSystem.create_file(path)
         }
+        fn create_new_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
+            NoopFileSystem.create_new_file(path)
+        }
+        fn create_new_private_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
+            NoopFileSystem.create_new_private_file(path)
+        }
         fn open_file(&self, path: &Path) -> io::Result<Box<dyn FileReader>> {
             NoopFileSystem.open_file(path)
         }

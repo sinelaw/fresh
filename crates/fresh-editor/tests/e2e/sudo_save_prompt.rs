@@ -332,6 +332,18 @@ impl WriteDeniedFileSystem {
     /// Compare canonical paths: the editor saves to the canonicalized path,
     /// which differs from the temp dir's spelling where it sits behind a
     /// symlink (macOS `/var` -> `/private/var`).
+    /// Creating a file in `denied_dir` fails, as in a directory the user
+    /// can't write.
+    fn check_dir_writable(&self, path: &Path) -> io::Result<()> {
+        if self.denied_dir.is_some() && path.parent() == self.denied_dir.as_deref() {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "simulated: permission denied",
+            ));
+        }
+        Ok(())
+    }
+
     fn is_denied(&self, path: &Path) -> bool {
         let canonical = |p: &Path| p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
         path == self.denied || canonical(path) == canonical(&self.denied)
@@ -358,13 +370,13 @@ impl FileSystem for WriteDeniedFileSystem {
     }
 
     fn create_new_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
-        if self.denied_dir.is_some() && path.parent() == self.denied_dir.as_deref() {
-            return Err(io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                "simulated: permission denied",
-            ));
-        }
+        self.check_dir_writable(path)?;
         self.inner.create_new_file(path)
+    }
+
+    fn create_new_private_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
+        self.check_dir_writable(path)?;
+        self.inner.create_new_private_file(path)
     }
 
     fn create_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {

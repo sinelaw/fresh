@@ -326,6 +326,25 @@ impl FileSystem for RemoteFileSystem {
         )))
     }
 
+    /// The agent protocol has no exclusive create, so this can't be done
+    /// without racing. Nothing on a remote host needs it: saves there go
+    /// through `write_file` / `write_patched`, never a sudo temp file or an
+    /// in-place staging copy.
+    fn create_new_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            format!(
+                "exclusive create of {} is not supported on a remote host",
+                path.display()
+            ),
+        ))
+    }
+
+    /// See [`Self::create_new_file`].
+    fn create_new_private_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
+        self.create_new_file(path)
+    }
+
     fn open_file(&self, path: &Path) -> io::Result<Box<dyn FileReader>> {
         // Read the entire file into memory for seeking
         let data = self.read_file(path)?;

@@ -712,54 +712,20 @@ pub trait FileSystem: Send + Sync {
         sibling_temp_path(path)
     }
 
-    /// Create a file that must not exist yet (fails with `AlreadyExists` otherwise).
-    ///
-    /// The default checks existence first; implementations that can do so
-    /// atomically (e.g. `O_EXCL`) should override it.
-    fn create_new_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
-        if self.symlink_metadata(path).is_ok() {
-            return Err(io::Error::new(
-                io::ErrorKind::AlreadyExists,
-                format!("{} already exists", path.display()),
-            ));
-        }
-        self.create_file(path)
-    }
+    /// Create a file that must not exist yet, atomically: fails with
+    /// `AlreadyExists` if it does, and never opens a file someone else
+    /// created in between (`O_EXCL` locally). No default — a check followed
+    /// by a create would race; a backend that can't do it atomically returns
+    /// `Unsupported`.
+    fn create_new_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>>;
 
     /// Like [`FileSystem::create_new_file`], but readable and writable only
-    /// by its owner (0600 on unix) — for a copy of some file's content kept
-    /// away from that file, where its permissions no longer guard it.
-    ///
-    /// The default narrows the permissions right after creating the file,
-    /// before anything is written to it; implementations that can create it
-    /// that way (`O_CREAT` with a mode) should override it.
-    fn create_new_private_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
-        let file = self.create_new_file(path)?;
-        #[cfg(unix)]
-        if let Err(e) = self.set_permissions(path, &FilePermissions::from_mode(0o600)) {
-            drop(file);
-            // Best-effort cleanup; the permission error is what matters
-            #[allow(clippy::let_underscore_must_use)]
-            let _ = self.remove_file(path);
-            return Err(e);
-        }
-        Ok(file)
-    }
-
-    /// Create a new, uniquely named temp file next to `path`, readable only
-    /// by its owner (see [`FileSystem::create_new_private_file`]), to hold
-    /// content meant for `path` until it can be written there. Never opens a
-    /// file that already exists.
-    fn create_private_temp_file_for(
-        &self,
-        path: &Path,
-    ) -> io::Result<(PathBuf, Box<dyn FileWriter>)> {
-        retry_on_name_clash(|| {
-            let temp_path = self.temp_path_for(path);
-            let file = self.create_new_private_file(&temp_path)?;
-            Ok((temp_path, file))
-        })
-    }
+    /// by its owner (0600 on unix) from the moment it exists — for a copy of
+    /// some file's content kept away from that file, where its permissions
+    /// no longer guard it. No default — creating the file and narrowing its
+    /// permissions afterwards leaves a window in which anyone may open it; a
+    /// backend that can't create it that way returns `Unsupported`.
+    fn create_new_private_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>>;
 
     /// Get a unique temporary file path (using timestamp and PID)
     fn unique_temp_path(&self, dest_path: &Path) -> PathBuf {
@@ -1122,6 +1088,21 @@ impl std::fmt::Display for ReplaceError {
 }
 
 impl std::error::Error for ReplaceError {}
+
+/// Create a new, uniquely named temp file next to `path`, readable only by
+/// its owner (see [`FileSystem::create_new_private_file`]), to hold content
+/// meant for `path` until it can be written there. Never opens a file that
+/// already exists.
+pub fn create_private_temp_file_for(
+    fs: &dyn FileSystem,
+    path: &Path,
+) -> io::Result<(PathBuf, Box<dyn FileWriter>)> {
+    retry_on_name_clash(|| {
+        let temp_path = fs.temp_path_for(path);
+        let file = fs.create_new_private_file(&temp_path)?;
+        Ok((temp_path, file))
+    })
+}
 
 /// Run `create`, which creates a file under a freshly picked temp name, again
 /// while the name it picked turns out to exist already.
@@ -2274,6 +2255,14 @@ impl FileSystem for NoopFileSystem {
     }
 
     fn create_file(&self, _path: &Path) -> io::Result<Box<dyn FileWriter>> {
+        Self::unsupported()
+    }
+
+    fn create_new_file(&self, _path: &Path) -> io::Result<Box<dyn FileWriter>> {
+        Self::unsupported()
+    }
+
+    fn create_new_private_file(&self, _path: &Path) -> io::Result<Box<dyn FileWriter>> {
         Self::unsupported()
     }
 
