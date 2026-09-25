@@ -568,6 +568,7 @@ fn save_and_quit_needing_sudo_leaves_no_temp_file() {
 
 /// Same for a plugin's replace-in-file (the project search-and-replace),
 /// which saves the file it edits and can't prompt either.
+#[cfg(feature = "plugins")]
 #[test]
 fn plugin_replace_needing_sudo_leaves_no_temp_file() {
     let (mut harness, dir, file_path) = dirty_unwritable_file(Config::default());
