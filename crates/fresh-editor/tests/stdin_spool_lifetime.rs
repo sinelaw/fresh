@@ -168,9 +168,9 @@ fn sigterm_leaves_nothing_behind() {
 
 /// Closing the terminal window, or an ssh session dropping.
 ///
-/// SIGHUP has no handler — the default action terminates the editor, exactly
-/// as it did before any of this. Nothing needs to run on the way out, which
-/// is the point.
+/// SIGHUP runs the editor's termination cleanups and then ends it by its
+/// default action, exactly as before it was handled. The spool needs none
+/// of that: nothing has to run on the way out, which is the point.
 #[test]
 fn sighup_leaves_nothing_behind() {
     use std::os::unix::process::ExitStatusExt;
@@ -217,8 +217,8 @@ fn sigkill_leaves_nothing_behind() {
 }
 
 /// `nohup fresh …` makes the process immune to SIGHUP, and nothing here
-/// should take that away — there is no SIGHUP handler to install any more,
-/// so the inherited `SIG_IGN` stands.
+/// should take that away — the SIGHUP handler is only installed when the
+/// signal isn't already ignored, so the inherited `SIG_IGN` stands.
 #[test]
 fn sighup_ignored_by_the_parent_stays_ignored() {
     if !pty_available() {

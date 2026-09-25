@@ -843,6 +843,35 @@ fn editor_closed_with_sudo_prompt_open_leaves_no_temp_file() {
     );
 }
 
+/// Same when a signal ends the editor with the sudo prompt open (issue
+/// #3396). The signal exit runs no destructors, so the prompt can't delete
+/// the file as it goes; the signal's termination cleanups have to. This
+/// runs those cleanups, the part `signal_termination`'s end-to-end tests
+/// can only reach as root, as any user; nothing else is dropped meanwhile.
+///
+/// The cleanups are process-wide, which is safe because nextest runs each
+/// test in a process of its own.
+#[test]
+fn termination_cleanups_remove_the_sudo_prompts_temp_file() {
+    let (mut harness, dir, file_path) = dirty_unwritable_file(Config::default());
+    open_sudo_prompt(&mut harness, dir.path());
+
+    fresh::services::signal_handler::run_termination_cleanups();
+
+    assert!(
+        harness.editor().is_prompting(),
+        "the prompt is still open: the cleanup, not its drop, removed the file"
+    );
+    assert_eq!(
+        leftover_temp_files(dir.path()),
+        Vec::<std::ffi::OsString>::new()
+    );
+    assert_eq!(
+        std::fs::read_to_string(&file_path).unwrap(),
+        "original content\n"
+    );
+}
+
 /// A plugin's replace in a file that isn't open (the project
 /// search-and-replace) edits it in a buffer hidden from the tabs, and a
 /// save of it that needs sudo leaves that buffer modified. The quit prompt

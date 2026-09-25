@@ -1,13 +1,18 @@
 //! What the editor reports when it is asked to stop.
 //!
-//! `SIGINT`, `SIGTERM` and `SIGHUP` dump the running JavaScript state and
-//! every thread's backtrace before the process ends, which is how a hung
-//! editor gets diagnosed after the fact.
+//! `SIGINT` and `SIGTERM` dump the running JavaScript state (and, on
+//! request, every thread's backtrace) before the process ends, which is how
+//! a hung editor gets diagnosed after the fact.
 //!
 //! Before that, they run the [termination cleanups](register_termination_cleanup):
 //! files the editor would delete on a normal exit, which the signal exit —
 //! `process::exit`, no destructors — would otherwise leave behind. The sudo
 //! save's temp file next to the user's file is one (issue #3396).
+//!
+//! `SIGHUP` — the terminal was closed — runs only the cleanups, then ends
+//! the process by `SIGHUP`'s default action, as it did before it was
+//! handled: an ordinary way for an editor to end, with nothing to diagnose.
+//! An inherited `SIGHUP` disposition of "ignore" (`nohup`) is left alone.
 //!
 //! **None of that happens in the signal handler.** A handler runs on
 //! whichever thread the kernel interrupted, wherever that thread happened to
@@ -111,7 +116,9 @@ pub fn register_termination_cleanup(cleanup: std::sync::Weak<dyn TerminationClea
 }
 
 /// Run every registered cleanup whose object is still alive.
-pub(crate) fn run_termination_cleanups() {
+///
+/// Public so a test can run what a signal would, without ending the process.
+pub fn run_termination_cleanups() {
     let live: Vec<_> = match TERMINATION_CLEANUPS.lock() {
         Ok(cleanups) => cleanups.iter().filter_map(|c| c.upgrade()).collect(),
         Err(_) => return,
@@ -121,7 +128,8 @@ pub(crate) fn run_termination_cleanups() {
     }
 }
 
-/// Install the `SIGINT`/`SIGTERM`/`SIGHUP` handlers and the machinery behind them.
+/// Install the `SIGINT`/`SIGTERM`/`SIGHUP` handlers and the machinery behind them
+/// (`SIGHUP`'s only if it isn't ignored already).
 ///
 /// Idempotent: the editor calls this once, and a couple of dozen tests call
 /// it too, so repeated calls must not stack up threads or handlers.
@@ -303,6 +311,17 @@ mod unix {
         // Ahead of the dump, which may wedge and leave it to the watchdog.
         super::run_termination_cleanups();
 
+        if signal == libc::SIGHUP {
+            // The terminal went away: how an editor ends when its window is
+            // closed, not a hang to diagnose. End the way the default action
+            // would have, now that nothing is left behind.
+            tracing::info!("SIGHUP received: the terminal was closed, exiting");
+            die_by_default(signal);
+            // `raise` returns only once the signal has been delivered, and
+            // its default action ends the process; this is never reached.
+            std::process::exit(128 + signal);
+        }
+
         tracing::error!("=== SIGNAL {signal} RECEIVED - Dumping debug info ===");
 
         tracing::error!("--- JavaScript State ---");
@@ -362,9 +381,24 @@ mod unix {
             }
             // Closing the terminal the editor runs in. Its default action
             // ends the process on the spot, skipping the cleanups above.
-            if let Err(e) = sigaction(Signal::SIGHUP, &action) {
+            // Unless it was ignored on the way in (`nohup`): whoever started
+            // the editor asked for it to outlive the terminal.
+            if is_ignored(libc::SIGHUP) {
+                tracing::debug!("SIGHUP is ignored as inherited; leaving it so");
+            } else if let Err(e) = sigaction(Signal::SIGHUP, &action) {
                 tracing::error!("Failed to set SIGHUP handler: {}", e);
             }
+        }
+    }
+
+    /// Whether `signal`'s current disposition is to ignore it.
+    fn is_ignored(signal: libc::c_int) -> bool {
+        // SAFETY: a null new action only reads the current one into `old`,
+        // a plain C struct for which all zeroes is a valid value.
+        unsafe {
+            let mut old: libc::sigaction = std::mem::zeroed();
+            libc::sigaction(signal, std::ptr::null(), &mut old) == 0
+                && old.sa_sigaction == libc::SIG_IGN
         }
     }
 }

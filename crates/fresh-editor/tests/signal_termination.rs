@@ -200,6 +200,78 @@ fn the_per_thread_sweep_is_available_on_request() {
     );
 }
 
+/// Closing the terminal (`SIGHUP`) is how an editor ends when its window is
+/// closed, not a hang to diagnose: it runs the cleanups and ends by
+/// `SIGHUP`'s default action, as it did before it was handled, without the
+/// error-level "Dumping debug info" report every closed terminal used to
+/// leave in the log (issue #3396).
+#[test]
+fn sighup_ends_the_editor_without_the_diagnostic_dump() {
+    use std::os::unix::process::ExitStatusExt;
+    if !pty_available() {
+        eprintln!("Skipping: no PTY available in this environment");
+        return;
+    }
+    let home = tempfile::tempdir().unwrap();
+    let mut editor = running_editor(isolated_fresh(home.path()));
+
+    // SAFETY: signalling a child this test owns and has not yet reaped.
+    assert_eq!(
+        unsafe { libc::kill(editor.pid() as i32, libc::SIGHUP) },
+        0
+    );
+    let status = editor.drain_and_wait().expect("wait for fresh to exit");
+
+    assert_eq!(
+        status.signal(),
+        Some(libc::SIGHUP),
+        "the editor should end as SIGHUP's default action ends it; it ended with {status:?}"
+    );
+    let log = logged(home.path());
+    assert!(
+        !log.contains("Dumping debug info"),
+        "a closed terminal is not a hang to diagnose; log was:\n{log}"
+    );
+}
+
+/// Started with `SIGHUP` ignored (`nohup`), the editor keeps it ignored:
+/// whoever started it asked for it to outlive its terminal.
+#[test]
+fn an_inherited_ignored_sighup_stays_ignored() {
+    use std::os::unix::process::CommandExt;
+    if !pty_available() {
+        eprintln!("Skipping: no PTY available in this environment");
+        return;
+    }
+    let home = tempfile::tempdir().unwrap();
+    let mut cmd = isolated_fresh(home.path());
+    // SAFETY: `signal` is async-signal-safe, as a `pre_exec` hook requires.
+    unsafe {
+        cmd.pre_exec(|| {
+            libc::signal(libc::SIGHUP, libc::SIG_IGN);
+            Ok(())
+        });
+    }
+    let mut editor = running_editor(cmd);
+
+    // SAFETY: signalling a child this test owns and has not yet reaped.
+    assert_eq!(
+        unsafe { libc::kill(editor.pid() as i32, libc::SIGHUP) },
+        0
+    );
+    editor.send(b"still here").unwrap();
+    editor
+        .wait_for_screen(|s| s.contains("still here"))
+        .expect("the editor should still be running after an ignored SIGHUP");
+
+    sigterm_and_reap(&mut editor);
+    let log = logged(home.path());
+    assert!(
+        !log.contains("SIGNAL 1 RECEIVED"),
+        "an ignored SIGHUP should not reach the editor; log was:\n{log}"
+    );
+}
+
 /// Temp files a sudo save left beside the file in `dir`.
 fn sudo_temp_files(dir: &Path) -> Vec<String> {
     std::fs::read_dir(dir)
