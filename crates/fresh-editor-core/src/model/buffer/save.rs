@@ -535,6 +535,37 @@ impl<'a> StagedCopy<'a> {
     }
 }
 
+/// `dest_path` was just written in full by other means (the sudo fallback),
+/// so an in-place recovery left for it by an earlier, interrupted attempt is
+/// resolved: remove its metadata and the staged copy it points at. Without
+/// this the copy outlives the save (a file that needs sudo never gets the
+/// non-sudo in-place write that would clear it), and every session start
+/// warns about it. Entries of another running process are left alone.
+pub fn resolve_inplace_write_recovery(fs: &dyn FileSystem, dest_path: &Path) {
+    let meta_path = inplace_recovery_meta_path(dest_path);
+    let Ok(json) = fs.read_file(&meta_path) else {
+        return;
+    };
+    let Ok(recovery) = serde_json::from_slice::<InplaceWriteRecovery>(&json) else {
+        return;
+    };
+    if recovery.dest_path != dest_path
+        || (recovery.pid != std::process::id() && recovery.is_in_progress())
+    {
+        return;
+    }
+    // Best-effort cleanup of files the completed save made obsolete
+    if meta_path
+        .parent()
+        .is_some_and(|dir| is_staged_copy_in(&recovery.temp_path, dir))
+    {
+        #[allow(clippy::let_underscore_must_use)]
+        let _ = fs.remove_file(&recovery.temp_path);
+    }
+    #[allow(clippy::let_underscore_must_use)]
+    let _ = fs.remove_file(&meta_path);
+}
+
 /// Clean up after in-place writes (see [`write_in_place_staged`]) whose
 /// process died before it could, in the directory they are staged in:
 ///
