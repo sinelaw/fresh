@@ -949,6 +949,7 @@ impl Editor {
                     &dest_path,
                 ) {
                     Ok(()) => {
+                        self.reload_buffers_of_restored_file(&dest_path);
                         self.set_status_message(
                             t!("interrupted_save.restored", name = &name).into_owned(),
                         );
@@ -1002,6 +1003,46 @@ impl Editor {
                     t!("interrupted_save.later", name = &name, path = &copy).into_owned(),
                 );
             }
+        }
+    }
+
+    /// `path` was just overwritten from the copy an interrupted save kept,
+    /// behind the back of the buffers that have it open (a session restore
+    /// opens them before the dialog is answered); a large one reads the
+    /// parts it never loaded from the file, at offsets that no longer hold
+    /// them. Reload every one that has no unsaved changes, in every window.
+    /// One that has keeps them: the file's mtime no longer matches the one
+    /// recorded for it, so it counts as changed on disk, and saving it asks
+    /// first.
+    fn reload_buffers_of_restored_file(&mut self, path: &std::path::Path) {
+        let active_window = self.active_window;
+        for window_id in self.window_ids_sorted() {
+            self.with_window_retargeted(window_id, |editor| {
+                // Restored through the local filesystem: a remote buffer
+                // with the same path is another file
+                let unmodified: Vec<BufferId> = editor
+                    .buffers()
+                    .iter()
+                    .filter(|(_, state)| {
+                        state.buffer.file_path() == Some(path)
+                            && state.buffer.filesystem().remote_connection_info().is_none()
+                            && !state.buffer.is_modified()
+                    })
+                    .map(|(id, _)| *id)
+                    .collect();
+                for buffer_id in unmodified {
+                    // The active buffer's reload keeps its view where it is
+                    let reloaded =
+                        if window_id == active_window && buffer_id == editor.active_buffer() {
+                            editor.revert_file().map(|_| ())
+                        } else {
+                            editor.revert_buffer_by_id(buffer_id, path)
+                        };
+                    if let Err(e) = reloaded {
+                        tracing::warn!("Failed to reload restored {}: {e}", path.display());
+                    }
+                }
+            });
         }
     }
 

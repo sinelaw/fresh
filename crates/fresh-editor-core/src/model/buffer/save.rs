@@ -718,7 +718,7 @@ fn write_inplace_recovery_meta(
             .filter(|previous| {
                 previous.temp_path != temp_path
                     && is_staged_copy(&previous.temp_path, dest_path)
-                    && (previous.is_ours() || !previous.is_in_progress())
+                    && previous.is_settled()
             })
             .map(|previous| previous.temp_path);
         PreviousMeta {
@@ -849,7 +849,7 @@ pub fn resolve_inplace_write_recovery(fs: &dyn FileSystem, recovery_dir: &Path, 
     let Ok(recovery) = serde_json::from_slice::<InplaceWriteRecovery>(&json) else {
         return;
     };
-    if recovery.dest_path != dest_path || (!recovery.is_ours() && recovery.is_in_progress()) {
+    if recovery.dest_path != dest_path || !recovery.is_settled() {
         return;
     }
     // Best-effort cleanup of files the completed save made obsolete
@@ -863,8 +863,10 @@ pub fn resolve_inplace_write_recovery(fs: &dyn FileSystem, recovery_dir: &Path, 
 
 /// The copies interrupted in-place writes kept in `recovery_dir` (see
 /// [`clean_up_inplace_write_recoveries`]) that the user has yet to decide
-/// about: a staged copy that is still there and differs from its file, of a
-/// write no longer in progress. Oldest first.
+/// about ([`is_kept_copy`]), of a write no other process may still be
+/// doing. That includes this process's own: a copy a save of this session
+/// kept holds up that file's saves, so it must be offered now, not only
+/// after a restart. Oldest first.
 pub fn kept_inplace_write_recoveries(
     fs: &dyn FileSystem,
     recovery_dir: &Path,
@@ -875,7 +877,7 @@ pub fn kept_inplace_write_recoveries(
             *meta_path == InplaceWriteRecovery::meta_path(recovery_dir, &recovery.dest_path)
         })
         .map(|(_, recovery)| recovery)
-        .filter(|recovery| !recovery.is_in_progress() && is_kept_copy(fs, recovery))
+        .filter(|recovery| recovery.is_settled() && is_kept_copy(fs, recovery))
         .collect()
 }
 
@@ -930,7 +932,7 @@ pub fn clean_up_inplace_write_recoveries(fs: &dyn FileSystem, recovery_dir: &Pat
         Err(e) => tracing::debug!("Failed to remove {}: {}", path.display(), e),
     };
     for (meta_path, recovery) in InplaceWriteRecovery::scan(fs, recovery_dir) {
-        if recovery.is_in_progress() {
+        if !recovery.is_settled() {
             continue;
         }
         if is_kept_copy(fs, &recovery) {

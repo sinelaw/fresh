@@ -154,3 +154,102 @@ fn interrupted_save_decided_later_is_kept() {
     harness.render().unwrap();
     harness.assert_screen_contains("A save of notes.txt was interrupted");
 }
+
+/// Plant the copy a save of `file` kept, written by `pid`, in the harness's
+/// top-level recovery directory. Returns the copy's path.
+fn plant_kept_copy(harness: &EditorTestHarness, file: &std::path::Path, pid: u32) -> PathBuf {
+    let recovery_dir = harness
+        .recovery_dir()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .to_path_buf();
+    std::fs::create_dir_all(&recovery_dir).unwrap();
+    let copy = recovery_dir.join(format!(".inplace-notes.txt-{pid}-1.tmp"));
+    std::fs::write(&copy, KEPT).unwrap();
+    let mut recovery = InplaceWriteRecovery::new(file.to_path_buf(), copy.clone(), 0, 0, 0o644);
+    recovery.pid = pid;
+    let meta = recovery_dir.join(format!("{}.inplace.json", path_hash(file)));
+    std::fs::write(&meta, serde_json::to_string(&recovery).unwrap()).unwrap();
+    copy
+}
+
+/// A copy kept by a save of this very session is waiting too: its file's
+/// saves are refused until the user decides, so "Review Interrupted Saves"
+/// must offer it now, not only after a restart. (Saves are synchronous, so
+/// none of this session's is still in flight when the command runs.)
+#[test]
+fn interrupted_save_of_this_session_is_offered() {
+    let mut harness = EditorTestHarness::with_temp_project(120, 30).unwrap();
+    let file = harness.project_dir().unwrap().join("notes.txt");
+    std::fs::write(&file, TORN).unwrap();
+    harness.startup(false, &[]).unwrap();
+    plant_kept_copy(&harness, &file, std::process::id());
+
+    harness
+        .run_palette_command("Review Interrupted Saves")
+        .unwrap();
+    harness.render().unwrap();
+
+    harness.assert_screen_contains("A save of notes.txt was interrupted");
+    harness.assert_screen_not_contains("No interrupted saves are waiting");
+}
+
+/// Restoring the file from the kept copy rewrites it behind the back of a
+/// buffer that already has it open. One with no unsaved changes is
+/// reloaded, so it shows what the file now holds (a large one would
+/// otherwise read the parts it never loaded at stale offsets).
+#[test]
+fn restoring_an_interrupted_save_reloads_its_open_buffer() {
+    let mut harness = EditorTestHarness::with_temp_project(120, 30).unwrap();
+    let file = harness.project_dir().unwrap().join("notes.txt");
+    std::fs::write(&file, TORN).unwrap();
+    harness.startup(false, &[]).unwrap();
+    harness.open_file(&file).unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("line tw");
+    harness.assert_screen_not_contains("line three");
+    plant_kept_copy(&harness, &file, DEAD_PID);
+
+    harness
+        .run_palette_command("Review Interrupted Saves")
+        .unwrap();
+    harness.render().unwrap();
+    press(&mut harness, 'r');
+
+    harness.assert_screen_contains("Restored notes.txt from the kept copy");
+    harness.assert_screen_contains("line three");
+}
+
+/// A buffer with unsaved changes keeps them when its file is restored, and
+/// saving it asks first: the file changed on disk.
+#[test]
+fn restoring_an_interrupted_save_keeps_unsaved_changes() {
+    let mut harness = EditorTestHarness::with_temp_project(120, 30).unwrap();
+    let file = harness.project_dir().unwrap().join("notes.txt");
+    std::fs::write(&file, TORN).unwrap();
+    harness.startup(false, &[]).unwrap();
+    harness.open_file(&file).unwrap();
+    harness.type_text("UNSAVED ").unwrap();
+    harness.render().unwrap();
+    plant_kept_copy(&harness, &file, DEAD_PID);
+
+    harness
+        .run_palette_command("Review Interrupted Saves")
+        .unwrap();
+    harness.render().unwrap();
+    press(&mut harness, 'r');
+
+    harness.assert_screen_contains("Restored notes.txt from the kept copy");
+    harness.assert_screen_contains("UNSAVED line one");
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), KEPT);
+
+    harness
+        .send_key(KeyCode::Char('s'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("File Changed on Disk");
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), KEPT);
+}

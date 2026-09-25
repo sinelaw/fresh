@@ -1223,16 +1223,17 @@ impl Editor {
 
     /// Run `f` with the active-window pointer temporarily retargeted.
     ///
-    /// Lets shutdown work reuse the many per-window helpers written against
-    /// `active_window` instead of growing a window-parameterized twin of each
-    /// (issue #3189). Deliberately not [`Editor::set_active_window`]: no
-    /// checkpoint, materialization, hooks or layout — none of which shutdown
-    /// wants.
+    /// Lets work that spans every workspace (shutdown; reloading a file
+    /// restored behind its buffers' back) reuse the many per-window helpers
+    /// written against `active_window` instead of growing a
+    /// window-parameterized twin of each (issue #3189). Deliberately not
+    /// [`Editor::set_active_window`]: no checkpoint, materialization, hooks
+    /// or layout — none of which such work wants.
     ///
     /// Only safe for synchronous, non-rendering work: nothing here may yield
     /// to the event loop or paint, or the user sees the wrong workspace. A
-    /// panic in `f` leaves the pointer retargeted, tolerable only because
-    /// callers are on the way out of the process.
+    /// panic in `f` leaves the pointer retargeted, tolerable only because a
+    /// panic ends the editor anyway.
     pub(crate) fn with_window_retargeted<R>(
         &mut self,
         window_id: fresh_core::WindowId,

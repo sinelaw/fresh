@@ -444,6 +444,13 @@ impl InplaceWriteRecovery {
         self.pid == std::process::id() && is_this_host(self.host.as_deref())
     }
 
+    /// Whether no other process may still be writing it: this process wrote
+    /// it (saves are synchronous, so none of its own is in flight whenever
+    /// anything asks), or the process that did is gone.
+    pub fn is_settled(&self) -> bool {
+        self.is_ours() || !self.is_in_progress()
+    }
+
     /// Whether the process that wrote it may still be running. One on
     /// another host can't be checked, so it counts as running until its
     /// write is older than [`OTHER_HOST_STALE_AGE`].
