@@ -230,7 +230,8 @@ impl RemoteFileSystem {
 /// A SHA-256 as the agent reports it: 64 hex digits.
 fn parse_sha256_hex(hex: &str) -> Option<[u8; 32]> {
     let digits = hex.as_bytes();
-    if digits.len() != 64 {
+    // `from_str_radix` alone would take a sign ("+f").
+    if digits.len() != 64 || !digits.iter().all(u8::is_ascii_hexdigit) {
         return None;
     }
     let mut out = [0u8; 32];
@@ -985,6 +986,28 @@ impl FileWriter for AppendingRemoteFileWriter {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Exactly 64 hex digits: no sign, no whitespace, no other length.
+    #[test]
+    fn parse_sha256_hex_takes_only_hex_digits() {
+        let hex = "00ff".repeat(16);
+        let mut expected = [0u8; 32];
+        for pair in expected.chunks_exact_mut(2) {
+            pair[1] = 0xff;
+        }
+        assert_eq!(parse_sha256_hex(&hex), Some(expected));
+        assert_eq!(parse_sha256_hex(&hex.to_uppercase()), Some(expected));
+
+        for bad in [
+            format!("+f{}", &hex[2..]),
+            format!(" f{}", &hex[2..]),
+            format!("zz{}", &hex[2..]),
+            hex[2..].to_string(),
+            format!("{hex}00"),
+        ] {
+            assert_eq!(parse_sha256_hex(&bad), None, "{bad:?}");
+        }
+    }
 
     #[test]
     fn test_convert_metadata() {

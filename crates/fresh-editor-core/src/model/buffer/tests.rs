@@ -1585,8 +1585,7 @@ fn test_save_fingerprints_only_up_to_the_large_file_threshold() {
 }
 
 /// A buffer built from bytes (a restored workspace file) is capped the same
-/// way once given the threshold, and so is one loaded whole past the
-/// large-file check (a non-resynchronizable encoding).
+/// way once given the threshold.
 #[test]
 fn test_threshold_given_after_construction_caps_the_fingerprint() {
     let temp_dir = tempfile::TempDir::new().unwrap();
@@ -1599,9 +1598,38 @@ fn test_threshold_given_after_construction_caps_the_fingerprint() {
     buffer.insert(0, "+");
     buffer.save(&recovery_dir).unwrap();
     assert_eq!(buffer.saved_content(), None);
+}
 
-    let buffer = TextBuffer::load_large_file_confirmed(&file_path, 9, test_fs()).unwrap();
-    assert_eq!(buffer.config.large_file_threshold, Some(9));
+/// A large file loaded whole because of its encoding (the confirmed load)
+/// saves without Copy ops; above the threshold it was loaded with, the save
+/// records no fingerprint, and below it, one.
+#[test]
+fn test_confirmed_full_load_fingerprints_only_up_to_the_threshold() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let recovery_dir = temp_dir.path().join("recovery");
+    let file_path = temp_dir.path().join("notes.txt");
+    // UTF-16LE with a BOM: not UTF-8, so loaded whole and re-encoded on save.
+    let utf16 = |text: &str| -> Vec<u8> {
+        let mut bytes = vec![0xFF, 0xFE];
+        bytes.extend(text.encode_utf16().flat_map(u16::to_le_bytes));
+        bytes
+    };
+    let save_edited = |threshold: usize| {
+        std::fs::write(&file_path, utf16("hello\n")).unwrap();
+        let mut buffer =
+            TextBuffer::load_large_file_confirmed(&file_path, threshold, test_fs()).unwrap();
+        assert!(buffer.is_large_file());
+        buffer.insert(0, "+");
+        buffer.save(&recovery_dir).unwrap();
+        assert_eq!(std::fs::read(&file_path).unwrap(), utf16("+hello\n"));
+        buffer.saved_content()
+    };
+
+    assert_eq!(
+        save_edited(1 << 20),
+        Some(ContentDigest::of(&utf16("+hello\n")))
+    );
+    assert_eq!(save_edited(8), None);
 }
 
 // ===== Line Ending Conversion Tests =====

@@ -141,8 +141,28 @@ impl std::fmt::Debug for SpoolFileSystem {
     }
 }
 
+/// A spool's bytes from `pos` up to `end`, read front to back.
+struct SpoolReader<'a> {
+    spool: &'a StdinSpool,
+    pos: u64,
+    end: u64,
+}
+
+impl io::Read for SpoolReader<'_> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let want = (self.end - self.pos).min(buf.len() as u64) as usize;
+        if want == 0 {
+            return Ok(0);
+        }
+        let data = self.spool.read_at(self.pos, want)?;
+        buf[..data.len()].copy_from_slice(&data);
+        self.pos += data.len() as u64;
+        Ok(data.len())
+    }
+}
+
 impl FileSystem for SpoolFileSystem {
-    // --- the two the spool actually answers ------------------------------
+    // --- the ones the spool actually answers -----------------------------
 
     fn read_range(&self, path: &Path, offset: u64, len: usize) -> io::Result<Vec<u8>> {
         if self.spool.owns(path) {
@@ -179,11 +199,20 @@ impl FileSystem for SpoolFileSystem {
         self.inner.read_file(path)
     }
 
-    // --- everything else is the wrapped filesystem's business -------------
-
     fn content_digest(&self, path: &Path) -> io::Result<ContentDigest> {
+        if self.spool.owns(path) {
+            // The drained region, as `read_file` answers it, a chunk at a time.
+            return ContentDigest::of_reader(SpoolReader {
+                spool: &self.spool,
+                pos: 0,
+                end: self.spool.len()?,
+            });
+        }
         self.inner.content_digest(path)
     }
+
+    // --- everything else is the wrapped filesystem's business -------------
+
     fn write_file(&self, path: &Path, data: &[u8]) -> io::Result<()> {
         self.inner.write_file(path, data)
     }
@@ -301,6 +330,23 @@ mod tests {
         writer.write_all(contents).expect("write spool contents");
         writer.flush().expect("flush spool");
         Arc::new(spool)
+    }
+
+    /// The spool's path is digested from the spool, like `read_file` reads
+    /// it, not handed to the wrapped filesystem, where nothing has that path.
+    #[test]
+    fn content_digest_of_the_spool_is_that_of_what_was_drained() {
+        let contents: Vec<u8> = (0..200_000u32).map(|i| (i % 251) as u8).collect();
+        let spool = spool_with(&contents);
+        let fs = wrap(
+            Arc::new(fresh_editor_core::model::filesystem::StdFileSystem),
+            spool.clone(),
+        );
+
+        assert_eq!(
+            fs.content_digest(spool.path()).unwrap(),
+            ContentDigest::of(&contents)
+        );
     }
 
     #[test]

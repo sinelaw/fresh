@@ -104,6 +104,13 @@ pub struct BufferConfig {
     /// [`TextBuffer::saved_content`]: the changed-on-disk check doesn't
     /// compare files that big, so hashing them would be wasted. `None`
     /// records it at any size.
+    ///
+    /// Taken when the buffer is built: a later change of the setting reaches
+    /// the check (which reads it live) but not this buffer. Raised, saves
+    /// between the old and the new threshold go unfingerprinted, and a
+    /// drifted mtime on such a file counts as a change, as it did before
+    /// #3380; lowered, a few saves are hashed for nothing. Reopening the
+    /// file picks up the new value.
     pub large_file_threshold: Option<usize>,
 }
 
