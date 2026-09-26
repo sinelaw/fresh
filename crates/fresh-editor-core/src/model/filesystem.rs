@@ -1118,9 +1118,8 @@ fn retry_on_name_clash<T>(mut create: impl FnMut() -> io::Result<T>) -> io::Resu
 
 /// A temp-file path in the same directory as `path`, for write-then-rename.
 ///
-/// The name is `.<file name>.<pid>@<host>.<n>.tmp`, where `host` is
-/// [`host_id`], `n` is a per-process counter and a long file name is cut
-/// short (see [`temp_name_stem`]), so it never coincides with a real sibling such as `foo.tmp`
+/// The name is `.<file name>.<pid>.<n>.tmp`, where `n` is a per-process
+/// counter and a long file name is cut short (see [`temp_name_stem`]), so it never coincides with a real sibling such as `foo.tmp`
 /// (issue #3377) and two saves never share a temp file. Callers still open it
 /// with `create_new` semantics, since a stale file from an earlier process
 /// with the same pid may exist.
@@ -1130,10 +1129,9 @@ pub fn sibling_temp_path(path: &Path) -> PathBuf {
 
     let n = COUNTER.fetch_add(1, Ordering::Relaxed);
     path.with_file_name(format!(
-        ".{}.{}@{}.{n}.tmp",
+        ".{}.{}.{n}.tmp",
         temp_name_stem(path),
-        std::process::id(),
-        host_id()
+        std::process::id()
     ))
 }
 
@@ -1164,71 +1162,16 @@ pub fn temp_name_stem(path: &Path) -> String {
     file_name[..end].to_string()
 }
 
-/// Who made a temp file named by [`sibling_temp_path`]
-/// (`.<name>.<pid>@<host>.<n>.tmp`): its pid, and the [`host_id`] of the
-/// host it ran on — `None` for a name from before hosts were recorded
-/// (`.<name>.<pid>.<n>.tmp`). `None` for any other file name. Lets a sweep of
-/// a directory tell a temp file left by a process that died mid-write from
-/// one being written now, including by another host sharing the directory.
-pub fn sibling_temp_owner(file_name: &str) -> Option<(u32, Option<&str>)> {
+/// The pid in a name [`sibling_temp_path`] makes (`.<name>.<pid>.<n>.tmp`),
+/// or `None` for any other file name. Lets a sweep of a directory tell a temp
+/// file left by a process that died mid-write from one being written now.
+pub fn sibling_temp_pid(file_name: &str) -> Option<u32> {
     let rest = file_name.strip_prefix('.')?.strip_suffix(".tmp")?;
     let mut parts = rest.rsplitn(3, '.');
     parts.next()?.parse::<u64>().ok()?;
-    let owner = parts.next()?;
+    let pid = parts.next()?.parse().ok()?;
     parts.next().filter(|name| !name.is_empty())?;
-    match owner.split_once('@') {
-        Some((pid, host)) if !host.is_empty() => Some((pid.parse().ok()?, Some(host))),
-        Some(_) => None,
-        None => Some((owner.parse().ok()?, None)),
-    }
-}
-
-/// A short id of the machine this process runs on — its host name and, on
-/// Linux, its pid namespace — so that files naming a pid can say whose pid
-/// it is. A data directory may be shared by several machines (an NFS home)
-/// or containers with their own pid namespaces, where a pid says nothing
-/// about a process elsewhere (issue #3410). Eight hex digits, the same for
-/// the whole process.
-pub fn host_id() -> &'static str {
-    static ID: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-    ID.get_or_init(|| {
-        // FNV-1a: stable across builds, unlike `DefaultHasher`.
-        let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-        let mut feed = |bytes: &[u8]| {
-            for &b in bytes {
-                hash ^= u64::from(b);
-                hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
-            }
-            hash ^= 0xff;
-            hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
-        };
-        feed(host_name().as_bytes());
-        // Identifies the pid namespace, which containers sharing a host
-        // name may still not share. A process attribute, not a user file,
-        // so read directly rather than through a `FileSystem`.
-        #[cfg(target_os = "linux")]
-        if let Ok(ns) = std::fs::read_link("/proc/self/ns/pid") {
-            feed(ns.to_string_lossy().as_bytes());
-        }
-        format!("{:08x}", (hash ^ (hash >> 32)) as u32)
-    })
-}
-
-/// This machine's host name, or "" if it can't be told.
-fn host_name() -> String {
-    #[cfg(all(unix, feature = "runtime"))]
-    {
-        let mut buf = [0u8; 256];
-        // SAFETY: `buf` is writable for its whole length.
-        if unsafe { libc::gethostname(buf.as_mut_ptr().cast(), buf.len()) } == 0 {
-            let len = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
-            return String::from_utf8_lossy(&buf[..len]).into_owned();
-        }
-    }
-    ["COMPUTERNAME", "HOSTNAME"]
-        .iter()
-        .find_map(|var| std::env::var(var).ok())
-        .unwrap_or_default()
+    Some(pid)
 }
 
 // ============================================================================
@@ -4203,10 +4146,7 @@ mod tests {
                 name.len()
             );
             assert_eq!(sibling.parent(), path.parent());
-            assert_eq!(
-                sibling_temp_owner(name),
-                Some((std::process::id(), Some(host_id())))
-            );
+            assert_eq!(sibling_temp_pid(name), Some(std::process::id()));
 
             let unique = StdFileSystem.unique_temp_path(&path);
             let name = unique.file_name().unwrap().to_str().unwrap();
