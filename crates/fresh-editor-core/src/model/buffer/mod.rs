@@ -808,9 +808,16 @@ impl TextBuffer {
 
         if local {
             if let Err(e) = save::save_local(&fs, dest_path, &recipe, recovery_dir) {
-                // Tore the very file the unloaded parts are read from
-                if e.is::<save::TornWrite>() && read_from.as_deref() == Some(dest_path) {
-                    self.persistence.set_source_torn(true);
+                if e.is::<save::TornWrite>() {
+                    // The file's mtime moved by our own write: remember it,
+                    // so the change isn't taken for someone else's
+                    let mtime = fs.metadata(dest_path).ok().and_then(|m| m.modified);
+                    self.persistence
+                        .set_torn_write(mtime.map(|mtime| (dest_path.to_path_buf(), mtime)));
+                    // Tore the very file the unloaded parts are read from
+                    if read_from.as_deref() == Some(dest_path) {
+                        self.persistence.set_source_torn(true);
+                    }
                 }
                 return Err(e);
             }
@@ -848,6 +855,26 @@ impl TextBuffer {
         self.persistence.saved_content()
     }
 
+    /// The file this buffer's last save tore, writing it in place and
+    /// failing part-way ([`save::TornWrite`]), and the mtime that left on
+    /// it; `None` once a save succeeds. While the file still has that mtime,
+    /// what changed it was this buffer's own write, not another writer.
+    pub fn torn_write(&self) -> Option<(&Path, std::time::SystemTime)> {
+        self.persistence.torn_write()
+    }
+
+    /// Record that a write of `path` by this buffer's save, done outside it
+    /// (the sudo prompt's), failed after changing the file, leaving `mtime`
+    /// on it: see [`Self::torn_write`]. When `path` is the file this
+    /// buffer's unloaded parts are read from, a save that would read them
+    /// is refused from now on, as after a [`save::TornWrite`] of it.
+    pub fn record_torn_write(&mut self, path: PathBuf, mtime: std::time::SystemTime) {
+        if self.file_read_by_save().as_deref() == Some(path.as_path()) {
+            self.persistence.set_source_torn(true);
+        }
+        self.persistence.set_torn_write(Some((path, mtime)));
+    }
+
     /// Forget [`Self::saved_content`], once the file is known to hold
     /// something else, so nothing reads the file again to compare.
     pub fn forget_saved_content(&mut self) {
@@ -866,6 +893,7 @@ impl TextBuffer {
         self.persistence.set_file_path(dest_path.to_path_buf());
         // Consolidated below onto the file just written
         self.persistence.set_source_torn(false);
+        self.persistence.set_torn_write(None);
 
         // Consolidate the piece tree to synchronize with disk (for large files)
         // or to simplify structure (for small files).
@@ -886,6 +914,7 @@ impl TextBuffer {
         self.persistence.set_file_path(dest_path.clone());
         // Consolidated below onto the file just written
         self.persistence.set_source_torn(false);
+        self.persistence.set_torn_write(None);
 
         // Consolidate the piece tree to synchronize with disk or simplify structure.
         self.consolidate_after_save(&dest_path, new_size);

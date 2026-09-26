@@ -1765,3 +1765,35 @@ fn test_large_file_save_ignores_recovery_its_file_matches() {
 
     assert_eq!(std::fs::read_to_string(&file_path).unwrap(), expected);
 }
+
+/// A save that tears its file records the mtime its own write left there,
+/// so the editor can tell that change from someone else's; a save that
+/// succeeds clears it. For a fully loaded buffer too, whose unloaded parts
+/// (there are none) the tear doesn't concern.
+#[test]
+#[cfg(unix)]
+fn test_torn_inplace_write_records_the_mtime_it_left() {
+    let data_dir = TempDir::new().unwrap();
+    let recovery_dir = data_dir.path().join("recovery");
+    let dir = TempDir::new().unwrap();
+    let file_path = dir.path().join("small.txt");
+    std::fs::write(&file_path, "original\n").unwrap();
+    let fs = Arc::new(FaultyFileSystem::new());
+    let mut buffer = TextBuffer::load_from_file(&file_path, 1024 * 1024, fs.clone()).unwrap();
+    assert!(!buffer.is_large_file());
+    buffer.insert_bytes(0, b"EDITED ".to_vec());
+    assert_eq!(buffer.torn_write(), None);
+
+    fs.tear_after(&file_path, 3);
+    buffer.save(&recovery_dir).expect_err("the write tears");
+    let mtime = std::fs::metadata(&file_path).unwrap().modified().unwrap();
+    assert_eq!(buffer.torn_write(), Some((file_path.as_path(), mtime)));
+
+    *fs.tear.lock().unwrap() = None;
+    buffer.save(&recovery_dir).unwrap();
+    assert_eq!(buffer.torn_write(), None);
+    assert_eq!(
+        std::fs::read_to_string(&file_path).unwrap(),
+        "EDITED original\n"
+    );
+}
