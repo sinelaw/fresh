@@ -86,6 +86,10 @@ impl FileSystem for ConfigurableFileSystem {
         self.inner.read_range(path, offset, len)
     }
 
+    fn content_digest(&self, path: &Path) -> io::Result<fresh::model::filesystem::ContentDigest> {
+        self.inner.content_digest(path)
+    }
+
     fn write_file(&self, path: &Path, data: &[u8]) -> io::Result<()> {
         self.inner.write_file(path, data)
     }

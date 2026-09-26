@@ -30,8 +30,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use fresh_editor_core::model::filesystem::{
-    DirEntry, FileMetadata, FilePermissions, FileReader, FileSearchCursor, FileSearchOptions,
-    FileSystem, FileWriter, ReplaceError, SearchMatch,
+    ContentDigest, DirEntry, FileMetadata, FilePermissions, FileReader, FileSearchCursor,
+    FileSearchOptions, FileSystem, FileWriter, ReplaceError, SearchMatch,
 };
 
 #[cfg(unix)]
@@ -181,6 +181,9 @@ impl FileSystem for SpoolFileSystem {
 
     // --- everything else is the wrapped filesystem's business -------------
 
+    fn content_digest(&self, path: &Path) -> io::Result<ContentDigest> {
+        self.inner.content_digest(path)
+    }
     fn write_file(&self, path: &Path, data: &[u8]) -> io::Result<()> {
         self.inner.write_file(path, data)
     }

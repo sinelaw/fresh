@@ -429,6 +429,56 @@ mod agent_integration {
         assert!(!path.contains('~'));
     }
 
+    /// `digest` hashes the file on the agent's side: its size and SHA-256
+    /// are the ones Rust computes over the same bytes, across several of
+    /// the agent's read chunks. A missing file is an error.
+    #[test]
+    fn test_agent_digest_command() {
+        use crate::model::filesystem::ContentDigest;
+        let Some((mut stdin, mut stdout)) = spawn_agent() else {
+            eprintln!("Skipping test: Python3 not available");
+            return;
+        };
+
+        // Read ready message
+        let mut line = String::new();
+        stdout.read_line(&mut line).unwrap();
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("notes.txt");
+        let content: Vec<u8> = (0..200_000u32).map(|i| (i % 251) as u8).collect();
+        std::fs::write(&path, &content).unwrap();
+
+        let resp = send_request(
+            &mut stdin,
+            &mut stdout,
+            "digest",
+            digest_params(&path.to_string_lossy()),
+        )
+        .unwrap();
+        let result = resp.result.expect("digest result");
+        let expected = ContentDigest::of(&content);
+        assert_eq!(result["size"].as_u64(), Some(expected.size));
+        let hex: String = expected.sha256.iter().map(|b| format!("{b:02x}")).collect();
+        assert_eq!(result["sha256"].as_str(), Some(hex.as_str()));
+
+        let resp = send_request(
+            &mut stdin,
+            &mut stdout,
+            "digest",
+            digest_params(&dir.path().join("missing").to_string_lossy()),
+        )
+        .unwrap();
+        assert!(resp.result.is_none());
+        assert!(
+            resp.error
+                .as_deref()
+                .is_some_and(|e| e.contains("not found")),
+            "error was {:?}",
+            resp.error
+        );
+    }
+
     #[test]
     fn test_agent_unknown_method() {
         let Some((mut stdin, mut stdout)) = spawn_agent() else {

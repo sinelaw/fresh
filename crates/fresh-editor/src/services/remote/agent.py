@@ -4,6 +4,7 @@ import sys
 import os
 import json
 import base64
+import hashlib
 import stat
 import shutil
 import subprocess
@@ -353,6 +354,22 @@ def cmd_count_lf(id, p):
             count += chunk.count(b"\n")
             remaining -= len(chunk)
     send(id, r={"count": count})
+
+
+def cmd_digest(id, p):
+    """Size and SHA-256 of a file, streamed, so the file stays on this host."""
+    path = validate_path(p["path"])
+
+    h = hashlib.sha256()
+    size = 0
+    with open(path, "rb") as f:
+        while True:
+            chunk = f.read(CHUNK)
+            if not chunk:
+                break
+            h.update(chunk)
+            size += len(chunk)
+    send(id, r={"size": size, "sha256": h.hexdigest()})
 
 
 def cmd_exists(id, p):
@@ -775,6 +792,7 @@ METHODS = {
     "truncate": cmd_truncate,
     "patch": cmd_patch,
     "count_lf": cmd_count_lf,
+    "digest": cmd_digest,
     "exists": cmd_exists,
     "find_up": cmd_find_up,
     "info": cmd_info,
