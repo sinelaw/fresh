@@ -20,9 +20,10 @@ pub struct ViewAnchor {
 /// One value, so a full hold and a row hold cannot both be pending: the last
 /// thing to scroll the view decides. The transitions are the viewport's
 /// `set_skip_ensure_visible` (→ `Hold`), `hold_rows_while_head_at`
-/// (→ `HoldRows`), `clear_skip_ensure_visible` (→ `Follow`), and
-/// `spend_row_hold`, which a placement runs to drop a row hold whose head the
-/// cursor has left. Everything else only asks.
+/// (→ `HoldRows`), `clear_skip_ensure_visible` (→ `Follow`),
+/// `release_hold_for_key` (`Hold` → `Follow`), and `spend_row_hold`, which a
+/// placement runs to drop a row hold whose head the cursor has left.
+/// Everything else only asks.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 enum EnsureVisible {
     /// Rows and columns follow the cursor.
@@ -31,16 +32,21 @@ enum EnsureVisible {
     /// Leave the view where a scroll put it (the wheel, the scrollbar,
     /// Ctrl+Up/Down, a recenter), until a key or a jump moves the cursor.
     Hold,
-    /// The rows stay where they are while the cursor is at `head`, and the
-    /// columns still follow it. Set by a drag-select level with the text
-    /// rows, whose head is on a row already on screen but may be in a column
-    /// scrolled out of view.
+    /// While the cursor is at `head`, the rows get no scroll-off margin: they
+    /// move only if the cursor would otherwise be off screen, and the columns
+    /// still follow it. Set where the pointer put the cursor — a click, or a
+    /// drag-select level with the text rows — on a row already on screen,
+    /// which the user can see and pointed at; the head of a drag may still be
+    /// in a column scrolled out of view.
     ///
-    /// Keyed to the head so it ends with the drag: once anything else moves
-    /// the cursor — a paste, a plugin's or LSP's jump — the next placement
-    /// drops it and places the rows as usual. Ending it on release instead
-    /// would apply the scroll-off margin to a head left on an edge row, and
-    /// the view would jump as the button came up.
+    /// Keyed to the head so it ends with the pointer's say: once anything
+    /// moves the cursor — a key, a paste, a plugin's or LSP's jump — the next
+    /// placement drops it and places the rows with the margin as usual. A key
+    /// that leaves the cursor where it is leaves the hold too (see
+    /// `Viewport::release_hold_for_key`). Ending it on release instead would
+    /// apply the scroll-off margin to a head left on an edge row, and the
+    /// view would jump as the button came up (#3329); applying it to a click
+    /// scrolled the text the user had just pointed at (#3407).
     HoldRows { head: usize },
 }
 
@@ -449,6 +455,22 @@ impl Viewport {
         self.ensure_visible = EnsureVisible::Follow;
     }
 
+    /// What a key press does to the view's hold, before the key runs.
+    ///
+    /// A scroll's full hold ends: the key is new intent, and the cursor it
+    /// acts on must come back into view. A row hold stays, because it ends by
+    /// itself as soon as the cursor leaves the pointer's head: a key that
+    /// moves the cursor then gets the scroll-off margin, like any keyboard
+    /// motion, and a key that does not (Esc, a save, a toggle) leaves the
+    /// rows the user pointed at where they are. Clearing it here made the
+    /// first key after a click or drag on an edge row scroll the view by the
+    /// margin whatever it was (#3407).
+    pub fn release_hold_for_key(&mut self) {
+        if self.ensure_visible.holds_all() {
+            self.ensure_visible = EnsureVisible::Follow;
+        }
+    }
+
     /// Set the scroll offset
     pub fn set_scroll_offset(&mut self, offset: usize) {
         self.scroll_offset = offset;
@@ -466,19 +488,28 @@ impl Viewport {
     /// `max_scroll_row` ends up wrong on wide viewports with a narrow
     /// page width.
     ///
-    /// Also capped at `wrap_column`, as the renderer caps it — see
-    /// [`Self::wrap_area_width`].
+    /// Also capped by `wrap_column`, as the renderer caps it — see
+    /// [`Self::wrap_area_width`], which is why this needs the pane's
+    /// `gutter_width`.
     #[inline]
-    pub fn effective_width(&self) -> u16 {
+    pub fn effective_width(&self, gutter_width: usize) -> u16 {
         let width = match self.compose_width {
             Some(cw) => cw.min(self.width).max(1),
             None => self.width,
         };
-        self.wrap_area_width(width as usize) as u16
+        self.wrap_area_width(width as usize, gutter_width) as u16
     }
 
     /// The width a wrapped row is laid out in, gutter included, for a pane
-    /// `width` columns wide: `width` capped at `wrap_column`.
+    /// `width` columns wide whose gutter is `gutter_width` columns.
+    ///
+    /// `wrap_column` counts *text* columns, the way a fill column does in
+    /// other editors: `wrap_column: 80` fits 80 characters on a row whatever
+    /// the gutter's width (issue #3405). So the area is capped at the gutter,
+    /// plus `wrap_column`, plus the one column every wrapped row keeps free
+    /// for the end-of-line cursor (see `WrapConfig::new` and
+    /// `view_data::effective_wrap_width`). A pane narrower than that wraps
+    /// at its own width, as without `wrap_column`.
     ///
     /// The one statement of what `wrap_column` does to the wrap. The
     /// renderer (`view_data::effective_wrap_width`) and every scroll and
@@ -489,12 +520,19 @@ impl Viewport {
     /// #3294). Terminal-grid wrap keeps its grid width in `wrap_column` and
     /// reads it through [`Self::grid_cols`] instead, so it is not capped here.
     #[inline]
-    pub fn wrap_area_width(&self, width: usize) -> usize {
+    pub fn wrap_area_width(&self, width: usize, gutter_width: usize) -> usize {
         match self.wrap_column {
-            Some(col) if !self.grid_wrap => col.min(width),
+            Some(col) if !self.grid_wrap => col
+                .saturating_add(gutter_width)
+                .saturating_add(Self::EOL_CURSOR_COLUMNS)
+                .min(width),
             _ => width,
         }
     }
+
+    /// Columns a wrapped row keeps free past its last character, where the
+    /// cursor sits at the end of a full row.
+    const EOL_CURSOR_COLUMNS: usize = 1;
 
     /// Get the number of visible lines
     pub fn visible_line_count(&self) -> usize {
@@ -813,6 +851,67 @@ impl Viewport {
         }
 
         starts.get(offset).copied().unwrap_or(walk_end)
+    }
+
+    /// The byte a page motion lands the caret on: on the row `rows` rows
+    /// below the row that starts at `from` (the new top row), at visual
+    /// column `goal_col` of that row, or at the row's last position when the
+    /// row is shorter.
+    ///
+    /// Walks the rows the frame draws (`row_walk`, over the same collapsed
+    /// folds), so the caret lands on the screen row asked for. Plugin soft
+    /// breaks and virtual lines are invisible to the walk, as they are to
+    /// [`Self::top_visual_row_source_byte`], and shift the landing by the
+    /// rows they add. The column is counted as the vertical motions' own
+    /// off-screen fallback counts it: a continuation row's hanging indent is
+    /// padding before its text.
+    pub fn byte_at_row_below(
+        &mut self,
+        buffer: &mut Buffer,
+        from: usize,
+        rows: usize,
+        goal_col: usize,
+        hidden_ranges: &[(usize, usize)],
+    ) -> usize {
+        use crate::primitives::display_width::byte_offset_at_visual_column;
+        use crate::view::row_walk;
+        use crate::view::wrap_machine::WrapRule;
+
+        let rule = if self.grid_wrap || self.line_wrap_enabled {
+            self.wrap_rule(buffer)
+        } else {
+            WrapRule::Chop {
+                chars: crate::view::ui::split_rendering::MAX_SAFE_LINE_WIDTH,
+            }
+        };
+        let folds = Self::fold_skip(hidden_ranges);
+        let starts = row_walk::row_starts_from(buffer, from, rule, rows.saturating_add(2), &folds);
+        let idx = rows.min(starts.len().saturating_sub(1));
+        let row_start = starts.get(idx).copied().unwrap_or(from);
+        let next_row = starts.get(idx + 1).copied();
+
+        // The row's text, cut at its line's end.
+        let read_end = next_row
+            .unwrap_or_else(|| row_start.saturating_add(MAX_LINE_BYTES))
+            .min(buffer.len());
+        let bytes = buffer.slice_bytes(row_start..read_end);
+        let Ok(text) = std::str::from_utf8(&bytes) else {
+            return row_start;
+        };
+        let (text, row_continues) = match text.find(['\n', '\r']) {
+            Some(end) => (&text[..end], false),
+            // No line break before the next row: the line wraps there, and the
+            // next row draws the byte it starts with.
+            None => (text, next_row.is_some()),
+        };
+        let last = if row_continues {
+            text.char_indices().last().map_or(0, |(i, _)| i)
+        } else {
+            text.len()
+        };
+        let indent = row_walk::carry_at(buffer, row_start, rule).line_indent;
+        let offset = byte_offset_at_visual_column(text, goal_col.saturating_sub(indent));
+        row_start + offset.min(last)
     }
 
     /// Scroll by `delta` visual rows using the wrap index — the whole of wheel
@@ -1455,9 +1554,7 @@ impl Viewport {
             return false;
         }
         self.spend_row_hold(cursor_byte);
-        if self.ensure_visible.holds_rows_at(cursor_byte) {
-            return false;
-        }
+        let rows_held = self.ensure_visible.holds_rows_at(cursor_byte);
         let viewport_height = self.visible_line_count();
         if viewport_height == 0 {
             return false;
@@ -1500,8 +1597,13 @@ impl Viewport {
 
         // Unconditional, and the byte pass's own rule: that pass defers to this
         // one for every indexed buffer, so a margin skipped here is a margin
-        // nobody applies.
-        let margin = self.scroll_offset.min(viewport_height / 2);
+        // nobody applies. None while the rows are held: the cursor is where
+        // the pointer put it, on a row the user can see.
+        let margin = if rows_held {
+            0
+        } else {
+            self.scroll_offset.min(viewport_height / 2)
+        };
         let max_top = total_rows.saturating_sub(viewport_height);
 
         let in_top_margin = cursor_row < top_row + margin;
@@ -2095,9 +2197,7 @@ impl Viewport {
         if !self.row_pass_owns_placement
             && crate::view::row_walk::addresses_rows_by_byte(buffer, self.line_wrap_enabled)
         {
-            if !rows_held {
-                self.ensure_visible_anchored(buffer, cursor, hidden_ranges);
-            }
+            self.ensure_visible_anchored(buffer, cursor, hidden_ranges, rows_held);
             self.left_column = 0;
             return;
         }
@@ -2122,13 +2222,17 @@ impl Viewport {
         let cursor_line_start = buffer
             .prev_line_start_within(cursor.position, buffer.len())
             .unwrap_or(0);
-        let effective_offset = self.scroll_offset.min(viewport_lines / 2);
+        // No margin while the rows are held: see `EnsureVisible::HoldRows`.
+        let effective_offset = if rows_held {
+            0
+        } else {
+            self.scroll_offset.min(viewport_lines / 2)
+        };
 
-        let (cursor_is_visible, cursor_near_top) = if self.row_pass_owns_placement || rows_held {
-            // Vertical placement belongs to the row pass (or the rows are
-            // held); claiming the cursor is visible short-circuits every
-            // scroll below while the horizontal handling further down still
-            // runs.
+        let (cursor_is_visible, cursor_near_top) = if self.row_pass_owns_placement {
+            // Vertical placement belongs to the row pass; claiming the cursor
+            // is visible short-circuits every scroll below while the
+            // horizontal handling further down still runs.
             (true, false)
         } else if cursor_line_start < self.top_byte() {
             (false, true)
@@ -2263,7 +2367,7 @@ impl Viewport {
         }
         let gutter_width = self.gutter_width(buffer);
         WrapConfig::new(
-            self.effective_width() as usize,
+            self.effective_width(gutter_width) as usize,
             gutter_width,
             true,
             self.wrap_indent,
@@ -2394,11 +2498,17 @@ impl Viewport {
         buffer: &mut Buffer,
         cursor: &Cursor,
         hidden_ranges: &[(usize, usize)],
+        rows_held: bool,
     ) {
         use crate::view::row_walk;
 
         let height = self.visible_line_count().max(1);
-        let margin = self.scroll_offset.min((height.saturating_sub(1)) / 2);
+        // No margin while the rows are held: see `EnsureVisible::HoldRows`.
+        let margin = if rows_held {
+            0
+        } else {
+            self.scroll_offset.min((height.saturating_sub(1)) / 2)
+        };
         let rule = self.wrap_rule(buffer);
         let folds = Self::fold_skip(hidden_ranges);
 

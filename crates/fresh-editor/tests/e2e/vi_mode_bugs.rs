@@ -61,7 +61,7 @@ fn enable_vi_mode(harness: &mut EditorTestHarness) {
     harness.render().unwrap();
 
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-normal".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-normal".to_string()))
         .unwrap();
 }
 
@@ -80,7 +80,7 @@ fn send_key(harness: &mut EditorTestHarness, c: char) {
 fn send_operator_motion(harness: &mut EditorTestHarness, op: char, motion: char) {
     send_key(harness, op);
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-operator-pending".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-operator-pending".to_string()))
         .unwrap();
     send_key(harness, motion);
 }
@@ -88,14 +88,14 @@ fn send_operator_motion(harness: &mut EditorTestHarness, op: char, motion: char)
 /// Helper: wait for vi-normal mode
 fn wait_normal(harness: &mut EditorTestHarness) {
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-normal".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-normal".to_string()))
         .unwrap();
 }
 
 /// Helper: wait for vi-insert mode
 fn wait_insert(harness: &mut EditorTestHarness) {
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-insert".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-insert".to_string()))
         .unwrap();
 }
 
@@ -181,7 +181,7 @@ fn test_vi_bug_cc_does_not_clear_line() {
     // cc = change line
     send_key(&mut harness, 'c');
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-operator-pending".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-operator-pending".to_string()))
         .unwrap();
     send_key(&mut harness, 'c');
     wait_insert(&mut harness);
@@ -245,7 +245,7 @@ fn test_vi_bug_visual_block_I_ignored() {
         .unwrap();
     harness.render().unwrap();
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-visual-block".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-visual-block".to_string()))
         .unwrap();
 
     // Select down two lines
@@ -404,7 +404,7 @@ fn test_vi_bug_r_not_implemented() {
     // Wait for the plugin to enter replace-char mode before sending the
     // replacement character (same pattern as send_operator_motion).
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-replace-char".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-replace-char".to_string()))
         .unwrap();
     send_key(&mut harness, 'a');
 
@@ -538,7 +538,7 @@ fn test_vi_bug_find_char_special_chars() {
     // f( should find '(' at offset 3
     send_key(&mut harness, 'f');
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-find-char".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-find-char".to_string()))
         .unwrap();
 
     harness
@@ -566,7 +566,7 @@ fn test_vi_bug_find_char_dot() {
 
     send_key(&mut harness, 'f');
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-find-char".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-find-char".to_string()))
         .unwrap();
 
     harness
@@ -593,7 +593,7 @@ fn test_vi_bug_find_char_slash() {
 
     send_key(&mut harness, 'f');
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-find-char".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-find-char".to_string()))
         .unwrap();
 
     harness
@@ -678,7 +678,7 @@ fn test_vi_bug_v_moves_cursor_on_entry() {
 
     send_key(&mut harness, 'v');
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-visual".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-visual".to_string()))
         .unwrap();
 
     // select_right advances cursor by 1 to establish anchor+selection;
@@ -709,7 +709,7 @@ fn test_vi_bug_V_moves_cursor_down() {
 
     send_key(&mut harness, 'V');
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-visual-line".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-visual-line".to_string()))
         .unwrap();
 
     // In vim, V selects the entire line including newline.
@@ -744,13 +744,13 @@ fn test_vi_bug_visual_mode_switching() {
     // Enter visual mode
     send_key(&mut harness, 'v');
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-visual".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-visual".to_string()))
         .unwrap();
 
     // Switch to visual line with V
     send_key(&mut harness, 'V');
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-visual-line".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-visual-line".to_string()))
         .unwrap();
 
     // Switch to visual block with Ctrl+V
@@ -759,7 +759,7 @@ fn test_vi_bug_visual_mode_switching() {
         .unwrap();
     harness.render().unwrap();
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-visual-block".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-visual-block".to_string()))
         .unwrap();
 
     escape(&mut harness);
@@ -893,7 +893,7 @@ fn test_vi_2dd_delete_two_lines() {
     send_key(&mut harness, '2');
     send_key(&mut harness, 'd');
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-operator-pending".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-operator-pending".to_string()))
         .unwrap();
     send_key(&mut harness, 'd');
 
@@ -1054,11 +1054,11 @@ fn send_operator_text_object(
 ) {
     send_key(harness, op);
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-operator-pending".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-operator-pending".to_string()))
         .unwrap();
     send_key(harness, modifier);
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-text-object".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-text-object".to_string()))
         .unwrap();
     send_key(harness, object);
 }
@@ -1176,7 +1176,7 @@ fn test_vi_indent_line() {
     // >> on line 1
     send_key(&mut harness, '>');
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-operator-pending".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-operator-pending".to_string()))
         .unwrap();
     send_key(&mut harness, '>');
 
@@ -1197,7 +1197,7 @@ fn test_vi_dedent_line() {
     // << on line 1 removes one 4-space level.
     send_key(&mut harness, '<');
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-operator-pending".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-operator-pending".to_string()))
         .unwrap();
     send_key(&mut harness, '<');
 
@@ -1219,7 +1219,7 @@ fn test_vi_indent_line_with_count() {
     send_key(&mut harness, '2');
     send_key(&mut harness, '>');
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-operator-pending".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-operator-pending".to_string()))
         .unwrap();
     send_key(&mut harness, '>');
 
@@ -1256,7 +1256,7 @@ fn test_vi_indent_line_repeat() {
 
     send_key(&mut harness, '>');
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-operator-pending".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-operator-pending".to_string()))
         .unwrap();
     send_key(&mut harness, '>');
     harness
@@ -1292,7 +1292,7 @@ fn test_vi_visual_line_indent() {
         .unwrap();
     harness.render().unwrap();
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-visual-line".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-visual-line".to_string()))
         .unwrap();
 
     send_key(&mut harness, '>');
@@ -1302,7 +1302,7 @@ fn test_vi_visual_line_indent() {
         .unwrap();
     // Returns to normal mode after the operation (Vim behavior).
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-normal".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-normal".to_string()))
         .unwrap();
 }
 
@@ -1321,7 +1321,7 @@ fn test_vi_visual_line_dedent() {
         .unwrap();
     harness.render().unwrap();
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-visual-line".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-visual-line".to_string()))
         .unwrap();
     send_key(&mut harness, 'j');
     send_key(&mut harness, '<');
@@ -1354,7 +1354,7 @@ fn test_vi_visual_line_indent_stops_at_selection() {
         .unwrap();
     harness.render().unwrap();
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-visual-line".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-visual-line".to_string()))
         .unwrap();
     send_key(&mut harness, 'j');
     send_key(&mut harness, '>');
@@ -1388,7 +1388,7 @@ fn test_vi_visual_block_indent() {
         .unwrap();
     harness.render().unwrap();
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-visual-block".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-visual-block".to_string()))
         .unwrap();
     send_key(&mut harness, 'j');
     send_key(&mut harness, '>');
@@ -1399,7 +1399,7 @@ fn test_vi_visual_block_indent() {
         .unwrap();
     // Returns to normal mode after the operation (Vim behavior).
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-normal".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-normal".to_string()))
         .unwrap();
 }
 
@@ -1417,7 +1417,7 @@ fn test_vi_visual_block_dedent() {
         .unwrap();
     harness.render().unwrap();
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-visual-block".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-visual-block".to_string()))
         .unwrap();
     send_key(&mut harness, 'j');
     send_key(&mut harness, '<');
@@ -1426,7 +1426,7 @@ fn test_vi_visual_block_dedent() {
         .wait_for_buffer_content("alpha\nbeta\ngamma\n")
         .unwrap();
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-normal".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-normal".to_string()))
         .unwrap();
 }
 
@@ -1446,7 +1446,7 @@ fn test_vi_bug_2441_dfr_deletes_through_target() {
 
     send_key(&mut harness, 'd');
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-operator-pending".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-operator-pending".to_string()))
         .unwrap();
     send_key(&mut harness, 'f');
     // `f` enters vi-find-char and consumes the *next* key as the target.
@@ -1455,7 +1455,7 @@ fn test_vi_bug_2441_dfr_deletes_through_target() {
     // happens, and the wait below hangs to the external timeout. Same guard
     // as the normal-mode f-find tests above.
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-find-char".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-find-char".to_string()))
         .unwrap();
     send_key(&mut harness, 'r');
 
@@ -1475,7 +1475,7 @@ fn test_vi_bug_2441_dfw_target_is_motion_key() {
 
     send_key(&mut harness, 'd');
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-operator-pending".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-operator-pending".to_string()))
         .unwrap();
     send_key(&mut harness, 'f');
     // `f` enters vi-find-char and consumes the *next* key as the target.
@@ -1484,7 +1484,7 @@ fn test_vi_bug_2441_dfw_target_is_motion_key() {
     // happens, and the wait below hangs to the external timeout. Same guard
     // as the normal-mode f-find tests above.
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-find-char".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-find-char".to_string()))
         .unwrap();
     send_key(&mut harness, 'w');
 
@@ -1505,7 +1505,7 @@ fn test_vi_bug_2441_dtr_deletes_until_target() {
 
     send_key(&mut harness, 'd');
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-operator-pending".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-operator-pending".to_string()))
         .unwrap();
     send_key(&mut harness, 't');
     // `t` enters vi-find-char and consumes the *next* key as the target.
@@ -1514,7 +1514,7 @@ fn test_vi_bug_2441_dtr_deletes_until_target() {
     // happens, and the wait below hangs to the external timeout. Same guard
     // as the normal-mode f-find tests above.
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-find-char".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-find-char".to_string()))
         .unwrap();
     send_key(&mut harness, 'r');
 
@@ -1535,7 +1535,7 @@ fn test_vi_bug_2441_cfr_changes_through_target() {
 
     send_key(&mut harness, 'c');
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-operator-pending".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-operator-pending".to_string()))
         .unwrap();
     send_key(&mut harness, 'f');
     // `f` enters vi-find-char and consumes the *next* key as the target.
@@ -1544,7 +1544,7 @@ fn test_vi_bug_2441_cfr_changes_through_target() {
     // happens, and the wait below hangs to the external timeout. Same guard
     // as the normal-mode f-find tests above.
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-find-char".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-find-char".to_string()))
         .unwrap();
     send_key(&mut harness, 'r');
     wait_insert(&mut harness);
@@ -1574,7 +1574,7 @@ fn test_vi_bug_2441_semicolon_repeats_find() {
     // (→ insert mode), the find never happens, and the cursor wait below hangs
     // to the external timeout. Matches the f-find sibling tests above.
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-find-char".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-find-char".to_string()))
         .unwrap();
     send_key(&mut harness, 'o');
     harness.wait_until(|h| h.cursor_position() == 4).unwrap();
@@ -1601,7 +1601,7 @@ fn test_vi_bug_2441_comma_repeats_find_reverse() {
     // to the external timeout. Gate each subsequent step on the cursor landing
     // so `;`/`,` repeat a completed find rather than racing an in-flight one.
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-find-char".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-find-char".to_string()))
         .unwrap();
     send_key(&mut harness, 'o');
     harness.wait_until(|h| h.cursor_position() == 4).unwrap();
@@ -1976,7 +1976,7 @@ fn test_vi_buffer_switch_leaves_visual_mode() {
     // Anchor a visual selection well past the end of the other buffer.
     send_key(&mut harness, 'v');
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-visual".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-visual".to_string()))
         .unwrap();
     for _ in 0..8 {
         send_key(&mut harness, 'l');
@@ -2009,7 +2009,7 @@ fn test_vi_returning_to_buffer_collapses_abandoned_selection() {
 
     send_key(&mut harness, 'v');
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-visual".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-visual".to_string()))
         .unwrap();
     for _ in 0..4 {
         send_key(&mut harness, 'l');
@@ -2151,7 +2151,7 @@ fn test_vi_split_focus_keeps_visual_mode() {
 
     send_key(&mut harness, 'v');
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-visual".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-visual".to_string()))
         .unwrap();
     send_key(&mut harness, 'l');
     harness.render().unwrap();
@@ -2160,7 +2160,7 @@ fn test_vi_split_focus_keeps_visual_mode() {
     harness.editor_mut().next_split();
     harness.render().unwrap();
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-visual".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-visual".to_string()))
         .unwrap();
 }
 
@@ -2186,7 +2186,7 @@ fn test_vi_visual_line_up_extends_selection() {
         .unwrap();
     harness.render().unwrap();
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-visual-line".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-visual-line".to_string()))
         .unwrap();
     send_key(&mut harness, 'k');
     send_key(&mut harness, 'd');
@@ -2211,7 +2211,7 @@ fn test_vi_visual_line_join() {
         .unwrap();
     harness.render().unwrap();
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-visual-line".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-visual-line".to_string()))
         .unwrap();
     send_key(&mut harness, 'j');
     send_key(&mut harness, 'J');
@@ -2234,7 +2234,7 @@ fn test_vi_visual_inner_word() {
     send_key(&mut harness, 'w');
     send_key(&mut harness, 'v');
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-visual".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-visual".to_string()))
         .unwrap();
     send_key(&mut harness, 'i');
     send_key(&mut harness, 'w');
@@ -2256,7 +2256,7 @@ fn test_vi_visual_word_back_includes_anchor() {
     send_key(&mut harness, 'w');
     send_key(&mut harness, 'v');
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-visual".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-visual".to_string()))
         .unwrap();
     send_key(&mut harness, 'b');
     send_key(&mut harness, 'd');
@@ -2276,7 +2276,7 @@ fn test_vi_inner_paren_falls_forward() {
 
     send_key(&mut harness, 'd');
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-operator-pending".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-operator-pending".to_string()))
         .unwrap();
     send_key(&mut harness, 'i');
     send_key(&mut harness, '(');
@@ -2365,7 +2365,7 @@ fn test_vi_visual_line_end_takes_line_break() {
     send_key(&mut harness, 'w');
     send_key(&mut harness, 'v');
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-visual".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-visual".to_string()))
         .unwrap();
     send_key(&mut harness, '$');
     send_key(&mut harness, 'd');
@@ -2426,7 +2426,7 @@ fn test_vi_visual_charwise_join_spans_selection() {
 
     send_key(&mut harness, 'v');
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-visual".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-visual".to_string()))
         .unwrap();
     send_key(&mut harness, 'j');
     send_key(&mut harness, 'j');
@@ -2469,7 +2469,7 @@ fn test_vi_delete_to_counted_line() {
 
     send_key(&mut harness, 'd');
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-operator-pending".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-operator-pending".to_string()))
         .unwrap();
     send_key(&mut harness, '3');
     send_key(&mut harness, 'G');
@@ -2514,7 +2514,7 @@ fn test_vi_visual_backward_keeps_anchor_character() {
     send_key(&mut harness, 'l');
     send_key(&mut harness, 'v');
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-visual".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-visual".to_string()))
         .unwrap();
     send_key(&mut harness, 'h');
     send_key(&mut harness, 'd');
@@ -2534,7 +2534,7 @@ fn test_vi_visual_up_keeps_anchor_character() {
     send_key(&mut harness, 'j');
     send_key(&mut harness, 'v');
     harness
-        .wait_until(|h| h.editor().editor_mode() == Some("vi-visual".to_string()))
+        .wait_until(|h| h.editor().input_mode() == Some("vi-visual".to_string()))
         .unwrap();
     send_key(&mut harness, 'k');
     send_key(&mut harness, 'd');

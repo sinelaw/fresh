@@ -17,6 +17,39 @@ use crate::model::piece_tree_diff::PieceTreeDiff;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+/// The size and hash of the bytes a save wrote, to tell later whether a
+/// file still holds them without keeping them (issue #3380). The hash is
+/// only compared within this process.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SavedContent {
+    pub size: u64,
+    pub hash: u64,
+}
+
+impl SavedContent {
+    /// The fingerprint of `chunks` written one after another.
+    pub fn of_chunks<'a>(chunks: impl IntoIterator<Item = &'a [u8]>) -> Self {
+        use std::hash::Hasher;
+        // `write` streams: the hash of the chunks is the hash of their
+        // concatenation, so a file read back in one piece compares equal.
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        let mut size = 0u64;
+        for chunk in chunks {
+            hasher.write(chunk);
+            size += chunk.len() as u64;
+        }
+        Self {
+            size,
+            hash: hasher.finish(),
+        }
+    }
+
+    /// The fingerprint of `bytes`.
+    pub fn of(bytes: &[u8]) -> Self {
+        Self::of_chunks([bytes])
+    }
+}
+
 /// Filesystem + save-state for one `TextBuffer`.
 pub struct Persistence {
     /// Filesystem abstraction for file I/O operations.
@@ -43,6 +76,20 @@ pub struct Persistence {
     /// reconstruction. Updated when loading from file or after
     /// saving.
     saved_file_size: Option<usize>,
+
+    /// An in-place save of the file this buffer reads its unloaded parts
+    /// from failed after it began overwriting it, so the file may be torn
+    /// and those parts' offsets no longer name the bytes the buffer loaded
+    /// (issue #3382). Refuses saves that would read them (see
+    /// `save::refuse_read_from_torn_file`) even when no recovery metadata
+    /// could be written to say so. A save that succeeds re-points the
+    /// buffer at what it wrote, and clears it.
+    source_torn: bool,
+
+    /// What the last save wrote, when this buffer had every byte of it in
+    /// hand (no Copy ops streamed from the old file). See
+    /// [`TextBuffer::saved_content`](super::TextBuffer::saved_content).
+    saved_content: Option<SavedContent>,
 
     /// Bumped by every write to `saved_root` or `modified`.
     ///
@@ -78,6 +125,8 @@ impl Persistence {
             recovery_pending: false,
             saved_root,
             saved_file_size,
+            source_torn: false,
+            saved_content: None,
             save_state_version: 0,
             saved_diff_memo: std::sync::RwLock::new(None),
         }
@@ -158,6 +207,22 @@ impl Persistence {
 
     pub fn set_saved_file_size(&mut self, size: Option<usize>) {
         self.saved_file_size = size;
+    }
+
+    pub fn is_source_torn(&self) -> bool {
+        self.source_torn
+    }
+
+    pub fn set_source_torn(&mut self, torn: bool) {
+        self.source_torn = torn;
+    }
+
+    pub fn saved_content(&self) -> Option<SavedContent> {
+        self.saved_content
+    }
+
+    pub fn set_saved_content(&mut self, content: Option<SavedContent>) {
+        self.saved_content = content;
     }
 
     // ---------- snapshot / diff operations ----------

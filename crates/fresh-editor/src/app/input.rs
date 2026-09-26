@@ -241,8 +241,10 @@ impl Editor {
             return Ok(());
         }
 
-        // Clear skip_ensure_visible flag so cursor becomes visible after key press
-        // (scroll actions will set it again if needed). Use the *effective*
+        // Release a scroll's hold so the cursor becomes visible after the key
+        // press (scroll actions will set it again if needed); a row hold the
+        // pointer left stays until the cursor moves (see
+        // `Viewport::release_hold_for_key`). Use the *effective*
         // active split so this clears the flag on a focused buffer-group
         // panel's own view state, not the group host's — without this, a
         // scroll action in the panel (mouse scrollbar click, plugin
@@ -255,7 +257,7 @@ impl Editor {
             .split_view_states_mut()
             .get_mut(&active_split)
         {
-            view_state.viewport.clear_skip_ensure_visible();
+            view_state.viewport.release_hold_for_key();
         }
 
         // The pre-band's chrome keyboard grabs are gone. The stage existed
@@ -371,9 +373,9 @@ impl Editor {
     ) -> Option<AnyhowResult<()>> {
         use crate::input::router::ModeKeyDisposition;
 
-        // effective_mode() returns buffer-local mode if present, else
-        // global mode, so virtual buffer modes aren't hijacked by global
-        // modes.
+        // effective_mode() returns the buffer-local mode if present, else
+        // the window's editor mode, else the editor-wide input mode, so
+        // virtual buffer modes aren't hijacked by either.
         let effective_mode = self.effective_mode().map(|s| s.to_owned());
         let allows_text_input = effective_mode
             .as_deref()
@@ -381,9 +383,7 @@ impl Editor {
         let view = router::ModeKeyView {
             allows_text_input,
             global_mode_read_only: self
-                .active_window()
-                .editor_mode
-                .as_deref()
+                .window_or_input_mode()
                 .map(|m| self.mode_registry.is_read_only(m)),
             effective_mode,
         };

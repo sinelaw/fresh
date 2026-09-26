@@ -42,11 +42,11 @@ fn test_cursor_stays_on_screen_when_lines_wrap_at_wrap_column() {
     let mut config = Config::default();
     config.editor.line_wrap = true;
     config.editor.wrap_column = Some(80);
-    // Wide enough that the 76-character lines fit on one row at the pane
+    // Wide enough that the 84-character lines fit on one row at the pane
     // width; they wrap only because of `wrap_column`.
     let mut harness = EditorTestHarness::with_config(120, 40, config).unwrap();
     let content: Vec<String> = (1..=200)
-        .map(|i| format!("{i:03} {}", "x".repeat(72)))
+        .map(|i| format!("{i:03} {}", "x".repeat(80)))
         .collect();
     let _fixture = harness.load_buffer_from_text(&content.join("\n")).unwrap();
     harness.render().unwrap();

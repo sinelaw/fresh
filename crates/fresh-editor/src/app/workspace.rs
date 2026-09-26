@@ -746,7 +746,7 @@ impl Editor {
             }
         };
 
-        let saved = self.auto_save_on_exit();
+        let saved = self.auto_save_on_exit().map(|_| ());
         record("auto-save", saved);
         let ended = self.end_recovery_session();
         record("end recovery session", ended);
@@ -765,10 +765,13 @@ impl Editor {
 
     /// The auto-save on exit: with `auto_save_enabled`, carry out the exit
     /// save plan ([`Self::save_all_on_exit`]) and log what it did. Nothing
-    /// otherwise. Owned by [`Self::persist_on_exit`].
-    pub(crate) fn auto_save_on_exit(&mut self) -> anyhow::Result<()> {
+    /// otherwise. Owned by [`Self::persist_on_exit`]. Returns what it did,
+    /// so a quit that runs it early can tell the user what it couldn't save.
+    pub(crate) fn auto_save_on_exit(
+        &mut self,
+    ) -> anyhow::Result<crate::app::file_operations::ExitSaveOutcome> {
         if !self.config().editor.auto_save_enabled {
-            return Ok(());
+            return Ok(Default::default());
         }
         let outcome = self.save_all_on_exit()?;
         if outcome.saved > 0 {
@@ -780,7 +783,7 @@ impl Editor {
                 outcome.changed_on_disk
             );
         }
-        Ok(())
+        Ok(outcome)
     }
 
     /// Save the prompt-history rings (search / replace / goto-line) to the
@@ -1647,21 +1650,6 @@ impl crate::app::window::Window {
                             buf_state,
                             &mut state.buffer,
                         );
-
-                        // Refresh the buffer's cached primary cursor line number.
-                        // The cursor-position fields above are written directly
-                        // (no MoveCursor event), so without this the cache stays
-                        // at EditorState::new's default `Absolute(0)`. Status bar
-                        // and plugin-side `getCursorLine` both read this cache —
-                        // a Git Blame invoked right after restore would see 0 and
-                        // land on Ln 1 even though the cursor is at line 5000.
-                        let line = state
-                            .buffer
-                            .offset_to_position(cursor_pos)
-                            .map(|p| p.line)
-                            .unwrap_or(0);
-                        state.primary_cursor_line_number =
-                            crate::model::buffer::LineNumber::Absolute(line);
                     }
 
                     // Restore per-buffer view mode and compose width

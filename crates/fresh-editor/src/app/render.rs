@@ -6153,6 +6153,9 @@ impl Editor {
 
         let active_split = self.effective_active_split();
         let active_buf = self.active_buffer();
+        let primary_cursor_line = self
+            .active_window()
+            .primary_cursor_line(active_split, active_buf);
         let default_cursors = crate::model::cursor::Cursors::new();
         let is_read_only = self
             .active_window()
@@ -6203,6 +6206,7 @@ impl Editor {
                 let mut status_ctx = crate::view::ui::status_bar::StatusBarContext {
                     state,
                     cursors,
+                    primary_cursor_line,
                     status_message: &status_message,
                     plugin_status_message: &plugin_status_message,
                     lsp_status: &lsp_status,

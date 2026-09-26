@@ -625,7 +625,7 @@ impl Editor {
         }
 
         // Update cursors in SplitViewState (sole source of truth)
-        let primary_position = {
+        {
             let cursors = &mut self
                 .active_window_mut()
                 .split_view_states_mut()
@@ -646,8 +646,7 @@ impl Editor {
                     cursor.sticky_column = *sticky;
                 }
             }
-            cursors.primary().position
-        };
+        }
 
         let state = self
             .windows
@@ -656,10 +655,6 @@ impl Editor {
             .expect("active window present")
             .get_mut(&active_buf)
             .unwrap();
-
-        // The cursors were written directly rather than through `MoveCursor`,
-        // so the primary's cached line number did not follow (#3167).
-        state.sync_primary_cursor_line_number(primary_position);
 
         // Notify the highlighter of each edit so the cache can take the
         // partial-update path on the next render. Throwing the whole cache

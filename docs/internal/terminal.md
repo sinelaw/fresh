@@ -85,7 +85,14 @@ The PTY spawner builds a terminal as follows:
      message).
    - **Wait**: blocks on the child, firing the exit event **exactly once**. The
      reader deliberately does *not* fire exit, to avoid a racing
-     `exit_code: None`.
+     `exit_code: None`. Before firing, it waits for the reader to drain the PTY
+     to EOF (a drain channel the reader pings per chunk and drops at EOF), so
+     the child's last output is in the grid and backing file before the exit
+     turns the terminal into read-only scrollback (#3379). The wait gives up
+     after 500 ms without reader progress or 5 s overall, for PTYs a
+     background job keeps open. On Windows the wait thread first has the
+     writer drop the master: ConPTY only ends its output pipe once the
+     pseudoconsole is closed.
    - **Writer**: owns the master, applies queued write/resize commands, and kills
      the child on shutdown.
 
@@ -118,11 +125,25 @@ and the `BackTab` variant.
 
 **Kitty keyboard protocol for the child** (not on Windows/ConPTY): the emulator
 answers `CSI ? u` and tracks the flags a child pushes and pops, read at send
-time like DECCKM. Once a child has enabled disambiguation (`CSI > 1 u`), the
-modified keys whose legacy byte can't carry a modifier — Enter, Tab, Backspace
-— are sent as `CSI <code>;<mods> u`, so a TUI can tell Shift+Enter from Enter
-(#3323). Unmodified keys, and children that never enable the protocol, keep
-the legacy bytes.
+time like DECCKM (`TerminalState::kitty_key_flags`). `pty::kitty_encoded_key`
+follows kitty's reference encoder for every flag the emulator accepts:
+
+- *disambiguate* (`CSI > 1 u`): Esc is `CSI 27u`; a text key with Ctrl, Alt,
+  Super… is `CSI <unshifted key>;<mods> u` (Ctrl+I ≠ Tab, Alt+[ ≠ CSI,
+  Ctrl+Shift+A ≠ Ctrl+A); modified Enter/Tab/Backspace (and Shift+Tab) are
+  CSI u (#3323); functional keys always use their CSI form (`CSI A` even
+  under DECCKM, F3 as `CSI 13~`); F13+, Menu, lock and media keys get their
+  protocol codes. Plain and Shift-only text, and unmodified
+  Enter/Tab/Backspace, keep their legacy bytes.
+- *report all keys* (`8`): text keys and unmodified Enter/Tab/Backspace are
+  CSI u too, and modifier keys are reported on their own.
+- *alternate keys* (`4`) adds `:<shifted>` for Shift+letter; *associated
+  text* (`16`) appends the typed text.
+- *event types* (`2`): only presses reach the child (the editor never forwards
+  releases, and repeats arrive as presses); a press carries no event-type
+  field, so the encoding is valid, but releases are never reported.
+
+Children that never enable the protocol keep the legacy bytes (#3408).
 
 A **paste** is not key encoding and does not go through it: every route into a
 live terminal (`Ev::Paste` and the web/daemon pastes via `Editor::paste_text`,
@@ -368,7 +389,7 @@ emulator or PTY.
   incremental scrollback streaming with reflow re-anchor; per-buffer
   `TerminalBuffer` live/scrollback fold; OSC 7 cwd sniffing; Ctrl+Click links
   (live + scrollback); alt-screen mouse forwarding; alternate-scroll guard;
-  kitty keyboard protocol for children (CSI-u modified Enter/Tab/Backspace);
+  kitty keyboard protocol for children (all flags; press events only);
   embedded-program & host titles; `fresh-winterm` (VT input, corrupt-mouse strip,
   relay, size); OSC 52 set-clipboard for session mode; authority-routed spawning
   and reconnect respawn preserving scrollback + mode.

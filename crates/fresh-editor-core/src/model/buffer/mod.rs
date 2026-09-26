@@ -26,7 +26,7 @@ pub mod save;
 pub mod search;
 pub use file_kind::BufferFileKind;
 pub use format::{BufferFormat, LineEnding};
-pub use persistence::Persistence;
+pub use persistence::{Persistence, SavedContent};
 pub use save::SudoSaveRequired;
 #[cfg(test)]
 pub(crate) use save::{RecipeAction, WriteRecipe};
@@ -755,7 +755,10 @@ impl TextBuffer {
     /// A local file is replaced atomically where that keeps it the same file,
     /// and written in place otherwise (see [`save::save_local`]), after
     /// staging a copy of the new content in `recovery_dir` — the editor's
-    /// recovery directory (`DirectoryContext::recovery_dir`).
+    /// recovery directory (`DirectoryContext::recovery_dir`). Refused while
+    /// the file the unloaded parts of a large file are read back from may be
+    /// torn by an in-place write that failed part-way
+    /// ([`save::refuse_read_from_torn_file`]).
     ///
     /// If the line ending format has been changed (via set_line_ending), all content
     /// will be converted to the new format during save.
@@ -765,6 +768,21 @@ impl TextBuffer {
         recovery_dir: &Path,
     ) -> anyhow::Result<()> {
         let dest_path = path.as_ref();
+        let fs = Arc::clone(self.persistence.fs());
+        let local = fs.remote_connection_info().is_none();
+
+        // The unloaded parts are read back from the file they were loaded
+        // from, which must not be torn (issue #3382). The recovery metadata
+        // is kept on this host, so only says anything about a local file.
+        let read_from = self.file_read_by_save();
+        if let Some(src_path) = read_from.as_deref().filter(|_| local) {
+            save::refuse_read_from_torn_file(
+                &*fs,
+                recovery_dir,
+                src_path,
+                self.persistence.is_source_torn(),
+            )?;
+        }
 
         // An emptied buffer is written as zero bytes: no BOM, nothing to copy.
         let recipe = if self.total_bytes() == 0 {
@@ -779,9 +797,23 @@ impl TextBuffer {
             )?
         };
 
-        let fs = self.persistence.fs();
-        if fs.remote_connection_info().is_none() {
-            save::save_local(fs, dest_path, &recipe, recovery_dir)?;
+        // What is about to be written, when every byte of it is in hand:
+        // cheaper than reading the file back to learn it (issue #3380).
+        let written = (!recipe.has_copy_ops()).then(|| {
+            SavedContent::of_chunks(recipe.actions.iter().filter_map(|action| match action {
+                save::RecipeAction::Insert { index } => Some(recipe.insert_data[*index].as_slice()),
+                save::RecipeAction::Copy { .. } => None,
+            }))
+        });
+
+        if local {
+            if let Err(e) = save::save_local(&fs, dest_path, &recipe, recovery_dir) {
+                // Tore the very file the unloaded parts are read from
+                if e.is::<save::TornWrite>() && read_from.as_deref() == Some(dest_path) {
+                    self.persistence.set_source_torn(true);
+                }
+                return Err(e);
+            }
         } else if recipe.has_copy_ops() {
             // Remote with Copy ops: the agent rebuilds the file server-side
             let src_for_patch = recipe.src_path.as_deref().unwrap_or(dest_path);
@@ -791,7 +823,35 @@ impl TextBuffer {
         }
 
         self.finalize_save(dest_path)?;
+        self.persistence.set_saved_content(written);
         Ok(())
+    }
+
+    /// The file a save reads this buffer's unloaded parts back from, if it
+    /// has any left (a large file's): the one they were loaded from, or,
+    /// after a save, the one it wrote.
+    fn file_read_by_save(&self) -> Option<PathBuf> {
+        self.piece_tree
+            .iter_pieces_in_range(0, self.piece_tree.total_bytes())
+            .find_map(
+                |piece| match &self.buffers.get(piece.location.buffer_id())?.data {
+                    BufferData::Unloaded { file_path, .. } => Some(file_path.clone()),
+                    BufferData::Loaded { .. } => None,
+                },
+            )
+    }
+
+    /// The size and hash of what the last save of this buffer wrote, or
+    /// `None` when it wrote nothing yet, or streamed part of the file from
+    /// the old one, or an external writer (sudo) did the writing.
+    pub fn saved_content(&self) -> Option<SavedContent> {
+        self.persistence.saved_content()
+    }
+
+    /// Forget [`Self::saved_content`], once the file is known to hold
+    /// something else, so nothing reads the file again to compare.
+    pub fn forget_saved_content(&mut self) {
+        self.persistence.set_saved_content(None);
     }
 
     /// Finalize save state after successful write.
@@ -804,6 +864,8 @@ impl TextBuffer {
         );
         self.persistence.set_saved_file_size(Some(new_size));
         self.persistence.set_file_path(dest_path.to_path_buf());
+        // Consolidated below onto the file just written
+        self.persistence.set_source_torn(false);
 
         // Consolidate the piece tree to synchronize with disk (for large files)
         // or to simplify structure (for small files).
@@ -819,8 +881,11 @@ impl TextBuffer {
     /// This updates the saved snapshot and file size to match the new state on disk.
     pub fn finalize_external_save(&mut self, dest_path: PathBuf) -> anyhow::Result<()> {
         let new_size = self.persistence.fs().metadata(&dest_path)?.size as usize;
+        self.persistence.set_saved_content(None);
         self.persistence.set_saved_file_size(Some(new_size));
         self.persistence.set_file_path(dest_path.clone());
+        // Consolidated below onto the file just written
+        self.persistence.set_source_torn(false);
 
         // Consolidate the piece tree to synchronize with disk or simplify structure.
         self.consolidate_after_save(&dest_path, new_size);

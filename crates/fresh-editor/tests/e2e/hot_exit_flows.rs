@@ -1238,3 +1238,74 @@ fn test_unnamed_buffer_survives_use_in_another_folder() {
         harness.assert_screen_not_contains("FOLDER_A_UNSAVED");
     }
 }
+
+/// **Restoring hot-exit content without the session adds no empty tab**
+/// (issue #3401). After "Quit (recoverable)" with an unnamed buffer,
+/// `fresh a.txt` skips the session restore but brings the buffer back — into
+/// a new buffer beside the launch's own empty scratch buffer, leaving an
+/// extra, empty "[No Name] 1".
+#[test]
+fn test_hot_exit_restore_without_session_reuses_the_scratch_buffer() {
+    let temp_dir = TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    std::fs::create_dir(&project_dir).unwrap();
+    let file = project_dir.join("a.txt");
+    std::fs::write(&file, "original\n").unwrap();
+    let dir_context = DirectoryContext::for_testing(temp_dir.path());
+    let harness_for = |config: Config| {
+        EditorTestHarness::create(
+            120,
+            24,
+            HarnessOptions::new()
+                .with_config(config)
+                .with_working_dir(project_dir.clone())
+                .with_shared_dir_context(dir_context.clone())
+                .without_empty_plugins_dir(),
+        )
+        .unwrap()
+    };
+
+    // Session 1: an unnamed buffer with text; quit keeping it for hot exit.
+    // (An edited file restored *before* it would take over the scratch buffer
+    // itself and hide the bug, and the restore order is the recovery
+    // directory's, so the file is left unedited to keep this deterministic.)
+    {
+        let mut config = Config::default();
+        config.editor.hot_exit = true;
+        let mut harness = harness_for(config);
+        harness.editor_mut().set_session_mode(true);
+        harness.new_buffer().unwrap();
+        harness.type_text("scratch notes").unwrap();
+        harness.open_file(&file).unwrap();
+        harness.render().unwrap();
+        harness.shutdown(true).unwrap();
+    }
+
+    // Session 2: `fresh a.txt` — file arguments skip the session restore
+    // (`skip_session_restore_when_files_passed`), which is the same branch
+    // `restore_previous_session = false` takes; hot-exit content still
+    // comes back.
+    {
+        let mut config = Config::default();
+        config.editor.hot_exit = true;
+        config.editor.restore_previous_session = false;
+        let mut harness = harness_for(config);
+        harness.startup(true, std::slice::from_ref(&file)).unwrap();
+        harness.render().unwrap();
+
+        let tab_bar = harness.screen_row_text(layout::TAB_BAR_ROW as u16);
+        assert!(
+            tab_bar.contains("a.txt"),
+            "the file argument is open.\nTab bar: {tab_bar}"
+        );
+        assert_eq!(
+            tab_bar.matches("[No Name]").count(),
+            1,
+            "only the restored unnamed buffer, no empty one beside it.\nTab bar: {tab_bar}"
+        );
+        assert!(
+            tab_bar.contains("[No Name] 1*") || tab_bar.contains("[No Name]*"),
+            "and that one is the restored, modified buffer.\nTab bar: {tab_bar}"
+        );
+    }
+}

@@ -34,6 +34,7 @@ Fresh is now licensed **GPL-3.0-or-later**, up from GPL-2.0-only (#3328).
 * **Code tour: clicking the prose takes the keyboard**, and its caret stays visible past the end of a line (#3318)
 * **A tab after CJK text no longer eats the character before it** - the tab marker was placed by visual column against an index counted in characters, so a double-width glyph put it one character early and the `→` took that glyph's place: `你好⇥world` drew as `你→    world`. The file was never touched (#3218, reported by @sgon00)
 * **Highlighted lines** (diff view, code tour) no longer hide inlay hints at the end of the line (#3314)
+* **`wrap_column` counts text columns** - `wrap_column: 80` now fits 80 characters on a row whatever the width of the line-number gutter. It used to cap the whole pane, gutter included, so it left about 72 and a file of 76-column lines wrapped every one of them (#3405)
 * **`editor.scroll_offset` fixed** for files under 5000 lines with line wrap off (#3248)
 * **Markdown code block borders** no longer break while you type inside them (#3247)
 * **LSP now finds the right project folder on Windows** (#3067, reported by @Bearmancer; fixed by @56steve)
@@ -43,6 +44,7 @@ Fresh is now licensed **GPL-3.0-or-later**, up from GPL-2.0-only (#3328).
 * **Vi mode: many Vim-parity fixes** - `Y`, `J`, `G`, `x`/`X`, visual mode, text objects, dot-repeat, and more, checked against real Vim (#2447)
 * **Vi `.` no longer drops the insert it replays** when typed quickly after Esc
 * **Fixed stale LSP diagnostics after vi-mode edits**, and Save All sending the wrong file's content to language servers (#3258)
+* **Vi mode holds in every window** - with vi on, a workspace opened afterwards typed `j` instead of moving down while the status bar said `-- NORMAL --`, and dialogs or window switches could turn vi off in one window. Vi is now an editor-wide input mode: on or off everywhere at once (#3395)
 * **The homepage's demo player paints again on Chrome/Linux** instead of showing a black box (#3106, reported by @sgon00)
 * **A language server can no longer delete your files.** A server-initiated `workspace/applyEdit` arrived with no confirmation and was applied as-is, including its "delete this file (recursively)" operation — permanently, bypassing the system trash the file explorer deletes through. Fresh now reports the request and ignores it
 * **Uninstalling a package, replacing one on upgrade, and deleting a theme all go to the system trash**, instead of being unlinked outright. A mis-click is recoverable now
@@ -58,6 +60,7 @@ Fresh is now licensed **GPL-3.0-or-later**, up from GPL-2.0-only (#3328).
 * Scrollbars are one implementation in the shared UI library now, so they behave the same on every surface
 * **Plugins can no longer delete, move, or overwrite a path they name.** `removePath`, `renamePath` and `copyPath` are gone from the plugin API. `removePath` checked that its target sat under the temp or config directory, but only the top-level argument — a symlink inside the target walked its recursive delete back out of the fence — and `renamePath` had no fence at all and fell back to copy-then-delete, so anything `removePath` refused could be moved somewhere it allowed and deleted from there. What replaced them names a *thing* rather than a path: `scratchCreate`/`scratchPath`/`scratchDiscard` for staging directories the editor issues and takes back, `scratchFromDirectory`/`installScratch`/`uninstallPackage` for packages by kind and name, and `stateSet`/`stateGet`/`stateKeys`/`stateDelete` for namespaced storage whose layout the editor owns. Third-party plugins using the old calls will need updating
 * **`writeFile` refuses to overwrite an existing file, as it always claimed to.** The docs said it "fails if the file already exists to prevent plugins from accidentally overwriting user data"; the implementation wrote a temp file and renamed it over whatever was there, so a plugin trusting the documentation destroyed the file. Replacing one is now `replaceFile`, asked for by name
+* **`editor.setInputMode(name | null)` sets an editor-wide input mode** for modal-editing plugins like vi, beside `setEditorMode`, which is now documented as window-scoped. Keys resolve against a focused panel's mode, then the buffer's, the window's editor mode, the input mode, and the base keymap. `getInputMode()` reads it and `input_mode_changed` announces changes (#3395)
 * **The orchestrator's saved machines moved into the editor-owned state store** and are imported from the old directory on first load. The old files are left in place — a plugin can no longer delete a path it names — and are inert
 
 ## 0.5.1

@@ -14,7 +14,7 @@ use crate::view::file_tree::FileTreeView;
 use crate::view::prompt::PromptType;
 use std::path::{Path, PathBuf};
 
-use fresh_i18n::t;
+use fresh_i18n::{t, tn};
 use lsp_types::TextDocumentContentChangeEvent;
 
 use crate::model::event::{BufferId, EventLog};
@@ -48,16 +48,83 @@ impl crate::app::window::Window {
     ///
     /// Any mtime difference counts, not only a newer one: a replacement file
     /// can carry an *older* timestamp (`cp -p`, `rsync -t`, `tar x`, `mv` of
-    /// an older file) and is still someone else's content (issue #3346).
+    /// an older file) and is still someone else's content (issue #3346) —
+    /// unless the file still holds exactly what this window saved there
+    /// ([`Self::holds_what_was_saved`]), when only the timestamp moved.
     pub(crate) fn changed_on_disk(&self, path: &Path) -> Option<std::time::SystemTime> {
-        let current_mtime = self
+        let metadata = self.authority().filesystem.metadata(path).ok()?;
+        let current_mtime = metadata.modified?;
+        let recorded_mtime = self.file_mod_times.get(path)?;
+        (current_mtime != *recorded_mtime && !self.holds_what_was_saved(path, metadata.size))
+            .then_some(current_mtime)
+    }
+
+    /// Whether `path`, whose mtime no longer matches the one recorded,
+    /// still holds exactly the bytes this window's buffer of it last saved.
+    ///
+    /// On a network filesystem the mtime read right after our own write can
+    /// differ from one read later, with no one else touching the file: the
+    /// client's cached attributes give way to the server's, and a skewed
+    /// server clock stamps something else (issue #3380). Telling that from a
+    /// real change takes the content, compared with what the save wrote
+    /// ([`TextBuffer::saved_content`]). Only for a buffer this window saved
+    /// itself, below the large-file threshold, and only when the size
+    /// matches, so a real change almost never costs a read; and a mismatch
+    /// is remembered ([`Self::forget_saved_content`]), so it costs one at
+    /// most. A revert or reload makes a new buffer, which saved nothing.
+    ///
+    /// [`TextBuffer::saved_content`]: crate::model::buffer::TextBuffer::saved_content
+    pub(crate) fn holds_what_was_saved(&self, path: &Path, size: u64) -> bool {
+        let Some(saved) = self
+            .buffers
+            .as_map()
+            .values()
+            .find(|state| state.buffer.file_path() == Some(path))
+            .and_then(|state| state.buffer.saved_content())
+        else {
+            return false;
+        };
+        if saved.size != size || size > self.resources.config.editor.large_file_threshold_bytes {
+            return false;
+        }
+        self.authority()
+            .filesystem
+            .read_file(path)
+            .is_ok_and(|bytes| crate::model::buffer::SavedContent::of(&bytes) == saved)
+    }
+
+    /// `path` holds something other than what its buffer last saved: stop
+    /// comparing against that, which would read the file on every check.
+    pub(crate) fn forget_saved_content(&mut self, path: &Path) {
+        for state in self.buffers.as_map_mut().values_mut() {
+            if state.buffer.file_path() == Some(path) {
+                state.buffer.forget_saved_content();
+            }
+        }
+    }
+
+    /// [`Self::changed_on_disk`], forgetting what was saved to `path` once
+    /// the file turns out to hold something else.
+    pub(crate) fn detect_change_on_disk(&mut self, path: &Path) -> Option<std::time::SystemTime> {
+        let changed = self.changed_on_disk(path);
+        if changed.is_some() {
+            self.forget_saved_content(path);
+        }
+        changed
+    }
+
+    /// Record `path`'s mtime after this window wrote it, re-read from the
+    /// file rather than predicted.
+    pub(crate) fn record_saved_file(&mut self, path: &Path) {
+        if let Some(mtime) = self
             .authority()
             .filesystem
             .metadata(path)
             .ok()
-            .and_then(|m| m.modified)?;
-        let recorded_mtime = self.file_mod_times.get(path)?;
-        (current_mtime != *recorded_mtime).then_some(current_mtime)
+            .and_then(|m| m.modified)
+        {
+            self.file_mod_times.insert(path.to_path_buf(), mtime);
+        }
     }
 }
 
@@ -90,9 +157,47 @@ pub struct ExitSaveOutcome {
     pub changed_on_disk: Vec<PathBuf>,
 }
 
+use crate::services::signal_handler::TerminationCleanup;
+
+/// A sudo save's temp file holds the unsaved content next to the user's
+/// file; on a signal exit with the sudo prompt still open it must go, as it
+/// does when the prompt is answered or dismissed (issue #3396).
+impl TerminationCleanup for SudoSaveRequired {
+    fn on_termination(&self) {
+        if let Err(e) = self.remove_temp_file() {
+            tracing::warn!(
+                "Failed to remove sudo-save temp file {}: {}",
+                self.temp_path().display(),
+                e
+            );
+        }
+    }
+}
+
+/// How far an interactive save of the active buffer got.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SaveProgress {
+    /// The buffer is saved.
+    Saved,
+    /// A prompt is open that the save waits on (save with sudo, create the
+    /// missing directory): nothing is written yet, and the prompt's answer
+    /// decides whether anything will be.
+    Pending,
+}
+
 impl Editor {
     /// Save the active buffer
     pub fn save(&mut self) -> anyhow::Result<()> {
+        self.save_active(false).map(|_| ())
+    }
+
+    /// Save the active buffer, reporting whether the save finished or is
+    /// waiting on a prompt.
+    ///
+    /// `close_after_save` rides along to the sudo prompt, which closes the
+    /// buffer once it has written it: the close-with-Save flow must not
+    /// close a tab whose save has not happened (issue #3385).
+    pub(crate) fn save_active(&mut self, close_after_save: bool) -> anyhow::Result<SaveProgress> {
         // Fail fast if remote connection is down
         if !self.authority().filesystem.is_remote_connected() {
             anyhow::bail!(
@@ -112,7 +217,7 @@ impl Editor {
 
         let recovery_dir = self.dir_context.recovery_dir();
         match self.active_state_mut().buffer.save(&recovery_dir) {
-            Ok(()) => self.finalize_save(path),
+            Ok(()) => self.finalize_save(path).map(|()| SaveProgress::Saved),
             Err(e) => match e.downcast::<SudoSaveRequired>() {
                 // The prompt takes the temp file over: it lives as long as
                 // the prompt does, and is deleted however the prompt ends.
@@ -132,8 +237,18 @@ impl Editor {
                     )
                     .detail(info.dest_path.display().to_string());
                     let info = std::sync::Arc::new(info);
-                    self.start_confirm_prompt(body, PromptType::ConfirmSudoSave { info }, confirm);
-                    Ok(())
+                    // Dropping the prompt deletes the temp file, but a
+                    // signal ends the process without dropping anything.
+                    let cleanup: std::sync::Weak<dyn TerminationCleanup> =
+                        std::sync::Arc::downgrade(&info) as _;
+                    crate::services::signal_handler::register_termination_cleanup(cleanup);
+                    let prompt = PromptType::ConfirmSudoSave {
+                        info,
+                        buffer_id: self.active_buffer(),
+                        close_after_save,
+                    };
+                    self.start_confirm_prompt(body, prompt, confirm);
+                    Ok(SaveProgress::Pending)
                 }
                 Err(e) => {
                     if let Some(path) = path {
@@ -156,7 +271,7 @@ impl Editor {
                                         PromptType::ConfirmCreateDirectory { path },
                                         confirm,
                                     );
-                                    return Ok(());
+                                    return Ok(SaveProgress::Pending);
                                 }
                             }
                         }
@@ -216,13 +331,10 @@ impl Editor {
             event_log.mark_saved();
         }
 
-        // Update file modification time after save
+        // Record the file's mtime after the save, re-read from the file
+        // rather than predicted, with a fingerprint of what was written.
         if let Some(ref p) = path {
-            if let Ok(metadata) = self.authority().filesystem.metadata(p) {
-                if let Some(mtime) = metadata.modified {
-                    self.file_mod_times_mut().insert(p.clone(), mtime);
-                }
-            }
+            self.active_window_mut().record_saved_file(p);
         }
 
         // Reload .gitignore in the file explorer when the user saves one.
@@ -340,7 +452,11 @@ impl Editor {
         for (id, path) in to_save {
             // Never overwrite someone else's change unasked; auto-save can't
             // prompt, so leave the buffer dirty and say so.
-            if self.changed_on_disk(&path).is_some() {
+            if self
+                .active_window_mut()
+                .detect_change_on_disk(&path)
+                .is_some()
+            {
                 tracing::warn!("Auto-save skipped for {}: changed on disk", path.display());
                 changed_on_disk.push(path);
                 continue;
@@ -593,7 +709,11 @@ impl Editor {
 
         let mut outcome = SaveAllOutcome::default();
         for (id, path) in to_save {
-            if self.changed_on_disk(&path).is_some() {
+            if self
+                .active_window_mut()
+                .detect_change_on_disk(&path)
+                .is_some()
+            {
                 outcome.changed_on_disk.push(path);
                 continue;
             }
@@ -1449,6 +1569,8 @@ impl Editor {
                 None => continue,
             };
 
+            let is_modified = state.buffer.is_modified();
+
             // Check if the file actually changed (compare mod times)
             // We use optimistic concurrency: check mtime, and if we decide to revert,
             // re-check to handle the race where a save completed between our checks.
@@ -1465,21 +1587,41 @@ impl Editor {
 
             // Any difference counts: a replacement can carry an older mtime
             // (issue #3346).
-            let matches_stored = self
-                .file_mod_times()
-                .get(&path)
-                .is_some_and(|stored| current_mtime == *stored);
-
-            if matches_stored {
+            let stored_mtime = self.file_mod_times().get(&path).copied();
+            if stored_mtime == Some(current_mtime) {
                 continue;
             }
+            // ...but not a timestamp that moved over the very bytes we
+            // saved: a network filesystem's clock skew (issue #3380).
+            let size = self
+                .authority()
+                .filesystem
+                .metadata(&path)
+                .map_or(u64::MAX, |m| m.size);
+            if self.active_window().holds_what_was_saved(&path, size) {
+                // Take the new mtime, so later checks are cheap again.
+                self.file_mod_times_mut()
+                    .insert(path.clone(), current_mtime);
+                continue;
+            }
+            self.active_window_mut().forget_saved_content(&path);
 
-            // If buffer has local modifications, show a warning (don't auto-revert)
-            if state.buffer.is_modified() {
-                self.active_window_mut().status_message = Some(format!(
-                    "File {} changed on disk (buffer has unsaved changes)",
-                    path.display()
-                ));
+            // If buffer has local modifications, show a warning (don't auto-revert).
+            // Once per change: the poll finds this same change on every pass
+            // until the buffer is saved or reverted, and repeating it would
+            // keep overwriting whatever the status bar has shown since.
+            if is_modified {
+                let change = stored_mtime.map(|stored| (stored, current_mtime));
+                let reported = match (change, self.buffers_mut().get_mut(&buffer_id)) {
+                    (Some(change), Some(state)) => state.disk_change_reported.replace(change),
+                    _ => None,
+                };
+                if change.is_none() || reported != change {
+                    self.active_window_mut().status_message = Some(format!(
+                        "File {} changed on disk (buffer has unsaved changes)",
+                        path.display()
+                    ));
+                }
                 continue;
             }
 
@@ -1569,27 +1711,31 @@ impl Editor {
     /// The status line for Save All: how many files it saved and failed to
     /// save, and those it left alone because they changed on disk.
     pub(crate) fn save_all_message(outcome: &SaveAllOutcome) -> String {
-        let saved = outcome.saved.to_string();
         let failed = outcome.failed.len();
         let changed = file_names(&outcome.changed_on_disk);
+        // The counts are separate plural-aware fragments ("Saved 1 file",
+        // "2 failed"), each inflected for its own number, which the locale's
+        // templates then join.
+        let saved_text = tn!("status.saved_files", outcome.saved);
+        let failed_text = tn!("status.save_all_failed", failed);
         match (failed > 0, outcome.saved > 0, changed.is_empty()) {
             (true, _, true) => t!(
                 "status.save_all_partial",
-                saved = saved,
-                failed = failed.to_string()
+                saved = saved_text,
+                failed = failed_text
             ),
             (true, _, false) => t!(
                 "status.save_all_partial_changed_on_disk",
-                saved = saved,
-                failed = failed.to_string(),
+                saved = saved_text,
+                failed = failed_text,
                 files = changed
             ),
             (false, false, true) => t!("status.save_all_none"),
             (false, false, false) => t!("status.not_saved_changed_on_disk", files = changed),
-            (false, true, true) => t!("status.save_all", count = saved),
+            (false, true, true) => saved_text,
             (false, true, false) => t!(
                 "status.save_all_changed_on_disk",
-                count = saved,
+                saved = saved_text,
                 files = changed
             ),
         }

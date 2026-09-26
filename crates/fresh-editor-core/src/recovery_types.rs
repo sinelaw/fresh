@@ -431,7 +431,19 @@ impl InplaceWriteRecovery {
         }
     }
 
-    /// Check if the process that created this is still running
+    /// Whether this process wrote it.
+    pub fn is_ours(&self) -> bool {
+        self.pid == std::process::id()
+    }
+
+    /// Whether no other process may still be writing it: this process wrote
+    /// it (saves are synchronous, so none of its own is in flight whenever
+    /// anything asks), or the process that did is gone.
+    pub fn is_settled(&self) -> bool {
+        self.is_ours() || !self.is_in_progress()
+    }
+
+    /// Whether the process that wrote it may still be running.
     pub fn is_in_progress(&self) -> bool {
         is_process_running(self.pid)
     }

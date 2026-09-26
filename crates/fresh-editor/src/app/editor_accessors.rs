@@ -238,15 +238,25 @@ impl Editor {
 
     /// Get the effective mode for the active buffer.
     ///
-    /// Buffer-local mode (virtual buffers) takes precedence over the global
-    /// editor mode, so that e.g. a search-replace panel isn't hijacked by
-    /// a markdown-source or vi-mode global mode.
+    /// The first of, in order: the buffer's own mode (virtual buffers), the
+    /// active window's editor mode, and the editor-wide input mode. So a
+    /// search-replace panel isn't hijacked by markdown-source or vi, a
+    /// window-scoped mode (flash's labels) outranks vi in its own window
+    /// only, and vi holds wherever nothing more specific does.
     ///
     /// A mounted panel's keymap is not in this answer: a dock or floating
     /// panel names its own (`panel_keymap`), and never borrows this one.
     pub fn effective_mode(&self) -> Option<&str> {
-        self.active_buffer_mode()
-            .or(self.active_window().editor_mode.as_deref())
+        self.active_buffer_mode().or(self.window_or_input_mode())
+    }
+
+    /// The mode beneath the buffer's: the active window's editor mode, else
+    /// the editor-wide input mode.
+    pub(crate) fn window_or_input_mode(&self) -> Option<&str> {
+        self.active_window()
+            .editor_mode
+            .as_deref()
+            .or(self.input_mode.as_deref())
     }
 
     // `has_active_lsp_progress`, `get_lsp_progress`, and
@@ -1213,16 +1223,17 @@ impl Editor {
 
     /// Run `f` with the active-window pointer temporarily retargeted.
     ///
-    /// Lets shutdown work reuse the many per-window helpers written against
-    /// `active_window` instead of growing a window-parameterized twin of each
-    /// (issue #3189). Deliberately not [`Editor::set_active_window`]: no
-    /// checkpoint, materialization, hooks or layout — none of which shutdown
-    /// wants.
+    /// Lets work that spans every workspace (shutdown; reloading a file
+    /// restored behind its buffers' back) reuse the many per-window helpers
+    /// written against `active_window` instead of growing a
+    /// window-parameterized twin of each (issue #3189). Deliberately not
+    /// [`Editor::set_active_window`]: no checkpoint, materialization, hooks
+    /// or layout — none of which such work wants.
     ///
     /// Only safe for synchronous, non-rendering work: nothing here may yield
     /// to the event loop or paint, or the user sees the wrong workspace. A
-    /// panic in `f` leaves the pointer retargeted, tolerable only because
-    /// callers are on the way out of the process.
+    /// panic in `f` leaves the pointer retargeted, tolerable only because a
+    /// panic ends the editor anyway.
     pub(crate) fn with_window_retargeted<R>(
         &mut self,
         window_id: fresh_core::WindowId,

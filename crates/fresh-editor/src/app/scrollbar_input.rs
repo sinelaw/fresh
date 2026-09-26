@@ -198,12 +198,15 @@ impl crate::app::window::Window {
         // what the renderer uses or `max_scroll_row` ends up wrong on
         // wide terminals with `composeWidth` set (mouse-wheel /
         // scrollbar-drag stop short of the buffer's tail).
+        let gutter_width = self.buffers.get(&buffer_id).map_or(0, |state| {
+            crate::view::viewport::gutter_width(&state.buffer)
+        });
         let (wrap_width, grid_cols) = self
             .split_view_states()
             .get(&split_id)
             .map(|vs| {
                 (
-                    vs.viewport.effective_width() as usize,
+                    vs.viewport.effective_width(gutter_width) as usize,
                     // Terminal-grid wrap (fresh#2649): scroll-back rows
                     // break at the capture-time PTY width.
                     vs.viewport.grid_wrap.then(|| vs.viewport.grid_cols()),
@@ -399,12 +402,15 @@ impl crate::app::window::Window {
             .map(|vs| vs.viewport.line_wrap_enabled)
             .unwrap_or(false);
 
+        let gutter_width = self.buffers.get(&buffer_id).map_or(0, |state| {
+            crate::view::viewport::gutter_width(&state.buffer)
+        });
         let (wrap_width, grid_cols) = self
             .split_view_states()
             .get(&split_id)
             .map(|vs| {
                 (
-                    vs.viewport.effective_width() as usize,
+                    vs.viewport.effective_width(gutter_width) as usize,
                     // Terminal-grid wrap (fresh#2649): scroll-back rows
                     // break at the capture-time PTY width.
                     vs.viewport.grid_wrap.then(|| vs.viewport.grid_cols()),

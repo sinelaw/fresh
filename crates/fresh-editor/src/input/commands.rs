@@ -285,6 +285,13 @@ static COMMAND_DEFS: &[CommandDef] = &[
         custom_contexts: &[],
     },
     CommandDef {
+        name_key: "cmd.review_interrupted_saves",
+        desc_key: "cmd.review_interrupted_saves_desc",
+        action: || Action::ReviewInterruptedSaves,
+        contexts: &[],
+        custom_contexts: &[],
+    },
+    CommandDef {
         name_key: "cmd.format_buffer",
         desc_key: "cmd.format_buffer_desc",
         action: || Action::FormatBuffer,

@@ -1246,3 +1246,522 @@ fn test_completed_sudo_save_resolves_earlier_staged_copy() {
     assert!(!meta_path.exists(), "the recovery metadata must be removed");
     assert!(!copy.exists(), "the obsolete staged copy must be removed");
 }
+
+/// Issue #3409: the copy an in-place save stages is named after the file,
+/// and adding its prefix, pid and timestamp to a name near the filesystem's
+/// limit (255 bytes here; ~143 on eCryptfs) made the staged name too long,
+/// so a large file with such a name couldn't be saved in place at all.
+#[test]
+#[cfg(unix)]
+fn test_inplace_save_of_file_with_250_byte_name() {
+    let data_dir = TempDir::new().unwrap();
+    let recovery_dir = data_dir.path().join("recovery");
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("n".repeat(250));
+    let original: String = (0..500).map(|i| format!("Line {i:04}\n")).collect();
+    std::fs::write(&file_path, &original).unwrap();
+
+    let fs = Arc::new(NotOwnerFileSystem::new(Arc::new(StdFileSystem)));
+    let mut buffer = TextBuffer::load_from_file(&file_path, 1024, fs).unwrap();
+    assert!(buffer.is_large_file());
+    buffer.insert_bytes(0, b"EDITED ".to_vec());
+
+    buffer
+        .save(&recovery_dir)
+        .expect("a file with a long name must be saveable");
+
+    assert_eq!(
+        std::fs::read_to_string(&file_path).unwrap(),
+        format!("EDITED {original}")
+    );
+    assert!(staged_copies(&recovery_dir).is_empty());
+}
+
+/// A filesystem on which we own no file (so saves go in place), creating
+/// files in some directories fails, and writes to one file can be made to
+/// fail part-way.
+struct FaultyFileSystem {
+    inner: StdFileSystem,
+    /// Creating a file in (or creating) one of these fails with its error.
+    deny_create_in: std::sync::Mutex<Vec<(PathBuf, io::ErrorKind)>>,
+    /// Writes to this file fail once this many bytes have been written.
+    tear: std::sync::Mutex<Option<(PathBuf, usize)>>,
+}
+
+impl FaultyFileSystem {
+    fn new() -> Self {
+        Self {
+            inner: StdFileSystem,
+            deny_create_in: Default::default(),
+            tear: Default::default(),
+        }
+    }
+
+    fn deny_create_in(&self, dir: &Path, kind: io::ErrorKind) {
+        self.deny_create_in
+            .lock()
+            .unwrap()
+            .push((dir.to_path_buf(), kind));
+    }
+
+    fn tear_after(&self, file: &Path, bytes: usize) {
+        *self.tear.lock().unwrap() = Some((file.to_path_buf(), bytes));
+    }
+
+    fn check_create(&self, dir: Option<&Path>) -> io::Result<()> {
+        for (denied, kind) in self.deny_create_in.lock().unwrap().iter() {
+            if dir.is_some_and(|dir| dir.starts_with(denied)) {
+                return Err(io::Error::new(*kind, "simulated failure to create"));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Writes through to `inner` until `left` bytes are used up, then fails.
+struct TearingFileWriter {
+    inner: Box<dyn FileWriter>,
+    left: usize,
+}
+
+impl std::io::Write for TearingFileWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        if self.left == 0 {
+            return Err(io::Error::other("simulated failure part-way"));
+        }
+        let n = self.inner.write(&buf[..buf.len().min(self.left)])?;
+        self.left -= n;
+        Ok(n)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.inner.flush()
+    }
+}
+
+impl FileWriter for TearingFileWriter {
+    fn sync_all(&self) -> io::Result<()> {
+        self.inner.sync_all()
+    }
+}
+
+impl FileSystem for FaultyFileSystem {
+    fn is_owner(&self, _path: &Path) -> bool {
+        false
+    }
+    fn open_file_for_write(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
+        let inner = self.inner.open_file_for_write(path)?;
+        match &*self.tear.lock().unwrap() {
+            Some((file, left)) if file == path => {
+                Ok(Box::new(TearingFileWriter { inner, left: *left }))
+            }
+            _ => Ok(inner),
+        }
+    }
+    fn create_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
+        self.check_create(path.parent())?;
+        self.inner.create_file(path)
+    }
+    fn create_new_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
+        self.check_create(path.parent())?;
+        self.inner.create_new_file(path)
+    }
+    fn create_new_private_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
+        self.check_create(path.parent())?;
+        self.inner.create_new_private_file(path)
+    }
+    fn create_dir_all(&self, path: &Path) -> io::Result<()> {
+        self.check_create(Some(path))?;
+        self.inner.create_dir_all(path)
+    }
+    fn write_file(&self, path: &Path, data: &[u8]) -> io::Result<()> {
+        self.check_create(path.parent())?;
+        self.inner.write_file(path, data)
+    }
+
+    fn read_file(&self, path: &Path) -> io::Result<Vec<u8>> {
+        self.inner.read_file(path)
+    }
+    fn read_range(&self, path: &Path, offset: u64, len: usize) -> io::Result<Vec<u8>> {
+        self.inner.read_range(path, offset, len)
+    }
+    fn open_file(&self, path: &Path) -> io::Result<Box<dyn FileReader>> {
+        self.inner.open_file(path)
+    }
+    fn open_file_for_append(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
+        self.inner.open_file_for_append(path)
+    }
+    fn set_file_length(&self, path: &Path, len: u64) -> io::Result<()> {
+        self.inner.set_file_length(path, len)
+    }
+    fn rename(&self, from: &Path, to: &Path) -> io::Result<()> {
+        self.inner.rename(from, to)
+    }
+    fn copy(&self, from: &Path, to: &Path) -> io::Result<u64> {
+        self.inner.copy(from, to)
+    }
+    fn remove_file(&self, path: &Path) -> io::Result<()> {
+        self.inner.remove_file(path)
+    }
+    fn remove_dir(&self, path: &Path) -> io::Result<()> {
+        self.inner.remove_dir(path)
+    }
+    fn metadata(&self, path: &Path) -> io::Result<FileMetadata> {
+        self.inner.metadata(path)
+    }
+    fn symlink_metadata(&self, path: &Path) -> io::Result<FileMetadata> {
+        self.inner.symlink_metadata(path)
+    }
+    fn is_dir(&self, path: &Path) -> io::Result<bool> {
+        self.inner.is_dir(path)
+    }
+    fn is_file(&self, path: &Path) -> io::Result<bool> {
+        self.inner.is_file(path)
+    }
+    fn set_permissions(&self, path: &Path, permissions: &FilePermissions) -> io::Result<()> {
+        self.inner.set_permissions(path, permissions)
+    }
+    fn read_dir(&self, path: &Path) -> io::Result<Vec<DirEntry>> {
+        self.inner.read_dir(path)
+    }
+    fn create_dir(&self, path: &Path) -> io::Result<()> {
+        self.inner.create_dir(path)
+    }
+    fn canonicalize(&self, path: &Path) -> io::Result<PathBuf> {
+        self.inner.canonicalize(path)
+    }
+    fn current_uid(&self) -> u32 {
+        self.inner.current_uid()
+    }
+    fn sudo_write(
+        &self,
+        path: &Path,
+        data: &[u8],
+        mode: u32,
+        uid: u32,
+        gid: u32,
+    ) -> io::Result<()> {
+        self.inner.sudo_write(path, data, mode, uid, gid)
+    }
+    fn search_file(
+        &self,
+        path: &Path,
+        pattern: &str,
+        opts: &fresh::model::filesystem::FileSearchOptions,
+        cursor: &mut fresh::model::filesystem::FileSearchCursor,
+    ) -> io::Result<Vec<fresh::model::filesystem::SearchMatch>> {
+        fresh::model::filesystem::default_search_file(&self.inner, path, pattern, opts, cursor)
+    }
+    fn walk(
+        &self,
+        root: &Path,
+        opts: &fresh_editor_core::model::filesystem::WalkOptions<'_>,
+        cancel: &std::sync::atomic::AtomicBool,
+        on_entry: &mut dyn FnMut(fresh_editor_core::model::filesystem::WalkEntry<'_>) -> bool,
+    ) -> std::io::Result<()> {
+        self.inner.walk(root, opts, cancel, on_entry)
+    }
+}
+
+/// A large file of numbered lines in a new temp dir, opened lazily through
+/// `fs`, with "EDITED " inserted at its start. Returns the dir (to keep it
+/// alive), the file's path, and the content saving it should produce.
+fn edited_large_file(fs: Arc<FaultyFileSystem>) -> (TempDir, PathBuf, TextBuffer, String) {
+    let dir = TempDir::new().unwrap();
+    let file_path = dir.path().join("big.txt");
+    let original: String = (0..500).map(|i| format!("Line {i:04}\n")).collect();
+    std::fs::write(&file_path, &original).unwrap();
+    let mut buffer = TextBuffer::load_from_file(&file_path, 1024, fs).unwrap();
+    assert!(buffer.is_large_file());
+    buffer.insert_bytes(0, b"EDITED ".to_vec());
+    (dir, file_path, buffer, format!("EDITED {original}"))
+}
+
+/// Issue #3381: a large file saved in place stages a complete copy of the
+/// new content first, since it reads the unchanged parts back from the file
+/// it is overwriting. When the recovery directory can't take the copy — not
+/// writable (under `su`, `$HOME` may be another user's), or its disk full
+/// while the file's has room — the save failed, reporting a bare error that
+/// read as if it were about the file. It stages the copy elsewhere instead.
+fn check_large_inplace_save_stages_elsewhere(refusal: io::ErrorKind) {
+    let data_dir = TempDir::new().unwrap();
+    let recovery_dir = data_dir.path().join("recovery");
+    let fs = Arc::new(FaultyFileSystem::new());
+    fs.deny_create_in(&recovery_dir, refusal);
+    let (dir, file_path, mut buffer, expected) = edited_large_file(fs);
+
+    buffer
+        .save(&recovery_dir)
+        .expect("the file can be written, so the save must succeed");
+
+    assert_eq!(std::fs::read_to_string(&file_path).unwrap(), expected);
+    let left: Vec<_> = std::fs::read_dir(dir.path())
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    assert_eq!(left, vec![std::ffi::OsString::from("big.txt")]);
+}
+
+#[test]
+#[cfg(unix)]
+fn test_large_inplace_save_with_unwritable_recovery_dir() {
+    check_large_inplace_save_stages_elsewhere(io::ErrorKind::PermissionDenied);
+}
+
+#[test]
+#[cfg(unix)]
+fn test_large_inplace_save_with_full_recovery_dir() {
+    check_large_inplace_save_stages_elsewhere(io::ErrorKind::StorageFull);
+}
+
+/// Issue #3381: when a large file's copy can't be staged anywhere, its save
+/// is refused with an error that says so, rather than a bare "Permission
+/// denied" that points at the file; and the file is left alone.
+#[test]
+#[cfg(unix)]
+fn test_large_inplace_save_with_nowhere_to_stage_says_why() {
+    let data_dir = TempDir::new().unwrap();
+    let recovery_dir = data_dir.path().join("recovery");
+    let fs = Arc::new(FaultyFileSystem::new());
+    fs.deny_create_in(&recovery_dir, io::ErrorKind::PermissionDenied);
+    fs.deny_create_in(&std::env::temp_dir(), io::ErrorKind::PermissionDenied);
+    let (_dir, file_path, mut buffer, _) = edited_large_file(fs);
+    let before = std::fs::read_to_string(&file_path).unwrap();
+
+    let err = buffer.save(&recovery_dir).expect_err("nowhere to stage");
+
+    let msg = err.to_string();
+    assert!(
+        msg.contains("copy") && msg.contains(&recovery_dir.display().to_string()),
+        "the error must say the copy couldn't be staged, and where: {msg}"
+    );
+    assert_eq!(std::fs::read_to_string(&file_path).unwrap(), before);
+}
+
+/// Issue #3381: the copy moves on to the next place only when the recovery
+/// directory can't take it (not writable, or full). Any other error there —
+/// a failing disk — is the save's to report: it must not put a copy of the
+/// user's content next to their file, or in the temp dir, and carry on.
+#[test]
+#[cfg(unix)]
+fn test_large_inplace_save_with_failing_recovery_dir_is_refused() {
+    let data_dir = TempDir::new().unwrap();
+    let recovery_dir = data_dir.path().join("recovery");
+    let fs = Arc::new(FaultyFileSystem::new());
+    fs.deny_create_in(&recovery_dir, io::ErrorKind::Other);
+    let (dir, file_path, mut buffer, _) = edited_large_file(fs);
+    let before = std::fs::read_to_string(&file_path).unwrap();
+
+    let err = buffer
+        .save(&recovery_dir)
+        .expect_err("an I/O error staging the copy must fail the save");
+
+    let msg = err.to_string();
+    assert!(
+        msg.contains(&recovery_dir.display().to_string()) && msg.contains("simulated"),
+        "the error must be the recovery directory's: {msg}"
+    );
+    assert_eq!(std::fs::read_to_string(&file_path).unwrap(), before);
+    let left: Vec<_> = std::fs::read_dir(dir.path())
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    assert_eq!(left, vec![std::ffi::OsString::from("big.txt")]);
+}
+
+/// Issue #3381: a copy staged in a place a later session no longer stages
+/// in (the system temp dir, under another `TMPDIR`) held up its file's
+/// saves while never being offered, and the startup sweep only logged it,
+/// every session. Saves, the offer and the sweep now agree on it.
+#[test]
+#[cfg(unix)]
+fn test_kept_copy_staged_in_a_former_temp_dir_is_offered() {
+    use fresh::services::recovery::{path_hash, InplaceWriteRecovery};
+    // No process has this pid (it's above any pid_max), so it "crashed".
+    const DEAD_PID: u32 = 2_000_000_000;
+    let data_dir = TempDir::new().unwrap();
+    let recovery_dir = data_dir.path().join("recovery");
+    std::fs::create_dir_all(&recovery_dir).unwrap();
+    let former_tmp = TempDir::new().unwrap();
+    let fs = Arc::new(FaultyFileSystem::new());
+    let (_dir, file_path, mut buffer, expected) = edited_large_file(fs);
+    let copy = former_tmp
+        .path()
+        .join(format!(".inplace-big.txt-{DEAD_PID}-1.tmp"));
+    std::fs::write(&copy, &expected).unwrap();
+    let mut recovery = InplaceWriteRecovery::new(file_path.clone(), copy.clone(), 0, 0, 0o644);
+    recovery.pid = DEAD_PID;
+    let meta = recovery_dir.join(format!("{}.inplace.json", path_hash(&file_path)));
+    std::fs::write(&meta, serde_json::to_string(&recovery).unwrap()).unwrap();
+
+    fresh::model::buffer::save::clean_up_inplace_write_recoveries(&StdFileSystem, &recovery_dir);
+    assert!(copy.exists() && meta.exists(), "the sweep keeps it");
+    let offered =
+        fresh::model::buffer::save::kept_inplace_write_recoveries(&StdFileSystem, &recovery_dir);
+    assert_eq!(
+        offered.iter().map(|r| &r.temp_path).collect::<Vec<_>>(),
+        vec![&copy],
+        "a copy that holds up saves must be offered"
+    );
+    assert!(buffer.save(&recovery_dir).is_err(), "and it holds them up");
+}
+
+/// Issue #3382: a large file's save reads the unchanged parts back from the
+/// file, at the offsets it had when loaded. An in-place write that fails
+/// part-way leaves the file torn, with new content at its start; when the
+/// torn file was still long enough, a retry read the shifted bytes and
+/// wrote them out as a "complete" file. It must be refused, keeping the
+/// complete copy the failed write staged, and saying where that is.
+#[test]
+#[cfg(unix)]
+fn test_large_file_retry_after_torn_inplace_write_is_refused() {
+    use fresh::services::recovery::{path_hash, InplaceWriteRecovery};
+    let data_dir = TempDir::new().unwrap();
+    let recovery_dir = data_dir.path().join("recovery");
+    let fs = Arc::new(FaultyFileSystem::new());
+    let (_dir, file_path, mut buffer, expected) = edited_large_file(fs.clone());
+    let original_len = expected.len() - "EDITED ".len();
+
+    // Attempt 1 fails part-way, leaving a torn file longer than the
+    // original, so every Copy op of a retry can still read its range.
+    fs.tear_after(&file_path, original_len + 3);
+    assert!(buffer.save(&recovery_dir).is_err());
+    let torn = std::fs::read(&file_path).unwrap();
+    assert_eq!(torn.len(), original_len + 3);
+    *fs.tear.lock().unwrap() = None;
+
+    let err = buffer
+        .save(&recovery_dir)
+        .expect_err("a retry reading from the torn file must be refused");
+
+    let meta_path = recovery_dir.join(format!("{}.inplace.json", path_hash(&file_path)));
+    let recovery: InplaceWriteRecovery =
+        serde_json::from_str(&std::fs::read_to_string(meta_path).unwrap()).unwrap();
+    assert_eq!(
+        std::fs::read_to_string(&recovery.temp_path).unwrap(),
+        expected,
+        "the complete copy attempt 1 staged must be kept"
+    );
+    assert!(
+        err.to_string()
+            .contains(&recovery.temp_path.display().to_string()),
+        "the error must say where the copy is: {err}"
+    );
+    assert!(
+        err.to_string().contains("Review Interrupted Saves")
+            && err.to_string().contains("Revert File"),
+        "the error must say how to get out: {err}"
+    );
+    assert_eq!(
+        std::fs::read(&file_path).unwrap(),
+        torn,
+        "nothing more is written"
+    );
+}
+
+/// Issue #3382: the unchanged parts a save reads back come from the file the
+/// buffer was loaded from, whichever file it writes. Save As of a buffer on
+/// a file another buffer's save tore wrote the torn bytes into the new file,
+/// since only recovery metadata for the destination was looked at. It must
+/// be refused, and the new file left unwritten.
+#[test]
+#[cfg(unix)]
+fn test_large_file_save_as_after_torn_inplace_write_is_refused() {
+    let data_dir = TempDir::new().unwrap();
+    let recovery_dir = data_dir.path().join("recovery");
+    let fs = Arc::new(FaultyFileSystem::new());
+    let (dir, file_path, mut buffer, expected) = edited_large_file(fs.clone());
+    let original_len = expected.len() - "EDITED ".len();
+    // Another buffer on the same file, loaded before the tear
+    let mut other = TextBuffer::load_from_file(&file_path, 1024, fs.clone()).unwrap();
+    assert!(other.is_large_file());
+    other.insert_bytes(0, b"OTHER ".to_vec());
+
+    fs.tear_after(&file_path, original_len + 3);
+    assert!(buffer.save(&recovery_dir).is_err());
+    *fs.tear.lock().unwrap() = None;
+
+    // Saved over an existing file, which this filesystem writes in place
+    let save_as = dir.path().join("copy.txt");
+    std::fs::write(&save_as, "old content\n").unwrap();
+    let err = other
+        .save_to_file(&save_as, &recovery_dir)
+        .expect_err("Save As reading from the torn file must be refused");
+
+    assert!(
+        err.to_string().contains(&file_path.display().to_string()),
+        "the error must name the torn file: {err}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&save_as).unwrap(),
+        "old content\n",
+        "nothing is written"
+    );
+}
+
+/// Issue #3382: when the recovery directory can't be written, a large
+/// file's in-place save stages its copy elsewhere (issue #3381) with no
+/// metadata pointing at it, so nothing on disk says the file is torn if the
+/// write then fails part-way. The buffer remembers it, and refuses a retry
+/// (or a Save As) that would read the torn file, instead of writing the
+/// shifted bytes out as a "complete" file.
+#[test]
+#[cfg(unix)]
+fn test_large_file_retry_after_torn_write_without_metadata_is_refused() {
+    let data_dir = TempDir::new().unwrap();
+    let recovery_dir = data_dir.path().join("recovery");
+    let fs = Arc::new(FaultyFileSystem::new());
+    fs.deny_create_in(&recovery_dir, io::ErrorKind::PermissionDenied);
+    let (dir, file_path, mut buffer, expected) = edited_large_file(fs.clone());
+    let original_len = expected.len() - "EDITED ".len();
+
+    fs.tear_after(&file_path, original_len + 3);
+    let first = buffer.save(&recovery_dir).expect_err("the write tears");
+    assert!(
+        first.to_string().contains(".inplace-"),
+        "the failure must say where the copy of what was being saved is: {first}"
+    );
+    let torn = std::fs::read(&file_path).unwrap();
+    *fs.tear.lock().unwrap() = None;
+
+    let err = buffer
+        .save(&recovery_dir)
+        .expect_err("a retry reading from the torn file must be refused");
+    assert!(err.to_string().contains("failed part-way"), "{err}");
+    assert_eq!(
+        std::fs::read(&file_path).unwrap(),
+        torn,
+        "nothing more is written"
+    );
+
+    let save_as = dir.path().join("copy.txt");
+    buffer
+        .save_to_file(&save_as, &recovery_dir)
+        .expect_err("so must a Save As");
+    assert!(!save_as.exists());
+}
+
+/// Recovery metadata whose copy the file already matches (the write did
+/// finish) doesn't hold up a large file's save.
+#[test]
+#[cfg(unix)]
+fn test_large_file_save_ignores_recovery_its_file_matches() {
+    use fresh::services::recovery::{path_hash, InplaceWriteRecovery};
+    let data_dir = TempDir::new().unwrap();
+    let recovery_dir = data_dir.path().join("recovery");
+    std::fs::create_dir_all(&recovery_dir).unwrap();
+    let fs = Arc::new(FaultyFileSystem::new());
+    let (_dir, file_path, mut buffer, expected) = edited_large_file(fs);
+    let copy = recovery_dir.join(".inplace-big.txt-1-1.tmp");
+    std::fs::copy(&file_path, &copy).unwrap();
+    let recovery = InplaceWriteRecovery::new(file_path.clone(), copy, 0, 0, 0o644);
+    std::fs::write(
+        recovery_dir.join(format!("{}.inplace.json", path_hash(&file_path))),
+        serde_json::to_string(&recovery).unwrap(),
+    )
+    .unwrap();
+
+    buffer.save(&recovery_dir).unwrap();
+
+    assert_eq!(std::fs::read_to_string(&file_path).unwrap(), expected);
+}

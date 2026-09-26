@@ -730,16 +730,13 @@ pub trait FileSystem: Send + Sync {
     /// Get a unique temporary file path (using timestamp and PID)
     fn unique_temp_path(&self, dest_path: &Path) -> PathBuf {
         let temp_dir = std::env::temp_dir();
-        let file_name = dest_path
-            .file_name()
-            .unwrap_or_else(|| std::ffi::OsStr::new("fresh-save"));
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos())
             .unwrap_or(0);
         temp_dir.join(format!(
             "{}-{}-{}.tmp",
-            file_name.to_string_lossy(),
+            temp_name_stem(dest_path),
             std::process::id(),
             timestamp
         ))
@@ -1122,30 +1119,47 @@ fn retry_on_name_clash<T>(mut create: impl FnMut() -> io::Result<T>) -> io::Resu
 /// A temp-file path in the same directory as `path`, for write-then-rename.
 ///
 /// The name is `.<file name>.<pid>.<n>.tmp`, where `n` is a per-process
-/// counter, so it never coincides with a real sibling such as `foo.tmp`
+/// counter and a long file name is cut short (see [`temp_name_stem`]), so it never coincides with a real sibling such as `foo.tmp`
 /// (issue #3377) and two saves never share a temp file. Callers still open it
 /// with `create_new` semantics, since a stale file from an earlier process
 /// with the same pid may exist.
 pub fn sibling_temp_path(path: &Path) -> PathBuf {
     use std::sync::atomic::{AtomicU64, Ordering};
     static COUNTER: AtomicU64 = AtomicU64::new(0);
-    // Keep the result within the usual 255-byte file-name limit.
-    const MAX_NAME_BYTES: usize = 200;
 
+    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+    path.with_file_name(format!(
+        ".{}.{}.{n}.tmp",
+        temp_name_stem(path),
+        std::process::id()
+    ))
+}
+
+/// The longest file name a temp name built from another file's name may
+/// have. Some filesystems allow far fewer bytes than the usual 255 — eCryptfs
+/// about 143, after its encrypted-name overhead — and a file whose own name
+/// fits there must still be saveable (issue #3409).
+pub const MAX_TEMP_NAME_BYTES: usize = 143;
+
+/// See [`temp_name_stem`]: the prefixes, pids, counters and timestamps of
+/// the temp names built on it take at most ~75 bytes more.
+pub const TEMP_NAME_STEM_BYTES: usize = 64;
+
+/// The part of `path`'s file name a temp name made for it carries: the whole
+/// name when short, else its first [`TEMP_NAME_STEM_BYTES`] bytes (on a char
+/// boundary). It only helps a person tell whose temp file it is; the pid and
+/// counter around it are what make the name unique. Short enough that every
+/// temp name built on it stays within [`MAX_TEMP_NAME_BYTES`].
+pub fn temp_name_stem(path: &Path) -> String {
     let file_name = path
         .file_name()
         .map(|n| n.to_string_lossy())
         .unwrap_or_else(|| "fresh-save".into());
-    let mut name_len = 0;
-    let short_name: String = file_name
-        .chars()
-        .take_while(|c| {
-            name_len += c.len_utf8();
-            name_len <= MAX_NAME_BYTES
-        })
-        .collect();
-    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-    path.with_file_name(format!(".{short_name}.{}.{n}.tmp", std::process::id()))
+    let mut end = file_name.len().min(TEMP_NAME_STEM_BYTES);
+    while !file_name.is_char_boundary(end) {
+        end -= 1;
+    }
+    file_name[..end].to_string()
 }
 
 /// The pid in a name [`sibling_temp_path`] makes (`.<name>.<pid>.<n>.tmp`),
@@ -4112,5 +4126,33 @@ mod tests {
             exit_code, 0,
             "child reported file NOT writable (exit_code={exit_code}); ACL was ignored",
         );
+    }
+
+    /// Temp names made for a file carry only the start of its name, so they
+    /// stay within the name limit of filesystems that allow short names
+    /// (eCryptfs: ~143 bytes) even for a file whose name is near the usual
+    /// 255-byte limit (issue #3409), and are still recognised as temp names.
+    #[test]
+    fn temp_names_for_long_file_names_stay_short() {
+        for long in ["n".repeat(250), "é".repeat(125)] {
+            assert_eq!(long.len(), 250);
+            let path = Path::new("/some/dir").join(&long);
+
+            let sibling = sibling_temp_path(&path);
+            let name = sibling.file_name().unwrap().to_str().unwrap();
+            assert!(
+                name.len() <= MAX_TEMP_NAME_BYTES,
+                "{} bytes: {name}",
+                name.len()
+            );
+            assert_eq!(sibling.parent(), path.parent());
+            assert_eq!(sibling_temp_pid(name), Some(std::process::id()));
+
+            let unique = StdFileSystem.unique_temp_path(&path);
+            let name = unique.file_name().unwrap().to_str().unwrap();
+            assert!(name.len() <= MAX_TEMP_NAME_BYTES, "{name}");
+        }
+        // A short name is kept whole.
+        assert_eq!(temp_name_stem(Path::new("/d/notes.txt")), "notes.txt");
     }
 }

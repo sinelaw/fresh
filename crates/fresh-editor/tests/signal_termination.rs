@@ -199,3 +199,197 @@ fn the_per_thread_sweep_is_available_on_request() {
         "the sweep should report the threads it found; log was:\n{log}"
     );
 }
+
+/// Closing the terminal (`SIGHUP`) is how an editor ends when its window is
+/// closed, not a hang to diagnose: it runs the cleanups and ends by
+/// `SIGHUP`'s default action, as it did before it was handled, without the
+/// error-level "Dumping debug info" report every closed terminal used to
+/// leave in the log (issue #3396).
+#[test]
+fn sighup_ends_the_editor_without_the_diagnostic_dump() {
+    use std::os::unix::process::ExitStatusExt;
+    if !pty_available() {
+        eprintln!("Skipping: no PTY available in this environment");
+        return;
+    }
+    let home = tempfile::tempdir().unwrap();
+    let mut editor = running_editor(isolated_fresh(home.path()));
+
+    // SAFETY: signalling a child this test owns and has not yet reaped.
+    assert_eq!(
+        unsafe { libc::kill(editor.pid() as i32, libc::SIGHUP) },
+        0
+    );
+    let status = editor.drain_and_wait().expect("wait for fresh to exit");
+
+    assert_eq!(
+        status.signal(),
+        Some(libc::SIGHUP),
+        "the editor should end as SIGHUP's default action ends it; it ended with {status:?}"
+    );
+    let log = logged(home.path());
+    assert!(
+        !log.contains("Dumping debug info"),
+        "a closed terminal is not a hang to diagnose; log was:\n{log}"
+    );
+}
+
+/// Started with `SIGHUP` ignored (`nohup`), the editor keeps it ignored:
+/// whoever started it asked for it to outlive its terminal.
+#[test]
+fn an_inherited_ignored_sighup_stays_ignored() {
+    use std::os::unix::process::CommandExt;
+    if !pty_available() {
+        eprintln!("Skipping: no PTY available in this environment");
+        return;
+    }
+    let home = tempfile::tempdir().unwrap();
+    let mut cmd = isolated_fresh(home.path());
+    // SAFETY: `signal` is async-signal-safe, as a `pre_exec` hook requires.
+    unsafe {
+        cmd.pre_exec(|| {
+            libc::signal(libc::SIGHUP, libc::SIG_IGN);
+            Ok(())
+        });
+    }
+    let mut editor = running_editor(cmd);
+
+    // SAFETY: signalling a child this test owns and has not yet reaped.
+    assert_eq!(
+        unsafe { libc::kill(editor.pid() as i32, libc::SIGHUP) },
+        0
+    );
+    editor.send(b"still here").unwrap();
+    editor
+        .wait_for_screen(|s| s.contains("still here"))
+        .expect("the editor should still be running after an ignored SIGHUP");
+
+    sigterm_and_reap(&mut editor);
+    let log = logged(home.path());
+    assert!(
+        !log.contains("SIGNAL 1 RECEIVED"),
+        "an ignored SIGHUP should not reach the editor; log was:\n{log}"
+    );
+}
+
+/// Temp files a sudo save left beside the file in `dir`.
+fn sudo_temp_files(dir: &Path) -> Vec<String> {
+    std::fs::read_dir(dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.ends_with(".tmp"))
+        .collect()
+}
+
+/// A non-root editor with a root-owned file's "Save with sudo?" prompt
+/// open, the save's temp file (holding the unsaved content) sitting beside
+/// the file. `None` where that can't be arranged: it needs root, to own the
+/// file, and `setpriv`, to run the editor as someone else.
+fn editor_at_the_sudo_prompt(home: &Path) -> Option<(PtyChild, PathBuf)> {
+    // SAFETY: getuid cannot fail.
+    if !pty_available() || unsafe { libc::getuid() } != 0 {
+        return None;
+    }
+    let setpriv = ["/usr/bin/setpriv", "/bin/setpriv"]
+        .into_iter()
+        .find(|p| Path::new(p).exists())?;
+
+    use std::os::unix::fs::PermissionsExt;
+    let project = home.join("project");
+    std::fs::create_dir_all(&project).unwrap();
+    let file = project.join("r.txt");
+    std::fs::write(&file, "root content\n").unwrap();
+    std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o644)).unwrap();
+    // The editor's user may write the directory (so the temp file goes
+    // beside the file) but not the file itself.
+    std::fs::set_permissions(&project, std::fs::Permissions::from_mode(0o777)).unwrap();
+
+    let template = isolated_fresh(home);
+    let nobody = 65534u32;
+    for dir in ["config", "data", "state", "cache"] {
+        let d = home.join(dir);
+        std::fs::create_dir_all(&d).unwrap();
+        chown_tree(&d, nobody);
+    }
+    std::fs::set_permissions(home, std::fs::Permissions::from_mode(0o777)).unwrap();
+
+    let mut cmd = Command::new(setpriv);
+    cmd.args(["--reuid=65534", "--regid=65534", "--clear-groups"])
+        .arg(template.get_program())
+        .arg(&file)
+        .current_dir(&project);
+    for (key, value) in template.get_envs() {
+        match value {
+            Some(v) => cmd.env(key, v),
+            None => cmd.env_remove(key),
+        };
+    }
+
+    let mut editor = spawn_on_pty(cmd, ChildStdin::Terminal, 120, 30).expect("spawn fresh");
+    editor
+        .wait_for_screen(|s| s.contains("root content"))
+        .expect("the file should open");
+    // A file the user can't write opens read-only; make it editable.
+    editor.send(b"\x10").unwrap();
+    editor.send(b"Toggle Read-Only").unwrap();
+    editor
+        .wait_for_screen(|s| s.contains("Toggle Read-Only Mode"))
+        .expect("the command should be offered");
+    editor.send(b"\r").unwrap();
+    editor.send(b"EDIT ").unwrap();
+    editor
+        .wait_for_screen(|s| s.contains("EDIT root content"))
+        .expect("the edit should show");
+    editor.send(b"\x13").unwrap();
+    editor
+        .wait_for_screen(|s| s.contains("Save with sudo"))
+        .expect("saving should ask for sudo");
+    Some((editor, project))
+}
+
+fn chown_tree(path: &Path, uid: u32) {
+    let c = std::ffi::CString::new(path.as_os_str().as_encoded_bytes()).unwrap();
+    // SAFETY: a valid NUL-terminated path; the result is checked.
+    assert_eq!(unsafe { libc::chown(c.as_ptr(), uid, uid) }, 0);
+    if path.is_dir() {
+        for entry in std::fs::read_dir(path).unwrap() {
+            chown_tree(&entry.unwrap().path(), uid);
+        }
+    }
+}
+
+/// Killed with the sudo prompt open, the editor still deletes the save's
+/// temp file (issue #3396). The prompt owns that file and deletes it
+/// however it ends — but a signal exit runs no destructors, so a `kill` or
+/// a closed terminal left the unsaved content in a hidden file beside the
+/// user's, where nothing ever cleaned it up.
+fn a_signal_at_the_sudo_prompt_removes_the_temp_file(signal: libc::c_int) {
+    let home = tempfile::tempdir().unwrap();
+    let Some((mut editor, project)) = editor_at_the_sudo_prompt(home.path()) else {
+        eprintln!("Skipping: needs a PTY, root and setpriv");
+        return;
+    };
+    assert_eq!(
+        sudo_temp_files(&project).len(),
+        1,
+        "the prompt should be holding the save's temp file"
+    );
+
+    // SAFETY: signalling a child this test owns and has not yet reaped.
+    assert_eq!(unsafe { libc::kill(editor.pid() as i32, signal) }, 0);
+    editor.drain_and_wait().expect("wait for fresh to exit");
+
+    assert_eq!(sudo_temp_files(&project), Vec::<String>::new());
+}
+
+#[test]
+fn sigterm_at_the_sudo_prompt_removes_the_temp_file() {
+    a_signal_at_the_sudo_prompt_removes_the_temp_file(libc::SIGTERM);
+}
+
+/// Closing the terminal: `SIGHUP`, whose default action skipped all of it.
+#[test]
+fn sighup_at_the_sudo_prompt_removes_the_temp_file() {
+    a_signal_at_the_sudo_prompt_removes_the_temp_file(libc::SIGHUP);
+}

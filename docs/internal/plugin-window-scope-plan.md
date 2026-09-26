@@ -50,6 +50,22 @@ it, and the rules the host now keeps. The code carries the detail:
 - A buffer-addressed plugin command that names another window's buffer is
   logged with the command's name, and panics under `FRESH_STRICT_PLUGIN_IDS`.
 
+## Keyboard modes and window scope
+
+Keyboard modes follow the same rule as chrome: a mode belongs to the thing
+it is about. A panel's keymap rides on the panel (`mount({ mode })`), a
+virtual buffer's on the buffer, and a window-scoped plugin mode on the window
+(`setEditorMode` → `Window::editor_mode`). A modal-editing personality — vi —
+is about none of those: it is how the user types. It is the editor-wide
+**input mode** (`setInputMode` → `Editor::input_mode`), set once, applied in
+every window, and out of reach of anything window-scoped.
+
+vi used to keep its mode in the window slot, so a window created after vi
+was enabled started with none (`j` typed a `j` under `-- NORMAL --`), and
+dialogs and window switches that cleared the slot turned vi off in one
+window only (#3305, #3395). Resolution order: focused panel's mode →
+buffer's mode → window's editor mode → input mode → base keymap.
+
 ## The one behaviour change for plugins
 
 A sidebar section mounted without a scope is per-window, not editor-wide.

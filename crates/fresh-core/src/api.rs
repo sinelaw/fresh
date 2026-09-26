@@ -1590,8 +1590,7 @@ pub struct EditorStateSnapshot {
     /// Primary cursor position for the active buffer
     pub primary_cursor: Option<CursorInfo>,
     /// Primary cursor's line number (0-indexed) for the active buffer.
-    /// Mirrors the editor's `primary_cursor_line_number` cache so plugins
-    /// can read "what line is the cursor on" without scanning the buffer.
+    /// The line the status bar's `Ln` shows (see `Editor::primary_cursor_line`).
     /// `None` when there is no active view state (e.g. before the first
     /// buffer is loaded).
     #[serde(default)]
@@ -1727,9 +1726,13 @@ pub struct EditorStateSnapshot {
     #[serde(skip)]
     #[ts(skip)]
     pub last_grammar_gen: u64,
-    /// Global editor mode for modal editing (e.g., "vi-normal", "vi-insert")
-    /// When set, this mode's keybindings take precedence over normal key handling
+    /// The active window's editor mode — a window-scoped plugin mode
+    /// (e.g. "markdown-source"). When set, its keybindings take precedence
+    /// over the input mode and normal key handling in that window.
     pub editor_mode: Option<String>,
+    /// The editor-wide input mode — a modal-editing personality such as vi
+    /// ("vi-normal", "vi-insert"), the same in every window.
+    pub input_mode: Option<String>,
 
     /// Which widget holds each mounted panel's focus, per owning plugin:
     /// plugin name → panel id → widget key (`""` for none). The host's
@@ -1867,6 +1870,7 @@ impl EditorStateSnapshot {
             available_grammars: Vec::new(),
             last_grammar_gen: 0,
             editor_mode: None,
+            input_mode: None,
             panel_focus: HashMap::new(),
             plugin_view_states: HashMap::new(),
             plugin_view_states_split: 0,
@@ -5421,9 +5425,19 @@ pub enum PluginCommand {
         line: usize,
     },
 
-    /// Set the global editor mode (for modal editing like vi mode)
-    /// When set, the mode's keybindings take precedence over normal editing
+    /// Set the active window's editor mode: a plugin mode scoped to that
+    /// one window. When set, the mode's keybindings take precedence over the
+    /// editor-wide input mode and normal editing, in that window only.
     SetEditorMode {
+        /// Mode name (e.g., "markdown-source") or None to clear
+        mode: Option<String>,
+    },
+
+    /// Set the editor-wide input mode: a modal-editing personality such as
+    /// vi, which applies in every window and which nothing window-scoped
+    /// can clear. Resolved after a panel's, the buffer's and the window's
+    /// own mode, and before the base keymap.
+    SetInputMode {
         /// Mode name (e.g., "vi-normal", "vi-insert") or None to clear
         mode: Option<String>,
     },

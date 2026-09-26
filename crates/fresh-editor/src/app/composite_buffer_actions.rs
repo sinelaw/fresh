@@ -258,30 +258,60 @@ impl crate::app::window::Window {
             .unwrap_or(DEFAULT_VIEWPORT_HEIGHT)
     }
 
+    /// The 0-indexed source line a composite (diff) view's cursor is on in
+    /// its focused pane, or `None` when `buffer_id` has no composite view in
+    /// `split_id`. A row with no line in the focused pane (padding opposite
+    /// an insertion) reports its alignment row.
+    pub(crate) fn composite_cursor_line(
+        &self,
+        split_id: LeafId,
+        buffer_id: BufferId,
+    ) -> Option<usize> {
+        let vs = self.composite_view_states.get(&(split_id, buffer_id))?;
+        let composite = self.composite_buffers.get(&buffer_id)?;
+        Some(
+            composite
+                .alignment
+                .get_row(vs.cursor_row)
+                .and_then(|row| row.get_pane_line(vs.focused_pane))
+                .map_or(vs.cursor_row, |line_ref| line_ref.line),
+        )
+    }
+
+    /// The 0-indexed line of the primary cursor of `buffer_id` in `split_id`:
+    /// the one statement of what the status bar's `Ln`, Goto Line's relative
+    /// targets and a plugin's `getCursorLine()` report.
+    ///
+    /// Derived from the cursor on every call. It used to be a per-buffer
+    /// cache that every cursor placement had to refresh; the ones that did
+    /// not — a restore, a jump, a file shown in a second window — left the
+    /// status bar on the wrong line (#2301, #3167, #3397). A cache per
+    /// buffer could not be right anyway once two windows show the same file
+    /// with their cursors in different places.
+    pub(crate) fn primary_cursor_line(&self, split_id: LeafId, buffer_id: BufferId) -> usize {
+        if let Some(line) = self.composite_cursor_line(split_id, buffer_id) {
+            return line;
+        }
+        let Some(state) = self.buffers.get(&buffer_id) else {
+            return 0;
+        };
+        let position = self
+            .split_view_states()
+            .get(&split_id)
+            .map_or(0, |vs| vs.cursors.primary().position);
+        state.line_of_position(position)
+    }
+
     /// Mirror the composite view's cursor row/column back onto the
-    /// underlying buffer's `EditorState` and the active split's view
-    /// state. Called from hunk-navigation handlers so the status-bar
-    /// `Ln/Col` reflects the new alignment row instead of stale
-    /// pre-jump data.
+    /// active split's view state. Called from hunk-navigation handlers so
+    /// the status-bar `Col` reflects the new alignment row instead of stale
+    /// pre-jump data; its `Ln` is derived from the composite view state
+    /// itself (see [`Self::composite_cursor_line`]).
     fn sync_editor_cursor_from_composite(&mut self, split_id: LeafId, buffer_id: BufferId) {
-        let (cursor_row, cursor_column, focused_pane) = self
+        let cursor_column = self
             .composite_view_states
             .get(&(split_id, buffer_id))
-            .map(|vs| (vs.cursor_row, vs.cursor_column, vs.focused_pane))
-            .unwrap_or((0, 0, 0));
-
-        let display_line = self
-            .composite_buffers
-            .get(&buffer_id)
-            .and_then(|composite| composite.alignment.get_row(cursor_row))
-            .and_then(|row| row.get_pane_line(focused_pane))
-            .map(|line_ref| line_ref.line)
-            .unwrap_or(cursor_row);
-
-        if let Some(state) = self.buffers.get_mut(&buffer_id) {
-            state.primary_cursor_line_number =
-                crate::model::buffer::LineNumber::Absolute(display_line);
-        }
+            .map_or(0, |vs| vs.cursor_column);
 
         // Write the cursor column into the same leaf the composite is keyed
         // under (`split_id`), not a recomputed `active_split()` — for the

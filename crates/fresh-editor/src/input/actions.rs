@@ -3846,6 +3846,7 @@ pub fn action_to_events(
         | Action::SelectLocale
         | Action::Revert
         | Action::ToggleAutoRevert
+        | Action::ReviewInterruptedSaves
         | Action::UpdateFresh
         | Action::OpenUpdateLog
         | Action::FormatBuffer

@@ -1,8 +1,18 @@
 //! What the editor reports when it is asked to stop.
 //!
-//! `SIGINT` and `SIGTERM` dump the running JavaScript state and every
-//! thread's backtrace before the process ends, which is how a hung editor
-//! gets diagnosed after the fact.
+//! `SIGINT` and `SIGTERM` dump the running JavaScript state (and, on
+//! request, every thread's backtrace) before the process ends, which is how
+//! a hung editor gets diagnosed after the fact.
+//!
+//! Before that, they run the [termination cleanups](register_termination_cleanup):
+//! files the editor would delete on a normal exit, which the signal exit —
+//! `process::exit`, no destructors — would otherwise leave behind. The sudo
+//! save's temp file next to the user's file is one (issue #3396).
+//!
+//! `SIGHUP` — the terminal was closed — runs only the cleanups, then ends
+//! the process by `SIGHUP`'s default action, as it did before it was
+//! handled: an ordinary way for an editor to end, with nothing to diagnose.
+//! An inherited `SIGHUP` disposition of "ignore" (`nohup`) is left alone.
 //!
 //! **None of that happens in the signal handler.** A handler runs on
 //! whichever thread the kernel interrupted, wherever that thread happened to
@@ -81,7 +91,45 @@ pub fn dump_js_state() {
     }
 }
 
-/// Install the `SIGINT`/`SIGTERM` handlers and the machinery behind them.
+/// Something to undo before a terminating signal ends the process, which it
+/// does without running destructors.
+pub trait TerminationCleanup: Send + Sync {
+    fn on_termination(&self);
+}
+
+/// The registered cleanups. Weak, so registering never keeps an object
+/// alive: one that has been dropped (its normal cleanup done) is skipped.
+static TERMINATION_CLEANUPS: Mutex<Vec<std::sync::Weak<dyn TerminationCleanup>>> =
+    Mutex::new(Vec::new());
+
+/// Run `cleanup` if a terminating signal ends the process while it is still
+/// alive.
+///
+/// Runs on the reporting thread, not in the signal handler, so it may
+/// allocate, lock and do I/O like any other code. It runs before the
+/// diagnostic dump, and within the watchdog's deadline like the rest.
+pub fn register_termination_cleanup(cleanup: std::sync::Weak<dyn TerminationCleanup>) {
+    if let Ok(mut cleanups) = TERMINATION_CLEANUPS.lock() {
+        cleanups.retain(|c| c.strong_count() > 0);
+        cleanups.push(cleanup);
+    }
+}
+
+/// Run every registered cleanup whose object is still alive.
+///
+/// Public so a test can run what a signal would, without ending the process.
+pub fn run_termination_cleanups() {
+    let live: Vec<_> = match TERMINATION_CLEANUPS.lock() {
+        Ok(cleanups) => cleanups.iter().filter_map(|c| c.upgrade()).collect(),
+        Err(_) => return,
+    };
+    for cleanup in live {
+        cleanup.on_termination();
+    }
+}
+
+/// Install the `SIGINT`/`SIGTERM`/`SIGHUP` handlers and the machinery behind them
+/// (`SIGHUP`'s only if it isn't ignored already).
 ///
 /// Idempotent: the editor calls this once, and a couple of dozen tests call
 /// it too, so repeated calls must not stack up threads or handlers.
@@ -119,7 +167,7 @@ mod unix {
     /// again, which takes the escape path in the handler.
     const DUMP_DEADLINE: Duration = Duration::from_secs(2);
 
-    /// Ctrl+C's conventional status, reported for both signals. Unchanged
+    /// Ctrl+C's conventional status, reported for every one of them. Unchanged
     /// from before this file was rewritten; scripts may be reading it.
     const EXIT_CODE: i32 = 130;
 
@@ -160,7 +208,7 @@ mod unix {
                     // is what the editor had before this facility existed.
                     tracing::warn!(
                         "Could not create the signal relays; \
-                         leaving SIGINT/SIGTERM at their default disposition"
+                         leaving SIGINT/SIGTERM/SIGHUP at their default disposition"
                     );
                     return;
                 }
@@ -260,6 +308,19 @@ mod unix {
     /// allowed to allocate, lock, log and call into plugin code.
     fn report_and_exit(signal: libc::c_int) -> ! {
         restore_terminal();
+        // Ahead of the dump, which may wedge and leave it to the watchdog.
+        super::run_termination_cleanups();
+
+        if signal == libc::SIGHUP {
+            // The terminal went away: how an editor ends when its window is
+            // closed, not a hang to diagnose. End the way the default action
+            // would have, now that nothing is left behind.
+            tracing::info!("SIGHUP received: the terminal was closed, exiting");
+            die_by_default(signal);
+            // `raise` returns only once the signal has been delivered, and
+            // its default action ends the process; this is never reached.
+            std::process::exit(128 + signal);
+        }
 
         tracing::error!("=== SIGNAL {signal} RECEIVED - Dumping debug info ===");
 
@@ -318,6 +379,61 @@ mod unix {
             if let Err(e) = sigaction(Signal::SIGTERM, &action) {
                 tracing::error!("Failed to set SIGTERM handler: {}", e);
             }
+            // Closing the terminal the editor runs in. Its default action
+            // ends the process on the spot, skipping the cleanups above.
+            // Unless it was ignored on the way in (`nohup`): whoever started
+            // the editor asked for it to outlive the terminal.
+            if is_ignored(libc::SIGHUP) {
+                tracing::debug!("SIGHUP is ignored as inherited; leaving it so");
+            } else if let Err(e) = sigaction(Signal::SIGHUP, &action) {
+                tracing::error!("Failed to set SIGHUP handler: {}", e);
+            }
         }
+    }
+
+    /// Whether `signal`'s current disposition is to ignore it.
+    fn is_ignored(signal: libc::c_int) -> bool {
+        // SAFETY: a null new action only reads the current one into `old`,
+        // a plain C struct for which all zeroes is a valid value.
+        unsafe {
+            let mut old: libc::sigaction = std::mem::zeroed();
+            libc::sigaction(signal, std::ptr::null(), &mut old) == 0
+                && old.sa_sigaction == libc::SIG_IGN
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    struct Counter(AtomicUsize);
+    impl TerminationCleanup for Counter {
+        fn on_termination(&self) {
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    /// A live registration runs; one whose object is gone does not, and
+    /// registering never keeps an object alive.
+    #[test]
+    fn termination_cleanups_run_only_for_live_objects() {
+        let live = Arc::new(Counter(AtomicUsize::new(0)));
+        let gone = Arc::new(Counter(AtomicUsize::new(0)));
+        let live_weak: std::sync::Weak<dyn TerminationCleanup> = Arc::downgrade(&live) as _;
+        let gone_weak: std::sync::Weak<dyn TerminationCleanup> = Arc::downgrade(&gone) as _;
+        register_termination_cleanup(live_weak);
+        register_termination_cleanup(gone_weak);
+        let gone_probe = Arc::downgrade(&gone);
+        drop(gone);
+        assert!(
+            gone_probe.upgrade().is_none(),
+            "registering must not keep it alive"
+        );
+
+        run_termination_cleanups();
+        assert_eq!(live.0.load(Ordering::SeqCst), 1);
     }
 }

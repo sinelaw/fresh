@@ -20,9 +20,11 @@ use std::borrow::Cow;
 use std::sync::RwLock;
 
 mod plugins;
+mod plural;
 mod store;
 
 pub use plugins::{register_plugin_strings, translate_plugin_string, unregister_plugin_strings};
+pub use plural::{plural_category, translate_plural, PluralCategory};
 pub use store::{available_locales, register_locales, translate_in};
 
 use store::FALLBACK_LOCALE;
@@ -109,6 +111,24 @@ fn lookup(key: &str) -> Option<&'static str> {
     translate_in(FALLBACK_LOCALE, key)
 }
 
+/// The locales [`lookup`] consults, in order: the active locale, each shorter
+/// tag of it, then [`FALLBACK_LOCALE`]. For the plural lookup, which needs
+/// each locale's code to pick its form.
+pub(crate) fn locale_chain() -> Vec<String> {
+    let active = locale();
+    let mut chain = Vec::new();
+    let mut current: &str = &active;
+    loop {
+        chain.push(current.to_string());
+        match current.rfind('-') {
+            Some(n) => current = current[..n].trim_end_matches("-x"),
+            None => break,
+        }
+    }
+    chain.push(FALLBACK_LOCALE.to_string());
+    chain
+}
+
 /// Replace `%{name}` placeholders in `template` with the matching argument.
 pub(crate) fn interpolate(template: &str, args: &[(&str, String)]) -> String {
     let mut out = String::with_capacity(template.len() + 32);
@@ -150,6 +170,33 @@ macro_rules! t {
     ($key:expr, $($name:tt = $value:expr),+ $(,)?) => {
         $crate::translate_with_args(
             $key,
+            &[$(($crate::__t_arg_name!($name), ::std::format!("{}", $value))),+],
+        )
+    };
+}
+
+/// Translate a count-dependent message: the plural form the active
+/// locale's rule gives for `count`, with `%{count}` substituted along with
+/// any named arguments. See [`translate_plural`] for how the forms are
+/// stored.
+///
+/// ```
+/// # fresh_i18n::register_locales(&[("en", r#"{"n.one": "%{count} file", "n.other": "%{count} files"}"#)]);
+/// # fresh_i18n::set_locale("en");
+/// use fresh_i18n::tn;
+///
+/// assert_eq!(tn!("n", 1), "1 file");
+/// assert_eq!(tn!("n", 2), "2 files");
+/// ```
+#[macro_export]
+macro_rules! tn {
+    ($key:expr, $count:expr $(,)?) => {
+        $crate::translate_plural(::core::convert::AsRef::<str>::as_ref(&$key), ($count) as u64, &[])
+    };
+    ($key:expr, $count:expr, $($name:tt = $value:expr),+ $(,)?) => {
+        $crate::translate_plural(
+            ::core::convert::AsRef::<str>::as_ref(&$key),
+            ($count) as u64,
             &[$(($crate::__t_arg_name!($name), ::std::format!("{}", $value))),+],
         )
     };

@@ -535,7 +535,7 @@ impl TerminalState {
             scrolling_history: scrollback_lines.saturating_add(SCROLLBACK_DRAIN_MARGIN),
             // Answer the kitty keyboard protocol's query and track the flags a
             // child pushes, so a TUI can ask for Shift+Enter and friends in
-            // CSI-u form (see `kitty_disambiguates_keys`). Not on Windows:
+            // CSI-u form (see `kitty_key_flags`). Not on Windows:
             // there the child sits behind ConPTY, whose handling of CSI-u
             // input is unverified.
             kitty_keyboard: cfg!(not(windows)),
@@ -927,13 +927,22 @@ impl TerminalState {
         self.term.mode().contains(TermMode::APP_CURSOR)
     }
 
-    /// Check if the child enabled the kitty keyboard protocol at a level that
-    /// wants modified keys in CSI-u form ("disambiguate escape codes", or
-    /// "report all keys as escape codes").
-    pub fn kitty_disambiguates_keys(&self) -> bool {
-        self.term
-            .mode()
-            .intersects(TermMode::DISAMBIGUATE_ESC_CODES | TermMode::REPORT_ALL_KEYS_AS_ESC)
+    /// The kitty keyboard protocol flags the child has pushed, which decide
+    /// how keys are encoded for it (see `pty::kitty_encoded_key`). Empty
+    /// for a child that never enabled the protocol.
+    pub fn kitty_key_flags(&self) -> super::pty::KittyKeyFlags {
+        use super::pty::KittyKeyFlags as F;
+        let mode = self.term.mode();
+        [
+            (TermMode::DISAMBIGUATE_ESC_CODES, F::DISAMBIGUATE),
+            (TermMode::REPORT_EVENT_TYPES, F::REPORT_EVENT_TYPES),
+            (TermMode::REPORT_ALTERNATE_KEYS, F::REPORT_ALTERNATE_KEYS),
+            (TermMode::REPORT_ALL_KEYS_AS_ESC, F::REPORT_ALL_KEYS),
+            (TermMode::REPORT_ASSOCIATED_TEXT, F::REPORT_ASSOCIATED_TEXT),
+        ]
+        .into_iter()
+        .filter(|(term_mode, _)| mode.contains(*term_mode))
+        .fold(F::empty(), |flags, (_, flag)| flags | flag)
     }
 
     /// Check if the child asked for bracketed paste (DECSET 2004).
