@@ -15,7 +15,8 @@ use crate::common::harness::{EditorTestHarness, HarnessOptions};
 use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::config::Config;
 use fresh::model::filesystem::{
-    DirEntry, FileMetadata, FilePermissions, FileReader, FileSystem, FileWriter, StdFileSystem,
+    ContentDigest, DirEntry, FileMetadata, FilePermissions, FileReader, FileSystem, FileWriter,
+    StdFileSystem,
 };
 use std::io;
 use std::path::{Path, PathBuf};
@@ -33,6 +34,9 @@ struct SkewedClockFileSystem {
     /// How many times `notes.txt` was read whole. On a remote filesystem
     /// each is a download of the file.
     notes_reads: AtomicUsize,
+    /// How many times `notes.txt` was hashed where it lives. On a remote
+    /// filesystem only the digest crosses the network.
+    notes_digests: AtomicUsize,
 }
 
 impl SkewedClockFileSystem {
@@ -52,6 +56,12 @@ impl FileSystem for SkewedClockFileSystem {
     }
     fn read_range(&self, path: &Path, offset: u64, len: usize) -> io::Result<Vec<u8>> {
         self.inner.read_range(path, offset, len)
+    }
+    fn content_digest(&self, path: &Path) -> io::Result<ContentDigest> {
+        if path.file_name().is_some_and(|name| name == "notes.txt") {
+            self.notes_digests.fetch_add(1, Ordering::SeqCst);
+        }
+        self.inner.content_digest(path)
     }
     fn write_file(&self, path: &Path, data: &[u8]) -> io::Result<()> {
         self.inner.write_file(path, data)
@@ -177,6 +187,7 @@ fn saved_then_skewed_clean() -> (
         inner: Arc::new(StdFileSystem),
         skew: Mutex::new(Duration::ZERO),
         notes_reads: AtomicUsize::new(0),
+        notes_digests: AtomicUsize::new(0),
     });
     let mut harness = EditorTestHarness::create(
         160,
@@ -317,11 +328,12 @@ fn saving_does_not_read_the_file_back() {
     assert_eq!(fs.notes_reads.load(Ordering::SeqCst), 0);
 }
 
-/// A same-size change under a modified buffer is read once to tell it from
-/// a moved timestamp, not again on every poll after: once the file is
-/// known to hold something else, what was saved is no longer compared.
+/// A same-size change under a modified buffer is hashed once to tell it
+/// from a moved timestamp, not again on every poll after: once the file is
+/// known to hold something else, what was saved is no longer compared. And
+/// never read whole to do it.
 #[test]
-fn a_same_size_change_is_read_once_not_on_every_poll() {
+fn a_same_size_change_is_hashed_once_not_on_every_poll() {
     let (mut harness, dir, file, fs) = saved_then_skewed();
     // A second file in a split of its own, whose reload shows when a poll
     // has run over both.
@@ -343,6 +355,7 @@ fn a_same_size_change_is_read_once_not_on_every_poll() {
     harness.resize(160 + path_len, 24).unwrap();
     harness.render().unwrap();
     fs.notes_reads.store(0, Ordering::SeqCst);
+    fs.notes_digests.store(0, Ordering::SeqCst);
 
     std::fs::write(&file, "FIRST ORIGINAL\n").unwrap();
     harness
@@ -358,5 +371,42 @@ fn a_same_size_change_is_read_once_not_on_every_poll() {
             .unwrap();
     }
 
-    assert_eq!(fs.notes_reads.load(Ordering::SeqCst), 1);
+    assert_eq!(fs.notes_digests.load(Ordering::SeqCst), 1);
+    assert_eq!(fs.notes_reads.load(Ordering::SeqCst), 0);
+}
+
+/// Telling a drifted mtime from a change hashes the file where it lives
+/// instead of reading it: on a remote filesystem a read is a download of
+/// the whole file, on every change the poll notices. Once is enough — the
+/// poll takes the new mtime, so later passes don't compare again.
+#[test]
+fn a_drifted_mtime_is_hashed_once_not_downloaded() {
+    let (mut harness, dir, file, fs) = saved_then_skewed_clean();
+    fs.notes_reads.store(0, Ordering::SeqCst);
+    fs.notes_digests.store(0, Ordering::SeqCst);
+    // A second file in a split of its own, whose reload shows when a poll
+    // has run over both.
+    let other = dir.path().join("other.txt");
+    std::fs::write(&other, "other\n").unwrap();
+    harness.open_file(&other).unwrap();
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.type_text("Split Vertical").unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.open_file(&file).unwrap();
+    harness.render().unwrap();
+
+    for pass in ["reloaded once\n", "reloaded twice\n"] {
+        std::fs::write(&other, pass).unwrap();
+        harness
+            .wait_until(|h| h.screen_to_string().contains(pass.trim_end()))
+            .unwrap();
+    }
+
+    assert_eq!(fs.notes_digests.load(Ordering::SeqCst), 1);
+    assert_eq!(fs.notes_reads.load(Ordering::SeqCst), 0);
 }

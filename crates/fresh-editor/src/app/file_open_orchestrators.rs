@@ -365,6 +365,7 @@ impl Editor {
             Arc::clone(&self.authority().filesystem),
             crate::model::buffer::BufferConfig {
                 estimated_line_length: self.config.editor.estimated_line_length,
+                large_file_threshold: Some(self.config.editor.large_file_threshold_bytes as usize),
             },
         )?;
         let first_line = buffer.first_line_lossy();
@@ -474,6 +475,7 @@ impl Editor {
             Arc::clone(&self.authority().filesystem),
             crate::model::buffer::BufferConfig {
                 estimated_line_length: self.config.editor.estimated_line_length,
+                large_file_threshold: Some(self.config.editor.large_file_threshold_bytes as usize),
             },
         )?;
 

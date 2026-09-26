@@ -215,6 +215,8 @@ The names of these temp files and staged copies carry only the start of the file
 
 `FileSystem::write_file` is a plain atomic replace for the editor's own files (config, workspace, recovery data): it keeps what owner/xattrs it can and replaces the file regardless, never writing in place.
 
+A save also remembers what it wrote, as a `ContentDigest` (size and SHA-256; `TextBuffer::saved_content`), when every byte of it was in hand (no Copy ops) and it is no bigger than the large-file threshold the buffer was built with (`BufferConfig::large_file_threshold`) — above that nothing compares it, so it isn't computed. It is how the changed-on-disk check tells a real change from an mtime that moved over the same bytes, as on a network filesystem whose server clock is skewed (issue #3380): when the mtime differs but the size matches, the window asks the filesystem for the file's digest (`FileSystem::content_digest`) and compares. The digest is computed where the file lives — streamed locally, by the agent on a remote host (its `digest` command) — so the check never downloads the file; SHA-256 because both sides must compute the same answer. Once the file turns out to hold something else, the saved digest is forgotten, so a real change is hashed at most once.
+
 ### 7.3 Pristine-saved-root rebuild
 
 Two "saved root" mechanisms:
@@ -233,7 +235,7 @@ Two "saved root" mechanisms:
 - **Cursor** — a cursor holds a position, anchor, sticky column, selection mode, block anchor, and a deselect-on-move flag; positions are **byte offsets**. The cursor collection is a map from cursor id to cursor with a designated primary, supporting multi-cursor merge/dedupe and per-edit adjustment.
 - **Buffer position** — free functions converting byte↔(line, col) over a buffer reference, kept as functions to avoid growing `TextBuffer`'s surface.
 - **Document model** — the `DocumentModel` trait plus `DocumentPosition` (`LineColumn` or `ByteOffset`, the dual coordinate system for huge files) and viewport types.
-- **Filesystem** — a `FileSystem` trait of backend primitives: range read (the lazy-load primitive), patched write (zero-copy save), atomic replace (plain, and identity-preserving with a typed refusal), exclusive create (`create_new_file`) and private exclusive create (`create_new_private_file`, 0600 from the start), metadata, and server-side file search. It holds no save strategy (§7.2). The exclusive creates have no default, so a backend that can't make them atomic says so (`Unsupported`, as the remote one does) instead of racing, and a wrapper must forward them. Local and remote backends implement it, so the entire model is FS-agnostic (enabling remote editing).
+- **Filesystem** — a `FileSystem` trait of backend primitives: range read (the lazy-load primitive), patched write (zero-copy save), atomic replace (plain, and identity-preserving with a typed refusal), exclusive create (`create_new_file`) and private exclusive create (`create_new_private_file`, 0600 from the start), metadata, server-side file search, and a content digest (size and SHA-256, computed by the backend where the file lives, streamed by default). It holds no save strategy (§7.2). The exclusive creates have no default, so a backend that can't make them atomic says so (`Unsupported`, as the remote one does) instead of racing, and a wrapper must forward them. Local and remote backends implement it, so the entire model is FS-agnostic (enabling remote editing).
 
 ---
 

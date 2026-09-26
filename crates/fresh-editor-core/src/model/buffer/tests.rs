@@ -1548,6 +1548,38 @@ fn test_get_all_text_returns_empty_for_unloaded_buffers() {
     );
 }
 
+/// A save records the size and SHA-256 of what it wrote, up to the
+/// large-file threshold the buffer was built with; above it, nothing:
+/// the changed-on-disk check doesn't compare files that big, so hashing
+/// them would be wasted (issue #3380).
+#[test]
+fn test_save_fingerprints_only_up_to_the_large_file_threshold() {
+    use crate::model::filesystem::ContentDigest;
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let recovery_dir = temp_dir.path().join("recovery");
+    let file_path = temp_dir.path().join("notes.txt");
+
+    let mut buffer = TextBuffer::new_with_path(16, test_fs(), file_path.clone());
+    buffer.insert(0, "sixteen bytes!!\n");
+    buffer.save(&recovery_dir).unwrap();
+    assert_eq!(
+        buffer.saved_content(),
+        Some(ContentDigest::of(b"sixteen bytes!!\n"))
+    );
+
+    buffer.insert(0, "+");
+    buffer.save(&recovery_dir).unwrap();
+    assert_eq!(std::fs::read(&file_path).unwrap().len(), 17);
+    assert_eq!(buffer.saved_content(), None);
+
+    // Loaded under the threshold, saved over it.
+    let mut buffer = TextBuffer::load_from_file(&file_path, 20, test_fs()).unwrap();
+    buffer.insert(0, "more");
+    buffer.save(&recovery_dir).unwrap();
+    assert_eq!(std::fs::read(&file_path).unwrap().len(), 21);
+    assert_eq!(buffer.saved_content(), None);
+}
+
 // ===== Line Ending Conversion Tests =====
 
 mod line_ending_conversion {

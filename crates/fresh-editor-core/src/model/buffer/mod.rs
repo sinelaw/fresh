@@ -1,7 +1,7 @@
 /// Text buffer that uses PieceTree with integrated line tracking
 /// Architecture where the tree is the single source of truth for text and line information
 use crate::model::encoding;
-use crate::model::filesystem::{FileSearchOptions, FileSystem};
+use crate::model::filesystem::{ContentDigest, FileSearchOptions, FileSystem};
 use crate::model::piece_tree::{
     BufferData, BufferLocation, Cursor, PieceRangeIter, PieceTree, PieceView, Position,
     StringBuffer, TreeStats,
@@ -26,7 +26,7 @@ pub mod save;
 pub mod search;
 pub use file_kind::BufferFileKind;
 pub use format::{BufferFormat, LineEnding};
-pub use persistence::{Persistence, SavedContent};
+pub use persistence::Persistence;
 pub use save::SudoSaveRequired;
 #[cfg(test)]
 pub(crate) use save::{RecipeAction, WriteRecipe};
@@ -99,12 +99,19 @@ pub struct BufferConfig {
     /// Estimated average line length in bytes. Used for approximate line number
     /// display in large files and for goto-line byte offset estimation.
     pub estimated_line_length: usize,
+    /// The resolved `editor.large_file_threshold_bytes`, when the buffer was
+    /// built by a constructor given it. A save bigger than this records no
+    /// [`TextBuffer::saved_content`]: the changed-on-disk check doesn't
+    /// compare files that big, so hashing them would be wasted. `None`
+    /// records it at any size.
+    pub large_file_threshold: Option<usize>,
 }
 
 impl Default for BufferConfig {
     fn default() -> Self {
         Self {
             estimated_line_length: 80,
+            large_file_threshold: None,
         }
     }
 }
@@ -242,8 +249,9 @@ fn normalize_for_line_ending(content: Vec<u8>, line_ending: LineEnding) -> (Vec<
 
 impl TextBuffer {
     /// Create a new text buffer with the given filesystem implementation.
-    /// Note: large_file_threshold is ignored in the new implementation
-    pub fn new(_large_file_threshold: usize, fs: Arc<dyn FileSystem + Send + Sync>) -> Self {
+    /// `large_file_threshold` only caps what a save fingerprints
+    /// ([`BufferConfig::large_file_threshold`]).
+    pub fn new(large_file_threshold: usize, fs: Arc<dyn FileSystem + Send + Sync>) -> Self {
         let piece_tree = PieceTree::empty();
         let saved_root = piece_tree.root();
         let line_ending = LineEnding::default();
@@ -256,7 +264,10 @@ impl TextBuffer {
             file_kind: BufferFileKind::new(false, false),
             format: BufferFormat::new(line_ending, encoding),
             version: 0,
-            config: BufferConfig::default(),
+            config: BufferConfig {
+                large_file_threshold: Some(large_file_threshold),
+                ..BufferConfig::default()
+            },
         }
     }
 
@@ -432,10 +443,12 @@ impl TextBuffer {
     /// Create a text buffer from a string with the given filesystem.
     pub fn from_str(
         s: &str,
-        _large_file_threshold: usize,
+        large_file_threshold: usize,
         fs: Arc<dyn FileSystem + Send + Sync>,
     ) -> Self {
-        Self::from_bytes(s.as_bytes().to_vec(), fs)
+        let mut buffer = Self::from_bytes(s.as_bytes().to_vec(), fs);
+        buffer.config.large_file_threshold = Some(large_file_threshold);
+        buffer
     }
 
     /// Create an empty text buffer with the given filesystem.
@@ -519,11 +532,13 @@ impl TextBuffer {
         // Choose loading strategy based on file size. `large_file_threshold`
         // is the resolved `editor.large_file_threshold_bytes` setting, passed
         // in by the caller — the single source of truth, no local default.
-        if file_size >= large_file_threshold {
-            Self::load_large_file_internal(path, file_size, fs, false, force_text, normalize_cr)
+        let mut buffer = if file_size >= large_file_threshold {
+            Self::load_large_file_internal(path, file_size, fs, false, force_text, normalize_cr)?
         } else {
-            Self::load_small_file(path, fs, force_text, normalize_cr)
-        }
+            Self::load_small_file(path, fs, force_text, normalize_cr)?
+        };
+        buffer.config.large_file_threshold = Some(large_file_threshold);
+        Ok(buffer)
     }
 
     /// Load a text buffer from a file with a specific encoding (no auto-detection).
@@ -798,13 +813,25 @@ impl TextBuffer {
         };
 
         // What is about to be written, when every byte of it is in hand:
-        // cheaper than reading the file back to learn it (issue #3380).
-        let written = (!recipe.has_copy_ops()).then(|| {
-            SavedContent::of_chunks(recipe.actions.iter().filter_map(|action| match action {
-                save::RecipeAction::Insert { index } => Some(recipe.insert_data[*index].as_slice()),
-                save::RecipeAction::Copy { .. } => None,
-            }))
-        });
+        // cheaper than reading the file back to learn it (issue #3380). Not
+        // above the large-file threshold, where nothing compares it.
+        let written = if recipe.has_copy_ops() {
+            None
+        } else {
+            let chunks = || {
+                recipe.actions.iter().filter_map(|action| match action {
+                    save::RecipeAction::Insert { index } => {
+                        Some(recipe.insert_data[*index].as_slice())
+                    }
+                    save::RecipeAction::Copy { .. } => None,
+                })
+            };
+            let size: usize = chunks().map(<[u8]>::len).sum();
+            self.config
+                .large_file_threshold
+                .is_none_or(|threshold| size <= threshold)
+                .then(|| ContentDigest::of_chunks(chunks()))
+        };
 
         if local {
             if let Err(e) = save::save_local(&fs, dest_path, &recipe, recovery_dir) {
@@ -848,10 +875,11 @@ impl TextBuffer {
             )
     }
 
-    /// The size and hash of what the last save of this buffer wrote, or
+    /// The size and SHA-256 of what the last save of this buffer wrote, or
     /// `None` when it wrote nothing yet, or streamed part of the file from
-    /// the old one, or an external writer (sudo) did the writing.
-    pub fn saved_content(&self) -> Option<SavedContent> {
+    /// the old one, or wrote more than [`BufferConfig::large_file_threshold`],
+    /// or an external writer (sudo) did the writing.
+    pub fn saved_content(&self) -> Option<ContentDigest> {
         self.persistence.saved_content()
     }
 
