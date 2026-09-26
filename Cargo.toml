@@ -97,6 +97,10 @@ lsp-types = "0.97"
 ts-rs = { version = "12.0", features = ["serde_json", "no-serde-warnings"] }
 # Add more as needed during refactor
 
+# Fix for lsp-types
+[patch.crates-io]
+lsp-types = { git = "https://github.com/atk/lsp-types.git", branch = "fix/diagnostic-types" }
+
 # Default (dev/test) profile, tuned for build speed.
 #
 # `debug = 0` is the single biggest lever in this workspace, because the
