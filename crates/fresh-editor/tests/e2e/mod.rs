@@ -389,6 +389,7 @@ pub mod theme;
 pub mod theme_screenshots;
 pub mod toggle_bars;
 pub mod toggle_comment;
+pub mod torn_save_not_changed_on_disk;
 pub mod trust_activation_cancellable;
 pub mod undo_bulk_edit_after_save;
 pub mod undo_redo_marker_roundtrip;

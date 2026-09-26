@@ -326,6 +326,9 @@ struct WriteDeniedFileSystem {
     /// Also refuse to create files in this directory, as for a file in a
     /// directory the user may not write.
     denied_dir: Option<PathBuf>,
+    /// The elevated write runs out of space once it has written this many
+    /// bytes, as `sudo tee` does on a full disk: the file is left torn.
+    sudo_disk_full_after: Option<usize>,
 }
 
 impl WriteDeniedFileSystem {
@@ -466,7 +469,16 @@ impl FileSystem for WriteDeniedFileSystem {
         _uid: u32,
         _gid: u32,
     ) -> io::Result<()> {
-        self.inner.write_file(path, data)
+        match self.sudo_disk_full_after {
+            Some(n) => {
+                self.inner.write_file(path, &data[..n.min(data.len())])?;
+                Err(io::Error::new(
+                    io::ErrorKind::StorageFull,
+                    "No space left on device",
+                ))
+            }
+            None => self.inner.write_file(path, data),
+        }
     }
 
     fn search_file(
@@ -500,6 +512,7 @@ fn dirty_unwritable_file(config: Config) -> (EditorTestHarness, TempDir, PathBuf
         inner: Arc::new(StdFileSystem),
         denied: file_path.clone(),
         denied_dir: None,
+        sudo_disk_full_after: None,
     });
     let mut harness = EditorTestHarness::create(
         120,
@@ -737,6 +750,7 @@ fn sudo_save_temp_file_is_private() {
             inner: Arc::new(StdFileSystem),
             denied: file_path.clone(),
             denied_dir: (!dir_writable).then(|| temp_dir.path().to_path_buf()),
+            sudo_disk_full_after: None,
         });
         let mut buffer = TextBuffer::load_from_file(&file_path, 1024 * 1024, fs).unwrap();
         buffer.insert_bytes(0, b"modified ".to_vec());
@@ -861,6 +875,7 @@ fn save_and_quit_is_not_held_by_a_hidden_buffer() {
         inner: Arc::new(StdFileSystem),
         denied: hidden.clone(),
         denied_dir: None,
+        sudo_disk_full_after: None,
     });
     let mut harness = EditorTestHarness::create(
         120,
@@ -1007,5 +1022,172 @@ fn close_with_save_needing_sudo_cancelled_keeps_the_edits() {
     assert_eq!(
         std::fs::read_to_string(&file_path).unwrap(),
         "original content\n"
+    );
+}
+
+/// **A sudo save that fails part-way is not taken for a change on disk**
+/// (issue #3385). `sudo tee` truncates the file and then writes it, so
+/// running out of space part-way changes the file; nothing recorded that
+/// the change was the editor's own, so the file-change poll replaced the
+/// save's error with "changed on disk", and the quit prompt blamed an
+/// outside writer for it.
+#[test]
+fn a_sudo_save_failing_part_way_is_not_taken_for_a_change_on_disk() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("notes.txt");
+    let other = temp_dir.path().join("other.txt");
+    std::fs::write(&file_path, "original content\n").unwrap();
+    std::fs::write(&other, "other content\n").unwrap();
+    // Well in the past, so the failed write moves it whatever the
+    // filesystem's timestamp granularity.
+    std::fs::File::options()
+        .write(true)
+        .open(&file_path)
+        .unwrap()
+        .set_times(
+            std::fs::FileTimes::new()
+                .set_modified(std::time::SystemTime::now() - Duration::from_secs(600)),
+        )
+        .unwrap();
+    let fs = Arc::new(WriteDeniedFileSystem {
+        inner: Arc::new(StdFileSystem),
+        denied: file_path.clone(),
+        denied_dir: None,
+        sudo_disk_full_after: Some(3),
+    });
+    // Wide enough for the poll's "File <full path> changed on disk (...)"
+    // whole, however long the temp dir's path (macOS, Windows).
+    let path_len = file_path
+        .canonicalize()
+        .unwrap()
+        .display()
+        .to_string()
+        .len() as u16;
+    let mut harness = EditorTestHarness::create(
+        200 + path_len,
+        24,
+        HarnessOptions::new()
+            .with_config(Config::default())
+            .with_filesystem(fs)
+            .with_working_dir(temp_dir.path().to_path_buf()),
+    )
+    .unwrap();
+    // other.txt, clean and in a split of its own, reloads on screen once a
+    // file-change poll has run over both files.
+    harness.open_file(&other).unwrap();
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.type_text("Split Vertical").unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.open_file(&file_path).unwrap();
+    harness.type_text("modified ").unwrap();
+    harness.render().unwrap();
+
+    harness
+        .send_key(KeyCode::Char('s'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("Save with sudo");
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    assert!(harness.get_status_bar().contains("Sudo save failed"));
+    assert_eq!(std::fs::read_to_string(&file_path).unwrap(), "mod");
+
+    std::fs::write(&other, "reloaded\n").unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("reloaded"))
+        .unwrap();
+    let status = harness.get_status_bar();
+    assert!(
+        status.contains("Sudo save failed") && !status.contains("changed on disk"),
+        "the poll must leave the save's error alone; status was {status:?}"
+    );
+
+    harness
+        .send_key(KeyCode::Char('q'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("[ Save and Quit ]");
+    harness.assert_screen_contains("unsaved changes");
+    harness.assert_screen_not_contains("changed on disk");
+}
+
+/// **A retry after a large file's sudo save failed part-way is refused**
+/// (issue #3382). A large file's save reads the parts it never loaded back
+/// from the file, at the offsets they had when it was loaded. A sudo save
+/// that runs out of space part-way leaves that file torn, and nothing on
+/// disk says so (the staged copy became the sudo temp file, and its
+/// metadata went with it); the next Ctrl+S read shifted bytes from the torn
+/// file and offered to write them out as a "complete" file.
+#[test]
+fn a_retry_after_a_large_files_sudo_save_failed_part_way_is_refused() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("big.txt");
+    // Several load chunks, so the parts off screen are never loaded.
+    let original: String = (0..250_000).map(|i| format!("Line {i:07}\n")).collect();
+    std::fs::write(&file_path, &original).unwrap();
+    let fs = Arc::new(WriteDeniedFileSystem {
+        inner: Arc::new(StdFileSystem),
+        denied: file_path.clone(),
+        denied_dir: None,
+        // Longer than the original, so every part a retry reads back from
+        // the torn file is still there to read.
+        sudo_disk_full_after: Some(original.len() + 3),
+    });
+    let mut config = Config::default();
+    config.editor.large_file_threshold_bytes = 1024;
+    // Wide enough for the whole refusal, which names the file's full path.
+    let path_len = file_path
+        .canonicalize()
+        .unwrap()
+        .display()
+        .to_string()
+        .len() as u16;
+    let mut harness = EditorTestHarness::create(
+        400 + path_len,
+        24,
+        HarnessOptions::new()
+            .with_config(config)
+            .with_filesystem(fs)
+            .with_working_dir(temp_dir.path().to_path_buf()),
+    )
+    .unwrap();
+    harness.open_file(&file_path).unwrap();
+    harness.type_text("EDITED ").unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("EDITED Line 0000000");
+
+    harness
+        .send_key(KeyCode::Char('s'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("Save with sudo");
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    assert!(harness.get_status_bar().contains("Sudo save failed"));
+    let torn = std::fs::read(&file_path).unwrap();
+    assert_eq!(torn.len(), original.len() + 3);
+
+    harness
+        .send_key(KeyCode::Char('s'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    harness.assert_screen_not_contains("Save with sudo");
+    harness.assert_screen_contains("failed part-way");
+    harness.assert_screen_contains("Review Interrupted Saves");
+    harness.assert_screen_contains("Revert File");
+    assert_eq!(
+        std::fs::read(&file_path).unwrap(),
+        torn,
+        "nothing more is written"
     );
 }

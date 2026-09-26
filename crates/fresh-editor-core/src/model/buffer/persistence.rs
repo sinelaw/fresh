@@ -16,6 +16,7 @@ use crate::model::piece_tree::{BufferLocation, LeafData, PieceTree, PieceTreeNod
 use crate::model::piece_tree_diff::PieceTreeDiff;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::SystemTime;
 
 /// The size and hash of the bytes a save wrote, to tell later whether a
 /// file still holds them without keeping them (issue #3380). The hash is
@@ -86,6 +87,13 @@ pub struct Persistence {
     /// buffer at what it wrote, and clears it.
     source_torn: bool,
 
+    /// The file this buffer's last in-place save tore (`save::TornWrite`),
+    /// whatever file its unloaded parts are read from, and the mtime that
+    /// write left on it. The file's mtime moved, but by this buffer's own
+    /// write, not someone else's: while it still reads this, the file has
+    /// not changed on disk since. A save that succeeds clears it.
+    torn_write: Option<(PathBuf, SystemTime)>,
+
     /// What the last save wrote, when this buffer had every byte of it in
     /// hand (no Copy ops streamed from the old file). See
     /// [`TextBuffer::saved_content`](super::TextBuffer::saved_content).
@@ -126,6 +134,7 @@ impl Persistence {
             saved_root,
             saved_file_size,
             source_torn: false,
+            torn_write: None,
             saved_content: None,
             save_state_version: 0,
             saved_diff_memo: std::sync::RwLock::new(None),
@@ -215,6 +224,16 @@ impl Persistence {
 
     pub fn set_source_torn(&mut self, torn: bool) {
         self.source_torn = torn;
+    }
+
+    pub fn torn_write(&self) -> Option<(&Path, SystemTime)> {
+        self.torn_write
+            .as_ref()
+            .map(|(path, mtime)| (path.as_path(), *mtime))
+    }
+
+    pub fn set_torn_write(&mut self, torn_write: Option<(PathBuf, SystemTime)>) {
+        self.torn_write = torn_write;
     }
 
     pub fn saved_content(&self) -> Option<SavedContent> {

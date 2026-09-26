@@ -50,13 +50,38 @@ impl crate::app::window::Window {
     /// can carry an *older* timestamp (`cp -p`, `rsync -t`, `tar x`, `mv` of
     /// an older file) and is still someone else's content (issue #3346) —
     /// unless the file still holds exactly what this window saved there
-    /// ([`Self::holds_what_was_saved`]), when only the timestamp moved.
+    /// ([`Self::holds_what_was_saved`]), when only the timestamp moved; or
+    /// the mtime is the one this window's own save left when it failed
+    /// part-way through writing the file in place
+    /// ([`Self::torn_by_own_write`]), which changed the file but is no
+    /// one else's change.
     pub(crate) fn changed_on_disk(&self, path: &Path) -> Option<std::time::SystemTime> {
         let metadata = self.authority().filesystem.metadata(path).ok()?;
         let current_mtime = metadata.modified?;
         let recorded_mtime = self.file_mod_times.get(path)?;
-        (current_mtime != *recorded_mtime && !self.holds_what_was_saved(path, metadata.size))
-            .then_some(current_mtime)
+        (current_mtime != *recorded_mtime
+            && !self.torn_by_own_write(path, current_mtime)
+            && !self.holds_what_was_saved(path, metadata.size))
+        .then_some(current_mtime)
+    }
+
+    /// Whether `path` was last written by a save of one of this window's
+    /// buffers that failed part-way through writing it in place
+    /// ([`TextBuffer::torn_write`]), and hasn't changed since: its mtime is
+    /// still `mtime`, the one that write left.
+    ///
+    /// No mtime is recorded for a failed save, so without this the file's
+    /// own torn write reads as someone else's change: the poll's "changed
+    /// on disk" replaced the save's error, Ctrl+S asked about overwriting
+    /// it, and the quit prompt blamed an outside writer. A later change by
+    /// anyone else moves the mtime on, and counts again.
+    ///
+    /// [`TextBuffer::torn_write`]: crate::model::buffer::TextBuffer::torn_write
+    pub(crate) fn torn_by_own_write(&self, path: &Path, mtime: std::time::SystemTime) -> bool {
+        self.buffers
+            .as_map()
+            .values()
+            .any(|state| state.buffer.torn_write() == Some((path, mtime)))
     }
 
     /// Whether `path`, whose mtime no longer matches the one recorded,
@@ -1568,8 +1593,14 @@ impl Editor {
             if stored_mtime == Some(current_mtime) {
                 continue;
             }
-            // ...but not a timestamp that moved over the very bytes we
-            // saved: a network filesystem's clock skew (issue #3380).
+            // ...but not the mark of our own save that failed part-way
+            // through writing it in place: the save's error, left in the
+            // status bar, says what happened to the file.
+            if self.active_window().torn_by_own_write(&path, current_mtime) {
+                continue;
+            }
+            // Nor a timestamp that moved over the very bytes we saved: a
+            // network filesystem's clock skew (issue #3380).
             let size = self
                 .authority()
                 .filesystem
