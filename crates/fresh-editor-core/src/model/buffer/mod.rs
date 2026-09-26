@@ -283,6 +283,12 @@ impl TextBuffer {
         buffer
     }
 
+    /// Set [`BufferConfig::large_file_threshold`], for a buffer built by a
+    /// constructor that isn't given it (`from_bytes`) that may be saved.
+    pub fn set_large_file_threshold(&mut self, large_file_threshold: usize) {
+        self.config.large_file_threshold = Some(large_file_threshold);
+    }
+
     /// Associate this buffer with `path` (title, dedup, save target). Used when
     /// building a buffer from in-memory bytes that logically belongs to a file
     /// — e.g. filling a restored remote placeholder with content read off-loop.
@@ -601,12 +607,15 @@ impl TextBuffer {
     /// non-resynchronizable encodings requiring full file loading.
     pub fn load_large_file_confirmed(
         path: impl AsRef<Path>,
+        large_file_threshold: usize,
         fs: Arc<dyn FileSystem + Send + Sync>,
     ) -> anyhow::Result<Self> {
         let path = path.as_ref();
         let metadata = fs.metadata(path)?;
         let file_size = metadata.size as usize;
-        Self::load_large_file_internal(path, file_size, fs, true, false, true)
+        let mut buffer = Self::load_large_file_internal(path, file_size, fs, true, false, true)?;
+        buffer.config.large_file_threshold = Some(large_file_threshold);
+        Ok(buffer)
     }
 
     /// Internal implementation for loading large files.
@@ -904,7 +913,7 @@ impl TextBuffer {
     }
 
     /// Forget [`Self::saved_content`], once the file is known to hold
-    /// something else, so nothing reads the file again to compare.
+    /// something else, so nothing hashes the file again to compare.
     pub fn forget_saved_content(&mut self) {
         self.persistence.set_saved_content(None);
     }

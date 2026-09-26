@@ -550,6 +550,7 @@ impl Editor {
         // Load buffer with forced full loading (bypasses the large file encoding check)
         let buffer = crate::model::buffer::Buffer::load_large_file_confirmed(
             path,
+            self.config.editor.large_file_threshold_bytes as usize,
             Arc::clone(&self.authority().filesystem),
         )?;
         let first_line = buffer.first_line_lossy();

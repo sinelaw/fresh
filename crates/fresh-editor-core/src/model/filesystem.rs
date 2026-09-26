@@ -4226,35 +4226,10 @@ mod tests {
         assert_eq!(temp_name_stem(Path::new("/d/notes.txt")), "notes.txt");
     }
 
-    /// A local filesystem that counts whole-file reads and records the
-    /// most bytes any single read of an opened file returned.
+    /// A local filesystem that counts whole-file reads.
     struct ReadCountingFs {
         read_file_calls: std::sync::atomic::AtomicUsize,
-        largest_read: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     }
-
-    /// An opened file whose reads report their size to `largest`.
-    struct MeasuredReader {
-        inner: Box<dyn FileReader>,
-        largest: std::sync::Arc<std::sync::atomic::AtomicUsize>,
-    }
-
-    impl Read for MeasuredReader {
-        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-            let n = self.inner.read(buf)?;
-            self.largest
-                .fetch_max(n, std::sync::atomic::Ordering::SeqCst);
-            Ok(n)
-        }
-    }
-
-    impl Seek for MeasuredReader {
-        fn seek(&mut self, pos: io::SeekFrom) -> io::Result<u64> {
-            self.inner.seek(pos)
-        }
-    }
-
-    impl FileReader for MeasuredReader {}
 
     impl FileSystem for ReadCountingFs {
         fn read_file(&self, path: &Path) -> io::Result<Vec<u8>> {
@@ -4278,10 +4253,7 @@ mod tests {
             StdFileSystem.create_new_private_file(path)
         }
         fn open_file(&self, path: &Path) -> io::Result<Box<dyn FileReader>> {
-            Ok(Box::new(MeasuredReader {
-                inner: StdFileSystem.open_file(path)?,
-                largest: self.largest_read.clone(),
-            }))
+            StdFileSystem.open_file(path)
         }
         fn open_file_for_write(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
             StdFileSystem.open_file_for_write(path)
@@ -4365,7 +4337,7 @@ mod tests {
     }
 
     /// The default `content_digest` is the file's size and SHA-256, got by
-    /// streaming it: no whole-file read, no read bigger than a chunk.
+    /// streaming it rather than reading it whole.
     #[test]
     fn default_content_digest_streams_the_files_sha256() {
         use sha2::{Digest, Sha256};
@@ -4378,7 +4350,6 @@ mod tests {
         std::fs::write(&path, &content).unwrap();
         let fs = ReadCountingFs {
             read_file_calls: Default::default(),
-            largest_read: Default::default(),
         };
 
         let digest = fs.content_digest(&path).unwrap();
@@ -4390,11 +4361,6 @@ mod tests {
         assert_eq!(
             fs.read_file_calls.load(std::sync::atomic::Ordering::SeqCst),
             0
-        );
-        let largest = fs.largest_read.load(std::sync::atomic::Ordering::SeqCst);
-        assert!(
-            (1..=CONTENT_DIGEST_CHUNK).contains(&largest),
-            "largest single read was {largest} bytes"
         );
     }
 

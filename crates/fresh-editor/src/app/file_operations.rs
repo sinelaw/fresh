@@ -95,7 +95,7 @@ impl crate::app::window::Window {
     /// lives ([`FileSystem::content_digest`] — on a remote host, by the
     /// agent, so the file isn't downloaded), compared with the digest of
     /// what the save wrote ([`TextBuffer::saved_content`]). Only for a
-    /// buffer this window saved itself, below the large-file threshold, and
+    /// buffer this window saved itself, at or below the large-file threshold, and
     /// only when the size matches, so a real change almost never costs a
     /// hash; and a mismatch is remembered ([`Self::forget_saved_content`]),
     /// so it costs one at most. A revert or reload makes a new buffer, which

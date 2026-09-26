@@ -1931,6 +1931,7 @@ impl crate::app::window::Window {
             Some(bytes) => {
                 let mut b = crate::model::buffer::Buffer::from_bytes(bytes, fs);
                 b.set_file_path(path.to_path_buf());
+                b.set_large_file_threshold(threshold);
                 b
             }
             None => crate::model::buffer::Buffer::new_with_path(threshold, fs, path.to_path_buf()),

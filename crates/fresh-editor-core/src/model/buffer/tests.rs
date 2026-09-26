@@ -1572,12 +1572,36 @@ fn test_save_fingerprints_only_up_to_the_large_file_threshold() {
     assert_eq!(std::fs::read(&file_path).unwrap().len(), 17);
     assert_eq!(buffer.saved_content(), None);
 
-    // Loaded under the threshold, saved over it.
+    // Loaded under the threshold: fingerprinted up to it, not over it.
     let mut buffer = TextBuffer::load_from_file(&file_path, 20, test_fs()).unwrap();
-    buffer.insert(0, "more");
+    buffer.insert(0, "mo");
+    buffer.save(&recovery_dir).unwrap();
+    assert_eq!(std::fs::read(&file_path).unwrap().len(), 19);
+    assert!(buffer.saved_content().is_some());
+    buffer.insert(0, "re");
     buffer.save(&recovery_dir).unwrap();
     assert_eq!(std::fs::read(&file_path).unwrap().len(), 21);
     assert_eq!(buffer.saved_content(), None);
+}
+
+/// A buffer built from bytes (a restored workspace file) is capped the same
+/// way once given the threshold, and so is one loaded whole past the
+/// large-file check (a non-resynchronizable encoding).
+#[test]
+fn test_threshold_given_after_construction_caps_the_fingerprint() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let recovery_dir = temp_dir.path().join("recovery");
+    let file_path = temp_dir.path().join("notes.txt");
+
+    let mut buffer = TextBuffer::from_bytes(b"ten bytes\n".to_vec(), test_fs());
+    buffer.set_file_path(file_path.clone());
+    buffer.set_large_file_threshold(9);
+    buffer.insert(0, "+");
+    buffer.save(&recovery_dir).unwrap();
+    assert_eq!(buffer.saved_content(), None);
+
+    let buffer = TextBuffer::load_large_file_confirmed(&file_path, 9, test_fs()).unwrap();
+    assert_eq!(buffer.config.large_file_threshold, Some(9));
 }
 
 // ===== Line Ending Conversion Tests =====

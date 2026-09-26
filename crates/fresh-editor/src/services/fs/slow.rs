@@ -176,7 +176,7 @@ impl FileSystem for SlowFileSystem {
 
     fn content_digest(&self, path: &Path) -> io::Result<ContentDigest> {
         self.add_delay(self.config.read_file_delay);
-        self.metrics.read_file_calls.fetch_add(1, Ordering::SeqCst);
+        self.metrics.other_calls.fetch_add(1, Ordering::SeqCst);
         self.inner.content_digest(path)
     }
 
