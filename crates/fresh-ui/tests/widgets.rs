@@ -593,6 +593,66 @@ fn a_million_row_list_does_a_screenful_of_work_per_frame() {
 
 // -- Tree --------------------------------------------------------------------
 
+/// **A windowed tree builds its window, over the owner's projection.** Ten
+/// folders of a hundred files each, all open, flattened by the owner; the
+/// tree asks for the rows on screen and nothing else, and pins the folder the
+/// run's first file is in above it.
+#[test]
+fn a_windowed_tree_builds_its_window_and_pins_the_folder_it_is_in() {
+    use fresh_ui::widgets::TreeRow;
+    use std::cell::Cell;
+    // Visible index i: folder when i % 101 == 0, else a file in it.
+    let built = Rc::new(Cell::new(0usize));
+    let tree = |built: Rc<Cell<usize>>| -> Node<Msg> {
+        fresh_ui::Tree::windowed(
+            1010,
+            |i| fresh_ui::Key::from(i),
+            |i| TreeRow {
+                depth: usize::from(i % 101 != 0),
+                has_children: i % 101 == 0,
+                open: true,
+            },
+            move |i, row, _| {
+                built.set(built.get() + 1);
+                let name = match row.has_children {
+                    true => format!("dir {}", i / 101),
+                    false => format!("  file {}.{}", i / 101, i % 101),
+                };
+                fresh_ui::text(name)
+            },
+        )
+        .sticky(3, |i| (i % 101 != 0).then_some(i / 101 * 101))
+        .list()
+        .focusable(false)
+        .node()
+    };
+    let mut ui: Ui<Msg> = Ui::new();
+    let screen = support::screen::render(ui.frame(tree(built.clone()), FRAME)).text();
+    assert!(screen.starts_with("dir 0"), "{screen}");
+    assert!(
+        built.get() < 40,
+        "built {} rows for a ten-row window",
+        built.get()
+    );
+
+    // Into folder 3: its header stays above the run.
+    ui.dispatch(Input::Wheel {
+        pos: Point::new(1, 1),
+        delta: 350,
+        axis: Axis::Vertical,
+        mods: Mods::NONE,
+    });
+    let screen = support::screen::render(ui.frame(tree(built.clone()), FRAME)).text();
+    let first = screen
+        .lines()
+        .next()
+        .unwrap_or_default()
+        .trim_end()
+        .to_string();
+    assert_eq!(first, "dir 3", "{screen}");
+    assert!(screen.contains("file 3."), "{screen}");
+}
+
 #[test]
 fn a_tree_expands_and_collapses_on_click() {
     let mut ui: Ui<Msg> = Ui::new();
@@ -1728,13 +1788,15 @@ fn a_reveal_in_a_pinned_list_counts_only_the_run() {
 #[test]
 fn pins_that_depend_on_the_offset_are_asked_at_layout() {
     let list = || -> Node<Msg> {
-        List::windowed(100, fresh_ui::Key::from, |i| fresh_ui::text(format!("row {i:02}")))
-            .focusable(false)
-            .pinned_at(|first| match first % 10 {
-                0 => Rc::from(Vec::new()),
-                _ => Rc::from(vec![first / 10 * 10]),
-            })
-            .node()
+        List::windowed(100, fresh_ui::Key::from, |i| {
+            fresh_ui::text(format!("row {i:02}"))
+        })
+        .focusable(false)
+        .pinned_at(|first| match first % 10 {
+            0 => Rc::from(Vec::new()),
+            _ => Rc::from(vec![first / 10 * 10]),
+        })
+        .node()
     };
     let mut ui: Ui<Msg> = Ui::new();
     let screen = support::screen::render(ui.frame(list(), FRAME)).text();
@@ -1748,7 +1810,11 @@ fn pins_that_depend_on_the_offset_are_asked_at_layout() {
         mods: Mods::NONE,
     });
     let screen = support::screen::render(ui.frame(list(), FRAME)).text();
-    let rows: Vec<&str> = screen.lines().map(str::trim_end).filter(|l| !l.is_empty()).collect();
+    let rows: Vec<&str> = screen
+        .lines()
+        .map(str::trim_end)
+        .filter(|l| !l.is_empty())
+        .collect();
     assert_eq!(rows.first(), Some(&"row 90"), "{screen}");
     assert_eq!(rows.last(), Some(&"row 99"), "{screen}");
     assert_eq!(rows.len(), FRAME.h as usize, "{screen}");

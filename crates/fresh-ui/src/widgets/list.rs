@@ -1174,6 +1174,124 @@ impl<M: 'static> Component<M> for Tree<M> {
     }
 }
 
+/// What the owner's projection says about the node at a visible index. The
+/// tree is the owner's — the nodes, their order and which are open — and the
+/// projection is its flattened, visible order; this is one row of it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TreeRow {
+    /// How deep the node is: 0 for a root.
+    pub depth: usize,
+    pub has_children: bool,
+    /// Whether the owner has it expanded. Expansion is the owner's fact; the
+    /// tree only reads it.
+    pub open: bool,
+}
+
+/// One row's builder in a [`WindowedTree`]: the visible index, what the
+/// projection says about it, and the row's state.
+pub type TreeRowOf<M> = Rc<dyn Fn(usize, TreeRow, RowState) -> Node<M>>;
+
+/// A **windowed, controlled** tree over the owner's projection.
+///
+/// The owner holds the tree and its expansion, and flattens the visible
+/// nodes into an order it can index; this takes that projection — a count,
+/// and per index a key, a [`TreeRow`] and a row — and does what the window
+/// needs done: builds only the rows on screen, keyed by what they are, and,
+/// with [`WindowedTree::sticky`], pins the expanded ancestors of the run's
+/// first row above it, asked at layout where the offset is known.
+///
+/// Everything a [`List`] does it does as one — selection, paging, scrolling
+/// — because it is one: [`WindowedTree::list`] hands it over. Nothing here
+/// holds the tree or its expansion; a toggle is the owner's to make and the
+/// row's to offer (the row knows where its disclosure is drawn).
+pub struct WindowedTree<M> {
+    count: usize,
+    key: RowKeyOf,
+    node: Rc<dyn Fn(usize) -> TreeRow>,
+    row: TreeRowOf<M>,
+    sticky: Option<(usize, ParentOf)>,
+}
+
+/// A visible node's parent, by visible index.
+type ParentOf = Rc<dyn Fn(usize) -> Option<usize>>;
+
+/// A row's key by index.
+type RowKeyOf = Rc<dyn Fn(usize) -> Key>;
+
+impl<M: 'static> WindowedTree<M> {
+    /// Pin the expanded ancestors of the window's first row above the run,
+    /// at most `max` of them — the innermost, when a path is deeper than
+    /// that, because a file's own folder says more than the workspace root.
+    /// `parent` names a visible node's parent by visible index: the owner's
+    /// tree knows it directly, where walking the projection back would not.
+    pub fn sticky(mut self, max: usize, parent: impl Fn(usize) -> Option<usize> + 'static) -> Self {
+        self.sticky = Some((max, Rc::new(parent)));
+        self
+    }
+
+    /// The tree as the list it windows.
+    pub fn list(self) -> List<M> {
+        let WindowedTree {
+            count,
+            key,
+            node,
+            row,
+            sticky,
+        } = self;
+        let rows = {
+            let node = node.clone();
+            move |i: usize, st: RowState| row(i, node(i), st)
+        };
+        let list = List::windowed_stateful(count, move |i| key(i), rows);
+        match sticky {
+            None => list,
+            Some((max, parent)) => {
+                list.pinned_at(move |first| sticky_ancestors(&*parent, first, max))
+            }
+        }
+    }
+}
+
+/// The expanded ancestors of `first`, outermost first, at most `max` of the
+/// innermost. None at the top of the tree: nothing is scrolled away there
+/// that a header would stand for.
+fn sticky_ancestors(
+    parent: &dyn Fn(usize) -> Option<usize>,
+    first: usize,
+    max: usize,
+) -> Rc<[usize]> {
+    if first == 0 || max == 0 {
+        return Rc::from(Vec::new());
+    }
+    let mut out = Vec::new();
+    let mut at = parent(first);
+    while let Some(p) = at.filter(|&p| p < first) {
+        out.push(p);
+        at = parent(p);
+    }
+    out.truncate(max);
+    out.reverse();
+    Rc::from(out)
+}
+
+impl<M: 'static> Tree<M> {
+    /// A windowed tree over the owner's projection. See [`WindowedTree`].
+    pub fn windowed(
+        count: usize,
+        key: impl Fn(usize) -> Key + 'static,
+        node: impl Fn(usize) -> TreeRow + 'static,
+        row: impl Fn(usize, TreeRow, RowState) -> Node<M> + 'static,
+    ) -> WindowedTree<M> {
+        WindowedTree {
+            count,
+            key: Rc::new(key),
+            node: Rc::new(node),
+            row: Rc::new(row),
+            sticky: None,
+        }
+    }
+}
+
 fn flatten<M>(
     nodes: &[TreeNode<M>],
     depth: usize,

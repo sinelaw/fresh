@@ -1148,18 +1148,24 @@ fn tree_rows_plain(p: &TreeRows) -> Node<UiMsg> {
     // them. See [`TreeTable`].
     let table = TreeTable::of(columns, &nodes, indent, checkable);
     // One row, at the width it is laid out at: the node, its index,
-    // its state, and the width.
+    // whether the projection has it open, its state, and the width.
     type BuildRow = Rc<
-        dyn Fn(&fresh_core::api::TreeNode, usize, fresh_ui::widgets::RowState, u16) -> Node<UiMsg>,
+        dyn Fn(
+            &fresh_core::api::TreeNode,
+            usize,
+            bool,
+            fresh_ui::widgets::RowState,
+            u16,
+        ) -> Node<UiMsg>,
     >;
     let build_row: BuildRow = {
         let keys = keys.clone();
         let tree_key = tree_key.clone();
-        let expanded = expanded.clone();
         let table = table.clone();
         Rc::new(
             move |node: &fresh_core::api::TreeNode,
                   abs: usize,
+                  open: bool,
                   st: fresh_ui::widgets::RowState,
                   width: u16|
                   -> Node<UiMsg> {
@@ -1167,7 +1173,6 @@ fn tree_rows_plain(p: &TreeRows) -> Node<UiMsg> {
                 let mut node = node.clone();
                 node.text.normalize_widths();
                 let item_key = keys[abs].clone();
-                let open = node.has_children && expanded.contains(&item_key);
                 let table = table.as_ref().filter(|_| !node.cells.is_empty());
                 let r = match table {
                     // A cell row's body is its cells, which are nodes
@@ -1286,23 +1291,39 @@ fn tree_rows_plain(p: &TreeRows) -> Node<UiMsg> {
             },
         )
     };
+    // **The projection is the tree's one statement of each row**: which
+    // node, its depth, whether it has children and whether the resolved
+    // expansion has it open. The window asks it for the rows on screen.
     let row_at = {
         let (nodes, visible) = (nodes.clone(), visible.clone());
         let build_row = build_row.clone();
-        move |i: usize, st: fresh_ui::widgets::RowState| -> Node<UiMsg> {
+        move |i: usize, row: fresh_ui::widgets::TreeRow, st: fresh_ui::widgets::RowState| {
             let abs = visible[i];
             collection_stats::note_row();
-            build_row(&nodes[abs], abs, st, width)
+            build_row(&nodes[abs], abs, row.open, st, width)
         }
     };
-    let list = fresh_ui::List::windowed_stateful(
+    let list = fresh_ui::Tree::windowed(
         n,
         {
             let (keys, visible) = (keys.clone(), visible.clone());
             move |i| fresh_ui::Key::Str(keys[visible[i]].clone().into())
         },
+        {
+            let (nodes, keys, visible) = (nodes.clone(), keys.clone(), visible.clone());
+            move |i| {
+                let abs = visible[i];
+                let node = &nodes[abs];
+                fresh_ui::widgets::TreeRow {
+                    depth: node.depth as usize,
+                    has_children: node.has_children,
+                    open: node.has_children && expanded.contains(&keys[abs]),
+                }
+            }
+        },
         row_at,
     )
+    .list()
     .focusable(false)
     .scrollbar_when(p.reveal)
     .scrollbar_theme(bar_ink())
