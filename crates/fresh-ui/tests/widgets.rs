@@ -274,6 +274,39 @@ fn a_list_moves_its_selection_and_activates_it() {
     assert_eq!(key(&mut ui, KeyCode::Home), vec![Msg::Selected(0)]);
 }
 
+/// A page is the window layout gave the list, in items: ten rows in a
+/// ten-row frame. The owner's pager answers the same number the list's own
+/// PageDown moves by, and a page past either end stops at it.
+#[test]
+fn a_page_is_the_height_layout_gave_the_list() {
+    let pager = fresh_ui::behavior::Pager::new();
+    let list = |sel: usize| -> Node<Msg> {
+        List::windowed(100, fresh_ui::Key::from, |i| {
+            fresh_ui::text(format!("row {i}"))
+        })
+        .selected(sel)
+        .on_select(Msg::Selected)
+        .pager(pager.clone())
+        .node()
+    };
+    assert_eq!(pager.target(0, 1, 100), None, "not laid out: no page yet");
+
+    let mut ui: Ui<Msg> = Ui::new();
+    ui.frame(list(0), FRAME);
+    assert_eq!(pager.target(0, 1, 100), Some(FRAME.h as usize));
+    assert_eq!(pager.target(95, 1, 100), Some(99));
+    assert_eq!(pager.target(3, -1, 100), Some(0));
+
+    key(&mut ui, KeyCode::Tab);
+    assert_eq!(key(&mut ui, KeyCode::PageDown), vec![Msg::Selected(10)]);
+    ui.frame(list(10), FRAME);
+    assert_eq!(key(&mut ui, KeyCode::PageUp), vec![Msg::Selected(0)]);
+
+    // A shorter frame is a shorter page, on the next layout.
+    ui.frame(list(10), Size { w: 30, h: 4 });
+    assert_eq!(pager.target(10, 1, 100), Some(14));
+}
+
 #[test]
 fn the_selected_row_is_marked_in_the_display_list() {
     let mut ui: Ui<Msg> = Ui::new();

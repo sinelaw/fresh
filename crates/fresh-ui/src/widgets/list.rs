@@ -55,6 +55,9 @@ pub struct ListState {
     /// The `(selection, token)` a standing follow was last armed for — see
     /// [`List::follow_selection`].
     pub(crate) followed: crate::behavior::Cache<(usize, u64), ()>,
+    /// The list's own page handle, for its PageUp/PageDown when the owner
+    /// passed none.
+    pub(crate) pager: Rc<crate::behavior::Pager>,
 }
 
 /// Which click in a run activates a row.
@@ -319,6 +322,9 @@ pub struct List<M> {
     /// Keep the selection in the window on every layout, re-armed whenever
     /// the selection or this token changes. See [`List::follow_selection`].
     follow: Option<u64>,
+    /// The owner's page handle, when it pages the list from its own keys.
+    /// See [`List::pager`].
+    pager: Option<Rc<crate::behavior::Pager>>,
 }
 
 impl<M: 'static> List<M> {
@@ -445,6 +451,7 @@ impl<M: 'static> List<M> {
             row_theme: None,
             row_height: RowHeight::default(),
             follow: None,
+            pager: None,
         }
     }
 
@@ -481,6 +488,18 @@ impl<M: 'static> List<M> {
     /// the caret moves (its byte, say). A `None` selection stops following.
     pub fn follow_selection(mut self, token: u64) -> Self {
         self.follow = Some(token);
+        self
+    }
+
+    /// Record this list's window in `pager`, so its owner can ask where a
+    /// page from the selection lands ([`Pager::target`]). For an owner whose
+    /// own keymap resolves the page keys: the key stays the owner's, and the
+    /// page is the height layout gave the list. A focusable list pages itself
+    /// on PageUp/PageDown by the same number either way.
+    ///
+    /// [`Pager::target`]: crate::behavior::Pager::target
+    pub fn pager(mut self, pager: Rc<crate::behavior::Pager>) -> Self {
+        self.pager = Some(pager);
         self
     }
 
@@ -802,6 +821,8 @@ impl<M: 'static> Component<M> for List<M> {
         let measured = self.row_height == RowHeight::UniformMeasured;
         let declared = self.row_height.declared();
         let pinned = self.pinned.clone();
+        let pager = self.pager.clone().unwrap_or_else(|| s.pager.clone());
+        let recorder = pager.clone();
         let reader = layout_reader(move |info| {
             let measuring = info.band == Some(Band::Measuring);
             let row_rows = match info.band {
@@ -815,6 +836,10 @@ impl<M: 'static> Component<M> for List<M> {
             // when they would have taken the whole window.
             let win = info.scroll_window.unwrap_or_default();
             let visible = (win.h as usize).max(1);
+            // The page is the window this layout placed, in items.
+            if info.scroll_window.is_some() && !measuring {
+                recorder.record(visible);
+            }
             let first = (win.y.max(0) as usize).min(n);
             let last = (first + visible + OVERSCAN).min(n);
             let pins = (info.pinned as usize).min(pinned.len());
@@ -981,6 +1006,22 @@ impl<M: 'static> Component<M> for List<M> {
                 let (up, a, f) = (up.clone(), anchor.clone(), self.on_select.clone());
                 let select = select.clone();
                 Rc::new(move |_: &Event| select(sel.map_or(0, |s| (s + 1).min(last)), &up, &a, &f))
+            })
+            .action_handler(Intent::PageUp, {
+                let (up, a, f) = (up.clone(), anchor.clone(), self.on_select.clone());
+                let (select, pager) = (select.clone(), pager.clone());
+                Rc::new(move |_: &Event| {
+                    let to = pager.target(sel.unwrap_or(0), -1, n)?;
+                    select(to, &up, &a, &f)
+                })
+            })
+            .action_handler(Intent::PageDown, {
+                let (up, a, f) = (up.clone(), anchor.clone(), self.on_select.clone());
+                let (select, pager) = (select.clone(), pager.clone());
+                Rc::new(move |_: &Event| {
+                    let to = pager.target(sel.unwrap_or(0), 1, n)?;
+                    select(to, &up, &a, &f)
+                })
             })
             .action_handler(Intent::Home, {
                 let (up, a, f) = (up.clone(), anchor.clone(), self.on_select.clone());

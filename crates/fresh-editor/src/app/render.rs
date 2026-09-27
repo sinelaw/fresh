@@ -2731,6 +2731,7 @@ impl Editor {
                 })
                 .collect(),
             selected: e.selected(),
+            pager: e.pager.clone(),
         })
     }
 
@@ -4416,33 +4417,6 @@ impl Editor {
         // It was `apply_dimming` over the frame and four `Paragraph`s into
         // three rectangles it split by hand; it is `Scrim::Dim` and a column
         // now (`view::shell::calibration`). Nothing paints here.
-
-        // Event-debug: the web renders it natively from `aux_modals_view`; paint
-        // cells only for the TUI.
-        let draw_aux = !self.suppress_chrome_cells;
-
-        // The keybinding editor is the tree's — box, chrome, table and dialogs
-        // (`view::shell::keybinding`). What is left here is the one thing the
-        // description cannot say for itself: how many rows a `PgUp` moves by,
-        // which is the box's height less the bands around the rows.
-        if draw_aux {
-            // **The box is the tree's.** `view::shell::keybinding` places it —
-            // ninety percent of the chrome area, capped, floored, centred
-            // beside the dock — and this reads the answer. The four lines of
-            // arithmetic that computed it here and then filed it in a
-            // `KeybindingEditorLayout` for a mouse handler to compare
-            // against were the same rectangle stated twice.
-            let modal_area = self.panel_rect(&crate::view::shell::keybinding::key());
-            // The page a `PgUp` moves by. It was the table rectangle's height,
-            // filed by the painter as it drew; the box is the tree's and the
-            // bands between it and the rows are one statement in
-            // `keybinding::table_rows`, so the page and the window the rows
-            // fill cannot disagree.
-            if let (Some(r), Some(e)) = (modal_area, self.keybinding_editor.as_mut()) {
-                e.scroll
-                    .set_viewport(crate::view::shell::keybinding::table_rows(r.height));
-            }
-        }
 
         // The event-debug dialog is the tree's, box and contents alike
         // (`view::shell::event_debug`) — the calibration wizard's twin, and
