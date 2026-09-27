@@ -68,7 +68,7 @@ editor.setStatus("buffer-plugin loaded ok");
     let screen = harness.screen_to_string();
     assert!(
         screen.contains("buffer-plugin loaded ok")
-            || screen.contains("Plugin 'my_plugin.ts' loaded from buffer"),
+            || screen.contains("Plugin 'my_plugin' loaded from my_plugin.ts"),
         "Expected plugin load success message. Screen:\n{}",
         screen
     );
@@ -255,4 +255,70 @@ editor.setStatus("v2 loaded");
         count,
         screen
     );
+}
+
+/// A saved plugin file is loaded from disk, so its relative imports are
+/// bundled (loading the buffer text alone left them undefined).
+#[test]
+fn test_load_plugin_from_buffer_bundles_imports() {
+    init_tracing_from_env();
+
+    let mut harness = EditorTestHarness::with_temp_project(200, 30).unwrap();
+    let project_dir = harness.project_dir().unwrap();
+    std::fs::create_dir_all(project_dir.join("lib")).unwrap();
+    std::fs::write(
+        project_dir.join("lib").join("names.ts"),
+        "export const COMMAND_NAME = \"Imported Kiwi Command\";\n",
+    )
+    .unwrap();
+    let plugin_file = project_dir.join("importer.ts");
+    std::fs::write(
+        &plugin_file,
+        r#"import { COMMAND_NAME } from "./lib/names.ts";
+const editor = getEditor();
+editor.registerCommand(COMMAND_NAME, "Registered with an imported name", "importer_run", null);
+"#,
+    )
+    .unwrap();
+    harness.open_file(&plugin_file).unwrap();
+    harness.render().unwrap();
+
+    run_palette_command(&mut harness, "Load Plugin from Buffer");
+    harness.assert_no_plugin_errors();
+    harness.assert_screen_contains("Plugin 'importer' loaded from importer.ts");
+
+    // Loading again reloads the running copy instead of failing with
+    // "already registered".
+    run_palette_command(&mut harness, "Load Plugin from Buffer");
+    harness.assert_no_plugin_errors();
+    harness.assert_screen_contains("Plugin 'importer' reloaded from importer.ts");
+
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.type_text("Imported Kiwi").unwrap();
+    for _ in 0..3 {
+        harness.process_async_and_render().unwrap();
+        harness.sleep(Duration::from_millis(50));
+    }
+    harness.assert_screen_contains("Imported Kiwi Command");
+}
+
+fn run_palette_command(harness: &mut EditorTestHarness, command: &str) {
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text(command).unwrap();
+    for _ in 0..3 {
+        harness.process_async_and_render().unwrap();
+        harness.sleep(Duration::from_millis(50));
+    }
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    for _ in 0..10 {
+        harness.process_async_and_render().unwrap();
+        harness.sleep(Duration::from_millis(50));
+    }
 }

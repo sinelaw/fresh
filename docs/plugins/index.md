@@ -16,7 +16,10 @@ Bundled plugins:
 
 ## Load Plugin from Buffer
 
-Run and hot-reload plugins directly from an open `.ts` buffer using "Load Plugin from Buffer" from the command palette. The buffer gets LSP support for the Fresh plugin API, making this useful for rapid plugin development.
+Run "Load Plugin from Buffer" from the command palette to load or reload the plugin in the current buffer:
+
+- **Saved file:** loads it from disk, including its imports. If the plugin is already running, it reloads it.
+- **Unsaved buffer:** loads the buffer text. Imports are not supported.
 
 ## Plugin API: `registerHandler()`
 

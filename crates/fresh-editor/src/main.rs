@@ -2305,13 +2305,21 @@ fn init_package_command(package_type: Option<String>) -> AnyhowResult<()> {
     }
 
     println!("\nPackage '{}' created successfully!", name);
+    if pkg_type == "plugin" {
+        println!();
+        for line in set_up_plugin_dev(&pkg_dir, &name) {
+            println!("  {line}");
+        }
+    }
     println!("\nNext steps:");
     println!("  1. cd {}", name);
     match pkg_type {
         "plugin" => {
-            println!("  2. Edit plugin.ts to add your functionality");
-            println!("  3. Set up types + live reload: https://getfresh.dev/docs/plugins/development/setup");
-            println!("  4. Validate manifest: ./validate.sh");
+            println!("  2. fresh {name}.ts");
+            println!("  3. Ctrl+P, run \"{name}: Say Hello\"");
+            println!("  4. Edit, save, then Ctrl+P, run \"Load Plugin from Buffer\" to reload");
+            println!("  5. Type-check from the shell: npx tsc -p .");
+            println!("\nGuide: https://getfresh.dev/docs/plugins/development/setup");
         }
         "theme" => {
             println!("  2. Edit theme.json to customize colors");
@@ -2437,6 +2445,10 @@ fn create_plugin_package(
     description: &str,
     author: &str,
 ) -> AnyhowResult<()> {
+    // The runtime names a plugin after its entry file, so name the file after
+    // the package: every scaffold writing `plugin.ts` would make them all
+    // "plugin".
+    let entry = format!("{name}.ts");
     write_package_json(
         dir,
         name,
@@ -2444,46 +2456,45 @@ fn create_plugin_package(
         author,
         "plugin",
         "A Fresh plugin",
-        r#"{
-    "entry": "plugin.ts"
-  }"#,
+        &format!(
+            r#"{{
+    "entry": "{entry}"
+  }}"#
+        ),
     )?;
+    add_typescript_dev_dependency(dir)?;
 
     // validate.sh
     write_validate_script(dir)?;
 
-    // plugin.ts
-    let plugin_ts = r#"// Fresh Plugin
-// Setup (types, live reload): https://getfresh.dev/docs/plugins/development/setup
+    let handler = name.replace('-', "_");
+    let plugin_ts = format!(
+        r#"// Fresh plugin. Guide: https://getfresh.dev/docs/plugins/development/setup
 
 const editor = getEditor();
 
-// Define a command handler and register it
-function hello(): void {
-  editor.setStatus("Hello from your plugin!");
-}
-registerHandler("hello", hello);
-editor.registerCommand("hello", "Say Hello", "hello");
+// A command. Run it from the command palette (Ctrl+P).
+registerHandler("{handler}_hello", () => {{
+  editor.setStatus("Hello from {name}!");
+}});
+editor.registerCommand("{name}: Say Hello", "Show a greeting in the status bar", "{handler}_hello");
 
-// React to editor events
-function onBufferOpened(): void {
-  const bufferId = editor.getActiveBufferId();
-  const info = editor.getBufferInfo(bufferId);
-  if (info) {
-    editor.debug(`Opened: ${info.path}`);
-  }
-}
-registerHandler("on_buffer_opened", onBufferOpened);
-editor.on("buffer_opened", "on_buffer_opened");
+// An event handler. `args` is typed from the event name.
+editor.on("buffer_activated", (args) => {{
+  editor.debug(`{name}: switched to buffer ${{args.buffer_id}}`);
+}});
+"#
+    );
+    std::fs::write(dir.join(&entry), plugin_ts)?;
 
-// Example: Add a keybinding in your Fresh config:
-// {
-//   "keyBindings": {
-//     "ctrl+alt+h": "command:hello"
-//   }
-// }
-"#;
-    std::fs::write(dir.join("plugin.ts"), plugin_ts)?;
+    std::fs::write(dir.join("tsconfig.json"), PLUGIN_TSCONFIG)?;
+    std::fs::write(dir.join(".gitignore"), "node_modules/\ntypes\n")?;
+    // Project settings: start the TypeScript language server on open.
+    std::fs::create_dir_all(dir.join(".fresh"))?;
+    std::fs::write(
+        dir.join(".fresh").join("config.json"),
+        "{\n  \"lsp\": { \"typescript\": { \"auto_start\": true } }\n}\n",
+    )?;
 
     // README.md
     let readme = format!(
@@ -2506,7 +2517,7 @@ Or install from this repository:
 ## Usage
 
 This plugin adds the following commands:
-- `hello` - Say Hello
+- `{}: Say Hello` - Show a greeting in the status bar
 
 ## License
 
@@ -2519,11 +2530,147 @@ MIT
             description
         },
         name,
+        name,
         name
     );
     std::fs::write(dir.join("README.md"), readme)?;
 
     Ok(())
+}
+
+/// `tsconfig.json` for a plugin package. Matches the plugin runtime (QuickJS:
+/// no DOM, no Node types) and the bundled plugins' `.ts` import style.
+/// `moduleResolution` must be `bundler`: TypeScript 7 removed `node` (#2872).
+const PLUGIN_TSCONFIG: &str = r#"{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "ES2020",
+    "moduleResolution": "bundler",
+    "moduleDetection": "force",
+    "allowImportingTsExtensions": true,
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "lib": ["ES2020"],
+    "types": []
+  },
+  "include": ["*.ts", "lib/**/*.ts", "types/fresh.d.ts", "types/plugins.d.ts"]
+}
+"#;
+
+/// Add `typescript` as a dev dependency so `npx tsc` and
+/// typescript-language-server find a local copy. Pinned to 6: TypeScript 7
+/// ships no `tsserver`, which the language server needs.
+fn add_typescript_dev_dependency(dir: &Path) -> AnyhowResult<()> {
+    let path = dir.join("package.json");
+    let text = std::fs::read_to_string(&path)?;
+    let text = text
+        .trim_end()
+        .strip_suffix('}')
+        .unwrap_or(&text)
+        .trim_end();
+    std::fs::write(
+        &path,
+        format!("{text},\n  \"devDependencies\": {{\n    \"typescript\": \"^6.0.0\"\n  }}\n}}\n"),
+    )?;
+    Ok(())
+}
+
+/// Make a new plugin package ready to develop: link the API types, install
+/// TypeScript, load it in Fresh and trust its folder. Each step is
+/// best-effort; returns one line per step for the summary.
+fn set_up_plugin_dev(dir: &Path, name: &str) -> Vec<String> {
+    let mut report = Vec::new();
+    let abs_dir = std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
+    let dir_context = match fresh::config_io::DirectoryContext::from_system() {
+        Ok(d) => d,
+        Err(e) => {
+            report.push(format!("✗ Could not find the Fresh config folder: {e}"));
+            return report;
+        }
+    };
+    let config_dir = &dir_context.config_dir;
+
+    // Types: the same files the editor refreshes on every start, linked so
+    // they track the installed Fresh version.
+    fresh::init_script::refresh_types_scaffolding(config_dir);
+    let types_dir = config_dir.join("types");
+    report.push(match link_dir(&types_dir, &dir.join("types")) {
+        Ok(()) => format!("✓ Linked API types: types -> {}", types_dir.display()),
+        Err(e) => format!(
+            "✗ Could not link API types from {}: {e}",
+            types_dir.display()
+        ),
+    });
+
+    // TypeScript, for `npx tsc` and the language server.
+    let npm = if cfg!(windows) { "npm.cmd" } else { "npm" };
+    let install = std::process::Command::new(npm)
+        .args(["install", "--no-audit", "--no-fund"])
+        .current_dir(dir)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+    report.push(match install {
+        Ok(status) if status.success() => "✓ Installed TypeScript (npm install)".to_string(),
+        Ok(_) => "✗ npm install failed. Run it again in the plugin folder.".to_string(),
+        Err(_) => "✗ npm not found. Install Node.js, then run npm install in the plugin folder."
+            .to_string(),
+    });
+    if !fresh::services::lsp::command_exists("typescript-language-server") {
+        report.push(
+            "! For type checking inside Fresh, run: npm install -g typescript-language-server"
+                .to_string(),
+        );
+    }
+
+    // Load it in Fresh: every folder under plugins/packages/ is a package.
+    let packages_dir = config_dir.join("plugins").join("packages");
+    let link = packages_dir.join(name);
+    report.push(if link.symlink_metadata().is_ok() {
+        format!("✗ Not linked into Fresh: {} already exists", link.display())
+    } else {
+        match std::fs::create_dir_all(&packages_dir).and_then(|()| link_dir(&abs_dir, &link)) {
+            Ok(()) => format!(
+                "✓ Loaded in Fresh: {} (delete it to unload)",
+                link.display()
+            ),
+            Err(e) => format!("✗ Could not link into {}: {e}", packages_dir.display()),
+        }
+    });
+
+    // Trust the folder so the TypeScript language server may run. It holds
+    // only what this command just wrote.
+    let store = fresh::services::workspace_trust::TrustStore::for_project_dir(
+        &dir_context.project_state_dir(&abs_dir),
+    );
+    if !store.is_decided() {
+        report.push(
+            match store.record(fresh::services::workspace_trust::TrustLevel::Trusted) {
+                Ok(()) => "✓ Trusted the folder, so the language server can run".to_string(),
+                Err(e) => format!("✗ Could not trust the folder: {e}"),
+            },
+        );
+    }
+
+    report
+}
+
+/// Symlink `link` to the directory `target`.
+fn link_dir(target: &Path, link: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(target, link)
+    }
+    #[cfg(windows)]
+    {
+        std::os::windows::fs::symlink_dir(target, link)
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = (target, link);
+        Err(std::io::Error::other("symlinks not supported"))
+    }
 }
 
 fn create_theme_package(

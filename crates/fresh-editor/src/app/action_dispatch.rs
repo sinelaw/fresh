@@ -1517,7 +1517,9 @@ impl Editor {
             }
             Action::LoadPluginFromBuffer => {
                 #[cfg(feature = "plugins")]
-                {
+                if let Some(path) = self.saved_plugin_file() {
+                    self.reload_plugin_file(&path);
+                } else {
                     let buffer_id = self.active_buffer();
                     let state = self.active_state();
                     let buffer = &state.buffer;
