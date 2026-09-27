@@ -3225,8 +3225,8 @@ mod tests {
         assert_eq!(engine.backend_name(), "textmate");
         assert!(engine.language().is_some());
 
-        // JavaScript and TypeScript use the vendored TypeScript-TmLanguage
-        // grammars; `.tsx` picks the TypeScriptReact dialect.
+        // JavaScript and TypeScript use Fresh's TypeScript grammar and its
+        // derived variants; `.tsx` picks the TypeScriptReact dialect.
         for (file, syntax) in [
             ("test.js", "JavaScript"),
             ("test.jsx", "JavaScript"),

@@ -40,13 +40,15 @@ rule; the older highlighter-preference API has been removed. **[impl]**
   editor's `tree-sitter` feature): **JavaScript, TypeScript, JSON (also serving
   JSONC), Templ, and Go** (Go only because Templ's grammar extends it). Reasons:
   - **JavaScript / TypeScript**: kept for AST indentation only. Highlighting
-    uses TextMate grammars generated from `microsoft/TypeScript-TmLanguage`
-    (the grammars VS Code uses) by `scripts/tmlanguage-to-sublime-syntax.py`:
-    `typescript`, `typescriptreact` (a dialect of the TypeScript catalog entry,
-    picked for `.tsx`) and `javascript` (TypeScriptReact with `.js` scopes, as
-    VS Code builds it; it shadows syntect's bundled JS grammar, which leaked
-    template-literal state past the closing backtick). syntect reproduces
-    upstream's `tests/baselines` token scopes exactly.
+    uses `grammars/typescript.sublime-syntax`, written for syntect's cost
+    model (few rules per context, ambiguity settled by pushed contexts rather
+    than long lookaheads). build.rs derives `typescriptreact` (a dialect of the
+    TypeScript catalog entry, picked for `.tsx`) and `javascript` from it by
+    swapping `<T>` casts for JSX; `javascript` shadows syntect's bundled JS
+    grammar, which leaked template-literal state past the closing backtick.
+    It parses about 4x faster than the VS Code (TypeScript-TmLanguage) grammar
+    and agrees with that grammar's highlight categories on 99% of the bytes
+    of the bundled plugins' TypeScript.
   - **JSONC**: no JSONC tree-sitter crate exists; the JSON grammar recovers past
     comments/trailing commas well enough.
   - **Templ**: Go + components/HTML/CSS.
