@@ -55,9 +55,9 @@ pub struct ListState {
     /// The `(selection, token)` a standing follow was last armed for — see
     /// [`List::follow_selection`].
     pub(crate) followed: crate::behavior::Cache<(usize, u64), ()>,
-    /// The list's own page handle, for its PageUp/PageDown when the owner
-    /// passed none.
-    pub(crate) pager: Rc<crate::behavior::Pager>,
+    /// Which pager the list records its window into, and the one it uses
+    /// for its own PageUp/PageDown when the owner passed none.
+    pub(crate) pager: Option<Rc<crate::behavior::pager::PagerSlot>>,
 }
 
 /// Which click in a run activates a row.
@@ -689,6 +689,7 @@ impl<M: 'static> Component<M> for List<M> {
         // move can ask for the window rather than owning it.
         ListState {
             anchor: Some(cx.register(crate::behavior::Anchor::default())),
+            pager: Some(cx.register(crate::behavior::pager::PagerSlot::default())),
             ..ListState::default()
         }
     }
@@ -821,7 +822,10 @@ impl<M: 'static> Component<M> for List<M> {
         let measured = self.row_height == RowHeight::UniformMeasured;
         let declared = self.row_height.declared();
         let pinned = self.pinned.clone();
-        let pager = self.pager.clone().unwrap_or_else(|| s.pager.clone());
+        let pager = match &s.pager {
+            Some(slot) => slot.bind(self.pager.clone()),
+            None => self.pager.clone().unwrap_or_default(),
+        };
         let recorder = pager.clone();
         let reader = layout_reader(move |info| {
             let measuring = info.band == Some(Band::Measuring);
