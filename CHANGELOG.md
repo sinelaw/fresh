@@ -24,8 +24,6 @@ Fresh is now licensed **GPL-3.0-or-later**, up from GPL-2.0-only (#3328).
 * **Much faster JavaScript/TypeScript highlighting, and a quieter idle daemon** - JS/TS moved off a parser that re-read the whole file on every keystroke, large files parse only as far as the view, and idle CPU drops to a few percent (#3418)
 * **Live Grep dialog redesigned** - an aligned form with underlined shortcut letters and a Provider dropdown listing only the providers that can run; the Ignored toggle moves to Alt+I (#3367)
 * **Dialog pickers behave like standard controls** - suggestion lists act as combo boxes, and the Browse… file picker floats over the form, closes when focus leaves, and supports double-click, Home/End and type-to-jump (#3367)
-* **Odin support** - Toggle Comment, brace indenting, Odin's tab convention, and a preconfigured `ols` language server you can turn on (#3331)
-* **Pascal indents by block structure** - Enter lands at the enclosing block's level, and `end`, `until`, `else`, `except` line up with their opener (#3331)
 * **`fresh --cmd init plugin` sets up a typed plugin project** - TypeScript config, API types and the language server, with a new setup guide; **Load Plugin from Buffer** on a saved file now loads it from disk, so relative imports work, and reloads it in place (#3422)
 
 ### Bug Fixes
