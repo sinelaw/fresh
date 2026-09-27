@@ -8,10 +8,12 @@
 > the text panes go out as keyed rows, and the few surfaces the operating
 > system owns (menu bar, clipboard, window title) go out as semantic models.
 > The tree is sent **after** layout, never before it, so no client needs a
-> layout engine. The protocol is one schema with two encodings (JSON, and a
-> binary encoding for native clients) and two transports (the web bridge's
-> WebSocket, and the session daemon's local socket — a named pipe on
-> Windows). Companion to [web-ui.md](web-ui.md) (the web frontend as built),
+> layout engine. A client may draw a surface as native UI from a semantic
+> model only when the editor never reads that surface's geometry back (§4.9,
+> with the full inventory of read-backs in Appendix A). The protocol is one
+> schema with two encodings (JSON, and a binary encoding for native clients)
+> and two transports (the web bridge's WebSocket, and the session daemon's
+> local socket — a named pipe on Windows). Companion to [web-ui.md](web-ui.md) (the web frontend as built),
 > [retained-mode-ui.md](retained-mode-ui.md) (the tree the protocol carries)
 > and [00-overview.md](00-overview.md) (the session daemon)._
 
@@ -490,6 +492,76 @@ and share the key translation with `fresh-gui`, but WinUI 3 from Rust is
 immature, so it would likely draw chrome itself rather than use XAML
 controls. Recommended: C# and WinUI 3 for a client meant to feel native.
 
+### 4.9 Which surfaces a client may draw natively
+
+The design picks one side of the tradeoff in §6: **the editor lays out, in
+cells, and clients draw what they are given.** That is the default for every
+surface. A client may instead draw a surface as native UI from a semantic
+model — a native menu, a native form with real text boxes, a natively
+scrolled list — only when the surface passes this rule.
+
+**The rule.** A surface may be drawn natively from a semantic model only when
+the editor never reads that surface's geometry back. Concretely:
+
+1. **No host read-back.** No editor behaviour reads the surface's laid-out
+   rectangles, scroll window or wrapped rows after layout: not a pointer
+   hit-test in host code, not a keyboard page size, not a scroll-into-view,
+   not a cache written during render and read by a key handler.
+2. **Nothing else is placed against it.** No other surface is anchored to a
+   rectangle inside it (as popups are anchored to status-bar elements), and
+   it is not itself anchored to a buffer position (as completion and hover
+   are anchored to the caret).
+3. **Input can be semantic.** Every interaction can be stated in the model's
+   own terms — "activate item 3", "toggle setting 12", "select row 40" —
+   rather than as a cell for the tree to hit-test.
+4. **It owns no editor state that depends on its size.** Layout-only
+   decisions (a list window that follows the selection, a truncation) are
+   fine; they change what is drawn, not what the editor holds.
+
+Rules 1 and 2 are what make a native rendering safe: if the editor reads a
+surface's geometry, a client that laid the surface out differently would make
+that reading wrong. Rule 3 is what makes it possible: a native control cannot
+report its clicks as cells the editor laid out. Rule 4 keeps the shared frame
+honest, since every attached client mirrors one editor.
+
+**Client-reported viewports.** Most failures of rule 1 on otherwise
+self-contained surfaces are one thing: a PageUp/PageDown whose page is the
+list's visible height, read off the tree. The protocol removes that
+dependency instead of disqualifying the surface. A client drawing a list
+natively reports its window as input, `viewport {list, first, count}`, and a
+page key *from that client* pages by the reported count. A key from a client
+drawing the display list keeps using the tree's window. Reports are
+per client, like the rest of §4.7's server state, so a native client and a
+browser attached to one session each page by what they show.
+
+**Where each surface stands today.** From a sweep of every place the editor
+reads geometry back after layout (Appendix A lists the readers by surface):
+
+| Surface | Host read-back today | Verdict |
+|---|---|---|
+| Menu bar and dropdowns | None; hit-testing stays inside the tree, keys are index-based | **Native now** — the menu model exists, and the macOS menu bar already uses it |
+| Confirm dialogs | None beyond sizing its own in-grid box from the frame | **Native now**, with semantic button input |
+| Trust dialog | None beyond sizing its own box | **Native now**, with semantic input |
+| Open File / Save As browser | None outside the web's projection; paging is a fixed 10 | **Native now**, with semantic input — or the OS file dialog |
+| Context menus | Two anchors: the "Close split" menu is placed under the split's × control, and the explorer decides title-row versus body from its region | **Native with an anchor rect** carried in the model |
+| Settings modal | PageUp/PageDown use the body's visible height and the category tree's height; the left tree's highlight follows the body's scroll (`top_item`); search and entry-dialog scroll offsets are read off the tree | **Native after viewport reports** — semantic input already exists (`SettingsHit`); the tree-follows-scroll sync must move to a client report |
+| Keybinding editor | PageUp/PageDown use a page taken from the box height | **Native after viewport reports** — row selection is already semantic |
+| Prompt and palette suggestions | Column widths are measured over the last layout's visible window; paging is a fixed 10 | **Native list possible**, but it is anchored to the prompt row and shares the frame's bottom band; low value |
+| Live Grep card | The selection is scrolled into the results region's height; its preview is a buffer | **Display list** — the preview is a pane |
+| File explorer | Page size, scroll clamping and sticky ancestors use a height written during render; the wheel clamps against it; right-click reads its region | **Display list**; could qualify with viewport reports and semantic node input, but it is docked beside panes, not modal |
+| Popups: completion, hover, signature | Anchored to the caret; hover stays alive while the pointer is over the popup's rectangle | **Display list** (fails rule 2) |
+| Status bar | Popups are placed above its elements from a cache of its layout | **Display list** (fails rule 2) |
+| Tabs | Drag drop zones, tab rectangles, reveal-active-tab in layout, and name shortening fed back from the last frame's strip width | **Display list** |
+| Split grid, panes, scrollbars, dividers | Viewports, wrap width, PTY sizes, visual-line motion, plugin-reported split rects, the pane-beside choice — all from pane rectangles | **Display list and rows**; this is the grid |
+| Composite (diff) panes | Cursor movement and horizontal scroll use the content width | **Cells**, until described |
+| Plugin panels (dock, floating, sidebar, pane-mounted) | Arrow focus moves by laid-out rectangles; list paging reads the item window; prose motion reads wrapped rows; a pane-mounted panel's buffer text *is* its laid-out rows | **Display list** |
+
+So the native-eligible set is the menus, the modal dialogs, the file browser
+and — once page keys come from viewport reports — Settings and the
+keybinding editor. They are exactly the surfaces that are modal or
+OS-shaped, which is where a native feel matters most. Everything that shares
+the screen with buffers stays on the single layout.
+
 ## 5. What changing it buys
 
 - **Bytes.** Typing, caret moves and scrolling drop from about 25–40 KB a
@@ -518,9 +590,11 @@ controls. Recommended: C# and WinUI 3 for a client meant to feel native.
   already are: wheel forwarding and cell-positioned text. `paint_subtree` (an
   unclipped subtree) could supply extra rows for short lists. This is the real
   product tradeoff — one source of truth versus a native feel — and it applies
-  to the web and Windows alike. Native materials, fonts, the system accent and
-  OS-owned surfaces (§4.3) recover much of the feel without giving up the
-  single layout.
+  to the web and Windows alike. The design takes the single-source side, and
+  admits native rendering per surface only under §4.9's rule: menus, modal
+  dialogs, the file browser, and Settings and the keybinding editor once their
+  page keys use viewport reports. Native materials, fonts, the system accent
+  and OS-owned surfaces (§4.3) recover much of the feel everywhere else.
 - **Hover** is decided on the server (the pointer is a layout input), so it is
   a round trip per cell crossing, over a local pipe or loopback. Clients can
   add cosmetic hover feedback by class.
@@ -564,7 +638,7 @@ of its recommendations:
 ## 8. Order of work
 
 Each step ships on its own and keeps parity. Steps 1–5 are the web's and pay
-for themselves there; steps 6–8 add the native client.
+for themselves there; steps 6–9 add the native client.
 
 1. **Row-keyed pane diffs and the row applier.** The bridge assigns row ids
    by content (text and gutter separately), and the page applies rows as §4.8
@@ -577,7 +651,9 @@ for themselves there; steps 6–8 add the native client.
    §4.8 replacing the tree fold's rebuild-everything pass. Retire the drawing
    `Scene` views one surface at a time: the status bar and tabs first (the
    tree already measures both), then the prompt and palette, popups, and
-   Settings and the keybinding editor last. Keep the OS-service models (§4.3).
+   Settings and the keybinding editor last. Keep the OS-service models (§4.3),
+   and keep a semantic model for each surface §4.9 admits for native
+   rendering.
 4. **The role/state slot**, in `Desc` and the display list, and ARIA from it.
 5. **Rows from the content pass and overlays.** Build pane rows straight from
    `PaneContent` instead of reading them back out of the ratatui buffer, and
@@ -590,10 +666,149 @@ for themselves there; steps 6–8 add the native client.
    frontend protocol gets frames on the data channel, beside terminal
    clients and browsers on the same editor; add the `native-menu` capability
    and the all-clients rule of §4.3.
-8. **A Windows client.** WinUI 3, per §4.8: the chrome panel and pools, the
-   Composition row visuals, brushes, the native menu bar, clipboard, IME, and
-   UI Automation.
+8. **Native-eligible surfaces (§4.9).** Semantic input for the confirm and
+   trust dialogs, the file browser and context menus (with the anchor rect),
+   joining Settings' and the keybinding editor's existing semantic paths; the
+   `viewport` report, and Settings and keybinding-editor page keys that use it
+   for the reporting client; Settings' left-tree sync driven by the report
+   rather than the tree's scroll.
+9. **A Windows client.** WinUI 3, per §4.8: the chrome panel and pools, the
+   Composition row visuals, brushes, the native menu bar, the native dialogs
+   §4.9 admits, clipboard, IME, and UI Automation.
 
 Not planned, and argued against above: sending the description tree for a
 client to lay out, sending buffer text for a client to render panes itself,
 and embedding a layout engine or a tree reconciler in any client.
+
+## Appendix A. Where the editor reads geometry back
+
+A sweep of the editor crate (the web bridge and its projections excluded)
+for every behaviour that reads laid-out geometry after layout. "Pointer" is a
+hit-test, hover or drag; "keyboard" is a key, command or plugin behaviour that
+depends on on-screen size; "placement" anchors one surface to another;
+"sizing" sizes something that is not drawn (a viewport, a PTY, a plugin
+report). Most event-time readers ask the retained tree by key at the last
+frame's size; the few caches still written during render are named.
+
+**Menu bar and dropdowns.** No host read-back. Presses are hit-tested inside
+the tree; menu keys move by index.
+
+**Confirm and trust dialogs.** No host read-back. Their in-grid box is sized
+from the last frame when the description is built; arrow keys are not
+geometric.
+
+**Open File / Save As browser.** No host read-back outside the web's
+projection. Paging is a fixed 10; the list window follows the selection
+inside layout.
+
+**Context menus.** Hit-tested inside the tree. Two placement reads: the
+"Close split" menu is anchored under the split's × control
+(`close_split_button` via `split_control_rect`), and a right-click in the file
+explorer asks the explorer's region whether it was the title row
+(`explorer_body_context`).
+
+**Settings modal.** Keyboard: body PageUp/PageDown page by the body window's
+height (`select_next_page` / `select_prev_page` over `BodyWindow`, filled by
+`refresh_settings_body_window` from the items viewport's rectangle and
+scroll); category-tree PageUp/PageDown page by `tree_page_rows`, set in
+`settle_modal_viewports` from the categories panel's rectangle; the left tree's
+highlight follows the body's scroll through `top_item`
+(`sync_tree_cursor_to_body_scroll`, `current_section_index`, also used by
+`jump_to_search_result`); the search results and entry dialogs' scroll
+offsets are read off their viewports. Input is already semantic on the web
+(`dispatch_settings_hit` with a `SettingsHit`).
+
+**Keybinding editor.** Keyboard: PageUp/PageDown page by `scroll.viewport`,
+set in `settle_modal_viewports` from the editor box's rectangle
+(`keybinding::table_rows`). Row selection is already semantic on the web
+(`kbedit_select_display_row`).
+
+**Prompt and palette.** Keyboard: none geometric — PageUp/PageDown move by a
+fixed 10. Description-time feedback: suggestion column widths are measured
+over the last layout's visible window (`record_suggestions_window` →
+`suggestions_window`, read by `suggestions_description`). The Live Grep card
+scrolls its selection into the results region's height
+(`settle_prompt_suggestions`, `ensure_selected_visible_within`), and its
+preview viewport is resized to the card's inner rectangle.
+
+**Popups (completion, hover, signature, action).** Placement: anchored to the
+caret cell and the completion word's start column, read from the pane's
+settled view (`publish_popup_carets`, `popup_caret_cells`). Pointer: hover
+stays alive while the pointer is over a popup's rectangle
+(`is_mouse_over_transient_popup` via `popup_rects`). Keyboard: paging uses the
+model's `max_height`, not the drawn height.
+
+**Status bar.** Placement: popups opened from a status element (LSP status,
+remote indicator, read-only, update) are placed above that element from the
+description's cached layout (`popup_above_status_bar` reading
+`shell_frame_status_bar`). Right-side elements are dropped by frame width at
+description time.
+
+**Tabs.** Pointer: drag drop zones and insertion index (`compute_tab_drop_zone`
+via `tab_rects` and `pane_strip_at`). Keyboard: reveal-active-tab is decided in
+layout; tab-switch animations use the pane's content rectangle
+(`cycle_tab` via `pane_or_group_content_rect`). Feedback: whether tab names
+are shortened comes from the last frame's strip width (`Window::pane_strips`).
+
+**File explorer.** Keyboard: PageUp/PageDown, scroll-to-selection, maximum
+scroll and sticky ancestors all read `FileTreeView::viewport_height`, written
+while the description is built (`explorer_body`). Pointer: the wheel clamps
+against the same height; right-click reads the explorer's region.
+
+**Split grid and panes.** Sizing: every layout pass reads the pane boxes
+(`PaneRects::read`, retained per window, and `layout_panes_offscreen` for
+windows not on screen). From them: each split's viewport size
+(`Window::apply_layout`), PTY rows and columns and scrollback wrap width
+(`resize_visible_terminals`, and `paint_embed` for embedded windows), the
+plugin snapshot's split rectangles and viewport sizes
+(`populate_plugin_state_snapshot`, `getViewport`, `listSplits`), the
+split-window reply's rectangle, and the pane chosen by `pane_beside`.
+Keyboard: page motion, visual-line Up/Down/Home/End and smart Home read the
+pane's settled rows (`PaneView`, via `handle_page_motion`,
+`handle_visual_line_movement`, `compute_wrap_aware_visual_move_fallback`,
+`smart_home_visual_line`); every `Viewport` scroll and ensure-visible path
+reads the viewport's size; search highlighting and semantic-token requests
+are bounded by it. Pointer: click-to-byte, selection drag, fold toggles, LSP
+hover, terminal link hover and forwarding, all through the content rectangle;
+scrollbar clicks, drags and hover through the bar rectangles and thumb facts;
+divider drags through the body area.
+
+**Composite (diff) panes.** Keyboard: cursor movement and horizontal scroll
+use the text width derived from the content rectangle
+(`get_cursor_line_info`, `PaneLayout`); hunk navigation and paging use the
+viewport height less the header.
+
+**Plugin panels (dock, floating, sidebar sections, pane-mounted).** Keyboard:
+list and tree paging read the published item window (`widget_viewport`,
+`described_widget_viewport`); arrow focus moves by laid-out rectangles
+(`move_panel_focus`, the directional focus policy); markdown prose Up/Down
+reads wrapped rows (`prose_vertical_key`); page panels seat the reading row
+and focus by widget rectangles (`page_widget_spans`,
+`page_anchor_of_widget`). A pane-mounted panel's buffer text is its laid-out,
+unclipped rows (`mirror_pane_panels`), so every buffer action in that pane
+depends on layout width. Sizing: auto-sized lists get a row budget from the
+terminal height or the sidebar section's resolved height
+(`floating_panel_inner_height`, `resolve_sidebar_sections`).
+
+**Frame-wide.** The frame's caret is the display list's cursor; the theme
+inspector reads the per-cell provenance map written during paint
+(`resolve_theme_key_at`, `inspect_theme_at_cursor`); macro replay re-lays the
+shell at the last frame's size after each action (`recompute_layout`).
+
+**Incidental findings from the sweep** (inconsistencies, not violations):
+
+- `ensure_cursor_visible_for_navigation` scrolls horizontally with a
+  hard-coded gutter of 6 columns instead of the measured gutter.
+- Popups page by `max_height` less borders, while the drawn height may be
+  clamped smaller by the chrome area.
+- Settings body paging applies the body's height in rows as a count of item
+  steps, so a page of multi-row cards moves further than one screen.
+- Visible terminals get PTY sizes from hand-subtracted rows and columns off the
+  pane box, while embedded windows use the tree's content rectangle.
+- Prompt, Live Grep and file-browser paging is a fixed 10 whatever the visible
+  row count.
+- The multi-line text widget pages by its spec's row count, not the height of
+  a growing box.
+- The keybinding editor's `ScrollState` offset and content height are never
+  read or set outside tests; only its page size is live. `EntryDialogState`'s
+  `viewport_height` is never updated from its default.
