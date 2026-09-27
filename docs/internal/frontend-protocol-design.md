@@ -101,7 +101,7 @@ list was 154 items (330 with the file explorer open), about 17 KB.
   container and re-emits its whole SVG as one string, and the plugin-panel
   layer rebuilds every item on any change. Smaller diffs alone would not fix
   this: the protocol has to name what changed in terms a client can apply to
-  existing nodes (§5).
+  existing nodes (§4.8).
 - **Two chrome paths.** The projections and their JS builders are a second
   statement of what the chrome is, kept honest by a parity test rather than by
   construction. A native client would need a third.
@@ -544,21 +544,10 @@ relaid out nor repainted; this design does not depend on it and does not
 claim incrementality on the server. The saving it does claim is on the wire
 and in every client, where cost follows the change.
 
-**Where the editor still pays for the whole list.** The window is only as cheap
-as what feeds it. Some surfaces copy their entire collection into the frame
-every frame so the row builder can index it: the file browser clones every
-entry of the directory (`rows.to_vec()` in its description), and the prompt
-maps every suggestion into a `SuggestionRow` in `suggestions_description`. That
-is proportional to the list's length, per frame, whether or not anything
-changed — the "memos sit below the work" item retained-mode-ui.md already
-lists. The fix follows the library's own contract ("the application resolves
-it against its own storage"): hand the builder a shared handle to the
-editor's storage, or a memo keyed on the collection's version, instead of a
-fresh copy. One plugin-widget list also measures with
-`RowHeight::UniformMeasured`, which describes every item by design, because
-the tallest row is a question the visible ones cannot answer; lists that can
-use a declared row height should. Neither is a protocol concern, and neither
-is fixed by one.
+**Where the editor still pays for the whole list.** The window is only as
+cheap as what feeds it. §5 says where a list's data lives and where the window
+is cut, and Appendix B lists where the editor falls short of that today. None
+of it is a protocol concern, and none of it is fixed by one.
 
 ### 4.9 Client application
 
@@ -652,7 +641,7 @@ controls. Recommended: C# and WinUI 3 for a client meant to feel native.
 
 ### 4.10 Native look, native behaviour, and where each belongs
 
-The design takes one side of the tradeoff in §6: **the editor lays out, in
+The design takes one side of the tradeoff in §7: **the editor lays out, in
 cells, and clients draw what they are given.** Within that, "native" means two
 different things, and `fresh-ui` already puts them in different places.
 
@@ -718,7 +707,148 @@ an anchor answered at layout (`ScrollByPages`, `Reveal`) already expresses.
 Moving them is worth doing for the terminal alone, and it also fixes the
 inconsistencies the sweep turned up (Appendix A).
 
-## 5. What changing it buys
+## 5. Collections: where a list's data lives, and where the window is cut
+
+Every list and tree drawn through the tree — the host's (prompt suggestions,
+the file browser, Settings, the keybinding table, popups, the file explorer)
+and the plugins' (widget `List` and `Tree`) — follows one design. It sits
+upstream of the protocol, which only ever sees the window. **The collection
+lives with its owner in shared, versioned storage; the description holds a
+handle to it, never a copy; the library cuts the window during layout; and one
+domain key names an item from the data to the client's node.**
+
+### 5.1 The layers, and the one cut
+
+The window is cut in exactly one place: inside `fresh-ui`'s layout pass, in the
+`List` widget's layout reader, the first point where the viewport's size and
+scroll offset are both known. Every layer above it carries the full dataset
+only as a handle; every layer below it sees only the window.
+
+| # | Layer | What it holds | Size |
+|---|---|---|---|
+| 1 | The owner's storage: the editor model, or the host's replica of a plugin's collection | Every item, plus derived collections (§5.4) | N, persistent |
+| 2 | Description: `List::windowed(count, key_of, row_of)` | A count and two closures capturing a handle to layer 1. No rows. | O(1) |
+| 3 | The list's element and its viewport | Selection, hover, the scroll offset, the source handle; the viewport declares `items(n)` so the scrollbar knows the extent | O(1) |
+| 4 | **Layout: the viewport runs the list's layout reader** | Reads the published scroll window, computes `first..first + visible + overscan`, and calls `key_of(i)` and `row_of(i)` only for those indices | **The cut: N becomes the window, W** |
+| 5 | Reconcile of the window's rows | One element per visible row, keyed by `key_of(i)` | O(W) |
+| 6 | Layout and paint of those rows | Rectangles; the display list, with overscan rows clipped out | O(W) |
+| 7 | The protocol and the client | Only painted items, plus the scrollbar item's offset, content and window | O(W) |
+
+Scrolling is input that moves the viewport's offset (layer 3). Layout reruns
+layer 4 with a new `first`: rows that enter are built by `row_of`, rows that
+leave are disposed, and nothing above layer 4 changes.
+
+`RowHeight::UniformMeasured` is the one deliberate exception at the cut: its
+measuring pass calls `row_of` for every item, because "the tallest row" is a
+question the visible ones cannot answer. It is for lists whose row height
+really cannot be declared.
+
+### 5.2 Where the full dataset lives
+
+- **Host lists and trees** live in the editor model that owns the domain —
+  `Prompt`, the file-open state, `SettingsState`, `KeybindingEditor`,
+  `FileTreeView` — held as shared storage with a version, so describing them
+  each frame costs a reference count, not a clone.
+- **Plugin lists and trees** have the plugin's JavaScript model as their source
+  of truth, and a **replica** in the host's widget registry, in the same shared,
+  versioned storage. The replica is required: layout runs synchronously on the
+  editor thread and cannot ask the plugin thread for row 5,000 in the middle of
+  a layout pass. The replica changes by keyed operations (§5.7). The widget
+  spec describes structure — which widgets, where, with which options — and
+  names the collection; it is not the carrier of a large collection.
+- **Never** in the description, in `fresh-ui` elements, in the display list, or
+  on the wire. Those hold the window.
+
+### 5.3 One owner per fact
+
+| Fact | Owner | Notes |
+|---|---|---|
+| Items and their order | The model, or the plugin's replica | Changed by keyed operations |
+| Item identity | The domain key: a path, a command id, a setting's path, the plugin's key | Never the index; a key is required |
+| Selection | The model, **by key**, when anything else acts on it (the prompt's Enter, Settings, plugin panels) | Element state only for purely visual lists. The index is resolved from the key when the description is built |
+| Tree expansion | The model or the replica, by key | A spec's `expanded_keys` is a seed at mount. The plugin hears `expand` events and overrides with `setExpandedKeys`. The description reads the resolved set, never the spec field |
+| A tree's visible projection | Derived by the owner | Memoised on the collection's version and the expansion's version |
+| The scroll window | The library's viewport | Reveal through `Anchor`; page keys answered at layout (§9, step 8) |
+| Hover and pressed state | Element state | As today |
+
+### 5.4 What happens before the cut, and what after
+
+- **Layer 1 holds data and derived collections.** A filtered and ranked set of
+  suggestions, a sorted directory, a tree's flattened visible projection: each
+  is the owner's derived collection, recomputed when its inputs change (the
+  query, the source, the expansion) and never per frame. Filtering and sorting
+  are not windowing — they decide which items exist, not which are on screen.
+- **Layer 2 captures handles.** The description passes a count and closures
+  over layer 1's storage. It converts nothing and copies nothing, so it costs
+  the same for ten items or a million.
+- **Per-row work belongs after the cut, in `row_of`.** Turning an item into a
+  row — its text, its style, its node — runs only for the rows layout asks
+  for.
+- **Per-window work belongs at the cut, in the layout reader.** Anything that
+  depends on which rows are visible — the prompt's column widths, measured
+  over the rows on screen — is computed where the window is known, over the
+  rows just built. Computing it before the cut means reading the previous
+  frame's window back, one frame late (Appendix B, item 10).
+
+The prompt is the worked example. Today the description maps every suggestion
+into a `SuggestionRow` each frame and measures columns over the last frame's
+window. In this design the model holds the ranked suggestions (recomputed on
+each keystroke that changes the query), the description captures a handle to
+them, `row_of(i)` converts suggestion `i` when layout asks for it, and the
+reader measures the columns over the window it just built.
+
+### 5.5 How it flows through `fresh-ui` each frame
+
+1. **Description.** `List::windowed(len, key_of, row_of)` over the storage handle
+   (a list) or the memoised projection (a tree). Selection and expansion are
+   passed down; callbacks carry keys back up. O(1) whatever the length.
+2. **Memo.** The list's subtree is built under a memo keyed on the collection's
+   version and the controlled state, so an unchanged list reconciles by
+   `Rc::ptr_eq`. This is retained-mode-ui.md's "memos sit below the work"
+   item, closed for lists.
+3. **Reconcile.** Rows keyed by domain key, so an insertion moves elements
+   instead of rewriting every row below it (§4.8).
+4. **Layout.** The viewport asks for its window; `row_of` runs for visible rows
+   only.
+5. **Paint and protocol.** Items are diffed per id. The identity chain is one
+   key from end to end: domain key → element key → element → protocol item id
+   → client node.
+6. **Events.** A handler receives an index into the current projection and
+   turns it into a key at once. Everything upstream — `UiFact`, `widget_event`
+   — speaks keys; an index is at most a hint.
+
+### 5.6 Library changes
+
+- **`fresh_ui::Tree` becomes windowed and controllable.** Today it takes every
+  node with a pre-built label, flattens the whole tree into an eager list every
+  frame, and owns its expansion privately — which is why the plugin tree and
+  the file explorer each hand-roll a list with disclosure glyphs instead of
+  using it. The end state is a source over the owner's projection (a count,
+  and per index its key, depth, whether it has children, whether it is open,
+  and its row), with controlled `expanded` and an `on_toggle(key, open)`
+  callback. The uncontrolled form can stay for trivial trees. Callers exist:
+  the explorer, plugin trees, and the Settings category tree.
+- **A page intent on `List` and `Tree`**, answered at layout (§9, step 8).
+- **`List::windowed` needs no change.** It already takes a count, a key and a
+  builder, and already cuts at layout.
+
+### 5.7 The plugin API
+
+- **Keyed collection operations.** `mountWidgetPanel` and `updateWidgetPanel`
+  carry structure. A collection changes through keyed operations on its
+  widget: `setItems` (replace), `insertItems(afterKey, …)`,
+  `removeItems(keys)`, `updateItem(key, …)`, `moveItem(key, afterKey)`; for
+  trees, `insertNodes(parentKey, beforeKey, …)`, `removeNodes(keys)` and
+  `updateNode(key, …)`. Item keys become mandatory.
+- **Selection and expansion live in the replica.** Spec values are seeds at
+  mount; the host tells the plugin what changed through key-bearing events;
+  the plugin overrides through mutations.
+- **Full-spec updates keep working.** They cost O(N) per update, over IPC and in
+  rebuilding the replica, but never per frame; and because rows are keyed by
+  domain key, even a full replace reconciles to minimal element changes. Large,
+  changing lists use the keyed operations.
+
+## 6. What changing it buys
 
 - **Bytes.** Typing, caret moves and scrolling drop from about 25–40 KB a
   frame to about 0.1–2 KB (§2), on every transport.
@@ -740,7 +870,7 @@ inconsistencies the sweep turned up (Appendix A).
 - **Sessions for free.** A native client is a daemon client: attach, detach,
   restore, and sharing one editor with terminals and browsers.
 
-## 6. What it costs
+## 7. What it costs
 
 - **Truly native layout.** Display-list text is already fitted to cell widths,
   and a long list only exists as its visible rows. Chrome that reflows in a
@@ -776,7 +906,7 @@ inconsistencies the sweep turned up (Appendix A).
 - **A protocol to maintain.** A schema, two encodings, a capability list and
   fallbacks per draw kind, plus a second client codebase for Windows.
 
-## 7. Where this departs from the native-client research
+## 8. Where this departs from the native-client research
 
 The research this revision was checked against (a survey of native Windows
 renderers for server-driven UI) assumes a server that sends a pre-layout,
@@ -797,7 +927,7 @@ of its recommendations:
 | Native controls for app surfaces | Native look from a class table at the tree's rectangles; OS facilities only for surfaces that leave the frame (§4.10) | The tree is the whole keyboard and the one input path |
 | Controls for all content | Composition visuals drawn with DirectWrite for pane rows | A code pane is too many runs for per-run controls |
 
-## 8. Order of work
+## 9. Order of work
 
 Each step ships on its own and keeps parity. Steps 1–5 and 8–9 pay for
 themselves on the web and the terminal; steps 6, 7 and 10 add the native
@@ -837,14 +967,14 @@ client.
    the Settings tree stops following the body's scroll through a cached
    `top_item`. No client needs this; it is retained-mode-ui.md's rule, and it
    fixes the sweep's inconsistencies for the terminal too.
-9. **Rows keyed by what they are.** Replace the index keys on the shell's
-   lists — prompt suggestions, the file browser, the keybinding table and its
-   autocomplete, popup items, Settings' categories and search results — with
-   domain keys (command, path, setting), so an insertion or a reorder moves
-   nodes instead of rewriting every row below it (§4.8, "What an insertion
-   costs"). In the same pass, hand each windowed list's row builder the
-   editor's storage instead of a per-frame copy of the whole collection (§4.8,
-   "Where the editor still pays for the whole list").
+9. **Collections as §5 describes.** Close the windowing and identity gaps of
+   Appendix B: owners hold collections in shared, versioned storage and
+   descriptions capture handles; per-row conversion moves into `row_of` and
+   per-window measurement into the layout reader; list subtrees are memoised
+   on their data's version; rows are keyed by domain key and selection is held
+   by key; plugin collections live in a replica changed by keyed operations,
+   with one owner for expansion; and `fresh_ui::Tree` becomes windowed and
+   controllable, replacing the hand-rolled disclosure lists.
 10. **A Windows client.** WinUI 3, per §4.9: the chrome panel and pools, the
    Composition row visuals, brushes, the class table's Fluent look, the OS
    menu bar and file dialog, clipboard, IME, and UI Automation.
@@ -866,7 +996,7 @@ frame's size; the few caches still written during render are named.
 
 None of these is a hazard for a client of this protocol: every client draws
 the tree's layout, so a read-back reads what the client shows. They are the
-places the host still does layout's work, and step 8 of §8 moves the keyboard
+places the host still does layout's work, and step 8 of §9 moves the keyboard
 ones into layout.
 
 **Menu bar and dropdowns.** No host read-back. Presses are hit-tested inside
@@ -992,3 +1122,84 @@ shell at the last frame's size after each action (`recompute_layout`).
 - The keybinding editor's `ScrollState` offset and content height are never
   read or set outside tests; only its page size is live. `EntryDialogState`'s
   `viewport_height` is never updated from its default.
+
+## Appendix B. Gaps in the current implementation
+
+Where today's code falls short of §5, §4.8 and §4.10, each checked against the
+source when this was written. None is fixed by the protocol; most matter to
+the terminal as much as to any client.
+
+**Windowing and data flow** (§5.1, §5.4)
+
+1. The file browser copies every directory entry into each frame
+   (`rows.to_vec()`) instead of handing its list a handle to its storage.
+2. The prompt maps every suggestion into a `SuggestionRow` each frame instead of
+   letting the row builder convert suggestion `i` when layout asks for it.
+3. `panel_interior` deep-clones every plugin panel's whole spec each frame.
+4. A plugin `List`'s description clones all its items each frame.
+5. A plugin `Tree` walks all its nodes each frame
+   (`collect_visible_tree_indices`) instead of reusing a projection memoised
+   until the data or the expansion changes.
+6. Plugin trees with card borders build a block for every visible node, with no
+   windowing.
+7. Plugin card lists (`item_specs`) use `UniformMeasured`, which builds every
+   item to measure the tallest.
+8. `fresh_ui::Tree` flattens the whole tree into an eager list every frame and
+   keeps its expansion private, so the host and plugins work around it instead
+   of using it.
+9. List subtrees are not memoised on their data's version, so an unchanged
+   list is rebuilt every frame ("memos sit below the work").
+10. The prompt's column widths are measured over the previous frame's window,
+    read back through `suggestions_window`, instead of at the cut over the rows
+    just built.
+
+**Identity and state ownership** (§5.3, §4.8)
+
+11. Most shell lists key rows by index — suggestions, the file browser, the
+    keybinding table and its autocomplete, popup items, Settings' categories and
+    search results — so an insertion rewrites every row below it.
+12. Plugin lists fall back to the index when an item key is missing, instead of
+    requiring one.
+13. Host lists hold their selection as an index rather than as an item key.
+14. The drawn plugin `Tree` reads `expanded_keys` from the spec, while clicks,
+    arrow keys and `setExpandedKeys` write only host state, so expansion has two
+    owners.
+15. The Markdown table of contents probably does not redraw after a disclosure
+    click until something re-sends its spec, a consequence of item 14 (not
+    verified at runtime).
+16. The plugin API has no keyed insert, remove or move for list items and tree
+    nodes, so any change is `setItems` or a full spec re-send.
+
+**Geometry read back outside layout** (§4.10, Appendix A)
+
+17. Settings and keybinding-editor PageUp/PageDown read panel rectangles off the
+    tree instead of paging by the list's window at layout.
+18. File explorer paging, scroll clamping and sticky headers read a height
+    written while the description is built (`viewport_height`).
+19. The Settings category tree follows the body's scroll through a `top_item`
+    cached during render.
+20. `List` and `Tree` have no PageUp/PageDown handling of their own, which is
+    why each host computes a page size.
+
+**Inconsistencies from the read-back sweep** (Appendix A)
+
+21. `ensure_cursor_visible_for_navigation` assumes a 6-column gutter instead of
+    the measured one.
+22. Popups page by `max_height`, but can be drawn shorter than that.
+23. Settings body paging uses the visible height in rows as a count of items, so
+    paging over multi-row cards jumps more than a screen.
+24. Visible terminals compute their PTY size by hand-subtracting rows and
+    columns off the pane box, while embedded windows use the tree's rectangle.
+25. Prompt, Live Grep and file-browser paging is a fixed 10 rows whatever is
+    visible.
+26. The multi-line text widget pages by its spec's row count, not the height of a
+    growing box.
+27. The keybinding editor's `ScrollState` offset and content height are never
+    read or set outside tests, and the Settings entry dialog's
+    `viewport_height` never changes from its default.
+
+**Stale documentation**
+
+28. The plugin `List` API doc says the host owns the scroll offset (the viewport
+    does), and the `Tree` API doc says a plugin need not re-send its spec after
+    an expansion change (today it must; item 14).
