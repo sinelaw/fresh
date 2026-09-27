@@ -5877,6 +5877,7 @@ impl Editor {
         self.page_anchors.remove(panel_key);
         self.pane_mirrors.remove(panel_key);
         self.prose_reveal.borrow_mut().remove(panel_key);
+        self.tree_projections.borrow_mut().remove(panel_key);
         match self.widget_registry.unmount(panel_key) {
             Some(buffer_id) => {
                 tracing::debug!(

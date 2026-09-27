@@ -4832,4 +4832,155 @@ mod tests {
             "and the next frame describes it"
         );
     }
+
+    /// A tree of `groups` folders, each holding `per` leaves, keyed `tr`.
+    #[cfg(feature = "plugins")]
+    fn big_tree(groups: usize, per: usize, cards: bool) -> WidgetSpec {
+        let node = |t: String, depth: u32, has_children: bool| fresh_core::api::TreeNode {
+            text: fresh_core::text_property::TextPropertyEntry::text(t),
+            depth,
+            has_children,
+            checked: None,
+            extra_lines: Vec::new(),
+            window_anchor: None,
+            cells: Vec::new(),
+            action: None,
+        };
+        let mut nodes = Vec::new();
+        let mut keys = Vec::new();
+        for g in 0..groups {
+            nodes.push(node(format!("group {g}"), 0, true));
+            keys.push(format!("g{g}"));
+            for l in 0..per {
+                nodes.push(node(format!("leaf {g}.{l}"), 1, false));
+                keys.push(format!("g{g}/l{l}"));
+            }
+        }
+        WidgetSpec::Tree {
+            nodes: nodes.into(),
+            item_keys: keys.into(),
+            selected_index: 0,
+            visible_rows: None,
+            key: Some("tr".into()),
+            // Every group open: a thousand visible nodes, a window of rows.
+            expanded_keys: (0..groups).map(|g| format!("g{g}")).collect(),
+            checkable: false,
+            indent_cols: 2,
+            item_height: 1,
+            card_borders: cards,
+            toggle_on_click: false,
+            columns: Vec::new(),
+        }
+    }
+
+    /// **A still plugin collection costs nothing per frame.**
+    ///
+    /// The drawn tree walked every node (`collect_visible_tree_indices`) and
+    /// rebuilt every row in its window on every frame, and a list rebuilt its
+    /// window, whether or not anything had changed. Now the projection is
+    /// the owner's, kept until the collections or the expansion change, and
+    /// each subtree is built under a memo on everything it reads — so a
+    /// frame with nothing new walks nothing and builds no row, a selection
+    /// move rebuilds the window but not the projection, and an expansion
+    /// change is what walks the tree again.
+    #[cfg(all(feature = "plugins", debug_assertions))]
+    #[test]
+    fn a_still_collection_is_projected_and_built_once() {
+        use crate::view::shell::widgets::collection_stats;
+        use fresh_core::api::WidgetMutation;
+        for (what, spec) in [
+            ("a plain tree", big_tree(100, 9, false)),
+            ("a card tree", big_tree(100, 9, true)),
+            ("a list", list_of(1000)),
+        ] {
+            let (mut editor, _t) = make_editor();
+            let panel_key = crate::widgets::PanelKey::new("test-plugin", 1);
+            let out = crate::widgets::resolve_panel(&spec, &Default::default(), "", true, None);
+            editor.widget_registry.mount(
+                panel_key.clone(),
+                crate::app::PanelSlot::Dock.buffer_id(),
+                spec.clone(),
+                out.instance_states,
+                out.focus_key,
+                true,
+                false,
+                false,
+            );
+            editor.dock = Some(dock_panel(panel_key.clone()));
+            let is_tree = matches!(spec, WidgetSpec::Tree { .. });
+            let widget = if is_tree { "tr" } else { "lst" };
+
+            collection_stats::take();
+            frame_the_shell(&mut editor);
+            let first = collection_stats::take();
+            frame_the_shell(&mut editor);
+            frame_the_shell(&mut editor);
+            let still = collection_stats::take();
+            eprintln!("{what}: first frame {first:?}, two still frames {still:?}");
+            assert_eq!(
+                first.projections,
+                u32::from(is_tree),
+                "{what}: one walk to start"
+            );
+            assert!(first.rows > 0, "{what}: the first frame builds its window");
+            // A card tree is not windowed yet: it builds a block for every
+            // visible node. Memoised, it pays that once rather than per frame.
+            let cards = matches!(
+                spec,
+                WidgetSpec::Tree {
+                    card_borders: true,
+                    ..
+                }
+            );
+            assert!(
+                cards || first.rows < 200,
+                "{what}: a window's worth of rows, not the collection ({})",
+                first.rows
+            );
+            assert_eq!(
+                still,
+                collection_stats::Counts::default(),
+                "{what}: two still frames walk nothing and build no row"
+            );
+
+            // The selection moves: the window's rows are built again (their
+            // state changed), the projection is not.
+            editor.handle_widget_mutate(
+                &panel_key,
+                WidgetMutation::SetSelectedIndex {
+                    widget_key: widget.into(),
+                    index: 3,
+                },
+            );
+            frame_the_shell(&mut editor);
+            let moved = collection_stats::take();
+            eprintln!("{what}: after a selection move {moved:?}");
+            assert_eq!(
+                moved.projections, 0,
+                "{what}: a selection is not an expansion"
+            );
+            assert!(moved.rows > 0, "{what}: the moved selection is redrawn");
+
+            if is_tree {
+                // Folding a group is an expansion change: one walk.
+                editor.handle_widget_mutate(
+                    &panel_key,
+                    WidgetMutation::SetExpandedKeys {
+                        widget_key: "tr".into(),
+                        keys: vec!["g1".into()],
+                    },
+                );
+                frame_the_shell(&mut editor);
+                let folded = collection_stats::take();
+                eprintln!("{what}: after an expansion change {folded:?}");
+                assert_eq!(folded.projections, 1, "{what}: the expansion changed");
+                frame_the_shell(&mut editor);
+                assert_eq!(
+                    collection_stats::take(),
+                    collection_stats::Counts::default(),
+                    "{what}: and is still again after"
+                );
+            }
+        }
+    }
 }

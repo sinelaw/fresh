@@ -5846,6 +5846,7 @@ impl Editor {
                     .map(|p| p.h_pan.clone())
                     .unwrap_or_default(),
             ),
+            projections: self.projections_for(&key),
             focus_key: self
                 .widget_registry
                 .focus_key(&key)
@@ -5941,6 +5942,20 @@ impl Editor {
             .clone()
     }
 
+    /// The panel's projection cache — the same one every frame, so a tree
+    /// that did not change is not walked again. See
+    /// `view::shell::widgets::Projections`.
+    pub(crate) fn projections_for(
+        &self,
+        key: &crate::widgets::PanelKey,
+    ) -> std::rc::Rc<crate::view::shell::widgets::Projections> {
+        self.tree_projections
+            .borrow_mut()
+            .entry(key.clone())
+            .or_insert_with(|| std::rc::Rc::new(crate::view::shell::widgets::Projections::kept()))
+            .clone()
+    }
+
     pub(crate) fn panel_interior(
         &self,
         slot: crate::app::PanelSlot,
@@ -5964,6 +5979,7 @@ impl Editor {
                     .map(|p| p.h_pan.clone())
                     .unwrap_or_default(),
             ),
+            projections: self.projections_for(&key),
             focus_key: self
                 .widget_registry
                 .focus_key(&key)

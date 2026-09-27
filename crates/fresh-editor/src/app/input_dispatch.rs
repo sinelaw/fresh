@@ -617,6 +617,7 @@ impl Editor {
                     .map(|p| p.h_pan.clone())
                     .unwrap_or_default(),
             ),
+            projections: self.projections_for(&key),
             focus_key: self
                 .widget_registry
                 .focus_key(&key)
