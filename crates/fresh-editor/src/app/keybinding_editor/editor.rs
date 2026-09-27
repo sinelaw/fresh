@@ -631,9 +631,7 @@ impl KeybindingEditor {
         // Build display rows with section headers
         self.build_display_rows();
 
-        // The selection stays on its row wherever the rebuild put it; a row
-        // that is gone hands it to whatever now sits where it was.
-        self.select(self.selected());
+        self.reselect_after_rebuild();
         self.ensure_visible();
     }
 
@@ -695,13 +693,27 @@ impl KeybindingEditor {
         }
     }
 
-    /// The selected display row: where its row is now, or — when a rebuild
-    /// dropped that row — where it was, clamped to the rows there are.
+    /// The selected display row. Rows move only when they are rebuilt, and
+    /// every rebuild re-finds the selection by its key
+    /// ([`Self::reselect_after_rebuild`]), so between rebuilds the row it
+    /// was last found at is exact.
     pub fn selected(&self) -> usize {
+        self.selection.last_index()
+    }
+
+    /// Re-find the selected row by its key after the rows were rebuilt.
+    ///
+    /// **The editor always has a selected row**, so a row the rebuild
+    /// dropped (a binding deleted, or filtered out by a search) hands the
+    /// selection to the row now where it was: a stated rule for an item
+    /// that is gone, not a stand-in for an identity the row lacks.
+    fn reselect_after_rebuild(&mut self) {
         let n = self.display_rows.len();
-        self.selection
+        let at = self
+            .selection
             .find(n, |i, key| self.row_key(i).as_ref() == Some(key))
-            .unwrap_or_else(|| self.selection.last_index().min(n.saturating_sub(1)))
+            .unwrap_or(self.selection.last_index());
+        self.select(at);
     }
 
     /// Select display row `i` (clamped to the rows there are).
@@ -725,7 +737,7 @@ impl KeybindingEditor {
                 self.collapsed_sections.insert(key);
             }
             self.build_display_rows();
-            self.select(self.selected());
+            self.reselect_after_rebuild();
             self.ensure_visible();
         }
     }

@@ -1061,11 +1061,11 @@ fn list_rows(p: &ListRows) -> Node<UiMsg> {
                 // for a described panel, a row that does not declare
                 // the capability raises no context menu at all.
                 context_click: true,
-                widget_key: hit_keys.get(i).cloned().unwrap_or_default(),
+                widget_key: hit_keys[i].clone(),
                 widget_kind: "list",
                 payload: serde_json::json!({
                     "index": i,
-                    "key": hit_keys.get(i).cloned().unwrap_or_default(),
+                    "key": hit_keys[i].clone(),
                 }),
                 event_type: "select",
                 // A row's hit names the List that owns it: focus moves
@@ -1166,9 +1166,8 @@ fn tree_rows_plain(p: &TreeRows) -> Node<UiMsg> {
                 let surface = row_surface(st, &surface);
                 let mut node = node.clone();
                 node.text.normalize_widths();
-                let item_key = keys.get(abs).cloned().unwrap_or_default();
-                let open =
-                    node.has_children && !item_key.is_empty() && expanded.contains(&item_key);
+                let item_key = keys[abs].clone();
+                let open = node.has_children && expanded.contains(&item_key);
                 let table = table.as_ref().filter(|_| !node.cells.is_empty());
                 let r = match table {
                     // A cell row's body is its cells, which are nodes
@@ -1385,7 +1384,7 @@ fn tree_rows_cards(p: &CardTreeRows) -> Node<UiMsg> {
             line.normalize_widths();
         }
         let item_key = item_keys[abs].clone();
-        let open = n.has_children && !item_key.is_empty() && expanded.contains(&item_key);
+        let open = n.has_children && expanded.contains(&item_key);
         let r = crate::widgets::render_tree_row(
             &n,
             open,
@@ -2550,7 +2549,7 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                 }
             })
             .on_activate_handler(Rc::new(move |i, e: &fresh_ui::Event| {
-                let item_key = hit_keys.get(i).cloned().unwrap_or_default();
+                let item_key = hit_keys[i].clone();
                 Some(UiMsg::Ui(super::msg::UiFact::WidgetHit {
                     slot,
                     event: crate::widgets::WidgetEvent {
