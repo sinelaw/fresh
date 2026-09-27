@@ -603,7 +603,8 @@ impl Editor {
         let spec = self.widget_registry.get(&key)?.spec.clone();
         let (hovered, hovered_item) = self.widget_registry.hover_keys(&key);
         Some(crate::view::shell::panel::Interior {
-            spec: Rc::new(spec),
+            // A handle on the registry's storage, not a copy of it.
+            spec,
             states: Rc::new(
                 self.widget_registry
                     .instance_states(&key)

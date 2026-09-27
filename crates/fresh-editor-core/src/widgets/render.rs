@@ -4655,8 +4655,12 @@ pub mod tests {
         key: Option<&str>,
     ) -> WidgetSpec {
         WidgetSpec::Tree {
-            nodes,
-            item_keys: item_keys.iter().map(|s| s.to_string()).collect(),
+            nodes: nodes.into(),
+            item_keys: item_keys
+                .iter()
+                .map(|s| s.to_string())
+                .collect::<Vec<_>>()
+                .into(),
             selected_index: selected,
             visible_rows: Some(visible),
             expanded_keys: expanded.iter().map(|s| s.to_string()).collect(),

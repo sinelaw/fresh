@@ -5832,7 +5832,8 @@ impl Editor {
             .next()?;
         let spec = self.widget_registry.get(&key)?.spec.clone();
         Some(crate::view::shell::panel::Interior {
-            spec: Rc::new(spec),
+            // A handle on the registry's storage, not a copy of it.
+            spec,
             states: Rc::new(
                 self.widget_registry
                     .instance_states(&key)
@@ -5949,7 +5950,8 @@ impl Editor {
         let key = panel.panel_key.clone();
         let spec = self.widget_registry.get(&key)?.spec.clone();
         Some(crate::view::shell::panel::Interior {
-            spec: Rc::new(spec),
+            // A handle on the registry's storage, not a copy of it.
+            spec,
             states: Rc::new(
                 self.widget_registry
                     .instance_states(&key)

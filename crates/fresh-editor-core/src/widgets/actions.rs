@@ -93,8 +93,10 @@ pub fn set_list_items_in_spec(
     } = spec
     {
         if key.as_deref() == Some(widget_key) {
-            *items = new_items;
-            *item_keys = new_item_keys;
+            // Replaced, not edited: a frame that captured the old
+            // collection keeps it, and the next one captures this.
+            *items = new_items.into();
+            *item_keys = new_item_keys.into();
             return true;
         }
     }
@@ -134,8 +136,8 @@ pub fn set_tree_nodes_in_spec(
     } = spec
     {
         if key.as_deref() == Some(widget_key) {
-            *nodes = new_nodes;
-            *item_keys = new_item_keys;
+            *nodes = new_nodes.into();
+            *item_keys = new_item_keys.into();
             return true;
         }
     }
@@ -177,8 +179,10 @@ pub fn append_tree_nodes_in_spec(
     } = spec
     {
         if key.as_deref() == Some(widget_key) {
-            nodes.extend(new_nodes);
-            item_keys.extend(new_item_keys);
+            // Copy-on-write: in place when nothing else holds the
+            // collection, a fresh one when a described frame still does.
+            std::sync::Arc::make_mut(nodes).extend(new_nodes);
+            std::sync::Arc::make_mut(item_keys).extend(new_item_keys);
             return true;
         }
     }
@@ -249,7 +253,7 @@ pub fn set_tree_checked_keys_in_spec(
     {
         if key.as_deref() == Some(widget_key) {
             let target: std::collections::HashSet<&str> = keys.iter().map(String::as_str).collect();
-            for (i, node) in nodes.iter_mut().enumerate() {
+            for (i, node) in std::sync::Arc::make_mut(nodes).iter_mut().enumerate() {
                 if node.checked.is_none() {
                     continue;
                 }
@@ -429,8 +433,8 @@ mod tests {
     #[test]
     fn set_tree_nodes_in_spec_replaces_nodes() {
         let mut spec = WidgetSpec::Tree {
-            nodes: vec![node("old", 0, false)],
-            item_keys: vec!["k0".into()],
+            nodes: vec![node("old", 0, false)].into(),
+            item_keys: vec!["k0".into()].into(),
             selected_index: -1,
             visible_rows: Some(5),
             expanded_keys: vec![],
@@ -451,7 +455,7 @@ mod tests {
                 nodes, item_keys, ..
             } => {
                 assert_eq!(nodes.len(), 2);
-                assert_eq!(item_keys, &new_keys);
+                assert_eq!(**item_keys, new_keys);
             }
             _ => unreachable!(),
         }
@@ -470,8 +474,8 @@ mod tests {
         let mut c = node("c", 0, false);
         c.checked = Some(true);
         let mut spec = WidgetSpec::Tree {
-            nodes: vec![a, b, c],
-            item_keys: vec!["k_a".into(), "k_b".into(), "k_c".into()],
+            nodes: vec![a, b, c].into(),
+            item_keys: vec!["k_a".into(), "k_b".into(), "k_c".into()].into(),
             selected_index: -1,
             visible_rows: Some(5),
             expanded_keys: vec![],
@@ -512,8 +516,8 @@ mod tests {
         };
         let n_without = node("no-checkbox", 0, false); // checked: None
         let mut spec = WidgetSpec::Tree {
-            nodes: vec![n_with, n_without],
-            item_keys: vec!["k0".into(), "k1".into()],
+            nodes: vec![n_with, n_without].into(),
+            item_keys: vec!["k0".into(), "k1".into()].into(),
             selected_index: -1,
             visible_rows: Some(5),
             expanded_keys: vec![],
@@ -543,8 +547,8 @@ mod tests {
     #[test]
     fn set_tree_nodes_in_spec_returns_false_for_unknown_key() {
         let mut spec = WidgetSpec::Tree {
-            nodes: vec![node("a", 0, false)],
-            item_keys: vec!["k".into()],
+            nodes: vec![node("a", 0, false)].into(),
+            item_keys: vec!["k".into()].into(),
             selected_index: -1,
             visible_rows: Some(5),
             expanded_keys: vec![],

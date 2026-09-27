@@ -5562,7 +5562,7 @@ impl Editor {
     /// the full spec; it sends one targeted change. The host
     /// mutates the registry's spec / instance state and re-renders
     /// against the just-mutated state.
-    fn handle_widget_mutate(
+    pub(crate) fn handle_widget_mutate(
         &mut self,
         panel_key: &crate::widgets::PanelKey,
         mutation: fresh_core::api::WidgetMutation,
@@ -5650,7 +5650,7 @@ impl Editor {
                 // mutate.
                 if let Some(panel) = self.widget_registry.get_mut(panel_key) {
                     crate::widgets::set_toggle_checked_in_spec(
-                        &mut panel.spec,
+                        std::rc::Rc::make_mut(&mut panel.spec),
                         &widget_key,
                         checked,
                     );
@@ -5761,7 +5761,7 @@ impl Editor {
                 // List items live in the spec.
                 if let Some(panel) = self.widget_registry.get_mut(panel_key) {
                     crate::widgets::set_list_items_in_spec(
-                        &mut panel.spec,
+                        std::rc::Rc::make_mut(&mut panel.spec),
                         &widget_key,
                         items,
                         item_keys,
@@ -5812,7 +5812,7 @@ impl Editor {
                 // plugin.
                 if let Some(panel) = self.widget_registry.get_mut(panel_key) {
                     crate::widgets::set_tree_checked_keys_in_spec(
-                        &mut panel.spec,
+                        std::rc::Rc::make_mut(&mut panel.spec),
                         &widget_key,
                         checked,
                         &keys,
@@ -5826,7 +5826,7 @@ impl Editor {
             } => {
                 if let Some(panel) = self.widget_registry.get_mut(panel_key) {
                     crate::widgets::append_tree_nodes_in_spec(
-                        &mut panel.spec,
+                        std::rc::Rc::make_mut(&mut panel.spec),
                         &widget_key,
                         new_nodes,
                         new_item_keys,
@@ -5838,7 +5838,11 @@ impl Editor {
                 entries,
             } => {
                 if let Some(panel) = self.widget_registry.get_mut(panel_key) {
-                    crate::widgets::set_raw_entries_in_spec(&mut panel.spec, &widget_key, entries);
+                    crate::widgets::set_raw_entries_in_spec(
+                        std::rc::Rc::make_mut(&mut panel.spec),
+                        &widget_key,
+                        entries,
+                    );
                 }
             }
             WidgetMutation::SetFocusKey { widget_key } => {
