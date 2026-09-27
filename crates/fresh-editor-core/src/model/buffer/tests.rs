@@ -1548,6 +1548,90 @@ fn test_get_all_text_returns_empty_for_unloaded_buffers() {
     );
 }
 
+/// A save records the size and SHA-256 of what it wrote, up to the
+/// large-file threshold the buffer was built with; above it, nothing:
+/// the changed-on-disk check doesn't compare files that big, so hashing
+/// them would be wasted (issue #3380).
+#[test]
+fn test_save_fingerprints_only_up_to_the_large_file_threshold() {
+    use crate::model::filesystem::ContentDigest;
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let recovery_dir = temp_dir.path().join("recovery");
+    let file_path = temp_dir.path().join("notes.txt");
+
+    let mut buffer = TextBuffer::new_with_path(16, test_fs(), file_path.clone());
+    buffer.insert(0, "sixteen bytes!!\n");
+    buffer.save(&recovery_dir).unwrap();
+    assert_eq!(
+        buffer.saved_content(),
+        Some(ContentDigest::of(b"sixteen bytes!!\n"))
+    );
+
+    buffer.insert(0, "+");
+    buffer.save(&recovery_dir).unwrap();
+    assert_eq!(std::fs::read(&file_path).unwrap().len(), 17);
+    assert_eq!(buffer.saved_content(), None);
+
+    // Loaded under the threshold: fingerprinted up to it, not over it.
+    let mut buffer = TextBuffer::load_from_file(&file_path, 20, test_fs()).unwrap();
+    buffer.insert(0, "mo");
+    buffer.save(&recovery_dir).unwrap();
+    assert_eq!(std::fs::read(&file_path).unwrap().len(), 19);
+    assert!(buffer.saved_content().is_some());
+    buffer.insert(0, "re");
+    buffer.save(&recovery_dir).unwrap();
+    assert_eq!(std::fs::read(&file_path).unwrap().len(), 21);
+    assert_eq!(buffer.saved_content(), None);
+}
+
+/// A buffer built from bytes (a restored workspace file) is capped the same
+/// way once given the threshold.
+#[test]
+fn test_threshold_given_after_construction_caps_the_fingerprint() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let recovery_dir = temp_dir.path().join("recovery");
+    let file_path = temp_dir.path().join("notes.txt");
+
+    let mut buffer = TextBuffer::from_bytes(b"ten bytes\n".to_vec(), test_fs());
+    buffer.set_file_path(file_path.clone());
+    buffer.set_large_file_threshold(9);
+    buffer.insert(0, "+");
+    buffer.save(&recovery_dir).unwrap();
+    assert_eq!(buffer.saved_content(), None);
+}
+
+/// A large file loaded whole because of its encoding (the confirmed load)
+/// saves without Copy ops; above the threshold it was loaded with, the save
+/// records no fingerprint, and below it, one.
+#[test]
+fn test_confirmed_full_load_fingerprints_only_up_to_the_threshold() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let recovery_dir = temp_dir.path().join("recovery");
+    let file_path = temp_dir.path().join("notes.txt");
+    // UTF-16LE with a BOM: not UTF-8, so loaded whole and re-encoded on save.
+    let utf16 = |text: &str| -> Vec<u8> {
+        let mut bytes = vec![0xFF, 0xFE];
+        bytes.extend(text.encode_utf16().flat_map(u16::to_le_bytes));
+        bytes
+    };
+    let save_edited = |threshold: usize| {
+        std::fs::write(&file_path, utf16("hello\n")).unwrap();
+        let mut buffer =
+            TextBuffer::load_large_file_confirmed(&file_path, threshold, test_fs()).unwrap();
+        assert!(buffer.is_large_file());
+        buffer.insert(0, "+");
+        buffer.save(&recovery_dir).unwrap();
+        assert_eq!(std::fs::read(&file_path).unwrap(), utf16("+hello\n"));
+        buffer.saved_content()
+    };
+
+    assert_eq!(
+        save_edited(1 << 20),
+        Some(ContentDigest::of(&utf16("+hello\n")))
+    );
+    assert_eq!(save_edited(8), None);
+}
+
 // ===== Line Ending Conversion Tests =====
 
 mod line_ending_conversion {

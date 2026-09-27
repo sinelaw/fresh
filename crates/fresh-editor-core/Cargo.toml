@@ -33,7 +33,6 @@ runtime = [
     "dep:libc",
     "dep:nix",
     "dep:pulldown-cmark",
-    "dep:sha2",
     "dep:syntect",
     "syntect/regex-onig",
     "syntect/parsing",
@@ -74,6 +73,9 @@ unicode-width = { version = "0.2" }
 unicode-segmentation = { version = "1.12" }
 encoding_rs = "0.8"
 chardetng = "0.1"
+# Not optional: the text model fingerprints what a save wrote
+# (`model::filesystem::ContentDigest`), and the model is always compiled.
+sha2 = "0.10"
 
 crossterm = { version = "0.29.0", features = ["osc52"], optional = true }
 # Not optional: `widgets` is always compiled and renders through ratatui.
@@ -83,7 +85,6 @@ tokio = { version = "1.49", features = ["fs", "io-util", "process", "rt", "rt-mu
 libc = { version = "0.2", optional = true }
 nix = { version = "0.31", features = ["signal", "pthread", "resource", "poll", "fs"], optional = true }
 pulldown-cmark = { version = "0.13", default-features = false, optional = true }
-sha2 = { version = "0.10", optional = true }
 syntect = { version = "5.3", default-features = false, optional = true }
 tempfile = { version = "3.25", optional = true }
 

@@ -91,12 +91,15 @@ impl crate::app::window::Window {
     /// differ from one read later, with no one else touching the file: the
     /// client's cached attributes give way to the server's, and a skewed
     /// server clock stamps something else (issue #3380). Telling that from a
-    /// real change takes the content, compared with what the save wrote
-    /// ([`TextBuffer::saved_content`]). Only for a buffer this window saved
-    /// itself, below the large-file threshold, and only when the size
-    /// matches, so a real change almost never costs a read; and a mismatch
-    /// is remembered ([`Self::forget_saved_content`]), so it costs one at
-    /// most. A revert or reload makes a new buffer, which saved nothing.
+    /// real change takes the content: the file's SHA-256, computed where it
+    /// lives ([`FileSystem::content_digest`] — on a remote host, by the
+    /// agent, so the file isn't downloaded), compared with the digest of
+    /// what the save wrote ([`TextBuffer::saved_content`]). Only for a
+    /// buffer this window saved itself, at or below the large-file threshold, and
+    /// only when the size matches, so a real change almost never costs a
+    /// hash; and a mismatch is remembered ([`Self::forget_saved_content`]),
+    /// so it costs one at most. A revert or reload makes a new buffer, which
+    /// saved nothing.
     ///
     /// [`TextBuffer::saved_content`]: crate::model::buffer::TextBuffer::saved_content
     pub(crate) fn holds_what_was_saved(&self, path: &Path, size: u64) -> bool {
@@ -114,12 +117,12 @@ impl crate::app::window::Window {
         }
         self.authority()
             .filesystem
-            .read_file(path)
-            .is_ok_and(|bytes| crate::model::buffer::SavedContent::of(&bytes) == saved)
+            .content_digest(path)
+            .is_ok_and(|digest| digest == saved)
     }
 
     /// `path` holds something other than what its buffer last saved: stop
-    /// comparing against that, which would read the file on every check.
+    /// comparing against that, which would hash the file on every check.
     pub(crate) fn forget_saved_content(&mut self, path: &Path) {
         for state in self.buffers.as_map_mut().values_mut() {
             if state.buffer.file_path() == Some(path) {

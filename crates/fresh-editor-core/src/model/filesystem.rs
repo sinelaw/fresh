@@ -459,6 +459,64 @@ pub struct SearchMatch {
     pub context: String,
 }
 
+/// A file's size and the SHA-256 of its bytes: enough to tell whether it
+/// still holds bytes seen earlier, without keeping them. SHA-256 so the
+/// answer is the same on any host and in any release — a remote agent
+/// computes it where the file lives ([`FileSystem::content_digest`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ContentDigest {
+    pub size: u64,
+    pub sha256: [u8; 32],
+}
+
+impl ContentDigest {
+    /// The digest of `chunks` written one after another: equal to the
+    /// digest of their concatenation.
+    pub fn of_chunks<'a>(chunks: impl IntoIterator<Item = &'a [u8]>) -> Self {
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        let mut size = 0u64;
+        for chunk in chunks {
+            hasher.update(chunk);
+            size += chunk.len() as u64;
+        }
+        Self {
+            size,
+            sha256: hasher.finalize().into(),
+        }
+    }
+
+    /// The digest of `bytes`.
+    pub fn of(bytes: &[u8]) -> Self {
+        Self::of_chunks([bytes])
+    }
+
+    /// The digest of everything `reader` yields, read a chunk at a time.
+    pub fn of_reader(mut reader: impl Read) -> io::Result<Self> {
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        let mut size = 0u64;
+        let mut chunk = vec![0u8; CONTENT_DIGEST_CHUNK];
+        loop {
+            let n = match reader.read(&mut chunk) {
+                Ok(0) => break,
+                Ok(n) => n,
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                Err(e) => return Err(e),
+            };
+            hasher.update(&chunk[..n]);
+            size += n as u64;
+        }
+        Ok(Self {
+            size,
+            sha256: hasher.finalize().into(),
+        })
+    }
+}
+
+/// How much of a file [`ContentDigest::of_reader`] holds at once.
+const CONTENT_DIGEST_CHUNK: usize = 64 * 1024;
+
 // ============================================================================
 // FileSystem Trait
 // ============================================================================
@@ -493,6 +551,18 @@ pub trait FileSystem: Send + Sync {
     fn count_line_feeds_in_range(&self, path: &Path, offset: u64, len: usize) -> io::Result<usize> {
         let data = self.read_range(path, offset, len)?;
         Ok(data.iter().filter(|&&b| b == b'\n').count())
+    }
+
+    /// The size and SHA-256 of the file at `path`.
+    ///
+    /// Used to tell whether a file still holds what the editor saved there
+    /// (issue #3380). Remote filesystem implementations override this to
+    /// hash on the server side, so only the digest crosses the network.
+    ///
+    /// The default implementation streams the file through
+    /// [`FileSystem::open_file`] a chunk at a time, never holding all of it.
+    fn content_digest(&self, path: &Path) -> io::Result<ContentDigest> {
+        ContentDigest::of_reader(self.open_file(path)?)
     }
 
     /// Write data to file atomically (temp file + rename).
@@ -4154,5 +4224,167 @@ mod tests {
         }
         // A short name is kept whole.
         assert_eq!(temp_name_stem(Path::new("/d/notes.txt")), "notes.txt");
+    }
+
+    /// A local filesystem that counts whole-file reads.
+    struct ReadCountingFs {
+        read_file_calls: std::sync::atomic::AtomicUsize,
+    }
+
+    impl FileSystem for ReadCountingFs {
+        fn read_file(&self, path: &Path) -> io::Result<Vec<u8>> {
+            self.read_file_calls
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            StdFileSystem.read_file(path)
+        }
+        fn read_range(&self, path: &Path, offset: u64, len: usize) -> io::Result<Vec<u8>> {
+            StdFileSystem.read_range(path, offset, len)
+        }
+        fn write_file(&self, path: &Path, data: &[u8]) -> io::Result<()> {
+            StdFileSystem.write_file(path, data)
+        }
+        fn create_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
+            StdFileSystem.create_file(path)
+        }
+        fn create_new_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
+            StdFileSystem.create_new_file(path)
+        }
+        fn create_new_private_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
+            StdFileSystem.create_new_private_file(path)
+        }
+        fn open_file(&self, path: &Path) -> io::Result<Box<dyn FileReader>> {
+            StdFileSystem.open_file(path)
+        }
+        fn open_file_for_write(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
+            StdFileSystem.open_file_for_write(path)
+        }
+        fn open_file_for_append(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
+            StdFileSystem.open_file_for_append(path)
+        }
+        fn set_file_length(&self, path: &Path, len: u64) -> io::Result<()> {
+            StdFileSystem.set_file_length(path, len)
+        }
+        fn rename(&self, from: &Path, to: &Path) -> io::Result<()> {
+            StdFileSystem.rename(from, to)
+        }
+        fn copy(&self, from: &Path, to: &Path) -> io::Result<u64> {
+            StdFileSystem.copy(from, to)
+        }
+        fn remove_file(&self, path: &Path) -> io::Result<()> {
+            StdFileSystem.remove_file(path)
+        }
+        fn remove_dir(&self, path: &Path) -> io::Result<()> {
+            StdFileSystem.remove_dir(path)
+        }
+        fn metadata(&self, path: &Path) -> io::Result<FileMetadata> {
+            StdFileSystem.metadata(path)
+        }
+        fn symlink_metadata(&self, path: &Path) -> io::Result<FileMetadata> {
+            StdFileSystem.symlink_metadata(path)
+        }
+        fn is_dir(&self, path: &Path) -> io::Result<bool> {
+            StdFileSystem.is_dir(path)
+        }
+        fn is_file(&self, path: &Path) -> io::Result<bool> {
+            StdFileSystem.is_file(path)
+        }
+        fn set_permissions(&self, path: &Path, permissions: &FilePermissions) -> io::Result<()> {
+            StdFileSystem.set_permissions(path, permissions)
+        }
+        fn read_dir(&self, path: &Path) -> io::Result<Vec<DirEntry>> {
+            StdFileSystem.read_dir(path)
+        }
+        fn create_dir(&self, path: &Path) -> io::Result<()> {
+            StdFileSystem.create_dir(path)
+        }
+        fn create_dir_all(&self, path: &Path) -> io::Result<()> {
+            StdFileSystem.create_dir_all(path)
+        }
+        fn canonicalize(&self, path: &Path) -> io::Result<PathBuf> {
+            StdFileSystem.canonicalize(path)
+        }
+        fn current_uid(&self) -> u32 {
+            StdFileSystem.current_uid()
+        }
+        fn sudo_write(
+            &self,
+            path: &Path,
+            data: &[u8],
+            mode: u32,
+            uid: u32,
+            gid: u32,
+        ) -> io::Result<()> {
+            StdFileSystem.sudo_write(path, data, mode, uid, gid)
+        }
+        fn search_file(
+            &self,
+            path: &Path,
+            pattern: &str,
+            opts: &FileSearchOptions,
+            cursor: &mut FileSearchCursor,
+        ) -> io::Result<Vec<SearchMatch>> {
+            default_search_file(&StdFileSystem, path, pattern, opts, cursor)
+        }
+        fn walk(
+            &self,
+            root: &Path,
+            opts: &WalkOptions<'_>,
+            cancel: &std::sync::atomic::AtomicBool,
+            on_entry: &mut dyn FnMut(WalkEntry<'_>) -> bool,
+        ) -> io::Result<()> {
+            StdFileSystem.walk(root, opts, cancel, on_entry)
+        }
+    }
+
+    /// The default `content_digest` is the file's size and SHA-256, got by
+    /// streaming it rather than reading it whole.
+    #[test]
+    fn default_content_digest_streams_the_files_sha256() {
+        use sha2::{Digest, Sha256};
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("big.bin");
+        // Several chunks and a partial one.
+        let content: Vec<u8> = (0..CONTENT_DIGEST_CHUNK * 3 + 17)
+            .map(|i| (i % 251) as u8)
+            .collect();
+        std::fs::write(&path, &content).unwrap();
+        let fs = ReadCountingFs {
+            read_file_calls: Default::default(),
+        };
+
+        let digest = fs.content_digest(&path).unwrap();
+
+        let expected: [u8; 32] = Sha256::digest(&content).into();
+        assert_eq!(digest.size, content.len() as u64);
+        assert_eq!(digest.sha256, expected);
+        assert_eq!(digest, ContentDigest::of(&content));
+        assert_eq!(
+            fs.read_file_calls.load(std::sync::atomic::Ordering::SeqCst),
+            0
+        );
+    }
+
+    /// Chunks digest as their concatenation does, so a save that writes a
+    /// file in pieces compares equal to the file hashed whole.
+    #[test]
+    fn content_digest_of_chunks_is_that_of_their_concatenation() {
+        assert_eq!(
+            ContentDigest::of_chunks([&b"first "[..], b"", b"original\n"]),
+            ContentDigest::of(b"first original\n")
+        );
+        assert_ne!(
+            ContentDigest::of(b"first original\n"),
+            ContentDigest::of(b"FIRST ORIGINAL\n")
+        );
+    }
+
+    /// A missing file is an error, not the digest of nothing.
+    #[test]
+    fn content_digest_of_a_missing_file_is_not_found() {
+        let dir = tempfile::tempdir().unwrap();
+        let err = StdFileSystem
+            .content_digest(&dir.path().join("missing"))
+            .unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::NotFound);
     }
 }

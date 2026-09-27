@@ -6,7 +6,8 @@
 //! drives, slow disks, etc.).
 
 use crate::model::filesystem::{
-    DirEntry, FileMetadata, FilePermissions, FileReader, FileSystem, FileWriter, ReplaceError,
+    ContentDigest, DirEntry, FileMetadata, FilePermissions, FileReader, FileSystem, FileWriter,
+    ReplaceError,
 };
 use std::io;
 use std::path::{Path, PathBuf};
@@ -171,6 +172,12 @@ impl FileSystem for SlowFileSystem {
         self.add_delay(self.config.read_file_delay);
         self.metrics.read_file_calls.fetch_add(1, Ordering::SeqCst);
         self.inner.read_range(path, offset, len)
+    }
+
+    fn content_digest(&self, path: &Path) -> io::Result<ContentDigest> {
+        self.add_delay(self.config.read_file_delay);
+        self.metrics.other_calls.fetch_add(1, Ordering::SeqCst);
+        self.inner.content_digest(path)
     }
 
     fn write_file(&self, path: &Path, data: &[u8]) -> io::Result<()> {

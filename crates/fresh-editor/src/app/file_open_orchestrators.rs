@@ -365,6 +365,7 @@ impl Editor {
             Arc::clone(&self.authority().filesystem),
             crate::model::buffer::BufferConfig {
                 estimated_line_length: self.config.editor.estimated_line_length,
+                large_file_threshold: Some(self.config.editor.large_file_threshold_bytes as usize),
             },
         )?;
         let first_line = buffer.first_line_lossy();
@@ -474,6 +475,7 @@ impl Editor {
             Arc::clone(&self.authority().filesystem),
             crate::model::buffer::BufferConfig {
                 estimated_line_length: self.config.editor.estimated_line_length,
+                large_file_threshold: Some(self.config.editor.large_file_threshold_bytes as usize),
             },
         )?;
 
@@ -548,6 +550,7 @@ impl Editor {
         // Load buffer with forced full loading (bypasses the large file encoding check)
         let buffer = crate::model::buffer::Buffer::load_large_file_confirmed(
             path,
+            self.config.editor.large_file_threshold_bytes as usize,
             Arc::clone(&self.authority().filesystem),
         )?;
         let first_line = buffer.first_line_lossy();

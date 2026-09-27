@@ -9,9 +9,10 @@
 //! - RemoteFileSystem for file operations
 
 use fresh::model::buffer::TextBuffer;
-use fresh::model::filesystem::{FileSystem, WriteOp};
+use fresh::model::filesystem::{ContentDigest, FileSystem, WriteOp};
 use fresh::services::remote::{
-    spawn_local_agent, spawn_local_agent_with_capacity, RemoteFileSystem, TEST_RECV_DELAY_US,
+    spawn_local_agent, spawn_local_agent_transport, spawn_local_agent_with_capacity, AgentChannel,
+    RemoteFileSystem, TEST_RECV_DELAY_US,
 };
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -272,6 +273,84 @@ fn test_remote_connection_info() {
         Some("test@localhost"),
         "Should return connection string"
     );
+}
+
+/// A writer that keeps a copy of everything written through it, to see
+/// which requests a channel sent the agent.
+struct RecordingWriter<W> {
+    inner: W,
+    sent: Arc<std::sync::Mutex<Vec<u8>>>,
+}
+
+impl<W: tokio::io::AsyncWrite + Unpin> tokio::io::AsyncWrite for RecordingWriter<W> {
+    fn poll_write(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        let this = &mut *self;
+        let poll = std::pin::Pin::new(&mut this.inner).poll_write(cx, buf);
+        if let std::task::Poll::Ready(Ok(n)) = poll {
+            this.sent.lock().unwrap().extend_from_slice(&buf[..n]);
+        }
+        poll
+    }
+    fn poll_flush(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.inner).poll_flush(cx)
+    }
+    fn poll_shutdown(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.inner).poll_shutdown(cx)
+    }
+}
+
+/// The content digest is computed by the agent, where the file lives: one
+/// `digest` request, no `read` downloading the file. It is the same as one
+/// computed here over the same bytes.
+#[test]
+fn test_content_digest_is_computed_by_the_agent() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let Ok((reader, writer)) = rt.block_on(spawn_local_agent_transport()) else {
+        eprintln!("Skipping test: could not spawn the agent");
+        return;
+    };
+    let sent = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let writer = RecordingWriter {
+        inner: writer,
+        sent: sent.clone(),
+    };
+    let channel = rt.block_on(async { AgentChannel::from_transport(reader, writer, 64) });
+    channel.set_request_timeout(TEST_HARNESS_REQUEST_TIMEOUT);
+    let fs = RemoteFileSystem::new(Arc::new(channel), "test@localhost".to_string());
+
+    let test_path = temp_dir.path().join("digest_test.txt");
+    let content: Vec<u8> = (0..300_000u32).map(|i| (i % 253) as u8).collect();
+    std::fs::write(&test_path, &content).unwrap();
+
+    assert_eq!(
+        fs.content_digest(&test_path).unwrap(),
+        ContentDigest::of(&content)
+    );
+    let err = fs
+        .content_digest(&temp_dir.path().join("missing.txt"))
+        .unwrap_err();
+    assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
+
+    let sent = String::from_utf8(sent.lock().unwrap().clone()).unwrap();
+    let methods: Vec<String> = sent
+        .lines()
+        .map(|line| {
+            let request: serde_json::Value = serde_json::from_str(line).unwrap();
+            request["m"].as_str().unwrap().to_string()
+        })
+        .collect();
+    assert_eq!(methods, ["digest", "digest"]);
 }
 
 #[test]

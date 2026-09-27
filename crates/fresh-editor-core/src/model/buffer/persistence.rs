@@ -11,45 +11,12 @@
 //! both dirty flags. `TextBuffer::mark_content_modified` calls it and
 //! then bumps the top-level version counter.
 
-use crate::model::filesystem::FileSystem;
+use crate::model::filesystem::{ContentDigest, FileSystem};
 use crate::model::piece_tree::{BufferLocation, LeafData, PieceTree, PieceTreeNode, StringBuffer};
 use crate::model::piece_tree_diff::PieceTreeDiff;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::SystemTime;
-
-/// The size and hash of the bytes a save wrote, to tell later whether a
-/// file still holds them without keeping them (issue #3380). The hash is
-/// only compared within this process.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SavedContent {
-    pub size: u64,
-    pub hash: u64,
-}
-
-impl SavedContent {
-    /// The fingerprint of `chunks` written one after another.
-    pub fn of_chunks<'a>(chunks: impl IntoIterator<Item = &'a [u8]>) -> Self {
-        use std::hash::Hasher;
-        // `write` streams: the hash of the chunks is the hash of their
-        // concatenation, so a file read back in one piece compares equal.
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        let mut size = 0u64;
-        for chunk in chunks {
-            hasher.write(chunk);
-            size += chunk.len() as u64;
-        }
-        Self {
-            size,
-            hash: hasher.finish(),
-        }
-    }
-
-    /// The fingerprint of `bytes`.
-    pub fn of(bytes: &[u8]) -> Self {
-        Self::of_chunks([bytes])
-    }
-}
 
 /// Filesystem + save-state for one `TextBuffer`.
 pub struct Persistence {
@@ -94,10 +61,11 @@ pub struct Persistence {
     /// not changed on disk since. A save that succeeds clears it.
     torn_write: Option<(PathBuf, SystemTime)>,
 
-    /// What the last save wrote, when this buffer had every byte of it in
-    /// hand (no Copy ops streamed from the old file). See
+    /// The digest of what the last save wrote, when this buffer had every
+    /// byte of it in hand (no Copy ops streamed from the old file) and it was
+    /// small enough to be compared. See
     /// [`TextBuffer::saved_content`](super::TextBuffer::saved_content).
-    saved_content: Option<SavedContent>,
+    saved_content: Option<ContentDigest>,
 
     /// Bumped by every write to `saved_root` or `modified`.
     ///
@@ -236,11 +204,11 @@ impl Persistence {
         self.torn_write = torn_write;
     }
 
-    pub fn saved_content(&self) -> Option<SavedContent> {
+    pub fn saved_content(&self) -> Option<ContentDigest> {
         self.saved_content
     }
 
-    pub fn set_saved_content(&mut self, content: Option<SavedContent>) {
+    pub fn set_saved_content(&mut self, content: Option<ContentDigest>) {
         self.saved_content = content;
     }
 

@@ -3,13 +3,14 @@
 //! Implements the FileSystem trait for remote operations via SSH agent.
 
 use crate::model::filesystem::{
-    DirEntry, EntryType, FileMetadata, FilePermissions, FileReader, FileSystem, FileWriter, WriteOp,
+    ContentDigest, DirEntry, EntryType, FileMetadata, FilePermissions, FileReader, FileSystem,
+    FileWriter, WriteOp,
 };
 use crate::services::remote::channel::{AgentChannel, ChannelError};
 use crate::services::remote::protocol::{
-    append_params, count_lf_params, decode_base64, ls_params, patch_params, read_params,
-    stat_params, sudo_write_params, truncate_params, write_params, PatchOp, RemoteDirEntry,
-    RemoteMetadata,
+    append_params, count_lf_params, decode_base64, digest_params, ls_params, patch_params,
+    read_params, stat_params, sudo_write_params, truncate_params, write_params, PatchOp,
+    RemoteDirEntry, RemoteMetadata,
 };
 use std::io::{self, Cursor, Read, Seek, Write};
 use std::path::{Path, PathBuf};
@@ -226,6 +227,21 @@ impl RemoteFileSystem {
     }
 }
 
+/// A SHA-256 as the agent reports it: 64 hex digits.
+fn parse_sha256_hex(hex: &str) -> Option<[u8; 32]> {
+    let digits = hex.as_bytes();
+    // `from_str_radix` alone would take a sign ("+f").
+    if digits.len() != 64 || !digits.iter().all(u8::is_ascii_hexdigit) {
+        return None;
+    }
+    let mut out = [0u8; 32];
+    for (byte, pair) in out.iter_mut().zip(digits.chunks_exact(2)) {
+        let pair = std::str::from_utf8(pair).ok()?;
+        *byte = u8::from_str_radix(pair, 16).ok()?;
+    }
+    Some(out)
+}
+
 impl FileSystem for RemoteFileSystem {
     fn read_file(&self, path: &Path) -> io::Result<Vec<u8>> {
         let path_str = path.to_string_lossy();
@@ -307,6 +323,31 @@ impl FileSystem for RemoteFileSystem {
                     "missing count in count_lf response",
                 )
             })
+    }
+
+    fn content_digest(&self, path: &Path) -> io::Result<ContentDigest> {
+        let path_str = path.to_string_lossy();
+        let result = self
+            .channel
+            .request_blocking("digest", digest_params(&path_str))
+            .map_err(Self::to_io_error)?;
+
+        let invalid = |what: &str| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("{what} in digest response"),
+            )
+        };
+        let size = result
+            .get("size")
+            .and_then(|v| v.as_u64())
+            .ok_or_else(|| invalid("missing size"))?;
+        let hex = result
+            .get("sha256")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| invalid("missing sha256"))?;
+        let sha256 = parse_sha256_hex(hex).ok_or_else(|| invalid("malformed sha256"))?;
+        Ok(ContentDigest { size, sha256 })
     }
 
     fn write_file(&self, path: &Path, data: &[u8]) -> io::Result<()> {
@@ -945,6 +986,28 @@ impl FileWriter for AppendingRemoteFileWriter {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Exactly 64 hex digits: no sign, no whitespace, no other length.
+    #[test]
+    fn parse_sha256_hex_takes_only_hex_digits() {
+        let hex = "00ff".repeat(16);
+        let mut expected = [0u8; 32];
+        for pair in expected.chunks_exact_mut(2) {
+            pair[1] = 0xff;
+        }
+        assert_eq!(parse_sha256_hex(&hex), Some(expected));
+        assert_eq!(parse_sha256_hex(&hex.to_uppercase()), Some(expected));
+
+        for bad in [
+            format!("+f{}", &hex[2..]),
+            format!(" f{}", &hex[2..]),
+            format!("zz{}", &hex[2..]),
+            hex[2..].to_string(),
+            format!("{hex}00"),
+        ] {
+            assert_eq!(parse_sha256_hex(&bad), None, "{bad:?}");
+        }
+    }
 
     #[test]
     fn test_convert_metadata() {
