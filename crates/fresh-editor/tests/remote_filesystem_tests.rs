@@ -289,9 +289,16 @@ impl<W: tokio::io::AsyncWrite + Unpin> tokio::io::AsyncWrite for RecordingWriter
         buf: &[u8],
     ) -> std::task::Poll<std::io::Result<usize>> {
         let this = &mut *self;
+        // Held across the write, not taken after it. Once the bytes reach
+        // the agent it can answer, and the test reads `sent` as soon as the
+        // answer arrives; recording after the write left a window in which
+        // the reply beat the record and the test saw one request short.
+        // With the lock held from before the write, the test's read waits
+        // for the record.
+        let mut sent = this.sent.lock().unwrap();
         let poll = std::pin::Pin::new(&mut this.inner).poll_write(cx, buf);
         if let std::task::Poll::Ready(Ok(n)) = poll {
-            this.sent.lock().unwrap().extend_from_slice(&buf[..n]);
+            sent.extend_from_slice(&buf[..n]);
         }
         poll
     }
