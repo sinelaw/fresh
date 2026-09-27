@@ -196,6 +196,10 @@ pub struct Interior {
     /// How far each keyed rows widget is panned sideways, in display columns.
     /// See [`super::widgets::Ctx::h_pan`].
     pub h_pan: std::rc::Rc<std::collections::HashMap<String, i32>>,
+    /// The panel's memoised tree projections, kept by the host across frames
+    /// so a tree whose collections and expansion did not change is not walked
+    /// again. See [`super::widgets::Projections`].
+    pub projections: std::rc::Rc<super::widgets::Projections>,
     /// The handle a markdown document's viewport is anchored to, so the host
     /// can ask it to reveal the row holding a byte (`Anchor::reveal_byte`)
     /// after a key moved the caret — the tree shaped the rows, so the tree
@@ -820,6 +824,7 @@ fn body(p: &Panel) -> Node<UiMsg> {
                 slot: super::widgets::Slot::Floating,
                 states: &i.states,
                 h_pan: &i.h_pan,
+                projections: &i.projections,
                 reveal: i.reveal.clone(),
                 focus_key: i.focus_key.clone(),
                 keyboard: i.keyboard,
@@ -950,6 +955,7 @@ mod tests {
             spec: std::rc::Rc::new(spec),
             states: Default::default(),
             h_pan: Default::default(),
+            projections: Default::default(),
             focus_key: String::new(),
             keyboard: true,
             label_align: Default::default(),
@@ -1139,6 +1145,7 @@ mod tests {
             }),
             states: Default::default(),
             h_pan: Default::default(),
+            projections: Default::default(),
             focus_key: "ok".into(),
             keyboard: true,
 
@@ -1581,6 +1588,7 @@ mod tests {
                 spec: std::rc::Rc::new(spec),
                 states: Default::default(),
                 h_pan: Default::default(),
+                projections: Default::default(),
                 focus_key: String::new(),
                 keyboard: true,
 
@@ -1651,6 +1659,7 @@ mod tests {
                 spec: std::rc::Rc::new(spec),
                 states: Default::default(),
                 h_pan: Default::default(),
+                projections: Default::default(),
                 focus_key: String::new(),
                 keyboard: true,
 
@@ -1710,6 +1719,7 @@ mod tests {
                 }),
                 states: Default::default(),
                 h_pan: Default::default(),
+                projections: Default::default(),
                 focus_key: String::new(),
                 keyboard: true,
 

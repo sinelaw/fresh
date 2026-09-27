@@ -930,6 +930,7 @@ fn control(c: &Card, band: &str) -> Node<UiMsg> {
             slot: super::widgets::Slot::Settings,
             states: &states,
             h_pan: super::widgets::no_pan(),
+            projections: super::widgets::no_projections(),
             focus_key: focus_key.clone(),
             keyboard: true,
             hovered_key: None,

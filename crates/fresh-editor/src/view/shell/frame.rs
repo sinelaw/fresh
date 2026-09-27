@@ -1658,6 +1658,7 @@ mod tests {
                 spec: std::rc::Rc::new(spec),
                 states: Default::default(),
                 h_pan: Default::default(),
+                projections: Default::default(),
                 focus_key: "create".into(),
                 keyboard: true,
 
