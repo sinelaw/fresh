@@ -215,3 +215,40 @@ fn test_tsx_uses_jsx_aware_grammar_and_ts_does_not() {
         Some(theme.syntax_keyword)
     );
 }
+
+/// Opening a large file parses only down to the viewport; an unclosed
+/// comment typed at the top reaches the last line, already highlighted once,
+/// as soon as it is shown.
+#[test]
+fn test_large_ts_file_parses_lazily_and_edits_reach_the_end() {
+    let src = large_ts_source("// opening", "// body", "// closing");
+    let mut harness = create_harness();
+    open(&mut harness, "big.ts", &src);
+    let parsed = harness.highlight_stats().unwrap().bytes_parsed;
+    assert!(
+        parsed < 64 * 1024,
+        "opening a {}-byte file parsed {parsed} bytes",
+        src.len()
+    );
+
+    let theme = harness.editor().theme().clone();
+    harness
+        .send_key(KeyCode::End, KeyModifiers::CONTROL)
+        .unwrap();
+    assert_eq!(
+        fg_of(&harness, "function tail7"),
+        Some(theme.syntax_keyword)
+    );
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
+
+    harness.type_text("/*").unwrap();
+    harness
+        .send_key(KeyCode::End, KeyModifiers::CONTROL)
+        .unwrap();
+    assert_eq!(
+        fg_of(&harness, "function tail7"),
+        Some(theme.syntax_comment)
+    );
+}

@@ -26,11 +26,10 @@
 //! - **Cold start / fallback** — no cache, or none of the above applies;
 //!   parse the appropriate range from a fresh state or nearest checkpoint.
 //!
-//! For files at or below `MAX_PARSE_BYTES` the parse range is the whole
-//! file, so the cache is whole-file after the first parse and scrolling
-//! becomes filter-only. Larger files use a viewport-centred window of
-//! `±context_bytes` and rely on the forward-extension path to keep
-//! scroll-cost bounded.
+//! For files at or below `MAX_PARSE_BYTES` the parse range starts at byte 0,
+//! so every state is exact, and ends `context_bytes` past the viewport; the
+//! forward-extension path grows it as the viewport moves down. Larger files
+//! use a viewport-centred window of `±context_bytes`.
 //!
 //! Edits go through `notify_insert` / `notify_delete`, which shift cached
 //! span byte offsets in place, set `dirty_from`, and invalidate `tail_state`
@@ -1728,7 +1727,7 @@ impl TextMateEngine {
     ) -> Vec<HighlightSpan> {
         let buf_len = buffer.len();
         let (desired_parse_start, parse_end) = if buf_len <= MAX_PARSE_BYTES {
-            (0, buf_len)
+            (0, (viewport_end + context_bytes).min(buf_len))
         } else {
             let s = viewport_start.saturating_sub(context_bytes);
             let e = (viewport_end + context_bytes).min(buf_len);
@@ -1746,6 +1745,17 @@ impl TextMateEngine {
                 .cache
                 .as_ref()
                 .is_some_and(|c| c.range.end >= parse_end);
+
+        if cache_covers_viewport
+            && dirty.is_none()
+            && self.last_buffer_len == buffer.len()
+            && self
+                .cache
+                .as_ref()
+                .is_some_and(|c| c.range.end < parse_end && c.tail_state.is_none())
+        {
+            self.rewind_cache_to_checkpoint();
+        }
 
         // Cache hit.
         if exact_cache_hit {
@@ -1899,6 +1909,11 @@ impl TextMateEngine {
         let mut current_offset = actual_start;
         let mut converged_at: Option<usize> = None;
         let mut budget_hit_at: Option<usize> = None;
+        let must_reach = if buffer.len() <= MAX_PARSE_BYTES {
+            viewport_end
+        } else {
+            0
+        };
         let mut bytes_since_checkpoint: usize = 0;
 
         while pos < content_bytes.len() {
@@ -1970,8 +1985,11 @@ impl TextMateEngine {
 
             // Bound work per pass: pathological edits (e.g. unclosed `/*`
             // re-scoping the rest of the file) can never converge. Stop here
-            // and resume from `current_offset` on the next render.
-            if current_offset.saturating_sub(dirty_pos) >= CONVERGENCE_BUDGET {
+            // and resume from `current_offset` on the next render; a small
+            // file's viewport is always parsed first.
+            if current_offset >= must_reach
+                && current_offset.saturating_sub(dirty_pos) >= CONVERGENCE_BUDGET
+            {
                 budget_hit_at = Some(current_offset);
                 break;
             }
@@ -1985,6 +2003,13 @@ impl TextMateEngine {
             (c, None)
         } else if let Some(b) = budget_hit_at {
             (b, Some(b))
+        } else if self
+            .cache
+            .as_ref()
+            .is_some_and(|c| current_offset < c.range.end)
+        {
+            // Stopped at `parse_end`; the cached spans past it predate the edit.
+            (current_offset, Some(current_offset))
         } else {
             (current_offset, None)
         };
@@ -2036,6 +2061,31 @@ impl TextMateEngine {
         self.dirty_from = dirty_after;
 
         Some(self.filter_cached_spans(viewport_start, viewport_end, theme))
+    }
+
+    /// Give a cache whose end state an edit cleared a new end at its last
+    /// checkpoint, so it extends forward instead of re-parsing from the start.
+    fn rewind_cache_to_checkpoint(&mut self) {
+        let Some(cache) = self.cache.as_mut() else {
+            return;
+        };
+        let last = self
+            .checkpoint_markers
+            .query_range(cache.range.start, cache.range.end + 1)
+            .into_iter()
+            .max_by_key(|(_, pos, _)| *pos);
+        let Some((id, pos, _)) = last else {
+            return;
+        };
+        let Some(state) = self.checkpoint_states.get(&id) else {
+            return;
+        };
+        cache.spans.retain_mut(|span| {
+            span.range.end = span.range.end.min(pos);
+            span.range.start < span.range.end
+        });
+        cache.range.end = pos;
+        cache.tail_state = Some(state.clone());
     }
 
     /// Forward extension path (see module docs). Caller checks the cache
@@ -5008,8 +5058,8 @@ diff --git a/tools/check.py b/tools/check.py
             panic!("expected TextMate engine for .rs");
         };
 
-        // Warm cache (whole-file parse).
-        let _ = tm.highlight_viewport(&buffer, 0, 200, &theme, 10_000);
+        // Warm cache (whole-file parse: the context covers the file).
+        let _ = tm.highlight_viewport(&buffer, 0, 200, &theme, buffer.len());
         // Simulate an edit and force every checkpoint to disagree by clearing
         // their stored states. The convergence loop will look at each marker,
         // find the slot empty, and never converge.
@@ -5017,7 +5067,7 @@ diff --git a/tools/check.py b/tools/check.py
         tm.checkpoint_states.clear();
 
         let bytes_before = tm.stats().bytes_parsed;
-        let _ = tm.highlight_viewport(&buffer, 0, 200, &theme, 10_000);
+        let _ = tm.highlight_viewport(&buffer, 0, 200, &theme, buffer.len());
         let parsed = tm.stats().bytes_parsed - bytes_before;
 
         // Budget bounds the work to roughly CONVERGENCE_BUDGET past the dirty
