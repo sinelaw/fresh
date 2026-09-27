@@ -1,5 +1,5 @@
 {
-  "name": "fresh-0.5.2-orchestrator",
+  "name": "fresh-0.5.2-recover",
   "capture": {
     "geometry": "150x34",
     "font": "JetBrains Mono 24",
@@ -22,33 +22,15 @@
         "sleep": 1
       },
       {
-        "key": "ctrl+p"
-      },
-      {
-        "key": "BackSpace"
-      },
-      {
-        "type": "tides"
-      },
-      {
-        "key": "Return",
-        "settle": 1.0
-      },
-      {
-        "shot": "dock"
-      },
-      {
-        "key": "ctrl+q",
-        "settle": 0.8
-      },
-      {
-        "shot": "detach"
+        "shot": "dialog"
       }
     ],
     "panes": {
-      "orchestrator": {
+      "recover": {
         "argv": [
-          "~/repos/fresh/target/debug/fresh"
+          "sh",
+          "-c",
+          "$HOME/repos/fresh/scripts/clips/assets/fresh-0.5.2/seed-interrupted-save.sh && exec $HOME/repos/fresh/target/debug/fresh --no-restore --no-upgrade-check src/tides.rs"
         ]
       }
     }
@@ -62,36 +44,16 @@
           0,
           34
         ],
-        "view": "all",
-        "band": false,
-        "head": "Orchestrator mode",
-        "shot": "dock"
-      },
-      {
-        "rows": [
-          0,
-          34
-        ],
         "view": "card",
         "band": false,
-        "head": "Ctrl+Q: detach, don't kill",
-        "shot": "detach"
+        "head": "Interrupted saves, recoverable",
+        "shot": "dialog"
       }
     ],
     "views": {
-      "all": {
-        "rows": [
-          0,
-          34
-        ],
-        "cols": [
-          0,
-          150
-        ]
-      },
       "card": {
         "rows": [
-          9,
+          8,
           25
         ],
         "cols": [

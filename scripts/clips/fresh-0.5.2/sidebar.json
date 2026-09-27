@@ -1,5 +1,5 @@
 {
-  "name": "fresh-0.5.2-orchestrator",
+  "name": "fresh-0.5.2-sidebar",
   "capture": {
     "geometry": "150x34",
     "font": "JetBrains Mono 24",
@@ -19,36 +19,33 @@
     },
     "keys": [
       {
-        "sleep": 1
+        "sleep": 1.5
       },
       {
-        "key": "ctrl+p"
+        "shot": "doc"
       },
       {
-        "key": "BackSpace"
+        "key": "alt+shift+n",
+        "settle": 0.6
       },
       {
-        "type": "tides"
+        "shot": "n1"
       },
       {
-        "key": "Return",
-        "settle": 1.0
+        "key": "alt+shift+n",
+        "settle": 0.6
       },
       {
-        "shot": "dock"
-      },
-      {
-        "key": "ctrl+q",
-        "settle": 0.8
-      },
-      {
-        "shot": "detach"
+        "shot": "n2"
       }
     ],
     "panes": {
-      "orchestrator": {
+      "sidebar": {
         "argv": [
-          "~/repos/fresh/target/debug/fresh"
+          "~/repos/fresh/target/debug/fresh",
+          "--no-restore",
+          "--no-upgrade-check",
+          "docs/moorings.md:1:1"
         ]
       }
     }
@@ -64,18 +61,13 @@
         ],
         "view": "all",
         "band": false,
-        "head": "Orchestrator mode",
-        "shot": "dock"
-      },
-      {
-        "rows": [
-          0,
-          34
-        ],
-        "view": "card",
-        "band": false,
-        "head": "Ctrl+Q: detach, don't kill",
-        "shot": "detach"
+        "head": "Alt+Shift+N walks the sidebar",
+        "hold": 1.8,
+        "shots": [
+          "doc",
+          "n1",
+          "n2"
+        ]
       }
     ],
     "views": {
@@ -87,16 +79,6 @@
         "cols": [
           0,
           150
-        ]
-      },
-      "card": {
-        "rows": [
-          9,
-          25
-        ],
-        "cols": [
-          36,
-          114
         ]
       }
     }

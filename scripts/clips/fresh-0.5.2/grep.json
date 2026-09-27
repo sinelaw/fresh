@@ -1,5 +1,5 @@
 {
-  "name": "fresh-0.5.2-orchestrator",
+  "name": "fresh-0.5.2-grep",
   "capture": {
     "geometry": "150x34",
     "font": "JetBrains Mono 24",
@@ -22,33 +22,26 @@
         "sleep": 1
       },
       {
-        "key": "ctrl+p"
-      },
-      {
-        "key": "BackSpace"
-      },
-      {
-        "type": "tides"
-      },
-      {
-        "key": "Return",
+        "key": "alt+slash",
         "settle": 1.0
       },
       {
-        "shot": "dock"
+        "type": "berth"
       },
       {
-        "key": "ctrl+q",
-        "settle": 0.8
+        "sleep": 1.0
       },
       {
-        "shot": "detach"
+        "shot": "form"
       }
     ],
     "panes": {
-      "orchestrator": {
+      "grep": {
         "argv": [
-          "~/repos/fresh/target/debug/fresh"
+          "~/repos/fresh/target/debug/fresh",
+          "--no-restore",
+          "--no-upgrade-check",
+          "docs/moorings.md:1:1"
         ]
       }
     }
@@ -62,41 +55,21 @@
           0,
           34
         ],
-        "view": "all",
+        "view": "form",
         "band": false,
-        "head": "Orchestrator mode",
-        "shot": "dock"
-      },
-      {
-        "rows": [
-          0,
-          34
-        ],
-        "view": "card",
-        "band": false,
-        "head": "Ctrl+Q: detach, don't kill",
-        "shot": "detach"
+        "head": "Live Grep, redesigned",
+        "shot": "form"
       }
     ],
     "views": {
-      "all": {
+      "form": {
         "rows": [
-          0,
-          34
+          1,
+          14
         ],
         "cols": [
-          0,
-          150
-        ]
-      },
-      "card": {
-        "rows": [
-          9,
-          25
-        ],
-        "cols": [
-          36,
-          114
+          6,
+          143
         ]
       }
     }
