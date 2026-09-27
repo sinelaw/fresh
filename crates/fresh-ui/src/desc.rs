@@ -516,6 +516,31 @@ impl Default for Scroll {
     }
 }
 
+/// Which items a window pins at an offset — see [`Node::pinned_at`]. Compared
+/// by identity: the same function is the same answer.
+#[derive(Clone)]
+pub struct PinnedAt(pub Rc<dyn Fn(u32) -> Rc<[u32]>>);
+
+impl PinnedAt {
+    pub fn at(&self, offset: u32) -> Rc<[u32]> {
+        (self.0)(offset)
+    }
+}
+
+impl PartialEq for PinnedAt {
+    fn eq(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl Eq for PinnedAt {}
+
+impl std::fmt::Debug for PinnedAt {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("PinnedAt(..)")
+    }
+}
+
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
 pub struct ViewportProps {
     /// Where the window is, and whose that fact is. See [`Scroll`].
@@ -523,6 +548,9 @@ pub struct ViewportProps {
     /// Items drawn at the top of the window whatever the offset, in order —
     /// an index-scrolled window only. See [`Node::pinned`].
     pub pinned: Rc<[u32]>,
+    /// The pinned items as a function of the offset, evaluated by the window
+    /// at layout. Replaces `pinned` when set. See [`Node::pinned_at`].
+    pub pinned_at: Option<PinnedAt>,
     /// Mark the region as text-selectable in the display list. The library
     /// never interprets it — a backend that supports selection reads it, the
     /// same way it reads a theme name.
@@ -1634,6 +1662,23 @@ impl<M> Node<M> {
         match &mut self.desc {
             Desc::Viewport(p) => p.pinned = Rc::from(indices),
             _ => panic!("pinned() applies to Viewport nodes only"),
+        }
+        self
+    }
+
+    /// [`Node::pinned`] as a function of the offset, which the window
+    /// evaluates at layout — **the pins are layout's answer**, not a list the
+    /// owner recomputes after being told where the window went. A tree's
+    /// sticky ancestors are the expanded ancestors of the first row of the
+    /// run, so they are known exactly when the offset is: in the window.
+    ///
+    /// The ceiling is the smallest offset whose run, under the pins *that
+    /// offset* has, reaches the last item — which the window can search for
+    /// only because it can ask this at an offset it is not at.
+    pub fn pinned_at(mut self, f: impl Fn(u32) -> Rc<[u32]> + 'static) -> Self {
+        match &mut self.desc {
+            Desc::Viewport(p) => p.pinned_at = Some(PinnedAt(Rc::new(f))),
+            _ => panic!("pinned_at() applies to Viewport nodes only"),
         }
         self
     }

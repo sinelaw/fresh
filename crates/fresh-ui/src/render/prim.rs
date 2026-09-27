@@ -1704,7 +1704,19 @@ impl RenderObject for ViewportRender {
                 // How many of the pinned rows a window of `rows` honours:
                 // never all of them, so one row of the run stays on screen
                 // and the offset still names something.
-                let pinned_n = self.props.pinned.len() as u32;
+                // The pins at an offset: the owner's function of it when it
+                // gave one (`Node::pinned_at`), else the fixed list.
+                let fixed_n = self.props.pinned.len() as u32;
+                let pinned_at = self.props.pinned_at.clone();
+                // Never asked past the last item: an offset the wheel took
+                // beyond the end is about to be clamped, and the owner's
+                // function need not answer for rows that do not exist.
+                let pins_at = |y: u32| match &pinned_at {
+                    Some(f) => f.at(y.min(n.saturating_sub(1))).len() as u32,
+                    None => fixed_n,
+                };
+                let here = scroll.y.max(0) as u32;
+                let pinned_n = pins_at(here);
                 let pinned_of = |rows: u32| pinned_n.min(rows.saturating_sub(1));
                 // The child renders only the window, so nothing is translated
                 // and the offset is an index. A cell extent over a million rows
@@ -1801,9 +1813,28 @@ impl RenderObject for ViewportRender {
                 // below it; a framework-owned one is clamped to it here,
                 // before the window is published, so the builder never sees
                 // a window the clamp is about to move.
-                let run = rows - pinned_of(rows);
-                let ceiling = n.saturating_sub(run).max(held.map_or(0, |y| y as u32));
-                let y = (scroll.y.max(0) as u32).min(ceiling);
+                // With pins that depend on the offset, the ceiling is searched
+                // for: the first offset past `n - rows` whose run, under its
+                // own pins, reaches the end. Each step down the tree can pin
+                // at most one more ancestor, so the search is as long as the
+                // deepest pin stack, not the tree.
+                let ceiling_of = |rows: u32| -> u32 {
+                    let fits = |c: u32| c + rows - pins_at(c).min(rows.saturating_sub(1)) >= n;
+                    let mut c = n.saturating_sub(rows);
+                    while c < n && !fits(c) {
+                        c += 1;
+                    }
+                    c
+                };
+                let ceiling = match &pinned_at {
+                    Some(_) => ceiling_of(rows),
+                    None => n.saturating_sub(rows - pinned_of(rows)),
+                }
+                .max(held.map_or(0, |y| y as u32));
+                let y = here.min(ceiling);
+                // The run is under the pins of the offset the window lands on.
+                let pinned_y = pins_at(y).min(rows.saturating_sub(1));
+                let run = rows - pinned_y;
                 if y as i32 != scroll.y {
                     cx.set_offset(Point::new(scroll.x, y as i32));
                 }
@@ -1819,7 +1850,7 @@ impl RenderObject for ViewportRender {
                     // band is known only here, and a row built at the wrong
                     // height puts every index below it on the wrong cell.
                     band: Some(crate::render::object::Band::Cells(height)),
-                    pinned: pinned_of(rows) as u16,
+                    pinned: pinned_y as u16,
                     axis: crate::event::Axis::Vertical,
                     step: 0,
                     cap: 0,
