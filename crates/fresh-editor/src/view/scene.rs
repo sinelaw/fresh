@@ -591,7 +591,7 @@ impl Editor {
                 .toolbar
                 .as_ref()
                 .and_then(|k| self.widget_registry.get(k))
-                .map(|panel| panel.spec.clone()),
+                .map(|panel| fresh_core::api::WidgetSpec::clone(&panel.spec)),
             toolbar_focus: p
                 .toolbar
                 .as_ref()

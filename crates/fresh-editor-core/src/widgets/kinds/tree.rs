@@ -664,8 +664,8 @@ mod tests {
 
     fn tree(toggle_on_click: bool) -> WidgetSpec {
         WidgetSpec::Tree {
-            nodes: vec![node("group", 0, true), node("leaf", 1, false)],
-            item_keys: vec!["g".into(), "l".into()],
+            nodes: vec![node("group", 0, true), node("leaf", 1, false)].into(),
+            item_keys: vec!["g".into(), "l".into()].into(),
             selected_index: -1,
             visible_rows: Some(5),
             expanded_keys: vec![],
@@ -682,7 +682,7 @@ mod tests {
     fn panel_of(spec: &WidgetSpec) -> crate::widgets::WidgetPanelState {
         crate::widgets::WidgetPanelState {
             buffer_id: None,
-            spec: spec.clone(),
+            spec: std::rc::Rc::new(spec.clone()),
             instance_states: HashMap::new(),
             focus_key: String::new(),
             auto_focus_first: true,

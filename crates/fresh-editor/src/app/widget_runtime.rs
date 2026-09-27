@@ -3307,9 +3307,10 @@ mod tests {
         WidgetSpec::List {
             items: (0..n)
                 .map(|i| fresh_core::text_property::TextPropertyEntry::text(format!("row {i}")))
-                .collect(),
-            item_specs: Vec::new(),
-            item_keys: (0..n).map(|i| format!("k{i}")).collect(),
+                .collect::<Vec<_>>()
+                .into(),
+            item_specs: Vec::new().into(),
+            item_keys: (0..n).map(|i| format!("k{i}")).collect::<Vec<_>>().into(),
             selected_index: 0,
             visible_rows: Some(4),
             focusable: true,
@@ -4272,8 +4273,8 @@ mod tests {
     fn an_unlaid_out_widget_takes_the_specs_window_in_the_specs_own_units() {
         use crate::widgets::kinds::Viewport;
         let cards = WidgetSpec::Tree {
-            nodes: Vec::new(),
-            item_keys: Vec::new(),
+            nodes: Vec::new().into(),
+            item_keys: Vec::new().into(),
             selected_index: 0,
             visible_rows: Some(12),
             key: Some("t".into()),
@@ -4734,5 +4735,101 @@ mod tests {
             "and the dock was told it has the keyboard back"
         );
         assert_eq!(editor.widget_registry.focus_key(&dock_key), Some("menu"));
+    }
+
+    /// The items `Arc` of the `List` keyed `lst` in a spec.
+    #[cfg(feature = "plugins")]
+    fn list_items(spec: &WidgetSpec) -> Arc<Vec<fresh_core::text_property::TextPropertyEntry>> {
+        match crate::widgets::find_widget_by_key(spec, "lst") {
+            Some(WidgetSpec::List { items, .. }) => items.clone(),
+            _ => panic!("no list"),
+        }
+    }
+
+    /// **A frame describes a panel from a handle on its storage, never a
+    /// copy of it.**
+    ///
+    /// `panel_interior` used to deep-clone the panel's whole spec on every
+    /// frame, and the `List` arm cloned every item again for its row builder,
+    /// so a still panel cost O(items) twice per frame before one row was on
+    /// screen. Now two frames with nothing changed describe the *same*
+    /// allocation, the drawn list holds the owner's items rather than a copy,
+    /// and a mutation — which edits copy-on-write — is what produces a new
+    /// one. (The mutation is a plugin's, so the test needs the feature.)
+    #[cfg(feature = "plugins")]
+    #[test]
+    fn a_still_panel_is_described_from_its_storage_not_a_copy() {
+        let (mut editor, _t) = make_editor();
+        let panel_key = crate::widgets::PanelKey::new("test-plugin", 1);
+        mount_list_panel(
+            &mut editor,
+            &panel_key,
+            crate::app::PanelSlot::Dock.buffer_id(),
+        );
+        editor.dock = Some(dock_panel(panel_key.clone()));
+
+        frame_the_shell(&mut editor);
+        let first = editor
+            .panel_interior(crate::app::PanelSlot::Dock)
+            .expect("the dock's interior")
+            .spec;
+        frame_the_shell(&mut editor);
+        let second = editor
+            .panel_interior(crate::app::PanelSlot::Dock)
+            .expect("the dock's interior")
+            .spec;
+        assert!(
+            std::rc::Rc::ptr_eq(&first, &second),
+            "two frames with no mutation describe the same spec allocation"
+        );
+        assert!(
+            std::rc::Rc::ptr_eq(
+                &first,
+                &editor.widget_registry.get(&panel_key).unwrap().spec
+            ),
+            "and it is the registry's own, not a copy of it"
+        );
+        let items = list_items(&second);
+        // The registry's spec, the two interiors above and the laid-out
+        // tree's row builder: the list's rows are read out of the owner's
+        // collection, not a clone of it.
+        drop((first, second));
+        assert!(
+            Arc::strong_count(&items) >= 3,
+            "the drawn list holds the owner's items (count {})",
+            Arc::strong_count(&items)
+        );
+
+        // A mutation is what makes a new allocation, and only for what it
+        // touched's path: the old handle keeps the old rows.
+        let before = editor.widget_registry.get(&panel_key).unwrap().spec.clone();
+        editor.handle_widget_mutate(
+            &panel_key,
+            fresh_core::api::WidgetMutation::SetItems {
+                widget_key: "lst".into(),
+                items: vec![fresh_core::text_property::TextPropertyEntry::text("only")],
+                item_keys: vec!["only".into()],
+            },
+        );
+        let after = editor.widget_registry.get(&panel_key).unwrap().spec.clone();
+        assert!(
+            !std::rc::Rc::ptr_eq(&before, &after),
+            "a mutation under a held handle writes a new spec"
+        );
+        assert_eq!(
+            list_items(&before).len(),
+            40,
+            "the held frame's rows are untouched"
+        );
+        assert_eq!(list_items(&after).len(), 1);
+        frame_the_shell(&mut editor);
+        let third = editor
+            .panel_interior(crate::app::PanelSlot::Dock)
+            .unwrap()
+            .spec;
+        assert!(
+            std::rc::Rc::ptr_eq(&third, &after),
+            "and the next frame describes it"
+        );
     }
 }

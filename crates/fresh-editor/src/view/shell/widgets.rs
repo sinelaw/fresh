@@ -1681,8 +1681,10 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
         } if item_specs.is_empty() => {
             use std::rc::Rc;
             let n = items.len();
-            let rows = Rc::new(items.clone());
-            let keys = Rc::new(item_keys.clone());
+            // Handles on the panel's storage: the row builder reads item `i`
+            // out of the owner's collection when layout asks for it.
+            let rows = items.clone();
+            let keys = item_keys.clone();
             let list_key = key.clone().unwrap_or_default();
             let slot = cx.slot;
             let sel = live_list_selection(cx, key, *selected_index, n);
@@ -1872,7 +1874,7 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                     .collect(),
             );
             let n = cards.len();
-            let keys = Rc::new(item_keys.clone());
+            let keys = item_keys.clone();
             let list_key = key.clone().unwrap_or_default();
             let slot = cx.slot;
             let hit_keys = keys.clone();
@@ -2192,8 +2194,8 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
             let visible = Rc::new(crate::widgets::collect_visible_tree_indices(
                 nodes, item_keys, &expanded,
             ));
-            let nodes = Rc::new(nodes.clone());
-            let keys = Rc::new(item_keys.clone());
+            let nodes = nodes.clone();
+            let keys = item_keys.clone();
             let tree_key = key.clone().unwrap_or_default();
             let h_pan = cx.h_pan.get(&tree_key).copied().unwrap_or(0);
             let (slot, checkable, indent) = (cx.slot, *checkable, *indent_cols);
@@ -5258,9 +5260,9 @@ pub(crate) mod tests {
     #[test]
     fn every_variant_is_covered() {
         let plain_list = WidgetSpec::List {
-            items: vec![raw("one")],
-            item_specs: Vec::new(),
-            item_keys: vec!["a".into()],
+            items: vec![raw("one")].into(),
+            item_specs: Vec::new().into(),
+            item_keys: vec!["a".into()].into(),
             selected_index: 0,
             visible_rows: Some(1),
             key: Some("l".into()),
@@ -5334,9 +5336,12 @@ pub(crate) mod tests {
 
     fn a_list(n: usize, selected: i32, visible: u32) -> WidgetSpec {
         WidgetSpec::List {
-            items: (0..n).map(|i| raw(&format!("row{i}"))).collect(),
-            item_specs: Vec::new(),
-            item_keys: (0..n).map(|i| format!("k{i}")).collect(),
+            items: (0..n)
+                .map(|i| raw(&format!("row{i}")))
+                .collect::<Vec<_>>()
+                .into(),
+            item_specs: Vec::new().into(),
+            item_keys: (0..n).map(|i| format!("k{i}")).collect::<Vec<_>>().into(),
             selected_index: selected,
             visible_rows: Some(visible),
             key: Some("l".into()),
@@ -5605,8 +5610,9 @@ pub(crate) mod tests {
                 tree_node("root", 0, true),
                 tree_node("child", 1, false),
                 tree_node("sibling", 0, false),
-            ],
-            item_keys: vec!["r".into(), "c".into(), "s".into()],
+            ]
+            .into(),
+            item_keys: vec!["r".into(), "c".into(), "s".into()].into(),
             selected_index: selected,
             visible_rows: Some(5),
             key: Some("tr".into()),
@@ -6471,9 +6477,12 @@ pub(crate) mod tests {
 
     fn card_list(n: usize, selected: i32, visible: u32) -> WidgetSpec {
         WidgetSpec::List {
-            items: Vec::new(),
-            item_specs: (0..n).map(|i| card(&format!("card{i}"))).collect(),
-            item_keys: (0..n).map(|i| format!("c{i}")).collect(),
+            items: Vec::new().into(),
+            item_specs: (0..n)
+                .map(|i| card(&format!("card{i}")))
+                .collect::<Vec<_>>()
+                .into(),
+            item_keys: (0..n).map(|i| format!("c{i}")).collect::<Vec<_>>().into(),
             selected_index: selected,
             visible_rows: Some(visible),
             key: Some("cards".into()),
@@ -6533,9 +6542,9 @@ pub(crate) mod tests {
     #[test]
     fn an_uneven_card_lists_band_is_the_tallest_and_a_short_card_keeps_its_own_box() {
         let spec = WidgetSpec::List {
-            items: Vec::new(),
-            item_specs: vec![card_of(1), card_of(3), card_of(1)],
-            item_keys: vec!["c0".into(), "c1".into(), "c2".into()],
+            items: Vec::new().into(),
+            item_specs: vec![card_of(1), card_of(3), card_of(1)].into(),
+            item_keys: vec!["c0".into(), "c1".into(), "c2".into()].into(),
             selected_index: -1,
             visible_rows: Some(18),
             key: Some("cards".into()),
@@ -6802,8 +6811,9 @@ pub(crate) mod tests {
                     cells: Vec::new(),
                     action: None,
                 })
-                .collect(),
-            item_keys: (0..n).map(|i| format!("s{i}")).collect(),
+                .collect::<Vec<_>>()
+                .into(),
+            item_keys: (0..n).map(|i| format!("s{i}")).collect::<Vec<_>>().into(),
             selected_index: selected,
             visible_rows: Some(visible),
             key: Some("sessions".into()),

@@ -2355,6 +2355,27 @@ pub enum Elide {
 /// Plugins should provide stable keys for any widget that owns
 /// instance state; stateless widgets (`HintBar`, `Toggle`, `Button`,
 /// `Spacer`) can omit it.
+/// A widget's collection — a `List`'s items and keys, a `Tree`'s nodes and
+/// keys — in shared storage.
+///
+/// **Cloning one is a reference count, not a copy.** The host keeps a
+/// mounted panel's spec across frames and describes it every frame; a
+/// collection held by value was deep-copied by every description that
+/// needed to own its rows (`List`'s row builder is `'static`), which made
+/// each frame O(items) before a single row was on screen. Shared, the
+/// description captures a handle and the row builder reads item `i` out of
+/// the owner's storage when layout asks for it. A mutation replaces the
+/// collection, or edits it copy-on-write (`Arc::make_mut`), so a handle a
+/// frame captured never sees a change under it.
+///
+/// `Arc` rather than `Rc` because a spec crosses from the plugin thread.
+/// On the wire it is the plain array it always was.
+pub type Collection<T> = std::sync::Arc<Vec<T>>;
+
+fn collection_is_empty<T>(c: &Collection<T>) -> bool {
+    c.is_empty()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(
     tag = "kind",
@@ -2810,7 +2831,7 @@ pub enum WidgetSpec {
     ///                payload: { index, key } }`
     /// where `index` is the absolute (not visible-window) index.
     List {
-        items: Vec<crate::text_property::TextPropertyEntry>,
+        items: Collection<crate::text_property::TextPropertyEntry>,
         /// Optional parallel array of per-item widget specs. When
         /// non-empty it **overrides** `items`: each entry is rendered
         /// via the normal widget renderer into a multi-row block
@@ -2823,10 +2844,10 @@ pub enum WidgetSpec {
         /// still indexed per item. Interactive widgets nested inside a
         /// card aren't routed yet — the whole card is one `select`
         /// hit. Leave empty for the classic one-row-per-`items` list.
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        item_specs: Vec<WidgetSpec>,
+        #[serde(default, skip_serializing_if = "collection_is_empty")]
+        item_specs: Collection<WidgetSpec>,
         #[serde(default)]
-        item_keys: Vec<String>,
+        item_keys: Collection<String>,
         #[serde(default = "default_list_selected")]
         selected_index: i32,
         /// Number of rows of the panel's available height the list
@@ -2890,9 +2911,9 @@ pub enum WidgetSpec {
     /// expanded } }`. Enter/Space on the focused tree fires
     /// `widget_event { event_type: "activate", payload: { index, key } }`.
     Tree {
-        nodes: Vec<TreeNode>,
+        nodes: Collection<TreeNode>,
         #[serde(default)]
-        item_keys: Vec<String>,
+        item_keys: Collection<String>,
         #[serde(default = "default_tree_selected")]
         selected_index: i32,
         /// Rows of the panel's available height the tree occupies.
