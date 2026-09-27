@@ -2310,7 +2310,7 @@ fn init_package_command(package_type: Option<String>) -> AnyhowResult<()> {
     match pkg_type {
         "plugin" => {
             println!("  2. Edit plugin.ts to add your functionality");
-            println!("  3. Test locally: fresh --check-plugin .");
+            println!("  3. Set up types + live reload: https://getfresh.dev/docs/plugins/development/setup");
             println!("  4. Validate manifest: ./validate.sh");
         }
         "theme" => {
@@ -2454,7 +2454,7 @@ fn create_plugin_package(
 
     // plugin.ts
     let plugin_ts = r#"// Fresh Plugin
-// Documentation: https://github.com/user/fresh/blob/main/docs/plugins.md
+// Setup (types, live reload): https://getfresh.dev/docs/plugins/development/setup
 
 const editor = getEditor();
 

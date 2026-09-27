@@ -89,14 +89,15 @@ Run `pkg: Sync Registry` to fetch the latest package lists.
 Use the CLI to scaffold new packages:
 
 ```bash
-fresh --init           # Interactive mode
-fresh --init plugin    # Create a plugin
-fresh --init theme     # Create a theme
-fresh --init language  # Create a language pack
+fresh --cmd init           # Interactive mode
+fresh --cmd init plugin    # Create a plugin
+fresh --cmd init theme     # Create a theme
+fresh --cmd init language  # Create a language pack
 ```
 
 For detailed guides, see:
 - [Plugin Development](./development/) - Getting started with plugin development
+- [Project Setup](./development/setup.md) - TypeScript types, autocomplete and live reload for a plugin project
 - [Language Packs](./development/language-packs.md) - Creating syntax highlighting and LSP support
 - [Common Patterns](./development/patterns.md) - Reusable plugin patterns and recipes
 - [Utilities Library](./development/utilities.md) - Built-in utility functions for plugins
