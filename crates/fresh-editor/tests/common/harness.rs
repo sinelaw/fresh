@@ -799,6 +799,16 @@ impl EditorTestHarness {
         editor.process_async_messages();
         t.phase("process_async_messages");
 
+        // A slow filesystem's tests count its calls: let startup's workspace
+        // environment probe (a few root `exists` checks) finish first.
+        if fs_metrics.is_some() {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+            while editor.env_probe_pending() && std::time::Instant::now() < deadline {
+                std::thread::sleep(std::time::Duration::from_millis(5));
+                editor.process_async_messages();
+            }
+        }
+
         let h = EditorTestHarness {
             editor,
             terminal,

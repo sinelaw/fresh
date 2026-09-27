@@ -154,6 +154,11 @@ pub fn count_lf_params(path: &str, offset: u64, len: usize) -> serde_json::Value
     serde_json::json!({"path": path, "off": offset, "len": len})
 }
 
+/// Build params for digest request (size and SHA-256 of a whole file)
+pub fn digest_params(path: &str) -> serde_json::Value {
+    serde_json::json!({"path": path})
+}
+
 /// Build params for write request
 pub fn write_params(path: &str, data: &[u8]) -> serde_json::Value {
     serde_json::json!({

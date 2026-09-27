@@ -533,6 +533,12 @@ impl TerminalState {
             // down to `scrollback_lines` itself so the emulator never evicts a
             // row out from under the sync pointer. See SCROLLBACK_DRAIN_MARGIN.
             scrolling_history: scrollback_lines.saturating_add(SCROLLBACK_DRAIN_MARGIN),
+            // Answer the kitty keyboard protocol's query and track the flags a
+            // child pushes, so a TUI can ask for Shift+Enter and friends in
+            // CSI-u form (see `kitty_key_flags`). Not on Windows:
+            // there the child sits behind ConPTY, whose handling of CSI-u
+            // input is unverified.
+            kitty_keyboard: cfg!(not(windows)),
             ..Default::default()
         };
         let listener = PtyWriteListener::new();
@@ -921,6 +927,24 @@ impl TerminalState {
         self.term.mode().contains(TermMode::APP_CURSOR)
     }
 
+    /// The kitty keyboard protocol flags the child has pushed, which decide
+    /// how keys are encoded for it (see `pty::kitty_encoded_key`). Empty
+    /// for a child that never enabled the protocol.
+    pub fn kitty_key_flags(&self) -> super::pty::KittyKeyFlags {
+        use super::pty::KittyKeyFlags as F;
+        let mode = self.term.mode();
+        [
+            (TermMode::DISAMBIGUATE_ESC_CODES, F::DISAMBIGUATE),
+            (TermMode::REPORT_EVENT_TYPES, F::REPORT_EVENT_TYPES),
+            (TermMode::REPORT_ALTERNATE_KEYS, F::REPORT_ALTERNATE_KEYS),
+            (TermMode::REPORT_ALL_KEYS_AS_ESC, F::REPORT_ALL_KEYS),
+            (TermMode::REPORT_ASSOCIATED_TEXT, F::REPORT_ASSOCIATED_TEXT),
+        ]
+        .into_iter()
+        .filter(|(term_mode, _)| mode.contains(*term_mode))
+        .fold(F::empty(), |flags, (_, flag)| flags | flag)
+    }
+
     /// Check if the child asked for bracketed paste (DECSET 2004).
     ///
     /// Every line editor worth the name — bash/zsh/fish's readline, and the
@@ -1225,6 +1249,17 @@ impl TerminalState {
 
         for col in 0..self.cols as usize {
             let cell = &row_data[Column(col)];
+            // A wide character fills two columns, and the second is a spacer
+            // cell holding a blank. So is the last column of a row whose next
+            // character was too wide to fit and wrapped. Neither is text:
+            // written out, every CJK character in the scrollback gained a
+            // space after it (sinelaw/fresh#3235).
+            if cell
+                .flags
+                .intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER)
+            {
+                continue;
+            }
             let fg = color_to_rgb(&cell.fg);
             let bg = color_to_rgb(&cell.bg);
             let flags = cell.flags;
@@ -1700,6 +1735,30 @@ mod tests {
             max = max.max(c);
         }
         (min, max)
+    }
+
+    /// Wide (CJK) characters are written to the scrollback as themselves, not
+    /// followed by the blank spacer cell that fills their second column —
+    /// including one wrapped to the next row because it did not fit in the
+    /// last column (sinelaw/fresh#3235).
+    #[test]
+    fn test_wide_chars_stored_without_spacer_cells() {
+        let mut state = TerminalState::new(9, 24);
+        // `ab你好世` is 8 columns, so `界` (2 wide) cannot fit in the 9th and
+        // wraps, leaving a leading spacer at the end of the first row.
+        state.process_output("你好世界test\r\nab你好世界x\r\n".as_bytes());
+        for _ in 0..24 {
+            state.process_output(b"y\r\n");
+        }
+        let mut sink: Vec<u8> = Vec::new();
+        state.flush_new_scrollback(&mut sink).unwrap();
+        let text = String::from_utf8_lossy(&sink);
+        let lines: Vec<&str> = text.lines().take(2).collect();
+        assert_eq!(
+            lines,
+            ["你好世界test", "ab你好世界x"],
+            "scrollback:\n{text}"
+        );
     }
 
     /// A wrapped line is stored as ONE unwrapped logical line in the backing

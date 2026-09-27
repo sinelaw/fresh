@@ -469,6 +469,32 @@ pub struct PerfCounters {
     /// carry one row or a whole file's diff (the review stream ships
     /// git's output verbatim, in blocks), and it is the rows that cost.
     pub panel_content_rows: u64,
+    /// Rebuilds of the plugin state snapshot. An idle loop pass must not add
+    /// one; see `Editor::refresh_plugin_state_snapshot`.
+    pub plugin_snapshot_rebuilds: u64,
+    /// Workspace environment detections (`detect_env`), each a probe per
+    /// marker on the authority's filesystem.
+    pub env_detections: u64,
+}
+
+/// `detect_env`'s answer for one root, detector set and filesystem. Probed
+/// on a worker thread: the filesystem may be remote, or hung.
+#[cfg(feature = "plugins")]
+pub(crate) struct DetectedEnvCache {
+    pub(crate) root: std::path::PathBuf,
+    pub(crate) detectors: Vec<crate::config::EnvDetector>,
+    pub(crate) fs: Arc<dyn crate::model::filesystem::FileSystem + Send + Sync>,
+    /// The published answer; empty when nothing is detected.
+    pub(crate) answer: String,
+    /// `answer` may no longer match the root; the next rebuild re-probes.
+    pub(crate) stale: bool,
+    /// A probe in flight, reporting `(answer, incomplete)`.
+    pub(crate) probe: Option<std::sync::mpsc::Receiver<(String, bool)>>,
+    /// While stale without a watch event (an incomplete answer, an unwatched
+    /// root), the earliest time to probe again.
+    pub(crate) reprobe_at: Option<std::time::Instant>,
+    /// Watch on a local root that marks `answer` stale.
+    pub(crate) watch: Option<u64>,
 }
 
 /// A machine a plugin opened with `openMachine`.
@@ -517,6 +543,14 @@ pub struct Editor {
     /// that is already copying), and the only way an assertion can tell a
     /// per-tick copy from a per-change one.
     pub(crate) perf_counters: PerfCounters,
+    /// Something happened since the plugin state snapshot was last rebuilt.
+    #[cfg(feature = "plugins")]
+    pub(crate) plugin_snapshot_dirty: bool,
+    /// Live remote connections at the last snapshot rebuild; they flip off-loop.
+    #[cfg(feature = "plugins")]
+    pub(crate) plugin_snapshot_liveness: u64,
+    #[cfg(feature = "plugins")]
+    pub(crate) detected_env_cache: Option<DetectedEnvCache>,
 
     // Buffers moved onto `Window` (Step 0c). Each window owns its
     // own buffer storage; opening the same file in two windows
@@ -1283,6 +1317,16 @@ pub struct Editor {
     /// nothing.
     pub(crate) pane_mirrors: HashMap<crate::widgets::PanelKey, Vec<String>>,
 
+    /// The editor-wide **input mode**: a modal-editing personality such as
+    /// vi, set by a plugin with `setInputMode`. Editor state, not window
+    /// state, because it is a preference about how the user types, not
+    /// about any one workspace: it applies in every window — one created
+    /// after it was set included — and nothing window-scoped can clear it.
+    /// A window's own `Window::editor_mode` outranks it there, and a
+    /// buffer's or a focused panel's mode outranks both
+    /// (`Editor::effective_mode`).
+    pub(crate) input_mode: Option<String>,
+
     /// Request the event loop to suspend the process (SIGTSTP on Unix).
     /// Consumed by the outer event loop after the current action returns.
     suspend_requested: bool,
@@ -1669,7 +1713,8 @@ pub(crate) struct FloatingWidgetState {
     pub focused: bool,
     /// The plugin mode whose bindings this panel's keys resolve against
     /// first — the panel's own keymap (`view::shell::panel::Keymap`),
-    /// declared at mount. `None`: the window's editor mode, as before.
+    /// declared at mount. `None`: no keymap — the panel's own defaults only,
+    /// never the window's editor mode.
     pub mode: Option<String>,
     /// The text projection's rows for this panel, refreshed on every spec /
     /// command / mutate.

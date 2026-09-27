@@ -164,24 +164,10 @@ pub(crate) fn screen_to_buffer_position_with_overshoot(
     // Helper to get position (and cells past the rendered content) from a
     // line mapping at a given visual column.
     let position_from_mapping = |line_mapping: &ViewLineMapping, col: usize| -> (usize, usize) {
-        // Column of the cell just past the last *content* cell: the last
-        // source-backed cell whose byte is before `line_end_byte` (the
-        // newline cell and trailing decoration-only cells don't count).
-        // A click at or beyond this column is a click past the line's
-        // content; the difference is the virtual-space overshoot.
-        let content_end_col = line_mapping
-            .visual_to_char
-            .iter()
-            .enumerate()
-            .rev()
-            .find(|(_, &char_idx)| {
-                line_mapping
-                    .char_source_bytes
-                    .get(char_idx)
-                    .is_some_and(|b| b.is_some_and(|b| b < line_mapping.line_end_byte))
-            })
-            .map(|(visual_col, _)| visual_col + 1)
-            .unwrap_or(0);
+        // A click at or beyond the column just past the last content cell
+        // is a click past the line's content; the difference is the
+        // virtual-space overshoot.
+        let content_end_col = line_mapping.content_end_col();
 
         if col < content_end_col {
             // Use O(1) lookup: visual column -> char index -> source byte
@@ -198,9 +184,12 @@ pub(crate) fn screen_to_buffer_position_with_overshoot(
         } else {
             // Click is past end of visible content.
             let overshoot = col - content_end_col;
-            // For empty lines (only a newline), return the line start position
-            // to keep cursor on this line rather than jumping to the next line.
-            if line_mapping.visual_to_char.len() <= 1 {
+            // For empty lines (no content cells, at most a newline cell),
+            // return the line start position to keep cursor on this line
+            // rather than jumping to the next line. The cell count can't
+            // tell: the newline usually draws no cell, so a one-character
+            // line has exactly one (issue #3351).
+            if content_end_col == 0 {
                 if let Some(Some(first_byte)) = line_mapping.char_source_bytes.first() {
                     return (*first_byte, overshoot);
                 }

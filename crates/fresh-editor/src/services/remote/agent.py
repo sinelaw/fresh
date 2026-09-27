@@ -4,6 +4,7 @@ import sys
 import os
 import json
 import base64
+import hashlib
 import stat
 import shutil
 import subprocess
@@ -355,6 +356,22 @@ def cmd_count_lf(id, p):
     send(id, r={"count": count})
 
 
+def cmd_digest(id, p):
+    """Size and SHA-256 of a file, streamed, so the file stays on this host."""
+    path = validate_path(p["path"])
+
+    h = hashlib.sha256()
+    size = 0
+    with open(path, "rb") as f:
+        while True:
+            chunk = f.read(CHUNK)
+            if not chunk:
+                break
+            h.update(chunk)
+            size += len(chunk)
+    send(id, r={"size": size, "sha256": h.hexdigest()})
+
+
 def cmd_exists(id, p):
     """Check if path exists."""
     try:
@@ -362,6 +379,42 @@ def cmd_exists(id, p):
         send(id, r={"exists": os.path.exists(path)})
     except (ValueError, OSError):
         send(id, r={"exists": False})
+
+
+def cmd_find_up(id, p):
+    """Ancestors of a path that directly contain one of `markers`, nearest first.
+
+    Answers the whole "climb to the project root" question in one exchange.
+    Done client-side it would be a stat per directory per marker, and each of
+    those is a network round trip on the editor's UI thread.
+    """
+    try:
+        path = validate_path(p["path"])
+    except (ValueError, OSError):
+        send(id, r={"dirs": []})
+        return
+
+    markers = p.get("markers") or []
+    max_dirs = p.get("max_dirs")
+    dirs = []
+    visited = 0
+    current = path
+
+    while max_dirs is None or visited < max_dirs:
+        try:
+            if any(os.path.exists(os.path.join(current, m)) for m in markers):
+                dirs.append(current)
+        except OSError:
+            # Unreadable directory: skip it, keep climbing. "What we could
+            # see" is the contract, same as the local implementation.
+            pass
+        visited += 1
+        parent = os.path.dirname(current)
+        if parent == current:
+            break
+        current = parent
+
+    send(id, r={"dirs": dirs})
 
 
 def cmd_info(id, p):
@@ -739,7 +792,9 @@ METHODS = {
     "truncate": cmd_truncate,
     "patch": cmd_patch,
     "count_lf": cmd_count_lf,
+    "digest": cmd_digest,
     "exists": cmd_exists,
+    "find_up": cmd_find_up,
     "info": cmd_info,
     "search_file": cmd_search_file,
     "exec": cmd_exec,

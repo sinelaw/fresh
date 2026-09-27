@@ -83,6 +83,7 @@ fn effective_wrap_width(
     viewport: &Viewport,
     line_wrap_enabled: bool,
     content_width: usize,
+    gutter_width: usize,
 ) -> usize {
     if !line_wrap_enabled {
         return MAX_SAFE_LINE_WIDTH;
@@ -98,12 +99,10 @@ fn effective_wrap_width(
         // the non-wrapped exit frame always has.
         return viewport.grid_cols();
     }
-    let base = if let Some(col) = viewport.wrap_column {
-        col.min(content_width)
-    } else {
-        content_width
-    };
-    base.saturating_sub(1).max(1)
+    viewport
+        .wrap_area_width(content_width, gutter_width)
+        .saturating_sub(1)
+        .max(1)
 }
 
 /// Character budget for [`build_base_tokens`], or `None` to bound the read by
@@ -224,7 +223,8 @@ pub(super) fn build_view_data(
     // Width one visual row wraps at. Computed here — before the token build
     // rather than just before `apply_wrapping_transform` — because it also
     // sizes the token build's character budget (see `base_char_budget`).
-    let effective_width = effective_wrap_width(viewport, line_wrap_enabled, content_width);
+    let effective_width =
+        effective_wrap_width(viewport, line_wrap_enabled, content_width, gutter_width);
     // What a row can show, which with wrapping off is not what a row is
     // *chopped* at: the chop is a safety bound no real line reaches, while this
     // is the handful of columns the pane draws.

@@ -1611,6 +1611,13 @@ type WidgetSpec = {
 	* before this field was read on that path it stayed flush left.
 	*/
 	labelWidth: number;
+	/**
+	* The keyboard accelerator's letter, underlined where it first
+	* appears in `label` (case-insensitively) — the classic menu-bar
+	* mnemonic, so `Alt+L` reads as the `l` in `Files`. Absent, or a
+	* letter the label does not contain, underlines nothing.
+	*/
+	mnemonic?: string | null;
 	key?: string | null;
 } | {
 	"kind": "number";
@@ -1947,6 +1954,15 @@ type WidgetSpec = {
 	* dispatch.
 	*/
 	focusable: boolean;
+	/**
+	* Typing jumps the selection to the next item whose text starts
+	* with what was typed (the listbox pattern's type-ahead). Off by
+	* default: a list that is a command surface — Git Log's `q`, a
+	* dock's single-key actions — binds those letters in its mode, and
+	* the focused widget is asked first. Turn it on for a list of names
+	* to find, such as a file browser.
+	*/
+	typeAhead: boolean;
 	key?: string | null;
 } | {
 	"kind": "tree";
@@ -2174,6 +2190,20 @@ type WidgetSpec = {
 	* changes via a spec update.
 	*/
 	markdown: boolean;
+	/**
+	* A single-line field that offers a list of values to pick from as
+	* well as free text — a combo box (the ARIA combobox pattern). Drawn
+	* with a `▼` in the last cell inside its `]` (`▲` while its
+	* completion list is open), so the field says it has a list before
+	* it is focused. The list itself is still the plugin's
+	* `completions`: with the list closed, ↓ / Alt+↓ or a press on the
+	* arrow fires `completion_request`, which the plugin answers with
+	* `setCompletions`; a press on the arrow with the list open closes
+	* it (`completion_dismiss`). Opening on focus is left out on
+	* purpose — a list that opens as a form is walked covers the fields
+	* under it. Defaults to `false`.
+	*/
+	combo: boolean;
 	key?: string | null;
 } | {
 	"kind": "labeledSection";
@@ -4470,6 +4500,13 @@ interface EditorAPI {
 	*/
 	setPromptFooter(footer: StyledText[]): boolean;
 	/**
+	* Centre the floating-overlay prompt's card on the whole frame — 90%
+	* of it, over the dock and sidebar, as the Settings dialog is — instead
+	* of on the chrome area beside the dock. `false` puts it back. Has no
+	* visible effect on non-overlay prompts.
+	*/
+	setPromptFullscreen(fullscreen: boolean): boolean;
+	/**
 	* Set the floating-overlay prompt's input-row status text (right-aligned,
 	* left of the match count). Empty string clears it.
 	*/
@@ -4522,9 +4559,22 @@ interface EditorAPI {
 	*/
 	defineMode(name: string, bindingsArr: string[][], readOnly?: boolean, allowTextInput?: boolean, inheritNormalBindings?: boolean): boolean;
 	/**
-	* Set the global editor mode
+	* Set the active window's editor mode — a plugin mode scoped to that
+	* window, such as `markdown-source`. It outranks the editor-wide input
+	* mode in that window and is invisible in every other. `null` clears
+	* it. A modal-editing personality that should apply everywhere (vi)
+	* belongs in `setInputMode` instead.
 	*/
 	setEditorMode(mode: string | null): boolean;
+	/**
+	* Set the editor-wide input mode — a modal-editing personality such as
+	* vi (`"vi-normal"`, `"vi-insert"`, …). It applies in every window,
+	* including windows created later, and nothing window-scoped clears it.
+	* Keys resolve against a focused panel's mode, then the buffer's, then
+	* the window's editor mode, then this, then the base keymap. `null`
+	* turns it off.
+	*/
+	setInputMode(mode: string | null): boolean;
 	/**
 	* Which widget holds focus in one of this plugin's mounted panels —
 	* its key, or `""` when nothing is focused or the panel is not mounted.
@@ -4536,9 +4586,13 @@ interface EditorAPI {
 	*/
 	getPanelFocusKey(panelId: number): string;
 	/**
-	* Get the current editor mode
+	* Get the active window's editor mode (see `setEditorMode`)
 	*/
 	getEditorMode(): string | null;
+	/**
+	* Get the editor-wide input mode (see `setInputMode`)
+	*/
+	getInputMode(): string | null;
 	/**
 	* Close a split.
 	* 
@@ -5786,6 +5840,16 @@ interface HookEventMap {
 	* plugin's own `editor.setSetting(...)` writes.
 	*/
 	config_changed: Record<string, never>;
+	/**
+	* The editor-wide input mode (`editor.setInputMode`) changed — vi, or
+	* another modal-editing plugin, was turned on or off or switched between
+	* its sub-modes. `mode` is the new value (`null` when cleared). A plugin
+	* whose window-scoped editor mode should step aside while an input mode
+	* is on re-checks here, since a window's editor mode outranks it.
+	*/
+	input_mode_changed: {
+		mode: string | null;
+	};
 	// ── buffer lifecycle ─────────────────────────────────────────────────────
 	buffer_activated: {
 		buffer_id: number;

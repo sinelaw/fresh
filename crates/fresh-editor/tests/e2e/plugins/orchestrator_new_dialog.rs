@@ -157,21 +157,19 @@ fn project_path_field_value(screen: &str) -> String {
     );
 }
 
-/// True when the rendered screen contains a dim `┄┄┄...┄┄┄`
-/// separator row — the host-rendered popup's replacement for
-/// the input field's normal `╰─...─╯` bottom border. Its
-/// presence is the load-bearing visual cue that input + popup
-/// are part of one unified box: above the separator is the
-/// active input, below it (and inside the labeled section's
-/// side borders) are the candidate rows.
-fn screen_has_completion_dim_separator(screen: &str) -> bool {
+/// True when the rendered screen shows a completion list box: a `┌─...─┐`
+/// top row with nothing but rule in it. A field outside a labeled section
+/// drops its candidates in a bordered box of their own, the way a dropdown's
+/// option list is drawn; a dialog's own top border carries its title, so it
+/// never matches.
+pub(crate) fn screen_has_completion_box(screen: &str) -> bool {
     screen.lines().any(|l| {
-        if let Some(start) = l.find('┄') {
-            let rest = &l[start..];
-            let run: String = rest.chars().take_while(|c| *c == '┄').collect();
-            return run.chars().count() >= 8;
-        }
-        false
+        let Some(start) = l.find('┌') else {
+            return false;
+        };
+        let rest = &l[start + '┌'.len_utf8()..];
+        let run = rest.chars().take_while(|c| *c == '─').count();
+        run >= 8 && rest.chars().nth(run) == Some('┐')
     })
 }
 
@@ -194,13 +192,12 @@ fn type_alpha_prefix_and_wait(
     prefix
 }
 
-/// The host-rendered popup integrates with the wrapping
-/// labeled-section chrome: the input field's normal bottom
-/// border becomes a dim `┄┄┄...┄┄┄` separator (cueing that the
-/// box has extended downward), and the side borders continue
-/// past the input through the candidate rows.
+/// The host-rendered popup of a field outside a labeled section is a
+/// bordered box under the field, drawn like a dropdown's option list — not
+/// the section-joined list with its dim `┄` separator, which has no section
+/// border here to join.
 #[test]
-fn completion_popup_renders_with_dim_separator() {
+fn completion_popup_renders_as_a_box_under_its_field() {
     let (_temp, workspace) = set_up_workspace();
     let mut harness = EditorTestHarness::with_working_dir(160, 50, workspace.clone()).unwrap();
     harness.tick_and_render().unwrap();
@@ -211,9 +208,13 @@ fn completion_popup_renders_with_dim_separator() {
 
     let screen = harness.screen_to_string();
     assert!(
-        screen_has_completion_dim_separator(&screen),
-        "completion popup must render with a dim `┄┄┄...┄┄┄` separator \
-         between input and candidates. Screen:\n{}",
+        screen_has_completion_box(&screen),
+        "completion popup must render as a bordered `┌─...─┐` box. Screen:\n{}",
+        screen,
+    );
+    assert!(
+        !screen.contains('┄'),
+        "no section separator without a section. Screen:\n{}",
         screen,
     );
 }
@@ -497,14 +498,13 @@ fn completion_popup_renders_scrollbar_when_overflowing() {
 }
 
 /// The selected candidate's row paints with `popup_selection_bg`
-/// across the candidate text + trailing pad + scrollbar column,
-/// but the popup's `│` side borders must stay outside the
-/// highlight — the right `│` in particular must keep the
-/// popup's base bg (`theme.suggestion_bg`), not the selection
-/// blue. Regression guard for a bug where the row-level
-/// selection style propagated onto the wrapping `│ ... │` entry
-/// and the per-border fg-only inline overlay could not paint
-/// the bg back, so the right border sat on selection blue.
+/// across the candidate text, trailing pad and scrollbar column, but
+/// the popup's `│` side borders must stay outside the highlight — the
+/// right `│` in particular keeps the list box's own ground
+/// (`popup_bg`, the ground a dropdown's option list takes), not the
+/// selection blue. Regression guard for a bug where the row-level
+/// selection style propagated onto the border and it sat on selection
+/// blue.
 #[test]
 fn selection_highlight_does_not_overlap_right_border() {
     let (_temp, workspace, _names) = set_up_workspace_many_alphas();
@@ -526,37 +526,26 @@ fn selection_highlight_does_not_overlap_right_border() {
     // `alpha_00/` is the first candidate, now selected after the `↓`
     // stepped into the dropdown (the host keeps `selectedIndex` at 0
     // when first entering the list).
-    let (_text_col, row) = harness
+    let (text_col, row) = harness
         .find_text_on_screen("alpha_00/")
         .expect("`alpha_00/` should be visible as the first candidate row");
 
-    // Scan the selected row right-to-left for the popup's
-    // right `│` border. The dialog that wraps the form draws
-    // its own `│` one column further out, so the rightmost
-    // `│` is the dialog's border — the popup's right border
-    // is the next `│` inward, identified as the rightmost `│`
-    // whose left neighbor is NOT also `│` (the dialog border
-    // would have the popup's `│` immediately to its left).
+    // The popup's right `│` is the first one to the right of the selected
+    // candidate's text: the list box is exactly as wide as its field, so
+    // that is its wall, whatever frames the dialog further out.
     let width = harness.buffer().area.width;
-    let mut right_border_col: Option<u16> = None;
-    for x in (1..width).rev() {
-        if harness.get_cell(x, row).as_deref() == Some("│")
-            && harness.get_cell(x - 1, row).as_deref() != Some("│")
-        {
-            right_border_col = Some(x);
-            break;
-        }
-    }
-    let right_border_col = right_border_col.unwrap_or_else(|| {
-        panic!(
-            "popup right `│` border should be visible on the selected candidate row.\nScreen:\n{}",
-            harness.screen_to_string(),
-        )
-    });
+    let right_border_col = (text_col..width)
+        .find(|&x| harness.get_cell(x, row).as_deref() == Some("│"))
+        .unwrap_or_else(|| {
+            panic!(
+                "popup right `│` border should be visible on the selected candidate row.\nScreen:\n{}",
+                harness.screen_to_string(),
+            )
+        });
 
-    let (popup_selection_bg, suggestion_bg) = {
+    let (popup_selection_bg, popup_bg) = {
         let theme = harness.editor().theme();
-        (theme.popup_selection_bg, theme.suggestion_bg)
+        (theme.popup_selection_bg, theme.popup_bg)
     };
     let border_style = harness
         .get_cell_style(right_border_col, row)
@@ -574,10 +563,10 @@ fn selection_highlight_does_not_overlap_right_border() {
     );
     assert_eq!(
         border_style.bg,
-        Some(suggestion_bg),
+        Some(popup_bg),
         "right `│` border on the selected candidate row should paint on the \
-         popup's base background (`suggestion_bg` = {:?}), not {:?}.\nScreen:\n{}",
-        suggestion_bg,
+         list box's own ground (`popup_bg` = {:?}), not {:?}.\nScreen:\n{}",
+        popup_bg,
         border_style.bg,
         harness.screen_to_string(),
     );
@@ -844,7 +833,7 @@ fn bracketed_paste_routes_to_focused_dialog_field() {
 /// — neither inserted into any field nor leaked into the obscured
 /// buffer.
 ///
-/// The form's tab cycle runs the mode switch, the prompt, the agent, then
+/// The form's tab cycle runs the mode switch, the agent, the prompt, then
 /// `Project`, `Machine` and the fields; this test puts focus in the
 /// Folder field, so a single Shift+Tab walks focus back onto the
 /// `Machine` dropdown — a non-text widget,

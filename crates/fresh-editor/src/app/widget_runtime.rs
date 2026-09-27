@@ -93,6 +93,29 @@ impl Editor {
     ///
     /// `None` when the press carries no byte at all — the web's by-index
     /// route, and a keyboard activation.
+    /// **A double-click on a list row activates it**, the way Enter does:
+    /// the first press selected the row (its `select`), the second fires the
+    /// list's `activate` for the selection — opening a folder in a file
+    /// browser, choosing an entry in a picker. Other widgets take a second
+    /// press as another single one.
+    pub(crate) fn activate_on_double_click(
+        &mut self,
+        panel_key: &crate::widgets::PanelKey,
+        hit: &crate::widgets::WidgetEvent,
+    ) {
+        if hit.widget_kind != "list" || hit.event_type != "select" {
+            return;
+        }
+        let owner = hit.owner().to_string();
+        let ev = self.widget_registry.get(panel_key).and_then(|p| {
+            let spec = crate::widgets::find_widget_by_key(&p.spec, &owner)?;
+            crate::widgets::kinds::list::activate_event(spec, &owner, p)
+        });
+        if let Some((event_type, payload)) = ev {
+            self.fire_widget_event(panel_key, owner, event_type, payload);
+        }
+    }
+
     pub(crate) fn deliver_widget_hit(
         &mut self,
         panel_key: &crate::widgets::PanelKey,
@@ -2278,24 +2301,25 @@ impl Editor {
     /// The keymap a panel's keys resolve against once its focused control
     /// has passed them: the plugin mode its interior names.
     ///
-    /// Per slot, because a mode reaches a panel three ways. A dock or a
-    /// floating panel names the mode it mounted with, or else the active
-    /// window's editor mode (how a plugin that mounts a centred form declares
-    /// one). A pane's panel resolves against its buffer's mode
-    /// (`setBufferMode`). A sidebar section takes its keys through
-    /// `widget_event` and never through a mode, so it has none. Read by the
-    /// description (the capture leg's shortcuts) and by
-    /// `dispatch_widget_panel_key` (everything else) — one answer for both.
+    /// Per slot, because a mode reaches a panel two ways. A dock or a
+    /// floating panel names the mode it mounted with, and one mounted
+    /// without a mode has no keymap: the window's editor mode and the
+    /// editor-wide input mode (vi's) belong to the buffer, so a panel that
+    /// borrowed them would hand its arrows and Esc to whichever plugin owns
+    /// them. A pane's
+    /// panel resolves against its buffer's mode (`setBufferMode`). A sidebar
+    /// section takes its keys through `widget_event` and never through a
+    /// mode, so it has none. Read by the description (the capture leg's
+    /// shortcuts) and by `dispatch_widget_panel_key` (everything else) — one
+    /// answer for both.
     pub(crate) fn panel_keymap(
         &self,
         panel_key: &crate::widgets::PanelKey,
     ) -> Option<crate::view::shell::panel::Keymap> {
         let mode = match self.slot_of_panel(panel_key) {
-            Some(slot @ (super::PanelSlot::Dock | super::PanelSlot::Floating)) => self
-                .panel(slot)?
-                .mode
-                .clone()
-                .or_else(|| self.active_window().editor_mode.clone())?,
+            Some(slot @ (super::PanelSlot::Dock | super::PanelSlot::Floating)) => {
+                self.panel(slot)?.mode.clone()?
+            }
             Some(super::PanelSlot::Sidebar(_)) => return None,
             None => {
                 let buffer = self.widget_registry.get(panel_key)?.buffer_id?;
@@ -3289,6 +3313,7 @@ mod tests {
             selected_index: 0,
             visible_rows: Some(4),
             focusable: true,
+            type_ahead: false,
             key: Some("lst".into()),
         }
     }
@@ -3304,6 +3329,7 @@ mod tests {
                 item_keys,
                 selected_index,
                 focusable,
+                type_ahead,
                 key,
                 ..
             } => WidgetSpec::List {
@@ -3313,6 +3339,7 @@ mod tests {
                 selected_index,
                 visible_rows: None,
                 focusable,
+                type_ahead,
                 key,
             },
             other => other,
@@ -3373,6 +3400,7 @@ mod tests {
             label_width: 0,
             read_only: false,
             markdown: false,
+            combo: false,
             key: Some("field".into()),
         };
         let out = crate::widgets::resolve_panel(&spec, &Default::default(), "field", true, None);
@@ -3792,6 +3820,7 @@ mod tests {
             label_width: 0,
             read_only: true,
             markdown: true,
+            combo: false,
             key: key.map(str::to_string),
         }
     }

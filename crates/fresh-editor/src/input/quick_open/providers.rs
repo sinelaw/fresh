@@ -1285,12 +1285,12 @@ mod tests {
 
     #[async_trait::async_trait]
     impl crate::services::remote::ProcessSpawner for FailingSpawner {
-        async fn spawn(
+        async fn spawn_raw(
             &self,
             _command: String,
             _args: Vec<String>,
             _cwd: Option<String>,
-        ) -> Result<crate::services::remote::SpawnResult, crate::services::remote::SpawnError>
+        ) -> Result<crate::services::remote::RawSpawnResult, crate::services::remote::SpawnError>
         {
             Err(crate::services::remote::SpawnError::Process(
                 "no git in test".to_string(),
@@ -1315,12 +1315,12 @@ mod tests {
 
     #[async_trait::async_trait]
     impl crate::services::remote::ProcessSpawner for OtherSpawner {
-        async fn spawn(
+        async fn spawn_raw(
             &self,
             _command: String,
             _args: Vec<String>,
             _cwd: Option<String>,
-        ) -> Result<crate::services::remote::SpawnResult, crate::services::remote::SpawnError>
+        ) -> Result<crate::services::remote::RawSpawnResult, crate::services::remote::SpawnError>
         {
             Err(crate::services::remote::SpawnError::Process(
                 "other".to_string(),

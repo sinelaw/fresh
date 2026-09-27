@@ -33,10 +33,10 @@ pub use registry::{
     PROMPT_TOOLBAR_PANEL_ID,
 };
 pub use render::{
-    apply_hover_band, clamp_number, dual_available_values, dual_label, dual_sanitize_included,
-    format_number_value, render_dropdown, render_hint_bar, render_number, render_toggle,
-    render_toggle_form, render_tree_row, resolve_panel, wrap_index, MarkdownCtx, NumberEdit,
-    PanelPopup, RenderedTreeRow, ResolvedPanel, DROPDOWN_VISIBLE_OPTIONS,
+    apply_hover_band, apply_mnemonic, clamp_number, dual_available_values, dual_label,
+    dual_sanitize_included, format_number_value, render_dropdown, render_hint_bar, render_number,
+    render_toggle, render_toggle_form, render_tree_row, resolve_panel, wrap_index, MarkdownCtx,
+    NumberEdit, PanelPopup, RenderedTreeRow, ResolvedPanel, DROPDOWN_VISIBLE_OPTIONS,
 };
 pub use render::{render_label, render_radio, RenderedRadio};
 pub use text_click::{row_byte_to_value_byte, value_byte_from_hit};

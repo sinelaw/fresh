@@ -268,8 +268,8 @@ fn embedded_fresh_dts_path() -> Option<PathBuf> {
     None
 }
 
-/// Refresh `~/.config/fresh/types/fresh.d.ts` from the embedded copy and
-/// write `tsconfig.json` if it isn't already present.
+/// Refresh `~/.config/fresh/types/fresh.d.ts` from the embedded copy, and
+/// write `types/plugins.d.ts` and `tsconfig.json` if they aren't present.
 ///
 /// `fresh.d.ts` is **always overwritten** — it's an auto-generated API
 /// mirror that must track the running binary. Keeping a stale copy in
@@ -303,11 +303,25 @@ pub fn refresh_types_scaffolding(config_dir: &Path) {
         );
     }
 
+    ensure_plugin_declarations(config_dir);
+
     let tsconfig = config_dir.join("tsconfig.json");
     if !tsconfig.exists() {
         if let Err(e) = std::fs::write(&tsconfig, INIT_TSCONFIG) {
             tracing::warn!("init.ts: failed to write {}: {e}", tsconfig.display());
         }
+    }
+}
+
+/// Create an empty `<config_dir>/types/plugins.d.ts` if there is none.
+///
+/// The real contents are written once plugins load, which can be after a
+/// TypeScript server has started. A server that starts while the file is
+/// missing never picks it up, and keeps typing `getPluginApi()` as `{}`.
+/// With the file present from the start, the server sees the rewrite.
+pub fn ensure_plugin_declarations(config_dir: &Path) {
+    if !config_dir.join("types").join("plugins.d.ts").exists() {
+        write_plugin_declarations(config_dir, &[]);
     }
 }
 
@@ -825,6 +839,23 @@ mod tests {
         assert!(
             STARTER_TEMPLATE.contains(r#"/// <reference path="./types/plugins.d.ts" />"#),
             "starter template must reference plugins.d.ts so plugin APIs are typed"
+        );
+    }
+
+    #[test]
+    fn ensure_plugin_declarations_creates_but_never_overwrites() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("types/plugins.d.ts");
+
+        ensure_plugin_declarations(tmp.path());
+        assert!(path.exists(), "missing plugins.d.ts should be created");
+
+        std::fs::write(&path, "// real declarations\n").unwrap();
+        ensure_plugin_declarations(tmp.path());
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "// real declarations\n",
+            "an existing plugins.d.ts must be left alone"
         );
     }
 

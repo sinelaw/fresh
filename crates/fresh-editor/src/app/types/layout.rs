@@ -99,6 +99,58 @@ impl ViewLineMapping {
     pub fn first_source_byte(&self) -> Option<usize> {
         self.char_source_bytes.iter().find_map(|b| *b)
     }
+
+    /// Visual column just past the last *content* cell: the last
+    /// source-backed cell whose byte is before `line_end_byte`. The
+    /// newline cell (a line-ending indicator or cursor indicator) and
+    /// trailing decoration-only cells don't count, so an empty line is 0
+    /// whether or not it drew a cell for its newline, and a one-character
+    /// line is 1.
+    pub fn content_end_col(&self) -> usize {
+        self.visual_to_char
+            .iter()
+            .enumerate()
+            .rev()
+            .find(|(_, &char_idx)| {
+                self.char_source_bytes
+                    .get(char_idx)
+                    .is_some_and(|b| b.is_some_and(|b| b < self.line_end_byte))
+            })
+            .map(|(visual_col, _)| visual_col + 1)
+            .unwrap_or(0)
+    }
+}
+
+#[cfg(test)]
+mod view_line_mapping_tests {
+    use super::ViewLineMapping;
+
+    fn mapping(cells: &[Option<usize>], line_end_byte: usize) -> ViewLineMapping {
+        ViewLineMapping {
+            char_source_bytes: cells.to_vec(),
+            visual_to_char: (0..cells.len()).collect(),
+            line_end_byte,
+            is_plugin_virtual: false,
+            end_exclusive: None,
+        }
+    }
+
+    /// Issue #3351: a one-character line has one cell and must not read as
+    /// empty; an empty line is empty whether or not its newline drew a cell.
+    #[test]
+    fn content_end_col_counts_content_cells_only() {
+        // "}\n" at byte 10: one cell for `}`, the newline draws none.
+        assert_eq!(mapping(&[Some(10)], 11).content_end_col(), 1);
+        // Empty line at byte 10, newline drawn as an indicator cell.
+        assert_eq!(mapping(&[Some(10)], 10).content_end_col(), 0);
+        // Empty line, newline draws no cell.
+        assert_eq!(mapping(&[], 10).content_end_col(), 0);
+        // "ab" followed by decoration cells with no source byte.
+        assert_eq!(
+            mapping(&[Some(0), Some(1), None, None], 2).content_end_col(),
+            2
+        );
+    }
 }
 
 /// What the frame leaves behind for the next one: its size, the screen-indexed

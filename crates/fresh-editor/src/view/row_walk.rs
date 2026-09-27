@@ -384,8 +384,16 @@ pub fn row_start_before(
 /// Prefers a line start, which carries fresh and so gives the canonical grid.
 /// A line too long to reach one — the case this module exists for — starts
 /// mid-line and takes the shift documented on [`row_start_before`].
+///
+/// The mid-line start is a byte count back from `byte`, so on multi-byte text
+/// it can land inside a character. It is moved to the next whole one: every row
+/// start of the walk descends from it, and a row starting mid-character draws
+/// replacement glyphs and hands clicks on it offsets inside a character (issue
+/// #3285).
 fn walk_start_before(buffer: &mut Buffer, byte: usize, reach: usize) -> usize {
-    let back = byte.saturating_sub(reach);
+    let back = buffer
+        .char_boundary_at_or_after(byte.saturating_sub(reach))
+        .min(byte);
     match bounded_line_start(buffer, back) {
         Some(line_start) if back.saturating_sub(line_start) <= reach => line_start,
         _ => back,
@@ -705,5 +713,25 @@ mod tests {
             rows_between(&mut buffer, whole[3], whole[80], rule, 10, NO_FOLDS),
             None
         );
+    }
+
+    /// A line too long to search back through is walked from a byte count
+    /// back, which on multi-byte text can be inside a character. Every row
+    /// start descends from that one, so it has to be a character's start.
+    #[test]
+    fn a_walk_back_into_a_long_multibyte_line_starts_on_a_character() {
+        // Three-byte characters, far past the line-start search window.
+        let text = "信".repeat(100_000);
+        let rule = word_rule(37);
+        for shift in 0..3 {
+            let mut buffer = Buffer::from_str_test(&text);
+            let byte = buffer.len() - 3 * 1_000 - 3 * shift;
+            for reach in [100, 101, 102] {
+                let from = walk_start_before(&mut buffer, byte, reach);
+                assert_eq!(from % 3, 0, "reach {reach} from {byte} began at {from}");
+            }
+            let top = row_start_before(&mut buffer, byte, 5, rule, &[]);
+            assert_eq!(top % 3, 0, "row start {top} is inside a character");
+        }
     }
 }

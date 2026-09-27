@@ -629,9 +629,7 @@ fn blog_showcase_productivity_flash_jump() {
     })
     .unwrap();
     // Two extra renders so the status bar's cursor snapshot catches
-    // up before capture.  (Pre-existing Fresh quirk: the status's
-    // `Ln` value reads from a cached `primary_cursor_line_number`
-    // that lags one tick behind `setBufferCursor`.)
+    // up before capture.
     h.render().unwrap();
     h.render().unwrap();
     snap(&mut h, &mut s, Some("m"), 700);
@@ -3711,8 +3709,8 @@ fn blog_showcase_fresh_0_4_0_universal_search() {
         .unwrap();
     snap(&mut h, &mut s, None, 80);
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
-    // The overlay's scope toolbar paints "Search in:".
-    h.wait_until(|h| h.screen_to_string().contains("Search in:"))
+    // The overlay's scope toolbar paints "Scope".
+    h.wait_until(|h| h.screen_to_string().contains("Scope "))
         .unwrap();
     snap(&mut h, &mut s, Some("Enter"), 110);
     hold(&mut h, &mut s, 3, 75);

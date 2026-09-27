@@ -952,7 +952,9 @@ mod large_file_support {
 
         // Save to a new file (to avoid issues with reading while writing same file)
         let save_path = temp_dir.path().join("saved.txt");
-        buffer.save_to_file(&save_path).unwrap();
+        buffer
+            .save_to_file(&save_path, &temp_dir.path().join("recovery"))
+            .unwrap();
 
         // Verify the saved file
         let saved_content = std::fs::read(&save_path).unwrap();
@@ -1018,7 +1020,9 @@ mod large_file_support {
 
         // Save
         let save_path = temp_dir.path().join("multi_edit_saved.txt");
-        buffer.save_to_file(&save_path).unwrap();
+        buffer
+            .save_to_file(&save_path, &temp_dir.path().join("recovery"))
+            .unwrap();
 
         // Verify
         let saved = std::fs::read_to_string(&save_path).unwrap();
@@ -1406,7 +1410,9 @@ fn test_cr_file_roundtrips_on_save() {
     assert_eq!(buffer.line_count(), Some(4));
 
     // Saving an unchanged CR buffer must write `\r`, never `\n`.
-    buffer.save_to_file(&file_path).unwrap();
+    buffer
+        .save_to_file(&file_path, &temp_dir.path().join("recovery"))
+        .unwrap();
     let saved = std::fs::read(&file_path).unwrap();
     assert_eq!(&saved, b"Line 1\rLine 2\rLine 3\r");
     assert!(
@@ -1442,7 +1448,9 @@ fn test_cr_enter_inserts_row_and_saves_cr() {
         "Enter in a CR buffer must create a new row"
     );
 
-    buffer.save_to_file(&file_path).unwrap();
+    buffer
+        .save_to_file(&file_path, &temp_dir.path().join("recovery"))
+        .unwrap();
     let saved = std::fs::read(&file_path).unwrap();
     assert_eq!(&saved, b"Line 1\r\rLine 2");
 }
@@ -1466,7 +1474,9 @@ fn test_new_buffer_default_cr_saves_cr_separators() {
     // The buffer split into two rows despite being CR mode.
     assert_eq!(buffer.line_count(), Some(2));
 
-    buffer.save_to_file(&file_path).unwrap();
+    buffer
+        .save_to_file(&file_path, &temp_dir.path().join("recovery"))
+        .unwrap();
     let saved = std::fs::read(&file_path).unwrap();
     assert_eq!(&saved, b"line one\rline two");
 }
@@ -1536,6 +1546,90 @@ fn test_get_all_text_returns_empty_for_unloaded_buffers() {
         String::from_utf8_lossy(&content_lazy).starts_with("EDITED: "),
         "Content should start with our edit"
     );
+}
+
+/// A save records the size and SHA-256 of what it wrote, up to the
+/// large-file threshold the buffer was built with; above it, nothing:
+/// the changed-on-disk check doesn't compare files that big, so hashing
+/// them would be wasted (issue #3380).
+#[test]
+fn test_save_fingerprints_only_up_to_the_large_file_threshold() {
+    use crate::model::filesystem::ContentDigest;
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let recovery_dir = temp_dir.path().join("recovery");
+    let file_path = temp_dir.path().join("notes.txt");
+
+    let mut buffer = TextBuffer::new_with_path(16, test_fs(), file_path.clone());
+    buffer.insert(0, "sixteen bytes!!\n");
+    buffer.save(&recovery_dir).unwrap();
+    assert_eq!(
+        buffer.saved_content(),
+        Some(ContentDigest::of(b"sixteen bytes!!\n"))
+    );
+
+    buffer.insert(0, "+");
+    buffer.save(&recovery_dir).unwrap();
+    assert_eq!(std::fs::read(&file_path).unwrap().len(), 17);
+    assert_eq!(buffer.saved_content(), None);
+
+    // Loaded under the threshold: fingerprinted up to it, not over it.
+    let mut buffer = TextBuffer::load_from_file(&file_path, 20, test_fs()).unwrap();
+    buffer.insert(0, "mo");
+    buffer.save(&recovery_dir).unwrap();
+    assert_eq!(std::fs::read(&file_path).unwrap().len(), 19);
+    assert!(buffer.saved_content().is_some());
+    buffer.insert(0, "re");
+    buffer.save(&recovery_dir).unwrap();
+    assert_eq!(std::fs::read(&file_path).unwrap().len(), 21);
+    assert_eq!(buffer.saved_content(), None);
+}
+
+/// A buffer built from bytes (a restored workspace file) is capped the same
+/// way once given the threshold.
+#[test]
+fn test_threshold_given_after_construction_caps_the_fingerprint() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let recovery_dir = temp_dir.path().join("recovery");
+    let file_path = temp_dir.path().join("notes.txt");
+
+    let mut buffer = TextBuffer::from_bytes(b"ten bytes\n".to_vec(), test_fs());
+    buffer.set_file_path(file_path.clone());
+    buffer.set_large_file_threshold(9);
+    buffer.insert(0, "+");
+    buffer.save(&recovery_dir).unwrap();
+    assert_eq!(buffer.saved_content(), None);
+}
+
+/// A large file loaded whole because of its encoding (the confirmed load)
+/// saves without Copy ops; above the threshold it was loaded with, the save
+/// records no fingerprint, and below it, one.
+#[test]
+fn test_confirmed_full_load_fingerprints_only_up_to_the_threshold() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let recovery_dir = temp_dir.path().join("recovery");
+    let file_path = temp_dir.path().join("notes.txt");
+    // UTF-16LE with a BOM: not UTF-8, so loaded whole and re-encoded on save.
+    let utf16 = |text: &str| -> Vec<u8> {
+        let mut bytes = vec![0xFF, 0xFE];
+        bytes.extend(text.encode_utf16().flat_map(u16::to_le_bytes));
+        bytes
+    };
+    let save_edited = |threshold: usize| {
+        std::fs::write(&file_path, utf16("hello\n")).unwrap();
+        let mut buffer =
+            TextBuffer::load_large_file_confirmed(&file_path, threshold, test_fs()).unwrap();
+        assert!(buffer.is_large_file());
+        buffer.insert(0, "+");
+        buffer.save(&recovery_dir).unwrap();
+        assert_eq!(std::fs::read(&file_path).unwrap(), utf16("+hello\n"));
+        buffer.saved_content()
+    };
+
+    assert_eq!(
+        save_edited(1 << 20),
+        Some(ContentDigest::of(&utf16("+hello\n")))
+    );
+    assert_eq!(save_edited(8), None);
 }
 
 // ===== Line Ending Conversion Tests =====
@@ -1638,7 +1732,9 @@ mod line_ending_conversion {
         assert!(buffer.is_modified());
 
         // Save the file
-        buffer.save_to_file(&file_path).unwrap();
+        buffer
+            .save_to_file(&file_path, &temp_dir.path().join("recovery"))
+            .unwrap();
 
         // Read back and verify CRLF
         let saved_bytes = std::fs::read(&file_path).unwrap();
@@ -1671,7 +1767,9 @@ mod line_ending_conversion {
         assert!(buffer.is_modified());
 
         // Save the file
-        buffer.save_to_file(&file_path).unwrap();
+        buffer
+            .save_to_file(&file_path, &temp_dir.path().join("recovery"))
+            .unwrap();
 
         // Read back and verify LF (no CRLF)
         let saved_bytes = std::fs::read(&file_path).unwrap();
@@ -1702,16 +1800,18 @@ mod line_ending_conversion {
         std::fs::set_permissions(&unwritable_dir, Permissions::from_mode(0o555))?;
 
         let mut buffer = TextBuffer::from_bytes(b"new content".to_vec(), test_fs());
-        let result = buffer.save_to_file(&file_path);
+        let result = buffer.save_to_file(&file_path, &temp_dir.path().join("recovery"));
 
         // Verify that it returns SudoSaveRequired
         match result {
             Err(e) => {
                 if let Some(sudo_err) = e.downcast_ref::<SudoSaveRequired>() {
                     assert_eq!(sudo_err.dest_path, file_path);
-                    assert!(sudo_err.temp_path.exists());
-                    // Cleanup temp file
-                    drop(std::fs::remove_file(&sudo_err.temp_path));
+                    let temp_path = sudo_err.temp_path().to_path_buf();
+                    assert!(temp_path.exists());
+                    // Dropping the error deletes its temp file
+                    drop(e);
+                    assert!(!temp_path.exists());
                 } else {
                     panic!("Expected SudoSaveRequired error, got: {:?}", e);
                 }
@@ -1745,17 +1845,15 @@ mod line_ending_conversion {
         std::fs::set_permissions(&unwritable_dir, Permissions::from_mode(0o555))?;
 
         let mut buffer = TextBuffer::from_bytes(b"content".to_vec(), test_fs());
-        let result = buffer.save_to_file(&file_path);
+        let result = buffer.save_to_file(&file_path, &temp_dir.path().join("recovery"));
 
         match result {
             Err(e) => {
                 if let Some(sudo_err) = e.downcast_ref::<SudoSaveRequired>() {
                     assert_eq!(sudo_err.dest_path, file_path);
-                    assert!(sudo_err.temp_path.exists());
+                    assert!(sudo_err.temp_path().exists());
                     // It should be in /tmp because the directory was not writable
-                    assert!(sudo_err.temp_path.starts_with(std::env::temp_dir()));
-                    // Cleanup
-                    drop(std::fs::remove_file(&sudo_err.temp_path));
+                    assert!(sudo_err.temp_path().starts_with(std::env::temp_dir()));
                 } else {
                     panic!("Expected SudoSaveRequired error, got: {:?}", e);
                 }
@@ -2486,6 +2584,18 @@ mod rebuild_pristine_saved_root_tests {
                 path: &Path,
             ) -> std::io::Result<Box<dyn crate::model::filesystem::FileWriter>> {
                 self.inner.create_file(path)
+            }
+            fn create_new_file(
+                &self,
+                path: &Path,
+            ) -> std::io::Result<Box<dyn crate::model::filesystem::FileWriter>> {
+                self.inner.create_new_file(path)
+            }
+            fn create_new_private_file(
+                &self,
+                path: &Path,
+            ) -> std::io::Result<Box<dyn crate::model::filesystem::FileWriter>> {
+                self.inner.create_new_private_file(path)
             }
             fn open_file(
                 &self,

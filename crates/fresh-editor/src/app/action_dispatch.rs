@@ -73,6 +73,7 @@ impl Editor {
     /// Handle an action (for normal mode and command execution).
     /// Used by the app module internally and by the GUI module for native menu dispatch.
     pub(crate) fn handle_action(&mut self, action: Action) -> AnyhowResult<()> {
+        self.mark_plugin_snapshot_dirty();
         use crate::input::keybindings::Action;
 
         // Actions are the funnel for command-driven UI mutation (palette,
@@ -210,20 +211,7 @@ impl Editor {
             }
             Action::SaveAll => {
                 let msg = match self.save_all() {
-                    Ok((saved, failed)) => {
-                        if failed > 0 {
-                            t!(
-                                "status.save_all_partial",
-                                saved = saved.to_string(),
-                                failed = failed.to_string()
-                            )
-                            .to_string()
-                        } else if saved == 0 {
-                            t!("status.save_all_none").to_string()
-                        } else {
-                            t!("status.save_all", count = saved.to_string()).to_string()
-                        }
-                    }
+                    Ok(outcome) => Self::save_all_message(&outcome),
                     Err(e) => t!("file.save_failed", error = &format!("{}", e)).to_string(),
                 };
                 self.active_window_mut().status_message = Some(msg);
@@ -301,6 +289,9 @@ impl Editor {
             }
             Action::ToggleAutoRevert => {
                 self.toggle_auto_revert();
+            }
+            Action::ReviewInterruptedSaves => {
+                self.review_interrupted_saves();
             }
             Action::OpenUpdateLog => {
                 self.show_self_update_output();
@@ -1527,7 +1518,9 @@ impl Editor {
             }
             Action::LoadPluginFromBuffer => {
                 #[cfg(feature = "plugins")]
-                {
+                if let Some(path) = self.saved_plugin_file() {
+                    self.reload_plugin_file(&path);
+                } else {
                     let buffer_id = self.active_buffer();
                     let state = self.active_state();
                     let buffer = &state.buffer;

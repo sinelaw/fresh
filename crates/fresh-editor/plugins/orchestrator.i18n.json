@@ -510,7 +510,8 @@
     "dock.menu_h_show": "Показване",
     "dock.menu_h_project": "Проект",
     "machine.hosts_not_added": "SSH хостове в ~/.ssh/config, които не са добавени: %{count}. Добавете с „+ Добавяне на машина…“.",
-    "repo.browse_hint_file": "⏎ open a folder or pick a file · ⌫ up · Esc close"
+    "repo.browse_hint_file": "⏎ open a folder or pick a file · ⌫ up · Esc close",
+    "machine.identity_pub_hint": "Това е публичната половина на двойката ключове; SSH се нуждае от частния ключ — същото име без .pub."
   },
   "cs": {
     "backend.devcontainer": "Devcontainer",
@@ -1023,7 +1024,8 @@
     "dock.menu_h_show": "Zobrazit",
     "dock.menu_h_project": "Projekt",
     "machine.hosts_not_added": "Hostitelé SSH z ~/.ssh/config, kteří nejsou přidáni: %{count}. Přidejte je přes „+ Přidat stroj…“.",
-    "repo.browse_hint_file": "⏎ otevřít složku nebo vybrat soubor · ⌫ nahoru · Esc zavřít"
+    "repo.browse_hint_file": "⏎ otevřít složku nebo vybrat soubor · ⌫ nahoru · Esc zavřít",
+    "machine.identity_pub_hint": "To je veřejná polovina páru klíčů; SSH potřebuje soukromý klíč — stejný název bez .pub."
   },
   "de": {
     "backend.devcontainer": "Devcontainer",
@@ -1536,7 +1538,8 @@
     "dock.menu_h_show": "Anzeigen",
     "dock.menu_h_project": "Projekt",
     "machine.hosts_not_added": "Nicht hinzugefügte SSH-Hosts aus ~/.ssh/config: %{count}. Mit „+ Maschine hinzufügen…“ hinzufügen.",
-    "repo.browse_hint_file": "⏎ Ordner öffnen oder Datei wählen · ⌫ hoch · Esc schließen"
+    "repo.browse_hint_file": "⏎ Ordner öffnen oder Datei wählen · ⌫ hoch · Esc schließen",
+    "machine.identity_pub_hint": "Das ist der öffentliche Teil eines Schlüsselpaars; SSH braucht den privaten Schlüssel – denselben Namen ohne .pub."
   },
   "en": {
     "backend.devcontainer": "Devcontainer",
@@ -2049,7 +2052,8 @@
     "dock.menu_h_show": "Show",
     "dock.menu_h_project": "Project",
     "machine.hosts_not_added": "%{count} SSH host(s) in ~/.ssh/config not added yet. Use + Add machine… to add one.",
-    "repo.browse_hint_file": "⏎ open a folder or pick a file · ⌫ up · Esc close"
+    "repo.browse_hint_file": "⏎ open a folder or pick a file · ⌫ up · Esc close",
+    "machine.identity_pub_hint": "That is the public half of a key pair; SSH needs the private key, the same name without .pub."
   },
   "es": {
     "backend.devcontainer": "Devcontainer",
@@ -2562,7 +2566,8 @@
     "dock.menu_h_show": "Mostrar",
     "dock.menu_h_project": "Proyecto",
     "machine.hosts_not_added": "Hosts SSH de ~/.ssh/config sin añadir: %{count}. Usa «+ Añadir máquina…» para añadirlos.",
-    "repo.browse_hint_file": "⏎ abrir carpeta o elegir archivo · ⌫ subir · Esc cerrar"
+    "repo.browse_hint_file": "⏎ abrir carpeta o elegir archivo · ⌫ subir · Esc cerrar",
+    "machine.identity_pub_hint": "Esa es la mitad pública de un par de claves; SSH necesita la clave privada, el mismo nombre sin .pub."
   },
   "fr": {
     "backend.devcontainer": "Devcontainer",
@@ -3075,7 +3080,8 @@
     "dock.menu_h_show": "Afficher",
     "dock.menu_h_project": "Projet",
     "machine.hosts_not_added": "Hôtes SSH de ~/.ssh/config non ajoutés : %{count}. Utilisez « + Ajouter une machine… ».",
-    "repo.browse_hint_file": "⏎ ouvrir un dossier ou choisir un fichier · ⌫ remonter · Esc fermer"
+    "repo.browse_hint_file": "⏎ ouvrir un dossier ou choisir un fichier · ⌫ remonter · Esc fermer",
+    "machine.identity_pub_hint": "C'est la moitié publique d'une paire de clés ; SSH a besoin de la clé privée, le même nom sans .pub."
   },
   "it": {
     "backend.devcontainer": "Devcontainer",
@@ -3588,7 +3594,8 @@
     "dock.menu_h_show": "Mostra",
     "dock.menu_h_project": "Progetto",
     "machine.hosts_not_added": "Host SSH in ~/.ssh/config non aggiunti: %{count}. Usa «+ Aggiungi macchina…» per aggiungerli.",
-    "repo.browse_hint_file": "⏎ apri cartella o scegli file · ⌫ su · Esc chiudi"
+    "repo.browse_hint_file": "⏎ apri cartella o scegli file · ⌫ su · Esc chiudi",
+    "machine.identity_pub_hint": "Questa è la metà pubblica di una coppia di chiavi; SSH ha bisogno della chiave privata, lo stesso nome senza .pub."
   },
   "ja": {
     "backend.devcontainer": "Devcontainer",
@@ -4101,7 +4108,8 @@
     "dock.menu_h_show": "表示対象",
     "dock.menu_h_project": "プロジェクト",
     "machine.hosts_not_added": "~/.ssh/config に未追加の SSH ホストが %{count} 件あります。「+ マシンを追加…」で追加できます。",
-    "repo.browse_hint_file": "⏎ フォルダーを開く／ファイルを選ぶ · ⌫ 上へ · Esc 閉じる"
+    "repo.browse_hint_file": "⏎ フォルダーを開く／ファイルを選ぶ · ⌫ 上へ · Esc 閉じる",
+    "machine.identity_pub_hint": "これは鍵ペアの公開鍵です。SSH には秘密鍵(同じ名前で .pub なし)が必要です。"
   },
   "ko": {
     "backend.devcontainer": "Devcontainer",
@@ -4614,7 +4622,8 @@
     "dock.menu_h_show": "표시",
     "dock.menu_h_project": "프로젝트",
     "machine.hosts_not_added": "~/.ssh/config에 아직 추가되지 않은 SSH 호스트 %{count}개. \"+ 머신 추가…\"로 추가하세요.",
-    "repo.browse_hint_file": "⏎ 폴더 열기 또는 파일 선택 · ⌫ 위로 · Esc 닫기"
+    "repo.browse_hint_file": "⏎ 폴더 열기 또는 파일 선택 · ⌫ 위로 · Esc 닫기",
+    "machine.identity_pub_hint": "이것은 키 쌍의 공개 키입니다. SSH에는 개인 키(같은 이름에서 .pub 제외)가 필요합니다."
   },
   "pt-BR": {
     "backend.devcontainer": "Devcontainer",
@@ -5127,7 +5136,8 @@
     "dock.menu_h_show": "Mostrar",
     "dock.menu_h_project": "Projeto",
     "machine.hosts_not_added": "Hosts SSH do ~/.ssh/config não adicionados: %{count}. Use \"+ Adicionar máquina…\" para adicionar.",
-    "repo.browse_hint_file": "⏎ abrir pasta ou escolher arquivo · ⌫ subir · Esc fechar"
+    "repo.browse_hint_file": "⏎ abrir pasta ou escolher arquivo · ⌫ subir · Esc fechar",
+    "machine.identity_pub_hint": "Essa é a metade pública de um par de chaves; o SSH precisa da chave privada, o mesmo nome sem .pub."
   },
   "ru": {
     "backend.devcontainer": "Devcontainer",
@@ -5640,7 +5650,8 @@
     "dock.menu_h_show": "Показывать",
     "dock.menu_h_project": "Проект",
     "machine.hosts_not_added": "SSH-хосты из ~/.ssh/config, не добавленные: %{count}. Добавьте через «+ Добавить машину…».",
-    "repo.browse_hint_file": "⏎ открыть папку или выбрать файл · ⌫ вверх · Esc закрыть"
+    "repo.browse_hint_file": "⏎ открыть папку или выбрать файл · ⌫ вверх · Esc закрыть",
+    "machine.identity_pub_hint": "Это открытая половина пары ключей; SSH нужен закрытый ключ — то же имя без .pub."
   },
   "th": {
     "backend.devcontainer": "Devcontainer",
@@ -6153,7 +6164,8 @@
     "dock.menu_h_show": "แสดง",
     "dock.menu_h_project": "โปรเจกต์",
     "machine.hosts_not_added": "โฮสต์ SSH ใน ~/.ssh/config ที่ยังไม่ได้เพิ่ม: %{count} ใช้ \"+ เพิ่มเครื่อง…\" เพื่อเพิ่ม",
-    "repo.browse_hint_file": "⏎ open a folder or pick a file · ⌫ up · Esc close"
+    "repo.browse_hint_file": "⏎ open a folder or pick a file · ⌫ up · Esc close",
+    "machine.identity_pub_hint": "นี่คือกุญแจสาธารณะของคู่กุญแจ SSH ต้องใช้กุญแจส่วนตัว ซึ่งเป็นชื่อเดียวกันแต่ไม่มี .pub"
   },
   "uk": {
     "backend.devcontainer": "Devcontainer",
@@ -6666,7 +6678,8 @@
     "dock.menu_h_show": "Показувати",
     "dock.menu_h_project": "Проєкт",
     "machine.hosts_not_added": "SSH-хости з ~/.ssh/config, не додані: %{count}. Додайте через «+ Додати машину…».",
-    "repo.browse_hint_file": "⏎ відкрити теку або вибрати файл · ⌫ вгору · Esc закрити"
+    "repo.browse_hint_file": "⏎ відкрити теку або вибрати файл · ⌫ вгору · Esc закрити",
+    "machine.identity_pub_hint": "Це відкрита половина пари ключів; SSH потрібен закритий ключ — та сама назва без .pub."
   },
   "vi": {
     "backend.devcontainer": "Devcontainer",
@@ -7179,7 +7192,8 @@
     "dock.menu_h_show": "Hiển thị",
     "dock.menu_h_project": "Dự án",
     "machine.hosts_not_added": "Có %{count} máy SSH trong ~/.ssh/config chưa được thêm. Dùng \"+ Thêm máy…\" để thêm.",
-    "repo.browse_hint_file": "⏎ open a folder or pick a file · ⌫ up · Esc close"
+    "repo.browse_hint_file": "⏎ open a folder or pick a file · ⌫ up · Esc close",
+    "machine.identity_pub_hint": "Đó là nửa công khai của cặp khóa; SSH cần khóa riêng, cùng tên nhưng không có .pub."
   },
   "zh-CN": {
     "backend.devcontainer": "Devcontainer",
@@ -7692,6 +7706,7 @@
     "dock.menu_h_show": "显示",
     "dock.menu_h_project": "项目",
     "machine.hosts_not_added": "~/.ssh/config 中有 %{count} 个 SSH 主机尚未添加。使用“+ 添加机器…”来添加。",
-    "repo.browse_hint_file": "⏎ 打开文件夹或选择文件 · ⌫ 上一级 · Esc 关闭"
+    "repo.browse_hint_file": "⏎ 打开文件夹或选择文件 · ⌫ 上一级 · Esc 关闭",
+    "machine.identity_pub_hint": "这是密钥对的公钥部分;SSH 需要私钥,即去掉 .pub 的同名文件。"
   }
 }

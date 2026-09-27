@@ -678,6 +678,14 @@ interface HookEventMap {
    * plugin's own `editor.setSetting(...)` writes.
    */
   config_changed: Record<string, never>;
+  /**
+   * The editor-wide input mode (`editor.setInputMode`) changed — vi, or
+   * another modal-editing plugin, was turned on or off or switched between
+   * its sub-modes. `mode` is the new value (`null` when cleared). A plugin
+   * whose window-scoped editor mode should step aside while an input mode
+   * is on re-checks here, since a window's editor mode outranks it.
+   */
+  input_mode_changed: { mode: string | null };
 
   // ── buffer lifecycle ─────────────────────────────────────────────────────
   buffer_activated: { buffer_id: number; window_id: number };
@@ -1689,6 +1697,8 @@ mod tests {
             "defineMode",
             "setEditorMode",
             "getEditorMode",
+            "setInputMode",
+            "getInputMode",
             "getPanelFocusKey",
             "closeSplit",
             "setSplitBuffer",

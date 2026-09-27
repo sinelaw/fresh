@@ -1719,7 +1719,31 @@ fn page_layers(
     if reading.is_none() && selection.is_empty() {
         return widgets;
     }
-    let mut layers = vec![widgets];
+    // The reader's caret is absent while a control places the cursor — the
+    // caller leaves `reading` out then (`panel_content`) — so it never has to
+    // outrank the field's by paint order. It paints no cells, so being under
+    // the content hides nothing.
+    let mut layers = Vec::new();
+    if let Some((at_row, at_col)) = reading {
+        layers.push(
+            col()
+                .pointer_mode(PointerMode::Ignore)
+                .child(row().h(Sizing::Cells(at_row.min(u16::MAX as u32) as u16)))
+                .child(
+                    row()
+                        .h(Sizing::Cells(1))
+                        .child(row().w(Sizing::Cells(at_col)))
+                        .child(
+                            text("")
+                                .key(super::widgets::caret_key(super::widgets::Slot::Pane(id)))
+                                .w(Sizing::Cells(0))
+                                .h(Sizing::Cells(1))
+                                .cursor_byte(0),
+                        ),
+                ),
+        );
+    }
+    layers.push(widgets);
     if !selection.is_empty() {
         // The bands are in content rows, so the layer is a column of spacers
         // and washes: each band skips to its own row and paints the cells
@@ -1751,25 +1775,6 @@ fn page_layers(
         }
         layers.push(band_layer);
     }
-    if let Some((at_row, at_col)) = reading {
-        layers.push(
-            col()
-                .pointer_mode(PointerMode::Ignore)
-                .child(row().h(Sizing::Cells(at_row.min(u16::MAX as u32) as u16)))
-                .child(
-                    row()
-                        .h(Sizing::Cells(1))
-                        .child(row().w(Sizing::Cells(at_col)))
-                        .child(
-                            text("")
-                                .key(super::widgets::caret_key(super::widgets::Slot::Pane(id)))
-                                .w(Sizing::Cells(0))
-                                .h(Sizing::Cells(1))
-                                .cursor_byte(0),
-                        ),
-                ),
-        );
-    }
     stack().children(layers)
 }
 
@@ -1793,7 +1798,15 @@ fn panel_content(id: LeafId, i: super::panel::Interior, active: bool) -> Node<Ui
     // sweep rather than a set of controls to click.
     let is_page = i.page.is_some();
     let page = i.page.clone();
-    let reading = i.reading;
+    // **The caret is the focused control's when it places one** (R2): a text
+    // field in the page draws its own at its insertion point, and the
+    // reader's — seated on the field's first cell when it took focus — is
+    // left out rather than painted under it. Stacked over the widgets, the
+    // reader's used to win, so typing into a page's field showed the cursor
+    // parked before its label (issue #3234).
+    let reading = i
+        .reading
+        .filter(|_| !(active && super::widgets::focus_places_cursor(&i.spec, &i.focus_key)));
     let selection = i.selection.clone();
     let compose = i.compose;
     let body = fresh_ui::layout_reader(move |info: fresh_ui::LayoutInfo| {

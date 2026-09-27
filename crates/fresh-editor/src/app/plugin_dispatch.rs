@@ -193,7 +193,154 @@ impl Editor {
         }
     }
 
+    /// Rebuild the plugin state snapshot if anything happened since the last
+    /// rebuild; an idle loop pass leaves it untouched.
+    pub(crate) fn refresh_plugin_state_snapshot(&mut self) {
+        let env_changed = self.take_env_probe_result();
+        if env_changed
+            || self.plugin_snapshot_dirty
+            || self.plugin_snapshot_liveness != self.remote_liveness_signature()
+        {
+            self.update_plugin_state_snapshot();
+        }
+    }
+
+    /// Which windows have a live remote connection, folded into one value.
+    /// Connections drop and return off the editor thread, so this is polled.
+    fn remote_liveness_signature(&self) -> u64 {
+        self.windows
+            .keys()
+            .filter(|id| self.window_connection_is_live(**id))
+            .fold(0u64, |acc, id| {
+                acc ^ id.0.wrapping_add(1).wrapping_mul(0x9E37_79B9_7F4A_7C15)
+            })
+    }
+
+    /// `detect_env` for the active root, re-probed only when the root, the
+    /// detectors or the authority change, or the root's entries change.
+    fn detected_env_json(&mut self) -> String {
+        /// How long a new root's first probe may hold the editor thread; a
+        /// local disk answers well inside it, a hung remote does not block.
+        const FIRST_PROBE_WAIT: std::time::Duration = std::time::Duration::from_millis(50);
+
+        let root = self.working_dir().to_path_buf();
+        let fs = Arc::clone(&self.authority().filesystem);
+        let fresh = self.detected_env_cache.as_ref().is_some_and(|c| {
+            c.root == root
+                && std::ptr::addr_eq(Arc::as_ptr(&c.fs), Arc::as_ptr(&fs))
+                && c.detectors == self.config.env.detectors
+        });
+        let first = !fresh;
+        if first {
+            if let Some(watch) = self.detected_env_cache.take().and_then(|c| c.watch) {
+                self.file_watcher_manager.unwatch(watch);
+            }
+            // Only a local root can be watched; a remote one re-probes when
+            // the file explorer sees its listing change.
+            let watch = if self.active_window().authority_spec.is_remote() {
+                None
+            } else {
+                self.async_bridge
+                    .as_ref()
+                    .and_then(|bridge| self.file_watcher_manager.watch(bridge, &root, false).ok())
+            };
+            self.detected_env_cache = Some(super::DetectedEnvCache {
+                root,
+                detectors: self.config.env.detectors.clone(),
+                fs,
+                answer: String::new(),
+                stale: true,
+                probe: None,
+                reprobe_at: None,
+                watch,
+            });
+        }
+        let cache = self.detected_env_cache.as_mut().expect("set above");
+        let due = cache
+            .reprobe_at
+            .is_none_or(|at| std::time::Instant::now() >= at);
+        if cache.stale && cache.probe.is_none() && due {
+            self.perf_counters.env_detections += 1;
+            let (tx, rx) = std::sync::mpsc::channel();
+            let (fs, root, detectors) = (
+                Arc::clone(&cache.fs),
+                cache.root.clone(),
+                cache.detectors.clone(),
+            );
+            let spawned = std::thread::Builder::new()
+                .name("fresh-env-probe".into())
+                .spawn(move || {
+                    let (env, incomplete) =
+                        crate::services::workspace_trust::probe_env(fs.as_ref(), &root, &detectors);
+                    let json = env
+                        .and_then(|d| serde_json::to_string(&d).ok())
+                        .unwrap_or_default();
+                    tx.send((json, incomplete)).ok();
+                });
+            match spawned {
+                Ok(_) => {
+                    if first {
+                        if let Ok(result) = rx.recv_timeout(FIRST_PROBE_WAIT) {
+                            Self::settle_env_probe(cache, result);
+                        } else {
+                            cache.probe = Some(rx);
+                        }
+                    } else {
+                        cache.probe = Some(rx);
+                    }
+                    cache.stale = cache.stale && cache.probe.is_none();
+                }
+                Err(e) => tracing::warn!("Could not start the environment probe: {e}"),
+            }
+        }
+        self.take_env_probe_result();
+        self.detected_env_cache
+            .as_ref()
+            .map(|c| c.answer.clone())
+            .unwrap_or_default()
+    }
+
+    /// Adopt a finished probe's `(answer, incomplete)`. An answer no watch
+    /// event would refresh (incomplete, or an unwatched root) is re-probed on
+    /// a rebuild once `ENV_REPROBE_INTERVAL` has passed.
+    fn settle_env_probe(cache: &mut super::DetectedEnvCache, (answer, incomplete): (String, bool)) {
+        const ENV_REPROBE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
+        cache.answer = answer;
+        cache.probe = None;
+        cache.stale = incomplete || cache.watch.is_none();
+        cache.reprobe_at = cache
+            .stale
+            .then(|| std::time::Instant::now() + ENV_REPROBE_INTERVAL);
+    }
+
+    /// Collect a finished environment probe; true when it changed the answer.
+    fn take_env_probe_result(&mut self) -> bool {
+        let Some(cache) = self.detected_env_cache.as_mut() else {
+            return false;
+        };
+        let Some(probe) = &cache.probe else {
+            return false;
+        };
+        match probe.try_recv() {
+            Ok(result) => {
+                let before = std::mem::take(&mut cache.answer);
+                Self::settle_env_probe(cache, result);
+                cache.answer != before
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => false,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                cache.probe = None;
+                false
+            }
+        }
+    }
+
+    /// Rebuild the plugin state snapshot unconditionally.
     pub fn update_plugin_state_snapshot(&mut self) {
+        self.plugin_snapshot_dirty = false;
+        self.plugin_snapshot_liveness = self.remote_liveness_signature();
+        self.perf_counters.plugin_snapshot_rebuilds += 1;
+
         // Rebuild the per-window filesystem registry so plugin file I/O resolves
         // against the correct window's authority (or the active one). This runs
         // on the same cadence as the snapshot, so it captures window
@@ -216,6 +363,8 @@ impl Editor {
         else {
             return;
         };
+        // Probed before taking the lock: a first probe may wait on the disk.
+        let detected_env = self.detected_env_json();
         let mut snapshot = snapshot_handle.write().unwrap();
 
         let shares = self
@@ -228,6 +377,7 @@ impl Editor {
 
         snapshot.clipboard = self.clipboard.get_internal().to_string();
         snapshot.working_dir = self.working_dir().to_path_buf();
+        snapshot.input_mode = self.input_mode.clone();
 
         // Total terminal dimensions (full screen, not the active
         // split's viewport). Plugins read this via `getScreenSize()`
@@ -262,12 +412,7 @@ impl Editor {
         // has. The env-manager plugin reads this resolved result via
         // `editor.detectedEnv()` rather than probing the filesystem itself.
         // Empty string ⇒ no env detected.
-        snapshot.detected_env = crate::services::workspace_trust::detect_env(
-            self.working_dir(),
-            &self.config.env.detectors,
-        )
-        .and_then(|d| serde_json::to_string(&d).ok())
-        .unwrap_or_default();
+        snapshot.detected_env = detected_env;
 
         // Publish the session list so plugins (Orchestrator, etc.)
         // see updates from createWindow/closeWindow without
@@ -1035,6 +1180,11 @@ impl Editor {
             PluginCommand::SetPromptTitle { title } => {
                 self.handle_set_prompt_title(title);
             }
+            PluginCommand::SetPromptFullscreen { fullscreen } => {
+                if let Some(prompt) = &mut self.active_window_mut().prompt {
+                    prompt.fullscreen = fullscreen;
+                }
+            }
             PluginCommand::SetPromptFooter { footer } => {
                 self.handle_set_prompt_footer(footer);
             }
@@ -1632,6 +1782,9 @@ impl Editor {
             }
             PluginCommand::SetEditorMode { mode } => {
                 self.handle_set_editor_mode(mode);
+            }
+            PluginCommand::SetInputMode { mode } => {
+                self.handle_set_input_mode(mode);
             }
 
             // ==================== LSP Helper Commands ====================
@@ -2667,7 +2820,10 @@ impl Editor {
             .get_mut(&buffer_id)
         {
             // Save to the specified path
-            match state.buffer.save_to_file(&path) {
+            match state
+                .buffer
+                .save_to_file(&path, &self.dir_context.recovery_dir())
+            {
                 Ok(()) => {
                     // save_to_file already updates file_path internally via finalize_save
                     // Run on-save actions (formatting, etc.)
@@ -3135,10 +3291,31 @@ impl Editor {
         }
     }
 
-    /// Set the global editor mode (for vi mode)
+    /// Set the active window's editor mode — a window-scoped plugin mode.
     fn handle_set_editor_mode(&mut self, mode: Option<String>) {
         self.active_window_mut().editor_mode = mode.clone();
         tracing::debug!("Set editor mode: {:?}", mode);
+    }
+
+    /// Set the editor-wide input mode (vi, or another modal-editing
+    /// personality). Held on the editor, not on a window, so it is the same
+    /// in every window and no window-scoped code path can clear it.
+    fn handle_set_input_mode(&mut self, mode: Option<String>) {
+        if self.input_mode == mode {
+            return;
+        }
+        self.input_mode = mode.clone();
+        tracing::debug!("Set input mode: {:?}", mode);
+        #[cfg(feature = "plugins")]
+        {
+            // Snapshot first, so a handler that reads `getInputMode()` sees
+            // the value the hook announces.
+            self.update_plugin_state_snapshot();
+            self.plugin_manager.read().unwrap().run_hook(
+                "input_mode_changed",
+                crate::services::plugins::hooks::HookArgs::InputModeChanged { mode },
+            );
+        }
     }
 
     /// Normalize a plugin-supplied `BufferId`: treat id 0 as "use the active buffer".
@@ -5704,14 +5881,19 @@ impl Editor {
                         ..
                     }) = panel.instance_states.get_mut(&widget_key)
                     {
+                        // A combo box's ↓ asked for this list and marked the
+                        // empty one entered, so its first candidate is
+                        // highlighted as it arrives (`kinds::text` — an empty
+                        // list is otherwise never entered).
+                        let stepped_in = completions.is_empty() && *completion_navigated;
                         *completions = items;
                         *completion_selected_index = 0;
                         *completion_scroll_offset = 0;
-                        // A (re)opened popup is not yet "entered": Tab /
-                        // Enter act on the form until the user steps in
-                        // with ↑/↓. (Closing — empty `items` — also
-                        // resets it, harmlessly.)
-                        *completion_navigated = false;
+                        // Otherwise a (re)opened popup is not yet "entered":
+                        // Tab / Enter act on the form until the user steps in
+                        // with ↑/↓. (Closing — empty `items` — also resets
+                        // it, harmlessly.)
+                        *completion_navigated = stepped_in && !completions.is_empty();
                     }
                 }
             }
@@ -6935,6 +7117,7 @@ impl Window {
         // which is what `editor.getCursorPosition()` then sees.
         let active_buf_id = snapshot.active_buffer_id;
         let active_split_id = self.effective_active_pair().0;
+        let primary_cursor_line = self.primary_cursor_line(active_split_id, active_buf_id) as u32;
         // Captured before the closure borrows `self`: the panes' rects are
         // derived from the same area the renderer lays out into, so the
         // geometry a plugin reads matches the cells actually drawn.
@@ -6972,16 +7155,9 @@ impl Window {
                         line: line_of(primary_position),
                     });
 
-                    // Mirror the editor's cached primary cursor line number so
-                    // `getCursorLine()` returns a meaningful value without the
-                    // plugin runtime having to scan the buffer. Falls back to
-                    // 0 if the active buffer state isn't available.
-                    snapshot.primary_cursor_line = Some(
-                        buffers_mut
-                            .get(&active_buf_id)
-                            .map(|s| s.primary_cursor_line_number.value() as u32)
-                            .unwrap_or(0),
-                    );
+                    // What the status bar's `Ln` shows, so `getCursorLine()`
+                    // agrees with it — a composite view's source line included.
+                    snapshot.primary_cursor_line = Some(primary_cursor_line);
 
                     snapshot.all_cursors = active_cursors
                         .iter()

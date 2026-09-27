@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 
-use fresh_core::api::{OverlayOptions, WidgetSpec};
+use fresh_core::api::{OverlayColorSpec, OverlayOptions, WidgetSpec};
 use fresh_core::text_property::{InlineOverlay, OffsetUnit, TextPropertyEntry};
 use serde_json::json;
 
@@ -12,7 +12,8 @@ use crate::widgets::registry::WidgetInstanceState;
 use crate::widgets::render::{
     completion_scrollbar_glyph, ensure_trailing_newline, fit_label, focus_gutter_prefix,
     form_label_width, ratatui_style_to_overlay, render_completion_bottom_border,
-    render_completion_dim_separator_overlay, render_completion_item_overlay, render_text_input,
+    render_completion_dim_separator_overlay, render_completion_item,
+    render_completion_item_overlay, render_text_input,
 };
 
 pub struct Text;
@@ -78,6 +79,32 @@ impl WidgetImpl for Text {
                 }
                 _ => Pass,
             };
+        }
+        // **A closed combo box opens on ↓ or Alt+↓** (the ARIA combobox
+        // pattern). The list is the plugin's, so the field asks for it
+        // (`completion_request`); the plugin answers with `setCompletions`.
+        // ↓ also steps onto the first candidate once it arrives, Alt+↓ only
+        // opens — so the field marks the empty list as entered, and
+        // `SetCompletions` keeps that mark for the items it brings (an empty
+        // list is otherwise never entered: accepting and dismissing both
+        // clear the mark). A field that is not a combo keeps ↓ for the form.
+        if is_combo(spec)
+            && key.code() == KeyCode::Down
+            && (bare || key.mods() == crossterm::event::KeyModifiers::ALT)
+            && !completions_open(widget_key, panel)
+        {
+            ensure_text_state(spec, widget_key, panel);
+            if let Some(WidgetInstanceState::Text {
+                completion_selected_index,
+                completion_navigated,
+                ..
+            }) = panel.instance_states.get_mut(widget_key)
+            {
+                *completion_selected_index = 0;
+                *completion_navigated = bare;
+            }
+            request_completions(fx);
+            return Consumed;
         }
         // The editing vocabulary. Caret motion, mutation, selection
         // chords, clipboard, and multi-line paging are the field's
@@ -216,13 +243,48 @@ impl WidgetImpl for Text {
     /// event still fires — plugins mirror the caret from it.
     fn on_pointer(
         &self,
-        _spec: &WidgetSpec,
-        _widget_key: &str,
-        _panel: &mut crate::widgets::WidgetPanelState,
+        spec: &WidgetSpec,
+        widget_key: &str,
+        panel: &mut crate::widgets::WidgetPanelState,
         event_type: &str,
-        _payload: &serde_json::Value,
+        payload: &serde_json::Value,
         fx: &mut super::PointerFx,
     ) -> super::PointerDisposition {
+        // **A press on a candidate row accepts it**, as ↓ to it and Enter
+        // would: the value goes in the field, the list closes, and the plugin
+        // hears `change` then `completion_accept`.
+        if event_type == "completion_pick" {
+            if let (
+                Some(index),
+                Some(WidgetInstanceState::Text {
+                    completions,
+                    completion_selected_index,
+                    completion_navigated,
+                    ..
+                }),
+            ) = (
+                payload.get("index").and_then(|v| v.as_u64()),
+                panel.instance_states.get_mut(widget_key),
+            ) {
+                if (index as usize) < completions.len() {
+                    *completion_selected_index = index as usize;
+                    *completion_navigated = true;
+                    accept_completion(spec, widget_key, panel, &mut fx.key);
+                }
+            }
+            return super::PointerDisposition::Consumed;
+        }
+        // **A combo box's arrow toggles its list** — closing an open one the
+        // way Esc does, asking the plugin for a closed one's the way ↓ does.
+        // The press has already given the field focus; the caret stays where
+        // it was, since the arrow is not a place in the value.
+        if event_type == "combo_toggle" {
+            match completions_open(widget_key, panel) {
+                true => dismiss_completions(widget_key, panel, &mut fx.key),
+                false => request_completions(&mut fx.key),
+            }
+            return super::PointerDisposition::Consumed;
+        }
         if event_type == "focus" {
             fx.place_caret = true;
         }
@@ -384,6 +446,7 @@ pub fn completion_popup(
     navigated: bool,
     prev_scroll: u32,
     lead: usize,
+    frame: CompletionFrame,
 ) -> Option<CompletionPopup> {
     if completions.is_empty() {
         return None;
@@ -393,7 +456,10 @@ pub fn completion_popup(
     } else {
         completions_visible_rows
     };
-    let popup_total = (panel_width as usize).saturating_add(4); // re-add section chrome
+    let popup_total = match frame {
+        CompletionFrame::Section => (panel_width as usize).saturating_add(4), // re-add section chrome
+        CompletionFrame::Box => panel_width as usize,
+    };
     let total = completions.len() as u32;
     // The shared pop-up list's window, from the highlight, every layout —
     // both ways, so a highlight above the window pulls it back up as surely
@@ -407,7 +473,11 @@ pub fn completion_popup(
     let (scroll, visible) = (scroll as u32, visible as u32);
 
     let mut rows = Vec::with_capacity(visible as usize + 2);
-    rows.push(render_completion_dim_separator_overlay(popup_total));
+    // A box is framed by its node's border; only the section-joined list
+    // paints its own chrome rows.
+    if frame == CompletionFrame::Section {
+        rows.push(render_completion_dim_separator_overlay(popup_total));
+    }
     let needs_scrollbar = total > visible;
     let end = (scroll + visible).min(total) as usize;
     for (visible_row, i) in (scroll as usize..end).enumerate() {
@@ -417,25 +487,58 @@ pub fn completion_popup(
         } else {
             None
         };
-        rows.push(render_completion_item_overlay(
-            &item.value,
-            item.kind.as_deref(),
-            // Only paint a selected-row highlight once the user
-            // has stepped into the dropdown (↓/↑). A freshly
-            // surfaced popup shows plain suggestions so it's
-            // clear Enter acts on the form, not the list.
-            navigated && i == selected_idx,
-            popup_total,
-            thumb,
-            lead,
-        ));
+        rows.push(match frame {
+            CompletionFrame::Section => render_completion_item_overlay(
+                &item.value,
+                item.kind.as_deref(),
+                // Only paint a selected-row highlight once the user
+                // has stepped into the dropdown (↓/↑). A freshly
+                // surfaced popup shows plain suggestions so it's
+                // clear Enter acts on the form, not the list.
+                navigated && i == selected_idx,
+                popup_total,
+                thumb,
+                lead,
+                true,
+            ),
+            // The box's walls are the node's border, as a dropdown's list's
+            // are, so a row is only the inside: no gutter, starting in the
+            // value's own column.
+            CompletionFrame::Box => render_completion_item(
+                &item.value,
+                item.kind.as_deref(),
+                navigated && i == selected_idx,
+                popup_total.saturating_sub(2),
+                thumb,
+                0,
+                false,
+            ),
+        });
     }
-    rows.push(render_completion_bottom_border(popup_total));
+    if frame == CompletionFrame::Section {
+        rows.push(render_completion_bottom_border(popup_total));
+    }
     Some(CompletionPopup {
         rows,
         scroll,
         visible,
     })
+}
+
+/// How a completion list is framed, which depends on where its field stands.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CompletionFrame {
+    /// Inside a `LabeledSection`: the list is `panel_width + 4` wide and its
+    /// first row is a dashed separator painted over the section's bottom
+    /// border, so section and list read as one frame.
+    Section,
+    /// Anywhere else: a box of its own under the field, drawn the way a
+    /// dropdown's option list is — the rows are only its inside, and the
+    /// caller frames them with the node's border. `panel_width` is the box's
+    /// outer width, the field's `[…]` span, so the left wall sits under the
+    /// `[` and a row, carrying no gutter, starts in the value's own column. A
+    /// list wider than its field ran past the dialog's edge.
+    Box,
 }
 
 /// **Where a candidate row's text starts, so it sits under the value.**
@@ -752,6 +855,63 @@ pub struct SingleLine {
     /// after the gutter and the `label: [` — where a completion list
     /// lines its candidates up ([`completion_lead`]).
     pub value_col: u32,
+}
+
+/// Put `glyph` in the one-char cell at byte `at` of the field's row, moving
+/// the overlays and the caret after it by the difference in width.
+fn replace_cell(line: &mut SingleLine, at: usize, glyph: &str) {
+    let old = line.entry.text[at..]
+        .chars()
+        .next()
+        .map_or(0, char::len_utf8);
+    line.entry.text.replace_range(at..at + old, glyph);
+    let grow = glyph.len() as isize - old as isize;
+    let shift = |b: &mut usize| {
+        if *b > at {
+            *b = (*b as isize + grow) as usize;
+        }
+    };
+    for io in &mut line.entry.inline_overlays {
+        if io.unit == OffsetUnit::Byte {
+            shift(&mut io.start);
+            shift(&mut io.end);
+        }
+    }
+    if let Some(c) = &mut line.caret {
+        shift(c);
+    }
+}
+
+/// **Mark a combo field: `▼` in the last cell inside its `]`.**
+///
+/// A field that offers a list as well as free text says so before it is
+/// focused, the way a dropdown's `[value ▼]` does; `open` (its list is up)
+/// turns the arrow over, as the dropdown's does. The arrow takes the cell only
+/// while it is blank — the trailing pad the value cell always keeps — so a
+/// value long enough to reach it is never covered. The overlays and the caret
+/// after that cell move with the wider glyph. Returns the arrow's byte range,
+/// which the description gives a press of its own (`combo_toggle`).
+pub fn mark_combo(line: &mut SingleLine, open: bool) -> Option<(usize, usize)> {
+    let text = &line.entry.text;
+    let close = text.rfind(']')?;
+    let Some((at, ' ')) = text[..close].char_indices().last() else {
+        return None;
+    };
+    let glyph = if open { "▲" } else { "▼" };
+    replace_cell(line, at, glyph);
+    line.entry.inline_overlays.push(InlineOverlay {
+        start: at,
+        end: at + glyph.len(),
+        style: OverlayOptions {
+            fg: Some(OverlayColorSpec::theme_key(
+                crate::widgets::render::KEY_HELP_KEY_FG,
+            )),
+            ..Default::default()
+        },
+        properties: Default::default(),
+        unit: OffsetUnit::Byte,
+    });
+    Some((at, at + glyph.len()))
 }
 
 /// **The single-line field's row: label column, value cell, focus gutter,
@@ -1197,6 +1357,18 @@ pub fn dismiss_completion_list(
     open
 }
 
+/// Whether `spec` is a combo box: a single-line field that offers a list.
+fn is_combo(spec: &WidgetSpec) -> bool {
+    matches!(spec, WidgetSpec::Text { combo: true, rows, .. } if *rows <= 1)
+}
+
+/// Ask the plugin for a combo box's list: `completion_request`, answered with
+/// `setCompletions`. The host has no candidates of its own to show.
+fn request_completions(fx: &mut super::KeyFx) {
+    fx.events
+        .push(("completion_request".into(), serde_json::json!({})));
+}
+
 /// Close the popup and queue `completion_dismiss` so the plugin can
 /// sync its own state (e.g. invalidate an in-flight fetch token, so a
 /// late-arriving result doesn't re-open the popup the user closed).
@@ -1328,6 +1500,7 @@ mod key_contract_tests {
             max_rows: 0,
             read_only,
             markdown,
+            combo: false,
             key: Some("t".into()),
         }
     }

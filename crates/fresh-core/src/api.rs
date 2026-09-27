@@ -1590,8 +1590,7 @@ pub struct EditorStateSnapshot {
     /// Primary cursor position for the active buffer
     pub primary_cursor: Option<CursorInfo>,
     /// Primary cursor's line number (0-indexed) for the active buffer.
-    /// Mirrors the editor's `primary_cursor_line_number` cache so plugins
-    /// can read "what line is the cursor on" without scanning the buffer.
+    /// The line the status bar's `Ln` shows (see `Editor::primary_cursor_line`).
     /// `None` when there is no active view state (e.g. before the first
     /// buffer is loaded).
     #[serde(default)]
@@ -1727,9 +1726,13 @@ pub struct EditorStateSnapshot {
     #[serde(skip)]
     #[ts(skip)]
     pub last_grammar_gen: u64,
-    /// Global editor mode for modal editing (e.g., "vi-normal", "vi-insert")
-    /// When set, this mode's keybindings take precedence over normal key handling
+    /// The active window's editor mode — a window-scoped plugin mode
+    /// (e.g. "markdown-source"). When set, its keybindings take precedence
+    /// over the input mode and normal key handling in that window.
     pub editor_mode: Option<String>,
+    /// The editor-wide input mode — a modal-editing personality such as vi
+    /// ("vi-normal", "vi-insert"), the same in every window.
+    pub input_mode: Option<String>,
 
     /// Which widget holds each mounted panel's focus, per owning plugin:
     /// plugin name → panel id → widget key (`""` for none). The host's
@@ -1867,6 +1870,7 @@ impl EditorStateSnapshot {
             available_grammars: Vec::new(),
             last_grammar_gen: 0,
             editor_mode: None,
+            input_mode: None,
             panel_focus: HashMap::new(),
             plugin_view_states: HashMap::new(),
             plugin_view_states_split: 0,
@@ -2430,6 +2434,12 @@ pub enum WidgetSpec {
         /// before this field was read on that path it stayed flush left.
         #[serde(default)]
         label_width: u32,
+        /// The keyboard accelerator's letter, underlined where it first
+        /// appears in `label` (case-insensitively) — the classic menu-bar
+        /// mnemonic, so `Alt+L` reads as the `l` in `Files`. Absent, or a
+        /// letter the label does not contain, underlines nothing.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        mnemonic: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         key: Option<String>,
     },
@@ -2837,6 +2847,14 @@ pub enum WidgetSpec {
         /// dispatch.
         #[serde(default = "default_true")]
         focusable: bool,
+        /// Typing jumps the selection to the next item whose text starts
+        /// with what was typed (the listbox pattern's type-ahead). Off by
+        /// default: a list that is a command surface — Git Log's `q`, a
+        /// dock's single-key actions — binds those letters in its mode, and
+        /// the focused widget is asked first. Turn it on for a list of names
+        /// to find, such as a file browser.
+        #[serde(default)]
+        type_ahead: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         key: Option<String>,
     },
@@ -3117,6 +3135,19 @@ pub enum WidgetSpec {
         /// changes via a spec update.
         #[serde(default)]
         markdown: bool,
+        /// A single-line field that offers a list of values to pick from as
+        /// well as free text — a combo box (the ARIA combobox pattern). Drawn
+        /// with a `▼` in the last cell inside its `]` (`▲` while its
+        /// completion list is open), so the field says it has a list before
+        /// it is focused. The list itself is still the plugin's
+        /// `completions`: with the list closed, ↓ / Alt+↓ or a press on the
+        /// arrow fires `completion_request`, which the plugin answers with
+        /// `setCompletions`; a press on the arrow with the list open closes
+        /// it (`completion_dismiss`). Opening on focus is left out on
+        /// purpose — a list that opens as a form is walked covers the fields
+        /// under it. Defaults to `false`.
+        #[serde(default)]
+        combo: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         key: Option<String>,
     },
@@ -4676,6 +4707,13 @@ pub enum PluginCommand {
     /// footer. Has no visible effect on non-overlay prompts.
     SetPromptFooter { footer: Vec<StyledText> },
 
+    /// Centre the floating-overlay prompt's card on the whole frame (90% of
+    /// it, over the dock and sidebar, as the Settings dialog is) instead of
+    /// on the chrome area beside the dock — the prompt's counterpart of
+    /// `FloatingPanelControl`'s `fullscreen`.
+    /// Has no visible effect on non-overlay prompts.
+    SetPromptFullscreen { fullscreen: bool },
+
     /// Plugin-supplied toolbar for the floating-overlay prompt's header
     /// band, as a `WidgetSpec` (a `Row`/`Col` of `Toggle`s/`Button`s). Unlike
     /// `SetPromptTitle` (styled text), these are real widgets: they render
@@ -5387,9 +5425,19 @@ pub enum PluginCommand {
         line: usize,
     },
 
-    /// Set the global editor mode (for modal editing like vi mode)
-    /// When set, the mode's keybindings take precedence over normal editing
+    /// Set the active window's editor mode: a plugin mode scoped to that
+    /// one window. When set, the mode's keybindings take precedence over the
+    /// editor-wide input mode and normal editing, in that window only.
     SetEditorMode {
+        /// Mode name (e.g., "markdown-source") or None to clear
+        mode: Option<String>,
+    },
+
+    /// Set the editor-wide input mode: a modal-editing personality such as
+    /// vi, which applies in every window and which nothing window-scoped
+    /// can clear. Resolved after a panel's, the buffer's and the window's
+    /// own mode, and before the base keymap.
+    SetInputMode {
         /// Mode name (e.g., "vi-normal", "vi-insert") or None to clear
         mode: Option<String>,
     },
@@ -6158,8 +6206,9 @@ pub enum PluginCommand {
         /// resolve against first — the panel's own keymap, ahead of the
         /// widget that holds focus. A dock declares its chords here rather
         /// than through the window's editor mode, which is the buffer's
-        /// and would shadow or be shadowed by it. `None` keeps the
-        /// window's editor mode as the panel's keymap, as before.
+        /// and would shadow or be shadowed by it. `None`: the panel has no
+        /// keymap — the keys its focused control passes go to the panel's
+        /// own defaults (Tab, Esc), never to the window's editor mode.
         #[serde(default)]
         mode: Option<String>,
     },
@@ -7806,6 +7855,12 @@ impl PluginApi {
     /// the bottom of the results pane. Empty vec clears.
     pub fn set_prompt_footer(&self, footer: Vec<StyledText>) -> Result<(), String> {
         self.send_command(PluginCommand::SetPromptFooter { footer })
+    }
+
+    /// Centre the floating-overlay prompt's card on the whole frame
+    /// (`true`) or on the chrome area beside the dock (`false`).
+    pub fn set_prompt_fullscreen(&self, fullscreen: bool) -> Result<(), String> {
+        self.send_command(PluginCommand::SetPromptFullscreen { fullscreen })
     }
 
     /// Set the floating-overlay prompt's toolbar as a `WidgetSpec` (real,

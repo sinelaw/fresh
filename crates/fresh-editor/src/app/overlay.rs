@@ -134,6 +134,59 @@ impl Editor {
         self.shell_ui.as_ref().is_some_and(|ui| ui.modal_up())
     }
 
+    /// The plugin modes whose keymaps the next key resolves against, read
+    /// off the same focus chain as [`Self::get_key_context`] and answered by
+    /// the owners the dispatch itself asks — no list of its own:
+    ///
+    /// * the focused panel's keymap ([`Self::panel_keymap`]), which its
+    ///   interior's capture leg and `dispatch_widget_panel_key` resolve
+    ///   against;
+    /// * while the context is the editor content's (`Normal`,
+    ///   `CompositeBuffer`), [`Self::effective_mode`], which
+    ///   `dispatch_base_key`'s mode stage resolves against — for the plain
+    ///   content, and for what a panel there passes on to it.
+    ///
+    /// Any other surface — a prompt, a popup, the menu, the explorer —
+    /// resolves no mode, so none is listed.
+    pub(crate) fn focused_modes(&mut self) -> Vec<String> {
+        use crate::view::shell::widgets::Slot;
+        let context = self.get_key_context();
+        let slot = self.shell_ui.as_ref().and_then(|ui| {
+            let f = ui.focused()?;
+            ui.path_to(f)
+                .into_iter()
+                .rev()
+                .find_map(|e| crate::view::shell::panel::slot_of_key(&ui.key_of(e)?))
+        });
+        let panel_key = match slot {
+            Some(Slot::Dock) => self
+                .panel(super::PanelSlot::Dock)
+                .map(|p| p.panel_key.clone()),
+            Some(Slot::Floating) => self
+                .panel(super::PanelSlot::Floating)
+                .map(|p| p.panel_key.clone()),
+            Some(Slot::Sidebar(i)) => self
+                .panel(super::PanelSlot::Sidebar(i))
+                .map(|p| p.panel_key.clone()),
+            Some(Slot::Pane(leaf)) => self.pane_panel_key(leaf),
+            Some(Slot::Settings | Slot::SettingsEntry | Slot::PromptToolbar) | None => None,
+        };
+        let mut modes: Vec<String> = panel_key
+            .and_then(|k| self.panel_keymap(&k))
+            .map(|keymap| keymap.mode)
+            .into_iter()
+            .collect();
+        use crate::input::keybindings::KeyContext;
+        if matches!(context, KeyContext::Normal | KeyContext::CompositeBuffer) {
+            if let Some(mode) = self.effective_mode() {
+                if !modes.iter().any(|m| m == mode) {
+                    modes.push(mode.to_owned());
+                }
+            }
+        }
+        modes
+    }
+
     /// The keybinding context the next key resolves against: the vocabulary
     /// of whichever surface holds the keyboard.
     ///

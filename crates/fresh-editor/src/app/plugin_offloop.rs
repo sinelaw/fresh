@@ -539,6 +539,9 @@ pub(crate) struct BaselineLoadRequest {
     pub spawner: Arc<dyn crate::services::remote::ProcessSpawner>,
     pub store: crate::app::diff_baselines::BaselineStore,
     pub callback_id: JsCallbackId,
+    /// The buffer's encoding, which the baseline's bytes are decoded with
+    /// so a non-UTF-8 file compares equal to its unmodified buffer.
+    pub encoding: crate::model::encoding::Encoding,
     /// Registration resolves with the baseline id; a refresh resolves with
     /// null. A failed registration also removes the placeholder entry,
     /// while a failed refresh keeps the previous content serving.
@@ -552,6 +555,13 @@ pub(crate) fn load_diff_baseline(runtime: &LiveRuntime, cap: OffLoop, req: Basel
     use crate::app::diff_baselines::{BaselineContent, BaselineSpec};
 
     runtime.spawn(async move {
+        let decode = |bytes: Vec<u8>| {
+            String::from_utf8_lossy(&crate::model::encoding::convert_to_utf8(
+                &bytes,
+                req.encoding,
+            ))
+            .into_owned()
+        };
         let text: Result<String, String> = match &req.spec {
             // Saved baselines never load content; the editor thread
             // resolves them synchronously and never sends them here.
@@ -563,7 +573,7 @@ pub(crate) fn load_diff_baseline(runtime: &LiveRuntime, cap: OffLoop, req: Basel
                     .await
                     .map_err(|e| format!("baseline read task failed: {e}"))
                     .and_then(|r| {
-                        r.map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+                        r.map(decode)
                             .map_err(|e| format!("failed to read baseline file: {e}"))
                     })
             }
@@ -571,7 +581,9 @@ pub(crate) fn load_diff_baseline(runtime: &LiveRuntime, cap: OffLoop, req: Basel
                 cwd,
                 file_path,
                 git_ref,
-            } => load_git_baseline(req.spawner.as_ref(), cwd, file_path, git_ref.as_deref()).await,
+            } => load_git_baseline(req.spawner.as_ref(), cwd, file_path, git_ref.as_deref())
+                .await
+                .map(decode),
         };
 
         match text {
@@ -617,12 +629,14 @@ pub(crate) fn load_diff_baseline(runtime: &LiveRuntime, cap: OffLoop, req: Basel
 
 /// Fetch a file's content at a git revision: resolve the repo-relative
 /// path, then `git show`. `git_ref` of `None` means the index (stage 0).
+/// Returns the raw bytes; the caller decodes them with the buffer's
+/// encoding.
 async fn load_git_baseline(
     spawner: &dyn crate::services::remote::ProcessSpawner,
     cwd: &std::path::Path,
     file_path: &std::path::Path,
     git_ref: Option<&str>,
-) -> Result<String, String> {
+) -> Result<Vec<u8>, String> {
     let cwd_str = cwd.to_string_lossy().to_string();
     let file_str = file_path.to_string_lossy().to_string();
 
@@ -656,7 +670,7 @@ async fn load_git_baseline(
         None => format!(":0:{rel_path}"),
     };
     let show = spawner
-        .spawn(
+        .spawn_raw(
             "git".to_string(),
             vec!["show".to_string(), show_spec],
             Some(cwd_str),
@@ -754,6 +768,7 @@ mod tests {
             7,
             BaselineEntry {
                 buffer_id: BufferId(1),
+                window_id: fresh_core::WindowId(1),
                 spec: BaselineSpec::Disk { path: path.clone() },
                 generation: 0,
                 content: None,
@@ -776,6 +791,7 @@ mod tests {
                 )),
                 store: store.clone(),
                 callback_id: JsCallbackId::new(1),
+                encoding: Default::default(),
                 is_registration: true,
             },
         );
@@ -808,6 +824,67 @@ mod tests {
             "the loaded content should be installed in the store"
         );
         drop(inner);
+    }
+
+    /// A disk baseline is decoded with the buffer's encoding, so a Shift-JIS
+    /// file's baseline matches its (UTF-8) buffer text. Issue #3246.
+    #[test]
+    fn disk_baseline_is_decoded_with_the_buffer_encoding() {
+        use crate::app::diff_baselines::{BaselineEntry, BaselineSpec, BaselineStore};
+        use crate::model::encoding::Encoding;
+        use crate::services::env_provider::EnvProvider;
+        use crate::services::remote::LocalProcessSpawner;
+        use crate::services::workspace_trust::WorkspaceTrust;
+
+        let text = "// コンフィグウィンドウ：ベース\n";
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("baseline.cpp");
+        std::fs::write(&path, encoding_rs::SHIFT_JIS.encode(text).0).unwrap();
+
+        let runtime = LiveRuntime::multi_thread("offloop-test", 2).unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let store = BaselineStore::default();
+        store.inner.lock().unwrap().entries.insert(
+            3,
+            BaselineEntry {
+                buffer_id: BufferId(1),
+                window_id: fresh_core::WindowId(1),
+                spec: BaselineSpec::Disk { path: path.clone() },
+                generation: 0,
+                content: None,
+            },
+        );
+        load_diff_baseline(
+            &runtime,
+            OffLoop {
+                filesystem: Arc::new(StdFileSystem),
+                sender: tx,
+                cancel: Arc::default(),
+            },
+            BaselineLoadRequest {
+                baseline_id: 3,
+                spec: BaselineSpec::Disk { path },
+                spawner: Arc::new(LocalProcessSpawner::new(
+                    Arc::new(EnvProvider::inactive()),
+                    Arc::new(WorkspaceTrust::permissive()),
+                )),
+                store: store.clone(),
+                callback_id: JsCallbackId::new(1),
+                encoding: Encoding::ShiftJis,
+                is_registration: true,
+            },
+        );
+        match rx.recv().expect("the load must settle exactly once") {
+            AsyncMessage::Plugin(PluginAsyncMessage::OffLoopSettled { result, .. }) => {
+                result.expect("a readable baseline file should resolve");
+            }
+            other => panic!("unexpected message: {other:?}"),
+        }
+        let inner = store.inner.lock().unwrap();
+        assert_eq!(
+            inner.entries[&3].content.as_ref().map(|c| c.text.as_str()),
+            Some(text)
+        );
     }
 
     /// A superseded grep stopped partway, so the matches it happened to collect

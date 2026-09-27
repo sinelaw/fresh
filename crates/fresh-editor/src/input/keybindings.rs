@@ -480,6 +480,7 @@ pub enum Action {
     Detach,
     Revert,
     ToggleAutoRevert,
+    ReviewInterruptedSaves,
     FormatBuffer,
     TrimTrailingWhitespace,
     EnsureFinalNewline,
@@ -1067,6 +1068,7 @@ impl Action {
             "detach" => Detach,
             "revert" => Revert,
             "toggle_auto_revert" => ToggleAutoRevert,
+            "review_interrupted_saves" => ReviewInterruptedSaves,
             "format_buffer" => FormatBuffer,
             "trim_trailing_whitespace" => TrimTrailingWhitespace,
             "ensure_final_newline" => EnsureFinalNewline,
@@ -2660,6 +2662,36 @@ impl KeybindingResolver {
         .find_map(|table| table.get(context).and_then(|b| b.get(&norm)).cloned())
     }
 
+    /// Whether anything in `context` binds `event` for itself: a binding
+    /// that resolves to an action, a `noop` that disables the key there, or a
+    /// live chord the key starts. [`Self::resolve`] alone answers
+    /// `Action::None` for both "unbound" and `noop`, and never looks at
+    /// chords.
+    ///
+    /// The resolver's "nothing bound, just type it" answer
+    /// ([`Action::InsertChar`] for a character with
+    /// [`is_text_input_modifier`] modifiers in a text context) does not
+    /// count. That answer includes Ctrl+Alt+<char> on Windows, where it is
+    /// how AltGr arrives from crossterm and the GUI. A key the VT input
+    /// parser reported as Ctrl+Alt+<char> is ESC plus a control byte instead
+    /// — there AltGr text arrives as the character it types — so for such a
+    /// key the question is only whether something binds it.
+    pub fn binds_key(&self, event: &KeyEvent, context: &KeyContext) -> bool {
+        let norm = normalize_key(event.code, event.modifiers);
+        let resolved = !matches!(
+            self.resolve(event, context.clone()),
+            Action::None | Action::InsertChar(_)
+        );
+        resolved
+            || self.probe_order(context).iter().any(|(source, ctx)| {
+                self.single_key_map(*source)
+                    .get(ctx)
+                    .and_then(|bindings| bindings.get(&norm))
+                    .is_some_and(|action| !self.is_suppressed(&norm, action))
+            })
+            || self.resolve_chord(&[], event, context.clone()) != ChordResolution::NoMatch
+    }
+
     /// Resolve a key event to a UI action for terminal mode.
     /// Only returns actions the terminal yields to the editor
     /// ([`Self::is_terminal_ui_action`]).
@@ -2672,16 +2704,25 @@ impl KeybindingResolver {
             event.modifiers
         );
 
-        // Check Terminal context bindings first (highest priority for terminal mode)
-        for bindings in [&self.bindings, &self.default_bindings] {
-            if let Some(terminal_bindings) = bindings.get(&KeyContext::Terminal) {
-                if let Some(action) = terminal_bindings.get(&norm) {
-                    if Self::is_terminal_ui_action(action) {
-                        tracing::trace!("  -> Found UI action in terminal bindings: {:?}", action);
-                        return action.clone();
-                    }
-                }
+        // Check Terminal context bindings first (highest priority for terminal
+        // mode). A key bound in the Terminal context itself ends the lookup:
+        // the user's binding first, then the keymap's. One that is not a UI
+        // action — notably a `noop` override — leaves the key to the PTY
+        // rather than falling through to a Global/Normal binding (issue
+        // #3270: `noop` on Ctrl+Q in `terminal` still quit the editor).
+        if let Some(action) = [&self.bindings, &self.default_bindings]
+            .into_iter()
+            .find_map(|bindings| bindings.get(&KeyContext::Terminal)?.get(&norm))
+        {
+            if Self::is_terminal_ui_action(action) {
+                tracing::trace!("  -> Found UI action in terminal bindings: {:?}", action);
+                return action.clone();
             }
+            tracing::trace!(
+                "  -> Terminal binding {:?} leaves the key to the PTY",
+                action
+            );
+            return Action::None;
         }
 
         // Check Global bindings (work in all contexts)
@@ -3059,6 +3100,7 @@ impl KeybindingResolver {
             Action::Detach => t!("action.detach"),
             Action::Revert => t!("action.revert"),
             Action::ToggleAutoRevert => t!("action.toggle_auto_revert"),
+            Action::ReviewInterruptedSaves => t!("action.review_interrupted_saves"),
             Action::FormatBuffer => t!("action.format_buffer"),
             Action::TrimTrailingWhitespace => t!("action.trim_trailing_whitespace"),
             Action::EnsureFinalNewline => t!("action.ensure_final_newline"),
@@ -6228,5 +6270,27 @@ mod tests {
         {
             assert_eq!(name, &name.to_lowercase(), "{name:?} is not lowercase");
         }
+    }
+
+    /// Only a binding, a `noop` or a chord binds a key; typing it doesn't.
+    /// On Windows, Ctrl+Alt+<char> is typed (AltGr), yet an unbound
+    /// Ctrl+Alt+J — ESC LF, from the input parser — must still be free to
+    /// read as Alt+Enter (`router::ctrl_j_reading`).
+    #[test]
+    fn typing_a_key_does_not_bind_it() {
+        let config = Config {
+            active_keybinding_map: "default".into(),
+            ..Config::default()
+        };
+        let resolver = KeybindingResolver::new(&config);
+        let typed = KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE);
+        assert!(!resolver.binds_key(&typed, &KeyContext::Normal));
+        let ctrl_alt_j = KeyEvent::new(
+            KeyCode::Char('j'),
+            KeyModifiers::CONTROL | KeyModifiers::ALT,
+        );
+        assert!(!resolver.binds_key(&ctrl_alt_j, &KeyContext::Normal));
+        let bound = KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL);
+        assert!(resolver.binds_key(&bound, &KeyContext::Normal));
     }
 }

@@ -6,7 +6,8 @@
 //! drives, slow disks, etc.).
 
 use crate::model::filesystem::{
-    DirEntry, FileMetadata, FilePermissions, FileReader, FileSystem, FileWriter,
+    ContentDigest, DirEntry, FileMetadata, FilePermissions, FileReader, FileSystem, FileWriter,
+    ReplaceError,
 };
 use std::io;
 use std::path::{Path, PathBuf};
@@ -173,16 +174,44 @@ impl FileSystem for SlowFileSystem {
         self.inner.read_range(path, offset, len)
     }
 
+    fn content_digest(&self, path: &Path) -> io::Result<ContentDigest> {
+        self.add_delay(self.config.read_file_delay);
+        self.metrics.other_calls.fetch_add(1, Ordering::SeqCst);
+        self.inner.content_digest(path)
+    }
+
     fn write_file(&self, path: &Path, data: &[u8]) -> io::Result<()> {
         self.add_delay(self.config.write_file_delay);
         self.metrics.write_file_calls.fetch_add(1, Ordering::SeqCst);
         self.inner.write_file(path, data)
     }
 
+    fn replace_file_preserving_identity(
+        &self,
+        path: &Path,
+        data: &[u8],
+    ) -> Result<(), ReplaceError> {
+        self.add_delay(self.config.write_file_delay);
+        self.metrics.write_file_calls.fetch_add(1, Ordering::SeqCst);
+        self.inner.replace_file_preserving_identity(path, data)
+    }
+
     fn create_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
         self.add_delay(self.config.write_file_delay);
         self.metrics.write_file_calls.fetch_add(1, Ordering::SeqCst);
         self.inner.create_file(path)
+    }
+
+    fn create_new_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
+        self.add_delay(self.config.write_file_delay);
+        self.metrics.write_file_calls.fetch_add(1, Ordering::SeqCst);
+        self.inner.create_new_file(path)
+    }
+
+    fn create_new_private_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
+        self.add_delay(self.config.write_file_delay);
+        self.metrics.write_file_calls.fetch_add(1, Ordering::SeqCst);
+        self.inner.create_new_private_file(path)
     }
 
     fn open_file(&self, path: &Path) -> io::Result<Box<dyn FileReader>> {

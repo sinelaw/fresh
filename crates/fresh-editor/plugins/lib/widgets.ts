@@ -200,7 +200,9 @@ export function styledRow(
  * (chip after the label, and only the chip is clickable);
  * `labelWidth` pads the label so a column of controls aligns.
  * `indeterminate: true` renders a neutral `[-]` chip for an
- * unset/inherited value. */
+ * unset/inherited value. `mnemonic` names the accelerator letter
+ * (`"l"` for `Alt+L`) to underline where it first appears in the
+ * label; a letter the label lacks underlines nothing. */
 export function toggle(
   checked: boolean,
   label: string,
@@ -209,10 +211,11 @@ export function toggle(
     indeterminate?: boolean;
     labelFirst?: boolean;
     labelWidth?: number;
+    mnemonic?: string;
     key?: string;
   },
 ): WidgetSpec {
-  return {
+  const spec: WidgetSpec = {
     kind: "toggle",
     checked,
     label,
@@ -222,6 +225,9 @@ export function toggle(
     labelWidth: options?.labelWidth ?? 0,
     key: options?.key,
   };
+  // Omit rather than pass `undefined` (the bridge would send `null`).
+  if (options?.mnemonic !== undefined) spec.mnemonic = options.mnemonic;
+  return spec;
 }
 
 /** Numeric field, rendered as `label: [ 42 ]`. Press Left/Down
@@ -554,6 +560,12 @@ export function list(options: {
    * skipping the list in the Tab cycle keeps focus jumping
    * straight between filter and action buttons. */
   focusable?: boolean;
+  /** Typing jumps to the next item starting with what was typed (the
+   * listbox pattern). Off by default — leave it off for a list whose mode
+   * binds single letters (`q` to quit), since the focused list is asked
+   * first. Turn it on for a list of names to find, such as a file
+   * browser. */
+  typeAhead?: boolean;
   key?: string;
 }): WidgetSpec {
   return {
@@ -564,6 +576,7 @@ export function list(options: {
     selectedIndex: options.selectedIndex ?? -1,
     visibleRows: options.visibleRows,
     focusable: options.focusable ?? true,
+    typeAhead: options.typeAhead ?? false,
     key: options.key,
   };
 }
@@ -838,6 +851,13 @@ export function text(
      * word-wraps to the widget's width. Forcibly read-only; the caret,
      * selection, and Copy operate on the rendered plain text. */
     markdown?: boolean;
+    /** A single-line field that offers a list (its `completions`) as
+     * well as free text — a combo box. Drawn with a `▼` inside its `]`
+     * (`▲` while the list is open), so the field says it has a list
+     * before it is focused. With the list closed, ↓ / Alt+↓ or a click
+     * on the arrow fires `completion_request`: answer it with
+     * `setCompletions`. Don't open the list on focus. */
+    combo?: boolean;
     key?: string;
   } = {},
 ): WidgetSpec {
@@ -861,6 +881,7 @@ export function text(
     labelWidth: options.labelWidth ?? 0,
     readOnly: options.readOnly ?? false,
     markdown: options.markdown ?? false,
+    combo: options.combo ?? false,
     key: options.key,
   };
 }
@@ -910,6 +931,8 @@ export function textInput(
     fieldWidth?: number;
     /** See `text({ fullWidth })`. */
     fullWidth?: boolean;
+    /** See `text({ combo })`. */
+    combo?: boolean;
     key?: string;
   },
 ): WidgetSpec {
@@ -923,6 +946,7 @@ export function textInput(
     fieldWidth: options?.fieldWidth,
     maxVisibleChars: options?.maxVisibleChars,
     fullWidth: options?.fullWidth,
+    combo: options?.combo,
     key: options?.key,
   });
 }

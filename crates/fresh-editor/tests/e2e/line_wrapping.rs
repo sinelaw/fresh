@@ -2300,6 +2300,51 @@ fn test_wrap_column_wraps_at_configured_column() {
     );
 }
 
+/// `wrap_column` counts text columns, not the gutter (issue #3405): with
+/// line numbers on, `wrap_column: 40` fits exactly 40 characters on a row.
+/// It used to cap the whole pane width, gutter and end-of-line column
+/// included, which left about 33.
+#[test]
+fn test_wrap_column_counts_text_columns_not_gutter() {
+    let config = Config {
+        editor: fresh::config::EditorConfig {
+            line_wrap: true,
+            line_numbers: true,
+            wrap_column: Some(40),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let mut harness = EditorTestHarness::with_config(100, 24, config).unwrap();
+    // No spaces, so the row breaks exactly at the wrap width.
+    let line = format!("{}{}", "a".repeat(40), "b".repeat(20));
+    let _fixture = harness.load_buffer_from_text(&line).unwrap();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    let rows: Vec<&str> = screen.lines().collect();
+    let first = rows
+        .iter()
+        .position(|row| row.contains('a'))
+        .unwrap_or_else(|| panic!("the line is not drawn:\n{screen}"));
+    let text_of = |row: &str| {
+        row.split_once('│')
+            .map_or("", |(_, t)| t)
+            .trim()
+            .to_string()
+    };
+    assert_eq!(
+        text_of(rows[first]),
+        "a".repeat(40),
+        "the first row should hold all 40 text columns. Screen:\n{screen}"
+    );
+    assert_eq!(
+        text_of(rows[first + 1]),
+        "b".repeat(20),
+        "the rest of the line should wrap onto the next row. Screen:\n{screen}"
+    );
+}
+
 /// Test per-language wrap_column: markdown wraps at 40 while global is None
 #[test]
 fn test_per_language_wrap_column() {

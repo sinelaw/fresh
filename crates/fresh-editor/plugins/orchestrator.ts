@@ -629,6 +629,14 @@ const DOCK_MODE = "orchestrator-dock";
 const PROJECT_MENU_KEY = "project-pick";
 const DOCK_MENU_KEY = "menu-pick";
 
+// Every orchestrator keymap rides on the panel it belongs to (the `mount`
+// option `mode`), never on the window's editor mode: that is one slot per
+// window, shared with every plugin, and a dialog that borrowed it had nothing
+// to hand back on close, so clearing it wiped whatever lived there — vi's
+// mode, before vi moved to the editor-wide input mode (issues #3305, #3395). The dock's menus bind nothing, so they mount
+// without a mode: the keys their focused control leaves go to the panel's own
+// defaults, never to the window's mode.
+
 // The "New Folder" dialog — a small centered floating panel with a name
 // field, an "organize the current session under it" checkbox, and
 // Cancel / Create Folder buttons. Replaces the old bottom-of-screen
@@ -5061,6 +5069,7 @@ function openControlRoom(
       // for Centered placement, so the dock mount above never gets it.
       title: editor.t("list.title"),
       closable: true,
+      mode: OPEN_MODE,
     });
     // The control room is a global orchestrator feature: render it over
     // the full screen (covering its own dimmed dock) rather than cramped
@@ -5082,14 +5091,6 @@ function openControlRoom(
   // (↑↓ switch, Enter blurs to editor). The modal lands on Visit.
   const initialFocus = asDock ? "sessions" : "visit";
   openPanel.setFocusKey(initialFocus);
-  if (asDock) {
-    // The dock has no editor mode — its keys are handled at the host
-    // floating-panel layer (mode bindings would be shadowed by the
-    // active session's buffer mode).
-    editor.setEditorMode(null);
-  } else {
-    editor.setEditorMode(OPEN_MODE);
-  }
 
   // Discover worktrees that exist on disk but aren't open yet and
   // fold them into the list. Async (it shells out to git per
@@ -5118,7 +5119,6 @@ function restoreDockBehindPicker(): boolean {
     const activeIdx = openDialog.filteredIds.indexOf(activeId);
     openDialog.selectedIndex = activeIdx >= 0 ? activeIdx : 0;
   }
-  editor.setEditorMode(null);
   refreshOpenDialog();
   editor.floatingPanelControl(openPanel.id(), "focus", 0);
   focusDockControl("sessions");
@@ -5141,7 +5141,6 @@ function closeOpenDialog(): void {
   // The dock is gone — restore the default Next/Prev Window cycling (every
   // window, by id).
   editor.setWindowCycleOrder([]);
-  editor.setEditorMode(null);
 }
 
 // ---------------------------------------------------------------------
@@ -6050,9 +6049,9 @@ function mountFolderDialog(): void {
     // a native `[×]` that dismisses via the same cancel path as Esc.
     title,
     closable: true,
+    mode: CREATE_FOLDER_MODE,
   });
   editor.floatingPanelControl(createFolderPanel.id(), "fullscreen", 1);
-  editor.setEditorMode(CREATE_FOLDER_MODE);
   // Land focus in the name field so typing goes straight to it; the
   // whole value starts selected-for-overwrite feel via a full cursor.
   createFolderPanel.setFocusKey("folder-name");
@@ -6165,7 +6164,6 @@ function closeCreateFolderDialog(): void {
     createFolderPanel = null;
   }
   createFolderDialog = null;
-  editor.setEditorMode(null);
 }
 
 // Flip one folder's expansion in the persisted set and push it to the
@@ -6229,7 +6227,6 @@ function dockMenuVisit(id: number): void {
   if (openPanel && dockMode) {
     dockBlurred = true;
     editor.floatingPanelControl(openPanel.id(), "blur", 0);
-    editor.setEditorMode(null);
   }
 }
 
@@ -6609,7 +6606,6 @@ function diveDockSelectionFromClick(fromEdge: "top" | "bottom" | null): void {
   dockDiveBlur = true;
   dockBlurred = true;
   editor.floatingPanelControl(openPanel.id(), "blur", 0);
-  editor.setEditorMode(null);
 }
 
 // Toggle command (bind to a key of choice; reachable as
@@ -8974,7 +8970,6 @@ function settleHostKey(trust: boolean, unmount: boolean): void {
   if (unmount && hostKeyPanel) hostKeyPanel.unmount();
   hostKeyPanel = null;
   hostKeyState = null;
-  editor.setEditorMode(null);
   if (st) st.settle(trust);
 }
 
@@ -8991,9 +8986,9 @@ function askHostKeyTrust(offer: HostKeyOffer): Promise<boolean> {
       focusMarker: true,
       title: editor.t("hostkey.title"),
       closable: true,
+      mode: HOSTKEY_MODE,
     });
     editor.floatingPanelControl(hostKeyPanel.id(), "fullscreen", 1);
-    editor.setEditorMode(HOSTKEY_MODE);
     // The safe option holds the keyboard, so Enter never trusts by reflex.
     hostKeyPanel.setFocusKey("hostkey-cancel");
   });
@@ -9656,6 +9651,10 @@ function openMachineDialog(
       onPick: (path) => {
         d.identity = fieldOf(tildePath(path));
       },
+      // What sits beside the keys in `~/.ssh` but is not one: the public
+      // halves, and ssh's own files. Listed, but dimmed.
+      dim: (name) => name.endsWith(".pub") || SSH_DIR_NON_KEYS.has(name),
+      hint: (value) => (value.endsWith(".pub") ? editor.t("machine.identity_pub_hint") : null),
       render: () => {
         if (machineDialog === d) renderMachineDialog();
       },
@@ -9687,15 +9686,19 @@ function openMachineDialog(
       ? editor.t("machine.setup_title", { name: fromHost.alias })
       : editor.t("machine.add_title"),
     closable: true,
+    mode: MACHINE_DIALOG_MODE,
   });
   editor.floatingPanelControl(machinePanel.id(), "fullscreen", 1);
-  editor.setEditorMode(MACHINE_DIALOG_MODE);
-  // Straight to what the machine reaches; for a new ssh machine the Host
-  // field opens with the config hosts to pick from.
+  // Straight to what the machine reaches. For a new ssh machine the Host
+  // field is a combo box of the config hosts, closed until asked: typing,
+  // ↓ / Alt+↓, or its arrow opens it (`completion_request`) — a list that
+  // opened on focus would cover the fields under it as the form is walked.
   const first = machineDialog.kind === "ssh" ? "machine-target" : "machine-context";
   machinePanel.setFocusKey(first);
-  suggestMachineHosts();
 }
+
+/** Files `~/.ssh` holds that are not a private key. */
+const SSH_DIR_NON_KEYS = new Set(["known_hosts", "known_hosts.old", "config", "authorized_keys", "environment"]);
 
 function blankMachine(): Machine {
   return {
@@ -9722,7 +9725,6 @@ function closeMachineDialog(reopen: boolean): void {
     machinePanel = null;
   }
   machineDialog = null;
-  editor.setEditorMode(null);
   if (reopen && returnTo === "machines") {
     openMachinesDialog();
     return;
@@ -9804,7 +9806,12 @@ function buildMachineDialogSpec(): WidgetSpec {
   }
   if (d.kind === "ssh") {
     children.push(
-      ...field(formLabel("machine.host"), d.target, { key: "machine-target" }),
+      ...field(formLabel("machine.host"), d.target, {
+        key: "machine-target",
+        // A new SSH machine's Host offers the `~/.ssh/config` hosts not yet
+        // added (`suggestMachineHosts`): say so with the combo arrow.
+        combo: d.id === null && unaddedSshHosts().length > 0,
+      }),
     );
     const h = d.hosts.find((x) => x.alias === d.target.value.trim());
     if (h) children.push(machineFact("machine.resolves_to", [{ text: sshResolvedTarget(h) }]));
@@ -10005,8 +10012,15 @@ function handleMachineDialogEvent(e: WidgetEvt): void {
     return;
   }
   if (e.event_type === "focus") {
-    if (e.widget_key === "machine-target") suggestMachineHosts();
-    else setMachineHostSuggestions([]);
+    // Focus alone does not open the Host list; leaving Host closes it.
+    if (e.widget_key !== "machine-target") setMachineHostSuggestions([]);
+    // Leaving the identity file's browser closes it.
+    d.identityPicker.focusMoved(e.widget_key ?? "");
+    return;
+  }
+  if (e.event_type === "completion_request" && e.widget_key === "machine-target") {
+    // ↓ / Alt+↓ or the arrow on a closed Host list.
+    suggestMachineHosts();
     return;
   }
   if (e.event_type === "completion_accept" && e.widget_key === "machine-target") {
@@ -10080,7 +10094,6 @@ function suspendForm(): void {
   formPanel.unmount();
   formPanel = null;
   form = null;
-  editor.setEditorMode(null);
 }
 
 // Bring the set-aside form back; false when there is none.
@@ -10607,9 +10620,9 @@ function mountRepoPanel(): void {
     labelAlign: "right",
     title: d.mode === "add" ? editor.t("repo.add_title") : editor.t("repo.title"),
     closable: true,
+    mode: REPOS_MODE,
   });
   editor.floatingPanelControl(repoPanel.id(), "fullscreen", 1);
-  editor.setEditorMode(REPOS_MODE);
   const focus = d.mode === "add"
     ? (d.addFrom === "url" ? "repo_url" : d.path.value ? "repo_name" : "repo_path")
     : "repo_list";
@@ -10632,7 +10645,6 @@ function closeRepoDialog(): void {
     repoPanel = null;
   }
   repoDialog = null;
-  editor.setEditorMode(null);
   if (d?.returnTo === "form" && resumeSuspendedForm()) return;
 }
 
@@ -11099,6 +11111,11 @@ async function listMachineDir(
 ): Promise<{ entries: RepoBrowseEntry[]; error: string }> {
   if (machineKey === "local") {
     const base = expandHome(dir);
+    // A folder that is not there lists as nothing at all; say so, as the
+    // remote listing's `NODIR` does, so the browser can go up to one that is.
+    if (!editor.fileExists(editor.localPath(base))) {
+      return { entries: [], error: editor.t("repo.no_such_dir") };
+    }
     const out: RepoBrowseEntry[] = [];
     const found: RepoBrowseEntry[] = [];
     for (const e of editor.readDir(editor.localPath(base))) {
@@ -11342,6 +11359,9 @@ function handleRepoDialogEvent(e: WidgetEvt): void {
     return;
   }
   if (e.event_type === "focus") {
+    // Leaving a folder browser closes it.
+    d.browse.focusMoved(e.widget_key ?? "");
+    d.place?.browse.focusMoved(e.widget_key ?? "");
     return;
   }
   if (d.place && handlePlaceEvent(d.place, repoPlaceHost(d), e)) return;
@@ -11579,7 +11599,6 @@ function newWorkspaceOnRepo(): void {
     repoPanel = null;
   }
   repoDialog = null;
-  editor.setEditorMode(null);
   pendingFormRepo = repoId;
   pendingFormMachine = { kind: "option", key };
   dockBlurred = true;
@@ -11822,9 +11841,9 @@ function openMachinesDialog(): void {
     labelAlign: "right",
     title: editor.t("machine.list_title"),
     closable: true,
+    mode: MACHINES_MODE,
   });
   editor.floatingPanelControl(machinesPanel.id(), "fullscreen", 1);
-  editor.setEditorMode(MACHINES_MODE);
   machinesPanel.setFocusKey("machines");
   machinesPanel.setSelectedIndex("machines", machinesState.index);
 }
@@ -11835,7 +11854,6 @@ function closeMachinesDialog(): void {
     machinesPanel = null;
   }
   machinesState = null;
-  editor.setEditorMode(null);
 }
 
 // The list's columns, sized to what they hold: the longest name and the
@@ -12023,7 +12041,6 @@ function closeMachinesDialogKeepDock(): void {
     machinesPanel.unmount();
     machinesPanel = null;
   }
-  editor.setEditorMode(null);
 }
 
 registerHandler("orchestrator_machines", () => {
@@ -12236,7 +12253,7 @@ function fieldNote(text: string, style: Partial<OverlayOptions> = NOTE_STYLE): W
 function field(
   lbl: string,
   slot: { value: string; cursor: number },
-  o: { key?: string; placeholder?: string; note?: string | undefined },
+  o: { key?: string; placeholder?: string; note?: string | undefined; combo?: boolean },
 ): WidgetSpec[] {
   const out: WidgetSpec[] = [
     text({
@@ -12246,6 +12263,7 @@ function field(
       placeholder: o.placeholder,
       fullWidth: true,
       labelWidth: FORM_LABEL_W,
+      combo: o.combo,
       key: o.key,
     }),
   ];
@@ -13335,13 +13353,15 @@ function buildFormSpec(): WidgetSpec {
     ...gap(),
     launchModeRow(),
     ...gap(),
-    sectionHeader("form.section_prompt"),
-    ...gap(),
-    promptBox(f),
-    ...gap(),
+    // The agent first, then what to tell it: whether there is a prompt at
+    // all, and what it means, depend on the agent chosen above it.
     sectionHeader("form.section_agent"),
     ...gap(),
     ...agentRowFields(f),
+    ...gap(),
+    sectionHeader("form.section_prompt"),
+    ...gap(),
+    promptBox(f),
     ...gap(),
   ];
   if (creating) {
@@ -13521,12 +13541,12 @@ function mountFormPanel(focusKey?: string): void {
     // native `[×]` that dismisses via the same cancel path as Esc.
     title: creating ? editor.t("form.header_label") : editor.t("run_agent.title"),
     closable: true,
+    mode: NEW_SESSION_MODE,
   });
   // The New-Session form is a global orchestrator feature too: center it
   // over the full screen (covering its own dimmed dock) rather than in the
   // chrome area beside the dock. A no-op when no dock is up.
   editor.floatingPanelControl(formPanel.id(), "fullscreen", 1);
-  editor.setEditorMode(NEW_SESSION_MODE);
   // Mirror the host's focus cycle so Up/Down route to the right field's
   // history. Without an explicit focus the form would open on the Launch-in
   // switch and typing would go nowhere, so focus lands on the first input.
@@ -13916,7 +13936,6 @@ function closeForm(): void {
     formPanel = null;
   }
   form = null;
-  editor.setEditorMode(null);
 }
 
 // Whether the New-Session form was opened over a still-mounted dock: closing
@@ -14931,7 +14950,6 @@ async function runLocalCreate(id: number): Promise<void> {
       // the keyboard (blur the dock) so they can type into the agent.
       dockBlurred = true;
       editor.floatingPanelControl(openPanel.id(), "blur", 0);
-      editor.setEditorMode(null);
     }
     if (openPanel) {
       refreshOpenDialog();
@@ -15106,7 +15124,6 @@ async function runRemoteCreate(id: number): Promise<void> {
       if (openPanel && dockMode) {
         dockBlurred = true;
         editor.floatingPanelControl(openPanel.id(), "blur", 0);
-        editor.setEditorMode(null);
       }
     } else {
       // Stay put: the attach activated the born window — return to where the
@@ -15317,7 +15334,6 @@ async function attachToWorktree(opts: {
       dockDiveBlur = true;
       dockBlurred = true;
       editor.floatingPanelControl(openPanel.id(), "blur", 0);
-      editor.setEditorMode(null);
     } else if (dockMode && openPanel) {
       // Live-switch: keep the dock focused, but rebuild the list (the
       // `· on-disk` row's synthetic id is gone, replaced by the new live
@@ -16510,7 +16526,6 @@ function dockActivate(): void {
   dockDiveBlur = true;
   dockBlurred = true;
   editor.floatingPanelControl(openPanel.id(), "blur", 0);
-  editor.setEditorMode(null);
   return;
 }
 
@@ -16824,7 +16839,6 @@ editor.on("widget_event", (e) => {
       // gave the keyboard back to what opened it), so drop our handle.
       createFolderPanel = null;
       createFolderDialog = null;
-      editor.setEditorMode(null);
       return;
     }
     if (e.event_type === "change" && e.widget_key === "folder-name") {
@@ -16992,6 +17006,8 @@ editor.on("widget_event", (e) => {
     // The launch-time "where is it?" question owns its own widgets.
     if (form.place && e.event_type !== "focus" && handlePlaceEvent(form.place, formPlaceHost(form), e as WidgetEvt)) return;
     if (e.event_type === "focus") {
+      // Leaving the where-is-it question's folder browser closes it.
+      form.place?.browse.focusMoved(e.widget_key ?? "");
       // Leaving a field (Shift+Tab, a click) closes its suggestions.
       if (form.completion.field !== null && form.completion.field !== e.widget_key) {
         closeCompletion();
@@ -17261,7 +17277,6 @@ editor.on("widget_event", (e) => {
       }
       form = null;
       formPanel = null;
-      editor.setEditorMode(null);
       if (dockUnderForm()) return;
       if (wasFromPicker) {
         openControlRoom();
@@ -17519,7 +17534,6 @@ editor.on("widget_event", (e) => {
         // editor (the session is already active via live-switch).
         editor.floatingPanelControl(openPanel.id(), "blur");
         dockBlurred = true;
-        editor.setEditorMode(null);
         return;
       }
       closeOpenDialog();
@@ -17717,7 +17731,6 @@ editor.on("widget_event", (e) => {
       // the bare editor.
       if (restoreDockBehindPicker()) return;
       openDialog = null;
-      editor.setEditorMode(null);
       return;
     }
     return;
@@ -18090,7 +18103,6 @@ function closeExplainPopup(): void {
   explainPanel.unmount();
   explainPanel = null;
   explainShowing = null;
-  editor.setEditorMode(null);
 }
 
 // What the popup is showing, so a resize can rebuild it: the host wraps
@@ -18149,9 +18161,9 @@ function openExplainPopup(s: AgentSession, ex: StateExplanation): void {
     focusMarker: true,
     title: editor.t("explain.title"),
     closable: true,
+    mode: EXPLAIN_MODE,
   });
   editor.floatingPanelControl(explainPanel.id(), "fullscreen", 1);
-  editor.setEditorMode(EXPLAIN_MODE);
   explainPanel.setFocusKey("explain-close");
 }
 
@@ -18163,7 +18175,6 @@ function handleExplainEvent(e: WidgetEvt): void {
     // Esc / click-outside: the host already unmounted the panel.
     explainPanel = null;
     explainShowing = null;
-    editor.setEditorMode(null);
     return;
   }
   if (e.event_type === "activate" && e.widget_key === "explain-close") closeExplainPopup();

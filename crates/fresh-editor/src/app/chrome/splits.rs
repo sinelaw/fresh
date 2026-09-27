@@ -1180,6 +1180,21 @@ impl Editor {
 
         let leaf_id = split_id;
 
+        // A text row on the screen's own edge — the menu, tab or status bar
+        // hidden — has nothing past it for the pointer to reach, so it is
+        // where a drag past that edge happens: it counts as one row beyond
+        // the text area (#3006) rather than as a row inside it, where the
+        // view holds still (#3329).
+        let edge_rows: isize = if row == 0 && row == content_rect.y {
+            -1
+        } else if row == self.terminal_height.saturating_sub(1)
+            && row == content_rect.bottom().saturating_sub(1)
+        {
+            1
+        } else {
+            0
+        };
+
         // Get fallback from SplitViewState viewport
         let fallback = self
             .active_window()
@@ -1253,8 +1268,9 @@ impl Editor {
                         // effect of the scroll-off margin, so a configured
                         // `scroll_offset = 0` means dragging past the edge
                         // does nothing at all.
-                        let rows_past_edge =
-                            target.row_overshoot as isize - target.row_undershoot as isize;
+                        let rows_past_edge = target.row_overshoot as isize
+                            - target.row_undershoot as isize
+                            + edge_rows;
                         crate::app::click_geometry::position_offset_by_lines(
                             &state.buffer,
                             target.position,
@@ -1313,20 +1329,40 @@ impl Editor {
         if let Some(event_log) = self.active_window_mut().event_logs.get_mut(&buffer_id) {
             event_log.append(event.clone());
         }
-        // A drag is cursor motion, so it owns vertical placement from here on
-        // — exactly like a key press, which clears this same flag in
-        // `handle_key`. A wheel or scrollbar scroll sets `skip_ensure_visible`
-        // so the render pass won't yank the viewport back to the cursor, and
-        // nothing on the mouse path used to clear it again: after any scroll
-        // by wheel or scrollbar, a drag-select moved the selection head but
-        // the viewport stayed frozen, in *both* directions (issue #3006).
+        // Above or below the text rows, a drag is cursor motion that owns
+        // vertical placement — exactly like a key press, which clears this
+        // same flag in `handle_key`. A wheel or scrollbar scroll sets
+        // `skip_ensure_visible` so the render pass won't yank the viewport
+        // back to the cursor, and nothing on the mouse path used to clear it
+        // again: after any scroll by wheel or scrollbar, a drag-select moved
+        // the selection head but the viewport stayed frozen, in *both*
+        // directions (issue #3006).
+        //
+        // Level with the text rows the head is on the pointer's row, which is
+        // on screen by construction, so the rows must stay put — whether the
+        // pointer is over the text or has left the pane sideways. Letting
+        // ensure-visible place them applied the scroll-off margin to the
+        // head: a drag within `scroll_offset` rows of an edge scrolled the
+        // view, the next motion at the same screen row then named a line
+        // further along, and the selection ran away from the pointer —
+        // backwards from the anchor on a drag along the top rows (issue
+        // #3329). The columns still follow the head: with no wrap its cell
+        // can be the gutter's (the line's first visible column) or the last
+        // one, and scrolling sideways from there is how a drag reaches the
+        // rest of a long line.
+        let pointer_level_with_text =
+            (content_rect.y..content_rect.bottom()).contains(&row) && edge_rows == 0;
         if let Some(view_state) = self
             .windows
             .get_mut(&self.active_window)
             .and_then(|w| w.buffers.split_view_states_mut())
             .and_then(|states| states.get_mut(&leaf_id))
         {
-            view_state.viewport.clear_skip_ensure_visible();
+            if pointer_level_with_text {
+                view_state.viewport.hold_rows_while_head_at(new_position);
+            } else {
+                view_state.viewport.clear_skip_ensure_visible();
+            }
         }
         self.active_window_mut()
             .apply_event_to_buffer(buffer_id, leaf_id, &event);

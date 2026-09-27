@@ -597,7 +597,7 @@ pub enum EnvKind {
 }
 
 /// One environment detector: its markers, risk, activation command and name.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[schemars(extend("x-display-field" = "/name"))]
 pub struct EnvDetector {
     /// Short label shown in the status pill (e.g. ".venv", "direnv", "mise").
@@ -1170,7 +1170,8 @@ pub struct EditorConfig {
     #[schemars(extend("x-section" = "Display"))]
     pub wrap_indent: bool,
 
-    /// Column to wrap lines at (e.g. `80`). Never wider than the window.
+    /// Number of text columns to wrap lines at (e.g. `80`), not counting the
+    /// line-number gutter. Never wider than the window.
     /// `null` or `0` (default) wraps at the window edge.
     #[serde(default)]
     #[schemars(extend("x-section" = "Display"))]
@@ -2561,7 +2562,8 @@ pub struct LanguageConfig {
     #[serde(default)]
     pub line_wrap: Option<bool>,
 
-    /// Column to wrap lines at. `null` or `0` uses `editor.wrap_column`.
+    /// Number of text columns to wrap lines at, not counting the line-number
+    /// gutter. `null` or `0` uses `editor.wrap_column`.
     #[serde(default)]
     pub wrap_column: Option<usize>,
 
@@ -2706,7 +2708,7 @@ pub struct BufferConfig {
     /// Whether line wrapping is enabled for this buffer
     pub line_wrap: bool,
 
-    /// Column at which to wrap lines (None = viewport width)
+    /// Text columns at which to wrap lines, gutter excluded (None = viewport width)
     pub wrap_column: Option<usize>,
 
     /// Resolved whitespace indicator visibility
@@ -9271,12 +9273,13 @@ mod tests {
     #[test]
     fn test_default_languages_map_jsonc_filenames() {
         use crate::language_detect::detect_language;
+        use crate::model::filesystem::StdFileSystem;
         use std::path::Path;
 
         let languages = Config::default_languages();
         for filename in ["bun.lock", "tsconfig.json", "devcontainer.json"] {
             assert_eq!(
-                detect_language(Path::new(filename), &languages),
+                detect_language(Path::new(filename), &languages, &StdFileSystem),
                 Some("jsonc".to_string()),
                 "expected `{filename}` to be detected as jsonc"
             );

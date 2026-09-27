@@ -60,6 +60,10 @@ Rows past the end of the buffer keep the theme's editor background, so the empty
 
 Enable `auto_save_enabled` in settings to automatically save modified buffers to disk at a configurable interval (default 30 seconds). This is separate from the crash-recovery auto-save, which runs independently every 2 seconds to a recovery directory.
 
+## Interrupted Saves
+
+A file that can't be replaced by a new one without losing something (it belongs to another user, has other hard links, or carries attributes that can't be copied) is overwritten in place. Before truncating it, Fresh keeps a complete copy of the new content in its recovery directory. If the write fails part-way, or Fresh dies during it, the file may be left damaged; the next session then opens an **Interrupted Save** dialog for it: **Restore** writes the kept copy into the file (and reloads any open buffer of it that has no unsaved changes), **Show Diff** closes the dialog and opens the file on disk beside the kept copy (keeping the copy, so the diff can be read at leisure), **Discard** deletes the copy, and **Later** keeps it and shows where it is. A copy that is still waiting is asked about again at the next start, or any time with **Review Interrupted Saves** from the command palette, including one kept by a save earlier in the same session. While such a copy is kept, or after a save of it failed part-way in this session, a large file (opened without loading it whole) can't be saved again, not even under another name, since its unchanged parts would be read back from the damaged file.
+
 ## Code Folding
 
 Fold and unfold code blocks via gutter indicators or "Toggle Fold" from the command palette. Up/Down navigation skips folded regions. Each split view maintains its own fold state. Folding works in two modes:
@@ -90,6 +94,8 @@ Diagnostic messages can be displayed at the end of each line, right-aligned, wit
 ## Line Wrap
 
 When line wrap is enabled (`line_wrap` in settings), wrapped continuation lines preserve the indentation of their parent line (hanging indent).
+
+Lines wrap at the window edge, or at `wrap_column` when it is set and the window is wider. `wrap_column` counts text columns, not the line-number gutter: `"wrap_column": 80` fits 80 characters on a row with or without line numbers. It can be set per language, e.g. to wrap Markdown at 80 while code wraps at the window edge.
 
 **Per-buffer overrides** — **Toggle Line Wrap (Current Buffer)** and **Toggle Line Numbers (Current Buffer)** flip these for the active buffer only, leaving the global default and other buffers untouched. The override persists across restarts; the editor-wide **Toggle Line Wrap** / **Toggle Line Numbers** commands still change the default for everything else and save it to your config. See [Per-Buffer Overrides](../configuration/index.md#per-buffer-overrides) for the naming convention every settings toggle follows.
 

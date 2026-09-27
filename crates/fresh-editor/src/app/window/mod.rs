@@ -843,9 +843,12 @@ pub struct Window {
     /// per-window — different windows can prompt independently.
     pub user_dismissed_lsp_languages: std::collections::HashSet<String>,
 
-    /// Active editor mode (e.g. "search", "replace", "macro-record").
-    /// Per-window because the modes drive UI affordances that belong
-    /// to one window's UX flow.
+    /// This window's plugin editor mode (`setEditorMode`, e.g.
+    /// "markdown-source", flash's label mode). Per-window because such
+    /// modes drive affordances that belong to one window's flow. A modal
+    /// editing personality that should hold in every window (vi) is the
+    /// editor-wide input mode instead (`Editor::input_mode`), which this
+    /// outranks in this window.
     pub editor_mode: Option<String>,
 
     /// Per-window prompt histories (one ring per `PromptType`). Each
@@ -1098,6 +1101,10 @@ pub struct Window {
     /// in this window.
     pub last_auto_recovery_save: std::time::Instant,
     pub last_persistent_auto_save: std::time::Instant,
+    /// The files the last persistent auto-save left unsaved because they
+    /// changed on disk, as reported in the status bar; it's only reported
+    /// again once that changes, rather than every interval.
+    pub auto_save_changed_on_disk: Vec<std::path::PathBuf>,
 
     /// Warning domain registry for this window's status indicator.
     pub warning_domains: crate::app::warning_domains::WarningDomainRegistry,
@@ -1945,7 +1952,6 @@ impl Window {
     ) {
         self.buffers
             .with_buffer_and_view_states(buffer_id, |state, vs_map| {
-                let mut moved_any = false;
                 for leaf_id in splits {
                     let Some(view_state) = vs_map.get_mut(leaf_id) else {
                         continue;
@@ -1976,25 +1982,6 @@ impl Window {
                     // motion.
                     cursor.sticky_column = None;
                     view_state.ensure_cursor_visible(&mut state.buffer, &state.marker_list);
-                    moved_any = true;
-                }
-                // Refresh the cached primary cursor line number so the status
-                // bar (and any other consumer of `primary_cursor_line_number`)
-                // reflects the new position. Other cursor-move paths update
-                // this cache themselves; without doing the same here, a
-                // plugin-driven setBufferCursor would leave the cache pinned
-                // to its initial Absolute(0) — the user-visible "off-by-one"
-                // when opening blame from line 2 still shows "Ln 1". Guard
-                // on `moved_any` so we don't desync the cache when no split
-                // was actually carrying the buffer's cursor.
-                if moved_any {
-                    let line = state
-                        .buffer
-                        .offset_to_position(position)
-                        .map(|p| p.line)
-                        .unwrap_or(0);
-                    state.primary_cursor_line_number =
-                        crate::model::buffer::LineNumber::Absolute(line);
                 }
             });
     }
@@ -2536,6 +2523,7 @@ impl Window {
             prompt_line_visible: resources.config.editor.show_prompt_line,
             last_auto_recovery_save: now,
             last_persistent_auto_save: now,
+            auto_save_changed_on_disk: Vec::new(),
             warning_domains: crate::app::warning_domains::WarningDomainRegistry::default(),
             tab_context_menu: None,
             new_tab_menu: None,
@@ -3977,6 +3965,7 @@ impl Window {
                 &self.resources.grammar_registry,
                 &self.config().languages,
                 self.config().default_language.as_deref(),
+                buffer.filesystem().as_ref(),
             );
         let state = crate::state::EditorState::from_buffer_with_language(buffer, detected);
 

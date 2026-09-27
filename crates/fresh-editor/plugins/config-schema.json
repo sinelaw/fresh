@@ -491,7 +491,7 @@
           "x-section": "Display"
         },
         "wrap_column": {
-          "description": "Column to wrap lines at (e.g. `80`). Never wider than the window.\n`null` or `0` (default) wraps at the window edge.",
+          "description": "Number of text columns to wrap lines at (e.g. `80`), not counting the\nline-number gutter. Never wider than the window.\n`null` or `0` (default) wraps at the window edge.",
           "type": [
             "integer",
             "null"
@@ -1645,7 +1645,7 @@
           "default": null
         },
         "wrap_column": {
-          "description": "Column to wrap lines at. `null` or `0` uses `editor.wrap_column`.",
+          "description": "Number of text columns to wrap lines at, not counting the line-number\ngutter. `null` or `0` uses `editor.wrap_column`.",
           "type": [
             "integer",
             "null"

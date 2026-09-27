@@ -235,10 +235,18 @@ getBufferText(buffer_id: number, start: number, end: number): Promise<string>
 
 ### `getEditorMode`
 
-Get the current global editor mode
+Get the active window's editor mode (see `setEditorMode`)
 
 ```typescript
-getEditorMode(): string
+getEditorMode(): string | null
+```
+
+### `getInputMode`
+
+Get the editor-wide input mode (see `setInputMode`)
+
+```typescript
+getInputMode(): string | null
 ```
 
 ## Buffer Info Queries
@@ -365,6 +373,22 @@ setPromptFooter(footer: StyledText[]): boolean
 | Name | Type | Description |
 |------|------|-------------|
 | `footer` | `StyledText[]` | Styled segments rendered along the overlay's bottom row |
+
+### `setPromptFullscreen`
+
+Centre the floating-overlay prompt's card on the whole screen — 90% of
+it, over the dock and sidebar, the way the Settings dialog is sized —
+instead of on the area beside the dock. Live Grep uses it so its
+results, preview and toolbar get the room. `false` puts the card back.
+Has no visible effect on non-overlay prompts.
+
+```typescript
+setPromptFullscreen(fullscreen: boolean): boolean
+```
+
+| Name | Type | Description |
+|------|------|-------------|
+| `fullscreen` | `boolean` | `true` to size the card on the whole screen, `false` to size it beside the dock |
 
 ## Buffer Mutations
 
@@ -1141,9 +1165,11 @@ executeActions(actions: ActionSpecJs[]): boolean
 
 #### `setEditorMode`
 
-Set the global editor mode (for modal editing like vi mode)
-When a mode is set, its keybindings take precedence over normal key handling.
-Pass null/undefined to clear the mode and return to normal editing.
+Set the active window's editor mode — a plugin mode scoped to that window,
+such as `markdown-source`. Its keybindings take precedence over the input
+mode and normal key handling in that window only; other windows don't see it.
+Pass null/undefined to clear it. A modal-editing personality that should
+apply in every window (vi) belongs in `setInputMode`.
 
 ```typescript
 setEditorMode(mode?: string | null): boolean
@@ -1153,7 +1179,26 @@ setEditorMode(mode?: string | null): boolean
 
 | Name | Type | Description |
 |------|------|-------------|
-| `mode` | `string | null` (optional) | Mode name (e.g., "vi-normal") or null to clear |
+| `mode` | `string | null` (optional) | Mode name (e.g., "markdown-source") or null to clear |
+
+#### `setInputMode`
+
+Set the editor-wide input mode — a modal-editing personality such as vi
+(`"vi-normal"`, `"vi-insert"`, …). It applies in every window, including
+windows created later, and nothing window-scoped can clear it. Keys resolve
+against a focused panel's mode, then the buffer's mode, then the window's
+editor mode, then the input mode, then the base keymap. Pass null to turn it
+off. Changes fire the `input_mode_changed` hook.
+
+```typescript
+setInputMode(mode: string | null): boolean
+```
+
+**Parameters:**
+
+| Name | Type | Description |
+|------|------|-------------|
+| `mode` | `string | null` | Mode name (e.g., "vi-normal") or null to clear |
 
 #### `showActionPopup`
 

@@ -171,8 +171,11 @@ fn shift_without_control_still_folds_the_character_in() {
     );
 }
 
+/// A raw-mode terminal sends CR for Enter and LF only for Ctrl+J, and
+/// programs in the integrated terminal tell the two apart (sinelaw/fresh#3169:
+/// Ctrl+J inserts a newline where Enter submits). LF used to parse as Enter.
 #[test]
-fn enter_key_cr_and_lf() {
+fn enter_is_cr_and_lf_is_ctrl_j() {
     let mut p = InputParser::new();
     assert_eq!(
         keys(&p.parse(&[0x0D])),
@@ -180,7 +183,14 @@ fn enter_key_cr_and_lf() {
     );
     assert_eq!(
         keys(&p.parse(&[0x0A])),
-        vec![(KeyCode::Enter, KeyModifiers::empty())]
+        vec![(KeyCode::Char('j'), KeyModifiers::CONTROL)]
+    );
+    assert_eq!(
+        keys(&p.parse(&[0x1b, 0x0A])),
+        vec![(
+            KeyCode::Char('j'),
+            KeyModifiers::CONTROL | KeyModifiers::ALT
+        )]
     );
 }
 

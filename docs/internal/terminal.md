@@ -85,7 +85,14 @@ The PTY spawner builds a terminal as follows:
      message).
    - **Wait**: blocks on the child, firing the exit event **exactly once**. The
      reader deliberately does *not* fire exit, to avoid a racing
-     `exit_code: None`.
+     `exit_code: None`. Before firing, it waits for the reader to drain the PTY
+     to EOF (a drain channel the reader pings per chunk and drops at EOF), so
+     the child's last output is in the grid and backing file before the exit
+     turns the terminal into read-only scrollback (#3379). The wait gives up
+     after 500 ms without reader progress or 5 s overall, for PTYs a
+     background job keeps open. On Windows the wait thread first has the
+     writer drop the master: ConPTY only ends its output pipe once the
+     pseudoconsole is closed.
    - **Writer**: owns the master, applies queued write/resize commands, and kills
      the child on shutdown.
 
@@ -115,6 +122,28 @@ Alt+key → `ESC`+key, and full CSI/SS3 tables for arrows/Home/End/PgUp/F-keys.
 Application-cursor mode (DECCKM) switches unmodified arrows to SS3 form, selected
 from the terminal state at send time. Shift+Tab is emitted for both `Tab+SHIFT`
 and the `BackTab` variant.
+
+**Kitty keyboard protocol for the child** (not on Windows/ConPTY): the emulator
+answers `CSI ? u` and tracks the flags a child pushes and pops, read at send
+time like DECCKM (`TerminalState::kitty_key_flags`). `pty::kitty_encoded_key`
+follows kitty's reference encoder for every flag the emulator accepts:
+
+- *disambiguate* (`CSI > 1 u`): Esc is `CSI 27u`; a text key with Ctrl, Alt,
+  Super… is `CSI <unshifted key>;<mods> u` (Ctrl+I ≠ Tab, Alt+[ ≠ CSI,
+  Ctrl+Shift+A ≠ Ctrl+A); modified Enter/Tab/Backspace (and Shift+Tab) are
+  CSI u (#3323); functional keys always use their CSI form (`CSI A` even
+  under DECCKM, F3 as `CSI 13~`); F13+, Menu, lock and media keys get their
+  protocol codes. Plain and Shift-only text, and unmodified
+  Enter/Tab/Backspace, keep their legacy bytes.
+- *report all keys* (`8`): text keys and unmodified Enter/Tab/Backspace are
+  CSI u too, and modifier keys are reported on their own.
+- *alternate keys* (`4`) adds `:<shifted>` for Shift+letter; *associated
+  text* (`16`) appends the typed text.
+- *event types* (`2`): only presses reach the child (the editor never forwards
+  releases, and repeats arrive as presses); a press carries no event-type
+  field, so the encoding is valid, but releases are never reported.
+
+Children that never enable the protocol keep the legacy bytes (#3408).
 
 A **paste** is not key encoding and does not go through it: every route into a
 live terminal (`Ev::Paste` and the web/daemon pastes via `Editor::paste_text`,
@@ -155,7 +184,9 @@ history ends.
 **Flush** writes only logical lines that fully scrolled into history. Wrapped
 rows are *rejoined* into one unwrapped logical line so the editor can re-wrap them
 at any view width. SGR colors are threaded across wrapped rows as truecolor and
-reset once per logical line.
+reset once per logical line. Wide-character spacer cells (a CJK character's
+second column, and the blank left at a row's end when the next wide character
+wrapped) are not written, so a wide character gains no trailing space (#3235).
 
 **Resize reconciliation**: a pure height change leaves the streamed-history count
 alone (a flush guard suppresses pulled-back rows; spilled rows stream as new). A
@@ -224,7 +255,10 @@ char / Enter / Tab / Backspace resumes live; nav keys scroll instead; Ctrl+Space
 Mouse forwarding only happens when in terminal mode **and** the buffer is in
 **alternate screen** — i.e. full-screen programs own the mouse. Coordinates are
 content-rect-relative. Crossterm button/event kinds map to Fresh's enums;
-horizontal scroll is dropped.
+horizontal scroll is dropped. Each wheel notch is forwarded **once**: when the
+child takes it, the smooth-scroll lines armed for that notch are dropped rather
+than replayed through the same dispatch (which re-forwarded every one — three
+SGR reports, or nine alternate-scroll arrows, per notch).
 
 ---
 
@@ -355,6 +389,7 @@ emulator or PTY.
   incremental scrollback streaming with reflow re-anchor; per-buffer
   `TerminalBuffer` live/scrollback fold; OSC 7 cwd sniffing; Ctrl+Click links
   (live + scrollback); alt-screen mouse forwarding; alternate-scroll guard;
+  kitty keyboard protocol for children (all flags; press events only);
   embedded-program & host titles; `fresh-winterm` (VT input, corrupt-mouse strip,
   relay, size); OSC 52 set-clipboard for session mode; authority-routed spawning
   and reconnect respawn preserving scrollback + mode.

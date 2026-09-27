@@ -86,6 +86,58 @@ pub fn layout_reading(
     }
 }
 
+/// The reading of a Ctrl+J the editor should act on: Enter, unless something
+/// wants Ctrl+J itself. `None` keeps the key as it came. Ctrl+Alt+J, which
+/// is ESC LF, is likewise Alt+Enter.
+///
+/// Only something *binding* the key keeps it
+/// ([`KeybindingResolver::binds_key`]), not the keymap merely typing it: on
+/// Windows Ctrl+Alt+<char> resolves to typed text, since crossterm and the
+/// GUI report AltGr that way
+/// ([`crate::input::keybindings::is_text_input_modifier`]). This reading is
+/// only asked of keys the input parser produced (`Editor::handle_key_press`),
+/// and there — Windows included, whose console is read in VT input mode —
+/// AltGr text arrives as the character it types, so a Ctrl+Alt+J can only
+/// be ESC LF.
+///
+/// Ctrl+J is LF. The parser reports a raw LF as Ctrl+J so a program in the
+/// integrated terminal can tell it from Enter's CR (sinelaw/fresh#3169), but
+/// to the editor it has always been a second Enter — a newline in the buffer,
+/// confirm in a prompt — and no built-in keymap binds it. So it is read as
+/// Enter except where it is going to a terminal's child (the `Terminal`
+/// context forwards it as 0x0A), where it continues a chord, or where the
+/// keymap or one of `modes` claims it: binds it (a `noop` too), or starts a
+/// chord with it. `modes` are the ones the focused surface resolves keys
+/// against (`Editor::focused_modes`): a mode the key never reaches — a
+/// buffer's, under a prompt — has no say (sinelaw/fresh#3384). Asking only for a single-key action missed the last two:
+/// a `noop` on Ctrl+J turned into Enter, and a `C-j …` chord could never
+/// start because its first key arrived as Enter.
+pub fn ctrl_j_reading(
+    code: KeyCode,
+    modifiers: KeyModifiers,
+    kb: &KeybindingResolver,
+    context: &KeyContext,
+    chord_pending: bool,
+    modes: &[&str],
+) -> Option<(KeyCode, KeyModifiers)> {
+    let ctrl = KeyModifiers::CONTROL;
+    if code != KeyCode::Char('j') || (modifiers != ctrl && modifiers != ctrl | KeyModifiers::ALT) {
+        return None;
+    }
+    if *context == KeyContext::Terminal || chord_pending {
+        return None;
+    }
+    let event = KeyEvent::new(code, modifiers);
+    let claimed = kb.binds_key(&event, context)
+        || modes
+            .iter()
+            .any(|mode| kb.binds_key(&event, &KeyContext::Mode((*mode).to_string())));
+    match claimed {
+        true => None,
+        false => Some((KeyCode::Enter, modifiers - ctrl)),
+    }
+}
+
 /// Keybinding precedence for a key aimed at an *unfocused* popup: the
 /// user's bound `popup_cancel` (default Esc) and `popup_focus` (default
 /// Alt+T) keys must still take effect even though the popup isn't
@@ -374,15 +426,17 @@ pub fn should_dismiss_transient_popup(
 /// Read-only view for [`mode_key_disposition`]: the mode-related state a
 /// key is judged against while the editor buffer has focus.
 pub struct ModeKeyView {
-    /// The effective mode (buffer-local if present, else global) —
-    /// virtual buffer modes must not be hijacked by global modes.
+    /// The effective mode (buffer-local if present, else the window's
+    /// editor mode, else the input mode) — virtual buffer modes must not be
+    /// hijacked by either.
     pub effective_mode: Option<String>,
     /// The effective mode declares `allow_text_input` (e.g.
     /// search-replace-list): character keys are captured, other unbound
     /// keys are blocked.
     pub allows_text_input: bool,
-    /// The *global* editor mode's read-only flag, when a global mode is
-    /// active (e.g. vi-normal blocks all unbound keys when read-only).
+    /// The read-only flag of the mode beneath the buffer's — the window's
+    /// editor mode, else the editor-wide input mode — when one is active
+    /// (e.g. vi-normal blocks all unbound keys when read-only).
     pub global_mode_read_only: Option<bool>,
 }
 
@@ -660,6 +714,84 @@ mod tests {
         assert_eq!(
             unfocused_popup_action(KeyContext::Normal, &kb, &char_a),
             None
+        );
+    }
+
+    /// An unbound Ctrl+J is read as Enter, except where it goes to a
+    /// terminal's child or something binds it.
+    #[test]
+    fn ctrl_j_reads_as_enter_unless_terminal_or_bound() {
+        let (j, ctrl) = (KeyCode::Char('j'), KeyModifiers::CONTROL);
+        let enter = Some((KeyCode::Enter, KeyModifiers::NONE));
+        let mut kb = resolver();
+        for context in [KeyContext::Normal, KeyContext::Prompt, KeyContext::Popup] {
+            assert_eq!(ctrl_j_reading(j, ctrl, &kb, &context, false, &[]), enter);
+        }
+        // The terminal forwards it to its child as LF (0x0A).
+        assert_eq!(
+            ctrl_j_reading(j, ctrl, &kb, &KeyContext::Terminal, false, &[]),
+            None
+        );
+        // The second key of a chord in progress.
+        assert_eq!(
+            ctrl_j_reading(j, ctrl, &kb, &KeyContext::Normal, true, &[]),
+            None
+        );
+        // Ctrl+Alt+J (ESC LF) is Alt+Enter, Windows included: there the
+        // keymap would type it (Ctrl+Alt is AltGr to it), which is not a
+        // binding.
+        for context in [KeyContext::Normal, KeyContext::Prompt] {
+            assert_eq!(
+                ctrl_j_reading(j, ctrl | KeyModifiers::ALT, &kb, &context, false, &[]),
+                Some((KeyCode::Enter, KeyModifiers::ALT))
+            );
+        }
+        // Only Ctrl+J itself.
+        for (code, mods) in [
+            (j, KeyModifiers::NONE),
+            (j, ctrl | KeyModifiers::SHIFT),
+            (KeyCode::Char('k'), ctrl),
+        ] {
+            assert_eq!(
+                ctrl_j_reading(code, mods, &kb, &KeyContext::Normal, false, &[]),
+                None
+            );
+        }
+        // A mode chord that starts with it holds it for the chord.
+        let chord_mode = KeyContext::Mode("chorded".to_string());
+        kb.load_plugin_chord_default(
+            chord_mode,
+            vec![(j, ctrl), (KeyCode::Char('k'), ctrl)],
+            Action::SelectAll,
+        );
+        assert_eq!(
+            ctrl_j_reading(j, ctrl, &kb, &KeyContext::Normal, false, &["chorded"]),
+            None
+        );
+        // So does a `noop` that disables it.
+        let quiet = KeyContext::Mode("quiet".to_string());
+        kb.load_plugin_default(quiet, j, ctrl, Action::None);
+        assert_eq!(
+            ctrl_j_reading(j, ctrl, &kb, &KeyContext::Normal, false, &["quiet"]),
+            None
+        );
+        // A mode that binds it (merge_conflict's `C-j`) keeps it.
+        let mode = KeyContext::Mode("merge-conflict".to_string());
+        kb.load_plugin_default(mode, j, ctrl, Action::MoveDown);
+        assert_eq!(
+            ctrl_j_reading(
+                j,
+                ctrl,
+                &kb,
+                &KeyContext::Normal,
+                false,
+                &["merge-conflict"]
+            ),
+            None
+        );
+        assert_eq!(
+            ctrl_j_reading(j, ctrl, &kb, &KeyContext::Normal, false, &["other"]),
+            enter
         );
     }
 

@@ -317,6 +317,13 @@ impl EditorServer {
         let mut last_render = Instant::now();
         const FRAME_DURATION: Duration = Duration::from_millis(16); // 60fps
 
+        // Poll every 5ms for a second after any activity, so replies to a
+        // keystroke land promptly; once idle, once a frame.
+        const ACTIVE_POLL: Duration = Duration::from_millis(5);
+        const ACTIVE_WINDOW: Duration = Duration::from_secs(1);
+        let mut last_activity = Instant::now();
+        let mut periodic_deadline: Option<Instant> = None;
+
         // Bind the web bridge (`--web`) before the loop: unlike a terminal,
         // a browser can't be waited for, so the editor is built eagerly here
         // rather than on the first IPC client.
@@ -367,7 +374,7 @@ impl EditorServer {
             }
 
             // Accept new connections
-            tracing::debug!("[server] main loop: calling accept()");
+            tracing::trace!("[server] main loop: calling accept()");
             match self.listener.accept() {
                 Ok(Some(conn)) => {
                     // Get current cursor style from editor if it exists, otherwise from config
@@ -414,7 +421,7 @@ impl EditorServer {
             }
 
             // Process client messages and get input events
-            tracing::debug!("[server] main loop: calling process_clients");
+            tracing::trace!("[server] main loop: calling process_clients");
             let (input_events, resize_occurred, input_source) = self.process_clients()?;
             if let Some(idx) = input_source {
                 self.last_input_client = Some(idx);
@@ -620,10 +627,8 @@ impl EditorServer {
                 // word under the cursor waited for the next keystroke and
                 // then jumped, which reads as a flicker while typing. The LSP
                 // spinner and the async-paste fallback had the same hole.
-                if editor
-                    .next_periodic_redraw_deadline()
-                    .is_some_and(|deadline| Instant::now() >= deadline)
-                {
+                periodic_deadline = editor.next_periodic_redraw_deadline();
+                if periodic_deadline.is_some_and(|deadline| Instant::now() >= deadline) {
                     needs_render = true;
                 }
             }
@@ -645,6 +650,10 @@ impl EditorServer {
                 }
             }
 
+            if needs_render {
+                last_activity = Instant::now();
+            }
+
             // Render and broadcast if needed
             if needs_render && last_render.elapsed() >= FRAME_DURATION {
                 self.render_and_broadcast()?;
@@ -652,8 +661,21 @@ impl EditorServer {
                 needs_render = false;
             }
 
-            // Brief sleep to avoid busy-waiting
-            std::thread::sleep(Duration::from_millis(5));
+            let mut wait = if last_activity.elapsed() < ACTIVE_WINDOW {
+                ACTIVE_POLL
+            } else {
+                FRAME_DURATION
+            };
+            if let Some(deadline) = periodic_deadline {
+                // A deadline already due waits for the frame it owes, not 0.
+                let until_frame = FRAME_DURATION.saturating_sub(last_render.elapsed());
+                wait = wait.min(
+                    deadline
+                        .saturating_duration_since(Instant::now())
+                        .max(until_frame),
+                );
+            }
+            std::thread::sleep(wait.max(Duration::from_millis(1)));
         }
 
         // The same shutdown sequence as the normal (non-daemon) exit path in
@@ -1068,7 +1090,7 @@ impl EditorServer {
             // Read from data socket
             let mut buf = [0u8; 4096];
             let mut data_eof = false;
-            tracing::debug!("[server] reading from client {} data socket", client.id);
+            tracing::trace!("[server] reading from client {} data socket", client.id);
             match client.conn.read_data(&mut buf) {
                 Ok(0) => {
                     tracing::debug!("[server] Client {} data stream closed (EOF)", client.id);
@@ -1646,6 +1668,7 @@ mod wave_dismiss_tests {
             label_width: 0,
             read_only: false,
             markdown: false,
+            combo: false,
             key: Some("field".to_string()),
         };
         editor.widget_registry.mount(

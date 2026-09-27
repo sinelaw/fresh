@@ -654,3 +654,155 @@ fn hovering_a_button_lights_it_without_arming_it() {
         "Enter must have saved, not discarded"
     );
 }
+
+/// **Backing out of a quit says so, not "Close cancelled"** (issue #3404).
+/// That message belongs to closing a tab; after `Ctrl+Q` then Esc it told
+/// the user they had cancelled something they never started.
+#[test]
+fn cancelling_the_unsaved_changes_quit_prompt_reports_a_cancelled_quit() {
+    let _pin = pin();
+    let (mut harness, _file) = dirty_buffer(Config::default());
+    quit(&mut harness);
+    harness.assert_screen_contains("Unsaved Changes");
+
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    assert!(!harness.should_quit());
+    harness.assert_screen_contains("Quit cancelled");
+    harness.assert_screen_not_contains("Close cancelled");
+}
+
+/// The same for the `confirm_quit` question asked of a clean session, and
+/// for its Cancel button rather than Esc.
+#[test]
+fn cancelling_the_quit_confirmation_reports_a_cancelled_quit() {
+    let _pin = pin();
+    let mut config = Config::default();
+    config.editor.confirm_quit = true;
+    let mut harness =
+        EditorTestHarness::with_temp_project_and_config(WIDTH, HEIGHT, config).expect("harness");
+    harness.render().unwrap();
+
+    quit(&mut harness);
+    harness.assert_screen_contains("Quit Fresh");
+    harness
+        .send_key(KeyCode::Char('c'), KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    assert!(!harness.should_quit());
+    harness.assert_screen_contains("Quit cancelled");
+    harness.assert_screen_not_contains("Close cancelled");
+}
+
+/// Save and Quit with an unnamed buffer asks for its name; cancelling that
+/// Save As calls the quit off, and the status has to say it was the quit.
+#[test]
+fn cancelling_the_save_as_of_save_and_quit_reports_a_cancelled_quit() {
+    let _pin = pin();
+    let mut config = Config::default();
+    config.editor.hot_exit = false;
+    let mut harness =
+        EditorTestHarness::with_temp_project_and_config(WIDTH, HEIGHT, config).expect("harness");
+    harness.new_buffer().unwrap();
+    harness.type_text("unnamed work").unwrap();
+    harness.render().unwrap();
+
+    quit(&mut harness);
+    harness.assert_screen_contains("Unsaved Changes");
+    harness
+        .send_key(KeyCode::Char('s'), KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("Save as:");
+
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    assert!(!harness.should_quit());
+    harness.assert_screen_contains("Quit cancelled");
+    harness.assert_screen_not_contains("Close cancelled");
+}
+
+/// **The count agrees with its noun in the user's language** (issue #3399).
+/// Russian has three integer forms — 1 буфер, 2 буфера, 5 буферов — and a
+/// single "many" string read "2 буферов", wrong the way "1 files" is wrong in
+/// English.
+#[test]
+fn the_unsaved_count_takes_the_form_its_number_needs_in_russian() {
+    let _pin = pin();
+    let mut config = Config::default();
+    config.editor.hot_exit = false;
+    config.locale = Some("ru").into();
+    let (mut harness, _file) = dirty_buffer(config);
+    let dir = harness.project_dir().expect("project dir");
+    let second = dir.join("second.txt");
+    std::fs::write(&second, "second\n").unwrap();
+    harness.open_file(&second).unwrap();
+    harness.type_text("EDITED").unwrap();
+    harness.render().unwrap();
+
+    quit(&mut harness);
+    harness.assert_screen_contains("2 буфера имеют несохранённые изменения");
+    harness.assert_screen_not_contains("2 буферов");
+}
+
+/// **The quit prompt names what holds the quit, and why** (issue #3400):
+/// a count alone left the user to hunt through tabs — or other workspaces —
+/// for which buffers, and gave no hint that one of them had changed on disk
+/// and would not be written by Save and Quit.
+#[test]
+fn the_quit_prompt_lists_each_unsaved_buffer_with_its_reason() {
+    let _pin = pin();
+    let mut config = Config::default();
+    config.editor.hot_exit = false;
+    let (mut harness, _file) = dirty_buffer(config);
+    let dir = harness.project_dir().expect("project dir");
+
+    // A second file edited, then changed on disk behind the editor's back.
+    let other = dir.join("other.txt");
+    std::fs::write(&other, "other\n").unwrap();
+    harness.open_file(&other).unwrap();
+    harness.type_text("EDITED").unwrap();
+    std::fs::write(&other, "changed by someone else\n").unwrap();
+    let later = std::time::SystemTime::now() + std::time::Duration::from_secs(60);
+    std::fs::File::options()
+        .write(true)
+        .open(&other)
+        .unwrap()
+        .set_times(std::fs::FileTimes::new().set_modified(later))
+        .unwrap();
+    harness.render().unwrap();
+
+    quit(&mut harness);
+    harness.assert_screen_contains("2 buffers have unsaved changes.");
+    harness.assert_screen_contains("notes.txt — unsaved changes");
+    harness.assert_screen_contains("other.txt — changed on disk");
+}
+
+/// Past a handful, the list stops and says how many more there are; the
+/// count in the question stays exact.
+#[test]
+fn the_quit_prompt_trims_a_long_list() {
+    let _pin = pin();
+    let mut config = Config::default();
+    config.editor.hot_exit = false;
+    let mut harness =
+        EditorTestHarness::with_temp_project_and_config(WIDTH, HEIGHT, config).expect("harness");
+    let dir = harness.project_dir().expect("project dir");
+    for i in 1..=8 {
+        let file = dir.join(format!("f{i}.txt"));
+        std::fs::write(&file, "x\n").unwrap();
+        harness.open_file(&file).unwrap();
+        harness.type_text("EDITED").unwrap();
+    }
+    harness.render().unwrap();
+
+    quit(&mut harness);
+    harness.assert_screen_contains("8 buffers have unsaved changes.");
+    harness.assert_screen_contains("f1.txt — unsaved changes");
+    harness.assert_screen_contains("f6.txt — unsaved changes");
+    harness.assert_screen_not_contains("f7.txt — unsaved changes");
+    harness.assert_screen_contains("…and 2 more");
+}

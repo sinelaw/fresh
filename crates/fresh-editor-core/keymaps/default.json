@@ -1952,8 +1952,8 @@
       "when": "prompt"
     },
     {
-      "comment": "Universal Search overlay — toggle the 'Ignored & hidden files' scope (off by default). Mnemonic: 'h' for Hidden ('i' is taken by toggle_search_confirm_each).",
-      "key": "h",
+      "comment": "Universal Search overlay — toggle the 'Ignored & hidden files' scope (off by default). Mnemonic: 'i' for Ignored, the letter the toolbar underlines. The search/replace prompt's own Alt+I (toggle_search_confirm_each) is bound in `searchPrompt`, which is consulted before `prompt`, so the two never collide.",
+      "key": "i",
       "modifiers": ["alt"],
       "action": "live_grep_toggle_ignored",
       "args": {},

@@ -1211,6 +1211,9 @@ impl Editor {
         // until the user pressed one. Still ahead of the next key, which is
         // what `Editor::shell_dispatch`'s own drain of the same queue is for.
         self.apply_settled_shell_messages();
+
+        // Layout and scroll settle during a frame; plugins read them back.
+        self.mark_plugin_snapshot_dirty();
     }
 
     /// The Confirm-each option's live value when it is shown (replace
@@ -2193,6 +2196,7 @@ impl Editor {
                         label_width: 0,
                         read_only: false,
                         markdown: false,
+                        combo: false,
                         key: None,
                     }),
                     suffix: vec![
@@ -3565,7 +3569,13 @@ impl Editor {
         self.shell_frame_status_bar = status_bar_items.clone();
         let menu_keys = self.menu_shortcuts();
         let suggestions = self.suggestions_description();
-        let card = self.overlay_card_description(chrome_area);
+        // A fullscreen card is placed on the whole frame, the dock beside the
+        // chrome included.
+        let frame_area = match dock_area {
+            Some(dock) => chrome_area.union(dock),
+            None => chrome_area,
+        };
+        let card = self.overlay_card_description(chrome_area, frame_area);
         let popups = self.popup_descriptions(chrome_area);
         let theme_info = self.theme_info_description();
         // The grid's shape, for the tree to lay out. Cloned rather than
@@ -3890,13 +3900,23 @@ impl Editor {
     fn overlay_card_description(
         &self,
         chrome: ratatui::layout::Rect,
+        frame: ratatui::layout::Rect,
     ) -> Option<crate::view::shell::overlay_prompt::Card> {
         use crate::view::shell::overlay_prompt::Card;
         let prompt = self.active_window().prompt.as_ref()?;
         if !prompt.overlay {
             return None;
         }
-        let at = Self::centered_overlay_rect(chrome, 90, 90);
+        // A fullscreen card is centred on the whole frame, as the Settings
+        // dialog is, rather than on the chrome beside the dock.
+        let at = Self::centered_overlay_rect(
+            match prompt.fullscreen {
+                true => frame,
+                false => chrome,
+            },
+            90,
+            90,
+        );
         let toolbar = self.prompt_toolbar_interior();
         let default_title;
         let title_segs: &[fresh_core::api::StyledText] = if prompt.title.is_empty() {
@@ -6136,6 +6156,9 @@ impl Editor {
 
         let active_split = self.effective_active_split();
         let active_buf = self.active_buffer();
+        let primary_cursor_line = self
+            .active_window()
+            .primary_cursor_line(active_split, active_buf);
         let default_cursors = crate::model::cursor::Cursors::new();
         let is_read_only = self
             .active_window()
@@ -6186,6 +6209,7 @@ impl Editor {
                 let mut status_ctx = crate::view::ui::status_bar::StatusBarContext {
                     state,
                     cursors,
+                    primary_cursor_line,
                     status_message: &status_message,
                     plugin_status_message: &plugin_status_message,
                     lsp_status: &lsp_status,

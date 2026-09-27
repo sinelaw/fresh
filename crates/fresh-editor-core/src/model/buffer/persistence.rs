@@ -11,11 +11,12 @@
 //! both dirty flags. `TextBuffer::mark_content_modified` calls it and
 //! then bumps the top-level version counter.
 
-use crate::model::filesystem::FileSystem;
+use crate::model::filesystem::{ContentDigest, FileSystem};
 use crate::model::piece_tree::{BufferLocation, LeafData, PieceTree, PieceTreeNode, StringBuffer};
 use crate::model::piece_tree_diff::PieceTreeDiff;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::SystemTime;
 
 /// Filesystem + save-state for one `TextBuffer`.
 pub struct Persistence {
@@ -43,6 +44,28 @@ pub struct Persistence {
     /// reconstruction. Updated when loading from file or after
     /// saving.
     saved_file_size: Option<usize>,
+
+    /// An in-place save of the file this buffer reads its unloaded parts
+    /// from failed after it began overwriting it, so the file may be torn
+    /// and those parts' offsets no longer name the bytes the buffer loaded
+    /// (issue #3382). Refuses saves that would read them (see
+    /// `save::refuse_read_from_torn_file`) even when no recovery metadata
+    /// could be written to say so. A save that succeeds re-points the
+    /// buffer at what it wrote, and clears it.
+    source_torn: bool,
+
+    /// The file this buffer's last in-place save tore (`save::TornWrite`),
+    /// whatever file its unloaded parts are read from, and the mtime that
+    /// write left on it. The file's mtime moved, but by this buffer's own
+    /// write, not someone else's: while it still reads this, the file has
+    /// not changed on disk since. A save that succeeds clears it.
+    torn_write: Option<(PathBuf, SystemTime)>,
+
+    /// The digest of what the last save wrote, when this buffer had every
+    /// byte of it in hand (no Copy ops streamed from the old file) and it was
+    /// small enough to be compared. See
+    /// [`TextBuffer::saved_content`](super::TextBuffer::saved_content).
+    saved_content: Option<ContentDigest>,
 
     /// Bumped by every write to `saved_root` or `modified`.
     ///
@@ -78,6 +101,9 @@ impl Persistence {
             recovery_pending: false,
             saved_root,
             saved_file_size,
+            source_torn: false,
+            torn_write: None,
+            saved_content: None,
             save_state_version: 0,
             saved_diff_memo: std::sync::RwLock::new(None),
         }
@@ -158,6 +184,32 @@ impl Persistence {
 
     pub fn set_saved_file_size(&mut self, size: Option<usize>) {
         self.saved_file_size = size;
+    }
+
+    pub fn is_source_torn(&self) -> bool {
+        self.source_torn
+    }
+
+    pub fn set_source_torn(&mut self, torn: bool) {
+        self.source_torn = torn;
+    }
+
+    pub fn torn_write(&self) -> Option<(&Path, SystemTime)> {
+        self.torn_write
+            .as_ref()
+            .map(|(path, mtime)| (path.as_path(), *mtime))
+    }
+
+    pub fn set_torn_write(&mut self, torn_write: Option<(PathBuf, SystemTime)>) {
+        self.torn_write = torn_write;
+    }
+
+    pub fn saved_content(&self) -> Option<ContentDigest> {
+        self.saved_content
+    }
+
+    pub fn set_saved_content(&mut self, content: Option<ContentDigest>) {
+        self.saved_content = content;
     }
 
     // ---------- snapshot / diff operations ----------

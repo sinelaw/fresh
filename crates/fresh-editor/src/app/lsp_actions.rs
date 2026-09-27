@@ -1343,6 +1343,7 @@ impl Editor {
                             first_line.as_deref(),
                             &self.grammar_registry,
                             &self.config.languages,
+                            state.buffer.filesystem().as_ref(),
                         );
                     state.apply_language(detected);
                     state.apply_buffer_config(&self.config);
@@ -1390,6 +1391,79 @@ impl Editor {
             Err(e) => {
                 tracing::warn!("Failed to create plugin dev workspace: {}", e);
             }
+        }
+    }
+
+    /// The active buffer's file, if it is saved to local disk. "Load Plugin
+    /// from Buffer" loads such a file from disk, so its imports get bundled.
+    #[cfg(feature = "plugins")]
+    pub(crate) fn saved_plugin_file(&self) -> Option<std::path::PathBuf> {
+        let buffer = &self.active_state().buffer;
+        if buffer.is_modified() {
+            return None;
+        }
+        let path = buffer.file_path()?;
+        path.is_file().then(|| path.to_path_buf())
+    }
+
+    /// Load a plugin file from disk, or reload it if it is already running.
+    ///
+    /// "Already running" is matched by resolved path, so a package symlinked
+    /// into `plugins/packages/` reloads in place instead of being loaded a
+    /// second time (which fails with "command already registered").
+    #[cfg(feature = "plugins")]
+    pub(crate) fn reload_plugin_file(&mut self, path: &std::path::Path) {
+        let resolve =
+            |p: &std::path::Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+        let target = resolve(path);
+        let manager = self.plugin_manager.read().unwrap();
+        let running = manager
+            .list_plugins()
+            .into_iter()
+            .find(|p| resolve(&p.path) == target)
+            .map(|p| p.name);
+        let running_was_some = running.is_some();
+        let result = match &running {
+            Some(name) => manager.reload_plugin(name),
+            None => manager.load_plugin(path),
+        };
+        drop(manager);
+
+        let file = path
+            .file_name()
+            .map(|f| f.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        match result {
+            Ok(()) => {
+                let name = running.unwrap_or_else(|| {
+                    path.file_stem()
+                        .map(|s| s.to_string_lossy().into_owned())
+                        .unwrap_or_default()
+                });
+                let verb = if running_was_some {
+                    "reloaded"
+                } else {
+                    "loaded"
+                };
+                self.set_status_message(format!("Plugin '{name}' {verb} from {file}"));
+            }
+            Err(e) => {
+                self.set_status_message(format!("Failed to load plugin: {e}"));
+                tracing::error!("LoadPluginFromBuffer error: {}", e);
+            }
+        }
+
+        // A file next to a tsconfig.json gets type checking from that
+        // project. A lone file gets the scratch workspace.
+        let has_tsconfig = path
+            .parent()
+            .is_some_and(|dir| dir.join("tsconfig.json").is_file());
+        if !has_tsconfig {
+            let buffer_id = self.active_buffer();
+            let buffer = &self.active_state().buffer;
+            let content =
+                String::from_utf8_lossy(&buffer.slice_bytes(0..buffer.total_bytes())).to_string();
+            self.setup_plugin_dev_lsp(buffer_id, &content);
         }
     }
 }

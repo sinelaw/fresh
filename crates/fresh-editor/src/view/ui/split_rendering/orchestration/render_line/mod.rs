@@ -512,6 +512,10 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
     prefill_cell_theme_map(cell_theme_map, screen_width, render_area, gutter_width);
 
     let primary_cursor_position = selection.primary_cursor_position;
+    // The line relative line numbers count from: this split's own primary
+    // cursor, derived here rather than read from a per-buffer cache that
+    // another split or window could have left behind.
+    let cursor_line_number = state.line_of_position(primary_cursor_position);
 
     // Compute cursor line start byte — universal key for cursor line highlight
     // Or-floor rather than the exact start: on a line longer than the scan
@@ -525,9 +529,7 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
     // belongs to the same logical line as the cursor — even if a plugin
     // soft-break (compose-mode wrapping) put the sub-row's start mid-line.
     // Without this, the highlight only landed on the *first* visual sub-row
-    // of a soft-wrapped paragraph (issue #1790). Computed by direct byte scan
-    // so it doesn't depend on the cached `primary_cursor_line_number` being
-    // in sync with the cursor position.
+    // of a soft-wrapped paragraph (issue #1790). Computed by direct byte scan.
     let cursor_line_end_byte =
         indent_folding::line_end_byte_or_ceiling(&state.buffer, primary_cursor_position);
 
@@ -753,7 +755,7 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
                 line_indicators: &decorations.line_indicators,
                 fold_indicators: &decorations.fold_indicators,
                 cursor_line_start_byte,
-                cursor_line_number: state.primary_cursor_line_number.value(),
+                cursor_line_number,
                 relative_line_numbers,
                 show_line_numbers,
                 byte_offset_mode,
