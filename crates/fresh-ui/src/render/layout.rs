@@ -825,6 +825,70 @@ impl<M: 'static> Ui<M> {
         row
     }
 
+    /// The keyed children of a paged window's content and the bands the
+    /// last arrange gave them, with the window's extent — what
+    /// [`Anchor::page_key`](crate::behavior::Anchor::page_key) answers from.
+    ///
+    /// The content's children are the first level under the window at which
+    /// children carry keys: a window over a `col` of keyed cards records the
+    /// cards, however many unkeyed wrappers stand between.
+    fn bands_of(
+        &self,
+        vp_el: ElementId,
+        arranged_at: Point,
+    ) -> Option<crate::behavior::anchor::Bands> {
+        let r = self.render_for(vp_el)?;
+        let vp = self.render.get(r)?;
+        let axis = vp.data.scroll_axis;
+        let window = match axis {
+            crate::event::Axis::Vertical => vp.data.window.map_or(vp.data.size.h, |w| w.h),
+            crate::event::Axis::Horizontal => vp.data.window.map_or(vp.data.size.w, |w| w.w),
+        } as i32;
+        let inset = match axis {
+            crate::event::Axis::Vertical => 0,
+            crate::event::Axis::Horizontal => {
+                (vp.data.rect.w.saturating_sub(window as u16) / 2) as i32
+            }
+        };
+        // Down through the unkeyed wrappers to the first keyed run.
+        let mut at = vp_el;
+        let children = loop {
+            let el = self.arena.get(at)?;
+            if el
+                .children
+                .iter()
+                .any(|c| self.arena.get(*c).is_some_and(|e| e.key.is_some()))
+            {
+                break el.children.clone();
+            }
+            match el.children.as_slice() {
+                [only] => at = *only,
+                _ => return None,
+            }
+        };
+        let run = children
+            .iter()
+            .filter_map(|c| {
+                let key = self.arena.get(*c)?.key.clone()?;
+                let n = self.render_for(*c).and_then(|cr| self.render.get(cr))?;
+                Some(match axis {
+                    crate::event::Axis::Vertical => (
+                        key,
+                        n.data.rect.y - vp.data.rect.y + arranged_at.y,
+                        n.data.rect.h as i32,
+                    ),
+                    // Past the leading cap, as `keyed_band` reads it.
+                    crate::event::Axis::Horizontal => (
+                        key,
+                        n.data.rect.x - vp.data.rect.x - inset + arranged_at.x,
+                        n.data.rect.w as i32,
+                    ),
+                })
+            })
+            .collect::<Vec<_>>();
+        (!run.is_empty()).then_some(crate::behavior::anchor::Bands { window, run })
+    }
+
     /// Returns whether anything moved.
     fn apply_anchors(&mut self) -> bool {
         use crate::behavior::anchor::Command;
@@ -992,6 +1056,11 @@ impl<M: 'static> Ui<M> {
                     let mut told = Vec::new();
                     self.report_scroll(r, main(axis, next), &mut told);
                     self.pending_messages.extend(told);
+                }
+            }
+            if a.wants_bands() {
+                if let Some(b) = self.bands_of(id, arranged_at) {
+                    a.record_bands(b);
                 }
             }
         }

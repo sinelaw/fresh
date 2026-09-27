@@ -606,6 +606,40 @@ fn shown(ui: &Ui<()>) -> Vec<String> {
         .collect()
 }
 
+/// **A page of cards is a window's height of content, not a count of
+/// cards.** The cards start at rows 0, 1, 3, 6, 7 and 9 in a window four
+/// rows tall; only layout knows which card a page lands on.
+#[test]
+fn a_page_of_cards_is_the_window_the_layout_measured() {
+    let card = |i: i32| Key::Pair("card".into(), i as u64);
+    let anchor = fresh_ui::behavior::anchor::Anchor::paged();
+    assert_eq!(anchor.page_key(&card(0), 1), None, "not laid out");
+
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(cards(anchor.clone()), FRAME);
+    // Four rows down from card 0's top is row 4, inside card 2 (rows 3–5).
+    assert_eq!(anchor.page_key(&card(0), 1), Some(card(2)));
+    // From card 2 (row 3): row 7, where card 4 starts.
+    assert_eq!(anchor.page_key(&card(2), 1), Some(card(4)));
+    // Back up from card 4 (row 7): row 3, card 2.
+    assert_eq!(anchor.page_key(&card(4), -1), Some(card(2)));
+    // Clamped at both ends.
+    assert_eq!(anchor.page_key(&card(5), 1), Some(card(5)));
+    assert_eq!(anchor.page_key(&card(1), -1), Some(card(0)));
+    // A key that is not a card of this window has no page.
+    assert_eq!(anchor.page_key(&card(99), 1), None);
+
+    // A window that was not asked to record its cards answers nothing.
+    let plain = fresh_ui::behavior::anchor::Anchor::new();
+    let mut other: Ui<()> = Ui::new();
+    other.frame(cards(plain.clone()), FRAME);
+    assert_eq!(plain.page_key(&card(0), 1), None);
+
+    // And a window that is gone has no page.
+    ui.frame(text("gone"), FRAME);
+    assert_eq!(anchor.page_key(&card(0), 1), None);
+}
+
 #[test]
 fn a_window_is_moved_to_a_band_it_measured_itself() {
     // `reveal` takes a content row, which is only an item's position when
