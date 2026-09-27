@@ -511,16 +511,54 @@ interruptible diff.
   bottom: the gutter's other rows still show the same numbers at the same
   screen rows. Rows below keep their nodes and change only their offsets.
 
-**What the server pays.** The server's work per frame is proportional to what
-is on screen, not to what changed. `fresh-ui` rebuilds the display list every
-frame — the paint walk is O(visible items) — and the transport compares it
-item by item against what each client last received. At the few hundred
-items a frame holds (§2), that is small. The library's element-level dirty
-tracking could later let the transport skip subtrees that did not relayout or
-repaint, and retained-mode-ui.md already lists the per-frame clones and the
-memos that sit below the work as open; this design does not depend on either
-and does not claim incrementality on the server. The saving it does claim is
-on the wire and in every client, where cost follows the change.
+**Long lists.** Nothing in the protocol handles long lists, because
+`fresh-ui` already does. A list is `List::windowed(count, key, row)`: the
+application states how many rows there are, how to key row `i` and how to
+build it, and the library materialises only the rows its viewport shows,
+plus a small overscan, during layout. "Off-screen rows have no descriptions,
+no elements and no state"; the library never holds the collection. So:
+
+- **The retained tree holds the window, not the list.** A million-row list
+  costs the same to lay out and paint as a forty-row one. No code outside the
+  library brings rows into the tree or evicts them; the host answers "row
+  `i`?" and the window decides which `i`s are asked.
+- **A client receives only what paint emitted.** That is the visible rows
+  (overscan rows are mounted but clipped, and paint drops what its clip hides)
+  and the list's scrollbar item, whose `offset`, `content` and `window` are in
+  rows. A client never holds the whole list, and cannot scroll it natively
+  past the window: a wheel or a thumb drag is `Input`, the library moves the
+  window, and the rows that enter arrive as `add`s, the rows that leave as
+  `remove`s, and the rows that stay as `rect` patches. A row that scrolls out
+  loses its element, so one that comes back is a new element with a new id.
+- **Index keys are fine for scrolling and wrong for insertion.** While
+  scrolling, row `i` keeps key `i` and so keeps its element; it is an insertion
+  or a reorder that makes an index key name different content (above).
+
+**What the server pays.** Per frame, the library's work — reconcile, layout,
+paint — is proportional to what is on screen, independent of how long any
+list is. The transport adds a comparison of each client's last-sent items
+against the new list, which is proportional to the same thing. At the few
+hundred items a frame holds (§2), both are small. The library's element-level
+dirty tracking could later let the transport skip subtrees that neither
+relaid out nor repainted; this design does not depend on it and does not
+claim incrementality on the server. The saving it does claim is on the wire
+and in every client, where cost follows the change.
+
+**Where the editor still pays for the whole list.** The window is only as cheap
+as what feeds it. Some surfaces copy their entire collection into the frame
+every frame so the row builder can index it: the file browser clones every
+entry of the directory (`rows.to_vec()` in its description), and the prompt
+maps every suggestion into a `SuggestionRow` in `suggestions_description`. That
+is proportional to the list's length, per frame, whether or not anything
+changed — the "memos sit below the work" item retained-mode-ui.md already
+lists. The fix follows the library's own contract ("the application resolves
+it against its own storage"): hand the builder a shared handle to the
+editor's storage, or a memo keyed on the collection's version, instead of a
+fresh copy. One plugin-widget list also measures with
+`RowHeight::UniformMeasured`, which describes every item by design, because
+the tallest row is a question the visible ones cannot answer; lists that can
+use a declared row height should. Neither is a protocol concern, and neither
+is fixed by one.
 
 ### 4.9 Client application
 
@@ -804,7 +842,9 @@ client.
    autocomplete, popup items, Settings' categories and search results — with
    domain keys (command, path, setting), so an insertion or a reorder moves
    nodes instead of rewriting every row below it (§4.8, "What an insertion
-   costs").
+   costs"). In the same pass, hand each windowed list's row builder the
+   editor's storage instead of a per-frame copy of the whole collection (§4.8,
+   "Where the editor still pays for the whole list").
 10. **A Windows client.** WinUI 3, per §4.9: the chrome panel and pools, the
    Composition row visuals, brushes, the class table's Fluent look, the OS
    menu bar and file dialog, clipboard, IME, and UI Automation.
