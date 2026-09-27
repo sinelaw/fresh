@@ -3005,6 +3005,36 @@ fn kill_session_command(session: Option<&str>, args: &Args) -> AnyhowResult<()> 
     Ok(())
 }
 
+/// Point this process's stderr at `fresh-server-<PID>.log`.
+#[cfg(unix)]
+fn redirect_stderr_to_server_log() {
+    use std::os::fd::AsRawFd;
+    let path = fresh::services::log_dirs::server_log_path(std::process::id());
+    match std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
+        // SAFETY: `dup2` onto fd 2 only swaps what stderr refers to; `file`
+        // is open for the duration of the call.
+        Ok(file) => unsafe {
+            libc::dup2(file.as_raw_fd(), libc::STDERR_FILENO);
+        },
+        Err(e) => eprintln!("[server] cannot open log {}: {e}", path.display()),
+    }
+}
+
+/// Record, in the client's log, where a daemon it just spawned logs.
+fn log_spawned_daemon(pid: u32) {
+    #[cfg(unix)]
+    tracing::info!(
+        "Started daemon {pid}; its log is {}",
+        fresh::services::log_dirs::server_log_path(pid).display()
+    );
+    #[cfg(not(unix))]
+    tracing::info!("Started daemon {pid}");
+}
+
 /// Run as a daemon server
 /// Run the session daemon in this process.
 ///
@@ -3012,17 +3042,17 @@ fn kill_session_command(session: Option<&str>, args: &Args) -> AnyhowResult<()> 
 ///
 ///   - `fresh --server` — the detached process a `fresh -a` client spawns
 ///     when no daemon is live for the working directory. Chatty on stderr,
-///     which the spawner has already redirected into the session log.
+///     which it points at its own log file.
 ///   - `fresh --web [ADDR]` (`web_addr = Some`) — the same daemon in the
 ///     foreground, additionally serving the web UI. Same session, same
 ///     sockets: `fresh -a` in this working directory attaches a terminal to
 ///     the very editor the browser is looking at, and closing either one
 ///     leaves the session (and the other) running.
 ///
-/// `web_addr` also picks the console posture. The detached daemon logs at
-/// `debug` into its log file; a foreground `--web` would flood the user's
-/// terminal with it, so it logs at `warn` and skips the boot chatter.
-/// `RUST_LOG` still overrides either.
+/// `web_addr` also picks the console posture. The detached daemon logs at the
+/// editor's default level into `fresh-server-<PID>.log`; a foreground `--web`
+/// would flood the user's terminal with it, so it logs at `warn` and skips the
+/// boot chatter. `RUST_LOG` still overrides either.
 fn run_server_command(args: &Args, web_addr: Option<String>) -> AnyhowResult<()> {
     use fresh::server::{EditorServer, EditorServerConfig};
 
@@ -3036,11 +3066,22 @@ fn run_server_command(args: &Args, web_addr: Option<String>) -> AnyhowResult<()>
         };
     }
 
-    // Initialize tracing to stderr (will go to log file when spawned detached)
+    // A spawned daemon's stdio is /dev/null; give its stderr (tracing, the
+    // boot lines above, panics) a log file instead.
+    #[cfg(unix)]
+    if detached && !std::io::IsTerminal::is_terminal(&std::io::stderr()) {
+        redirect_stderr_to_server_log();
+    }
+
+    // Initialize tracing to stderr
     use tracing_subscriber::{fmt, EnvFilter};
-    let default_level = if detached { "debug" } else { "warn" };
+    let default_filter = if detached {
+        fresh::services::tracing_setup::DEFAULT_LOG_FILTER
+    } else {
+        "warn"
+    };
     let filter =
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default_level));
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default_filter));
     fmt()
         .with_env_filter(filter)
         .with_writer(std::io::stderr)
@@ -3339,13 +3380,14 @@ fn run_open_files_command(
 
     // Start server if not running (like nvr does by default)
     let server_was_started = if !socket_paths.is_server_alive() {
-        let _pid = spawn_server_detached(&fresh::server::DaemonSpawn {
+        let pid = spawn_server_detached(&fresh::server::DaemonSpawn {
             session_name,
             ssh_url: ssh_url.as_deref(),
             locale,
             config,
             ..Default::default()
         })?;
+        log_spawned_daemon(pid);
 
         // Wait for server to be ready
         loop {
@@ -5249,13 +5291,14 @@ fn run_attach(
         eprintln!("Starting daemon...");
 
         // Spawn server in background
-        let _pid = spawn_server_detached(&fresh::server::DaemonSpawn {
+        let pid = spawn_server_detached(&fresh::server::DaemonSpawn {
             session_name,
             ssh_url: ssh_url.as_deref(),
             locale,
             config,
             orchestrator_mode,
         })?;
+        log_spawned_daemon(pid);
         true
     } else {
         false
