@@ -23,10 +23,12 @@
 /// sees `&State`.
 pub mod anchor;
 pub mod misc;
+pub mod pager;
 pub mod tasks;
 
 pub use anchor::Anchor;
 pub use misc::{Cache, Controller, MemStore, Persisted, Store, Ticker, PERSISTENCE_SCOPE};
+pub use pager::Pager;
 pub use tasks::{TaskHandle, Tasks};
 
 pub trait Behavior {

@@ -690,6 +690,10 @@ pub struct Table {
     pub columns: [String; 5],
     pub rows: Vec<Row>,
     pub selected: usize,
+    /// The editor's page handle: the table records the window its layout
+    /// gave it here, and the editor's PageUp/PageDown ask it for the row a
+    /// page away.
+    pub pager: std::rc::Rc<fresh_ui::behavior::Pager>,
 }
 
 /// The five column widths for a table of this inner width.
@@ -708,13 +712,30 @@ pub fn columns(inner: u16) -> [u16; 5] {
     [key, action, desc, context, source]
 }
 
-/// How many rows of the table fit in a box of `box_h`.
-///
-/// The bands the painter split by hand: two border rows, three of header, one
-/// of footer, and two more for the table's own header and rule. Stated once so
-/// the page a `PgUp` moves by and the window the rows fill cannot disagree.
-pub fn table_rows(box_h: u16) -> u16 {
-    box_h.saturating_sub(2 + 3 + 1 + 2)
+thread_local! {
+    static TABLE_KEY: fresh_ui::Key = fresh_ui::Key::Str("keybinding_table".into());
+}
+
+/// Which rows of the table are on screen, `(first, count)`, read off the
+/// laid-out tree. **The viewport owns the window; this reads it.** The
+/// editor kept a second copy (`scroll`) that it moved by hand for the web
+/// scene and for the page size, sized from the box's rectangle. A table
+/// that fits has no bar and answers `(0, 0)`: all of it is on screen.
+pub fn table_window(spec: &fresh_ui::LayoutSpec) -> Option<(usize, usize)> {
+    let key = TABLE_KEY.with(|k| k.clone());
+    let range = spec.index.iter().find(|(k, _)| *k == key)?.1.clone();
+    spec.items[range]
+        .iter()
+        .find_map(|i| match &i.draw {
+            fresh_ui::Draw::Scrollbar {
+                offset,
+                content,
+                window,
+                ..
+            } => Some((*offset as usize, (*window as usize).min(*content as usize))),
+            _ => None,
+        })
+        .or(Some((0, 0)))
 }
 
 fn pad(s: &str, w: usize) -> String {
@@ -776,7 +797,8 @@ pub fn table(t: &Table) -> Node<UiMsg> {
             }
             _ => ink(),
         })
-        .on_select(|i| UiMsg::Ui(UiFact::KeybindingRow(i)));
+        .on_select(|i| UiMsg::Ui(UiFact::KeybindingRow(i)))
+        .pager(t.pager.clone());
         let list = match n {
             0 => list,
             _ => list.selected(t.selected.min(n - 1)),
@@ -784,7 +806,12 @@ pub fn table(t: &Table) -> Node<UiMsg> {
         col().children([
             header,
             rule.h(Sizing::Cells(1)),
-            fresh_ui::ComponentExt::node(list).flex(1),
+            // Keyed so the web scene can read the window off the laid-out
+            // tree ([`table_window`]) — the viewport owns it.
+            col()
+                .key(TABLE_KEY.with(|k| k.clone()))
+                .flex(1)
+                .children([fresh_ui::ComponentExt::node(list).flex(1)]),
         ])
     })
 }
@@ -1229,6 +1256,7 @@ mod tests {
 
     fn a_table(n: usize, selected: usize) -> Table {
         Table {
+            pager: fresh_ui::behavior::Pager::new(),
             columns: [
                 "Key".into(),
                 "Action".into(),
@@ -1287,15 +1315,6 @@ mod tests {
         assert_eq!(columns(40)[3], 14);
     }
 
-    /// The page a `PgUp` moves by is the box less the bands around the rows —
-    /// two borders, three of header, one of footer, and the table's own header
-    /// and rule.
-    #[test]
-    fn the_page_is_the_box_less_its_bands() {
-        assert_eq!(table_rows(20), 12);
-        assert_eq!(table_rows(8), 0);
-    }
-
     /// **A row knows its own index.** The arm behind this was
     /// `(row - table_first_row_y) + scroll.offset`, against two rectangles the
     /// painter recorded — the second of which existed only because the window
@@ -1346,6 +1365,32 @@ mod tests {
             "the selected row is in view at {}",
             selected.y
         );
+    }
+
+    /// **A page is the window the table was laid out with.** It was the
+    /// box's rectangle, read back after the frame, less the bands the
+    /// painter once split by hand — a second statement of what layout had
+    /// already decided. The table records its window in the editor's pager
+    /// and the page is that, whatever the box's chrome.
+    #[test]
+    fn a_page_is_the_window_the_table_was_given() {
+        let t = a_table(200, 0);
+        let pager = t.pager.clone();
+        assert_eq!(pager.target(0, 1, 200), None, "no layout, no page");
+        let ui = with_table(t, 160, 50);
+        let (first, rows) = table_window(ui.spec()).expect("the table is keyed");
+        assert_eq!(first, 0);
+        assert!(rows > 0, "fifty rows of box hold some of the table");
+        assert_eq!(pager.target(0, 1, 200), Some(rows));
+        assert_eq!(pager.target(199, 1, 200), Some(199));
+
+        // A shorter box is a shorter page.
+        let t = a_table(200, 0);
+        let pager = t.pager.clone();
+        let ui = with_table(t, 160, 30);
+        let (_, short) = table_window(ui.spec()).unwrap();
+        assert!(short < rows);
+        assert_eq!(pager.target(0, 1, 200), Some(short));
     }
 
     /// **The selected row wears a `>`, not only a highlight.** The painter

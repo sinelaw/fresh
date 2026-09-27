@@ -27,8 +27,11 @@ pub struct KeybindingEditor {
     /// rebuilds the rows. Read and written through [`Self::selected`] and
     /// [`Self::select`].
     selection: crate::view::keyed_selection::KeyedSelection<RowKey>,
-    /// Scroll state (offset, viewport, content_height) — shared with render
-    pub scroll: crate::view::ui::ScrollState,
+    /// The table's page handle. The window is the table viewport's own;
+    /// the table records how many rows it holds here, and PageUp/PageDown
+    /// ask it for the row a page away — the page is layout's number, not
+    /// a rectangle read back or a height written down beside it.
+    pub pager: std::rc::Rc<fresh_ui::behavior::Pager>,
 
     /// Whether search is active (search bar visible)
     pub search_active: bool,
@@ -176,7 +179,7 @@ impl KeybindingEditor {
             binding_ids,
             filtered_indices,
             selection: Default::default(),
-            scroll: crate::view::ui::ScrollState::default(),
+            pager: fresh_ui::behavior::Pager::new(),
             search_active: false,
             search_focused: false,
             search_query: String::new(),
@@ -632,7 +635,6 @@ impl KeybindingEditor {
         self.build_display_rows();
 
         self.reselect_after_rebuild();
-        self.ensure_visible();
     }
 
     /// Build display rows from filtered indices, inserting section headers
@@ -738,7 +740,6 @@ impl KeybindingEditor {
             }
             self.build_display_rows();
             self.reselect_after_rebuild();
-            self.ensure_visible();
         }
     }
 
@@ -763,7 +764,6 @@ impl KeybindingEditor {
         let at = self.selected();
         if at > 0 {
             self.select(at - 1);
-            self.ensure_visible();
         }
     }
 
@@ -772,32 +772,29 @@ impl KeybindingEditor {
         let at = self.selected();
         if at + 1 < self.display_rows.len() {
             self.select(at + 1);
-            self.ensure_visible();
         }
     }
 
-    /// Page up
+    /// Move the selection a page up. The table's viewport shows it.
     pub fn page_up(&mut self) {
-        let page = self.scroll.viewport as usize;
-        self.select(self.selected().saturating_sub(page));
-        self.ensure_visible();
+        self.page(-1);
     }
 
-    /// Page down
+    /// Move the selection a page down.
     pub fn page_down(&mut self) {
-        let page = self.scroll.viewport as usize;
-        self.select((self.selected() + page).min(self.display_rows.len().saturating_sub(1)));
-        self.ensure_visible();
+        self.page(1);
     }
 
-    /// Ensure the selected item is visible (public version)
-    pub fn ensure_visible_public(&mut self) {
-        self.ensure_visible();
-    }
-
-    /// Ensure the selected item is visible
-    fn ensure_visible(&mut self) {
-        self.scroll.ensure_visible(self.selected() as u16, 1);
+    /// Move the selection `pages` pages, by the window the table was last
+    /// laid out with. Before the table has been laid out there is no page,
+    /// and nothing moves.
+    fn page(&mut self, pages: i32) {
+        if let Some(to) = self
+            .pager
+            .target(self.selected(), pages, self.display_rows.len())
+        {
+            self.select(to);
+        }
     }
 
     /// Start text search (preserves existing query when re-focusing)

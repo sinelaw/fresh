@@ -1911,6 +1911,12 @@ impl Editor {
             BindingSource, ContextFilter, DisplayRow, SearchMode, SourceFilter,
         };
         let kb = self.keybinding_editor.as_ref()?;
+        // The table's window, read off the tree that holds it.
+        let window = self
+            .shell_ui
+            .as_ref()
+            .and_then(|ui| crate::view::shell::keybinding::table_window(ui.spec()))
+            .unwrap_or((0, 0));
 
         let rows = kb
             .display_rows
@@ -2011,8 +2017,8 @@ impl Editor {
             has_changes: kb.has_changes,
             rows,
             selected: kb.selected(),
-            scroll_offset: kb.scroll.offset,
-            viewport: kb.scroll.viewport,
+            scroll_offset: window.0 as u16,
+            viewport: window.1 as u16,
             showing_help: kb.showing_help,
             edit_dialog,
             confirm,
