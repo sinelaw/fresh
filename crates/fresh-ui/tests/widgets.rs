@@ -1720,6 +1720,40 @@ fn a_reveal_in_a_pinned_list_counts_only_the_run() {
     assert_eq!(ui.take_messages(), vec![Msg::Scrolled(11)]);
 }
 
+/// **Pins asked at layout.** Rows 0, 10, 20… head their groups of ten; the
+/// row heading the first row of the run is pinned above it. The window asks
+/// which at whatever offset it lands on — the owner is never told the offset
+/// and asked again — and its ceiling is the offset whose run, under that
+/// offset's own pin, reaches the last row.
+#[test]
+fn pins_that_depend_on_the_offset_are_asked_at_layout() {
+    let list = || -> Node<Msg> {
+        List::windowed(100, fresh_ui::Key::from, |i| fresh_ui::text(format!("row {i:02}")))
+            .focusable(false)
+            .pinned_at(|first| match first % 10 {
+                0 => Rc::from(Vec::new()),
+                _ => Rc::from(vec![first / 10 * 10]),
+            })
+            .node()
+    };
+    let mut ui: Ui<Msg> = Ui::new();
+    let screen = support::screen::render(ui.frame(list(), FRAME)).text();
+    assert!(screen.starts_with("row 00"), "{screen}");
+
+    // All the way down: the last row is on screen, under its group's head.
+    ui.dispatch(Input::Wheel {
+        pos: Point::new(1, 1),
+        delta: 200,
+        axis: Axis::Vertical,
+        mods: Mods::NONE,
+    });
+    let screen = support::screen::render(ui.frame(list(), FRAME)).text();
+    let rows: Vec<&str> = screen.lines().map(str::trim_end).filter(|l| !l.is_empty()).collect();
+    assert_eq!(rows.first(), Some(&"row 90"), "{screen}");
+    assert_eq!(rows.last(), Some(&"row 99"), "{screen}");
+    assert_eq!(rows.len(), FRAME.h as usize, "{screen}");
+}
+
 /// **A following list keeps its selection in view on every layout** — not
 /// only on the build that moved it. The window here shrinks a frame after the
 /// selection arrived (a box resized by its owner a beat later), which a

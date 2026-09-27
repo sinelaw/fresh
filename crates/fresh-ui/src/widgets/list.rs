@@ -307,6 +307,10 @@ pub struct List<M> {
     scroll: Option<usize>,
     on_scroll: Option<Rc<dyn Fn(usize) -> M>>,
     pinned: Rc<[usize]>,
+    /// The pinned rows as a function of the window's first row, evaluated at
+    /// layout. See [`List::pinned_at`].
+    #[allow(clippy::type_complexity)]
+    pinned_at: Option<Rc<dyn Fn(usize) -> Rc<[usize]>>>,
     on_activate: Option<ActivateHandler<M>>,
     activate_on: Activate,
     focusable: bool,
@@ -439,6 +443,7 @@ impl<M: 'static> List<M> {
             scroll: None,
             on_scroll: None,
             pinned: Rc::from(Vec::new()),
+            pinned_at: None,
             on_activate: None,
             activate_on: Activate::default(),
             focusable: true,
@@ -543,6 +548,17 @@ impl<M: 'static> List<M> {
     /// hovering it tints it.
     pub fn pinned(mut self, indices: &[usize]) -> Self {
         self.pinned = Rc::from(indices);
+        self
+    }
+
+    /// The pinned rows as a function of the row the window starts on —
+    /// asked by the window at layout, where the offset is known, rather than
+    /// named by the owner after it is told where the window went. A tree's
+    /// sticky ancestors are this: the expanded ancestors of the first row of
+    /// the run. Replaces [`List::pinned`]. See
+    /// [`Node::pinned_at`](crate::Node::pinned_at).
+    pub fn pinned_at(mut self, f: impl Fn(usize) -> Rc<[usize]> + 'static) -> Self {
+        self.pinned_at = Some(Rc::new(f));
         self
     }
 
@@ -822,6 +838,7 @@ impl<M: 'static> Component<M> for List<M> {
         let measured = self.row_height == RowHeight::UniformMeasured;
         let declared = self.row_height.declared();
         let pinned = self.pinned.clone();
+        let pinned_at = self.pinned_at.clone();
         let pager = match &s.pager {
             Some(slot) => slot.bind(self.pager.clone()),
             None => self.pager.clone().unwrap_or_default(),
@@ -846,6 +863,12 @@ impl<M: 'static> Component<M> for List<M> {
             }
             let first = (win.y.max(0) as usize).min(n);
             let last = (first + visible + OVERSCAN).min(n);
+            // The pins of this window: asked of the owner's function at the
+            // offset the window is at, or the fixed list.
+            let pinned: Rc<[usize]> = match &pinned_at {
+                Some(f) => f(first),
+                None => pinned.clone(),
+            };
             let pins = (info.pinned as usize).min(pinned.len());
             // The window is known here and nowhere earlier: a source with
             // per-window work does it now, over the rows about to be built.
@@ -937,7 +960,14 @@ impl<M: 'static> Component<M> for List<M> {
         if let Some(f) = self.on_scroll.clone() {
             body = body.on_scroll(move |y| f(y as usize));
         }
-        if !self.pinned.is_empty() {
+        if let Some(f) = self.pinned_at.clone() {
+            body = body.pinned_at(move |y| {
+                f(y as usize)
+                    .iter()
+                    .map(|&i| u32::try_from(i).unwrap_or(u32::MAX))
+                    .collect()
+            });
+        } else if !self.pinned.is_empty() {
             let pins: Vec<u32> = self
                 .pinned
                 .iter()
