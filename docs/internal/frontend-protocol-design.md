@@ -469,6 +469,59 @@ interruptible diff.
 - **Geometry needs no measuring.** Every position is a cell rectangle and the
   client knows its cell size, so applying a frame never reads layout back.
 
+**What an insertion costs.** Take a node inserted in the middle of a list:
+
+- **Identity survives the insert when siblings are keyed.** `fresh-ui`'s
+  reconciler looks a keyed description's key up anywhere in the old child
+  list, so every keyed sibling keeps its element, and so its protocol id. The
+  insert is one `add {id, before}`: one `insertBefore` in a DOM, one
+  `Children.Insert` in WinUI. Nothing else is renumbered, because order is
+  stated relative to the next item rather than as an index.
+- **Siblings pay for moving, not for rebuilding.** Items below the insertion
+  point move, so each gets a `rect` patch: a few bytes on the wire and one
+  transform write on the client, with no reflow. A viewport materialises only
+  its window, so this is bounded by the visible rows (tens, not the list's
+  length), and the row pushed out of the window is a `remove`.
+- **Position keys defeat this, and most shell lists use them today.** Rows
+  keyed by index — the prompt's suggestions, the file browser, the keybinding
+  table and its autocomplete, popup items, Settings' categories and search
+  results — are matched by position. Inserting at row 5 gives the element at 5
+  the new row's content, the element at 6 the old 5's, and so on: the wire
+  carries a content patch for every visible row below the insertion plus one
+  `add` at the end, and the client rebuilds those rows' text instead of moving
+  nodes. Still bounded by the window and correct, but not minimal. The fix is
+  in the tree, not the protocol: key rows by what they are — the command, the
+  path, the setting — as the library asks ("keys are supplied by the caller
+  and never inferred"). Plugin widget lists already key by the plugin's own
+  keys, falling back to the index only where one is missing. The terminal
+  gains too: per-row element state, such as hover, stays with its row.
+- **Moves are minimised once, on the server.** When surviving items change
+  order, the server finds the longest run of them still in their old relative
+  order and emits `move` only for the rest (a longest-increasing-subsequence
+  over their old positions). A plain insertion finds no moves; a reorder moves
+  as few nodes as possible. This is the one place keyed-list move minimisation
+  runs, and no client repeats it.
+- **Ordinals are local to one element.** An item's id is its element plus its
+  ordinal among that element's draws. When one element's draws change — a
+  text run gains a differently styled piece in the middle — the pieces after
+  it within that element shift ordinals and arrive as patches. The effect
+  stops at the element's boundary.
+- **Pane rows behave the same way.** Inserting a buffer line is one new text
+  row, the new row order (a few dozen short ids), and one new gutter row at the
+  bottom: the gutter's other rows still show the same numbers at the same
+  screen rows. Rows below keep their nodes and change only their offsets.
+
+**What the server pays.** The server's work per frame is proportional to what
+is on screen, not to what changed. `fresh-ui` rebuilds the display list every
+frame — the paint walk is O(visible items) — and the transport compares it
+item by item against what each client last received. At the few hundred
+items a frame holds (§2), that is small. The library's element-level dirty
+tracking could later let the transport skip subtrees that did not relayout or
+repaint, and retained-mode-ui.md already lists the per-frame clones and the
+memos that sit below the work as open; this design does not depend on either
+and does not claim incrementality on the server. The saving it does claim is
+on the wire and in every client, where cost follows the change.
+
 ### 4.9 Client application
 
 **Common to every client:**
@@ -708,8 +761,9 @@ of its recommendations:
 
 ## 8. Order of work
 
-Each step ships on its own and keeps parity. Steps 1–5 are the web's and pay
-for themselves there; steps 6–9 add the native client.
+Each step ships on its own and keeps parity. Steps 1–5 and 8–9 pay for
+themselves on the web and the terminal; steps 6, 7 and 10 add the native
+client.
 
 1. **Row-keyed pane diffs and the row applier.** The bridge assigns row ids
    by content (text and gutter separately), and the page applies rows as §4.9
@@ -745,7 +799,13 @@ for themselves there; steps 6–9 add the native client.
    the Settings tree stops following the body's scroll through a cached
    `top_item`. No client needs this; it is retained-mode-ui.md's rule, and it
    fixes the sweep's inconsistencies for the terminal too.
-9. **A Windows client.** WinUI 3, per §4.9: the chrome panel and pools, the
+9. **Rows keyed by what they are.** Replace the index keys on the shell's
+   lists — prompt suggestions, the file browser, the keybinding table and its
+   autocomplete, popup items, Settings' categories and search results — with
+   domain keys (command, path, setting), so an insertion or a reorder moves
+   nodes instead of rewriting every row below it (§4.8, "What an insertion
+   costs").
+10. **A Windows client.** WinUI 3, per §4.9: the chrome panel and pools, the
    Composition row visuals, brushes, the class table's Fluent look, the OS
    menu bar and file dialog, clipboard, IME, and UI Automation.
 
