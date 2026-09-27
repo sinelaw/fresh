@@ -1,36 +1,30 @@
 # Setting Up a Plugin Project
 
-This page sets up a plugin project with full TypeScript support: autocomplete,
-hover docs and type errors for the whole `editor` API, plus a way to reload
-your changes without restarting Fresh. Setup takes about five minutes. You need
-Fresh and Node.js (for `npm`).
+This page sets up a plugin project with TypeScript types, autocomplete, and
+reload without restarting Fresh.
 
-## 1. Scaffold the package
+You need Fresh and Node.js.
+
+## 1. Create the plugin
 
 ```bash
-fresh --cmd init plugin          # asks for a name, description and author
+fresh --cmd init plugin
 cd my-plugin
 ```
 
-Fresh names a plugin after its entry file, so `plugin.ts` is loaded as a plugin
-called `plugin`. Give yours a distinctive name, and update `"entry"` in
-`package.json` to match:
+Rename the entry file. The plugin's name is its file name, so every
+`plugin.ts` would be called `plugin`.
 
 ```bash
 mv plugin.ts my_plugin.ts
 sed -i 's/"plugin.ts"/"my_plugin.ts"/' package.json   # macOS: sed -i ''
 ```
 
-## 2. Link the type definitions
+## 2. Link the types
 
-Fresh writes its API declarations to `~/.config/fresh/types/` every time it
-starts, so they always match the Fresh version you have installed:
+Start Fresh once. It writes the API types to `~/.config/fresh/types/`.
 
-- `fresh.d.ts` is the full plugin API.
-- `plugins.d.ts` holds the APIs other plugins publish, so
-  `editor.getPluginApi("dashboard")` is typed.
-
-Start Fresh once so these files exist, then link the folder into your project:
+Then link that folder into your project:
 
 ```bash
 ln -s "$(dirname "$(fresh --cmd script types | head -n1)")" types
@@ -56,115 +50,106 @@ ln -s "$(dirname "$(fresh --cmd script types | head -n1)")" types
 }
 ```
 
-Plugins run in QuickJS, not Node or a browser, so there is no DOM and there
-are no Node types. `allowImportingTsExtensions` lets you write
-`import { x } from "./lib/x.ts"`, which is the style the bundled plugins use.
-
-## 4. Install TypeScript and check the plugin
+## 4. Install TypeScript
 
 ```bash
 npm install --save-dev typescript@6
 printf 'node_modules/\ntypes\n' > .gitignore
+```
+
+Use version 6. Version 7 doesn't work with the language server in step 7.
+
+Check your code:
+
+```bash
 npx tsc -p .
 ```
 
-Use TypeScript 6. TypeScript 7 doesn't ship `tsserver`, which the
-TypeScript language server needs for in-editor checking (step 7). Adding
-`devDependencies` to `package.json` is fine, because the Fresh manifest schema
-allows it.
-
-`npx tsc -p .` should print nothing. Try a typo to see it working:
+No output means no errors. A mistake looks like this:
 
 ```
 my_plugin.ts(18,8): error TS2551: Property 'setStatuss' does not exist on type 'EditorAPI'. Did you mean 'setStatus'?
 ```
 
-## 5. Load it into Fresh
-
-Fresh loads every folder under `~/.config/fresh/plugins/packages/`, so symlink
-your project there:
+## 5. Load the plugin in Fresh
 
 ```bash
 mkdir -p ~/.config/fresh/plugins/packages
 ln -s "$PWD" ~/.config/fresh/plugins/packages/my-plugin
 ```
 
-Restart Fresh, and your commands appear in the command palette (`Ctrl+P`).
-The scaffold registers one called `hello`. Run `fresh --cmd config paths` if
-your config directory isn't `~/.config/fresh`.
+Restart Fresh. Press `Ctrl+P` and run `hello`, the command the template adds.
+
+If your config folder isn't `~/.config/fresh`, run `fresh --cmd config paths`
+to find it.
 
 ## 6. Reload without restarting
 
-Add a reload command to your `init.ts`. To open the file, run
-**init: Edit init.ts** from the command palette. Then run
-**init: Reload init.ts** to apply it.
+1. Run **init: Edit init.ts** from the command palette.
+2. Paste this:
 
-```ts
-const editor = getEditor();
+   ```ts
+   const editor = getEditor();
 
-const DEV_PLUGIN = "my_plugin"; // entry file name without .ts
-const DEV_ENTRY = editor.pathJoin(
-  editor.getConfigDir(), "plugins", "packages", "my-plugin", "my_plugin.ts",
-);
+   const DEV_PLUGIN = "my_plugin"; // entry file name without .ts
+   const DEV_ENTRY = editor.pathJoin(
+     editor.getConfigDir(), "plugins", "packages", "my-plugin", "my_plugin.ts",
+   );
 
-registerHandler("dev_reload_plugin", async () => {
-  try {
-    await editor.reloadPlugin(DEV_PLUGIN);
-  } catch {
-    // The last load failed, so the plugin is no longer registered.
-    try {
-      await editor.loadPlugin(DEV_ENTRY);
-    } catch (e) {
-      editor.setStatus(`Reload failed: ${e}`);
-      return;
-    }
-  }
-  editor.setStatus(`Reloaded ${DEV_PLUGIN}`);
-});
-editor.registerCommand("Dev: Reload Plugin", "Reload the plugin under development", "dev_reload_plugin");
-```
+   registerHandler("dev_reload_plugin", async () => {
+     try {
+       await editor.reloadPlugin(DEV_PLUGIN);
+     } catch {
+       // A failed load removes the plugin, so load it again from the file.
+       try {
+         await editor.loadPlugin(DEV_ENTRY);
+       } catch (e) {
+         editor.setStatus(`Reload failed: ${e}`);
+         return;
+       }
+     }
+     editor.setStatus(`Reloaded ${DEV_PLUGIN}`);
+   });
+   editor.registerCommand("Dev: Reload Plugin", "Reload the plugin under development", "dev_reload_plugin");
+   ```
 
-Your loop is now: edit, save, **Dev: Reload Plugin**, try it. The reload
-removes the old copy's commands, handlers and event subscriptions first, picks
-up changes in imported files too, and shows load errors in the status bar.
+3. Save, then run **init: Reload init.ts**.
+
+Now your loop is: edit, save, run **Dev: Reload Plugin**, test. Errors show in
+the status bar.
 
 ## 7. Type checking inside Fresh (optional)
 
-Any editor that understands `tsconfig.json` works, VS Code included. To get
-the same checks inside Fresh:
+VS Code and other editors pick up `tsconfig.json` on their own. For Fresh:
 
-```bash
-npm install -g typescript-language-server
-```
+1. Install the language server:
 
-Then, in Fresh:
-
-1. **Trust the folder.** Because the project has a `package.json`, Fresh opens
-   it as *Restricted*, which blocks language servers. Run **Workspace Trust…**
-   from the palette, press `T`, then OK.
-2. **Start the server.** Open your entry file and run
-   **Start/Restart LSP Server**. The TypeScript server doesn't start on its
-   own. To start it every time, add this to `config.json`:
-
-   ```json
-   { "lsp": { "typescript": { "auto_start": true } } }
+   ```bash
+   npm install -g typescript-language-server
    ```
 
-You then get diagnostics, hover docs, and completion with `Ctrl+Space`.
+2. Run **Workspace Trust…**, press `T`, then OK. Folders with a
+   `package.json` start as Restricted, and Restricted blocks language servers.
+3. Open your plugin file and run **Start/Restart LSP Server**.
 
-## Things that will bite you
+To start the server automatically, add this to `config.json`:
 
-- **Every top-level `.ts` and `.js` file in the package folder is loaded as its own plugin.**
-  Put helper modules in a subfolder such as `lib/`, and keep tool config files
-  like `eslint.config.js` out of the root.
-- **Load Plugin from Buffer** is only for single-file experiments. It doesn't
-  resolve `import`s, and it fails with "already registered" if the same plugin
-  is also installed.
-- **Keep exported API types self-contained.** If you publish an API with
-  `exportPluginApi`, define the types it uses in the entry file.
-  `plugins.d.ts` copies your declarations, but relative imports inside it
-  don't resolve, so an imported type turns into `any` for anyone consuming
-  your API:
+```json
+{ "lsp": { "typescript": { "auto_start": true } } }
+```
+
+Press `Ctrl+Space` for completion.
+
+## Common problems
+
+- **A file gets loaded as a plugin by mistake.** Fresh loads every `.ts` and
+  `.js` file at the top of the plugin folder as a plugin. Put helper files in
+  `lib/`.
+- **Imports don't work.** **Load Plugin from Buffer** doesn't support
+  imports. Use step 6 instead.
+- **Your API type is `any` in other plugins.** If you share an API with
+  `exportPluginApi`, define its types in the entry file, not in an imported
+  file:
 
   ```ts
   export type MyPluginApi = { count(text: string): { words: number } };
@@ -174,16 +159,16 @@ You then get diagnostics, hover docs, and completion with `Ctrl+Space`.
   editor.exportPluginApi("my-plugin", { count } satisfies MyPluginApi);
   ```
 
-- **Finding output:** `editor.setStatus()` messages are also appended to
-  `status-<pid>.log`, and `editor.debug()` output goes to `fresh-<pid>.log`.
-  Both are in the Logs directory that `fresh --cmd config paths` prints.
+- **You can't find your log output.** `setStatus` messages go to
+  `status-<pid>.log` and `editor.debug` output goes to `fresh-<pid>.log`.
+  Both are in the Logs folder that `fresh --cmd config paths` prints.
 
-## More help from the CLI
+## More help
 
 ```bash
-fresh --cmd script api <query>   # search the API, e.g. "getBufferText"
-fresh --cmd help plugin          # runtime rules: async, handlers, timers, panels
+fresh --cmd script api <query>   # search the API, e.g. getBufferText
+fresh --cmd help plugin          # rules of the plugin runtime
 ```
 
-Next: [Plugin Development](./index.md) · [Common Patterns](./patterns.md) ·
+See also: [Plugin Development](./index.md) · [Common Patterns](./patterns.md) ·
 [API Reference](../api/)
