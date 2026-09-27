@@ -2307,7 +2307,7 @@ fn init_package_command(package_type: Option<String>) -> AnyhowResult<()> {
     println!("\nPackage '{}' created successfully!", name);
     if pkg_type == "plugin" {
         println!();
-        for line in set_up_plugin_dev(&pkg_dir, &name) {
+        for line in set_up_plugin_dev(&pkg_dir) {
             println!("  {line}");
         }
     }
@@ -2316,9 +2316,10 @@ fn init_package_command(package_type: Option<String>) -> AnyhowResult<()> {
     match pkg_type {
         "plugin" => {
             println!("  2. fresh {name}.ts");
-            println!("  3. Ctrl+P, run \"{name}: Say Hello\"");
-            println!("  4. Edit, save, then Ctrl+P, run \"Load Plugin from Buffer\" to reload");
-            println!("  5. Type-check from the shell: npx tsc -p .");
+            println!("  3. Ctrl+P, run \"Load Plugin from Buffer\"");
+            println!("  4. Ctrl+P, run \"{name}: Say Hello\"");
+            println!("  5. Edit, save, and run \"Load Plugin from Buffer\" again to reload");
+            println!("  6. Type-check from the shell: npx tsc -p .");
             println!("\nGuide: https://getfresh.dev/docs/plugins/development/setup");
         }
         "theme" => {
@@ -2577,9 +2578,10 @@ fn add_typescript_dev_dependency(dir: &Path) -> AnyhowResult<()> {
 }
 
 /// Make a new plugin package ready to develop: link the API types, install
-/// TypeScript, load it in Fresh and trust its folder. Each step is
-/// best-effort; returns one line per step for the summary.
-fn set_up_plugin_dev(dir: &Path, name: &str) -> Vec<String> {
+/// TypeScript and trust its folder. It is not installed: the author loads it
+/// with "Load Plugin from Buffer". Each step is best-effort; returns one line
+/// per step for the summary.
+fn set_up_plugin_dev(dir: &Path) -> Vec<String> {
     let mut report = Vec::new();
     let abs_dir = std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
     let dir_context = match fresh::config_io::DirectoryContext::from_system() {
@@ -2623,21 +2625,6 @@ fn set_up_plugin_dev(dir: &Path, name: &str) -> Vec<String> {
                 .to_string(),
         );
     }
-
-    // Load it in Fresh: every folder under plugins/packages/ is a package.
-    let packages_dir = config_dir.join("plugins").join("packages");
-    let link = packages_dir.join(name);
-    report.push(if link.symlink_metadata().is_ok() {
-        format!("✗ Not linked into Fresh: {} already exists", link.display())
-    } else {
-        match std::fs::create_dir_all(&packages_dir).and_then(|()| link_dir(&abs_dir, &link)) {
-            Ok(()) => format!(
-                "✓ Loaded in Fresh: {} (delete it to unload)",
-                link.display()
-            ),
-            Err(e) => format!("✗ Could not link into {}: {e}", packages_dir.display()),
-        }
-    });
 
     // Trust the folder so the TypeScript language server may run. It holds
     // only what this command just wrote.

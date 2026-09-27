@@ -13,21 +13,26 @@ Enter a name, such as `my-plugin`. The command then:
 - creates the `my-plugin/` folder with `my-plugin.ts`, `package.json`, and `tsconfig.json`
 - links Fresh's API types into `my-plugin/types/`
 - installs TypeScript with `npm install`
-- loads the plugin in Fresh
 - trusts the folder, so the TypeScript language server can run
+
+It does not install the plugin. The plugin runs only when you load it.
 
 It prints one line per step. A line starting with `✗` or `!` tells you what
 to do.
 
-## 2. Open it
+## 2. Load it
 
 ```bash
 cd my-plugin
 fresh my-plugin.ts
 ```
 
-Press `Ctrl+P` and run **my-plugin: Say Hello**. The status bar shows
-`Hello from my-plugin!`.
+1. Press `Ctrl+P` and run **Load Plugin from Buffer**. The status bar shows
+   `Plugin 'my-plugin' loaded from my-plugin.ts`.
+2. Press `Ctrl+P` and run **my-plugin: Say Hello**. The status bar shows
+   `Hello from my-plugin!`.
+
+Fresh forgets the plugin when it quits. Load it again after each restart.
 
 ## 3. Edit and reload
 
@@ -36,7 +41,7 @@ Press `Ctrl+P` and run **my-plugin: Say Hello**. The status bar shows
 3. Press `Ctrl+P` and run **Load Plugin from Buffer**.
 
 The status bar shows `Plugin 'my-plugin' reloaded from my-plugin.ts`, or the
-error if loading failed. You don't need to restart Fresh.
+error if loading failed.
 
 ## 4. Check types
 
@@ -55,34 +60,88 @@ npx tsc -p .
 
 No output means no errors.
 
+## 5. Use another plugin's API
+
+Plugins can share an API with `exportPluginApi`. Get one with
+`editor.getPluginApi`. It's fully typed. This example adds a section to the
+built-in dashboard:
+
+```ts
+registerHandler("my_plugin_dashboard", () => {
+  const dash = editor.getPluginApi("dashboard"); // type: DashboardApi | null
+  if (!dash) {
+    editor.setStatus("dashboard is not loaded");
+    return;
+  }
+  dash.removeSection("my-plugin"); // don't add it twice
+  dash.registerSection("my-plugin", async (ctx) => {
+    ctx.kv("buffers", String(editor.listBuffers().length), "number");
+  });
+  editor.setStatus("Added a section. Run Show Dashboard to see it.");
+});
+editor.registerCommand("my-plugin: Add Dashboard Section", "Add a section to the dashboard", "my_plugin_dashboard");
+```
+
+Load the plugin, run **my-plugin: Add Dashboard Section**, then run
+**Show Dashboard**. Your section shows the number of open buffers.
+
+- Call `getPluginApi` inside your handler, not at the top of the file. The
+  other plugin may not be loaded yet when your file runs.
+- It returns `null` if that plugin isn't loaded. Check before using it.
+- The types come from `types/plugins.d.ts`. Fresh rewrites it on every start
+  with the APIs of all installed plugins. Search it for `FreshPluginRegistry`
+  to see which APIs exist.
+- After you install a new plugin, restart Fresh to get its types.
+
+## 6. Share your plugin's API
+
+Define the API type in your entry file, register it in
+`FreshPluginRegistry`, and export it:
+
+```ts
+export type MyPluginApi = {
+  countWords(text: string): number;
+};
+declare global {
+  interface FreshPluginRegistry {
+    "my-plugin": MyPluginApi;
+  }
+}
+editor.exportPluginApi("my-plugin", {
+  countWords: (text) => text.split(/\s+/).filter(Boolean).length,
+} satisfies MyPluginApi);
+```
+
+Other plugins get the typed API once your plugin is installed (see below)
+and Fresh has restarted.
+
+Define the types in the entry file itself. Types imported from another file
+become `any` for other plugins.
+
 ## What the command changes outside the folder
 
-- `~/.config/fresh/plugins/packages/my-plugin` is a link to your folder.
-  Delete it to stop loading the plugin.
-- The folder is marked as trusted. Change this with **Workspace Trust…**.
+The folder is marked as trusted. Change this with **Workspace Trust…**.
 
-Run `fresh --cmd config paths` to see where your config folder is.
+## Load it every time Fresh starts
+
+When you're ready to use the plugin every day, link it into your plugins
+folder:
+
+```bash
+ln -s "$PWD" ~/.config/fresh/plugins/packages/my-plugin
+```
+
+Delete the link to stop loading it. Run `fresh --cmd config paths` if your
+config folder isn't `~/.config/fresh`.
 
 ## Common problems
 
-- **A file gets loaded as a plugin by mistake.** Fresh loads every `.ts` and
-  `.js` file at the top of the plugin folder as a plugin. Put helper files in
-  `lib/` and import them:
+- **Keep helper files in `lib/`.** Once the plugin is installed, Fresh loads
+  every `.ts` and `.js` file at the top of its folder as a separate plugin.
+  Import helpers from `lib/` instead:
 
   ```ts
   import { countWords } from "./lib/count.ts";
-  ```
-
-- **Your API type is `any` in other plugins.** If you share an API with
-  `exportPluginApi`, define its types in the entry file, not in an imported
-  file:
-
-  ```ts
-  export type MyPluginApi = { count(text: string): { words: number } };
-  declare global {
-    interface FreshPluginRegistry { "my-plugin": MyPluginApi }
-  }
-  editor.exportPluginApi("my-plugin", { count } satisfies MyPluginApi);
   ```
 
 - **You can't find your log output.** `editor.setStatus` messages go to
