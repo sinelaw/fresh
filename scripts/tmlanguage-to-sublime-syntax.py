@@ -1,17 +1,16 @@
 #!/usr/bin/env python3
 """Convert a TextMate grammar (.tmLanguage plist) to a .sublime-syntax file.
 
-Regenerates the vendored JavaScript/TypeScript grammars in
+Regenerates the vendored TypeScript grammars in
 crates/fresh-editor-core/src/grammars/ from microsoft/TypeScript-TmLanguage.
 syntect only loads .sublime-syntax, and upstream ships TextMate plists.
 
 Usage:
     tmlanguage-to-sublime-syntax.py <TypeScript-TmLanguage checkout> <commit> <out dir>
 
-Writes typescript.sublime-syntax (from TypeScript.tmLanguage), and
-typescriptreact.sublime-syntax and javascript.sublime-syntax (both from
-TypeScriptReact.tmLanguage; JavaScript is derived the way VS Code derives its
-own JavaScript grammar: same rules, `.tsx` scope suffixes renamed to `.js`).
+Writes typescript.sublime-syntax (from TypeScript.tmLanguage) and
+typescriptreact.sublime-syntax (from TypeScriptReact.tmLanguage). The
+JavaScript grammar is derived from the latter by fresh-editor-core's build.rs.
 
 The mapping is the one Sublime Text's own converter uses:
   match/name/captures          -> match/scope/captures
@@ -46,12 +45,11 @@ SUPPORTED_RULE_KEYS = {
 
 
 class Converter:
-    def __init__(self, grammar, rename_scope):
+    def __init__(self, grammar):
         self.grammar = grammar
-        self.rename_scope = rename_scope
 
     def scope(self, name):
-        return self.rename_scope(name)
+        return name
 
     def captures(self, caps):
         out = {}
@@ -179,11 +177,10 @@ def main():
         with open(src / file_name, "rb") as f:
             return plistlib.load(f)
 
-    identity = lambda s: s
     outputs = [
         (
             "typescript.sublime-syntax",
-            Converter(load("TypeScript.tmLanguage"), identity).convert(
+            Converter(load("TypeScript.tmLanguage")).convert(
                 "TypeScript",
                 ["ts", "mts", "cts"],
                 header("TypeScript.tmLanguage", commit, []),
@@ -191,29 +188,10 @@ def main():
         ),
         (
             "typescriptreact.sublime-syntax",
-            Converter(load("TypeScriptReact.tmLanguage"), identity).convert(
+            Converter(load("TypeScriptReact.tmLanguage")).convert(
                 "TypeScriptReact",
                 ["tsx"],
                 header("TypeScriptReact.tmLanguage", commit, []),
-            ),
-        ),
-        (
-            "javascript.sublime-syntax",
-            Converter(
-                load("TypeScriptReact.tmLanguage"),
-                lambda s: s.replace(".tsx", ".js"),
-            ).convert(
-                "JavaScript",
-                ["js", "jsx", "mjs", "cjs", "es6"],
-                header(
-                    "TypeScriptReact.tmLanguage",
-                    commit,
-                    [
-                        "",
-                        "JavaScript is the TypeScriptReact grammar with `.tsx` scope",
-                        "suffixes renamed to `.js`, which is how VS Code builds its own.",
-                    ],
-                ),
             ),
         ),
     ]

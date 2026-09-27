@@ -292,12 +292,14 @@ pub const VUE_GRAMMAR: &str = include_str!("../../grammars/vue.sublime-syntax");
 
 /// Embedded TypeScript, TypeScriptReact and JavaScript grammars, generated
 /// from microsoft/TypeScript-TmLanguage by
-/// `scripts/tmlanguage-to-sublime-syntax.py`. JavaScript shadows syntect's
-/// bundled grammar, which leaked template-literal state (issue #899).
+/// `scripts/tmlanguage-to-sublime-syntax.py`; build.rs derives JavaScript
+/// from TypeScriptReact. JavaScript shadows syntect's bundled grammar, which
+/// leaked template-literal state (issue #899).
 pub const TYPESCRIPT_GRAMMAR: &str = include_str!("../../grammars/typescript.sublime-syntax");
 pub const TYPESCRIPTREACT_GRAMMAR: &str =
     include_str!("../../grammars/typescriptreact.sublime-syntax");
-pub const JAVASCRIPT_GRAMMAR: &str = include_str!("../../grammars/javascript.sublime-syntax");
+pub const JAVASCRIPT_GRAMMAR: &str =
+    include_str!(concat!(env!("OUT_DIR"), "/javascript.sublime-syntax"));
 /// Embedded Svelte grammar
 pub const SVELTE_GRAMMAR: &str = include_str!("../../grammars/svelte.sublime-syntax");
 /// Embedded Astro grammar

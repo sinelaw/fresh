@@ -24,7 +24,9 @@ fn main() {
     if let Err(e) = generate_builtin_themes() {
         eprintln!("Warning: Failed to generate builtin themes: {}", e);
     }
-    if let Err(e) = generate_syntax_packdump() {
+    // `include_str!`ed by grammar/types.rs, so a failure stops the build.
+    let javascript = generate_javascript_grammar();
+    if let Err(e) = generate_syntax_packdump(&javascript) {
         eprintln!("Warning: Failed to generate syntax packdump: {}", e);
     }
 }
@@ -173,11 +175,37 @@ pub const GENERATED_LOCALE_OPTIONS: &[Option<&str>] = &[
     Ok(())
 }
 
+/// JavaScript is the TypeScriptReact grammar with its `.tsx` scope suffixes
+/// renamed to `.js`, as VS Code derives its own; written to OUT_DIR.
+fn generate_javascript_grammar() -> String {
+    let tsx = fs::read_to_string("src/grammars/typescriptreact.sublime-syntax")
+        .expect("read typescriptreact.sublime-syntax");
+    let mut js = tsx.replace(".tsx", ".js");
+    for (from, to) in [
+        ("\nname: TypeScriptReact\n", "\nname: JavaScript\n"),
+        (
+            "\nfile_extensions:\n- tsx\n",
+            "\nfile_extensions:\n- js\n- jsx\n- mjs\n- cjs\n- es6\n",
+        ),
+    ] {
+        assert_eq!(
+            js.matches(from).count(),
+            1,
+            "typescriptreact.sublime-syntax: expected {from:?} exactly once"
+        );
+        js = js.replace(from, to);
+    }
+    let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR");
+    let path = Path::new(&out_dir).join("javascript.sublime-syntax");
+    fs::write(&path, js).expect("write javascript.sublime-syntax");
+    path.to_string_lossy().into_owned()
+}
+
 /// Pre-compile syntect defaults + all embedded grammars into a single binary packdump.
 ///
 /// This moves the expensive `SyntaxSetBuilder::build()` + grammar parsing from
 /// runtime to build time, reducing startup from ~12s to ~300ms.
-fn generate_syntax_packdump() -> Result<(), Box<dyn std::error::Error>> {
+fn generate_syntax_packdump(javascript: &str) -> Result<(), Box<dyn std::error::Error>> {
     use syntect::dumps::dump_to_uncompressed_file;
     use syntect::parsing::{SyntaxDefinition, SyntaxSet};
 
@@ -263,7 +291,7 @@ fn generate_syntax_packdump() -> Result<(), Box<dyn std::error::Error>> {
             "TypeScriptReact",
         ),
         // Shadows syntect's bundled JavaScript grammar (issue #899).
-        ("src/grammars/javascript.sublime-syntax", "JavaScript"),
+        (javascript, "JavaScript"),
         ("src/grammars/svelte.sublime-syntax", "Svelte"),
         ("src/grammars/astro.sublime-syntax", "Astro"),
         ("src/grammars/hyprlang.sublime-syntax", "Hyprlang"),
