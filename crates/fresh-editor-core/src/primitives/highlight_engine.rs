@@ -1817,10 +1817,15 @@ impl TextMateEngine {
         theme: &Theme,
     ) -> Vec<HighlightSpan> {
         let cache = self.cache.as_ref().unwrap();
-        cache
+        // Sorted and disjoint, so the viewport's spans are one contiguous run.
+        let first = cache
             .spans
+            .partition_point(|span| span.range.end <= viewport_start);
+        let last = cache
+            .spans
+            .partition_point(|span| span.range.start < viewport_end);
+        cache.spans[first..last.max(first)]
             .iter()
-            .filter(|span| span.range.start < viewport_end && span.range.end > viewport_start)
             .map(|span| HighlightSpan {
                 range: span.range.clone(),
                 color: highlight_color(span.category, theme),
@@ -1990,12 +1995,37 @@ impl TextMateEngine {
 
         if let Some(cache) = &mut self.cache {
             let splice_start = actual_start;
-            cache
-                .spans
-                .retain(|span| span.range.end <= splice_start || span.range.start >= splice_end);
-            cache.spans.extend(new_spans);
-            cache.spans.sort_by_key(|s| s.range.start);
-            Self::merge_adjacent_spans(&mut cache.spans);
+            let in_order = new_spans
+                .windows(2)
+                .all(|w| w[0].range.end <= w[1].range.start)
+                && new_spans
+                    .first()
+                    .is_none_or(|s| s.range.start >= splice_start)
+                && new_spans.last().is_none_or(|s| s.range.end <= splice_end);
+            if in_order {
+                // The cache is sorted and disjoint: swap the re-parsed run in
+                // where it belongs and merge only at its two seams.
+                let lo = cache
+                    .spans
+                    .partition_point(|span| span.range.end <= splice_start);
+                let hi = cache
+                    .spans
+                    .partition_point(|span| span.range.start < splice_end)
+                    .max(lo);
+                let inserted = new_spans.len();
+                cache.spans.splice(lo..hi, new_spans);
+                let seams = lo.saturating_sub(1)..(lo + inserted + 1).min(cache.spans.len());
+                let mut window: Vec<CachedSpan> = cache.spans.drain(seams.clone()).collect();
+                Self::merge_adjacent_spans(&mut window);
+                cache.spans.splice(seams.start..seams.start, window);
+            } else {
+                cache.spans.retain(|span| {
+                    span.range.end <= splice_start || span.range.start >= splice_end
+                });
+                cache.spans.extend(new_spans);
+                cache.spans.sort_by_key(|s| s.range.start);
+                Self::merge_adjacent_spans(&mut cache.spans);
+            }
             if splice_end > cache.range.end {
                 cache.range.end = splice_end;
             }
