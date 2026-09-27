@@ -591,6 +591,60 @@ fn a_million_row_list_does_a_screenful_of_work_per_frame() {
     );
 }
 
+/// **Rows of their own heights are windowed in cells.** Cards of three rows
+/// between one-row headers: the list builds the rows that overlap the window,
+/// the column scrolls a row at a time over all of them, and a selection far
+/// down is shown whole.
+#[test]
+fn rows_of_their_own_heights_are_windowed_in_cells() {
+    use std::cell::Cell;
+    let built = Rc::new(Cell::new(0usize));
+    let list = |sel: usize, built: Rc<Cell<usize>>| -> Node<Msg> {
+        List::windowed(1000, fresh_ui::Key::from, move |i| {
+            built.set(built.get() + 1);
+            match i % 2 {
+                0 => fresh_ui::text(format!("head {i}")),
+                _ => col().children((0..3).map(move |r| fresh_ui::text(format!("card {i}.{r}")))),
+            }
+        })
+        .row_heights(|i| if i % 2 == 0 { 1 } else { 3 })
+        .focusable(false)
+        .selected(sel)
+        .node()
+    };
+    let mut ui: Ui<Msg> = Ui::new();
+    let screen = support::screen::render(ui.frame(list(0, built.clone()), FRAME)).text();
+    assert!(screen.starts_with("head 0\ncard 1.0"), "{screen}");
+    assert!(
+        built.get() < 30,
+        "built {} rows for a ten-row window",
+        built.get()
+    );
+
+    // Row 801 starts at cell 1600 (400 pairs of 4 cells, then its head).
+    built.set(0);
+    ui.frame(list(801, built.clone()), FRAME);
+    let screen = support::screen::render(ui.frame(list(801, built.clone()), FRAME)).text();
+    for r in 0..3 {
+        assert!(
+            screen.contains(&format!("card 801.{r}")),
+            "all of card 801: {screen}"
+        );
+    }
+    assert!(built.get() < 60, "built {} rows to get there", built.get());
+
+    // A wheel moves a row, not a card: a card can be half in view.
+    ui.dispatch(Input::Wheel {
+        pos: Point::new(1, 1),
+        delta: 1,
+        axis: Axis::Vertical,
+        mods: Mods::NONE,
+    });
+    let before = screen.lines().next().unwrap_or_default().to_string();
+    let after = support::screen::render(ui.frame(list(801, built.clone()), FRAME)).text();
+    assert_ne!(after.lines().next().unwrap_or_default(), before, "{after}");
+}
+
 // -- Tree --------------------------------------------------------------------
 
 /// **A windowed tree builds its window, over the owner's projection.** Ten
