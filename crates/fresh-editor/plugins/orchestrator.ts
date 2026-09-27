@@ -7700,7 +7700,10 @@ function splitAgentCmd(s: string): string[] {
 // interface; entries are easy to add and intended to become user-overridable.
 // `{id}` in a template is replaced with the minted uuid (array slot only).
 interface AgentResumeSpec {
-  provision?: { idFlag: string; resumeArgs: string[] };
+  // `sessionFlags`: flags that make a command already name its session
+  // (`--resume <id>`, `--continue`). A command carrying one — or `idFlag`
+  // itself — is not given a minted id: the agent rejects the combination.
+  provision?: { idFlag: string; resumeArgs: string[]; sessionFlags?: string[] };
   continue?: { resumeArgs: string[] };
 }
 // How an agent takes an initial prompt on the command line: as a trailing
@@ -7753,7 +7756,11 @@ const AGENT_REGISTRY: AgentEntry[] = [
     label: "claude",
     match: /^claude$/,
     spec: {
-      provision: { idFlag: "--session-id", resumeArgs: ["--resume", "{id}"] },
+      provision: {
+        idFlag: "--session-id",
+        resumeArgs: ["--resume", "{id}"],
+        sessionFlags: ["--resume", "-r", "--continue", "-c", "--from-pr", "--teleport"],
+      },
       continue: { resumeArgs: ["--continue"] },
     },
     // "Auto mode" = `--permission-mode auto`: the safe-autonomous mode (a
@@ -8021,8 +8028,21 @@ function resolveAgentLaunch(
   const withAuto = [...argv, ...autoArgs, ...sysPromptArgs];
 
   if (entry.spec.provision) {
+    const { idFlag, resumeArgs, sessionFlags = [] } = entry.spec.provision;
+    // The command already names its session (an imported `claude --resume
+    // <id>`, a hand-typed `--session-id`): minting another id alongside it is
+    // rejected by the agent, so launch it as given and resume by the id it
+    // names — or, with none (`--continue`), by the agent's continue form.
+    const named = namedSession(argv, idFlag, sessionFlags);
+    if (named) {
+      const resume = named.id
+        ? [argv0, ...resumeArgs.map((a) => a.replace("{id}", named.id!)), ...autoArgs]
+        : entry.spec.continue
+        ? [argv0, ...entry.spec.continue.resumeArgs, ...autoArgs]
+        : undefined;
+      return { launch: [...withAuto, ...promptArgs], resume };
+    }
     const id = agentSessionUuid();
-    const { idFlag, resumeArgs } = entry.spec.provision;
     return {
       launch: [...withAuto, idFlag, id, ...promptArgs],
       resume: [argv0, ...resumeArgs.map((a) => a.replace("{id}", id)), ...autoArgs],
@@ -8036,6 +8056,29 @@ function resolveAgentLaunch(
   }
   return { launch: [...withAuto, ...promptArgs] };
 }
+
+/** Whether `argv` already names a session: `idFlag` or one of `sessionFlags`,
+ *  as `--flag value` or `--flag=value`. `id` is the value it pins (`idFlag`,
+ *  or `--resume`/`-r` given a uuid), absent when the flag selects a session
+ *  without naming one (`--continue`, a bare `--resume` picker). */
+function namedSession(
+  argv: string[],
+  idFlag: string,
+  sessionFlags: string[],
+): { id?: string } | null {
+  const idBearing = new Set([idFlag, "--resume", "-r"]);
+  for (let i = 1; i < argv.length; i++) {
+    const arg = argv[i];
+    const eq = arg.indexOf("=");
+    const flag = eq > 0 ? arg.slice(0, eq) : arg;
+    if (flag !== idFlag && !sessionFlags.includes(flag)) continue;
+    if (!idBearing.has(flag)) return {};
+    const value = eq > 0 ? arg.slice(eq + 1) : argv[i + 1];
+    return value && UUID_RE.test(value) ? { id: value } : {};
+  }
+  return null;
+}
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 async function spawnCollect(
   command: string,
