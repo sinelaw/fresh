@@ -436,6 +436,7 @@ impl Editor {
             .map(|enc| {
                 let is_default = *enc == Encoding::Utf8;
                 crate::input::commands::Suggestion {
+                    id: enc.display_name().to_string(),
                     description_spans: None,
                     text: format!("{} ({})", enc.display_name(), enc.description()),
                     description: if is_default {

@@ -3308,6 +3308,7 @@ editor.on("resize", () => {
 const registryFinder = new Finder<[string, RegistryEntry]>(editor, {
   id: "pkg-registry",
   format: ([name, entry]) => ({
+    id: name,
     label: name,
     description: entry.description,
     metadata: { name, entry }
@@ -3457,6 +3458,7 @@ function pkg_update() : void {
   const finder = new Finder<InstalledPackage>(editor, {
     id: "pkg-update",
     format: (pkg) => ({
+      id: `${pkg.type}:${pkg.name}`,
       label: pkg.name,
       description: `${pkg.type} | ${pkg.version}${pkg.localSource ? " (local)" : ""}`,
       metadata: pkg
@@ -3492,6 +3494,7 @@ function pkg_remove() : void {
   const finder = new Finder<InstalledPackage>(editor, {
     id: "pkg-remove",
     format: (pkg) => ({
+      id: `${pkg.type}:${pkg.name}`,
       label: pkg.name,
       description: `${pkg.type} | ${pkg.version}`,
       metadata: pkg
@@ -3573,6 +3576,7 @@ async function pkg_outdated() : Promise<void> {
   const finder = new Finder<{ pkg: InstalledPackage; behind: number }>(editor, {
     id: "pkg-outdated",
     format: (item) => ({
+      id: `${item.pkg.type}:${item.pkg.name}`,
       label: item.pkg.name,
       description: `${item.behind} commits behind`,
       metadata: item

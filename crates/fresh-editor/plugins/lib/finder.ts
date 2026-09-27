@@ -44,6 +44,14 @@ import { byteLength } from "./text.ts";
  * How a result should be displayed
  */
 export interface DisplayEntry {
+  /**
+   * What this result is, unique among the results: a path, a match's
+   * `file:line:column`, a package's name. **Required** — the list keys its
+   * rows by it, so a re-rank or an insertion moves the other rows rather
+   * than rewriting them, and the selection stays on its result. Not the
+   * label: two results may read the same and still be different things.
+   */
+  id: string;
   /** Primary text (e.g., "src/main.rs:42") */
   label: string;
   /** Secondary text (e.g., code snippet) */
@@ -962,6 +970,7 @@ export class Finder<T> {
       const display = errorMsg.replace(/^Error:\s*/, "");
       this.editor.setPromptSuggestions([
         {
+          id: "status:error",
           text: `⚠ ${display}`,
           value: "",
           disabled: true,
@@ -978,6 +987,7 @@ export class Finder<T> {
 
     const suggestions: PromptSuggestion[] = this.promptState.entries.map(
       (entry, i) => ({
+        id: entry.id,
         text: entry.label,
         description: entry.description,
         description_spans: entry.descriptionSpans,

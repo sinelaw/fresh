@@ -7861,6 +7861,11 @@ impl PluginApi {
     /// Set the suggestions for the current prompt
     /// This updates the prompt's autocomplete/selection list
     pub fn set_prompt_suggestions(&self, suggestions: Vec<Suggestion>) -> Result<(), String> {
+        if let Some(id) = Suggestion::duplicate_id(&suggestions) {
+            return Err(format!(
+                "setPromptSuggestions: duplicate suggestion id {id:?}"
+            ));
+        }
         self.send_command(PluginCommand::SetPromptSuggestions {
             suggestions,
             selected_index: None,
@@ -9037,8 +9042,8 @@ mod tests {
         // set_prompt_suggestions
         assert_dispatches!(
             |a: &PluginApi| a.set_prompt_suggestions(vec![
-                Suggestion::new("one".into()),
-                Suggestion::new("two".into()),
+                Suggestion::new("1".into(), "one".into()),
+                Suggestion::new("2".into(), "two".into()),
             ]),
             PluginCommand::SetPromptSuggestions { suggestions, .. }
                 if suggestions.len() == 2

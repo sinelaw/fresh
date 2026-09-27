@@ -333,6 +333,7 @@ export function matchesToSuggestions(
         : match.content;
 
     suggestions.push({
+      id: `${match.file}:${match.line}:${match.column}`,
       text: `${match.file}:${match.line}`,
       description: displayContent.trim(),
       value: `${i}`,

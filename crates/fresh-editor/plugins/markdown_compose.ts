@@ -3455,8 +3455,8 @@ function markdownSetComposeWidth() : void {
   editor.startPromptWithInitial(editor.t("prompt.compose_width"), "markdown-compose-width", currentValue);
   editor.setPromptInputSync(true);
   editor.setPromptSuggestions([
-    { text: "None", description: editor.t("suggestion.none") },
-    { text: "120", description: editor.t("suggestion.default") },
+    { id: "None", text: "None", description: editor.t("suggestion.none") },
+    { id: "120", text: "120", description: editor.t("suggestion.default") },
   ]);
 }
 registerHandler("markdownSetComposeWidth", markdownSetComposeWidth);

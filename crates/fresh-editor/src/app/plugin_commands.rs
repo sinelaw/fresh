@@ -2489,6 +2489,7 @@ impl Editor {
                     fresh_core::command::CommandSource::Plugin(name) => CommandSource::Plugin(name),
                 });
                 EditorSuggestion {
+                    id: s.id,
                     text: s.text,
                     description: s.description,
                     description_spans: s.description_spans,
@@ -2504,7 +2505,7 @@ impl Editor {
             // Set original_suggestions for Rust-side filtering (used by prompts that
             // don't handle their own filtering like theme editor dropdowns)
             prompt.original_suggestions = Some(internal_suggestions.clone());
-            prompt.suggestions = internal_suggestions.into();
+            prompt.set_suggestions(internal_suggestions);
             // Select first suggestion by default (or the specified index)
             prompt.selected_suggestion = if prompt.suggestions.is_empty() {
                 None

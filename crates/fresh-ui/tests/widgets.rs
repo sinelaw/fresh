@@ -400,6 +400,64 @@ fn a_row_under_the_pointer_reads_as_hovered() {
     assert_eq!(themes_of(&ui, "item 4"), vec!["mine.hover"]);
 }
 
+/// **A row inserted above keeps every other row's element and state.**
+///
+/// Rows are matched by key, so an insertion moves the rows below it rather
+/// than rewriting them in place — and the list's own element state goes with
+/// them: the hover names the row the pointer is over, not the position it was
+/// at, so the row that slides down under an insertion keeps its highlight and
+/// the newcomer does not inherit it.
+#[test]
+fn an_insertion_moves_the_rows_below_it_with_their_state() {
+    let list = |items: &[&'static str]| {
+        let items: Vec<&'static str> = items.to_vec();
+        List::keyed(
+            &items,
+            |s| fresh_ui::Key::Str((*s).into()),
+            |s| fresh_ui::text(format!("item {s}")),
+        )
+        .selected(0)
+        .row_theme(|_, st| match st {
+            fresh_ui::widgets::RowState::Hover => "mine.hover".into(),
+            _ => "mine.plain".into(),
+        })
+        .node()
+    };
+    let before = ["a", "b", "c", "d"];
+    let after = ["a", "new", "b", "c", "d"];
+    let key = |s: &str| fresh_ui::Key::Str(s.into());
+    let mut ui: Ui<Msg> = Ui::new();
+    ui.frame(list(&before), FRAME);
+    let c = ui.find_by_key(&key("c")).expect("row c");
+    let at = ui.rect_of(c);
+    ui.dispatch(Input::Move {
+        pos: Point::new(at.x, at.y),
+        mods: Mods::NONE,
+    });
+    ui.frame(list(&before), FRAME);
+    assert_eq!(themes_of(&ui, "item c"), vec!["mine.hover"]);
+    let ids: Vec<_> = before
+        .iter()
+        .map(|s| ui.find_by_key(&key(s)).expect("a row"))
+        .collect();
+
+    ui.frame(list(&after), FRAME);
+    for (s, id) in before.iter().zip(&ids) {
+        assert_eq!(
+            ui.find_by_key(&key(s)),
+            Some(*id),
+            "row {s} is the same element after the insertion"
+        );
+    }
+    assert_eq!(
+        themes_of(&ui, "item c"),
+        vec!["mine.hover"],
+        "the hover moved down with its row"
+    );
+    assert_eq!(themes_of(&ui, "item b"), vec!["mine.plain"]);
+    assert_eq!(themes_of(&ui, "item new"), vec!["mine.plain"]);
+}
+
 /// **Which click commits is the host's rule, not the widget's.**
 ///
 /// `on_activate` fired on the first click and won over `on_select`, so a list

@@ -570,6 +570,17 @@ type ViewTokenStyle = {
 };
 type PromptSuggestion = {
 	/**
+	* What this row is, unique within the list: the plugin's own name for
+	* the item (a path, a match's `file:line:col`, a record id).
+	*
+	* **Required.** The list keys its rows by it, so an insertion or a
+	* re-rank moves the other rows instead of rewriting them, and the
+	* selection stays on the row it was on. Not the label: two rows may
+	* read the same and still be different things. `setPromptSuggestions`
+	* throws when two suggestions share an id.
+	*/
+	id: string;
+	/**
 	* The text to display
 	*/
 	text: string;

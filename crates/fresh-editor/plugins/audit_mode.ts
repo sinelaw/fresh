@@ -4400,8 +4400,8 @@ function startDiscardFilePrompt(f: FileEntry): void {
             : (tr("prompt.discard_file_lose") ?? "Permanently lose changes");
     editor.startPrompt(`${action} "${f.path}"? This cannot be undone.`, "review-discard-confirm");
     const suggestions: PromptSuggestion[] = [
-        { text: `${action} file`, description, value: "discard" },
-        { text: "Cancel", description: "Keep the file as-is", value: "cancel" },
+        { id: "discard", text: `${action} file`, description, value: "discard" },
+        { id: "cancel", text: "Cancel", description: "Keep the file as-is", value: "cancel" },
     ];
     editor.setPromptSuggestions(suggestions);
 }
@@ -4432,8 +4432,8 @@ function review_discard_file() {
             "review-discard-hunk-confirm"
         );
         const suggestions: PromptSuggestion[] = [
-            { text: "Discard hunk", description: "Permanently lose this change", value: "discard" },
-            { text: "Cancel", description: "Keep the hunk as-is", value: "cancel" },
+            { id: "discard", text: "Discard hunk", description: "Permanently lose this change", value: "discard" },
+            { id: "cancel", text: "Cancel", description: "Keep the hunk as-is", value: "cancel" },
         ];
         editor.setPromptSuggestions(suggestions);
         return;
@@ -7077,8 +7077,8 @@ async function review_delete_comment() {
     const preview = target.text.length > 40 ? target.text.substring(0, 37) + '...' : target.text;
     editor.startPrompt(`Delete "${preview}"?`, "review-delete-comment-confirm");
     const suggestions: PromptSuggestion[] = [
-        { text: "Delete", description: "Remove this comment", value: "delete" },
-        { text: "Cancel", description: "Keep the comment", value: "cancel" },
+        { id: "delete", text: "Delete", description: "Remove this comment", value: "delete" },
+        { id: "cancel", text: "Cancel", description: "Keep the comment", value: "cancel" },
     ];
     editor.setPromptSuggestions(suggestions);
 }
@@ -7697,13 +7697,14 @@ async function fetchRangeDiff(range: ReviewRange): Promise<{ hunks: Hunk[]; file
 async function buildRangeSuggestions(): Promise<PromptSuggestion[]> {
     const suggestions: PromptSuggestion[] = [];
     // HEAD last commit.
-    suggestions.push({ text: "HEAD", description: "Review last commit", value: "HEAD" });
+    suggestions.push({ id: "HEAD", text: "HEAD", description: "Review last commit", value: "HEAD" });
     // Current-branch-vs-main style ranges.
     const tryRange = async (base: string) => {
         const cwd = gitCwd();
         const exists = await editor.spawnProcess("git", ["rev-parse", "--verify", base], cwd);
         if (exists.exit_code === 0) {
             suggestions.push({
+                id: `${base}..HEAD`,
                 text: `${base}..HEAD`,
                 description: `Review all commits on current branch vs ${base}`,
                 value: `${base}..HEAD`,
@@ -7723,6 +7724,7 @@ async function buildRangeSuggestions(): Promise<PromptSuggestion[]> {
                 const m = line.match(/^([0-9a-f]+)\s+(.*)$/);
                 if (m) {
                     suggestions.push({
+                        id: m[1],
                         text: m[1],
                         description: `Review commit: ${m[2]}`,
                         value: m[1],

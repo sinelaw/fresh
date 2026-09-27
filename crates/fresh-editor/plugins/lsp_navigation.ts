@@ -220,6 +220,9 @@ function buildSnippetSpans(sym: SymbolItem): StyledText[] | undefined {
 function format(sym: SymbolItem): DisplayEntry {
   const trimmed = sym.lineText ? sym.lineText.trim() : `line ${sym.nameLine + 1}`;
   return {
+    // Where the symbol's name sits is what the symbol is; kind and name
+    // tell apart the rare two that share a position.
+    id: `${sym.nameLine}:${sym.nameCharacter}:${sym.kind}:${sym.name}`,
     label: `[${getKindLabel(sym.kind)}] ${sym.name}`,
     description: trimmed,
     descriptionSpans: buildSnippetSpans(sym),

@@ -4023,10 +4023,12 @@ impl Editor {
             Listing::Entries(Entries::new(
                 state.entries.clone(),
                 state.entries.len(),
+                |v, i| v[i].fs_entry.path.to_string_lossy().into_owned(),
                 |v, i| {
                     let e = &v[i];
                     let meta = e.fs_entry.metadata.as_ref();
                     Entry {
+                        id: e.fs_entry.path.to_string_lossy().into_owned(),
                         name: e.fs_entry.name.clone(),
                         is_dir: e.fs_entry.is_dir(),
                         is_symlink: e.fs_entry.is_symlink(),
@@ -4091,6 +4093,7 @@ impl Editor {
             false => crate::view::shell::prompt::Place::AbovePrompt,
         };
         let convert = |s: &crate::input::commands::Suggestion| SuggestionRow {
+            id: s.id.clone(),
             name: s.text.clone(),
             keybinding: s.keybinding.clone(),
             description: s.description.clone(),
@@ -4113,6 +4116,7 @@ impl Editor {
                 prompt.suggestions.clone(),
                 prompt.suggestions.len(),
                 prompt.names_are_paths(),
+                |v, i| v[i].id.clone(),
                 move |v, i| convert(&v[i]),
                 |v, i| v[i].disabled,
             ),

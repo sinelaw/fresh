@@ -287,6 +287,7 @@ Suggestion for prompt autocomplete
 
 ```typescript
 interface PromptSuggestion {
+  id: string;
   text: string;
   description?: string | null;
   value?: string | null;
@@ -297,6 +298,7 @@ interface PromptSuggestion {
 
 | Field | Description |
 |-------|-------------|
+| `id` | What the suggestion is, unique within the list (a path, a `file:line:column`, a record id). Required: the list keys its rows by it, so the selection and the rows' state follow the item when the list is re-ranked or grows. Not the label — two rows may read the same |
 | `text` | Display text for the suggestion |
 | `description` | Optional description shown alongside |
 | `value` | Optional value to use instead of text when selected |
