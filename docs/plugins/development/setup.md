@@ -117,8 +117,8 @@ editor.exportPluginApi("my-plugin", {
 } satisfies MyPluginApi);
 ```
 
-Other plugins get the typed API once your plugin is installed (see below)
-and Fresh has restarted.
+Other plugins get the typed API once your plugin is installed (see
+[Install it](#install-it)) and Fresh has restarted.
 
 Define the types in the entry file itself. Types imported from another file
 become `any` for other plugins.
@@ -129,18 +129,22 @@ become `any` for other plugins.
 - Fresh's type files are written to `~/.config/fresh/types/`. Fresh also does
   this every time it starts.
 
-## Load it every time Fresh starts
+## Install it
 
-When you're ready to use the plugin every day, link it into your plugins
-folder:
+To load the plugin every time Fresh starts:
 
-```bash
-mkdir -p ~/.config/fresh/plugins/packages
-ln -s "$PWD" ~/.config/fresh/plugins/packages/my-plugin
-```
+1. Press `Ctrl+P` and run **Package: Install from URL**.
+2. Enter the full path of the plugin folder, such as
+   `/home/me/my-plugin`. Run `pwd` in the folder to see it.
 
-Delete the link to stop loading it. Run `fresh --cmd config paths` if your
-config folder isn't `~/.config/fresh`.
+Fresh copies the folder into its packages and loads it. The status bar shows
+`Installed and activated my-plugin v0.1.0`.
+
+- To update the installed copy after more changes, run the same command
+  again.
+- To uninstall, run **Package: Remove**.
+- **Load Plugin from Buffer** still works while the plugin is installed. It
+  replaces the installed copy until Fresh restarts.
 
 ## Common problems
 
