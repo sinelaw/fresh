@@ -490,6 +490,9 @@ pub(crate) struct DetectedEnvCache {
     pub(crate) stale: bool,
     /// A probe in flight, reporting `(answer, incomplete)`.
     pub(crate) probe: Option<std::sync::mpsc::Receiver<(String, bool)>>,
+    /// While stale without a watch event (an incomplete answer, an unwatched
+    /// root), the earliest time to probe again.
+    pub(crate) reprobe_at: Option<std::time::Instant>,
     /// Watch on a local root that marks `answer` stale.
     pub(crate) watch: Option<u64>,
 }

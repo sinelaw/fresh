@@ -8,6 +8,7 @@ use crate::common::harness::{copy_plugin_lib, EditorTestHarness};
 use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::config::Config;
 use std::fs;
+use std::time::{Duration, Instant};
 
 /// Records what the plugin API reports each time the cursor moves or text
 /// is inserted.
@@ -83,11 +84,15 @@ fn seen(harness: &EditorTestHarness) -> Option<serde_json::Value> {
         .cloned()
 }
 
-/// Loop passes (`editor_tick`, what the TUI, GUI and web loops run between
-/// frames) with nothing to do.
-fn idle_passes(harness: &mut EditorTestHarness, n: usize) {
-    for _ in 0..n {
-        fresh::app::editor_tick(harness.editor_mut(), || Ok(())).unwrap();
+/// Loop passes as the TUI, GUI and web loops run them between frames:
+/// `editor_tick`, then a render whenever it asks for one.
+fn idle_for(harness: &mut EditorTestHarness, duration: Duration) {
+    let until = Instant::now() + duration;
+    while Instant::now() < until {
+        if fresh::app::editor_tick(harness.editor_mut(), || Ok(())).unwrap() {
+            harness.render().unwrap();
+        }
+        std::thread::sleep(Duration::from_millis(5));
     }
 }
 
@@ -96,17 +101,18 @@ fn idle_loop_passes_leave_the_plugin_snapshot_alone() {
     let Setup {
         dir: _dir,
         mut harness,
-        ..
+        root,
     } = setup();
     harness
         .send_key(KeyCode::Right, KeyModifiers::NONE)
         .unwrap();
     seen_at(&mut harness, 1);
 
-    // Settle whatever the key and its hook left in flight, then go idle.
+    // Settle whatever the key, its hook and the file's own watch left in
+    // flight: quiet for a whole window.
     let mut settled = harness.editor().perf_counters();
-    for _ in 0..50 {
-        idle_passes(&mut harness, 5);
+    for _ in 0..20 {
+        idle_for(&mut harness, Duration::from_millis(300));
         let now = harness.editor().perf_counters();
         if now.plugin_snapshot_rebuilds == settled.plugin_snapshot_rebuilds {
             break;
@@ -114,7 +120,14 @@ fn idle_loop_passes_leave_the_plugin_snapshot_alone() {
         settled = now;
     }
 
-    idle_passes(&mut harness, 200);
+    // Activity at the root that cannot change the environment, like a log
+    // a dev server keeps appending to.
+    for i in 0..5 {
+        fs::write(root.join("server.log"), format!("line {i}\n")).unwrap();
+        idle_for(&mut harness, Duration::from_millis(50));
+    }
+    idle_for(&mut harness, Duration::from_millis(300));
+
     let after = harness.editor().perf_counters();
     assert_eq!(
         after.plugin_snapshot_rebuilds, settled.plugin_snapshot_rebuilds,

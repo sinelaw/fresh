@@ -201,12 +201,12 @@ impl Editor {
         // change — invisible locally, but real lag over serial (#2100).
         // A custom LSP notification is the same: it only feeds a plugin
         // hook, and chatty servers (clangd's per-edit fileStatus) send many.
-        let needs_render = messages.iter().any(|m| {
-            !matches!(
-                m,
-                AsyncMessage::Plugin(fresh_core::api::PluginAsyncMessage::DelayComplete { .. })
-                    | AsyncMessage::LspCustomNotification { .. }
-            )
+        // The env probe's root watch only feeds the plugin snapshot.
+        let needs_render = messages.iter().any(|m| match m {
+            AsyncMessage::Plugin(fresh_core::api::PluginAsyncMessage::DelayComplete { .. })
+            | AsyncMessage::LspCustomNotification { .. } => false,
+            AsyncMessage::PathChanged { handle, .. } => !self.is_detected_env_watch(*handle),
+            _ => true,
         });
         tracing::trace!(
             async_message_count = messages.len(),
@@ -1141,6 +1141,7 @@ impl Editor {
         if let Some(cache) = self.detected_env_cache.as_mut() {
             cache.stale = true;
             cache.probe = None;
+            cache.reprobe_at = None;
         }
     }
 
@@ -1165,7 +1166,7 @@ impl Editor {
         kind: crate::services::async_bridge::PathChangeKind,
     ) -> bool {
         use crate::services::async_bridge::PathChangeKind as K;
-        if !matches!(kind, K::Create | K::Delete | K::Rename | K::Other) {
+        if !matches!(kind, K::Create | K::Delete | K::Rename) {
             return false;
         }
         let Some(name) = path.file_name() else {

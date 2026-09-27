@@ -251,11 +251,15 @@ impl Editor {
                 answer: String::new(),
                 stale: true,
                 probe: None,
+                reprobe_at: None,
                 watch,
             });
         }
         let cache = self.detected_env_cache.as_mut().expect("set above");
-        if cache.stale && cache.probe.is_none() {
+        let due = cache
+            .reprobe_at
+            .is_none_or(|at| std::time::Instant::now() >= at);
+        if cache.stale && cache.probe.is_none() && due {
             self.perf_counters.env_detections += 1;
             let (tx, rx) = std::sync::mpsc::channel();
             let (fs, root, detectors) = (
@@ -296,12 +300,17 @@ impl Editor {
             .unwrap_or_default()
     }
 
-    /// Adopt a finished probe's `(answer, incomplete)`. An incomplete answer
-    /// (a marker without its required files) is re-probed on the next rebuild.
+    /// Adopt a finished probe's `(answer, incomplete)`. An answer no watch
+    /// event would refresh (incomplete, or an unwatched root) is re-probed on
+    /// a rebuild once `ENV_REPROBE_INTERVAL` has passed.
     fn settle_env_probe(cache: &mut super::DetectedEnvCache, (answer, incomplete): (String, bool)) {
+        const ENV_REPROBE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
         cache.answer = answer;
-        cache.stale = incomplete;
         cache.probe = None;
+        cache.stale = incomplete || cache.watch.is_none();
+        cache.reprobe_at = cache
+            .stale
+            .then(|| std::time::Instant::now() + ENV_REPROBE_INTERVAL);
     }
 
     /// Collect a finished environment probe; true when it changed the answer.
@@ -354,6 +363,8 @@ impl Editor {
         else {
             return;
         };
+        // Probed before taking the lock: a first probe may wait on the disk.
+        let detected_env = self.detected_env_json();
         let mut snapshot = snapshot_handle.write().unwrap();
 
         let shares = self
@@ -401,7 +412,7 @@ impl Editor {
         // has. The env-manager plugin reads this resolved result via
         // `editor.detectedEnv()` rather than probing the filesystem itself.
         // Empty string ⇒ no env detected.
-        snapshot.detected_env = self.detected_env_json();
+        snapshot.detected_env = detected_env;
 
         // Publish the session list so plugins (Orchestrator, etc.)
         // see updates from createWindow/closeWindow without
