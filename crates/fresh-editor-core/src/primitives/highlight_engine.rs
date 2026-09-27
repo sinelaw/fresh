@@ -2711,11 +2711,11 @@ impl TextMateEngine {
     /// The position must be within the last highlighted viewport range for a result.
     pub fn category_at_position(&self, position: usize) -> Option<HighlightCategory> {
         let cache = self.cache.as_ref()?;
-        cache
-            .spans
-            .iter()
-            .find(|span| span.range.start <= position && position < span.range.end)
-            .map(|span| span.category)
+        // Spans are sorted by start and disjoint; the cache can hold a whole
+        // file's worth, and the indent rules ask on every keystroke.
+        let after = cache.spans.partition_point(|s| s.range.start <= position);
+        let span = cache.spans.get(after.checked_sub(1)?)?;
+        (position < span.range.end).then_some(span.category)
     }
 
     /// Get syntax name
