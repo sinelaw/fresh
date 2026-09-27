@@ -20,6 +20,13 @@ Fresh is now licensed **GPL-3.0-or-later**, up from GPL-2.0-only (#3328).
 * **Alt+Shift+N / Alt+Shift+P cycle the keyboard through the sidebar**, so a plugin panel like the Markdown outline is reachable without the palette (#3326)
 * **Search folds case by default everywhere** - Find/Replace, Live Grep, the Search & Replace panel and Git Grep all match `todo` against `TODO` now; each keeps its own toggle, and `editor.search` seeds the default for a workspace that hasn't set its own (#3349, requested by @Korkman)
 * **Settings reorganized** - new Keybindings and Syntax & Languages pages, plugin settings nested under Plugins, a more compact category tree, and shorter descriptions (#3357)
+* **Interrupted saves are recoverable** - if a save stops partway (disk full, I/O error, crash), a full copy is kept and an **Interrupted Save** dialog offers Restore / Show Diff / Discard on the next start, or any time via **Review Interrupted Saves** (#3383)
+* **Much faster JavaScript/TypeScript highlighting, and a quieter idle daemon** - JS/TS moved off a parser that re-read the whole file on every keystroke, large files parse only as far as the view, and idle CPU drops to a few percent (#3418)
+* **Live Grep dialog redesigned** - an aligned form with underlined shortcut letters and a Provider dropdown listing only the providers that can run; the Ignored toggle moves to Alt+I (#3367)
+* **Dialog pickers behave like standard controls** - suggestion lists act as combo boxes, and the Browse… file picker floats over the form, closes when focus leaves, and supports double-click, Home/End and type-to-jump (#3367)
+* **Odin support** - Toggle Comment, brace indenting, Odin's tab convention, and a preconfigured `ols` language server you can turn on (#3331)
+* **Pascal indents by block structure** - Enter lands at the enclosing block's level, and `end`, `until`, `else`, `except` line up with their opener (#3331)
+* **`fresh --cmd init plugin` sets up a typed plugin project** - TypeScript config, API types and the language server, with a new setup guide; **Load Plugin from Buffer** on a saved file now loads it from disk, so relative imports work, and reloads it in place (#3422)
 
 ### Bug Fixes
 
@@ -38,7 +45,8 @@ Fresh is now licensed **GPL-3.0-or-later**, up from GPL-2.0-only (#3328).
 * **Code tour: clicking the prose takes the keyboard**, and its caret stays visible past the end of a line (#3318)
 * **A tab after CJK text no longer eats the character before it** - the tab marker was placed by visual column against an index counted in characters, so a double-width glyph put it one character early and the `→` took that glyph's place: `你好⇥world` drew as `你→    world`. The file was never touched (#3218, reported by @sgon00)
 * **Highlighted lines** (diff view, code tour) no longer hide inlay hints at the end of the line (#3314)
-* **`wrap_column` counts text columns** - `wrap_column: 80` now fits 80 characters on a row whatever the width of the line-number gutter. It used to cap the whole pane, gutter included, so it left about 72 and a file of 76-column lines wrapped every one of them (#3405)
+* **`wrap_column` counts text columns** - `wrap_column: 80` now fits 80 characters per row; the line-number gutter used to eat into it (#3405)
+* **With `wrap_column` set, arrowing down no longer leaves the cursor below the visible lines** (#3294, reported by @gibboni)
 * **`editor.scroll_offset` fixed** for files under 5000 lines with line wrap off (#3248)
 * **Markdown code block borders** no longer break while you type inside them (#3247)
 * **LSP now finds the right project folder on Windows** (#3067, reported by @Bearmancer; fixed by @56steve)
@@ -48,7 +56,7 @@ Fresh is now licensed **GPL-3.0-or-later**, up from GPL-2.0-only (#3328).
 * **Vi mode: many Vim-parity fixes** - `Y`, `J`, `G`, `x`/`X`, visual mode, text objects, dot-repeat, and more, checked against real Vim (#2447)
 * **Vi `.` no longer drops the insert it replays** when typed quickly after Esc
 * **Fixed stale LSP diagnostics after vi-mode edits**, and Save All sending the wrong file's content to language servers (#3258)
-* **Vi mode holds in every window** - with vi on, a workspace opened afterwards typed `j` instead of moving down while the status bar said `-- NORMAL --`, and dialogs or window switches could turn vi off in one window. Vi is now an editor-wide input mode: on or off everywhere at once (#3395)
+* **Vi mode holds in every window** - `autoStart` turns it on at startup again, and dialogs, window switches and newly opened workspaces no longer drop it (#3305, reported by @thedadams; #3395)
 * **The homepage's demo player paints again on Chrome/Linux** instead of showing a black box (#3106, reported by @sgon00)
 * **A language server can no longer delete your files.** A server-initiated `workspace/applyEdit` arrived with no confirmation and was applied as-is, including its "delete this file (recursively)" operation — permanently, bypassing the system trash the file explorer deletes through. Fresh now reports the request and ignores it
 * **Uninstalling a package, replacing one on upgrade, and deleting a theme all go to the system trash**, instead of being unlinked outright. A mis-click is recoverable now
@@ -69,12 +77,30 @@ Fresh is now licensed **GPL-3.0-or-later**, up from GPL-2.0-only (#3328).
 * **The status bar underlines a hovered element again** - the underline was silently dropped in the move to the current renderer, and every hovered element's colour, plus the separator, stopped following the theme
 * **The horizontal scrollbar can reach the end of the widest line** - a press at the far end of the track, or a drag of the thumb to it, used to stop short by the gutter's width
 * **Clicking a split pane hits the pane you clicked** - in a layout without a visible separator, every pane past the first could be off by one column, and a click on the separator or past the last pane landed in the first pane instead
+* **Saving keeps the file's identity and touches nothing else** - saving `foo.txt` could delete an unrelated `foo.tmp`, and saving (including under `sudo`) changed the file's group and broke hard links and xattrs; very long file names now save too (#3377, #3348 reported by @qs5779, #3409)
+* **A file changed on disk is never silently overwritten** - Save All, Save and Quit, auto-save and closing a tab with Save skip it and say why, and auto-save on exit waits until you confirm the quit (#3346, reported by @mommysgoodpuppy)
+* **"Changed on disk" is reported once, and only for real changes** - clock skew on NFS or SMB, or a save's own failed write, no longer counts (#3380, #3403)
+* **Quitting** - the prompt lists each unsaved buffer and why, cancelling says "Quit cancelled", Save on a tab that needs `sudo` keeps it open until the save succeeds, restoring a recoverable quit adds no extra `[No Name]`, and counts read "Saved 1 file" (#3400, #3404, #3385, #3401, #3399)
+* **Integrated terminal keys reach the program** - a terminal-context binding like `noop` on Ctrl+Q passes the key through (#3270, reported by @brunnerh), Ctrl+J arrives as Ctrl+J rather than Enter (#3169, reported by @liugh-dev), and Shift+Enter and other modified keys reach kitty-protocol TUIs like OpenCode (#3323, reported by @sdecima; #3408)
+* **Integrated terminal output** - CJK text in scrollback no longer gains extra spaces (#3235, reported by @leonchen2012), a program's last output survives its exit (#3379), and a mouse-tracking program gets each wheel notch once with smooth scroll on
+* **Clicks and paging keep the view still** - clicking the top or bottom row no longer scrolls, PageUp/PageDown keep the caret's column and screen row, and drag-selecting past the end of the top line no longer scrolls and selects from the wrong place (#3407, #3398, #3329 reported by @asukaminato0721)
+* **Clicking past the end of a one-character line puts the caret after it** (#3351, reported by @asukaminato0721)
+* **The welcome page's cursor sits in the focused text field** (#3234, reported by @asukaminato0721)
+* **The status bar shows the right line** after opening a file that's already open in another window (#3397)
+* **TOML: an apostrophe in a comment no longer turns the rest of the file into a string** (#3358, reported by @rsramkis)
+* **Live Diff shows no false diff for Shift-JIS and other non-UTF-8 files** (#3246, reported by @asukaminato0721)
+* **Rainbow brackets: the matching pair under the cursor is highlighted** on every page (#3084, reported by @Korkman)
+* **C++ headers highlight as C++** - a `.h` in a C++ project, including over SSH, used to highlight and report as C (#3009, reported by @asukaminato0721)
+* **Large files with long multi-byte lines no longer panic or save invalid UTF-8** - invalid bytes now show as `<XX>` (#3285, reported by @CnsMaple)
+* **Windows: formatters and shell commands run through `cmd /c`** - they used to fail, or replace the buffer with cmd's banner (#3279, by @CnsMaple)
+* **A transient LSP crash no longer pops "Language Server Not Found" or opens log tabs** while a restart is pending (#3282, by @CnsMaple)
+* **A client whose daemon dies at startup says so** and names the daemon's log, instead of spinning at full CPU (#3418)
 
 ### Internals
 
-* Minor performance and dependency updates, including a security fix for a TLS library (RUSTSEC-2026-0285)
+* **Minor performance and dependency updates**, including a security fix for a TLS library (RUSTSEC-2026-0285)
 * **Less allocation churn on the render path** - a new memory-profiling harness found two hot spots copying and regrowing tens of MB over a two-minute editing session, and a large batch of explorer decorations no longer re-resolves the project root once per path (#3266, #3103)
-* Scrollbars are one implementation in the shared UI library now, so they behave the same on every surface
+* **Scrollbars are one shared implementation**, so they behave the same on every surface
 * **Plugins can no longer delete, move, or overwrite a path they name.** `removePath`, `renamePath` and `copyPath` are gone from the plugin API. `removePath` checked that its target sat under the temp or config directory, but only the top-level argument — a symlink inside the target walked its recursive delete back out of the fence — and `renamePath` had no fence at all and fell back to copy-then-delete, so anything `removePath` refused could be moved somewhere it allowed and deleted from there. What replaced them names a *thing* rather than a path: `scratchCreate`/`scratchPath`/`scratchDiscard` for staging directories the editor issues and takes back, `scratchFromDirectory`/`installScratch`/`uninstallPackage` for packages by kind and name, and `stateSet`/`stateGet`/`stateKeys`/`stateDelete` for namespaced storage whose layout the editor owns. Third-party plugins using the old calls will need updating
 * **`writeFile` refuses to overwrite an existing file, as it always claimed to.** The docs said it "fails if the file already exists to prevent plugins from accidentally overwriting user data"; the implementation wrote a temp file and renamed it over whatever was there, so a plugin trusting the documentation destroyed the file. Replacing one is now `replaceFile`, asked for by name
 * **`editor.setInputMode(name | null)` sets an editor-wide input mode** for modal-editing plugins like vi, beside `setEditorMode`, which is now documented as window-scoped. Keys resolve against a focused panel's mode, then the buffer's, the window's editor mode, the input mode, and the base keymap. `getInputMode()` reads it and `input_mode_changed` announces changes (#3395)
