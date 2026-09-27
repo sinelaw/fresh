@@ -4613,6 +4613,9 @@ function refreshOpenDialog(): void {
   // skips any id that isn't currently open. Cleared in `closeOpenDialog`.
   if (dockMode) {
     editor.setWindowCycleOrder(openDialog.filteredIds.filter((id) => id > 0));
+    // The tree's `expandedKeys` is a seed too, and a rebuild can change
+    // what it should be (a search opening every folder, or clearing).
+    applyDockExpansion();
   }
 }
 
@@ -5056,6 +5059,7 @@ function openControlRoom(
     });
     // The column's width is the host's; nothing to re-issue.
     openPanel.update(buildDockSpec());
+    applyDockExpansion();
   } else {
     // 90% × 90% of the terminal — the open dialog wants room for
     // a real session list + preview pane, unlike the new-session
@@ -6174,7 +6178,9 @@ function toggleDockFolderExpansion(folderKey: string): void {
   if (set.has(folderKey)) set.delete(folderKey);
   else set.add(folderKey);
   saveExpanded();
-  openPanel.setExpandedKeys("sessions", Array.from(set));
+  // Through the reconciler: while a search holds every folder open, the
+  // flip is remembered for later rather than drawn.
+  applyDockExpansion();
   // Re-render so the hint-bar padding tracks the tree's new height
   // (see the `expand` widget_event mirror for the host-owned fold path).
   if (dockMode && openDialog) openPanel.update(buildDockSpec());
@@ -16416,12 +16422,10 @@ function apiSetDockFilter(
     const nextIdx = prevId !== undefined ? openDialog.filteredIds.indexOf(prevId) : -1;
     openDialog.selectedIndex = nextIdx >= 0 ? nextIdx : 0;
   }
-  refreshOpenDialog();
   // A search force-opens every folder so matches aren't buried, and restores
-  // the user's expansion set when it clears — the same reconciliation the
-  // typed-into filter box runs. `refreshOpenDialog` just rebuilt the tree, so
-  // `dockKeys` is current.
-  if (dockMode) applyDockExpansion();
+  // the user's expansion set when it clears — `refreshOpenDialog` runs that
+  // reconciliation (`applyDockExpansion`) after it rebuilds the tree.
+  refreshOpenDialog();
   // Turning "all worktrees" ON re-scans *now* so the rows reflect every
   // project's on-disk worktrees at this moment — not just whatever the single
   // scan at dialog-open time happened to catch. Discovery walks every known
@@ -17618,6 +17622,9 @@ editor.on("widget_event", (e) => {
         // the blank padding between the tree and the bottom hint bar
         // re-balances and the hints stay pinned to the dock's bottom.
         if (dockMode && openPanel) openPanel.update(buildDockSpec());
+        // While a search holds every folder open the host's flip is undone
+        // here; otherwise this re-pushes the set the host already has.
+        if (dockMode) applyDockExpansion();
       }
       return;
     }

@@ -779,10 +779,10 @@ fn leading_row_style(children: &[WidgetSpec]) -> Option<&fresh_core::api::Overla
     }
 }
 
-/// The selection a controlled `Tree` actually has.
+/// The selection and expansion a controlled `Tree` actually has.
 ///
-/// **The spec's `selected_index` is a seed, not the live value**, and the
-/// described arms were reading it as though it were live.
+/// **The spec's `selected_index` and `expanded_keys` are seeds, not the live
+/// values**, and the described arms were reading them as though they were.
 /// `WidgetInstanceState::Tree` says so in as many words — it becomes
 /// authoritative once a handler decides one, "so the host can mutate it via
 /// `WidgetCommand::SelectMove` without racing the plugin's spec round-trip" —
@@ -794,27 +794,33 @@ fn leading_row_style(children: &[WidgetSpec]) -> Option<&fresh_core::api::Overla
 /// spec, so `Ctrl+Alt+→` moved the match and the highlight stayed on the row
 /// it started on.
 ///
-/// This is `kinds::tree::resolve`'s selection half, restated only because a
-/// description holds the spec's fields rather than the spec node. A `List`'s
-/// arms call `kinds::list::resolve` directly, because that one also clamps —
-/// there is nothing left in this codebase that sanitises a stored list index,
-/// so every reader has to.
+/// Expansion split the same way: a disclosure click, →/← and
+/// `SetExpandedKeys` write only the instance state, so a tree drawn from the
+/// spec's `expanded_keys` kept its old shape while its keys walked the new
+/// one — the Markdown table of contents, which answers `expand` with
+/// `SetExpandedKeys` alone, did not fold until something re-sent its spec.
 ///
-/// A `Tree`'s `expanded_keys` is still read from the spec here, and agrees
-/// today because the plugins that drive it re-send the spec; the mutation
-/// route this closes had no such second writer.
-fn live_selection(cx: &Ctx<'_>, key: &Option<String>, seed: i32) -> i32 {
-    use crate::widgets::WidgetInstanceState as St;
-    let Some(k) = key.as_deref().filter(|k| !k.is_empty()) else {
-        return seed;
-    };
-    match cx.states.get(k) {
-        Some(St::Tree { selected_index, .. }) => *selected_index,
-        _ => seed,
-    }
+/// This is `kinds::tree::resolve_seeded`, the one resolver every handler
+/// reads through, called with the spec's fields because a description holds
+/// those rather than the spec node. A `List`'s arms call
+/// `kinds::list::resolve` directly, because that one also clamps — there is
+/// nothing left in this codebase that sanitises a stored list index, so
+/// every reader has to.
+fn live_tree(
+    cx: &Ctx<'_>,
+    key: &Option<String>,
+    selected_seed: i32,
+    expanded_seed: &[String],
+) -> crate::widgets::kinds::tree::Resolved {
+    crate::widgets::kinds::tree::resolve_seeded(
+        selected_seed,
+        expanded_seed,
+        key.as_deref().unwrap_or_default(),
+        cx.states,
+    )
 }
 
-/// The selection a controlled `List` actually has — [`live_selection`]'s
+/// The selection a controlled `List` actually has — [`live_tree`]'s
 /// sibling, through the kind's own resolver so the clamp is the same one
 /// the painter and every handler apply.
 fn live_list_selection(cx: &Ctx<'_>, key: &Option<String>, seed: i32, total: usize) -> i32 {
@@ -1941,18 +1947,21 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                 None => node.h(Sizing::Flex(1)),
             }
         }
-        // **A tree is a flat list whose expansion belongs to the plugin.**
+        // **A tree is a flat list whose expansion belongs to the host's
+        // instance state.**
         //
         // `WidgetSpec::Tree` is not the library's `Tree`: it arrives already
-        // flattened, each node carrying a `depth` and a `has_children` flag,
-        // and `expanded_keys` comes down in the spec and goes back through
-        // `WidgetMutation`. The library's `Tree` builds its own nesting and
-        // owns `expanded` in element state, so it would fight the plugin for
-        // the one fact the plugin is authoritative for. What this is, is a
-        // controlled list of pre-rendered rows — `widgets::List`, again.
+        // flattened, each node carrying a `depth` and a `has_children` flag;
+        // its `expanded_keys` is a seed, and the live set is the widget's
+        // instance state, which the kind's handlers and `SetExpandedKeys`
+        // write. The library's `Tree` builds its own nesting and owns
+        // `expanded` in element state, so it would be a second owner of that
+        // one fact. What this is, is a controlled list of pre-rendered rows —
+        // `widgets::List`, again.
         //
-        // Which nodes are *visible* is the plugin's `expanded_keys` applied to
-        // the flat array, and `collect_visible_tree_indices` is that rule.
+        // Which nodes are *visible* is the resolved set ([`live_tree`])
+        // applied to the flat array, and `collect_visible_tree_indices` is
+        // that rule.
         // Reused rather than restated: an ancestor-open walk written twice is
         // two answers to "what is on screen".
         //
@@ -1989,9 +1998,10 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
             toggle_on_click: _,
             columns: _,
         } if *card_borders => {
-            let sel_abs = live_selection(cx, key, *selected_index);
-            let expanded: std::collections::HashSet<String> =
-                expanded_keys.iter().cloned().collect();
+            let crate::widgets::kinds::tree::Resolved {
+                selected: sel_abs,
+                expanded,
+            } = live_tree(cx, key, *selected_index, expanded_keys);
             let visible = crate::widgets::collect_visible_tree_indices(nodes, item_keys, &expanded);
             let tree_key = key.clone().unwrap_or_default();
             let h_pan = cx.h_pan.get(&tree_key).copied().unwrap_or(0);
@@ -2175,8 +2185,10 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
             columns,
         } if !*card_borders => {
             use std::rc::Rc;
-            let expanded: std::collections::HashSet<String> =
-                expanded_keys.iter().cloned().collect();
+            let crate::widgets::kinds::tree::Resolved {
+                selected: sel_abs,
+                expanded,
+            } = live_tree(cx, key, *selected_index, expanded_keys);
             let visible = Rc::new(crate::widgets::collect_visible_tree_indices(
                 nodes, item_keys, &expanded,
             ));
@@ -2186,7 +2198,6 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
             let h_pan = cx.h_pan.get(&tree_key).copied().unwrap_or(0);
             let (slot, checkable, indent) = (cx.slot, *checkable, *indent_cols);
             let surface = cx.surface.clone();
-            let sel_abs = live_selection(cx, key, *selected_index);
             let n = visible.len();
 
             // **A table** (`columns`): the rows that carry cells lay them on
@@ -5609,10 +5620,11 @@ pub(crate) mod tests {
         }
     }
 
-    /// **Expansion stays the plugin's.** A collapsed root hides its child; an
-    /// expanded one shows it. Nothing in the tree owns that — `expanded_keys`
-    /// arrives in the spec, and `collect_visible_tree_indices` is the same
-    /// rule the runtime applies, reused rather than restated.
+    /// **The seed is drawn until the host has a set of its own.** A collapsed
+    /// root hides its child; an expanded one shows it. With no instance state
+    /// the spec's `expanded_keys` is the answer, and
+    /// `collect_visible_tree_indices` is the same rule the runtime applies,
+    /// reused rather than restated.
     #[test]
     fn a_trees_visible_rows_are_the_plugins_expansion() {
         let collapsed = tree_text(&a_tree(&[], -1), &cx());
@@ -5627,6 +5639,80 @@ pub(crate) mod tests {
             open.iter().any(|r| r.contains("child")),
             "an expanded one shows it, got {open:?}"
         );
+    }
+
+    /// **Once the host holds a tree's expansion, the spec's is only a seed.**
+    ///
+    /// A disclosure click, →/← and `SetExpandedKeys` all write
+    /// `WidgetInstanceState::Tree` and none re-sends the spec, so a tree
+    /// drawn from the spec's `expanded_keys` shows the old shape while the
+    /// keys already walk the new one. Both ways, and for both arms — the
+    /// plain rows and the `card_borders` viewport.
+    #[test]
+    fn a_trees_drawn_expansion_is_the_hosts_once_it_has_one() {
+        fn with_expanded(keys: &[&str]) -> Ctx<'static> {
+            let mut states = std::collections::HashMap::new();
+            states.insert(
+                "tr".to_string(),
+                crate::widgets::WidgetInstanceState::Tree {
+                    selected_index: -1,
+                    expanded_keys: keys.iter().map(|k| k.to_string()).collect(),
+                },
+            );
+            Ctx {
+                states: Box::leak(Box::new(states)),
+                ..cx()
+            }
+        }
+        fn carded(spec: WidgetSpec) -> WidgetSpec {
+            match spec {
+                WidgetSpec::Tree {
+                    nodes,
+                    item_keys,
+                    selected_index,
+                    key,
+                    expanded_keys,
+                    checkable,
+                    indent_cols,
+                    toggle_on_click,
+                    columns,
+                    ..
+                } => WidgetSpec::Tree {
+                    nodes,
+                    item_keys,
+                    selected_index,
+                    visible_rows: Some(12),
+                    key,
+                    expanded_keys,
+                    checkable,
+                    indent_cols,
+                    item_height: 1,
+                    card_borders: true,
+                    toggle_on_click,
+                    columns,
+                },
+                other => other,
+            }
+        }
+        for (arm, spec_of) in [
+            ("plain", (|s| s) as fn(WidgetSpec) -> WidgetSpec),
+            ("card_borders", carded),
+        ] {
+            let opened = tree_text(&spec_of(a_tree(&[], -1)), &with_expanded(&["r"]));
+            assert!(
+                opened.iter().any(|r| r.contains("child")),
+                "{arm}: the host opened the root, the spec's seed did not: {opened:?}"
+            );
+            let shut = tree_text(&spec_of(a_tree(&["r"], -1)), &with_expanded(&[]));
+            assert!(
+                !shut.iter().any(|r| r.contains("child")),
+                "{arm}: the host shut the root the spec seeded open: {shut:?}"
+            );
+            assert!(
+                shut.iter().any(|r| r.contains("sibling")),
+                "{arm}: {shut:?}"
+            );
+        }
     }
 
     /// **In the sidebar, the selected row wears the explorer's `▌`** (design

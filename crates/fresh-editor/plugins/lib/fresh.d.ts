@@ -1977,11 +1977,13 @@ type WidgetSpec = {
 	*/
 	visibleRows?: number | null;
 	/**
-	* Initial-only set of expanded item keys. Once the widget
-	* has rendered, the host's instance-state `expanded_keys`
-	* is authoritative; updating this field on subsequent specs
-	* has no effect (use `WidgetMutation::SetExpandedKeys` to
-	* override host state).
+	* Seed set of expanded item keys, drawn until the host's
+	* instance state has an expansion of its own (a Right/Left,
+	* a disclosure click, a selection write, or
+	* `WidgetMutation::SetExpandedKeys`). From then on the
+	* instance state is what is drawn and navigated, and
+	* changing this field on later specs has no effect — use
+	* `WidgetMutation::SetExpandedKeys` to change it.
 	*/
 	expandedKeys: Array<string>;
 	/**

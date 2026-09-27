@@ -2291,6 +2291,17 @@ function filesInDisplayOrder(): FileEntry[] {
  *  it is acting on. */
 let filesSelectedNodeKey = "";
 
+/** The directory / category rows the reader folded. Every group is open
+ *  by default, so the tree's expansion is `groupKeys` minus these — kept
+ *  here because a rebuild can bring groups the host has never seen (a new
+ *  directory, a filter cleared), and those must arrive open. */
+let filesCollapsedKeys = new Set<string>();
+
+/** The FILES tree's expanded set: every group but the folded ones. */
+function filesExpandedKeys(): string[] {
+    return filesTree.groupKeys.filter((k) => !filesCollapsedKeys.has(k));
+}
+
 /** The sidebar tree as last built — the map from a `select` event's node
  *  key back to a file. */
 let filesTree: FilesTree = {
@@ -2344,7 +2355,9 @@ function buildFilesPanelSpec(): WidgetSpec {
             // panel kept the old, shorter window until some unrelated
             // event happened to repaint it — the rows below the window
             // stayed blank with files still to show.
-            expandedKeys: filesTree.groupKeys,
+            // A seed only: the host owns expansion once the tree is up,
+            // so `renderFilesPanel` pushes the same set after every build.
+            expandedKeys: filesExpandedKeys(),
             indentCols: FILES_TREE_INDENT,
             key: FILES_TREE_KEY,
         }));
@@ -2494,6 +2507,9 @@ function panelVisible(panel: 'files' | 'diff' | 'comments'): boolean {
 function renderFilesPanel(): void {
     if (filesPanel === null || !panelVisible('files')) return;
     filesPanel.set(buildFilesPanelSpec());
+    // The spec's `expandedKeys` is ignored once the tree has state, and a
+    // rebuild can add groups that must open by default.
+    filesPanel.setExpandedKeys(FILES_TREE_KEY, filesExpandedKeys());
     pointSidebarAtCurrentFile();
 }
 
@@ -2631,8 +2647,15 @@ editor.on("widget_event", (data) => {
             }
             return;
         }
+        if (data.event_type === "expand") {
+            // The host has already flipped the row; remember the fold so
+            // the next rebuild keeps it.
+            const expanded = (data.payload as Record<string, unknown>)?.["expanded"] === true;
+            if (expanded) filesCollapsedKeys.delete(nodeKey);
+            else filesCollapsedKeys.add(nodeKey);
+        }
         adoptPanelFocusFromWidget('files');
-        return; // `expand` is host-owned; nothing else to mirror.
+        return;
     }
     if (data.widget_key === FILES_FILTER_KEY) {
         if (data.event_type === "focus") {
@@ -7551,6 +7574,7 @@ function stop_review_diff() {
     toolbarPanel = null;
     filesPanel = null;
     commentsPanel = null;
+    filesCollapsedKeys = new Set<string>();
     if (state.groupId !== null) {
         editor.closeBufferGroup(state.groupId);
         state.groupId = null;
