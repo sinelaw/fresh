@@ -41,6 +41,9 @@ pub fn init_global(log_file_path: &Path) -> Option<TracingHandles> {
     })
 }
 
+/// The editor's default log filter, as a `RUST_LOG`-style directive string.
+pub const DEFAULT_LOG_FILTER: &str = "debug,swc_ecma_transforms_base=info,swc_common=info";
+
 /// Build a subscriber with file logging and optional warning/status layers.
 ///
 /// This is the core subscriber configuration shared between production and tests.

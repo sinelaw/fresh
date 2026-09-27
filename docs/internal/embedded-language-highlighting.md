@@ -268,7 +268,7 @@ attribute value, and the engine does the rest.
 
 ### Non-goals / future
 
-- The tree-sitter backend (JS/TS/JSON/Templ/Go fallback) has injections
+- The tree-sitter backend (JSON/Templ/Go fallback) has injections
   explicitly disabled and none of those languages currently host embedded
   regions; if one ever does, tree-sitter injection queries are the natural
   analogue there.

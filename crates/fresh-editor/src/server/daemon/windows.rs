@@ -61,6 +61,11 @@ pub fn spawn_server_detached(spawn: &super::DaemonSpawn<'_>) -> io::Result<u32> 
     Ok(child.id())
 }
 
+/// Whether a daemon this process spawned has exited.
+pub fn spawned_daemon_exited(pid: u32) -> bool {
+    !is_process_running(pid)
+}
+
 /// Check if a process with the given PID is still running
 pub fn is_process_running(pid: u32) -> bool {
     unsafe {

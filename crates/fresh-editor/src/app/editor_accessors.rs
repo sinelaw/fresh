@@ -1485,6 +1485,11 @@ impl Editor {
             return false;
         }
 
+        // Nothing armed: skip the overlay checks below, which run every tick.
+        if self.active_window().mouse_state.lsp_hover_state.is_none() {
+            return false;
+        }
+
         // Suppress hover while the LSP status popup is open so the hover card
         // doesn't stack on top of it.
         if self.is_lsp_status_popup_open() {

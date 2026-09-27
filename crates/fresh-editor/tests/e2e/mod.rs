@@ -370,6 +370,7 @@ pub mod sudo_save_prompt;
 pub mod symlinks;
 pub mod syntax_highlighting_coverage;
 pub mod syntax_highlighting_embedded_offset;
+pub mod syntax_highlighting_js_ts;
 pub mod syntax_language_case;
 pub mod syntax_variable_builtin;
 pub mod tab_config;

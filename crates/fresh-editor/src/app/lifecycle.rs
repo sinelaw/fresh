@@ -448,6 +448,7 @@ impl Editor {
 
     /// Handle terminal focus gained event
     pub fn focus_gained(&mut self) {
+        self.mark_plugin_snapshot_dirty();
         self.plugin_manager.read().unwrap().run_hook(
             "focus_gained",
             crate::services::plugins::hooks::HookArgs::FocusGained {},
@@ -544,6 +545,7 @@ impl Editor {
     /// plugin hook is signature-deduped, so callers never need to decide
     /// "did this actually change the layout?" — they just call `relayout`.
     pub fn relayout(&mut self) {
+        self.mark_plugin_snapshot_dirty();
         self.push_layout_geometry();
         self.notify_layout_changed();
     }
