@@ -204,10 +204,6 @@ pub struct BracketHighlightOverlay {
 struct ColorizationCache {
     /// Bytes scanned for brackets.
     scan: Range<usize>,
-    /// Byte range the overlays were written into — the union of this pass's
-    /// scan range and the previous one's, which is what the next replace has
-    /// to cover to retract what scrolled out of view.
-    written: Range<usize>,
     buffer_version: u64,
     viewport: Range<usize>,
     colors: [Color; 6],
@@ -565,7 +561,8 @@ impl BracketHighlightOverlay {
         }
 
         let mut stack: Vec<char> = Vec::new();
-        let mut new_overlays = Vec::new();
+        // What the viewport's brackets should look like: byte -> colour.
+        let mut wanted: std::collections::HashMap<usize, Color> = std::collections::HashMap::new();
 
         for (idx, byte) in bytes.iter().enumerate() {
             let pos = scan_start + idx;
@@ -582,12 +579,7 @@ impl BracketHighlightOverlay {
                 let depth = stack.len();
                 stack.push(c);
                 if pos >= viewport_start {
-                    let color = self.rainbow_colors[depth % self.rainbow_colors.len()];
-                    let face = OverlayFace::Foreground { color };
-                    let overlay =
-                        Overlay::with_namespace(marker_list, pos..pos + 1, face, ns.clone())
-                            .with_priority_value(6);
-                    new_overlays.push(overlay);
+                    wanted.insert(pos, self.rainbow_colors[depth % self.rainbow_colors.len()]);
                 }
                 continue;
             }
@@ -600,40 +592,46 @@ impl BracketHighlightOverlay {
                     }
                 }
                 if pos >= viewport_start {
-                    let color = self.rainbow_colors[depth % self.rainbow_colors.len()];
-                    let face = OverlayFace::Foreground { color };
-                    let overlay =
-                        Overlay::with_namespace(marker_list, pos..pos + 1, face, ns.clone())
-                            .with_priority_value(6);
-                    new_overlays.push(overlay);
+                    wanted.insert(pos, self.rainbow_colors[depth % self.rainbow_colors.len()]);
                 }
             }
         }
 
-        self.colorization_active = !new_overlays.is_empty();
-        // Replace over the scanned bytes plus whatever the previous pass
-        // wrote — enough to retract the overlays that scrolled out of view,
-        // and nothing more. Passing `0..buffer.len()` here (as this used to)
-        // makes the replace's marker-tree query return *every* marker in the
-        // buffer, so the cost of one frame grew with the whole overlay set
-        // rather than with the viewport: ~230ms per frame on a 20k-line
-        // review diff, against ~3ms for the rest of the frame.
-        let written = match &self.colorization_cache {
-            // An edit moved every marker after it, so the overlays this
-            // namespace already owns are no longer where the cached range
-            // says they are — one of them can have been pushed clear of it.
-            // Retract across the buffer for that pass; edits are rare next
-            // to frames, and this is the range the pass always used before.
-            Some(cache) if cache.buffer_version != buffer.version() => 0..buffer.len(),
-            Some(cache) => cache.written.start.min(scan_start)..cache.written.end.max(scan_end),
-            None => scan_start..scan_end,
-        };
-        overlays.replace_range_in_namespace(&ns, &written, new_overlays, marker_list);
+        self.colorization_active = !wanted.is_empty();
+        // Reconcile against what this namespace already has rather than
+        // replacing it: its markers moved with any edit, so typing a letter
+        // leaves every overlay in place and costs no marker churn at all.
+        let stale: Vec<_> = overlays
+            .in_namespace(&ns)
+            .filter(|o| {
+                let range = o.range(marker_list);
+                let current = match o.face {
+                    OverlayFace::Foreground { color } if range.len() == 1 => Some(color),
+                    _ => None,
+                };
+                if current.is_some() && wanted.get(&range.start).copied() == current {
+                    wanted.remove(&range.start);
+                    false
+                } else {
+                    true
+                }
+            })
+            .map(|o| o.handle.clone())
+            .collect();
+        for handle in &stale {
+            overlays.remove_by_handle(handle, marker_list);
+        }
+        overlays.extend(wanted.into_iter().map(|(pos, color)| {
+            Overlay::with_namespace(
+                marker_list,
+                pos..pos + 1,
+                OverlayFace::Foreground { color },
+                ns.clone(),
+            )
+            .with_priority_value(6)
+        }));
         self.colorization_cache = Some(ColorizationCache {
             scan: scan_start..scan_end,
-            // The next pass has to cover what this one wrote, but not what
-            // the one before it did — that has just been retracted.
-            written: scan_start..scan_end,
             buffer_version: buffer.version(),
             viewport: viewport_start..viewport_end,
             colors: self.rainbow_colors,
@@ -797,6 +795,41 @@ mod tests {
             colorize_frame(&mut overlay, &buffer, &mut overlays, &mut markers),
             "an edited buffer must be re-colorized"
         );
+    }
+
+    /// An edit that adds or removes no bracket leaves the overlays in place:
+    /// their markers moved with it, so there is nothing to retract or re-add.
+    #[test]
+    fn typing_a_letter_keeps_the_bracket_overlays() {
+        let mut buffer = Buffer::from_str_test("fn a() { b(); }\n");
+        let mut overlays = OverlayManager::new();
+        let mut markers = MarkerList::new();
+        let mut overlay = BracketHighlightOverlay::new();
+        let handles = |overlays: &OverlayManager| -> std::collections::HashSet<_> {
+            overlays.all().iter().map(|o| o.handle.clone()).collect()
+        };
+        colorize_frame(&mut overlay, &buffer, &mut overlays, &mut markers);
+        let before = handles(&overlays);
+        assert_eq!(before.len(), 6);
+
+        markers.adjust_for_insert(0, 1);
+        buffer.insert(0, "x");
+        assert!(colorize_frame(
+            &mut overlay,
+            &buffer,
+            &mut overlays,
+            &mut markers
+        ));
+        assert_eq!(handles(&overlays), before);
+
+        // A bracket after the others adds its overlay and moves none of theirs.
+        let end = buffer.len();
+        markers.adjust_for_insert(end, 1);
+        buffer.insert(end, "(");
+        colorize_frame(&mut overlay, &buffer, &mut overlays, &mut markers);
+        let after = handles(&overlays);
+        assert_eq!(after.len(), 7);
+        assert_eq!(after.intersection(&before).count(), 6);
     }
 
     #[test]
