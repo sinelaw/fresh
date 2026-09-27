@@ -208,6 +208,10 @@ fn load_startup_plugins(
         );
     }
 
+    // Before any plugin (or a TypeScript server for an opened file) runs,
+    // so the declarations file written after loading is never new to it.
+    crate::init_script::ensure_plugin_declarations(&dir_context.config_dir);
+
     let manifests =
         crate::services::plugins::manifest::read_manifests(&plugin_dirs, &config.plugins);
 
