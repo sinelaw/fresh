@@ -70,6 +70,7 @@ pub mod plugin_authoring;
 pub mod plugin_config_changed_hook;
 pub mod plugin_config_registration;
 pub mod plugin_keybinding_execution;
+pub mod plugin_snapshot_idle;
 pub mod plugin_snapshot_scaling;
 pub mod plugin_text_property_freshness;
 pub mod plugins_dir_in_working_dir;

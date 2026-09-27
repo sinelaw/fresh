@@ -145,6 +145,7 @@ impl crate::app::Editor {
     /// cross-window render (e.g. the Orchestrator preview pane's
     /// `WindowEmbed`) draws blank.
     pub fn create_window_at(&mut self, root: PathBuf, label: String) -> WindowId {
+        self.mark_plugin_snapshot_dirty();
         // One session per directory: reuse an existing window at this
         // root instead of spawning a colliding duplicate.
         if let Some(existing) = self.find_window_by_root(&root) {
@@ -664,6 +665,7 @@ impl crate::app::Editor {
     /// bug (caller verifies with `listWindows`), not a recoverable
     /// error worth surfacing through the channel.
     pub fn set_active_window(&mut self, id: WindowId) {
+        self.mark_plugin_snapshot_dirty();
         if self.active_window == id {
             return;
         }

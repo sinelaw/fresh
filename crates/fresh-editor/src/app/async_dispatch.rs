@@ -180,10 +180,11 @@ impl Editor {
         // Order matters only for cosmetic message ordering on a
         // very-busy frame; semantically the dispatcher is the same
         // for every source.
+        // Spans in this pass are `trace`: it runs every tick, idle or not.
         let mut messages: Vec<AsyncMessage> =
             std::mem::take(&mut self.async_message_backlog).into();
         {
-            let _s = tracing::info_span!("try_recv_all").entered();
+            let _s = tracing::trace_span!("try_recv_all").entered();
             messages.extend(bridge.try_recv_all());
         }
         for window in self.windows.values() {
@@ -588,6 +589,9 @@ impl Editor {
             }
         }
         self.async_message_backlog = messages.collect();
+        if handled > 0 {
+            self.mark_plugin_snapshot_dirty();
+        }
         if !self.async_message_backlog.is_empty() {
             tracing::debug!(
                 deferred = self.async_message_backlog.len(),
@@ -595,12 +599,13 @@ impl Editor {
             );
         }
 
-        // Update plugin state snapshot BEFORE processing commands
-        // This ensures plugins have access to current editor state (cursor positions, etc.)
+        // Bring the plugin state snapshot up to date BEFORE processing
+        // commands, so plugins see current editor state (cursor positions,
+        // etc.). A no-op when nothing happened since the last rebuild.
         #[cfg(feature = "plugins")]
         {
-            let _s = tracing::info_span!("update_plugin_state_snapshot").entered();
-            self.update_plugin_state_snapshot();
+            let _s = tracing::trace_span!("refresh_plugin_state_snapshot").entered();
+            self.refresh_plugin_state_snapshot();
         }
 
         // Process TypeScript plugin commands
@@ -608,7 +613,7 @@ impl Editor {
         let processed_any_commands = false;
         #[cfg(feature = "plugins")]
         let processed_any_commands = {
-            let _s = tracing::info_span!("process_plugin_commands").entered();
+            let _s = tracing::trace_span!("process_plugin_commands").entered();
             self.process_plugin_commands()
         };
 
@@ -617,20 +622,20 @@ impl Editor {
         // subsequent lines_changed callback would see stale values.
         #[cfg(feature = "plugins")]
         if processed_any_commands {
-            let _s = tracing::info_span!("update_plugin_state_snapshot_post").entered();
+            let _s = tracing::trace_span!("update_plugin_state_snapshot_post").entered();
             self.update_plugin_state_snapshot();
         }
 
         // Process pending plugin action completions
         #[cfg(feature = "plugins")]
         {
-            let _s = tracing::info_span!("process_pending_plugin_actions").entered();
+            let _s = tracing::trace_span!("process_pending_plugin_actions").entered();
             self.process_pending_plugin_actions();
         }
 
         // Process pending LSP server restarts (with exponential backoff)
         {
-            let _s = tracing::info_span!("process_pending_lsp_restarts").entered();
+            let _s = tracing::trace_span!("process_pending_lsp_restarts").entered();
             self.process_pending_lsp_restarts();
         }
 
@@ -652,13 +657,19 @@ impl Editor {
 
         // Poll for file changes (auto-revert) and file tree changes
         let file_changes = {
-            let _s = tracing::info_span!("poll_file_changes").entered();
+            let _s = tracing::trace_span!("poll_file_changes").entered();
             self.poll_file_changes()
         };
         let tree_changes = {
-            let _s = tracing::info_span!("poll_file_tree_changes").entered();
+            let _s = tracing::trace_span!("poll_file_tree_changes").entered();
             self.poll_file_tree_changes()
         };
+        if tree_changes {
+            self.invalidate_detected_env();
+        }
+        if file_changes || tree_changes {
+            self.mark_plugin_snapshot_dirty();
+        }
 
         // Trigger render if any async messages, plugin commands were processed, or plugin requested render
         //
@@ -1106,6 +1117,36 @@ impl Editor {
         );
     }
 
+    /// Something plugins can observe may have changed; the next
+    /// `refresh_plugin_state_snapshot` rebuilds.
+    pub(crate) fn mark_plugin_snapshot_dirty(&mut self) {
+        #[cfg(feature = "plugins")]
+        {
+            self.plugin_snapshot_dirty = true;
+        }
+    }
+
+    /// Re-probe the environment on the next rebuild (a root entry changed);
+    /// a probe already in flight may have missed the change.
+    pub(crate) fn invalidate_detected_env(&mut self) {
+        #[cfg(feature = "plugins")]
+        if let Some(cache) = self.detected_env_cache.as_mut() {
+            cache.stale = true;
+            cache.probe = None;
+        }
+    }
+
+    /// Whether `handle` is the watch behind the cached `detect_env` answer.
+    fn is_detected_env_watch(&self, _handle: u64) -> bool {
+        #[cfg(feature = "plugins")]
+        return self
+            .detected_env_cache
+            .as_ref()
+            .is_some_and(|c| c.watch == Some(_handle));
+        #[cfg(not(feature = "plugins"))]
+        false
+    }
+
     /// Forward a watched-path filesystem event to the `path_changed` hook.
     fn handle_path_changed(
         &mut self,
@@ -1113,6 +1154,10 @@ impl Editor {
         path: std::path::PathBuf,
         kind: crate::services::async_bridge::PathChangeKind,
     ) {
+        if self.is_detected_env_watch(handle) {
+            self.invalidate_detected_env();
+            return;
+        }
         self.path_changes_for_test
             .push((handle, path.clone(), kind.as_str()));
         self.plugin_manager.read().unwrap().run_hook(

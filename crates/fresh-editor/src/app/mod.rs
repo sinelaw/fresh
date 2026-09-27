@@ -469,6 +469,29 @@ pub struct PerfCounters {
     /// carry one row or a whole file's diff (the review stream ships
     /// git's output verbatim, in blocks), and it is the rows that cost.
     pub panel_content_rows: u64,
+    /// Rebuilds of the plugin state snapshot. An idle loop pass must not add
+    /// one; see `Editor::refresh_plugin_state_snapshot`.
+    pub plugin_snapshot_rebuilds: u64,
+    /// Workspace environment detections (`detect_env`), each a probe per
+    /// marker on the authority's filesystem.
+    pub env_detections: u64,
+}
+
+/// `detect_env`'s answer for one root, detector set and filesystem. Probed
+/// on a worker thread: the filesystem may be remote, or hung.
+#[cfg(feature = "plugins")]
+pub(crate) struct DetectedEnvCache {
+    pub(crate) root: std::path::PathBuf,
+    pub(crate) detectors: Vec<crate::config::EnvDetector>,
+    pub(crate) fs: Arc<dyn crate::model::filesystem::FileSystem + Send + Sync>,
+    /// The published answer; empty when nothing is detected.
+    pub(crate) answer: String,
+    /// `answer` may no longer match the root; the next rebuild re-probes.
+    pub(crate) stale: bool,
+    /// A probe in flight, reporting `(answer, incomplete)`.
+    pub(crate) probe: Option<std::sync::mpsc::Receiver<(String, bool)>>,
+    /// Watch on a local root that marks `answer` stale.
+    pub(crate) watch: Option<u64>,
 }
 
 /// A machine a plugin opened with `openMachine`.
@@ -517,6 +540,14 @@ pub struct Editor {
     /// that is already copying), and the only way an assertion can tell a
     /// per-tick copy from a per-change one.
     pub(crate) perf_counters: PerfCounters,
+    /// Something happened since the plugin state snapshot was last rebuilt.
+    #[cfg(feature = "plugins")]
+    pub(crate) plugin_snapshot_dirty: bool,
+    /// Live remote connections at the last snapshot rebuild; they flip off-loop.
+    #[cfg(feature = "plugins")]
+    pub(crate) plugin_snapshot_liveness: u64,
+    #[cfg(feature = "plugins")]
+    pub(crate) detected_env_cache: Option<DetectedEnvCache>,
 
     // Buffers moved onto `Window` (Step 0c). Each window owns its
     // own buffer storage; opening the same file in two windows

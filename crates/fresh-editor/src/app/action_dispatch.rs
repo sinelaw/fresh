@@ -73,6 +73,7 @@ impl Editor {
     /// Handle an action (for normal mode and command execution).
     /// Used by the app module internally and by the GUI module for native menu dispatch.
     pub(crate) fn handle_action(&mut self, action: Action) -> AnyhowResult<()> {
+        self.mark_plugin_snapshot_dirty();
         use crate::input::keybindings::Action;
 
         // Actions are the funnel for command-driven UI mutation (palette,

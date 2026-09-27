@@ -101,6 +101,7 @@ impl Editor {
         // a fact says whether it changed anything routing reads
         // (`UiFact::is_pointer_transient`), and the legacy walk, which cannot,
         // marks the description stale for every press and release it takes.
+        self.mark_plugin_snapshot_dirty();
         self.lay_out_shell_if_stale();
         self.handle_mouse_routed(mouse_event)
     }

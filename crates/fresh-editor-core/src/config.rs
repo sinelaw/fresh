@@ -597,7 +597,7 @@ pub enum EnvKind {
 }
 
 /// One environment detector: its markers, risk, activation command and name.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[schemars(extend("x-display-field" = "/name"))]
 pub struct EnvDetector {
     /// Short label shown in the status pill (e.g. ".venv", "direnv", "mise").

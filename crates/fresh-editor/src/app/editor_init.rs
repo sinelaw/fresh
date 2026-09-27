@@ -618,6 +618,12 @@ impl Editor {
         let editor = Editor {
             seat_focus_depth: 0,
             perf_counters: Default::default(),
+            #[cfg(feature = "plugins")]
+            plugin_snapshot_dirty: true,
+            #[cfg(feature = "plugins")]
+            plugin_snapshot_liveness: 0,
+            #[cfg(feature = "plugins")]
+            detected_env_cache: None,
             // From parts (non-trivial):
             next_buffer_id: parts.next_buffer_id,
             buffer_id_alloc: parts.buffer_id_alloc,

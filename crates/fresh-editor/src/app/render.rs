@@ -1211,6 +1211,9 @@ impl Editor {
         // until the user pressed one. Still ahead of the next key, which is
         // what `Editor::shell_dispatch`'s own drain of the same queue is for.
         self.apply_settled_shell_messages();
+
+        // Layout and scroll settle during a frame; plugins read them back.
+        self.mark_plugin_snapshot_dirty();
     }
 
     /// The Confirm-each option's live value when it is shown (replace
