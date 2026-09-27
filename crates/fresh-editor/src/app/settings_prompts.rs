@@ -294,7 +294,10 @@ impl Editor {
             };
 
             suggestions.push(crate::input::commands::Suggestion {
-                id: entry.config_key.clone(),
+                // The row picks a catalog entry, by its display name (the
+                // row's `value`). The config key is no identity: a config
+                // language can point a second entry at the same key.
+                id: entry.display_name.clone(),
                 description_spans: None,
                 text: entry.display_name.clone(),
                 description: Some(description),

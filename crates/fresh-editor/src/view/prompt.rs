@@ -438,7 +438,8 @@ impl Prompt {
             suggestions: {
                 debug_assert!(
                     Suggestion::duplicate_id(&suggestions).is_none(),
-                    "suggestion ids must be unique"
+                    "suggestion ids must be unique: {:?} repeats",
+                    Suggestion::duplicate_id(&suggestions)
                 );
                 suggestions.into()
             },
