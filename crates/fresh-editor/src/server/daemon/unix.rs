@@ -116,6 +116,18 @@ fn detach_from_terminal(cmd: &mut std::process::Command) {
     }
 }
 
+/// Whether a daemon this process spawned has exited. Reaps it: until then an
+/// exited child is a zombie, which `is_process_running` still reports alive.
+pub fn spawned_daemon_exited(pid: u32) -> bool {
+    let mut status = 0;
+    // SAFETY: a non-blocking `waitpid` on a pid; it touches only `status`.
+    match unsafe { libc::waitpid(pid as i32, &mut status, libc::WNOHANG) } {
+        0 => false,
+        -1 => !is_process_running(pid),
+        _ => true,
+    }
+}
+
 /// Check if a process with the given PID is still running
 pub fn is_process_running(pid: u32) -> bool {
     // Send signal 0 to check if process exists

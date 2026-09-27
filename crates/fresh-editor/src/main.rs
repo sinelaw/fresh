@@ -3024,6 +3024,37 @@ fn redirect_stderr_to_server_log() {
     }
 }
 
+/// Wait for a daemon this client just spawned to bind its sockets (the pid
+/// file is written after `bind()`); fail, naming its log, if it exits first.
+fn wait_for_spawned_daemon(socket_paths: &SocketPaths, pid: u32) -> AnyhowResult<()> {
+    use fresh::server::daemon::{is_process_running, spawned_daemon_exited};
+    const STARTUP_LIMIT: std::time::Duration = std::time::Duration::from_secs(30);
+
+    #[cfg(unix)]
+    let log = format!(
+        "; its log is {}",
+        fresh::services::log_dirs::server_log_path(pid).display()
+    );
+    #[cfg(not(unix))]
+    let log = String::new();
+
+    let deadline = std::time::Instant::now() + STARTUP_LIMIT;
+    loop {
+        if let Ok(Some(ready)) = socket_paths.read_pid() {
+            if is_process_running(ready) {
+                return Ok(());
+            }
+        }
+        if spawned_daemon_exited(pid) {
+            anyhow::bail!("The daemon exited during startup{log}");
+        }
+        if std::time::Instant::now() >= deadline {
+            anyhow::bail!("The daemon did not start within {STARTUP_LIMIT:?}{log}");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+}
+
 /// Record, in the client's log, where a daemon it just spawned logs.
 fn log_spawned_daemon(pid: u32) {
     #[cfg(unix)]
@@ -3335,7 +3366,6 @@ fn run_open_files_command(
     locale: Option<&str>,
     config: Option<&Path>,
 ) -> AnyhowResult<()> {
-    use fresh::server::daemon::is_process_running;
     use fresh::server::protocol::{ClientControl, ServerControl};
     use fresh::server::spawn_server_detached;
 
@@ -3388,16 +3418,7 @@ fn run_open_files_command(
             ..Default::default()
         })?;
         log_spawned_daemon(pid);
-
-        // Wait for server to be ready
-        loop {
-            if let Ok(Some(pid)) = socket_paths.read_pid() {
-                if is_process_running(pid) {
-                    break;
-                }
-            }
-            std::thread::yield_now();
-        }
+        wait_for_spawned_daemon(&socket_paths, pid)?;
         true
     } else {
         false
@@ -5287,7 +5308,7 @@ fn run_attach(
     }
 
     // Check if a daemon is running, if not start one
-    let server_was_started = if !socket_paths.is_server_alive() {
+    let spawned = if !socket_paths.is_server_alive() {
         eprintln!("Starting daemon...");
 
         // Spawn server in background
@@ -5299,32 +5320,18 @@ fn run_attach(
             orchestrator_mode,
         })?;
         log_spawned_daemon(pid);
-        true
+        Some(pid)
     } else {
-        false
+        None
     };
 
     // Get terminal size
     let (cols, rows) = crossterm::terminal::size()?;
 
-    // Wait for server to be ready - the PID file is the semantic signal
-    // that the server has successfully bound and is ready to accept connections.
-    if server_was_started {
-        use fresh::server::daemon::is_process_running;
-
-        // Wait for PID file to appear with a valid running PID
-        // This is the semantic condition: server writes PID after bind() succeeds
-        loop {
-            if let Ok(Some(pid)) = socket_paths.read_pid() {
-                if is_process_running(pid) {
-                    break; // Server is ready
-                }
-            }
-            // Yield to scheduler - we're waiting for an event (PID file creation),
-            // not delaying for time. The yield is just to avoid busy-spinning.
-            std::thread::yield_now();
-        }
+    if let Some(pid) = spawned {
+        wait_for_spawned_daemon(&socket_paths, pid)?;
     }
+    let server_was_started = spawned.is_some();
 
     // Now connect - server is ready
     let conn = fresh::server::ipc::ClientConnection::connect(&socket_paths)?;
