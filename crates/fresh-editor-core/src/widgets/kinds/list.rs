@@ -292,7 +292,7 @@ pub fn select_move(
     let cur_sel = resolve_in(spec, widget_key, &panel.instance_states).selected;
     let raw = if cur_sel < 0 { 0 } else { cur_sel + delta };
     let new_sel = raw.clamp(0, total as i32 - 1);
-    let new_key = item_keys.get(new_sel as usize).cloned().unwrap_or_default();
+    let new_key = item_keys[new_sel as usize].clone();
     panel.instance_states.insert(
         widget_key.to_string(),
         WidgetInstanceState::List {
@@ -403,7 +403,9 @@ pub fn activate_event(
     if sel < 0 {
         return None;
     }
-    let item_key = item_keys.get(sel as usize).cloned().unwrap_or_default();
+    // An index past the items selects nothing, so there is nothing to
+    // activate.
+    let item_key = item_keys.get(sel as usize)?.clone();
     Some(("activate".into(), json!({ "index": sel, "key": item_key, })))
 }
 
