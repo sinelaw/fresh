@@ -127,6 +127,13 @@ fn scope_to_category(scope: &str) -> Option<HighlightCategory> {
         return Some(HighlightCategory::Type);
     }
 
+    // Word operators (`new`, `typeof`, `instanceof`, `in`, `of`) read as keywords.
+    if scope_lower.starts_with("keyword.operator.new")
+        || scope_lower.starts_with("keyword.operator.expression")
+    {
+        return Some(HighlightCategory::Keyword);
+    }
+
     // Keywords
     if scope_lower.starts_with("keyword.control")
         || scope_lower.starts_with("keyword.other")
@@ -167,6 +174,9 @@ fn scope_to_category(scope: &str) -> Option<HighlightCategory> {
         || scope_lower.starts_with("punctuation.definition.section")
         || scope_lower.starts_with("punctuation.definition.table")
         || scope_lower.starts_with("punctuation.definition.tag")
+        || scope_lower.starts_with("punctuation.definition.typeparameters")
+        || scope_lower.starts_with("punctuation.definition.parameters")
+        || scope_lower.starts_with("meta.brace")
     {
         return Some(HighlightCategory::PunctuationBracket);
     }
@@ -216,6 +226,22 @@ fn scope_to_category(scope: &str) -> Option<HighlightCategory> {
         return Some(HighlightCategory::Constant);
     }
 
+    // Member access (`obj.prop`, `.length`); checked before `variable.other`.
+    if scope_lower.starts_with("variable.other.property")
+        || scope_lower.starts_with("variable.other.object.property")
+        || scope_lower.starts_with("support.variable.property")
+    {
+        return Some(HighlightCategory::Property);
+    }
+
+    // Host globals (`document`, `window`) and library constants (`Math.PI`).
+    if scope_lower.starts_with("support.variable") {
+        return Some(HighlightCategory::VariableBuiltin);
+    }
+    if scope_lower.starts_with("support.constant") {
+        return Some(HighlightCategory::Constant);
+    }
+
     // Variables
     if scope_lower.starts_with("variable.language") {
         return Some(HighlightCategory::VariableBuiltin);
@@ -228,8 +254,6 @@ fn scope_to_category(scope: &str) -> Option<HighlightCategory> {
     if scope_lower.starts_with("entity.name.tag")
         || scope_lower.starts_with("support.other.property")
         || scope_lower.starts_with("meta.object-literal.key")
-        || scope_lower.starts_with("variable.other.property")
-        || scope_lower.starts_with("variable.other.object.property")
     {
         return Some(HighlightCategory::Property);
     }
@@ -2711,8 +2735,26 @@ impl HighlightEngine {
         entry: &crate::primitives::grammar::GrammarEntry,
         registry: &GrammarRegistry,
     ) -> Self {
+        Self::build(entry, entry.engines.syntect, registry)
+    }
+
+    /// Like [`Self::from_entry`], but picks the entry's dialect grammar for
+    /// `path` when it has one (e.g. TypeScriptReact for `.tsx`).
+    pub fn from_entry_for_path(
+        entry: &crate::primitives::grammar::GrammarEntry,
+        path: &Path,
+        registry: &GrammarRegistry,
+    ) -> Self {
+        Self::build(entry, entry.syntect_for_path(path), registry)
+    }
+
+    fn build(
+        entry: &crate::primitives::grammar::GrammarEntry,
+        syntect: Option<usize>,
+        registry: &GrammarRegistry,
+    ) -> Self {
         let syntax_set = registry.syntax_set_arc();
-        if let Some(index) = entry.engines.syntect {
+        if let Some(index) = syntect {
             return Self::TextMate(Box::new(TextMateEngine::with_language(
                 syntax_set,
                 index,
@@ -2736,7 +2778,7 @@ impl HighlightEngine {
     /// `None` when no content is available.
     pub fn for_file(path: &Path, first_line: Option<&str>, registry: &GrammarRegistry) -> Self {
         if let Some(entry) = registry.find_by_path(path, first_line) {
-            return Self::from_entry(entry, registry);
+            return Self::from_entry_for_path(entry, path, registry);
         }
         Self::None
     }
@@ -3103,21 +3145,19 @@ mod tests {
         assert_eq!(engine.backend_name(), "textmate");
         assert!(engine.language().is_some());
 
-        // JavaScript is routed to tree-sitter (issue #899: syntect's JS
-        // grammar bleeds template-literal string state past the closing
-        // backtick).
-        let engine = HighlightEngine::for_file(Path::new("test.js"), None, &registry);
-        assert_eq!(engine.backend_name(), "tree-sitter");
-        assert!(engine.language().is_some());
-
-        // TypeScript falls back to tree-sitter (syntect doesn't include TS by default)
-        let engine = HighlightEngine::for_file(Path::new("test.ts"), None, &registry);
-        assert_eq!(engine.backend_name(), "tree-sitter");
-        assert!(engine.language().is_some());
-
-        let engine = HighlightEngine::for_file(Path::new("test.tsx"), None, &registry);
-        assert_eq!(engine.backend_name(), "tree-sitter");
-        assert!(engine.language().is_some());
+        // JavaScript and TypeScript use the vendored TypeScript-TmLanguage
+        // grammars; `.tsx` picks the TypeScriptReact dialect.
+        for (file, syntax) in [
+            ("test.js", "JavaScript"),
+            ("test.jsx", "JavaScript"),
+            ("test.ts", "TypeScript"),
+            ("test.tsx", "TypeScriptReact"),
+        ] {
+            let engine = HighlightEngine::for_file(Path::new(file), None, &registry);
+            assert_eq!(engine.backend_name(), "textmate", "{file}");
+            assert_eq!(engine.syntax_name(), Some(syntax), "{file}");
+            assert!(engine.language().is_some(), "{file}");
+        }
     }
 
     #[test]
@@ -5360,11 +5400,14 @@ diff --git a/tools/check.py b/tools/check.py
             names(registry.embedded_syntax_index("py")).as_deref(),
             Some("Python")
         );
-        // TypeScript is served by tree-sitter for real buffers; a declared
-        // region still gets its TextMate grammar, not plain text.
+        // A region named by a path gets the grammar that file opens with.
         assert_eq!(
             names(registry.embedded_syntax_index("app.ts")).as_deref(),
             Some("TypeScript")
+        );
+        assert_eq!(
+            names(registry.embedded_syntax_index("app.tsx")).as_deref(),
+            Some("TypeScriptReact")
         );
         assert_eq!(registry.embedded_syntax_index("README"), None);
     }

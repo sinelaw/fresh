@@ -39,12 +39,14 @@ rule; the older highlighter-preference API has been removed. **[impl]**
 - **Bundled tree-sitter set** (the `bundled-languages` feature backing the
   editor's `tree-sitter` feature): **JavaScript, TypeScript, JSON (also serving
   JSONC), Templ, and Go** (Go only because Templ's grammar extends it). Reasons:
-  - **TypeScript**: syntect ships no TS grammar → tree-sitter only.
-  - **JavaScript**: syntect's JS grammar leaks template-literal state past the
-    closing backtick and paints the rest of the file as a string; JS is routed
-    through tree-sitter by *skipping* the syntect "JavaScript" entry when
-    building the catalog. (syntect's JS grammar is still reachable by name for
-    markdown-popup code highlighting.)
+  - **JavaScript / TypeScript**: kept for AST indentation only. Highlighting
+    uses TextMate grammars generated from `microsoft/TypeScript-TmLanguage`
+    (the grammars VS Code uses) by `scripts/tmlanguage-to-sublime-syntax.py`:
+    `typescript`, `typescriptreact` (a dialect of the TypeScript catalog entry,
+    picked for `.tsx`) and `javascript` (TypeScriptReact with `.js` scopes, as
+    VS Code builds it; it shadows syntect's bundled JS grammar, which leaked
+    template-literal state past the closing backtick). syntect reproduces
+    upstream's `tests/baselines` token scopes exactly.
   - **JSONC**: no JSONC tree-sitter crate exists; the JSON grammar recovers past
     comments/trailing commas well enough.
   - **Templ**: Go + components/HTML/CSS.
@@ -63,8 +65,7 @@ The oxc-based parser crate (`oxc_parser`, `oxc_allocator`, `oxc_span`,
 is the plugin toolchain: TypeScript→JS transpile, `.d.ts` emission, plugin
 dependency extraction + topological load ordering, and ES-module bundling so
 plugin source (incl. config-as-code `init.ts`) can run in the QuickJS plugin
-runtime. JS/TS *buffers* are highlighted by the tree-sitter grammars in the
-languages crate. The only editor-side caller is a CLI plugin-check helper; the
+runtime. JS/TS *buffers* are highlighted by the TextMate grammars above. The only editor-side caller is a CLI plugin-check helper; the
 real consumer is the plugin runtime. The oxc deps in the editor crate are pulled
 by the `plugins` feature to syntax-check `init.ts`, not for highlighting.
 **[impl]** **[flag]**: the oxc deps may *look* highlighting-related but are not.

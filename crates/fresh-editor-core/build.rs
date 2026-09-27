@@ -258,6 +258,12 @@ fn generate_syntax_packdump() -> Result<(), Box<dyn std::error::Error>> {
         ("src/grammars/gomod.sublime-syntax", "Go Module"),
         ("src/grammars/vue.sublime-syntax", "Vue"),
         ("src/grammars/typescript.sublime-syntax", "TypeScript"),
+        (
+            "src/grammars/typescriptreact.sublime-syntax",
+            "TypeScriptReact",
+        ),
+        // Shadows syntect's bundled JavaScript grammar (issue #899).
+        ("src/grammars/javascript.sublime-syntax", "JavaScript"),
         ("src/grammars/svelte.sublime-syntax", "Svelte"),
         ("src/grammars/astro.sublime-syntax", "Astro"),
         ("src/grammars/hyprlang.sublime-syntax", "Hyprlang"),
