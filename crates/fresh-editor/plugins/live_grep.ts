@@ -793,6 +793,9 @@ function badgeFor(source: ScopeId | undefined): string {
 const finder = new Finder<GrepMatch>(editor, {
   id: "live-grep",
   format: (match) => ({
+    // The same hit can come from two scopes (an open buffer and the file on
+    // disk), so the scope is part of what a result is.
+    id: `${match.source ?? ""}:${match.file}:${match.line}:${match.column}`,
     label: `${badgeFor(match.source)}${match.file}:${match.line}`,
     description:
       match.content.length > 60
@@ -837,6 +840,7 @@ const finder = new Finder<GrepMatch>(editor, {
 const quickfixFinder = new Finder<GrepMatch>(editor, {
   id: "quickfix",
   format: (match) => ({
+    id: `${match.source ?? ""}:${match.file}:${match.line}:${match.column}`,
     label: `${match.file}:${match.line}:${match.column}`,
     description: match.content.trim(),
     location: {

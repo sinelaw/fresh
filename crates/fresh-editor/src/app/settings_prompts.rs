@@ -41,6 +41,7 @@ impl Editor {
             .map(|(le, name, desc)| {
                 let is_current = *le == current_line_ending;
                 crate::input::commands::Suggestion {
+                    id: name.to_string(),
                     description_spans: None,
                     text: format!("{} ({})", name, desc),
                     description: if is_current {
@@ -82,6 +83,7 @@ impl Editor {
             .map(|enc| {
                 let is_current = *enc == current_encoding;
                 crate::input::commands::Suggestion {
+                    id: enc.display_name().to_string(),
                     description_spans: None,
                     text: format!("{} ({})", enc.display_name(), enc.description()),
                     description: if is_current {
@@ -161,6 +163,7 @@ impl Editor {
             .map(|enc| {
                 let is_current = *enc == current_encoding;
                 crate::input::commands::Suggestion {
+                    id: enc.display_name().to_string(),
                     description_spans: None,
                     text: format!("{} ({})", enc.display_name(), enc.description()),
                     description: if is_current {
@@ -222,6 +225,7 @@ impl Editor {
         let mut suggestions: Vec<crate::input::commands::Suggestion> = vec![
             // Plain Text option (no syntax highlighting)
             crate::input::commands::Suggestion {
+                id: "text".to_string(),
                 description_spans: None,
                 text: "Plain Text".to_string(),
                 description: if current_language == "text" || current_language == "Plain Text" {
@@ -290,6 +294,7 @@ impl Editor {
             };
 
             suggestions.push(crate::input::commands::Suggestion {
+                id: entry.config_key.clone(),
                 description_spans: None,
                 text: entry.display_name.clone(),
                 description: Some(description),
@@ -369,6 +374,7 @@ impl Editor {
                     Some(display_key.to_string())
                 };
                 crate::input::commands::Suggestion {
+                    id: info.key.clone(),
                     description_spans: None,
                     text: info.name.clone(),
                     description,
@@ -627,6 +633,7 @@ impl Editor {
             .map(|map_name| {
                 let is_current = *map_name == current_map;
                 crate::input::commands::Suggestion {
+                    id: map_name.to_string(),
                     description_spans: None,
                     text: map_name.to_string(),
                     description: if is_current {
@@ -719,6 +726,7 @@ impl Editor {
             .map(|(style_name, description)| {
                 let is_current = *style_name == current_style.as_str();
                 crate::input::commands::Suggestion {
+                    id: style_name.to_string(),
                     description_spans: None,
                     text: description.to_string(),
                     description: if is_current {
@@ -809,6 +817,7 @@ impl Editor {
         let suggestions: Vec<crate::input::commands::Suggestion> = rulers
             .iter()
             .map(|&col| crate::input::commands::Suggestion {
+                id: col.to_string(),
                 description_spans: None,
                 text: format!("Column {}", col),
                 description: None,
@@ -888,6 +897,7 @@ impl Editor {
                     }
                 };
                 crate::input::commands::Suggestion {
+                    id: locale_name.to_string(),
                     description_spans: None,
                     text: locale_name.to_string(),
                     description: if description.is_empty() {

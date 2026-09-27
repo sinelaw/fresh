@@ -29,6 +29,7 @@ const finder = new Finder<ReferenceLocation>(editor, {
       content.length > 60 ? content.substring(0, 57) + "..." : content;
 
     return {
+      id: `${ref.file}:${ref.line}:${ref.column}`,
       label: `${displayPath}:${ref.line}`,
       description,
       location: {

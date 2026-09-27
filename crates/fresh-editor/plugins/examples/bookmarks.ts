@@ -223,6 +223,7 @@ function bookmark_select() : void {
   bookmarks.forEach((bm) => {
     const filename = bm.path.split("/").pop() || bm.path;
     suggestions.push({
+      id: String(bm.id),
       text: `${bm.name}: ${bm.path}:${bm.line}:${bm.column}`,
       description: `${filename} at line ${bm.line}`,
       value: String(bm.id),

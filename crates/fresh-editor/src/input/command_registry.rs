@@ -332,7 +332,7 @@ impl CommandRegistry {
                     .get_keybinding_for_action(&cmd.action, current_context_ref.clone());
                 let history_pos = self.history_position(&cmd.name);
 
-                let suggestion = Suggestion::new(localized_name)
+                let suggestion = Suggestion::new(cmd.id(), localized_name)
                     .with_description(localized_desc)
                     .set_disabled(!available)
                     .with_keybinding(keybinding)

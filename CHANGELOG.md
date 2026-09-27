@@ -103,6 +103,7 @@ Fresh is now licensed **GPL-3.0-or-later**, up from GPL-2.0-only (#3328).
 * **`writeFile` refuses to overwrite an existing file, as it always claimed to.** The docs said it "fails if the file already exists to prevent plugins from accidentally overwriting user data"; the implementation wrote a temp file and renamed it over whatever was there, so a plugin trusting the documentation destroyed the file. Replacing one is now `replaceFile`, asked for by name
 * **`editor.setInputMode(name | null)` sets an editor-wide input mode** for modal-editing plugins like vi, beside `setEditorMode`, which is now documented as window-scoped. Keys resolve against a focused panel's mode, then the buffer's, the window's editor mode, the input mode, and the base keymap. `getInputMode()` reads it and `input_mode_changed` announces changes (#3395)
 * **The orchestrator's saved machines moved into the editor-owned state store** and are imported from the old directory on first load. The old files are left in place — a plugin can no longer delete a path it names — and are inert
+* **Prompt suggestions carry a required `id`**, unique in the list: `setPromptSuggestions` throws on a missing or repeated one. The list keys its rows by it, so a re-ranked or growing list keeps each row's selection and state on the item rather than on a position. The finder library's `DisplayEntry` gains the same required `id`. Third-party plugins that set suggestions will need to supply one
 
 ## 0.5.1
 

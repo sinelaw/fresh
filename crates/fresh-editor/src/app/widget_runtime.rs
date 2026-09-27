@@ -4994,7 +4994,7 @@ mod tests {
                     true => format!("command {i} {}", "with a very long name ".repeat(3)),
                     false => format!("command {i}"),
                 };
-                Suggestion::new(name).with_keybinding(Some("Ctrl+K".into()))
+                Suggestion::new(format!("cmd{i}"), name).with_keybinding(Some("Ctrl+K".into()))
             })
             .collect();
         crate::view::prompt::Prompt::with_suggestions(
@@ -5039,7 +5039,7 @@ mod tests {
         let name_width = |editor: &Editor, i: usize| {
             let ui = editor.shell_ui.as_ref().expect("a laid-out shell");
             let id = ui
-                .find_by_key(&crate::view::shell::prompt::name_key(i))
+                .find_by_key(&crate::view::shell::prompt::name_key(&format!("cmd{i}")))
                 .unwrap_or_else(|| panic!("row {i}'s name is on screen"));
             ui.rect_of(id).w
         };

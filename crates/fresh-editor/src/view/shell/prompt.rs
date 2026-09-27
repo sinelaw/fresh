@@ -82,6 +82,9 @@ pub struct DescriptionSpan {
 /// layout, and which of them survives a narrow row is `priority`'s answer.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SuggestionRow {
+    /// The suggestion's id: what the row is, unique in the list. The row and
+    /// its name column are keyed by it.
+    pub id: String,
     pub name: String,
     pub keybinding: Option<String>,
     pub description: Option<String>,
@@ -135,6 +138,7 @@ impl Place {
 #[derive(Clone)]
 pub struct Rows {
     len: usize,
+    id: Rc<dyn Fn(usize) -> String>,
     row: Rc<dyn Fn(usize) -> SuggestionRow>,
     disabled: Rc<dyn Fn(usize) -> bool>,
     names_are_paths: bool,
@@ -149,15 +153,23 @@ impl Rows {
     /// one fact the list's own theme needs without a conversion.
     /// `names_are_paths` is [`names_are_paths`] over the whole list, which the
     /// owner works out once per list rather than once per frame.
+    ///
+    /// `id` answers the row's identity without converting it: the list keys
+    /// every row it builds by it.
     pub fn new<T: 'static>(
         source: Rc<T>,
         len: usize,
         names_are_paths: bool,
+        id: impl Fn(&T, usize) -> String + 'static,
         row: impl Fn(&T, usize) -> SuggestionRow + 'static,
         disabled: impl Fn(&T, usize) -> bool + 'static,
     ) -> Rows {
         Rows {
             len,
+            id: {
+                let source = source.clone();
+                Rc::new(move |i| id(&source, i))
+            },
             row: {
                 let source = source.clone();
                 Rc::new(move |i| row(&source, i))
@@ -190,6 +202,11 @@ impl Rows {
     fn disabled(&self, i: usize) -> bool {
         i < self.len && (self.disabled)(i)
     }
+
+    /// Row `i`'s key: its suggestion's id.
+    fn key(&self, i: usize) -> Key {
+        row_key(&(self.id)(i))
+    }
 }
 
 /// Rows already converted, for a caller that has them as values.
@@ -204,6 +221,7 @@ impl From<Vec<SuggestionRow>> for Rows {
             Rc::new(rows),
             len,
             paths,
+            |v, i| v[i].id.clone(),
             |v, i| v[i].clone(),
             |v, i| v[i].disabled,
         )
@@ -294,14 +312,18 @@ impl Suggestions {
     }
 }
 
-pub fn row_key(index: usize) -> Key {
-    Key::Pair("suggestion".into(), index as u64)
+/// A suggestion row's key: its id, namespaced so it cannot meet another
+/// list's. **By identity, never by position**: a row inserted above another
+/// moves it, and its element — hover, a press in flight — moves with it.
+pub fn row_key(id: &str) -> Key {
+    Key::Str(format!("suggestion:{id}").into())
 }
 
-/// The name column of a row. Keyed so the width rule can be read back off the
-/// tree — the same way the status bar's segments and the explorer's slots are.
-pub fn name_key(index: usize) -> Key {
-    Key::Pair("suggestion_name".into(), index as u64)
+/// The name column of a row, by the row's id. Keyed so the width rule can be
+/// read back off the tree — the same way the status bar's segments and the
+/// explorer's slots are.
+pub fn name_key(id: &str) -> Key {
+    Key::Str(format!("suggestion_name:{id}").into())
 }
 
 /// The painter's own ladder, in the painter's own keys.
@@ -497,13 +519,7 @@ impl Columns {
 
 /// One row's four columns, in paint order, each carrying the priority that says
 /// when it yields.
-fn node_row(
-    index: usize,
-    r: &SuggestionRow,
-    st: RowState,
-    name_elide: Elide,
-    cols: Columns,
-) -> Node<UiMsg> {
+fn node_row(r: &SuggestionRow, st: RowState, name_elide: Elide, cols: Columns) -> Node<UiMsg> {
     let t = theme(r.disabled, st);
     // `ColumnLayout::left_margin`, as a cell rather than as two leading spaces
     // in a span. It carries the row's own fill because the row container
@@ -513,7 +529,7 @@ fn node_row(
     cells.push(
         text(r.name.clone())
             .theme(t.clone())
-            .key(name_key(index))
+            .key(name_key(&r.id))
             .elide(name_elide)
             .w(Sizing::Cells(cols.name))
             .priority(yields_last::NAME),
@@ -647,9 +663,10 @@ pub fn suggestions(s: &Suggestions) -> Node<UiMsg> {
     }
     let for_cut = s.rows.clone();
     let for_row = s.rows.clone();
+    let for_key = s.rows.clone();
     let mut list = fresh_ui::widgets::List::windowed_cut(
         s.rows.len(),
-        row_key,
+        move |i| for_key.key(i),
         move |on_screen: std::ops::Range<usize>| {
             let first = on_screen.start;
             let rows: Vec<SuggestionRow> = on_screen.filter_map(|i| for_cut.at(i)).collect();
@@ -667,7 +684,7 @@ pub fn suggestions(s: &Suggestions) -> Node<UiMsg> {
                 None => for_row.at(i).map(std::borrow::Cow::Owned),
             };
             match converted {
-                Some(r) => node_row(i, &r, st, name_elide, w.cols),
+                Some(r) => node_row(&r, st, name_elide, w.cols),
                 None => row().h(Sizing::Cells(1)),
             }
         },
@@ -1005,6 +1022,7 @@ mod tests {
     fn rows(n: usize) -> Vec<SuggestionRow> {
         (0..n)
             .map(|i| SuggestionRow {
+                id: format!("command-{i}"),
                 name: format!("command-{i}"),
                 ..SuggestionRow::default()
             })
@@ -1064,7 +1082,7 @@ mod tests {
             40,
             8,
         );
-        let r = ui.rect_of(ui.find_by_key(&row_key(2)).expect("row 2"));
+        let r = ui.rect_of(ui.find_by_key(&row_key("command-2")).expect("row 2"));
         let at = Point::new(r.x + 1, r.y);
         let mut msgs = ui
             .dispatch(Input::press(at, MouseButton::Left, Mods::NONE))
@@ -1097,7 +1115,7 @@ mod tests {
             40,
             8,
         );
-        let r = ui.rect_of(ui.find_by_key(&row_key(2)).expect("row 2"));
+        let r = ui.rect_of(ui.find_by_key(&row_key("command-2")).expect("row 2"));
         let at = Point::new(r.x + 1, r.y);
         let mut click = |n: u8| {
             let mut out = ui
@@ -1163,6 +1181,84 @@ mod tests {
         );
     }
 
+    /// **A suggestion inserted above another moves it, element and hover.**
+    ///
+    /// The rows were keyed by index, so a suggestion arriving at the top of
+    /// a streaming list rewrote every row below it in place — each element
+    /// took over its neighbour's content, and the hover stayed on a position
+    /// while the row the pointer was on slid away from it. Keyed by id, the
+    /// rows below an insertion are the same elements, and the one under the
+    /// pointer still reads as hovered.
+    #[test]
+    fn an_inserted_suggestion_moves_the_rows_below_it() {
+        let list = |rows: Vec<SuggestionRow>| {
+            suggestions(&Suggestions {
+                rows: rows.into(),
+                selected: None,
+                place: Place::AbovePrompt,
+                hints: None,
+            })
+        };
+        let before = rows(5);
+        let mut after = before.clone();
+        after.insert(
+            1,
+            SuggestionRow {
+                id: "new".into(),
+                name: "a new command".into(),
+                ..SuggestionRow::default()
+            },
+        );
+        let mut ui: Ui<UiMsg> = Ui::new();
+        ui.frame(list(before.clone()), Size::new(40, 10));
+        let ids: Vec<_> = before
+            .iter()
+            .map(|r| ui.find_by_key(&row_key(&r.id)).expect("a row"))
+            .collect();
+        let at = ui.rect_of(ids[3]);
+        ui.dispatch(Input::Move {
+            pos: Point::new(at.x + 1, at.y),
+            mods: Mods::NONE,
+        });
+        ui.frame(list(before.clone()), Size::new(40, 10));
+        // The rows the hover band is painted on, by the row's own key.
+        let hovered = |ui: &Ui<UiMsg>| {
+            let banded: Vec<i32> = ui
+                .spec()
+                .items
+                .iter()
+                .filter(|i| i.theme.as_str().contains("ui.menu_hover_bg"))
+                .map(|i| i.rect.y)
+                .collect();
+            (0..6)
+                .filter_map(|i| {
+                    let id = match i {
+                        5 => "new".to_string(),
+                        _ => format!("command-{i}"),
+                    };
+                    let e = ui.find_by_key(&row_key(&id))?;
+                    banded.contains(&ui.rect_of(e).y).then_some(id)
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(hovered(&ui), vec!["command-3".to_string()]);
+
+        ui.frame(list(after), Size::new(40, 10));
+        for (r, id) in before.iter().zip(&ids) {
+            assert_eq!(
+                ui.find_by_key(&row_key(&r.id)),
+                Some(*id),
+                "{} is the same element after the insertion",
+                r.id
+            );
+        }
+        assert_eq!(
+            hovered(&ui),
+            vec!["command-3".to_string()],
+            "the hover went down with its row"
+        );
+    }
+
     /// **Ledger rule 1: at most `MAX_VISIBLE_SUGGESTIONS` rows exist.** The
     /// painter kept a `scroll_offset` window by hand; `windowed` is the
     /// concept, and a list far longer than the viewport must not build a node
@@ -1180,7 +1276,7 @@ mod tests {
             MAX_VISIBLE_SUGGESTIONS as u16,
         );
         let built = (0..1000)
-            .filter(|i| ui.find_by_key(&row_key(*i)).is_some())
+            .filter(|i| ui.find_by_key(&row_key(&format!("command-{i}"))).is_some())
             .count();
         assert!(
             built <= MAX_VISIBLE_SUGGESTIONS + 2,
@@ -1216,7 +1312,7 @@ mod tests {
         );
         // Inside the ring and past the gutter: one cell of border plus the
         // painter's two-cell `left_margin`.
-        let name = ui.rect_of(ui.find_by_key(&name_key(0)).expect("a name"));
+        let name = ui.rect_of(ui.find_by_key(&name_key("command-0")).expect("a name"));
         assert_eq!(
             name.x,
             1 + LEFT_MARGIN as i32,
@@ -1277,7 +1373,7 @@ mod tests {
             };
             let ui = laid_out(s, 16, 4);
             let spec = ui.spec();
-            let id = ui.find_by_key(&name_key(0)).expect("the name column");
+            let id = ui.find_by_key(&name_key("")).expect("the name column");
             let rect = ui.rect_of(id);
             spec.items
                 .iter()
@@ -1639,7 +1735,7 @@ mod tests {
                 hints: None,
             };
             let ui = laid_out(s, w, 4);
-            ui.rect_of(ui.find_by_key(&name_key(0)).expect("the name column"))
+            ui.rect_of(ui.find_by_key(&name_key("")).expect("the name column"))
                 .w
         };
         // The name column is `max(longest name, 30)` — `ColumnLayout`'s

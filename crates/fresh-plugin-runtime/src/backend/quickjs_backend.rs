@@ -5416,17 +5416,31 @@ impl JsEditorApi {
     //     as present but void, failing `u32::from_js`).
     // Together they accept both `fn(suggestions)` and
     // `fn(suggestions, undefined)` from JS.
-    pub fn set_prompt_suggestions(
+    //
+    // Every suggestion carries an `id`, unique in the list — the rows are
+    // keyed by it — and a list that repeats one is refused with a thrown
+    // error rather than drawn.
+    #[plugin_api(ts_return = "boolean")]
+    pub fn set_prompt_suggestions<'js>(
         &self,
+        ctx: rquickjs::Ctx<'js>,
         suggestions: Vec<fresh_core::command::Suggestion>,
         selected_index: rquickjs::function::Opt<Option<u32>>,
-    ) -> bool {
-        self.command_sender
+    ) -> rquickjs::Result<bool> {
+        if let Some(id) = fresh_core::command::Suggestion::duplicate_id(&suggestions) {
+            let msg = rquickjs::String::from_str(
+                ctx.clone(),
+                &format!("setPromptSuggestions: duplicate suggestion id {id:?}"),
+            )?;
+            return Err(ctx.throw(msg.into_value()));
+        }
+        Ok(self
+            .command_sender
             .send(PluginCommand::SetPromptSuggestions {
                 suggestions,
                 selected_index: selected_index.0.flatten(),
             })
-            .is_ok()
+            .is_ok())
     }
 
     pub fn set_prompt_input_sync(&self, sync: bool) -> bool {
@@ -12996,8 +13010,8 @@ mod tests {
                 r#"
             const editor = getEditor();
             editor.setPromptSuggestions([
-                { text: "Option 1", value: "opt1" },
-                { text: "Option 2", value: "opt2" }
+                { id: "opt1", text: "Option 1", value: "opt1" },
+                { id: "opt2", text: "Option 2", value: "opt2" }
             ]);
         "#,
                 "test.js",

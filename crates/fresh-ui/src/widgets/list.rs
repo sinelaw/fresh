@@ -32,13 +32,21 @@ const OVERSCAN: usize = 2;
 
 #[derive(Default)]
 pub struct ListState {
-    /// Only consulted when the owner did not supply a selection.
+    /// Only consulted when the owner did not supply a selection: where the
+    /// element's own selection was last seen, as a hint. The row it names is
+    /// [`Self::selected_key`].
     pub selected: usize,
+    /// The row the element's own selection is on, by key. **The key is the
+    /// selection; the index is where it was.** A row inserted above the
+    /// selected one moves it down, and a selection held by index would stay
+    /// put and land on the newcomer.
+    pub selected_key: Option<Key>,
     pub focused: bool,
-    /// The row the pointer is over, if any. Mirrored from Enter/Leave the same
+    /// The row the pointer is over, by key. Mirrored from Enter/Leave the same
     /// way `focused` is mirrored from focus transitions; `build` reads it to
-    /// tint that row.
-    pub hovered: Option<usize>,
+    /// tint that row. By key for the reason `selected_key` is: the hover
+    /// belongs to the row under the pointer, wherever an insertion moves it.
+    pub hovered: Option<Key>,
     /// A handle to the window, so a selection move can ask it to follow. The
     /// window itself belongs to the viewport.
     pub(crate) anchor: Option<Rc<crate::behavior::Anchor>>,
@@ -209,6 +217,24 @@ impl<M> Source<M> {
             Source::Eager(v) => v.len(),
             Source::Windowed { count, .. } => *count,
         }
+    }
+
+    /// Row `i`'s key.
+    fn key_of(&self, i: usize) -> Option<Key> {
+        match self {
+            Source::Eager(v) => v.get(i).map(|(k, _)| k.clone()),
+            Source::Windowed { count, key, .. } => (i < *count).then(|| key(i)),
+        }
+    }
+
+    /// Where the row keyed `k` is: `hint` when it is still there, a walk
+    /// otherwise. Only the element's own selection asks, and only once it
+    /// has moved.
+    fn position_of(&self, k: &Key, hint: usize) -> Option<usize> {
+        if self.key_of(hint).as_ref() == Some(k) {
+            return Some(hint);
+        }
+        (0..self.len()).find(|&i| self.key_of(i).as_ref() == Some(k))
     }
 
     fn at(&self, i: usize, state: RowState) -> Option<(Key, Node<M>)> {
@@ -652,7 +678,16 @@ impl<M: 'static> Component<M> for List<M> {
         let n = self.source.len();
         let last = n.saturating_sub(1);
         let sel: Option<usize> = match self.selection {
-            Sel::Own => Some(s.selected.min(last)),
+            // The element's own selection follows its row; an index it was
+            // last seen at is only a hint, and a row that is gone leaves the
+            // hint where it was.
+            Sel::Own => Some(
+                s.selected_key
+                    .as_ref()
+                    .and_then(|k| self.source.position_of(k, s.selected))
+                    .unwrap_or(s.selected)
+                    .min(last),
+            ),
             Sel::At(i) => Some(i.min(last)),
             Sel::Empty => None,
         };
@@ -682,7 +717,7 @@ impl<M: 'static> Component<M> for List<M> {
         }
 
         let source = self.source.clone();
-        let hov = s.hovered;
+        let hov = s.hovered.clone();
         let focused = s.focused;
         let row_theme = self.row_theme.clone();
         // Clicking a row selects it, the same selection the keyboard drives.
@@ -699,7 +734,9 @@ impl<M: 'static> Component<M> for List<M> {
             let on_activate = self.on_activate.clone();
             let activate_on = self.activate_on;
             let takes_focus = self.focusable;
+            let keys = self.source.clone();
             Some(Rc::new(move |i: usize| {
+                let key = keys.key_of(i);
                 let up = up.clone();
                 let anchor = anchor.clone();
                 let on_select = on_select.clone();
@@ -708,7 +745,11 @@ impl<M: 'static> Component<M> for List<M> {
                     if takes_focus {
                         e.request_focus(crate::event::SelectionOnFocus::Preserve);
                     }
-                    up.set(move |st: &mut ListState| st.selected = i);
+                    let key = key.clone();
+                    up.set(move |st: &mut ListState| {
+                        st.selected = i;
+                        st.selected_key = key;
+                    });
                     let _ = &anchor;
                     // A click always moves the selection; whether it also
                     // activates is `activate_on`'s answer, read off the click
@@ -730,17 +771,18 @@ impl<M: 'static> Component<M> for List<M> {
 
         // The row under the pointer tints itself. Enter and Leave are mirrored
         // into `hovered`, which the reader below reads back — the same shape as
-        // the focus mirror, one row at a time.
-        let hover: RowClick<M> = {
+        // the focus mirror, one row at a time, named by the row's key.
+        let hover: Rc<dyn Fn(Key) -> crate::desc::Handler<M>> = {
             let up = up.clone();
-            Rc::new(move |i: usize| {
+            Rc::new(move |k: Key| {
                 let up = up.clone();
                 let h: crate::desc::Handler<M> = Rc::new(move |e: &Event| {
                     let over = e.kind == GestureKind::Enter;
+                    let k = k.clone();
                     up.set(move |st: &mut ListState| {
                         if over {
-                            st.hovered = Some(i);
-                        } else if st.hovered == Some(i) {
+                            st.hovered = Some(k);
+                        } else if st.hovered.as_ref() == Some(&k) {
                             st.hovered = None;
                         }
                     });
@@ -785,6 +827,7 @@ impl<M: 'static> Component<M> for List<M> {
                 .filter(|&i| i < n)
                 .chain(first..last);
             let window = col().children(indices.map(|i| {
+                let k = run.key_of(i).expect("index inside the source");
                 let state = if Some(i) == sel {
                     // A selected row reads as focused only when the list has
                     // focus; otherwise it is muted.
@@ -793,22 +836,29 @@ impl<M: 'static> Component<M> for List<M> {
                     } else {
                         RowState::SelectedBlur
                     }
-                } else if hov == Some(i) {
+                } else if hov.as_ref() == Some(&k) {
                     RowState::Hover
                 } else {
                     RowState::Normal
                 };
-                let (k, row) = run.at(i, state).expect("index inside the source");
+                let (_, row) = run.at(i, state).expect("index inside the source");
                 let theme: String = match &row_theme {
                     Some(f) => f(i, state),
                     None => state.theme().to_string(),
                 };
-                let content = row.key(k).theme(theme).h(Sizing::Cells(row_rows));
-                let g = gesture(content).on_enter(hover(i)).on_leave(hover(i));
-                match &click {
+                let content = row.theme(theme).h(Sizing::Cells(row_rows));
+                let g = gesture(content)
+                    .on_enter(hover(k.clone()))
+                    .on_leave(hover(k.clone()));
+                let g = match &click {
                     Some(mk) => g.on(GestureKind::Click, mk(i)),
                     None => g,
-                }
+                };
+                // **The key goes on the row's outermost node.** Siblings are
+                // matched by key only where the key is; keyed inside an
+                // unkeyed wrapper, a row inserted above would shift every
+                // wrapper below it by position and remount what they hold.
+                g.key(k)
             }));
             if !measured {
                 return window;
@@ -893,16 +943,23 @@ impl<M: 'static> Component<M> for List<M> {
         // move the selection. A wheel is a statement about the window and a key
         // is a statement about the selection, and the two now live in different
         // places.
-        let select = |target: usize,
-                      up: &Updater<ListState>,
-                      anchor: &Option<Rc<crate::behavior::Anchor>>,
-                      on_select: &Option<Rc<dyn Fn(usize) -> M>>|
-         -> Option<M> {
-            let up = up.clone();
-            up.set(move |st: &mut ListState| st.selected = target);
-            let _ = anchor;
-            on_select.as_ref().map(|f| f(target))
-        };
+        let keys = self.source.clone();
+        let select = Rc::new(
+            move |target: usize,
+                  up: &Updater<ListState>,
+                  anchor: &Option<Rc<crate::behavior::Anchor>>,
+                  on_select: &Option<Rc<dyn Fn(usize) -> M>>|
+                  -> Option<M> {
+                let up = up.clone();
+                let key = keys.key_of(target);
+                up.set(move |st: &mut ListState| {
+                    st.selected = target;
+                    st.selected_key = key;
+                });
+                let _ = anchor;
+                on_select.as_ref().map(|f| f(target))
+            },
+        );
 
         let up_focus = up.clone();
         let mut node = focusable(body)
@@ -913,6 +970,7 @@ impl<M: 'static> Component<M> for List<M> {
             }))
             .action_handler(Intent::Up, {
                 let (up, a, f) = (up.clone(), anchor.clone(), self.on_select.clone());
+                let select = select.clone();
                 // With nothing selected, Up lands on the last row and Down
                 // on the first — the two ends a walk can start from.
                 Rc::new(move |_: &Event| {
@@ -921,14 +979,17 @@ impl<M: 'static> Component<M> for List<M> {
             })
             .action_handler(Intent::Down, {
                 let (up, a, f) = (up.clone(), anchor.clone(), self.on_select.clone());
+                let select = select.clone();
                 Rc::new(move |_: &Event| select(sel.map_or(0, |s| (s + 1).min(last)), &up, &a, &f))
             })
             .action_handler(Intent::Home, {
                 let (up, a, f) = (up.clone(), anchor.clone(), self.on_select.clone());
+                let select = select.clone();
                 Rc::new(move |_: &Event| select(0, &up, &a, &f))
             })
             .action_handler(Intent::End, {
                 let (up, a, f) = (up.clone(), anchor.clone(), self.on_select.clone());
+                let select = select.clone();
                 Rc::new(move |_: &Event| select(n.saturating_sub(1), &up, &a, &f))
             });
 

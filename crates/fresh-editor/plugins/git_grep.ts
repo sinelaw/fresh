@@ -79,6 +79,7 @@ interface GrepMatch {
 const finder = new Finder<GrepMatch>(editor, {
   id: "git-grep",
   format: (match) => ({
+    id: `${match.file}:${match.line}:${match.column}`,
     label: `${match.file}:${match.line}`,
     description:
       match.content.length > 60

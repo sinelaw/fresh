@@ -344,6 +344,9 @@ setPromptSuggestions(suggestions: PromptSuggestion[]): boolean
 |------|------|-------------|
 | `suggestions` | `PromptSuggestion[]` | Array of suggestions to display |
 
+Every suggestion's `id` must be unique in the array; a list that repeats one
+throws instead of being shown.
+
 ### `setPromptTitle`
 
 Set the title shown in a floating-overlay prompt's frame header

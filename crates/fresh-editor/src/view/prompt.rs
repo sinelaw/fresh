@@ -337,6 +337,19 @@ pub struct Prompt {
 pub const MAX_VISIBLE_SUGGESTIONS: usize = 10;
 
 impl Prompt {
+    /// Replace the suggestions. The one way they change: every id in the
+    /// list must be unique (it is the row's key), which a plugin's list was
+    /// already made to prove at the API and the editor's own lists are built
+    /// to.
+    pub fn set_suggestions(&mut self, suggestions: Vec<Suggestion>) {
+        debug_assert!(
+            Suggestion::duplicate_id(&suggestions).is_none(),
+            "suggestion ids must be unique, {:?} repeats",
+            Suggestion::duplicate_id(&suggestions)
+        );
+        self.suggestions = std::rc::Rc::new(suggestions);
+    }
+
     /// Whether the suggestions' names are paths, which decides the end a
     /// narrow row keeps (`view::shell::prompt::names_are_paths`).
     ///
@@ -401,7 +414,13 @@ impl Prompt {
             edit: crate::primitives::text_edit::TextEdit::single_line(),
             prompt_type,
             original_suggestions: Some(suggestions.clone()),
-            suggestions: suggestions.into(),
+            suggestions: {
+                debug_assert!(
+                    Suggestion::duplicate_id(&suggestions).is_none(),
+                    "suggestion ids must be unique"
+                );
+                suggestions.into()
+            },
             names_are_paths_of: Default::default(),
             selected_suggestion,
             scroll_offset: 0,
@@ -707,7 +726,7 @@ impl Prompt {
             .collect();
 
         filtered.sort_by_key(|b| std::cmp::Reverse(b.1));
-        self.suggestions = std::rc::Rc::new(filtered.into_iter().map(|(s, _)| s).collect());
+        self.set_suggestions(filtered.into_iter().map(|(s, _)| s).collect());
         self.selected_suggestion = if self.suggestions.is_empty() {
             None
         } else {

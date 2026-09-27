@@ -85,6 +85,18 @@ pub struct Command {
 }
 
 impl Command {
+    /// What this command is, as a suggestion row's id: its source and its
+    /// internal name. Built-in names are unique among built-ins and plugin
+    /// names among plugins (`CommandRegistry::register`), so the pair is
+    /// unique in the palette — unlike the localized name the row shows,
+    /// which a plugin can share with a built-in.
+    pub fn id(&self) -> String {
+        match &self.source {
+            CommandSource::Builtin => format!("builtin:{}", self.name),
+            CommandSource::Plugin(_) => format!("plugin:{}", self.name),
+        }
+    }
+
     /// Get the localized name of the command
     pub fn get_localized_name(&self) -> String {
         if self.name.starts_with('%') {
@@ -117,6 +129,15 @@ impl Command {
 /// A single suggestion item for autocomplete
 #[derive(Debug, Clone, PartialEq)]
 pub struct Suggestion {
+    /// What this row *is*, unique within its list: a command's name, a
+    /// file's path, a buffer's id, an option's value.
+    ///
+    /// **Required, and never derived from the row's position or its label.**
+    /// The list keys its rows by it, so an insertion moves the other rows'
+    /// elements instead of rewriting them, and the selection is held by it.
+    /// A label is not an identity — two commands can share a name, two
+    /// search hits the same text.
+    pub id: String,
     /// The text to display
     pub text: String,
     /// Optional description
@@ -137,9 +158,10 @@ pub struct Suggestion {
 }
 
 impl Suggestion {
-    /// Create an active (selectable) suggestion
-    pub fn new(text: String) -> Self {
+    /// Create an active (selectable) suggestion identified by `id`.
+    pub fn new(id: impl Into<String>, text: String) -> Self {
         Self {
+            id: id.into(),
             text,
             description: None,
             description_spans: None,
@@ -150,9 +172,11 @@ impl Suggestion {
         }
     }
 
-    /// Create a disabled (greyed-out) suggestion used for hints or errors
-    pub fn disabled(text: String) -> Self {
+    /// Create a disabled (greyed-out) suggestion used for hints or errors,
+    /// identified by `id`.
+    pub fn disabled(id: impl Into<String>, text: String) -> Self {
         Self {
+            id: id.into(),
             text,
             description: None,
             description_spans: None,
@@ -186,6 +210,16 @@ impl Suggestion {
     pub fn set_disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
         self
+    }
+
+    /// The first id `suggestions` repeats, if any. A list's ids are its row
+    /// keys, so a repeat is a bug in whoever built the list.
+    pub fn duplicate_id(suggestions: &[Suggestion]) -> Option<&str> {
+        let mut seen = std::collections::HashSet::with_capacity(suggestions.len());
+        suggestions
+            .iter()
+            .map(|s| s.id.as_str())
+            .find(|id| !seen.insert(*id))
     }
 
     pub fn get_value(&self) -> &str {

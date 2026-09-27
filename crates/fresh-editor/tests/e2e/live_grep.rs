@@ -1043,7 +1043,7 @@ fn seed_overlay_results(harness: &mut EditorTestHarness, labels: &[&str], select
     let prompt = harness.editor_mut().prompt_mut().unwrap();
     prompt.suggestions = labels
         .iter()
-        .map(|l| Suggestion::new(l.to_string()))
+        .map(|l| Suggestion::new(l.to_string(), l.to_string()))
         .collect::<Vec<_>>()
         .into();
     prompt.selected_suggestion = selected;
@@ -1207,8 +1207,11 @@ fn test_live_grep_preview_uses_value_not_badged_label() {
     // authoritative relative path:line:col.
     {
         let prompt = harness.editor_mut().prompt_mut().unwrap();
-        prompt.suggestions = vec![Suggestion::new("[term] not-a-real-file.txt:1".to_string())
-            .with_value("scrollback.txt:2:1".to_string())]
+        prompt.suggestions = vec![Suggestion::new(
+            "term:scrollback.txt:2:1",
+            "[term] not-a-real-file.txt:1".to_string(),
+        )
+        .with_value("scrollback.txt:2:1".to_string())]
         .into();
         prompt.selected_suggestion = Some(0);
     }
