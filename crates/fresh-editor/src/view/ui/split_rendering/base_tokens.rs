@@ -96,18 +96,21 @@ pub(super) fn build_windowed_tokens(
         let next_line = buffer.next_line_start_within(line_start, LINE_SKIP_SCAN_BYTES);
         let line_end = next_line.map(|n| n.saturating_sub(1)).unwrap_or(buffer_len);
 
-        let read_from = line_start.saturating_add(window_byte).min(line_end);
+        // The window's offset is a byte count, so on multi-byte text it can
+        // fall inside a character; the row starts at the next whole one.
+        let read_from = buffer
+            .char_boundary_at_or_after(line_start.saturating_add(window_byte).min(line_end))
+            .min(line_end);
         let take = (line_end.saturating_sub(read_from)).min(read_bytes);
         let raw = buffer
             .get_text_range_mut(read_from, take)
             .unwrap_or_default();
-        let text = String::from_utf8_lossy(&raw);
         // The end-of-line search is bounded, so `line_end` can be the buffer's
         // end for a line whose break is merely far away. Stopping at the first
         // break in what was read keeps a row to one line regardless.
-        let text = match text.find('\n') {
-            Some(i) => &text[..=i],
-            None => &text[..],
+        let text = match raw.iter().position(|&b| b == b'\n') {
+            Some(i) => &raw[..=i],
+            None => &raw[..],
         };
 
         emit_line_text(&mut tokens, read_from, text, line_ending, window_chars);
@@ -115,7 +118,7 @@ pub(super) fn build_windowed_tokens(
         // End the row. A window carrying the line's own terminator ends on a
         // byte the document has; one that does not is a break the layout is
         // inventing, and says so by carrying no source byte.
-        let terminator = line_terminator_offset(text.as_bytes(), read_from, line_ending);
+        let terminator = line_terminator_offset(text, read_from, line_ending);
         let more_below = next_line.is_some_and(|n| n < buffer_len);
         if !more_below {
             break;
@@ -144,104 +147,125 @@ pub(super) fn build_windowed_tokens(
 /// Source offsets are absolute either way, which is what lets the second exist
 /// — a row that begins mid-line still says which bytes it is showing.
 ///
+/// Takes the bytes as the buffer holds them, not a decoded string, because every
+/// token's source offset is counted along them. Lossy decoding turns each
+/// invalid byte into a three-byte U+FFFD, and offsets counted along *that* drift
+/// two bytes per invalid byte from the document — the caret and every click on
+/// the rest of the row then land inside characters, and typing there splits
+/// them (issue #3285). An invalid byte is instead emitted as the
+/// `BinaryByte` it is, one token per byte, the way control characters are.
+///
 /// Returns how many characters were emitted, and whether it stopped on
 /// `max_chars` with text still to come. The caller owns what that means: on a
 /// frame budget there is no room for another row, on a row budget there is.
 fn emit_line_text(
     tokens: &mut Vec<ViewTokenWire>,
     text_start: usize,
-    text: &str,
+    content_bytes: &[u8],
     line_ending: LineEnding,
     max_chars: usize,
 ) -> (usize, bool) {
-    let content_bytes = text.as_bytes();
     let mut byte_offset = 0usize;
     let mut skip_next_lf = false; // Track if we should skip \n after \r in CRLF
     let mut emitted = 0usize;
 
-    for ch in text.chars() {
-        if emitted >= max_chars {
-            return (emitted, true);
-        }
-        emitted += 1;
+    for chunk in content_bytes.utf8_chunks() {
+        for ch in chunk.valid().chars() {
+            if emitted >= max_chars {
+                return (emitted, true);
+            }
+            emitted += 1;
 
-        let ch_len = ch.len_utf8();
-        let source_offset = Some(text_start + byte_offset);
+            let ch_len = ch.len_utf8();
+            let source_offset = Some(text_start + byte_offset);
 
-        match ch {
-            '\r' => {
-                // In CRLF mode with \r\n: emit Newline at \r position, skip the \n.
-                // In LF/Unix files, ANY \r is unusual and should be shown as <0D>.
-                let is_crlf_file = line_ending == LineEnding::CRLF;
-                let next_byte = content_bytes.get(byte_offset + 1);
-                if is_crlf_file && next_byte == Some(&b'\n') {
+            match ch {
+                '\r' => {
+                    // In CRLF mode with \r\n: emit Newline at \r position, skip the \n.
+                    // In LF/Unix files, ANY \r is unusual and should be shown as <0D>.
+                    let is_crlf_file = line_ending == LineEnding::CRLF;
+                    let next_byte = content_bytes.get(byte_offset + 1);
+                    if is_crlf_file && next_byte == Some(&b'\n') {
+                        tokens.push(ViewTokenWire {
+                            source_offset,
+                            kind: ViewTokenWireKind::Newline,
+                            style: None,
+                        });
+                        skip_next_lf = true;
+                        byte_offset += ch_len;
+                        continue;
+                    }
+                    tokens.push(ViewTokenWire {
+                        source_offset,
+                        kind: ViewTokenWireKind::BinaryByte(ch as u8),
+                        style: None,
+                    });
+                }
+                '\n' if skip_next_lf => {
+                    skip_next_lf = false;
+                    byte_offset += ch_len;
+                    continue;
+                }
+                '\n' => {
                     tokens.push(ViewTokenWire {
                         source_offset,
                         kind: ViewTokenWireKind::Newline,
                         style: None,
                     });
-                    skip_next_lf = true;
-                    byte_offset += ch_len;
-                    continue;
                 }
-                tokens.push(ViewTokenWire {
-                    source_offset,
-                    kind: ViewTokenWireKind::BinaryByte(ch as u8),
-                    style: None,
-                });
-            }
-            '\n' if skip_next_lf => {
-                skip_next_lf = false;
-                byte_offset += ch_len;
-                continue;
-            }
-            '\n' => {
-                tokens.push(ViewTokenWire {
-                    source_offset,
-                    kind: ViewTokenWireKind::Newline,
-                    style: None,
-                });
-            }
-            ' ' => {
-                tokens.push(ViewTokenWire {
-                    source_offset,
-                    kind: ViewTokenWireKind::Space,
-                    style: None,
-                });
-            }
-            '\t' => {
-                tokens.push(ViewTokenWire {
-                    source_offset,
-                    kind: ViewTokenWireKind::Text(ch.to_string()),
-                    style: None,
-                });
-            }
-            _ if is_control_char(ch) => {
-                tokens.push(ViewTokenWire {
-                    source_offset,
-                    kind: ViewTokenWireKind::BinaryByte(ch as u8),
-                    style: None,
-                });
-            }
-            _ => {
-                if let Some(last) = tokens.last_mut() {
-                    if let ViewTokenWireKind::Text(ref mut s) = last.kind {
-                        let expected_offset = last.source_offset.map(|o| o + s.len());
-                        if expected_offset == Some(text_start + byte_offset) {
-                            s.push(ch);
-                            byte_offset += ch_len;
-                            continue;
+                ' ' => {
+                    tokens.push(ViewTokenWire {
+                        source_offset,
+                        kind: ViewTokenWireKind::Space,
+                        style: None,
+                    });
+                }
+                '\t' => {
+                    tokens.push(ViewTokenWire {
+                        source_offset,
+                        kind: ViewTokenWireKind::Text(ch.to_string()),
+                        style: None,
+                    });
+                }
+                _ if is_control_char(ch) => {
+                    tokens.push(ViewTokenWire {
+                        source_offset,
+                        kind: ViewTokenWireKind::BinaryByte(ch as u8),
+                        style: None,
+                    });
+                }
+                _ => {
+                    if let Some(last) = tokens.last_mut() {
+                        if let ViewTokenWireKind::Text(ref mut s) = last.kind {
+                            let expected_offset = last.source_offset.map(|o| o + s.len());
+                            if expected_offset == Some(text_start + byte_offset) {
+                                s.push(ch);
+                                byte_offset += ch_len;
+                                continue;
+                            }
                         }
                     }
+                    tokens.push(ViewTokenWire {
+                        source_offset,
+                        kind: ViewTokenWireKind::Text(ch.to_string()),
+                        style: None,
+                    });
                 }
-                tokens.push(ViewTokenWire {
-                    source_offset,
-                    kind: ViewTokenWireKind::Text(ch.to_string()),
-                    style: None,
-                });
             }
+            byte_offset += ch_len;
         }
-        byte_offset += ch_len;
+        for &byte in chunk.invalid() {
+            if emitted >= max_chars {
+                return (emitted, true);
+            }
+            emitted += 1;
+            tokens.push(ViewTokenWire {
+                source_offset: Some(text_start + byte_offset),
+                kind: ViewTokenWireKind::BinaryByte(byte),
+                style: None,
+            });
+            byte_offset += 1;
+        }
     }
 
     (emitted, false)
@@ -355,7 +379,7 @@ pub(crate) fn build_base_tokens(
             iter = iter.with_max_line_bytes(budget.saturating_mul(4).saturating_add(1024));
         }
         while lines_seen < max_lines {
-            let Some((line_start, line_content)) = iter.next_line() else {
+            let Some((line_start, line_content)) = iter.next_line_raw() else {
                 break 'segments;
             };
             // Stop the inner loop when the next line crosses into the
@@ -365,7 +389,7 @@ pub(crate) fn build_base_tokens(
             if next_fold_start.is_some_and(|s| line_start >= s) {
                 break;
             }
-            let content_bytes = line_content.as_bytes();
+            let content_bytes = line_content.as_slice();
             // Two budgets bound this line: the frame's remaining characters,
             // which ends the whole build, and the row's own width, which ends
             // only this line. Whichever is smaller stops the emission; which
@@ -839,5 +863,49 @@ mod tests {
                 "token {i} moved"
             );
         }
+    }
+
+    /// Source offsets are counted along the bytes the buffer holds. Counting
+    /// them along the lossy decode made each invalid byte three bytes long
+    /// (its U+FFFD), so everything after it on the row claimed an offset two
+    /// bytes too far on — inside a character, for CJK (issue #3285).
+    #[test]
+    fn invalid_bytes_keep_the_offsets_after_them_exact() {
+        let mut bytes = vec![0xA1, 0xB2];
+        bytes.extend_from_slice("信x\n".as_bytes());
+        // Declared UTF-8, so the bytes are kept as they are rather than
+        // detected as some other encoding and converted.
+        let mut buffer = Buffer::from_bytes_with_encoding(
+            bytes,
+            crate::model::encoding::Encoding::Utf8,
+            test_fs(),
+        );
+
+        let tokens = build_base_tokens(
+            &mut buffer,
+            0,
+            80,
+            1,
+            false,
+            LineEnding::LF,
+            &[],
+            None,
+            None,
+            false,
+        );
+        // The token kind has no `PartialEq`; its `Debug` form says the same.
+        let got: Vec<_> = tokens
+            .iter()
+            .map(|t| format!("{:?} {:?}", t.source_offset, t.kind))
+            .collect();
+        assert_eq!(
+            got[..4],
+            [
+                "Some(0) BinaryByte(161)",
+                "Some(1) BinaryByte(178)",
+                "Some(2) Text(\"信x\")",
+                "Some(6) Newline",
+            ]
+        );
     }
 }

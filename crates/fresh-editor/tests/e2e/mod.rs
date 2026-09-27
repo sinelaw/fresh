@@ -170,6 +170,7 @@ pub mod language_features_e2e;
 pub mod large_file_edit_bounded;
 pub mod large_file_inplace_write_bug;
 pub mod large_file_mode;
+pub mod large_file_multibyte_offsets;
 pub mod large_file_open_bounded;
 pub mod lifecycle;
 pub mod line_number_bugs;

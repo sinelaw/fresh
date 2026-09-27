@@ -3122,6 +3122,35 @@ impl TextBuffer {
         self.prev_char_boundary(pos)
     }
 
+    /// `pos`, or the first character boundary after it.
+    ///
+    /// For offsets that come from arithmetic rather than from the text — a
+    /// bounded search that gave up, a reach backwards, a byte the user typed
+    /// into "Go to Byte Offset" — and that are about to be read from, drawn at
+    /// or edited at. Anchoring any of those inside a character puts replacement
+    /// glyphs on screen and lets an insertion split the character in two.
+    ///
+    /// Loads the bytes it needs, unlike [`Self::snap_to_char_boundary`], which
+    /// gives up on data that is not resident — exactly the state of a large
+    /// file far from where it was last read. UTF-8 continuation bytes are
+    /// `0b10xxxxxx` and a character is at most four bytes, so at most three are
+    /// stepped over. A read that fails leaves `pos` alone: this is a repair,
+    /// not a place to invent an answer.
+    pub fn char_boundary_at_or_after(&mut self, pos: usize) -> usize {
+        let len = self.len();
+        if pos == 0 || pos >= len {
+            return pos.min(len);
+        }
+        let Ok(bytes) = self.get_text_range_mut(pos, 4.min(len - pos)) else {
+            return pos;
+        };
+        let step = bytes
+            .iter()
+            .position(|&b| !Self::is_utf8_continuation_byte(b))
+            .unwrap_or(bytes.len());
+        pos + step
+    }
+
     /// Find the previous grapheme cluster boundary (for proper cursor movement with combining characters)
     ///
     /// This handles complex scripts like Thai where multiple Unicode code points
