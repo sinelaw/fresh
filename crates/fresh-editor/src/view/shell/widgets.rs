@@ -1386,152 +1386,223 @@ struct CardTreeRows {
 }
 
 /// A `card_borders` plugin `Tree`, from its props alone.
+///
+/// **Windowed in cells, over the projection.** A card is several rows and a
+/// folder header one, and both are known from the node alone
+/// ([`crate::widgets::tree_row_rows`]), so the tree places every row without
+/// rendering any and builds only the blocks that overlap the window. It was
+/// every visible node's block, rendered whenever the tree rebuilt.
 fn tree_rows_cards(p: &CardTreeRows) -> Node<UiMsg> {
+    use std::rc::Rc;
     let key = &p.key;
     let (sel_abs, width) = (p.sel_abs, p.width);
     let (checkable, indent_cols, item_height) = (p.checkable, p.indent_cols, p.item_height);
-    let (nodes, item_keys) = (&p.nodes.0, &p.keys.0);
-    let (visible, expanded) = (&p.visible.0, &p.expanded.0);
+    let (nodes, item_keys) = (p.nodes.0.clone(), p.keys.0.clone());
+    let (visible, expanded) = (p.visible.0.clone(), p.expanded.0.clone());
     let tree_key = key.clone().unwrap_or_default();
-    let h_pan = p.h_pan;
-    let mut blocks: Vec<Chunk> = Vec::with_capacity(visible.len());
-    let mut at: u32 = 0;
-    let mut selected: Option<usize> = None;
-    for (i, &abs) in visible.iter().enumerate() {
-        collection_stats::note_row();
-        let mut n = nodes[abs].clone();
-        n.text.normalize_widths();
-        for line in n.extra_lines.iter_mut() {
-            line.normalize_widths();
+    let (h_pan, slot) = (p.h_pan, p.slot);
+    let n = visible.len();
+    let rows_of = {
+        let (nodes, visible) = (nodes.clone(), visible.clone());
+        move |i: usize| {
+            crate::widgets::tree_row_rows(&nodes[visible[i]], checkable, item_height, true)
         }
-        let item_key = item_keys[abs].clone();
-        let open = n.has_children && expanded.contains(&item_key);
-        let r = crate::widgets::render_tree_row(
-            &n,
-            open,
-            checkable,
-            item_height,
-            true,
-            tree_row_width(width, &n) as u32,
-            indent_cols,
-            h_pan,
-        );
-        let is_selected = abs as i32 == sel_abs;
-        if is_selected {
-            selected = Some(i);
+    };
+    // Where each block starts, for the one thing that needs to know: the
+    // dock's active card scooping the divider across exactly its own rows.
+    let starts: Rc<std::cell::OnceCell<Vec<u32>>> = Rc::default();
+    let start_of = {
+        let (rows_of, starts) = (rows_of.clone(), starts.clone());
+        move |i: usize| {
+            starts.get_or_init(|| {
+                let mut at = 0u32;
+                std::iter::once(0)
+                    .chain((0..n).map(|j| {
+                        at += rows_of(j);
+                        at
+                    }))
+                    .collect()
+            })[i]
         }
-        // A card marks selection in its glyphs; a folder header takes
-        // the band. Hover lights every row of the block, because the
-        // block selects as one unit and so must light as one — and
-        // selection outranks it.
-        let as_card = crate::widgets::render::tree_node_is_card(&n, checkable);
-        // **In the dock, the selected card is the seamless tab.**
-        // There the card sits against a wall — `dock::grip_ink`'s
-        // divider, in the column's last cell — and the active session
-        // is the one mirrored in the editor beside it, so its card
-        // opens onto the editor instead of being boxed off from it
-        // (F.8). That is the whole marker, and it is made of glyphs:
-        // nothing here depends on a colour. Everywhere else there is
-        // no wall to open onto, so the heavy frame stays what
-        // selection looks like.
-        let tab = is_selected && as_card && matches!(p.slot, Slot::Dock);
-        let hovered =
-            !is_selected && !p.hovered_item_key.is_empty() && p.hovered_item_key == item_key;
-        let dress = |e: &mut TextPropertyEntry| {
-            if is_selected {
-                match (as_card, tab) {
-                    (true, true) => open_card_edge(e),
-                    (true, false) => crate::widgets::render::mark_list_card_selected(e),
-                    (false, _) => {
-                        let mut st = e.style.clone().unwrap_or_default();
-                        st.bg = Some(OverlayColorSpec::theme_key("ui.popup_selection_bg"));
-                        st.extend_to_line_end = true;
-                        e.style = Some(st);
-                    }
-                }
-            } else if hovered {
-                crate::widgets::render::apply_hover_band(e);
+    };
+    let block = {
+        let (nodes, item_keys, visible) = (nodes.clone(), item_keys.clone(), visible.clone());
+        let start_of = start_of.clone();
+        let surface = p.surface.clone();
+        let hovered_item_key = Rc::new(p.hovered_item_key.clone());
+        let tree_key = tree_key.clone();
+        move |i: usize, row: fresh_ui::widgets::TreeRow, _: fresh_ui::widgets::RowState| {
+            let abs = visible[i];
+            let hovered_item_key = &hovered_item_key;
+            collection_stats::note_row();
+            let mut n = nodes[abs].clone();
+            let open = row.open;
+            n.text.normalize_widths();
+            for line in n.extra_lines.iter_mut() {
+                line.normalize_widths();
             }
-        };
-        // The row's three targets differ only in what they fire and
-        // where they are; `row_target` is the difference between the
-        // body (a press anywhere on the row is its) and the two glyphs
-        // (a press inside their own bytes only). Where each one is is
-        // the range beside it in `hits`, not anything this states.
-        let select = |row_target: bool| crate::widgets::WidgetEvent {
-            row_target,
-            context_click: row_target,
-            widget_key: tree_key.clone(),
-            widget_kind: "tree",
-            payload: serde_json::json!({ "index": abs, "key": item_key }),
-            event_type: "select",
-            owner_key: None,
-        };
-        let mut rows: Vec<Node<UiMsg>> = Vec::new();
-        let mut primary = r.entry.clone();
-        dress(&mut primary);
-        let end = primary.text.len();
-        let mut hits: Vec<((usize, usize), crate::widgets::WidgetEvent)> = Vec::new();
-        if let Some((a, b)) = r.disclosure_range {
-            let mut h = select(false);
-            h.event_type = "expand";
-            h.payload = serde_json::json!({ "index": abs, "key": item_key, "expanded": !open });
-            hits.push(((a, b), h));
-        }
-        if let Some((a, b)) = r.checkbox_range {
-            let mut h = select(false);
-            h.event_type = "toggle";
-            h.payload = serde_json::json!({
-                "index": abs,
-                "key": item_key,
-                "checked": !n.checked.unwrap_or(false),
+            let item_key = item_keys[abs].clone();
+            let r = crate::widgets::render_tree_row(
+                &n,
+                open,
+                checkable,
+                item_height,
+                true,
+                tree_row_width(width, &n) as u32,
+                indent_cols,
+                h_pan,
+            );
+            let is_selected = abs as i32 == sel_abs;
+            // A card marks selection in its glyphs; a folder header takes
+            // the band. Hover lights every row of the block, because the
+            // block selects as one unit and so must light as one — and
+            // selection outranks it.
+            let as_card = crate::widgets::render::tree_node_is_card(&n, checkable);
+            // **In the dock, the selected card is the seamless tab.**
+            // There the card sits against a wall — `dock::grip_ink`'s
+            // divider, in the column's last cell — and the active session
+            // is the one mirrored in the editor beside it, so its card
+            // opens onto the editor instead of being boxed off from it
+            // (F.8). That is the whole marker, and it is made of glyphs:
+            // nothing here depends on a colour. Everywhere else there is
+            // no wall to open onto, so the heavy frame stays what
+            // selection looks like.
+            let tab = is_selected && as_card && matches!(slot, Slot::Dock);
+            let hovered =
+                !is_selected && !hovered_item_key.is_empty() && **hovered_item_key == item_key;
+            let dress = |e: &mut TextPropertyEntry| {
+                if is_selected {
+                    match (as_card, tab) {
+                        (true, true) => open_card_edge(e),
+                        (true, false) => crate::widgets::render::mark_list_card_selected(e),
+                        (false, _) => {
+                            let mut st = e.style.clone().unwrap_or_default();
+                            st.bg = Some(OverlayColorSpec::theme_key("ui.popup_selection_bg"));
+                            st.extend_to_line_end = true;
+                            e.style = Some(st);
+                        }
+                    }
+                } else if hovered {
+                    crate::widgets::render::apply_hover_band(e);
+                }
+            };
+            // The row's three targets differ only in what they fire and
+            // where they are; `row_target` is the difference between the
+            // body (a press anywhere on the row is its) and the two glyphs
+            // (a press inside their own bytes only). Where each one is is
+            // the range beside it in `hits`, not anything this states.
+            let select = |row_target: bool| crate::widgets::WidgetEvent {
+                row_target,
+                context_click: row_target,
+                widget_key: tree_key.clone(),
+                widget_kind: "tree",
+                payload: serde_json::json!({ "index": abs, "key": item_key }),
+                event_type: "select",
+                owner_key: None,
+            };
+            let mut rows: Vec<Node<UiMsg>> = Vec::new();
+            let mut primary = r.entry.clone();
+            dress(&mut primary);
+            let end = primary.text.len();
+            let mut hits: Vec<((usize, usize), crate::widgets::WidgetEvent)> = Vec::new();
+            if let Some((a, b)) = r.disclosure_range {
+                let mut h = select(false);
+                h.event_type = "expand";
+                h.payload = serde_json::json!({ "index": abs, "key": item_key, "expanded": !open });
+                hits.push(((a, b), h));
+            }
+            if let Some((a, b)) = r.checkbox_range {
+                let mut h = select(false);
+                h.event_type = "toggle";
+                h.payload = serde_json::json!({
+                    "index": abs,
+                    "key": item_key,
+                    "checked": !n.checked.unwrap_or(false),
+                });
+                hits.push(((a, b), h));
+            }
+            if let Some((a, b)) = r.action_range {
+                let mut h = select(false);
+                h.event_type = "action";
+                hits.push(((a, b), h));
+            }
+            // The body starts after whatever prefix the glyphs took —
+            // the collector's own rule, so a press on the glyph is the
+            // glyph's and the rest of the row is the card's.
+            let body = match (r.checkbox_range, r.disclosure_range) {
+                (Some((_, e)), _) => e + 1,
+                (None, Some((_, e))) => e,
+                (None, None) => 0,
+            };
+            if body < end {
+                hits.push(((body, end), select(true)));
+            }
+            rows.push(entry_row_hits(&primary, slot, &surface, &hits));
+            for extra in r.extra_entries.iter() {
+                let mut e = extra.clone();
+                dress(&mut e);
+                let b = e.text.len();
+                rows.push(match b > 0 {
+                    true => entry_row_hit(&e, (0, b), slot, &surface, select(true)),
+                    false => entry_row(&e, &surface),
+                });
+            }
+            let h = rows.len() as u32;
+            debug_assert_eq!(
+                h,
+                crate::widgets::tree_row_rows(&nodes[abs], checkable, item_height, true)
+            );
+            let edge = tab.then(|| {
+                tab_scoop(
+                    fresh_ui::Key::Str(item_key.clone().into()),
+                    start_of(i),
+                    h,
+                    &surface,
+                )
             });
-            hits.push(((a, b), h));
+            let block = col().children(rows);
+            match edge {
+                Some(e) => block.child(e),
+                None => block,
+            }
         }
-        if let Some((a, b)) = r.action_range {
-            let mut h = select(false);
-            h.event_type = "action";
-            hits.push(((a, b), h));
-        }
-        // The body starts after whatever prefix the glyphs took —
-        // the collector's own rule, so a press on the glyph is the
-        // glyph's and the rest of the row is the card's.
-        let body = match (r.checkbox_range, r.disclosure_range) {
-            (Some((_, e)), _) => e + 1,
-            (None, Some((_, e))) => e,
-            (None, None) => 0,
-        };
-        if body < end {
-            hits.push(((body, end), select(true)));
-        }
-        rows.push(entry_row_hits(&primary, p.slot, &p.surface, &hits));
-        for extra in r.extra_entries.iter() {
-            let mut e = extra.clone();
-            dress(&mut e);
-            let b = e.text.len();
-            rows.push(match b > 0 {
-                true => entry_row_hit(&e, (0, b), p.slot, &p.surface, select(true)),
-                false => entry_row(&e, &p.surface),
-            });
-        }
-        let h = rows.len() as u32;
-        let block = fresh_ui::Key::Str(item_key.clone().into());
-        blocks.push(Chunk {
-            edge: tab.then(|| tab_scoop(block.clone(), at, h, &p.surface)),
-            key: block,
-            start: at,
-            rows,
-        });
-        at += h;
-    }
-    let node = keyed(
-        fresh_ui::ComponentExt::node(Scrolled {
-            blocks: std::rc::Rc::new(blocks),
-            selected,
-            reveal: p.reveal,
-        }),
-        state_key(key),
-    );
+    };
+    let selected = visible.iter().position(|&a| a as i32 == sel_abs);
+    let list = fresh_ui::Tree::windowed(
+        n,
+        {
+            let (item_keys, visible) = (item_keys.clone(), visible.clone());
+            move |i| fresh_ui::Key::Str(item_keys[visible[i]].clone().into())
+        },
+        {
+            let (nodes, item_keys, visible) = (nodes.clone(), item_keys.clone(), visible.clone());
+            move |i| {
+                let node = &nodes[visible[i]];
+                fresh_ui::widgets::TreeRow {
+                    depth: node.depth as usize,
+                    has_children: node.has_children,
+                    open: node.has_children && expanded.contains(&item_keys[visible[i]]),
+                }
+            }
+        },
+        block,
+    )
+    .list()
+    .row_heights({
+        let rows_of = rows_of.clone();
+        move |i| rows_of(i).min(u16::MAX as u32) as u16
+    })
+    // A card marks selection and hover in its own glyphs and bands, so the
+    // row under it keeps the panel's surface whatever its state.
+    .row_theme({
+        let plain = p.surface.clone();
+        move |_, _| plain.to_string()
+    })
+    .focusable(false)
+    .selection(selected)
+    .scrollbar_when(p.reveal)
+    .scrollbar_theme(bar_ink());
+    let node = keyed(fresh_ui::ComponentExt::node(list), state_key(key));
     // **As wide as the panel, not as wide as its rows.** The rows
     // arrive pre-rendered at the runtime's wrap width, so a window
     // sized to its content stops where the text does — and the two
@@ -1544,7 +1615,7 @@ fn tree_rows_cards(p: &CardTreeRows) -> Node<UiMsg> {
     let node = node.w(Sizing::Auto);
     let node = pan_to_widget(node, p.slot, &tree_key);
     match p.visible_rows {
-        Some(r) => node.h(Sizing::Cells(tree_rows(at, r))),
+        Some(r) => node.h(Sizing::Cells(tree_rows(start_of(n), r))),
         // Height only. `flex(1)` set both axes, and a flexible width
         // on a column's cross axis is measured at the whole extent —
         // frame-wide under an `Auto` box. The width stays `Auto`;
@@ -3791,49 +3862,6 @@ fn tab_scoop(block: fresh_ui::Key, start: u32, rows: u32, surface: &Ink) -> Node
     .h(Sizing::Cells(0))
 }
 
-/// One addressable run of rows inside a [`Scrolled`]: a card tree's node, or
-/// a single line of a text area. `start` is where it begins in the content.
-struct Chunk {
-    key: fresh_ui::Key,
-    /// First row of this block within the whole tree's rows.
-    start: u32,
-    rows: Vec<Node<UiMsg>>,
-    /// What this block does to the column's right edge, if anything: the
-    /// dock's active card scoops the divider away across its own rows (see
-    /// [`tab_scoop`]). Out of flow, so it is not one of `rows` — the row
-    /// count is what `start` and the reveal are counted in.
-    edge: Option<Node<UiMsg>>,
-}
-
-#[derive(Default)]
-struct ScrolledState {
-    anchor: Option<std::rc::Rc<fresh_ui::behavior::Anchor>>,
-    revealed: fresh_ui::behavior::Cache<usize, ()>,
-}
-
-/// Rows in a window that owns its own scroll, revealing one of them.
-///
-/// **A component, for one reason: the reveal.** The runtime scrolled to keep
-/// the selection visible unless the user had scrolled by wheel, and it did
-/// that by writing an offset into the side table it also read. Here the
-/// offset is the viewport's, which is the whole point — so the only thing
-/// left to say is "put this row in the window", which is `Anchor::reveal`,
-/// and an anchor is registered at mount. The memo is what keeps the reveal a
-/// statement about the *selection moving* rather than about every build:
-/// asking on every one would fight the wheel, which is a statement about the
-/// window.
-///
-/// The scroll survives a rebuild because the element does, which is what
-/// retains it — no `scroll_offset` is carried anywhere.
-struct Scrolled {
-    blocks: std::rc::Rc<Vec<Chunk>>,
-    /// Which block is selected, if any.
-    selected: Option<usize>,
-    /// See [`Ctx::scrollbar_reveal`]. Carried rather than read from a context
-    /// because a component builds outside the one that described it.
-    reveal: Option<bool>,
-}
-
 /// **A fold the element owns**, for a builder that computes one while it
 /// renders.
 ///
@@ -3894,48 +3922,6 @@ fn windowed(
         build: std::rc::Rc::new(build),
     });
     keyed(n, key)
-}
-
-impl fresh_ui::Component<UiMsg> for Scrolled {
-    type State = ScrolledState;
-
-    fn init(&self, cx: &mut fresh_ui::InitCx<'_, UiMsg>) -> ScrolledState {
-        ScrolledState {
-            anchor: Some(cx.register(fresh_ui::behavior::Anchor::default())),
-            ..ScrolledState::default()
-        }
-    }
-
-    fn build(&self, s: &ScrolledState, _cx: &mut fresh_ui::BuildCx<'_, UiMsg>) -> Node<UiMsg> {
-        if let (Some(a), Some(i)) = (s.anchor.clone(), self.selected) {
-            if let Some(b) = self.blocks.get(i) {
-                let (start, rows) = (b.start, b.rows.len() as u32);
-                s.revealed.get_or(i, move || {
-                    // The last row first, then the first: the shortest move
-                    // that shows the end, then the one that shows the start,
-                    // so a block taller than the window anchors to its top —
-                    // which is the rule the runtime spelled with a `min`.
-                    a.reveal(start + rows.saturating_sub(1));
-                    a.reveal(start);
-                });
-            }
-        }
-        let mut content = col();
-        for b in self.blocks.iter() {
-            let block = col().key(b.key.clone()).children(b.rows.iter().cloned());
-            content = content.child(match b.edge.clone() {
-                Some(e) => block.child(e),
-                None => block,
-            });
-        }
-        let body = fresh_ui::viewport(content)
-            .scrollbar_when(self.reveal)
-            .scrollbar_theme(bar_ink());
-        match s.anchor.clone() {
-            Some(a) => body.anchor_to(a),
-            None => body,
-        }
-    }
 }
 
 /// Send a float's wheel and hover where the rows behind it would have sent

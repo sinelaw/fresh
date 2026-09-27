@@ -27,6 +27,18 @@ use crate::render::object::Band;
 use crate::schedule::{BuildCx, Updater};
 use crate::{Component, ComponentExt};
 
+/// Where each of `n` rows starts, in cells, and (last) where the column ends.
+fn prefix(n: usize, height: &dyn Fn(usize) -> u16) -> Vec<u32> {
+    let mut out = Vec::with_capacity(n + 1);
+    let mut at = 0u32;
+    out.push(0);
+    for i in 0..n {
+        at += height(i).max(1) as u32;
+        out.push(at);
+    }
+    out
+}
+
 /// Rows above and below the window, so a one-cell scroll does not expose a gap.
 const OVERSCAN: usize = 2;
 
@@ -311,6 +323,8 @@ pub struct List<M> {
     /// layout. See [`List::pinned_at`].
     #[allow(clippy::type_complexity)]
     pinned_at: Option<Rc<dyn Fn(usize) -> Rc<[usize]>>>,
+    /// Each row's own height, stated by the owner. See [`List::row_heights`].
+    heights: Option<Rc<dyn Fn(usize) -> u16>>,
     on_activate: Option<ActivateHandler<M>>,
     activate_on: Activate,
     focusable: bool,
@@ -444,6 +458,7 @@ impl<M: 'static> List<M> {
             on_scroll: None,
             pinned: Rc::from(Vec::new()),
             pinned_at: None,
+            heights: None,
             on_activate: None,
             activate_on: Activate::default(),
             focusable: true,
@@ -691,6 +706,20 @@ impl<M: 'static> List<M> {
 
     /// Where one row's height comes from: the caller, or the layout. See
     /// [`RowHeight`], which carries the cost of each.
+    /// **Rows of different heights, each stated by the owner** — a card
+    /// tree, whose cards are several rows and whose folder headers are one.
+    /// The window counts in cells rather than items: it scrolls a row at a
+    /// time, a card can be half in view, and the rows built are the ones
+    /// that overlap it, between two spacers that stand for the rest. The
+    /// heights are summed once per description, never per scroll.
+    ///
+    /// A page is not a count of items here, so the list records none in its
+    /// pager, and pins are not honoured.
+    pub fn row_heights(mut self, f: impl Fn(usize) -> u16 + 'static) -> Self {
+        self.heights = Some(Rc::new(f));
+        self
+    }
+
     pub fn row_height(mut self, h: RowHeight) -> Self {
         self.row_height = h;
         self
@@ -735,19 +764,46 @@ impl<M: 'static> Component<M> for List<M> {
         // fight the wheel, which is a statement about the window rather than
         // about the selection; the memo is what distinguishes the two, and its
         // write is an idempotent function of the build inputs.
+        // Where each row starts, in cells, when the owner states each row's
+        // height: summed once for this description and shared with the
+        // reader, which reads it on every scroll.
+        let heights = self.heights.clone();
+        let starts: Rc<std::cell::OnceCell<Vec<u32>>> = Rc::default();
+        // The selected row's band in the window's unit: `(start, extent)`.
+        // An item window counts items, so a row is one unit at its index; a
+        // window over rows of their own heights counts cells.
+        let band_of = {
+            let (heights, starts) = (heights.clone(), starts.clone());
+            move |i: usize| -> (u32, u32) {
+                match heights.as_ref() {
+                    Some(h) => {
+                        let st = starts.get_or_init(|| prefix(n, &**h));
+                        (st[i], st[i + 1] - st[i])
+                    }
+                    None => (i as u32, 1),
+                }
+            }
+        };
         match (self.follow, &anchor, sel) {
             // A standing follow, re-armed when the selection or the owner's
             // token moves — so a wheel since then is not fought, and a layout
             // since then is still answered.
             (Some(token), Some(a), Some(sel)) => {
+                let (top, _) = band_of(sel);
                 let a = a.clone();
-                s.followed
-                    .get_or((sel, token), move || a.follow(sel as u32));
+                s.followed.get_or((sel, token), move || a.follow(top));
             }
             (Some(_), Some(a), None) => a.unfollow(),
+            // The band's last unit, then its first: the shortest move shows
+            // its end, and a band taller than the window is shown from its
+            // top.
             (None, Some(a), Some(sel)) => {
+                let (top, rows) = band_of(sel);
                 let a = a.clone();
-                s.revealed.get_or(sel, move || a.reveal(sel as u32));
+                s.revealed.get_or(sel, move || {
+                    a.reveal(top + rows.saturating_sub(1));
+                    a.reveal(top);
+                });
             }
             _ => {}
         }
@@ -857,17 +913,34 @@ impl<M: 'static> Component<M> for List<M> {
             // when they would have taken the whole window.
             let win = info.scroll_window.unwrap_or_default();
             let visible = (win.h as usize).max(1);
-            // The page is the window this layout placed, in items.
-            if info.scroll_window.is_some() && !measuring {
-                recorder.record(visible);
-            }
-            let first = (win.y.max(0) as usize).min(n);
-            let last = (first + visible + OVERSCAN).min(n);
+            // Rows of their own heights: the window is in cells, and the rows
+            // built are the ones overlapping it.
+            let cells = heights
+                .as_ref()
+                .map(|h| starts.get_or_init(|| prefix(n, &**h)).as_slice());
+            let (first, last) = match cells {
+                Some(st) => {
+                    let (y, h) = (win.y.max(0) as u32, win.h as u32);
+                    let first = st.partition_point(|&s| s <= y).saturating_sub(1).min(n);
+                    let end = st.partition_point(|&s| s < y + h).min(n);
+                    (first, (end + OVERSCAN).min(n))
+                }
+                None => {
+                    // The page is the window this layout placed, in items.
+                    if info.scroll_window.is_some() && !measuring {
+                        recorder.record(visible);
+                    }
+                    let first = (win.y.max(0) as usize).min(n);
+                    (first, (first + visible + OVERSCAN).min(n))
+                }
+            };
             // The pins of this window: asked of the owner's function at the
-            // offset the window is at, or the fixed list.
-            let pinned: Rc<[usize]> = match &pinned_at {
-                Some(f) => f(first),
-                None => pinned.clone(),
+            // offset the window is at, or the fixed list. None for rows of
+            // their own heights.
+            let pinned: Rc<[usize]> = match (&pinned_at, cells) {
+                (_, Some(_)) => Rc::from(Vec::new()),
+                (Some(f), None) => f(first),
+                (None, None) => pinned.clone(),
             };
             let pins = (info.pinned as usize).min(pinned.len());
             // The window is known here and nowhere earlier: a source with
@@ -898,7 +971,11 @@ impl<M: 'static> Component<M> for List<M> {
                     Some(f) => f(i, state),
                     None => state.theme().to_string(),
                 };
-                let content = row.theme(theme).h(Sizing::Cells(row_rows));
+                let rows_h = match &heights {
+                    Some(h) => h(i).max(1),
+                    None => row_rows,
+                };
+                let content = row.theme(theme).h(Sizing::Cells(rows_h));
                 let g = gesture(content)
                     .on_enter(hover(k.clone()))
                     .on_leave(hover(k.clone()));
@@ -912,6 +989,16 @@ impl<M: 'static> Component<M> for List<M> {
                 // wrapper below it by position and remount what they hold.
                 g.key(k)
             }));
+            // The rows above and below the window, as two spacers: the column
+            // is as tall as all of it, so the window scrolls over the whole.
+            if let Some(st) = cells {
+                let cap = |c: u32| Sizing::Cells(c.min(u16::MAX as u32) as u16);
+                return col().children([
+                    crate::desc::row().h(cap(st[first])),
+                    window,
+                    crate::desc::row().h(cap(st[n] - st[last])),
+                ]);
+            }
             if !measured {
                 return window;
             }
@@ -949,18 +1036,23 @@ impl<M: 'static> Component<M> for List<M> {
             ])
         });
 
-        let mut body = viewport(reader).items(n as u32);
-        body = match self.row_height {
-            RowHeight::Cells(c) => body.item_rows(c),
-            RowHeight::UniformMeasured => body.item_rows_measured(),
-        };
+        let mut body = viewport(reader);
+        if self.heights.is_none() {
+            body = body.items(n as u32);
+            body = match self.row_height {
+                RowHeight::Cells(c) => body.item_rows(c),
+                RowHeight::UniformMeasured => body.item_rows_measured(),
+            };
+        }
         if let Some(y) = self.scroll {
             body = body.scroll(u32::try_from(y).unwrap_or(u32::MAX));
         }
         if let Some(f) = self.on_scroll.clone() {
             body = body.on_scroll(move |y| f(y as usize));
         }
-        if let Some(f) = self.pinned_at.clone() {
+        if self.heights.is_some() {
+            // Pins are an item window's; see `row_heights`.
+        } else if let Some(f) = self.pinned_at.clone() {
             body = body.pinned_at(move |y| {
                 f(y as usize)
                     .iter()

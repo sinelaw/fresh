@@ -4923,17 +4923,10 @@ mod tests {
                 "{what}: one walk to start"
             );
             assert!(first.rows > 0, "{what}: the first frame builds its window");
-            // A card tree is not windowed yet: it builds a block for every
-            // visible node. Memoised, it pays that once rather than per frame.
-            let cards = matches!(
-                spec,
-                WidgetSpec::Tree {
-                    card_borders: true,
-                    ..
-                }
-            );
+            // A card tree too: it is windowed in cells over its projection,
+            // and builds the blocks that overlap the window.
             assert!(
-                cards || first.rows < 200,
+                first.rows < 200,
                 "{what}: a window's worth of rows, not the collection ({})",
                 first.rows
             );
