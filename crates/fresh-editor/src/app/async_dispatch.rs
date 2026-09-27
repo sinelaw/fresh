@@ -219,8 +219,16 @@ impl Editor {
         // fully absorbed before the next one.
         let deadline = std::time::Instant::now() + ASYNC_MESSAGE_FRAME_BUDGET;
         let mut handled = 0usize;
+        // The env probe's own root watch marks the snapshot dirty only for a
+        // marker change (`handle_path_changed`), not for every event.
+        let mut observable = 0usize;
         let mut messages = messages.into_iter();
         for message in messages.by_ref() {
+            if !matches!(&message, AsyncMessage::PathChanged { handle, .. }
+                if self.is_detected_env_watch(*handle))
+            {
+                observable += 1;
+            }
             match message {
                 AsyncMessage::LspDiagnostics {
                     uri,
@@ -589,7 +597,7 @@ impl Editor {
             }
         }
         self.async_message_backlog = messages.collect();
-        if handled > 0 {
+        if observable > 0 {
             self.mark_plugin_snapshot_dirty();
         }
         if !self.async_message_backlog.is_empty() {
@@ -1136,6 +1144,46 @@ impl Editor {
         }
     }
 
+    /// Whether a workspace environment probe is still in flight; the test
+    /// harness settles on it so fs accounting starts from a quiet editor.
+    #[doc(hidden)]
+    pub fn env_probe_pending(&self) -> bool {
+        #[cfg(feature = "plugins")]
+        return self
+            .detected_env_cache
+            .as_ref()
+            .is_some_and(|c| c.probe.is_some());
+        #[cfg(not(feature = "plugins"))]
+        false
+    }
+
+    /// Whether a root event can change `detect_env`'s answer: an entry named
+    /// like a detector's marker (or its `require` directory) came or went.
+    fn is_env_marker_change(
+        &self,
+        path: &std::path::Path,
+        kind: crate::services::async_bridge::PathChangeKind,
+    ) -> bool {
+        use crate::services::async_bridge::PathChangeKind as K;
+        if !matches!(kind, K::Create | K::Delete | K::Rename | K::Other) {
+            return false;
+        }
+        let Some(name) = path.file_name() else {
+            return false;
+        };
+        let first = |p: &String| {
+            std::path::Path::new(p)
+                .components()
+                .next()
+                .is_some_and(|c| c.as_os_str() == name)
+        };
+        self.config
+            .env
+            .detectors
+            .iter()
+            .any(|d| d.markers.iter().any(first) || d.require.iter().any(first))
+    }
+
     /// Whether `handle` is the watch behind the cached `detect_env` answer.
     fn is_detected_env_watch(&self, _handle: u64) -> bool {
         #[cfg(feature = "plugins")]
@@ -1155,7 +1203,10 @@ impl Editor {
         kind: crate::services::async_bridge::PathChangeKind,
     ) {
         if self.is_detected_env_watch(handle) {
-            self.invalidate_detected_env();
+            if self.is_env_marker_change(&path, kind) {
+                self.invalidate_detected_env();
+                self.mark_plugin_snapshot_dirty();
+            }
             return;
         }
         self.path_changes_for_test
