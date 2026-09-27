@@ -4847,7 +4847,7 @@ fn test_popup_home_key_selects_first_item() -> anyhow::Result<()> {
     // Show completion popup with many items
     let items: Vec<PopupListItemData> = (0..20)
         .map(|i| PopupListItemData {
-            id: "t4831_18".into(),
+            id: format!("item{i}"),
             text: format!("item_{}", i),
             detail: None,
             icon: None,
@@ -4907,7 +4907,7 @@ fn test_popup_end_key_selects_last_item() -> anyhow::Result<()> {
     // Show completion popup with many items
     let items: Vec<PopupListItemData> = (0..20)
         .map(|i| PopupListItemData {
-            id: "t4890_18".into(),
+            id: format!("item{i}"),
             text: format!("item_{}", i),
             detail: None,
             icon: None,
@@ -4962,7 +4962,7 @@ fn test_popup_mouse_wheel_scrolls() -> anyhow::Result<()> {
     // Show completion popup with many items (more than visible)
     let items: Vec<PopupListItemData> = (0..30)
         .map(|i| PopupListItemData {
-            id: "t4944_18".into(),
+            id: format!("item{i}"),
             text: format!("completion_item_{}", i),
             detail: None,
             icon: None,
@@ -5038,7 +5038,7 @@ fn test_popup_scrollbar_visible_for_long_list() -> anyhow::Result<()> {
     // Show completion popup with many items (more than max_height)
     let items: Vec<PopupListItemData> = (0..50)
         .map(|i| PopupListItemData {
-            id: "t5019_18".into(),
+            id: format!("item{i}"),
             text: format!("item_{}", i),
             detail: None,
             icon: None,
@@ -5104,7 +5104,7 @@ fn test_popup_no_scrollbar_for_short_list() -> anyhow::Result<()> {
     // Show completion popup with few items (less than max_height)
     let items: Vec<PopupListItemData> = (0..3)
         .map(|i| PopupListItemData {
-            id: "t5084_18".into(),
+            id: format!("item{i}"),
             text: format!("item_{}", i),
             detail: None,
             icon: None,
@@ -5158,7 +5158,7 @@ fn test_popup_mouse_wheel_scroll_up() -> anyhow::Result<()> {
     // Show completion popup with many items
     let items: Vec<PopupListItemData> = (0..30)
         .map(|i| PopupListItemData {
-            id: "t5137_18".into(),
+            id: format!("item{i}"),
             text: format!("item_{}", i),
             detail: None,
             icon: None,
@@ -5750,21 +5750,21 @@ fn test_completion_type_to_filter_preserves_selection() -> anyhow::Result<()> {
             content: PopupContentData::List {
                 items: vec![
                     PopupListItemData {
-                        id: "t5720_21".into(),
+                        id: "lsp:0:0".into(),
                         text: "test_alpha".to_string(),
                         detail: None,
                         icon: None,
                         data: Some("test_alpha".to_string()),
                     },
                     PopupListItemData {
-                        id: "t5726_21".into(),
+                        id: "lsp:0:1".into(),
                         text: "test_beta".to_string(),
                         detail: None,
                         icon: None,
                         data: Some("test_beta".to_string()),
                     },
                     PopupListItemData {
-                        id: "t5732_21".into(),
+                        id: "lsp:0:2".into(),
                         text: "test_gamma".to_string(),
                         detail: None,
                         icon: None,
@@ -5781,6 +5781,9 @@ fn test_completion_type_to_filter_preserves_selection() -> anyhow::Result<()> {
     })?;
 
     harness.render()?;
+
+    // The rows carry the ids the editor gave the candidates above (the
+    // first response, in order), which is what a refilter finds them by.
 
     // Navigate to test_beta (second item)
     harness.send_key(KeyCode::Down, KeyModifiers::NONE)?;

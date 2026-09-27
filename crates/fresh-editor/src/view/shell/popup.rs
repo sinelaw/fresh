@@ -1094,7 +1094,7 @@ mod tests {
     #[test]
     fn a_disabled_row_is_muted_and_a_clickable_one_is_underlined() {
         let item = |text: &str, data: Option<&str>, disabled: bool| PopupListItem {
-            id: "t1086_69".into(),
+            id: text.into(),
             text: text.into(),
             detail: None,
             icon: None,
@@ -1147,7 +1147,7 @@ mod tests {
     #[test]
     fn a_hovered_row_carries_the_hover_ink_through_its_cells() {
         let item = |text: &str| PopupListItem {
-            id: "t1138_33".into(),
+            id: text.into(),
             text: text.into(),
             detail: None,
             icon: None,
@@ -1164,7 +1164,7 @@ mod tests {
         let size = Size::new(40, 6);
         ui.frame(content(&c, None), size);
         let at = ui.rect_of(
-            ui.find_by_key(&Key::Pair("popup_item".into(), 1))
+            ui.find_by_key(&Key::Str("popup_item:second".into()))
                 .expect("row 1"),
         );
         ui.dispatch(fresh_ui::Input::Move {
@@ -1197,7 +1197,7 @@ mod tests {
         let c = PopupContent::List {
             items: (0..5)
                 .map(|i| PopupListItem {
-                    id: "t1187_26".into(),
+                    id: format!("item{i}"),
                     text: format!("item {i}"),
                     detail: None,
                     icon: None,
@@ -1210,7 +1210,7 @@ mod tests {
         let mut ui: Ui<UiMsg> = Ui::new();
         ui.frame(content(&c, None), Size::new(40, 6));
         let r = ui.rect_of(
-            ui.find_by_key(&Key::Pair("popup_item".into(), 2))
+            ui.find_by_key(&Key::Str("popup_item:item2".into()))
                 .expect("row 2"),
         );
         let at = fresh_ui::Point::new(r.x + 1, r.y);
@@ -1389,7 +1389,7 @@ mod tests {
         bound: Vec<(KeyPress, crate::input::keybindings::Action)>,
     ) -> Ui<UiMsg> {
         let items: Vec<PopupListItem> = (0..4)
-            .map(|i| PopupListItem::new("t1379_22", format!("item {i}")))
+            .map(|i| PopupListItem::new(format!("item{i}"), format!("item {i}")))
             .collect();
         let mut ui: Ui<UiMsg> = Ui::new();
         ui.frame(
