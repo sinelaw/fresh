@@ -1028,9 +1028,7 @@ fn list_rows(p: &ListRows) -> Node<UiMsg> {
         n,
         {
             let keys = keys.clone();
-            move |i| {
-                fresh_ui::Key::Str(keys.get(i).cloned().unwrap_or_else(|| i.to_string()).into())
-            }
+            move |i| fresh_ui::Key::Str(keys[i].clone().into())
         },
         {
             let rows = rows.clone();
@@ -1302,14 +1300,7 @@ fn tree_rows_plain(p: &TreeRows) -> Node<UiMsg> {
         n,
         {
             let (keys, visible) = (keys.clone(), visible.clone());
-            move |i| {
-                fresh_ui::Key::Str(
-                    keys.get(visible[i])
-                        .cloned()
-                        .unwrap_or_else(|| i.to_string())
-                        .into(),
-                )
-            }
+            move |i| fresh_ui::Key::Str(keys[visible[i]].clone().into())
         },
         row_at,
     )
@@ -1393,7 +1384,7 @@ fn tree_rows_cards(p: &CardTreeRows) -> Node<UiMsg> {
         for line in n.extra_lines.iter_mut() {
             line.normalize_widths();
         }
-        let item_key = item_keys.get(abs).cloned().unwrap_or_default();
+        let item_key = item_keys[abs].clone();
         let open = n.has_children && !item_key.is_empty() && expanded.contains(&item_key);
         let r = crate::widgets::render_tree_row(
             &n,
@@ -1504,13 +1495,7 @@ fn tree_rows_cards(p: &CardTreeRows) -> Node<UiMsg> {
             });
         }
         let h = rows.len() as u32;
-        let block = fresh_ui::Key::Str(
-            match item_key.is_empty() {
-                true => i.to_string(),
-                false => item_key.clone(),
-            }
-            .into(),
-        );
+        let block = fresh_ui::Key::Str(item_key.clone().into());
         blocks.push(Chunk {
             edge: tab.then(|| tab_scoop(block.clone(), at, h, &p.surface)),
             key: block,
@@ -2541,11 +2526,7 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                 n,
                 {
                     let keys = keys.clone();
-                    move |i| {
-                        fresh_ui::Key::Str(
-                            keys.get(i).cloned().unwrap_or_else(|| i.to_string()).into(),
-                        )
-                    }
+                    move |i| fresh_ui::Key::Str(keys[i].clone().into())
                 },
                 move |i| cards[i].clone(),
             )

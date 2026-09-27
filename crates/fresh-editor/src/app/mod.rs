@@ -1959,10 +1959,18 @@ impl Editor {
     /// one: a `completionItem/resolve` needs the server that minted the
     /// item's opaque `data`.
     pub fn set_completion_items(&mut self, items: Vec<lsp_types::CompletionItem>) {
+        let response = self.active_window().completion_responses;
+        self.active_window_mut().completion_responses += 1;
         self.active_window_mut().completion_items = Some(
             items
                 .into_iter()
-                .map(crate::app::window::LspCompletionCandidate::unattributed)
+                .enumerate()
+                .map(|(ordinal, item)| {
+                    crate::app::window::LspCompletionCandidate::unattributed(
+                        format!("lsp:{response}:{ordinal}"),
+                        item,
+                    )
+                })
                 .collect(),
         );
     }

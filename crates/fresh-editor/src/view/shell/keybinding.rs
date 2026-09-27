@@ -517,10 +517,18 @@ fn autocomplete_layer(a: &Autocomplete) -> Node<UiMsg> {
     // and the window is the viewport's.
     let items = std::rc::Rc::new(a.suggestions.clone());
     let n = items.len();
-    let list = fresh_ui::List::windowed(n, |i| fresh_ui::Key::Str(i.to_string().into()), {
-        let items = items.clone();
-        move |i| text(items[i].clone())
-    })
+    // Keyed by the action the entry names; the list is deduplicated.
+    let list = fresh_ui::List::windowed(
+        n,
+        {
+            let items = items.clone();
+            move |i| fresh_ui::Key::Str(format!("action:{}", items[i]).into())
+        },
+        {
+            let items = items.clone();
+            move |i| text(items[i].clone())
+        },
+    )
     .focusable(false)
     .scrollbar()
     .row_theme(|_, st| match st {
@@ -641,17 +649,29 @@ fn search_row(v: &[Span]) -> Node<UiMsg> {
     )
 }
 
+/// A table row's key: its identity, namespaced by what kind of row it is.
+pub fn table_row_key(r: &Row) -> fresh_ui::Key {
+    match r {
+        Row::Section { id, .. } => fresh_ui::Key::Str(format!("section:{id}").into()),
+        Row::Binding { id, .. } => fresh_ui::Key::Str(format!("binding:{id}").into()),
+    }
+}
+
 /// One row of the table.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Row {
     /// A plugin's collapsible group heading.
     Section {
+        /// The section's identity: its plugin, or the built-in section.
+        id: String,
         chevron: String,
         label: String,
         count: usize,
     },
     /// A binding: five columns, padded to the widths the table resolved.
     Binding {
+        /// The row's identity, `BindingId` for as long as the editor is open.
+        id: String,
         key: String,
         action: String,
         description: String,
@@ -735,10 +755,19 @@ pub fn table(t: &Table) -> Node<UiMsg> {
         let rows = std::rc::Rc::new(t.rows.clone());
         let n = rows.len();
         let selected = t.selected;
-        let list = fresh_ui::List::windowed(n, |i| fresh_ui::Key::Str(i.to_string().into()), {
-            let rows = rows.clone();
-            move |i| table_row(&rows[i], &cols, i == selected)
-        })
+        // Keyed by what each row is, never by where it is: adding a binding,
+        // or one moving under a re-sort, moves the rows around it.
+        let list = fresh_ui::List::windowed(
+            n,
+            {
+                let rows = rows.clone();
+                move |i| table_row_key(&rows[i])
+            },
+            {
+                let rows = rows.clone();
+                move |i| table_row(&rows[i], &cols, i == selected)
+            },
+        )
         .focusable(false)
         .scrollbar()
         .row_theme(|_, st| match st {
@@ -779,6 +808,7 @@ fn table_row(r: &Row, cols: &[u16; 5], selected: bool) -> Node<UiMsg> {
             chevron,
             label,
             count,
+            ..
         } => row().h(Sizing::Cells(1)).children([
             text(indicator).theme(pair("ui.help_key_fg", "ui.popup_bg")),
             text(format!("{chevron} {label} ({count})")).theme(attrs(
@@ -794,6 +824,7 @@ fn table_row(r: &Row, cols: &[u16; 5], selected: bool) -> Node<UiMsg> {
             context,
             source,
             source_accent,
+            ..
         } => {
             let accent = |on: bool, name: &str| match on {
                 true => pair(name, "ui.popup_bg"),
@@ -1208,11 +1239,13 @@ mod tests {
             rows: (0..n)
                 .map(|i| match i % 5 {
                     0 => Row::Section {
+                        id: format!("s{i}"),
                         chevron: "▼".into(),
                         label: format!("plugin{i}"),
                         count: 4,
                     },
                     _ => Row::Binding {
+                        id: format!("{i}"),
                         key: format!("Ctrl+{i}"),
                         action: format!("act{i}"),
                         description: format!("does {i}"),

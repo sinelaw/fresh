@@ -634,6 +634,7 @@ fn scene_completion_popup(h: &mut EditorTestHarness, s: &mut BlogShowcase) {
     h.render().unwrap();
 
     let item = |text: &str, detail: &str, icon: &str| PopupListItemData {
+        id: "t636_55".into(),
         text: text.to_string(),
         detail: Some(detail.to_string()),
         icon: Some(icon.to_string()),

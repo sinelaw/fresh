@@ -138,7 +138,7 @@ impl Editor {
     pub(crate) fn kbedit_select_display_row(&mut self, idx: usize) {
         if let Some(ed) = self.keybinding_editor.as_mut() {
             if idx < ed.display_rows.len() {
-                ed.selected = idx;
+                ed.select(idx);
                 if ed.selected_is_section_header() {
                     ed.toggle_section_at_selected();
                 }

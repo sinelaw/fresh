@@ -2820,9 +2820,11 @@ pub enum WidgetSpec {
     ///
     /// Each item is one rendered row (`TextPropertyEntry`).
     /// `item_keys` is a parallel array of stable per-item identifiers
-    /// the plugin uses to map a click event back to its model
-    /// (e.g. `"file:5/match:23"`); the array length must match
-    /// `items.len()`. Missing keys default to empty string.
+    /// (e.g. `"file:5/match:23"`): one per item, no two alike. The host
+    /// keeps each row's state — selection, hover, a card's widgets — by
+    /// its key, and events carry it back so the plugin can map a click
+    /// to its model. A spec whose keys don't match its items one to one
+    /// is rejected (see [`WidgetSpec::item_keys_problem`]).
     ///
     /// `selected_index` is the *absolute* index into `items`
     /// (`-1` for no selection); the host paints the selected row
@@ -2846,7 +2848,6 @@ pub enum WidgetSpec {
         /// hit. Leave empty for the classic one-row-per-`items` list.
         #[serde(default, skip_serializing_if = "collection_is_empty")]
         item_specs: Collection<WidgetSpec>,
-        #[serde(default)]
         item_keys: Collection<String>,
         #[serde(default = "default_list_selected")]
         selected_index: i32,
@@ -2884,7 +2885,8 @@ pub enum WidgetSpec {
     ///
     /// The plugin emits its tree as a depth-first flat list of
     /// `TreeNode`s (each carrying a `depth` and `has_children` flag)
-    /// plus a parallel `item_keys` array. The host filters out
+    /// plus a parallel `item_keys` array — one key per node, no two
+    /// alike, as for `List`. The host filters out
     /// descendants of collapsed nodes when rendering the visible
     /// window, so the plugin always emits the *full* tree — toggling
     /// expansion is host-owned (instance state) rather than the
@@ -2912,7 +2914,6 @@ pub enum WidgetSpec {
     /// `widget_event { event_type: "activate", payload: { index, key } }`.
     Tree {
         nodes: Collection<TreeNode>,
-        #[serde(default)]
         item_keys: Collection<String>,
         #[serde(default = "default_tree_selected")]
         selected_index: i32,
@@ -3440,6 +3441,39 @@ impl WidgetSpec {
         k.as_deref().filter(|k| !k.is_empty())
     }
 
+    /// Why this spec's item keys can't identify its items, if they
+    /// can't: every `List` and `Tree` in it must give each item exactly
+    /// one key, and no two items the same one. The plugin API rejects a
+    /// spec this answers for; the host keys rows, selection and
+    /// expansion by these strings and has no other identity to fall
+    /// back on.
+    pub fn item_keys_problem(&self) -> Option<String> {
+        let own = match self {
+            WidgetSpec::List {
+                items,
+                item_specs,
+                item_keys,
+                key,
+                ..
+            } => {
+                let n = if item_specs.is_empty() {
+                    items.len()
+                } else {
+                    item_specs.len()
+                };
+                item_keys_problem("List", key.as_deref(), n, item_keys)
+            }
+            WidgetSpec::Tree {
+                nodes,
+                item_keys,
+                key,
+                ..
+            } => item_keys_problem("Tree", key.as_deref(), nodes.len(), item_keys),
+            _ => None,
+        };
+        own.or_else(|| self.children().find_map(WidgetSpec::item_keys_problem))
+    }
+
     pub fn children(&self) -> Box<dyn Iterator<Item = &WidgetSpec> + '_> {
         match self {
             WidgetSpec::Row { children, .. } | WidgetSpec::Col { children, .. } => {
@@ -3605,7 +3639,6 @@ pub enum WidgetMutation {
     SetItems {
         widget_key: String,
         items: Vec<crate::text_property::TextPropertyEntry>,
-        #[serde(default)]
         item_keys: Vec<String>,
     },
     /// Replace a `Tree`'s expanded-keys instance state. Plugins use
@@ -3636,7 +3669,6 @@ pub enum WidgetMutation {
     AppendTreeNodes {
         widget_key: String,
         new_nodes: Vec<crate::api::TreeNode>,
-        #[serde(default)]
         new_item_keys: Vec<String>,
     },
     /// Replace a `Raw` widget's entries in place. The streaming search
@@ -3656,6 +3688,27 @@ pub enum WidgetMutation {
     /// after mount, or to snap focus back to a "home" widget after a
     /// navigation event.
     SetFocusKey { widget_key: String },
+}
+
+impl WidgetMutation {
+    /// [`WidgetSpec::item_keys_problem`] for a mutation that carries
+    /// items: its keys must match its items one to one. (Whether an
+    /// appended key is new to the tree only the host can tell.)
+    pub fn item_keys_problem(&self) -> Option<String> {
+        match self {
+            WidgetMutation::SetItems {
+                widget_key,
+                items,
+                item_keys,
+            } => item_keys_problem("List", Some(widget_key), items.len(), item_keys),
+            WidgetMutation::AppendTreeNodes {
+                widget_key,
+                new_nodes,
+                new_item_keys,
+            } => item_keys_problem("Tree", Some(widget_key), new_nodes.len(), new_item_keys),
+            _ => None,
+        }
+    }
 }
 
 /// Cursor-dependent activation rule for a conceal range or soft break.
@@ -6452,6 +6505,35 @@ pub struct ActionPopupAction {
     pub label: String,
 }
 
+/// Why `keys` can't key the `n` items of the `kind` widget `key`, if
+/// they can't: there must be one key per item and no two alike.
+pub fn item_keys_problem(
+    kind: &str,
+    key: Option<&str>,
+    n: usize,
+    keys: &[String],
+) -> Option<String> {
+    let name = key.map_or_else(|| format!("unkeyed {kind}"), |k| format!("{kind} {k:?}"));
+    if keys.len() != n {
+        return Some(format!(
+            "{name} has {n} items but {} itemKeys: give each item one key",
+            keys.len()
+        ));
+    }
+    first_duplicate_id(keys.iter().map(String::as_str))
+        .map(|dup| format!("{name} has two items keyed {dup:?}: item keys must be unique"))
+}
+
+/// The first id a list repeats, if any.
+///
+/// A plugin list's ids are its rows' keys — suggestions, action-popup
+/// actions, LSP-menu rows — so a list that repeats one cannot be drawn
+/// without two rows claiming one identity, and is refused where it arrives.
+pub fn first_duplicate_id<'a>(ids: impl IntoIterator<Item = &'a str>) -> Option<&'a str> {
+    let mut seen = std::collections::HashSet::new();
+    ids.into_iter().find(|id| !seen.insert(*id))
+}
+
 /// Plugin-contributed row in the LSP-Servers popup.
 /// See `PluginCommand::SetLspMenuContributions`.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -8265,6 +8347,51 @@ fn default_plugin_provider_priority() -> u32 {
 mod tests {
     use super::*;
     use std::path::Path;
+
+    /// Every List and Tree must key each item once, with no two alike —
+    /// wherever it sits in the spec — and a spec that doesn't is named
+    /// for what is wrong. A spec without `itemKeys` doesn't parse at all.
+    #[test]
+    fn item_keys_must_match_items_one_to_one() {
+        let tree = |keys: serde_json::Value| {
+            serde_json::from_value::<WidgetSpec>(serde_json::json!({
+                "kind": "col",
+                "children": [{
+                    "kind": "tree",
+                    "key": "t",
+                    "nodes": [{"text": {"text": "a"}}, {"text": {"text": "b"}}],
+                    "itemKeys": keys,
+                }],
+            }))
+        };
+        assert_eq!(
+            tree(serde_json::json!(["a", "b"]))
+                .unwrap()
+                .item_keys_problem(),
+            None
+        );
+
+        let short = tree(serde_json::json!(["a"])).unwrap().item_keys_problem();
+        assert!(short.unwrap().contains("2 items but 1 itemKeys"));
+
+        let dup = tree(serde_json::json!(["a", "a"]))
+            .unwrap()
+            .item_keys_problem();
+        assert!(dup.unwrap().contains("two items keyed \"a\""));
+
+        let missing = serde_json::from_value::<WidgetSpec>(serde_json::json!({
+            "kind": "list",
+            "items": [{"text": "a"}],
+        }));
+        assert!(missing.is_err(), "itemKeys is required");
+
+        let append = WidgetMutation::AppendTreeNodes {
+            widget_key: "t".into(),
+            new_nodes: vec![],
+            new_item_keys: vec!["x".into()],
+        };
+        assert!(append.item_keys_problem().is_some());
+    }
 
     #[test]
     fn test_plugin_api_creation() {

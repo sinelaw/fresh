@@ -1631,6 +1631,7 @@ pub(crate) fn convert_popup_data_to_popup(
             items: items
                 .iter()
                 .map(|item| PopupListItem {
+                    id: item.id.clone(),
                     text: item.text.clone(),
                     detail: item.detail.clone(),
                     icon: item.icon.clone(),

@@ -268,6 +268,13 @@ impl TerminalBuffer {
 /// server does this belong to?" answerable wherever the candidate travels.
 #[derive(Clone, Debug, PartialEq)]
 pub struct LspCompletionCandidate {
+    /// What this candidate is: the response it came in and its place in
+    /// it (`lsp:<response>:<ordinal>`). **The server's identity for it, not
+    /// the popup's**: filtering and re-ranking move a candidate's row, and
+    /// labels repeat (one `HashMap` per crate that exports one), so neither
+    /// the row's position nor its label names it. The response number keeps
+    /// a re-request for an incomplete list from reusing a position.
+    pub id: String,
     /// The candidate as the server sent it.
     pub item: lsp_types::CompletionItem,
 
@@ -279,8 +286,12 @@ pub struct LspCompletionCandidate {
 impl LspCompletionCandidate {
     /// A candidate with no server behind it — nothing can be resolved
     /// against a server that doesn't exist.
-    pub fn unattributed(item: lsp_types::CompletionItem) -> Self {
-        Self { item, server: None }
+    pub fn unattributed(id: String, item: lsp_types::CompletionItem) -> Self {
+        Self {
+            id,
+            item,
+            server: None,
+        }
     }
 }
 
@@ -440,6 +451,9 @@ pub struct Window {
     /// Original LSP completion candidates (for type-to-filter), merged
     /// from every server that answered.
     pub completion_items: Option<Vec<LspCompletionCandidate>>,
+    /// Completion responses merged into `completion_items` so far; numbers
+    /// each response for its candidates' ids (`LspCompletionCandidate::id`).
+    pub completion_responses: u64,
 
     /// The candidate behind each *LSP row* of the completion popup
     /// currently on screen, in row order. Rows past the end of this vector
@@ -2393,6 +2407,7 @@ impl Window {
             next_lsp_request_id: 0,
             pending_completion_requests: std::collections::HashMap::new(),
             completion_items: None,
+            completion_responses: 0,
             completion_popup_lsp_items: Vec::new(),
             pending_completion_resolve_request: None,
             scheduled_completion_trigger: None,

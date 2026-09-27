@@ -295,6 +295,9 @@ export class PathPicker {
       items: items.map((i) =>
         i.file && this.o.dim?.(this.lastSegment(i.file)) ? { text: i.text, style: dimmed } : { text: i.text }
       ),
+      // What each row is: the way up, the pick-this-folder row, or an
+      // entry by its path — names are unique within a folder.
+      itemKeys: items.map((i) => (i.up ? "up" : i.file ?? i.dir ?? "use_this_folder")),
       selectedIndex: Math.max(0, Math.min(b.index, items.length - 1)),
       visibleRows: BROWSER_ROWS,
       // A folder's names: typing jumps to one.

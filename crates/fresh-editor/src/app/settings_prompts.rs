@@ -65,7 +65,7 @@ impl Editor {
 
         if let Some(prompt) = self.active_window_mut().prompt.as_mut() {
             if !prompt.suggestions.is_empty() {
-                prompt.selected_suggestion = Some(current_index);
+                prompt.select_suggestion(Some(current_index));
                 let (_, name, desc) = options[current_index];
                 prompt.set_input_selected(format!("{} ({})", name, desc));
             }
@@ -112,7 +112,7 @@ impl Editor {
 
         if let Some(prompt) = self.active_window_mut().prompt.as_mut() {
             if !prompt.suggestions.is_empty() {
-                prompt.selected_suggestion = Some(current_index);
+                prompt.select_suggestion(Some(current_index));
                 let enc = Encoding::all()[current_index];
                 prompt.set_input_selected(format!(
                     "{} ({})",
@@ -192,7 +192,7 @@ impl Editor {
 
         if let Some(prompt) = self.active_window_mut().prompt.as_mut() {
             if !prompt.suggestions.is_empty() {
-                prompt.selected_suggestion = Some(current_index);
+                prompt.select_suggestion(Some(current_index));
                 let enc = Encoding::all()[current_index];
                 prompt.set_input_selected(format!(
                     "{} ({})",
@@ -316,7 +316,7 @@ impl Editor {
 
         if let Some(prompt) = self.active_window_mut().prompt.as_mut() {
             if !prompt.suggestions.is_empty() {
-                prompt.selected_suggestion = Some(current_index);
+                prompt.select_suggestion(Some(current_index));
                 // Don't set input - keep it empty so typing filters the list
                 // The selected suggestion shows the current language
             }
@@ -396,7 +396,7 @@ impl Editor {
 
         if let Some(prompt) = self.active_window_mut().prompt.as_mut() {
             if !prompt.suggestions.is_empty() {
-                prompt.selected_suggestion = Some(current_index);
+                prompt.select_suggestion(Some(current_index));
                 // Set input to match selected theme key
                 if let Some(suggestion) = prompt.suggestions.get(current_index) {
                     let synced = suggestion.get_value().to_string();
@@ -657,7 +657,7 @@ impl Editor {
 
         if let Some(prompt) = self.active_window_mut().prompt.as_mut() {
             if !prompt.suggestions.is_empty() {
-                prompt.selected_suggestion = Some(current_index);
+                prompt.select_suggestion(Some(current_index));
                 prompt.set_input_selected(current_map.clone());
             }
         }
@@ -756,7 +756,7 @@ impl Editor {
 
         if let Some(prompt) = self.active_window_mut().prompt.as_mut() {
             if !prompt.suggestions.is_empty() {
-                prompt.selected_suggestion = Some(current_index);
+                prompt.select_suggestion(Some(current_index));
                 prompt.set_input_selected(CursorStyle::DESCRIPTIONS[current_index].to_string());
             }
         }
@@ -921,7 +921,7 @@ impl Editor {
 
         if let Some(prompt) = self.active_window_mut().prompt.as_mut() {
             if !prompt.suggestions.is_empty() {
-                prompt.selected_suggestion = Some(current_index);
+                prompt.select_suggestion(Some(current_index));
                 // Start with empty input to show all options initially
                 prompt.set_input_plain(String::new());
             }

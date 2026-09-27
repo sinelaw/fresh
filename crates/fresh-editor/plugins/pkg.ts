@@ -2522,9 +2522,8 @@ function buildPkgHeaderEntries(): TextPropertyEntry[] {
  * navigation skips them implicitly via the index math. */
 interface PkgListRow {
   entry: TextPropertyEntry;
-  /** Stable widget-key for the List item. Empty string for non-
-   * selectable header rows (the List still tracks them in
-   * itemKeys but they don't carry useful identity). */
+  /** The row's List item key: what the row is, unique in the list.
+   * Header and filler rows have fixed keys of their own. */
   key: string;
   /** Index within `getFilteredItems()` if this row is a real
    * package, else -1. The widget's `selectedIndex` is reported
@@ -2604,7 +2603,8 @@ function buildPkgListRows(): PkgListRow[] {
           text: `  ${name.padEnd(availNameW)} [${typeTag}]`,
           properties: { type: "package-row", installed: false },
         },
-        key: `pkg.${item.name}`,
+        // Registries of different kinds can each offer a name.
+        key: `pkg.${item.packageType}.${item.name}`,
         itemIndex: idx,
       });
       idx++;

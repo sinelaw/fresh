@@ -59,6 +59,7 @@ fn setup_completion_popup(prefix: &str) -> anyhow::Result<EditorTestHarness> {
                 content: PopupContentData::List {
                     items: vec![
                         PopupListItemData {
+                            id: "t61_25".into(),
                             text: "calculate_difference".to_string(),
                             detail: Some(
                                 "fn calculate_difference(a: i32, b: i32) -> i32".to_string(),
@@ -67,12 +68,14 @@ fn setup_completion_popup(prefix: &str) -> anyhow::Result<EditorTestHarness> {
                             data: Some("calculate_difference".to_string()),
                         },
                         PopupListItemData {
+                            id: "t69_25".into(),
                             text: "calculate_product".to_string(),
                             detail: Some("fn calculate_product(a: i32, b: i32) -> i32".to_string()),
                             icon: Some("λ".to_string()),
                             data: Some("calculate_product".to_string()),
                         },
                         PopupListItemData {
+                            id: "t75_25".into(),
                             text: "calculate_sum".to_string(),
                             detail: Some("fn calculate_sum(a: i32, b: i32) -> i32".to_string()),
                             icon: Some("λ".to_string()),
@@ -591,12 +594,14 @@ fn test_completion_underscore_filters() -> anyhow::Result<()> {
                 content: PopupContentData::List {
                     items: vec![
                         PopupListItemData {
+                            id: "t593_25".into(),
                             text: "calculate_sum".to_string(),
                             detail: None,
                             icon: None,
                             data: Some("calculate_sum".to_string()),
                         },
                         PopupListItemData {
+                            id: "t599_25".into(),
                             text: "calculated".to_string(),
                             detail: None,
                             icon: None,
@@ -688,18 +693,21 @@ fn setup_frameless_completion_popup(prefix: &str) -> anyhow::Result<EditorTestHa
                 content: PopupContentData::List {
                     items: vec![
                         PopupListItemData {
+                            id: "t690_25".into(),
                             text: "calculate_difference".to_string(),
                             detail: Some("fn(a: i32, b: i32) -> i32".to_string()),
                             icon: Some("λ".to_string()),
                             data: Some("calculate_difference".to_string()),
                         },
                         PopupListItemData {
+                            id: "t696_25".into(),
                             text: "calculate_product".to_string(),
                             detail: Some("fn(a: i32, b: i32) -> i32".to_string()),
                             icon: Some("λ".to_string()),
                             data: Some("calculate_product".to_string()),
                         },
                         PopupListItemData {
+                            id: "t702_25".into(),
                             text: "calculate_sum".to_string(),
                             detail: Some("fn(a: i32, b: i32) -> i32".to_string()),
                             icon: Some("λ".to_string()),
@@ -821,12 +829,14 @@ fn test_completion_popup_aligns_with_word_start() -> anyhow::Result<()> {
                 content: PopupContentData::List {
                     items: vec![
                         PopupListItemData {
+                            id: "t823_25".into(),
                             text: "calculate".to_string(),
                             detail: None,
                             icon: Some("λ".to_string()),
                             data: Some("calculate".to_string()),
                         },
                         PopupListItemData {
+                            id: "t829_25".into(),
                             text: "calibrate".to_string(),
                             detail: None,
                             icon: Some("λ".to_string()),

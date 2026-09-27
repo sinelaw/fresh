@@ -163,10 +163,17 @@ impl Editor {
         // each candidate's origin has to be stamped on: once several
         // servers' results sit in one list, nothing else can tell them
         // apart.
-        let candidates = items.into_iter().map(|item| LspCompletionCandidate {
-            item,
-            server: Some(server),
-        });
+        let response = self.active_window().completion_responses;
+        self.active_window_mut().completion_responses += 1;
+        let candidates =
+            items
+                .into_iter()
+                .enumerate()
+                .map(|(ordinal, item)| LspCompletionCandidate {
+                    id: format!("lsp:{response}:{ordinal}"),
+                    item,
+                    server: Some(server),
+                });
         match &mut self.active_window_mut().completion_items {
             Some(existing) => {
                 existing.extend(candidates);
@@ -2088,6 +2095,10 @@ impl Editor {
                         kind
                     };
                     PopupListItem {
+                        // The action's place in what the servers answered:
+                        // the list is built once from that answer and never
+                        // re-ranked, and `data` indexes it the same way.
+                        id: format!("action:{i}"),
                         text: format!("{}. {}", i + 1, title),
                         detail,
                         icon: None,

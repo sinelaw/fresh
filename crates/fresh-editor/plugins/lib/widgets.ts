@@ -539,15 +539,13 @@ export function list(options: {
    * click anywhere on a card fires the same `select` event a classic
    * row would. Interactive widgets nested in a card aren't routed. */
   itemSpecs?: WidgetSpec[];
-  /** One stable identifier per item, parallel to the item list.
-   *
-   * @deprecated Omitting this is deprecated and will become an error.
-   * Per-item state — scroll position, selection, tree expansion — is
-   * keyed by these strings; items without one all share the empty key,
-   * so they cannot keep state of their own. The host logs a warning
-   * naming your plugin and this widget when any item is unkeyed.
-   * Pass one stable string per item (e.g. `"file:5/match:23"`). */
-  itemKeys?: string[];
+  /** One stable identifier per item, parallel to the item list: one
+   * per item, no two alike (e.g. `"file:5/match:23"`). The host keeps
+   * each row's state — selection, hover, a card's widgets, a tree
+   * node's expansion — by these strings, so a key is what an item is,
+   * never where it is. A spec whose keys don't match its items one to
+   * one is rejected. */
+  itemKeys: string[];
   selectedIndex?: number;
   /** Rows this widget windows to. Omit to auto-size from the
    * host-known panel height (recommended); an explicit value pins
@@ -572,7 +570,7 @@ export function list(options: {
     kind: "list",
     items: options.items,
     itemSpecs: options.itemSpecs ?? [],
-    itemKeys: options.itemKeys ?? [],
+    itemKeys: options.itemKeys,
     selectedIndex: options.selectedIndex ?? -1,
     visibleRows: options.visibleRows,
     focusable: options.focusable ?? true,
@@ -689,15 +687,13 @@ export function treeNode(
  * selection + expansion across re-renders. */
 export function tree(options: {
   nodes: TreeNode[];
-  /** One stable identifier per item, parallel to the item list.
-   *
-   * @deprecated Omitting this is deprecated and will become an error.
-   * Per-item state — scroll position, selection, tree expansion — is
-   * keyed by these strings; items without one all share the empty key,
-   * so they cannot keep state of their own. The host logs a warning
-   * naming your plugin and this widget when any item is unkeyed.
-   * Pass one stable string per item (e.g. `"file:5/match:23"`). */
-  itemKeys?: string[];
+  /** One stable identifier per item, parallel to the item list: one
+   * per item, no two alike (e.g. `"file:5/match:23"`). The host keeps
+   * each row's state — selection, hover, a card's widgets, a tree
+   * node's expansion — by these strings, so a key is what an item is,
+   * never where it is. A spec whose keys don't match its items one to
+   * one is rejected. */
+  itemKeys: string[];
   selectedIndex?: number;
   /** Rows this widget windows to. Omit to auto-size from the
    * host-known panel height (recommended); an explicit value pins
@@ -748,7 +744,7 @@ export function tree(options: {
   return {
     kind: "tree",
     nodes: options.nodes,
-    itemKeys: options.itemKeys ?? [],
+    itemKeys: options.itemKeys,
     selectedIndex: options.selectedIndex ?? -1,
     visibleRows: options.visibleRows,
     expandedKeys: options.expandedKeys ?? [],
@@ -1295,11 +1291,12 @@ export class WidgetPanel {
     return this.mutate({ kind: "setCompletions", widgetKey, items });
   }
 
-  /** Replace a `List`'s items + parallel `itemKeys`. */
+  /** Replace a `List`'s items + parallel `itemKeys` (one per item, no
+   * two alike). */
   setItems(
     widgetKey: string,
     items: TextPropertyEntry[],
-    itemKeys: string[] = [],
+    itemKeys: string[],
   ): boolean {
     return this.mutate({ kind: "setItems", widgetKey, items, itemKeys });
   }
@@ -1330,7 +1327,7 @@ export class WidgetPanel {
   appendTreeNodes(
     widgetKey: string,
     newNodes: TreeNode[],
-    newItemKeys: string[] = [],
+    newItemKeys: string[],
   ): boolean {
     return this.mutate({
       kind: "appendTreeNodes",
@@ -1559,7 +1556,7 @@ export class FloatingWidgetPanel {
   setItems(
     widgetKey: string,
     items: TextPropertyEntry[],
-    itemKeys: string[] = [],
+    itemKeys: string[],
   ): boolean {
     return this.mutate({ kind: "setItems", widgetKey, items, itemKeys });
   }

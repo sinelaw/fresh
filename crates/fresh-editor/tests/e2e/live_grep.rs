@@ -1046,7 +1046,7 @@ fn seed_overlay_results(harness: &mut EditorTestHarness, labels: &[&str], select
         .map(|l| Suggestion::new(l.to_string(), l.to_string()))
         .collect::<Vec<_>>()
         .into();
-    prompt.selected_suggestion = selected;
+    prompt.select_suggestion(selected);
 }
 
 /// Issue #1: undo/redo must operate on the filter input box, not the
@@ -1213,7 +1213,7 @@ fn test_live_grep_preview_uses_value_not_badged_label() {
         )
         .with_value("scrollback.txt:2:1".to_string())]
         .into();
-        prompt.selected_suggestion = Some(0);
+        prompt.select_suggestion(Some(0));
     }
     harness.render().unwrap();
 

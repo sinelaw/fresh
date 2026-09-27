@@ -99,12 +99,12 @@ fn handle_main_input(editor: &mut KeybindingEditor, event: &KeyEvent) -> Keybind
             KeybindingEditorAction::Consumed
         }
         (KeyCode::Home, _) => {
-            editor.selected = 0;
+            editor.select(0);
             editor.scroll.offset = 0;
             KeybindingEditorAction::Consumed
         }
         (KeyCode::End, _) => {
-            editor.selected = editor.display_rows.len().saturating_sub(1);
+            editor.select(editor.display_rows.len().saturating_sub(1));
             editor.ensure_visible_public();
             KeybindingEditorAction::Consumed
         }
@@ -182,7 +182,7 @@ fn handle_search_input(editor: &mut KeybindingEditor, event: &KeyEvent) -> Keybi
             (KeyCode::Up, _) => {
                 // Unfocus search, move to list, select last item
                 editor.search_focused = false;
-                editor.selected = editor.filtered_indices.len().saturating_sub(1);
+                editor.select(editor.filtered_indices.len().saturating_sub(1));
                 editor.ensure_visible_public();
                 KeybindingEditorAction::Consumed
             }

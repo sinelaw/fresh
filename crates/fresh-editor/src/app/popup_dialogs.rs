@@ -432,9 +432,10 @@ impl Editor {
                     }
                 }
             };
-            items.push(crate::view::popup::PopupListItem::new(format!(
-                "{icon} {name} ({label})"
-            )));
+            items.push(crate::view::popup::PopupListItem::new(
+                format!("server:{language}/{name}"),
+                format!("{icon} {name} ({label})"),
+            ));
 
             // Progress row immediately UNDER the server's name row, if there's
             // an active `$/progress` notification for this language. Fields are
@@ -459,18 +460,21 @@ impl Editor {
                 if let Some(pct) = info.percentage {
                     line.push_str(&format!(" ({pct}%)"));
                 }
-                items.push(crate::view::popup::PopupListItem::new(line));
+                items.push(crate::view::popup::PopupListItem::new(
+                    format!("progress:{language}/{name}"),
+                    line,
+                ));
             }
 
             if is_active {
-                items.push(
-                    crate::view::popup::PopupListItem::new(format!("    Restart {name}"))
-                        .with_data(format!("restart:{language}/{name}")),
-                );
-                items.push(
-                    crate::view::popup::PopupListItem::new(format!("    Stop {name}"))
-                        .with_data(format!("stop:{language}/{name}")),
-                );
+                items.push(crate::view::popup::PopupListItem::action(
+                    format!("restart:{language}/{name}"),
+                    format!("    Restart {name}"),
+                ));
+                items.push(crate::view::popup::PopupListItem::action(
+                    format!("stop:{language}/{name}"),
+                    format!("    Stop {name}"),
+                ));
             } else if binary_missing {
                 // A disabled advisory row instead of an actionable "Start" —
                 // clicking Start here would spawn, fail, and noise up the
@@ -481,7 +485,13 @@ impl Editor {
                 } else {
                     format!("    Install {name} to enable")
                 };
-                items.push(crate::view::popup::PopupListItem::new(advisory).disabled());
+                items.push(
+                    crate::view::popup::PopupListItem::new(
+                        format!("advisory:{language}/{name}"),
+                        advisory,
+                    )
+                    .disabled(),
+                );
             } else {
                 // Two sibling rows for a dormant server, ordered by what the
                 // user most likely wants:
@@ -494,12 +504,10 @@ impl Editor {
                 let is_manual = !servers.auto_start.get(name).copied().unwrap_or(true);
 
                 if is_manual {
-                    items.push(
-                        crate::view::popup::PopupListItem::new(format!(
-                            "    Start {name} (always)"
-                        ))
-                        .with_data(format!("autostart:{language}/{name}")),
-                    );
+                    items.push(crate::view::popup::PopupListItem::action(
+                        format!("autostart:{language}/{name}"),
+                        format!("    Start {name} (always)"),
+                    ));
                 }
 
                 let start_label = if is_manual {
@@ -514,9 +522,10 @@ impl Editor {
                     .iter()
                     .any(|i| i.data.as_deref() == Some(start_key.as_str()))
                 {
-                    items.push(
-                        crate::view::popup::PopupListItem::new(start_label).with_data(start_key),
-                    );
+                    items.push(crate::view::popup::PopupListItem::action(
+                        start_key,
+                        start_label,
+                    ));
                 }
             }
         }
@@ -536,21 +545,24 @@ impl Editor {
         // server is already disabled would leave no surface to undo it.
         let muted = servers.user_dismissed || !servers.any_enabled;
         if muted {
-            items.push(
-                crate::view::popup::PopupListItem::new(format!("    Enable LSP for {language}"))
-                    .with_data(format!("enable:{language}")),
-            );
+            items.push(crate::view::popup::PopupListItem::action(
+                format!("enable:{language}"),
+                format!("    Enable LSP for {language}"),
+            ));
         } else {
-            items.push(
-                crate::view::popup::PopupListItem::new(format!("    Disable LSP for {language}"))
-                    .with_data(format!("dismiss:{language}")),
-            );
+            items.push(crate::view::popup::PopupListItem::action(
+                format!("dismiss:{language}"),
+                format!("    Disable LSP for {language}"),
+            ));
         }
 
         // View log action — grayed out and non-actionable when no log file
         // exists yet for this language.
         let log_path = crate::services::log_dirs::lsp_log_path(language);
-        let mut log_item = crate::view::popup::PopupListItem::new("    View Log".to_string());
+        let mut log_item = crate::view::popup::PopupListItem::new(
+            format!("log:{language}"),
+            "    View Log".to_string(),
+        );
         if log_path.exists() {
             log_item = log_item.with_data(format!("log:{language}"));
         } else {
@@ -577,14 +589,15 @@ impl Editor {
         contributed.sort_by(|a, b| a.0.cmp(b.0));
         if !contributed.is_empty() {
             items.push(crate::view::popup::PopupListItem::new(
+                "header:plugin-actions",
                 "  ─ Plugin actions ─".to_string(),
             ));
             for (plugin_id, plugin_items) in contributed {
                 for it in plugin_items {
-                    items.push(
-                        crate::view::popup::PopupListItem::new(format!("    {}", it.label))
-                            .with_data(format!("plugin:{}|{}", plugin_id, it.id)),
-                    );
+                    items.push(crate::view::popup::PopupListItem::action(
+                        format!("plugin:{}|{}", plugin_id, it.id),
+                        format!("    {}", it.label),
+                    ));
                 }
             }
         }
@@ -604,10 +617,10 @@ impl Editor {
                 )
             })
             .unwrap_or_else(|| "Esc".to_string());
-        items.push(
-            crate::view::popup::PopupListItem::new(format!("    Dismiss ({cancel_binding})"))
-                .with_data("cancel_popup".to_string()),
-        );
+        items.push(crate::view::popup::PopupListItem::action(
+            "cancel_popup".to_string(),
+            format!("    Dismiss ({cancel_binding})"),
+        ));
     }
 
     /// Pin the popup width (using worst-case widths so it doesn't jitter),
@@ -760,14 +773,14 @@ impl Editor {
                         .map(|s| format!(" — {}", s))
                         .unwrap_or_default();
                     title = format!("Remote: Connecting{}", suffix);
-                    items.push(
-                        PopupListItem::new("    Cancel Startup".to_string())
-                            .with_data("plugin:devcontainer_cancel_attach".to_string()),
-                    );
-                    items.push(
-                        PopupListItem::new("    Show Logs".to_string())
-                            .with_data("plugin:devcontainer_show_build_logs".to_string()),
-                    );
+                    items.push(PopupListItem::action(
+                        "plugin:devcontainer_cancel_attach".to_string(),
+                        "    Cancel Startup".to_string(),
+                    ));
+                    items.push(PopupListItem::action(
+                        "plugin:devcontainer_show_build_logs".to_string(),
+                        "    Show Logs".to_string(),
+                    ));
                 }
                 RemoteIndicatorOverride::FailedAttach { error } => {
                     let suffix = error
@@ -775,18 +788,18 @@ impl Editor {
                         .map(|s| format!(" — {}", s))
                         .unwrap_or_default();
                     title = format!("Remote: Attach failed{}", suffix);
-                    items.push(
-                        PopupListItem::new("    Retry".to_string())
-                            .with_data("plugin:devcontainer_retry_attach".to_string()),
-                    );
-                    items.push(
-                        PopupListItem::new("    Reopen Locally".to_string())
-                            .with_data("clear_override".to_string()),
-                    );
-                    items.push(
-                        PopupListItem::new("    Show Build Logs".to_string())
-                            .with_data("plugin:devcontainer_show_build_logs".to_string()),
-                    );
+                    items.push(PopupListItem::action(
+                        "plugin:devcontainer_retry_attach".to_string(),
+                        "    Retry".to_string(),
+                    ));
+                    items.push(PopupListItem::action(
+                        "clear_override".to_string(),
+                        "    Reopen Locally".to_string(),
+                    ));
+                    items.push(PopupListItem::action(
+                        "plugin:devcontainer_show_build_logs".to_string(),
+                        "    Show Build Logs".to_string(),
+                    ));
                 }
                 _ => {
                     // Fall through to the derived branches.
@@ -819,10 +832,10 @@ impl Editor {
             } else {
                 format!("Remote: Reconnect failed — {err}")
             };
-            items.push(
-                PopupListItem::new("    Retry".to_string())
-                    .with_data("retry_reconnect".to_string()),
-            );
+            items.push(PopupListItem::action(
+                "retry_reconnect".to_string(),
+                "    Retry".to_string(),
+            ));
         }
 
         if !override_handled && !core_failed_attach {
@@ -831,22 +844,22 @@ impl Editor {
                 (Some(label), false) => {
                     title = format!("Remote: {}", label);
                     if is_container {
-                        items.push(
-                            PopupListItem::new("    Reopen Locally".to_string())
-                                .with_data("detach".to_string()),
-                        );
-                        items.push(
-                            PopupListItem::new("    Rebuild Container".to_string())
-                                .with_data("plugin:devcontainer_rebuild".to_string()),
-                        );
-                        items.push(
-                            PopupListItem::new("    Show Container Logs".to_string())
-                                .with_data("plugin:devcontainer_show_logs".to_string()),
-                        );
-                        items.push(
-                            PopupListItem::new("    Show Container Info".to_string())
-                                .with_data("plugin:devcontainer_show_info".to_string()),
-                        );
+                        items.push(PopupListItem::action(
+                            "detach".to_string(),
+                            "    Reopen Locally".to_string(),
+                        ));
+                        items.push(PopupListItem::action(
+                            "plugin:devcontainer_rebuild".to_string(),
+                            "    Rebuild Container".to_string(),
+                        ));
+                        items.push(PopupListItem::action(
+                            "plugin:devcontainer_show_logs".to_string(),
+                            "    Show Container Logs".to_string(),
+                        ));
+                        items.push(PopupListItem::action(
+                            "plugin:devcontainer_show_info".to_string(),
+                            "    Show Container Info".to_string(),
+                        ));
                         // The build log file from the most recent
                         // `devcontainer up` survives the post-attach
                         // restart (path stashed in plugin global state,
@@ -855,15 +868,15 @@ impl Editor {
                         // users can revisit "what did the build
                         // actually do" any time after attach without
                         // hunting through the file tree.
-                        items.push(
-                            PopupListItem::new("    Show Build Logs".to_string())
-                                .with_data("plugin:devcontainer_show_build_logs".to_string()),
-                        );
+                        items.push(PopupListItem::action(
+                            "plugin:devcontainer_show_build_logs".to_string(),
+                            "    Show Build Logs".to_string(),
+                        ));
                     } else if is_ssh {
-                        items.push(
-                            PopupListItem::new("    Disconnect Remote".to_string())
-                                .with_data("detach".to_string()),
-                        );
+                        items.push(PopupListItem::action(
+                            "detach".to_string(),
+                            "    Disconnect Remote".to_string(),
+                        ));
                     }
                 }
                 // Disconnected — offer a reconnect and nothing else. The old
@@ -886,24 +899,24 @@ impl Editor {
                         crate::services::authority::SessionAuthoritySpec::RemoteAgent(_)
                     );
                     if is_remote_agent {
-                        items.push(
-                            PopupListItem::new("    Reconnect".to_string())
-                                .with_data("reconnect".to_string()),
-                        );
+                        items.push(PopupListItem::action(
+                            "reconnect".to_string(),
+                            "    Reconnect".to_string(),
+                        ));
                     }
                 }
                 // Local authority.
                 (None, _) => {
                     title = "Remote: Local".to_string();
                     if devcontainer_config_path.is_some() {
-                        items.push(
-                            PopupListItem::new("    Reopen in Container".to_string())
-                                .with_data("plugin:devcontainer_attach".to_string()),
-                        );
-                        items.push(
-                            PopupListItem::new("    Open Dev Container Config".to_string())
-                                .with_data("plugin:devcontainer_open_config".to_string()),
-                        );
+                        items.push(PopupListItem::action(
+                            "plugin:devcontainer_attach".to_string(),
+                            "    Reopen in Container".to_string(),
+                        ));
+                        items.push(PopupListItem::action(
+                            "plugin:devcontainer_open_config".to_string(),
+                            "    Open Dev Container Config".to_string(),
+                        ));
                     } else {
                         // No .devcontainer present — offer the scaffold
                         // so users can bootstrap a config in one click
@@ -911,10 +924,10 @@ impl Editor {
                         // command is plugin-owned and registered
                         // unconditionally at plugin load, so this row is
                         // always actionable.
-                        items.push(
-                            PopupListItem::new("    Create Dev Container Config".to_string())
-                                .with_data("plugin:devcontainer_scaffold_config".to_string()),
-                        );
+                        items.push(PopupListItem::action(
+                            "plugin:devcontainer_scaffold_config".to_string(),
+                            "    Create Dev Container Config".to_string(),
+                        ));
                     }
                 }
             }
@@ -933,10 +946,10 @@ impl Editor {
                 )
             })
             .unwrap_or_else(|| "Esc".to_string());
-        items.push(
-            PopupListItem::new(format!("    Dismiss ({})", cancel_binding))
-                .with_data("cancel_popup".to_string()),
-        );
+        items.push(PopupListItem::action(
+            "cancel_popup".to_string(),
+            format!("    Dismiss ({})", cancel_binding),
+        ));
 
         let first_actionable = items
             .iter()
@@ -1014,10 +1027,14 @@ impl Editor {
         self.dismiss_menu_popups_for_prompt();
 
         let items = vec![
-            PopupListItem::new(format!("    {}", t!("read_only.menu.enable_editing")))
-                .with_data("toggle_read_only".to_string()),
-            PopupListItem::new(format!("    {}", t!("read_only.menu.cancel")))
-                .with_data("cancel".to_string()),
+            PopupListItem::action(
+                "toggle_read_only".to_string(),
+                format!("    {}", t!("read_only.menu.enable_editing")),
+            ),
+            PopupListItem::action(
+                "cancel".to_string(),
+                format!("    {}", t!("read_only.menu.cancel")),
+            ),
         ];
 
         let position =
@@ -1155,8 +1172,7 @@ impl Editor {
                     UpdateChoice::DownloadOnly => t!("update.choice_download_only").to_string(),
                     UpdateChoice::ShowCommand => t!("update.choice_show_command").to_string(),
                 };
-                PopupListItem::new(format!("    {label}"))
-                    .with_data(choice.action_key().to_string())
+                PopupListItem::action(choice.action_key().to_string(), format!("    {label}"))
             })
             .collect();
 
@@ -1178,13 +1194,14 @@ impl Editor {
         // short of restarting the editor — a dead end reachable in one click
         // from a choice the popup itself offers.
         let items = vec![
-            PopupListItem::new(format!("    {}", t!("update.choice_show_pending_command")))
-                .with_data("show_log".to_string()),
-            PopupListItem::new(format!(
-                "    {}",
-                t!("update.choice_update_now", version = version)
-            ))
-            .with_data("update".to_string()),
+            PopupListItem::action(
+                "show_log".to_string(),
+                format!("    {}", t!("update.choice_show_pending_command")),
+            ),
+            PopupListItem::action(
+                "update".to_string(),
+                format!("    {}", t!("update.choice_update_now", version = version)),
+            ),
         ];
         self.push_update_menu(
             t!("update.action_required_title").to_string(),
@@ -1199,10 +1216,11 @@ impl Editor {
     pub fn show_update_failed_popup(&mut self) {
         use crate::view::popup::PopupListItem;
         let items = vec![
-            PopupListItem::new(format!("    {}", t!("update.retry")))
-                .with_data("update".to_string()),
-            PopupListItem::new(format!("    {}", t!("update.show_log")))
-                .with_data("show_log".to_string()),
+            PopupListItem::action("update".to_string(), format!("    {}", t!("update.retry"))),
+            PopupListItem::action(
+                "show_log".to_string(),
+                format!("    {}", t!("update.show_log")),
+            ),
         ];
         self.push_update_menu(t!("update.failed_title").to_string(), None, items);
     }
@@ -1247,10 +1265,10 @@ impl Editor {
                 )
             })
             .unwrap_or_else(|| "Esc".to_string());
-        items.push(
-            PopupListItem::new(format!("    Dismiss ({})", cancel_binding))
-                .with_data("cancel_popup".to_string()),
-        );
+        items.push(PopupListItem::action(
+            "cancel_popup".to_string(),
+            format!("    Dismiss ({})", cancel_binding),
+        ));
 
         let position =
             self.popup_above_status_bar(crate::view::ui::status_bar::StatusBarClickable::Update);
@@ -1513,13 +1531,16 @@ impl Editor {
         };
 
         let items = vec![
-            crate::view::popup::PopupListItem::new("Trust this folder".to_string())
+            crate::view::popup::PopupListItem::new("trusted", "Trust this folder".to_string())
                 .with_detail("Allow project tooling (LSP, env managers, tasks) to run".to_string())
                 .with_data("trusted".to_string()),
-            crate::view::popup::PopupListItem::new("Keep restricted (default)".to_string())
-                .with_detail("Don't run repo-controlled code; system tools still run".to_string())
-                .with_data("restricted".to_string()),
-            crate::view::popup::PopupListItem::new("Block all execution".to_string())
+            crate::view::popup::PopupListItem::new(
+                "restricted",
+                "Keep restricted (default)".to_string(),
+            )
+            .with_detail("Don't run repo-controlled code; system tools still run".to_string())
+            .with_data("restricted".to_string()),
+            crate::view::popup::PopupListItem::new("blocked", "Block all execution".to_string())
                 .with_detail("No processes run at all in this workspace".to_string())
                 .with_data("blocked".to_string()),
         ];

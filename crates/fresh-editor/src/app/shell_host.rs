@@ -3019,7 +3019,7 @@ impl Editor {
             UiFact::KeybindingRow(i) => {
                 if let Some(e) = self.keybinding_editor.as_mut() {
                     if i < e.display_rows.len() {
-                        e.selected = i;
+                        e.select(i);
                         if e.selected_is_section_header() {
                             e.toggle_section_at_selected();
                         }
