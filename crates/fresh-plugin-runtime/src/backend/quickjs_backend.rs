@@ -9662,12 +9662,10 @@ impl QuickJsBackend {
                     self.execute_js(&bundled, path)?;
                 }
                 Err(e) => {
-                    tracing::warn!(
-                        "Plugin {} uses ES imports but bundling failed: {}. Skipping.",
-                        path,
-                        e
-                    );
-                    return Ok(()); // Skip plugins with unresolvable imports
+                    // An error, not a silent skip: "Load Plugin from Buffer"
+                    // and `reloadPlugin` report it, and the startup scan
+                    // (`thread.rs`) already fails the same way.
+                    return Err(anyhow!("Failed to bundle plugin {}: {}", path, e));
                 }
             }
         } else if has_es_module_syntax(&source) {

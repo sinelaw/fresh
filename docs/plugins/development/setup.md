@@ -8,7 +8,8 @@ You need Fresh and Node.js.
 fresh --cmd init plugin
 ```
 
-Enter a name, such as `my-plugin`. The command then:
+Enter a name, such as `my-plugin`. Press Enter to skip the description and
+author. The command then:
 
 - creates the `my-plugin/` folder with `my-plugin.ts`, `package.json`, and `tsconfig.json`
 - links Fresh's API types into `my-plugin/types/`
@@ -43,9 +44,13 @@ Fresh forgets the plugin when it quits. Load it again after each restart.
 The status bar shows `Plugin 'my-plugin' reloaded from my-plugin.ts`, or the
 error if loading failed.
 
+Quit Fresh with `Ctrl+Q`.
+
 ## 4. Check types
 
-Inside Fresh, errors show as you type. Press `Ctrl+Space` for completion.
+Inside Fresh, errors show as you type: a `●` next to the line and `E:1` in
+the status bar. Run **Show Diagnostics Panel** to read them. Press
+`Ctrl+Space` for completion.
 This needs the TypeScript language server:
 
 ```bash
@@ -120,7 +125,9 @@ become `any` for other plugins.
 
 ## What the command changes outside the folder
 
-The folder is marked as trusted. Change this with **Workspace Trust…**.
+- The folder is marked as trusted. Change this with **Workspace Trust…**.
+- Fresh's type files are written to `~/.config/fresh/types/`. Fresh also does
+  this every time it starts.
 
 ## Load it every time Fresh starts
 
@@ -128,6 +135,7 @@ When you're ready to use the plugin every day, link it into your plugins
 folder:
 
 ```bash
+mkdir -p ~/.config/fresh/plugins/packages
 ln -s "$PWD" ~/.config/fresh/plugins/packages/my-plugin
 ```
 

@@ -304,6 +304,33 @@ editor.registerCommand(COMMAND_NAME, "Registered with an imported name", "import
     harness.assert_screen_contains("Imported Kiwi Command");
 }
 
+/// A saved plugin with imports that fails to parse reports the failure,
+/// instead of a "loaded" status with nothing registered.
+#[test]
+fn test_load_plugin_from_buffer_reports_bundling_errors() {
+    init_tracing_from_env();
+
+    let mut harness = EditorTestHarness::with_temp_project(200, 30).unwrap();
+    let project_dir = harness.project_dir().unwrap();
+    std::fs::create_dir_all(project_dir.join("lib")).unwrap();
+    std::fs::write(
+        project_dir.join("lib").join("names.ts"),
+        "export const X = 1;\n",
+    )
+    .unwrap();
+    let plugin_file = project_dir.join("broken.ts");
+    std::fs::write(
+        &plugin_file,
+        "import { X } from \"./lib/names.ts\";\nconst = X;\n",
+    )
+    .unwrap();
+    harness.open_file(&plugin_file).unwrap();
+    harness.render().unwrap();
+
+    run_palette_command(&mut harness, "Load Plugin from Buffer");
+    harness.assert_screen_contains("Failed to load plugin");
+}
+
 fn run_palette_command(harness: &mut EditorTestHarness, command: &str) {
     harness
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
