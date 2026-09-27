@@ -180,7 +180,8 @@ pub const GENERATED_LOCALE_OPTIONS: &[Option<&str>] = &[
 fn generate_javascript_grammar() -> String {
     let tsx = fs::read_to_string("src/grammars/typescriptreact.sublime-syntax")
         .expect("read typescriptreact.sublime-syntax");
-    let mut js = tsx.replace(".tsx", ".js");
+    // A Windows checkout may have CRLF line endings.
+    let mut js = tsx.replace("\r\n", "\n").replace(".tsx", ".js");
     for (from, to) in [
         ("\nname: TypeScriptReact\n", "\nname: JavaScript\n"),
         (
