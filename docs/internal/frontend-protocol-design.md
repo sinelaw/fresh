@@ -8,9 +8,11 @@
 > the text panes go out as keyed rows, and the few surfaces the operating
 > system owns (menu bar, clipboard, window title) go out as semantic models.
 > The tree is sent **after** layout, never before it, so no client needs a
-> layout engine. A client may draw a surface as native UI from a semantic
-> model only when the editor never reads that surface's geometry back (§4.9,
-> with the full inventory of read-backs in Appendix A). The protocol is one
+> layout engine. The protocol is a `fresh-ui` backend on the far side of a
+> wire (§4.1): native look comes from each client's class table, and native
+> behaviour only from OS facilities that replace a surface wholesale and answer
+> with actions (§4.10; Appendix A inventories where the editor reads geometry
+> back). The protocol is one
 > schema with two encodings (JSON, and a binary encoding for native clients)
 > and two transports (the web bridge's WebSocket, and the session daemon's
 > local socket — a named pipe on Windows). Companion to [web-ui.md](web-ui.md) (the web frontend as built),
@@ -129,10 +131,38 @@ list was 154 items (330 with the file explorer open), about 17 KB.
 6. **Native where the OS owns the surface.** Menu bar, clipboard, window title,
    IME placement and accessibility are the operating system's, and a native
    client should use the OS's own.
+7. **Stay a `fresh-ui` backend.** The library already defines what a backend
+   consumes and sends — the display list, `Input`, host content — and what it
+   may decide for itself: appearance, through its class table. The protocol
+   adds a wire, not concepts.
 
 ## 4. The design
 
-### 4.1 The rule for choosing a level
+### 4.1 The protocol is a `fresh-ui` backend
+
+The library already says what a client is. Its backend-independence goal
+reads "paint produces a display list; TUI cells, the web DOM and test
+assertions are consumers of that list", and the shell's stylesheet says "each
+backend owns a table from class to appearance". A web page or a Windows client
+on this protocol is exactly that: a backend folding the display list the
+terminal folds, on the far side of a wire. Most of the design follows from
+taking that literally:
+
+| `fresh-ui` says | So the protocol |
+|---|---|
+| The display list is flat, ordered, absolute and keyed; paint order is list order; layers start at `layers_from` | Ships the list as it is: no parent links, order stated as position in the list, two halves. Where a client needs grouping (an accessibility tree), it reads the list's `index` ranges, which nest. |
+| Identity is explicit: elements are matched by `(type, key)` at a position and survive rebuilds | Names an item by the element that painted it plus its ordinal among that element's draws. It never infers a tree item's identity from content. |
+| A class names what a thing is; each backend owns a table from class to appearance; an unknown class decorates nothing | Carries classes untouched. A client's class table is where native look lives (CSS on the web, Fluent visuals on Windows) and where accessibility roles and states are read from. No new slot. |
+| A theme key says how a thing is painted, and an unresolvable ink is a loud failure | Resolves inks on the server into the style table and keeps the theme keys beside the colours, as `tree_view` already does. |
+| `Draw` is the whole vocabulary of what paint can say | Mirrors `Draw` one for one. A new draw kind is a library change with a caller, plus a fallback for clients that predate it (§4.5). |
+| A `Host` leaf is content the host owns and draws | Sends host content on its own channel: panes as rows, terminals as grids. |
+| Input is `Input` — pointer events at a position, keys along the focus chain — and it is one path for every frontend | Carries `Input` as it is, plus the host's own events (paste, committed text, resize). No client sends "activate item 3": that would be a second input path the tree does not route. |
+| The tree is the whole keyboard | Lets no client-drawn surface hold keyboard focus the tree does not know about. |
+| Geometry is produced by layout or recorded by ruling, never by accident | Takes no geometry back from clients. |
+| Cell-level damage tracking is a non-goal | Diffs in the transport, outside the library, just as crossterm diffs cells for the terminal. |
+| `Selectable` says where selecting is meaningful; selection is the host's | Confines a client's native selection to `selectable` items and host rows; buffer selection stays the editor's. |
+
+### 4.2 The rule for choosing a level
 
 **Send the tree after layout, never before it.** Layout is in integer cells,
 and the editor reads the resulting geometry back: hit-tests, pane content
@@ -160,13 +190,13 @@ lays out each pane's rows (`PaneContent`: styled spans per visual row plus
 theme-key provenance of every cell (`CellThemeInfo`: fg key, bg key, syntax
 category).
 
-**Send a semantic model where the OS owns the surface.** A native menu bar, a
-native context menu, the clipboard, the window title and the IME candidate
-window cannot be drawn from display-list items; they need the model. The menu
+**Send a semantic model where the OS owns the surface.** A native menu bar, an
+OS file dialog, the clipboard, the window title and the IME candidate window
+cannot be drawn from display-list items; they need the model. The menu
 model already exists for the macOS native menu bar. These few projections are
-kept and formalised (§4.3); every other `Scene` projection retires.
+kept and formalised (§4.4); every other `Scene` projection retires.
 
-### 4.2 What the protocol carries
+### 4.3 What the protocol carries
 
 **Laid-out tree info (keyed display-list items, diffed per item):**
 
@@ -174,12 +204,15 @@ kept and formalised (§4.3); every other `Scene` projection retires.
   palette, popups, context menus, file explorer, file browser, trust dialog,
   confirmations, Settings, keybinding editor, dock, floating panels and
   sidebar sections.
-- **What each item carries:** a stable identity, its parent's identity, a cell
-  rectangle and clip, a draw kind (fill, wash, lines, rule, border, scrollbar
-  with marks, overflow cap, scrim, selectable, host), its classes, and a
-  role/state slot (role, label, checked / expanded / selected / disabled,
-  focused, heading level, live region) that a web client maps to ARIA and a
-  Windows client maps to UI Automation properties.
+- **What each item carries:** its identity (the element that painted it and
+  its ordinal among that element's draws), a cell rectangle and clip, a draw
+  kind — `Draw`'s variants one for one (fill, wash, lines, rule, border,
+  scrollbar with marks, overflow cap, scrim, selectable, host) — its classes,
+  and a style-table id. Classes are also where roles and states live
+  (`button primary focused`, as the shell's buttons already say). A client's
+  class table maps them to appearance and, for accessibility, to ARIA roles
+  and states on the web and UI Automation control types and patterns on
+  Windows. Each frame also names the focused element, from the tree's focus.
 - **A style table.** Each item names an entry the server resolves once:
   fg/bg colours, text modifiers, and the theme keys they came from. An entry's
   id is its *provenance* (the ink, or the theme keys, category and modifiers
@@ -220,7 +253,7 @@ kept and formalised (§4.3); every other `Scene` projection retires.
   (retained-mode-ui.md, "Composite buffer panes"), so they stay cells until
   that migration lands.
 
-**OS-service models (§4.3):** the menu model, the window title, the clipboard
+**OS-service models (§4.4):** the menu model, the window title, the clipboard
 text, and notifications.
 
 **Unchanged:** input stays keys, text, and pointer events at cell coordinates,
@@ -229,21 +262,25 @@ hit-testing; no client resolves a click to a byte itself. Layout stays on the
 server, in whole cells. The shared-view session model stays: every attached
 client mirrors one editor, and the grid is fitted to the smallest viewport.
 
-### 4.3 Surfaces the operating system owns
+### 4.4 Surfaces the operating system owns
 
 Some surfaces are better as the OS's own than as items drawn in the grid:
 
 | Surface | Model sent | Web client | Windows client |
 |---|---|---|---|
 | Menu bar | the menu model (menus, items, enabled/checked, accelerators) | draws the in-grid items | native `MenuBar`, or the title-bar menu |
-| Context menu | the open context menu's model | draws the layer's items | native `MenuFlyout` at the item's rect |
 | Window title | title string | `document.title` | window title |
 | Clipboard | `{seq, text}` (web-ui.md §3.5) | `navigator.clipboard` | Win32 clipboard, with no gesture restriction |
 | IME placement | the caret overlay's rect | hidden input at the caret | TSF / IMM candidate window at the caret |
 | Notifications | kind, text | toast in page | Windows notification |
+| Open / Save As | the prompt's kind and starting directory | the in-grid browser | the OS file dialog |
 
-A menu picked from a native menu comes back as an `action` message with the
-item's action name and arguments, the path the macOS menu bar already uses.
+An OS surface answers only with an `Action` — the editor's rebinding and
+serialisation currency, which carries no position (retained-mode-ui.md,
+"Messages, and the applier"). A pick from a native menu comes back as the
+item's action and arguments, the path the macOS menu bar already uses; an OS
+file dialog comes back as the action the prompt would have run, with the
+chosen path. §4.10 gives the rule for which surfaces qualify.
 
 **Per-client chrome in a shared frame.** Every attached client mirrors one
 frame. If a native client draws the menu bar natively, the in-grid menu bar is
@@ -255,7 +292,7 @@ owns it natively skips drawing those items (they are recognisable by class)
 and leaves the row blank. When the last web client leaves, the frame reflows
 without the row.
 
-### 4.4 One schema, versioned, two encodings
+### 4.5 One schema, versioned, two encodings
 
 **The schema is Rust types.** The message types live in one module (a
 `fresh-protocol` crate, or a module the daemon and the bridge share), with
@@ -295,7 +332,7 @@ JSON.
 - A client too old for the server's minimum version gets a version-mismatch
   message, as terminal clients do today.
 
-### 4.5 Transports
+### 4.6 Transports
 
 The messages are the same on every transport; only framing differs.
 
@@ -315,17 +352,19 @@ The messages are the same on every transport; only framing differs.
   two streams: frames pushed by the server, input sent by the client. The
   only reply-shaped exchange is the hello.
 
-### 4.6 Message shape (sketch)
+### 4.7 Message shape (sketch)
 
 ```text
 client hello: { proto, client, encoding: "json"|"msgpack",
-                caps: ["rows","overlays","roles","native-menu","kind:overflow",…],
+                caps: ["rows","overlays","native-menu","os-file-dialog","kind:overflow",…],
                 cols, rows, cell: {w, h, dpi} }
 
 server hello: { proto, caps, w, h, windowId,
                 styles: { <styleId>: {fg, bg, b, i, u, fgKey, bgKey, cat} },
-                items:  [ {id, parent, rect, clip, kind, cls, role?, state?, style, ...draw} ],
-                                                    // paint order within each parent
+                items:  [ {id, rect, clip, kind, cls, style, ...draw} ],  // list order
+                layersFrom: <id of the first layer item> | null,
+                groups: [ {key, first, last} ],     // the list's index: keyed subtrees
+                focus:  <id> | null,                // the focused element's first item
                 hosts:  { <leaf>: { kind: "pane"|"grid"|"cells",
                                     rows:   { <rowId>: [ [text, styleId], … ] },
                                     text:   [rowId, …],   // screen order, top to bottom
@@ -335,10 +374,11 @@ server hello: { proto, caps, w, h, windowId,
 
 frame:        { seq,
                 styles?: { <styleId>: {…} },       // new ids, or new values for old ids
-                items?:  { add:    [ {id, parent, before, …full item} ],
+                items?:  { add:    [ {id, before, …full item} ],
                            patch:  [ {id, <only the fields that changed>} ],
-                           move:   [ {id, parent, before} ],
+                           move:   [ {id, before} ],
                            remove: [id] },
+                layersFrom?, groups?, focus?,
                 hosts?:  { <leaf>: { rows?: { <rowId>: [runs] },  // rows the client lacks
                                      text?: [rowId, …], gutter?: [rowId, …],
                                      drop?: [rowId, …],
@@ -346,22 +386,32 @@ frame:        { seq,
                 os?:     { menu?, title?, clipboard?, notify? },
                 w?, h? }
 
-input:        key {chord} | text {text} | paste {text}
-              | mouse {kind, col, row, mods, count} | wheel {col, row, dx, dy, mods}
-              | action {name, args} | resize {cols, rows, cell}
+input:        // fresh_ui::Input, one for one, at cell positions:
+              press {col, row, button, mods, clicks} | release {col, row, button, mods}
+              | move {col, row, mods} | wheel {col, row, delta, axis, mods}
+              | key {chord}
+              // the host's own events:
+              | text {text} | paste {text} | resize {cols, rows, cell}
+              // an OS surface's answer (§4.4):
+              | action {name, args}
 ```
 
-Keys travel as chords in the editor's one key vocabulary
+The pointer and key messages are `fresh_ui::Input`'s variants, so a client's
+input enters the same two entry points a terminal's does and is routed by the
+tree. Keys travel as chords in the editor's one key vocabulary
 ([key-vocabulary-unification.md](key-vocabulary-unification.md)), so the web
 page and a Windows client each translate their platform's key events into the
 same spelling. Item identity is the producing element plus an ordinal within
 that element's draws: `LayoutSpec::index` already maps keys to item ranges,
 and elements persist across rebuilds by `(type, key)`, so identities are
-stable across frames with nothing new in the library. Row ids are the
-server's, assigned as §4.2 describes. Everything a client must do is stated
+stable across frames with nothing new in the library. On the wire an element is
+named by its arena slot and generation, as an opaque value: the generation is
+bumped whenever a slot is freed, so a name is never reused for a different
+element, and the server never uses a name to look an element up. Row ids are the
+server's, assigned as §4.3 describes. Everything a client must do is stated
 explicitly — adds, patches, moves and removals — so no client diffs anything.
 
-### 4.7 Designed for in-place patching
+### 4.8 Designed for in-place patching
 
 The operations are chosen so that each one is **at most one mutation of one
 node** in a retained client tree — a DOM element, or a XAML element or
@@ -381,26 +431,31 @@ interruptible diff.
   ever converting one kind of node into another.
 - **Patches are field-level.** `patch` carries only the fields that changed,
   and each field maps to one property of the node: `rect` to its offset and
-  size, `style` to its class or brush, `lines` to its text, `state` to its
-  ARIA or UI Automation properties, `thumb` to the thumb's offset. The server
+  size, `style` to its class or brush, `lines` to its text, `cls` to its
+  class list (and so its ARIA or UI Automation state), `thumb` to the thumb's
+  offset. The server
   compares field by field against what it last sent.
-- **Order is sibling order, stated locally.** Paint order is child order within
-  a parent, stated as `parent` plus `before` (the next sibling's id, or none
-  for last). An insertion is one `insertBefore` in a DOM, or one
-  `Children.Insert` at the index of `before` in XAML; nothing else is
-  renumbered. A numeric paint index or z-index is deliberately not used:
-  inserting one item would renumber every item after it. The display list's
-  in-flow half and its layers (`LayoutSpec::layers_from`) are two root
-  containers, so a popup opening never reorders the chrome under it.
-- **Moves are rare, and explicit.** An item changes parent or position among
-  its siblings only when the tree's structure changes; `move` says so. A pure
-  geometry change (a pane resized, a panel dragged) is a `rect` patch, never a
-  move.
+- **Order is list order, stated locally.** The list is flat, as the library
+  makes it, and paint order is its order. An item's position is stated as
+  `before`: the id of the next item in the same half of the list, or none for
+  last. An insertion is one `insertBefore` in a DOM, or one `Children.Insert`
+  at the index of `before` in XAML; nothing else is renumbered. A numeric
+  paint index or z-index is deliberately not used: inserting one item would
+  renumber every item after it. The in-flow half and the layers
+  (`LayoutSpec::layers_from`) are two root containers, so a popup opening
+  never reorders the chrome under it.
+- **Moves are rare, and explicit.** An item changes position in the list only
+  when the tree's structure changes; `move` says so. A pure geometry change (a
+  pane resized, a panel dragged) is a `rect` patch, never a move.
+- **Grouping is read, not built.** A client that needs nesting — an
+  accessibility tree, a scroll container — takes it from `groups`, the list's
+  own index of keyed subtrees, whose ranges nest. The flat list stays the only
+  thing a client patches.
 - **Rows are placed by index, not by content.** The `text` and `gutter` lists
   give each row id its screen row. A row still on screen keeps its node and
   only its vertical offset changes. `drop` lists the row ids that left the
   screen; a row that later comes back is sent again, under a new id.
-- **Style ids are stable.** Runs name a style by provenance (§4.2), and a
+- **Style ids are stable.** Runs name a style by provenance (§4.3), and a
   client turns each style into one shared resource — a CSS class, a brush. A
   theme switch changes the resource, not the runs.
 - **Carets, the current line and selections are overlays.** They are cell
@@ -414,12 +469,12 @@ interruptible diff.
 - **Geometry needs no measuring.** Every position is a cell rectangle and the
   client knows its cell size, so applying a frame never reads layout back.
 
-### 4.8 Client application
+### 4.9 Client application
 
 **Common to every client:**
 
 - **Decode and merge off the UI thread; apply on it.** The socket reader
-  decodes each message and merges it into one pending frame (§4.7's merge
+  decodes each message and merges it into one pending frame (§4.8's merge
   rule). The UI thread takes the pending frame once per display frame and
   applies it. Nothing touches the UI tree from the reader.
 - **Write-only apply.** The apply pass creates, patches, moves and removes. It
@@ -433,9 +488,13 @@ interruptible diff.
   one-line scroll is about 44 offset writes and one new row; typing rebuilds
   the one edited row.
 - **Pointer input is one handler at the root.** The client converts the
-  pointer's position to a cell and sends it. There are no per-node handlers
-  to attach, detach or leak, because the editor's hit-test decides what the
-  cell means.
+  pointer's position to a cell and sends it as `Input`. There are no per-node
+  handlers to attach, detach or leak, because the tree's hit-test decides what
+  the cell means.
+- **The class table is the client's.** Each client keeps its own table from
+  class to appearance and to accessibility semantics, as the terminal keeps
+  `shell_style`. An unknown class decorates nothing; an unknown role maps to a
+  generic group.
 - **Reconnect.** A server hello discards every map and rebuilds from scratch;
   it is the only operation that does.
 
@@ -451,17 +510,23 @@ interruptible diff.
 - CSS containment (`contain: strict` on panes and surfaces, `contain: content`
   on rows) keeps a change inside one from invalidating layout outside it.
 - The caret node persists, so its blink phase survives unrelated frames.
+- ARIA roles and states come from the class table; `aria-owns` or nesting
+  follows `groups`; focus follows the frame's `focus`.
 
 **A Windows client (WinUI 3):**
 
 - The reader runs on a background thread over the named pipe, decoding
   MessagePack from pooled buffers. The merged frame is handed to the UI thread
   with `DispatcherQueue.TryEnqueue`, at most one pending apply at a time.
-- **Chrome** is XAML elements under one custom panel per surface whose
-  arrange pass places each child at its cell rectangle — no measure-driven
-  layout and no layout engine. Nodes are pooled per draw kind. Layers
-  (popups, menus, modals) are a second root above the in-flow root, and can
-  wear the platform's materials (acrylic, a shadow) chosen by class.
+- **Chrome** is XAML elements or Composition visuals under two custom panels,
+  one per half of the list, whose arrange pass places each child at its cell
+  rectangle — no measure-driven layout and no layout engine. Nodes are pooled
+  per draw kind. The layers panel sits above the in-flow one.
+- **Native look is the class table.** `button` draws as a Fluent button face
+  at the tree's rectangle, `focused` as the system focus visual, `selected` in
+  the system selection brush, a layer's ground as an acrylic flyout with a
+  shadow; the chrome font is the system's, and the accent colour is the
+  user's. Geometry, focus and input stay the tree's.
 - **Panes are not XAML text controls.** A pane's rows are thousands of runs;
   one `TextBlock` per run would be thousands of COM objects. Each row is one
   Composition visual whose surface is drawn once with DirectWrite, glyphs at
@@ -471,8 +536,10 @@ interruptible diff.
 - **Styles are brushes.** One `SolidColorBrush` per style id, shared by every
   element and row that uses it. A theme switch sets each brush's colour, and
   everything using it repaints with no element touched.
-- **Accessibility** maps the role/state slot to `AutomationProperties` (name,
-  heading level, live setting, toggle and expand state) on the item's element.
+- **Accessibility** maps classes through the class table to UI Automation
+  control types and patterns (toggle, expand/collapse, selection item), names
+  an element by its `lines` text, builds the automation tree from `groups`,
+  and raises focus changes from the frame's `focus`.
   A pane's text needs a UI Automation text provider; the rows give it the
   visible text, and the accessible-text projection web-ui.md §3.8 proposes
   would give it the rest. The same projection serves ARIA on the web.
@@ -481,7 +548,7 @@ interruptible diff.
   caret overlay's rectangle. The cell size comes from DirectWrite metrics in
   device-independent pixels and is re-measured on a DPI change, which sends a
   `resize` as the web page does on zoom.
-- **OS surfaces** per §4.3: a native menu bar and flyouts built from the menu
+- **OS surfaces** per §4.4: a native menu bar and flyouts built from the menu
   model, the window title, the clipboard, notifications.
 
 **Language for the Windows client.** The protocol does not decide it. A C#
@@ -492,75 +559,73 @@ and share the key translation with `fresh-gui`, but WinUI 3 from Rust is
 immature, so it would likely draw chrome itself rather than use XAML
 controls. Recommended: C# and WinUI 3 for a client meant to feel native.
 
-### 4.9 Which surfaces a client may draw natively
+### 4.10 Native look, native behaviour, and where each belongs
 
-The design picks one side of the tradeoff in §6: **the editor lays out, in
-cells, and clients draw what they are given.** That is the default for every
-surface. A client may instead draw a surface as native UI from a semantic
-model — a native menu, a native form with real text boxes, a natively
-scrolled list — only when the surface passes this rule.
+The design takes one side of the tradeoff in §6: **the editor lays out, in
+cells, and clients draw what they are given.** Within that, "native" means two
+different things, and `fresh-ui` already puts them in different places.
 
-**The rule.** A surface may be drawn natively from a semantic model only when
-the editor never reads that surface's geometry back. Concretely:
+**Native look belongs to the class table, and every surface gets it.** A class
+names what an item is, and each backend owns the table from class to
+appearance (§4.1). A Windows client draws `button` as a Fluent button face,
+`focused` as the system focus visual, `selected` in the system selection
+brush, a toggle's `checked` state as a switch, a layer's ground as an acrylic
+flyout, all in the system font; the web does the same in CSS. The item still
+sits at the rectangle the tree gave it, keys still go along the tree's focus
+chain, and a press is still hit-tested by the tree. This applies to every
+surface: Settings, the keybinding editor, dialogs, menus, the palette,
+plugin panels.
 
-1. **No host read-back.** No editor behaviour reads the surface's laid-out
-   rectangles, scroll window or wrapped rows after layout: not a pointer
-   hit-test in host code, not a keyboard page size, not a scroll-into-view,
-   not a cache written during render and read by a key handler.
-2. **Nothing else is placed against it.** No other surface is anchored to a
-   rectangle inside it (as popups are anchored to status-bar elements), and
-   it is not itself anchored to a buffer position (as completion and hover
-   are anchored to the caret).
-3. **Input can be semantic.** Every interaction can be stated in the model's
-   own terms — "activate item 3", "toggle setting 12", "select row 40" —
-   rather than as a cell for the tree to hit-test.
-4. **It owns no editor state that depends on its size.** Layout-only
-   decisions (a list window that follows the selection, a truncation) are
-   fine; they change what is drawn, not what the editor holds.
+**Native behaviour belongs to the OS, and only for surfaces that leave the
+frame.** A client may replace a surface with an OS facility — something that
+lays itself out, takes its own input and answers when it is done — only when
+all of these hold:
 
-Rules 1 and 2 are what make a native rendering safe: if the editor reads a
-surface's geometry, a client that laid the surface out differently would make
-that reading wrong. Rule 3 is what makes it possible: a native control cannot
-report its clicks as cells the editor laid out. Rule 4 keeps the shared frame
-honest, since every attached client mirrors one editor.
+1. **The OS facility replaces the surface wholesale.** The tree does not lay
+   the surface out for that client, under the all-clients rule of §4.4.
+2. **It answers only with an `Action`.** `UiMsg` already draws this line: an
+   `Action` is something a user could bind, meaningful without this frame; a
+   `UiFact` is positional, about this frame's tree. An OS surface can produce
+   the first and never the second.
+3. **The editor never reads its geometry back, and nothing is anchored to
+   it.** Appendix A is the check.
+4. **The tree holds no focus inside it.** While it is open the OS owns its
+   input, as a native menu bar's tracking loop or a file dialog does, and the
+   tree's focus stays where it was.
 
-**Client-reported viewports.** Most failures of rule 1 on otherwise
-self-contained surfaces are one thing: a PageUp/PageDown whose page is the
-list's visible height, read off the tree. The protocol removes that
-dependency instead of disqualifying the surface. A client drawing a list
-natively reports its window as input, `viewport {list, first, count}`, and a
-page key *from that client* pages by the reported count. A key from a client
-drawing the display list keeps using the tree's window. Reports are
-per client, like the rest of §4.7's server state, so a native client and a
-browser attached to one session each page by what they show.
+That admits the OS menu bar, whose items are actions with arguments (macOS
+already does it), and the OS file dialog in place of Open File / Save As,
+which answers with the action the prompt would have run and the chosen path.
+The OS services of §4.4 — clipboard, title, IME placement, notifications — are
+not surfaces in the frame at all.
 
-**Where each surface stands today.** From a sweep of every place the editor
-reads geometry back after layout (Appendix A lists the readers by surface):
+It does not admit Settings or the keybinding editor as native forms, though
+they are modal and look like the obvious candidates:
 
-| Surface | Host read-back today | Verdict |
-|---|---|---|
-| Menu bar and dropdowns | None; hit-testing stays inside the tree, keys are index-based | **Native now** — the menu model exists, and the macOS menu bar already uses it |
-| Confirm dialogs | None beyond sizing its own in-grid box from the frame | **Native now**, with semantic button input |
-| Trust dialog | None beyond sizing its own box | **Native now**, with semantic input |
-| Open File / Save As browser | None outside the web's projection; paging is a fixed 10 | **Native now**, with semantic input — or the OS file dialog |
-| Context menus | Two anchors: the "Close split" menu is placed under the split's × control, and the explorer decides title-row versus body from its region | **Native with an anchor rect** carried in the model |
-| Settings modal | PageUp/PageDown use the body's visible height and the category tree's height; the left tree's highlight follows the body's scroll (`top_item`); search and entry-dialog scroll offsets are read off the tree | **Native after viewport reports** — semantic input already exists (`SettingsHit`); the tree-follows-scroll sync must move to a client report |
-| Keybinding editor | PageUp/PageDown use a page taken from the box height | **Native after viewport reports** — row selection is already semantic |
-| Prompt and palette suggestions | Column widths are measured over the last layout's visible window; paging is a fixed 10 | **Native list possible**, but it is anchored to the prompt row and shares the frame's bottom band; low value |
-| Live Grep card | The selection is scrolled into the results region's height; its preview is a buffer | **Display list** — the preview is a pane |
-| File explorer | Page size, scroll clamping and sticky ancestors use a height written during render; the wheel clamps against it; right-click reads its region | **Display list**; could qualify with viewport reports and semantic node input, but it is docked beside panes, not modal |
-| Popups: completion, hover, signature | Anchored to the caret; hover stays alive while the pointer is over the popup's rectangle | **Display list** (fails rule 2) |
-| Status bar | Popups are placed above its elements from a cache of its layout | **Display list** (fails rule 2) |
-| Tabs | Drag drop zones, tab rectangles, reveal-active-tab in layout, and name shortening fed back from the last frame's strip width | **Display list** |
-| Split grid, panes, scrollbars, dividers | Viewports, wrap width, PTY sizes, visual-line motion, plugin-reported split rects, the pane-beside choice — all from pane rectangles | **Display list and rows**; this is the grid |
-| Composite (diff) panes | Cursor movement and horizontal scroll use the content width | **Cells**, until described |
-| Plugin panels (dock, floating, sidebar, pane-mounted) | Arrow focus moves by laid-out rectangles; list paging reads the item window; prose motion reads wrapped rows; a pane-mounted panel's buffer text *is* its laid-out rows | **Display list** |
+- Their interactions are positional facts (`UiFact`s), not actions, and their
+  text fields are the tree's `TextField`s, whose caret the library places. A
+  native `TextBox` would take the keyboard from the tree and hold an editing
+  state the editor does not.
+- The web's existing semantic paths for them (`SettingsHit` by index, a
+  keybinding row by index) are exactly the second input path §4.1 rules out,
+  and they retire with the `Scene` projections, as retained-mode-ui.md's "The
+  web" already plans.
 
-So the native-eligible set is the menus, the modal dialogs, the file browser
-and — once page keys come from viewport reports — Settings and the
-keybinding editor. They are exactly the surfaces that are modal or
-OS-shaped, which is where a native feel matters most. Everything that shares
-the screen with buffers stays on the single layout.
+They get native look through the class table, like everything else. A
+client-reported viewport, which an earlier draft of this design proposed so
+their page keys could use a native list's height, is dropped: it is geometry
+coming from a client, which the library rules out.
+
+**The read-backs are residue, not a boundary.** Every client draws the tree's
+layout, so none of the read-backs in Appendix A can disagree with what a
+client shows; they are not hazards for this protocol. They are the places the
+host still does layout's work, which retained-mode-ui.md's working rule — "a
+surface is done when the tree measures it" — says should move into layout.
+The keyboard ones are the clearest: a host reading a panel's rectangle to size
+PageUp/PageDown, or a height written while the description is built, is what
+an anchor answered at layout (`ScrollByPages`, `Reveal`) already expresses.
+Moving them is worth doing for the terminal alone, and it also fixes the
+inconsistencies the sweep turned up (Appendix A).
 
 ## 5. What changing it buys
 
@@ -572,12 +637,15 @@ the screen with buffers stays on the single layout.
   to cells for the terminal, to DOM for the browser and to XAML for Windows.
 - **No layout engine and no reconciler in any client.** Both are the editor's
   already; clients only apply mutations.
-- **Native OS integration** where it matters: menus, clipboard, IME,
-  accessibility, title.
+- **Native look on every surface** from each client's class table, and
+  **native OS integration** where the OS owns the surface: menu bar, file
+  dialog, clipboard, IME, accessibility, title.
+- **No new library concepts.** The protocol is the display list, `Input` and
+  host channels — what `fresh-ui` already defines for a backend.
 - **Per-row patching** (web-ui.md §3.4) falls out of the row ids.
 - **Theming.** Theme switches cost one table. Clients dress chrome by class
   and theme key, and code by syntax category.
-- **Accessibility.** One role/state slot feeds ARIA and UI Automation.
+- **Accessibility.** One class vocabulary feeds ARIA and UI Automation.
 - **Sessions for free.** A native client is a daemon client: attach, detach,
   restore, and sharing one editor with terminals and browsers.
 
@@ -590,11 +658,11 @@ the screen with buffers stays on the single layout.
   already are: wheel forwarding and cell-positioned text. `paint_subtree` (an
   unclipped subtree) could supply extra rows for short lists. This is the real
   product tradeoff — one source of truth versus a native feel — and it applies
-  to the web and Windows alike. The design takes the single-source side, and
-  admits native rendering per surface only under §4.9's rule: menus, modal
-  dialogs, the file browser, and Settings and the keybinding editor once their
-  page keys use viewport reports. Native materials, fonts, the system accent
-  and OS-owned surfaces (§4.3) recover much of the feel everywhere else.
+  to the web and Windows alike. The design takes the single-source side
+  (§4.10): native look everywhere through class tables, and native behaviour
+  only where an OS facility replaces a surface wholesale — the menu bar and the
+  file dialog. Settings stays a tree surface, so it gets Fluent styling but
+  not native text boxes.
 - **Hover** is decided on the server (the pointer is a layout input), so it is
   a round trip per cell crossing, over a local pipe or loopback. Clients can
   add cosmetic hover feedback by class.
@@ -602,10 +670,12 @@ the screen with buffers stays on the single layout.
   against 0.8 KB of state, because the semantic model was already on the
   client. Small either way, and a client with a native menu gets the model
   instead.
-- **The library gains a semantic slot.** `Desc` has no role or state today.
-  Adding it needs a caller and a test per retained-mode-ui.md's working rules,
-  and it must land before any projection that carries `enabled`/`checked`
-  retires.
+- **A class vocabulary for roles and states.** The shell's buttons already
+  emit state classes (`focused`, `hovered`, `disabled`); roles and the other
+  states (checked, expanded, selected, heading) need the same, each with a
+  caller and a test per retained-mode-ui.md's working rules. There is no new
+  slot in `Desc`. The vocabulary must be in place before any projection that
+  carries `enabled`/`checked` retires.
 - **Overlays** need a render mode that keeps the caret, current line and
   selections out of the cells, in the same spirit as `suppress_chrome_cells`,
   covered by the parity test. Until then a caret move dirties two rows.
@@ -625,14 +695,15 @@ of its recommendations:
 | Research recommends | This design | Why |
 |---|---|---|
 | WinUI 3, C#, Native AOT | Same, recommended | Native fidelity, UI Automation, compositor-thread animation |
-| Embed a flexbox engine (Yoga.Net) in a custom panel | Not needed; a panel that places children at their cell rects | The editor lays out once; clients never do (§4.1) |
+| Embed a flexbox engine (Yoga.Net) in a custom panel | Not needed; a panel that places children at their cell rects | The editor lays out once; clients never do (§4.2) |
 | Client-side virtual tree, O(n) keyed diff, LIS moves, interruptible reconcile | Not needed; the server sends explicit `add`/`patch`/`move`/`remove` | The editor's reconciler already knows identity; diffing once on the server is cheaper than in every client |
-| Element pooling | Kept, per draw kind | Ids never change kind (§4.7) |
+| Element pooling | Kept, per draw kind | Ids never change kind (§4.8) |
 | Background decode, UI-thread apply via `DispatcherQueue` | Kept | Operations are mergeable, so the UI thread gets one batch |
 | Protocol Buffers for schema evolution | MessagePack from the same Rust types, plus a generated JSON Schema, capabilities and server-side fallbacks | One source of truth for the schema |
 | Named pipes with StreamJsonRpc or gRPC | The daemon's existing named pipe, length-prefixed frames, no RPC layer | The protocol is two streams, not calls |
 | Tag-based event dispatch on pooled controls | One root pointer handler sending cells | The editor's hit-test decides what a cell means |
-| Map semantics to UI Automation | Kept, through the role/state slot | One slot feeds ARIA and UIA |
+| Map semantics to UI Automation | Kept, through the class vocabulary | Classes already say what an item is; one vocabulary feeds ARIA and UIA |
+| Native controls for app surfaces | Native look from a class table at the tree's rectangles; OS facilities only for surfaces that leave the frame (§4.10) | The tree is the whole keyboard and the one input path |
 | Controls for all content | Composition visuals drawn with DirectWrite for pane rows | A code pane is too many runs for per-run controls |
 
 ## 8. Order of work
@@ -641,20 +712,20 @@ Each step ships on its own and keeps parity. Steps 1–5 are the web's and pay
 for themselves there; steps 6–9 add the native client.
 
 1. **Row-keyed pane diffs and the row applier.** The bridge assigns row ids
-   by content (text and gutter separately), and the page applies rows as §4.8
+   by content (text and gutter separately), and the page applies rows as §4.9
    describes. No core change. This is the largest byte reduction, and it
    delivers web-ui.md §3.4's per-row patching.
 2. **Provenance on pane runs.** Split runs on the theme keys and syntax
    category from the cell theme map, and introduce the style table.
 3. **The whole-frame display list.** Generalise `tree_view` from plugin panels
-   to every surface, with the item operations of §4.7 and the keyed applier of
-   §4.8 replacing the tree fold's rebuild-everything pass. Retire the drawing
+   to every surface, with the item operations of §4.8 and the keyed applier of
+   §4.9 replacing the tree fold's rebuild-everything pass. Retire the drawing
    `Scene` views one surface at a time: the status bar and tabs first (the
    tree already measures both), then the prompt and palette, popups, and
-   Settings and the keybinding editor last. Keep the OS-service models (§4.3),
-   and keep a semantic model for each surface §4.9 admits for native
-   rendering.
-4. **The role/state slot**, in `Desc` and the display list, and ARIA from it.
+   Settings and the keybinding editor last. Keep the OS-service models (§4.4),
+   including the menu model for the OS menu bar.
+4. **The role and state class vocabulary**, emitted by the shell's widgets,
+   and ARIA from it.
 5. **Rows from the content pass and overlays.** Build pane rows straight from
    `PaneContent` instead of reading them back out of the ratatui buffer, and
    move the caret, the current-line band and then selections to overlays.
@@ -665,20 +736,23 @@ for themselves there; steps 6–9 add the native client.
 7. **The protocol on the daemon's socket.** A client hello that asks for the
    frontend protocol gets frames on the data channel, beside terminal
    clients and browsers on the same editor; add the `native-menu` capability
-   and the all-clients rule of §4.3.
-8. **Native-eligible surfaces (§4.9).** Semantic input for the confirm and
-   trust dialogs, the file browser and context menus (with the anchor rect),
-   joining Settings' and the keybinding editor's existing semantic paths; the
-   `viewport` report, and Settings and keybinding-editor page keys that use it
-   for the reporting client; Settings' left-tree sync driven by the report
-   rather than the tree's scroll.
-9. **A Windows client.** WinUI 3, per §4.8: the chrome panel and pools, the
-   Composition row visuals, brushes, the native menu bar, the native dialogs
-   §4.9 admits, clipboard, IME, and UI Automation.
+   and the all-clients rule of §4.4.
+8. **Layout's own answers for paging and reveal.** Move the keyboard
+   read-backs of Appendix A into layout: page sizes read off panel rectangles
+   (Settings, the keybinding editor) and heights written while the description
+   is built (the file explorer) become anchors answered at layout
+   (`ScrollByPages`, `Reveal`), with a page intent on `List` and `Tree`, and
+   the Settings tree stops following the body's scroll through a cached
+   `top_item`. No client needs this; it is retained-mode-ui.md's rule, and it
+   fixes the sweep's inconsistencies for the terminal too.
+9. **A Windows client.** WinUI 3, per §4.9: the chrome panel and pools, the
+   Composition row visuals, brushes, the class table's Fluent look, the OS
+   menu bar and file dialog, clipboard, IME, and UI Automation.
 
 Not planned, and argued against above: sending the description tree for a
 client to lay out, sending buffer text for a client to render panes itself,
-and embedding a layout engine or a tree reconciler in any client.
+embedding a layout engine or a tree reconciler in any client, semantic input
+paths beside `Input`, and geometry reported back by clients.
 
 ## Appendix A. Where the editor reads geometry back
 
@@ -689,6 +763,11 @@ depends on on-screen size; "placement" anchors one surface to another;
 "sizing" sizes something that is not drawn (a viewport, a PTY, a plugin
 report). Most event-time readers ask the retained tree by key at the last
 frame's size; the few caches still written during render are named.
+
+None of these is a hazard for a client of this protocol: every client draws
+the tree's layout, so a read-back reads what the client shows. They are the
+places the host still does layout's work, and step 8 of §8 moves the keyboard
+ones into layout.
 
 **Menu bar and dropdowns.** No host read-back. Presses are hit-tested inside
 the tree; menu keys move by index.
@@ -715,13 +794,14 @@ scroll); category-tree PageUp/PageDown page by `tree_page_rows`, set in
 highlight follows the body's scroll through `top_item`
 (`sync_tree_cursor_to_body_scroll`, `current_section_index`, also used by
 `jump_to_search_result`); the search results and entry dialogs' scroll
-offsets are read off their viewports. Input is already semantic on the web
-(`dispatch_settings_hit` with a `SettingsHit`).
+offsets are read off their viewports. The web reaches it through a second,
+index-based input path (`dispatch_settings_hit` with a `SettingsHit`), which
+retires with its projection (§4.10).
 
 **Keybinding editor.** Keyboard: PageUp/PageDown page by `scroll.viewport`,
 set in `settle_modal_viewports` from the editor box's rectangle
-(`keybinding::table_rows`). Row selection is already semantic on the web
-(`kbedit_select_display_row`).
+(`keybinding::table_rows`). The web selects rows through an index-based path
+(`kbedit_select_display_row`), which retires with its projection.
 
 **Prompt and palette.** Keyboard: none geometric — PageUp/PageDown move by a
 fixed 10. Description-time feedback: suggestion column widths are measured
