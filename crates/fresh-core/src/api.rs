@@ -2791,11 +2791,11 @@ pub enum WidgetSpec {
     ///
     /// The plugin passes the *full dataset* of items + a
     /// `visible_rows` count (typically the panel's available
-    /// height). The host owns the scroll offset as widget instance
-    /// state, keyed by the spec's `key` — so a `key` is required for
-    /// any List that should preserve scroll across re-renders. The
-    /// scroll offset auto-clamps to keep `selected_index` in view;
-    /// plugins never compute scroll math.
+    /// height). The scroll offset is the list's viewport's, not
+    /// widget instance state: the viewport is identified by the
+    /// spec's `key`, so a `key` is required for any List that should
+    /// preserve scroll across re-renders. The viewport keeps the
+    /// selected row in view; plugins never compute scroll math.
     ///
     /// Each item is one rendered row (`TextPropertyEntry`).
     /// `item_keys` is a parallel array of stable per-item identifiers
@@ -2869,12 +2869,18 @@ pub enum WidgetSpec {
     /// expansion is host-owned (instance state) rather than the
     /// plugin re-emitting on every `▶`/`▼` press.
     ///
-    /// `expanded_keys` is initial-only (seeded into instance state
-    /// on first render); subsequent expansion changes flow through
-    /// `WidgetCommand::Key` (Right/Left) or click on the disclosure
-    /// glyph — neither requires the plugin to re-emit. Plugins that
+    /// Expansion has one owner, the host's instance state, and the
+    /// tree is drawn from it. `expanded_keys` is only a seed: it is
+    /// what the tree shows until something first sets the host's
+    /// state, and is ignored after that. Right/Left, a click on the
+    /// disclosure glyph (or on the row, with `toggle_on_click`) and
+    /// `WidgetMutation::SetExpandedKeys` all write that state and
+    /// redraw without the plugin re-emitting the spec. Plugins that
     /// need to react to expansion changes listen for
-    /// `widget_event { event_type: "expand" }`.
+    /// `widget_event { event_type: "expand" }`, and a plugin that
+    /// decides expansion itself (expand-all, open every group while
+    /// filtering) says so with `SetExpandedKeys`, never with a later
+    /// spec's `expanded_keys`.
     ///
     /// `selected_index` is the *absolute* index into `nodes`
     /// (initial-only; instance state takes over). Click on a row
@@ -2895,11 +2901,13 @@ pub enum WidgetSpec {
         /// fallback when the host has no height: 20 rows.)
         #[serde(default, skip_serializing_if = "Option::is_none")]
         visible_rows: Option<u32>,
-        /// Initial-only set of expanded item keys. Once the widget
-        /// has rendered, the host's instance-state `expanded_keys`
-        /// is authoritative; updating this field on subsequent specs
-        /// has no effect (use `WidgetMutation::SetExpandedKeys` to
-        /// override host state).
+        /// Seed set of expanded item keys, drawn until the host's
+        /// instance state has an expansion of its own (a Right/Left,
+        /// a disclosure click, a selection write, or
+        /// `WidgetMutation::SetExpandedKeys`). From then on the
+        /// instance state is what is drawn and navigated, and
+        /// changing this field on later specs has no effect — use
+        /// `WidgetMutation::SetExpandedKeys` to change it.
         #[serde(default)]
         expanded_keys: Vec<String>,
         /// When true, every node with `checked: Some(_)` renders a

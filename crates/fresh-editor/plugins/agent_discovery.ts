@@ -133,8 +133,9 @@ interface DiscoverState {
    *  regrouping are free. */
   scans: DiscoverScan[] | null;
   /** The headings the reader has opened. Kept here even though the host
-   *  toggles folds: the tree is drawn from the spec's `expandedKeys`, so a
-   *  fold the spec does not mirror is undone on the next frame. */
+   *  toggles folds: `refreshDiscoverDialog` pushes this set with
+   *  `setExpandedKeys` after every rebuild, so a fold it does not mirror is
+   *  undone by the next one. */
   expanded: Set<string>;
 }
 
@@ -649,7 +650,7 @@ function handleDiscoverEvent(e: WidgetEvt): void {
     return;
   }
   // A tree reports its cursor as `select` and its folds as `expand`. The
-  // fold must be mirrored and re-rendered, or the next frame undoes it.
+  // fold must be mirrored, or the next refresh's `setExpandedKeys` undoes it.
   if (
     (e.event_type === "select" || e.event_type === "expand") &&
     e.widget_key === "discover-rows"

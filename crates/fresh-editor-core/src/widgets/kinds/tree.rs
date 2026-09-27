@@ -390,8 +390,9 @@ pub fn resolve(
     resolve_seeded(spec_selected, spec_expanded, widget_key, prev)
 }
 
-/// [`resolve`] against the seeds directly, for the collector — which is
-/// handed a `Tree`'s fields unpacked rather than the spec node itself.
+/// [`resolve`] against the seeds directly, for a reader handed a `Tree`'s
+/// fields unpacked rather than the spec node itself — the shell's described
+/// `Tree` arms, which draw from what this returns.
 pub fn resolve_seeded(
     spec_selected: i32,
     spec_expanded: &[String],
