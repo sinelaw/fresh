@@ -15,6 +15,7 @@ use fresh::model::event::{
 fn show_scrolling_popup(harness: &mut EditorTestHarness) {
     let items = (0..40)
         .map(|i| PopupListItemData {
+            id: "t17_18".into(),
             text: format!("POPUP_ITEM_{i:02}"),
             detail: None,
             icon: None,

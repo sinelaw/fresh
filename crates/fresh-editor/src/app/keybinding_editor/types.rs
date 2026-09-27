@@ -32,9 +32,36 @@ pub enum DeleteResult {
     NothingSelected,
 }
 
+/// What one row of the keybinding table is, for as long as the editor is
+/// open: issued when the row is created and kept through edits.
+///
+/// **The row's identity, because nothing about the binding is.** The same
+/// action can be bound twice in one context (`Ctrl+S` and `F2`, both *save*),
+/// and adding or editing a binding can leave two rows with the same key and
+/// context until the conflict is resolved — so neither pair is unique. The
+/// table keys its rows by this.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct BindingId(pub u64);
+
+/// Issues [`BindingId`]s: every row created gets one no other row has had.
+#[derive(Debug, Default)]
+pub struct BindingIds {
+    next: u64,
+}
+
+impl BindingIds {
+    pub fn issue(&mut self) -> BindingId {
+        let id = BindingId(self.next);
+        self.next += 1;
+        id
+    }
+}
+
 /// A single resolved keybinding entry for display
 #[derive(Debug, Clone)]
 pub struct ResolvedBinding {
+    /// This row's identity. See [`BindingId`].
+    pub id: BindingId,
     /// Formatted key combination for display (e.g., "Ctrl+S")
     pub key_display: String,
     /// Action name (machine-readable, e.g., "save")
@@ -246,6 +273,16 @@ pub enum SourceFilter {
     KeymapOnly,
     CustomOnly,
     PluginOnly,
+}
+
+/// What a [`DisplayRow`] is, independent of where it is: the editor holds
+/// its selection by this.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RowKey {
+    /// A section header, by its plugin name (`None` = builtin).
+    Section(Option<String>),
+    /// A binding row, by its binding.
+    Binding(BindingId),
 }
 
 /// A row in the keybinding editor display list — either a section header or a binding

@@ -10570,6 +10570,7 @@ function buildRepoDialogSpec(): WidgetSpec {
         label: editor.t("repo.list_title", { count: String(repos.length) }),
         child: list({
           items: repos.map((r) => ({ text: `${r.name.padEnd(w)}${repoRemoteLabel(r)}` })),
+          itemKeys: repos.map((r) => r.id),
           selectedIndex: Math.max(0, repos.findIndex((r) => r.id === d.repoId)),
           visibleRows: Math.min(6, repos.length),
           key: "repo_list",

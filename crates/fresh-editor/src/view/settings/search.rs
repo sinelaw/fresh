@@ -35,6 +35,28 @@ pub enum DeepMatch {
     },
 }
 
+impl SearchResult {
+    /// What this result is: the setting it found, and where in it the match
+    /// was. **A setting's path alone is not unique among results** — one
+    /// setting can match directly and again through each map key, map value
+    /// and list item it holds — so the match's own place is part of it: a
+    /// map entry by its key (unique in the map), a list item by its place in
+    /// the list (which is what a list item's identity is).
+    pub fn id(&self) -> String {
+        let path = &self.item.path;
+        match &self.deep_match {
+            None => path.clone(),
+            Some(DeepMatch::MapKey { key, .. }) => format!("{path}#key:{key}"),
+            Some(DeepMatch::MapValue {
+                key, field_path, ..
+            }) => format!("{path}#value:{key}{field_path}"),
+            Some(DeepMatch::TextListItem { item_index, .. }) => {
+                format!("{path}#item:{item_index}")
+            }
+        }
+    }
+}
+
 /// A search result with match information
 #[derive(Debug, Clone)]
 pub struct SearchResult {

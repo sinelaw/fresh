@@ -2528,7 +2528,7 @@ impl Editor {
         if let Some(prompt) = &mut self.active_window_mut().prompt {
             let len = prompt.suggestions.len();
             if len > 0 {
-                prompt.selected_suggestion = Some((index as usize).min(len - 1));
+                prompt.select_suggestion(Some((index as usize).min(len - 1)));
             }
         }
     }
@@ -4513,6 +4513,9 @@ impl Editor {
         let items: Vec<crate::model::event::PopupListItemData> = actions
             .iter()
             .map(|action| crate::model::event::PopupListItemData {
+                // Unique among the actions: the plugin API refuses a
+                // repeated one.
+                id: action.id.clone(),
                 text: action.label.clone(),
                 detail: None,
                 icon: None,

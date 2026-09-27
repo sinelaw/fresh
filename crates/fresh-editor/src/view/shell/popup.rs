@@ -759,6 +759,10 @@ pub fn content(c: &PopupContent, selected_hint: Option<&str>) -> Node<UiMsg> {
         .scrollbar(),
         PopupContent::List { items, selected } => {
             let rows: Rc<Vec<PopupListItem>> = Rc::new(items.clone());
+            debug_assert!(
+                fresh_core::api::first_duplicate_id(rows.iter().map(|r| r.id.as_str())).is_none(),
+                "popup list ids must be unique: rows are keyed by them"
+            );
             let for_row = rows.clone();
             let sel = *selected;
             let hint = selected_hint.map(str::to_string);
@@ -775,7 +779,13 @@ pub fn content(c: &PopupContent, selected_hint: Option<&str>) -> Node<UiMsg> {
             // selection is never muted.
             let list = fresh_ui::widgets::List::windowed_stateful(
                 rows.len(),
-                |i| Key::Pair("popup_item".into(), i as u64),
+                // By what the item is (`PopupListItem::id`), never by where
+                // it is: a completion list re-filters under every keystroke,
+                // and its rows must move rather than be rewritten.
+                {
+                    let rows = rows.clone();
+                    move |i| Key::Str(format!("popup_item:{}", rows[i].id).into())
+                },
                 move |i, st| match for_row.get(i) {
                     Some(it) => list_row(
                         it,
@@ -1084,6 +1094,7 @@ mod tests {
     #[test]
     fn a_disabled_row_is_muted_and_a_clickable_one_is_underlined() {
         let item = |text: &str, data: Option<&str>, disabled: bool| PopupListItem {
+            id: "t1086_69".into(),
             text: text.into(),
             detail: None,
             icon: None,
@@ -1136,6 +1147,7 @@ mod tests {
     #[test]
     fn a_hovered_row_carries_the_hover_ink_through_its_cells() {
         let item = |text: &str| PopupListItem {
+            id: "t1138_33".into(),
             text: text.into(),
             detail: None,
             icon: None,
@@ -1185,6 +1197,7 @@ mod tests {
         let c = PopupContent::List {
             items: (0..5)
                 .map(|i| PopupListItem {
+                    id: "t1187_26".into(),
                     text: format!("item {i}"),
                     detail: None,
                     icon: None,
@@ -1376,7 +1389,7 @@ mod tests {
         bound: Vec<(KeyPress, crate::input::keybindings::Action)>,
     ) -> Ui<UiMsg> {
         let items: Vec<PopupListItem> = (0..4)
-            .map(|i| PopupListItem::new(format!("item {i}")))
+            .map(|i| PopupListItem::new("t1379_22", format!("item {i}")))
             .collect();
         let mut ui: Ui<UiMsg> = Ui::new();
         ui.frame(

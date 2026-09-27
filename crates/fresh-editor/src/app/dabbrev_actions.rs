@@ -281,6 +281,9 @@ impl Editor {
         candidates
             .into_iter()
             .map(|c| PopupListItemData {
+                // A buffer word is its own identity: the candidates are
+                // distinct words.
+                id: format!("word:{}", c.label),
                 text: c.label.clone(),
                 detail: c.detail.clone(),
                 icon: Some("w".to_string()),

@@ -2267,6 +2267,7 @@ impl Editor {
                     } => {
                         let page = &s.pages[idx];
                         st::CatRow::Category {
+                            id: page.path.clone(),
                             idx,
                             chevron: match (expandable, expanded) {
                                 (false, _) => " ",
@@ -2282,11 +2283,23 @@ impl Editor {
                     TreeRow::Section {
                         cat_idx,
                         section_idx,
-                    } => st::CatRow::Section {
-                        cat: cat_idx,
-                        section: section_idx,
-                        label: s.pages[cat_idx].sections[section_idx].name.clone(),
-                    },
+                    } => {
+                        let page = &s.pages[cat_idx];
+                        let section = &page.sections[section_idx];
+                        st::CatRow::Section {
+                            id: format!(
+                                "{}#{}",
+                                page.path,
+                                page.items
+                                    .get(section.first_item_index)
+                                    .map(|item| item.path.as_str())
+                                    .unwrap_or_default()
+                            ),
+                            cat: cat_idx,
+                            section: section_idx,
+                            label: section.name.clone(),
+                        }
+                    }
                 })
                 .collect();
             // **One index, where the painter asked every row.** It compared
@@ -2680,6 +2693,7 @@ impl Editor {
                         collapsed,
                         binding_count,
                     } => kb::Row::Section {
+                        id: plugin_name.clone().unwrap_or_default(),
                         chevron: match collapsed {
                             true => "▶".into(),
                             false => "▼".into(),
@@ -2690,6 +2704,7 @@ impl Editor {
                     DisplayRow::Binding(i) => {
                         let b = &e.bindings[*i];
                         kb::Row::Binding {
+                            id: b.id.0.to_string(),
                             key: b.key_display.clone(),
                             action: b.action.clone(),
                             description: b.action_display.clone(),
@@ -2715,7 +2730,7 @@ impl Editor {
                     }
                 })
                 .collect(),
-            selected: e.selected,
+            selected: e.selected(),
         })
     }
 
@@ -3934,7 +3949,7 @@ impl Editor {
         );
         let count = (!prompt.suggestions.is_empty()).then(|| {
             (
-                prompt.selected_suggestion.map(|i| i + 1).unwrap_or(0),
+                prompt.selected_suggestion().map(|i| i + 1).unwrap_or(0),
                 prompt.suggestions.len(),
             )
         });
@@ -4066,7 +4081,7 @@ impl Editor {
             sort: state.sort_mode,
             ascending: state.sort_ascending,
             listing,
-            selected: files.then_some(state.selected_index).flatten(),
+            selected: files.then_some(state.selected_index()).flatten(),
             hover,
         })
     }
@@ -4123,7 +4138,7 @@ impl Editor {
                 move |v, i| convert(&v[i]),
                 |v, i| v[i].disabled,
             ),
-            selected: prompt.selected_suggestion,
+            selected: prompt.selected_suggestion(),
             place,
             // The row the painter drew under the popup, now stacked in the
             // layer with it. `render_quick_open_hints` is what this replaces.
@@ -4759,7 +4774,7 @@ impl Editor {
                 .prompt
                 .as_ref()
                 .and_then(|prompt| {
-                    let idx = prompt.selected_suggestion?;
+                    let idx = prompt.selected_suggestion()?;
                     prompt.suggestions.get(idx)
                 })
                 .map(|s| {

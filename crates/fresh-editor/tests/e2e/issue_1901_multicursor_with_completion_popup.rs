@@ -34,6 +34,7 @@ fn show_completion_popup(harness: &mut EditorTestHarness) -> anyhow::Result<()> 
             transient: false,
             content: PopupContentData::List {
                 items: vec![PopupListItemData {
+                    id: "t36_29".into(),
                     text: "value".to_string(),
                     detail: None,
                     icon: Some("v".to_string()),
@@ -141,6 +142,7 @@ fn show_hello_completion_popup(harness: &mut EditorTestHarness) -> anyhow::Resul
             transient: false,
             content: PopupContentData::List {
                 items: vec![PopupListItemData {
+                    id: "t143_29".into(),
                     text: "hello".to_string(),
                     detail: None,
                     icon: Some("v".to_string()),

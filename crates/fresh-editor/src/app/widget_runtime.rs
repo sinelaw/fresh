@@ -5052,7 +5052,7 @@ mod tests {
             .prompt
             .as_mut()
             .unwrap()
-            .selected_suggestion = Some(500);
+            .select_suggestion(Some(500));
         frame_the_shell(&mut editor);
         let long = name_width(&editor, 500);
         // Wider than the short rows' column, on the frame the long name

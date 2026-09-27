@@ -112,6 +112,7 @@ fn show_lsp_popup(harness: &mut EditorTestHarness) {
                 transient: false,
                 content: PopupContentData::List {
                     items: vec![PopupListItemData {
+                        id: "t114_33".into(),
                         text: POPUP_MARKER.to_string(),
                         detail: Some("fn calculate_difference(a: i32, b: i32) -> i32".to_string()),
                         icon: Some("λ".to_string()),

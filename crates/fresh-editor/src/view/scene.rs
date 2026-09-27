@@ -570,7 +570,7 @@ impl Editor {
             overlay: p.overlay,
             title: p.title.iter().map(|t| t.text.as_str()).collect(),
             status: p.status.clone(),
-            selected: p.selected_suggestion,
+            selected: p.selected_suggestion(),
             scroll_start,
             visible_count: visible,
             total,
@@ -1114,7 +1114,7 @@ impl Editor {
             scroll_offset: window.first,
             visible_rows: window.visible,
             total: state.entries.len(),
-            selected: state.selected_index,
+            selected: state.selected_index(),
             active_section: if files_active { "files" } else { "navigation" },
             loading: state.loading,
             error: state.error.clone(),
@@ -1917,7 +1917,7 @@ impl Editor {
             .iter()
             .enumerate()
             .map(|(i, dr)| {
-                let selected = i == kb.selected;
+                let selected = i == kb.selected();
                 match dr {
                     DisplayRow::SectionHeader {
                         plugin_name,
@@ -2010,7 +2010,7 @@ impl Editor {
             count: format!("{} / {}", kb.filtered_indices.len(), kb.bindings.len()),
             has_changes: kb.has_changes,
             rows,
-            selected: kb.selected,
+            selected: kb.selected(),
             scroll_offset: kb.scroll.offset,
             viewport: kb.scroll.viewport,
             showing_help: kb.showing_help,

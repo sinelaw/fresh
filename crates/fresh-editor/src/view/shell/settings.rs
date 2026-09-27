@@ -434,7 +434,13 @@ pub fn categories(c: &Categories) -> Node<UiMsg> {
     // row theme only shows through the cells that name no ink of their own.
     let list = fresh_ui::List::windowed_stateful(
         n,
-        |i| fresh_ui::Key::Pair("settings_cat".into(), i as u64),
+        // By page and section, never by position: expanding a category
+        // inserts its sections, and the rows below must move, not be
+        // rewritten.
+        {
+            let rows = rows.clone();
+            move |i| rows[i].key()
+        },
         {
             let rows = rows.clone();
             let selected = c.selected;
@@ -575,7 +581,12 @@ pub fn results(r: &Results) -> Node<UiMsg> {
     let sel = r.selected;
     let list = fresh_ui::List::windowed(
         n,
-        |i| fresh_ui::Key::Pair("settings_result".into(), i as u64),
+        // By what the result is, never by its rank: the results re-rank
+        // under every keystroke of the query.
+        {
+            let rows = rows.clone();
+            move |i| fresh_ui::Key::Str(format!("settings_result:{}", rows[i].id).into())
+        },
         move |i| result_card(&rows[i], i == sel),
     )
     .row_rows(RESULT_ROWS)
@@ -1412,6 +1423,8 @@ pub struct Results {
 /// breadcrumb that says where it lives, and its description.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ResultRow {
+    /// What the result is (`SearchResult::id`); the row is keyed by it.
+    pub id: String,
     /// Already split at the match positions by the search, which is domain
     /// knowledge: what a fuzzy match *is* belongs to the matcher.
     pub name: Vec<Span>,
@@ -1444,6 +1457,8 @@ pub struct StripCat {
 #[derive(Clone, Debug, PartialEq)]
 pub enum CatRow {
     Category {
+        /// The page's path: what the row is. The row is keyed by it.
+        id: String,
         idx: usize,
         /// `▼`, `▶` or a space — the painter's own three states.
         chevron: &'static str,
@@ -1456,10 +1471,24 @@ pub enum CatRow {
         nested: bool,
     },
     Section {
+        /// The page's path and the section's first setting: what the row
+        /// is. A section's name is not unique; its first setting is.
+        id: String,
         cat: usize,
         section: usize,
         label: String,
     },
+}
+
+impl CatRow {
+    /// The row's key: its id, namespaced.
+    fn key(&self) -> fresh_ui::Key {
+        match self {
+            CatRow::Category { id, .. } | CatRow::Section { id, .. } => {
+                fresh_ui::Key::Str(format!("settings_cat:{id}").into())
+            }
+        }
+    }
 }
 
 pub fn search_key() -> fresh_ui::Key {
@@ -2044,6 +2073,7 @@ mod tests {
         Categories {
             rows: vec![
                 CatRow::Category {
+                    id: "/general".into(),
                     idx: 0,
                     chevron: "▼",
                     dirty: true,
@@ -2052,16 +2082,19 @@ mod tests {
                     nested: false,
                 },
                 CatRow::Section {
+                    id: "/general#/general/a".into(),
                     cat: 0,
                     section: 0,
                     label: "Startup".into(),
                 },
                 CatRow::Section {
+                    id: "/general#/general/b".into(),
                     cat: 0,
                     section: 1,
                     label: "Appearance".into(),
                 },
                 CatRow::Category {
+                    id: "/clipboard".into(),
                     idx: 1,
                     chevron: " ",
                     dirty: false,
@@ -2258,6 +2291,7 @@ mod tests {
                 selected,
                 rows: (0..12)
                     .map(|i| ResultRow {
+                        id: format!("/general/setting_{i}"),
                         name: vec![Span::new(
                             format!("result {i}"),
                             pair("ui.popup_text_fg", "ui.popup_bg"),

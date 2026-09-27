@@ -110,11 +110,7 @@ impl Suggestion {
     /// The first id `suggestions` repeats, if any: a list whose ids are not
     /// unique cannot key its rows, and is refused where it arrives.
     pub fn duplicate_id(suggestions: &[Suggestion]) -> Option<&str> {
-        let mut seen = std::collections::HashSet::with_capacity(suggestions.len());
-        suggestions
-            .iter()
-            .map(|s| s.id.as_str())
-            .find(|id| !seen.insert(*id))
+        crate::api::first_duplicate_id(suggestions.iter().map(|s| s.id.as_str()))
     }
 
     /// Check if this suggestion is disabled

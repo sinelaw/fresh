@@ -599,7 +599,7 @@ impl EditorTestApi for crate::app::Editor {
             input: p.input_str().to_string(),
             cursor_pos: p.cursor_byte(),
             suggestions: p.suggestions.iter().map(|s| s.text.clone()).collect(),
-            selected_suggestion: p.selected_suggestion,
+            selected_suggestion: p.selected_suggestion(),
         });
 
         ModalSnapshot {

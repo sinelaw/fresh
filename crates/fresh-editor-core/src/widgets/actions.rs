@@ -179,6 +179,18 @@ pub fn append_tree_nodes_in_spec(
     } = spec
     {
         if key.as_deref() == Some(widget_key) {
+            // Keys are the nodes' identity: an appended key the tree
+            // already has would make two nodes one. Refuse the batch
+            // whole rather than keep half of it.
+            let existing: std::collections::HashSet<&str> =
+                item_keys.iter().map(String::as_str).collect();
+            if let Some(dup) = new_item_keys.iter().find(|k| existing.contains(k.as_str())) {
+                tracing::error!(
+                    "AppendTreeNodes on Tree {widget_key:?}: key {dup:?} is already in the tree; \
+                     item keys must be unique, so the batch is dropped"
+                );
+                return true;
+            }
             // Copy-on-write: in place when nothing else holds the
             // collection, a fresh one when a described frame still does.
             std::sync::Arc::make_mut(nodes).extend(new_nodes);
@@ -542,6 +554,48 @@ mod tests {
             }
             _ => unreachable!(),
         }
+    }
+
+    /// An appended key the tree already has would make two nodes one:
+    /// the batch is refused whole.
+    #[test]
+    fn append_tree_nodes_refuses_a_key_the_tree_has() {
+        let mut spec = WidgetSpec::Tree {
+            nodes: vec![node("a", 0, false)].into(),
+            item_keys: vec!["k".into()].into(),
+            selected_index: -1,
+            visible_rows: Some(5),
+            expanded_keys: vec![],
+            checkable: false,
+            item_height: 1,
+            card_borders: false,
+            toggle_on_click: false,
+            columns: Vec::new(),
+            indent_cols: 2,
+            key: Some("t".into()),
+        };
+        let batch = vec![node("b", 0, false), node("c", 0, false)];
+        assert!(append_tree_nodes_in_spec(
+            &mut spec,
+            "t",
+            batch.clone(),
+            vec!["new".into(), "k".into()],
+        ));
+        let WidgetSpec::Tree { nodes, .. } = &spec else {
+            unreachable!()
+        };
+        assert_eq!(nodes.len(), 1, "no part of the batch lands");
+
+        assert!(append_tree_nodes_in_spec(
+            &mut spec,
+            "t",
+            batch,
+            vec!["b".into(), "c".into()],
+        ));
+        let WidgetSpec::Tree { item_keys, .. } = &spec else {
+            unreachable!()
+        };
+        assert_eq!(**item_keys, ["k", "b", "c"]);
     }
 
     #[test]

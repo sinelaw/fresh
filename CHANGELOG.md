@@ -28,6 +28,7 @@ Fresh is now licensed **GPL-3.0-or-later**, up from GPL-2.0-only (#3328).
 
 ### Bug Fixes
 
+* **A selection stays on its item when the list changes under it** - re-sorting the Open File browser kept the same row number selected, so a different file was highlighted; searching the keybinding editor did the same to the selected binding. Both now follow the item
 * **`echo 123 | fresh` opens the pipe instead of hanging** - piping into `fresh` with no file and no `-` brought up an editor that took no input at all, spun on a full CPU core, and could not even be quit with Ctrl+Q. Stdin with nothing else to open now means `fresh -`; with a file to open it is left unread, but the keyboard works either way. Any redirect counts, not just a pipe - `fresh < file` and `fresh < /dev/null` hung the same way (#3252)
 * **Orchestrator dock polish** - the welcome screen and dock could fail to appear in a daemon session, a context menu could close itself too fast, and a workspace just created from the dock could end up not taking keyboard input (#3306, #3275)
 * **The workspace dock is there from the first frame** - the editor used to come up full width and the dock shoved it aside a moment later, once the plugins had loaded. The column is now laid out before any plugin runs. The dock also **remembers whether you left it open and how wide you dragged it** across launches; `autoOpenDock: false` keeps it closed until you open it, and a bare `fresh` always opens it (#3321)
@@ -104,6 +105,8 @@ Fresh is now licensed **GPL-3.0-or-later**, up from GPL-2.0-only (#3328).
 * **`editor.setInputMode(name | null)` sets an editor-wide input mode** for modal-editing plugins like vi, beside `setEditorMode`, which is now documented as window-scoped. Keys resolve against a focused panel's mode, then the buffer's, the window's editor mode, the input mode, and the base keymap. `getInputMode()` reads it and `input_mode_changed` announces changes (#3395)
 * **The orchestrator's saved machines moved into the editor-owned state store** and are imported from the old directory on first load. The old files are left in place — a plugin can no longer delete a path it names — and are inert
 * **Prompt suggestions carry a required `id`**, unique in the list: `setPromptSuggestions` throws on a missing or repeated one. The list keys its rows by it, so a re-ranked or growing list keeps each row's selection and state on the item rather than on a position. The finder library's `DisplayEntry` gains the same required `id`. Third-party plugins that set suggestions will need to supply one
+* **Widget `List` and `Tree` specs require `itemKeys`, one per item and no two alike**, and so do `setItems` and `appendTreeNodes`. A spec or mutation whose keys don't match its items one to one is refused (the call returns `false` and the reason is logged), and an append whose key the tree already has is dropped. The host keeps rows, selection, hover and expansion by these keys and no longer falls back to row positions. The `list()`/`tree()` helpers in `lib/widgets.ts` now require the field
+* **Action popups and LSP menu contributions require unique ids**; `showActionPopup` and `setLspMenuContributions` throw on a repeated one
 
 ## 0.5.1
 

@@ -520,7 +520,7 @@ impl Editor {
 
         if let Some(prompt) = self.active_window_mut().prompt.as_mut() {
             if !prompt.suggestions.is_empty() {
-                prompt.selected_suggestion = Some(current_index);
+                prompt.select_suggestion(Some(current_index));
                 prompt.set_input_plain(current_theme_key.to_string());
             }
         }

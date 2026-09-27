@@ -576,8 +576,7 @@ impl Editor {
             .cloned()
             .collect();
 
-        let mut rows =
-            lsp_items_to_popup_items(&matching.iter().map(|c| &c.item).collect::<Vec<_>>());
+        let mut rows = lsp_items_to_popup_items(&matching.iter().collect::<Vec<_>>());
         self.active_window_mut().completion_popup_lsp_items = matching;
 
         // Buffer-word candidates go below, minus anything the server
@@ -593,58 +592,17 @@ impl Editor {
         rows
     }
 
-    /// The candidate behind the highlighted completion row, described in
-    /// terms that survive rebuilding the rows.
-    ///
-    /// Read *before* `build_completion_popup_rows` runs, since that call
-    /// overwrites the row → item mapping this reads.
-    fn selected_completion_row(&self) -> Option<SelectedCompletionRow> {
-        let popup = self.active_state().popups.top()?;
-        let row = popup.selected_index()?;
-        match self.active_window().completion_popup_lsp_items.get(row) {
-            Some(item) => Some(SelectedCompletionRow::Lsp(Box::new(item.clone()))),
-            // No candidate recorded for this row.
-            None => popup
-                .selected_item()
-                .map(|item| SelectedCompletionRow::Text(item.text.clone())),
-        }
-    }
-
-    /// Where the previously selected candidate ended up among the freshly
-    /// built `rows`, or `None` if the new prefix filtered it out.
-    fn completion_row_of(
-        &self,
-        previous: &SelectedCompletionRow,
-        rows: &[crate::model::event::PopupListItemData],
-    ) -> Option<usize> {
-        match previous {
-            SelectedCompletionRow::Lsp(item) => self
-                .active_window()
-                .completion_popup_lsp_items
-                .iter()
-                .position(|i| i == item.as_ref()),
-            // A row with no candidate recorded behind it carries no payload
-            // beyond the text it inserts, so its text is identity enough —
-            // and identity semantics only buy anything where duplicates
-            // exist, which is the LSP rows. Search the whole list rather
-            // than only the buffer-word tail: popups that were not built by
-            // `build_completion_popup_rows` (plugin-supplied lists, and the
-            // ones tests inject) have *no* row → candidate mapping, so
-            // every one of their rows lands here and a tail-only search
-            // would never find them. This cannot quietly promote a plain
-            // buffer word into an auto-import candidate, because
-            // `build_completion_popup_rows` drops any buffer word whose
-            // text an LSP row already occupies — the two never coexist.
-            SelectedCompletionRow::Text(text) => rows.iter().position(|row| row.text == *text),
-        }
-    }
-
     /// Re-filter the completion popup based on current prefix.
     /// If no items match, dismiss the popup.
     fn refilter_completion_popup(&mut self) {
-        // What the user has highlighted, captured before the rows (and the
-        // mapping behind them) are rebuilt.
-        let previous_selection = self.selected_completion_row();
+        // What the user has highlighted, by the row's id: a rebuilt row
+        // keeps the id of the candidate it was built from.
+        let previous_selection = self
+            .active_state()
+            .popups
+            .top()
+            .and_then(|p| p.selected_item())
+            .map(|item| item.id.clone());
 
         let all_popup_items = self.build_completion_popup_rows();
 
@@ -655,14 +613,14 @@ impl Editor {
             return;
         }
 
-        // Keep the highlight on the candidate the user picked, identified
-        // by the *item* behind the row rather than by its label: an
-        // auto-import list offers one `HashMap` row per crate exporting
-        // one, and matching on the label snapped the highlight back to the
-        // first of them on every further keystroke (#2952). A candidate
-        // the new prefix filtered out falls back to the first row.
+        // Keep the highlight on the candidate the user picked, found by id
+        // rather than by label: an auto-import list offers one `HashMap`
+        // row per crate exporting one, and matching on the label snapped
+        // the highlight back to the first of them on every further
+        // keystroke (#2952). A candidate the new prefix filtered out falls
+        // back to the first row.
         let selected = previous_selection
-            .and_then(|previous| self.completion_row_of(&previous, &all_popup_items))
+            .and_then(|id| all_popup_items.iter().position(|row| row.id == id))
             .unwrap_or(0);
 
         let popup_data = build_completion_popup_from_items(all_popup_items, selected);
@@ -712,20 +670,6 @@ pub(crate) fn build_completion_popup_from_items(
     }
 }
 
-/// The highlighted completion row, in terms that outlive the rows
-/// themselves — so typing another character can put the highlight back on
-/// the same candidate rather than on the first row that happens to share
-/// its label.
-enum SelectedCompletionRow {
-    /// An LSP candidate, identified by the candidate itself. Boxed because
-    /// a `CompletionItem` is large next to the other variant.
-    Lsp(Box<LspCompletionCandidate>),
-    /// A row with no LSP candidate recorded behind it — a buffer word, or
-    /// any row of a popup this module did not build. Identified by its
-    /// text, which is all such a row carries.
-    Text(String),
-}
-
 /// Whether a completion candidate survives the word prefix at the cursor.
 ///
 /// `prefix` must already be lowercased (see `Editor::completion_word_prefix`).
@@ -741,13 +685,14 @@ pub(crate) fn completion_matches_prefix(item: &lsp_types::CompletionItem, prefix
 
 /// Convert LSP `CompletionItem`s to `PopupListItemData`s.
 pub(crate) fn lsp_items_to_popup_items(
-    items: &[&lsp_types::CompletionItem],
+    candidates: &[&LspCompletionCandidate],
 ) -> Vec<crate::model::event::PopupListItemData> {
     use crate::model::event::PopupListItemData;
 
-    items
+    candidates
         .iter()
-        .map(|item| {
+        .map(|candidate| {
+            let item = &candidate.item;
             let icon = match item.kind {
                 Some(lsp_types::CompletionItemKind::FUNCTION)
                 | Some(lsp_types::CompletionItemKind::METHOD) => Some("λ".to_string()),
@@ -780,6 +725,7 @@ pub(crate) fn lsp_items_to_popup_items(
                 .or_else(|| item.detail.clone());
 
             PopupListItemData {
+                id: candidate.id.clone(),
                 text: item.label.clone(),
                 detail,
                 icon,
@@ -811,7 +757,8 @@ mod tests {
             kind: Some(lsp_types::CompletionItemKind::STRUCT),
             ..Default::default()
         };
-        let popup_items = lsp_items_to_popup_items(&[&item]);
+        let candidate = LspCompletionCandidate::unattributed("lsp:0:0".into(), item);
+        let popup_items = lsp_items_to_popup_items(&[&candidate]);
         assert_eq!(popup_items.len(), 1);
         assert_eq!(popup_items[0].text, "HashMap");
         assert_eq!(
@@ -830,7 +777,8 @@ mod tests {
             detail: Some("fn test_function()".to_string()),
             ..Default::default()
         };
-        let popup_items = lsp_items_to_popup_items(&[&item]);
+        let candidate = LspCompletionCandidate::unattributed("lsp:0:0".into(), item);
+        let popup_items = lsp_items_to_popup_items(&[&candidate]);
         assert_eq!(popup_items[0].detail.as_deref(), Some("fn test_function()"));
     }
 }

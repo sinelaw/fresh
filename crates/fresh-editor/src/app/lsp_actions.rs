@@ -115,7 +115,7 @@ impl Editor {
 
         // Configure initial selection
         if let Some(prompt) = self.active_window_mut().prompt.as_mut() {
-            prompt.selected_suggestion = Some(0);
+            prompt.select_suggestion(Some(0));
         }
     }
 
@@ -338,10 +338,10 @@ impl Editor {
             if suggestions.len() == 1 {
                 // If only one entry, pre-fill the input with it
                 prompt.set_input_plain(suggestions[0].text.clone());
-                prompt.selected_suggestion = Some(0);
+                prompt.select_suggestion(Some(0));
             } else if !prompt.suggestions.is_empty() {
                 // Auto-select first suggestion
-                prompt.selected_suggestion = Some(0);
+                prompt.select_suggestion(Some(0));
             }
         }
     }
