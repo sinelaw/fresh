@@ -238,18 +238,14 @@ pub struct SettingsState {
     /// tree view. Only categories with `sections.len() > 1` are eligible —
     /// a category with zero or one section stays flat.
     pub expanded_categories: std::collections::HashSet<usize>,
-    /// How many rows a `PgUp` / `PgDn` moves the category cursor by: the
-    /// tree's own height, read off the box the tree placed
-    /// (`Editor::settle_modal_viewports`).
+    /// The category tree's page handle. The tree's list records the window
+    /// its layout placed, and PageUp/PageDown ask it for the row a page away.
     ///
-    /// **This is the whole of what the tree's old `ScrollablePanel` was still
-    /// doing.** Its offset and content height were written by
-    /// `ensure_focused_visible` walking `ScrollItem::height` over every row —
-    /// a second copy of the heights the list draws the rows with — and read by
-    /// nothing: the window is the list element's, so the wheel moves it and a
-    /// keyboard move reveals the selection, which is what `categories`
-    /// documents. A page is a number, not a panel.
-    pub tree_page_rows: u16,
+    /// It replaces `tree_page_rows`, the height of the box the tree was
+    /// placed in, read back after each frame —
+    /// the last thing the tree's old `ScrollablePanel` was still doing. The
+    /// window is the list element's; the page is that window, in rows.
+    pub tree_pager: std::rc::Rc<fresh_ui::behavior::Pager>,
     /// Cursor position inside the currently-selected category's tree row.
     /// `None` = cursor is on the category row itself (the category row
     /// shows the `>` indicator).
@@ -452,7 +448,7 @@ impl SettingsState {
             pending_deletions: std::collections::HashSet::new(),
             item_style: super::items::ItemBoxStyle::default(),
             expanded_categories: std::collections::HashSet::new(),
-            tree_page_rows: 0,
+            tree_pager: fresh_ui::behavior::Pager::new(),
             tree_cursor_section: None,
             cursor_drove_body: false,
             text_edit_snapshot: None,
@@ -769,6 +765,16 @@ impl SettingsState {
             })
             .collect();
         self.expanded_categories.extend(parents);
+    }
+
+    /// Move the tree cursor `pages` pages, by the window the tree's list was
+    /// last laid out with.
+    pub fn tree_page(&mut self, pages: i32) {
+        let rows = self.visible_tree();
+        let cur = self.tree_cursor_index(&rows);
+        if let Some(to) = self.tree_pager.target(cur, pages, rows.len()) {
+            self.tree_step(to as i32 - cur as i32);
+        }
     }
 
     /// Move the cursor in the categories tree by `delta` rows (positive =

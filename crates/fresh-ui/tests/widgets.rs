@@ -305,6 +305,10 @@ fn a_page_is_the_height_layout_gave_the_list() {
     // A shorter frame is a shorter page, on the next layout.
     ui.frame(list(10), Size { w: 30, h: 4 });
     assert_eq!(pager.target(10, 1, 100), Some(14));
+
+    // A list that has left the tree has no window, and so no page.
+    ui.frame(fresh_ui::text("gone"), FRAME);
+    assert_eq!(pager.target(10, 1, 100), None);
 }
 
 #[test]

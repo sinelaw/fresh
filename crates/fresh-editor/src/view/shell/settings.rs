@@ -464,7 +464,7 @@ pub fn categories(c: &Categories) -> Node<UiMsg> {
     };
     // The list's own ring stop is declined: the tree is one stop, and its
     // cursor is the host's (`SettingsState::tree_key`), not the list's.
-    let list = list.focusable(false);
+    let list = list.focusable(false).pager(c.pager.clone());
     categories_keys(fresh_ui::ComponentExt::node(list), c.focused)
 }
 
@@ -1410,6 +1410,10 @@ pub struct Categories {
     /// Whether the categories panel has the keyboard. It decides both the
     /// highlight's colour and whether the `>` is drawn, exactly as it did.
     pub focused: bool,
+    /// The dialog's page handle for the tree: the list records the window
+    /// its layout gave it, and the tree's PageUp/PageDown ask it for the row
+    /// a page away.
+    pub pager: Rc<fresh_ui::behavior::Pager>,
 }
 
 /// The search's results, which replace the page while a search is running.
@@ -2105,6 +2109,7 @@ mod tests {
             ],
             selected: Some(0),
             focused: true,
+            pager: fresh_ui::behavior::Pager::new(),
         }
     }
 
@@ -2773,6 +2778,57 @@ mod tests {
             "the panel starts one divider column right of the tree"
         );
         assert!(panel.h > 0 && tree.h > 0, "both have a band to fill");
+    }
+
+    /// **The tree's page is the window its list was laid out with**, not the
+    /// height of the box it sits in, read back after the frame
+    /// (`tree_page_rows`). A shorter dialog is a shorter page, and the
+    /// narrow layout, which draws a strip instead of this list, has none.
+    #[test]
+    fn the_trees_page_is_its_lists_window() {
+        // A tree taller than any box: a hundred pages.
+        let long = || {
+            let mut c = chrome();
+            let cats = c.categories.as_mut().unwrap();
+            let first = cats.rows[0].clone();
+            cats.rows = (0..100)
+                .map(|i| match first.clone() {
+                    CatRow::Category {
+                        chevron,
+                        dirty,
+                        icon,
+                        nested,
+                        ..
+                    } => CatRow::Category {
+                        id: format!("/page{i}"),
+                        idx: i,
+                        chevron,
+                        dirty,
+                        icon,
+                        label: format!("Page {i}"),
+                        nested,
+                    },
+                    other => other,
+                })
+                .collect();
+            c
+        };
+        let c = long();
+        let pager = c.categories.as_ref().unwrap().pager.clone();
+        let ui = with_chrome(c, 200, 60, None);
+        let tree = ui.rect_of(ui.find_by_key(&categories_key()).expect("the tree"));
+        let rows = pager.target(0, 1, 1000).expect("laid out, so a page");
+        assert!(
+            rows > 0 && rows <= tree.h as usize,
+            "{rows} rows in {}",
+            tree.h
+        );
+
+        let c = long();
+        let pager = c.categories.as_ref().unwrap().pager.clone();
+        let _ui = with_chrome(c, 200, 30, None);
+        let short = pager.target(0, 1, 1000).unwrap();
+        assert!(short < rows, "{short} < {rows}");
     }
 
     /// **A press on a row is that row's identity**, which is what the four

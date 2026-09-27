@@ -13,7 +13,7 @@
 //! still owns the selection; the pager owns only the arithmetic between the
 //! selection and the window.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 /// The window a list was last laid out with, and the page arithmetic over it.
@@ -45,6 +45,11 @@ impl Pager {
         self.rows.set(Some(rows.max(1)));
     }
 
+    /// The list is gone: there is no window, so no page.
+    pub(crate) fn forget(&self) {
+        self.rows.set(None);
+    }
+
     /// The item `pages` pages from `from` (negative: up) in a list of `len`
     /// items, clamped to the list: a page past the end lands on the last
     /// item, and one before the start on the first.
@@ -59,5 +64,46 @@ impl Pager {
             true => from.min(last).saturating_sub(step),
             false => from.saturating_add(step).min(last),
         })
+    }
+}
+
+/// A list's hold on the pager it records into — its own, or its owner's —
+/// so that a list leaving the tree takes its window with it. A pager that
+/// went on answering from the last window it saw would page a list nobody
+/// can see (the narrow Settings layout draws its categories as a strip, not
+/// this list) by a height that is no longer anyone's.
+#[derive(Debug, Default)]
+pub(crate) struct PagerSlot {
+    own: Rc<Pager>,
+    current: RefCell<Option<Rc<Pager>>>,
+}
+
+impl PagerSlot {
+    /// The pager this build records into: `owner`'s when it passed one,
+    /// else the list's own. A pager the list stops recording into forgets
+    /// the window it had.
+    pub(crate) fn bind(&self, owner: Option<Rc<Pager>>) -> Rc<Pager> {
+        let next = owner.unwrap_or_else(|| self.own.clone());
+        let prev = self.current.replace(Some(next.clone()));
+        if let Some(prev) = prev.filter(|p| !Rc::ptr_eq(p, &next)) {
+            prev.forget();
+        }
+        next
+    }
+}
+
+impl super::Behavior for PagerSlot {
+    fn teardown(&self) {
+        if let Some(p) = self.current.take() {
+            p.forget();
+        }
+    }
+
+    fn behavior_name(&self) -> &'static str {
+        "PagerSlot"
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }

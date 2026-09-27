@@ -1129,29 +1129,6 @@ impl Editor {
         // geometry lives now. So the description is built either way and only
         // the cell-writing half is skipped, which is what "backends are folds
         // over the display list" buys: two backends, one layout.
-        // The full-screen modals' remaining paint, **before** the overlay band
-        // rather than after it. What is left of `render_modal_overlays` for
-        // the settings dialog is the box and the one divider column between
-        // its two panes (`view::settings::render`, 270 lines); everything
-        // inside it — both panels, the entry stack, the search row, the footer
-        // and every prompt — is the tree's. Order still matters for what is
-        // left: a `Block` fills the rectangle it borders, so a painter that
-        // ran after the fold wiped the described rows inside it and the help
-        // overlay never appeared at all.
-        //
-        // This is the rule the overlay band already states for every other
-        // legacy painter — "painted after every legacy painter, because paint
-        // order is what puts a menu on top" — applied to the last painter that
-        // was still exempt from it. It was exempt because it used to be the
-        // topmost surface there was; it is not, now that the chrome over it is
-        // the tree's.
-        //
-        // The dock's cells are painted just below, still before the band, so
-        // the dimming this pass applies to it is re-applied by
-        // `render_panels_and_modals` once those cells exist. The modal itself
-        // lays into the chrome column beside the dock, so nothing of it is at
-        // risk from that later paint.
-        self.settle_modal_viewports();
 
         // Chrome theme-key provenance is the fold's (`FoldProvenance`, applied
         // above): every described surface files its items' rects and keys as
@@ -2316,6 +2293,7 @@ impl Editor {
                 rows,
                 selected,
                 focused: s.focus_panel() == FocusPanel::Categories,
+                pager: s.tree_pager.clone(),
             }
         });
         // The settings panel's own header: the page title, and the `[Clear …]`
@@ -4392,36 +4370,6 @@ impl Editor {
             retry: retry.to_string(),
             pane,
         })
-    }
-
-    fn settle_modal_viewports(&mut self) {
-        // The settings dialog is the tree's, box and contents alike
-        // (`view::shell::settings`): its ring, its caption, the divider
-        // between its columns and the dim over everything behind it are the
-        // layer's own. What is left here is the one thing the description
-        // cannot say for itself: how many rows a `PgUp` moves the category
-        // cursor by.
-        // The page a `PgUp` moves the category cursor by: the tree's own
-        // height, read from the box the tree placed. It was
-        // `categories_scroll.set_viewport(area.height)`, filed by the painter
-        // as it drew the rows — so the page and the window it pages through
-        // came from two statements of the same rectangle. The panel around it
-        // is gone; this number was all of it that anything read.
-        if let (Some(r), Some(s)) = (
-            self.panel_rect(&crate::view::shell::settings::categories_key()),
-            self.settings_state.as_mut(),
-        ) {
-            s.tree_page_rows = r.height;
-        }
-        // The calibration wizard is the tree's — box, bands, key list and all.
-        // It was `apply_dimming` over the frame and four `Paragraph`s into
-        // three rectangles it split by hand; it is `Scrim::Dim` and a column
-        // now (`view::shell::calibration`). Nothing paints here.
-
-        // The event-debug dialog is the tree's, box and contents alike
-        // (`view::shell::event_debug`) — the calibration wizard's twin, and
-        // migrated with it for the same reason: no mouse and no recorded
-        // rectangles. Nothing paints here.
     }
 
     /// Apply the theme-key provenance the frame's menu walk recorded.
