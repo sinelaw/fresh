@@ -338,7 +338,7 @@ impl Editor {
         };
 
         if let Some(prompt) = &mut self.active_window_mut().prompt {
-            prompt.suggestions = suggestions;
+            prompt.suggestions = suggestions.into();
             prompt.selected_suggestion = if prompt.suggestions.is_empty() {
                 None
             } else {

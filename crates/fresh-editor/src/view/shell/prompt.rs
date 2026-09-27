@@ -124,20 +124,153 @@ impl Place {
     }
 }
 
+/// The list's rows: a handle on the model's suggestions, not a copy of them.
+///
+/// **The model holds the ranked suggestions; the description holds a count
+/// and a converter.** Mapping every suggestion into a [`SuggestionRow`] on
+/// every frame made a thousand-command palette cost a thousand conversions
+/// per frame to show ten of them. Here row `i` is converted when the list's
+/// layout reader asks for it — which it does for the rows in its window and
+/// no others — out of storage the model already keeps.
+#[derive(Clone)]
+pub struct Rows {
+    len: usize,
+    row: Rc<dyn Fn(usize) -> SuggestionRow>,
+    disabled: Rc<dyn Fn(usize) -> bool>,
+    names_are_paths: bool,
+    /// The storage the converters read, for identity: two frames over the
+    /// same allocation describe the same rows. The model replaces its
+    /// suggestions rather than editing them, so identity is "unchanged".
+    source: Rc<dyn std::any::Any>,
+}
+
+impl Rows {
+    /// Rows read out of `source`: `row` converts one, `disabled` answers the
+    /// one fact the list's own theme needs without a conversion.
+    /// `names_are_paths` is [`names_are_paths`] over the whole list, which the
+    /// owner works out once per list rather than once per frame.
+    pub fn new<T: 'static>(
+        source: Rc<T>,
+        len: usize,
+        names_are_paths: bool,
+        row: impl Fn(&T, usize) -> SuggestionRow + 'static,
+        disabled: impl Fn(&T, usize) -> bool + 'static,
+    ) -> Rows {
+        Rows {
+            len,
+            row: {
+                let source = source.clone();
+                Rc::new(move |i| row(&source, i))
+            },
+            disabled: {
+                let source = source.clone();
+                Rc::new(move |i| disabled(&source, i))
+            },
+            names_are_paths,
+            source,
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    /// Row `i`, converted now.
+    fn at(&self, i: usize) -> Option<SuggestionRow> {
+        (i < self.len).then(|| {
+            stats::note_row();
+            (self.row)(i)
+        })
+    }
+
+    fn disabled(&self, i: usize) -> bool {
+        i < self.len && (self.disabled)(i)
+    }
+}
+
+/// Rows already converted, for a caller that has them as values.
+impl From<Vec<SuggestionRow>> for Rows {
+    fn from(rows: Vec<SuggestionRow>) -> Rows {
+        let paths = names_are_paths(
+            rows.iter().any(|r| r.keybinding.is_some()),
+            rows.iter().any(|r| r.source.is_some()),
+        );
+        let len = rows.len();
+        Rows::new(
+            Rc::new(rows),
+            len,
+            paths,
+            |v, i| v[i].clone(),
+            |v, i| v[i].disabled,
+        )
+    }
+}
+
+impl Default for Rows {
+    fn default() -> Self {
+        Vec::new().into()
+    }
+}
+
+impl PartialEq for Rows {
+    fn eq(&self, other: &Self) -> bool {
+        self.len == other.len
+            && self.names_are_paths == other.names_are_paths
+            && std::ptr::addr_eq(Rc::as_ptr(&self.source), Rc::as_ptr(&other.source))
+    }
+}
+
+impl Eq for Rows {}
+
+impl std::fmt::Debug for Rows {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Rows").field("len", &self.len).finish()
+    }
+}
+
+/// Which end of a name survives a narrow row, as a fact about the whole list.
+///
+/// `ColumnLayout::names_are_paths` decided this from the shape of the list
+/// rather than from a flag: a list with neither keybindings nor sources is a
+/// file finder, and a path keeps its filename. A command palette keeps its
+/// head — "Toggle Compose/Preview (All Files)" contains a slash and is still
+/// a command name, which is the bug that rule was written for.
+pub fn names_are_paths(any_keybinding: bool, any_source: bool) -> bool {
+    !any_keybinding && !any_source
+}
+
+/// Conversions of a suggestion into a row, counted for the test that pins
+/// them to the window. Thread-local and debug-only, like `geometry::stats`.
+pub mod stats {
+    #[cfg(debug_assertions)]
+    use std::cell::Cell;
+
+    #[cfg(debug_assertions)]
+    thread_local! {
+        static ROWS: Cell<u32> = const { Cell::new(0) };
+    }
+
+    #[inline]
+    pub(super) fn note_row() {
+        #[cfg(debug_assertions)]
+        ROWS.with(|c| c.set(c.get().saturating_add(1)));
+    }
+
+    /// Rows converted since the last call, which resets the count.
+    #[cfg(debug_assertions)]
+    pub fn take() -> u32 {
+        ROWS.with(|c| c.replace(0))
+    }
+}
+
 /// The list itself.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Suggestions {
-    pub rows: Vec<SuggestionRow>,
-    /// Which rows the list is showing, as `(first, count)`.
-    ///
-    /// Only the column widths use it, and only because they are measured from
-    /// the rows on screen — `ColumnLayout::compute` took
-    /// `visible_suggestions`, so one very long name at the far end of a
-    /// thousand-row list does not squeeze every description above it. The
-    /// window itself belongs to the viewport; this is last frame's, read back
-    /// through `suggestions_window`, which is exact except on the frame a
-    /// scroll lands.
-    pub window: Option<(usize, usize)>,
+    pub rows: Rows,
     /// Which row is selected, if any. Controlled: the editor holds it.
     pub selected: Option<usize>,
     pub place: Place,
@@ -152,19 +285,11 @@ pub struct Suggestions {
 }
 
 impl Suggestions {
-    /// Which end of a name survives a narrow row.
-    ///
-    /// `ColumnLayout::names_are_paths` decided this from the shape of the list
-    /// rather than from a flag: a list with neither keybindings nor sources is
-    /// a file finder, and a path keeps its filename. A command palette keeps
-    /// its head — "Toggle Compose/Preview (All Files)" contains a slash and is
-    /// still a command name, which is the bug that rule was written for.
+    /// Which end of a name survives a narrow row. See [`names_are_paths`].
     fn name_elide(&self) -> Elide {
-        let has = |f: fn(&SuggestionRow) -> bool| self.rows.iter().any(f);
-        if has(|r| r.keybinding.is_some()) || has(|r| r.source.is_some()) {
-            Elide::Tail
-        } else {
-            Elide::Head
+        match self.rows.names_are_paths {
+            true => Elide::Head,
+            false => Elide::Tail,
         }
     }
 }
@@ -337,12 +462,11 @@ impl Columns {
     /// cells on every row, and every description would elide to nothing. The
     /// visual snapshot is what showed that; it is a column of `…` where the
     /// help text used to be.
-    fn of(rows: &[SuggestionRow], window: Option<(usize, usize)>) -> Columns {
+    ///
+    /// Called at the cut (`List::windowed_cut`), with the rows the window
+    /// is about to show — so the widths are this frame's, not the last one's.
+    fn of(rows: &[SuggestionRow]) -> Columns {
         use crate::primitives::display_width::str_width;
-        let (first, count) = window.unwrap_or((0, MAX_VISIBLE_SUGGESTIONS));
-        let rows: &[SuggestionRow] = rows
-            .get(first..(first + count).min(rows.len()))
-            .unwrap_or(rows);
         let longest = rows
             .iter()
             .map(|r| str_width(&r.name) as u16)
@@ -494,13 +618,9 @@ fn absorb(n: Node<UiMsg>) -> Node<UiMsg> {
 /// library asks for the rows it can show and the editor resolves each index
 /// against its own storage, so no window is stored on either side.
 pub fn suggestions(s: &Suggestions) -> Node<UiMsg> {
-    let rows: Vec<SuggestionRow> = s.rows.clone();
     let selected = s.selected;
-    let rows_for_row = Rc::new(rows);
-    let rows_for_key = rows_for_row.clone();
-    let rows_for_theme = rows_for_row.clone();
+    let rows_for_theme = s.rows.clone();
     let name_elide = s.name_elide();
-    let cols = Columns::of(&s.rows, s.window);
 
     // `List` reports the state it holds; the names are this module's. Both the
     // row builder and `row_theme` need the state, and only the latter is given
@@ -515,60 +635,80 @@ pub fn suggestions(s: &Suggestions) -> Node<UiMsg> {
         }
     };
 
-    let mut list =
-        fresh_ui::widgets::List::windowed(rows_for_key.len(), row_key, move |i| match rows_for_row
-            .get(i)
-        {
-            Some(r) => node_row(
-                i,
-                r,
-                if selected == Some(i) {
-                    RowState::Selected
-                } else {
-                    RowState::Normal
-                },
-                name_elide,
-                cols,
-            ),
-            None => row().h(Sizing::Cells(1)),
-        })
-        .row_theme(move |i, st| {
-            let st = hover_state(i, st);
-            theme(rows_for_theme.get(i).is_some_and(|r| r.disabled), st)
-        })
-        // **The bar rides the popup's right border, and the column is always
-        // reserved for it.** Both halves of that are what the painter did:
-        // `render` drew the shared scrollbar widget over `outer.right() - 1`, the
-        // ring's own column, and laid the rows out in the inner rect either way —
-        // so a list that grew past ten entries did not reflow its columns by a
-        // cell. A gutter that came and went would leave the bar *beside* the ring
-        // rather than on it, which is the one thing the ring column cannot say.
-        .scrollbar_gutter()
-        // Named apart from the rows, because the bar is not part of the list's
-        // ground: it is the editor's one scrollbar, in the editor's one pair of
-        // scrollbar colours, wherever it appears.
-        .scrollbar_theme(pair("ui.scrollbar_thumb_fg", "ui.scrollbar_track_fg"))
-        // A click reports the row; what that *means* is the prompt type's
-        // business — `select_suggestion` confirms when `click_confirms()` says a
-        // click commits, and otherwise syncs the input. That decision was already
-        // editor-side; what the list removes is the coordinate hit-test in front
-        // of it (`handle_click_suggestions` recovering an index the row knew).
-        //
-        // A double click always commits, `click_confirms` or not: it is the
-        // mouse-only commit path for the prompts that preview on a single click.
-        // Both handlers can be set now that `activate_on` says *which* click
-        // activates — before it, the widget fired activation on the first and let
-        // it win, so setting both confirmed every click.
-        .activate_on(fresh_ui::widgets::Activate::DoubleClick)
-        // **The keyboard belongs to the prompt's input line, which is not in this
-        // tree.** The editor sets the selection every frame and handles every key
-        // the prompt answers — Up, Down, Enter, Tab-completion — so a list that
-        // joined the focus ring would only be somewhere for Tab to land, and Tab
-        // in a command palette completes the query. The mouse is unaffected: a
-        // list that declines focus still answers clicks and the wheel.
-        .focusable(false)
-        .on_select(|i| UiMsg::Ui(UiFact::SuggestionSelect(i)))
-        .on_activate(|i| UiMsg::Ui(UiFact::SuggestionConfirm(i)));
+    // **The rows on screen are converted once, at the cut, and measured
+    // there.** The window is known in the list's layout reader and nowhere
+    // earlier, so that is where the rows it will show are converted and the
+    // columns sized over them; a row in the overscan either side is
+    // converted on its own and laid on the same columns.
+    struct Window {
+        first: usize,
+        rows: Vec<SuggestionRow>,
+        cols: Columns,
+    }
+    let for_cut = s.rows.clone();
+    let for_row = s.rows.clone();
+    let mut list = fresh_ui::widgets::List::windowed_cut(
+        s.rows.len(),
+        row_key,
+        move |on_screen: std::ops::Range<usize>| {
+            let first = on_screen.start;
+            let rows: Vec<SuggestionRow> = on_screen.filter_map(|i| for_cut.at(i)).collect();
+            let cols = Columns::of(&rows);
+            Window { first, rows, cols }
+        },
+        move |i, _, w: &Window| {
+            let st = if selected == Some(i) {
+                RowState::Selected
+            } else {
+                RowState::Normal
+            };
+            let converted = match i.checked_sub(w.first).and_then(|j| w.rows.get(j)) {
+                Some(r) => Some(std::borrow::Cow::Borrowed(r)),
+                None => for_row.at(i).map(std::borrow::Cow::Owned),
+            };
+            match converted {
+                Some(r) => node_row(i, &r, st, name_elide, w.cols),
+                None => row().h(Sizing::Cells(1)),
+            }
+        },
+    )
+    .row_theme(move |i, st| {
+        let st = hover_state(i, st);
+        theme(rows_for_theme.disabled(i), st)
+    })
+    // **The bar rides the popup's right border, and the column is always
+    // reserved for it.** Both halves of that are what the painter did:
+    // `render` drew the shared scrollbar widget over `outer.right() - 1`, the
+    // ring's own column, and laid the rows out in the inner rect either way —
+    // so a list that grew past ten entries did not reflow its columns by a
+    // cell. A gutter that came and went would leave the bar *beside* the ring
+    // rather than on it, which is the one thing the ring column cannot say.
+    .scrollbar_gutter()
+    // Named apart from the rows, because the bar is not part of the list's
+    // ground: it is the editor's one scrollbar, in the editor's one pair of
+    // scrollbar colours, wherever it appears.
+    .scrollbar_theme(pair("ui.scrollbar_thumb_fg", "ui.scrollbar_track_fg"))
+    // A click reports the row; what that *means* is the prompt type's
+    // business — `select_suggestion` confirms when `click_confirms()` says a
+    // click commits, and otherwise syncs the input. That decision was already
+    // editor-side; what the list removes is the coordinate hit-test in front
+    // of it (`handle_click_suggestions` recovering an index the row knew).
+    //
+    // A double click always commits, `click_confirms` or not: it is the
+    // mouse-only commit path for the prompts that preview on a single click.
+    // Both handlers can be set now that `activate_on` says *which* click
+    // activates — before it, the widget fired activation on the first and let
+    // it win, so setting both confirmed every click.
+    .activate_on(fresh_ui::widgets::Activate::DoubleClick)
+    // **The keyboard belongs to the prompt's input line, which is not in this
+    // tree.** The editor sets the selection every frame and handles every key
+    // the prompt answers — Up, Down, Enter, Tab-completion — so a list that
+    // joined the focus ring would only be somewhere for Tab to land, and Tab
+    // in a command palette completes the query. The mouse is unaffected: a
+    // list that declines focus still answers clicks and the wheel.
+    .focusable(false)
+    .on_select(|i| UiMsg::Ui(UiFact::SuggestionSelect(i)))
+    .on_activate(|i| UiMsg::Ui(UiFact::SuggestionConfirm(i)));
     if let Some(i) = selected {
         list = list.selected(i);
     }
@@ -916,11 +1056,10 @@ mod tests {
     fn a_click_on_a_row_reports_that_row() {
         let mut ui = laid_out(
             Suggestions {
-                rows: rows(5),
+                rows: rows(5).into(),
                 selected: Some(0),
                 place: Place::AbovePrompt,
                 hints: None,
-                window: None,
             },
             40,
             8,
@@ -950,11 +1089,10 @@ mod tests {
     fn a_double_click_confirms_and_a_single_one_only_selects() {
         let mut ui = laid_out(
             Suggestions {
-                rows: rows(5),
+                rows: rows(5).into(),
                 selected: Some(0),
                 place: Place::AbovePrompt,
                 hints: None,
-                window: None,
             },
             40,
             8,
@@ -998,11 +1136,10 @@ mod tests {
         let mut ui: Ui<UiMsg> = Ui::new();
         let tree = || {
             suggestions(&Suggestions {
-                rows: rows(100),
+                rows: rows(100).into(),
                 selected: Some(0),
                 place: Place::AbovePrompt,
                 hints: None,
-                window: None,
             })
         };
         ui.frame(tree(), Size::new(40, 8));
@@ -1034,11 +1171,10 @@ mod tests {
     fn a_long_list_builds_only_the_rows_it_can_show() {
         let ui = laid_out(
             Suggestions {
-                rows: rows(1000),
+                rows: rows(1000).into(),
                 selected: Some(0),
                 place: Place::AbovePrompt,
                 hints: None,
-                window: None,
             },
             40,
             MAX_VISIBLE_SUGGESTIONS as u16,
@@ -1065,11 +1201,10 @@ mod tests {
     fn the_popup_frames_the_list_and_insets_it() {
         let mut ui: Ui<UiMsg> = Ui::new();
         let s = Suggestions {
-            rows: rows(3),
+            rows: rows(3).into(),
             selected: Some(0),
             place: Place::AbovePrompt,
             hints: None,
-            window: None,
         };
         let spec = ui.frame(popup(&s), Size::new(40, 6)).clone();
         assert!(
@@ -1105,11 +1240,10 @@ mod tests {
                 frame_tree(Frame {
                     prompt_line: true,
                     suggestions: Some(Suggestions {
-                        rows: rows(3),
+                        rows: rows(3).into(),
                         selected: Some(0),
                         place: Place::AbovePrompt,
                         hints: None,
-                        window: None,
                     }),
                     ..Frame::default()
                 }),
@@ -1136,11 +1270,10 @@ mod tests {
     fn a_path_gives_up_its_head_and_a_command_its_tail() {
         let painted = |r: SuggestionRow| {
             let s = Suggestions {
-                rows: vec![r],
+                rows: vec![r].into(),
                 selected: Some(0),
                 place: Place::AbovePrompt,
                 hints: None,
-                window: None,
             };
             let ui = laid_out(s, 16, 4);
             let spec = ui.spec();
@@ -1202,11 +1335,11 @@ mod tests {
                     },
                 ]),
                 ..SuggestionRow::default()
-            }],
+            }]
+            .into(),
             selected: Some(0),
             place: Place::AbovePrompt,
             hints: None,
-            window: None,
         };
         // Wide enough that the description is not elided: the name column has
         // a thirty-cell floor, and this test is about the span's ink.
@@ -1271,11 +1404,10 @@ mod tests {
                         ..Card::default()
                     }),
                     suggestions: Some(Suggestions {
-                        rows: rows(3),
+                        rows: rows(3).into(),
                         selected: Some(0),
                         place: Place::InCard,
                         hints: None,
-                        window: None,
                     }),
                     ..Frame::default()
                 }),
@@ -1320,11 +1452,10 @@ mod tests {
                     // width had to be kept in step with.
                     dock: Some(12),
                     suggestions: Some(Suggestions {
-                        rows: rows(3),
+                        rows: rows(3).into(),
                         selected: Some(0),
                         place: Place::AbovePrompt,
                         hints: None,
-                        window: None,
                     }),
                     ..Frame::default()
                 }),
@@ -1346,11 +1477,10 @@ mod tests {
             let mut ui: Ui<UiMsg> = Ui::new();
             ui.frame(
                 col().child(suggestions_layer(&Suggestions {
-                    rows: rows(n),
+                    rows: rows(n).into(),
                     selected: Some(0),
                     place: Place::AbovePrompt,
                     hints: None,
-                    window: None,
                 })),
                 Size::new(60, 40),
             );
@@ -1388,11 +1518,10 @@ mod tests {
         let mut ui: Ui<UiMsg> = Ui::new();
         ui.frame(
             col().child(suggestions_layer(&Suggestions {
-                rows: rows(3),
+                rows: rows(3).into(),
                 selected: Some(0),
                 place: Place::AbovePrompt,
                 hints: None,
-                window: None,
             })),
             Size::new(60, 20),
         );
@@ -1427,11 +1556,10 @@ mod tests {
             let mut ui: Ui<UiMsg> = Ui::new();
             ui.frame(
                 suggestions(&Suggestions {
-                    rows: rows(n),
+                    rows: rows(n).into(),
                     selected: Some(0),
                     place: Place::AbovePrompt,
                     hints: None,
-                    window: None,
                 }),
                 Size::new(40, 6),
             );
@@ -1464,11 +1592,10 @@ mod tests {
             frame_tree(Frame {
                 prompt_line: true,
                 suggestions: Some(Suggestions {
-                    rows: rows(5),
+                    rows: rows(5).into(),
                     selected: Some(0),
                     place: Place::AbovePrompt,
                     hints: None,
-                    window: None,
                 }),
                 ..Frame::default()
             }),
@@ -1505,11 +1632,11 @@ mod tests {
                     name: "a-long-command-name".into(),
                     description: Some("a-long-description".into()),
                     ..SuggestionRow::default()
-                }],
+                }]
+                .into(),
                 selected: Some(0),
                 place: Place::AbovePrompt,
                 hints: None,
-                window: None,
             };
             let ui = laid_out(s, w, 4);
             ui.rect_of(ui.find_by_key(&name_key(0)).expect("the name column"))

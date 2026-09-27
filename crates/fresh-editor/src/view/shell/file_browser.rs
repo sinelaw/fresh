@@ -81,12 +81,122 @@ pub struct Entry {
     pub matches: bool,
 }
 
+/// The directory's entries: a handle on the model's listing, not a copy of it.
+///
+/// **The model keeps the entries; the description holds a count and a
+/// converter.** Formatting every entry's size and date into an [`Entry`] and
+/// then copying the lot into the list's row builder made a thousand-entry
+/// directory cost two thousand row values per frame to show twenty of them.
+/// Here entry `i` is formatted when the list's layout reader asks for it,
+/// which it does for the rows in its window and no others.
+#[derive(Clone)]
+pub struct Entries {
+    len: usize,
+    row: Rc<dyn Fn(usize) -> Entry>,
+    matches: Rc<dyn Fn(usize) -> bool>,
+    /// The storage the converters read, for identity. The model edits it
+    /// copy-on-write while a description holds it, so two frames over the
+    /// same allocation describe the same entries.
+    source: Rc<dyn std::any::Any>,
+}
+
+impl Entries {
+    /// Entries read out of `source`: `row` formats one, `matches` answers
+    /// the one fact the list's own theme needs without formatting it.
+    pub fn new<T: 'static>(
+        source: Rc<T>,
+        len: usize,
+        row: impl Fn(&T, usize) -> Entry + 'static,
+        matches: impl Fn(&T, usize) -> bool + 'static,
+    ) -> Entries {
+        Entries {
+            len,
+            row: {
+                let source = source.clone();
+                Rc::new(move |i| row(&source, i))
+            },
+            matches: {
+                let source = source.clone();
+                Rc::new(move |i| matches(&source, i))
+            },
+            source,
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    /// Entry `i`, formatted now.
+    pub fn at(&self, i: usize) -> Option<Entry> {
+        (i < self.len).then(|| {
+            stats::note_row();
+            (self.row)(i)
+        })
+    }
+
+    fn matches(&self, i: usize) -> bool {
+        i >= self.len || (self.matches)(i)
+    }
+}
+
+/// Entries already formatted, for a caller that has them as values.
+impl From<Vec<Entry>> for Entries {
+    fn from(v: Vec<Entry>) -> Entries {
+        let len = v.len();
+        Entries::new(Rc::new(v), len, |v, i| v[i].clone(), |v, i| v[i].matches)
+    }
+}
+
+impl PartialEq for Entries {
+    fn eq(&self, other: &Self) -> bool {
+        self.len == other.len
+            && std::ptr::addr_eq(Rc::as_ptr(&self.source), Rc::as_ptr(&other.source))
+    }
+}
+
+impl Eq for Entries {}
+
+impl std::fmt::Debug for Entries {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Entries").field("len", &self.len).finish()
+    }
+}
+
+/// Entries formatted into rows, counted for the test that pins them to the
+/// window. Thread-local and debug-only, like `geometry::stats`.
+pub mod stats {
+    #[cfg(debug_assertions)]
+    use std::cell::Cell;
+
+    #[cfg(debug_assertions)]
+    thread_local! {
+        static ROWS: Cell<u32> = const { Cell::new(0) };
+    }
+
+    #[inline]
+    pub(super) fn note_row() {
+        #[cfg(debug_assertions)]
+        ROWS.with(|c| c.set(c.get().saturating_add(1)));
+    }
+
+    /// Rows formatted since the last call, which resets the count.
+    #[cfg(debug_assertions)]
+    pub fn take() -> u32 {
+        ROWS.with(|c| c.replace(0))
+    }
+}
+
 /// What the list band shows.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Listing {
     Loading,
     Error(String),
-    Entries(Vec<Entry>),
+    Entries(Entries),
 }
 
 /// The dialog, as the shell states it.
@@ -521,15 +631,16 @@ fn dir_scope(dir: &Path) -> String {
     format!("file_browser:{}", dir.display())
 }
 
-fn entries(b: &Browser, rows: &[Entry]) -> Node<UiMsg> {
-    let rows = Rc::new(rows.to_vec());
+fn entries(b: &Browser, rows: &Entries) -> Node<UiMsg> {
+    // Handles on the model's listing: the row builder formats entry `i`
+    // when the window asks for it.
     let for_row = rows.clone();
     let for_theme = rows.clone();
-    let list = List::windowed_stateful(rows.len(), row_key, move |i, st| match for_row.get(i) {
-        Some(e) => entry_row(e, st),
+    let list = List::windowed_stateful(rows.len(), row_key, move |i, st| match for_row.at(i) {
+        Some(e) => entry_row(&e, st),
         None => row().h(Sizing::Cells(1)),
     })
-    .row_theme(move |i, st| row_theme(for_theme.get(i).is_none_or(|e| e.matches), st))
+    .row_theme(move |i, st| row_theme(for_theme.matches(i), st))
     // Controlled, and empty is a real state: a fresh directory has no
     // selection until the user types or moves.
     .selection(b.selected)
@@ -735,7 +846,7 @@ mod tests {
             selected_shortcut: None,
             sort: SortMode::Name,
             ascending: true,
-            listing: Listing::Entries((0..n).map(entry).collect()),
+            listing: Listing::Entries((0..n).map(entry).collect::<Vec<_>>().into()),
             selected: None,
             hover: None,
         }
@@ -1024,7 +1135,7 @@ mod tests {
         for listing in [
             Listing::Loading,
             Listing::Error("denied".into()),
-            Listing::Entries(vec![]),
+            Listing::Entries(Vec::new().into()),
         ] {
             b.listing = listing;
             let ui = laid_out(b.clone(), None, 80, 30);

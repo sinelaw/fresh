@@ -1070,9 +1070,6 @@ impl Editor {
         // effect lands on the same paint that made the buffer visible.
         self.drain_pending_vb_animations();
 
-        // Initialize popup/suggestion layout state (rendered after status bar below)
-        self.active_chrome_mut().suggestions_window = None;
-
         // Clone all immutable values before the mutable borrow
         let display_name = self
             .active_window()
@@ -3989,7 +3986,9 @@ impl Editor {
     ) -> Option<crate::view::shell::file_browser::Browser> {
         use crate::app::file_open::{format_modified, format_size, FileOpenSection, Toggle};
         use crate::input::keybindings::{Action, KeyContext};
-        use crate::view::shell::file_browser::{Browser, Entry, Listing, Shortcut, ToggleItem};
+        use crate::view::shell::file_browser::{
+            Browser, Entries, Entry, Listing, Shortcut, ToggleItem,
+        };
         let state = self.active_window().file_open_state.as_ref()?;
         let shortcut_of = |a: Action| -> Option<String> {
             self.keybindings
@@ -4022,25 +4021,27 @@ impl Editor {
         } else if let Some(e) = &state.error {
             Listing::Error(e.clone())
         } else {
-            Listing::Entries(
-                state
-                    .entries
-                    .iter()
-                    .map(|e| {
-                        let meta = e.fs_entry.metadata.as_ref();
-                        Entry {
-                            name: e.fs_entry.name.clone(),
-                            is_dir: e.fs_entry.is_dir(),
-                            is_symlink: e.fs_entry.is_symlink(),
-                            size: (!e.fs_entry.is_dir())
-                                .then(|| meta.map(|m| format_size(m.size)))
-                                .flatten(),
-                            modified: meta.and_then(|m| m.modified).map(format_modified),
-                            matches: e.matches_filter,
-                        }
-                    })
-                    .collect(),
-            )
+            // A handle on the model's listing: the window's entries are
+            // formatted when the list asks for them, and only those.
+            Listing::Entries(Entries::new(
+                state.entries.clone(),
+                state.entries.len(),
+                |v, i| {
+                    let e = &v[i];
+                    let meta = e.fs_entry.metadata.as_ref();
+                    Entry {
+                        name: e.fs_entry.name.clone(),
+                        is_dir: e.fs_entry.is_dir(),
+                        is_symlink: e.fs_entry.is_symlink(),
+                        size: (!e.fs_entry.is_dir())
+                            .then(|| meta.map(|m| format_size(m.size)))
+                            .flatten(),
+                        modified: meta.and_then(|m| m.modified).map(format_modified),
+                        matches: e.matches_filter,
+                    }
+                },
+                |v, i| v[i].matches_filter,
+            ))
         };
         let files = state.active_section == FileOpenSection::Files;
         let hover = match self.shell_hover {
@@ -4069,7 +4070,7 @@ impl Editor {
     }
 
     fn suggestions_description(&self) -> Option<crate::view::shell::prompt::Suggestions> {
-        use crate::view::shell::prompt::{SuggestionRow, Suggestions};
+        use crate::view::shell::prompt::{Rows, SuggestionRow, Suggestions};
         let prompt = self.active_window().prompt.as_ref()?;
         if prompt.suggestions.is_empty() {
             return None;
@@ -4092,33 +4093,33 @@ impl Editor {
             true => crate::view::shell::prompt::Place::InCard,
             false => crate::view::shell::prompt::Place::AbovePrompt,
         };
+        let convert = |s: &crate::input::commands::Suggestion| SuggestionRow {
+            name: s.text.clone(),
+            keybinding: s.keybinding.clone(),
+            description: s.description.clone(),
+            description_spans: s
+                .description_spans
+                .as_ref()
+                .map(|v| v.iter().map(Self::description_span).collect()),
+            // Character for character what `push_source_column` wrote: the
+            // plugin's own name, or the word for a built-in.
+            source: s.source.as_ref().map(|src| match src {
+                crate::input::commands::CommandSource::Builtin => "builtin".to_string(),
+                crate::input::commands::CommandSource::Plugin(name) => name.clone(),
+            }),
+            disabled: s.disabled,
+        };
         Some(Suggestions {
-            rows: prompt
-                .suggestions
-                .iter()
-                .map(|s| SuggestionRow {
-                    name: s.text.clone(),
-                    keybinding: s.keybinding.clone(),
-                    description: s.description.clone(),
-                    description_spans: s
-                        .description_spans
-                        .as_ref()
-                        .map(|v| v.iter().map(Self::description_span).collect()),
-                    // Character for character what `push_source_column`
-                    // wrote: the plugin's own name, or the word for a
-                    // built-in.
-                    source: s.source.as_ref().map(|src| match src {
-                        crate::input::commands::CommandSource::Builtin => "builtin".to_string(),
-                        crate::input::commands::CommandSource::Plugin(name) => name.clone(),
-                    }),
-                    disabled: s.disabled,
-                })
-                .collect(),
+            // A handle on the prompt's own list: the rows the window asks
+            // for are converted then, and only those.
+            rows: Rows::new(
+                prompt.suggestions.clone(),
+                prompt.suggestions.len(),
+                prompt.names_are_paths(),
+                move |v, i| convert(&v[i]),
+                |v, i| v[i].disabled,
+            ),
             selected: prompt.selected_suggestion,
-            // Last frame's window, for the column widths only — see
-            // `Suggestions::window`. `record_suggestions_window` is where it
-            // came from.
-            window: self.active_chrome().suggestions_window,
             place,
             // The row the painter drew under the popup, now stacked in the
             // layer with it. `render_quick_open_hints` is what this replaces.
@@ -4702,9 +4703,8 @@ impl Editor {
         crate::view::dimming::apply_dimming_excluding(frame, size, Some(terminal_area));
     }
 
-    /// Settle the open prompt's suggestion list: the selection's window, and
-    /// the rectangles the not-yet-migrated readers ask for, read off the tree
-    /// that placed the list. Nothing is painted here — the list, the bottom
+    /// Settle the open overlay prompt's selection window against the results
+    /// band the tree placed. Nothing is painted here — the list, the bottom
     /// popup and the overlay card are the tree's.
     fn settle_prompt_suggestions(&mut self) {
         let Some(prompt) = &self.active_window_mut().prompt else {
@@ -4736,52 +4736,10 @@ impl Editor {
                     prompt.ensure_selected_visible_within(visible);
                 }
             }
-            self.record_suggestions_window();
-            return;
         }
-
-        if prompt.suggestions.is_empty() {
-            return;
-        }
-
-        // Nothing is painted here any more. The layer drew the popup, the
-        // hints row and the scrollbar in the overlay band before this method
-        // ran, and everything below is the geometry the not-yet-migrated
-        // rails still ask `ChromeLayout` for — read off the tree that placed
-        // it rather than computed a second time.
-        //
-        // Gone with the painter: the `Clear` that blanked the cells under the
-        // box (a themed box fills its own ground), the `y` arithmetic that had
-        // to agree with a second copy in `chrome::Prompt::collect`, and the
-        // quick-open hints row, which is now the layer's own last row.
-        self.record_suggestions_window();
-    }
-
-    /// Carry the suggestion list's window over to the next description.
-    ///
-    /// The rest of what this recorded is gone: the click and hover walks and
-    /// the scrollbar drag became gestures in the tree, and the two rectangles
-    /// that outlived them had one reader, the web `Scene`, which asks the
-    /// tree for them directly now. What is left is not a cache of anything —
-    /// it is *feedback*, the palette's next description measuring its columns
-    /// against the rows this layout put on screen, and the tree cannot answer
-    /// that while it is the thing being described.
-    ///
-    /// A list with no scrollbar reports no window, and then the window is the
-    /// whole list: every row it has room for, starting at the first.
-    fn record_suggestions_window(&mut self) {
-        use crate::view::shell::prompt as p;
-        let read = self.shell_ui.as_ref().map(|ui| {
-            let spec = ui.spec();
-            (p::suggestions_list_rect(spec), p::suggestions_window(spec))
-        });
-        let Some((list, window)) = read else {
-            return;
-        };
-        self.active_chrome_mut().suggestions_window = list.map(|r| {
-            let (first, visible) = window.unwrap_or((0, r.h as usize));
-            (first, visible.max(r.h as usize))
-        });
+        // Nothing is painted here, and nothing is carried to the next frame:
+        // the columns that used to measure against the window this layout
+        // settled are measured at the cut now (`shell::prompt::suggestions`).
     }
 
     /// Resolve the overlay's currently-selected match into a real

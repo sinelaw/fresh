@@ -94,8 +94,13 @@ pub struct FileOpenState {
     raw_entries: Vec<DirEntry>,
 
     /// Directory entries with metadata (the currently displayed subset of
-    /// `raw_entries`, with the synthesized ".." prepended).
-    pub entries: Vec<FileOpenEntry>,
+    /// `raw_entries`, with the synthesized ".." prepended), in shared storage.
+    ///
+    /// The browser's list holds this handle and formats the entries its
+    /// window asks for, so a frame costs the window rather than the
+    /// directory. Edited copy-on-write (`Rc::make_mut`): a frame that holds
+    /// the listing keeps what it was drawn from.
+    pub entries: std::rc::Rc<Vec<FileOpenEntry>>,
 
     /// Whether directory is currently loading
     pub loading: bool,
@@ -149,7 +154,7 @@ impl FileOpenState {
         Self {
             current_dir: dir,
             raw_entries: Vec::new(),
-            entries: Vec::new(),
+            entries: Default::default(),
             loading: true,
             error: None,
             sort_mode: SortMode::Name,
@@ -316,7 +321,7 @@ impl FileOpenState {
                 }),
         );
 
-        self.entries = result;
+        self.entries = std::rc::Rc::new(result);
         self.apply_filter_internal();
     }
 
@@ -342,7 +347,7 @@ impl FileOpenState {
     pub fn set_error(&mut self, error: String) {
         self.loading = false;
         self.error = Some(error);
-        self.entries.clear();
+        std::rc::Rc::make_mut(&mut self.entries).clear();
     }
 
     /// Check if a filename is hidden (starts with .)
@@ -362,7 +367,7 @@ impl FileOpenState {
 
         // When filter is non-empty, sort by match score (best matches first)
         if !filter.is_empty() {
-            self.entries.sort_by(|a, b| {
+            std::rc::Rc::make_mut(&mut self.entries).sort_by(|a, b| {
                 // ".." always stays at top
                 let a_is_parent = a.fs_entry.name == "..";
                 let b_is_parent = b.fs_entry.name == "..";
@@ -410,7 +415,7 @@ impl FileOpenState {
     }
 
     fn apply_filter_internal(&mut self) {
-        for entry in &mut self.entries {
+        for entry in std::rc::Rc::make_mut(&mut self.entries).iter_mut() {
             if self.filter.is_empty() {
                 entry.matches_filter = true;
                 entry.match_score = 0;
@@ -427,7 +432,7 @@ impl FileOpenState {
         let sort_mode = self.sort_mode;
         let ascending = self.sort_ascending;
 
-        self.entries.sort_by(|a, b| {
+        std::rc::Rc::make_mut(&mut self.entries).sort_by(|a, b| {
             // ".." always stays at top
             let a_is_parent = a.fs_entry.name == "..";
             let b_is_parent = b.fs_entry.name == "..";
