@@ -861,6 +861,9 @@ impl<M: 'static> Ui<M> {
                 self.focus_roots.retain(|x| *x != f);
             }
             self.anchored.retain(|a| *a != id);
+            if let Some(a) = &el.desc.anchor {
+                a.unbind(id);
+            }
             self.renderer.dispose(id, el.ty, el.name);
             self.forget_element(id);
         }

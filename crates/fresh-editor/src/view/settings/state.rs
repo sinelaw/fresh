@@ -98,19 +98,8 @@ pub enum FocusPanel {
 pub struct BodyWindow {
     /// How far down the column the window starts.
     pub offset: u16,
-    /// How tall the window is.
-    pub height: u16,
-    /// How tall the column is.
-    pub content: u16,
     /// The card the window starts on.
     pub top_item: Option<usize>,
-}
-
-impl BodyWindow {
-    /// The furthest the window can move before its bottom meets the column's.
-    pub fn max_offset(&self) -> u16 {
-        self.content.saturating_sub(self.height)
-    }
 }
 
 /// The state of the settings UI
@@ -438,7 +427,7 @@ impl SettingsState {
             entry_delete_target_is_array_item: false,
             showing_help: false,
             body: BodyWindow::default(),
-            body_anchor: fresh_ui::behavior::Anchor::new(),
+            body_anchor: fresh_ui::behavior::Anchor::paged(),
             available_status_bar_tokens,
             hover_hit: None,
             hovered_popup_row: String::new(),
@@ -1102,20 +1091,44 @@ impl SettingsState {
         }
     }
 
-    /// Move selection down by a page (viewport height worth of items)
+    /// Move the selection a page down: to the card a window's height of
+    /// content below the selected one's top.
     pub fn select_next_page(&mut self) {
-        let page_size = self.body.height.max(1);
-        for _ in 0..page_size {
-            self.select_next();
-        }
+        self.select_page(1);
     }
 
-    /// Move selection up by a page (viewport height worth of items)
+    /// Move the selection a page up.
     pub fn select_prev_page(&mut self) {
-        let page_size = self.body.height.max(1);
-        for _ in 0..page_size {
-            self.select_prev();
+        self.select_page(-1);
+    }
+
+    /// **A page of cards is a window's height of content, not a count of
+    /// them.** This stepped `select_next` once per row of the window's
+    /// height, so a page of three-row cards moved three windows. The body's
+    /// window records where its cards sit, and names the card a page away
+    /// (`Anchor::page_key`); off the settings panel, or before the body has
+    /// been laid out, nothing moves.
+    fn select_page(&mut self, pages: i32) {
+        use super::super::shell::settings::card_key;
+        if self.focus_panel() != FocusPanel::Settings {
+            return;
         }
+        let Some(to) = self
+            .body_anchor
+            .page_key(&card_key(self.selected_item), pages)
+        else {
+            return;
+        };
+        let n = self.current_page().map_or(0, |p| p.items.len());
+        let Some(i) = (0..n).find(|&i| card_key(i) == to) else {
+            return;
+        };
+        if i != self.selected_item {
+            self.update_control_focus(false);
+            self.selected_item = i;
+            self.enter_composite(pages > 0);
+        }
+        self.ensure_visible();
     }
 
     /// Ensure the selected item is visible in the viewport.

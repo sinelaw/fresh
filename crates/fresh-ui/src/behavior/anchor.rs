@@ -48,11 +48,83 @@ pub struct Anchor {
     /// A standing [`Anchor::follow`] request: the index the window keeps in
     /// view on every layout until the reader scrolls it away.
     follow: Cell<Option<u32>>,
+    /// Whether the window records its children's bands for
+    /// [`Anchor::page_key`]; see [`Anchor::paged`].
+    paged: bool,
+    /// What the last layout placed, when `paged`: `None` until the window is
+    /// laid out, and again once it is gone.
+    bands: RefCell<Option<Bands>>,
+}
+
+/// The keyed children of a paged window's content, in order, with the bands
+/// the last layout gave them, and the window's own extent — all along the
+/// axis it scrolls.
+#[derive(Debug, Clone)]
+pub(crate) struct Bands {
+    pub(crate) window: i32,
+    pub(crate) run: Vec<(crate::key::Key, i32, i32)>,
 }
 
 impl Anchor {
     pub fn new() -> Rc<Anchor> {
         Rc::new(Anchor::default())
+    }
+
+    /// An anchor whose window also answers [`Anchor::page_key`]: at each
+    /// layout it records where its content's keyed children sit.
+    ///
+    /// For a window over a column of things of different heights — a page
+    /// of setting cards — where a page is not a count of items but a
+    /// window's height of content, and only layout knows which child that
+    /// lands on.
+    pub fn paged() -> Rc<Anchor> {
+        Rc::new(Anchor {
+            paged: true,
+            ..Anchor::default()
+        })
+    }
+
+    pub(crate) fn wants_bands(&self) -> bool {
+        self.paged
+    }
+
+    pub(crate) fn record_bands(&self, bands: Bands) {
+        *self.bands.borrow_mut() = Some(bands);
+    }
+
+    /// The element this anchor addressed is gone: nothing is bound, and a
+    /// paged window has no bands.
+    pub(crate) fn unbind(&self, id: ElementId) {
+        if self.bound.get() == Some(id) {
+            self.bound.set(None);
+            *self.bands.borrow_mut() = None;
+        }
+    }
+
+    /// The keyed child a page from `from` (negative: up): the one whose band
+    /// holds the point a window's height of content past the start of
+    /// `from`'s, clamped to the first and last. A child taller than the
+    /// window still moves: a page from it is at least the next one.
+    ///
+    /// `None` when the window was not built [`paged`](Anchor::paged), has not
+    /// been laid out, is gone, or `from` is not one of its children.
+    pub fn page_key(&self, from: &crate::key::Key, pages: i32) -> Option<crate::key::Key> {
+        let bands = self.bands.borrow();
+        let b = bands.as_ref()?;
+        let at = b.run.iter().position(|(k, _, _)| k == from)?;
+        let last = b.run.len() - 1;
+        let want = b.run[at].1 + pages * b.window.max(1);
+        let holding = b
+            .run
+            .iter()
+            .rposition(|(_, top, _)| *top <= want)
+            .unwrap_or(0);
+        let to = match pages.cmp(&0) {
+            std::cmp::Ordering::Greater => holding.max((at + 1).min(last)),
+            std::cmp::Ordering::Less => holding.min(at.saturating_sub(1)),
+            std::cmp::Ordering::Equal => at,
+        };
+        Some(b.run[to].0.clone())
     }
 
     /// The element this anchor addresses, once it has mounted.

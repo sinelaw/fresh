@@ -2224,6 +2224,25 @@ mod tests {
         c
     }
 
+    /// **A page of the body is a window's height of cards**, named by the
+    /// window that measured them: the body's paged anchor records the cards
+    /// (through whatever wraps them) and answers the one a page away — the
+    /// last card starting within a window's height of the selected one's
+    /// top. `select_next_page` stepped one card per row of that height.
+    #[test]
+    fn a_body_page_is_the_card_a_window_below() {
+        let anchor = fresh_ui::behavior::Anchor::paged();
+        let ui = with_chrome(paged(60, &anchor), 200, 40, None);
+        let window = ui
+            .rect_of(ui.find_by_key(&items_key()).expect("the body"))
+            .h as i32;
+        let top = |i: usize| ui.rect_of(ui.find_by_key(&card_key(i)).expect("a card")).y;
+        let want = (0..60).rposition(|i| top(i) - top(0) <= window).unwrap();
+        assert!(want > 1, "a window holds more than one card: {want}");
+        assert_eq!(anchor.page_key(&card_key(0), 1), Some(card_key(want)));
+        assert_eq!(anchor.page_key(&card_key(want), -1), Some(card_key(0)));
+    }
+
     /// The rows the body's window is showing, in order.
     fn body_rows(ui: &Ui<UiMsg>) -> Vec<String> {
         let vp = ui.find_by_key(&items_key()).expect("the body window");

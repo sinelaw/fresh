@@ -1794,8 +1794,8 @@ impl Editor {
         // far the wheel had taken the list.
         let body = ui.find_by_key(&st::items_key());
         let vpr = body.map(|vp| ui.rect_of(vp)).unwrap_or_default();
-        let (scroll, content) = match body {
-            Some(vp) => ui.scroll(vp),
+        let scroll = match body {
+            Some(vp) => ui.scroll(vp).0,
             None => Default::default(),
         };
         let offset = scroll.y.max(0) as u16;
@@ -1829,12 +1829,7 @@ impl Editor {
             return;
         };
         if body.is_some() {
-            s.body = crate::view::settings::state::BodyWindow {
-                offset,
-                height: vpr.h,
-                content: content.h,
-                top_item,
-            };
+            s.body = crate::view::settings::state::BodyWindow { offset, top_item };
         }
         // The left tree's highlight follows the body, in both directions —
         // the same contract the wheel and the scrollbar had, stated once
