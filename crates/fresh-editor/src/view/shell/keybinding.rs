@@ -1287,6 +1287,11 @@ mod tests {
         }
     }
 
+    /// The key the table gives row `i` of [`a_table`]: by what the row is.
+    fn row_key(i: usize) -> fresh_ui::Key {
+        table_row_key(&a_table(i + 1, 0).rows[i])
+    }
+
     fn with_table(t: Table, w: u16, h: u16) -> Ui<UiMsg> {
         let mut ui: Ui<UiMsg> = Ui::new();
         ui.frame(
@@ -1323,10 +1328,7 @@ mod tests {
     fn pressing_a_row_names_it() {
         use crate::view::shell::msg::UiFact;
         let mut ui = with_table(a_table(30, 0), 160, 50);
-        let r = ui.rect_of(
-            ui.find_by_key(&fresh_ui::Key::Str("3".into()))
-                .expect("row 3"),
-        );
+        let r = ui.rect_of(ui.find_by_key(&row_key(3)).expect("row 3"));
         let at = fresh_ui::Point::new(r.x + 2, r.y);
         ui.dispatch(fresh_ui::Input::press(
             at,
@@ -1355,10 +1357,7 @@ mod tests {
             .iter()
             .any(|i| matches!(i.draw, fresh_ui::Draw::Scrollbar { .. }));
         assert!(bar, "two hundred rows in a box of fifty overflow");
-        let selected = ui.rect_of(
-            ui.find_by_key(&fresh_ui::Key::Str("150".into()))
-                .expect("row 150"),
-        );
+        let selected = ui.rect_of(ui.find_by_key(&row_key(150)).expect("row 150"));
         let boxed = ui.rect_of(ui.find_by_key(&key()).expect("the box"));
         assert!(
             selected.y >= boxed.y && selected.y < boxed.y + boxed.h as i32,
@@ -1411,10 +1410,7 @@ mod tests {
             })
             .collect();
         assert_eq!(marked.len(), 1, "exactly one row is marked: {marked:?}");
-        let row = ui.rect_of(
-            ui.find_by_key(&fresh_ui::Key::Str("4".into()))
-                .expect("row 4"),
-        );
+        let row = ui.rect_of(ui.find_by_key(&row_key(4)).expect("row 4"));
         assert_eq!(marked[0], row.y, "and it is the selected one");
     }
 
@@ -1426,10 +1422,7 @@ mod tests {
         let ui = with_table(a_table(30, 0), 160, 50);
         let boxed = ui.rect_of(ui.find_by_key(&key()).expect("the box"));
         let search = ui.rect_of(ui.find_by_key(&search_key()).expect("the search row"));
-        let first = ui.rect_of(
-            ui.find_by_key(&fresh_ui::Key::Str("0".into()))
-                .expect("row 0"),
-        );
+        let first = ui.rect_of(ui.find_by_key(&row_key(0)).expect("row 0"));
         assert!(search.y > boxed.y, "the header is inside the border");
         assert!(first.y > search.y + 1, "and the table is under it");
         assert!(

@@ -2861,10 +2861,7 @@ mod tests {
             (3, UiFact::SettingsCategory(1)),
         ] {
             let mut ui = laid_out(200, 60, None);
-            let at = ui.rect_of(
-                ui.find_by_key(&fresh_ui::Key::Pair("settings_cat".into(), row as u64))
-                    .expect("a row"),
-            );
+            let at = ui.rect_of(ui.find_by_key(&tree().rows[row].key()).expect("a row"));
             // A `List` selects on the click, not on the press.
             let p = fresh_ui::Point::new(at.x + 6, at.y);
             let _ = ui.dispatch(fresh_ui::Input::press(
@@ -2892,7 +2889,7 @@ mod tests {
     fn a_click_on_the_chevron_is_the_rows_click() {
         let mut ui = laid_out(200, 60, None);
         let at = ui.rect_of(
-            ui.find_by_key(&fresh_ui::Key::Pair("settings_cat".into(), 0u64))
+            ui.find_by_key(&tree().rows[0].key())
                 .expect("the first row"),
         );
         // Column 0 is the cursor marker; the chevron is the one after it.
