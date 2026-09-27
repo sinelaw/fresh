@@ -165,13 +165,22 @@ impl RowHeight {
     }
 }
 
+/// A row builder: the node for index `i` in state `st`.
+type RowOf<M> = Rc<dyn Fn(usize, RowState) -> Node<M>>;
+
+/// Per-window work: handed the index range the window holds, it returns the
+/// row builder for that window. See [`List::windowed_cut`].
+type CutOf<M> = Rc<dyn Fn(std::ops::Range<usize>) -> RowOf<M>>;
+
 enum Source<M> {
     Eager(Rc<Vec<(Key, Node<M>)>>),
-    #[allow(clippy::type_complexity)]
     Windowed {
         count: usize,
         key: Rc<dyn Fn(usize) -> Key>,
-        row: Rc<dyn Fn(usize, RowState) -> Node<M>>,
+        row: RowOf<M>,
+        /// The per-window step, when the rows depend on which rows are in
+        /// the window. `None` for rows that are a function of their index.
+        cut: Option<CutOf<M>>,
     },
 }
 
@@ -179,10 +188,16 @@ impl<M> Clone for Source<M> {
     fn clone(&self) -> Self {
         match self {
             Source::Eager(v) => Source::Eager(v.clone()),
-            Source::Windowed { count, key, row } => Source::Windowed {
+            Source::Windowed {
+                count,
+                key,
+                row,
+                cut,
+            } => Source::Windowed {
                 count: *count,
                 key: key.clone(),
                 row: row.clone(),
+                cut: cut.clone(),
             },
         }
     }
@@ -201,7 +216,28 @@ impl<M> Source<M> {
             // Eager rows are built before the list knows anything about them,
             // so their state cannot reach them. `row_theme` still names them.
             Source::Eager(v) => v.get(i).cloned(),
-            Source::Windowed { count, key, row } => (i < *count).then(|| (key(i), row(i, state))),
+            Source::Windowed {
+                count, key, row, ..
+            } => (i < *count).then(|| (key(i), row(i, state))),
+        }
+    }
+
+    /// The source for one window: the same rows, built by the builder the
+    /// per-window step returns for `window` when there is one.
+    fn for_window(&self, window: std::ops::Range<usize>) -> Source<M> {
+        match self {
+            Source::Windowed {
+                count,
+                key,
+                cut: Some(cut),
+                ..
+            } => Source::Windowed {
+                count: *count,
+                key: key.clone(),
+                row: cut(window),
+                cut: None,
+            },
+            other => other.clone(),
         }
     }
 }
@@ -284,6 +320,7 @@ impl<M: 'static> List<M> {
             count,
             key: Rc::new(key),
             row: Rc::new(move |i, _| row(i)),
+            cut: None,
         })
     }
 
@@ -312,6 +349,53 @@ impl<M: 'static> List<M> {
             count,
             key: Rc::new(key),
             row: Rc::new(row),
+            cut: None,
+        })
+    }
+
+    /// Rows that depend on which rows are in the window.
+    ///
+    /// **Per-window work belongs at the cut.** Some facts about a row are
+    /// facts about its neighbours on screen — the prompt's name column is as
+    /// wide as the longest name *in view*, so one long name a thousand rows
+    /// away does not squeeze every description above it. The window is known
+    /// in exactly one place, the layout reader below, so that is where this
+    /// runs: `cut` is handed the index range on screen and returns what the
+    /// rows need to know about it, and `row` builds each row with that answer
+    /// — the overscan rows above and below included, so a row scrolled in by
+    /// one cell looks like its neighbours until the next layout re-cuts.
+    ///
+    /// Computed anywhere earlier, it has to read the previous frame's window
+    /// back off the tree — one frame late whenever the window moves.
+    ///
+    /// A measuring pass ([`RowHeight::UniformMeasured`]) builds its probe rows
+    /// with the answer for the whole list, since every item is on its bench.
+    pub fn windowed_cut<W: 'static>(
+        count: usize,
+        key: impl Fn(usize) -> Key + 'static,
+        cut: impl Fn(std::ops::Range<usize>) -> W + 'static,
+        row: impl Fn(usize, RowState, &W) -> Node<M> + 'static,
+    ) -> Self {
+        let cut = Rc::new(cut);
+        let row = Rc::new(row);
+        // Outside the reader (a measuring pass) the answer is the whole
+        // list's, worked out once however many rows ask for it.
+        let whole: RowOf<M> = {
+            let (cut, row) = (cut.clone(), row.clone());
+            let once: Rc<std::cell::OnceCell<W>> = Rc::default();
+            Rc::new(move |i, st| row(i, st, once.get_or_init(|| cut(0..count))))
+        };
+        let per_window: CutOf<M> = Rc::new(move |window| {
+            let w = Rc::new(cut(window));
+            let row = row.clone();
+            let built: RowOf<M> = Rc::new(move |i, st| row(i, st, &w));
+            built
+        });
+        List::from_source(Source::Windowed {
+            count,
+            key: Rc::new(key),
+            row: whole,
+            cut: Some(per_window),
         })
     }
 
@@ -692,6 +776,9 @@ impl<M: 'static> Component<M> for List<M> {
             let first = (win.y.max(0) as usize).min(n);
             let last = (first + visible + OVERSCAN).min(n);
             let pins = (info.pinned as usize).min(pinned.len());
+            // The window is known here and nowhere earlier: a source with
+            // per-window work does it now, over the rows about to be built.
+            let run = source.for_window(first..(first + visible).min(n));
             let indices = pinned[..pins]
                 .iter()
                 .copied()
@@ -711,7 +798,7 @@ impl<M: 'static> Component<M> for List<M> {
                 } else {
                     RowState::Normal
                 };
-                let (k, row) = source.at(i, state).expect("index inside the source");
+                let (k, row) = run.at(i, state).expect("index inside the source");
                 let theme: String = match &row_theme {
                     Some(f) => f(i, state),
                     None => state.theme().to_string(),

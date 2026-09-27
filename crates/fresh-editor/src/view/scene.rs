@@ -499,7 +499,14 @@ impl Editor {
                 )
             })
             .unwrap_or((None, None));
-        let sugg_window = self.active_chrome().suggestions_window;
+        // The list's window, read off the tree that holds it.
+        let sugg_window = self.shell_ui.as_ref().and_then(|ui| {
+            let spec = ui.spec();
+            let list = crate::view::shell::prompt::suggestions_list_rect(spec)?;
+            let (first, visible) = crate::view::shell::prompt::suggestions_window(spec)
+                .unwrap_or((0, list.h as usize));
+            Some((first, visible.max(list.h as usize)))
+        });
         let p = self.active_window().prompt.as_ref()?;
         // The overlay card's bands, read off the tree that placed them.
         let card_band = |r: crate::view::shell::overlay_prompt::CardRegion| {
@@ -1076,11 +1083,9 @@ impl Editor {
         // The window the tree is showing: the rows the TUI has on screen, at
         // the grid rows it put them on.
         let rows = match &b.listing {
-            fb::Listing::Entries(entries) => entries
-                .iter()
-                .enumerate()
-                .skip(window.first)
+            fb::Listing::Entries(entries) => (window.first..)
                 .take(window.visible)
+                .filter_map(|index| entries.at(index).map(|e| (index, e)))
                 .map(|(index, e)| FileBrowserRowView {
                     index,
                     row: list_rect.y + (index - window.first) as u16,

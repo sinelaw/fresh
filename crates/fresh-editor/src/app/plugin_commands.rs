@@ -2504,7 +2504,7 @@ impl Editor {
             // Set original_suggestions for Rust-side filtering (used by prompts that
             // don't handle their own filtering like theme editor dropdowns)
             prompt.original_suggestions = Some(internal_suggestions.clone());
-            prompt.suggestions = internal_suggestions;
+            prompt.suggestions = internal_suggestions.into();
             // Select first suggestion by default (or the specified index)
             prompt.selected_suggestion = if prompt.suggestions.is_empty() {
                 None

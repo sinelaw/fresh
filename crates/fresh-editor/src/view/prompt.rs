@@ -235,8 +235,17 @@ pub struct Prompt {
     edit: crate::primitives::text_edit::TextEdit,
     /// What to do when user confirms
     pub prompt_type: PromptType,
-    /// Autocomplete suggestions (filtered)
-    pub suggestions: Vec<Suggestion>,
+    /// Autocomplete suggestions (filtered), in shared storage.
+    ///
+    /// The list's description holds this handle and converts the rows its
+    /// window asks for, so a frame costs the window rather than the list.
+    /// Replaced, never edited in place: every writer assigns a new list, so
+    /// the allocation's identity is "these suggestions" and
+    /// [`Prompt::names_are_paths`] can be kept against it.
+    pub suggestions: std::rc::Rc<Vec<Suggestion>>,
+    /// [`Prompt::names_are_paths`]'s answer, and the list it was worked out
+    /// for (held, so its address cannot be reused by another list).
+    names_are_paths_of: std::cell::RefCell<Option<(std::rc::Rc<Vec<Suggestion>>, bool)>>,
     /// Original unfiltered suggestions (for prompts that filter client-side like SwitchToTab)
     pub original_suggestions: Option<Vec<Suggestion>>,
     /// Currently selected suggestion index
@@ -328,13 +337,35 @@ pub struct Prompt {
 pub const MAX_VISIBLE_SUGGESTIONS: usize = 10;
 
 impl Prompt {
+    /// Whether the suggestions' names are paths, which decides the end a
+    /// narrow row keeps (`view::shell::prompt::names_are_paths`).
+    ///
+    /// A fact about the whole list, so it is worked out once per list — the
+    /// list is replaced, never edited, so the one it was worked out for is
+    /// the one still here until a writer assigns another.
+    pub fn names_are_paths(&self) -> bool {
+        let mut memo = self.names_are_paths_of.borrow_mut();
+        if let Some((list, answer)) = memo.as_ref() {
+            if std::rc::Rc::ptr_eq(list, &self.suggestions) {
+                return *answer;
+            }
+        }
+        let answer = crate::view::shell::prompt::names_are_paths(
+            self.suggestions.iter().any(|s| s.keybinding.is_some()),
+            self.suggestions.iter().any(|s| s.source.is_some()),
+        );
+        *memo = Some((self.suggestions.clone(), answer));
+        answer
+    }
+
     /// Create a new prompt
     pub fn new(message: String, prompt_type: PromptType) -> Self {
         Self {
             message,
             edit: crate::primitives::text_edit::TextEdit::single_line(),
             prompt_type,
-            suggestions: Vec::new(),
+            suggestions: Default::default(),
+            names_are_paths_of: Default::default(),
             original_suggestions: None,
             selected_suggestion: None,
             scroll_offset: 0,
@@ -370,7 +401,8 @@ impl Prompt {
             edit: crate::primitives::text_edit::TextEdit::single_line(),
             prompt_type,
             original_suggestions: Some(suggestions.clone()),
-            suggestions,
+            suggestions: suggestions.into(),
+            names_are_paths_of: Default::default(),
             selected_suggestion,
             scroll_offset: 0,
             manual_scroll: false,
@@ -423,7 +455,8 @@ impl Prompt {
             message,
             edit,
             prompt_type,
-            suggestions: Vec::new(),
+            suggestions: Default::default(),
+            names_are_paths_of: Default::default(),
             original_suggestions: None,
             selected_suggestion: None,
             scroll_offset: 0,
@@ -674,7 +707,7 @@ impl Prompt {
             .collect();
 
         filtered.sort_by_key(|b| std::cmp::Reverse(b.1));
-        self.suggestions = filtered.into_iter().map(|(s, _)| s).collect();
+        self.suggestions = std::rc::Rc::new(filtered.into_iter().map(|(s, _)| s).collect());
         self.selected_suggestion = if self.suggestions.is_empty() {
             None
         } else {

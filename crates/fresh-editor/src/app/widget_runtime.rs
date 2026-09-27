@@ -4983,4 +4983,130 @@ mod tests {
             }
         }
     }
+
+    /// A palette of `n` commands, with the one at `long_at` named far
+    /// longer than the rest.
+    fn palette(n: usize, long_at: usize) -> crate::view::prompt::Prompt {
+        use crate::input::commands::Suggestion;
+        let suggestions = (0..n)
+            .map(|i| {
+                let name = match i == long_at {
+                    true => format!("command {i} {}", "with a very long name ".repeat(3)),
+                    false => format!("command {i}"),
+                };
+                Suggestion::new(name).with_keybinding(Some("Ctrl+K".into()))
+            })
+            .collect();
+        crate::view::prompt::Prompt::with_suggestions(
+            "Command: ".into(),
+            crate::view::prompt::PromptType::QuickOpen,
+            suggestions,
+        )
+    }
+
+    /// **A thousand-command palette converts the rows it shows, not the
+    /// list.** The description used to map every suggestion into a
+    /// `SuggestionRow` on every frame; now it holds the prompt's own list and
+    /// the list's layout reader converts the rows in its window.
+    #[cfg(debug_assertions)]
+    #[test]
+    fn a_long_palette_converts_only_its_window() {
+        use crate::view::shell::prompt::stats;
+        let (mut editor, _t) = make_editor();
+        editor.active_window_mut().prompt = Some(palette(1000, usize::MAX));
+        stats::take();
+        frame_the_shell(&mut editor);
+        let first = stats::take();
+        frame_the_shell(&mut editor);
+        let next = stats::take();
+        eprintln!("palette of 1000: {first} rows converted, then {next}");
+        assert!(first > 0, "the window's rows are converted");
+        assert!(
+            first <= 30 && next <= 30,
+            "a window's worth, not the list: {first}, then {next}"
+        );
+    }
+
+    /// **The name column is as wide as the longest name on screen *this*
+    /// frame.** It was measured over the window the previous layout had
+    /// settled, read back off the tree — so on the frame the selection jumped
+    /// to a long name, the column was still sized for the rows it left.
+    #[test]
+    fn the_name_column_fits_the_rows_on_screen_in_the_same_frame() {
+        let (mut editor, _t) = make_editor();
+        editor.active_window_mut().prompt = Some(palette(1000, 500));
+        frame_the_shell(&mut editor);
+        let name_width = |editor: &Editor, i: usize| {
+            let ui = editor.shell_ui.as_ref().expect("a laid-out shell");
+            let id = ui
+                .find_by_key(&crate::view::shell::prompt::name_key(i))
+                .unwrap_or_else(|| panic!("row {i}'s name is on screen"));
+            ui.rect_of(id).w
+        };
+        let short = name_width(&editor, 0);
+
+        // Jump to the long name: the list reveals it in this frame's layout,
+        // and its column is measured over the rows that layout shows.
+        editor
+            .active_window_mut()
+            .prompt
+            .as_mut()
+            .unwrap()
+            .selected_suggestion = Some(500);
+        frame_the_shell(&mut editor);
+        let long = name_width(&editor, 500);
+        // Wider than the short rows' column, on the frame the long name
+        // arrived — how much wider is the row's to decide (the description
+        // yields first), but a column sized from the rows the window left
+        // would still be the short rows' width.
+        assert!(
+            long > short,
+            "the long name's column grows on the frame it arrives ({long}, the short rows had \
+             {short})"
+        );
+    }
+
+    /// **A thousand-entry directory formats the entries it shows, not the
+    /// directory.** The description used to format every entry's size and
+    /// date and the list then copied the lot (`rows.to_vec()`); now the list
+    /// holds the model's listing and formats the rows in its window.
+    #[cfg(debug_assertions)]
+    #[test]
+    fn a_large_directory_formats_only_its_window() {
+        use crate::model::filesystem::{DirEntry, EntryType};
+        use crate::view::shell::file_browser::stats;
+        let (mut editor, t) = make_editor();
+        let fs: Arc<dyn crate::model::filesystem::FileSystem + Send + Sync> =
+            Arc::new(crate::model::filesystem::StdFileSystem);
+        let dir = t.path().to_path_buf();
+        let mut state = crate::app::file_open::FileOpenState::new(dir.clone(), false, fs);
+        state.set_entries(
+            (0..1000)
+                .map(|i| {
+                    DirEntry::new(
+                        dir.join(format!("f{i:04}.txt")),
+                        format!("f{i:04}.txt"),
+                        EntryType::File,
+                    )
+                })
+                .collect(),
+        );
+        let w = editor.active_window_mut();
+        w.file_open_state = Some(state);
+        w.prompt = Some(crate::view::prompt::Prompt::new(
+            "Open: ".into(),
+            crate::view::prompt::PromptType::OpenFile,
+        ));
+        stats::take();
+        frame_the_shell(&mut editor);
+        let first = stats::take();
+        frame_the_shell(&mut editor);
+        let next = stats::take();
+        eprintln!("directory of 1000: {first} entries formatted, then {next}");
+        assert!(first > 0, "the window's entries are formatted");
+        assert!(
+            first <= 40 && next <= 40,
+            "a window's worth, not the directory: {first}, then {next}"
+        );
+    }
 }

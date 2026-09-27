@@ -172,29 +172,14 @@ mod view_line_mapping_tests {
 /// `shell::prompt::{suggestions_list_rect, suggestions_rect}` kept for one
 /// reader, the web `Scene`, which asks the tree directly now.
 ///
-/// What remains under that name is `suggestions_window`, which is not a
-/// rectangle and not a cache: see its own note. ADDING A SURFACE TO THE ROSTER
+/// `suggestions_window`, the last thing under that name, went when the
+/// prompt's columns moved to the list's own cut. ADDING A SURFACE TO THE ROSTER
 /// REQUIRES A RULING — event-time derivation is the default, and this class
 /// must not grow back surface by surface (`docs/internal/retained-mode-ui.md`,
 /// "The keyed geometry index"; the paint-time compositing arc is
 /// sinelaw/fresh#3024).
 #[derive(Debug, Clone, Default)]
 pub(crate) struct ChromeLayout {
-    /// The suggestion list's window as the last layout settled it: the first
-    /// row shown, and how many.
-    ///
-    /// **The only thing here that is feedback rather than a cache.** The
-    /// description measures the palette's columns against the rows that will
-    /// be on screen, and which rows those are is the window the *previous*
-    /// layout arrived at — a description reading back its own last frame, and
-    /// the one thing about the popup a fresh read of the tree cannot supply
-    /// while the tree is being described. The two rectangles that sat beside
-    /// it were caches: the web `Scene` was their only reader and it asks
-    /// `shell::prompt::{suggestions_rect, suggestions_list_rect}` for them
-    /// now, the way it already asked `overlay_prompt::regions_of` for the
-    /// card's bands two lines above. The count beside them was
-    /// `prompt.suggestions.len()` copied.
-    pub suggestions_window: Option<(usize, usize)>,
     /// Dimensions of the last rendered frame. See [`FrameDimensions`].
     pub last_frame: FrameDimensions,
     /// Per-cell theme key provenance recorded during rendering.
