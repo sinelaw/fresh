@@ -606,7 +606,7 @@ fn a_windowed_tree_builds_its_window_and_pins_the_folder_it_is_in() {
     let tree = |built: Rc<Cell<usize>>| -> Node<Msg> {
         fresh_ui::Tree::windowed(
             1010,
-            |i| fresh_ui::Key::from(i),
+            fresh_ui::Key::from,
             |i| TreeRow {
                 depth: usize::from(i % 101 != 0),
                 has_children: i % 101 == 0,
