@@ -38,8 +38,15 @@ function trustDialogEls(t){
 // sidebar's content cells, which the existing file-explorer hit-test resolves.
 function fileExplorerEl(fe){
   const el=div("region fileexplorer"); place(el,fe.rect);
-  const title=div("fx-title"); title.textContent=fe.title||"Explorer"; el.appendChild(title);
-  const list=div("fx-list");
+  // **On the editor's grid.** The editor chose the window for a title of one
+  // cell over one cell per row (the same arithmetic the row clicks below
+  // assume); a theme's taller rows would push the last of them, often the
+  // selection, below the panel's edge. So heights are cells here, and the
+  // themes keep everything else.
+  const onGrid=e=>{ e.style.height=CH+"px"; e.style.lineHeight=CH+"px"; e.style.boxSizing="border-box";
+                    e.style.marginTop=e.style.marginBottom="0"; e.style.paddingTop=e.style.paddingBottom="0"; };
+  const title=div("fx-title"); title.textContent=fe.title||"Explorer"; onGrid(title); el.appendChild(title);
+  const list=div("fx-list"); list.style.paddingTop=list.style.paddingBottom="0";
   const n=Math.max(0,(fe.viewportHeight||fe.rect.h)), start=fe.scrollOffset||0;
   // Newer cores provide the exact screen-row mapping, including sticky
   // ancestors. Keep the contiguous fallback for compatibility with an older
@@ -48,6 +55,7 @@ function fileExplorerEl(fe){
   for(let j=0;j<n;j++){
     const idx=viewportRows[j], r=fe.rows[idx]; if(!r) break;
     const row=div("fx-row"+(idx===fe.selected?" sel":""));
+    onGrid(row);
     row.style.paddingLeft=(6 + r.depth*10)+"px";
     const chev=document.createElement("span"); chev.className="fx-chev";
     chev.textContent=r.isDir?(r.expanded?"▾":"▸"):"";
