@@ -1,6 +1,8 @@
 # The frontend protocol: one wire format for web and native clients
 
-> _Design note. Status: **PLANNED** — nothing here ships yet. It began as the
+> _Design note. Status: **PARTLY IMPLEMENTED.** *Collections and the window*
+> shipped in #3420, and its IMPLEMENTED and PLANNED parts are marked there;
+> the protocol itself — everything else here — is **PLANNED**. It began as the
 > answer to "can the web UI protocol carry the higher-level layout tree
 > instead of the low-level cells the terminal draws?", and now also answers
 > "can the same protocol drive a native Windows UI?". The answer to both is
@@ -490,19 +492,16 @@ interruptible diff.
   transform write on the client, with no reflow. A viewport materialises only
   its window, so this is bounded by the visible rows (tens, not the list's
   length), and the row pushed out of the window is a `remove`.
-- **Position keys defeat this, and most shell lists use them today.** Rows
-  keyed by index — the prompt's suggestions, the file browser, the keybinding
-  table and its autocomplete, popup items, Settings' categories and search
-  results — are matched by position. Inserting at row 5 gives the element at 5
-  the new row's content, the element at 6 the old 5's, and so on: the wire
-  carries a content patch for every visible row below the insertion plus one
-  `add` at the end, and the client rebuilds those rows' text instead of moving
-  nodes. Still bounded by the window and correct, but not minimal. The fix is
-  in the tree, not the protocol: key rows by what they are — the command, the
-  path, the setting — as the library asks ("keys are supplied by the caller
-  and never inferred"). Plugin widget lists already key by the plugin's own
-  keys, falling back to the index only where one is missing. The terminal
-  gains too: per-row element state, such as hover, stays with its row.
+- **Position keys would defeat this; since #3420 no list uses them.** A row
+  keyed by index is matched by position, so inserting at row 5 would give the
+  element at 5 the new row's content, the element at 6 the old 5's, and so on:
+  a content patch for every visible row below the insertion, and a client
+  rebuilding text instead of moving nodes. Every list the shell draws is keyed
+  by what the row is — a suggestion's id, a path, a binding's id, a popup
+  item's id, a setting's page and path, a plugin's item key — with no index
+  fallback, and the key sits on the row's outermost node, so an insertion moves
+  the rows below it with their element state. Plugin keys are required and
+  unique; the plugin API refuses a spec or mutation that breaks that.
 - **Moves are minimised once, on the server.** When surviving items change
   order, the server finds the longest run of them still in their old relative
   order and emits `move` only for the rest (a longest-increasing-subsequence
@@ -553,10 +552,11 @@ it and does not claim incrementality on the server. The saving it does claim is
 on the wire and in every client, where cost follows the change.
 
 **Where the editor still pays for the whole list.** The window is only as cheap
-as what feeds it. *Collections and the window* says where a list's data lives
-and where the window is cut, and *Appendix: gaps in the current implementation*
-lists where the editor falls short of that today. None of it is a protocol
-concern, and none of it is fixed by one.
+as what feeds it; since #3420 the shell's lists are fed handles, not copies.
+*Collections and the window* says where a list's data lives and where the
+window is cut, and *Appendix: gaps in the current implementation* lists where
+the editor falls short of that today. None of it is a protocol concern, and
+none of it is fixed by one.
 
 ### Client application
 
@@ -714,12 +714,12 @@ layout, so none of the read-backs in *Appendix: where the editor reads geometry
 back* can disagree with what a client shows; they are not hazards for this
 protocol. They are the places the host still does layout's work, which
 retained-mode-ui.md's working rule — "a surface is done when the tree measures
-it" — says should move into layout. The keyboard ones are the clearest: a host
-reading a panel's rectangle to size PageUp/PageDown, or a height written while
-the description is built, is what an anchor answered at layout
-(`ScrollByPages`, `Reveal`) already expresses. Moving them is worth doing for
-the terminal alone, and it also fixes the inconsistencies the sweep turned up
-(*Appendix: where the editor reads geometry back*).
+it" — says should move into layout. The keyboard ones were the clearest: a
+host reading a panel's rectangle to size PageUp/PageDown, or a height written
+while the description is built. #3420 moved Settings', the keybinding
+editor's and the file explorer's into layout (`Pager`, `Anchor::paged`, the
+windowed `Tree`); the ones left are listed in *Appendix: gaps in the current
+implementation*.
 
 ## Collections and the window
 
@@ -727,9 +727,12 @@ Every list and tree drawn through the tree — the host's (prompt suggestions,
 the file browser, Settings, the keybinding table, popups, the file explorer)
 and the plugins' (widget `List` and `Tree`) — follows one design. It sits
 upstream of the protocol, which only ever sees the window. **The collection
-lives with its owner in shared, versioned storage; the description holds a
-handle to it, never a copy; the library cuts the window during layout; and one
-domain key names an item from the data to the client's node.**
+lives with its owner in shared storage; the description holds a handle to it,
+never a copy; the library cuts the window during layout; and one domain key
+names an item from the data to the client's node.**
+
+**IMPLEMENTED** in #3420, except where a part below says PLANNED. The
+remaining gaps are listed in *Appendix: gaps in the current implementation*.
 
 ### The layers, and the one cut
 
@@ -741,36 +744,38 @@ only as a handle; every layer below it sees only the window.
 | Layer | What it holds | Size |
 |---|---|---|
 | **Storage:** the editor model, or the host's replica of a plugin's collection | Every item, plus derived collections (*What happens before the cut, and what after*) | N, persistent |
-| **Description:** `List::windowed(count, key_of, row_of)` | A count and two closures capturing a handle to the storage. No rows. | O(1) |
-| **Element:** the list's element and its viewport | Selection, hover, the scroll offset, the source handle; the viewport declares `items(n)` so the scrollbar knows the extent | O(1) |
-| **The cut:** the viewport runs the list's layout reader during layout | Reads the published scroll window, computes `first..first + visible + overscan`, and calls `key_of(i)` and `row_of(i)` only for those indices | **The cut: N becomes the window, W** |
-| **Rows:** reconcile of the window's rows | One element per visible row, keyed by `key_of(i)` | O(W) |
+| **Description:** `List::windowed(count, key, row)`, `List::windowed_cut(count, key, cut, row)`, or `Tree::windowed(count, key, node, row)` | A count and closures capturing a handle to the storage. No rows. | O(1) |
+| **Element:** the list's element and its viewport | Selection and hover (by key), the scroll offset, the source handle; the viewport declares `items(n)` so the scrollbar knows the extent | O(1) |
+| **The cut:** the viewport runs the list's layout reader during layout | Reads the published scroll window, computes `first..first + visible + overscan`, and calls `key` and `row` only for those indices (and `cut` once, for the range) | **The cut: N becomes the window, W** |
+| **Rows:** reconcile of the window's rows | One element per visible row, keyed by `key(i)` on the row's outermost node | O(W) |
 | **Paint:** layout and paint of those rows | Rectangles; the display list, with overscan rows clipped out | O(W) |
 | **Wire:** the protocol and the client | Only painted items, plus the scrollbar item's offset, content and window | O(W) |
 
 Scrolling is input that moves the viewport's offset (the element). Layout
-reruns the cut with a new `first`: rows that enter are built by `row_of`, rows
+reruns the cut with a new `first`: rows that enter are built by `row`, rows
 that leave are disposed, and nothing above the cut changes.
 
 `RowHeight::UniformMeasured` is the one deliberate exception at the cut: its
-measuring pass calls `row_of` for every item, because "the tallest row" is a
-question the visible ones cannot answer. It is for lists whose row height
-really cannot be declared.
+measuring pass builds every item, because "the tallest row" is a question the
+visible ones cannot answer. Lists whose rows have known, differing heights use
+`List::row_heights` instead, which sums the heights once per description and
+windows in cells.
 
 ### Where the full dataset lives
 
-- **Host lists and trees** live in the editor model that owns the domain —
-  `Prompt`, the file-open state, `SettingsState`, `KeybindingEditor`,
-  `FileTreeView` — held as shared storage with a version, so describing them
-  each frame costs a reference count, not a clone.
+- **Host lists and trees** live in the editor model that owns the domain, as
+  shared storage: the prompt's suggestions (`Rc<Vec<Suggestion>>`, replaced
+  rather than edited), the file browser's entries (copy-on-write), Settings'
+  pages, the keybinding editor's rows, and `FileTreeView`'s projection of its
+  visible rows. Describing them each frame costs a reference count, not a
+  clone.
 - **Plugin lists and trees** have the plugin's JavaScript model as their source
-  of truth, and a **replica** in the host's widget registry, in the same
-  shared, versioned storage. The replica is required: layout runs synchronously
-  on the editor thread and cannot ask the plugin thread for row 5,000 in the
-  middle of a layout pass. The replica changes by keyed operations (*The plugin
-  API*). The widget spec describes structure — which widgets, where, with which
-  options — and names the collection; it is not the carrier of a large
-  collection.
+  of truth, and a **replica** in the host's widget registry. The registry holds
+  each panel's spec as `Rc<WidgetSpec>`, and a spec's collections — `List`
+  items, keys and card specs, `Tree` nodes and keys — as
+  `Collection<T> = Arc<Vec<T>>`; mutations are copy-on-write. The replica is
+  required: layout runs synchronously on the editor thread and cannot ask the
+  plugin thread for row 5,000 in the middle of a layout pass.
 - **Never** in the description, in `fresh-ui` elements, in the display list, or
   on the wire. Those hold the window.
 
@@ -778,13 +783,14 @@ really cannot be declared.
 
 | Fact | Owner | Notes |
 |---|---|---|
-| Items and their order | The model, or the plugin's replica | Changed by keyed operations |
-| Item identity | The domain key: a path, a command id, a setting's path, the plugin's key | Never the index; a key is required |
-| Selection | The model, **by key**, when anything else acts on it (the prompt's Enter, Settings, plugin panels) | Element state only for purely visual lists. The index is resolved from the key when the description is built |
-| Tree expansion | The model or the replica, by key | A spec's `expanded_keys` is a seed at mount. The plugin hears `expand` events and overrides with `setExpandedKeys`. The description reads the resolved set, never the spec field |
-| A tree's visible projection | Derived by the owner | Memoised on the collection's version and the expansion's version |
-| The scroll window | The library's viewport | Reveal through `Anchor`; page keys answered at layout (the *Order of work* step "Layout's own answers for paging and reveal") |
-| Hover and pressed state | Element state | As today |
+| Items and their order | The model, or the plugin's replica | Replaced or mutated copy-on-write |
+| Item identity | The domain key: a suggestion's id, a path, a binding's id, a setting's page and path, the plugin's key | Never the index. Plugin keys are required and unique; the API refuses a spec or mutation that breaks that |
+| Selection | The model, **by key** (`KeyedSelection`), where rows can move under it: the prompt, the Open File browser, the keybinding editor | Popups, Settings and the keybinding autocomplete keep an index, because their rows never change without the selection being reset. `List`'s own state holds selection and hover by key |
+| Tree expansion | The model or the replica, by key | A spec's `expanded_keys` is a seed. The plugin hears `expand` events and overrides with `setExpandedKeys`; the drawn tree reads the resolved set (`kinds::tree::resolve_seeded`) |
+| A tree's visible projection | Derived by the owner | A plugin tree's projection is cached per panel and validated against the collections' identity and the expanded set; `FileTreeView` rebuilds its projection once per change to the tree |
+| The scroll window | The library's viewport | Reveal and follow through `Anchor`, keyed by the selected row; the owner may seed where a remounted window starts (`List::start_at`) |
+| A page | The list's `Pager` | Recorded at layout, in items; the owner asks `target(from, pages, len)`. For columns of different heights, `Anchor::paged()` / `page_key` |
+| Hover and pressed state | Element state | Keyed by row |
 
 ### What happens before the cut, and what after
 
@@ -795,38 +801,46 @@ really cannot be declared.
   sorting are not windowing — they decide which items exist, not which are on
   screen.
 - **The description captures handles.** It passes a count and closures over
-  the storage. It converts nothing and copies nothing, so it costs
-  the same for ten items or a million.
-- **Per-row work belongs after the cut, in `row_of`.** Turning an item into a
+  the storage. It converts nothing and copies nothing, so it costs the same
+  for ten items or a million.
+- **Per-row work belongs after the cut, in `row`.** Turning an item into a
   row — its text, its style, its node — runs only for the rows layout asks
   for.
-- **Per-window work belongs at the cut, in the layout reader.** Anything that
-  depends on which rows are visible — the prompt's column widths, measured over
-  the rows on screen — is computed where the window is known, over the rows
-  just built. Computing it before the cut means reading the previous frame's
-  window back, one frame late (*Appendix: gaps in the current implementation*,
-  the prompt's column widths).
+- **Per-window work belongs at the cut.** Anything that depends on which rows
+  are visible is computed where the window is known. `List::windowed_cut`
+  hands its `cut` the index range on screen and passes the answer to each
+  row it builds, overscan included.
 
-The prompt is the worked example. Today the description maps every suggestion
-into a `SuggestionRow` each frame and measures columns over the last frame's
-window. In this design the model holds the ranked suggestions (recomputed on
-each keystroke that changes the query), the description captures a handle to
-them, `row_of(i)` converts suggestion `i` when layout asks for it, and the
-reader measures the columns over the window it just built.
+The prompt is the worked example. The model holds the ranked suggestions,
+recomputed when the query or the source changes. The description holds a
+handle that converts suggestion `i` only when the window asks for it. The
+palette is a `windowed_cut` list whose `cut` measures the name, keybinding and
+source columns over the rows on screen, so the columns fit the window on the
+frame it arrives, where they used to be measured over the previous frame's
+window read back off the tree.
+
+Measured with debug-only counters in #3420 (rows converted or built per
+frame):
+
+| | before | after |
+|---|---|---|
+| palette, 1000 commands | 1012 | 12 |
+| directory, 1000 entries | 2019 | 17 |
+| plugin tree, 1000 nodes, still frame | 26, plus a walk of every node | 0 |
+| plugin card tree, 1000 nodes, first frame | 1000 | 26 |
 
 ### How it flows through `fresh-ui` each frame
 
-1. **Description.** `List::windowed(len, key_of, row_of)` over the storage
-   handle (a list) or the memoised projection (a tree). Selection and expansion
-   are passed down; callbacks carry keys back up. O(1) whatever the length.
-2. **Memo.** The list's subtree is built under a memo keyed on the collection's
-   version and the controlled state, so an unchanged list reconciles by
-   `Rc::ptr_eq`. This is retained-mode-ui.md's "memos sit below the work"
-   item, closed for lists.
+1. **Description.** A windowed list or tree over the storage handle (a list)
+   or the owner's projection (a tree). Selection and expansion are passed down;
+   callbacks carry keys back up. O(1) whatever the length.
+2. **Memo.** A plugin panel's `List` and `Tree` arms are built under
+   `fresh_ui::memo`, with props covering every input the builder reads, so an
+   unchanged list reconciles by `Rc::ptr_eq`.
 3. **Reconcile.** Rows keyed by domain key, so an insertion moves elements
    instead of rewriting every row below it (*Designed for in-place patching*).
-4. **Layout.** The viewport asks for its window; `row_of` runs for visible rows
-   only.
+4. **Layout.** The viewport asks for its window; `row` runs for visible rows
+   only; the list's `Pager` records the window's size.
 5. **Paint and protocol.** Items are diffed per id. The identity chain is one
    key from end to end: domain key → element key → element → protocol item id
    → client node.
@@ -834,37 +848,50 @@ reader measures the columns over the window it just built.
    turns it into a key at once. Everything upstream — `UiFact`, `widget_event`
    — speaks keys; an index is at most a hint.
 
-### Library changes
+### What the library provides
 
-- **`fresh_ui::Tree` becomes windowed and controllable.** Today it takes every
-  node with a pre-built label, flattens the whole tree into an eager list every
-  frame, and owns its expansion privately — which is why the plugin tree and
-  the file explorer each hand-roll a list with disclosure glyphs instead of
-  using it. The end state is a source over the owner's projection (a count,
-  and per index its key, depth, whether it has children, whether it is open,
-  and its row), with controlled `expanded` and an `on_toggle(key, open)`
-  callback. The uncontrolled form can stay for trivial trees. Callers exist:
-  the explorer, plugin trees, and the Settings category tree.
-- **A page intent on `List` and `Tree`**, answered at layout (the *Order of
-  work* step "Layout's own answers for paging and reveal").
-- **`List::windowed` needs no change.** It already takes a count, a key and a
-  builder, and already cuts at layout.
+- **`List::windowed` and `List::windowed_cut`** — the count, the key and the
+  row builder, with `windowed_cut` adding per-window work at the cut.
+- **`Tree::windowed(count, key, node, row)`** — a windowed, controlled tree
+  over the owner's projection: per index a key and a `TreeRow` (depth, has
+  children, open). It builds only the window; `sticky(max, parent)` pins the
+  expanded ancestors of the run's first row, asked at layout. It is a `List`
+  (`.list()`). Nothing in it holds the tree or its expansion: a toggle is the
+  owner's to make and the row's to offer, because the row knows where its
+  disclosure is drawn. The plugin tree and the file explorer run on it.
+- **`Pager`** — a list's answer to "a page from here", recorded at layout. A
+  focusable `List` answers PageUp/PageDown with it; an owner that keeps its own
+  selection asks it. **`Anchor::paged()` / `page_key`** does the same for a
+  column of children of different heights, by their bands.
+- **`List::row_heights`** — rows of their own known heights, windowed in
+  cells.
+- **`List::pinned_at` / `Node::pinned_at`** — pinned rows as a function of the
+  offset, evaluated by the window at layout.
+- **`List::start_at`** — where a viewport-owned window starts, for an owner
+  that mounts the list again.
+- **PLANNED:** retire the eager, uncontrolled `Tree::new`, which only its own
+  test still uses.
 
 ### The plugin API
 
-- **Keyed collection operations.** `mountWidgetPanel` and `updateWidgetPanel`
-  carry structure. A collection changes through keyed operations on its
-  widget: `setItems` (replace), `insertItems(afterKey, …)`,
-  `removeItems(keys)`, `updateItem(key, …)`, `moveItem(key, afterKey)`; for
-  trees, `insertNodes(parentKey, beforeKey, …)`, `removeNodes(keys)` and
-  `updateNode(key, …)`. Item keys become mandatory.
-- **Selection and expansion live in the replica.** Spec values are seeds at
-  mount; the host tells the plugin what changed through key-bearing events;
+- **Keys are required and unique** (IMPLEMENTED). `List` and `Tree` specs,
+  `setItems` and `appendTreeNodes` carry one key per item, no two alike; the
+  API refuses a spec or mutation that breaks this, and an append whose key the
+  tree already has is dropped whole. Suggestions, action popups and LSP menu
+  contributions need unique ids too. These are breaking changes, recorded in
+  the CHANGELOG.
+- **Selection and expansion live in the replica** (IMPLEMENTED). Spec values
+  are seeds; the host tells the plugin what changed through key-bearing events;
   the plugin overrides through mutations.
+- **Keyed collection operations** (PLANNED). Today a collection changes by
+  `setItems` (replace) or `appendTreeNodes`. With keys now required, the API
+  can offer `insertItems(afterKey, …)`, `removeItems(keys)`,
+  `updateItem(key, …)`, `moveItem(key, afterKey)`, and for trees
+  `insertNodes(parentKey, beforeKey, …)`, `removeNodes(keys)` and
+  `updateNode(key, …)`, so a large, changing list stops re-sending everything.
 - **Full-spec updates keep working.** They cost O(N) per update, over IPC and
   in rebuilding the replica, but never per frame; and because rows are keyed by
-  domain key, even a full replace reconciles to minimal element changes. Large,
-  changing lists use the keyed operations.
+  domain key, even a full replace reconciles to minimal element changes.
 
 ## What changing it buys
 
@@ -981,23 +1008,17 @@ clients; every other step pays for itself on the web and the terminal.
    frontend protocol gets frames on the data channel, beside terminal
    clients and browsers on the same editor; add the `native-menu` capability
    and the all-clients rule of *Surfaces the operating system owns*.
-8. **Layout's own answers for paging and reveal.** Move the keyboard read-backs
-   of *Appendix: where the editor reads geometry back* into layout: page sizes
-   read off panel rectangles (Settings, the keybinding editor) and heights
-   written while the description is built (the file explorer) become anchors
-   answered at layout (`ScrollByPages`, `Reveal`), with a page intent on `List`
-   and `Tree`, and the Settings tree stops following the body's scroll through
-   a cached `top_item`. No client needs this; it is retained-mode-ui.md's rule,
-   and it fixes the sweep's inconsistencies for the terminal too.
-9. **Collections as *Collections and the window* describes.** Close the
-   windowing and identity gaps of *Appendix: gaps in the current
-   implementation*: owners hold collections in shared, versioned storage and
-   descriptions capture handles; per-row conversion moves into `row_of` and
-   per-window measurement into the layout reader; list subtrees are memoised on
-   their data's version; rows are keyed by domain key and selection is held by
-   key; plugin collections live in a replica changed by keyed operations, with
-   one owner for expansion; and `fresh_ui::Tree` becomes windowed and
-   controllable, replacing the hand-rolled disclosure lists.
+8. **Layout's own answers for paging and reveal.** IMPLEMENTED in #3420 for
+   Settings (the category tree and the body), the keybinding editor and the
+   file explorer, through `Pager`, `Anchor::paged` and the windowed `Tree`.
+   Left: the prompt's, Live Grep's and the file browser's paging, Live Grep's
+   results window, and the Settings category highlight that follows the body
+   by reading card rectangles back (*Appendix: gaps in the current
+   implementation*).
+9. **Collections as *Collections and the window* describes.** IMPLEMENTED in
+   #3420, except the keyed plugin collection operations, card lists measured
+   with `UniformMeasured`, and the eager `Tree::new` (*Appendix: gaps in the
+   current implementation*).
 10. **A Windows client.** WinUI 3, per *Client application*: the chrome panel
     and pools, the Composition row visuals, brushes, the class table's Fluent
     look, the OS menu bar and file dialog, clipboard, IME, and UI Automation.
@@ -1039,28 +1060,27 @@ inside layout.
 explorer asks the explorer's region whether it was the title row
 (`explorer_body_context`).
 
-**Settings modal.** Keyboard: body PageUp/PageDown page by the body window's
-height (`select_next_page` / `select_prev_page` over `BodyWindow`, filled by
-`refresh_settings_body_window` from the items viewport's rectangle and scroll);
-category-tree PageUp/PageDown page by `tree_page_rows`, set in
-`settle_modal_viewports` from the categories panel's rectangle; the left tree's
-highlight follows the body's scroll through `top_item`
-(`sync_tree_cursor_to_body_scroll`, `current_section_index`, also used by
-`jump_to_search_result`); the search results and entry dialogs' scroll offsets
-are read off their viewports. The web reaches it through a second, index-based
-input path (`dispatch_settings_hit` with a `SettingsHit`), which retires with
-its projection (*Native look, native behaviour, and where each belongs*).
+**Settings modal.** Keyboard: body and category-tree PageUp/PageDown page at
+layout since #3420 (the body by the cards its window measured, the tree by
+its list's `Pager`). Still read back after layout: the left tree's highlight
+follows the body's scroll through `top_item`, found by walking the cards'
+rectangles when the body's offset moved (`refresh_settings_body_window`,
+`current_section_index`, also used by `jump_to_search_result`); the search
+results' and entry dialogs' scroll offsets are read off their viewports for
+the count row. The web reaches Settings through a second, index-based input
+path (`dispatch_settings_hit` with a `SettingsHit`), which retires with its
+projection (*Native look, native behaviour, and where each belongs*).
 
-**Keybinding editor.** Keyboard: PageUp/PageDown page by `scroll.viewport`,
-set in `settle_modal_viewports` from the editor box's rectangle
-(`keybinding::table_rows`). The web selects rows through an index-based path
+**Keybinding editor.** No keyboard read-back since #3420: PageUp/PageDown page
+by the table's `Pager`, and the hand-counted `table_rows` and the `scroll`
+state are gone. The web selects rows through an index-based path
 (`kbedit_select_display_row`), which retires with its projection.
 
-**Prompt and palette.** Keyboard: none geometric — PageUp/PageDown move by a
-fixed 10. Description-time feedback: suggestion column widths are measured
-over the last layout's visible window (`record_suggestions_window` →
-`suggestions_window`, read by `suggestions_description`). The Live Grep card
-scrolls its selection into the results region's height
+**Prompt and palette.** Keyboard: PageUp/PageDown still move by a fixed 10.
+The column widths are measured at the cut since #3420 (`List::windowed_cut`);
+the `suggestions_window` read-back is gone, and the web scene reads the window
+straight off the tree. The Live Grep card still scrolls its selection into the
+results region's height, read off the card after layout
 (`settle_prompt_suggestions`, `ensure_selected_visible_within`), and its
 preview viewport is resized to the card's inner rectangle.
 
@@ -1083,10 +1103,13 @@ layout; tab-switch animations use the pane's content rectangle
 (`cycle_tab` via `pane_or_group_content_rect`). Feedback: whether tab names
 are shortened comes from the last frame's strip width (`Window::pane_strips`).
 
-**File explorer.** Keyboard: PageUp/PageDown, scroll-to-selection, maximum
-scroll and sticky ancestors all read `FileTreeView::viewport_height`, written
-while the description is built (`explorer_body`). Pointer: the wheel clamps
-against the same height; right-click reads the explorer's region.
+**File explorer.** No keyboard read-back since #3420: it is a
+`Tree::windowed(..).sticky(..)` over `FileTreeView`'s projection, the list owns
+its window, and PageUp/PageDown page by its `Pager`; `viewport_height` and the
+model's own window, sticky and ceiling functions are gone. The model records
+where the window reported it went (`window_top`) for a remount and the
+workspace. Pointer: right-click still reads the explorer's region to tell the
+title row from the body (`explorer_body_context`).
 
 **Split grid and panes.** Sizing: every layout pass reads the pane boxes
 (`PaneRects::read`, retained per window, and `layout_panes_offscreen` for
@@ -1128,106 +1151,75 @@ inspector reads the per-cell provenance map written during paint
 (`resolve_theme_key_at`, `inspect_theme_at_cursor`); macro replay re-lays the
 shell at the last frame's size after each action (`recompute_layout`).
 
-**Incidental findings from the sweep** (inconsistencies, not violations):
-
-- `ensure_cursor_visible_for_navigation` scrolls horizontally with a
-  hard-coded gutter of 6 columns instead of the measured gutter.
-- Popups page by `max_height` less borders, while the drawn height may be
-  clamped smaller by the chrome area.
-- Settings body paging applies the body's height in rows as a count of item
-  steps, so a page of multi-row cards moves further than one screen.
-- Visible terminals get PTY sizes from hand-subtracted rows and columns off the
-  pane box, while embedded windows use the tree's content rectangle.
-- Prompt, Live Grep and file-browser paging is a fixed 10 whatever the visible
-  row count.
-- The multi-line text widget pages by its spec's row count, not the height of
-  a growing box.
-- The keybinding editor's `ScrollState` offset and content height are never
-  read or set outside tests; only its page size is live. `EntryDialogState`'s
-  `viewport_height` is never updated from its default.
+**Incidental findings from the sweep.** The inconsistencies the sweep turned
+up, and which of them #3420 closed, are kept in one place: *Appendix: gaps in
+the current implementation*.
 
 ## Appendix: gaps in the current implementation
 
 Where today's code falls short of *Collections and the window*, *Designed for
-in-place patching* and *Native look, native behaviour, and where each belongs*,
-each checked against the source when this was written. None is fixed by the
-protocol; most matter to the terminal as much as to any client.
+in-place patching* and *Native look, native behaviour, and where each belongs*.
+Checked against master after #3420 merged. None is fixed by the protocol; most
+matter to the terminal as much as to any client.
 
-**Windowing and data flow** (*The layers, and the one cut*, *What happens
-before the cut, and what after*)
+**Still open**
 
-- The file browser copies every directory entry into each frame
-  (`rows.to_vec()`) instead of handing its list a handle to its storage.
-- The prompt maps every suggestion into a `SuggestionRow` each frame instead of
-  letting the row builder convert suggestion `i` when layout asks for it.
-- `panel_interior` deep-clones every plugin panel's whole spec each frame.
-- A plugin `List`'s description clones all its items each frame.
-- A plugin `Tree` walks all its nodes each frame
-  (`collect_visible_tree_indices`) instead of reusing a projection memoised
-  until the data or the expansion changes.
-- Plugin trees with card borders build a block for every visible node, with no
-  windowing.
-- Plugin card lists (`item_specs`) use `UniformMeasured`, which builds every
-  item to measure the tallest.
-- `fresh_ui::Tree` flattens the whole tree into an eager list every frame and
-  keeps its expansion private, so the host and plugins work around it instead
-  of using it.
-- List subtrees are not memoised on their data's version, so an unchanged
-  list is rebuilt every frame ("memos sit below the work").
-- The prompt's column widths are measured over the previous frame's window,
-  read back through `suggestions_window`, instead of at the cut over the rows
-  just built.
+- **Keyed plugin collection operations.** A plugin collection changes only by
+  `setItems` or `appendTreeNodes`, so a large list that changes re-sends
+  everything. Keys are now required, so keyed insert, remove, update and move
+  can follow (*The plugin API*).
+- **Card lists measure every item.** A plugin `List` of `item_specs` uses
+  `RowHeight::UniformMeasured`, which builds every card to find the tallest.
+  Its builder needs the panel's context, which is why the cards are built up
+  front; a card whose height is known from its spec could use
+  `List::row_heights`, as the card tree now does.
+- **The eager `fresh_ui::Tree::new`** flattens the whole tree every frame and
+  keeps its expansion private. No production code uses it any more; only its
+  own test does. Retire it in favour of `Tree::windowed`.
+- **Fixed paging.** The prompt, Live Grep and the Open File browser move
+  PageUp/PageDown by a fixed 10 rows, whatever is visible. `Pager` exists for
+  exactly this.
+- **Live Grep's results window** is kept around the selection by reading the
+  results region's height off the card after layout
+  (`ensure_selected_visible_within`), instead of the list following its own
+  selection.
+- **The Settings category highlight** follows the body's scroll through a
+  `top_item` found by walking card rectangles after layout.
+- **The tab strip** decides whether to shorten tab names from the width the
+  previous frame gave its window (`Window::pane_strips`, `cap_names`).
+- **The multi-line text widget** pages by its spec's row count, not the height
+  of a growing box.
 
-**Identity and state ownership** (*One owner per fact*, *Designed for in-place
-patching*)
-
-- Most shell lists key rows by index — suggestions, the file browser, the
-  keybinding table and its autocomplete, popup items, Settings' categories and
-  search results — so an insertion rewrites every row below it.
-- Plugin lists fall back to the index when an item key is missing, instead of
-  requiring one.
-- Host lists hold their selection as an index rather than as an item key.
-- The drawn plugin `Tree` reads `expanded_keys` from the spec, while clicks,
-  arrow keys and `setExpandedKeys` write only host state, so expansion has two
-  owners.
-- The Markdown table of contents probably does not redraw after a disclosure
-  click until something re-sends its spec, a consequence of expansion's two
-  owners, above (not verified at runtime).
-- The plugin API has no keyed insert, remove or move for list items and tree
-  nodes, so any change is `setItems` or a full spec re-send.
-
-**Geometry read back outside layout** (*Native look, native behaviour, and
-where each belongs*, *Appendix: where the editor reads geometry back*)
-
-- Settings and keybinding-editor PageUp/PageDown read panel rectangles off the
-  tree instead of paging by the list's window at layout.
-- File explorer paging, scroll clamping and sticky headers read a height
-  written while the description is built (`viewport_height`).
-- The Settings category tree follows the body's scroll through a `top_item`
-  cached during render.
-- `List` and `Tree` have no PageUp/PageDown handling of their own, which is
-  why each host computes a page size.
-
-**Inconsistencies from the read-back sweep** (*Appendix: where the editor reads
-geometry back*)
+**Inconsistencies from the read-back sweep**
 
 - `ensure_cursor_visible_for_navigation` assumes a 6-column gutter instead of
   the measured one.
 - Popups page by `max_height`, but can be drawn shorter than that.
-- Settings body paging uses the visible height in rows as a count of items, so
-  paging over multi-row cards jumps more than a screen.
 - Visible terminals compute their PTY size by hand-subtracting rows and
   columns off the pane box, while embedded windows use the tree's rectangle.
-- Prompt, Live Grep and file-browser paging is a fixed 10 rows whatever is
-  visible.
-- The multi-line text widget pages by its spec's row count, not the height of a
-  growing box.
-- The keybinding editor's `ScrollState` offset and content height are never
-  read or set outside tests, and the Settings entry dialog's
-  `viewport_height` never changes from its default.
+- The Settings entry dialog's `viewport_height` never changes from its
+  default of 20.
 
-**Stale documentation**
+**Closed by #3420**
 
-- The plugin `List` API doc says the host owns the scroll offset (the viewport
-  does), and the `Tree` API doc says a plugin need not re-send its spec after
-  an expansion change (today it must; see expansion's two owners, above).
+- Per-frame copies: `panel_interior` deep-cloning every plugin panel's spec, a
+  plugin `List` cloning its items, the file browser copying every entry
+  (`rows.to_vec()`), and the prompt converting every suggestion.
+- A plugin `Tree` walking all its nodes each frame, and the card tree building
+  a block for every visible node.
+- List subtrees not memoised on their data (plugin lists and trees).
+- The prompt's column widths measured over the previous frame's window
+  (`suggestions_window`).
+- Tree expansion with two owners, and the Markdown table of contents not
+  folding on a disclosure click.
+- Rows keyed by position (suggestions, file browser, keybinding rows, popup
+  items, Settings rows, explorer rows, plugin items without keys), and
+  selections held by index where rows move under them.
+- Settings and keybinding-editor PageUp/PageDown read off panel rectangles,
+  and the Settings body paging by a count of cards.
+- `List` and `Tree` having no PageUp/PageDown of their own.
+- `fresh_ui::Tree` having no windowed, controlled form.
+- The explorer's model keeping a viewport height and cutting its own window,
+  sticky rows and ceiling before layout.
+- The keybinding editor's dead `ScrollState`.
+- Stale API docs for `List` scroll ownership and `Tree` expansion.
