@@ -890,6 +890,18 @@ impl<M: 'static> Ui<M> {
     }
 
     /// Returns whether anything moved.
+    /// The run an index-scrolled window would show at offset `y`. See
+    /// [`ViewportRender::run_at`](crate::render::prim::ViewportRender::run_at).
+    fn run_at(&mut self, r: RenderId, y: u32) -> Option<u32> {
+        self.render
+            .get_mut(r)?
+            .obj
+            .as_mut()?
+            .as_any_mut()
+            .downcast_mut::<crate::render::prim::ViewportRender>()?
+            .run_at(y)
+    }
+
     fn apply_anchors(&mut self) -> bool {
         use crate::behavior::anchor::Command;
         let ids = self.anchored.clone();
@@ -969,11 +981,23 @@ impl<M: 'static> Ui<M> {
                     Command::Reveal(i) => {
                         let i = i as i32;
                         // The shortest move that puts the index inside the
-                        // window; nothing at all if it already is.
+                        // window; nothing at all if it already is. Moving
+                        // down, the run is the one under the pins of the
+                        // offset the window lands on, which can be shorter
+                        // than the run it has here: step on until the index
+                        // is in it. Each step pins at most one more row, so
+                        // this is as long as the deepest pin stack.
                         at(if i < here {
                             i
                         } else if i >= here + rows {
-                            i - rows + 1
+                            let mut y = i - rows + 1;
+                            while y < i {
+                                match self.run_at(r, y as u32) {
+                                    Some(run) if i >= y + run as i32 => y += 1,
+                                    _ => break,
+                                }
+                            }
+                            y
                         } else {
                             here
                         })

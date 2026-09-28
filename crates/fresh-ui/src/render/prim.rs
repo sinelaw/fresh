@@ -1415,6 +1415,9 @@ pub struct ViewportRender {
     /// window, and a controlled offset is never below it (see
     /// [`Scroll::At`](crate::desc::Scroll::At)).
     ceiling: u32,
+    /// Items the box holds, pins and run together, as last laid out. An
+    /// index-scrolled window's only.
+    rows: u32,
     /// Whether the description's initial offset has been applied, for a
     /// framework-owned offset ([`Scroll::Own`](crate::desc::Scroll::Own)):
     /// it is the initial value only.
@@ -1436,7 +1439,36 @@ pub struct ViewportRender {
     band: Option<(u16, u32, u16)>,
 }
 
+/// How many items a window at `y` is asked to pin: the owner's function of
+/// the offset when it gave one ([`Node::pinned_at`](crate::Node::pinned_at)),
+/// else the fixed list. Never asked past the last item: an offset the wheel
+/// took beyond the end is about to be clamped, and the owner's function need
+/// not answer for rows that do not exist.
+fn pins_named(props: &ViewportProps, n: u32, y: u32) -> u32 {
+    match &props.pinned_at {
+        Some(f) => f.at(y.min(n.saturating_sub(1))).len() as u32,
+        None => props.pinned.len() as u32,
+    }
+}
+
 impl ViewportRender {
+    /// The run a window at offset `y` shows under the pins that offset has:
+    /// its rows less the pins, one row always left to the run. For an
+    /// index-scrolled window that has been laid out; `None` otherwise.
+    ///
+    /// **Asked of the offset a move lands on, not the one it leaves.** Pins
+    /// that depend on the offset change as the window moves, so the run the
+    /// window has now is not the run it will have there.
+    pub(crate) fn run_at(&self, y: u32) -> Option<u32> {
+        match self.props.mode {
+            crate::desc::ScrollMode::Items { .. } if self.rows > 0 => {
+                let pins = pins_named(&self.props, self.items, y).min(self.rows - 1);
+                Some(self.rows - pins)
+            }
+            _ => None,
+        }
+    }
+
     pub fn new(props: ViewportProps) -> Self {
         ViewportRender {
             props,
@@ -1444,6 +1476,7 @@ impl ViewportRender {
             content: Size::ZERO,
             items: 0,
             ceiling: 0,
+            rows: 0,
             placed: false,
             gutter: false,
             band: None,
@@ -1536,7 +1569,7 @@ impl RenderObject for ViewportRender {
                 if !self.placed {
                     self.placed = true;
                     if x != 0 || y != 0 {
-                        cx.set_offset(Point::new(x as i32, y as i32));
+                        cx.set_offset(Point::new(x as i32, y.min(i32::MAX as u32) as i32));
                     }
                 }
                 None
@@ -1706,15 +1739,9 @@ impl RenderObject for ViewportRender {
                 // and the offset still names something.
                 // The pins at an offset: the owner's function of it when it
                 // gave one (`Node::pinned_at`), else the fixed list.
-                let fixed_n = self.props.pinned.len() as u32;
                 let pinned_at = self.props.pinned_at.clone();
-                // Never asked past the last item: an offset the wheel took
-                // beyond the end is about to be clamped, and the owner's
-                // function need not answer for rows that do not exist.
-                let pins_at = |y: u32| match &pinned_at {
-                    Some(f) => f.at(y.min(n.saturating_sub(1))).len() as u32,
-                    None => fixed_n,
-                };
+                let props = self.props.clone();
+                let pins_at = |y: u32| pins_named(&props, n, y);
                 let here = scroll.y.max(0) as u32;
                 let pinned_n = pins_at(here);
                 let pinned_of = |rows: u32| pinned_n.min(rows.saturating_sub(1));
@@ -1801,6 +1828,7 @@ impl RenderObject for ViewportRender {
                 }
                 self.gutter = gutter == 1;
                 self.items = n;
+                self.rows = rows;
                 let inner_w = own.w.saturating_sub(gutter);
                 // **The window is the run under the pinned rows.** The pinned
                 // rows take the top of the box; what is published — to the

@@ -62,11 +62,14 @@ pub struct ListState {
     /// A handle to the window, so a selection move can ask it to follow. The
     /// window itself belongs to the viewport.
     pub(crate) anchor: Option<Rc<crate::behavior::Anchor>>,
-    /// The selection the window was last asked to show.
-    pub(crate) revealed: crate::behavior::Cache<usize, ()>,
-    /// The `(selection, token)` a standing follow was last armed for — see
-    /// [`List::follow_selection`].
-    pub(crate) followed: crate::behavior::Cache<(usize, u64), ()>,
+    /// The row the window was last asked to show, by key. **A row that
+    /// moves is not a selection that moved:** rows inserted above the
+    /// selected one shift its index, and a window asked to follow the index
+    /// would snap back to it after the wheel had taken it elsewhere.
+    pub(crate) revealed: crate::behavior::Cache<Option<Key>, ()>,
+    /// The `(selected row, token)` a standing follow was last armed for, by
+    /// the row's key — see [`List::follow_selection`].
+    pub(crate) followed: crate::behavior::Cache<(Option<Key>, u64), ()>,
     /// Which pager the list records its window into, and the one it uses
     /// for its own PageUp/PageDown when the owner passed none.
     pub(crate) pager: Option<Rc<crate::behavior::pager::PagerSlot>>,
@@ -317,6 +320,8 @@ pub struct List<M> {
     /// viewport. Two states rather than `Sel`'s three: a window is always
     /// somewhere, so "controlled and empty" has no meaning here.
     scroll: Option<usize>,
+    /// Where a window the viewport owns starts. See [`List::start_at`].
+    start: usize,
     on_scroll: Option<Rc<dyn Fn(usize) -> M>>,
     pinned: Rc<[usize]>,
     /// The pinned rows as a function of the window's first row, evaluated at
@@ -458,6 +463,7 @@ impl<M: 'static> List<M> {
             selection: Sel::Own,
             on_select: None,
             scroll: None,
+            start: 0,
             on_scroll: None,
             pinned: Rc::from(Vec::new()),
             pinned_at: None,
@@ -507,8 +513,11 @@ impl<M: 'static> List<M> {
     /// keeps the selection in it on every layout
     /// ([`Anchor::follow`](crate::behavior::anchor::Anchor::follow)); a wheel
     /// over it wins until the request is armed again, which happens when the
-    /// selection or `token` changes — pass something that changes whenever
-    /// the caret moves (its byte, say). A `None` selection stops following.
+    /// selected row or `token` changes — pass something that changes
+    /// whenever the caret moves (its byte, say), or whenever the owner acts
+    /// on the selection. The selected row is its key: rows inserted above it
+    /// move the follow with it, and do not re-arm one a wheel cleared. A
+    /// `None` selection stops following.
     pub fn follow_selection(mut self, token: u64) -> Self {
         self.follow = Some(token);
         self
@@ -543,6 +552,18 @@ impl<M: 'static> List<M> {
     /// owner's value is never clamped.
     pub fn scroll(mut self, offset: usize) -> Self {
         self.scroll = Some(offset);
+        self
+    }
+
+    /// Where the window starts when the list mounts. **The initial value
+    /// only:** from then on the window is the viewport's, and wherever the
+    /// wheel, the bar and a reveal put it, clamped to its ceiling. For an
+    /// owner that mounts the list again later — a panel handed out while a
+    /// background task works on it — and wants it back where it was, which
+    /// [`on_scroll`](Self::on_scroll) told it. Ignored under
+    /// [`scroll`](Self::scroll), which states the offset at every layout.
+    pub fn start_at(mut self, offset: usize) -> Self {
+        self.start = offset;
         self
     }
 
@@ -806,8 +827,14 @@ impl<M: 'static> Component<M> for List<M> {
             // since then is still answered.
             (Some(token), Some(a), Some(sel)) => {
                 let (top, _) = band_of(sel);
-                let a = a.clone();
-                s.followed.get_or((sel, token), move || a.follow(top));
+                let armed = a.clone();
+                s.followed
+                    .get_or((self.source.key_of(sel), token), move || armed.follow(top));
+                // A standing follow is of the row, wherever rows arriving
+                // above it have moved it; one a wheel cleared stays clear.
+                if a.following().is_some_and(|at| at != top) {
+                    a.follow(top);
+                }
             }
             (Some(_), Some(a), None) => a.unfollow(),
             // The band's last unit, then its first: the shortest move shows
@@ -816,7 +843,7 @@ impl<M: 'static> Component<M> for List<M> {
             (None, Some(a), Some(sel)) => {
                 let (top, rows) = band_of(sel);
                 let a = a.clone();
-                s.revealed.get_or(sel, move || {
+                s.revealed.get_or(self.source.key_of(sel), move || {
                     a.reveal(top + rows.saturating_sub(1));
                     a.reveal(top);
                 });
@@ -1063,8 +1090,12 @@ impl<M: 'static> Component<M> for List<M> {
                 RowHeight::UniformMeasured => body.item_rows_measured(),
             };
         }
-        if let Some(y) = self.scroll {
-            body = body.scroll(u32::try_from(y).unwrap_or(u32::MAX));
+        match self.scroll {
+            Some(y) => body = body.scroll(u32::try_from(y).unwrap_or(u32::MAX)),
+            None if self.start > 0 => {
+                body = body.scroll_at(0, u32::try_from(self.start).unwrap_or(u32::MAX))
+            }
+            None => {}
         }
         if let Some(f) = self.on_scroll.clone() {
             body = body.on_scroll(move |y| f(y as usize));

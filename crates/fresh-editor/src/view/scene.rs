@@ -865,13 +865,31 @@ impl Editor {
             .get_node(tree.root_id())
             .map(|n| n.entry.name.clone())
             .unwrap_or_default();
+        // The window is the list's: which rows are on screen, pins and
+        // all, is read off the layout that placed them.
+        let projection = view.projection();
+        let (scroll_offset, viewport_rows) = self
+            .shell_ui
+            .as_ref()
+            .and_then(|ui| {
+                crate::view::shell::file_explorer::window_rows(ui, self.active_window().id.0)
+            })
+            .map(|(first, paths)| {
+                let rows = paths
+                    .iter()
+                    .filter_map(|p| tree.get_node_by_path(p))
+                    .filter_map(|n| projection.index_of(n.id))
+                    .collect::<Vec<_>>();
+                (first, rows)
+            })
+            .unwrap_or_default();
         Some(FileExplorerView {
             rect: RectView::from(rect),
             title,
-            scroll_offset: view.get_scroll_offset(),
-            viewport_height: view.viewport_height,
+            scroll_offset,
+            viewport_height: viewport_rows.len(),
             selected: view.get_selected_index(),
-            viewport_rows: view.viewport_display_indices(),
+            viewport_rows,
             rows,
         })
     }
