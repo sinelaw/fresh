@@ -255,17 +255,6 @@ pub struct Prompt {
     /// selection on its suggestion. Read and written through
     /// [`Prompt::selected_suggestion`] and [`Prompt::select_suggestion`].
     selection: crate::view::keyed_selection::KeyedSelection,
-    /// Index of the first suggestion shown in the popup viewport.
-    /// Updated minimally by the renderer to keep `selected_suggestion`
-    /// visible — selection changes inside the viewport never scroll
-    /// (issue #1660).
-    pub scroll_offset: usize,
-    /// When true, the user has scrolled the result list with the mouse wheel,
-    /// so the renderer must NOT pull `scroll_offset` back to keep the
-    /// selection in view (issue #2119). Reset whenever the selection moves by
-    /// keyboard or the suggestion list is rebuilt, so normal navigation
-    /// re-engages the keep-selection-visible behaviour.
-    pub manual_scroll: bool,
     /// The suggestion list's page: its layout records the window it was
     /// given here, and PageUp/PageDown ask it for the row a page away.
     pub pager: std::rc::Rc<fresh_ui::behavior::Pager>,
@@ -406,8 +395,6 @@ impl Prompt {
             names_are_paths_of: Default::default(),
             original_suggestions: None,
             selection: Default::default(),
-            scroll_offset: 0,
-            manual_scroll: false,
             pager: fresh_ui::behavior::Pager::new(),
             suggestions_set_for_input: None,
             sync_input_on_navigate: false,
@@ -449,8 +436,6 @@ impl Prompt {
             },
             names_are_paths_of: Default::default(),
             selection,
-            scroll_offset: 0,
-            manual_scroll: false,
             pager: fresh_ui::behavior::Pager::new(),
             suggestions_set_for_input: None,
             sync_input_on_navigate: false,
@@ -505,8 +490,6 @@ impl Prompt {
             names_are_paths_of: Default::default(),
             original_suggestions: None,
             selection: Default::default(),
-            scroll_offset: 0,
-            manual_scroll: false,
             pager: fresh_ui::behavior::Pager::new(),
             suggestions_set_for_input: None,
             sync_input_on_navigate: false,
@@ -760,37 +743,6 @@ impl Prompt {
         } else {
             Some(0)
         });
-        self.scroll_offset = 0;
-        self.manual_scroll = false;
-    }
-
-    /// Adjust `scroll_offset` so that `selected_suggestion` is inside a
-    /// viewport of `visible_count` rows, scrolling the minimum amount
-    /// required. A selection that's already on-screen leaves the viewport
-    /// untouched — this is what stops a click on a near-bottom item from
-    /// snapping the list upward and recentering under the cursor (issue
-    /// #1660). Callers pass the actual rendered height of their list
-    /// (bottom-anchored popup and floating Live Grep overlay alike), so
-    /// the scroll only moves when the selection genuinely leaves the
-    /// visible window.
-    pub fn ensure_selected_visible_within(&mut self, visible_count: usize) {
-        let total = self.suggestions.len();
-        let visible = total.min(visible_count.max(1));
-        let max_offset = total.saturating_sub(visible);
-        if visible == 0 {
-            self.scroll_offset = 0;
-            return;
-        }
-        if let Some(selected) = self.selected_suggestion() {
-            if selected < self.scroll_offset {
-                self.scroll_offset = selected;
-            } else if selected >= self.scroll_offset + visible {
-                self.scroll_offset = selected + 1 - visible;
-            }
-        }
-        if self.scroll_offset > max_offset {
-            self.scroll_offset = max_offset;
-        }
     }
 
     // ========================================================================

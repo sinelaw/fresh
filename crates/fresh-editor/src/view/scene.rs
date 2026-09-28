@@ -533,7 +533,7 @@ impl Editor {
         // Such prompts have no native suggestion list; the frontend renders
         // just the input bar (null `list_rect`/`outer_rect` below).
         let total = p.suggestions.len();
-        let (scroll_start, visible) = sugg_window.unwrap_or((p.scroll_offset, p.suggestions.len()));
+        let (scroll_start, visible) = sugg_window.unwrap_or((0, p.suggestions.len()));
         // Search-option toggles: the row's own content — the same values the
         // TUI describes its toggles with — plus the cell spans the shell's
         // layout assigned them, READ BACK off the laid-out tree rather than

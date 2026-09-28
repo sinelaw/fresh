@@ -1557,3 +1557,83 @@ fn test_live_grep_page_down_moves_by_the_results_window() {
     harness.render().unwrap();
     assert_eq!(selected_result(&harness), Some(0));
 }
+
+/// **The results window follows its selection inside the list, and a wheel
+/// scroll stays.** Moving the selection past the band's last row scrolls
+/// the window by one row; a wheel scroll afterwards moves the window away
+/// from the selection and later frames, including more results streaming
+/// in, leave it there until the keyboard moves the selection again
+/// (issue #2119).
+#[test]
+fn test_live_grep_results_window_follows_selection_and_keeps_the_wheel() {
+    use crossterm::event::{MouseEvent, MouseEventKind};
+    let (mut harness, _tmp) = open_live_grep_overlay(&[], Default::default());
+    seed_many_results(&mut harness, 100);
+    let rows = results_on_screen(&harness).len();
+
+    for _ in 0..rows {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    }
+    harness.render().unwrap();
+    let shown = results_on_screen(&harness);
+    assert_eq!(selected_result(&harness), Some(rows));
+    assert_eq!(
+        (shown.first().copied(), shown.last().copied()),
+        (Some(1), Some(rows)),
+        "the window moved one row to show the selection:\n{}",
+        harness.screen_to_string()
+    );
+
+    // Wheel down over the results, past the selection.
+    let screen = harness.screen_to_string();
+    let (row, line) = screen
+        .lines()
+        .enumerate()
+        .find(|(_, l)| l.contains(&format!(" r{:03}.txt", rows / 2)))
+        .expect("a result on screen");
+    let column = line.find(" r").unwrap() as u16 + 2;
+    for _ in 0..20 {
+        harness
+            .send_mouse(MouseEvent {
+                kind: MouseEventKind::ScrollDown,
+                column,
+                row: row as u16,
+                modifiers: KeyModifiers::NONE,
+            })
+            .unwrap();
+    }
+    harness.render().unwrap();
+    let wheeled = results_on_screen(&harness);
+    assert!(
+        !wheeled.contains(&rows),
+        "the wheel moved the window off the selection:\n{}",
+        harness.screen_to_string()
+    );
+
+    // More results stream in; the selection stays on its result.
+    let labels: Vec<String> = (0..120).map(|i| format!("r{i:03}.txt:1")).collect();
+    let prompt = harness.editor_mut().prompt_mut().unwrap();
+    prompt.suggestions = labels
+        .iter()
+        .map(|l| Suggestion::new(l.clone(), l.clone()))
+        .collect::<Vec<_>>()
+        .into();
+    harness.render().unwrap();
+    harness.render().unwrap();
+    assert_eq!(selected_result(&harness), Some(rows));
+    assert_eq!(
+        results_on_screen(&harness),
+        wheeled,
+        "later frames leave the wheel's window:\n{}",
+        harness.screen_to_string()
+    );
+
+    // The keyboard brings it back.
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    assert!(
+        results_on_screen(&harness).contains(&(rows + 1)),
+        "{}",
+        harness.screen_to_string()
+    );
+}

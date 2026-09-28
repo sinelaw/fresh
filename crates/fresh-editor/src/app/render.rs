@@ -1130,10 +1130,6 @@ impl Editor {
         // with OSC sequences every frame.
         self.update_terminal_title(&display_name);
 
-        // Render file browser popup or suggestions popup AFTER status bar + prompt,
-        // so they overlay on top of both (fixes bottom border being overwritten by status bar)
-        self.settle_prompt_suggestions();
-
         // Render editor-level popups (e.g. plugin action popups) on top of any
         // buffer content so they stay visible across buffer switches and over
         // virtual buffers (Dashboard, diagnostics) that own the whole split.
@@ -3860,8 +3856,7 @@ impl Editor {
     ///
     /// Only the outer rectangle and two counts. Everything the painter derived
     /// from them — the header band's height, where the body starts, how the
-    /// body splits — is what the description states, and
-    /// `overlay_prompt::regions_of` is where the painter reads it back.
+    /// body splits — is what the description states.
     ///
     /// The toolbar's row count is the one thing that has to be *measured*
     /// rather than declared: a plugin's toolbar is two rows on a wide terminal
@@ -4625,45 +4620,6 @@ impl Editor {
     ) {
         let size = frame.area();
         crate::view::dimming::apply_dimming_excluding(frame, size, Some(terminal_area));
-    }
-
-    /// Settle the open overlay prompt's selection window against the results
-    /// band the tree placed. Nothing is painted here — the list, the bottom
-    /// popup and the overlay card are the tree's.
-    fn settle_prompt_suggestions(&mut self) {
-        let Some(prompt) = &self.active_window_mut().prompt else {
-            return;
-        };
-
-        // Overlay prompts (Live Grep, issue #1796) get a dedicated
-        // centred floating frame instead of the bottom-anchored popup.
-        // Centre it in the chrome area (right of a left dock) so it never
-        // overlaps the dock column.
-        if prompt.overlay {
-            // The card is the tree's; what is left here is the selection's
-            // window. How many rows the list can show is the results band's
-            // height, read off the card rather than counted — so the
-            // selection scrolls only when it genuinely passes the bottom, not
-            // when it crosses the bottom-popup default cap.
-            let visible = crate::view::shell::overlay_prompt::regions_of(
-                self.shell_ui.as_ref().expect("the shell tree is in place"),
-            )
-            .iter()
-            .find(|(k, _)| *k == crate::view::shell::overlay_prompt::CardRegion::Results)
-            .map(|(_, r)| r.height as usize)
-            .unwrap_or(0);
-            if let Some(prompt) = self.active_window_mut().prompt.as_mut() {
-                // Skip when the user has wheel-scrolled the list — keeping
-                // the selection pinned in view would undo their scroll
-                // (issue #2119).
-                if !prompt.manual_scroll {
-                    prompt.ensure_selected_visible_within(visible);
-                }
-            }
-        }
-        // Nothing is painted here, and nothing is carried to the next frame:
-        // the columns that used to measure against the window this layout
-        // settled are measured at the cut now (`shell::prompt::suggestions`).
     }
 
     /// Resolve the overlay's currently-selected match into a real
