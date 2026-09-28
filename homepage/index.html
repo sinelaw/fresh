@@ -530,16 +530,7 @@
         .light { margin-top: 110px; text-align: center; }
         .light-head { font-family: var(--serif); font-size: clamp(1.9rem, 3.4vw, 2.6rem); line-height: 1.15; color: var(--paper); }
         .light-head em { color: var(--sage); }
-        .light-facts {
-            list-style: none;
-            display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
-            margin: 40px auto 0; max-width: 980px;
-            border-top: 1px solid var(--line); border-bottom: 1px solid var(--line);
-        }
-        .light-facts li { padding: 26px 18px; display: flex; flex-direction: column; gap: 6px; }
-        .light-facts li + li { border-left: 1px solid var(--line); }
-        .light-facts b { font-family: var(--serif); font-weight: 400; font-size: 1.85rem; line-height: 1.1; color: var(--paper); }
-        .light-facts span { font-size: 13.5px; color: var(--mute); }
+        .light-sub { margin: 16px auto 0; max-width: 34rem; font-size: 16px; color: var(--mute); }
         .light + .ticker { margin-top: 70px; }
 
         /* Agents that drive the editor */
@@ -734,9 +725,6 @@
             .beats { grid-template-columns: 1fr; gap: 40px; margin: 64px 0; }
             .orchestra-review { grid-template-columns: 1fr; gap: 36px; }
             .teach { grid-template-columns: 1fr; gap: 28px; padding: 30px 24px; }
-            .light-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-            .light-facts li:nth-child(3) { border-left: none; }
-            .light-facts li:nth-child(n+3) { border-top: 1px solid var(--line); }
             .nav-links { display: none; }
             .hamburger { display: flex; }
             .mobile-menu { display: block; }
@@ -863,12 +851,7 @@
         <!-- Light enough to run almost anywhere -->
         <div class="wrap light reveal">
             <p class="light-head">Light enough to run <em>almost anywhere.</em></p>
-            <ul class="light-facts">
-                <li><b>Small</b><span>a quick download</span></li>
-                <li><b>Lean</b><span>on memory, even with big files open</span></li>
-                <li><b>One</b><span>static binary, no runtime</span></li>
-                <li><b>Linux · macOS</b><span>Windows · FreeBSD · over SSH</span></li>
-            </ul>
+            <p class="light-sub">One small, self-contained binary that stays light on memory. Linux, macOS, Windows and FreeBSD, and just as happy over SSH.</p>
         </div>
 
         <div class="ticker" aria-hidden="true">
