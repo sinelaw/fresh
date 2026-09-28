@@ -14,7 +14,6 @@
 //! between the measurement and the frame, and nothing at all is described to
 //! *scroll*.
 
-use std::collections::HashSet;
 use std::rc::Rc;
 
 use crate::desc::{
@@ -1281,95 +1280,9 @@ impl<M: 'static> Component<M> for List<M> {
 
 // -- Tree --------------------------------------------------------------------
 
-/// One node of a tree. The application owns the shape; the widget owns which
-/// parts of it are open.
-pub struct TreeNode<M> {
-    pub key: Key,
-    pub label: Node<M>,
-    pub children: Vec<TreeNode<M>>,
-}
-
-impl<M> TreeNode<M> {
-    pub fn leaf(key: impl Into<Key>, label: Node<M>) -> Self {
-        TreeNode {
-            key: key.into(),
-            label,
-            children: Vec::new(),
-        }
-    }
-
-    pub fn branch(key: impl Into<Key>, label: Node<M>, children: Vec<TreeNode<M>>) -> Self {
-        TreeNode {
-            key: key.into(),
-            label,
-            children,
-        }
-    }
-}
-
-#[derive(Default)]
-pub struct TreeState {
-    pub expanded: HashSet<Key>,
-}
-
-pub struct Tree<M> {
-    roots: Vec<TreeNode<M>>,
-    on_activate: Option<Rc<dyn Fn(Key) -> M>>,
-}
-
-impl<M: 'static> Tree<M> {
-    pub fn new(roots: Vec<TreeNode<M>>) -> Self {
-        Tree {
-            roots,
-            on_activate: None,
-        }
-    }
-
-    pub fn on_activate(mut self, f: impl Fn(Key) -> M + 'static) -> Self {
-        self.on_activate = Some(Rc::new(f));
-        self
-    }
-}
-
-impl<M: 'static> Component<M> for Tree<M> {
-    type State = TreeState;
-
-    fn build(&self, s: &TreeState, cx: &mut BuildCx<'_, M>) -> Node<M> {
-        let mut rows: Vec<(Key, Node<M>)> = Vec::new();
-        flatten(&self.roots, 0, &s.expanded, &mut rows);
-
-        let up: Updater<TreeState> = cx.updater();
-        let keys: Vec<Key> = rows.iter().map(|(k, _)| k.clone()).collect();
-        let activate = self.on_activate.clone();
-
-        let rows: Vec<(Key, Node<M>)> = rows
-            .into_iter()
-            .map(|(k, node)| {
-                let up = up.clone();
-                let kk = k.clone();
-                let node = gesture(node).on(
-                    GestureKind::Click,
-                    Rc::new(move |_: &Event| {
-                        let k = kk.clone();
-                        up.set(move |st: &mut TreeState| {
-                            if !st.expanded.remove(&k) {
-                                st.expanded.insert(k);
-                            }
-                        });
-                        None
-                    }),
-                );
-                (k, node)
-            })
-            .collect();
-
-        let mut list = List::from_source(Source::Eager(Rc::new(rows)));
-        if let Some(f) = activate {
-            list = list.on_activate_handler(Rc::new(move |i, _: &Event| Some(f(keys[i].clone()))));
-        }
-        list.node()
-    }
-}
+/// Where a tree is described from: [`Tree::windowed`]. There is no eager form
+/// that takes the nodes; the tree and its expansion are the owner's.
+pub struct Tree<M>(std::marker::PhantomData<fn() -> M>);
 
 /// What the owner's projection says about the node at a visible index. The
 /// tree is the owner's — the nodes, their order and which are open — and the
@@ -1485,30 +1398,6 @@ impl<M: 'static> Tree<M> {
             node: Rc::new(node),
             row: Rc::new(row),
             sticky: None,
-        }
-    }
-}
-
-fn flatten<M>(
-    nodes: &[TreeNode<M>],
-    depth: usize,
-    expanded: &HashSet<Key>,
-    out: &mut Vec<(Key, Node<M>)>,
-) {
-    for n in nodes {
-        let open = expanded.contains(&n.key);
-        let mark = if n.children.is_empty() {
-            "  "
-        } else if open {
-            "v "
-        } else {
-            "> "
-        };
-        let row =
-            crate::desc::row().children([text(" ".repeat(depth * 2)), text(mark), n.label.clone()]);
-        out.push((n.key.clone(), row));
-        if open {
-            flatten(&n.children, depth + 1, expanded, out);
         }
     }
 }
