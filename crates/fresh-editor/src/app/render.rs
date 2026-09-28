@@ -1816,71 +1816,33 @@ impl Editor {
         })
     }
 
-    /// Read the settings body's window back off the tree.
+    /// Follow the settings body's window, and read the other windows back.
     ///
-    /// **The direction of travel is the point.** `ScrollablePanel` owned the
-    /// window and re-derived the column's height from `SettingItem::layout_box`
-    /// to bound it — the same arithmetic the painter drew each card with, in a
-    /// second place. The `viewport` owns it now, so this reads rather than
-    /// computes, and the state's scroll methods ask for a move by handle
-    /// instead of writing an offset.
+    /// The body's is layout's answer: its paged anchor records where the
+    /// window starts and which card that is, where the cards are placed.
     fn refresh_settings_body_window(&mut self) {
         use crate::view::shell::settings as st;
         let Some(ui) = self.shell_ui.as_ref() else {
             return;
         };
-        // **Three windows, three answers, and no one of them gates the
-        // others.** The cards' viewport is only in the tree while the body is
-        // showing cards: a search replaces it with the results list, so
-        // returning here when it is missing left the results' own offset
-        // unread, and the count row went on reporting "(1-10 of 176)" however
-        // far the wheel had taken the list.
-        let body = ui.find_by_key(&st::items_key());
-        let vpr = body.map(|vp| ui.rect_of(vp)).unwrap_or_default();
-        let scroll = match body {
-            Some(vp) => ui.scroll(vp).0,
-            None => Default::default(),
-        };
-        let offset = scroll.y.max(0) as u16;
-        let moved = body.is_some()
-            && self
-                .settings_state
-                .as_ref()
-                .is_some_and(|s| s.body.offset != offset);
-        // Which card the window starts on. Only worth a walk when the window
-        // has actually moved — it is the left tree's highlight that reads it,
-        // and that only has to change when the body does.
-        let top_item = match moved {
-            false => self.settings_state.as_ref().and_then(|s| s.body.top_item),
-            true => {
-                let n = self
-                    .settings_state
-                    .as_ref()
-                    .and_then(|s| s.pages.get(s.selected_category))
-                    .map(|p| p.items.len())
-                    .unwrap_or(0);
-                (0..n).find(|&i| {
-                    body.and_then(|vp| ui.find_by_key_in(vp, &st::card_key(i)))
-                        .map(|e| ui.rect_of(e))
-                        // The first card whose bottom edge is below the
-                        // window's top is the one the window starts on.
-                        .is_some_and(|r| r.y + r.h as i32 > vpr.y)
-                })
-            }
-        };
         let Some(s) = self.settings_state.as_mut() else {
             return;
         };
-        if body.is_some() {
-            s.body = crate::view::settings::state::BodyWindow { offset, top_item };
-        }
-        // The left tree's highlight follows the body, in both directions —
-        // the same contract the wheel and the scrollbar had, stated once
-        // against the window rather than at each thing that moves it.
-        // ...but not when the cursor is what moved it: see
-        // `SettingsState::cursor_drove_body`.
-        if moved && !s.take_cursor_drove_body() {
-            s.sync_tree_cursor_to_body_scroll();
+        // **Three windows, three answers, and no one of them gates the
+        // others.** The cards' window only answers while the body is showing
+        // cards: a search replaces it with the results list, whose own
+        // offset is still read below.
+        if let Some(start) = s.body_anchor.start() {
+            let moved = s.body_offset != start.offset;
+            s.body_offset = start.offset;
+            // The left tree's highlight follows the body, in both directions
+            // — the same contract the wheel and the scrollbar had, stated
+            // once against the window rather than at each thing that moves
+            // it. ...but not when the cursor is what moved it: see
+            // `SettingsState::cursor_drove_body`.
+            if moved && !s.take_cursor_drove_body() {
+                s.sync_tree_cursor_to_body_scroll();
+            }
         }
         // The search results' window, on the same terms. The list moves its
         // own window when the selection leaves it, so what the count row

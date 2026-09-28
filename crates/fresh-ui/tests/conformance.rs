@@ -606,6 +606,43 @@ fn shown(ui: &Ui<()>) -> Vec<String> {
         .collect()
 }
 
+/// **Which card a window starts on is layout's answer.** The cards start
+/// at rows 0, 1, 3, 6, 7 and 9; a window scrolled to row 4 starts inside
+/// card 2 (rows 3–5), and one the wheel moved answers for where it went.
+#[test]
+fn a_paged_window_says_which_card_it_starts_on() {
+    use fresh_ui::behavior::anchor::Start;
+    let card = |i: u64| Key::Pair("card".into(), i);
+    let anchor = fresh_ui::behavior::anchor::Anchor::paged();
+    assert_eq!(anchor.start(), None, "not laid out");
+
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(cards(anchor.clone()), FRAME);
+    let at = |offset: i32, i: u64| {
+        Some(Start {
+            offset,
+            first: Some(card(i)),
+        })
+    };
+    assert_eq!(anchor.start(), at(0, 0));
+
+    anchor.scroll_to(fresh_ui::Point::new(0, 4));
+    ui.frame(cards(anchor.clone()), FRAME);
+    assert_eq!(anchor.start(), at(4, 2), "{:?}", shown(&ui));
+
+    ui.dispatch(Input::Wheel {
+        pos: fresh_ui::Point::new(0, 0),
+        delta: 3,
+        axis: fresh_ui::Axis::Vertical,
+        mods: Mods::NONE,
+    });
+    ui.frame(cards(anchor.clone()), FRAME);
+    assert_eq!(anchor.start(), at(7, 4), "{:?}", shown(&ui));
+
+    ui.frame(text("gone"), FRAME);
+    assert_eq!(anchor.start(), None, "a window that is gone starts nowhere");
+}
+
 /// **A page of cards is a window's height of content, not a count of
 /// cards.** The cards start at rows 0, 1, 3, 6, 7 and 9 in a window four
 /// rows tall; only layout knows which card a page lands on.
