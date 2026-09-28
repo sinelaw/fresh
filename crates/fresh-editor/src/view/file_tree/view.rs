@@ -89,6 +89,11 @@ pub struct FileTreeView {
     /// selection for it (and for a change of selected row) until the wheel
     /// takes it elsewhere; the model never says where the window goes.
     reveal: u64,
+    /// The `reveal` the window at `window_top` already answers: the token
+    /// as of the list's last report. A list mounted again follows only a
+    /// request made since — one made while it was away (a background
+    /// expand-to-path) — not one the reader has since wheeled away from.
+    answered: u64,
     /// Sort mode for entries
     sort_mode: SortMode,
     /// Ignore patterns for filtering
@@ -125,6 +130,7 @@ impl FileTreeView {
             selection_anchor: None,
             window_top: 0,
             reveal: 0,
+            answered: 0,
             sort_mode: SortMode::Type,
             ignore_patterns: IgnorePatterns::new(),
             search: FileExplorerSearch::new(),
@@ -145,8 +151,10 @@ impl FileTreeView {
         self.reveal
     }
 
-    /// Ask for the selection to be shown, wherever it is.
-    fn show_selection(&mut self) {
+    /// Ask for the selection to be shown, wherever it is — for a caller that
+    /// set it with [`set_selected`](Self::set_selected) on a command the
+    /// reader expects to see the result of.
+    pub fn show_selection(&mut self) {
         self.reveal = self.reveal.wrapping_add(1);
     }
 
@@ -158,6 +166,9 @@ impl FileTreeView {
     fn project(&self) -> Projection {
         let mut ids = Vec::new();
         self.collect_filtered_visible(self.tree.root_id(), &mut ids);
+        // Only ids with a node get a row, and an index is a row's: a missing
+        // node dropped below would otherwise shift every index after it.
+        ids.retain(|&id| self.tree.get_node(id).is_some());
         let index_of: HashMap<NodeId, usize> =
             ids.iter().enumerate().map(|(i, &id)| (id, i)).collect();
         let rows = ids
@@ -679,9 +690,17 @@ impl FileTreeView {
     }
 
     /// Record where the explorer's window went — the list's report, not a
-    /// request: the window is already there.
+    /// request: the window is already there, and it answers every reveal
+    /// asked so far.
     pub fn note_window(&mut self, top: usize) {
         self.window_top = top;
+        self.answered = self.reveal;
+    }
+
+    /// The reveal token the window at [`window_top`](Self::window_top)
+    /// already answers.
+    pub fn answered_token(&self) -> u64 {
+        self.answered
     }
 
     /// Get the sort mode

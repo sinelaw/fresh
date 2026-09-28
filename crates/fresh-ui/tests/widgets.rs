@@ -2140,6 +2140,97 @@ fn a_bar_drag_wins_over_a_standing_follow() {
     assert!(screen.contains("row 99"), "{screen}");
 }
 
+/// **Mounted again, a list starts where it was left.** An owner that saved
+/// the window (`start_at`) and the follow token it answers
+/// (`follow_answered`) gets it back; only a token moved since — a request
+/// made while the list was away — brings the selection into view instead.
+#[test]
+fn a_list_mounted_again_keeps_its_window_unless_asked_since() {
+    let list = |token: u64, answered: u64| -> Node<Msg> {
+        List::windowed(100, fresh_ui::Key::from, |i| {
+            fresh_ui::text(format!("row {i:02}"))
+        })
+        .focusable(false)
+        .selection(Some(0))
+        .follow_on(token)
+        .follow_answered(answered)
+        .start_at(40)
+        .node()
+    };
+    let top = |token, answered| {
+        let mut ui: Ui<Msg> = Ui::new();
+        let screen = support::screen::render(ui.frame(list(token, answered), FRAME)).text();
+        screen
+            .lines()
+            .next()
+            .unwrap_or_default()
+            .trim_end()
+            .to_string()
+    };
+    assert_eq!(top(7, 7), "row 40", "nothing asked since: where it was");
+    assert_eq!(top(8, 7), "row 00", "asked while away: the selection");
+}
+
+/// **`follow_on` follows the owner's token, not every selection move.** A
+/// selection the owner moves without it — a right-click picking the row a
+/// menu is about — leaves the window where it is.
+#[test]
+fn follow_on_leaves_the_window_for_a_selection_moved_without_the_token() {
+    let list = |sel: usize, token: u64| -> Node<Msg> {
+        List::windowed(100, fresh_ui::Key::from, |i| {
+            fresh_ui::text(format!("row {i:02}"))
+        })
+        .focusable(false)
+        .selection(Some(sel))
+        .follow_on(token)
+        .node()
+    };
+    let mut ui: Ui<Msg> = Ui::new();
+    let mut top = |sel, token| {
+        let screen = support::screen::render(ui.frame(list(sel, token), FRAME)).text();
+        screen
+            .lines()
+            .next()
+            .unwrap_or_default()
+            .trim_end()
+            .to_string()
+    };
+    assert_eq!(top(60, 1), format!("row {:02}", 60 + 1 - FRAME.h as usize));
+    let here = top(60, 1);
+    assert_eq!(top(2, 1), here, "moved without the token: the window stays");
+    assert_eq!(top(2, 2), "row 02", "the token: the window follows");
+}
+
+/// **A reveal answers a selection move, not new keys.** A controlled list
+/// that re-keys its rows under an unchanged selected index (rows prepended,
+/// keys regenerated) leaves a window the wheel moved where it is.
+#[test]
+fn new_keys_under_an_unchanged_selection_do_not_reveal_it_again() {
+    let list = |gen: u64| -> Node<Msg> {
+        List::windowed(
+            100,
+            move |i| fresh_ui::Key::Pair("g".into(), gen * 1000 + i as u64),
+            |i| fresh_ui::text(format!("row {i:02}")),
+        )
+        .focusable(false)
+        .selection(Some(0))
+        .node()
+    };
+    let mut ui: Ui<Msg> = Ui::new();
+    ui.frame(list(1), FRAME);
+    ui.dispatch(Input::Wheel {
+        pos: Point::new(1, 1),
+        delta: 30,
+        axis: Axis::Vertical,
+        mods: Mods::NONE,
+    });
+    let screen = support::screen::render(ui.frame(list(2), FRAME)).text();
+    assert!(
+        !screen.contains("row 00"),
+        "the wheel's window stays: {screen}"
+    );
+}
+
 /// **A following list keeps its selection in view on every layout** — not
 /// only on the build that moved it. The window here shrinks a frame after the
 /// selection arrived (a box resized by its owner a beat later), which a

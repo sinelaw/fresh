@@ -3273,6 +3273,7 @@ impl Editor {
             }),
             selected,
             reveal: view.reveal_token(),
+            answered: view.answered_token(),
             caret: focused,
             start: view.window_top(),
             owner: win.id.0,
