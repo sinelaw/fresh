@@ -2560,7 +2560,9 @@ function buildPkgListRows(): PkgListRow[] {
           text: `  ${name.padEnd(nameW)} ${ver.padEnd(7)} ${status}`,
           properties: { type: "package-row", installed: true },
         },
-        key: `pkg.${item.name}`,
+        // Installed packages come from four directories, so a plugin and
+        // a theme can share a name; the type tells them apart.
+        key: `pkg.${item.packageType}.${item.name}`,
         itemIndex: idx,
       });
       idx++;
@@ -2603,7 +2605,8 @@ function buildPkgListRows(): PkgListRow[] {
           text: `  ${name.padEnd(availNameW)} [${typeTag}]`,
           properties: { type: "package-row", installed: false },
         },
-        // Registries of different kinds can each offer a name.
+        // Registries of different kinds can each offer a name. (Installed
+        // names are not offered again, so no row here repeats one above.)
         key: `pkg.${item.packageType}.${item.name}`,
         itemIndex: idx,
       });

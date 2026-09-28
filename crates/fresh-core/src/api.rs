@@ -2345,16 +2345,6 @@ pub enum Elide {
     Head,
 }
 
-/// Declarative widget tree. Each variant is one node; nested
-/// composition is via `Row { children }` / `Col { children }`.
-///
-/// `key` is the stable identifier used by the reconciler to match a
-/// node across `MountWidgetPanel` / `UpdateWidgetPanel` calls — when
-/// the plugin re-emits a Spec, instance state (cursor offset, scroll,
-/// expanded keys, hover) is preserved on nodes whose `key` matches.
-/// Plugins should provide stable keys for any widget that owns
-/// instance state; stateless widgets (`HintBar`, `Toggle`, `Button`,
-/// `Spacer`) can omit it.
 /// A widget's collection — a `List`'s items and keys, a `Tree`'s nodes and
 /// keys — in shared storage.
 ///
@@ -2376,6 +2366,16 @@ fn collection_is_empty<T>(c: &Collection<T>) -> bool {
     c.is_empty()
 }
 
+/// Declarative widget tree. Each variant is one node; nested
+/// composition is via `Row { children }` / `Col { children }`.
+///
+/// `key` is the stable identifier used by the reconciler to match a
+/// node across `MountWidgetPanel` / `UpdateWidgetPanel` calls — when
+/// the plugin re-emits a Spec, instance state (cursor offset, scroll,
+/// expanded keys, hover) is preserved on nodes whose `key` matches.
+/// Plugins should provide stable keys for any widget that owns
+/// instance state; stateless widgets (`HintBar`, `Toggle`, `Button`,
+/// `Spacer`) can omit it.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(
     tag = "kind",
@@ -7987,6 +7987,11 @@ impl PluginApi {
         plugin: String,
         spec: Option<WidgetSpec>,
     ) -> Result<(), String> {
+        // Refused here as the JavaScript API refuses it: rows are keyed by
+        // `itemKeys`, which must match the items one to one.
+        if let Some(problem) = spec.as_ref().and_then(WidgetSpec::item_keys_problem) {
+            return Err(problem);
+        }
         self.send_command(PluginCommand::SetPromptToolbar { plugin, spec })
     }
 

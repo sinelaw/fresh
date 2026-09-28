@@ -1156,7 +1156,9 @@ async function devcontainer_show_ports(): Promise<void> {
       desc += ` → ${binding}`;
     }
     return { id: `port:${key}`, text: String(port), description: desc };
-  });
+  })
+    // A config can list a port twice; it is one port, shown once.
+    .filter((s, i, all) => all.findIndex((o) => o.id === s.id) === i);
 
   // Surface runtime-only ports (exposed by the container but not
   // listed in forwardPorts) so users see the full picture.

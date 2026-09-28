@@ -87,12 +87,25 @@ pub fn set_list_items_in_spec(
     }
     if let WidgetSpec::List {
         items,
+        item_specs,
         item_keys,
         key,
         ..
     } = spec
     {
         if key.as_deref() == Some(widget_key) {
+            // **A card list's rows are its cards.** `SetItems` carries
+            // text rows and their keys; applied to a list drawn from
+            // `item_specs`, the keys would be checked against rows it
+            // does not draw and the cards left keyed by the wrong count.
+            // A card list changes by a spec update.
+            if !item_specs.is_empty() {
+                tracing::error!(
+                    "SetItems on List {widget_key:?}: it draws cards (`itemSpecs`), not \
+                     items; update the spec instead. The mutation is dropped"
+                );
+                return true;
+            }
             // Replaced, not edited: a frame that captured the old
             // collection keeps it, and the next one captures this.
             *items = new_items.into();
@@ -554,6 +567,38 @@ mod tests {
             }
             _ => unreachable!(),
         }
+    }
+
+    /// A card list draws its `item_specs`; `SetItems` carries text rows, so
+    /// applied to one it would leave the cards keyed by the wrong count
+    /// (and a lookup by row index past the keys). It is refused.
+    #[test]
+    fn set_items_leaves_a_card_list_alone() {
+        let mut spec: WidgetSpec = serde_json::from_value(serde_json::json!({
+            "kind": "list",
+            "key": "cards",
+            "items": [],
+            "itemSpecs": [
+                {"kind": "raw", "entries": [{"text": "a"}]},
+                {"kind": "raw", "entries": [{"text": "b"}]},
+            ],
+            "itemKeys": ["a", "b"],
+        }))
+        .unwrap();
+        assert!(set_list_items_in_spec(
+            &mut spec,
+            "cards",
+            vec![TextPropertyEntry::text("x")],
+            vec!["x".into()],
+        ));
+        let WidgetSpec::List {
+            item_keys, items, ..
+        } = &spec
+        else {
+            unreachable!()
+        };
+        assert_eq!(**item_keys, ["a", "b"], "the cards keep their keys");
+        assert!(items.is_empty());
     }
 
     /// An appended key the tree already has would make two nodes one:

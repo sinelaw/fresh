@@ -1564,15 +1564,15 @@ pub struct Editor {
     /// routing is the tree's capture; this only says a press is live, which
     /// a `Move` event cannot say for itself.
     pub(crate) prose_drag: Option<(crate::widgets::PanelKey, String)>,
-    /// One reveal anchor per mounted panel — see `panel::Interior::reveal`.
-    /// Kept here rather than on the panel's registry state because an
-    /// `Anchor` is the tree's and the registry cannot see the tree.
     /// Each mounted panel's memoised tree projections, kept across frames so
     /// the description of an unchanged tree is not an O(nodes) walk. Keyed
     /// the way `prose_reveal` is, and dropped with the panel.
     pub(crate) tree_projections: std::cell::RefCell<
         HashMap<crate::widgets::PanelKey, std::rc::Rc<crate::view::shell::widgets::Projections>>,
     >,
+    /// One reveal anchor per mounted panel — see `panel::Interior::reveal`.
+    /// Kept here rather than on the panel's registry state because an
+    /// `Anchor` is the tree's and the registry cannot see the tree.
     pub(crate) prose_reveal: std::cell::RefCell<
         HashMap<crate::widgets::PanelKey, std::rc::Rc<fresh_ui::behavior::anchor::Anchor>>,
     >,
