@@ -37,6 +37,10 @@ for p in sorted(glob.glob('shots/*.png')):
     print(name, im.size)
 PY
 
+# the Orchestrator loop: the dock walking through the workspaces (rec_dock.py)
+AD_PORT="$PORT" AD_PAGE=shots.html FFMPEG="$FFMPEG" node render.mjs clip "$OUT/orchestrator.mp4" orchestrator 0.4 19.1 25
+"$FFMPEG" -loglevel error -y -i "$OUT/orchestrator.mp4" -c:v libvpx-vp9 -b:v 0 -crf 36 -row-mt 1 -an "$OUT/orchestrator.webm"
+
 "$FFMPEG" -loglevel error -y -i fresh-ad-calm.mp4 -vf "scale=720:1280:flags=lanczos" \
   -c:v libx264 -preset slow -crf 25 -profile:v high -pix_fmt yuv420p -c:a aac -b:a 128k \
   -movflags +faststart "$OUT/fresh-film.mp4"

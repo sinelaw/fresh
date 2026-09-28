@@ -365,7 +365,7 @@
             flex: 1; text-align: center; margin-right: 46px;
             font-size: 12.5px; color: var(--faint); letter-spacing: 0.02em;
         }
-        .window img { display: block; width: 100%; height: auto; }
+        .window img, .window video { display: block; width: 100%; height: auto; }
 
         /* Every feature, drifting past: the end card of the film. */
         .ticker {
@@ -813,7 +813,7 @@
             <div class="hero-text">
                 <span class="eyebrow reveal">Fresh</span>
                 <h1 class="reveal">A modern<br><em class="keep">terminal IDE.</em></h1>
-                <p class="lede reveal">Easy to use, with the keys you already know. Designed for driving coding agents alongside a full-blown IDE and text editor: LSP, git review, multi-cursor and more. One binary, nothing to configure.</p>
+                <p class="lede reveal">Easy to use, with the keys you already know. Designed for driving coding agents alongside a full-blown IDE and text editor: LSP, git review, multi-cursor, remoting and more. One binary, nothing to configure.</p>
 
                 <div class="install reveal">
                     <div class="install-tabs" role="tablist" aria-label="Operating system">
@@ -851,7 +851,7 @@
         <!-- Light enough to run almost anywhere -->
         <div class="wrap light reveal">
             <p class="light-head">Light enough to run <em>almost anywhere.</em></p>
-            <p class="light-sub">One small, self-contained binary that stays light on memory. Linux, macOS, Windows and FreeBSD, and just as happy over SSH.</p>
+            <p class="light-sub">One small, self-contained binary that stays light on memory. Linux, macOS, Windows and FreeBSD, and built for remoting: edit files and drive agents on remote machines over SSH.</p>
         </div>
 
         <div class="ticker" aria-hidden="true">
@@ -871,9 +871,14 @@
                 <p>Each task gets its own git worktree, with its own tabs, terminals and agent. Hop between tasks with an arrow key while the rest keep working.</p>
             </div>
             <div class="orchestra-hero reveal">
-                <a href="public/assets/shots/orchestrator.webp" target="_blank"><div class="window">
+                <a href="public/assets/orchestrator.mp4" target="_blank"><div class="window">
                     <div class="window-bar"><span></span><span></span><span></span><span class="title">orchestrator</span></div>
-                    <img src="public/assets/shots/orchestrator.webp" alt="The Orchestrator dock listing three workspaces; the selected one shows a coding agent working beside the file it is changing" width="2000" height="1321" loading="lazy" decoding="async">
+                    <video class="loop" poster="public/assets/shots/orchestrator.webp"
+                           width="1600" height="1056" muted loop playsinline preload="none"
+                           aria-label="The Orchestrator dock stepping through workspaces filed into Performance and Security folders, each with a coding agent at work">
+                        <source src="public/assets/orchestrator.webm" type="video/webm">
+                        <source src="public/assets/orchestrator.mp4" type="video/mp4">
+                    </video>
                 </div></a>
             </div>
             <div class="beats">
@@ -1654,6 +1659,12 @@
                     overlay.setAttribute('aria-label', 'Enlarged screenshot; click or press Escape to close');
                     overlay.tabIndex = -1;
                     const win = src.cloneNode(true);
+                    const vid = src.querySelector('video'), copy = win.querySelector('video');
+                    if (vid && copy) {
+                        copy.preload = 'auto';
+                        copy.currentTime = vid.currentTime;
+                        if (!calm) copy.play().catch(() => {});
+                    }
                     const ratio = from.height / from.width;
                     const w = Math.min(window.innerWidth * 0.94, 1600, (window.innerHeight * 0.92) / ratio);
                     win.style.width = w + 'px';
@@ -1671,6 +1682,22 @@
                 });
             });
             document.addEventListener('keydown', e => { if (e.key === 'Escape') close(); });
+        })();
+    </script>
+
+    <!-- Looping screen captures play while on screen; with reduced motion
+         they keep to their poster. -->
+    <script>
+        (function () {
+            const loops = document.querySelectorAll('video.loop');
+            if (window.matchMedia('(prefers-reduced-motion: reduce)').matches || !('IntersectionObserver' in window)) return;
+            const io = new IntersectionObserver(entries => {
+                for (const e of entries) {
+                    if (e.isIntersecting) { e.target.preload = 'auto'; e.target.play().catch(() => {}); }
+                    else e.target.pause();
+                }
+            }, { threshold: 0.25 });
+            loops.forEach(v => io.observe(v));
         })();
     </script>
 
