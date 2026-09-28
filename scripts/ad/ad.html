@@ -1,0 +1,320 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Fresh Ad</title>
+<style>
+@font-face { font-family: 'JBM'; src: url(fonts/JBM-Regular.woff2); font-weight: 400; }
+@font-face { font-family: 'JBM'; src: url(fonts/JBM-Bold.woff2); font-weight: 700; }
+@font-face { font-family: 'JBM'; src: url(fonts/JBM-ExtraBold.woff2); font-weight: 800; }
+@font-face { font-family: 'Inter'; src: url(fonts/Inter-900.woff2); font-weight: 100 900; }
+html, body { margin: 0; background: #000; }
+canvas { display: block; }
+</style>
+</head>
+<body>
+<canvas id="c" width="1080" height="1920"></canvas>
+<script src="scenes.js"></script>
+<script>
+const W = 1080, H = 1920;
+const BPM = 137, BEAT = 60 / BPM, BAR = BEAT * 4, DUR = 30;
+const C = {
+  bg: '#07090b', green: '#10b981', green2: '#34d399', yellow: '#fbbf24',
+  blue: '#60a5fa', purple: '#a78bfa', red: '#f43f5e', text: '#f5f5f5', muted: '#8b949e',
+};
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d');
+
+// ---------- helpers --------------------------------------------------------
+const clamp = (v, a = 0, b = 1) => Math.max(a, Math.min(b, v));
+const lerp = (a, b, f) => a + (b - a) * f;
+const easeOut = f => 1 - Math.pow(1 - clamp(f), 3);
+const easeIn = f => Math.pow(clamp(f), 3);
+const easeInOut = f => { f = clamp(f); return f < .5 ? 4 * f * f * f : 1 - Math.pow(-2 * f + 2, 3) / 2; };
+const backOut = f => { f = clamp(f); const c1 = 2.2, c3 = c1 + 1; return 1 + c3 * Math.pow(f - 1, 3) + c1 * Math.pow(f - 1, 2); };
+const hash = n => { const s = Math.sin(n * 127.1) * 43758.5453; return s - Math.floor(s); };
+
+function rrect(x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
+}
+
+// piecewise-linear map: [[sceneT, recT], ...]
+function pmap(map, t) {
+  if (t <= map[0][0]) return map[0][1];
+  for (let i = 1; i < map.length; i++) {
+    if (t <= map[i][0]) {
+      const [t0, r0] = map[i - 1], [t1, r1] = map[i];
+      return t1 === t0 ? r1 : lerp(r0, r1, (t - t0) / (t1 - t0));
+    }
+  }
+  return map[map.length - 1][1];
+}
+function pinv(map, r) {
+  const inv = map.map(([a, b]) => [b, a]);
+  if (r < inv[0][0] || r > inv[inv.length - 1][0]) return null;
+  return pmap(inv, r);
+}
+
+// ---------- assets ---------------------------------------------------------
+const clips = {};
+const imgs = {};
+function loadImg(src) {
+  return new Promise(res => { const i = new Image(); i.onload = () => res(i); i.src = src; });
+}
+async function load() {
+  const names = [...new Set(SCENES.flatMap(s => s.clip ? [s.clip] : []).concat(['terminal']))];
+  await Promise.all(names.map(async n => { clips[n] = await (await fetch('frames/' + n + '.json')).json(); }));
+  imgs.logo = await loadImg('logo.png');
+  await document.fonts.load('800 40px JBM');
+  await document.fonts.load('700 40px JBM');
+  await document.fonts.load('400 40px JBM');
+  await document.fonts.load('900 40px Inter');
+  await document.fonts.ready;
+}
+
+// ---------- terminal rendering ---------------------------------------------
+const TF = 23, CW = TF * 0.6, CHH = 29;           // cell metrics
+const COLS = 68, ROWS = 36;
+const TW = COLS * CW, TH = ROWS * CHH;            // 938.4 x 1044
+const WIN = { x: (W - TW - 24) / 2, y: 520, w: TW + 24, h: TH + 24 + 46 };
+
+function frameAt(clip, r) {
+  const i = clamp(Math.round(r * clip.fps), 0, clip.timeline.length - 1);
+  return clip.timeline[i];
+}
+
+function drawCells(clip, r, opts = {}) {
+  const fr = frameAt(clip, r);
+  const scr = clip.screens[fr[1]];
+  ctx.textBaseline = 'middle';
+  for (let y = 0; y < scr.length; y++) {
+    let x = 0;
+    for (const [txt, fg, bg, attr] of scr[y]) {
+      const n = txt.length;
+      ctx.fillStyle = bg;
+      ctx.fillRect(x * CW - 0.5, y * CHH - 0.5, n * CW + 1, CHH + 1);
+      x += n;
+    }
+  }
+  for (let y = 0; y < scr.length; y++) {
+    let x = 0;
+    for (const [txt, fg, bg, attr] of scr[y]) {
+      ctx.font = `${attr & 1 ? 700 : 400} ${TF}px JBM`;
+      ctx.fillStyle = fg;
+      for (let k = 0; k < txt.length; k++) {
+        const ch = txt[k];
+        const cx = (x + k) * CW, cy = y * CHH;
+        if (ch === ' ') continue;
+        if (ch === '▌') { ctx.fillRect(cx, cy, CW / 2, CHH); continue; }
+        if (ch === '█') { ctx.fillRect(cx, cy, CW, CHH); continue; }
+        if (ch === '│' || ch === '┃') { ctx.fillRect(cx + CW / 2 - 0.75, cy - 0.5, 1.5, CHH + 1); continue; }
+        if (ch === '─' || ch === '━') { ctx.fillRect(cx - 0.5, cy + CHH / 2 - 0.75, CW + 1, 1.5); continue; }
+        ctx.fillText(ch, cx, cy + CHH / 2 + 1);
+      }
+      if (attr & 2) ctx.fillRect(x * CW, y * CHH + CHH - 4, txt.length * CW, 1.5);
+      x += txt.length;
+    }
+  }
+  if (fr[4] && opts.cursor !== false) {
+    ctx.fillStyle = 'rgba(230,237,243,0.85)';
+    ctx.fillRect(fr[2] * CW, fr[3] * CHH + 3, 2.5, CHH - 6);
+  }
+  return scr;
+}
+
+function screenBg(clip, r) {
+  const scr = clip.screens[frameAt(clip, r)[1]];
+  return scr[Math.min(10, scr.length - 1)][0][2];
+}
+
+function mouseAt(clip, r) {
+  let m = null;
+  for (const e of clip.mouse) { if (e[0] <= r) m = e; else break; }
+  return m;
+}
+
+function drawPointer(x, y, pressed) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(1.5, 1.5);
+  if (pressed) {
+    ctx.fillStyle = 'rgba(16,185,129,0.35)';
+    ctx.beginPath(); ctx.arc(0, 0, 18, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.beginPath();
+  ctx.moveTo(0, 0); ctx.lineTo(0, 22); ctx.lineTo(5.5, 17); ctx.lineTo(9.5, 26); ctx.lineTo(13, 24.5);
+  ctx.lineTo(9, 16); ctx.lineTo(16, 16); ctx.closePath();
+  ctx.fillStyle = '#fff'; ctx.strokeStyle = '#000'; ctx.lineWidth = 1.6;
+  ctx.shadowColor = 'rgba(0,0,0,.5)'; ctx.shadowBlur = 8;
+  ctx.fill(); ctx.shadowBlur = 0; ctx.stroke();
+  ctx.restore();
+}
+
+// Terminal window with optional content camera (zoom around a focus cell)
+function drawWindow(o) {
+  const { clip, r, title = 'fresh', cam = { z: 1, fx: .5, fy: .5 }, punch = 0, alpha = 1, dx = 0, dy = 0 } = o;
+  const s = 1 + punch;
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.translate(W / 2 + dx, WIN.y + WIN.h / 2 + dy);
+  ctx.scale(s, s);
+  ctx.translate(-W / 2, -(WIN.y + WIN.h / 2));
+  // glow + shadow
+  ctx.shadowColor = 'rgba(16,185,129,0.28)'; ctx.shadowBlur = 90;
+  rrect(WIN.x, WIN.y, WIN.w, WIN.h, 22);
+  ctx.fillStyle = clip ? screenBg(clip, r) : '#111'; ctx.fill();
+  ctx.shadowBlur = 0;
+  // title bar
+  ctx.save(); rrect(WIN.x, WIN.y, WIN.w, WIN.h, 22); ctx.clip();
+  ctx.fillStyle = '#15171c'; ctx.fillRect(WIN.x, WIN.y, WIN.w, 46);
+  ['#ff5f57', '#febc2e', '#28c840'].forEach((c, i) => {
+    ctx.fillStyle = c; ctx.beginPath(); ctx.arc(WIN.x + 28 + i * 26, WIN.y + 23, 8, 0, 7); ctx.fill();
+  });
+  ctx.fillStyle = C.muted; ctx.font = '600 20px JBM'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(title, W / 2, WIN.y + 24); ctx.textAlign = 'left';
+  // content
+  const ox = WIN.x + 12, oy = WIN.y + 46 + 12;
+  ctx.beginPath(); ctx.rect(WIN.x, WIN.y + 46, WIN.w, WIN.h - 46); ctx.clip();
+  if (clip) {
+    const z = cam.z;
+    const fx = cam.fx * TW, fy = cam.fy * TH;
+    // keep the zoomed view inside the content box
+    let tx = fx - fx * z, ty = fy - fy * z;
+    tx = clamp(tx, TW - TW * z, 0); ty = clamp(ty, TH - TH * z, 0);
+    ctx.translate(ox + tx, oy + ty);
+    ctx.scale(z * (o.scale || 1), z * (o.scale || 1));
+    drawCells(clip, r, o);
+    if (o.pointer) {
+      const m = mouseAt(clip, r);
+      if (m) drawPointer(m[1] * CW + CW / 2, m[2] * CHH + CHH / 2, m[3]);
+    }
+  }
+  if (o.after) o.after();
+  ctx.restore();
+  // border
+  rrect(WIN.x, WIN.y, WIN.w, WIN.h, 22);
+  ctx.strokeStyle = 'rgba(255,255,255,0.10)'; ctx.lineWidth = 2; ctx.stroke();
+  ctx.restore();
+}
+
+// ---------- typography -----------------------------------------------------
+// words: "Keys you *already* know." — *word* is highlighted
+function caption(text, lt, dur, o = {}) {
+  let { y = 300, size = 92, color = C.text, hi = C.green, font = 'Inter', weight = 900, delay = 0, lineGap = 1.08, stagger = 0.045, exit = true } = o;
+  const lines = text.split('\n');
+  ctx.font = `${weight} ${size}px ${font}`;
+  const widest = Math.max(...lines.map(l => ctx.measureText(l.replace(/\*/g, '')).width));
+  if (widest > W - 110) { size *= (W - 110) / widest; ctx.font = `${weight} ${size}px ${font}`; }
+  ctx.textBaseline = 'alphabetic';
+  let wi = 0;
+  const exitF = exit ? easeIn((lt - (dur - 0.14)) / 0.14) : 0;
+  lines.forEach((line, li) => {
+    const words = line.split(' ');
+    const parts = words.map(w => ({ w: w.replace(/\*/g, ''), hi: w.includes('*') }));
+    const space = ctx.measureText(' ').width;
+    const total = parts.reduce((a, p) => a + ctx.measureText(p.w).width, 0) + space * (parts.length - 1);
+    let x = W / 2 - total / 2;
+    const ly = y + li * size * lineGap;
+    parts.forEach(p => {
+      const f = easeOut((lt - delay - wi * stagger) / 0.22);
+      const b = backOut((lt - delay - wi * stagger) / 0.3);
+      const wWidth = ctx.measureText(p.w).width;
+      ctx.save();
+      ctx.globalAlpha = f * (1 - exitF);
+      ctx.translate(x + wWidth / 2, ly - 60 * exitF);
+      const sc = lerp(0.75, 1, easeOut((lt - delay - wi * stagger) / 0.22));
+      ctx.scale(sc, sc);
+      ctx.translate(0, (1 - f) * 50);
+      ctx.fillStyle = p.hi ? hi : color;
+      if (p.hi) { ctx.shadowColor = hi; ctx.shadowBlur = 30; }
+      ctx.fillText(p.w, -wWidth / 2, 0);
+      ctx.restore();
+      x += wWidth + space;
+      wi++;
+    });
+  });
+}
+
+function chip(label, x, y, pop, o = {}) {
+  const { size = 44, fg = '#fff', bg = 'rgba(255,255,255,0.07)', border = C.green, alpha = 1 } = o;
+  ctx.save();
+  ctx.font = `800 ${size}px JBM`;
+  const w = ctx.measureText(label).width + size * 1.1, h = size * 1.75;
+  const s = lerp(1.35, 1, backOut(pop));
+  ctx.globalAlpha = alpha * clamp(pop * 3);
+  ctx.translate(x, y); ctx.scale(s, s);
+  rrect(-w / 2, -h / 2, w, h, h * 0.28);
+  ctx.fillStyle = bg; ctx.fill();
+  ctx.lineWidth = 3; ctx.strokeStyle = border; ctx.stroke();
+  // key-cap bottom edge
+  ctx.fillStyle = fg; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(label, 0, 2);
+  ctx.restore();
+  return w;
+}
+
+// ---------- background -----------------------------------------------------
+function background(t, energy) {
+  ctx.fillStyle = C.bg; ctx.fillRect(0, 0, W, H);
+  const beatPhase = (t % BEAT) / BEAT;
+  const pulse = energy * Math.exp(-beatPhase * 5);
+  const g1 = ctx.createRadialGradient(W * 0.2, H * 0.18, 0, W * 0.2, H * 0.18, 900);
+  g1.addColorStop(0, `rgba(16,185,129,${0.20 + 0.14 * pulse})`); g1.addColorStop(1, 'rgba(16,185,129,0)');
+  ctx.fillStyle = g1; ctx.fillRect(0, 0, W, H);
+  const g2 = ctx.createRadialGradient(W * 0.9, H * 0.85, 0, W * 0.9, H * 0.85, 900);
+  g2.addColorStop(0, `rgba(96,165,250,${0.12 + 0.08 * pulse})`); g2.addColorStop(1, 'rgba(96,165,250,0)');
+  ctx.fillStyle = g2; ctx.fillRect(0, 0, W, H);
+  // drifting dot grid
+  ctx.fillStyle = `rgba(255,255,255,${0.05 + 0.04 * pulse})`;
+  const off = (t * 24) % 60;
+  for (let y = -60; y < H + 60; y += 60) for (let x = 0; x < W + 60; x += 60) {
+    ctx.fillRect(x - off / 2, y + off, 2, 2);
+  }
+}
+
+function brandBug(alpha) {
+  if (alpha <= 0) return;
+  ctx.save(); ctx.globalAlpha = alpha;
+  ctx.drawImage(imgs.logo, 56, 72, 58, 58);
+  ctx.font = '900 44px Inter'; ctx.fillStyle = C.text; ctx.textBaseline = 'middle';
+  ctx.fillText('Fresh', 128, 103);
+  ctx.restore();
+}
+
+// ---------- scene dispatch ---------------------------------------------------
+function sceneAt(t) {
+  for (const s of SCENES) if (t >= s.start * BAR && t < (s.start + s.bars) * BAR) return s;
+  return SCENES[SCENES.length - 1];
+}
+
+function render(t) {
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalAlpha = 1;
+  const s = sceneAt(t);
+  const lt = t - s.start * BAR, dur = s.bars * BAR;
+  background(t, s.energy ?? 1);
+  s.draw(lt, dur, t, s);
+  // cut flash
+  const sinceCut = lt;
+  if (s.flash !== false && sinceCut < 0.12) {
+    ctx.fillStyle = `rgba(255,255,255,${0.35 * (1 - sinceCut / 0.12)})`;
+    ctx.fillRect(0, 0, W, H);
+  }
+}
+window.renderAt = t => render(t);
+window.DUR = DUR;
+window.ready = load().then(() => {
+  const q = new URLSearchParams(location.search);
+  if (q.has('t')) render(parseFloat(q.get('t')));
+  else if (q.has('play')) {
+    const t0 = performance.now();
+    const tick = () => { render(((performance.now() - t0) / 1000) % DUR); requestAnimationFrame(tick); };
+    tick();
+  }
+  return true;
+});
+</script>
+</body>
+</html>
