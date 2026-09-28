@@ -828,12 +828,13 @@ pub struct FileExplorerView {
 }
 
 impl Editor {
-    /// Semantic file-explorer sidebar: the flattened visible tree rows (the same
-    /// `get_display_nodes()` the TUI renderer uses) plus selection/scroll and the
+    /// Semantic file-explorer sidebar: the flattened visible tree rows (the
+    /// same projection the TUI's list windows) plus selection/scroll and the
     /// sidebar rect. Rendered natively by the web frontend; row clicks route
     /// back through `handle_mouse` at the sidebar's content cells, where the
-    /// shell's own row nodes answer them — `viewport_rows[n]` and the tree's
-    /// n-th row key are the same number by construction.
+    /// shell's own row nodes answer them. `viewport_rows` is read off the
+    /// layout — the rows keyed by path that the list placed, pins first —
+    /// and mapped back to row indices through the projection.
     pub fn file_explorer_view(&self) -> Option<FileExplorerView> {
         // **Derived, not recorded.** The sidebar's rectangle is
         // `HostRegion::Explorer`'s, which is a keyed node — so this asks the
@@ -849,16 +850,15 @@ impl Editor {
             crate::view::shell::frame::HostRegion::Explorer,
         ))?;
         let tree = view.tree();
-        let rows = view
-            .get_display_nodes()
-            .into_iter()
-            .filter_map(|(id, indent)| {
-                tree.get_node(id).map(|n| FileRow {
-                    name: n.entry.name.clone(),
-                    depth: indent,
-                    is_dir: n.is_dir(),
-                    expanded: n.is_expanded(),
-                })
+        let projection = view.projection();
+        let rows = projection
+            .rows
+            .iter()
+            .map(|r| FileRow {
+                name: r.entry.name.clone(),
+                depth: r.indent,
+                is_dir: r.is_dir(),
+                expanded: r.is_expanded(),
             })
             .collect();
         let title = tree
@@ -866,28 +866,28 @@ impl Editor {
             .map(|n| n.entry.name.clone())
             .unwrap_or_default();
         // The window is the list's: which rows are on screen, pins and
-        // all, is read off the layout that placed them.
-        let projection = view.projection();
-        let (scroll_offset, viewport_rows) = self
+        // all, and how tall the body is, are read off the layout that placed
+        // them.
+        let (scroll_offset, viewport_height, viewport_rows) = self
             .shell_ui
             .as_ref()
             .and_then(|ui| {
                 crate::view::shell::file_explorer::window_rows(ui, self.active_window().id.0)
             })
-            .map(|(first, paths)| {
+            .map(|(first, height, paths)| {
                 let rows = paths
                     .iter()
                     .filter_map(|p| tree.get_node_by_path(p))
                     .filter_map(|n| projection.index_of(n.id))
                     .collect::<Vec<_>>();
-                (first, rows)
+                (first, height, rows)
             })
             .unwrap_or_default();
         Some(FileExplorerView {
             rect: RectView::from(rect),
             title,
             scroll_offset,
-            viewport_height: viewport_rows.len(),
+            viewport_height,
             selected: view.get_selected_index(),
             viewport_rows,
             rows,

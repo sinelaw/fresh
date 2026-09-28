@@ -1249,6 +1249,7 @@ impl Editor {
             } else {
                 let root_id = explorer.tree().root_id();
                 explorer.set_selected(Some(root_id));
+                explorer.show_selection();
             }
         }
     }

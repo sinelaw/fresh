@@ -212,13 +212,20 @@ impl Editor {
 
     /// Move the selection `pages` pages, by the window the tree was last
     /// laid out with. Before the tree has been laid out there is no page,
-    /// and nothing moves.
+    /// and nothing moves. With nothing selected, a page key selects the
+    /// first row.
     fn file_explorer_page(&mut self, pages: i32) {
         let pager = self.active_window().file_explorer_pager.clone();
         if let Some(explorer) = self.file_explorer_mut() {
-            let from = explorer.get_selected_index().unwrap_or(0);
-            if let Some(to) = pager.target(from, pages, explorer.visible_count()) {
-                explorer.select_index(to);
+            let count = explorer.visible_count();
+            match explorer.get_selected_index() {
+                _ if count == 0 => {}
+                None => explorer.select_index(0),
+                Some(from) => {
+                    if let Some(to) = pager.target(from, pages, count) {
+                        explorer.select_index(to);
+                    }
+                }
             }
         }
         self.file_explorer_preview_selected();
@@ -760,6 +767,7 @@ impl Editor {
                                 // No visible nodes, select parent
                                 explorer.set_selected(Some(parent_id));
                             }
+                            explorer.show_selection();
                         }
                     }
                 }

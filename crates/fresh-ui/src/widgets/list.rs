@@ -42,6 +42,22 @@ fn prefix(n: usize, height: &dyn Fn(usize) -> u16) -> Vec<u32> {
 /// Rows above and below the window, so a one-cell scroll does not expose a gap.
 const OVERSCAN: usize = 2;
 
+/// A selection the window was asked to show: its index and its row's key.
+///
+/// **The same selection if either is.** Rows arriving above the selected
+/// one move its index but not its key; an owner re-keying its rows under an
+/// unchanged selection changes the key but not the index. Neither is the
+/// reader's selection moving, and revealing again would pull back a window
+/// the wheel had moved. A selection that moved changes both.
+#[derive(Clone)]
+pub(crate) struct Revealed(usize, Option<Key>);
+
+impl PartialEq for Revealed {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0 || (self.1.is_some() && self.1 == other.1)
+    }
+}
+
 #[derive(Default)]
 pub struct ListState {
     /// Only consulted when the owner did not supply a selection: where the
@@ -62,14 +78,13 @@ pub struct ListState {
     /// A handle to the window, so a selection move can ask it to follow. The
     /// window itself belongs to the viewport.
     pub(crate) anchor: Option<Rc<crate::behavior::Anchor>>,
-    /// The row the window was last asked to show, by key. **A row that
-    /// moves is not a selection that moved:** rows inserted above the
-    /// selected one shift its index, and a window asked to follow the index
-    /// would snap back to it after the wheel had taken it elsewhere.
-    pub(crate) revealed: crate::behavior::Cache<Option<Key>, ()>,
-    /// The `(selected row, token)` a standing follow was last armed for, by
-    /// the row's key — see [`List::follow_selection`].
-    pub(crate) followed: crate::behavior::Cache<(Option<Key>, u64), ()>,
+    /// The selection the window was last asked to show. See [`Revealed`].
+    pub(crate) revealed: crate::behavior::Cache<Revealed, ()>,
+    /// What a standing follow was last armed for — the selected row, by its
+    /// key, and the owner's token (see [`List::follow_selection`]); the
+    /// token alone under [`List::follow_on`]. The value is the row it was
+    /// armed on.
+    pub(crate) followed: crate::behavior::Cache<(Option<Key>, u64), Option<Key>>,
     /// Which pager the list records its window into, and the one it uses
     /// for its own PageUp/PageDown when the owner passed none.
     pub(crate) pager: Option<Rc<crate::behavior::pager::PagerSlot>>,
@@ -348,6 +363,12 @@ pub struct List<M> {
     /// Keep the selection in the window on every layout, re-armed whenever
     /// the selection or this token changes. See [`List::follow_selection`].
     follow: Option<u64>,
+    /// Re-arm the follow on the token alone, not on a selection move. See
+    /// [`List::follow_on`].
+    follow_by_token: bool,
+    /// The follow token the window at [`start`](List::start_at) already
+    /// answers. See [`List::follow_answered`].
+    answered: Option<u64>,
     /// The owner's page handle, when it pages the list from its own keys.
     /// See [`List::pager`].
     pager: Option<Rc<crate::behavior::Pager>>,
@@ -480,6 +501,8 @@ impl<M: 'static> List<M> {
             row_theme: None,
             row_height: RowHeight::default(),
             follow: None,
+            follow_by_token: false,
+            answered: None,
             pager: None,
         }
     }
@@ -520,6 +543,29 @@ impl<M: 'static> List<M> {
     /// `None` selection stops following.
     pub fn follow_selection(mut self, token: u64) -> Self {
         self.follow = Some(token);
+        self
+    }
+
+    /// [`follow_selection`](Self::follow_selection), re-armed **only** when
+    /// `token` changes — for an owner that says, with its token, which
+    /// selection moves should be brought into view. A selection that moves
+    /// without it (a right-click that picks the row a menu is about) leaves
+    /// the window where it is.
+    pub fn follow_on(mut self, token: u64) -> Self {
+        self.follow = Some(token);
+        self.follow_by_token = true;
+        self
+    }
+
+    /// The follow token the window at [`start_at`](Self::start_at) already
+    /// answers — the owner's token as of the last window it was told of
+    /// ([`on_scroll`](Self::on_scroll)). **A list mounted again is not a new
+    /// request:** without this, a following list mounted at `start` arms its
+    /// follow on the first build and pulls the window back to the selection
+    /// the reader had wheeled away from. With it, the list follows on mount
+    /// only if the owner's token moved since.
+    pub fn follow_answered(mut self, token: u64) -> Self {
+        self.answered = Some(token);
         self
     }
 
@@ -827,12 +873,25 @@ impl<M: 'static> Component<M> for List<M> {
             // since then is still answered.
             (Some(token), Some(a), Some(sel)) => {
                 let (top, _) = band_of(sel);
+                let key = self.source.key_of(sel);
+                let armed_on = |t: u64| match self.follow_by_token {
+                    true => (None, t),
+                    false => (key.clone(), t),
+                };
+                // Mounted again at a window that already answers a token: that
+                // token is spent, as if this state had armed it.
+                if let Some(t) = self.answered {
+                    s.followed.seed(armed_on(t), key.clone());
+                }
                 let armed = a.clone();
-                s.followed
-                    .get_or((self.source.key_of(sel), token), move || armed.follow(top));
-                // A standing follow is of the row, wherever rows arriving
-                // above it have moved it; one a wheel cleared stays clear.
-                if a.following().is_some_and(|at| at != top) {
+                let row = s.followed.get_or(armed_on(token), || {
+                    armed.follow(top);
+                    key.clone()
+                });
+                // A standing follow is of the row it was armed on, wherever
+                // rows arriving above it have moved it; one a wheel cleared
+                // stays clear.
+                if row == key && a.following().is_some_and(|at| at != top) {
                     a.follow(top);
                 }
             }
@@ -843,10 +902,11 @@ impl<M: 'static> Component<M> for List<M> {
             (None, Some(a), Some(sel)) => {
                 let (top, rows) = band_of(sel);
                 let a = a.clone();
-                s.revealed.get_or(self.source.key_of(sel), move || {
-                    a.reveal(top + rows.saturating_sub(1));
-                    a.reveal(top);
-                });
+                s.revealed
+                    .get_or(Revealed(sel, self.source.key_of(sel)), move || {
+                        a.reveal(top + rows.saturating_sub(1));
+                        a.reveal(top);
+                    });
             }
             _ => {}
         }

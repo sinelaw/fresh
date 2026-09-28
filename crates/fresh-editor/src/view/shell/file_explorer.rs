@@ -143,10 +143,14 @@ pub struct Tree {
     pub node: Rc<dyn Fn(usize) -> fresh_ui::widgets::TreeRow>,
     /// The row the keyboard is on.
     pub selected: Option<usize>,
-    /// The window follows the selected row, re-armed when the row or this
-    /// changes, until the wheel takes it elsewhere. The model moves it
-    /// whenever it acts on the selection.
+    /// The window follows the selected row whenever this changes, until the
+    /// wheel takes it elsewhere. The model moves it whenever it acts on the
+    /// selection; a selection moved without it is not brought into view.
     pub reveal: u64,
+    /// The `reveal` the window at `start` already answers — so a list
+    /// mounted again does not pull the window back to a selection the
+    /// reader wheeled away from.
+    pub answered: u64,
     /// Whether the panel owns the keyboard, and so draws the caret.
     pub caret: bool,
     /// Where the window starts when the list mounts.
@@ -194,6 +198,7 @@ impl Tree {
             }),
             selected: None,
             reveal: 0,
+            answered: 0,
             caret: false,
             start,
             owner: 1,
@@ -222,12 +227,78 @@ impl Explorer {
 /// A row's key: the path it shows. A row is the same row wherever an
 /// expansion above it moves it.
 pub fn row_key(path: &std::path::Path) -> Key {
-    Key::Str(format!("explorer_row:{}", path.display()).into())
+    Key::Str(format!("explorer_row{}", path_text(path)).into())
 }
 
 /// The key of a row's trailing status slot.
 pub fn slot_key(path: &std::path::Path) -> Key {
-    Key::Str(format!("explorer_slot:{}", path.display()).into())
+    Key::Str(format!("explorer_slot{}", path_text(path)).into())
+}
+
+/// A path as key text, **losslessly**: `:` and the path when it is UTF-8,
+/// else `~` and its raw bytes in hex. `display()` would fold every name that
+/// is not UTF-8 onto its replacement characters, so two such files could
+/// share a key, and neither could be found again by it.
+fn path_text(path: &std::path::Path) -> String {
+    match path.to_str() {
+        Some(s) => format!(":{s}"),
+        None => {
+            let hex: String = os_bytes(path.as_os_str())
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect();
+            format!("~{hex}")
+        }
+    }
+}
+
+/// The path a row key's text names — [`path_text`] read back.
+fn text_path(text: &str) -> Option<std::path::PathBuf> {
+    if let Some(s) = text.strip_prefix(':') {
+        return Some(std::path::PathBuf::from(s));
+    }
+    let hex = text.strip_prefix('~')?;
+    let bytes = (0..hex.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(hex.get(i..i + 2)?, 16).ok())
+        .collect::<Option<Vec<u8>>>()?;
+    Some(std::path::PathBuf::from(os_string(bytes)))
+}
+
+#[cfg(unix)]
+fn os_bytes(s: &std::ffi::OsStr) -> Vec<u8> {
+    std::os::unix::ffi::OsStrExt::as_bytes(s).to_vec()
+}
+
+#[cfg(unix)]
+fn os_string(b: Vec<u8>) -> std::ffi::OsString {
+    std::os::unix::ffi::OsStringExt::from_vec(b)
+}
+
+#[cfg(windows)]
+fn os_bytes(s: &std::ffi::OsStr) -> Vec<u8> {
+    std::os::windows::ffi::OsStrExt::encode_wide(s)
+        .flat_map(u16::to_le_bytes)
+        .collect()
+}
+
+#[cfg(windows)]
+fn os_string(b: Vec<u8>) -> std::ffi::OsString {
+    let wide: Vec<u16> = b
+        .chunks_exact(2)
+        .map(|c| u16::from_le_bytes([c[0], c[1]]))
+        .collect();
+    std::os::windows::ffi::OsStringExt::from_wide(&wide)
+}
+
+#[cfg(not(any(unix, windows)))]
+fn os_bytes(s: &std::ffi::OsStr) -> Vec<u8> {
+    s.to_string_lossy().into_owned().into_bytes()
+}
+
+#[cfg(not(any(unix, windows)))]
+fn os_string(b: Vec<u8>) -> std::ffi::OsString {
+    String::from_utf8_lossy(&b).into_owned().into()
 }
 
 /// The list's own key, per window: see [`Tree::owner`].
@@ -281,7 +352,10 @@ pub fn rows(e: &Explorer) -> Node<UiMsg> {
     .sticky(MAX_STICKY_ANCESTORS, move |i| parent(i))
     .list()
     .selection(t.selected)
-    .follow_selection(t.reveal)
+    // Only the model's requests bring the selection into view: a
+    // right-click picks the row its menu is about without scrolling it.
+    .follow_on(t.reveal)
+    .follow_answered(t.answered)
     // The keys are the editor's keymap's; the rows answer the mouse.
     .focusable(false)
     // Each row paints its own ground; what the list would stamp is the
@@ -581,7 +655,7 @@ pub fn slot_rect(
 pub fn window_rows(
     ui: &fresh_ui::Ui<UiMsg>,
     owner: u64,
-) -> Option<(usize, Vec<std::path::PathBuf>)> {
+) -> Option<(usize, usize, Vec<std::path::PathBuf>)> {
     let list = ui.find_by_key(&list_key(owner))?;
     let run = ui.window(list)?;
     let pinned = (ui.rect_of(list).h as usize).saturating_sub(run.h as usize);
@@ -597,22 +671,51 @@ pub fn window_rows(
         .iter()
         .filter(|(_, r)| r.start >= within.start && r.end <= within.end)
         .filter_map(|(k, _)| match k {
-            Key::Str(s) => s
-                .strip_prefix("explorer_row:")
-                .map(std::path::PathBuf::from),
+            Key::Str(s) => s.strip_prefix("explorer_row").and_then(text_path),
             _ => None,
         })
         .collect();
     let first = run.y.max(0) as usize;
+    let height = ui.rect_of(list).h as usize;
     // The pins come first in the column; then the run, of which only the
     // window's rows are on screen (the rest is overscan).
     let shown = rows.into_iter().take(pinned + run.h as usize).collect();
-    Some((first, shown))
+    Some((first, height, shown))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A row key names its path exactly, and gives it back — for names that
+    /// are not UTF-8 too, which `display()` folded together.
+    #[test]
+    fn a_row_key_names_its_path_losslessly() {
+        let plain = std::path::Path::new("/p/src/main.rs");
+        assert_eq!(
+            row_key(plain),
+            Key::Str("explorer_row:/p/src/main.rs".into())
+        );
+        let Key::Str(k) = row_key(plain) else {
+            unreachable!()
+        };
+        assert_eq!(
+            k.strip_prefix("explorer_row")
+                .and_then(text_path)
+                .as_deref(),
+            Some(plain)
+        );
+        #[cfg(unix)]
+        {
+            let odd = |b: &[u8]| std::path::PathBuf::from(os_string(b.to_vec()));
+            let (a, b) = (odd(b"/p/\xff"), odd(b"/p/\xfe"));
+            assert_ne!(row_key(&a), row_key(&b), "two such names, two keys");
+            let Key::Str(k) = row_key(&a) else {
+                unreachable!()
+            };
+            assert_eq!(k.strip_prefix("explorer_row").and_then(text_path), Some(a));
+        }
+    }
     use crate::view::shell::fold::{fold_native, Band};
     use crate::view::shell::frame::{frame_tree, Frame};
     use crate::view::shell::sidebar::{close_key, grip_key, SectionKind, Sidebar};
@@ -972,7 +1075,7 @@ mod tests {
     /// follows a selection that moved, and the run it reveals it in is the
     /// run under the pins of the offset it lands on — so the selected row is
     /// on screen however many ancestors that offset pins. The model states
-    /// only the selection. And [`window_rows`] reads back what layout put
+    /// only the selection, and that it wants it shown. And [`window_rows`] reads back what layout put
     /// on screen: the pins, then the run.
     #[test]
     fn a_selection_far_down_is_shown_under_its_pinned_ancestors() {
@@ -983,11 +1086,14 @@ mod tests {
             _ => unreachable!("the fixture is an explorer"),
         };
         let mut ui = laid_out(panel_with(tree.clone(), 20), 20, 10);
-        let (first, shown) = window_rows(&ui, 1).expect("laid out");
+        let (first, height, shown) = window_rows(&ui, 1).expect("laid out");
         assert_eq!(first, 0);
+        assert_eq!(height, 8, "the body's height");
         assert_eq!(shown.len(), 8, "a body of eight rows: {shown:?}");
 
+        // A keyboard move: the model asks for the selection to be shown.
         tree.selected = Some(39);
+        tree.reveal += 1;
         ui.frame(
             frame_tree(Frame {
                 menu_bar: false,
@@ -997,13 +1103,103 @@ mod tests {
             }),
             Size::new(20, 10),
         );
-        let (first, shown) = window_rows(&ui, 1).expect("laid out");
+        let (first, height, shown) = window_rows(&ui, 1).expect("laid out");
+        assert_eq!(height, 8, "the body's height, pins and all");
         let names: Vec<String> = shown.iter().map(|p| p.display().to_string()).collect();
         assert_eq!(first, 34, "the last offset, past `40 - 8` by the two pins");
         assert_eq!(
             names,
             ["f0", "f1", "f34", "f35", "f36", "f37", "f38", "f39"],
             "the pins, then a run that ends on the selection"
+        );
+    }
+
+    /// The explorer's tree out of a fixture panel.
+    fn tree_in(panel: Sidebar) -> Tree {
+        match panel.sections[0].kind.clone() {
+            SectionKind::Explorer(Explorer {
+                body: Body::Tree(t),
+            }) => t,
+            _ => unreachable!("the fixture is an explorer"),
+        }
+    }
+
+    /// Lay `tree` out again in `ui`, as the next frame does.
+    fn reframe(ui: &mut Ui<UiMsg>, tree: Tree) {
+        ui.frame(
+            frame_tree(Frame {
+                menu_bar: false,
+                status_bar: false,
+                sidebar: Some(panel_with(tree, 20)),
+                ..Frame::default()
+            }),
+            Size::new(20, 10),
+        );
+    }
+
+    /// **Mounted again, the explorer is where the reader left it** — a window
+    /// switch or a hidden sidebar builds the list anew. The model's saved
+    /// window answers every reveal it asked before it, so the list starts
+    /// there; a reveal asked since (a background expand-to-path) is shown.
+    #[test]
+    fn mounted_again_the_explorer_keeps_its_window_unless_asked_since() {
+        let mut tree = tree_in(pinned_panel(40, 0, 30, 20));
+        tree.selected = Some(0);
+        tree.reveal = 5;
+        tree.answered = 5;
+        let ui = laid_out(panel_with(tree.clone(), 20), 20, 10);
+        assert_eq!(window_rows(&ui, 1).expect("laid out").0, 30, "where it was");
+
+        tree.reveal = 6;
+        let ui = laid_out(panel_with(tree, 20), 20, 10);
+        assert_eq!(window_rows(&ui, 1).expect("laid out").0, 0, "the selection");
+    }
+
+    /// **A right-click on a pinned folder does not scroll.** It picks the row
+    /// the menu is about — the model moves the selection without asking for
+    /// it to be shown — so the rows under the menu stay where they were.
+    #[test]
+    fn a_selection_moved_without_a_reveal_leaves_the_window() {
+        let mut tree = tree_in(pinned_panel(40, 2, 32, 20));
+        tree.selected = Some(35);
+        tree.reveal = 1;
+        tree.answered = 1;
+        let mut ui = laid_out(panel_with(tree.clone(), 20), 20, 10);
+        assert_eq!(window_rows(&ui, 1).expect("laid out").0, 32);
+
+        tree.selected = Some(1);
+        reframe(&mut ui, tree.clone());
+        assert_eq!(
+            window_rows(&ui, 1).expect("laid out").0,
+            32,
+            "no reveal asked"
+        );
+
+        tree.reveal = 2;
+        reframe(&mut ui, tree);
+        assert_eq!(window_rows(&ui, 1).expect("laid out").0, 1, "asked: shown");
+    }
+
+    /// **Collapsing a pinned folder keeps it on screen.** Collapsed, the
+    /// tree is shorter than the window was scrolled; the folder stays
+    /// selected and the window shows it.
+    #[test]
+    fn a_collapsed_pinned_folder_stays_on_screen() {
+        let mut tree = tree_in(pinned_panel(40, 2, 32, 20));
+        tree.selected = Some(1);
+        tree.reveal = 1;
+        tree.answered = 1;
+        let mut ui = laid_out(panel_with(tree, 20), 20, 10);
+        // Collapsed: the folder at row 1 has no rows under it.
+        let mut folded = tree_in(pinned_panel(3, 2, 32, 20));
+        folded.selected = Some(1);
+        folded.reveal = 2;
+        folded.answered = 1;
+        reframe(&mut ui, folded);
+        let (_, _, shown) = window_rows(&ui, 1).expect("laid out");
+        assert!(
+            shown.iter().any(|p| p == std::path::Path::new("f1")),
+            "the folder is on screen: {shown:?}"
         );
     }
 

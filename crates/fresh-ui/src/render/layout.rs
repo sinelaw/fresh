@@ -889,7 +889,6 @@ impl<M: 'static> Ui<M> {
         (!run.is_empty()).then_some(crate::behavior::anchor::Bands { window, run })
     }
 
-    /// Returns whether anything moved.
     /// The run an index-scrolled window would show at offset `y`. See
     /// [`ViewportRender::run_at`](crate::render::prim::ViewportRender::run_at).
     fn run_at(&mut self, r: RenderId, y: u32) -> Option<u32> {
@@ -902,6 +901,7 @@ impl<M: 'static> Ui<M> {
             .run_at(y)
     }
 
+    /// Returns whether anything moved.
     fn apply_anchors(&mut self) -> bool {
         use crate::behavior::anchor::Command;
         let ids = self.anchored.clone();

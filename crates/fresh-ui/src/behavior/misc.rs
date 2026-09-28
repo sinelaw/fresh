@@ -103,6 +103,15 @@ impl<K: PartialEq + Clone, V: Clone> Cache<K, V> {
     pub fn clear(&self) {
         *self.slot.borrow_mut() = None;
     }
+
+    /// Hold `value` for `key` if nothing is held yet — a state that has just
+    /// mounted taking over what an earlier one had answered.
+    pub fn seed(&self, key: K, value: V) {
+        let mut slot = self.slot.borrow_mut();
+        if slot.is_none() {
+            *slot = Some((key, value));
+        }
+    }
 }
 
 impl<K: 'static, V: 'static> Behavior for Cache<K, V> {
