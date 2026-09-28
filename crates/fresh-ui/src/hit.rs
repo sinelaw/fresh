@@ -909,8 +909,22 @@ impl<M: 'static> Ui<M> {
                 crate::event::Axis::Horizontal => n.data.scroll.x = off,
             }
         }
+        self.release_follow(r);
         self.mark_render_dirty(r);
         self.report_scroll(r, off, out);
+    }
+
+    /// The reader moved the window by hand — a bar, a cap — so a standing
+    /// follow (`Anchor::follow`) gives way until its owner asks again, as it
+    /// does for the wheel. Left standing, the next layout's reveal would pull
+    /// the window back to the followed row under the pointer.
+    fn release_follow(&self, r: RenderId) {
+        let Some(e) = self.render.get(r).map(|n| n.element) else {
+            return;
+        };
+        if let Some(a) = self.arena.get(e).and_then(|el| el.desc.anchor.clone()) {
+            a.unfollow();
+        }
     }
 
     fn scrollbar_hit(&self, pos: Point) -> Option<RenderId> {
@@ -1026,6 +1040,7 @@ impl<M: 'static> Ui<M> {
         }
         self.mark_render_dirty(r);
         if off != was {
+            self.release_follow(r);
             self.report_scroll(r, off, out);
         }
     }

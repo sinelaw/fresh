@@ -2103,6 +2103,43 @@ fn a_follow_tracks_its_row_and_rows_arriving_above_do_not_rearm_it() {
     );
 }
 
+/// **A bar drag is the reader choosing where to look**, as the wheel is: a
+/// standing follow gives way to it, rather than pulling the window back to
+/// the followed row on the next layout.
+#[test]
+fn a_bar_drag_wins_over_a_standing_follow() {
+    let list = || -> Node<Msg> {
+        List::windowed(100, fresh_ui::Key::from, |i| {
+            fresh_ui::text(format!("row {i:02}"))
+        })
+        .focusable(false)
+        .scrollbar()
+        .selection(Some(0))
+        .follow_selection(1)
+        .node()
+    };
+    let mut ui: Ui<Msg> = Ui::new();
+    assert!(support::screen::render(ui.frame(list(), FRAME)).contains("row 00"));
+    let bar = FRAME.w as i32 - 1;
+    ui.dispatch(Input::Press {
+        pos: Point::new(bar, FRAME.h as i32 - 1),
+        button: fresh_ui::MouseButton::Left,
+        mods: Mods::NONE,
+        clicks: 1,
+    });
+    ui.dispatch(Input::Release {
+        pos: Point::new(bar, FRAME.h as i32 - 1),
+        button: fresh_ui::MouseButton::Left,
+        mods: Mods::NONE,
+    });
+    let screen = support::screen::render(ui.frame(list(), FRAME)).text();
+    assert!(
+        !screen.contains("row 00"),
+        "the bar moved the window: {screen}"
+    );
+    assert!(screen.contains("row 99"), "{screen}");
+}
+
 /// **A following list keeps its selection in view on every layout** — not
 /// only on the build that moved it. The window here shrinks a frame after the
 /// selection arrived (a box resized by its owner a beat later), which a
