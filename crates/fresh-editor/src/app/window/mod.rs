@@ -2772,21 +2772,56 @@ impl Window {
             crate::view::shell::geometry::PaneRects::offscreen(&splits, self.editor_content_area());
     }
 
-    /// Every pane of this window with the buffer it shows — the panes
-    /// *inside* a buffer group included.
+    /// Every pane of this window with the tab it shows — the panes *inside*
+    /// a buffer group included.
     ///
-    /// A group's leaves are panes of the same grid, dispatched at render time
-    /// into their outer pane's interior, and `SplitManager::visible_leaves`
-    /// does not walk into them because a group's layout lives in a side map.
-    pub(crate) fn panes_with_buffers(&self) -> Vec<(LeafId, BufferId)> {
-        let Some((mgr, _)) = self.buffers.splits() else {
+    /// **A pane shows one tab: a buffer, or a group.** A pane showing a
+    /// group tab still has a buffer in the split tree and a
+    /// `SplitViewState::active_buffer` — the tab it showed before, kept to
+    /// return to — and `SplitManager::visible_leaves` reports that buffer as
+    /// if it were on screen. It is not: the pane's content is the group's
+    /// grid. So such a pane is `TabTarget::Group` here and carries no buffer
+    /// at all; a caller that wants the buffer a pane shows has to match, and
+    /// the hidden one is not on offer (`buffer_panes`).
+    ///
+    /// A group's panels follow as panes of the same grid, dispatched at
+    /// render time into their outer pane's interior; `visible_leaves` does
+    /// not walk into them because a group's layout lives in a side map.
+    pub(crate) fn panes(&self) -> Vec<(LeafId, crate::view::split::TabTarget)> {
+        use crate::view::split::TabTarget;
+        let Some((mgr, vs_map)) = self.buffers.splits() else {
             return Vec::new();
         };
-        let mut out = mgr.visible_leaves();
-        for g in self.pane_groups().values() {
-            out.extend(g.visible_leaves());
+        let mut out = Vec::new();
+        let mut panels = Vec::new();
+        for (leaf, buffer) in mgr.visible_leaves() {
+            let group = vs_map
+                .get(&leaf)
+                .and_then(|vs| vs.active_group_tab)
+                .and_then(|g| Some((g, self.grouped_subtrees.get(&g)?)));
+            match group {
+                Some((g, node)) => {
+                    out.push((leaf, TabTarget::Group(g)));
+                    panels.extend(node.visible_leaves());
+                }
+                None => out.push((leaf, TabTarget::Buffer(buffer))),
+            }
         }
+        out.extend(
+            panels
+                .into_iter()
+                .map(|(leaf, buffer)| (leaf, TabTarget::Buffer(buffer))),
+        );
         out
+    }
+
+    /// The panes of this window that show a buffer, with that buffer — a
+    /// pane showing a group tab is not one of them (`panes`).
+    pub(crate) fn buffer_panes(&self) -> Vec<(LeafId, BufferId)> {
+        self.panes()
+            .into_iter()
+            .filter_map(|(leaf, shows)| Some((leaf, shows.as_buffer()?)))
+            .collect()
     }
 
     /// Each visible pane's leaf handle, for a description of this window's
@@ -2807,11 +2842,7 @@ impl Window {
         // their outer pane's content slot (`PaneRects` keys them the same
         // way). A pane keeps its handle while it exists: the whole partition
         // stays live, a maximized sibling's hidden panes included.
-        let visible: Vec<LeafId> = self
-            .panes_with_buffers()
-            .into_iter()
-            .map(|(leaf, _)| leaf)
-            .collect();
+        let visible: Vec<LeafId> = self.panes().into_iter().map(|(leaf, _)| leaf).collect();
         let live: Vec<LeafId> = {
             let Some((mgr, _)) = self.buffers.splits() else {
                 return Default::default();
@@ -3374,7 +3405,8 @@ impl Window {
     ///
     /// A group's layout lives in `grouped_subtrees` rather than in the split
     /// tree, and is dispatched at render time into the pane's *interior* —
-    /// past its strip and its scrollbar column. This is that dispatch, stated
+    /// under its strip; the pane has no bars of its own while it shows a
+    /// group (`PaneKind::hosts_group`). This is that dispatch, stated
     /// once, so the description of the grid and the painter agree about which
     /// pane holds which group.
     pub fn pane_groups(&self) -> HashMap<LeafId, crate::view::split::SplitNode> {
@@ -3393,48 +3425,52 @@ impl Window {
     /// the tab bar's visibility and the two scrollbar config flags — which the
     /// preview embed narrows before calling (it suppresses both bars).
     ///
-    /// A buffer group's *panel* is not here: it is not one of the split
-    /// manager's leaves, and it resolves where the render loop expands it.
+    /// Read off `panes`, so a pane showing a group tab resolves from the
+    /// group it shows and never from the buffer it showed before.
     pub fn pane_chrome(
         &self,
         window: crate::view::shell::splits::PaneChrome,
     ) -> HashMap<LeafId, crate::view::shell::splits::PaneChrome> {
         use crate::view::shell::splits::{PaneChrome, PaneKind};
+        use crate::view::split::TabTarget;
         let Some((mgr, vs_map)) = self.buffers.splits() else {
             return HashMap::new();
         };
-        let mut out: HashMap<LeafId, PaneChrome> = HashMap::new();
-        let resolve = |leaf: LeafId, buffer: BufferId, inner: bool| {
-            let terminal = self
-                .buffer_metadata
-                .get(&buffer)
-                .and_then(|m| m.virtual_mode())
-                .is_some_and(|m| m == "terminal");
-            let kind = PaneKind {
-                inner_group_leaf: inner,
-                suppress_chrome: vs_map.get(&leaf).is_some_and(|vs| vs.suppress_chrome),
-                scrollable: self.buffers.get(&buffer).is_none_or(|s| s.scrollable),
-                terminal_live_grid: terminal && !self.split_terminal_scrollback(leaf, buffer),
-            };
-            (leaf, PaneChrome::resolve(window, kind))
-        };
-        for (leaf, buffer) in mgr.visible_leaves() {
-            let (k, v) = resolve(leaf, buffer, false);
-            out.insert(k, v);
-            // A group's panels are panes too — they sit inside this one's
-            // interior, which is what `inner_group_leaf` says about them.
-            let Some(group) = vs_map.get(&leaf).and_then(|vs| vs.active_group_tab) else {
-                continue;
-            };
-            let Some(node) = self.grouped_subtrees.get(&group) else {
-                continue;
-            };
-            for (inner_leaf, inner_buffer) in node.visible_leaves() {
-                let (k, v) = resolve(inner_leaf, inner_buffer, true);
-                out.insert(k, v);
-            }
-        }
-        out
+        // A group's panels are panes too — they sit inside their outer
+        // pane's interior, which is what `inner_group_leaf` says about them.
+        let outer: std::collections::HashSet<LeafId> =
+            mgr.visible_leaves().into_iter().map(|(l, _)| l).collect();
+        let suppress_chrome = |leaf: LeafId| vs_map.get(&leaf).is_some_and(|vs| vs.suppress_chrome);
+        self.panes()
+            .into_iter()
+            .map(|(leaf, shows)| {
+                let kind = match shows {
+                    // What the pane shows is the group's grid: nothing of
+                    // the buffer it showed before decides its chrome.
+                    TabTarget::Group(_) => PaneKind {
+                        hosts_group: true,
+                        suppress_chrome: suppress_chrome(leaf),
+                        ..PaneKind::default()
+                    },
+                    TabTarget::Buffer(buffer) => {
+                        let terminal = self
+                            .buffer_metadata
+                            .get(&buffer)
+                            .and_then(|m| m.virtual_mode())
+                            .is_some_and(|m| m == "terminal");
+                        PaneKind {
+                            inner_group_leaf: !outer.contains(&leaf),
+                            hosts_group: false,
+                            suppress_chrome: suppress_chrome(leaf),
+                            scrollable: self.buffers.get(&buffer).is_none_or(|s| s.scrollable),
+                            terminal_live_grid: terminal
+                                && !self.split_terminal_scrollback(leaf, buffer),
+                        }
+                    }
+                };
+                (leaf, PaneChrome::resolve(window, kind))
+            })
+            .collect()
     }
 
     /// Whether `split` is viewing terminal `buffer_id` in read-only scrollback.

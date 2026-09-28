@@ -707,7 +707,7 @@ impl Editor {
             None => {
                 let buffer = self.widget_registry.get(panel_key)?.buffer_id?;
                 let leaf = self
-                    .window_panes()
+                    .window_buffer_panes()
                     .into_iter()
                     .find(|(_, b)| *b == buffer)
                     .map(|(leaf, _)| leaf)?;
@@ -1141,7 +1141,7 @@ impl Editor {
             None => {}
         }
         let buffer = self.widget_registry.get(panel_key)?.buffer_id?;
-        self.window_panes()
+        self.window_buffer_panes()
             .into_iter()
             .find(|(_, b)| *b == buffer)
             .map(|(leaf, _)| Slot::Pane(leaf))

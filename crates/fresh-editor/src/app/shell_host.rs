@@ -871,7 +871,7 @@ pub(crate) fn paint_embed(
     // the panes paint their grids — a PTY left at the size it had when last
     // active draws a taller frame than the box shows.
     if let Some(win) = editor.windows.get_mut(&window) {
-        for (leaf, buffer_id) in win.panes_with_buffers() {
+        for (leaf, buffer_id) in win.buffer_panes() {
             let Some(content) = rects.content(leaf) else {
                 continue;
             };
@@ -1857,7 +1857,7 @@ impl Editor {
             Slot::PromptToolbar => self.prompt_toolbar_key(),
             Slot::Pane(leaf) => {
                 let buffer = self
-                    .window_panes()
+                    .window_buffer_panes()
                     .into_iter()
                     .find(|(l, _)| l == leaf)
                     .map(|(_, b)| b)?;
@@ -2340,7 +2340,7 @@ impl Editor {
                     // surface, so a mounted panel's rows never lit under the
                     // pointer at all.
                     Slot::Pane(leaf) => self
-                        .window_panes()
+                        .window_buffer_panes()
                         .into_iter()
                         .find(|(l, _)| *l == leaf)
                         .and_then(|(_, buffer)| {

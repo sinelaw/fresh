@@ -374,7 +374,7 @@ impl Editor {
     /// (`pane_content_rect`, `pane_vscroll_rect`), and so is the thumb now
     /// (`bar_thumb`); what is left is which panes there are.
     pub fn get_split_areas(&self) -> Vec<(LeafId, BufferId)> {
-        self.window_panes()
+        self.window_buffer_panes()
     }
 
     /// Get the ratio of a specific split (for testing).

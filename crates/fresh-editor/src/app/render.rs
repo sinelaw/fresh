@@ -5533,7 +5533,7 @@ impl Editor {
     ) -> std::collections::HashMap<crate::model::event::LeafId, crate::view::shell::panel::Interior>
     {
         let mut out = std::collections::HashMap::new();
-        for (leaf, buffer) in self.window_panes() {
+        for (leaf, buffer) in self.window_buffer_panes() {
             if let Some(i) = self.pane_panel_interior(buffer) {
                 out.insert(leaf, i);
             }
@@ -5602,7 +5602,7 @@ impl Editor {
         use crate::input::keybindings::KeyContext;
         let win = self.active_window();
         let terminal = win.key_context == KeyContext::Terminal;
-        self.window_panes()
+        self.window_buffer_panes()
             .into_iter()
             .filter_map(|(pane, buffer)| {
                 if pane == active && terminal {
@@ -5622,22 +5622,28 @@ impl Editor {
     /// building one: this is the painter's question, asked once per frame, and
     /// an `Interior` clones the spec and the whole instance-state map.
     pub(crate) fn described_panes(&self) -> std::collections::HashSet<crate::model::event::LeafId> {
-        self.window_panes()
+        self.window_buffer_panes()
             .into_iter()
             .filter(|(_, buffer)| self.pane_panel_is_described(*buffer))
             .map(|(leaf, _)| leaf)
             .collect()
     }
 
-    /// Every pane of the active window with the buffer it shows — the panes
-    /// *inside* a buffer group included.
-    ///
-    /// A group's leaves are panes of the same grid, dispatched at render time
-    /// into their outer pane's interior, and `SplitManager::visible_leaves`
-    /// does not walk into them because a group's layout lives in a side map.
-    /// Both halves of C.5 need the same list, so it is stated once.
-    pub(crate) fn window_panes(&self) -> Vec<(crate::model::event::LeafId, fresh_core::BufferId)> {
-        self.active_window().panes_with_buffers()
+    /// Every pane of the active window with the tab it shows — the panes
+    /// *inside* a buffer group included (`Window::panes`). A pane showing a
+    /// group tab carries the group, not the buffer it showed before.
+    pub(crate) fn window_panes(
+        &self,
+    ) -> Vec<(crate::model::event::LeafId, crate::view::split::TabTarget)> {
+        self.active_window().panes()
+    }
+
+    /// The active window's panes that show a buffer, with that buffer
+    /// (`Window::buffer_panes`).
+    pub(crate) fn window_buffer_panes(
+        &self,
+    ) -> Vec<(crate::model::event::LeafId, fresh_core::BufferId)> {
+        self.active_window().buffer_panes()
     }
 
     /// An embedded window's grid, described as the frame describes the

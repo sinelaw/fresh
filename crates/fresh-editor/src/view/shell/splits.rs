@@ -703,7 +703,7 @@ mod tests {
     /// none.**
     ///
     /// `expand_visible_buffers` lays a group out in its pane's *content*
-    /// rectangle — past the strip and the scrollbar column — and paints one
+    /// rectangle — past the strip and any bar column — and paints one
     /// entry per inner leaf. Those entries are these leaves, each at its own
     /// content slot. The outer pane paints nothing of its own any more: its
     /// strip is nodes and its content is the group's grid, so there is no
@@ -1614,8 +1614,9 @@ pub fn separator_rects_of<'a>(
 /// strip's gestures.
 fn live_interior(id: LeafId, c: PaneChrome, s: &Rc<Splits>) -> Node<UiMsg> {
     // A pane showing an active buffer group holds that group's own grid in its
-    // content — laid out inside the pane's interior, past the strip and the
-    // scrollbar column, which is exactly where the painter puts it. That was
+    // content — laid out inside the pane's interior, under the strip (the
+    // pane has no bars while it shows a group: `PaneKind::hosts_group`),
+    // which is exactly where the painter puts it. That was
     // the migration's standing boundary: the group's panels and dividers lived
     // in a side map, so their separators stayed recorded rectangles while the
     // main tree's became nodes. Nested here, they are the same nodes.
@@ -2429,6 +2430,13 @@ pub struct PaneKind {
     /// outer pane's interior, so it has no strip and no bottom bar of its
     /// own — only the scrollbar its own content earns.
     pub inner_group_leaf: bool,
+    /// The pane is showing a buffer group's tab. Its content is the group's
+    /// grid, whose panels each have the scrollbar their own content earns;
+    /// the pane itself keeps its strip but has no bars. Its buffer is the
+    /// one it showed *before* the group tab, and a bar for that would be a
+    /// second bar beside the group's, scrolling a file that is not on
+    /// screen.
+    pub hosts_group: bool,
     /// The view asked for no tab strip (a group's panel, a plugin's dock).
     pub suppress_chrome: bool,
     /// The buffer scrolls at all. A `Fixed` panel does not, and never had a
@@ -2444,6 +2452,7 @@ impl Default for PaneKind {
     fn default() -> Self {
         Self {
             inner_group_leaf: false,
+            hosts_group: false,
             suppress_chrome: false,
             scrollable: true,
             terminal_live_grid: false,
@@ -2461,8 +2470,14 @@ impl PaneChrome {
     pub fn resolve(window: PaneChrome, pane: PaneKind) -> Self {
         PaneChrome {
             tabs: window.tabs && !pane.inner_group_leaf && !pane.suppress_chrome,
-            vscroll: window.vscroll && pane.scrollable && !pane.terminal_live_grid,
-            hscroll: window.hscroll && pane.scrollable && !pane.inner_group_leaf,
+            vscroll: window.vscroll
+                && pane.scrollable
+                && !pane.terminal_live_grid
+                && !pane.hosts_group,
+            hscroll: window.hscroll
+                && pane.scrollable
+                && !pane.inner_group_leaf
+                && !pane.hosts_group,
         }
     }
 }
