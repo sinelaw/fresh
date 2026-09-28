@@ -1302,14 +1302,15 @@ pub struct SearchColors {
     /// Background of the *current* search match: the one Find Next / Find
     /// Previous just landed on, or the one Query Replace is asking about.
     /// Should stand out from `match_bg` so the current match is obvious
-    /// among the other highlighted matches.  Default: orange.
-    #[serde(default = "default_search_current_match_bg")]
-    pub current_match_bg: ColorDef,
+    /// among the other highlighted matches.  Falls back to
+    /// `editor.selection_bg`.
+    #[serde(default)]
+    pub current_match_bg: Option<ColorDef>,
     /// Text color of the current search match, optionally bundled with text
     /// attributes (`{"color": [255, 255, 255], "modifier": ["bold"]}`).
-    /// Default: bold white.
-    #[serde(default = "default_search_current_match_fg")]
-    pub current_match_fg: StyledColorDef,
+    /// Falls back to `editor.fg`, bold on top of `editor.selection_modifier`.
+    #[serde(default)]
+    pub current_match_fg: Option<StyledColorDef>,
     /// Background color for jump labels (e.g. flash plugin labels).
     /// Should be visually distinct from `match_bg` so labels stand
     /// out against highlighted matches.  Default: bright magenta.
@@ -1329,14 +1330,20 @@ fn default_search_match_bg() -> ColorDef {
 fn default_search_match_fg() -> ColorDef {
     ColorDef::Rgb(255, 255, 255)
 }
-fn default_search_current_match_bg() -> ColorDef {
-    ColorDef::Rgb(200, 100, 0)
-}
-fn default_search_current_match_fg() -> StyledColorDef {
-    StyledColorDef::Styled {
-        color: ColorDef::Rgb(255, 255, 255),
-        modifier: Some(ModifierDef(vec!["bold".to_string()])),
-    }
+
+/// The current search match's style for a theme that names no
+/// `search.current_match_*` keys: the selection's look — its background, the
+/// editor text color, and its text attributes — made bold. The current match
+/// is usually the selection too (Find Next selects it), so this reads as "the
+/// selected match", set apart from the other matches' `match_bg`.
+///
+/// Returns `(bg, fg, modifier)`.
+fn current_match_fallback(
+    selection_bg: Color,
+    editor_fg: Color,
+    selection_modifier: Modifier,
+) -> (Color, Color, Modifier) {
+    (selection_bg, editor_fg, Modifier::BOLD | selection_modifier)
 }
 // Mirrors flash.nvim's default FlashLabel (links to Substitute, which
 // is a magenta-family colour in most colorschemes).  The pairing is
@@ -1726,6 +1733,19 @@ pub struct Theme {
 
 impl From<ThemeFile> for Theme {
     fn from(file: ThemeFile) -> Self {
+        let (fallback_bg, fallback_fg, fallback_modifier) = current_match_fallback(
+            file.editor.selection_bg.clone().into(),
+            file.editor.fg.clone().into(),
+            file.editor
+                .selection_modifier
+                .as_ref()
+                .map(Modifier::from)
+                .unwrap_or(Modifier::empty()),
+        );
+        let (current_match_fg, current_match_modifier) = match &file.search.current_match_fg {
+            Some(styled) => (styled.color().clone().into(), styled.modifier()),
+            None => (fallback_fg, fallback_modifier),
+        };
         Self {
             name: file.name,
             editor_bg: file.editor.bg.clone().into(),
@@ -1981,9 +2001,13 @@ impl From<ThemeFile> for Theme {
                 .unwrap_or_else(|| file.diagnostic.error_fg.clone().into()),
             search_match_bg: file.search.match_bg.into(),
             search_match_fg: file.search.match_fg.into(),
-            search_current_match_bg: file.search.current_match_bg.into(),
-            search_current_match_fg: file.search.current_match_fg.color().clone().into(),
-            search_current_match_modifier: file.search.current_match_fg.modifier(),
+            search_current_match_bg: file
+                .search
+                .current_match_bg
+                .map(|c| c.into())
+                .unwrap_or(fallback_bg),
+            search_current_match_fg: current_match_fg,
+            search_current_match_modifier: current_match_modifier,
             search_label_bg: file.search.label_bg.into(),
             search_label_fg: file.search.label_fg.into(),
             diagnostic_error_fg: file.diagnostic.error_fg.into(),
@@ -2163,11 +2187,11 @@ impl From<Theme> for ThemeFile {
             search: SearchColors {
                 match_bg: theme.search_match_bg.into(),
                 match_fg: theme.search_match_fg.into(),
-                current_match_bg: theme.search_current_match_bg.into(),
-                current_match_fg: StyledColorDef::from_parts(
+                current_match_bg: Some(theme.search_current_match_bg.into()),
+                current_match_fg: Some(StyledColorDef::from_parts(
                     theme.search_current_match_fg,
                     theme.search_current_match_modifier,
-                ),
+                )),
                 label_bg: theme.search_label_bg.into(),
                 label_fg: theme.search_label_fg.into(),
             },
@@ -2349,6 +2373,34 @@ fn apply_theme_overrides(theme: &mut Theme, theme_file: &ThemeFile, raw: &serde_
     {
         theme.whitespace_indicator_selected_fg =
             selected_indicator_fg(theme.selection_bg, theme.whitespace_indicator_fg);
+    }
+
+    // The current search match falls back to the selection's look, so a
+    // theme that restyles its selection without naming the current-match
+    // keys gets them from its own selection rather than keeping the base
+    // theme's (which may clash with, or match, its other colors).
+    let names = |section: &str, key: &str| {
+        raw.get(section)
+            .and_then(|v| v.as_object())
+            .and_then(|o| o.get(key))
+            .is_some_and(|v| !v.is_null())
+    };
+    if ["selection_bg", "fg", "selection_modifier"]
+        .iter()
+        .any(|key| names("editor", key))
+    {
+        let (bg, fg, modifier) = current_match_fallback(
+            theme.selection_bg,
+            theme.editor_fg,
+            theme.selection_modifier,
+        );
+        if !names("search", "current_match_bg") {
+            theme.search_current_match_bg = bg;
+        }
+        if !names("search", "current_match_fg") {
+            theme.search_current_match_fg = fg;
+            theme.search_current_match_modifier = modifier;
+        }
     }
 }
 
@@ -2936,8 +2988,9 @@ mod tests {
 
     #[test]
     fn current_search_match_style_comes_from_the_theme() {
-        // Bundled themes draw the current match bold.
+        // Bundled themes name the keys, and draw the current match bold.
         let dark = Theme::load_builtin(THEME_DARK).unwrap();
+        assert_eq!(dark.search_current_match_bg, Color::Rgb(200, 100, 0));
         assert_eq!(dark.search_current_match_modifier, Modifier::BOLD);
         assert_eq!(
             dark.resolve_modifier_key("search.current_match_fg"),
@@ -2970,6 +3023,70 @@ mod tests {
         )
         .unwrap();
         assert!(plain.search_current_match_modifier.is_empty());
+    }
+
+    #[test]
+    fn current_search_match_falls_back_to_the_selection() {
+        // A standalone theme that names no current-match keys takes the
+        // selection's look, made bold.
+        let theme = Theme::from_json(
+            r#"{
+                "name": "no-current-match-keys",
+                "editor": {
+                    "fg": [10, 20, 30],
+                    "selection_bg": [40, 50, 60],
+                    "selection_modifier": ["italic"]
+                }
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(theme.search_current_match_bg, Color::Rgb(40, 50, 60));
+        assert_eq!(theme.search_current_match_fg, Color::Rgb(10, 20, 30));
+        assert_eq!(
+            theme.search_current_match_modifier,
+            Modifier::BOLD | Modifier::ITALIC
+        );
+
+        // Restyling the selection over a base theme derives the missing keys
+        // from the new selection instead of keeping the base theme's.
+        let restyled = Theme::from_json(
+            r#"{
+                "name": "restyled-selection",
+                "extends": "builtin://dark",
+                "editor": { "selection_bg": [40, 50, 60] }
+            }"#,
+        )
+        .unwrap();
+        let dark = Theme::load_builtin(THEME_DARK).unwrap();
+        assert_eq!(restyled.search_current_match_bg, Color::Rgb(40, 50, 60));
+        assert_eq!(restyled.search_current_match_fg, dark.editor_fg);
+        assert_eq!(restyled.search_current_match_modifier, Modifier::BOLD);
+
+        // A key the theme does name is kept.
+        let named = Theme::from_json(
+            r#"{
+                "name": "restyled-selection-named-bg",
+                "extends": "builtin://dark",
+                "editor": { "selection_bg": [40, 50, 60] },
+                "search": { "current_match_bg": [7, 8, 9] }
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(named.search_current_match_bg, Color::Rgb(7, 8, 9));
+
+        // Leaving the selection alone inherits the base theme's keys.
+        let inherited = Theme::from_json(
+            r#"{
+                "name": "inherits-current-match",
+                "extends": "builtin://dark",
+                "search": { "match_bg": [1, 1, 1] }
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(
+            inherited.search_current_match_bg,
+            dark.search_current_match_bg
+        );
     }
 
     #[test]

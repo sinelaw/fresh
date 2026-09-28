@@ -68,7 +68,11 @@ continues with the next match, even one that now starts where the deleted
 match was. The style comes from the theme's `search.current_match_bg` and
 `search.current_match_fg`. Like a syntax color, `current_match_fg` can bundle
 text attributes: `{"color": [255, 255, 255], "modifier": ["bold"]}`; a bare
-color means no attributes.
+color means no attributes. A theme that doesn't name these keys falls back to
+its selection's look, made bold: `editor.selection_bg` behind `editor.fg`, with
+`editor.selection_modifier` added. A theme that extends another and restyles
+its selection gets the fallback from its own selection, not the base theme's
+current-match colors.
 
 ## Regex and Capture Groups
 
