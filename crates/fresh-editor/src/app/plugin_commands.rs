@@ -1635,7 +1635,7 @@ impl Editor {
             text,
             cursor_id: CursorId(0),
         };
-        let split_id = self.active_window().split_manager().active_split();
+        let split_id = self.effective_active_split();
         let active_buf = self.active_buffer();
         // Gated as in `handle_insert_text`.
         let lsp_changes = if self.active_window().lsp_change_could_be_sent(active_buf) {
@@ -4498,7 +4498,9 @@ impl crate::app::window::Window {
         buffer_id: BufferId,
         f: impl FnOnce(&mut BufferViewState),
     ) {
-        let active_split = self.split_manager().active_split();
+        // The pane the user is in — a shown group's focused panel, not the
+        // pane showing the group.
+        let active_split = self.effective_active_split();
         if let Some(view_state) = self.split_view_states_mut().get_mut(&active_split) {
             f(view_state.ensure_buffer_state(buffer_id));
         }
@@ -4554,7 +4556,7 @@ impl crate::app::window::Window {
                     .map(|(leaf_id, _)| *leaf_id)
                     .collect();
                 if showing.is_empty() {
-                    vec![self.split_manager().active_split()]
+                    vec![self.effective_active_split()]
                 } else {
                     showing
                 }

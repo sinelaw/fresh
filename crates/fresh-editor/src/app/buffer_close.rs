@@ -745,7 +745,7 @@ impl Editor {
             };
 
             // Activate the replacement tab and drop the closed one. The buffer
-            // case must move the split tree AND the `SplitViewState.active_buffer`
+            // case must move the split tree AND the view state's buffer tab
             // together: routing it through `set_pane_buffer` (not the tree-only
             // `set_split_buffer`) is the fix for the cursor desync — updating
             // only the tree stranded the view-state on the just-closed buffer,
@@ -1207,7 +1207,7 @@ impl Editor {
                     old_sticky_column,
                     new_sticky_column: None, // Reset sticky column for navigation
                 };
-                let split_id = self.active_window().split_manager().active_split();
+                let split_id = self.effective_active_split();
                 self.active_window_mut()
                     .apply_event_to_buffer(target_buffer, split_id, &event);
                 // Position-history entries can land anywhere in the buffer;
@@ -1257,7 +1257,7 @@ impl Editor {
                     old_sticky_column,
                     new_sticky_column: None, // Reset sticky column for navigation
                 };
-                let split_id = self.active_window().split_manager().active_split();
+                let split_id = self.effective_active_split();
                 self.active_window_mut()
                     .apply_event_to_buffer(target_buffer, split_id, &event);
                 // Position-history entries can land anywhere in the buffer;

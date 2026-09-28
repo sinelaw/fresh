@@ -10,7 +10,7 @@ use std::path::PathBuf;
 
 use crate::model::event::LeafId;
 use crate::state::EditorState;
-use crate::view::split::{SplitManager, SplitViewState};
+use crate::view::split::{BufferViewState, SplitManager, SplitViewState};
 
 type Splits = (SplitManager, HashMap<LeafId, SplitViewState>);
 
@@ -181,16 +181,23 @@ impl WindowBuffers {
     // (or remove a buffer the split tree still points at) — the
     // closure's lifetime is tied to a single owning borrow.
 
-    /// Run `f` with the buffer state and the named split's view state.
-    /// Returns `None` if either the buffer or the split is missing.
+    /// Run `f` with the buffer state and **that buffer's** view state in
+    /// the named split. Returns `None` if the buffer or the split is
+    /// missing, or the split keeps no view state for the buffer.
+    ///
+    /// The view state is looked up by `buf`, not taken from whatever
+    /// buffer the split has as its tab: a caller names the buffer it means,
+    /// and a split whose tab is another buffer — or one showing a group,
+    /// whose tab is behind it — must not have that other buffer's cursors
+    /// or viewport handed over in its place.
     pub fn with_buffer_and_split<F, R>(&mut self, buf: BufferId, split: LeafId, f: F) -> Option<R>
     where
-        F: FnOnce(&mut EditorState, &mut SplitViewState) -> R,
+        F: FnOnce(&mut EditorState, &mut BufferViewState) -> R,
     {
         let state = self.map.get_mut(&buf)?;
         let (_, vs_map) = self.splits.as_mut()?;
-        let vs = vs_map.get_mut(&split)?;
-        Some(f(state, vs))
+        let view = vs_map.get_mut(&split)?.buffer_state_mut(buf)?;
+        Some(f(state, view))
     }
 
     /// Run `f` with the buffer state and the full per-leaf view-state

@@ -117,3 +117,95 @@ fn test_group_tab_pane_has_no_bar_of_the_hidden_buffer() {
         harness.screen_to_string()
     );
 }
+
+/// A goto-line preview cancelled inside the Review Diff restores the panel
+/// it moved, and leaves the file behind the group where it was.
+///
+/// The preview's snapshot used to name the pane *showing* the group while
+/// reading the cursor and viewport of the focused panel, so Esc wrote the
+/// panel's pre-preview viewport and cursor onto the file behind the group.
+#[test]
+fn test_goto_line_preview_in_a_group_leaves_the_hidden_file_alone() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    init_tracing_from_env();
+    let repo = GitTestRepo::new();
+    let plugins_dir = repo.path.join("plugins");
+    fs::create_dir_all(&plugins_dir).unwrap();
+    copy_plugin(&plugins_dir, "audit_mode");
+    copy_plugin_lib(&plugins_dir);
+
+    let body = |changed: bool| -> String {
+        (1..=500)
+            .map(|n| match (changed, n) {
+                (true, 100) => "changed line\n".to_string(),
+                _ => format!("hidden file line {n}\n"),
+            })
+            .collect()
+    };
+    let big = repo.create_file("big.txt", &body(false));
+    repo.git_add_all();
+    repo.git_commit("baseline");
+    repo.create_file("big.txt", &body(true));
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        WIDTH,
+        HEIGHT,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+    harness.open_file(&big).unwrap();
+    harness.render().unwrap();
+    // Park the file far from its start, so a restore aimed at it shows.
+    harness
+        .send_key(KeyCode::End, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    let pane = harness
+        .editor()
+        .active_window()
+        .split_manager()
+        .active_split();
+    let hidden = harness.editor().active_buffer();
+    let hidden_view = |h: &EditorTestHarness| {
+        let (_, view_states) = h.editor().active_window().buffers.splits().unwrap();
+        view_states
+            .get(&pane)
+            .and_then(|vs| vs.buffer_state(hidden))
+            .map(|bs| (bs.cursors.primary().position, bs.viewport.top_byte()))
+            .expect("the file keeps its view state behind the group")
+    };
+    let parked = hidden_view(&harness);
+    assert!(
+        parked.0 > 0 && parked.1 > 0,
+        "the file is parked at its end"
+    );
+
+    harness.run_palette_command("Review Diff").unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+    harness.wait_until(review_diff_showing).unwrap();
+
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+        .unwrap();
+    harness.type_text(":3").unwrap();
+    harness.render().unwrap();
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+    harness.render().unwrap();
+
+    assert!(
+        review_diff_showing(&harness),
+        "the Review Diff is still on screen:\n{}",
+        harness.screen_to_string()
+    );
+    assert_eq!(
+        hidden_view(&harness),
+        parked,
+        "cancelling a goto-line preview in the Review Diff moved the file behind it"
+    );
+}

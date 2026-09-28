@@ -81,7 +81,7 @@ impl crate::app::window::Window {
                 let auto_surround = state.buffer_settings.auto_surround;
                 convert_action_to_events(
                     state,
-                    &mut vs.buffer_tab_state_mut().cursors,
+                    &mut vs.cursors,
                     action,
                     tab_size,
                     auto_indent,
@@ -199,35 +199,23 @@ impl crate::app::window::Window {
                     // The rows this walks are the rows the frame drew, so it
                     // has to skip the same collapsed folds the frame did.
                     let hidden_ranges: Vec<(usize, usize)> = vs
-                        .buffer_tab_state_mut()
                         .folds
                         .resolved_ranges(&state.buffer, &state.marker_list)
                         .into_iter()
                         .map(|r| (r.start_byte, r.end_byte))
                         .collect();
-                    let top_row_byte = vs
-                        .buffer_tab_state_mut()
-                        .viewport
-                        .top_visual_row_source_byte(
-                            &mut state.buffer,
-                            &soft_breaks,
-                            &virtual_lines,
-                            &hidden_ranges,
-                        );
-                    let height = vs
-                        .buffer_tab_state_mut()
-                        .viewport
-                        .visible_line_count()
-                        .max(1);
-                    let margin = vs
-                        .buffer_tab_state_mut()
-                        .viewport
-                        .scroll_offset
-                        .min((height - 1) / 2);
+                    let top_row_byte = vs.viewport.top_visual_row_source_byte(
+                        &mut state.buffer,
+                        &soft_breaks,
+                        &virtual_lines,
+                        &hidden_ranges,
+                    );
+                    let height = vs.viewport.visible_line_count().max(1);
+                    let margin = vs.viewport.scroll_offset.min((height - 1) / 2);
                     let row = caret_row
                         .unwrap_or(margin)
                         .clamp(margin, height - 1 - margin);
-                    vs.buffer_tab_state_mut().viewport.byte_at_row_below(
+                    vs.viewport.byte_at_row_below(
                         &mut state.buffer,
                         top_row_byte,
                         row,

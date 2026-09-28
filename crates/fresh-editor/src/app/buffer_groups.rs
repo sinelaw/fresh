@@ -752,7 +752,7 @@ impl super::Editor {
     ///
     /// Updates two places: `group.panel_buffers[panel_name]` (the
     /// authoritative name → buffer mapping for the group) and the
-    /// panel split's `SplitViewState.active_buffer` (which buffer the
+    /// panel split's buffer tab, `SplitViewState::buffer_tab` (which buffer the
     /// panel actually renders). Marks the split's layout dirty so the
     /// next render sees the swap.
     ///

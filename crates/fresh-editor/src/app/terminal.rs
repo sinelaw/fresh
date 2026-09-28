@@ -2608,9 +2608,15 @@ impl Window {
         // single missed spot leaks a gutter pop-in on exit — pinning
         // them on this path covers any terminal regardless of how its
         // view state was created.
-        if let Some((mgr, view_states)) = self.buffers.splits_mut() {
-            let active_split = mgr.active_split();
-            // The active split's view state may not yet have a keyed
+        // The pane the user is in (a shown group's focused panel included),
+        // resolved before the view states are borrowed.
+        let focused = self
+            .buffers
+            .splits()
+            .is_some()
+            .then(|| self.effective_active_split());
+        if let (Some(focused), Some((_, view_states))) = (focused, self.buffers.splits_mut()) {
+            // The focused split's view state may not yet have a keyed
             // entry for the terminal buffer (e.g. user just pressed
             // Alt+] into a split that has the terminal as a tab but
             // never displayed it before). ensure_buffer_state will
@@ -2647,18 +2653,18 @@ impl Window {
                     }
                 }
             }
-            if let Some(view_state) = view_states.get_mut(&active_split) {
-                view_state.buffer_tab_state_mut().viewport.line_wrap_enabled = true;
-                view_state.buffer_tab_state_mut().viewport.grid_wrap = true;
-                view_state.buffer_tab_state_mut().viewport.wrap_indent = false;
-                if let Some(cols) = grid_cols {
-                    view_state.buffer_tab_state_mut().viewport.wrap_column = Some(cols);
-                }
-                view_state
-                    .buffer_tab_state_mut()
-                    .viewport
-                    .set_skip_ensure_visible();
+            // The terminal's own view state in that pane — the one the
+            // anchor was pinned on — not whatever buffer the pane has as
+            // its tab.
+            if let Some(view_state) = view_states.get_mut(&focused) {
                 let buf_state = view_state.ensure_buffer_state(buffer_id);
+                buf_state.viewport.line_wrap_enabled = true;
+                buf_state.viewport.grid_wrap = true;
+                buf_state.viewport.wrap_indent = false;
+                if let Some(cols) = grid_cols {
+                    buf_state.viewport.wrap_column = Some(cols);
+                }
+                buf_state.viewport.set_skip_ensure_visible();
                 buf_state.show_line_numbers = false;
                 buf_state.highlight_current_line = false;
             }

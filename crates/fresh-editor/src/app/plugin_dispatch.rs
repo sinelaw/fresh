@@ -7091,10 +7091,18 @@ impl Window {
                 .buffer_metadata
                 .get(buffer_id)
                 .is_some_and(|m| m.hidden_from_tabs);
-            let source_split = vs_ref.iter().find(|(split_id, vs)| {
-                vs.has_buffer_state(*buffer_id)
-                    && !(is_hidden && self.grouped_subtrees.contains_key(split_id))
-            });
+            // A pane that shows the buffer first: its cursor is the one on
+            // screen. Only then any pane keeping a state for it — which can
+            // be a default one made for a buffer that pane never showed.
+            let source_split = vs_ref
+                .iter()
+                .find(|(_, vs)| vs.shown_buffer() == Some(*buffer_id))
+                .or_else(|| {
+                    vs_ref.iter().find(|(split_id, vs)| {
+                        vs.has_buffer_state(*buffer_id)
+                            && !(is_hidden && self.grouped_subtrees.contains_key(split_id))
+                    })
+                });
             let cursor_pos = source_split
                 .and_then(|(_, vs)| vs.buffer_state(*buffer_id))
                 .map(|bs| bs.cursors.primary().position)

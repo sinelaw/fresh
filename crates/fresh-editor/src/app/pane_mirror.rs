@@ -154,9 +154,11 @@ impl Editor {
         let Some(byte) = byte else {
             return;
         };
+        // `buffer`'s own caret in every pane keeping one — not the caret of
+        // whatever buffer the pane has as its tab.
         for vs in window.split_view_states_mut().values_mut() {
-            if vs.buffer_state(buffer).is_some() {
-                vs.buffer_tab_state_mut().cursors.primary_mut().position = byte;
+            if let Some(view) = vs.buffer_state_mut(buffer) {
+                view.cursors.primary_mut().position = byte;
             }
         }
     }

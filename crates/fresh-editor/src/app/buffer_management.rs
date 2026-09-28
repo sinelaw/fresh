@@ -579,7 +579,7 @@ impl Editor {
                 new_sticky_column: Some(end_col_0),
             };
 
-            let split_id = self.active_window().split_manager().active_split();
+            let split_id = self.effective_active_split();
             self.active_window_mut()
                 .apply_event_to_buffer(buffer_id, split_id, &event);
         }

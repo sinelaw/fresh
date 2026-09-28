@@ -639,8 +639,9 @@ impl Editor {
                 self.sync_windows_config();
 
                 // Update all viewports to reflect the new line wrap setting,
-                // respecting per-language overrides
-                let active_split = self.active_window().split_manager().active_split();
+                // respecting per-language overrides. The pane the user is in
+                // is a shown group's focused panel, not the pane showing it.
+                let active_split = self.effective_active_split();
                 let leaf_ids: Vec<_> = self
                     .active_window()
                     .split_view_states()
@@ -648,11 +649,18 @@ impl Editor {
                     .copied()
                     .collect();
                 for leaf_id in leaf_ids {
-                    let buffer_id = self
-                        .active_window_mut()
-                        .split_manager_mut()
-                        .get_buffer_id(leaf_id.into())
-                        .unwrap_or(BufferId(0));
+                    // The buffer whose view state is written below: the
+                    // pane's buffer tab. The split tree has no entry for a
+                    // group's panels, so asking it answered "buffer 0" for
+                    // them and resolved that buffer's settings instead.
+                    let Some(buffer_id) = self
+                        .active_window()
+                        .split_view_states()
+                        .get(&leaf_id)
+                        .map(|vs| vs.buffer_tab())
+                    else {
+                        continue;
+                    };
                     let effective_wrap =
                         self.active_window().resolve_line_wrap_for_buffer(buffer_id);
                     let wrap_column = self
@@ -1257,7 +1265,7 @@ impl Editor {
                     self.apply_event_to_active_buffer(&batch);
 
                     // Ensure the primary cursor is visible after removing secondary cursors
-                    let active_split = self.active_window().split_manager().active_split();
+                    let active_split = self.effective_active_split();
                     let active_buffer = self.active_buffer();
                     self.active_window_mut()
                         .ensure_cursor_visible_for_split(active_buffer, active_split);

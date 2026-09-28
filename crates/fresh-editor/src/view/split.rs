@@ -231,6 +231,7 @@ pub struct BufferViewState {
 /// [`BufferViewState::apply_config_defaults`]. Grouping the flags into one
 /// struct keeps the call under the argument-count limit and names each
 /// boolean at every call site.
+#[derive(Clone)]
 pub struct ViewConfigDefaults {
     pub line_numbers: bool,
     pub highlight_current_line: bool,
@@ -1597,7 +1598,7 @@ impl SplitManager {
     ///
     /// A group's layout lives in `grouped_subtrees`, keyed by the *group's*
     /// leaf, and a pane names the group it shows through its view state's
-    /// `active_group_tab`. This is the one join of the two; the frame's
+    /// `shown_group_tab`. This is the one join of the two; the frame's
     /// description and the session preview's offscreen layout both take it.
     pub fn pane_groups(
         &self,

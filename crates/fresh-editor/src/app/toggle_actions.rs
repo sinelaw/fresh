@@ -648,48 +648,29 @@ impl Editor {
         let wrap_column = self
             .active_window()
             .resolve_wrap_column_for_buffer(buffer_id);
-        let leaf_ids: Vec<_> = self
-            .active_window()
-            .split_view_states()
-            .keys()
-            .copied()
-            .collect();
-        for leaf_id in leaf_ids {
-            if self
-                .active_window_mut()
-                .split_manager_mut()
-                .get_buffer_id(leaf_id.into())
-                != Some(buffer_id)
-            {
-                continue;
-            }
-            if let Some(view_state) = self
-                .windows
-                .get_mut(&self.active_window)
-                .and_then(|w| w.buffers.split_view_states_mut())
-                .expect("active window must have a populated split layout")
-                .get_mut(&leaf_id)
-            {
-                view_state.buffer_tab_state_mut().line_numbers_override = None;
-                view_state.buffer_tab_state_mut().line_wrap_override = None;
-                view_state
-                    .buffer_tab_state_mut()
-                    .highlight_current_line_override = None;
-                view_state
-                    .buffer_tab_state_mut()
-                    .indentation_guide_user_override = None;
-                view_state.buffer_tab_state_mut().fold_indicators_override = None;
-                view_state.buffer_tab_state_mut().apply_config_defaults(
-                    crate::view::split::ViewConfigDefaults {
-                        line_numbers: self.config.editor.line_numbers,
-                        highlight_current_line: self.config.editor.highlight_current_line,
-                        line_wrap,
-                        wrap_indent: self.config.editor.wrap_indent,
-                        wrap_column,
-                        rulers: self.config.editor.rulers.clone(),
-                        scroll_offset: self.config.editor.scroll_offset,
-                    },
-                );
+        // `buffer_id`'s own view state in every pane that keeps one — its
+        // tab or not, a group's panel included.
+        let defaults = crate::view::split::ViewConfigDefaults {
+            line_numbers: self.config.editor.line_numbers,
+            highlight_current_line: self.config.editor.highlight_current_line,
+            line_wrap,
+            wrap_indent: self.config.editor.wrap_indent,
+            wrap_column,
+            rulers: self.config.editor.rulers.clone(),
+            scroll_offset: self.config.editor.scroll_offset,
+        };
+        for vs in self
+            .active_window_mut()
+            .split_view_states_mut()
+            .values_mut()
+        {
+            if let Some(view) = vs.buffer_state_mut(buffer_id) {
+                view.line_numbers_override = None;
+                view.line_wrap_override = None;
+                view.highlight_current_line_override = None;
+                view.indentation_guide_user_override = None;
+                view.fold_indicators_override = None;
+                view.apply_config_defaults(defaults.clone());
             }
         }
 
