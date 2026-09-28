@@ -24,7 +24,7 @@ impl WidgetImpl for Text {
         spec: &WidgetSpec,
         widget_key: &str,
         panel: &mut crate::widgets::WidgetPanelState,
-        _viewport: super::Viewport,
+        viewport: super::Viewport,
         key: &crate::keys::KeySeq,
         fx: &mut super::KeyFx,
     ) -> super::KeyDisposition {
@@ -142,8 +142,10 @@ impl WidgetImpl for Text {
             KeyCode::PageUp | KeyCode::PageDown if bare => {
                 // Multi-line: page the caret (the viewport follows
                 // it), one row of overlap like the lists so the user
-                // keeps a visual anchor across pages.
-                let page = rows.saturating_sub(1).max(1) as i32;
+                // keeps a visual anchor across pages. A page is the box's
+                // window as layout gave it, which a box that grows with its
+                // text sizes between `min_rows` and `max_rows`.
+                let page = viewport.items.saturating_sub(1).max(1) as i32;
                 let down = key.code() == KeyCode::PageDown;
                 apply_edit(spec, widget_key, panel, fx, |editor| {
                     for _ in 0..page.unsigned_abs() {

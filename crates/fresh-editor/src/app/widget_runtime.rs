@@ -3871,10 +3871,18 @@ mod tests {
         editor: &Editor,
         key: &crate::widgets::PanelKey,
     ) -> crate::primitives::text_edit::TextEdit {
+        prose_editor_of(editor, key, "prose")
+    }
+
+    fn prose_editor_of(
+        editor: &Editor,
+        key: &crate::widgets::PanelKey,
+        widget: &str,
+    ) -> crate::primitives::text_edit::TextEdit {
         match editor
             .widget_registry
             .get(key)
-            .and_then(|p| p.instance_states.get("prose"))
+            .and_then(|p| p.instance_states.get(widget))
         {
             Some(crate::widgets::WidgetInstanceState::Text { editor, .. }) => editor.clone(),
             other => panic!("expected the prose's Text state, got {other:?}"),
@@ -3925,6 +3933,53 @@ mod tests {
             "wrapped into rows at the dock's width: {}",
             rows.len()
         );
+    }
+
+    /// **A growing text box pages by the height layout gave it.** The box
+    /// states two rows and grows to eight with its text; PageDown moved the
+    /// caret by the spec's `rows - 1`, one line, where the box showed eight.
+    #[test]
+    fn a_growing_text_box_pages_by_its_laid_out_height() {
+        let (mut editor, _t) = make_editor();
+        let key = crate::widgets::PanelKey::new("notes", 1);
+        let value = (0..30)
+            .map(|i| format!("line {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let spec = WidgetSpec::Text {
+            value,
+            cursor_byte: 0,
+            focused: true,
+            label: String::new(),
+            placeholder: None,
+            rows: 2,
+            field_width: 0,
+            max_visible_chars: 0,
+            full_width: false,
+            completions: Vec::new(),
+            completions_visible_rows: 0,
+            min_rows: 2,
+            max_rows: 8,
+            block_caret: false,
+            sel_start: -1,
+            sel_end: -1,
+            label_width: 0,
+            read_only: false,
+            markdown: false,
+            combo: false,
+            key: Some("notes".into()),
+        };
+        mount_prose_panel(&mut editor, &key, spec);
+        let line = |editor: &Editor| {
+            let e = prose_editor_of(editor, &key, "notes");
+            e.value()[..e.flat_cursor_byte()].matches('\n').count()
+        };
+
+        editor.handle_widget_key(&key, &keyseq("PageDown"));
+        assert_eq!(line(&editor), 7, "a page is the eight rows shown, less one");
+        frame_the_shell(&mut editor);
+        editor.handle_widget_key(&key, &keyseq("PageUp"));
+        assert_eq!(line(&editor), 0);
     }
 
     /// **`Up`/`Down`/`Home`/`End` move by rendered row, resolved host-side.**
