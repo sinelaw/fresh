@@ -940,7 +940,6 @@ mod tests {
             hscroll: false,
         };
         let strip = |n: usize| Strip {
-            cap_names: false,
             tabs: vec![Tab {
                 target: TabTarget::Buffer(BufferId(n)),
                 name: format!("file_{n}.rs"),

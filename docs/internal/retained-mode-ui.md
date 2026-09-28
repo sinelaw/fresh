@@ -621,13 +621,15 @@ name in the node, which is the pre-fitted string this whole document is about,
 in the one surface it is most about. Nothing had to be measured early; the
 decision had to stop being made early.
 
-It is **feedback** now, the same shape as the palette's column widths:
-`tabs::natural_width` (what these labels measure uncapped) against the window's
-outer width from the frame before. The outer width is what the strip row leaves
-after the control cluster, so it does not move with the names — which is what
-keeps the predicate from feeding itself and a frame from capping, fitting,
-un-capping and overflowing again. One frame late after a resize, unset on the
-very first frame, and both of those show whole names, which the window scrolls.
+It is decided **at layout** now: the strip's window is a `layout_reader`
+beside the control cluster, and compares `tabs::natural_width` (what these
+labels measure uncapped) against the width the strip row offers it. That is
+the window's outer width — what the row leaves after the cluster — so it does
+not move with the names, which is what keeps the predicate from feeding itself
+and a frame from capping, fitting, un-capping and overflowing again. For a
+while it was feedback instead, against the outer width read back off the frame
+before, which was one frame late wherever the width changed without the tree
+being laid out in between.
 
 **The cost of getting it wrong was a 26-column name elided on a 160-column
 screen showing one tab**, and four tests written by other people said so —
