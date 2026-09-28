@@ -250,11 +250,15 @@ def clip_agents():
     palette(t, "split vertical", 2.5)
     t.key("Ctrl+P", 0.6, show=False).wait(0.8).key("BS", 0.3, show=False)
     t.type("server.rs", d=0.05, first=0.4).wait(1.2).key("Enter", 0.3, show=False).wait(3.0)
+    t.wait(80.0)                      # let the agents' transcripts fill their panes
     t.raw(ESC + "o", 0.5).wait(2.0)
-    for k in ("Up", "Up", "Down", "Down", "Up", "Up"):
-        t.key(k, 2.5, show=False)
-    t.wait(1.5)
-    return [FRESH_BARE], t, (COLS, ROWS), "config-orch"
+    # dock: split (demo-2) -> claude (demo-1) -> main checkout's diff, then back down
+    for k in ("Up", "Up", "Down", "Down"):
+        t.key(k, 4.0, show=False)
+    t.wait(4.0)
+    # a narrow dock (24 columns, as if dragged there) leaves the panes more room
+    seed = {"data/fresh/chrome.json": '{"dock": {"width": 24}}'}
+    return [FRESH_BARE], t, (COLS, ROWS), "config-orch", seed
 
 
 def clip_settings():
@@ -309,6 +313,11 @@ def record(name):
     cols, rows = res[2] if len(res) > 2 else (COLS, ROWS)
     cfg = res[3] if len(res) > 3 else "config"
     reset_state()
+    for rel, text in (res[4] if len(res) > 4 else {}).items():
+        path = os.path.join(S, "xdg", rel)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
+            f.write(text)
     if argv[0] == FRESH_ARGS:
         argv = [FRESH, "--no-upgrade-check", "--no-restore"] + argv[1:]
     elif argv[0] == FRESH_BARE:

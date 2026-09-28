@@ -34,7 +34,7 @@ PY
 # reports more columns than the pane shows, its cursor-up redraw leaves stale lines.
 printf '#!/bin/sh\nexec "%s" --no-upgrade-check --no-restore "$@"\n' "${FRESH:-$REPO/target/debug/fresh}" > "$W/bin/fresh"
 cp "$REPO/crates/fresh-editor/tests/fixtures/coding_agent.py" "$W/bin/"
-for spec in claude:98 codex:47; do
+for spec in claude:112 codex:55; do
   a=${spec%%:*}; cols=${spec##*:}
   printf '#!/bin/sh\nCOLUMNS=%s exec python3 "%s/bin/coding_agent.py" --as %s "$@"\n' "$cols" "$W" "$a" > "$W/bin/$a"
 done

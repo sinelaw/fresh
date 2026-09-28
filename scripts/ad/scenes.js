@@ -273,16 +273,16 @@ const SCENES = [
   },
 
   // 11-12 — the Orchestrator: three workspaces that look different. The recording
-  // switches split -> agent (89.2) -> main checkout's Review Diff (91.7) -> agent
-  // (94.2) -> split (96.7); each switch lands on a beat.
+  // switches split -> agent (170.7) -> main checkout's Review Diff (174.6) -> agent
+  // (178.7) -> split (182.6); each switch lands on a beat.
   {
     start: 11, bars: 2, clip: 'agents',
     draw: termScene({
       clip: 'agents', title: 'fresh — orchestrator',
-      map: [[0, 88.6], [0.40, 89.2], [0.8, 89.9], [0.84, 91.72], [1.6, 92.6], [1.72, 94.22], [2.5, 95.1], [2.62, 96.72], [3.504, 98.6]],
+      map: [[0, 170.1], [0.40, 170.75], [0.8, 171.4], [0.84, 174.65], [1.6, 175.5], [1.72, 178.7], [2.5, 179.6], [2.62, 182.65], [3.504, 184.5]],
       // agent / diff: the dock plus the top of the pane; split: pan right onto agent + file
-      cam: [[0, { z: 1.35, fx: 1, fy: 0 }], [0.38, { z: 1.7, fx: 0, fy: 0 }],
-            [2.6, { z: 1.0, fx: 0, fy: 0 }], [2.95, { z: 1.35, fx: 1, fy: 0 }]],
+      cam: [[0, { z: 1.2, fx: 1, fy: 0 }], [0.38, { z: 1.7, fx: 0, fy: 0 }],
+            [2.6, { z: 1.0, fx: 0, fy: 0 }], [2.95, { z: 1.2, fx: 1, fy: 0 }]],
       captions: [[0, 1.752, 'One workspace\n*per task.*', { y: 360 }], [1.752, 3.504, 'Agents, diffs, code.\n*Side by side.*', { y: 360 }]],
       overlay(lt) {
         ctx.save();

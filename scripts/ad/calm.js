@@ -95,6 +95,8 @@ const FEATURES = [
   'Keyboard macros', 'Vim mode', 'SSH remote editing', 'Multi-GB files', 'Hot exit',
   'Markdown compose', 'Code tours', 'TypeScript plugins', 'Settings UI', 'Keybinding editor',
   'Orchestrator', 'Git worktrees', 'Coding agents', 'Search & replace', 'Dev containers',
+  'Mouse support', 'Autocomplete', 'Rename symbol', 'Diagnostics', 'Bookmarks', 'Rainbow brackets',
+  'Emacs keys', 'Daemon mode', 'Sudo save', 'Flash jump', 'Package manager', 'Word wrap',
 ];
 function ticker(lt, y, speed, offset, alpha) {
   ctx.save();
@@ -114,6 +116,10 @@ function ticker(lt, y, speed, offset, alpha) {
     ctx.fillStyle = g; ctx.fillRect(Math.min(x0, x1), y - 24, 160, 48);
   }
 }
+
+// Where the Orchestrator close-ups start in the agents recording (seconds):
+// the dock switching workspaces, the split workspace, the main checkout's diff.
+const ORCH = { dock: 173.4, split: 160.0, diff: 175.6 };
 
 const SCENES = [
   // 0 — an opening line on black
@@ -180,41 +186,58 @@ const SCENES = [
     }),
   },
 
-  // 5-6 — the Orchestrator, in real time: split (agent + file), then an agent, then a diff
+  // 5-6 — the Orchestrator, as three close-ups rather than one busy screen:
+  // the dock's list of workspaces, an agent beside the code, the diff to review.
   {
     start: 5, bars: 2, clip: 'agents',
-    draw: calmShot({
-      clip: 'agents', title: 'orchestrator',
-      map: [[0, 86.4], [6.86, 93.26]],
-      cam: [[0, { z: 1.3, fx: 1, fy: 0.55 }], [2.6, { z: 1.7, fx: 0, fy: 0 }]],
-      label: 'ORCHESTRATOR',
-      captions: [[0, 3.43, 'Every task, its\nown *workspace.*'], [3.43, 6.86, 'Agents, diffs and code,\nside by *side.*']],
-    }),
+    draw(lt, dur, t) {
+      const clip = clips.agents;
+      const scale = Math.min(TW / (clip.cols * CW), TH / (clip.rows * CHH));
+      const third = dur / 3;
+      const subs = [
+        { rec: ORCH.dock, cam: { z: 3.0, fx: 0, fy: 0 }, text: 'Every task gets its\nown *workspace.*' },
+        { rec: ORCH.split, cam: { z: 1.2, fx: 1, fy: 0 }, text: 'An agent, right\nbeside *your code.*' },
+        { rec: ORCH.diff, cam: { z: 2.0, fx: 0.336, fy: 0 }, text: 'Every change,\nready to *review.*' },
+      ];
+      const i = Math.min(2, Math.floor(lt / third));
+      const sl = lt - i * third, sub = subs[i];
+      const a = easeInOut(sl / 0.55) * (1 - easeInOut((sl - (third - 0.45)) / 0.45));
+      const cam = { z: sub.cam.z * lerp(1, 1.04, sl / third), fx: sub.cam.fx, fy: sub.cam.fy };
+      drawWindow({
+        clip, r: sub.rec + sl, title: 'orchestrator', alpha: a, cam, scale,
+        dy: (1 - easeOut(sl / 1.0)) * 24,
+      });
+      label('ORCHESTRATOR', lt, 215, shotAlpha(lt, dur, 0.8, 0.5));
+      softCaption(sub.text, sl, third, { delay: 0.15, stagger: 0.06 });
+      grain(t);
+    },
   },
 
-  // 7-8 — end card, with the rest of the features drifting past
+  // 7-8 — end card; six rows of features flow past underneath the whole time
   {
     start: 7, bars: 1.75,
     draw(lt, dur, t) {
-      const out = 1 - easeInOut((lt - (dur - 1.0)) / 1.0);
+      const out = 1 - easeInOut((lt - (dur - 0.9)) / 0.9);
       ctx.save(); ctx.globalAlpha = easeInOut(lt / 1.2) * out;
-      const s = 170;
-      ctx.drawImage(imgs.logo, W / 2 - s / 2, 600 - s / 2, s, s);
+      const s = 150;
+      ctx.drawImage(imgs.logo, W / 2 - s / 2, 470 - s / 2, s, s);
       ctx.restore();
-      softCaption('Fresh', lt, 99, { y: 900, size: 170, delay: 0.3, stagger: 0, alpha: out });
-      softCaption('The terminal IDE, *refined.*', lt, 99, { y: 1010, size: 58, delay: 0.9, stagger: 0.07, color: '#b9b6b0', alpha: out });
-      label('GETFRESH.DEV', lt - 1.8, 1240, out, 38, K.sage);
-      ctx.save(); ctx.globalAlpha = easeInOut((lt - 1.9) / 0.9) * out;
+      softCaption('Fresh', lt, 99, { y: 740, size: 160, delay: 0.3, stagger: 0, alpha: out });
+      softCaption('The terminal IDE, *refined.*', lt, 99, { y: 845, size: 56, delay: 0.8, stagger: 0.07, color: '#b9b6b0', alpha: out });
+      label('GETFRESH.DEV', lt - 1.5, 1010, out, 38, K.sage);
+      ctx.save(); ctx.globalAlpha = easeInOut((lt - 1.6) / 0.9) * out;
       ctx.strokeStyle = 'rgba(236,233,226,0.25)'; ctx.lineWidth = 1.5;
-      ctx.beginPath(); ctx.moveTo(W / 2 - 70, 1302); ctx.lineTo(W / 2 + 70, 1302); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(W / 2 - 70, 1066); ctx.lineTo(W / 2 + 70, 1066); ctx.stroke();
       ctx.restore();
-      softCaption('Free and open source.', lt, 99, { y: 1360, size: 40, delay: 2.4, stagger: 0.05, color: K.mute, alpha: out });
-      const ta = easeInOut((lt - 0.6) / 1.5) * out;
-      ctx.save(); ctx.globalAlpha = ta * 0.35; ctx.fillStyle = K.paper;
-      ctx.fillRect(140, 1560, W - 280, 1); ctx.fillRect(140, 1700, W - 280, 1);
+      softCaption('Free and open source.', lt, 99, { y: 1122, size: 40, delay: 2.0, stagger: 0.05, color: K.mute, alpha: out });
+      const ta = easeInOut(lt / 0.8) * out;
+      ctx.save(); ctx.globalAlpha = ta * 0.3; ctx.fillStyle = K.paper;
+      ctx.fillRect(120, 1270, W - 240, 1); ctx.fillRect(120, 1790, W - 240, 1);
       ctx.restore();
-      ticker(lt, 1605, 55, 0, ta * 0.9);
-      ticker(lt, 1655, -45, 13, ta * 0.6);
+      for (let row = 0; row < 6; row++) {
+        const dir = row % 2 ? -1 : 1;
+        ticker(lt + 2, 1340 + row * 80, dir * (38 + 7 * (row % 3)), (row * 9) % FEATURES.length, ta * (row % 2 ? 0.7 : 0.95));
+      }
       grain(t);
     },
   },

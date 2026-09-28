@@ -5,9 +5,9 @@ recordings. Every shot of the editor is a live recording of the current build,
 driven by a script, not the blog showcase GIFs.
 
 - **`fresh-ad-calm.mp4`**: calm. 70 BPM, one long shot per bar, serif type, no flashes.
-  The Orchestrator gets two bars: a file split beside an agent, an agent on its
-  own, and the main checkout's Review Diff; the end card carries a slow ticker
-  of the rest of the features.
+  The Orchestrator gets two bars as three close-ups: the dock's workspaces, an
+  agent split beside the code, and the main checkout's Review Diff. The end card
+  carries six slow rows of the rest of the features.
 - **`fresh-ad.mp4`**: fast. 137 BPM, a cut every bar, beat-synced keypresses.
 
 ```sh
@@ -47,7 +47,9 @@ into that screen (1 = all of it); shots anchor to the left edge (`fx: 0`) so the
 gutter is never cropped, and the palette anchors bottom-left so its input line
 stays in frame.
 
-The fake agents are pinned to the width of the pane they are filmed in
-(`claude` 98 columns, `codex` 47 in half a split). Without that, in a narrow
+The Orchestrator clip seeds a 24-column dock (`chrome.json`, the width a drag
+would store) and lets the agents run for 80 s before filming so their panes are
+full. The fake agents are pinned to the width of the pane they are filmed in
+(`claude` 112 columns, `codex` 55 in half a split). Without that, in a narrow
 layout the agent's pty reports more columns than the pane Fresh draws, and a
 cursor-up redraw (as Ink-based agents do) leaves stale spinner lines behind.
