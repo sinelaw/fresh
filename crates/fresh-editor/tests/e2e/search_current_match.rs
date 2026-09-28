@@ -413,3 +413,23 @@ fn test_find_selection_next_after_an_edit_continues_regex_search() {
         "Ctrl+F3 steps to the next regex match, not a literal '<b>22</b>' search"
     );
 }
+
+/// Typing over the selected current match replaces it; the typed text is not
+/// a match, so it does not keep the current-match look.
+#[test]
+fn test_typing_over_the_current_match_drops_the_mark() {
+    let (_dir, mut harness) = open_with("aa foo bb foo cc\n");
+
+    search(&mut harness, "foo", false);
+    harness.type_text("X").unwrap();
+    harness.render().unwrap();
+
+    assert_eq!(harness.get_buffer_content().unwrap(), "aa X bb foo cc\n");
+    assert_ne!(
+        bg_at(&harness, "aa X bb", 3),
+        Some(current_match_bg(&harness)),
+        "the typed text must not keep the current-match color"
+    );
+    // The remaining match is still an ordinary highlighted match.
+    assert_eq!(bg_at(&harness, "aa X bb", 9), Some(match_bg(&harness)));
+}

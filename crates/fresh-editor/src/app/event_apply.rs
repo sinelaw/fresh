@@ -270,6 +270,15 @@ impl Editor {
                         }
                     }
                 }
+                // Typing over a selection, multi-cursor edits, and their undo
+                // arrive as one `BulkEdit`. Re-evaluate the span its edits
+                // cover in the edited buffer.
+                Event::BulkEdit { edits, .. } => {
+                    if let Some((start, len)) = bulk_edit_span(edits) {
+                        self.active_window_mut()
+                            .reevaluate_search_overlays_around(start, len, search_fg, search_bg);
+                    }
+                }
                 _ => {}
             }
         }
@@ -672,6 +681,8 @@ impl Editor {
             self.shift_plugin_markers_for_edit(active_buf, pos, del_len, ins_len);
         }
 
+        let edited_span = bulk_edit_span(&edit_lengths);
+
         // Create BulkEdit event with both buffer snapshots
         let bulk_edit = Event::BulkEdit {
             old_snapshot: Some(old_snapshot),
@@ -686,7 +697,20 @@ impl Editor {
         // Post-processing (split cursor sync, etc.)
         let win = self.active_window_mut();
         win.adjust_other_split_cursors_for_event(&bulk_edit);
-        // Note: Do NOT clear search overlays - markers track through edits for F3/Shift+F3
+        // Note: Do NOT clear search overlays - markers track through edits for F3/Shift+F3.
+        // Re-evaluate them over the edited span instead, as the Insert/Delete
+        // path does: typing over a selected match must not leave a match
+        // highlight (or the current-match mark) on the typed text.
+        if let Some((start, len)) = edited_span {
+            if self.active_window().interactive_replace_state.is_none() {
+                let (search_fg, search_bg) = {
+                    let theme = self.theme.read().unwrap();
+                    (theme.search_match_fg, theme.search_match_bg)
+                };
+                self.active_window_mut()
+                    .reevaluate_search_overlays_around(start, len, search_fg, search_bg);
+            }
+        }
 
         // Notify LSP of the change using full document replacement.
         // Bulk edits combine multiple Delete+Insert operations into a single tree pass,
@@ -875,5 +899,42 @@ impl Editor {
         if edit_changed_line_count {
             self.handle_refresh_lines(buffer_id);
         }
+    }
+}
+
+/// The span a `BulkEdit`'s edits cover in the edited buffer, as
+/// `(start, len)`, or `None` when it has none.
+///
+/// The edits are `(position, delete_len, insert_len)` with positions in the
+/// buffer before the edit; each lands shifted by the net length change of the
+/// edits before it.
+fn bulk_edit_span(edits: &[(usize, usize, usize)]) -> Option<(usize, usize)> {
+    let mut sorted = edits.to_vec();
+    sorted.sort_unstable_by_key(|&(position, _, _)| position);
+    let mut shift: isize = 0;
+    let mut span: Option<(usize, usize)> = None;
+    for (position, delete_len, insert_len) in sorted {
+        let start = position.saturating_add_signed(shift);
+        let end = start + insert_len;
+        span = Some(match span {
+            Some((lo, hi)) => (lo.min(start), hi.max(end)),
+            None => (start, end),
+        });
+        shift += insert_len as isize - delete_len as isize;
+    }
+    span.map(|(lo, hi)| (lo, hi - lo))
+}
+
+#[cfg(test)]
+mod bulk_edit_span_tests {
+    use super::bulk_edit_span;
+
+    #[test]
+    fn places_each_edit_after_the_ones_before_it() {
+        // Replace 3 bytes at 0 with 1, and 3 bytes at 10 with 2: in the
+        // edited buffer the second edit sits at 10 - 2 = 8 and ends at 10.
+        assert_eq!(bulk_edit_span(&[(10, 3, 2), (0, 3, 1)]), Some((0, 10)));
+        assert_eq!(bulk_edit_span(&[(4, 0, 5)]), Some((4, 5)));
+        assert_eq!(bulk_edit_span(&[]), None);
     }
 }
