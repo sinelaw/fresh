@@ -1675,10 +1675,17 @@ impl<M> Node<M> {
     /// The ceiling is the smallest offset whose run, under the pins *that
     /// offset* has, reaches the last item — which the window can search for
     /// only because it can ask this at an offset it is not at.
-    pub fn pinned_at(mut self, f: impl Fn(u32) -> Rc<[u32]> + 'static) -> Self {
+    pub fn pinned_at(self, f: impl Fn(u32) -> Rc<[u32]> + 'static) -> Self {
+        self.pinned_by(PinnedAt(Rc::new(f)))
+    }
+
+    /// [`Node::pinned_at`] with the function already made, for a builder
+    /// that describes the window more than once and must hand it the same
+    /// function each time: the window compares it by identity.
+    pub fn pinned_by(mut self, f: PinnedAt) -> Self {
         match &mut self.desc {
-            Desc::Viewport(p) => p.pinned_at = Some(PinnedAt(Rc::new(f))),
-            _ => panic!("pinned_at() applies to Viewport nodes only"),
+            Desc::Viewport(p) => p.pinned_at = Some(f),
+            _ => panic!("pinned_by() applies to Viewport nodes only"),
         }
         self
     }

@@ -5657,6 +5657,9 @@ impl Editor {
         // The description reads what this writes; see
         // `Editor::shell_description_stale`.
         self.shell_description_stale = true;
+        if let Some(p) = self.tree_projections.borrow().get(panel_key) {
+            p.retain_trees_of(&spec);
+        }
         let prev = match self.widget_registry.instance_states(panel_key) {
             Some(s) => s.clone(),
             None => {

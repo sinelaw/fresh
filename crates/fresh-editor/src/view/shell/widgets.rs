@@ -297,6 +297,24 @@ impl Projections {
         }
     }
 
+    /// Drop the projections of trees `spec` no longer has. A tree leaves a
+    /// panel only by a new spec, so this runs there; without it a panel
+    /// that renames or removes a tree keeps the old one's arrays alive for
+    /// as long as it is mounted.
+    pub fn retain_trees_of(&self, spec: &WidgetSpec) {
+        fn keys(spec: &WidgetSpec, out: &mut std::collections::HashSet<String>) {
+            if let WidgetSpec::Tree { key: Some(k), .. } = spec {
+                out.insert(k.clone());
+            }
+            for c in spec.children() {
+                keys(c, out);
+            }
+        }
+        let mut live = std::collections::HashSet::new();
+        keys(spec, &mut live);
+        self.trees.borrow_mut().retain(|k, _| live.contains(k));
+    }
+
     /// The visible node indices of the tree keyed `tree_key`, and the
     /// expanded set they were projected through: the cached pair when its
     /// collections and expansion are the ones they were computed from, a

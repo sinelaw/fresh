@@ -321,8 +321,11 @@ pub struct List<M> {
     pinned: Rc<[usize]>,
     /// The pinned rows as a function of the window's first row, evaluated at
     /// layout. See [`List::pinned_at`].
+    /// With the same function as the window sees it, made once here: the
+    /// window compares it by identity, and one made per build would read
+    /// as a change on every build.
     #[allow(clippy::type_complexity)]
-    pinned_at: Option<Rc<dyn Fn(usize) -> Rc<[usize]>>>,
+    pinned_at: Option<(Rc<dyn Fn(usize) -> Rc<[usize]>>, crate::desc::PinnedAt)>,
     /// Each row's own height, stated by the owner. See [`List::row_heights`].
     heights: Option<Rc<dyn Fn(usize) -> u16>>,
     on_activate: Option<ActivateHandler<M>>,
@@ -573,7 +576,17 @@ impl<M: 'static> List<M> {
     /// the run. Replaces [`List::pinned`]. See
     /// [`Node::pinned_at`](crate::Node::pinned_at).
     pub fn pinned_at(mut self, f: impl Fn(usize) -> Rc<[usize]> + 'static) -> Self {
-        self.pinned_at = Some(Rc::new(f));
+        let f: Rc<dyn Fn(usize) -> Rc<[usize]>> = Rc::new(f);
+        let window = {
+            let f = f.clone();
+            crate::desc::PinnedAt(Rc::new(move |y: u32| {
+                f(y as usize)
+                    .iter()
+                    .map(|&i| u32::try_from(i).unwrap_or(u32::MAX))
+                    .collect()
+            }))
+        };
+        self.pinned_at = Some((f, window));
         self
     }
 
@@ -692,9 +705,9 @@ impl<M: 'static> List<M> {
     /// **Uniform, and that is the point.** A list of little blocks rather than
     /// lines is still addressable by index: the window knows which items it
     /// holds without measuring any of them, which is what keeps a window onto a
-    /// million of them possible. Rows that each decide their *own* height are a
-    /// different widget and would need a different answer — a prefix sum over
-    /// every row, which is the measurement an index exists to avoid.
+    /// million of them possible. Rows that each state their *own* height
+    /// are [`List::row_heights`], which windows in cells over a prefix sum
+    /// of them instead.
     ///
     /// This is the shorthand for [`RowHeight::Cells`]. A band that is uniform
     /// but that the caller cannot state — a card list, whose height is a
@@ -704,8 +717,6 @@ impl<M: 'static> List<M> {
         self.row_height(RowHeight::Cells(cells.max(1)))
     }
 
-    /// Where one row's height comes from: the caller, or the layout. See
-    /// [`RowHeight`], which carries the cost of each.
     /// **Rows of different heights, each stated by the owner** — a card
     /// tree, whose cards are several rows and whose folder headers are one.
     /// The window counts in cells rather than items: it scrolls a row at a
@@ -720,6 +731,8 @@ impl<M: 'static> List<M> {
         self
     }
 
+    /// Where one row's height comes from: the caller, or the layout. See
+    /// [`RowHeight`], which carries the cost of each.
     pub fn row_height(mut self, h: RowHeight) -> Self {
         self.row_height = h;
         self
@@ -742,7 +755,10 @@ impl<M: 'static> Component<M> for List<M> {
     fn build(&self, s: &ListState, cx: &mut BuildCx<'_, M>) -> Node<M> {
         let n = self.source.len();
         let last = n.saturating_sub(1);
+        // An empty list has no row to select, whatever the owner or the
+        // element last held.
         let sel: Option<usize> = match self.selection {
+            _ if n == 0 => None,
             // The element's own selection follows its row; an index it was
             // last seen at is only a hint, and a row that is gone leaves the
             // hint where it was.
@@ -894,7 +910,7 @@ impl<M: 'static> Component<M> for List<M> {
         let measured = self.row_height == RowHeight::UniformMeasured;
         let declared = self.row_height.declared();
         let pinned = self.pinned.clone();
-        let pinned_at = self.pinned_at.clone();
+        let pinned_at = self.pinned_at.as_ref().map(|(f, _)| f.clone());
         let pager = match &s.pager {
             Some(slot) => slot.bind(self.pager.clone()),
             None => self.pager.clone().unwrap_or_default(),
@@ -918,12 +934,14 @@ impl<M: 'static> Component<M> for List<M> {
             let cells = heights
                 .as_ref()
                 .map(|h| starts.get_or_init(|| prefix(n, &**h)).as_slice());
-            let (first, last) = match cells {
+            // `(first, end, last)`: the rows on screen are `first..end`, and
+            // the rows built run on to `last`, the overscan past them.
+            let (first, end, last) = match cells {
                 Some(st) => {
                     let (y, h) = (win.y.max(0) as u32, win.h as u32);
                     let first = st.partition_point(|&s| s <= y).saturating_sub(1).min(n);
                     let end = st.partition_point(|&s| s < y + h).min(n);
-                    (first, (end + OVERSCAN).min(n))
+                    (first, end, (end + OVERSCAN).min(n))
                 }
                 None => {
                     // The page is the window this layout placed, in items.
@@ -931,7 +949,8 @@ impl<M: 'static> Component<M> for List<M> {
                         recorder.record(visible);
                     }
                     let first = (win.y.max(0) as usize).min(n);
-                    (first, (first + visible + OVERSCAN).min(n))
+                    let end = (first + visible).min(n);
+                    (first, end, (end + OVERSCAN).min(n))
                 }
             };
             // The pins of this window: asked of the owner's function at the
@@ -945,7 +964,7 @@ impl<M: 'static> Component<M> for List<M> {
             let pins = (info.pinned as usize).min(pinned.len());
             // The window is known here and nowhere earlier: a source with
             // per-window work does it now, over the rows about to be built.
-            let run = source.for_window(first..(first + visible).min(n));
+            let run = source.for_window(first..end);
             let indices = pinned[..pins]
                 .iter()
                 .copied()
@@ -1052,13 +1071,8 @@ impl<M: 'static> Component<M> for List<M> {
         }
         if self.heights.is_some() {
             // Pins are an item window's; see `row_heights`.
-        } else if let Some(f) = self.pinned_at.clone() {
-            body = body.pinned_at(move |y| {
-                f(y as usize)
-                    .iter()
-                    .map(|&i| u32::try_from(i).unwrap_or(u32::MAX))
-                    .collect()
-            });
+        } else if let Some((_, window)) = &self.pinned_at {
+            body = body.pinned_by(window.clone());
         } else if !self.pinned.is_empty() {
             let pins: Vec<u32> = self
                 .pinned

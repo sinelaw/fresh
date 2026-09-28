@@ -645,6 +645,46 @@ fn rows_of_their_own_heights_are_windowed_in_cells() {
     assert_ne!(after.lines().next().unwrap_or_default(), before, "{after}");
 }
 
+/// An empty list selects nothing, whatever its owner passed: with rows of
+/// their own heights, a selection of row 0 in an empty list asked for a band
+/// the heights do not have.
+#[test]
+fn an_empty_list_of_stated_heights_selects_nothing() {
+    let mut ui: Ui<Msg> = Ui::new();
+    let list = List::windowed(0, fresh_ui::Key::from, |i| fresh_ui::text(format!("row {i}")))
+        .row_heights(|_| 3)
+        .selected(0)
+        .on_select(Msg::Selected)
+        .node();
+    ui.frame(list, FRAME);
+    key(&mut ui, KeyCode::Tab);
+    assert_eq!(key(&mut ui, KeyCode::Enter), Vec::<Msg>::new(), "nothing to confirm");
+}
+
+/// **The cut is the rows on screen.** With rows of their own heights the
+/// window is in cells, and the per-window work is handed the rows that
+/// overlap it — three rows of three cells in a ten-cell frame are four rows
+/// (the fourth half in view), not ten.
+#[test]
+fn the_cut_of_rows_of_stated_heights_is_the_rows_on_screen() {
+    use std::cell::RefCell;
+    let cuts: Rc<RefCell<Vec<std::ops::Range<usize>>>> = Rc::default();
+    let seen = cuts.clone();
+    let list = List::windowed_cut(
+        100,
+        fresh_ui::Key::from,
+        move |r| seen.borrow_mut().push(r),
+        |i, _, _: &()| fresh_ui::text(format!("row {i}")),
+    )
+    .row_heights(|_| 3)
+    .focusable(false)
+    .node();
+    let mut ui: Ui<Msg> = Ui::new();
+    ui.frame(list, FRAME);
+    let last = cuts.borrow().last().cloned().expect("the cut ran");
+    assert_eq!(last, 0..4, "{:?}", cuts.borrow());
+}
+
 // -- Tree --------------------------------------------------------------------
 
 /// **A windowed tree builds its window, over the owner's projection.** Ten

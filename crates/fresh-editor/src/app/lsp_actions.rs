@@ -87,12 +87,18 @@ impl Editor {
             source: None,
         });
 
-        // Individual server options
+        // Individual server options. A row picks a server by its name (the
+        // value below), so two configs sharing a display name are one
+        // choice: shown once.
+        let mut named = std::collections::HashSet::new();
         for config in &configs {
             if config.command.is_empty() {
                 continue;
             }
             let name = config.display_name();
+            if !named.insert(name.to_string()) {
+                continue;
+            }
             let status = if config.enabled { "" } else { " [disabled]" };
             suggestions.push(Suggestion {
                 id: format!("{}/{}", language, name),
@@ -288,8 +294,10 @@ impl Editor {
                 .unwrap_or_default();
 
             if server_names.len() > 1 {
-                // Multiple servers: show each individually
-                for name in &server_names {
+                // Multiple servers: show each individually — each name
+                // once, since the name is what the row stops.
+                let mut named = std::collections::HashSet::new();
+                for name in server_names.iter().filter(|n| named.insert(n.as_str())) {
                     let description = Some(format!("Server: {}", name));
                     suggestions.push(Suggestion {
                         id: format!("{}/{}", lang, name),
