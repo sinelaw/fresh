@@ -57,7 +57,8 @@ impl Editor {
                 .split_view_states()
                 .get(split_id)
                 .map(|vs| {
-                    vs.folds
+                    vs.buffer_tab_state()
+                        .folds
                         .collapsed_header_bytes(&state.buffer, &state.marker_list)
                 })
                 .unwrap_or_default();
@@ -72,13 +73,13 @@ impl Editor {
             .active_window()
             .split_view_states()
             .get(split_id)
-            .map(|vs| vs.viewport.top_byte())
+            .map(|vs| vs.buffer_tab_state().viewport.top_byte())
             .unwrap_or(0);
         let compose_width = self
             .active_window()
             .split_view_states()
             .get(split_id)
-            .and_then(|vs| vs.compose_width);
+            .and_then(|vs| vs.buffer_tab_state().compose_width);
 
         let target_position = super::click_geometry::screen_to_buffer_position(
             col,
@@ -104,7 +105,7 @@ impl Editor {
             .active_window()
             .split_view_states()
             .get(split_id)
-            .map(|vs| vs.fold_indicators_visible())
+            .map(|vs| vs.buffer_tab_state().fold_indicators_visible())
             .unwrap_or(true);
         if let Some(byte_pos) = super::click_geometry::fold_toggle_byte_from_position(
             state,
@@ -315,7 +316,7 @@ impl Editor {
             .active_window()
             .split_view_states()
             .get(&split_id)
-            .and_then(|vs| vs.compose_width);
+            .and_then(|vs| vs.buffer_tab_state().compose_width);
 
         // Shift-click extends the selection; Ctrl-click too, since some
         // terminals intercept Shift+click.
@@ -366,7 +367,8 @@ impl Editor {
                 .split_view_states()
                 .get(&split_id)
                 .map(|vs| {
-                    vs.folds
+                    vs.buffer_tab_state()
+                        .folds
                         .collapsed_header_bytes(&state.buffer, &state.marker_list)
                 })
                 .unwrap_or_default();
@@ -374,7 +376,7 @@ impl Editor {
                 .active_window()
                 .split_view_states()
                 .get(&split_id)
-                .map(|vs| vs.fold_indicators_visible())
+                .map(|vs| vs.buffer_tab_state().fold_indicators_visible())
                 .unwrap_or(true);
             let toggle_fold_byte = super::click_geometry::fold_toggle_byte_from_position(
                 state,
@@ -404,25 +406,28 @@ impl Editor {
                     // cursor count, so a lone survivor with a higher id
                     // would be overwritten by the next `Ctrl+Alt+Down`.
                     let kept_id = if extend_selection {
-                        vs.cursors.primary_id()
+                        vs.buffer_tab_state().cursors.primary_id()
                     } else {
-                        vs.cursors
+                        vs.buffer_tab_state()
+                            .cursors
                             .ids()
                             .into_iter()
                             .min_by_key(|id| id.0)
-                            .unwrap_or_else(|| vs.cursors.primary_id())
+                            .unwrap_or_else(|| vs.buffer_tab_state().cursors.primary_id())
                     };
                     let cursor = vs
+                        .buffer_tab_state()
                         .cursors
                         .get(kept_id)
                         .copied()
-                        .unwrap_or(*vs.cursors.primary());
+                        .unwrap_or(*vs.buffer_tab_state().cursors.primary());
                     // Sorted by id so the logged batch, and which cursor an
                     // undo re-adds last, do not depend on hash order.
                     let mut removed: Vec<(CursorId, usize, Option<usize>)> = if extend_selection {
                         Vec::new()
                     } else {
-                        vs.cursors
+                        vs.buffer_tab_state()
+                            .cursors
                             .iter()
                             .filter(|(id, _)| *id != kept_id)
                             .map(|(id, c)| (id, c.position, c.anchor))
@@ -543,7 +548,7 @@ impl Editor {
             .active_window()
             .split_view_states()
             .get(&split_id)
-            .map(|vs| vs.viewport.left_column)
+            .map(|vs| vs.buffer_tab_state().viewport.left_column)
             .unwrap_or(0);
         let new_sticky_column = self.buffers().get(&buffer_id).and_then(|state| {
             if virtual_lines_below > 0 {
@@ -607,7 +612,10 @@ impl Editor {
             .split_view_states_mut()
             .get_mut(&split_id)
         {
-            view_state.viewport.hold_rows_while_head_at(target_position);
+            view_state
+                .buffer_tab_state_mut()
+                .viewport
+                .hold_rows_while_head_at(target_position);
         }
         // Position history follows the move, not the removals.
         let moved = match &event {

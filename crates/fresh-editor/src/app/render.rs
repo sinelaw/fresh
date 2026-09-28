@@ -480,7 +480,7 @@ impl Editor {
                     .active_window()
                     .split_view_states()
                     .get(&split_id)
-                    .map(|vs| vs.viewport.top_byte())
+                    .map(|vs| vs.buffer_tab_state().viewport.top_byte())
                     .unwrap_or(0);
 
                 // Whether this buffer is being composed in any split, read from
@@ -962,9 +962,9 @@ impl Editor {
                     continue;
                 }
                 let current = (
-                    view_state.viewport.top_byte(),
-                    view_state.viewport.width,
-                    view_state.viewport.height,
+                    view_state.buffer_tab_state().viewport.top_byte(),
+                    view_state.buffer_tab_state().viewport.width,
+                    view_state.buffer_tab_state().viewport.height,
                 );
                 // Arriving on screen is itself the change. Skipping it (the
                 // old behaviour) left a pane that then never resizes — a
@@ -1021,11 +1021,9 @@ impl Editor {
                             .get(&buffer_id)
                             .and_then(|state| {
                                 if state.buffer.line_count().is_some() {
-                                    Some(
-                                        state
-                                            .buffer
-                                            .get_line_number(view_state.viewport.top_byte()),
-                                    )
+                                    Some(state.buffer.get_line_number(
+                                        view_state.buffer_tab_state().viewport.top_byte(),
+                                    ))
                                 } else {
                                     None
                                 }
@@ -1034,7 +1032,7 @@ impl Editor {
                             "Firing viewport_changed hook: split={:?} buffer={:?} top_byte={} top_line={:?}",
                             split_id,
                             buffer_id,
-                            view_state.viewport.top_byte(),
+                            view_state.buffer_tab_state().viewport.top_byte(),
                             top_line
                         );
                         let Ok(pm) = self.plugin_manager.try_read() else {
@@ -1047,10 +1045,10 @@ impl Editor {
                                 split_id: (*split_id).into(),
                                 buffer_id,
                                 window_id: self.active_window.0,
-                                top_byte: view_state.viewport.top_byte(),
+                                top_byte: view_state.buffer_tab_state().viewport.top_byte(),
                                 top_line,
-                                width: view_state.viewport.width,
-                                height: view_state.viewport.height,
+                                width: view_state.buffer_tab_state().viewport.width,
+                                height: view_state.buffer_tab_state().viewport.height,
                             },
                         );
                     }
@@ -1085,9 +1083,9 @@ impl Editor {
                 (
                     *split_id,
                     (
-                        view_state.viewport.top_byte(),
-                        view_state.viewport.width,
-                        view_state.viewport.height,
+                        view_state.buffer_tab_state().viewport.top_byte(),
+                        view_state.buffer_tab_state().viewport.width,
+                        view_state.buffer_tab_state().viewport.height,
                     ),
                 )
             })
@@ -1464,7 +1462,7 @@ impl Editor {
             .get(&self.active_window)
             .and_then(|w| w.buffers.splits())
             .and_then(|(_, vs)| vs.get(&active))
-            .map(|vs| vs.cursors.primary().position)?;
+            .map(|vs| vs.buffer_tab_state().cursors.primary().position)?;
         let word_start = {
             use crate::primitives::word_navigation::find_completion_word_start;
             find_completion_word_start(&self.active_state().buffer, primary)
@@ -4426,10 +4424,13 @@ impl Editor {
         {
             let _span = tracing::info_span!("compute_semantic_ranges").entered();
             for (split_id, view_state) in self.active_window().split_view_states() {
+                // A pane of the tree that shows its buffer — not one showing
+                // a group, whose buffer tab is behind it and not visible.
                 if let Some(buffer_id) = self
                     .active_window()
                     .split_manager()
                     .get_buffer_id((*split_id).into())
+                    .and(view_state.shown_buffer())
                 {
                     if let Some(state) = self
                         .windows
@@ -4438,10 +4439,14 @@ impl Editor {
                         .expect("active window present")
                         .get(&buffer_id)
                     {
-                        let start_line =
-                            state.buffer.get_line_number(view_state.viewport.top_byte());
-                        let visible_lines =
-                            view_state.viewport.visible_line_count().saturating_sub(1);
+                        let start_line = state
+                            .buffer
+                            .get_line_number(view_state.buffer_tab_state().viewport.top_byte());
+                        let visible_lines = view_state
+                            .buffer_tab_state()
+                            .viewport
+                            .visible_line_count()
+                            .saturating_sub(1);
                         let end_line = start_line.saturating_add(visible_lines);
                         semantic_ranges
                             .entry(buffer_id)
@@ -4480,8 +4485,17 @@ impl Editor {
             vs_map
                 .iter()
                 .filter_map(|(split_id, vs)| {
+                    // Not a pane showing a group: its buffer tab is behind
+                    // the group, not on screen.
                     mgr.get_buffer_id((*split_id).into())
-                        .map(|bid| (bid, vs.viewport.top_byte(), vs.viewport.height))
+                        .and(vs.shown_buffer())
+                        .map(|bid| {
+                            (
+                                bid,
+                                vs.buffer_tab_state().viewport.top_byte(),
+                                vs.buffer_tab_state().viewport.height,
+                            )
+                        })
                 })
                 .collect()
         };
@@ -4805,7 +4819,7 @@ impl Editor {
                 let __buffer_keys: Vec<BufferId> = __win.buffers.ids();
                 let (__mgr, __vs_map) = __win.splits_mut();
                 if let Some(source_state) = __vs_map.get_mut(&source_split) {
-                    if source_state.active_buffer == buffer_id {
+                    if source_state.buffer_tab() == buffer_id {
                         let fallback = source_state
                             .open_buffers
                             .iter()
@@ -4817,7 +4831,7 @@ impl Editor {
                                     .find(|b| *b != buffer_id && !preview_loaded.contains(b))
                             });
                         if let Some(fb) = fallback {
-                            source_state.switch_buffer(fb);
+                            source_state.set_buffer_tab(fb);
                             __mgr.set_split_buffer(source_split, fb);
                         }
                     }
@@ -4849,17 +4863,19 @@ impl Editor {
                 self.terminal_height,
                 buffer_id,
             );
-            view_state.apply_config_defaults(crate::view::split::ViewConfigDefaults {
-                line_numbers: self.config.editor.line_numbers,
-                highlight_current_line: self.config.editor.highlight_current_line,
-                line_wrap: self.active_window().resolve_line_wrap_for_buffer(buffer_id),
-                wrap_indent: self.config.editor.wrap_indent,
-                wrap_column: self
-                    .active_window()
-                    .resolve_wrap_column_for_buffer(buffer_id),
-                rulers: self.config.editor.rulers.clone(),
-                scroll_offset: self.config.editor.scroll_offset,
-            });
+            view_state.buffer_tab_state_mut().apply_config_defaults(
+                crate::view::split::ViewConfigDefaults {
+                    line_numbers: self.config.editor.line_numbers,
+                    highlight_current_line: self.config.editor.highlight_current_line,
+                    line_wrap: self.active_window().resolve_line_wrap_for_buffer(buffer_id),
+                    wrap_indent: self.config.editor.wrap_indent,
+                    wrap_column: self
+                        .active_window()
+                        .resolve_wrap_column_for_buffer(buffer_id),
+                    rulers: self.config.editor.rulers.clone(),
+                    scroll_offset: self.config.editor.scroll_offset,
+                },
+            );
             let mut loaded_buffers = std::collections::HashSet::new();
             // Whether this *first* preview buffer was newly loaded.
             // The pre-existing case skips the `was_open` branch so
@@ -4892,7 +4908,7 @@ impl Editor {
                 .is_some_and(|meta| meta.hidden_from_tabs);
             if let Some(state) = self.active_window_mut().overlay_preview_state.as_mut() {
                 if state.buffer_id != buffer_id {
-                    state.view_state.switch_buffer(buffer_id);
+                    state.view_state.set_buffer_tab(buffer_id);
                     // Keep the struct's `buffer_id` in lockstep with the
                     // view-state's active buffer: the renderer looks up the
                     // buffer to draw via this field, so a stale value here
@@ -4978,25 +4994,43 @@ impl Editor {
             let preview_buffer = win.buffers.get_mut(&buffer_id);
             let preview_state = win.overlay_preview_state.as_mut();
             if let (Some(state), Some(pstate)) = (preview_buffer, preview_state) {
-                pstate.view_state.cursors.primary_mut().position = byte_offset;
+                pstate
+                    .view_state
+                    .buffer_tab_state_mut()
+                    .cursors
+                    .primary_mut()
+                    .position = byte_offset;
                 // Force line wrapping on for the preview regardless of the
                 // global `editor.line_wrap` setting (and of a switched-in
                 // buffer's fresh default): the preview pane has no
                 // horizontal scroll affordance, so without wrapping a match
                 // deep in a long line scrolls off-screen. Wrapping moots
                 // horizontal scroll, so reset it to the left edge.
-                // `view_state` derefs to the active buffer's
-                // `BufferViewState`, so this targets the rendered buffer.
-                pstate.view_state.viewport.line_wrap_enabled = true;
+                // The preview's buffer tab is the rendered buffer, so its
+                // `BufferViewState` is the one to change.
+                pstate
+                    .view_state
+                    .buffer_tab_state_mut()
+                    .viewport
+                    .line_wrap_enabled = true;
                 // Recentre only when the selected match changed (issue
                 // #2119) so a mouse-wheel scroll of the preview is
                 // preserved; `center_on_position` counts real visual rows so
                 // a match deep in a wrapped doc still lands mid-pane.
                 if pstate.centered_byte != Some(byte_offset) {
-                    pstate.view_state.viewport.left_column = 0;
-                    pstate.view_state.viewport.horizontal_scroll_offset = 0;
                     pstate
                         .view_state
+                        .buffer_tab_state_mut()
+                        .viewport
+                        .left_column = 0;
+                    pstate
+                        .view_state
+                        .buffer_tab_state_mut()
+                        .viewport
+                        .horizontal_scroll_offset = 0;
+                    pstate
+                        .view_state
+                        .buffer_tab_state_mut()
                         .viewport
                         .center_on_position(&mut state.buffer, byte_offset);
                     pstate.centered_byte = Some(byte_offset);
@@ -5012,8 +5046,9 @@ impl Editor {
                     .overlays
                     .clear_namespace(&preview_ns, &mut state.marker_list);
                 if let Some(re) = &preview_regex {
-                    let visible_start = pstate.view_state.viewport.top_byte();
-                    let visible_rows = pstate.view_state.viewport.height as usize;
+                    let visible_start = pstate.view_state.buffer_tab_state().viewport.top_byte();
+                    let visible_rows =
+                        pstate.view_state.buffer_tab_state().viewport.height as usize;
                     let mut visible_end = visible_start;
                     {
                         let mut iter = state.buffer.line_iterator(visible_start, 80);
@@ -5129,6 +5164,7 @@ impl Editor {
         }
         preview_state
             .view_state
+            .buffer_tab_state_mut()
             .viewport
             .resize(inner.width, inner.height);
         let buffer_id = preview_state.buffer_id;
@@ -5138,7 +5174,7 @@ impl Editor {
         // Deref the SplitViewState once to a concrete `&mut BufferViewState`
         // so disjoint field splits (`viewport` + `folds`) are visible to the
         // borrow checker.
-        let buf_state = preview_state.view_state.active_state_mut();
+        let buf_state = preview_state.view_state.buffer_tab_state_mut();
         let cursors = buf_state.cursors.clone();
         let view_mode = buf_state.view_mode.clone();
         let compose_width = buf_state.compose_width;
@@ -6107,7 +6143,7 @@ impl Editor {
             .with_buffer_and_view_states(active_buf, |state, vs_map| {
                 let cursors = vs_map
                     .get(&active_split)
-                    .map(|v| &v.cursors)
+                    .map(|v| &v.buffer_tab_state().cursors)
                     .unwrap_or(&default_cursors);
                 let config = &self.config.editor.status_bar;
                 let mut status_ctx = crate::view::ui::status_bar::StatusBarContext {

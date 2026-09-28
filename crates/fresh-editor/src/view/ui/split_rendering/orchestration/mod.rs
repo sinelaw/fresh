@@ -198,15 +198,15 @@ pub(crate) fn paint_leaf(
     let skip_content = kind == RenderKind::GroupTabBarOnly;
     // For a buffer-group panel (inner leaf), `active_split()` returns the
     // group's *outer* leaf, so `is_active` is never true for the panel
-    // itself. The panel is focused when the active split's
-    // `focused_group_leaf` points at this inner leaf. Used to gate the
+    // itself. The panel is focused when the active split shows a group
+    // whose focused panel is this inner leaf. Used to gate the
     // composite cursor so it doesn't linger after Tab moves focus away.
     let panel_focused = if is_inner_group_leaf {
         split_view_states
             .as_deref()
             .and_then(|svs| svs.get(&active_split_id))
-            .and_then(|vs| vs.focused_group_leaf)
-            .is_some_and(|fl| fl == split_id)
+            .and_then(|vs| vs.shown_group())
+            .is_some_and(|(_, panel)| panel == split_id)
     } else {
         is_active
     };
@@ -451,7 +451,8 @@ fn text_pane_content(
             .as_deref()
             .and_then(|vs| vs.get(&split_id))
             .is_some_and(|vs| {
-                vs.cursors
+                vs.buffer_tab_state()
+                    .cursors
                     .iter()
                     .any(|(_, c)| c.selection_range().is_some())
             });
@@ -474,7 +475,7 @@ fn text_pane_content(
             user_override: split_view_states
                 .as_deref()
                 .and_then(|vs| vs.get(&split_id))
-                .and_then(|vs| vs.indentation_guide_user_override),
+                .and_then(|vs| vs.buffer_tab_state().indentation_guide_user_override),
             plugin_override: state.indentation_guide_override,
             language_gate: state.buffer_settings.indentation_guide,
             is_virtual_buffer,
@@ -483,7 +484,7 @@ fn text_pane_content(
     let fold_indicators_visible = split_view_states
         .as_deref()
         .and_then(|vs| vs.get(&split_id))
-        .map(|vs| vs.fold_indicators_visible())
+        .map(|vs| vs.buffer_tab_state().fold_indicators_visible())
         .unwrap_or(true);
 
     let mut fallback_view: Option<SplitViewState> = None;
@@ -497,7 +498,7 @@ fn text_pane_content(
             ));
             reconcile_pane(
                 state,
-                fresh.active_state_mut(),
+                fresh.buffer_tab_state_mut(),
                 ReconcileInputs {
                     content_rect,
                     pin_to_top: is_non_scrollable,
@@ -507,7 +508,7 @@ fn text_pane_content(
             fresh
         }
     };
-    let bvs = vs.active_state_mut();
+    let bvs = vs.buffer_tab_state_mut();
 
     let crate::view::ui::EditorRenderConfig {
         estimated_line_length,
@@ -659,7 +660,7 @@ pub(crate) fn reconcile_panes(pass: &ContentPass, f: &FrameFacts<'_>, s: &mut St
         };
         reconcile_pane(
             state,
-            vs.active_state_mut(),
+            vs.buffer_tab_state_mut(),
             ReconcileInputs {
                 content_rect,
                 // A pane whose content is pinned to its size does not scroll
@@ -692,7 +693,7 @@ fn expand_visible_buffers(
         let active_group = split_view_states
             .as_deref()
             .and_then(|svs| svs.get(main_split_id))
-            .and_then(|vs| vs.active_group_tab);
+            .and_then(|vs| vs.shown_group_tab());
 
         let grouped = active_group.and_then(|leaf| grouped_subtrees.get(&leaf));
         let Some(grouped) = grouped else {
@@ -718,7 +719,9 @@ fn expand_visible_buffers(
             // dimensions (updated synchronously during rendering).
             if let Some(svs) = split_view_states.as_deref_mut() {
                 if let Some(vs) = svs.get_mut(inner_leaf) {
-                    vs.viewport.resize(inner_rect.width, inner_rect.height);
+                    vs.buffer_tab_state_mut()
+                        .viewport
+                        .resize(inner_rect.width, inner_rect.height);
                 }
             }
             visible_buffers.push((
@@ -766,10 +769,11 @@ fn render_composite_split(
     // cursor movement uses the correct viewport height after a resize.
     if let Some(svs) = split_view_states {
         if let Some(split_vs) = svs.get_mut(&split_id) {
-            if split_vs.viewport.width != content_rect.width
-                || split_vs.viewport.height != content_rect.height
+            if split_vs.buffer_tab_state_mut().viewport.width != content_rect.width
+                || split_vs.buffer_tab_state_mut().viewport.height != content_rect.height
             {
                 split_vs
+                    .buffer_tab_state_mut()
                     .viewport
                     .resize(content_rect.width, content_rect.height);
             }

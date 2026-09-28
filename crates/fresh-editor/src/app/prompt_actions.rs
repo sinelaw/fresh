@@ -942,7 +942,7 @@ impl Editor {
 
     /// Handle SetPageWidth prompt confirmation.
     fn handle_set_page_width(&mut self, input: &str) {
-        let active_split = self.active_window().split_manager().active_split();
+        let active_split = self.effective_active_split();
         let trimmed = input.trim();
 
         if trimmed.is_empty() {
@@ -951,7 +951,7 @@ impl Editor {
                 .split_view_states_mut()
                 .get_mut(&active_split)
             {
-                vs.compose_width = None;
+                vs.buffer_tab_state_mut().compose_width = None;
             }
             self.set_status_message(t!("settings.page_width_cleared").to_string());
         } else {
@@ -962,7 +962,7 @@ impl Editor {
                         .split_view_states_mut()
                         .get_mut(&active_split)
                     {
-                        vs.compose_width = Some(val);
+                        vs.buffer_tab_state_mut().compose_width = Some(val);
                     }
                     self.set_status_message(t!("settings.page_width_set", value = val).to_string());
                 }
@@ -980,15 +980,15 @@ impl Editor {
         let trimmed = input.trim();
         match trimmed.parse::<usize>() {
             Ok(col) if col > 0 => {
-                let active_split = self.active_window().split_manager().active_split();
+                let active_split = self.effective_active_split();
                 if let Some(view_state) = self
                     .active_window_mut()
                     .split_view_states_mut()
                     .get_mut(&active_split)
                 {
-                    if !view_state.rulers.contains(&col) {
-                        view_state.rulers.push(col);
-                        view_state.rulers.sort();
+                    if !view_state.buffer_tab_state_mut().rulers.contains(&col) {
+                        view_state.buffer_tab_state_mut().rulers.push(col);
+                        view_state.buffer_tab_state_mut().rulers.sort();
                     }
                 }
                 // Persist to user config
@@ -996,7 +996,7 @@ impl Editor {
                     .active_window()
                     .split_view_states()
                     .get(&active_split)
-                    .map(|vs| vs.rulers.clone())
+                    .map(|vs| vs.buffer_tab_state().rulers.clone())
                     .unwrap_or_default();
                 self.config_mut().editor.rulers = new_rulers;
                 self.save_rulers_to_config();
@@ -1015,20 +1015,23 @@ impl Editor {
     fn handle_remove_ruler(&mut self, input: &str) {
         let trimmed = input.trim();
         if let Ok(col) = trimmed.parse::<usize>() {
-            let active_split = self.active_window().split_manager().active_split();
+            let active_split = self.effective_active_split();
             if let Some(view_state) = self
                 .active_window_mut()
                 .split_view_states_mut()
                 .get_mut(&active_split)
             {
-                view_state.rulers.retain(|&r| r != col);
+                view_state
+                    .buffer_tab_state_mut()
+                    .rulers
+                    .retain(|&r| r != col);
             }
             // Persist to user config
             let new_rulers = self
                 .active_window()
                 .split_view_states()
                 .get(&active_split)
-                .map(|vs| vs.rulers.clone())
+                .map(|vs| vs.buffer_tab_state().rulers.clone())
                 .unwrap_or_default();
             self.config_mut().editor.rulers = new_rulers;
             self.save_rulers_to_config();

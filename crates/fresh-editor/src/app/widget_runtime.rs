@@ -467,7 +467,9 @@ impl Editor {
             .and_then(|w| w.buffers.splits())
             .map(|(_, vs)| vs)?
             .values()
-            .find(|vs| vs.buffer_state(buffer_id).is_some() && vs.viewport.width > 0)
+            .find(|vs| {
+                vs.buffer_state(buffer_id).is_some() && vs.buffer_tab_state().viewport.width > 0
+            })
             .and_then(|vs| vs.buffer_state(buffer_id))
             .and_then(|b| b.compose_width)
     }
@@ -1776,16 +1778,16 @@ impl Editor {
         let Some(state) = window.and_then(|w| w.buffers.get(&buffer_id)) else {
             return Vec::new();
         };
-        let Some((manager, view_states)) = window.and_then(|w| w.buffers.splits()) else {
+        let Some((_, view_states)) = window.and_then(|w| w.buffers.splits()) else {
             return Vec::new();
         };
-        let active = manager.active_split();
+        let active = self.effective_active_split();
         let mut leaves = self.splits_showing_buffer(buffer_id);
         leaves.sort_by_key(|l| *l != active);
         let Some(vs) = leaves.first().and_then(|l| view_states.get(l)) else {
             return Vec::new();
         };
-        let mut ranges = vs.cursors.selections();
+        let mut ranges = vs.buffer_tab_state().cursors.selections();
         ranges.sort_by_key(|r| r.start);
         let mut bands = Vec::new();
         for range in ranges {
@@ -1914,13 +1916,24 @@ impl Editor {
     /// one would keep a stale caret without this.
     pub(super) fn splits_showing_buffer(&self, buffer_id: BufferId) -> Vec<LeafId> {
         let (manager, view_states) = self.active_window().splits();
-        let mut splits = manager.splits_for_buffer(buffer_id);
+        // A pane whose buffer *tab* is `buffer_id` but which shows a group
+        // does not show it: `splits_for_buffer` reads the tree, which only
+        // knows tabs, so the view state decides.
+        let mut splits: Vec<LeafId> = manager
+            .splits_for_buffer(buffer_id)
+            .into_iter()
+            .filter(|leaf| {
+                view_states
+                    .get(leaf)
+                    .is_none_or(|vs| vs.shown_buffer() == Some(buffer_id))
+            })
+            .collect();
         for node in self.active_window().grouped_subtrees.values() {
             if let crate::view::split::SplitNode::Grouped { layout, .. } = node {
                 for inner_leaf in layout.leaf_split_ids() {
                     if view_states
                         .get(&inner_leaf)
-                        .is_some_and(|vs| vs.active_buffer == buffer_id)
+                        .is_some_and(|vs| vs.shown_buffer() == Some(buffer_id))
                         && !splits.contains(&inner_leaf)
                     {
                         splits.push(inner_leaf);
@@ -3208,14 +3221,7 @@ impl crate::app::window::Window {
     /// `SplitViewState`, and the flag has to land on that one too.
     pub(super) fn pin_widget_panel_horizontal_scroll(&mut self, buffer_id: BufferId) {
         for vs in self.split_view_states_mut().values_mut() {
-            if vs.buffer_state(buffer_id).is_none() {
-                continue;
-            }
-            if vs.active_buffer == buffer_id {
-                vs.viewport.horizontal_scroll_enabled = false;
-                vs.viewport.left_column = 0;
-            }
-            if let Some(bs) = vs.keyed_states.get_mut(&buffer_id) {
+            if let Some(bs) = vs.buffer_state_mut(buffer_id) {
                 bs.viewport.horizontal_scroll_enabled = false;
                 bs.viewport.left_column = 0;
             }

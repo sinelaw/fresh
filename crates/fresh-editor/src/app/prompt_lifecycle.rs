@@ -488,7 +488,7 @@ impl Editor {
             .1
             .get_mut(&snap.split_id)
         {
-            let vp = &mut view_state.viewport;
+            let vp = &mut view_state.buffer_tab_state_mut().viewport;
             vp.set_top_byte(snap.viewport_top_byte);
             vp.set_top_view_line_offset(snap.viewport_top_view_line_offset);
             vp.left_column = snap.viewport_left_column;

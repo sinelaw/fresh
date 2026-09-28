@@ -77,7 +77,7 @@ impl Editor {
                         .then(|| BarFacts::plain(0, 0, BarWindow::Cells(1)));
                     return (v, h);
                 }
-                let bvs = vs.active_state_mut();
+                let bvs = vs.buffer_tab_state_mut();
                 let buffer_len = state.buffer.len();
                 let v = c.vscroll.then(|| {
                     let fold_ranges = state.fold_ranges(&bvs.folds);

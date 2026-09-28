@@ -254,7 +254,12 @@ impl crate::app::window::Window {
             .map(|(_, vs)| vs)
             .expect("window must have a populated split layout")
             .get(&split_id)
-            .map(|vs| vs.viewport.height.saturating_sub(COMPOSITE_HEADER_HEIGHT) as usize)
+            .map(|vs| {
+                vs.buffer_tab_state()
+                    .viewport
+                    .height
+                    .saturating_sub(COMPOSITE_HEADER_HEIGHT) as usize
+            })
             .unwrap_or(DEFAULT_VIEWPORT_HEIGHT)
     }
 
@@ -298,7 +303,7 @@ impl crate::app::window::Window {
         let position = self
             .split_view_states()
             .get(&split_id)
-            .map_or(0, |vs| vs.cursors.primary().position);
+            .map_or(0, |vs| vs.buffer_tab_state().cursors.primary().position);
         state.line_of_position(position)
     }
 
@@ -319,7 +324,11 @@ impl crate::app::window::Window {
         // land on the wrong leaf's view state.
         if let Some((_, vs_map)) = self.buffers.splits_mut() {
             if let Some(view_state) = vs_map.get_mut(&split_id) {
-                view_state.cursors.primary_mut().position = cursor_column;
+                view_state
+                    .buffer_tab_state_mut()
+                    .cursors
+                    .primary_mut()
+                    .position = cursor_column;
             }
         }
     }

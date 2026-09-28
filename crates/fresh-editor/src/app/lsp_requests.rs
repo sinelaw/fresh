@@ -2634,7 +2634,7 @@ impl Editor {
             self.active_window()
                 .split_view_states()
                 .get(&split_id)
-                .map(|vs| vs.cursors.primary_id())
+                .map(|vs| vs.buffer_tab_state().cursors.primary_id())
                 .unwrap_or_else(|| self.active_cursors().primary_id())
         };
 
@@ -3135,7 +3135,7 @@ impl Editor {
             .active_window()
             .split_view_states()
             .get(&split_id_for_cursors)
-            .and_then(|vs| vs.keyed_states.get(&buffer_id))
+            .and_then(|vs| vs.buffer_state(buffer_id))
             .map(|bvs| {
                 bvs.cursors
                     .iter()
@@ -3230,7 +3230,7 @@ impl Editor {
 
                 // Apply new cursor positions to split view state
                 if let Some(vs) = vs_map.get_mut(&split_id_for_cursors) {
-                    if let Some(bvs) = vs.keyed_states.get_mut(&buffer_id) {
+                    if let Some(bvs) = vs.buffer_state_mut(buffer_id) {
                         for (cursor_id, new_pos, new_anchor) in &new_cursors {
                             if let Some(cursor) = bvs.cursors.get_mut(*cursor_id) {
                                 cursor.position = *new_pos;

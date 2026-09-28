@@ -143,9 +143,9 @@ impl Editor {
             // If we landed on a hidden panel buffer to fill the Group-case
             // housekeeping slot, scrub the *visible* side effects
             // (`open_buffers`, `focus_history`) so the panel buffer doesn't
-            // appear as a tab. The `keyed_states` entry `switch_buffer`
-            // inserted has to stay — `active_state()` requires
-            // `active_buffer ∈ keyed_states` — but it's harmless as long as
+            // appear as a tab. The view state `set_buffer_tab` inserted has
+            // to stay — the buffer tab always has one — but it's harmless
+            // as long as
             // the plugin-snapshot lookup skips it; see
             // `snapshot_source_split` in `update_plugin_state_snapshot`.
             let hidden = self
@@ -380,8 +380,8 @@ impl Editor {
             _ => None,
         };
 
-        // Prefer a buffer already keyed in the host split: `switch_buffer`
-        // inserts a default BufferViewState for any new active_buffer, which
+        // Prefer a buffer already keyed in the host split: `set_buffer_tab`
+        // inserts a default BufferViewState for any new buffer tab, which
         // for hidden panel buffers becomes a shadow entry (cursor=0) that
         // the plugin-state snapshot could non-deterministically prefer over
         // the panel split's authoritative copy. Picking something already
@@ -391,10 +391,9 @@ impl Editor {
             self.active_window()
                 .split_view_states()
                 .get(&active_split)?
-                .keyed_states
-                .keys()
-                .find(|&&bid| bid != id)
-                .copied()
+                .buffer_states()
+                .map(|(bid, _)| *bid)
+                .find(|&bid| bid != id)
         });
 
         // Absolute last-resort pool for the Group case: any buffer at all,
@@ -537,7 +536,7 @@ impl Editor {
     /// If the tab is the last viewport of the underlying buffer, do the same as close_buffer
     /// (including triggering the save/discard prompt for modified buffers).
     ///
-    /// When the active tab is a buffer group (its `active_group_tab` is set),
+    /// When the active tab is a buffer group (the pane shows a group),
     /// this closes the entire group rather than the currently-focused inner
     /// panel buffer. Individual panels are internal details of the group —
     /// the user closes them all together by closing the group tab.
@@ -551,7 +550,7 @@ impl Editor {
             .active_window()
             .split_view_states()
             .get(&active_split)
-            .and_then(|vs| vs.active_group_tab)
+            .and_then(|vs| vs.shown_group_tab())
         {
             self.close_buffer_group_by_leaf(group_leaf_id);
             self.set_status_message(t!("buffer.tab_closed").to_string());

@@ -680,7 +680,7 @@ impl Editor {
         self.set_active_buffer(buffer_id);
 
         // Initialize per-buffer view state with config defaults.
-        // Must happen AFTER set_active_buffer, because switch_buffer creates
+        // Must happen AFTER set_active_buffer, because set_buffer_tab creates
         // the new BufferViewState with defaults (show_line_numbers=true).
         let active_split = self.active_window().split_manager().active_split();
         let line_wrap = self.active_window().resolve_line_wrap_for_buffer(buffer_id);
@@ -694,15 +694,17 @@ impl Editor {
             .expect("active window must have a populated split layout")
             .get_mut(&active_split)
         {
-            view_state.apply_config_defaults(crate::view::split::ViewConfigDefaults {
-                line_numbers: self.config.editor.line_numbers,
-                highlight_current_line: self.config.editor.highlight_current_line,
-                line_wrap,
-                wrap_indent: self.config.editor.wrap_indent,
-                wrap_column,
-                rulers: self.config.editor.rulers.clone(),
-                scroll_offset: self.config.editor.scroll_offset,
-            });
+            view_state.buffer_tab_state_mut().apply_config_defaults(
+                crate::view::split::ViewConfigDefaults {
+                    line_numbers: self.config.editor.line_numbers,
+                    highlight_current_line: self.config.editor.highlight_current_line,
+                    line_wrap,
+                    wrap_indent: self.config.editor.wrap_indent,
+                    wrap_column,
+                    rulers: self.config.editor.rulers.clone(),
+                    scroll_offset: self.config.editor.scroll_offset,
+                },
+            );
         }
 
         self.active_window_mut().status_message = Some(t!("buffer.new").to_string());

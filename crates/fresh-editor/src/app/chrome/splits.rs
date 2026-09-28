@@ -91,7 +91,7 @@ impl Editor {
             .buffers
             .splits()
             .and_then(|(_, vs)| vs.get(&leaf_id))
-            .map(|vs| vs.cursors.primary_id())
+            .map(|vs| vs.buffer_tab_state().cursors.primary_id())
             .unwrap_or(CursorId(0));
         let event = Event::MoveCursor {
             cursor_id: primary_cursor_id,
@@ -117,7 +117,7 @@ impl Editor {
             .active_window()
             .split_view_states()
             .get(&leaf_id)
-            .map(|vs| vs.cursors.primary())
+            .map(|vs| vs.buffer_tab_state().cursors.primary())
         {
             // Store both edges of the selected word so we can use the appropriate
             // anchor when dragging forward (use word start) vs backward (use word end).
@@ -193,7 +193,7 @@ impl Editor {
             .buffers
             .splits()
             .and_then(|(_, vs)| vs.get(&leaf_id))
-            .map(|vs| vs.cursors.primary_id())
+            .map(|vs| vs.buffer_tab_state().cursors.primary_id())
             .unwrap_or(CursorId(0));
         let event = Event::MoveCursor {
             cursor_id: primary_cursor_id,
@@ -320,8 +320,8 @@ impl Editor {
                     .and_then(|w| w.buffers.splits())
                     .and_then(|(_, vs)| vs.get(&split_id))
                     .map(|vs| VerticalScroll::Buffer {
-                        top_byte: vs.viewport.top_byte(),
-                        view_line_offset: vs.viewport.top_view_line_offset(),
+                        top_byte: vs.buffer_tab_state().viewport.top_byte(),
+                        view_line_offset: vs.buffer_tab_state().viewport.top_view_line_offset(),
                     })
             };
             self.active_window_mut().mouse_state.drag = Some(PointerDrag::VerticalScrollbar {
@@ -396,7 +396,7 @@ impl Editor {
                     .and_then(|(_, vs)| vs.get(&split_id))
                     .map(|vs| crate::app::types::HorizontalGrab {
                         col,
-                        left_column: vs.viewport.left_column,
+                        left_column: vs.buffer_tab_state().viewport.left_column,
                     })
             })
             .flatten();
@@ -419,8 +419,8 @@ impl Editor {
             {
                 let max_scroll = max_content_width.saturating_sub(visible_width);
                 let target_col = (ratio * max_scroll as f64).round() as usize;
-                vs.viewport.left_column = target_col.min(max_scroll);
-                vs.viewport.set_skip_ensure_visible();
+                vs.buffer_tab_state_mut().viewport.left_column = target_col.min(max_scroll);
+                vs.buffer_tab_state_mut().viewport.set_skip_ensure_visible();
             }
         }
         Some(Ok(()))
@@ -802,8 +802,25 @@ impl Editor {
             .map(|(mgr, _)| mgr.is_maximized())
             .unwrap_or(false);
         if !already_maximized {
-            if let Some(buffer_id) = self.active_window().split_manager().buffer_for_split(pane) {
-                self.focus_split(pane, buffer_id);
+            // What the pane shows decides how it takes focus: a buffer is
+            // focused as ever, but a pane showing a group only becomes the
+            // active pane — focusing the buffer tab behind the group would
+            // switch the pane to it and drop the group from the screen.
+            let shows = self
+                .active_window()
+                .split_view_states()
+                .get(&pane)
+                .map(|vs| vs.shown());
+            match shows {
+                Some(crate::view::split::Shown::Buffer(buffer_id)) => {
+                    self.focus_split(pane, buffer_id);
+                }
+                Some(crate::view::split::Shown::Group { .. }) => {
+                    self.active_window_mut()
+                        .split_manager_mut()
+                        .set_active_split(pane);
+                }
+                None => {}
             }
         }
         match self
@@ -1122,8 +1139,12 @@ impl Editor {
                                     (col_offset as f64 * scroll_per_pixel).round() as i64;
                                 let new_left =
                                     (drag_start_left_column as i64 + scroll_offset).max(0) as usize;
-                                view_state.viewport.left_column = new_left.min(max_scroll);
-                                view_state.viewport.set_skip_ensure_visible();
+                                view_state.buffer_tab_state_mut().viewport.left_column =
+                                    new_left.min(max_scroll);
+                                view_state
+                                    .buffer_tab_state_mut()
+                                    .viewport
+                                    .set_skip_ensure_visible();
                             }
                         }
                     } else {
@@ -1138,8 +1159,12 @@ impl Editor {
                         {
                             let max_scroll = max_content_width.saturating_sub(visible_width);
                             let target_col = (ratio * max_scroll as f64).round() as usize;
-                            view_state.viewport.left_column = target_col.min(max_scroll);
-                            view_state.viewport.set_skip_ensure_visible();
+                            view_state.buffer_tab_state_mut().viewport.left_column =
+                                target_col.min(max_scroll);
+                            view_state
+                                .buffer_tab_state_mut()
+                                .viewport
+                                .set_skip_ensure_visible();
                         }
                     }
 
@@ -1200,7 +1225,7 @@ impl Editor {
             .active_window()
             .split_view_states()
             .get(&leaf_id)
-            .map(|vs| vs.viewport.top_byte())
+            .map(|vs| vs.buffer_tab_state().viewport.top_byte())
             .unwrap_or(0);
 
         // Get compose width for this split
@@ -1208,7 +1233,7 @@ impl Editor {
             .active_window()
             .split_view_states()
             .get(&leaf_id)
-            .and_then(|vs| vs.compose_width);
+            .and_then(|vs| vs.buffer_tab_state().compose_width);
 
         // Calculate the target position and selection geometry by
         // reading buffer state directly, then dispatch the move via
@@ -1306,9 +1331,9 @@ impl Editor {
             .splits()
             .and_then(|(_, vs)| vs.get(&leaf_id))
             .map(|vs| {
-                let cursor = vs.cursors.primary();
+                let cursor = vs.buffer_tab_state().cursors.primary();
                 (
-                    vs.cursors.primary_id(),
+                    vs.buffer_tab_state().cursors.primary_id(),
                     cursor.position,
                     cursor.anchor,
                     cursor.sticky_column,
@@ -1359,9 +1384,15 @@ impl Editor {
             .and_then(|states| states.get_mut(&leaf_id))
         {
             if pointer_level_with_text {
-                view_state.viewport.hold_rows_while_head_at(new_position);
+                view_state
+                    .buffer_tab_state_mut()
+                    .viewport
+                    .hold_rows_while_head_at(new_position);
             } else {
-                view_state.viewport.clear_skip_ensure_visible();
+                view_state
+                    .buffer_tab_state_mut()
+                    .viewport
+                    .clear_skip_ensure_visible();
             }
         }
         self.active_window_mut()

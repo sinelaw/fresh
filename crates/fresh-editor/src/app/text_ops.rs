@@ -141,7 +141,10 @@ impl Editor {
             .visual_line_start(split_id, cursor_pos, false)?;
 
         // Determine the physical line start to tell first-row from continuation.
-        let buffer_id = self.active_window().split_manager().active_buffer_id()?;
+        // The buffer the user is on, which `split_id`'s pane shows — not
+        // the split manager's active leaf, whose buffer tab is behind the
+        // group while a group is shown.
+        let buffer_id = self.active_buffer();
         let state = self
             .windows
             .get_mut(&self.active_window)

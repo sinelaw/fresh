@@ -431,7 +431,7 @@ impl Editor {
                             .splits()
                             .and_then(|(_, vs)| vs.get(&split))
                             .is_some_and(|vs| {
-                                vs.cursors.iter().any(|(_, c)| {
+                                vs.buffer_tab_state().cursors.iter().any(|(_, c)| {
                                     c.selection_range().is_some() || c.has_block_selection()
                                 })
                             })
@@ -672,12 +672,18 @@ impl Editor {
                         // user did elsewhere (same rule as the highlight
                         // toggles below).
                         if leaf_id == active_split {
-                            view_state.line_wrap_override = None;
+                            view_state.buffer_tab_state_mut().line_wrap_override = None;
                         }
-                        if view_state.line_wrap_override.is_none() {
-                            view_state.viewport.line_wrap_enabled = effective_wrap;
-                            view_state.viewport.wrap_indent = self.config.editor.wrap_indent;
-                            view_state.viewport.wrap_column = wrap_column;
+                        if view_state
+                            .buffer_tab_state_mut()
+                            .line_wrap_override
+                            .is_none()
+                        {
+                            view_state.buffer_tab_state_mut().viewport.line_wrap_enabled =
+                                effective_wrap;
+                            view_state.buffer_tab_state_mut().viewport.wrap_indent =
+                                self.config.editor.wrap_indent;
+                            view_state.buffer_tab_state_mut().viewport.wrap_column = wrap_column;
                         }
                     }
                 }
@@ -698,7 +704,8 @@ impl Editor {
             Action::ToggleCurrentLineHighlight => {
                 let new_value = !self.config.editor.highlight_current_line;
                 self.config_mut().editor.highlight_current_line = new_value;
-                let active_split = self.active_window().split_manager().active_split();
+                // The pane the user is in: a shown group's focused panel.
+                let active_split = self.effective_active_split();
 
                 // Update all splits
                 let leaf_ids: Vec<_> = self
@@ -721,10 +728,16 @@ impl Editor {
                         // choice; a global default must not silently un-pin
                         // work the user did elsewhere.
                         if leaf_id == active_split {
-                            view_state.highlight_current_line_override = None;
+                            view_state
+                                .buffer_tab_state_mut()
+                                .highlight_current_line_override = None;
                         }
-                        if view_state.highlight_current_line_override.is_none() {
-                            view_state.highlight_current_line =
+                        if view_state
+                            .buffer_tab_state_mut()
+                            .highlight_current_line_override
+                            .is_none()
+                        {
+                            view_state.buffer_tab_state_mut().highlight_current_line =
                                 self.config.editor.highlight_current_line;
                         }
                     }
@@ -815,12 +828,11 @@ impl Editor {
                 self.active_window_mut().handle_toggle_page_view();
             }
             Action::SetPageWidth => {
-                let active_split = self.active_window().split_manager().active_split();
                 let current = self
                     .active_window()
-                    .split_view_states()
-                    .get(&active_split)
-                    .and_then(|v| v.compose_width.map(|w| w.to_string()))
+                    .focused_view()
+                    .compose_width
+                    .map(|w| w.to_string())
                     .unwrap_or_default();
                 self.start_prompt_with_initial_text(
                     "Page width (empty = viewport): ".to_string(),
@@ -2056,19 +2068,21 @@ impl Editor {
         );
         // Terminal-dedicated splits never show line numbers or current-line highlight.
         // (Mirrors the plugin-terminal split setup in `create_plugin_terminal`.)
-        view_state.apply_config_defaults(crate::view::split::ViewConfigDefaults {
-            line_numbers: false,
-            highlight_current_line: false,
-            line_wrap: self.active_window().resolve_line_wrap_for_buffer(buffer_id),
-            wrap_indent: self.config.editor.wrap_indent,
-            wrap_column: self
-                .active_window()
-                .resolve_wrap_column_for_buffer(buffer_id),
-            rulers: self.config.editor.rulers.clone(),
-            scroll_offset: 0,
-        });
+        view_state.buffer_tab_state_mut().apply_config_defaults(
+            crate::view::split::ViewConfigDefaults {
+                line_numbers: false,
+                highlight_current_line: false,
+                line_wrap: self.active_window().resolve_line_wrap_for_buffer(buffer_id),
+                wrap_indent: self.config.editor.wrap_indent,
+                wrap_column: self
+                    .active_window()
+                    .resolve_wrap_column_for_buffer(buffer_id),
+                rulers: self.config.editor.rulers.clone(),
+                scroll_offset: 0,
+            },
+        );
         // Terminals don't wrap — keep escape sequences intact.
-        view_state.viewport.line_wrap_enabled = false;
+        view_state.buffer_tab_state_mut().viewport.line_wrap_enabled = false;
 
         self.active_window_mut()
             .split_view_states_mut()

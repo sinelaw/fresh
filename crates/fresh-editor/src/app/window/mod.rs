@@ -1816,7 +1816,7 @@ impl Window {
     ) -> bool {
         self.buffers
             .with_buffer_and_split(buffer_id, split_id, |state, vs| {
-                state.apply(&mut vs.cursors, event);
+                state.apply(&mut vs.buffer_tab_state_mut().cursors, event);
             })
             .is_some()
     }
@@ -1834,7 +1834,7 @@ impl Window {
     ) {
         self.buffers
             .with_buffer_and_split(buffer_id, split_id, |state, vs| {
-                if let Some(keyed) = vs.keyed_states.get_mut(&buffer_id) {
+                if let Some(keyed) = vs.buffer_state_mut(buffer_id) {
                     state.apply(&mut keyed.cursors, event);
                 }
             });
@@ -1847,7 +1847,8 @@ impl Window {
     pub fn ensure_cursor_visible_for_split(&mut self, buffer_id: BufferId, split_id: LeafId) {
         self.buffers
             .with_buffer_and_split(buffer_id, split_id, |state, vs| {
-                vs.ensure_cursor_visible(&mut state.buffer, &state.marker_list);
+                vs.buffer_tab_state_mut()
+                    .ensure_cursor_visible(&mut state.buffer, &state.marker_list);
             });
     }
 
@@ -1866,9 +1867,11 @@ impl Window {
     ) {
         self.buffers
             .with_buffer_and_split(buffer_id, split_id, |state, vs| {
-                vs.viewport.scroll_to(&mut state.buffer, target_line);
+                vs.buffer_tab_state_mut()
+                    .viewport
+                    .scroll_to(&mut state.buffer, target_line);
                 if lock_against_ensure_visible {
-                    vs.viewport.set_skip_ensure_visible();
+                    vs.buffer_tab_state_mut().viewport.set_skip_ensure_visible();
                 }
             });
     }
@@ -1887,7 +1890,7 @@ impl Window {
         self.buffers
             .with_buffer_and_view_states(buffer_id, |state, vs_map| {
                 for vs in vs_map.values_mut() {
-                    if vs.keyed_states.contains_key(&buffer_id) {
+                    if vs.has_buffer_state(buffer_id) {
                         let buf_state = vs.ensure_buffer_state(buffer_id);
                         buf_state.folds.add(
                             &state.buffer,
@@ -1908,7 +1911,7 @@ impl Window {
         self.buffers
             .with_buffer_and_view_states(buffer_id, |state, vs_map| {
                 for vs in vs_map.values_mut() {
-                    if vs.keyed_states.contains_key(&buffer_id) {
+                    if vs.has_buffer_state(buffer_id) {
                         let buf_state = vs.ensure_buffer_state(buffer_id);
                         buf_state.folds.clear(&mut state.marker_list);
                     }
@@ -1930,7 +1933,7 @@ impl Window {
             .with_buffer_and_view_states(buffer_id, |state, vs_map| {
                 let mut pruned = false;
                 for vs in vs_map.values_mut() {
-                    if let Some(buf_state) = vs.keyed_states.get_mut(&buffer_id) {
+                    if let Some(buf_state) = vs.buffer_state_mut(buffer_id) {
                         pruned |= buf_state
                             .folds
                             .prune_orphaned(&state.buffer, &mut state.marker_list);
@@ -1977,7 +1980,7 @@ impl Window {
                     let Some(view_state) = vs_map.get_mut(leaf_id) else {
                         continue;
                     };
-                    let cursor = view_state.cursors.primary_mut();
+                    let cursor = view_state.buffer_tab_state_mut().cursors.primary_mut();
                     cursor.move_to(position, extend);
                     // An absolute placement is a jump, not a vertical move,
                     // so it clears the goal column — the same thing every
@@ -2002,7 +2005,9 @@ impl Window {
                     // all absolute placements, none of them a vertical
                     // motion.
                     cursor.sticky_column = None;
-                    view_state.ensure_cursor_visible(&mut state.buffer, &state.marker_list);
+                    view_state
+                        .buffer_tab_state_mut()
+                        .ensure_cursor_visible(&mut state.buffer, &state.marker_list);
                 }
             });
     }
@@ -2028,11 +2033,21 @@ impl Window {
                     .map(|p| p.line)
                     .unwrap_or(0);
                 view_state
+                    .buffer_tab_state_mut()
                     .viewport
                     .scroll_to(&mut state.buffer, target_line);
-                view_state.viewport.set_top_byte(clamped_byte);
-                view_state.viewport.set_top_view_line_offset(0);
-                view_state.viewport.set_skip_ensure_visible();
+                view_state
+                    .buffer_tab_state_mut()
+                    .viewport
+                    .set_top_byte(clamped_byte);
+                view_state
+                    .buffer_tab_state_mut()
+                    .viewport
+                    .set_top_view_line_offset(0);
+                view_state
+                    .buffer_tab_state_mut()
+                    .viewport
+                    .set_skip_ensure_visible();
             });
     }
 
@@ -2053,11 +2068,18 @@ impl Window {
                     let Some(view_state) = vs_map.get_mut(leaf_id) else {
                         continue;
                     };
-                    let viewport_height = view_state.viewport.height as usize;
+                    let viewport_height =
+                        view_state.buffer_tab_state_mut().viewport.height as usize;
                     let lines_above = viewport_height / 3;
                     let target = line.saturating_sub(lines_above);
-                    view_state.viewport.scroll_to(&mut state.buffer, target);
-                    view_state.viewport.set_skip_ensure_visible();
+                    view_state
+                        .buffer_tab_state_mut()
+                        .viewport
+                        .scroll_to(&mut state.buffer, target);
+                    view_state
+                        .buffer_tab_state_mut()
+                        .viewport
+                        .set_skip_ensure_visible();
                 }
             });
     }
@@ -2079,7 +2101,7 @@ impl Window {
     ) {
         self.buffers
             .with_buffer_and_split(buffer_id, split_id, |buffer_state, vs| {
-                let Some(buf_state) = vs.keyed_states.get_mut(&buffer_id) else {
+                let Some(buf_state) = vs.buffer_state_mut(buffer_id) else {
                     return;
                 };
                 let max_pos = buffer_state.buffer.len();
@@ -2114,7 +2136,7 @@ impl Window {
                 let total = state.buffer.total_bytes();
                 for vs in vs_map.values_mut() {
                     if vs.has_buffer(buffer_id) {
-                        vs.cursors.primary_mut().position = total;
+                        vs.buffer_tab_state_mut().cursors.primary_mut().position = total;
                         // Disable gutter + current-line highlight for the
                         // terminal buffer's per-buffer view state so that
                         // exiting terminal mode on a restored terminal
@@ -2154,7 +2176,7 @@ impl Window {
                 // row-space path needs only `&Buffer`.
                 let scroll_geometry = wrap_scroll_geometry(view_state, state);
                 let hidden_ranges = collapsed_hidden_ranges(view_state, state, buffer_id);
-                let top_byte_before = view_state.viewport.top_byte();
+                let top_byte_before = view_state.buffer_tab_state_mut().viewport.top_byte();
                 if let Some(geometry) = scroll_geometry {
                     // Row arithmetic off the wrap index: no text is read, so a
                     // wheel event on a file that is one enormous line costs the
@@ -2165,11 +2187,12 @@ impl Window {
                         .get(&geometry)
                         .expect("geometry resolved from a built index");
                     view_state
+                        .buffer_tab_state_mut()
                         .viewport
                         .scroll_visual_rows(index, &state.buffer, delta as isize);
                 } else if delta < 0 {
                     let lines_to_scroll = delta.unsigned_abs() as usize;
-                    view_state.viewport.scroll_up(
+                    view_state.buffer_tab_state_mut().viewport.scroll_up(
                         &mut state.buffer,
                         &soft_breaks,
                         &virtual_lines,
@@ -2178,7 +2201,7 @@ impl Window {
                     );
                 } else {
                     let lines_to_scroll = delta as usize;
-                    view_state.viewport.scroll_down(
+                    view_state.buffer_tab_state_mut().viewport.scroll_down(
                         &mut state.buffer,
                         &soft_breaks,
                         &virtual_lines,
@@ -2186,12 +2209,16 @@ impl Window {
                         lines_to_scroll,
                     );
                 }
-                view_state.viewport.set_skip_ensure_visible();
+                view_state
+                    .buffer_tab_state_mut()
+                    .viewport
+                    .set_skip_ensure_visible();
 
                 let buffer = &mut state.buffer;
-                if let Some(folds) = view_state.keyed_states.get(&buffer_id).map(|bs| &bs.folds) {
+                if let Some(folds) = view_state.buffer_state(buffer_id).map(|bs| &bs.folds) {
                     if !folds.is_empty() {
-                        let top_line = buffer.get_line_number(view_state.viewport.top_byte());
+                        let top_line = buffer
+                            .get_line_number(view_state.buffer_tab_state().viewport.top_byte());
                         if let Some(range) = folds
                             .resolved_ranges(buffer, &state.marker_list)
                             .iter()
@@ -2205,8 +2232,14 @@ impl Window {
                             let target_byte = buffer
                                 .line_start_offset(target_line)
                                 .unwrap_or_else(|| buffer.len());
-                            view_state.viewport.set_top_byte(target_byte);
-                            view_state.viewport.set_top_view_line_offset(0);
+                            view_state
+                                .buffer_tab_state_mut()
+                                .viewport
+                                .set_top_byte(target_byte);
+                            view_state
+                                .buffer_tab_state_mut()
+                                .viewport
+                                .set_top_view_line_offset(0);
                         }
                     }
                 }
@@ -2214,7 +2247,7 @@ impl Window {
                     "scroll_split_by_lines: delta={}, top_byte {} -> {}",
                     delta,
                     top_byte_before,
-                    view_state.viewport.top_byte()
+                    view_state.buffer_tab_state_mut().viewport.top_byte()
                 );
             });
     }
@@ -2245,7 +2278,7 @@ impl Window {
         let Some(ps) = self.overlay_preview_state.as_mut() else {
             return false;
         };
-        let viewport = &mut ps.view_state.active_state_mut().viewport;
+        let viewport = &mut ps.view_state.buffer_tab_state_mut().viewport;
         // The preview loads plain file buffers and exposes no fold controls,
         // so there are never collapsed regions to skip here.
         if delta < 0 {
@@ -2279,7 +2312,7 @@ impl Window {
                 state.virtual_texts.clear(&mut state.marker_list);
                 state.folding_ranges.clear(&mut state.marker_list);
                 for view_state in vs_map.values_mut() {
-                    if let Some(buf_state) = view_state.keyed_states.get_mut(&buffer_id) {
+                    if let Some(buf_state) = view_state.buffer_state_mut(buffer_id) {
                         buf_state.folds.clear(&mut state.marker_list);
                     }
                 }
@@ -2621,29 +2654,41 @@ impl Window {
 
     /// Resolve the effective (split, buffer) pair for the currently-
     /// focused target inside this window. Returned invariant: the split
-    /// id is in `splits.1` (view_states), its `active_buffer` equals
-    /// the returned buffer id, `self.buffers` contains the buffer id,
-    /// and the split's `keyed_states` contains an entry for the buffer.
+    /// id is in `splits.1` (view_states), its buffer tab is the returned
+    /// buffer id and is on screen, `self.buffers` contains the buffer id,
+    /// and the split keeps a view state for the buffer.
     ///
-    /// Falls back to the outer split when a buffer-group panel is
-    /// focused but any of those invariants doesn't hold for the inner
-    /// leaf. Mirrors `Editor::effective_active_pair`.
+    /// **While the active pane shows a group, the pair is one of the
+    /// group's panels — never the buffer behind the group.** That buffer is
+    /// not on screen, and every key, edit and command routed through this
+    /// pair would land in a file nobody can see. The focused panel first;
+    /// if its state is gone, any panel of the group still standing. Only
+    /// when none is does this fall through, loudly, to the outer pane.
+    /// Mirrors `Editor::effective_active_pair`.
     pub fn effective_active_pair(&self) -> (LeafId, BufferId) {
         let (mgr, vs_map) = self.splits();
         let active_split = mgr.active_split();
-        if let Some(vs) = vs_map.get(&active_split) {
-            if vs.active_group_tab.is_some() {
-                if let Some(inner_leaf) = vs.focused_group_leaf {
-                    if let Some(inner_vs) = vs_map.get(&inner_leaf) {
-                        let inner_buf = inner_vs.active_buffer;
-                        if self.buffers.get(&inner_buf).is_some()
-                            && inner_vs.keyed_states.contains_key(&inner_buf)
-                        {
-                            return (inner_leaf, inner_buf);
-                        }
-                    }
-                }
+        let panel_pair = |leaf: LeafId| {
+            let buffer = vs_map.get(&leaf)?.shown_buffer()?;
+            self.buffers.get(&buffer)?;
+            Some((leaf, buffer))
+        };
+        if let Some((group, panel)) = vs_map.get(&active_split).and_then(|vs| vs.shown_group()) {
+            let others = self
+                .grouped_subtrees
+                .get(&group)
+                .map(|node| node.leaf_split_ids())
+                .unwrap_or_default();
+            if let Some(pair) = std::iter::once(panel).chain(others).find_map(panel_pair) {
+                return pair;
             }
+            tracing::error!(
+                ?group,
+                ?panel,
+                ?active_split,
+                "effective_active_pair: the active pane shows a group none of whose \
+                 panels has a live buffer; falling back to the pane's own buffer tab"
+            );
         }
         let outer_buf = mgr
             .active_buffer_id()
@@ -2797,7 +2842,7 @@ impl Window {
         for (leaf, buffer) in mgr.visible_leaves() {
             let group = vs_map
                 .get(&leaf)
-                .and_then(|vs| vs.active_group_tab)
+                .and_then(|vs| vs.shown_group_tab())
                 .and_then(|g| Some((g, self.grouped_subtrees.get(&g)?)));
             match group {
                 Some((g, node)) => {
@@ -3160,28 +3205,54 @@ impl Window {
         self.buffers.get(&id)
     }
 
-    /// Read-only cursor set for the active buffer in the active split.
-    /// Group panels return their own cursors, not the outer split's
-    /// stale ones.
-    pub fn active_cursors(&self) -> &crate::model::cursor::Cursors {
-        let split_id = self.effective_active_split();
-        &self
+    /// The view state of the buffer the user is on: the focused pane's
+    /// buffer — a shown group's focused panel, not the pane showing the
+    /// group.
+    ///
+    /// **Keyed by the pane and the buffer both** (`effective_active_pair`),
+    /// so it is never the state of a buffer that is not on screen. The split
+    /// manager's `active_split` is the pane *showing* a group, and its
+    /// buffer tab is the one behind the group; a toggle, a scroll or a
+    /// cursor read aimed there lands on a file nobody can see.
+    ///
+    /// Should the pane keep no state for that buffer — the split tree and
+    /// the view states out of step (#1939) — it is the focused pane's own
+    /// buffer tab, which is on screen: the focused pane is never one showing
+    /// a group.
+    pub fn focused_view(&self) -> &crate::view::split::BufferViewState {
+        let (split_id, buffer_id) = self.effective_active_pair();
+        let vs = self
             .splits()
             .1
             .get(&split_id)
-            .expect("active split must be in view-state map")
-            .cursors
+            .expect("the focused pane has a view state");
+        vs.buffer_state(buffer_id)
+            .unwrap_or_else(|| vs.buffer_tab_state())
     }
 
-    /// Mutable cursor set for the active buffer in the active split.
-    pub fn active_cursors_mut(&mut self) -> &mut crate::model::cursor::Cursors {
-        let split_id = self.effective_active_split();
-        &mut self
+    /// The same, mutably.
+    pub fn focused_view_mut(&mut self) -> &mut crate::view::split::BufferViewState {
+        let (split_id, buffer_id) = self.effective_active_pair();
+        let vs = self
             .splits_mut()
             .1
             .get_mut(&split_id)
-            .expect("active split must be in view-state map")
-            .cursors
+            .expect("the focused pane has a view state");
+        if vs.has_buffer_state(buffer_id) {
+            vs.buffer_state_mut(buffer_id).expect("checked just above")
+        } else {
+            vs.buffer_tab_state_mut()
+        }
+    }
+
+    /// Read-only cursor set for the buffer the user is on (`focused_view`).
+    pub fn active_cursors(&self) -> &crate::model::cursor::Cursors {
+        &self.focused_view().cursors
+    }
+
+    /// Mutable cursor set for the buffer the user is on (`focused_view`).
+    pub fn active_cursors_mut(&mut self) -> &mut crate::model::cursor::Cursors {
+        &mut self.focused_view_mut().cursors
     }
 
     /// Read-only event log for the active buffer.
@@ -3308,7 +3379,7 @@ impl Window {
             return;
         };
         for vs in vs_map.values_mut() {
-            for (buffer_id, buffer_state) in vs.keyed_states.iter_mut() {
+            for (buffer_id, buffer_state) in vs.buffer_states_mut() {
                 if let Some(cols) = cols_by_buffer.get(buffer_id) {
                     let vp = &mut buffer_state.viewport;
                     vp.line_wrap_enabled = true;
@@ -3747,7 +3818,7 @@ impl Window {
         let view_state = self.splits().1.values().find(|vs| vs.has_buffer(buffer_id));
 
         let view_state = view_state?;
-        let buf_state = view_state.keyed_states.get(&buffer_id)?;
+        let buf_state = view_state.buffer_state(buffer_id)?;
 
         let primary_cursor = buf_state.cursors.primary();
         let file_state = SerializedFileState {
@@ -4159,7 +4230,12 @@ impl Window {
             .splits()
             .1
             .get(&active_split)
-            .map(|vs| (vs.viewport.top_byte(), vs.viewport.height.saturating_sub(2)))
+            .map(|vs| {
+                (
+                    vs.buffer_tab_state().viewport.top_byte(),
+                    vs.buffer_tab_state().viewport.height.saturating_sub(2),
+                )
+            })
             .unwrap_or((0, 20));
 
         let state = self.active_state_mut();
@@ -4906,13 +4982,14 @@ impl Window {
             if let Some(view_state) = vs_map.get_mut(&split_id) {
                 for (edit_pos, old_len, new_len) in &adjustments {
                     view_state
+                        .buffer_tab_state_mut()
                         .cursors
                         .adjust_for_edit(*edit_pos, *old_len, *new_len);
                 }
                 // A cursor can still sit past the end when the edit shrank
                 // the tail out from under it; clamp so no view holds an
                 // out-of-bounds position.
-                view_state.cursors.map(|cursor| {
+                view_state.buffer_tab_state_mut().cursors.map(|cursor| {
                     cursor.position = cursor.position.min(buffer_len);
                     cursor.anchor = cursor.anchor.map(|a| a.min(buffer_len));
                 });
@@ -4931,7 +5008,7 @@ impl Window {
     pub(crate) fn buffer_for_leaf(&self, leaf_id: LeafId) -> Option<BufferId> {
         let (mgr, vs_map) = self.buffers.splits()?;
         mgr.buffer_for_split(leaf_id)
-            .or_else(|| vs_map.get(&leaf_id).map(|vs| vs.active_buffer))
+            .or_else(|| vs_map.get(&leaf_id).and_then(|vs| vs.shown_buffer()))
     }
 
     /// Handle scroll events using the focused split's viewport.
@@ -4971,10 +5048,10 @@ impl Window {
             let right = group.right_split;
             if let Some(vs_map) = self.buffers.split_view_states_mut() {
                 if let Some(vs) = vs_map.get_mut(&LeafId(left)) {
-                    vs.viewport.set_skip_ensure_visible();
+                    vs.buffer_tab_state_mut().viewport.set_skip_ensure_visible();
                 }
                 if let Some(vs) = vs_map.get_mut(&LeafId(right)) {
-                    vs.viewport.set_skip_ensure_visible();
+                    vs.buffer_tab_state_mut().viewport.set_skip_ensure_visible();
                 }
             }
         }
@@ -4999,7 +5076,7 @@ impl Window {
                     let hidden_ranges = collapsed_hidden_ranges(view_state, state, buffer_id);
                     let buffer = &mut state.buffer;
                     if line_offset > 0 {
-                        view_state.viewport.scroll_down(
+                        view_state.buffer_tab_state_mut().viewport.scroll_down(
                             buffer,
                             &soft_breaks,
                             &virtual_lines,
@@ -5007,7 +5084,7 @@ impl Window {
                             line_offset as usize,
                         );
                     } else {
-                        view_state.viewport.scroll_up(
+                        view_state.buffer_tab_state_mut().viewport.scroll_up(
                             buffer,
                             &soft_breaks,
                             &virtual_lines,
@@ -5015,7 +5092,10 @@ impl Window {
                             line_offset.unsigned_abs(),
                         );
                     }
-                    view_state.viewport.set_skip_ensure_visible();
+                    view_state
+                        .buffer_tab_state_mut()
+                        .viewport
+                        .set_skip_ensure_visible();
                 });
         }
     }
@@ -5043,13 +5123,19 @@ impl Window {
             self.buffers
                 .with_buffer_and_split(buffer_id, split_id, |state, view_state| {
                     let buffer = &mut state.buffer;
-                    let cursor_pos = view_state.cursors.primary().position;
+                    let cursor_pos = view_state.buffer_tab_state_mut().cursors.primary().position;
                     // `center_on_position` counts real visual rows, so a
                     // recenter in a wrapped document doesn't under-scroll
                     // and leave the cursor below the viewport (each logical
                     // line above the cursor can span many rows).
-                    view_state.viewport.center_on_position(buffer, cursor_pos);
-                    view_state.viewport.set_skip_ensure_visible();
+                    view_state
+                        .buffer_tab_state_mut()
+                        .viewport
+                        .center_on_position(buffer, cursor_pos);
+                    view_state
+                        .buffer_tab_state_mut()
+                        .viewport
+                        .set_skip_ensure_visible();
                 });
         }
     }
@@ -5079,7 +5165,7 @@ impl Window {
         let (mgr, vs_map) = self.splits_mut();
         mgr.set_split_buffer(leaf, buffer_id);
         if let Some(view_state) = vs_map.get_mut(&leaf) {
-            view_state.switch_buffer(buffer_id);
+            view_state.set_buffer_tab(buffer_id);
             view_state.add_buffer(buffer_id);
         }
         if leaf == self.effective_active_split() {
@@ -5097,7 +5183,7 @@ fn collapsed_hidden_ranges(
     state: &crate::state::EditorState,
     buffer_id: BufferId,
 ) -> Vec<(usize, usize)> {
-    let Some(folds) = view_state.keyed_states.get(&buffer_id).map(|bs| &bs.folds) else {
+    let Some(folds) = view_state.buffer_state(buffer_id).map(|bs| &bs.folds) else {
         return Vec::new();
     };
     state
@@ -5116,16 +5202,18 @@ fn wrap_scroll_geometry(
     view_state: &crate::view::split::SplitViewState,
     state: &crate::state::EditorState,
 ) -> Option<crate::view::wrap_index::WrapIndexGeometry> {
-    if !view_state.viewport.line_wrap_enabled || state.wrap_indices.is_empty() {
+    if !view_state.buffer_tab_state().viewport.line_wrap_enabled || state.wrap_indices.is_empty() {
         return None;
     }
     let inputs = state.pipeline_inputs();
     let geometry = crate::view::ui::split_rendering::wrap_index_geometry_for(
-        &view_state.viewport,
+        &view_state.buffer_tab_state().viewport,
         &state.buffer,
-        view_state.viewport.line_wrap_enabled,
+        view_state.buffer_tab_state().viewport.line_wrap_enabled,
         &crate::state::ViewMode::Source,
-        crate::view::wrap_index::fold_signature(&state.fold_ranges(&view_state.folds)),
+        crate::view::wrap_index::fold_signature(
+            &state.fold_ranges(&view_state.buffer_tab_state().folds),
+        ),
     );
     state
         .wrap_indices

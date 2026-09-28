@@ -69,8 +69,7 @@ impl Editor {
             .split_view_states()
             .get(&active_split)
             .map(|vs| {
-                vs.keyed_states
-                    .iter()
+                vs.buffer_states()
                     .filter(|(&buf_id, _)| buf_id != current_buffer_id)
                     .map(|(&buf_id, buf_state)| {
                         let folds = self
@@ -102,19 +101,21 @@ impl Editor {
                     self.terminal_height,
                     current_buffer_id,
                 );
-                view_state.apply_config_defaults(crate::view::split::ViewConfigDefaults {
-                    line_numbers: self.config.editor.line_numbers,
-                    highlight_current_line: self.config.editor.highlight_current_line,
-                    line_wrap: self
-                        .active_window()
-                        .resolve_line_wrap_for_buffer(current_buffer_id),
-                    wrap_indent: self.config.editor.wrap_indent,
-                    wrap_column: self
-                        .active_window()
-                        .resolve_wrap_column_for_buffer(current_buffer_id),
-                    rulers: self.config.editor.rulers.clone(),
-                    scroll_offset: self.config.editor.scroll_offset,
-                });
+                view_state.buffer_tab_state_mut().apply_config_defaults(
+                    crate::view::split::ViewConfigDefaults {
+                        line_numbers: self.config.editor.line_numbers,
+                        highlight_current_line: self.config.editor.highlight_current_line,
+                        line_wrap: self
+                            .active_window()
+                            .resolve_line_wrap_for_buffer(current_buffer_id),
+                        wrap_indent: self.config.editor.wrap_indent,
+                        wrap_column: self
+                            .active_window()
+                            .resolve_wrap_column_for_buffer(current_buffer_id),
+                        rulers: self.config.editor.rulers.clone(),
+                        scroll_offset: self.config.editor.scroll_offset,
+                    },
+                );
 
                 // Copy keyed states from source split for OTHER buffers (not the active one).
                 // The active buffer gets a fresh cursor in the new split.
@@ -151,7 +152,7 @@ impl Editor {
                                 );
                             }
                         }
-                        view_state.keyed_states.insert(buf_id, buf_state);
+                        view_state.insert_buffer_state(buf_id, buf_state);
                     }
                 }
 
@@ -498,7 +499,7 @@ impl Editor {
                     TabTarget::Group(_) => true,
                 };
                 if needs_switch {
-                    vs_mut.switch_buffer(next_buf);
+                    vs_mut.set_buffer_tab(next_buf);
                 }
             }
         }
@@ -609,7 +610,7 @@ impl Editor {
             .get(&self.active_window)
             .and_then(|w| w.buffers.splits())
             .and_then(|(_, vs)| vs.get(&new_split_id))
-            .map(|vs| vs.active_buffer)
+            .map(|vs| vs.buffer_tab())
             .unwrap_or(self.active_buffer());
 
         // Refresh before answering: the caller awaiting this response is
@@ -919,7 +920,7 @@ impl Editor {
                 .get(&self.active_window)
                 .and_then(|w| w.buffers.splits())
                 .and_then(|(_, vs)| vs.get(&leaf))
-                .map(|vs| vs.active_buffer);
+                .and_then(|vs| vs.shown_buffer());
             if let Some(buffer_id) = opened {
                 self.handle_move_buffer_to_split(buffer_id, leaf.0);
             }

@@ -68,12 +68,10 @@ impl crate::app::window::Window {
     /// build the event themselves and call
     /// [`Editor::ensure_active_cursor_visible_for_navigation`] afterwards.
     pub fn jump_active_cursor_to(&mut self, position: usize, opts: JumpOptions) {
-        let active_split = self.split_manager().active_split();
-        if let Some(view_state) = self.split_view_states_mut().get_mut(&active_split) {
-            view_state.cursors.primary_mut().position = position;
-            if opts.clear_anchor {
-                view_state.cursors.primary_mut().anchor = None;
-            }
+        let cursors = self.active_cursors_mut();
+        cursors.primary_mut().position = position;
+        if opts.clear_anchor {
+            cursors.primary_mut().anchor = None;
         }
         self.ensure_active_cursor_visible_for_navigation(opts.recenter_on_scroll);
     }
@@ -114,30 +112,44 @@ impl crate::app::window::Window {
         active_buffer: crate::model::event::BufferId,
         recenter_on_scroll: bool,
     ) {
-        let Some(active_split) = self.buffers.split_manager().map(|m| m.active_split()) else {
+        // The pane the user is in — a shown group's focused panel, whose
+        // view state is the one `active_buffer` has; the pane showing the
+        // group holds the buffer behind it.
+        if self.buffers.splits().is_none() {
             return;
-        };
+        }
+        let active_split = self.effective_active_split();
         self.buffers
             .with_buffer_and_split(active_buffer, active_split, |state, view_state| {
                 // 1. Clear stale skip flag — a prior recenter (or scroll action) may
                 // have set it, but this navigation step is *new user intent* and must
                 // not be silently suppressed.
-                view_state.viewport.clear_skip_ensure_visible();
+                view_state
+                    .buffer_tab_state_mut()
+                    .viewport
+                    .clear_skip_ensure_visible();
 
-                let cursor_pos = view_state.cursors.primary().position;
-                let top_byte_before = view_state.viewport.top_byte();
+                let cursor_pos = view_state.buffer_tab_state_mut().cursors.primary().position;
+                let top_byte_before = view_state.buffer_tab_state_mut().viewport.top_byte();
 
                 // 2. Best-effort scroll via the existing line-aware routine.
-                view_state.ensure_cursor_visible(&mut state.buffer, &state.marker_list);
+                view_state
+                    .buffer_tab_state_mut()
+                    .ensure_cursor_visible(&mut state.buffer, &state.marker_list);
 
-                let scrolled = view_state.viewport.top_byte() != top_byte_before;
+                let scrolled =
+                    view_state.buffer_tab_state_mut().viewport.top_byte() != top_byte_before;
 
                 // 3. Post-condition check — derive line numbers (cheap, exact for
                 // non-large files; estimated for large files) and confirm the cursor
                 // line lies within the viewport's line range. If it doesn't, the
                 // lower-level routine bailed out for one of its skip-paths and we
                 // must force a recenter.
-                let cursor_visible = is_cursor_line_visible(view_state, &state.buffer, cursor_pos);
+                let cursor_visible = is_cursor_line_visible(
+                    view_state.buffer_tab_state(),
+                    &state.buffer,
+                    cursor_pos,
+                );
 
                 let needs_recenter = !cursor_visible || (scrolled && recenter_on_scroll);
                 if needs_recenter {
@@ -147,9 +159,13 @@ impl crate::app::window::Window {
                     // cursor can span many rows (e.g. an EPUB/XML paragraph
                     // on one very long line).
                     view_state
+                        .buffer_tab_state_mut()
                         .viewport
                         .center_on_position(&mut state.buffer, cursor_pos);
-                    view_state.viewport.set_skip_ensure_visible();
+                    view_state
+                        .buffer_tab_state_mut()
+                        .viewport
+                        .set_skip_ensure_visible();
                 }
 
                 // 4. Horizontal scroll. The byte-oriented `ensure_cursor_visible`
@@ -164,25 +180,29 @@ impl crate::app::window::Window {
                 // Skip when line wrapping is on (every column reaches the eye
                 // via wrap) and when the gutter/scrollbar reservation leaves
                 // no usable visible width.
-                if !view_state.viewport.line_wrap_enabled {
+                if !view_state.buffer_tab_state_mut().viewport.line_wrap_enabled {
                     let cursor_visual_col = visual_column_of(&mut state.buffer, cursor_pos);
-                    let gutter_width = if view_state.show_line_numbers { 6 } else { 0 };
+                    let gutter_width = if view_state.buffer_tab_state_mut().show_line_numbers {
+                        6
+                    } else {
+                        0
+                    };
                     let scrollbar_width = 1;
-                    let visible_width = (view_state.viewport.width as usize)
+                    let visible_width = (view_state.buffer_tab_state_mut().viewport.width as usize)
                         .saturating_sub(gutter_width)
                         .saturating_sub(scrollbar_width);
                     if visible_width > 0 {
-                        let left = view_state.viewport.left_column;
+                        let left = view_state.buffer_tab_state_mut().viewport.left_column;
                         let right = left + visible_width;
                         // Small margin so the cursor isn't pinned to the very
                         // edge — mirrors `ensure_column_visible_simple`'s
                         // `effective_offset` behaviour.
                         let margin = (visible_width / 8).min(8);
                         if cursor_visual_col < left + margin {
-                            view_state.viewport.left_column =
+                            view_state.buffer_tab_state_mut().viewport.left_column =
                                 cursor_visual_col.saturating_sub(margin);
                         } else if cursor_visual_col + margin >= right {
-                            view_state.viewport.left_column =
+                            view_state.buffer_tab_state_mut().viewport.left_column =
                                 (cursor_visual_col + margin + 1).saturating_sub(visible_width);
                         }
                     }

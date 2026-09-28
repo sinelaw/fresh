@@ -59,6 +59,7 @@ fn test_group_tab_pane_has_no_bar_of_the_hidden_buffer() {
         .active_window()
         .split_manager()
         .active_split();
+    let hidden = harness.editor().active_buffer();
     assert!(
         harness.editor().pane_vscroll_rect(pane).is_some(),
         "the file's pane has a scrollbar while it shows the file"
@@ -74,6 +75,33 @@ fn test_group_tab_pane_has_no_bar_of_the_hidden_buffer() {
         "the pane showing the Review Diff group has no bar of its own: the \
          group's panels have theirs, and big.txt is not on screen"
     );
+
+    // Everything addressed to "the buffer the user is on" goes to the
+    // group's focused panel: the file behind the group is not on screen.
+    assert_ne!(
+        harness.editor().active_buffer(),
+        hidden,
+        "the active buffer is the diff panel's, not the file behind the group"
+    );
+    let hidden_wrap = |h: &EditorTestHarness| {
+        let (_, view_states) = h.editor().active_window().buffers.splits().unwrap();
+        view_states
+            .get(&pane)
+            .and_then(|vs| vs.buffer_state(hidden))
+            .map(|bs| bs.viewport.line_wrap_enabled)
+    };
+    let before = hidden_wrap(&harness);
+    assert!(
+        before.is_some(),
+        "the file keeps its view state behind the group"
+    );
+    harness.editor_mut().toggle_line_wrap_current_buffer();
+    assert_eq!(
+        hidden_wrap(&harness),
+        before,
+        "a per-buffer toggle made in the Review Diff reached the file behind it"
+    );
+    harness.editor_mut().toggle_line_wrap_current_buffer();
 
     // Where the hidden file's bar used to be: the rightmost column, halfway
     // down. It belongs to the group now, so the pane stays on it.

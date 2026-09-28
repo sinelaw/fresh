@@ -587,9 +587,9 @@ impl Window {
                 // width so scroll-back lays out like the live grid
                 // (fresh#2649). The width is filled in on scroll-back entry
                 // / by the per-frame healer once the PTY reports its size.
-                view_state.viewport.line_wrap_enabled = true;
-                view_state.viewport.grid_wrap = true;
-                view_state.viewport.wrap_indent = false;
+                view_state.buffer_tab_state_mut().viewport.line_wrap_enabled = true;
+                view_state.buffer_tab_state_mut().viewport.grid_wrap = true;
+                view_state.buffer_tab_state_mut().viewport.wrap_indent = false;
                 // Disable line numbers + current-line highlight for the
                 // terminal buffer's per-buffer view state so exiting
                 // terminal mode doesn't suddenly add a gutter / row
@@ -712,7 +712,7 @@ impl Window {
                             // is independent.
                             let _ = line_numbers;
                             let _ = highlight_current_line;
-                            view_state.apply_config_defaults(
+                            view_state.buffer_tab_state_mut().apply_config_defaults(
                                 crate::view::split::ViewConfigDefaults {
                                     line_numbers: false,
                                     highlight_current_line: false,
@@ -726,8 +726,8 @@ impl Window {
                             // Terminal buffers grid-wrap at the PTY
                             // width (fresh#2649); the per-frame healer
                             // fills in the column count.
-                            view_state.viewport.line_wrap_enabled = true;
-                            view_state.viewport.grid_wrap = true;
+                            view_state.buffer_tab_state_mut().viewport.line_wrap_enabled = true;
+                            view_state.buffer_tab_state_mut().viewport.grid_wrap = true;
                             self.split_view_states_mut()
                                 .insert(new_split_id, view_state);
                             if focus {
@@ -748,8 +748,8 @@ impl Window {
                                 .and_then(|m| m.get_mut(&parent))
                             {
                                 view_state.add_buffer(buffer_id);
-                                view_state.viewport.line_wrap_enabled = true;
-                                view_state.viewport.grid_wrap = true;
+                                view_state.buffer_tab_state_mut().viewport.line_wrap_enabled = true;
+                                view_state.buffer_tab_state_mut().viewport.grid_wrap = true;
                             }
                             self.set_active_buffer(buffer_id);
                             (buffer_id, None)
@@ -768,8 +768,8 @@ impl Window {
                         self.terminal_height,
                         buffer_id,
                     );
-                    vs.viewport.line_wrap_enabled = true;
-                    vs.viewport.grid_wrap = true;
+                    vs.buffer_tab_state_mut().viewport.line_wrap_enabled = true;
+                    vs.buffer_tab_state_mut().viewport.grid_wrap = true;
                     view_states.insert(active_leaf, vs);
                     self.buffers.set_splits((manager, view_states));
                     (buffer_id, Some(active_leaf))
@@ -797,8 +797,8 @@ impl Window {
                         self.terminal_height,
                         buffer_id,
                     );
-                    vs.viewport.line_wrap_enabled = true;
-                    vs.viewport.grid_wrap = true;
+                    vs.buffer_tab_state_mut().viewport.line_wrap_enabled = true;
+                    vs.buffer_tab_state_mut().viewport.grid_wrap = true;
                     view_states.insert(active_leaf, vs);
                     self.buffers.set_splits((manager, view_states));
                     (buffer_id, Some(active_leaf))
@@ -1091,9 +1091,14 @@ impl Window {
     /// one (e.g. the terminal sits in a background tab), and `None`
     /// when the window has no terminals at all.
     pub fn last_focused_terminal(&self) -> Option<TerminalId> {
-        if let Some((mgr, _)) = self.buffers.splits() {
+        if let Some((mgr, vs_map)) = self.buffers.splits() {
+            // The terminal a pane *shows*: a pane showing a group has its
+            // buffer tab behind the group, and that is not what the user
+            // was last looking at.
             let terminal_of_leaf = |leaf: LeafId| {
-                mgr.get_buffer_id(leaf.into())
+                vs_map
+                    .get(&leaf)
+                    .and_then(|vs| vs.shown_buffer())
                     .and_then(|buffer_id| self.terminal_buffers.get(&buffer_id))
                     .map(|tb| tb.terminal_id)
             };
@@ -1634,21 +1639,23 @@ impl Editor {
             SplitViewState::with_buffer(self.terminal_width, self.terminal_height, buffer_id);
         // Terminal-dedicated splits never show line numbers or current-line
         // highlight (mirrors the dock + plugin-terminal split setup).
-        view_state.apply_config_defaults(crate::view::split::ViewConfigDefaults {
-            line_numbers: false,
-            highlight_current_line: false,
-            line_wrap: self.active_window().resolve_line_wrap_for_buffer(buffer_id),
-            wrap_indent: self.config.editor.wrap_indent,
-            wrap_column: self
-                .active_window()
-                .resolve_wrap_column_for_buffer(buffer_id),
-            rulers: self.config.editor.rulers.clone(),
-            scroll_offset: 0,
-        });
+        view_state.buffer_tab_state_mut().apply_config_defaults(
+            crate::view::split::ViewConfigDefaults {
+                line_numbers: false,
+                highlight_current_line: false,
+                line_wrap: self.active_window().resolve_line_wrap_for_buffer(buffer_id),
+                wrap_indent: self.config.editor.wrap_indent,
+                wrap_column: self
+                    .active_window()
+                    .resolve_wrap_column_for_buffer(buffer_id),
+                rulers: self.config.editor.rulers.clone(),
+                scroll_offset: 0,
+            },
+        );
         // Terminals grid-wrap at the PTY width (fresh#2649).
-        view_state.viewport.line_wrap_enabled = true;
-        view_state.viewport.grid_wrap = true;
-        view_state.viewport.wrap_indent = false;
+        view_state.buffer_tab_state_mut().viewport.line_wrap_enabled = true;
+        view_state.buffer_tab_state_mut().viewport.grid_wrap = true;
+        view_state.buffer_tab_state_mut().viewport.wrap_indent = false;
 
         self.active_window_mut()
             .split_view_states_mut()
@@ -1846,7 +1853,10 @@ impl Editor {
         let target_split = self.active_window().buffers.splits().and_then(|(mgr, vs)| {
             mgr.splits_for_buffer(buffer_id)
                 .into_iter()
-                .next()
+                .find(|leaf| {
+                    vs.get(leaf)
+                        .is_some_and(|v| v.shown_buffer() == Some(buffer_id))
+                })
                 .or_else(|| {
                     vs.iter()
                         .find(|(_, view_state)| view_state.has_buffer(buffer_id))
@@ -1989,7 +1999,7 @@ impl Editor {
                 state.editing_disabled = false;
                 state.margins.configure_for_line_numbers(false);
             }
-            let __active_split = self.active_window().split_manager().active_split();
+            let __active_split = self.active_window().effective_active_split();
             if let Some(view_state) = self
                 .active_window_mut()
                 .split_view_states_mut()
@@ -1998,14 +2008,17 @@ impl Editor {
                 // Keep the grid-wrap config (fresh#2649) — the live grid
                 // overlays the buffer view, but scroll math still reads
                 // these flags until the next scroll-back visit re-syncs.
-                view_state.viewport.line_wrap_enabled = true;
-                view_state.viewport.grid_wrap = true;
+                view_state.buffer_tab_state_mut().viewport.line_wrap_enabled = true;
+                view_state.buffer_tab_state_mut().viewport.grid_wrap = true;
                 // A selection made in the scrollback view must not outlive
                 // the visit: the anchor would otherwise re-materialize as a
                 // phantom selection on the next scrollback entry (the sync
                 // pins only the cursor *position*) and re-suppress the
                 // output-driven auto-resume in `handle_terminal_output`.
-                view_state.cursors.map(|c| c.clear_selection());
+                view_state
+                    .buffer_tab_state_mut()
+                    .cursors
+                    .map(|c| c.clear_selection());
             }
 
             // Truncate backing file to remove visible screen tail and scroll to bottom
@@ -2542,9 +2555,20 @@ impl Window {
             let anchor_byte = history_end_byte
                 .map(|h| (h as usize).min(total_bytes))
                 .unwrap_or(total_bytes);
-            if let Some((mgr, view_states)) = self.buffers.splits_mut() {
-                let active_split = mgr.active_split();
-                if let Some(view_state) = view_states.get_mut(&active_split) {
+            // `effective_active_split` needs a split layout; the guard
+            // below is the one this path always had.
+            let focused = self
+                .buffers
+                .splits()
+                .is_some()
+                .then(|| self.effective_active_split());
+            if let (Some(focused), Some((_, view_states))) = (focused, self.buffers.splits_mut()) {
+                // The terminal's own view state in the pane the user is in —
+                // not whatever buffer that pane has as its tab.
+                if let Some(view_state) = view_states
+                    .get_mut(&focused)
+                    .and_then(|vs| vs.buffer_state_mut(buffer_id))
+                {
                     // The anchor line may carry a re-attached in-history
                     // head (a tall in-progress line, fresh#2649): the grid
                     // view starts `prepended.rows` visual rows into it so
@@ -2624,13 +2648,16 @@ impl Window {
                 }
             }
             if let Some(view_state) = view_states.get_mut(&active_split) {
-                view_state.viewport.line_wrap_enabled = true;
-                view_state.viewport.grid_wrap = true;
-                view_state.viewport.wrap_indent = false;
+                view_state.buffer_tab_state_mut().viewport.line_wrap_enabled = true;
+                view_state.buffer_tab_state_mut().viewport.grid_wrap = true;
+                view_state.buffer_tab_state_mut().viewport.wrap_indent = false;
                 if let Some(cols) = grid_cols {
-                    view_state.viewport.wrap_column = Some(cols);
+                    view_state.buffer_tab_state_mut().viewport.wrap_column = Some(cols);
                 }
-                view_state.viewport.set_skip_ensure_visible();
+                view_state
+                    .buffer_tab_state_mut()
+                    .viewport
+                    .set_skip_ensure_visible();
                 let buf_state = view_state.ensure_buffer_state(buffer_id);
                 buf_state.show_line_numbers = false;
                 buf_state.highlight_current_line = false;
@@ -3138,8 +3165,8 @@ impl crate::app::window::Window {
         self.split_view_states()
             .values()
             .find_map(|vs| {
-                if vs.keyed_states.contains_key(&buffer_id) {
-                    Some(vs.keyed_states.get(&buffer_id)?.cursors.primary().position)
+                if vs.has_buffer_state(buffer_id) {
+                    Some(vs.buffer_state(buffer_id)?.cursors.primary().position)
                 } else {
                     None
                 }
@@ -3148,7 +3175,7 @@ impl crate::app::window::Window {
                 // Fallback: check active cursors
                 self.split_view_states()
                     .values()
-                    .map(|vs| vs.cursors.primary().position)
+                    .map(|vs| vs.buffer_tab_state().cursors.primary().position)
                     .next()
             })
     }

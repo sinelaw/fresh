@@ -13,11 +13,9 @@ use fresh_i18n::t;
 impl Window {
     /// Toggle between Compose and Source view modes for the active split.
     pub fn handle_toggle_page_view(&mut self) {
-        let (mgr, _) = self.splits();
-        let active_split = mgr.active_split();
-        let active_buffer = mgr
-            .get_buffer_id(active_split.into())
-            .unwrap_or(crate::model::event::BufferId(0));
+        // The pane and buffer the user is on — a shown group's focused
+        // panel, not the buffer behind the group.
+        let (active_split, active_buffer) = self.effective_active_pair();
         let default_wrap = self.resolve_line_wrap_for_buffer(active_buffer);
         let default_line_numbers = self.config().editor.line_numbers;
         let page_width = self
@@ -31,7 +29,7 @@ impl Window {
             let (_, vs_map) = self.splits();
             let current = vs_map
                 .get(&active_split)
-                .map(|vs| vs.view_mode.clone())
+                .map(|vs| vs.buffer_tab_state().view_mode.clone())
                 .unwrap_or(ViewMode::Source);
             match current {
                 ViewMode::PageView => ViewMode::Source,
@@ -41,29 +39,35 @@ impl Window {
 
         // Update split view state (source of truth for view mode and line numbers)
         if let Some(vs) = self.split_view_states_mut().get_mut(&active_split) {
-            vs.view_mode = view_mode.clone();
+            vs.buffer_tab_state_mut().view_mode = view_mode.clone();
             // In Compose mode, disable builtin line wrap - the plugin handles
             // wrapping by inserting Break tokens in the view transform pipeline.
             // In Source mode, respect the user's default_wrap preference.
-            vs.viewport.line_wrap_enabled = match view_mode {
+            vs.buffer_tab_state_mut().viewport.line_wrap_enabled = match view_mode {
                 ViewMode::PageView => false,
                 // A per-buffer override wins over the global/language default
                 // when returning to Source mode.
-                ViewMode::Source => vs.line_wrap_override.unwrap_or(default_wrap),
+                ViewMode::Source => vs
+                    .buffer_tab_state_mut()
+                    .line_wrap_override
+                    .unwrap_or(default_wrap),
             };
             match view_mode {
                 ViewMode::PageView => {
-                    vs.show_line_numbers = false;
+                    vs.buffer_tab_state_mut().show_line_numbers = false;
                     // Apply page_width from language config if available
                     if let Some(width) = page_width {
-                        vs.compose_width = Some(width as u16);
+                        vs.buffer_tab_state_mut().compose_width = Some(width as u16);
                     }
                 }
                 ViewMode::Source => {
                     // Clear compose width to remove margins
-                    vs.compose_width = None;
+                    vs.buffer_tab_state_mut().compose_width = None;
                     // A per-buffer override wins over the global default.
-                    vs.show_line_numbers = vs.line_numbers_override.unwrap_or(default_line_numbers);
+                    vs.buffer_tab_state_mut().show_line_numbers = vs
+                        .buffer_tab_state_mut()
+                        .line_numbers_override
+                        .unwrap_or(default_line_numbers);
                 }
             }
         }
@@ -130,7 +134,7 @@ impl super::Editor {
         }
         let win = self.windows.get(&self.active_window)?;
         let (_, vs_map) = win.buffers.splits()?;
-        let group_leaf = vs_map.get(&split_id).and_then(|vs| vs.active_group_tab)?;
+        let group_leaf = vs_map.get(&split_id).and_then(|vs| vs.shown_group_tab())?;
         let mut inner: Vec<LeafId> = Vec::new();
         collect_leaf_ids(win.grouped_subtrees.get(&group_leaf)?, &mut inner);
         inner

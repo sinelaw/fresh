@@ -192,8 +192,8 @@ impl Editor {
             .expect("active window must have a populated split layout")
             .values_mut()
         {
-            view_state.show_line_numbers = self.config.editor.line_numbers;
-            for buf_state in view_state.keyed_states.values_mut() {
+            view_state.buffer_tab_state_mut().show_line_numbers = self.config.editor.line_numbers;
+            for (_, buf_state) in view_state.buffer_states_mut() {
                 buf_state.rulers = self.config.editor.rulers.clone();
             }
         }
@@ -322,7 +322,7 @@ impl Editor {
 
             if let Some((_, view_states)) = window.buffers.splits_mut() {
                 for view_state in view_states.values_mut() {
-                    for buffer_view_state in view_state.keyed_states.values_mut() {
+                    for (_, buffer_view_state) in view_state.buffer_states_mut() {
                         buffer_view_state.viewport.wrap_row_cache.clear();
                     }
                 }

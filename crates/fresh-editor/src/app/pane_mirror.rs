@@ -156,7 +156,7 @@ impl Editor {
         };
         for vs in window.split_view_states_mut().values_mut() {
             if vs.buffer_state(buffer).is_some() {
-                vs.cursors.primary_mut().position = byte;
+                vs.buffer_tab_state_mut().cursors.primary_mut().position = byte;
             }
         }
     }

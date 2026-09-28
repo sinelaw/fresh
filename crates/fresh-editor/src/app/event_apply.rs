@@ -178,7 +178,7 @@ impl Editor {
                 self.active_window()
                     .split_view_states()
                     .get(&split_id)
-                    .is_some_and(|vs| vs.keyed_states.contains_key(&active_buf)),
+                    .is_some_and(|vs| vs.has_buffer_state(active_buf)),
                 "pane-buffer invariant violated: split {:?} resolves to buffer {:?} \
                  but that split's keyed_states has no entry for it. Some write path \
                  bypassed Editor::set_pane_buffer; see active_focus.rs / issue #1620.",
@@ -406,8 +406,7 @@ impl Editor {
             .split_view_states()
             .get(&split_id)
             .unwrap()
-            .keyed_states
-            .get(&active_buf)
+            .buffer_state(active_buf)
             .unwrap()
             .cursors
             .iter()
@@ -631,8 +630,7 @@ impl Editor {
                 .split_view_states_mut()
                 .get_mut(&split_id)
                 .unwrap()
-                .keyed_states
-                .get_mut(&active_buf)
+                .buffer_state_mut(active_buf)
                 .unwrap()
                 .cursors;
             for (cursor_id, position, anchor) in &new_cursors {
