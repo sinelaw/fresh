@@ -7,7 +7,7 @@
 
 use crate::common::harness::EditorTestHarness;
 use crossterm::event::{KeyCode, KeyModifiers};
-use ratatui::style::Color;
+use ratatui::style::{Color, Modifier};
 use tempfile::TempDir;
 
 fn open_with(content: &str) -> (TempDir, EditorTestHarness) {
@@ -51,6 +51,15 @@ fn bg_at(harness: &EditorTestHarness, anchor_text: &str, offset: u16) -> Option<
         .find_text_on_screen(anchor_text)
         .unwrap_or_else(|| panic!("'{anchor_text}' not on screen"));
     harness.get_cell_style(x + offset, y).and_then(|s| s.bg)
+}
+
+fn is_bold_at(harness: &EditorTestHarness, anchor_text: &str, offset: u16) -> bool {
+    let (x, y) = harness
+        .find_text_on_screen(anchor_text)
+        .unwrap_or_else(|| panic!("'{anchor_text}' not on screen"));
+    harness
+        .get_cell_style(x + offset, y)
+        .is_some_and(|s| s.add_modifier.contains(Modifier::BOLD))
 }
 
 fn current_match_bg(harness: &EditorTestHarness) -> Color {
@@ -169,6 +178,14 @@ fn test_current_match_has_its_own_color_over_the_selection() {
         bg_at(&harness, "aa foo bb", 4),
         Some(current_match_bg(&harness)),
         "the selected current match keeps the current-match color"
+    );
+    assert!(
+        is_bold_at(&harness, "aa foo bb", 4),
+        "the current match is bold"
+    );
+    assert!(
+        !is_bold_at(&harness, "aa foo bb", 11),
+        "other matches are not bold"
     );
     assert_eq!(bg_at(&harness, "aa foo bb", 11), Some(match_bg(&harness)));
 

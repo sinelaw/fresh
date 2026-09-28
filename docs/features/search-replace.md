@@ -59,7 +59,7 @@ same keys work after the bar is closed, continuing from the last search.
 
 `Enter` jumps to the current match and closes the bar; `Esc` cancels.
 
-The match you land on is **selected** in full, and drawn in its own
+The match you land on is **selected** in full, and drawn bold in its own
 current-match color so it stands out from the other highlighted matches. For
 a regex search this shows exactly how far the match reaches. Because it is a
 selection, `Delete` removes the whole match and typing replaces it; `F3` then
