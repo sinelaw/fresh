@@ -1,6 +1,5 @@
 //! Regression coverage for PageDown / Up cursor motion on a buffer that
-//! is a SINGLE very long soft-wrapped line (e.g. a minified JS bundle like
-//! `homepage/public/vendor/asciinema-player/asciinema-player.min.js`).
+//! is a SINGLE very long soft-wrapped line (e.g. a minified JS bundle).
 //!
 //! Two user-reported bugs, both rooted in `Window::handle_page_motion`
 //! (`app/action_events.rs`):
