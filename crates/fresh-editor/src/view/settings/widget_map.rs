@@ -526,10 +526,11 @@ fn rows_list(
             true => SettingControl::text_list_row_key(field_key, None),
             false => SettingControl::text_list_row_key(field_key, Some(i)),
         })
-        .collect();
+        .collect::<Vec<_>>()
+        .into();
     WidgetSpec::List {
-        items: rows,
-        item_specs: Vec::new(),
+        items: rows.into(),
+        item_specs: Vec::new().into(),
         item_keys,
         selected_index: cursor.map(|c| c as i32).unwrap_or(-1),
         visible_rows: Some(visible),
@@ -1061,7 +1062,7 @@ mod tests {
                 ..
             } => {
                 assert_eq!(items.len(), 2);
-                assert_eq!(item_keys, vec!["/languages::row::0", "/languages::add"]);
+                assert_eq!(*item_keys, vec!["/languages::row::0", "/languages::add"]);
                 assert_eq!(selected_index, -1);
                 assert_eq!(key.as_deref(), Some("/languages"));
             }

@@ -2305,13 +2305,22 @@ fn init_package_command(package_type: Option<String>) -> AnyhowResult<()> {
     }
 
     println!("\nPackage '{}' created successfully!", name);
+    if pkg_type == "plugin" {
+        println!();
+        for line in set_up_plugin_dev(&pkg_dir) {
+            println!("  {line}");
+        }
+    }
     println!("\nNext steps:");
     println!("  1. cd {}", name);
     match pkg_type {
         "plugin" => {
-            println!("  2. Edit plugin.ts to add your functionality");
-            println!("  3. Test locally: fresh --check-plugin .");
-            println!("  4. Validate manifest: ./validate.sh");
+            println!("  2. fresh {name}.ts");
+            println!("  3. Ctrl+P, run \"Load Plugin from Buffer\"");
+            println!("  4. Ctrl+P, run \"{name}: Say Hello\"");
+            println!("  5. Edit, save, and run \"Load Plugin from Buffer\" again to reload");
+            println!("  6. Type-check from the shell: npx tsc -p .");
+            println!("\nGuide: https://getfresh.dev/docs/plugins/development/setup");
         }
         "theme" => {
             println!("  2. Edit theme.json to customize colors");
@@ -2437,6 +2446,10 @@ fn create_plugin_package(
     description: &str,
     author: &str,
 ) -> AnyhowResult<()> {
+    // The runtime names a plugin after its entry file, so name the file after
+    // the package: every scaffold writing `plugin.ts` would make them all
+    // "plugin".
+    let entry = format!("{name}.ts");
     write_package_json(
         dir,
         name,
@@ -2444,46 +2457,45 @@ fn create_plugin_package(
         author,
         "plugin",
         "A Fresh plugin",
-        r#"{
-    "entry": "plugin.ts"
-  }"#,
+        &format!(
+            r#"{{
+    "entry": "{entry}"
+  }}"#
+        ),
     )?;
+    add_typescript_dev_dependency(dir)?;
 
     // validate.sh
     write_validate_script(dir)?;
 
-    // plugin.ts
-    let plugin_ts = r#"// Fresh Plugin
-// Documentation: https://github.com/user/fresh/blob/main/docs/plugins.md
+    let handler = name.replace('-', "_");
+    let plugin_ts = format!(
+        r#"// Fresh plugin. Guide: https://getfresh.dev/docs/plugins/development/setup
 
 const editor = getEditor();
 
-// Define a command handler and register it
-function hello(): void {
-  editor.setStatus("Hello from your plugin!");
-}
-registerHandler("hello", hello);
-editor.registerCommand("hello", "Say Hello", "hello");
+// A command. Run it from the command palette (Ctrl+P).
+registerHandler("{handler}_hello", () => {{
+  editor.setStatus("Hello from {name}!");
+}});
+editor.registerCommand("{name}: Say Hello", "Show a greeting in the status bar", "{handler}_hello");
 
-// React to editor events
-function onBufferOpened(): void {
-  const bufferId = editor.getActiveBufferId();
-  const info = editor.getBufferInfo(bufferId);
-  if (info) {
-    editor.debug(`Opened: ${info.path}`);
-  }
-}
-registerHandler("on_buffer_opened", onBufferOpened);
-editor.on("buffer_opened", "on_buffer_opened");
+// An event handler. `args` is typed from the event name.
+editor.on("buffer_activated", (args) => {{
+  editor.debug(`{name}: switched to buffer ${{args.buffer_id}}`);
+}});
+"#
+    );
+    std::fs::write(dir.join(&entry), plugin_ts)?;
 
-// Example: Add a keybinding in your Fresh config:
-// {
-//   "keyBindings": {
-//     "ctrl+alt+h": "command:hello"
-//   }
-// }
-"#;
-    std::fs::write(dir.join("plugin.ts"), plugin_ts)?;
+    std::fs::write(dir.join("tsconfig.json"), PLUGIN_TSCONFIG)?;
+    std::fs::write(dir.join(".gitignore"), "node_modules/\ntypes\n")?;
+    // Project settings: start the TypeScript language server on open.
+    std::fs::create_dir_all(dir.join(".fresh"))?;
+    std::fs::write(
+        dir.join(".fresh").join("config.json"),
+        "{\n  \"lsp\": { \"typescript\": { \"auto_start\": true } }\n}\n",
+    )?;
 
     // README.md
     let readme = format!(
@@ -2506,7 +2518,7 @@ Or install from this repository:
 ## Usage
 
 This plugin adds the following commands:
-- `hello` - Say Hello
+- `{}: Say Hello` - Show a greeting in the status bar
 
 ## License
 
@@ -2519,11 +2531,133 @@ MIT
             description
         },
         name,
+        name,
         name
     );
     std::fs::write(dir.join("README.md"), readme)?;
 
     Ok(())
+}
+
+/// `tsconfig.json` for a plugin package. Matches the plugin runtime (QuickJS:
+/// no DOM, no Node types) and the bundled plugins' `.ts` import style.
+/// `moduleResolution` must be `bundler`: TypeScript 7 removed `node` (#2872).
+const PLUGIN_TSCONFIG: &str = r#"{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "ES2020",
+    "moduleResolution": "bundler",
+    "moduleDetection": "force",
+    "allowImportingTsExtensions": true,
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "lib": ["ES2020"],
+    "types": []
+  },
+  "include": ["*.ts", "lib/**/*.ts", "types/fresh.d.ts", "types/plugins.d.ts"]
+}
+"#;
+
+/// Add `typescript` as a dev dependency so `npx tsc` and
+/// typescript-language-server find a local copy. Pinned to 6: TypeScript 7
+/// ships no `tsserver`, which the language server needs.
+fn add_typescript_dev_dependency(dir: &Path) -> AnyhowResult<()> {
+    let path = dir.join("package.json");
+    let text = std::fs::read_to_string(&path)?;
+    let text = text
+        .trim_end()
+        .strip_suffix('}')
+        .unwrap_or(&text)
+        .trim_end();
+    std::fs::write(
+        &path,
+        format!("{text},\n  \"devDependencies\": {{\n    \"typescript\": \"^6.0.0\"\n  }}\n}}\n"),
+    )?;
+    Ok(())
+}
+
+/// Make a new plugin package ready to develop: link the API types, install
+/// TypeScript and trust its folder. It is not installed: the author loads it
+/// with "Load Plugin from Buffer". Each step is best-effort; returns one line
+/// per step for the summary.
+fn set_up_plugin_dev(dir: &Path) -> Vec<String> {
+    let mut report = Vec::new();
+    let abs_dir = std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
+    let dir_context = match fresh::config_io::DirectoryContext::from_system() {
+        Ok(d) => d,
+        Err(e) => {
+            report.push(format!("✗ Could not find the Fresh config folder: {e}"));
+            return report;
+        }
+    };
+    let config_dir = &dir_context.config_dir;
+
+    // Types: the same files the editor refreshes on every start, linked so
+    // they track the installed Fresh version.
+    fresh::init_script::refresh_types_scaffolding(config_dir);
+    let types_dir = config_dir.join("types");
+    report.push(match link_dir(&types_dir, &dir.join("types")) {
+        Ok(()) => format!("✓ Linked API types: types -> {}", types_dir.display()),
+        Err(e) => format!(
+            "✗ Could not link API types from {}: {e}",
+            types_dir.display()
+        ),
+    });
+
+    // TypeScript, for `npx tsc` and the language server.
+    let npm = if cfg!(windows) { "npm.cmd" } else { "npm" };
+    let install = std::process::Command::new(npm)
+        .args(["install", "--no-audit", "--no-fund"])
+        .current_dir(dir)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+    report.push(match install {
+        Ok(status) if status.success() => "✓ Installed TypeScript (npm install)".to_string(),
+        Ok(_) => "✗ npm install failed. Run it again in the plugin folder.".to_string(),
+        Err(_) => "✗ npm not found. Install Node.js, then run npm install in the plugin folder."
+            .to_string(),
+    });
+    if !fresh::services::lsp::command_exists("typescript-language-server") {
+        report.push(
+            "! For type checking inside Fresh, run: npm install -g typescript-language-server"
+                .to_string(),
+        );
+    }
+
+    // Trust the folder so the TypeScript language server may run. It holds
+    // only what this command just wrote.
+    let store = fresh::services::workspace_trust::TrustStore::for_project_dir(
+        &dir_context.project_state_dir(&abs_dir),
+    );
+    if !store.is_decided() {
+        report.push(
+            match store.record(fresh::services::workspace_trust::TrustLevel::Trusted) {
+                Ok(()) => "✓ Trusted the folder, so the language server can run".to_string(),
+                Err(e) => format!("✗ Could not trust the folder: {e}"),
+            },
+        );
+    }
+
+    report
+}
+
+/// Symlink `link` to the directory `target`.
+fn link_dir(target: &Path, link: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(target, link)
+    }
+    #[cfg(windows)]
+    {
+        std::os::windows::fs::symlink_dir(target, link)
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = (target, link);
+        Err(std::io::Error::other("symlinks not supported"))
+    }
 }
 
 fn create_theme_package(
@@ -3005,6 +3139,67 @@ fn kill_session_command(session: Option<&str>, args: &Args) -> AnyhowResult<()> 
     Ok(())
 }
 
+/// Point this process's stderr at `fresh-server-<PID>.log`.
+#[cfg(unix)]
+fn redirect_stderr_to_server_log() {
+    use std::os::fd::AsRawFd;
+    let path = fresh::services::log_dirs::server_log_path(std::process::id());
+    match std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
+        // SAFETY: `dup2` onto fd 2 only swaps what stderr refers to; `file`
+        // is open for the duration of the call.
+        Ok(file) => unsafe {
+            libc::dup2(file.as_raw_fd(), libc::STDERR_FILENO);
+        },
+        Err(e) => eprintln!("[server] cannot open log {}: {e}", path.display()),
+    }
+}
+
+/// Wait for a daemon this client just spawned to bind its sockets (the pid
+/// file is written after `bind()`); fail, naming its log, if it exits first.
+fn wait_for_spawned_daemon(socket_paths: &SocketPaths, pid: u32) -> AnyhowResult<()> {
+    use fresh::server::daemon::{is_process_running, spawned_daemon_exited};
+    const STARTUP_LIMIT: std::time::Duration = std::time::Duration::from_secs(30);
+
+    #[cfg(unix)]
+    let log = format!(
+        "; its log is {}",
+        fresh::services::log_dirs::server_log_path(pid).display()
+    );
+    #[cfg(not(unix))]
+    let log = String::new();
+
+    let deadline = std::time::Instant::now() + STARTUP_LIMIT;
+    loop {
+        if let Ok(Some(ready)) = socket_paths.read_pid() {
+            if is_process_running(ready) {
+                return Ok(());
+            }
+        }
+        if spawned_daemon_exited(pid) {
+            anyhow::bail!("The daemon exited during startup{log}");
+        }
+        if std::time::Instant::now() >= deadline {
+            anyhow::bail!("The daemon did not start within {STARTUP_LIMIT:?}{log}");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+}
+
+/// Record, in the client's log, where a daemon it just spawned logs.
+fn log_spawned_daemon(pid: u32) {
+    #[cfg(unix)]
+    tracing::info!(
+        "Started daemon {pid}; its log is {}",
+        fresh::services::log_dirs::server_log_path(pid).display()
+    );
+    #[cfg(not(unix))]
+    tracing::info!("Started daemon {pid}");
+}
+
 /// Run as a daemon server
 /// Run the session daemon in this process.
 ///
@@ -3012,17 +3207,17 @@ fn kill_session_command(session: Option<&str>, args: &Args) -> AnyhowResult<()> 
 ///
 ///   - `fresh --server` — the detached process a `fresh -a` client spawns
 ///     when no daemon is live for the working directory. Chatty on stderr,
-///     which the spawner has already redirected into the session log.
+///     which it points at its own log file.
 ///   - `fresh --web [ADDR]` (`web_addr = Some`) — the same daemon in the
 ///     foreground, additionally serving the web UI. Same session, same
 ///     sockets: `fresh -a` in this working directory attaches a terminal to
 ///     the very editor the browser is looking at, and closing either one
 ///     leaves the session (and the other) running.
 ///
-/// `web_addr` also picks the console posture. The detached daemon logs at
-/// `debug` into its log file; a foreground `--web` would flood the user's
-/// terminal with it, so it logs at `warn` and skips the boot chatter.
-/// `RUST_LOG` still overrides either.
+/// `web_addr` also picks the console posture. The detached daemon logs at the
+/// editor's default level into `fresh-server-<PID>.log`; a foreground `--web`
+/// would flood the user's terminal with it, so it logs at `warn` and skips the
+/// boot chatter. `RUST_LOG` still overrides either.
 fn run_server_command(args: &Args, web_addr: Option<String>) -> AnyhowResult<()> {
     use fresh::server::{EditorServer, EditorServerConfig};
 
@@ -3036,11 +3231,22 @@ fn run_server_command(args: &Args, web_addr: Option<String>) -> AnyhowResult<()>
         };
     }
 
-    // Initialize tracing to stderr (will go to log file when spawned detached)
+    // A spawned daemon's stdio is /dev/null; give its stderr (tracing, the
+    // boot lines above, panics) a log file instead.
+    #[cfg(unix)]
+    if detached && !std::io::IsTerminal::is_terminal(&std::io::stderr()) {
+        redirect_stderr_to_server_log();
+    }
+
+    // Initialize tracing to stderr
     use tracing_subscriber::{fmt, EnvFilter};
-    let default_level = if detached { "debug" } else { "warn" };
+    let default_filter = if detached {
+        fresh::services::tracing_setup::DEFAULT_LOG_FILTER
+    } else {
+        "warn"
+    };
     let filter =
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default_level));
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default_filter));
     fmt()
         .with_env_filter(filter)
         .with_writer(std::io::stderr)
@@ -3294,7 +3500,6 @@ fn run_open_files_command(
     locale: Option<&str>,
     config: Option<&Path>,
 ) -> AnyhowResult<()> {
-    use fresh::server::daemon::is_process_running;
     use fresh::server::protocol::{ClientControl, ServerControl};
     use fresh::server::spawn_server_detached;
 
@@ -3339,23 +3544,15 @@ fn run_open_files_command(
 
     // Start server if not running (like nvr does by default)
     let server_was_started = if !socket_paths.is_server_alive() {
-        let _pid = spawn_server_detached(&fresh::server::DaemonSpawn {
+        let pid = spawn_server_detached(&fresh::server::DaemonSpawn {
             session_name,
             ssh_url: ssh_url.as_deref(),
             locale,
             config,
             ..Default::default()
         })?;
-
-        // Wait for server to be ready
-        loop {
-            if let Ok(Some(pid)) = socket_paths.read_pid() {
-                if is_process_running(pid) {
-                    break;
-                }
-            }
-            std::thread::yield_now();
-        }
+        log_spawned_daemon(pid);
+        wait_for_spawned_daemon(&socket_paths, pid)?;
         true
     } else {
         false
@@ -5245,43 +5442,30 @@ fn run_attach(
     }
 
     // Check if a daemon is running, if not start one
-    let server_was_started = if !socket_paths.is_server_alive() {
+    let spawned = if !socket_paths.is_server_alive() {
         eprintln!("Starting daemon...");
 
         // Spawn server in background
-        let _pid = spawn_server_detached(&fresh::server::DaemonSpawn {
+        let pid = spawn_server_detached(&fresh::server::DaemonSpawn {
             session_name,
             ssh_url: ssh_url.as_deref(),
             locale,
             config,
             orchestrator_mode,
         })?;
-        true
+        log_spawned_daemon(pid);
+        Some(pid)
     } else {
-        false
+        None
     };
 
     // Get terminal size
     let (cols, rows) = crossterm::terminal::size()?;
 
-    // Wait for server to be ready - the PID file is the semantic signal
-    // that the server has successfully bound and is ready to accept connections.
-    if server_was_started {
-        use fresh::server::daemon::is_process_running;
-
-        // Wait for PID file to appear with a valid running PID
-        // This is the semantic condition: server writes PID after bind() succeeds
-        loop {
-            if let Ok(Some(pid)) = socket_paths.read_pid() {
-                if is_process_running(pid) {
-                    break; // Server is ready
-                }
-            }
-            // Yield to scheduler - we're waiting for an event (PID file creation),
-            // not delaying for time. The yield is just to avoid busy-spinning.
-            std::thread::yield_now();
-        }
+    if let Some(pid) = spawned {
+        wait_for_spawned_daemon(&socket_paths, pid)?;
     }
+    let server_was_started = spawned.is_some();
 
     // Now connect - server is ready
     let conn = fresh::server::ipc::ClientConnection::connect(&socket_paths)?;

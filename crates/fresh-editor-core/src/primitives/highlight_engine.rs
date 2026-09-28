@@ -26,11 +26,10 @@
 //! - **Cold start / fallback** — no cache, or none of the above applies;
 //!   parse the appropriate range from a fresh state or nearest checkpoint.
 //!
-//! For files at or below `MAX_PARSE_BYTES` the parse range is the whole
-//! file, so the cache is whole-file after the first parse and scrolling
-//! becomes filter-only. Larger files use a viewport-centred window of
-//! `±context_bytes` and rely on the forward-extension path to keep
-//! scroll-cost bounded.
+//! For files at or below `MAX_PARSE_BYTES` the parse range starts at byte 0,
+//! so every state is exact, and ends `context_bytes` past the viewport; the
+//! forward-extension path grows it as the viewport moves down. Larger files
+//! use a viewport-centred window of `±context_bytes`.
 //!
 //! Edits go through `notify_insert` / `notify_delete`, which shift cached
 //! span byte offsets in place, set `dirty_from`, and invalidate `tail_state`
@@ -127,6 +126,13 @@ fn scope_to_category(scope: &str) -> Option<HighlightCategory> {
         return Some(HighlightCategory::Type);
     }
 
+    // Word operators (`new`, `typeof`, `instanceof`, `in`, `of`) read as keywords.
+    if scope_lower.starts_with("keyword.operator.new")
+        || scope_lower.starts_with("keyword.operator.expression")
+    {
+        return Some(HighlightCategory::Keyword);
+    }
+
     // Keywords
     if scope_lower.starts_with("keyword.control")
         || scope_lower.starts_with("keyword.other")
@@ -167,6 +173,9 @@ fn scope_to_category(scope: &str) -> Option<HighlightCategory> {
         || scope_lower.starts_with("punctuation.definition.section")
         || scope_lower.starts_with("punctuation.definition.table")
         || scope_lower.starts_with("punctuation.definition.tag")
+        || scope_lower.starts_with("punctuation.definition.typeparameters")
+        || scope_lower.starts_with("punctuation.definition.parameters")
+        || scope_lower.starts_with("meta.brace")
     {
         return Some(HighlightCategory::PunctuationBracket);
     }
@@ -216,6 +225,22 @@ fn scope_to_category(scope: &str) -> Option<HighlightCategory> {
         return Some(HighlightCategory::Constant);
     }
 
+    // Member access (`obj.prop`, `.length`); checked before `variable.other`.
+    if scope_lower.starts_with("variable.other.property")
+        || scope_lower.starts_with("variable.other.object.property")
+        || scope_lower.starts_with("support.variable.property")
+    {
+        return Some(HighlightCategory::Property);
+    }
+
+    // Host globals (`document`, `window`) and library constants (`Math.PI`).
+    if scope_lower.starts_with("support.variable") {
+        return Some(HighlightCategory::VariableBuiltin);
+    }
+    if scope_lower.starts_with("support.constant") {
+        return Some(HighlightCategory::Constant);
+    }
+
     // Variables
     if scope_lower.starts_with("variable.language") {
         return Some(HighlightCategory::VariableBuiltin);
@@ -228,8 +253,6 @@ fn scope_to_category(scope: &str) -> Option<HighlightCategory> {
     if scope_lower.starts_with("entity.name.tag")
         || scope_lower.starts_with("support.other.property")
         || scope_lower.starts_with("meta.object-literal.key")
-        || scope_lower.starts_with("variable.other.property")
-        || scope_lower.starts_with("variable.other.object.property")
     {
         return Some(HighlightCategory::Property);
     }
@@ -1704,7 +1727,7 @@ impl TextMateEngine {
     ) -> Vec<HighlightSpan> {
         let buf_len = buffer.len();
         let (desired_parse_start, parse_end) = if buf_len <= MAX_PARSE_BYTES {
-            (0, buf_len)
+            (0, (viewport_end + context_bytes).min(buf_len))
         } else {
             let s = viewport_start.saturating_sub(context_bytes);
             let e = (viewport_end + context_bytes).min(buf_len);
@@ -1722,6 +1745,17 @@ impl TextMateEngine {
                 .cache
                 .as_ref()
                 .is_some_and(|c| c.range.end >= parse_end);
+
+        if cache_covers_viewport
+            && dirty.is_none()
+            && self.last_buffer_len == buffer.len()
+            && self
+                .cache
+                .as_ref()
+                .is_some_and(|c| c.range.end < parse_end && c.tail_state.is_none())
+        {
+            self.rewind_cache_to_checkpoint();
+        }
 
         // Cache hit.
         if exact_cache_hit {
@@ -1793,10 +1827,15 @@ impl TextMateEngine {
         theme: &Theme,
     ) -> Vec<HighlightSpan> {
         let cache = self.cache.as_ref().unwrap();
-        cache
+        // Sorted and disjoint, so the viewport's spans are one contiguous run.
+        let first = cache
             .spans
+            .partition_point(|span| span.range.end <= viewport_start);
+        let last = cache
+            .spans
+            .partition_point(|span| span.range.start < viewport_end);
+        cache.spans[first..last.max(first)]
             .iter()
-            .filter(|span| span.range.start < viewport_end && span.range.end > viewport_start)
             .map(|span| HighlightSpan {
                 range: span.range.clone(),
                 color: highlight_color(span.category, theme),
@@ -1870,6 +1909,11 @@ impl TextMateEngine {
         let mut current_offset = actual_start;
         let mut converged_at: Option<usize> = None;
         let mut budget_hit_at: Option<usize> = None;
+        let must_reach = if buffer.len() <= MAX_PARSE_BYTES {
+            viewport_end
+        } else {
+            0
+        };
         let mut bytes_since_checkpoint: usize = 0;
 
         while pos < content_bytes.len() {
@@ -1941,8 +1985,11 @@ impl TextMateEngine {
 
             // Bound work per pass: pathological edits (e.g. unclosed `/*`
             // re-scoping the rest of the file) can never converge. Stop here
-            // and resume from `current_offset` on the next render.
-            if current_offset.saturating_sub(dirty_pos) >= CONVERGENCE_BUDGET {
+            // and resume from `current_offset` on the next render; a small
+            // file's viewport is always parsed first.
+            if current_offset >= must_reach
+                && current_offset.saturating_sub(dirty_pos) >= CONVERGENCE_BUDGET
+            {
                 budget_hit_at = Some(current_offset);
                 break;
             }
@@ -1956,6 +2003,13 @@ impl TextMateEngine {
             (c, None)
         } else if let Some(b) = budget_hit_at {
             (b, Some(b))
+        } else if self
+            .cache
+            .as_ref()
+            .is_some_and(|c| current_offset < c.range.end)
+        {
+            // Stopped at `parse_end`; the cached spans past it predate the edit.
+            (current_offset, Some(current_offset))
         } else {
             (current_offset, None)
         };
@@ -1966,12 +2020,37 @@ impl TextMateEngine {
 
         if let Some(cache) = &mut self.cache {
             let splice_start = actual_start;
-            cache
-                .spans
-                .retain(|span| span.range.end <= splice_start || span.range.start >= splice_end);
-            cache.spans.extend(new_spans);
-            cache.spans.sort_by_key(|s| s.range.start);
-            Self::merge_adjacent_spans(&mut cache.spans);
+            let in_order = new_spans
+                .windows(2)
+                .all(|w| w[0].range.end <= w[1].range.start)
+                && new_spans
+                    .first()
+                    .is_none_or(|s| s.range.start >= splice_start)
+                && new_spans.last().is_none_or(|s| s.range.end <= splice_end);
+            if in_order {
+                // The cache is sorted and disjoint: swap the re-parsed run in
+                // where it belongs and merge only at its two seams.
+                let lo = cache
+                    .spans
+                    .partition_point(|span| span.range.end <= splice_start);
+                let hi = cache
+                    .spans
+                    .partition_point(|span| span.range.start < splice_end)
+                    .max(lo);
+                let inserted = new_spans.len();
+                cache.spans.splice(lo..hi, new_spans);
+                let seams = lo.saturating_sub(1)..(lo + inserted + 1).min(cache.spans.len());
+                let mut window: Vec<CachedSpan> = cache.spans.drain(seams.clone()).collect();
+                Self::merge_adjacent_spans(&mut window);
+                cache.spans.splice(seams.start..seams.start, window);
+            } else {
+                cache.spans.retain(|span| {
+                    span.range.end <= splice_start || span.range.start >= splice_end
+                });
+                cache.spans.extend(new_spans);
+                cache.spans.sort_by_key(|s| s.range.start);
+                Self::merge_adjacent_spans(&mut cache.spans);
+            }
             if splice_end > cache.range.end {
                 cache.range.end = splice_end;
             }
@@ -1982,6 +2061,31 @@ impl TextMateEngine {
         self.dirty_from = dirty_after;
 
         Some(self.filter_cached_spans(viewport_start, viewport_end, theme))
+    }
+
+    /// Give a cache whose end state an edit cleared a new end at its last
+    /// checkpoint, so it extends forward instead of re-parsing from the start.
+    fn rewind_cache_to_checkpoint(&mut self) {
+        let Some(cache) = self.cache.as_mut() else {
+            return;
+        };
+        let last = self
+            .checkpoint_markers
+            .query_range(cache.range.start, cache.range.end + 1)
+            .into_iter()
+            .max_by_key(|(_, pos, _)| *pos);
+        let Some((id, pos, _)) = last else {
+            return;
+        };
+        let Some(state) = self.checkpoint_states.get(&id) else {
+            return;
+        };
+        cache.spans.retain_mut(|span| {
+            span.range.end = span.range.end.min(pos);
+            span.range.start < span.range.end
+        });
+        cache.range.end = pos;
+        cache.tail_state = Some(state.clone());
     }
 
     /// Forward extension path (see module docs). Caller checks the cache
@@ -2687,11 +2791,11 @@ impl TextMateEngine {
     /// The position must be within the last highlighted viewport range for a result.
     pub fn category_at_position(&self, position: usize) -> Option<HighlightCategory> {
         let cache = self.cache.as_ref()?;
-        cache
-            .spans
-            .iter()
-            .find(|span| span.range.start <= position && position < span.range.end)
-            .map(|span| span.category)
+        // Spans are sorted by start and disjoint; the cache can hold a whole
+        // file's worth, and the indent rules ask on every keystroke.
+        let after = cache.spans.partition_point(|s| s.range.start <= position);
+        let span = cache.spans.get(after.checked_sub(1)?)?;
+        (position < span.range.end).then_some(span.category)
     }
 
     /// Get syntax name
@@ -2711,8 +2815,26 @@ impl HighlightEngine {
         entry: &crate::primitives::grammar::GrammarEntry,
         registry: &GrammarRegistry,
     ) -> Self {
+        Self::build(entry, entry.engines.syntect, registry)
+    }
+
+    /// Like [`Self::from_entry`], but picks the entry's dialect grammar for
+    /// `path` when it has one (e.g. TypeScriptReact for `.tsx`).
+    pub fn from_entry_for_path(
+        entry: &crate::primitives::grammar::GrammarEntry,
+        path: &Path,
+        registry: &GrammarRegistry,
+    ) -> Self {
+        Self::build(entry, entry.syntect_for_path(path), registry)
+    }
+
+    fn build(
+        entry: &crate::primitives::grammar::GrammarEntry,
+        syntect: Option<usize>,
+        registry: &GrammarRegistry,
+    ) -> Self {
         let syntax_set = registry.syntax_set_arc();
-        if let Some(index) = entry.engines.syntect {
+        if let Some(index) = syntect {
             return Self::TextMate(Box::new(TextMateEngine::with_language(
                 syntax_set,
                 index,
@@ -2736,7 +2858,7 @@ impl HighlightEngine {
     /// `None` when no content is available.
     pub fn for_file(path: &Path, first_line: Option<&str>, registry: &GrammarRegistry) -> Self {
         if let Some(entry) = registry.find_by_path(path, first_line) {
-            return Self::from_entry(entry, registry);
+            return Self::from_entry_for_path(entry, path, registry);
         }
         Self::None
     }
@@ -3103,21 +3225,19 @@ mod tests {
         assert_eq!(engine.backend_name(), "textmate");
         assert!(engine.language().is_some());
 
-        // JavaScript is routed to tree-sitter (issue #899: syntect's JS
-        // grammar bleeds template-literal string state past the closing
-        // backtick).
-        let engine = HighlightEngine::for_file(Path::new("test.js"), None, &registry);
-        assert_eq!(engine.backend_name(), "tree-sitter");
-        assert!(engine.language().is_some());
-
-        // TypeScript falls back to tree-sitter (syntect doesn't include TS by default)
-        let engine = HighlightEngine::for_file(Path::new("test.ts"), None, &registry);
-        assert_eq!(engine.backend_name(), "tree-sitter");
-        assert!(engine.language().is_some());
-
-        let engine = HighlightEngine::for_file(Path::new("test.tsx"), None, &registry);
-        assert_eq!(engine.backend_name(), "tree-sitter");
-        assert!(engine.language().is_some());
+        // JavaScript and TypeScript use Fresh's TypeScript grammar and its
+        // derived variants; `.tsx` picks the TypeScriptReact dialect.
+        for (file, syntax) in [
+            ("test.js", "JavaScript"),
+            ("test.jsx", "JavaScript"),
+            ("test.ts", "TypeScript"),
+            ("test.tsx", "TypeScriptReact"),
+        ] {
+            let engine = HighlightEngine::for_file(Path::new(file), None, &registry);
+            assert_eq!(engine.backend_name(), "textmate", "{file}");
+            assert_eq!(engine.syntax_name(), Some(syntax), "{file}");
+            assert!(engine.language().is_some(), "{file}");
+        }
     }
 
     #[test]
@@ -4938,8 +5058,8 @@ diff --git a/tools/check.py b/tools/check.py
             panic!("expected TextMate engine for .rs");
         };
 
-        // Warm cache (whole-file parse).
-        let _ = tm.highlight_viewport(&buffer, 0, 200, &theme, 10_000);
+        // Warm cache (whole-file parse: the context covers the file).
+        let _ = tm.highlight_viewport(&buffer, 0, 200, &theme, buffer.len());
         // Simulate an edit and force every checkpoint to disagree by clearing
         // their stored states. The convergence loop will look at each marker,
         // find the slot empty, and never converge.
@@ -4947,7 +5067,7 @@ diff --git a/tools/check.py b/tools/check.py
         tm.checkpoint_states.clear();
 
         let bytes_before = tm.stats().bytes_parsed;
-        let _ = tm.highlight_viewport(&buffer, 0, 200, &theme, 10_000);
+        let _ = tm.highlight_viewport(&buffer, 0, 200, &theme, buffer.len());
         let parsed = tm.stats().bytes_parsed - bytes_before;
 
         // Budget bounds the work to roughly CONVERGENCE_BUDGET past the dirty
@@ -5360,11 +5480,14 @@ diff --git a/tools/check.py b/tools/check.py
             names(registry.embedded_syntax_index("py")).as_deref(),
             Some("Python")
         );
-        // TypeScript is served by tree-sitter for real buffers; a declared
-        // region still gets its TextMate grammar, not plain text.
+        // A region named by a path gets the grammar that file opens with.
         assert_eq!(
             names(registry.embedded_syntax_index("app.ts")).as_deref(),
             Some("TypeScript")
+        );
+        assert_eq!(
+            names(registry.embedded_syntax_index("app.tsx")).as_deref(),
+            Some("TypeScriptReact")
         );
         assert_eq!(registry.embedded_syntax_index("README"), None);
     }

@@ -499,7 +499,14 @@ impl Editor {
                 )
             })
             .unwrap_or((None, None));
-        let sugg_window = self.active_chrome().suggestions_window;
+        // The list's window, read off the tree that holds it.
+        let sugg_window = self.shell_ui.as_ref().and_then(|ui| {
+            let spec = ui.spec();
+            let list = crate::view::shell::prompt::suggestions_list_rect(spec)?;
+            let (first, visible) = crate::view::shell::prompt::suggestions_window(spec)
+                .unwrap_or((0, list.h as usize));
+            Some((first, visible.max(list.h as usize)))
+        });
         let p = self.active_window().prompt.as_ref()?;
         // The overlay card's bands, read off the tree that placed them.
         let card_band = |r: crate::view::shell::overlay_prompt::CardRegion| {
@@ -563,7 +570,7 @@ impl Editor {
             overlay: p.overlay,
             title: p.title.iter().map(|t| t.text.as_str()).collect(),
             status: p.status.clone(),
-            selected: p.selected_suggestion,
+            selected: p.selected_suggestion(),
             scroll_start,
             visible_count: visible,
             total,
@@ -591,7 +598,7 @@ impl Editor {
                 .toolbar
                 .as_ref()
                 .and_then(|k| self.widget_registry.get(k))
-                .map(|panel| panel.spec.clone()),
+                .map(|panel| fresh_core::api::WidgetSpec::clone(&panel.spec)),
             toolbar_focus: p
                 .toolbar
                 .as_ref()
@@ -821,12 +828,13 @@ pub struct FileExplorerView {
 }
 
 impl Editor {
-    /// Semantic file-explorer sidebar: the flattened visible tree rows (the same
-    /// `get_display_nodes()` the TUI renderer uses) plus selection/scroll and the
+    /// Semantic file-explorer sidebar: the flattened visible tree rows (the
+    /// same projection the TUI's list windows) plus selection/scroll and the
     /// sidebar rect. Rendered natively by the web frontend; row clicks route
     /// back through `handle_mouse` at the sidebar's content cells, where the
-    /// shell's own row nodes answer them — `viewport_rows[n]` and the tree's
-    /// n-th row key are the same number by construction.
+    /// shell's own row nodes answer them. `viewport_rows` is read off the
+    /// layout — the rows keyed by path that the list placed, pins first —
+    /// and mapped back to row indices through the projection.
     pub fn file_explorer_view(&self) -> Option<FileExplorerView> {
         // **Derived, not recorded.** The sidebar's rectangle is
         // `HostRegion::Explorer`'s, which is a keyed node — so this asks the
@@ -842,29 +850,46 @@ impl Editor {
             crate::view::shell::frame::HostRegion::Explorer,
         ))?;
         let tree = view.tree();
-        let rows = view
-            .get_display_nodes()
-            .into_iter()
-            .filter_map(|(id, indent)| {
-                tree.get_node(id).map(|n| FileRow {
-                    name: n.entry.name.clone(),
-                    depth: indent,
-                    is_dir: n.is_dir(),
-                    expanded: n.is_expanded(),
-                })
+        let projection = view.projection();
+        let rows = projection
+            .rows
+            .iter()
+            .map(|r| FileRow {
+                name: r.entry.name.clone(),
+                depth: r.indent,
+                is_dir: r.is_dir(),
+                expanded: r.is_expanded(),
             })
             .collect();
         let title = tree
             .get_node(tree.root_id())
             .map(|n| n.entry.name.clone())
             .unwrap_or_default();
+        // The window is the list's: which rows are on screen, pins and
+        // all, and how tall the body is, are read off the layout that placed
+        // them.
+        let (scroll_offset, viewport_height, viewport_rows) = self
+            .shell_ui
+            .as_ref()
+            .and_then(|ui| {
+                crate::view::shell::file_explorer::window_rows(ui, self.active_window().id.0)
+            })
+            .map(|(first, height, paths)| {
+                let rows = paths
+                    .iter()
+                    .filter_map(|p| tree.get_node_by_path(p))
+                    .filter_map(|n| projection.index_of(n.id))
+                    .collect::<Vec<_>>();
+                (first, height, rows)
+            })
+            .unwrap_or_default();
         Some(FileExplorerView {
             rect: RectView::from(rect),
             title,
-            scroll_offset: view.get_scroll_offset(),
-            viewport_height: view.viewport_height,
+            scroll_offset,
+            viewport_height,
             selected: view.get_selected_index(),
-            viewport_rows: view.viewport_display_indices(),
+            viewport_rows,
             rows,
         })
     }
@@ -1076,11 +1101,9 @@ impl Editor {
         // The window the tree is showing: the rows the TUI has on screen, at
         // the grid rows it put them on.
         let rows = match &b.listing {
-            fb::Listing::Entries(entries) => entries
-                .iter()
-                .enumerate()
-                .skip(window.first)
+            fb::Listing::Entries(entries) => (window.first..)
                 .take(window.visible)
+                .filter_map(|index| entries.at(index).map(|e| (index, e)))
                 .map(|(index, e)| FileBrowserRowView {
                     index,
                     row: list_rect.y + (index - window.first) as u16,
@@ -1109,7 +1132,7 @@ impl Editor {
             scroll_offset: window.first,
             visible_rows: window.visible,
             total: state.entries.len(),
-            selected: state.selected_index,
+            selected: state.selected_index(),
             active_section: if files_active { "files" } else { "navigation" },
             loading: state.loading,
             error: state.error.clone(),
@@ -1906,13 +1929,19 @@ impl Editor {
             BindingSource, ContextFilter, DisplayRow, SearchMode, SourceFilter,
         };
         let kb = self.keybinding_editor.as_ref()?;
+        // The table's window, read off the tree that holds it.
+        let window = self
+            .shell_ui
+            .as_ref()
+            .and_then(|ui| crate::view::shell::keybinding::table_window(ui.spec()))
+            .unwrap_or((0, 0));
 
         let rows = kb
             .display_rows
             .iter()
             .enumerate()
             .map(|(i, dr)| {
-                let selected = i == kb.selected;
+                let selected = i == kb.selected();
                 match dr {
                     DisplayRow::SectionHeader {
                         plugin_name,
@@ -2005,9 +2034,9 @@ impl Editor {
             count: format!("{} / {}", kb.filtered_indices.len(), kb.bindings.len()),
             has_changes: kb.has_changes,
             rows,
-            selected: kb.selected,
-            scroll_offset: kb.scroll.offset,
-            viewport: kb.scroll.viewport,
+            selected: kb.selected(),
+            scroll_offset: window.0 as u16,
+            viewport: window.1 as u16,
             showing_help: kb.showing_help,
             edit_dialog,
             confirm,

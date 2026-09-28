@@ -3307,9 +3307,10 @@ mod tests {
         WidgetSpec::List {
             items: (0..n)
                 .map(|i| fresh_core::text_property::TextPropertyEntry::text(format!("row {i}")))
-                .collect(),
-            item_specs: Vec::new(),
-            item_keys: (0..n).map(|i| format!("k{i}")).collect(),
+                .collect::<Vec<_>>()
+                .into(),
+            item_specs: Vec::new().into(),
+            item_keys: (0..n).map(|i| format!("k{i}")).collect::<Vec<_>>().into(),
             selected_index: 0,
             visible_rows: Some(4),
             focusable: true,
@@ -4272,8 +4273,8 @@ mod tests {
     fn an_unlaid_out_widget_takes_the_specs_window_in_the_specs_own_units() {
         use crate::widgets::kinds::Viewport;
         let cards = WidgetSpec::Tree {
-            nodes: Vec::new(),
-            item_keys: Vec::new(),
+            nodes: Vec::new().into(),
+            item_keys: Vec::new().into(),
             selected_index: 0,
             visible_rows: Some(12),
             key: Some("t".into()),
@@ -4734,5 +4735,371 @@ mod tests {
             "and the dock was told it has the keyboard back"
         );
         assert_eq!(editor.widget_registry.focus_key(&dock_key), Some("menu"));
+    }
+
+    /// The items `Arc` of the `List` keyed `lst` in a spec.
+    #[cfg(feature = "plugins")]
+    fn list_items(spec: &WidgetSpec) -> Arc<Vec<fresh_core::text_property::TextPropertyEntry>> {
+        match crate::widgets::find_widget_by_key(spec, "lst") {
+            Some(WidgetSpec::List { items, .. }) => items.clone(),
+            _ => panic!("no list"),
+        }
+    }
+
+    /// **A frame describes a panel from a handle on its storage, never a
+    /// copy of it.**
+    ///
+    /// `panel_interior` used to deep-clone the panel's whole spec on every
+    /// frame, and the `List` arm cloned every item again for its row builder,
+    /// so a still panel cost O(items) twice per frame before one row was on
+    /// screen. Now two frames with nothing changed describe the *same*
+    /// allocation, the drawn list holds the owner's items rather than a copy,
+    /// and a mutation — which edits copy-on-write — is what produces a new
+    /// one. (The mutation is a plugin's, so the test needs the feature.)
+    #[cfg(feature = "plugins")]
+    #[test]
+    fn a_still_panel_is_described_from_its_storage_not_a_copy() {
+        let (mut editor, _t) = make_editor();
+        let panel_key = crate::widgets::PanelKey::new("test-plugin", 1);
+        mount_list_panel(
+            &mut editor,
+            &panel_key,
+            crate::app::PanelSlot::Dock.buffer_id(),
+        );
+        editor.dock = Some(dock_panel(panel_key.clone()));
+
+        frame_the_shell(&mut editor);
+        let first = editor
+            .panel_interior(crate::app::PanelSlot::Dock)
+            .expect("the dock's interior")
+            .spec;
+        frame_the_shell(&mut editor);
+        let second = editor
+            .panel_interior(crate::app::PanelSlot::Dock)
+            .expect("the dock's interior")
+            .spec;
+        assert!(
+            std::rc::Rc::ptr_eq(&first, &second),
+            "two frames with no mutation describe the same spec allocation"
+        );
+        assert!(
+            std::rc::Rc::ptr_eq(
+                &first,
+                &editor.widget_registry.get(&panel_key).unwrap().spec
+            ),
+            "and it is the registry's own, not a copy of it"
+        );
+        let items = list_items(&second);
+        // The registry's spec, the two interiors above and the laid-out
+        // tree's row builder: the list's rows are read out of the owner's
+        // collection, not a clone of it.
+        drop((first, second));
+        assert!(
+            Arc::strong_count(&items) >= 3,
+            "the drawn list holds the owner's items (count {})",
+            Arc::strong_count(&items)
+        );
+
+        // A mutation is what makes a new allocation, and only for what it
+        // touched's path: the old handle keeps the old rows.
+        let before = editor.widget_registry.get(&panel_key).unwrap().spec.clone();
+        editor.handle_widget_mutate(
+            &panel_key,
+            fresh_core::api::WidgetMutation::SetItems {
+                widget_key: "lst".into(),
+                items: vec![fresh_core::text_property::TextPropertyEntry::text("only")],
+                item_keys: vec!["only".into()],
+            },
+        );
+        let after = editor.widget_registry.get(&panel_key).unwrap().spec.clone();
+        assert!(
+            !std::rc::Rc::ptr_eq(&before, &after),
+            "a mutation under a held handle writes a new spec"
+        );
+        assert_eq!(
+            list_items(&before).len(),
+            40,
+            "the held frame's rows are untouched"
+        );
+        assert_eq!(list_items(&after).len(), 1);
+        frame_the_shell(&mut editor);
+        let third = editor
+            .panel_interior(crate::app::PanelSlot::Dock)
+            .unwrap()
+            .spec;
+        assert!(
+            std::rc::Rc::ptr_eq(&third, &after),
+            "and the next frame describes it"
+        );
+    }
+
+    /// A tree of `groups` folders, each holding `per` leaves, keyed `tr`.
+    #[cfg(feature = "plugins")]
+    fn big_tree(groups: usize, per: usize, cards: bool) -> WidgetSpec {
+        let node = |t: String, depth: u32, has_children: bool| fresh_core::api::TreeNode {
+            text: fresh_core::text_property::TextPropertyEntry::text(t),
+            depth,
+            has_children,
+            checked: None,
+            extra_lines: Vec::new(),
+            window_anchor: None,
+            cells: Vec::new(),
+            action: None,
+        };
+        let mut nodes = Vec::new();
+        let mut keys = Vec::new();
+        for g in 0..groups {
+            nodes.push(node(format!("group {g}"), 0, true));
+            keys.push(format!("g{g}"));
+            for l in 0..per {
+                nodes.push(node(format!("leaf {g}.{l}"), 1, false));
+                keys.push(format!("g{g}/l{l}"));
+            }
+        }
+        WidgetSpec::Tree {
+            nodes: nodes.into(),
+            item_keys: keys.into(),
+            selected_index: 0,
+            visible_rows: None,
+            key: Some("tr".into()),
+            // Every group open: a thousand visible nodes, a window of rows.
+            expanded_keys: (0..groups).map(|g| format!("g{g}")).collect(),
+            checkable: false,
+            indent_cols: 2,
+            item_height: 1,
+            card_borders: cards,
+            toggle_on_click: false,
+            columns: Vec::new(),
+        }
+    }
+
+    /// **A still plugin collection costs nothing per frame.**
+    ///
+    /// The drawn tree walked every node (`collect_visible_tree_indices`) and
+    /// rebuilt every row in its window on every frame, and a list rebuilt its
+    /// window, whether or not anything had changed. Now the projection is
+    /// the owner's, kept until the collections or the expansion change, and
+    /// each subtree is built under a memo on everything it reads — so a
+    /// frame with nothing new walks nothing and builds no row, a selection
+    /// move rebuilds the window but not the projection, and an expansion
+    /// change is what walks the tree again.
+    #[cfg(all(feature = "plugins", debug_assertions))]
+    #[test]
+    fn a_still_collection_is_projected_and_built_once() {
+        use crate::view::shell::widgets::collection_stats;
+        use fresh_core::api::WidgetMutation;
+        for (what, spec) in [
+            ("a plain tree", big_tree(100, 9, false)),
+            ("a card tree", big_tree(100, 9, true)),
+            ("a list", list_of(1000)),
+        ] {
+            let (mut editor, _t) = make_editor();
+            let panel_key = crate::widgets::PanelKey::new("test-plugin", 1);
+            let out = crate::widgets::resolve_panel(&spec, &Default::default(), "", true, None);
+            editor.widget_registry.mount(
+                panel_key.clone(),
+                crate::app::PanelSlot::Dock.buffer_id(),
+                spec.clone(),
+                out.instance_states,
+                out.focus_key,
+                true,
+                false,
+                false,
+            );
+            editor.dock = Some(dock_panel(panel_key.clone()));
+            let is_tree = matches!(spec, WidgetSpec::Tree { .. });
+            let widget = if is_tree { "tr" } else { "lst" };
+
+            collection_stats::take();
+            frame_the_shell(&mut editor);
+            let first = collection_stats::take();
+            frame_the_shell(&mut editor);
+            frame_the_shell(&mut editor);
+            let still = collection_stats::take();
+            eprintln!("{what}: first frame {first:?}, two still frames {still:?}");
+            assert_eq!(
+                first.projections,
+                u32::from(is_tree),
+                "{what}: one walk to start"
+            );
+            assert!(first.rows > 0, "{what}: the first frame builds its window");
+            // A card tree too: it is windowed in cells over its projection,
+            // and builds the blocks that overlap the window.
+            assert!(
+                first.rows < 200,
+                "{what}: a window's worth of rows, not the collection ({})",
+                first.rows
+            );
+            assert_eq!(
+                still,
+                collection_stats::Counts::default(),
+                "{what}: two still frames walk nothing and build no row"
+            );
+
+            // The selection moves: the window's rows are built again (their
+            // state changed), the projection is not.
+            editor.handle_widget_mutate(
+                &panel_key,
+                WidgetMutation::SetSelectedIndex {
+                    widget_key: widget.into(),
+                    index: 3,
+                },
+            );
+            frame_the_shell(&mut editor);
+            let moved = collection_stats::take();
+            eprintln!("{what}: after a selection move {moved:?}");
+            assert_eq!(
+                moved.projections, 0,
+                "{what}: a selection is not an expansion"
+            );
+            assert!(moved.rows > 0, "{what}: the moved selection is redrawn");
+
+            if is_tree {
+                // Folding a group is an expansion change: one walk.
+                editor.handle_widget_mutate(
+                    &panel_key,
+                    WidgetMutation::SetExpandedKeys {
+                        widget_key: "tr".into(),
+                        keys: vec!["g1".into()],
+                    },
+                );
+                frame_the_shell(&mut editor);
+                let folded = collection_stats::take();
+                eprintln!("{what}: after an expansion change {folded:?}");
+                assert_eq!(folded.projections, 1, "{what}: the expansion changed");
+                frame_the_shell(&mut editor);
+                assert_eq!(
+                    collection_stats::take(),
+                    collection_stats::Counts::default(),
+                    "{what}: and is still again after"
+                );
+            }
+        }
+    }
+
+    /// A palette of `n` commands, with the one at `long_at` named far
+    /// longer than the rest.
+    fn palette(n: usize, long_at: usize) -> crate::view::prompt::Prompt {
+        use crate::input::commands::Suggestion;
+        let suggestions = (0..n)
+            .map(|i| {
+                let name = match i == long_at {
+                    true => format!("command {i} {}", "with a very long name ".repeat(3)),
+                    false => format!("command {i}"),
+                };
+                Suggestion::new(format!("cmd{i}"), name).with_keybinding(Some("Ctrl+K".into()))
+            })
+            .collect();
+        crate::view::prompt::Prompt::with_suggestions(
+            "Command: ".into(),
+            crate::view::prompt::PromptType::QuickOpen,
+            suggestions,
+        )
+    }
+
+    /// **A thousand-command palette converts the rows it shows, not the
+    /// list.** The description used to map every suggestion into a
+    /// `SuggestionRow` on every frame; now it holds the prompt's own list and
+    /// the list's layout reader converts the rows in its window.
+    #[cfg(debug_assertions)]
+    #[test]
+    fn a_long_palette_converts_only_its_window() {
+        use crate::view::shell::prompt::stats;
+        let (mut editor, _t) = make_editor();
+        editor.active_window_mut().prompt = Some(palette(1000, usize::MAX));
+        stats::take();
+        frame_the_shell(&mut editor);
+        let first = stats::take();
+        frame_the_shell(&mut editor);
+        let next = stats::take();
+        eprintln!("palette of 1000: {first} rows converted, then {next}");
+        assert!(first > 0, "the window's rows are converted");
+        assert!(
+            first <= 30 && next <= 30,
+            "a window's worth, not the list: {first}, then {next}"
+        );
+    }
+
+    /// **The name column is as wide as the longest name on screen *this*
+    /// frame.** It was measured over the window the previous layout had
+    /// settled, read back off the tree — so on the frame the selection jumped
+    /// to a long name, the column was still sized for the rows it left.
+    #[test]
+    fn the_name_column_fits_the_rows_on_screen_in_the_same_frame() {
+        let (mut editor, _t) = make_editor();
+        editor.active_window_mut().prompt = Some(palette(1000, 500));
+        frame_the_shell(&mut editor);
+        let name_width = |editor: &Editor, i: usize| {
+            let ui = editor.shell_ui.as_ref().expect("a laid-out shell");
+            let id = ui
+                .find_by_key(&crate::view::shell::prompt::name_key(&format!("cmd{i}")))
+                .unwrap_or_else(|| panic!("row {i}'s name is on screen"));
+            ui.rect_of(id).w
+        };
+        let short = name_width(&editor, 0);
+
+        // Jump to the long name: the list reveals it in this frame's layout,
+        // and its column is measured over the rows that layout shows.
+        editor
+            .active_window_mut()
+            .prompt
+            .as_mut()
+            .unwrap()
+            .select_suggestion(Some(500));
+        frame_the_shell(&mut editor);
+        let long = name_width(&editor, 500);
+        // Wider than the short rows' column, on the frame the long name
+        // arrived — how much wider is the row's to decide (the description
+        // yields first), but a column sized from the rows the window left
+        // would still be the short rows' width.
+        assert!(
+            long > short,
+            "the long name's column grows on the frame it arrives ({long}, the short rows had \
+             {short})"
+        );
+    }
+
+    /// **A thousand-entry directory formats the entries it shows, not the
+    /// directory.** The description used to format every entry's size and
+    /// date and the list then copied the lot (`rows.to_vec()`); now the list
+    /// holds the model's listing and formats the rows in its window.
+    #[cfg(debug_assertions)]
+    #[test]
+    fn a_large_directory_formats_only_its_window() {
+        use crate::model::filesystem::{DirEntry, EntryType};
+        use crate::view::shell::file_browser::stats;
+        let (mut editor, t) = make_editor();
+        let fs: Arc<dyn crate::model::filesystem::FileSystem + Send + Sync> =
+            Arc::new(crate::model::filesystem::StdFileSystem);
+        let dir = t.path().to_path_buf();
+        let mut state = crate::app::file_open::FileOpenState::new(dir.clone(), false, fs);
+        state.set_entries(
+            (0..1000)
+                .map(|i| {
+                    DirEntry::new(
+                        dir.join(format!("f{i:04}.txt")),
+                        format!("f{i:04}.txt"),
+                        EntryType::File,
+                    )
+                })
+                .collect(),
+        );
+        let w = editor.active_window_mut();
+        w.file_open_state = Some(state);
+        w.prompt = Some(crate::view::prompt::Prompt::new(
+            "Open: ".into(),
+            crate::view::prompt::PromptType::OpenFile,
+        ));
+        stats::take();
+        frame_the_shell(&mut editor);
+        let first = stats::take();
+        frame_the_shell(&mut editor);
+        let next = stats::take();
+        eprintln!("directory of 1000: {first} entries formatted, then {next}");
+        assert!(first > 0, "the window's entries are formatted");
+        assert!(
+            first <= 40 && next <= 40,
+            "a window's worth, not the directory: {first}, then {next}"
+        );
     }
 }

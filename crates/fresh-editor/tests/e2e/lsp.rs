@@ -26,12 +26,14 @@ fn test_lsp_completion_popup_text_not_mangled() -> anyhow::Result<()> {
             content: PopupContentData::List {
                 items: vec![
                     PopupListItemData {
+                        id: "t28_21".into(),
                         text: "test_function".to_string(),
                         detail: Some("fn test_function() -> i32".to_string()),
                         icon: Some("λ".to_string()),
                         data: Some("test_function".to_string()),
                     },
                     PopupListItemData {
+                        id: "t34_21".into(),
                         text: "test_variable".to_string(),
                         detail: Some("let test_variable: String".to_string()),
                         icon: Some("v".to_string()),
@@ -110,6 +112,7 @@ fn test_lsp_completion_replaces_word() -> anyhow::Result<()> {
             transient: false,
             content: PopupContentData::List {
                 items: vec![PopupListItemData {
+                    id: "t112_29".into(),
                     text: "test_function".to_string(),
                     detail: Some("fn test_function()".to_string()),
                     icon: Some("λ".to_string()),
@@ -201,12 +204,14 @@ fn test_lsp_completion_popup() -> anyhow::Result<()> {
             content: PopupContentData::List {
                 items: vec![
                     PopupListItemData {
+                        id: "t203_21".into(),
                         text: "test_function".to_string(),
                         detail: Some("fn test_function()".to_string()),
                         icon: Some("λ".to_string()),
                         data: Some("test_function".to_string()),
                     },
                     PopupListItemData {
+                        id: "t209_21".into(),
                         text: "test_variable".to_string(),
                         detail: Some("let test_variable".to_string()),
                         icon: Some("v".to_string()),
@@ -372,18 +377,21 @@ fn test_lsp_completion_navigation() -> anyhow::Result<()> {
             content: PopupContentData::List {
                 items: vec![
                     PopupListItemData {
+                        id: "t374_21".into(),
                         text: "item1".to_string(),
                         detail: None,
                         icon: None,
                         data: Some("item1".to_string()),
                     },
                     PopupListItemData {
+                        id: "t380_21".into(),
                         text: "item2".to_string(),
                         detail: None,
                         icon: None,
                         data: Some("item2".to_string()),
                     },
                     PopupListItemData {
+                        id: "t386_21".into(),
                         text: "item3".to_string(),
                         detail: None,
                         icon: None,
@@ -442,6 +450,7 @@ fn test_lsp_completion_cancel() -> anyhow::Result<()> {
             transient: false,
             content: PopupContentData::List {
                 items: vec![PopupListItemData {
+                    id: "t444_29".into(),
                     text: "completion_item".to_string(),
                     detail: None,
                     icon: None,
@@ -499,12 +508,14 @@ fn test_lsp_completion_after_dot() -> anyhow::Result<()> {
             content: PopupContentData::List {
                 items: vec![
                     PopupListItemData {
+                        id: "t501_21".into(),
                         text: "len".to_string(),
                         detail: Some("fn len(&self) -> usize".to_string()),
                         icon: Some("λ".to_string()),
                         data: Some("len".to_string()),
                     },
                     PopupListItemData {
+                        id: "t507_21".into(),
                         text: "is_empty".to_string(),
                         detail: Some("fn is_empty(&self) -> bool".to_string()),
                         icon: Some("λ".to_string()),
@@ -562,6 +573,7 @@ fn test_lsp_completion_after_dot_with_partial() -> anyhow::Result<()> {
             transient: false,
             content: PopupContentData::List {
                 items: vec![PopupListItemData {
+                    id: "t564_29".into(),
                     text: "length".to_string(),
                     detail: Some("fn length(&self) -> usize".to_string()),
                     icon: Some("λ".to_string()),
@@ -618,12 +630,14 @@ fn test_lsp_completion_filtering() -> anyhow::Result<()> {
                 items: vec![
                     // Only items matching "test_" prefix should appear
                     PopupListItemData {
+                        id: "t620_21".into(),
                         text: "test_function".to_string(),
                         detail: Some("fn test_function()".to_string()),
                         icon: Some("λ".to_string()),
                         data: Some("test_function".to_string()),
                     },
                     PopupListItemData {
+                        id: "t626_21".into(),
                         text: "test_variable".to_string(),
                         detail: Some("let test_variable".to_string()),
                         icon: Some("v".to_string()),
@@ -710,12 +724,14 @@ fn test_lsp_completion_popup_size() -> anyhow::Result<()> {
             content: PopupContentData::List {
                 items: vec![
                     PopupListItemData {
+                        id: "t712_21".into(),
                         text: "test_function".to_string(),
                         detail: Some("fn test_function()".to_string()),
                         icon: Some("λ".to_string()),
                         data: Some("test_function".to_string()),
                     },
                     PopupListItemData {
+                        id: "t718_21".into(),
                         text: "test_variable".to_string(),
                         detail: Some("let test_variable".to_string()),
                         icon: Some("v".to_string()),
@@ -1354,12 +1370,14 @@ fn test_lsp_completion_popup_hides_background() -> anyhow::Result<()> {
             content: PopupContentData::List {
                 items: vec![
                     PopupListItemData {
+                        id: "t1356_21".into(),
                         text: "args".to_string(),
                         detail: Some("Args".to_string()),
                         icon: Some("v".to_string()),
                         data: Some("args".to_string()),
                     },
                     PopupListItemData {
+                        id: "t1362_21".into(),
                         text: "Args".to_string(),
                         detail: Some("Args".to_string()),
                         icon: Some("S".to_string()),
@@ -4829,6 +4847,7 @@ fn test_popup_home_key_selects_first_item() -> anyhow::Result<()> {
     // Show completion popup with many items
     let items: Vec<PopupListItemData> = (0..20)
         .map(|i| PopupListItemData {
+            id: format!("item{i}"),
             text: format!("item_{}", i),
             detail: None,
             icon: None,
@@ -4888,6 +4907,7 @@ fn test_popup_end_key_selects_last_item() -> anyhow::Result<()> {
     // Show completion popup with many items
     let items: Vec<PopupListItemData> = (0..20)
         .map(|i| PopupListItemData {
+            id: format!("item{i}"),
             text: format!("item_{}", i),
             detail: None,
             icon: None,
@@ -4942,6 +4962,7 @@ fn test_popup_mouse_wheel_scrolls() -> anyhow::Result<()> {
     // Show completion popup with many items (more than visible)
     let items: Vec<PopupListItemData> = (0..30)
         .map(|i| PopupListItemData {
+            id: format!("item{i}"),
             text: format!("completion_item_{}", i),
             detail: None,
             icon: None,
@@ -5017,6 +5038,7 @@ fn test_popup_scrollbar_visible_for_long_list() -> anyhow::Result<()> {
     // Show completion popup with many items (more than max_height)
     let items: Vec<PopupListItemData> = (0..50)
         .map(|i| PopupListItemData {
+            id: format!("item{i}"),
             text: format!("item_{}", i),
             detail: None,
             icon: None,
@@ -5082,6 +5104,7 @@ fn test_popup_no_scrollbar_for_short_list() -> anyhow::Result<()> {
     // Show completion popup with few items (less than max_height)
     let items: Vec<PopupListItemData> = (0..3)
         .map(|i| PopupListItemData {
+            id: format!("item{i}"),
             text: format!("item_{}", i),
             detail: None,
             icon: None,
@@ -5135,6 +5158,7 @@ fn test_popup_mouse_wheel_scroll_up() -> anyhow::Result<()> {
     // Show completion popup with many items
     let items: Vec<PopupListItemData> = (0..30)
         .map(|i| PopupListItemData {
+            id: format!("item{i}"),
             text: format!("item_{}", i),
             detail: None,
             icon: None,
@@ -5266,18 +5290,21 @@ fn test_completion_type_to_filter_basic() -> anyhow::Result<()> {
             content: PopupContentData::List {
                 items: vec![
                     PopupListItemData {
+                        id: "t5268_21".into(),
                         text: "test_function".to_string(),
                         detail: Some("fn test_function()".to_string()),
                         icon: Some("λ".to_string()),
                         data: Some("test_function".to_string()),
                     },
                     PopupListItemData {
+                        id: "t5274_21".into(),
                         text: "test_variable".to_string(),
                         detail: Some("let test_variable".to_string()),
                         icon: Some("v".to_string()),
                         data: Some("test_variable".to_string()),
                     },
                     PopupListItemData {
+                        id: "t5280_21".into(),
                         text: "temp_file".to_string(),
                         detail: Some("let temp_file".to_string()),
                         icon: Some("v".to_string()),
@@ -5394,18 +5421,21 @@ fn test_completion_type_to_filter_uppercase() -> anyhow::Result<()> {
             content: PopupContentData::List {
                 items: vec![
                     PopupListItemData {
+                        id: "t5396_21".into(),
                         text: "WriteLine".to_string(),
                         detail: Some("void Console.WriteLine()".to_string()),
                         icon: Some("λ".to_string()),
                         data: Some("WriteLine".to_string()),
                     },
                     PopupListItemData {
+                        id: "t5402_21".into(),
                         text: "Write".to_string(),
                         detail: Some("void Console.Write()".to_string()),
                         icon: Some("λ".to_string()),
                         data: Some("Write".to_string()),
                     },
                     PopupListItemData {
+                        id: "t5408_21".into(),
                         text: "ReadLine".to_string(),
                         detail: Some("string Console.ReadLine()".to_string()),
                         icon: Some("λ".to_string()),
@@ -5516,6 +5546,7 @@ fn test_completion_type_to_filter_closes_on_no_match() -> anyhow::Result<()> {
             transient: false,
             content: PopupContentData::List {
                 items: vec![PopupListItemData {
+                    id: "t5518_29".into(),
                     text: "test_function".to_string(),
                     detail: None,
                     icon: None,
@@ -5595,6 +5626,7 @@ fn test_completion_backspace_refilters() -> anyhow::Result<()> {
             transient: false,
             content: PopupContentData::List {
                 items: vec![PopupListItemData {
+                    id: "t5597_29".into(),
                     text: "test_function".to_string(),
                     detail: None,
                     icon: None,
@@ -5718,18 +5750,21 @@ fn test_completion_type_to_filter_preserves_selection() -> anyhow::Result<()> {
             content: PopupContentData::List {
                 items: vec![
                     PopupListItemData {
+                        id: "lsp:0:0".into(),
                         text: "test_alpha".to_string(),
                         detail: None,
                         icon: None,
                         data: Some("test_alpha".to_string()),
                     },
                     PopupListItemData {
+                        id: "lsp:0:1".into(),
                         text: "test_beta".to_string(),
                         detail: None,
                         icon: None,
                         data: Some("test_beta".to_string()),
                     },
                     PopupListItemData {
+                        id: "lsp:0:2".into(),
                         text: "test_gamma".to_string(),
                         detail: None,
                         icon: None,
@@ -5746,6 +5781,9 @@ fn test_completion_type_to_filter_preserves_selection() -> anyhow::Result<()> {
     })?;
 
     harness.render()?;
+
+    // The rows carry the ids the editor gave the candidates above (the
+    // first response, in order), which is what a refilter finds them by.
 
     // Navigate to test_beta (second item)
     harness.send_key(KeyCode::Down, KeyModifiers::NONE)?;
@@ -5812,6 +5850,7 @@ fn test_completion_enter_dismisses_and_inserts_newline() -> anyhow::Result<()> {
             transient: false,
             content: PopupContentData::List {
                 items: vec![PopupListItemData {
+                    id: "t5814_29".into(),
                     text: "test_function".to_string(),
                     detail: None,
                     icon: Some("λ".to_string()),
@@ -5892,6 +5931,7 @@ fn test_completion_tab_accepts() -> anyhow::Result<()> {
             transient: false,
             content: PopupContentData::List {
                 items: vec![PopupListItemData {
+                    id: "t5894_29".into(),
                     text: "test_function".to_string(),
                     detail: None,
                     icon: Some("λ".to_string()),
@@ -5957,6 +5997,7 @@ fn test_completion_snippet_cursor_position() -> anyhow::Result<()> {
             transient: false,
             content: PopupContentData::List {
                 items: vec![PopupListItemData {
+                    id: "t5959_29".into(),
                     text: "println!".to_string(),
                     detail: Some("macro".to_string()),
                     icon: Some("m".to_string()),
@@ -6011,6 +6052,7 @@ fn test_completion_snippet_with_default() -> anyhow::Result<()> {
             transient: false,
             content: PopupContentData::List {
                 items: vec![PopupListItemData {
+                    id: "t6013_29".into(),
                     text: "fn".to_string(),
                     detail: Some("keyword".to_string()),
                     icon: Some("k".to_string()),
@@ -6068,6 +6110,7 @@ fn test_completion_plain_text_no_snippet() -> anyhow::Result<()> {
             transient: false,
             content: PopupContentData::List {
                 items: vec![PopupListItemData {
+                    id: "t6070_29".into(),
                     text: "my_variable".to_string(),
                     detail: Some("let my_variable".to_string()),
                     icon: Some("v".to_string()),
@@ -6644,6 +6687,7 @@ fn test_completion_ctrl_space_toggles_popup_off() -> anyhow::Result<()> {
             transient: false,
             content: PopupContentData::List {
                 items: vec![PopupListItemData {
+                    id: "t6646_29".into(),
                     text: "test_function".to_string(),
                     detail: None,
                     icon: Some("λ".to_string()),

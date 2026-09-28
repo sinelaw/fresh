@@ -235,12 +235,26 @@ pub struct Prompt {
     edit: crate::primitives::text_edit::TextEdit,
     /// What to do when user confirms
     pub prompt_type: PromptType,
-    /// Autocomplete suggestions (filtered)
-    pub suggestions: Vec<Suggestion>,
+    /// Autocomplete suggestions (filtered), in shared storage.
+    ///
+    /// The list's description holds this handle and converts the rows its
+    /// window asks for, so a frame costs the window rather than the list.
+    /// Replaced, never edited in place: every writer assigns a new list, so
+    /// the allocation's identity is "these suggestions" and
+    /// [`Prompt::names_are_paths`] can be kept against it.
+    pub suggestions: std::rc::Rc<Vec<Suggestion>>,
+    /// [`Prompt::names_are_paths`]'s answer, and the list it was worked out
+    /// for (held, so its address cannot be reused by another list).
+    names_are_paths_of: std::cell::RefCell<Option<(std::rc::Rc<Vec<Suggestion>>, bool)>>,
     /// Original unfiltered suggestions (for prompts that filter client-side like SwitchToTab)
     pub original_suggestions: Option<Vec<Suggestion>>,
     /// Currently selected suggestion index
-    pub selected_suggestion: Option<usize>,
+    ///
+    /// Held by the suggestion's id, not its position
+    /// (`view::keyed_selection`): a list that grows or re-ranks keeps the
+    /// selection on its suggestion. Read and written through
+    /// [`Prompt::selected_suggestion`] and [`Prompt::select_suggestion`].
+    selection: crate::view::keyed_selection::KeyedSelection,
     /// Index of the first suggestion shown in the popup viewport.
     /// Updated minimally by the renderer to keep `selected_suggestion`
     /// visible — selection changes inside the viewport never scroll
@@ -328,15 +342,67 @@ pub struct Prompt {
 pub const MAX_VISIBLE_SUGGESTIONS: usize = 10;
 
 impl Prompt {
+    /// Replace the suggestions. The one way they change: every id in the
+    /// list must be unique (it is the row's key), which a plugin's list was
+    /// already made to prove at the API and the editor's own lists are built
+    /// to.
+    pub fn set_suggestions(&mut self, suggestions: Vec<Suggestion>) {
+        debug_assert!(
+            Suggestion::duplicate_id(&suggestions).is_none(),
+            "suggestion ids must be unique, {:?} repeats",
+            Suggestion::duplicate_id(&suggestions)
+        );
+        self.suggestions = std::rc::Rc::new(suggestions);
+    }
+
+    /// Where the selected suggestion is in the current list: `None` when
+    /// nothing is selected, or when the selected suggestion has left the
+    /// list.
+    pub fn selected_suggestion(&self) -> Option<usize> {
+        let list = &self.suggestions;
+        self.selection.index(list.len(), |i| list[i].id.as_str())
+    }
+
+    /// Select the suggestion at `index` in the current list — or nothing,
+    /// for `None` or an index the list does not have.
+    pub fn select_suggestion(&mut self, index: Option<usize>) {
+        self.selection = match index.and_then(|i| self.suggestions.get(i).map(|s| (i, s))) {
+            Some((i, s)) => crate::view::keyed_selection::KeyedSelection::at(i, s.id.clone()),
+            None => Default::default(),
+        };
+    }
+
+    /// Whether the suggestions' names are paths, which decides the end a
+    /// narrow row keeps (`view::shell::prompt::names_are_paths`).
+    ///
+    /// A fact about the whole list, so it is worked out once per list — the
+    /// list is replaced, never edited, so the one it was worked out for is
+    /// the one still here until a writer assigns another.
+    pub fn names_are_paths(&self) -> bool {
+        let mut memo = self.names_are_paths_of.borrow_mut();
+        if let Some((list, answer)) = memo.as_ref() {
+            if std::rc::Rc::ptr_eq(list, &self.suggestions) {
+                return *answer;
+            }
+        }
+        let answer = crate::view::shell::prompt::names_are_paths(
+            self.suggestions.iter().any(|s| s.keybinding.is_some()),
+            self.suggestions.iter().any(|s| s.source.is_some()),
+        );
+        *memo = Some((self.suggestions.clone(), answer));
+        answer
+    }
+
     /// Create a new prompt
     pub fn new(message: String, prompt_type: PromptType) -> Self {
         Self {
             message,
             edit: crate::primitives::text_edit::TextEdit::single_line(),
             prompt_type,
-            suggestions: Vec::new(),
+            suggestions: Default::default(),
+            names_are_paths_of: Default::default(),
             original_suggestions: None,
-            selected_suggestion: None,
+            selection: Default::default(),
             scroll_offset: 0,
             manual_scroll: false,
             suggestions_set_for_input: None,
@@ -360,18 +426,25 @@ impl Prompt {
         prompt_type: PromptType,
         suggestions: Vec<Suggestion>,
     ) -> Self {
-        let selected_suggestion = if suggestions.is_empty() {
-            None
-        } else {
-            Some(0)
+        let selection = match suggestions.first() {
+            Some(first) => crate::view::keyed_selection::KeyedSelection::at(0, first.id.clone()),
+            None => Default::default(),
         };
         Self {
             message,
             edit: crate::primitives::text_edit::TextEdit::single_line(),
             prompt_type,
             original_suggestions: Some(suggestions.clone()),
-            suggestions,
-            selected_suggestion,
+            suggestions: {
+                debug_assert!(
+                    Suggestion::duplicate_id(&suggestions).is_none(),
+                    "suggestion ids must be unique: {:?} repeats",
+                    Suggestion::duplicate_id(&suggestions)
+                );
+                suggestions.into()
+            },
+            names_are_paths_of: Default::default(),
+            selection,
             scroll_offset: 0,
             manual_scroll: false,
             suggestions_set_for_input: None,
@@ -423,9 +496,10 @@ impl Prompt {
             message,
             edit,
             prompt_type,
-            suggestions: Vec::new(),
+            suggestions: Default::default(),
+            names_are_paths_of: Default::default(),
             original_suggestions: None,
-            selected_suggestion: None,
+            selection: Default::default(),
             scroll_offset: 0,
             manual_scroll: false,
             suggestions_set_for_input: None,
@@ -674,12 +748,12 @@ impl Prompt {
             .collect();
 
         filtered.sort_by_key(|b| std::cmp::Reverse(b.1));
-        self.suggestions = filtered.into_iter().map(|(s, _)| s).collect();
-        self.selected_suggestion = if self.suggestions.is_empty() {
+        self.set_suggestions(filtered.into_iter().map(|(s, _)| s).collect());
+        self.select_suggestion(if self.suggestions.is_empty() {
             None
         } else {
             Some(0)
-        };
+        });
         self.scroll_offset = 0;
         self.manual_scroll = false;
     }
@@ -701,7 +775,7 @@ impl Prompt {
             self.scroll_offset = 0;
             return;
         }
-        if let Some(selected) = self.selected_suggestion {
+        if let Some(selected) = self.selected_suggestion() {
             if selected < self.scroll_offset {
                 self.scroll_offset = selected;
             } else if selected >= self.scroll_offset + visible {
@@ -835,7 +909,7 @@ impl Prompt {
     pub fn clear(&mut self) {
         self.edit.clear();
         // Also clear selection when clearing input
-        self.selected_suggestion = None;
+        self.select_suggestion(None);
     }
 
     /// Insert text at cursor position (used for paste operation).
@@ -1126,13 +1200,13 @@ mod tests {
         let mut prompt = Prompt::new("Find: ".to_string(), PromptType::OpenFile);
         prompt.set_input_plain("some text".to_string());
         prompt.set_cursor_byte(5);
-        prompt.selected_suggestion = Some(0);
+        prompt.select_suggestion(Some(0));
 
         prompt.clear();
 
         assert_eq!(prompt.input_str(), "");
         assert_eq!(prompt.cursor_byte(), 0);
-        assert_eq!(prompt.selected_suggestion, None);
+        assert_eq!(prompt.selected_suggestion(), None);
     }
 
     #[test]

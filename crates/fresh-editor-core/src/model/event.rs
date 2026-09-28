@@ -323,6 +323,9 @@ pub enum PopupContentData {
 /// Popup list item for events
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PopupListItemData {
+    /// What this row is, unique in its list; the row is keyed by it. See
+    /// `PopupListItem::id`.
+    pub id: String,
     pub text: String,
     pub detail: Option<String>,
     pub icon: Option<String>,

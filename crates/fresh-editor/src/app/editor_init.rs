@@ -208,6 +208,10 @@ fn load_startup_plugins(
         );
     }
 
+    // Before any plugin (or a TypeScript server for an opened file) runs,
+    // so the declarations file written after loading is never new to it.
+    crate::init_script::ensure_plugin_declarations(&dir_context.config_dir);
+
     let manifests =
         crate::services::plugins::manifest::read_manifests(&plugin_dirs, &config.plugins);
 
@@ -618,6 +622,12 @@ impl Editor {
         let editor = Editor {
             seat_focus_depth: 0,
             perf_counters: Default::default(),
+            #[cfg(feature = "plugins")]
+            plugin_snapshot_dirty: true,
+            #[cfg(feature = "plugins")]
+            plugin_snapshot_liveness: 0,
+            #[cfg(feature = "plugins")]
+            detected_env_cache: None,
             // From parts (non-trivial):
             next_buffer_id: parts.next_buffer_id,
             buffer_id_alloc: parts.buffer_id_alloc,
@@ -782,6 +792,7 @@ impl Editor {
             sidebar_drag: None,
             prose_drag: None,
             prose_reveal: std::cell::RefCell::new(HashMap::new()),
+            tree_projections: std::cell::RefCell::new(HashMap::new()),
         };
 
         // The plugin per-window filesystem registry is populated on the first

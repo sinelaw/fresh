@@ -248,7 +248,21 @@ impl AgentChannel {
         connected: Arc<std::sync::atomic::AtomicBool>,
     ) {
         loop {
+            // Biased so a waiting replacement is always taken before the next
+            // message. `replace_transport` queues the writer before the reader,
+            // and `connected` only turns true once the read task has the new
+            // reader, so a request sent after a swap can find both branches
+            // ready. An unbiased select could then pick the request and write
+            // it to the old transport, where nobody answers it.
             tokio::select! {
+                biased;
+                // Reconnection: new transport arrived, switch immediately
+                new_writer = new_writer_rx.recv() => {
+                    match new_writer {
+                        Some(w) => { writer = w; }
+                        None => break, // AgentChannel dropped
+                    }
+                }
                 // Normal path: send outgoing message
                 msg = write_rx.recv() => {
                     let Some(msg) = msg else { break }; // AgentChannel dropped
@@ -263,13 +277,6 @@ impl AgentChannel {
                             Some(new_writer) => { writer = new_writer; continue; }
                             None => break,
                         }
-                    }
-                }
-                // Reconnection: new transport arrived, switch immediately
-                new_writer = new_writer_rx.recv() => {
-                    match new_writer {
-                        Some(w) => { writer = w; }
-                        None => break, // AgentChannel dropped
                     }
                 }
             }

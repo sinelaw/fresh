@@ -311,8 +311,17 @@ pub struct WidgetPanelState {
     /// host-owned surface ([`WidgetPanelState::surface`]), which has no
     /// buffer because nothing paints it but the tree.
     pub buffer_id: Option<BufferId>,
-    /// The currently-mounted spec.
-    pub spec: WidgetSpec,
+    /// The currently-mounted spec, in shared storage.
+    ///
+    /// **The description captures this handle; it never copies the spec.**
+    /// A panel is described every frame and its spec changes only when the
+    /// plugin sends one or a mutation lands, so a spec held by value was
+    /// deep-cloned once per frame per panel (`panel_interior`) for nothing.
+    /// A mutation edits it copy-on-write (`Rc::make_mut`): in place when no
+    /// description is holding the last frame's, into a fresh allocation when
+    /// one is — so what a frame captured never changes under it, and "did
+    /// the spec change?" is `Rc::ptr_eq`.
+    pub spec: std::rc::Rc<WidgetSpec>,
     /// Widget instance state by widget `key`. Survives re-renders —
     /// see `WidgetInstanceState` for what's stored.
     pub instance_states: HashMap<String, WidgetInstanceState>,
@@ -377,7 +386,7 @@ impl WidgetPanelState {
     pub fn surface(spec: WidgetSpec) -> Self {
         WidgetPanelState {
             buffer_id: None,
-            spec,
+            spec: std::rc::Rc::new(spec),
             instance_states: HashMap::new(),
             focus_key: String::new(),
             auto_focus_first: false,
@@ -583,7 +592,7 @@ impl WidgetRegistry {
             panel_key,
             WidgetPanelState {
                 buffer_id: Some(buffer_id),
-                spec,
+                spec: std::rc::Rc::new(spec),
                 instance_states,
                 focus_key,
                 auto_focus_first,
@@ -642,7 +651,7 @@ impl WidgetRegistry {
                 state
                     .h_pan
                     .retain(|k, _| rows_are_the_same_subject(&state.spec, &spec, k));
-                state.spec = spec;
+                state.spec = std::rc::Rc::new(spec);
                 state.instance_states = instance_states;
                 state.focus_key = focus_key;
                 state.buffer_id.ok_or(())
@@ -712,7 +721,10 @@ impl WidgetRegistry {
     /// Find the buffer and current spec for a panel — used by the
     /// dispatcher to re-render after a focus advance / activate
     /// command without the plugin needing to send an UpdateWidgetPanel.
-    pub fn buffer_and_spec(&self, panel_key: &PanelKey) -> Option<(BufferId, WidgetSpec)> {
+    pub fn buffer_and_spec(
+        &self,
+        panel_key: &PanelKey,
+    ) -> Option<(BufferId, std::rc::Rc<WidgetSpec>)> {
         let s = self.panels.get(panel_key)?;
         Some((s.buffer_id?, s.spec.clone()))
     }

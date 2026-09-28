@@ -639,15 +639,10 @@ impl SettingsState {
         match k {
             T::Prev => self.select_prev(),
             T::Next => self.select_next(),
-            // Page up and down in the tree scroll by viewport height.
-            T::PageUp => {
-                let viewport = self.tree_page_rows.max(1) as i32;
-                self.tree_step(-viewport);
-            }
-            T::PageDown => {
-                let viewport = self.tree_page_rows.max(1) as i32;
-                self.tree_step(viewport);
-            }
+            // A page is the window the tree's list was laid out with. No
+            // layout (the narrow layout's strip), no page.
+            T::PageUp => self.tree_page(-1),
+            T::PageDown => self.tree_page(1),
             T::First => {
                 let rows = self.visible_tree();
                 let cur = self.tree_cursor_index(&rows) as i32;

@@ -18,39 +18,24 @@
 //!
 //! # What the window is, and whose
 //!
-//! The rows sit in a `fresh_ui::viewport`, declared to the library the way
-//! every other scrolling surface's is: the tree's row count, a **controlled**
-//! offset ([`Node::scroll`](fresh_ui::Node::scroll) plus
-//! [`on_scroll`](fresh_ui::Node::on_scroll)), and the sticky ancestors as
-//! **pinned** rows ([`Node::pinned`](fresh_ui::Node::pinned)). The bar, its
-//! gutter, its thumb, its hit-testing and the wheel are the library's for it
-//! — this module used to hand-build the bar as a parallel column of coloured
-//! cells beside the rows, two structures kept in step by hand.
+//! The rows are a [`fresh_ui::Tree::windowed`] over the model's projection
+//! of the tree, and the window is the list's, as every other list's is:
 //!
-//! Three things stay the model's, and the three are why this panel was the
-//! last surface to declare its window:
-//!
-//! - **The offset.** `FileTreeView` owns it; keys, search, reveal and the
-//!   `follow_active_buffer` setting all write it, and it survives rebuilds.
-//!   So the window is *controlled*: the description states the model's
-//!   offset every frame, and a wheel or a bar drag is reported back as
-//!   [`UiFact::ExplorerScrollTo`], which the model clamps and stores. The
-//!   window is where the model says, one frame after the model is told.
-//! - **Which rows are pinned.** `FileTreeView::sticky_display_indices` —
-//!   the expanded ancestors of the first scrolled row — is a fact about the
-//!   tree, and a function of the offset. The model names them; the window
-//!   makes room and derives its ceiling from them. That ceiling is exactly
-//!   `FileTreeView::max_scroll_offset` for the offset the window is at: the
-//!   smallest offset whose run reaches the last row is past `total - rows`
-//!   by the rows the pins took.
-//! - **What a row says.** `describe_row` needs the tree, the decoration and
-//!   slot caches, the theme and the config, none of which a `'static` row
-//!   builder can borrow. So the model describes the rows *it* would window —
-//!   the same `viewport_display_indices()` as before, at the section height
-//!   the frame resolves before the description exists — and the builder the
-//!   viewport calls during layout answers an index out of that set. The
-//!   library still decides which indices it asks for; the app decides what
-//!   each one looks like, which is the split the row builder is for.
+//! - **The offset.** The list owns it. The wheel and the bar move it, and a
+//!   selection that moves — a key, a search, the `follow_active_buffer`
+//!   setting — asks it to show the selected row. It reports where it went
+//!   as [`UiFact::ExplorerScrollTo`], which the model only records: a list
+//!   mounted again (after a background expand hands the tree out, or on a
+//!   window switch) starts there, and the workspace saves it.
+//! - **Which rows are pinned.** The expanded ancestors of the run's first
+//!   row, asked at layout, where the offset is known — from the parent of
+//!   each row, which the model's projection carries. The ceiling is
+//!   layout's too: the first offset whose run, under its own pins, reaches
+//!   the last row.
+//! - **What a row says.** `describe_row` works from the projection's copy of
+//!   the node and handles to the caches, so the window describes the rows it
+//!   holds, when it holds them. No window height is known before layout, and
+//!   none is needed.
 //!
 //! # What it does not measure
 //!
@@ -72,8 +57,8 @@
 use std::rc::Rc;
 
 use fresh_ui::{
-    col, gesture, layout_reader, row, stack, text, text_runs, viewport, Event, GestureKind, Key,
-    Node, PointerMode, Run, Sizing,
+    col, gesture, row, stack, text, text_runs, ComponentExt, Event, GestureKind, Key, Node,
+    PointerMode, Run, Sizing,
 };
 
 use crate::app::shell_host::shell_theme::{attrs, pair};
@@ -88,10 +73,10 @@ pub type Runs = Vec<(String, String)>;
 /// One visible row of the tree.
 ///
 /// `index` is the row's index in the tree's flattened display order — what
-/// `FileTreeView::get_display_nodes` is indexed by and what the window counts
-/// in — so a row's key, its hit answer, the window's offset and the model's
-/// lookup are all the same number. A pinned ancestor keeps its own index
-/// wherever the window draws it.
+/// the model's projection is indexed by and what the window counts in — so
+/// a row's hit answer, the window's offset and the model's lookup are the
+/// same number. A pinned ancestor keeps its own index wherever the window
+/// draws it. Its key is the path it shows ([`row_key`]).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Row {
     pub index: usize,
@@ -119,60 +104,117 @@ pub struct Slot {
 }
 
 /// What fills the panel.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub enum Body {
     /// The tree is still being built (initial async build, or expand-to-path).
     /// The panel's chrome is already final — that is the point of this state,
     /// so a slow remote build never paints the window in two stages.
     Loading(String),
-    Rows(Vec<Row>),
+    Tree(Tree),
 }
 
 impl Default for Body {
     fn default() -> Body {
-        // Not an empty row list: a panel with no tree yet is *loading*, and the
+        // Not an empty tree: a panel with no tree yet is *loading*, and the
         // two look different on purpose.
         Body::Loading(String::new())
     }
 }
 
-/// Where the tree's window sits: what the description declares to the
-/// viewport, in tree rows. All three are the model's (see the module docs:
-/// *what the window is, and whose*).
+/// The tree as the window reads it: how many rows there are, and per index
+/// a key, a row and the row's parent — answered when layout asks, for the
+/// rows the window holds and no others.
 ///
-/// Whether there is a bar is no longer stated here — the viewport draws one
-/// when `total` overflows the rows it has, which is the same rule stated
-/// once, by the thing that knows how many rows it has.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Scroll {
-    /// The first row of the scrolled run — the model's offset, already
-    /// clamped to its own ceiling.
-    pub offset: usize,
-    /// Rows in the whole tree.
-    pub total: usize,
-    /// The ancestors pinned above the run, in the order they are drawn.
-    ///
-    /// **This is why the ceiling is not `total - rows`.** The pinned rows
-    /// eat part of the window, so the last offset is larger than the naive
-    /// ceiling by however many there are — which the viewport derives from
-    /// this list, and which `FileTreeView::max_scroll_offset` computes for
-    /// the model. A bar that assumed the naive ceiling parked its thumb at
-    /// the bottom of the track while the list was still moving.
-    pub pinned: Vec<usize>,
+/// **The window is the list's.** Which rows are on screen, how far down it
+/// is, which ancestors are pinned above the run and where its ceiling is
+/// are layout's answers: the list windows `count` rows, pins the expanded
+/// ancestors of the run's first row (from `parent`), and reports where it
+/// went through [`UiFact::ExplorerScrollTo`]. The model keeps that report
+/// only to put a list mounted again back where it was (`start`).
+#[derive(Clone)]
+pub struct Tree {
+    pub count: usize,
+    pub key: Rc<dyn Fn(usize) -> Key>,
+    /// What row `i` says. Asked at layout, by the window.
+    pub row: Rc<dyn Fn(usize) -> Row>,
+    /// Row `i`'s parent, by row index — what the sticky ancestors are.
+    pub parent: Rc<dyn Fn(usize) -> Option<usize>>,
+    /// Depth, children and expansion of row `i`, as the tree widget asks.
+    pub node: Rc<dyn Fn(usize) -> fresh_ui::widgets::TreeRow>,
+    /// The row the keyboard is on.
+    pub selected: Option<usize>,
+    /// The window follows the selected row whenever this changes, until the
+    /// wheel takes it elsewhere. The model moves it whenever it acts on the
+    /// selection; a selection moved without it is not brought into view.
+    pub reveal: u64,
+    /// The `reveal` the window at `start` already answers — so a list
+    /// mounted again does not pull the window back to a selection the
+    /// reader wheeled away from.
+    pub answered: u64,
+    /// Whether the panel owns the keyboard, and so draws the caret.
+    pub caret: bool,
+    /// Where the window starts when the list mounts.
+    pub start: usize,
+    /// Which window's explorer this is: each window's tree is its own list,
+    /// with its own window.
+    pub owner: u64,
+    /// Where the owner's page keys ask how far a page is.
+    pub pager: Option<Rc<fresh_ui::behavior::Pager>>,
 }
 
+impl std::fmt::Debug for Tree {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Tree")
+            .field("count", &self.count)
+            .field("selected", &self.selected)
+            .field("caret", &self.caret)
+            .field("start", &self.start)
+            .field("owner", &self.owner)
+            .finish_non_exhaustive()
+    }
+}
+
+#[cfg(test)]
+impl Tree {
+    /// A tree over `rows` for a test, each keyed by its name (the second of
+    /// its left runs), with `parent` for the pins and the window starting at
+    /// `start`.
+    pub(crate) fn fixture(
+        rows: Vec<Row>,
+        parent: impl Fn(usize) -> Option<usize> + 'static,
+        start: usize,
+    ) -> Tree {
+        let rows = Rc::new(rows);
+        let (keys, described) = (rows.clone(), rows.clone());
+        Tree {
+            count: rows.len(),
+            key: Rc::new(move |i| row_key(std::path::Path::new(&keys[i].left[1].0))),
+            row: Rc::new(move |i| described[i].clone()),
+            parent: Rc::new(parent),
+            node: Rc::new(|_| fresh_ui::widgets::TreeRow {
+                depth: 0,
+                has_children: false,
+                open: false,
+            }),
+            selected: None,
+            reveal: 0,
+            answered: 0,
+            caret: false,
+            start,
+            owner: 1,
+            pager: None,
+        }
+    }
+}
+
+/// Match VS Code's default upper bound for explorer sticky-scroll rows. The
+/// window always leaves at least one row for the run under them.
+pub const MAX_STICKY_ANCESTORS: usize = 7;
+
 /// The explorer's content: what the sidebar's first section holds.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default)]
 pub struct Explorer {
     pub body: Body,
-    /// The row the caret sits on, by [`Row::index`], when the panel owns the
-    /// keyboard.
-    pub caret_row: Option<usize>,
-    /// Where the window is. `None` is a window over the rows in `body`
-    /// alone, from the top — what a fixture built from a handful of rows
-    /// means, and what the viewport makes of a tree that fits: no bar (issue
-    /// #2859).
-    pub scroll: Option<Scroll>,
 }
 
 impl Explorer {
@@ -182,13 +224,86 @@ impl Explorer {
     }
 }
 
-/// The keys the readers below look elements up by.
-pub fn row_key(index: usize) -> Key {
-    Key::Pair("explorer_row".into(), index as u64)
+/// A row's key: the path it shows. A row is the same row wherever an
+/// expansion above it moves it.
+pub fn row_key(path: &std::path::Path) -> Key {
+    Key::Str(format!("explorer_row{}", path_text(path)).into())
 }
 
-pub fn slot_key(index: usize) -> Key {
-    Key::Pair("explorer_slot".into(), index as u64)
+/// The key of a row's trailing status slot.
+pub fn slot_key(path: &std::path::Path) -> Key {
+    Key::Str(format!("explorer_slot{}", path_text(path)).into())
+}
+
+/// A path as key text, **losslessly**: `:` and the path when it is UTF-8,
+/// else `~` and its raw bytes in hex. `display()` would fold every name that
+/// is not UTF-8 onto its replacement characters, so two such files could
+/// share a key, and neither could be found again by it.
+fn path_text(path: &std::path::Path) -> String {
+    match path.to_str() {
+        Some(s) => format!(":{s}"),
+        None => {
+            let hex: String = os_bytes(path.as_os_str())
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect();
+            format!("~{hex}")
+        }
+    }
+}
+
+/// The path a row key's text names — [`path_text`] read back.
+fn text_path(text: &str) -> Option<std::path::PathBuf> {
+    if let Some(s) = text.strip_prefix(':') {
+        return Some(std::path::PathBuf::from(s));
+    }
+    let hex = text.strip_prefix('~')?;
+    let bytes = (0..hex.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(hex.get(i..i + 2)?, 16).ok())
+        .collect::<Option<Vec<u8>>>()?;
+    Some(std::path::PathBuf::from(os_string(bytes)))
+}
+
+#[cfg(unix)]
+fn os_bytes(s: &std::ffi::OsStr) -> Vec<u8> {
+    std::os::unix::ffi::OsStrExt::as_bytes(s).to_vec()
+}
+
+#[cfg(unix)]
+fn os_string(b: Vec<u8>) -> std::ffi::OsString {
+    std::os::unix::ffi::OsStringExt::from_vec(b)
+}
+
+#[cfg(windows)]
+fn os_bytes(s: &std::ffi::OsStr) -> Vec<u8> {
+    std::os::windows::ffi::OsStrExt::encode_wide(s)
+        .flat_map(u16::to_le_bytes)
+        .collect()
+}
+
+#[cfg(windows)]
+fn os_string(b: Vec<u8>) -> std::ffi::OsString {
+    let wide: Vec<u16> = b
+        .chunks_exact(2)
+        .map(|c| u16::from_le_bytes([c[0], c[1]]))
+        .collect();
+    std::os::windows::ffi::OsStringExt::from_wide(&wide)
+}
+
+#[cfg(not(any(unix, windows)))]
+fn os_bytes(s: &std::ffi::OsStr) -> Vec<u8> {
+    s.to_string_lossy().into_owned().into_bytes()
+}
+
+#[cfg(not(any(unix, windows)))]
+fn os_string(b: Vec<u8>) -> std::ffi::OsString {
+    String::from_utf8_lossy(&b).into_owned().into()
+}
+
+/// The list's own key, per window: see [`Tree::owner`].
+pub fn list_key(owner: u64) -> Key {
+    Key::Pair("explorer_list".into(), owner)
 }
 
 fn hover_msg(t: Option<HoverTarget>) -> fresh_ui::Handler<UiMsg> {
@@ -201,18 +316,10 @@ fn runs_of(runs: &Runs) -> Vec<Run> {
         .collect()
 }
 
-/// The rows as a description: one per visible tree node, or the loading
+/// The rows as a description: a window onto the tree, or the loading
 /// placeholder while the tree is still being built.
-///
-/// **Memoised on the explorer's state.** The tree is rebuilt every frame
-/// and changes only when the listing, the cursor or a hover does.
-/// `Explorer` is `PartialEq` and is the whole of what this reads.
 pub fn rows(e: &Explorer) -> Node<UiMsg> {
-    fresh_ui::memo(e.clone(), build_rows)
-}
-
-fn build_rows(e: &Explorer) -> Node<UiMsg> {
-    let rows = match &e.body {
+    let t = match &e.body {
         Body::Loading(text_) => {
             return col().child(
                 text(text_.clone())
@@ -220,45 +327,59 @@ fn build_rows(e: &Explorer) -> Node<UiMsg> {
                     .h(Sizing::Cells(1)),
             )
         }
-        Body::Rows(rows) => rows,
+        Body::Tree(t) => t.clone(),
     };
-    // The window as the model declares it, or — for a body that came with
-    // no window state — the rows themselves, from the top.
-    let (offset, total, pinned): (u32, u32, Vec<u32>) = match &e.scroll {
-        Some(s) => (
-            narrow(s.offset),
-            narrow(s.total),
-            s.pinned.iter().map(|&i| narrow(i)).collect(),
-        ),
-        None => (0, narrow(rows.len()), Vec::new()),
-    };
-    // **The rows the model windowed, by index.** The builder below runs
-    // during layout, for whichever indices the viewport asks for: the pins it
-    // was given and the run under them. Those are exactly the indices the
-    // model described (module docs: *what the window is, and whose*), so the
-    // answer is a lookup; an index outside the set — a frame where the
-    // section's height and the model's disagree — draws an empty row rather
-    // than nothing at all, so the grid the offset addresses holds.
-    let by_index: Rc<std::collections::HashMap<usize, Row>> =
-        Rc::new(rows.iter().map(|r| (r.index, r.clone())).collect());
-    let caret_row = e.caret_row;
-    let pins = pinned.clone();
-    let reader = layout_reader(move |info| {
-        let win = info.scroll_window.unwrap_or_default();
-        let first = win.y.max(0) as u32;
-        let indices = pins[..(info.pinned as usize).min(pins.len())]
-            .iter()
-            .copied()
-            .chain(first..first.saturating_add(u32::from(win.h)).min(total));
-        // Clip hit targets as well as ink to the content lane. A long row's
-        // status slot can otherwise answer hover beneath the scrollbar.
-        col()
-            .clip(true)
-            .children(indices.map(|i| match by_index.get(&(i as usize)) {
-                Some(r) => node_row(caret_row, r),
-                None => row().h(Sizing::Cells(1)),
-            }))
-    });
+    let (describe, caret, selected) = (t.row.clone(), t.caret, t.selected);
+    let parent = t.parent.clone();
+    let node = t.node.clone();
+    let mut list = fresh_ui::Tree::windowed(
+        t.count,
+        {
+            let key = t.key.clone();
+            move |i| key(i)
+        },
+        move |i| node(i),
+        move |i, _, _| {
+            // Clip hit targets as well as ink to the row's lane. A long
+            // row's status slot can otherwise answer hover beneath the
+            // scrollbar. A column, so the row is as wide as the lane and its
+            // gap pushes the status slot to the edge.
+            col()
+                .clip(true)
+                .child(node_row(caret && selected == Some(i), &describe(i)))
+        },
+    )
+    .sticky(MAX_STICKY_ANCESTORS, move |i| parent(i))
+    .list()
+    .selection(t.selected)
+    // Only the model's requests bring the selection into view: a
+    // right-click picks the row its menu is about without scrolling it.
+    .follow_on(t.reveal)
+    .follow_answered(t.answered)
+    // The keys are the editor's keymap's; the rows answer the mouse.
+    .focusable(false)
+    // Each row paints its own ground; what the list would stamp is the
+    // panel's.
+    .row_theme(|_, _| Explorer::panel())
+    .start_at(t.start)
+    .on_scroll(|offset| UiMsg::Ui(UiFact::ExplorerScrollTo(offset)))
+    // The bar takes a column of its own rather than floating over the
+    // rows: a row's trailing status slot is pushed flush to the right
+    // edge by layout, so an overlay bar would sit exactly on top of
+    // the git markers. One column narrower is what a gutter costs,
+    // and the rows are measured at the narrower width by the same
+    // layout that answers a press — nothing re-derives a column.
+    //
+    // **A bar is two background colours, not two glyphs** — the fold
+    // paints the thumb in the pair's foreground and the track in its
+    // background, both as the cell's ground, because box-drawing
+    // glyphs leave gaps between rows in some terminals and every test
+    // that finds a scrollbar on screen finds it by that background.
+    .scrollbar()
+    .scrollbar_theme(pair("ui.scrollbar_thumb_fg", "ui.scrollbar_track_fg"));
+    if let Some(p) = &t.pager {
+        list = list.pager(p.clone());
+    }
     // A gesture around the window rather than a listener on each row: the
     // wheel is the window's, wherever over it the pointer is — the rows, the
     // empty space under the last one, the bar. It does not `stop()`: the
@@ -267,28 +388,7 @@ fn build_rows(e: &Explorer) -> Node<UiMsg> {
     // listener carries is the part the library cannot know about — the
     // plugin `mouse_scroll` hook wants the pointer, and a wheel over the
     // panel dismisses a transient popup — as it did when the rows claimed it.
-    gesture(
-        viewport(reader)
-            .items(total)
-            .scroll(offset)
-            .pinned(&pinned)
-            .on_scroll(|offset| UiMsg::Ui(UiFact::ExplorerScrollTo(offset as usize)))
-            // The bar takes a column of its own rather than floating over the
-            // rows: a row's trailing status slot is pushed flush to the right
-            // edge by layout, so an overlay bar would sit exactly on top of
-            // the git markers. One column narrower is what a gutter costs,
-            // and the rows are measured at the narrower width by the same
-            // layout that answers a press — nothing re-derives a column.
-            //
-            // **A bar is two background colours, not two glyphs** — the fold
-            // paints the thumb in the pair's foreground and the track in its
-            // background, both as the cell's ground, because box-drawing
-            // glyphs leave gaps between rows in some terminals and every test
-            // that finds a scrollbar on screen finds it by that background.
-            .scrollbar()
-            .scrollbar_theme(pair("ui.scrollbar_thumb_fg", "ui.scrollbar_track_fg")),
-    )
-    .on(
+    gesture(list.node().key(list_key(t.owner))).on(
         GestureKind::Wheel,
         Rc::new(move |e: &Event| {
             Some(UiMsg::Ui(UiFact::ExplorerWheel {
@@ -298,10 +398,6 @@ fn build_rows(e: &Explorer) -> Node<UiMsg> {
             }))
         }),
     )
-}
-
-fn narrow(n: usize) -> u32 {
-    u32::try_from(n).unwrap_or(u32::MAX)
 }
 
 /// **The union box.** A right-press anywhere on the panel opens the menu,
@@ -360,7 +456,7 @@ fn caret_ink(row: &str) -> String {
     }
 }
 
-fn node_row(caret_row: Option<usize>, r: &Row) -> Node<UiMsg> {
+fn node_row(caret: bool, r: &Row) -> Node<UiMsg> {
     let mut children: Vec<Node<UiMsg>> = vec![
         text_runs(runs_of(&r.left)),
         // **The padding rule, as layout.** The old walk computed
@@ -377,7 +473,7 @@ fn node_row(caret_row: Option<usize>, r: &Row) -> Node<UiMsg> {
             gesture(text(slot.text.clone()).theme(slot.theme.clone()))
                 // Keyed so a caller can ask layout where the slot ended up
                 // rather than re-deriving the column.
-                .key(slot_key(r.index))
+                .key(slot_key(&slot.path))
                 // The slot answers its own hover, so the tooltip opens on the
                 // cells that actually carry the status — no bounds function in
                 // between. It does not claim: a press here still selects the
@@ -392,7 +488,6 @@ fn node_row(caret_row: Option<usize>, r: &Row) -> Node<UiMsg> {
         children.push(text(t.clone()).theme(theme.clone()));
     }
     let index = r.index;
-    let caret = caret_row == Some(index);
     let body = row()
         .theme(r.theme.clone())
         .h(Sizing::Cells(1))
@@ -418,8 +513,8 @@ fn node_row(caret_row: Option<usize>, r: &Row) -> Node<UiMsg> {
     } else {
         body
     };
+    // The row's key is on the list's node around this one: see `rows`.
     gesture(body)
-        .key(row_key(index))
         // Left only, and it stops: the press selects and opens, which is what
         // the chrome component reported `Consumed` for. A right press is the
         // context menu's, and a modifier-less right press must still reach the
@@ -544,15 +639,83 @@ pub fn neutral_key(is_hidden: bool, is_symlink: bool, is_dir: bool) -> &'static 
 /// two places. It lives in the flex spacer now.
 pub fn slot_rect(
     ui: &fresh_ui::Ui<UiMsg>,
-    index: usize,
+    path: &std::path::Path,
     size: ratatui::layout::Rect,
 ) -> Option<ratatui::layout::Rect> {
-    rect_of(ui, &slot_key(index), size)
+    rect_of(ui, &slot_key(path), size)
+}
+
+/// The rows the explorer's window holds, as layout placed them: the first
+/// row of the run, and every row on screen top to bottom — the pinned
+/// ancestors, then the run — by path. `None` when the tree is not laid out.
+///
+/// **The window is the list's**, so this is where it is read: the run is
+/// the viewport's published window, and the pins are the rows the list
+/// drew above it, as many as the box has rows the run does not use.
+pub fn window_rows(
+    ui: &fresh_ui::Ui<UiMsg>,
+    owner: u64,
+) -> Option<(usize, usize, Vec<std::path::PathBuf>)> {
+    let list = ui.find_by_key(&list_key(owner))?;
+    let run = ui.window(list)?;
+    let pinned = (ui.rect_of(list).h as usize).saturating_sub(run.h as usize);
+    let spec = ui.spec();
+    let within = spec
+        .index
+        .iter()
+        .find(|(k, _)| *k == list_key(owner))?
+        .1
+        .clone();
+    let rows: Vec<std::path::PathBuf> = spec
+        .index
+        .iter()
+        .filter(|(_, r)| r.start >= within.start && r.end <= within.end)
+        .filter_map(|(k, _)| match k {
+            Key::Str(s) => s.strip_prefix("explorer_row").and_then(text_path),
+            _ => None,
+        })
+        .collect();
+    let first = run.y.max(0) as usize;
+    let height = ui.rect_of(list).h as usize;
+    // The pins come first in the column; then the run, of which only the
+    // window's rows are on screen (the rest is overscan).
+    let shown = rows.into_iter().take(pinned + run.h as usize).collect();
+    Some((first, height, shown))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A row key names its path exactly, and gives it back — for names that
+    /// are not UTF-8 too, which `display()` folded together.
+    #[test]
+    fn a_row_key_names_its_path_losslessly() {
+        let plain = std::path::Path::new("/p/src/main.rs");
+        assert_eq!(
+            row_key(plain),
+            Key::Str("explorer_row:/p/src/main.rs".into())
+        );
+        let Key::Str(k) = row_key(plain) else {
+            unreachable!()
+        };
+        assert_eq!(
+            k.strip_prefix("explorer_row")
+                .and_then(text_path)
+                .as_deref(),
+            Some(plain)
+        );
+        #[cfg(unix)]
+        {
+            let odd = |b: &[u8]| std::path::PathBuf::from(os_string(b.to_vec()));
+            let (a, b) = (odd(b"/p/\xff"), odd(b"/p/\xfe"));
+            assert_ne!(row_key(&a), row_key(&b), "two such names, two keys");
+            let Key::Str(k) = row_key(&a) else {
+                unreachable!()
+            };
+            assert_eq!(k.strip_prefix("explorer_row").and_then(text_path), Some(a));
+        }
+    }
     use crate::view::shell::fold::{fold_native, Band};
     use crate::view::shell::frame::{frame_tree, Frame};
     use crate::view::shell::sidebar::{close_key, grip_key, SectionKind, Sidebar};
@@ -577,19 +740,33 @@ mod tests {
         }
     }
 
+    fn tree_of(
+        rows: Vec<Row>,
+        parent: impl Fn(usize) -> Option<usize> + 'static,
+        start: usize,
+    ) -> Tree {
+        Tree::fixture(rows, parent, start)
+    }
+
     /// The explorer alone in its column, in the shape the frame builds.
-    fn panel_of(rows: Vec<Row>, cols: u16) -> Sidebar {
+    fn panel_with(tree: Tree, cols: u16) -> Sidebar {
         let mut s = Sidebar::explorer_only(
             cols,
             true,
             Explorer {
-                body: Body::Rows(rows),
-                caret_row: None,
-                scroll: None,
+                body: Body::Tree(tree),
             },
         );
         s.sections[0].title = " Files ".to_string();
         s
+    }
+
+    fn panel_of(rows: Vec<Row>, cols: u16) -> Sidebar {
+        panel_with(tree_of(rows, |_| None, 0), cols)
+    }
+
+    fn key_of(name: &str) -> Key {
+        row_key(std::path::Path::new(name))
     }
 
     /// **A right-press below the last row still opens the menu.**
@@ -627,7 +804,7 @@ mod tests {
     fn a_right_press_on_a_row_still_reports_that_row() {
         let e = panel_of(vec![row_of(0, "a.rs", None), row_of(1, "b.rs", None)], 30);
         let mut ui = laid_out(e, 30, 8);
-        let r = ui.rect_of(ui.find_by_key(&row_key(1)).expect("row 1"));
+        let r = ui.rect_of(ui.find_by_key(&key_of("b.rs")).expect("row 1"));
         let got = ui.dispatch(Input::press(
             Point::new(r.x + 1, r.y),
             MouseButton::Right,
@@ -669,49 +846,27 @@ mod tests {
         ui
     }
 
-    /// A panel whose tree is taller than its body, scrolled to `offset`.
-    fn scrolled_panel(total: usize, rows_shown: usize, offset: usize, cols: u16) -> Sidebar {
-        scrolled_panel_with_max(total, rows_shown, offset, total - rows_shown, cols)
+    /// A tree of `total` rows `f0`, `f1`, …, its window starting at
+    /// `offset`.
+    fn scrolled_panel(total: usize, offset: usize, cols: u16) -> Sidebar {
+        pinned_panel(total, 0, offset, cols)
     }
 
-    /// The same, for a tree whose pinned ancestors push the model's last
-    /// offset past `total - rows`.
-    ///
-    /// The model states the last offset by naming the ancestors it pins:
-    /// `max_offset - (total - rows_shown)` of them, the first rows of the
-    /// tree, which is what pins a scrolled tree's expanded ancestors are. The
-    /// rows described are the ones the model would have windowed — the pins,
-    /// then the run under them.
-    fn scrolled_panel_with_max(
-        total: usize,
-        rows_shown: usize,
-        offset: usize,
-        max_offset: usize,
-        cols: u16,
-    ) -> Sidebar {
-        let pinned: Vec<usize> = (0..max_offset - (total - rows_shown)).collect();
-        let run = rows_shown - pinned.len();
-        let rows: Vec<Row> = pinned
-            .iter()
-            .copied()
-            .chain(offset..(offset + run).min(total))
+    /// The same, for a tree whose first `pins` rows are a chain of expanded
+    /// ancestors of every row below them — so a window scrolled past them
+    /// pins all of them, and its last offset is past `total - rows` by as
+    /// many.
+    fn pinned_panel(total: usize, pins: usize, offset: usize, cols: u16) -> Sidebar {
+        let rows: Vec<Row> = (0..total)
             .map(|i| row_of(i, &format!("f{i}"), None))
             .collect();
-        let mut s = Sidebar::explorer_only(
-            cols,
-            true,
-            Explorer {
-                body: Body::Rows(rows),
-                caret_row: None,
-                scroll: Some(Scroll {
-                    offset,
-                    total,
-                    pinned,
-                }),
-            },
-        );
-        s.sections[0].title = " Files ".to_string();
-        s
+        let parent = move |i: usize| match i {
+            0 => None,
+            i if i < pins => Some(i - 1),
+            _ if pins > 0 => Some(pins - 1),
+            _ => None,
+        };
+        panel_with(tree_of(rows, parent, offset), cols)
     }
 
     /// The background of every cell in the panel's last inner column — the
@@ -747,7 +902,7 @@ mod tests {
         assert_ne!(thumb, track, "the two bar colours must differ");
 
         // 8 rows of body (10 tall, less title and bottom border) onto 40.
-        let got = bar_column(scrolled_panel(40, 8, 0, 20), 20, 10);
+        let got = bar_column(scrolled_panel(40, 0, 20), 20, 10);
         assert_eq!(got.len(), 8);
         assert!(
             got.contains(&thumb) && got.contains(&track),
@@ -757,7 +912,7 @@ mod tests {
         assert_eq!(first_thumb, Some(0), "unscrolled, the thumb is at the top");
 
         // Scrolled to the end, the thumb sits flush against the bottom.
-        let got = bar_column(scrolled_panel(40, 8, 32, 20), 20, 10);
+        let got = bar_column(scrolled_panel(40, 32, 20), 20, 10);
         assert_eq!(
             got.last().copied(),
             Some(thumb),
@@ -766,31 +921,27 @@ mod tests {
     }
 
     /// Issue #2859, follow-up: the thumb reaches the end of the track exactly
-    /// when the *model* is at its last offset — which pinned sticky ancestors
-    /// push past `total - rows`. Assuming the naive ceiling parked the thumb
-    /// at the bottom while the wheel could still move the list.
+    /// at the window's last offset — which pinned sticky ancestors push past
+    /// `total - rows`. Assuming the naive ceiling parked the thumb at the
+    /// bottom while the wheel could still move the list.
     #[test]
-    fn the_thumb_reaches_the_end_only_at_the_models_last_offset() {
+    fn the_thumb_reaches_the_end_only_at_the_last_offset() {
         let (thumb, _track) = bar_colours();
-        // 8 body rows onto 40, with two ancestors pinned: the model scrolls to
-        // 34, not to 32.
+        // 8 body rows onto 40, with two ancestors pinned: the window scrolls
+        // to 34, not to 32.
         let max_offset = 34;
-        let at_naive_end = bar_column(scrolled_panel_with_max(40, 8, 32, max_offset, 20), 20, 10);
+        let at_naive_end = bar_column(pinned_panel(40, 2, 32, 20), 20, 10);
         assert_ne!(
             at_naive_end.last().copied(),
             Some(thumb),
             "at offset 32 the tree still has rows below, so the thumb is not at the end: {at_naive_end:?}"
         );
 
-        let at_real_end = bar_column(
-            scrolled_panel_with_max(40, 8, max_offset, max_offset, 20),
-            20,
-            10,
-        );
+        let at_real_end = bar_column(pinned_panel(40, 2, max_offset, 20), 20, 10);
         assert_eq!(
             at_real_end.last().copied(),
             Some(thumb),
-            "at the model's last offset the thumb is flush with the track's end: {at_real_end:?}"
+            "at the last offset the thumb is flush with the track's end: {at_real_end:?}"
         );
     }
 
@@ -798,11 +949,10 @@ mod tests {
     /// by a row; it reaches the viewport, which moves its window and reports
     /// where it went, and the panel's own reaction rides along unclaimed —
     /// two facts, in that order: the hook's, then the window's. The window
-    /// is controlled, so the report is the *proposal* the model clamps and
-    /// stores; the description that follows says where the window is.
+    /// is the list's; the report is what the model records.
     #[test]
     fn a_wheel_over_the_rows_reports_the_window_the_library_moved_to() {
-        let mut ui = laid_out(scrolled_panel(40, 8, 3, 20), 20, 10);
+        let mut ui = laid_out(scrolled_panel(40, 3, 20), 20, 10);
         let got = ui.dispatch(Input::Wheel {
             pos: Point::new(4, 3),
             delta: 2,
@@ -833,7 +983,7 @@ mod tests {
 
         // And over the empty space under the last row, which no row ever
         // answered for: the window is the whole body.
-        let mut ui = laid_out(scrolled_panel(40, 8, 3, 20), 20, 12);
+        let mut ui = laid_out(scrolled_panel(40, 3, 20), 20, 12);
         let got = ui.dispatch(Input::Wheel {
             pos: Point::new(4, 10),
             delta: 1,
@@ -853,7 +1003,7 @@ mod tests {
     /// the offset, and nothing else on the panel answers the press.
     #[test]
     fn a_press_on_the_bar_reports_the_jump() {
-        let mut ui = laid_out(scrolled_panel(40, 8, 0, 20), 20, 10);
+        let mut ui = laid_out(scrolled_panel(40, 0, 20), 20, 10);
         // The bar's lane is the column before the right wall; the last body
         // row is the track's end.
         let got = ui.dispatch(Input::press(
@@ -873,14 +1023,15 @@ mod tests {
     }
 
     /// **Pinned ancestors are drawn at the top, and answer as themselves.**
-    /// The rows the viewport asks the builder for are the pins and then the
-    /// run, so window row 1 is the second pinned ancestor rather than
-    /// `offset + 1` — and a press there names that ancestor's own index,
-    /// because the row's handler carries it and no arithmetic sits between.
+    /// The window asks for the expanded ancestors of the run's first row, at
+    /// layout, and draws them above the run — so window row 1 is the second
+    /// pinned ancestor rather than `offset + 1`, and a press there names that
+    /// ancestor's own index, because the row's handler carries it and no
+    /// arithmetic sits between.
     #[test]
     fn pinned_ancestors_sit_above_the_run_and_a_press_names_them() {
         // 8 body rows onto 40, two ancestors (0, 1) pinned, the run from 32.
-        let ui = laid_out(scrolled_panel_with_max(40, 8, 32, 34, 20), 20, 10);
+        let ui = laid_out(pinned_panel(40, 2, 32, 20), 20, 10);
         let names: Vec<String> = lines_of(&ui, 20, 10)[1..9]
             .iter()
             .map(|l| l.trim_matches(|c| c == '│' || c == ' ').to_string())
@@ -918,6 +1069,157 @@ mod tests {
             "and the row under the pins is the first of the run: {:?}",
             got.msgs
         );
+    }
+
+    /// **A selection far down is shown under its ancestors.** The window
+    /// follows a selection that moved, and the run it reveals it in is the
+    /// run under the pins of the offset it lands on — so the selected row is
+    /// on screen however many ancestors that offset pins. The model states
+    /// only the selection, and that it wants it shown. And [`window_rows`] reads back what layout put
+    /// on screen: the pins, then the run.
+    #[test]
+    fn a_selection_far_down_is_shown_under_its_pinned_ancestors() {
+        let mut tree = match pinned_panel(40, 2, 0, 20).sections[0].kind.clone() {
+            SectionKind::Explorer(Explorer {
+                body: Body::Tree(t),
+            }) => t,
+            _ => unreachable!("the fixture is an explorer"),
+        };
+        let mut ui = laid_out(panel_with(tree.clone(), 20), 20, 10);
+        let (first, height, shown) = window_rows(&ui, 1).expect("laid out");
+        assert_eq!(first, 0);
+        assert_eq!(height, 8, "the body's height");
+        assert_eq!(shown.len(), 8, "a body of eight rows: {shown:?}");
+
+        // A keyboard move: the model asks for the selection to be shown.
+        tree.selected = Some(39);
+        tree.reveal += 1;
+        ui.frame(
+            frame_tree(Frame {
+                menu_bar: false,
+                status_bar: false,
+                sidebar: Some(panel_with(tree, 20)),
+                ..Frame::default()
+            }),
+            Size::new(20, 10),
+        );
+        let (first, height, shown) = window_rows(&ui, 1).expect("laid out");
+        assert_eq!(height, 8, "the body's height, pins and all");
+        let names: Vec<String> = shown.iter().map(|p| p.display().to_string()).collect();
+        assert_eq!(first, 34, "the last offset, past `40 - 8` by the two pins");
+        assert_eq!(
+            names,
+            ["f0", "f1", "f34", "f35", "f36", "f37", "f38", "f39"],
+            "the pins, then a run that ends on the selection"
+        );
+    }
+
+    /// The explorer's tree out of a fixture panel.
+    fn tree_in(panel: Sidebar) -> Tree {
+        match panel.sections[0].kind.clone() {
+            SectionKind::Explorer(Explorer {
+                body: Body::Tree(t),
+            }) => t,
+            _ => unreachable!("the fixture is an explorer"),
+        }
+    }
+
+    /// Lay `tree` out again in `ui`, as the next frame does.
+    fn reframe(ui: &mut Ui<UiMsg>, tree: Tree) {
+        ui.frame(
+            frame_tree(Frame {
+                menu_bar: false,
+                status_bar: false,
+                sidebar: Some(panel_with(tree, 20)),
+                ..Frame::default()
+            }),
+            Size::new(20, 10),
+        );
+    }
+
+    /// **Mounted again, the explorer is where the reader left it** — a window
+    /// switch or a hidden sidebar builds the list anew. The model's saved
+    /// window answers every reveal it asked before it, so the list starts
+    /// there; a reveal asked since (a background expand-to-path) is shown.
+    #[test]
+    fn mounted_again_the_explorer_keeps_its_window_unless_asked_since() {
+        let mut tree = tree_in(pinned_panel(40, 0, 30, 20));
+        tree.selected = Some(0);
+        tree.reveal = 5;
+        tree.answered = 5;
+        let ui = laid_out(panel_with(tree.clone(), 20), 20, 10);
+        assert_eq!(window_rows(&ui, 1).expect("laid out").0, 30, "where it was");
+
+        tree.reveal = 6;
+        let ui = laid_out(panel_with(tree, 20), 20, 10);
+        assert_eq!(window_rows(&ui, 1).expect("laid out").0, 0, "the selection");
+    }
+
+    /// **A right-click on a pinned folder does not scroll.** It picks the row
+    /// the menu is about — the model moves the selection without asking for
+    /// it to be shown — so the rows under the menu stay where they were.
+    #[test]
+    fn a_selection_moved_without_a_reveal_leaves_the_window() {
+        let mut tree = tree_in(pinned_panel(40, 2, 32, 20));
+        tree.selected = Some(35);
+        tree.reveal = 1;
+        tree.answered = 1;
+        let mut ui = laid_out(panel_with(tree.clone(), 20), 20, 10);
+        assert_eq!(window_rows(&ui, 1).expect("laid out").0, 32);
+
+        tree.selected = Some(1);
+        reframe(&mut ui, tree.clone());
+        assert_eq!(
+            window_rows(&ui, 1).expect("laid out").0,
+            32,
+            "no reveal asked"
+        );
+
+        tree.reveal = 2;
+        reframe(&mut ui, tree);
+        assert_eq!(window_rows(&ui, 1).expect("laid out").0, 1, "asked: shown");
+    }
+
+    /// **Collapsing a pinned folder keeps it on screen.** Collapsed, the
+    /// tree is shorter than the window was scrolled; the folder stays
+    /// selected and the window shows it.
+    #[test]
+    fn a_collapsed_pinned_folder_stays_on_screen() {
+        let mut tree = tree_in(pinned_panel(40, 2, 32, 20));
+        tree.selected = Some(1);
+        tree.reveal = 1;
+        tree.answered = 1;
+        let mut ui = laid_out(panel_with(tree, 20), 20, 10);
+        // Collapsed: the folder at row 1 has no rows under it.
+        let mut folded = tree_in(pinned_panel(3, 2, 32, 20));
+        folded.selected = Some(1);
+        folded.reveal = 2;
+        folded.answered = 1;
+        reframe(&mut ui, folded);
+        let (_, _, shown) = window_rows(&ui, 1).expect("laid out");
+        assert!(
+            shown.iter().any(|p| p == std::path::Path::new("f1")),
+            "the folder is on screen: {shown:?}"
+        );
+    }
+
+    /// **A page is the run the window was given**, recorded at layout for
+    /// the owner's page keys to ask — not a height the model wrote down
+    /// while describing the frame.
+    #[test]
+    fn a_page_is_the_run_layout_gave_the_tree() {
+        let pager = fresh_ui::behavior::Pager::new();
+        let mut tree = match pinned_panel(40, 2, 32, 20).sections[0].kind.clone() {
+            SectionKind::Explorer(Explorer {
+                body: Body::Tree(t),
+            }) => t,
+            _ => unreachable!("the fixture is an explorer"),
+        };
+        tree.pager = Some(pager.clone());
+        assert_eq!(pager.target(0, 1, 40), None, "not laid out: no page");
+        let _ui = laid_out(panel_with(tree, 20), 20, 10);
+        // Eight body rows, two of them pins at offset 32: a run of six.
+        assert_eq!(pager.target(0, 1, 40), Some(6));
     }
 
     /// The painted lines of a laid-out panel — `lines`, for a tree the test
@@ -1010,31 +1312,27 @@ mod tests {
     fn the_slot_rect_comes_from_layout() {
         let ui = laid_out(panel_of(vec![row_of(0, "a-file", Some("M"))], 20), 20, 4);
         let size = Rect::new(0, 0, 20, 4);
-        let slot = slot_rect(&ui, 0, size).expect("the slot");
+        let slot = slot_rect(&ui, std::path::Path::new("a-file"), size).expect("the slot");
         assert_eq!((slot.x, slot.y, slot.width), (18, 1, 1));
         // A row without a slot reports none, rather than a zero-width sliver
         // that would hit-test.
         let ui = laid_out(panel_of(vec![row_of(0, "a-file", None)], 20), 20, 4);
-        assert!(slot_rect(&ui, 0, size).is_none());
+        assert!(slot_rect(&ui, std::path::Path::new("a-file"), size).is_none());
     }
 
     #[test]
     fn a_scrollbar_keeps_the_status_slot_hittable_beside_it() {
-        let mut e = panel_of(vec![row_of(0, "a-file", Some("M"))], 20);
-        let SectionKind::Explorer(explorer) = &mut e.sections[0].kind else {
-            panic!("the fixture's first section must be the Explorer");
-        };
-        explorer.scroll = Some(Scroll {
-            offset: 0,
-            total: 40,
-            pinned: Vec::new(),
-        });
+        let rows = std::iter::once(row_of(0, "a-file", Some("M")))
+            .chain((1..40).map(|i| row_of(i, &format!("f{i}"), None)))
+            .collect();
+        let mut tree = tree_of(rows, |_| None, 0);
         // The caret is a paint-only overlay. It must not turn the selected
         // row into one opaque hit target and hide the status gesture below.
-        explorer.caret_row = Some(0);
-        let mut ui = laid_out(e, 20, 4);
+        tree.selected = Some(0);
+        tree.caret = true;
+        let mut ui = laid_out(panel_with(tree, 20), 20, 4);
         let size = Rect::new(0, 0, 20, 4);
-        let slot = slot_rect(&ui, 0, size).expect("the slot");
+        let slot = slot_rect(&ui, std::path::Path::new("a-file"), size).expect("the slot");
         assert_eq!((slot.x, slot.y, slot.width), (17, 1, 1));
 
         let got = ui.dispatch(Input::Move {
@@ -1079,7 +1377,7 @@ mod tests {
             20,
             6,
         );
-        let e = ui.find_by_key(&row_key(1)).expect("the row");
+        let e = ui.find_by_key(&key_of("b")).expect("the row");
         let r = ui.rect_of(e);
         let got = ui.dispatch(Input::press_n(
             Point::new(r.x + 2, r.y),
@@ -1171,7 +1469,7 @@ mod tests {
 
         // …and the strip between them is not a target: a press on the row
         // underneath the title strip's empty middle reaches the row.
-        let row = ui.rect_of(ui.find_by_key(&row_key(0)).expect("row"));
+        let row = ui.rect_of(ui.find_by_key(&key_of("a")).expect("row"));
         let got = ui.dispatch(Input::press(
             Point::new(row.x + 1, row.y),
             MouseButton::Left,

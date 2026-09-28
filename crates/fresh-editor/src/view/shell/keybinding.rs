@@ -517,10 +517,18 @@ fn autocomplete_layer(a: &Autocomplete) -> Node<UiMsg> {
     // and the window is the viewport's.
     let items = std::rc::Rc::new(a.suggestions.clone());
     let n = items.len();
-    let list = fresh_ui::List::windowed(n, |i| fresh_ui::Key::Str(i.to_string().into()), {
-        let items = items.clone();
-        move |i| text(items[i].clone())
-    })
+    // Keyed by the action the entry names; the list is deduplicated.
+    let list = fresh_ui::List::windowed(
+        n,
+        {
+            let items = items.clone();
+            move |i| fresh_ui::Key::Str(format!("action:{}", items[i]).into())
+        },
+        {
+            let items = items.clone();
+            move |i| text(items[i].clone())
+        },
+    )
     .focusable(false)
     .scrollbar()
     .row_theme(|_, st| match st {
@@ -641,17 +649,29 @@ fn search_row(v: &[Span]) -> Node<UiMsg> {
     )
 }
 
+/// A table row's key: its identity, namespaced by what kind of row it is.
+pub fn table_row_key(r: &Row) -> fresh_ui::Key {
+    match r {
+        Row::Section { id, .. } => fresh_ui::Key::Str(format!("section:{id}").into()),
+        Row::Binding { id, .. } => fresh_ui::Key::Str(format!("binding:{id}").into()),
+    }
+}
+
 /// One row of the table.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Row {
     /// A plugin's collapsible group heading.
     Section {
+        /// The section's identity: its plugin, or the built-in section.
+        id: String,
         chevron: String,
         label: String,
         count: usize,
     },
     /// A binding: five columns, padded to the widths the table resolved.
     Binding {
+        /// The row's identity, `BindingId` for as long as the editor is open.
+        id: String,
         key: String,
         action: String,
         description: String,
@@ -670,6 +690,10 @@ pub struct Table {
     pub columns: [String; 5],
     pub rows: Vec<Row>,
     pub selected: usize,
+    /// The editor's page handle: the table records the window its layout
+    /// gave it here, and the editor's PageUp/PageDown ask it for the row a
+    /// page away.
+    pub pager: std::rc::Rc<fresh_ui::behavior::Pager>,
 }
 
 /// The five column widths for a table of this inner width.
@@ -688,13 +712,30 @@ pub fn columns(inner: u16) -> [u16; 5] {
     [key, action, desc, context, source]
 }
 
-/// How many rows of the table fit in a box of `box_h`.
-///
-/// The bands the painter split by hand: two border rows, three of header, one
-/// of footer, and two more for the table's own header and rule. Stated once so
-/// the page a `PgUp` moves by and the window the rows fill cannot disagree.
-pub fn table_rows(box_h: u16) -> u16 {
-    box_h.saturating_sub(2 + 3 + 1 + 2)
+thread_local! {
+    static TABLE_KEY: fresh_ui::Key = fresh_ui::Key::Str("keybinding_table".into());
+}
+
+/// Which rows of the table are on screen, `(first, count)`, read off the
+/// laid-out tree. **The viewport owns the window; this reads it.** The
+/// editor kept a second copy (`scroll`) that it moved by hand for the web
+/// scene and for the page size, sized from the box's rectangle. A table
+/// that fits has no bar and answers `(0, 0)`: all of it is on screen.
+pub fn table_window(spec: &fresh_ui::LayoutSpec) -> Option<(usize, usize)> {
+    let key = TABLE_KEY.with(|k| k.clone());
+    let range = spec.index.iter().find(|(k, _)| *k == key)?.1.clone();
+    spec.items[range]
+        .iter()
+        .find_map(|i| match &i.draw {
+            fresh_ui::Draw::Scrollbar {
+                offset,
+                content,
+                window,
+                ..
+            } => Some((*offset as usize, (*window as usize).min(*content as usize))),
+            _ => None,
+        })
+        .or(Some((0, 0)))
 }
 
 fn pad(s: &str, w: usize) -> String {
@@ -735,10 +776,19 @@ pub fn table(t: &Table) -> Node<UiMsg> {
         let rows = std::rc::Rc::new(t.rows.clone());
         let n = rows.len();
         let selected = t.selected;
-        let list = fresh_ui::List::windowed(n, |i| fresh_ui::Key::Str(i.to_string().into()), {
-            let rows = rows.clone();
-            move |i| table_row(&rows[i], &cols, i == selected)
-        })
+        // Keyed by what each row is, never by where it is: adding a binding,
+        // or one moving under a re-sort, moves the rows around it.
+        let list = fresh_ui::List::windowed(
+            n,
+            {
+                let rows = rows.clone();
+                move |i| table_row_key(&rows[i])
+            },
+            {
+                let rows = rows.clone();
+                move |i| table_row(&rows[i], &cols, i == selected)
+            },
+        )
         .focusable(false)
         .scrollbar()
         .row_theme(|_, st| match st {
@@ -747,7 +797,8 @@ pub fn table(t: &Table) -> Node<UiMsg> {
             }
             _ => ink(),
         })
-        .on_select(|i| UiMsg::Ui(UiFact::KeybindingRow(i)));
+        .on_select(|i| UiMsg::Ui(UiFact::KeybindingRow(i)))
+        .pager(t.pager.clone());
         let list = match n {
             0 => list,
             _ => list.selected(t.selected.min(n - 1)),
@@ -755,7 +806,12 @@ pub fn table(t: &Table) -> Node<UiMsg> {
         col().children([
             header,
             rule.h(Sizing::Cells(1)),
-            fresh_ui::ComponentExt::node(list).flex(1),
+            // Keyed so the web scene can read the window off the laid-out
+            // tree ([`table_window`]) — the viewport owns it.
+            col()
+                .key(TABLE_KEY.with(|k| k.clone()))
+                .flex(1)
+                .children([fresh_ui::ComponentExt::node(list).flex(1)]),
         ])
     })
 }
@@ -779,6 +835,7 @@ fn table_row(r: &Row, cols: &[u16; 5], selected: bool) -> Node<UiMsg> {
             chevron,
             label,
             count,
+            ..
         } => row().h(Sizing::Cells(1)).children([
             text(indicator).theme(pair("ui.help_key_fg", "ui.popup_bg")),
             text(format!("{chevron} {label} ({count})")).theme(attrs(
@@ -794,6 +851,7 @@ fn table_row(r: &Row, cols: &[u16; 5], selected: bool) -> Node<UiMsg> {
             context,
             source,
             source_accent,
+            ..
         } => {
             let accent = |on: bool, name: &str| match on {
                 true => pair(name, "ui.popup_bg"),
@@ -1198,6 +1256,7 @@ mod tests {
 
     fn a_table(n: usize, selected: usize) -> Table {
         Table {
+            pager: fresh_ui::behavior::Pager::new(),
             columns: [
                 "Key".into(),
                 "Action".into(),
@@ -1208,11 +1267,13 @@ mod tests {
             rows: (0..n)
                 .map(|i| match i % 5 {
                     0 => Row::Section {
+                        id: format!("s{i}"),
                         chevron: "▼".into(),
                         label: format!("plugin{i}"),
                         count: 4,
                     },
                     _ => Row::Binding {
+                        id: format!("{i}"),
                         key: format!("Ctrl+{i}"),
                         action: format!("act{i}"),
                         description: format!("does {i}"),
@@ -1224,6 +1285,11 @@ mod tests {
                 .collect(),
             selected,
         }
+    }
+
+    /// The key the table gives row `i` of [`a_table`]: by what the row is.
+    fn row_key(i: usize) -> fresh_ui::Key {
+        table_row_key(&a_table(i + 1, 0).rows[i])
     }
 
     fn with_table(t: Table, w: u16, h: u16) -> Ui<UiMsg> {
@@ -1254,15 +1320,6 @@ mod tests {
         assert_eq!(columns(40)[3], 14);
     }
 
-    /// The page a `PgUp` moves by is the box less the bands around the rows —
-    /// two borders, three of header, one of footer, and the table's own header
-    /// and rule.
-    #[test]
-    fn the_page_is_the_box_less_its_bands() {
-        assert_eq!(table_rows(20), 12);
-        assert_eq!(table_rows(8), 0);
-    }
-
     /// **A row knows its own index.** The arm behind this was
     /// `(row - table_first_row_y) + scroll.offset`, against two rectangles the
     /// painter recorded — the second of which existed only because the window
@@ -1271,10 +1328,7 @@ mod tests {
     fn pressing_a_row_names_it() {
         use crate::view::shell::msg::UiFact;
         let mut ui = with_table(a_table(30, 0), 160, 50);
-        let r = ui.rect_of(
-            ui.find_by_key(&fresh_ui::Key::Str("3".into()))
-                .expect("row 3"),
-        );
+        let r = ui.rect_of(ui.find_by_key(&row_key(3)).expect("row 3"));
         let at = fresh_ui::Point::new(r.x + 2, r.y);
         ui.dispatch(fresh_ui::Input::press(
             at,
@@ -1303,16 +1357,39 @@ mod tests {
             .iter()
             .any(|i| matches!(i.draw, fresh_ui::Draw::Scrollbar { .. }));
         assert!(bar, "two hundred rows in a box of fifty overflow");
-        let selected = ui.rect_of(
-            ui.find_by_key(&fresh_ui::Key::Str("150".into()))
-                .expect("row 150"),
-        );
+        let selected = ui.rect_of(ui.find_by_key(&row_key(150)).expect("row 150"));
         let boxed = ui.rect_of(ui.find_by_key(&key()).expect("the box"));
         assert!(
             selected.y >= boxed.y && selected.y < boxed.y + boxed.h as i32,
             "the selected row is in view at {}",
             selected.y
         );
+    }
+
+    /// **A page is the window the table was laid out with.** It was the
+    /// box's rectangle, read back after the frame, less the bands the
+    /// painter once split by hand — a second statement of what layout had
+    /// already decided. The table records its window in the editor's pager
+    /// and the page is that, whatever the box's chrome.
+    #[test]
+    fn a_page_is_the_window_the_table_was_given() {
+        let t = a_table(200, 0);
+        let pager = t.pager.clone();
+        assert_eq!(pager.target(0, 1, 200), None, "no layout, no page");
+        let ui = with_table(t, 160, 50);
+        let (first, rows) = table_window(ui.spec()).expect("the table is keyed");
+        assert_eq!(first, 0);
+        assert!(rows > 0, "fifty rows of box hold some of the table");
+        assert_eq!(pager.target(0, 1, 200), Some(rows));
+        assert_eq!(pager.target(199, 1, 200), Some(199));
+
+        // A shorter box is a shorter page.
+        let t = a_table(200, 0);
+        let pager = t.pager.clone();
+        let ui = with_table(t, 160, 30);
+        let (_, short) = table_window(ui.spec()).unwrap();
+        assert!(short < rows);
+        assert_eq!(pager.target(0, 1, 200), Some(short));
     }
 
     /// **The selected row wears a `>`, not only a highlight.** The painter
@@ -1333,10 +1410,7 @@ mod tests {
             })
             .collect();
         assert_eq!(marked.len(), 1, "exactly one row is marked: {marked:?}");
-        let row = ui.rect_of(
-            ui.find_by_key(&fresh_ui::Key::Str("4".into()))
-                .expect("row 4"),
-        );
+        let row = ui.rect_of(ui.find_by_key(&row_key(4)).expect("row 4"));
         assert_eq!(marked[0], row.y, "and it is the selected one");
     }
 
@@ -1348,10 +1422,7 @@ mod tests {
         let ui = with_table(a_table(30, 0), 160, 50);
         let boxed = ui.rect_of(ui.find_by_key(&key()).expect("the box"));
         let search = ui.rect_of(ui.find_by_key(&search_key()).expect("the search row"));
-        let first = ui.rect_of(
-            ui.find_by_key(&fresh_ui::Key::Str("0".into()))
-                .expect("row 0"),
-        );
+        let first = ui.rect_of(ui.find_by_key(&row_key(0)).expect("row 0"));
         assert!(search.y > boxed.y, "the header is inside the border");
         assert!(first.y > search.y + 1, "and the table is under it");
         assert!(

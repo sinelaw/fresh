@@ -43,6 +43,19 @@ impl DetectedLanguage {
         }
     }
 
+    /// Like [`Self::from_entry`], with the highlighter chosen for `path`
+    /// (see [`HighlightEngine::from_entry_for_path`]).
+    pub fn from_entry_for_path(
+        entry: &GrammarEntry,
+        path: &Path,
+        registry: &GrammarRegistry,
+    ) -> Self {
+        Self {
+            highlighter: HighlightEngine::from_entry_for_path(entry, path, registry),
+            ..Self::from_entry(entry, registry)
+        }
+    }
+
     /// Detect language from a file path using user configuration.
     ///
     /// This is the primary detection path used when opening, reloading, or saving files.
@@ -99,7 +112,7 @@ impl DetectedLanguage {
         };
 
         if let Some(entry) = registry.find_by_path(path, first_line) {
-            return align(Self::from_entry(entry, registry));
+            return align(Self::from_entry_for_path(entry, path, registry));
         }
 
         // No grammar match — try the user-configured default language for
@@ -221,7 +234,7 @@ impl DetectedLanguage {
         };
         registry
             .find_by_path(Path::new(filename), None)
-            .map(|entry| Self::from_entry(entry, registry))
+            .map(|entry| Self::from_entry_for_path(entry, Path::new(filename), registry))
             .unwrap_or_else(Self::plain_text)
     }
 }

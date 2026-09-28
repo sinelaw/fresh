@@ -240,7 +240,7 @@ mod tests {
         let out = resolve_panel(spec, &HashMap::new(), "", true, None);
         crate::widgets::WidgetPanelState {
             buffer_id: Some(crate::model::event::BufferId(1)),
-            spec: spec.clone(),
+            spec: std::rc::Rc::new(spec.clone()),
             instance_states: out.instance_states,
             focus_key: out.focus_key,
             auto_focus_first: true,

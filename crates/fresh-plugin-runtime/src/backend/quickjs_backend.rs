@@ -115,6 +115,31 @@ use std::sync::{mpsc, Arc, RwLock};
 type PluginApiExports =
     Rc<RefCell<HashMap<String, (String, rquickjs::Persistent<rquickjs::Object<'static>>)>>>;
 
+/// A `WidgetSpec` from a plugin, or why it isn't one: malformed JSON, or
+/// a `List`/`Tree` whose item keys don't match its items one to one (see
+/// `WidgetSpec::item_keys_problem`).
+fn parse_widget_spec(json: serde_json::Value) -> Result<fresh_core::api::WidgetSpec, String> {
+    let spec: fresh_core::api::WidgetSpec =
+        serde_json::from_value(json).map_err(|e| e.to_string())?;
+    match spec.item_keys_problem() {
+        Some(problem) => Err(problem),
+        None => Ok(spec),
+    }
+}
+
+/// A `WidgetMutation` from a plugin, or why it isn't one; see
+/// [`parse_widget_spec`].
+fn parse_widget_mutation(
+    json: serde_json::Value,
+) -> Result<fresh_core::api::WidgetMutation, String> {
+    let mutation: fresh_core::api::WidgetMutation =
+        serde_json::from_value(json).map_err(|e| e.to_string())?;
+    match mutation.item_keys_problem() {
+        Some(problem) => Err(problem),
+        None => Ok(mutation),
+    }
+}
+
 /// Convert a QuickJS Value to serde_json::Value
 #[allow(clippy::only_used_in_recursion)]
 fn js_to_json(ctx: &rquickjs::Ctx<'_>, val: Value<'_>) -> serde_json::Value {
@@ -5416,17 +5441,31 @@ impl JsEditorApi {
     //     as present but void, failing `u32::from_js`).
     // Together they accept both `fn(suggestions)` and
     // `fn(suggestions, undefined)` from JS.
-    pub fn set_prompt_suggestions(
+    //
+    // Every suggestion carries an `id`, unique in the list — the rows are
+    // keyed by it — and a list that repeats one is refused with a thrown
+    // error rather than drawn.
+    #[plugin_api(ts_return = "boolean")]
+    pub fn set_prompt_suggestions<'js>(
         &self,
+        ctx: rquickjs::Ctx<'js>,
         suggestions: Vec<fresh_core::command::Suggestion>,
         selected_index: rquickjs::function::Opt<Option<u32>>,
-    ) -> bool {
-        self.command_sender
+    ) -> rquickjs::Result<bool> {
+        if let Some(id) = fresh_core::command::Suggestion::duplicate_id(&suggestions) {
+            let msg = rquickjs::String::from_str(
+                ctx.clone(),
+                &format!("setPromptSuggestions: duplicate suggestion id {id:?}"),
+            )?;
+            return Err(ctx.throw(msg.into_value()));
+        }
+        Ok(self
+            .command_sender
             .send(PluginCommand::SetPromptSuggestions {
                 suggestions,
                 selected_index: selected_index.0.flatten(),
             })
-            .is_ok()
+            .is_ok())
     }
 
     pub fn set_prompt_input_sync(&self, sync: bool) -> bool {
@@ -5498,7 +5537,7 @@ impl JsEditorApi {
             None
         } else {
             let json = js_to_json(&ctx, spec_obj);
-            match serde_json::from_value::<fresh_core::api::WidgetSpec>(json) {
+            match parse_widget_spec(json) {
                 Ok(s) => Some(s),
                 Err(e) => {
                     tracing::error!("setPromptToolbar: invalid spec: {}", e);
@@ -6838,8 +6877,26 @@ impl JsEditorApi {
     /// Show an action popup
     ///
     /// Takes a typed ActionPopupOptions struct - serde validates field names at runtime
-    pub fn show_action_popup(&self, opts: fresh_core::api::ActionPopupOptions) -> bool {
-        self.command_sender
+    ///
+    /// Each action's `id` is its row's key and must be unique among the
+    /// actions; a repeated one throws.
+    #[plugin_api(ts_return = "boolean")]
+    pub fn show_action_popup<'js>(
+        &self,
+        ctx: rquickjs::Ctx<'js>,
+        opts: fresh_core::api::ActionPopupOptions,
+    ) -> rquickjs::Result<bool> {
+        if let Some(id) =
+            fresh_core::api::first_duplicate_id(opts.actions.iter().map(|a| a.id.as_str()))
+        {
+            let msg = rquickjs::String::from_str(
+                ctx.clone(),
+                &format!("showActionPopup: duplicate action id {id:?}"),
+            )?;
+            return Err(ctx.throw(msg.into_value()));
+        }
+        Ok(self
+            .command_sender
             .send(PluginCommand::ShowActionPopup {
                 popup_id: opts.id,
                 title: opts.title,
@@ -6847,7 +6904,7 @@ impl JsEditorApi {
                 actions: opts.actions,
                 buffer_id: opts.buffer_id,
             })
-            .is_ok()
+            .is_ok())
     }
 
     /// Contribute a row to one of the menu bar's menus (e.g. a "Show Dock"
@@ -6872,19 +6929,32 @@ impl JsEditorApi {
     /// Contribute (or replace, or clear) menu rows for the LSP-Servers
     /// popup. Pass an empty `items` to clear this plugin's slice for
     /// the given language. See `PluginCommand::SetLspMenuContributions`.
-    pub fn set_lsp_menu_contributions(
+    ///
+    /// Each item's `id` is its row's key and must be unique among the
+    /// items; a repeated one throws.
+    #[plugin_api(ts_return = "boolean")]
+    pub fn set_lsp_menu_contributions<'js>(
         &self,
+        ctx: rquickjs::Ctx<'js>,
         plugin_id: String,
         language: String,
         items: Vec<fresh_core::api::LspMenuItem>,
-    ) -> bool {
-        self.command_sender
+    ) -> rquickjs::Result<bool> {
+        if let Some(id) = fresh_core::api::first_duplicate_id(items.iter().map(|i| i.id.as_str())) {
+            let msg = rquickjs::String::from_str(
+                ctx.clone(),
+                &format!("setLspMenuContributions: duplicate item id {id:?}"),
+            )?;
+            return Err(ctx.throw(msg.into_value()));
+        }
+        Ok(self
+            .command_sender
             .send(PluginCommand::SetLspMenuContributions {
                 plugin_id,
                 language,
                 items,
             })
-            .is_ok()
+            .is_ok())
     }
 
     /// Disable LSP for a specific language
@@ -7352,7 +7422,7 @@ impl JsEditorApi {
         >,
     ) -> rquickjs::Result<bool> {
         let json = js_to_json(&ctx, spec_obj);
-        let spec: fresh_core::api::WidgetSpec = match serde_json::from_value(json) {
+        let spec = match parse_widget_spec(json) {
             Ok(s) => s,
             Err(e) => {
                 tracing::error!("mountWidgetPanel: invalid spec: {}", e);
@@ -7401,7 +7471,7 @@ impl JsEditorApi {
         spec_obj: rquickjs::Value<'js>,
     ) -> rquickjs::Result<bool> {
         let json = js_to_json(&ctx, spec_obj);
-        let spec: fresh_core::api::WidgetSpec = match serde_json::from_value(json) {
+        let spec = match parse_widget_spec(json) {
             Ok(s) => s,
             Err(e) => {
                 tracing::error!("updateWidgetPanel: invalid spec: {}", e);
@@ -7476,7 +7546,7 @@ impl JsEditorApi {
         mutation_obj: rquickjs::Value<'js>,
     ) -> rquickjs::Result<bool> {
         let json = js_to_json(&ctx, mutation_obj);
-        let mutation: fresh_core::api::WidgetMutation = match serde_json::from_value(json) {
+        let mutation = match parse_widget_mutation(json) {
             Ok(m) => m,
             Err(e) => {
                 tracing::error!("widgetMutate: invalid mutation: {}", e);
@@ -7539,7 +7609,7 @@ impl JsEditorApi {
         label_align: rquickjs::function::Opt<String>,
     ) -> rquickjs::Result<bool> {
         let json = js_to_json(&ctx, spec_obj);
-        let spec: fresh_core::api::WidgetSpec = match serde_json::from_value(json) {
+        let spec = match parse_widget_spec(json) {
             Ok(s) => s,
             Err(e) => {
                 tracing::error!("mountFloatingWidget: invalid spec: {}", e);
@@ -7602,7 +7672,7 @@ impl JsEditorApi {
         opts: rquickjs::function::Opt<rquickjs::Value<'js>>,
     ) -> rquickjs::Result<bool> {
         let json = js_to_json(&ctx, spec_obj);
-        let spec: fresh_core::api::WidgetSpec = match serde_json::from_value(json) {
+        let spec = match parse_widget_spec(json) {
             Ok(s) => s,
             Err(e) => {
                 tracing::error!("mountSidebarSection: invalid spec: {}", e);
@@ -7655,7 +7725,7 @@ impl JsEditorApi {
         spec_obj: rquickjs::Value<'js>,
     ) -> rquickjs::Result<bool> {
         let json = js_to_json(&ctx, spec_obj);
-        let spec: fresh_core::api::WidgetSpec = match serde_json::from_value(json) {
+        let spec = match parse_widget_spec(json) {
             Ok(s) => s,
             Err(e) => {
                 tracing::error!("updateFloatingWidget: invalid spec: {}", e);
@@ -9662,12 +9732,10 @@ impl QuickJsBackend {
                     self.execute_js(&bundled, path)?;
                 }
                 Err(e) => {
-                    tracing::warn!(
-                        "Plugin {} uses ES imports but bundling failed: {}. Skipping.",
-                        path,
-                        e
-                    );
-                    return Ok(()); // Skip plugins with unresolvable imports
+                    // An error, not a silent skip: "Load Plugin from Buffer"
+                    // and `reloadPlugin` report it, and the startup scan
+                    // (`thread.rs`) already fails the same way.
+                    return Err(anyhow!("Failed to bundle plugin {}: {}", path, e));
                 }
             }
         } else if has_es_module_syntax(&source) {
@@ -12998,8 +13066,8 @@ mod tests {
                 r#"
             const editor = getEditor();
             editor.setPromptSuggestions([
-                { text: "Option 1", value: "opt1" },
-                { text: "Option 2", value: "opt2" }
+                { id: "opt1", text: "Option 1", value: "opt1" },
+                { id: "opt2", text: "Option 2", value: "opt2" }
             ]);
         "#,
                 "test.js",

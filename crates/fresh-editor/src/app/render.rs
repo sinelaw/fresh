@@ -15,6 +15,53 @@ pub(crate) struct BottomRowFlags {
 
 /// The explorer as the frame builds it: its content and the chrome its
 /// section wears, before the column it sits in has been assembled.
+/// What an explorer row reads, held for the window to describe its rows at
+/// layout: the model's projection of the tree, and handles to the rest.
+/// Made once per frame; the rows are described only for the window.
+struct ExplorerRows {
+    projection: std::sync::Arc<crate::view::file_tree::view::Projection>,
+    selected: Option<usize>,
+    multi: std::collections::HashSet<crate::view::file_tree::NodeId>,
+    focused: bool,
+    unsaved: std::collections::HashSet<std::path::PathBuf>,
+    cut: Vec<std::path::PathBuf>,
+    search: Option<crate::view::file_tree::FileExplorerSearch>,
+    decorations: std::rc::Rc<crate::view::file_tree::FileExplorerDecorationCache>,
+    slot_overrides: std::rc::Rc<crate::view::file_tree::FileExplorerSlotOverrideCache>,
+    slot_resolver: crate::view::file_tree::ExplorerSlotResolver<'static>,
+    /// The editor's theme, read when a row is described.
+    theme: std::sync::Arc<std::sync::RwLock<crate::view::theme::Theme>>,
+    collapsed: String,
+    expanded: String,
+}
+
+impl ExplorerRows {
+    fn describe(&self, i: usize) -> crate::view::shell::file_explorer::Row {
+        let node = &self.projection.rows[i];
+        let fuzzy = self
+            .search
+            .as_ref()
+            .and_then(|s| s.match_name(&node.entry.name));
+        let theme = self.theme.read().unwrap();
+        crate::view::ui::file_explorer::describe_row(crate::view::ui::file_explorer::RowDesc {
+            node,
+            row: i,
+            is_cursor: self.selected == Some(i),
+            is_multi: self.multi.contains(&node.id),
+            focused: self.focused,
+            unsaved: &self.unsaved,
+            cut: &self.cut,
+            fuzzy: fuzzy.as_ref(),
+            decorations: &self.decorations,
+            slot_overrides: &self.slot_overrides,
+            slot_resolver: &self.slot_resolver,
+            theme: &theme,
+            collapsed: &self.collapsed,
+            expanded: &self.expanded,
+        })
+    }
+}
+
 struct ExplorerSection {
     kind: crate::view::shell::file_explorer::Explorer,
     title: String,
@@ -1070,9 +1117,6 @@ impl Editor {
         // effect lands on the same paint that made the buffer visible.
         self.drain_pending_vb_animations();
 
-        // Initialize popup/suggestion layout state (rendered after status bar below)
-        self.active_chrome_mut().suggestions_window = None;
-
         // Clone all immutable values before the mutable borrow
         let display_name = self
             .active_window()
@@ -1132,29 +1176,6 @@ impl Editor {
         // geometry lives now. So the description is built either way and only
         // the cell-writing half is skipped, which is what "backends are folds
         // over the display list" buys: two backends, one layout.
-        // The full-screen modals' remaining paint, **before** the overlay band
-        // rather than after it. What is left of `render_modal_overlays` for
-        // the settings dialog is the box and the one divider column between
-        // its two panes (`view::settings::render`, 270 lines); everything
-        // inside it — both panels, the entry stack, the search row, the footer
-        // and every prompt — is the tree's. Order still matters for what is
-        // left: a `Block` fills the rectangle it borders, so a painter that
-        // ran after the fold wiped the described rows inside it and the help
-        // overlay never appeared at all.
-        //
-        // This is the rule the overlay band already states for every other
-        // legacy painter — "painted after every legacy painter, because paint
-        // order is what puts a menu on top" — applied to the last painter that
-        // was still exempt from it. It was exempt because it used to be the
-        // topmost surface there was; it is not, now that the chrome over it is
-        // the tree's.
-        //
-        // The dock's cells are painted just below, still before the band, so
-        // the dimming this pass applies to it is re-applied by
-        // `render_panels_and_modals` once those cells exist. The modal itself
-        // lays into the chrome column beside the dock, so nothing of it is at
-        // risk from that later paint.
-        self.settle_modal_viewports();
 
         // Chrome theme-key provenance is the fold's (`FoldProvenance`, applied
         // above): every described surface files its items' rects and keys as
@@ -1211,6 +1232,9 @@ impl Editor {
         // until the user pressed one. Still ahead of the next key, which is
         // what `Editor::shell_dispatch`'s own drain of the same queue is for.
         self.apply_settled_shell_messages();
+
+        // Layout and scroll settle during a frame; plugins read them back.
+        self.mark_plugin_snapshot_dirty();
     }
 
     /// The Confirm-each option's live value when it is shown (replace
@@ -1817,8 +1841,8 @@ impl Editor {
         // far the wheel had taken the list.
         let body = ui.find_by_key(&st::items_key());
         let vpr = body.map(|vp| ui.rect_of(vp)).unwrap_or_default();
-        let (scroll, content) = match body {
-            Some(vp) => ui.scroll(vp),
+        let scroll = match body {
+            Some(vp) => ui.scroll(vp).0,
             None => Default::default(),
         };
         let offset = scroll.y.max(0) as u16;
@@ -1852,12 +1876,7 @@ impl Editor {
             return;
         };
         if body.is_some() {
-            s.body = crate::view::settings::state::BodyWindow {
-                offset,
-                height: vpr.h,
-                content: content.h,
-                top_item,
-            };
+            s.body = crate::view::settings::state::BodyWindow { offset, top_item };
         }
         // The left tree's highlight follows the body, in both directions —
         // the same contract the wheel and the scrollbar had, stated once
@@ -2267,6 +2286,7 @@ impl Editor {
                     } => {
                         let page = &s.pages[idx];
                         st::CatRow::Category {
+                            id: page.path.clone(),
                             idx,
                             chevron: match (expandable, expanded) {
                                 (false, _) => " ",
@@ -2282,11 +2302,23 @@ impl Editor {
                     TreeRow::Section {
                         cat_idx,
                         section_idx,
-                    } => st::CatRow::Section {
-                        cat: cat_idx,
-                        section: section_idx,
-                        label: s.pages[cat_idx].sections[section_idx].name.clone(),
-                    },
+                    } => {
+                        let page = &s.pages[cat_idx];
+                        let section = &page.sections[section_idx];
+                        st::CatRow::Section {
+                            id: format!(
+                                "{}#{}",
+                                page.path,
+                                page.items
+                                    .get(section.first_item_index)
+                                    .map(|item| item.path.as_str())
+                                    .unwrap_or_default()
+                            ),
+                            cat: cat_idx,
+                            section: section_idx,
+                            label: section.name.clone(),
+                        }
+                    }
                 })
                 .collect();
             // **One index, where the painter asked every row.** It compared
@@ -2303,6 +2335,7 @@ impl Editor {
                 rows,
                 selected,
                 focused: s.focus_panel() == FocusPanel::Categories,
+                pager: s.tree_pager.clone(),
             }
         });
         // The settings panel's own header: the page title, and the `[Clear …]`
@@ -2680,6 +2713,7 @@ impl Editor {
                         collapsed,
                         binding_count,
                     } => kb::Row::Section {
+                        id: plugin_name.clone().unwrap_or_default(),
                         chevron: match collapsed {
                             true => "▶".into(),
                             false => "▼".into(),
@@ -2690,6 +2724,7 @@ impl Editor {
                     DisplayRow::Binding(i) => {
                         let b = &e.bindings[*i];
                         kb::Row::Binding {
+                            id: b.id.0.to_string(),
                             key: b.key_display.clone(),
                             action: b.action.clone(),
                             description: b.action_display.clone(),
@@ -2715,7 +2750,8 @@ impl Editor {
                     }
                 })
                 .collect(),
-            selected: e.selected,
+            selected: e.selected(),
+            pager: e.pager.clone(),
         })
     }
 
@@ -3024,9 +3060,8 @@ impl Editor {
     /// spacer with a floor.
     ///
     /// `height` is the column's, which the caller derives from the same rule
-    /// `Frame::fixed_rows` states — the viewport's row count is model state
-    /// (`set_viewport_height` drives scrolling and the web projection), so it
-    /// has to be known before the description exists.
+    /// `Frame::fixed_rows` states: the sections are sized from it before the
+    /// description exists (see `resolve_sidebar_sections`).
     fn sidebar_content(
         &mut self,
         chrome_area: ratatui::layout::Rect,
@@ -3072,7 +3107,7 @@ impl Editor {
             let rows = rows.get(i).copied().unwrap_or(0);
             let section = match kind {
                 SidebarSectionKind::Explorer => {
-                    let e = self.explorer_section(rows);
+                    let e = self.explorer_section();
                     Section {
                         kind: SectionKind::Explorer(e.kind),
                         title: e.title,
@@ -3128,9 +3163,8 @@ impl Editor {
         })
     }
 
-    /// The explorer as a section: its chrome, and its rows for a body
-    /// `rows` tall.
-    fn explorer_section(&mut self, rows: u16) -> ExplorerSection {
+    /// The explorer as a section: its chrome, and its rows.
+    fn explorer_section(&self) -> ExplorerSection {
         use crate::view::shell::file_explorer as fe;
         // The explorer reads as focused only when it actually owns the
         // keyboard — not when a focused orchestrator dock has stolen it out
@@ -3145,13 +3179,9 @@ impl Editor {
         let (title_theme, border_theme) = fe::chrome_themes(disconnected, focused);
         let close_hovered = matches!(self.shell_hover, Some(HoverTarget::FileExplorerCloseButton));
         let title = self.explorer_title(remote.as_deref());
-        let (body, scroll) = self.explorer_body(rows, focused);
-        let caret_row = focused.then(|| self.explorer_caret_row()).flatten();
         ExplorerSection {
             kind: fe::Explorer {
-                body,
-                caret_row,
-                scroll,
+                body: self.explorer_body(focused),
             },
             title,
             title_theme,
@@ -3195,118 +3225,63 @@ impl Editor {
         }
     }
 
-    /// The row the caret sits on, by display index, when the panel owns the
-    /// keyboard — `None` when the selection is scrolled out of the window,
-    /// where there is no row to carry it.
-    fn explorer_caret_row(&self) -> Option<usize> {
-        let view = self.file_explorer()?;
-        let selected = view.get_selected_index()?;
-        view.viewport_display_indices()
-            .contains(&selected)
-            .then_some(selected)
-    }
-
-    /// One row per visible tree node — or the loading placeholder while the
-    /// tree is still being built.
+    /// The tree as the explorer's window reads it — or the loading
+    /// placeholder while the tree is still being built.
     ///
-    /// The viewport height is set here because it is model state: scrolling and
-    /// the web projection both read it, and it must be current whether or not
-    /// anything paints.
-    #[allow(clippy::type_complexity)]
-    fn explorer_body(
-        &mut self,
-        rows: u16,
-        focused: bool,
-    ) -> (
-        crate::view::shell::file_explorer::Body,
-        Option<crate::view::shell::file_explorer::Scroll>,
-    ) {
+    /// Nothing here knows how tall the window is. The rows are described at
+    /// layout, for the window the list placed, from the model's projection
+    /// and handles to what a row reads (see [`ExplorerRows`]).
+    fn explorer_body(&self, focused: bool) -> crate::view::shell::file_explorer::Body {
         use crate::view::shell::file_explorer as fe;
-        // The body's rows: the section's, borders already taken off.
-        let viewport_rows = rows as usize;
-        if let Some(view) = self.file_explorer_mut() {
-            view.set_viewport_height(viewport_rows);
-            // **One offset for the rows and the window.** The tree can shrink
-            // under a deep offset — a collapse, a search that admits three
-            // files — and the model shows rows from wherever its offset
-            // lands, while the window is declared at the clamped one; the
-            // rows it asks for would then not be the rows described. Clamp
-            // through the owner, here, so the two are the same number. This
-            // is also what the window's bar used to disagree with the rows
-            // about.
-            let max = view.max_scroll_offset();
-            if view.get_scroll_offset() > max {
-                view.set_scroll_offset(max);
-            }
-        }
-        if self.file_explorer().is_none() {
-            return (
-                fe::Body::Loading(fresh_i18n::t!("explorer.loading").to_string()),
-                None,
-            );
-        }
-        let unsaved = self.explorer_unsaved_paths();
-        let cut: Vec<std::path::PathBuf> = self
-            .active_window()
+        let Some(view) = self.file_explorer() else {
+            return fe::Body::Loading(fresh_i18n::t!("explorer.loading").to_string());
+        };
+        let win = self.active_window();
+        let projection = view.projection();
+        let selected = view.get_selected_index();
+        let cut: Vec<std::path::PathBuf> = win
             .file_explorer_clipboard
             .as_ref()
             .filter(|cb| cb.is_cut)
             .map(|cb| cb.paths.clone())
             .unwrap_or_default();
-        let indicators = (
-            self.config.file_explorer.tree_indicator_collapsed.clone(),
-            self.config.file_explorer.tree_indicator_expanded.clone(),
-        );
-        let slot_resolver = self.file_explorer_slot_resolver();
-        let theme = self.theme.read().unwrap().clone();
-        let win = self.active_window();
-        let view = win.file_explorer.as_ref().expect("checked above");
-        let display = view.get_display_nodes();
-        let indices = view.viewport_display_indices();
-        let selected = view.get_selected_index();
-        let multi = view.multi_selection();
-        let search = view.is_search_active();
-        let rows: Vec<fe::Row> = indices
-            .iter()
-            .filter_map(|&actual| {
-                let &(node_id, indent) = display.get(actual)?;
-                let matched = search.then(|| view.get_match_for_node(node_id)).flatten();
-                crate::view::ui::file_explorer::describe_row(
-                    crate::view::ui::file_explorer::RowDesc {
-                        view,
-                        node_id,
-                        indent,
-                        row: actual,
-                        is_cursor: selected == Some(actual),
-                        is_multi: multi.contains(&node_id),
-                        focused,
-                        unsaved: &unsaved,
-                        cut: &cut,
-                        fuzzy: matched.as_ref(),
-                        decorations: &win.file_explorer_decoration_cache,
-                        slot_overrides: &win.file_explorer_slot_override_cache,
-                        slot_resolver: &slot_resolver,
-                        theme: &theme,
-                        collapsed: &indicators.0,
-                        expanded: &indicators.1,
-                    },
-                )
-            })
-            .collect();
-        // The window, in tree rows, as the viewport is told it: what the
-        // tree holds, where the run starts, and which ancestors are pinned
-        // above it. Whether there is a bar is the viewport's answer (issue
-        // #2859: a tree that fits draws none). The ceiling it derives from
-        // the pins is the model's `max_scroll_offset` for this offset —
-        // pinned ancestors put it past `total - rows`, and a bar that assumed
-        // otherwise showed the thumb at the end while the wheel still moved
-        // the tree.
-        let scroll = fe::Scroll {
-            offset: view.get_scroll_offset(),
-            total: display.len(),
-            pinned: view.sticky_display_indices(),
-        };
-        (fe::Body::Rows(rows), Some(scroll))
+        let rows = std::rc::Rc::new(ExplorerRows {
+            projection: projection.clone(),
+            selected,
+            multi: view.multi_selection().clone(),
+            focused,
+            unsaved: self.explorer_unsaved_paths(),
+            cut,
+            search: view.search().cloned(),
+            decorations: win.file_explorer_decoration_cache.clone(),
+            slot_overrides: win.file_explorer_slot_override_cache.clone(),
+            slot_resolver: self.file_explorer_slot_resolver(),
+            theme: self.theme.clone(),
+            collapsed: self.config.file_explorer.tree_indicator_collapsed.clone(),
+            expanded: self.config.file_explorer.tree_indicator_expanded.clone(),
+        });
+        let (keys, parents, nodes) = (projection.clone(), projection.clone(), projection.clone());
+        fe::Body::Tree(fe::Tree {
+            count: projection.len(),
+            key: std::rc::Rc::new(move |i| fe::row_key(&keys.rows[i].entry.path)),
+            row: std::rc::Rc::new(move |i| rows.describe(i)),
+            parent: std::rc::Rc::new(move |i| parents.rows.get(i).and_then(|r| r.parent)),
+            node: std::rc::Rc::new(move |i| {
+                let r = &nodes.rows[i];
+                fresh_ui::widgets::TreeRow {
+                    depth: r.indent,
+                    has_children: r.is_dir(),
+                    open: r.is_expanded(),
+                }
+            }),
+            selected,
+            reveal: view.reveal_token(),
+            answered: view.answered_token(),
+            caret: focused,
+            start: view.window_top(),
+            owner: win.id.0,
+            pager: Some(win.file_explorer_pager.clone()),
+        })
     }
 
     /// Paths with unsaved changes, which a row's status slot reads.
@@ -3934,7 +3909,7 @@ impl Editor {
         );
         let count = (!prompt.suggestions.is_empty()).then(|| {
             (
-                prompt.selected_suggestion.map(|i| i + 1).unwrap_or(0),
+                prompt.selected_suggestion().map(|i| i + 1).unwrap_or(0),
                 prompt.suggestions.len(),
             )
         });
@@ -3986,7 +3961,9 @@ impl Editor {
     ) -> Option<crate::view::shell::file_browser::Browser> {
         use crate::app::file_open::{format_modified, format_size, FileOpenSection, Toggle};
         use crate::input::keybindings::{Action, KeyContext};
-        use crate::view::shell::file_browser::{Browser, Entry, Listing, Shortcut, ToggleItem};
+        use crate::view::shell::file_browser::{
+            Browser, Entries, Entry, Listing, Shortcut, ToggleItem,
+        };
         let state = self.active_window().file_open_state.as_ref()?;
         let shortcut_of = |a: Action| -> Option<String> {
             self.keybindings
@@ -4019,25 +3996,29 @@ impl Editor {
         } else if let Some(e) = &state.error {
             Listing::Error(e.clone())
         } else {
-            Listing::Entries(
-                state
-                    .entries
-                    .iter()
-                    .map(|e| {
-                        let meta = e.fs_entry.metadata.as_ref();
-                        Entry {
-                            name: e.fs_entry.name.clone(),
-                            is_dir: e.fs_entry.is_dir(),
-                            is_symlink: e.fs_entry.is_symlink(),
-                            size: (!e.fs_entry.is_dir())
-                                .then(|| meta.map(|m| format_size(m.size)))
-                                .flatten(),
-                            modified: meta.and_then(|m| m.modified).map(format_modified),
-                            matches: e.matches_filter,
-                        }
-                    })
-                    .collect(),
-            )
+            // A handle on the model's listing: the window's entries are
+            // formatted when the list asks for them, and only those.
+            Listing::Entries(Entries::new(
+                state.entries.clone(),
+                state.entries.len(),
+                |v, i| v[i].fs_entry.path.to_string_lossy().into_owned(),
+                |v, i| {
+                    let e = &v[i];
+                    let meta = e.fs_entry.metadata.as_ref();
+                    Entry {
+                        id: e.fs_entry.path.to_string_lossy().into_owned(),
+                        name: e.fs_entry.name.clone(),
+                        is_dir: e.fs_entry.is_dir(),
+                        is_symlink: e.fs_entry.is_symlink(),
+                        size: (!e.fs_entry.is_dir())
+                            .then(|| meta.map(|m| format_size(m.size)))
+                            .flatten(),
+                        modified: meta.and_then(|m| m.modified).map(format_modified),
+                        matches: e.matches_filter,
+                    }
+                },
+                |v, i| v[i].matches_filter,
+            ))
         };
         let files = state.active_section == FileOpenSection::Files;
         let hover = match self.shell_hover {
@@ -4060,13 +4041,13 @@ impl Editor {
             sort: state.sort_mode,
             ascending: state.sort_ascending,
             listing,
-            selected: files.then_some(state.selected_index).flatten(),
+            selected: files.then_some(state.selected_index()).flatten(),
             hover,
         })
     }
 
     fn suggestions_description(&self) -> Option<crate::view::shell::prompt::Suggestions> {
-        use crate::view::shell::prompt::{SuggestionRow, Suggestions};
+        use crate::view::shell::prompt::{Rows, SuggestionRow, Suggestions};
         let prompt = self.active_window().prompt.as_ref()?;
         if prompt.suggestions.is_empty() {
             return None;
@@ -4089,33 +4070,35 @@ impl Editor {
             true => crate::view::shell::prompt::Place::InCard,
             false => crate::view::shell::prompt::Place::AbovePrompt,
         };
+        let convert = |s: &crate::input::commands::Suggestion| SuggestionRow {
+            id: s.id.clone(),
+            name: s.text.clone(),
+            keybinding: s.keybinding.clone(),
+            description: s.description.clone(),
+            description_spans: s
+                .description_spans
+                .as_ref()
+                .map(|v| v.iter().map(Self::description_span).collect()),
+            // Character for character what `push_source_column` wrote: the
+            // plugin's own name, or the word for a built-in.
+            source: s.source.as_ref().map(|src| match src {
+                crate::input::commands::CommandSource::Builtin => "builtin".to_string(),
+                crate::input::commands::CommandSource::Plugin(name) => name.clone(),
+            }),
+            disabled: s.disabled,
+        };
         Some(Suggestions {
-            rows: prompt
-                .suggestions
-                .iter()
-                .map(|s| SuggestionRow {
-                    name: s.text.clone(),
-                    keybinding: s.keybinding.clone(),
-                    description: s.description.clone(),
-                    description_spans: s
-                        .description_spans
-                        .as_ref()
-                        .map(|v| v.iter().map(Self::description_span).collect()),
-                    // Character for character what `push_source_column`
-                    // wrote: the plugin's own name, or the word for a
-                    // built-in.
-                    source: s.source.as_ref().map(|src| match src {
-                        crate::input::commands::CommandSource::Builtin => "builtin".to_string(),
-                        crate::input::commands::CommandSource::Plugin(name) => name.clone(),
-                    }),
-                    disabled: s.disabled,
-                })
-                .collect(),
-            selected: prompt.selected_suggestion,
-            // Last frame's window, for the column widths only — see
-            // `Suggestions::window`. `record_suggestions_window` is where it
-            // came from.
-            window: self.active_chrome().suggestions_window,
+            // A handle on the prompt's own list: the rows the window asks
+            // for are converted then, and only those.
+            rows: Rows::new(
+                prompt.suggestions.clone(),
+                prompt.suggestions.len(),
+                prompt.names_are_paths(),
+                |v, i| v[i].id.clone(),
+                move |v, i| convert(&v[i]),
+                |v, i| v[i].disabled,
+            ),
+            selected: prompt.selected_suggestion(),
             place,
             // The row the painter drew under the popup, now stacked in the
             // layer with it. `render_quick_open_hints` is what this replaces.
@@ -4368,63 +4351,6 @@ impl Editor {
             retry: retry.to_string(),
             pane,
         })
-    }
-
-    fn settle_modal_viewports(&mut self) {
-        // The settings dialog is the tree's, box and contents alike
-        // (`view::shell::settings`): its ring, its caption, the divider
-        // between its columns and the dim over everything behind it are the
-        // layer's own. What is left here is the one thing the description
-        // cannot say for itself: how many rows a `PgUp` moves the category
-        // cursor by.
-        // The page a `PgUp` moves the category cursor by: the tree's own
-        // height, read from the box the tree placed. It was
-        // `categories_scroll.set_viewport(area.height)`, filed by the painter
-        // as it drew the rows — so the page and the window it pages through
-        // came from two statements of the same rectangle. The panel around it
-        // is gone; this number was all of it that anything read.
-        if let (Some(r), Some(s)) = (
-            self.panel_rect(&crate::view::shell::settings::categories_key()),
-            self.settings_state.as_mut(),
-        ) {
-            s.tree_page_rows = r.height;
-        }
-        // The calibration wizard is the tree's — box, bands, key list and all.
-        // It was `apply_dimming` over the frame and four `Paragraph`s into
-        // three rectangles it split by hand; it is `Scrim::Dim` and a column
-        // now (`view::shell::calibration`). Nothing paints here.
-
-        // Event-debug: the web renders it natively from `aux_modals_view`; paint
-        // cells only for the TUI.
-        let draw_aux = !self.suppress_chrome_cells;
-
-        // The keybinding editor is the tree's — box, chrome, table and dialogs
-        // (`view::shell::keybinding`). What is left here is the one thing the
-        // description cannot say for itself: how many rows a `PgUp` moves by,
-        // which is the box's height less the bands around the rows.
-        if draw_aux {
-            // **The box is the tree's.** `view::shell::keybinding` places it —
-            // ninety percent of the chrome area, capped, floored, centred
-            // beside the dock — and this reads the answer. The four lines of
-            // arithmetic that computed it here and then filed it in a
-            // `KeybindingEditorLayout` for a mouse handler to compare
-            // against were the same rectangle stated twice.
-            let modal_area = self.panel_rect(&crate::view::shell::keybinding::key());
-            // The page a `PgUp` moves by. It was the table rectangle's height,
-            // filed by the painter as it drew; the box is the tree's and the
-            // bands between it and the rows are one statement in
-            // `keybinding::table_rows`, so the page and the window the rows
-            // fill cannot disagree.
-            if let (Some(r), Some(e)) = (modal_area, self.keybinding_editor.as_mut()) {
-                e.scroll
-                    .set_viewport(crate::view::shell::keybinding::table_rows(r.height));
-            }
-        }
-
-        // The event-debug dialog is the tree's, box and contents alike
-        // (`view::shell::event_debug`) — the calibration wizard's twin, and
-        // migrated with it for the same reason: no mouse and no recorded
-        // rectangles. Nothing paints here.
     }
 
     /// Apply the theme-key provenance the frame's menu walk recorded.
@@ -4699,9 +4625,8 @@ impl Editor {
         crate::view::dimming::apply_dimming_excluding(frame, size, Some(terminal_area));
     }
 
-    /// Settle the open prompt's suggestion list: the selection's window, and
-    /// the rectangles the not-yet-migrated readers ask for, read off the tree
-    /// that placed the list. Nothing is painted here — the list, the bottom
+    /// Settle the open overlay prompt's selection window against the results
+    /// band the tree placed. Nothing is painted here — the list, the bottom
     /// popup and the overlay card are the tree's.
     fn settle_prompt_suggestions(&mut self) {
         let Some(prompt) = &self.active_window_mut().prompt else {
@@ -4733,52 +4658,10 @@ impl Editor {
                     prompt.ensure_selected_visible_within(visible);
                 }
             }
-            self.record_suggestions_window();
-            return;
         }
-
-        if prompt.suggestions.is_empty() {
-            return;
-        }
-
-        // Nothing is painted here any more. The layer drew the popup, the
-        // hints row and the scrollbar in the overlay band before this method
-        // ran, and everything below is the geometry the not-yet-migrated
-        // rails still ask `ChromeLayout` for — read off the tree that placed
-        // it rather than computed a second time.
-        //
-        // Gone with the painter: the `Clear` that blanked the cells under the
-        // box (a themed box fills its own ground), the `y` arithmetic that had
-        // to agree with a second copy in `chrome::Prompt::collect`, and the
-        // quick-open hints row, which is now the layer's own last row.
-        self.record_suggestions_window();
-    }
-
-    /// Carry the suggestion list's window over to the next description.
-    ///
-    /// The rest of what this recorded is gone: the click and hover walks and
-    /// the scrollbar drag became gestures in the tree, and the two rectangles
-    /// that outlived them had one reader, the web `Scene`, which asks the
-    /// tree for them directly now. What is left is not a cache of anything —
-    /// it is *feedback*, the palette's next description measuring its columns
-    /// against the rows this layout put on screen, and the tree cannot answer
-    /// that while it is the thing being described.
-    ///
-    /// A list with no scrollbar reports no window, and then the window is the
-    /// whole list: every row it has room for, starting at the first.
-    fn record_suggestions_window(&mut self) {
-        use crate::view::shell::prompt as p;
-        let read = self.shell_ui.as_ref().map(|ui| {
-            let spec = ui.spec();
-            (p::suggestions_list_rect(spec), p::suggestions_window(spec))
-        });
-        let Some((list, window)) = read else {
-            return;
-        };
-        self.active_chrome_mut().suggestions_window = list.map(|r| {
-            let (first, visible) = window.unwrap_or((0, r.h as usize));
-            (first, visible.max(r.h as usize))
-        });
+        // Nothing is painted here, and nothing is carried to the next frame:
+        // the columns that used to measure against the window this layout
+        // settled are measured at the cut now (`shell::prompt::suggestions`).
     }
 
     /// Resolve the overlay's currently-selected match into a real
@@ -4794,7 +4677,7 @@ impl Editor {
                 .prompt
                 .as_ref()
                 .and_then(|prompt| {
-                    let idx = prompt.selected_suggestion?;
+                    let idx = prompt.selected_suggestion()?;
                     prompt.suggestions.get(idx)
                 })
                 .map(|s| {
@@ -5832,7 +5715,8 @@ impl Editor {
             .next()?;
         let spec = self.widget_registry.get(&key)?.spec.clone();
         Some(crate::view::shell::panel::Interior {
-            spec: Rc::new(spec),
+            // A handle on the registry's storage, not a copy of it.
+            spec,
             states: Rc::new(
                 self.widget_registry
                     .instance_states(&key)
@@ -5845,6 +5729,7 @@ impl Editor {
                     .map(|p| p.h_pan.clone())
                     .unwrap_or_default(),
             ),
+            projections: self.projections_for(&key),
             focus_key: self
                 .widget_registry
                 .focus_key(&key)
@@ -5940,6 +5825,20 @@ impl Editor {
             .clone()
     }
 
+    /// The panel's projection cache — the same one every frame, so a tree
+    /// that did not change is not walked again. See
+    /// `view::shell::widgets::Projections`.
+    pub(crate) fn projections_for(
+        &self,
+        key: &crate::widgets::PanelKey,
+    ) -> std::rc::Rc<crate::view::shell::widgets::Projections> {
+        self.tree_projections
+            .borrow_mut()
+            .entry(key.clone())
+            .or_insert_with(|| std::rc::Rc::new(crate::view::shell::widgets::Projections::kept()))
+            .clone()
+    }
+
     pub(crate) fn panel_interior(
         &self,
         slot: crate::app::PanelSlot,
@@ -5949,7 +5848,8 @@ impl Editor {
         let key = panel.panel_key.clone();
         let spec = self.widget_registry.get(&key)?.spec.clone();
         Some(crate::view::shell::panel::Interior {
-            spec: Rc::new(spec),
+            // A handle on the registry's storage, not a copy of it.
+            spec,
             states: Rc::new(
                 self.widget_registry
                     .instance_states(&key)
@@ -5962,6 +5862,7 @@ impl Editor {
                     .map(|p| p.h_pan.clone())
                     .unwrap_or_default(),
             ),
+            projections: self.projections_for(&key),
             focus_key: self
                 .widget_registry
                 .focus_key(&key)

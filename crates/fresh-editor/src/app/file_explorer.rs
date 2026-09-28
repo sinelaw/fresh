@@ -185,10 +185,12 @@ impl Editor {
         self.active_window_mut().init_file_explorer();
     }
 
+    // The selection moves; the window follows it on its own, because the
+    // list that draws the tree shows a selection that moved.
+
     pub fn file_explorer_navigate_up(&mut self) {
         if let Some(explorer) = self.file_explorer_mut() {
             explorer.select_prev_match();
-            explorer.update_scroll_for_selection();
         }
         self.file_explorer_preview_selected();
     }
@@ -196,23 +198,35 @@ impl Editor {
     pub fn file_explorer_navigate_down(&mut self) {
         if let Some(explorer) = self.file_explorer_mut() {
             explorer.select_next_match();
-            explorer.update_scroll_for_selection();
         }
         self.file_explorer_preview_selected();
     }
 
     pub fn file_explorer_page_up(&mut self) {
-        if let Some(explorer) = self.file_explorer_mut() {
-            explorer.select_page_up();
-            explorer.update_scroll_for_selection();
-        }
-        self.file_explorer_preview_selected();
+        self.file_explorer_page(-1);
     }
 
     pub fn file_explorer_page_down(&mut self) {
+        self.file_explorer_page(1);
+    }
+
+    /// Move the selection `pages` pages, by the window the tree was last
+    /// laid out with. Before the tree has been laid out there is no page,
+    /// and nothing moves. With nothing selected, a page key selects the
+    /// first row.
+    fn file_explorer_page(&mut self, pages: i32) {
+        let pager = self.active_window().file_explorer_pager.clone();
         if let Some(explorer) = self.file_explorer_mut() {
-            explorer.select_page_down();
-            explorer.update_scroll_for_selection();
+            let count = explorer.visible_count();
+            match explorer.get_selected_index() {
+                _ if count == 0 => {}
+                None => explorer.select_index(0),
+                Some(from) => {
+                    if let Some(to) = pager.target(from, pages, count) {
+                        explorer.select_index(to);
+                    }
+                }
+            }
         }
         self.file_explorer_preview_selected();
     }
@@ -274,7 +288,6 @@ impl Editor {
         // Otherwise, select parent
         if let Some(explorer) = self.file_explorer_mut() {
             explorer.select_parent();
-            explorer.update_scroll_for_selection();
         }
     }
 
@@ -754,6 +767,7 @@ impl Editor {
                                 // No visible nodes, select parent
                                 explorer.set_selected(Some(parent_id));
                             }
+                            explorer.show_selection();
                         }
                     }
                 }
@@ -1878,8 +1892,7 @@ impl crate::app::window::Window {
 
     /// Install an async expand-to-path result onto *this* window (routed
     /// per-window for the same reason as `install_initialized_file_explorer`).
-    pub(crate) fn install_expanded_file_explorer(&mut self, mut view: FileTreeView) {
-        view.update_scroll_for_selection();
+    pub(crate) fn install_expanded_file_explorer(&mut self, view: FileTreeView) {
         // A replay that would land exactly where this expand already did is
         // pure churn — and not free churn: replaying hands the tree straight
         // back out, so `self.file_explorer` returns to `None` and the sidebar
@@ -2052,12 +2065,13 @@ impl crate::app::window::Window {
             .map(|fe| fe.collect_symlink_mappings())
             .unwrap_or_default();
 
-        self.file_explorer_decoration_cache =
+        self.file_explorer_decoration_cache = std::rc::Rc::new(
             crate::view::file_tree::FileExplorerDecorationCache::rebuild(
                 decorations,
                 &self.root,
                 &symlink_mappings,
-            );
+            ),
+        );
     }
 
     /// Recompute the `file_explorer_slot_override_cache` from the current
@@ -2081,12 +2095,13 @@ impl crate::app::window::Window {
             .map(|fe| fe.collect_symlink_mappings())
             .unwrap_or_default();
 
-        self.file_explorer_slot_override_cache =
+        self.file_explorer_slot_override_cache = std::rc::Rc::new(
             crate::view::file_tree::FileExplorerSlotOverrideCache::rebuild(
                 slots,
                 &self.root,
                 &symlink_mappings,
-            );
+            ),
+        );
     }
 
     /// Read-only access to this window's file-explorer cut/copy clipboard.

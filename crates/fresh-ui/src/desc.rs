@@ -490,8 +490,10 @@ pub enum ScrollMode {
 pub enum Scroll {
     /// The framework's. The window starts here and is thereafter wherever the
     /// wheel, the bar and the anchor commands put it; the description's value
-    /// is read once, at the first layout. The default, at `(0, 0)`.
-    Own { x: u16, y: u16 },
+    /// is read once, at the first layout. The default, at `(0, 0)`. `y` is
+    /// an index for an index-scrolled window, which can be past a cell's
+    /// reach.
+    Own { x: u16, y: u32 },
     /// The owner's. The window is this far down — rows for a cell-scrolled
     /// window, items for an index-scrolled one — at *every* layout. The
     /// framework still moves its window for a wheel, a bar drag or an anchor
@@ -516,6 +518,31 @@ impl Default for Scroll {
     }
 }
 
+/// Which items a window pins at an offset — see [`Node::pinned_at`]. Compared
+/// by identity: the same function is the same answer.
+#[derive(Clone)]
+pub struct PinnedAt(pub Rc<dyn Fn(u32) -> Rc<[u32]>>);
+
+impl PinnedAt {
+    pub fn at(&self, offset: u32) -> Rc<[u32]> {
+        (self.0)(offset)
+    }
+}
+
+impl PartialEq for PinnedAt {
+    fn eq(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl Eq for PinnedAt {}
+
+impl std::fmt::Debug for PinnedAt {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("PinnedAt(..)")
+    }
+}
+
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
 pub struct ViewportProps {
     /// Where the window is, and whose that fact is. See [`Scroll`].
@@ -523,6 +550,9 @@ pub struct ViewportProps {
     /// Items drawn at the top of the window whatever the offset, in order —
     /// an index-scrolled window only. See [`Node::pinned`].
     pub pinned: Rc<[u32]>,
+    /// The pinned items as a function of the offset, evaluated by the window
+    /// at layout. Replaces `pinned` when set. See [`Node::pinned_at`].
+    pub pinned_at: Option<PinnedAt>,
     /// Mark the region as text-selectable in the display list. The library
     /// never interprets it — a backend that supports selection reads it, the
     /// same way it reads a theme name.
@@ -1563,7 +1593,7 @@ impl<M> Node<M> {
 
     /// Where the window starts. The initial value only: from the first layout
     /// on, the offset is framework-owned. See [`Scroll::Own`].
-    pub fn scroll_at(mut self, x: u16, y: u16) -> Self {
+    pub fn scroll_at(mut self, x: u16, y: u32) -> Self {
         match &mut self.desc {
             Desc::Viewport(p) => p.scroll = Scroll::Own { x, y },
             _ => panic!("scroll_at() applies to Viewport nodes only"),
@@ -1634,6 +1664,30 @@ impl<M> Node<M> {
         match &mut self.desc {
             Desc::Viewport(p) => p.pinned = Rc::from(indices),
             _ => panic!("pinned() applies to Viewport nodes only"),
+        }
+        self
+    }
+
+    /// [`Node::pinned`] as a function of the offset, which the window
+    /// evaluates at layout — **the pins are layout's answer**, not a list the
+    /// owner recomputes after being told where the window went. A tree's
+    /// sticky ancestors are the expanded ancestors of the first row of the
+    /// run, so they are known exactly when the offset is: in the window.
+    ///
+    /// The ceiling is the smallest offset whose run, under the pins *that
+    /// offset* has, reaches the last item — which the window can search for
+    /// only because it can ask this at an offset it is not at.
+    pub fn pinned_at(self, f: impl Fn(u32) -> Rc<[u32]> + 'static) -> Self {
+        self.pinned_by(PinnedAt(Rc::new(f)))
+    }
+
+    /// [`Node::pinned_at`] with the function already made, for a builder
+    /// that describes the window more than once and must hand it the same
+    /// function each time: the window compares it by identity.
+    pub fn pinned_by(mut self, f: PinnedAt) -> Self {
+        match &mut self.desc {
+            Desc::Viewport(p) => p.pinned_at = Some(f),
+            _ => panic!("pinned_by() applies to Viewport nodes only"),
         }
         self
     }

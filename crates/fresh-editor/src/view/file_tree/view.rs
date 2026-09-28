@@ -1,15 +1,70 @@
 use super::ignore::IgnorePatterns;
 use super::node::NodeId;
+use super::node::NodeState;
 use super::search::FileExplorerSearch;
 use super::tree::FileTree;
 use crate::input::fuzzy::FuzzyMatch;
 use crate::model::filesystem::DirEntry;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
+use std::sync::{Arc, OnceLock};
 
-/// Match VS Code's default upper bound for explorer sticky-scroll rows while
-/// always leaving at least one row for the scrolled contents.
-const MAX_STICKY_ANCESTORS: usize = 7;
+/// One visible row of the tree: the node, where it sits, and what a row
+/// needs to say about it.
+///
+/// The facts are copied out of the tree when the projection is made, so a
+/// row can be described from the projection alone — at layout, by the
+/// window, for whichever rows it holds — without a borrow of the tree.
+#[derive(Debug, Clone)]
+pub struct VisibleRow {
+    pub id: NodeId,
+    /// Depth as drawn: absorbed compact-directory ancestors do not count.
+    pub indent: usize,
+    /// The nearest ancestor that has a row of its own, by row index.
+    pub parent: Option<usize>,
+    pub entry: DirEntry,
+    pub state: NodeState,
+    /// The ancestors compact mode folded into this row, outermost first.
+    pub chain: Vec<String>,
+}
+
+impl VisibleRow {
+    pub fn is_dir(&self) -> bool {
+        self.entry.is_dir()
+    }
+
+    pub fn is_expanded(&self) -> bool {
+        self.state == NodeState::Expanded
+    }
+}
+
+/// The tree as the explorer shows it: every visible row, in order.
+///
+/// **Made once per change to the tree, not once per frame.** Expansion, a
+/// reload, the ignore rules and compact mode all go through `&mut
+/// FileTreeView`, and each of those drops it; everything that reads the
+/// visible order — navigation, the window, the web projection — shares the
+/// one that was made.
+#[derive(Debug, Default)]
+pub struct Projection {
+    pub rows: Vec<VisibleRow>,
+    index_of: HashMap<NodeId, usize>,
+}
+
+impl Projection {
+    pub fn len(&self) -> usize {
+        self.rows.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.rows.is_empty()
+    }
+
+    /// Where `id` is in the visible order.
+    pub fn index_of(&self, id: NodeId) -> Option<usize> {
+        self.index_of.get(&id).copied()
+    }
+}
 
 /// View state for file tree navigation and filtering
 #[derive(Debug)]
@@ -22,19 +77,35 @@ pub struct FileTreeView {
     multi_selection: HashSet<NodeId>,
     /// Anchor for Shift+range extension
     selection_anchor: Option<NodeId>,
-    /// Scroll offset (index into visible nodes)
-    scroll_offset: usize,
+    /// Where the explorer's window last reported it was, as the index of
+    /// its first scrolled row. **A record, not the window:** the list that
+    /// draws the tree owns its window, and this is only where it said it
+    /// went — kept so a list mounted again (after a background expand
+    /// hands the tree out, or a window switch) starts there, and so the
+    /// workspace can save it.
+    window_top: usize,
+    /// Bumped by every command that should bring the selection into view —
+    /// the keys, a toggle, a reveal of a path. The window follows the
+    /// selection for it (and for a change of selected row) until the wheel
+    /// takes it elsewhere; the model never says where the window goes.
+    reveal: u64,
+    /// The `reveal` the window at `window_top` already answers: the token
+    /// as of the list's last report. A list mounted again follows only a
+    /// request made since — one made while it was away (a background
+    /// expand-to-path) — not one the reader has since wheeled away from.
+    answered: u64,
     /// Sort mode for entries
     sort_mode: SortMode,
     /// Ignore patterns for filtering
     ignore_patterns: IgnorePatterns,
-    /// Last known viewport height (for scrolling calculations)
-    pub(crate) viewport_height: usize,
     /// Search state for quick navigation
     search: FileExplorerSearch,
     /// Render single-child directory chains as a single row
     /// (`foo/bar/baz`). Mirrors VSCode's `explorer.compactFolders`.
     compact_directories: bool,
+    /// The visible rows, made on first read after a change. See
+    /// [`Projection`].
+    projection: OnceLock<Arc<Projection>>,
 }
 
 /// Sort mode for file tree entries
@@ -57,18 +128,86 @@ impl FileTreeView {
             selected_node: Some(root_id),
             multi_selection: HashSet::new(),
             selection_anchor: None,
-            scroll_offset: 0,
+            window_top: 0,
+            reveal: 0,
+            answered: 0,
             sort_mode: SortMode::Type,
             ignore_patterns: IgnorePatterns::new(),
-            viewport_height: 10, // Default, will be updated during rendering
             search: FileExplorerSearch::new(),
             compact_directories: true,
+            projection: OnceLock::new(),
         }
+    }
+
+    /// The visible rows, made now if a change dropped them.
+    pub fn projection(&self) -> Arc<Projection> {
+        self.projection
+            .get_or_init(|| Arc::new(self.project()))
+            .clone()
+    }
+
+    /// The count the window follows the selection by. See `reveal`.
+    pub fn reveal_token(&self) -> u64 {
+        self.reveal
+    }
+
+    /// Ask for the selection to be shown, wherever it is — for a caller that
+    /// set it with [`set_selected`](Self::set_selected) on a command the
+    /// reader expects to see the result of.
+    pub fn show_selection(&mut self) {
+        self.reveal = self.reveal.wrapping_add(1);
+    }
+
+    /// Drop the projection: the tree, or what of it is visible, changed.
+    fn changed(&mut self) {
+        self.projection = OnceLock::new();
+    }
+
+    fn project(&self) -> Projection {
+        let mut ids = Vec::new();
+        self.collect_filtered_visible(self.tree.root_id(), &mut ids);
+        // Only ids with a node get a row, and an index is a row's: a missing
+        // node dropped below would otherwise shift every index after it.
+        ids.retain(|&id| self.tree.get_node(id).is_some());
+        let index_of: HashMap<NodeId, usize> =
+            ids.iter().enumerate().map(|(i, &id)| (id, i)).collect();
+        let rows = ids
+            .iter()
+            .filter_map(|&id| {
+                let node = self.tree.get_node(id)?;
+                // The nearest ancestor with a row: an absorbed one shares
+                // this row and has none.
+                let mut parent = None;
+                let mut at = node.parent;
+                while let Some(p) = at {
+                    if let Some(&i) = index_of.get(&p) {
+                        parent = Some(i);
+                        break;
+                    }
+                    at = self.tree.get_node(p).and_then(|n| n.parent);
+                }
+                let depth = self.tree.get_depth(id);
+                Some(VisibleRow {
+                    id,
+                    indent: depth.saturating_sub(self.count_absorbed_ancestors(id)),
+                    parent,
+                    entry: node.entry.clone(),
+                    state: node.state.clone(),
+                    chain: self
+                        .compact_chain_for_anchor(id)
+                        .into_iter()
+                        .filter_map(|a| self.tree.get_node(a).map(|n| n.entry.name.clone()))
+                        .collect(),
+                })
+            })
+            .collect();
+        Projection { rows, index_of }
     }
 
     /// Toggle/set the compact-directory rendering mode.
     pub fn set_compact_directories(&mut self, enabled: bool) {
         self.compact_directories = enabled;
+        self.changed();
     }
 
     /// Whether compact-directory rendering is enabled.
@@ -118,6 +257,7 @@ impl FileTreeView {
     /// isn't a directory. Stops as soon as a step has zero, multiple, or
     /// non-directory visible children.
     pub async fn expand_with_chain(&mut self, node_id: NodeId) -> std::io::Result<()> {
+        self.changed();
         // Always perform the first expansion so callers can use this in
         // place of `tree.expand_node` regardless of compact mode.
         let needs_initial_expand = self
@@ -127,6 +267,7 @@ impl FileTreeView {
             .unwrap_or(false);
         if needs_initial_expand {
             self.tree.expand_node(node_id).await?;
+            self.changed();
         }
         if !self.compact_directories {
             return Ok(());
@@ -168,6 +309,7 @@ impl FileTreeView {
                 .unwrap_or(false);
             if !already_expanded {
                 self.tree.expand_node(next).await?;
+                self.changed();
             }
             cur = next;
         }
@@ -176,12 +318,15 @@ impl FileTreeView {
     /// Toggle expansion on `node_id`. When expanding, also reveals the
     /// rest of any single-child-directory chain (see `expand_with_chain`).
     pub async fn toggle_with_chain(&mut self, node_id: NodeId) -> std::io::Result<()> {
+        self.show_selection();
         let was_expanded = self
             .tree
             .get_node(node_id)
             .map(|n| n.is_expanded())
             .unwrap_or(false);
+        self.changed();
         self.tree.toggle_node(node_id).await?;
+        self.changed();
         if !was_expanded {
             self.expand_with_chain(node_id).await?;
         }
@@ -193,10 +338,6 @@ impl FileTreeView {
         if let Some(sel) = self.selected_node {
             self.selected_node = Some(self.promote_to_anchor(sel));
         }
-        // A sticky ancestor can be toggled directly with the mouse. Collapsing
-        // it removes the scrolled descendants, so reconcile the old offset
-        // immediately or the selected parent could disappear from the screen.
-        self.update_scroll_for_selection();
         Ok(())
     }
 
@@ -224,14 +365,11 @@ impl FileTreeView {
         prefix
     }
 
-    /// Get visible nodes filtered by ignore patterns (hidden files, gitignored, etc.)
-    ///
-    /// Walks the expanded tree and skips ignored nodes along with their entire
-    /// subtree. The root node is never filtered out.
+    /// The visible nodes in display order: expanded, not ignored, and not
+    /// folded into a compact chain. Read off the projection; the walk is
+    /// [`Self::collect_filtered_visible`], which only the projection runs.
     fn filtered_visible_nodes(&self) -> Vec<NodeId> {
-        let mut result = Vec::new();
-        self.collect_filtered_visible(self.tree.root_id(), &mut result);
-        result
+        self.projection().rows.iter().map(|r| r.id).collect()
     }
 
     /// Recursively collect visible nodes, skipping ignored subtrees.
@@ -259,18 +397,15 @@ impl FileTreeView {
         }
     }
 
-    /// Set the viewport height (should be called during rendering)
-    pub fn set_viewport_height(&mut self, height: usize) {
-        self.viewport_height = height;
-    }
-
     /// Get the underlying tree
     pub fn tree(&self) -> &FileTree {
         &self.tree
     }
 
-    /// Get mutable reference to the underlying tree
+    /// Get mutable reference to the underlying tree. Drops the projection:
+    /// whatever the caller does with it is a change.
     pub fn tree_mut(&mut self) -> &mut FileTree {
+        self.changed();
         &mut self.tree
     }
 
@@ -281,136 +416,11 @@ impl FileTreeView {
     /// in the path so every row sits beneath its visible parent — both
     /// chain anchors *and* their descendants render at the right level.
     pub fn get_display_nodes(&self) -> Vec<(NodeId, usize)> {
-        let visible = self.filtered_visible_nodes();
-        visible
-            .into_iter()
-            .map(|id| {
-                let depth = self.tree.get_depth(id);
-                let absorbed = self.count_absorbed_ancestors(id);
-                (id, depth.saturating_sub(absorbed))
-            })
+        self.projection()
+            .rows
+            .iter()
+            .map(|r| (r.id, r.indent))
             .collect()
-    }
-
-    /// Indices into [`Self::get_display_nodes`] in the order they should be
-    /// painted in the viewport.
-    ///
-    /// Once the tree is scrolled, expanded ancestors of the first ordinary
-    /// row are prepended as sticky context. The ancestor cap is also bounded
-    /// by the viewport so scrolling can never hide every ordinary row.
-    pub fn viewport_display_indices(&self) -> Vec<usize> {
-        let visible = self.filtered_visible_nodes();
-        self.viewport_display_indices_with_nodes(&visible, self.scroll_offset, self.viewport_height)
-    }
-
-    /// Resolve a screen row in the explorer body to the displayed tree node.
-    /// Sticky ancestor rows and ordinary scrolled rows deliberately share this
-    /// mapping so render, click, hover, and context-menu targeting cannot drift.
-    #[cfg(test)]
-    pub fn get_display_node_at_viewport_row(&self, row: usize) -> Option<(NodeId, usize)> {
-        let display = self.get_display_nodes();
-        let display_index = self.viewport_display_indices().get(row).copied()?;
-        display.get(display_index).copied()
-    }
-
-    /// The ancestors pinned above the scrolled rows at the current offset, as
-    /// indices into [`Self::get_display_nodes`] — the prefix of
-    /// [`Self::viewport_display_indices`] that is not the contiguous run.
-    ///
-    /// Handed to the shell's window as its pinned rows: the window makes room
-    /// for them and derives its ceiling from how many there are, which is
-    /// what [`Self::max_scroll_offset`] computes for the offset the window is
-    /// at. Empty at offset zero, where nothing is scrolled away to need
-    /// context.
-    pub fn sticky_display_indices(&self) -> Vec<usize> {
-        let visible = self.filtered_visible_nodes();
-        if visible.is_empty() {
-            return Vec::new();
-        }
-        let scroll_offset = self.scroll_offset.min(visible.len() - 1);
-        self.sticky_indices(&visible, scroll_offset, self.viewport_height)
-    }
-
-    fn viewport_display_indices_with_nodes(
-        &self,
-        visible: &[NodeId],
-        scroll_offset: usize,
-        viewport_height: usize,
-    ) -> Vec<usize> {
-        if visible.is_empty() || viewport_height == 0 {
-            return Vec::new();
-        }
-
-        let scroll_offset = scroll_offset.min(visible.len() - 1);
-        let sticky = self.sticky_indices(visible, scroll_offset, viewport_height);
-        let ordinary_rows = viewport_height.saturating_sub(sticky.len());
-        let ordinary_end = (scroll_offset + ordinary_rows).min(visible.len());
-
-        let mut indices = Vec::with_capacity(viewport_height);
-        indices.extend(sticky);
-        indices.extend(scroll_offset..ordinary_end);
-        indices
-    }
-
-    fn sticky_indices(
-        &self,
-        visible: &[NodeId],
-        scroll_offset: usize,
-        viewport_height: usize,
-    ) -> Vec<usize> {
-        if scroll_offset == 0 || scroll_offset >= visible.len() || viewport_height < 2 {
-            return Vec::new();
-        }
-
-        let max_sticky = MAX_STICKY_ANCESTORS.min(viewport_height - 1);
-        let mut ancestors = Vec::new();
-        let mut current = self
-            .tree
-            .get_node(visible[scroll_offset])
-            .and_then(|node| node.parent);
-
-        while let Some(ancestor) = current {
-            // Absorbed compact-directory nodes do not own a display row, so
-            // only pin ancestors found in the flattened visible list.
-            if let Some(index) = visible[..scroll_offset]
-                .iter()
-                .position(|&id| id == ancestor)
-            {
-                ancestors.push(index);
-            }
-            current = self.tree.get_node(ancestor).and_then(|node| node.parent);
-        }
-
-        ancestors.reverse();
-        if ancestors.len() > max_sticky {
-            // In a path deeper than the cap, the immediate parents carry
-            // more useful context than the outermost workspace levels.
-            ancestors.drain(..ancestors.len() - max_sticky);
-        }
-        ancestors
-    }
-
-    /// Largest scroll offset that still fills the viewport as far as the
-    /// sticky ancestor rows allow. Deep trees may need a slightly larger
-    /// offset than `visible_count - viewport_height`, because pinned parents
-    /// consume part of the viewport.
-    pub fn max_scroll_offset(&self) -> usize {
-        let visible = self.filtered_visible_nodes();
-        if visible.is_empty() || self.viewport_height == 0 {
-            return 0;
-        }
-
-        let first_candidate = visible.len().saturating_sub(self.viewport_height);
-        for offset in first_candidate..visible.len() {
-            let sticky = self
-                .sticky_indices(&visible, offset, self.viewport_height)
-                .len();
-            let ordinary_rows = self.viewport_height.saturating_sub(sticky);
-            if offset + ordinary_rows >= visible.len() {
-                return offset;
-            }
-        }
-        visible.len() - 1
     }
 
     /// Count ancestors of `id` whose row is folded into a deeper anchor's
@@ -459,6 +469,7 @@ impl FileTreeView {
 
     /// Select the next visible node (clears multi-selection)
     pub fn select_next(&mut self) {
+        self.show_selection();
         self.clear_multi_selection();
         let visible = self.filtered_visible_nodes();
         if visible.is_empty() {
@@ -478,6 +489,7 @@ impl FileTreeView {
 
     /// Select the previous visible node (clears multi-selection)
     pub fn select_prev(&mut self) {
+        self.show_selection();
         self.clear_multi_selection();
         let visible = self.filtered_visible_nodes();
         if visible.is_empty() {
@@ -495,94 +507,20 @@ impl FileTreeView {
         }
     }
 
-    /// Move selection up by a page (viewport height)
-    pub fn select_page_up(&mut self) {
-        if self.viewport_height == 0 {
-            return;
-        }
-
-        let visible = self.filtered_visible_nodes();
-        if visible.is_empty() {
-            return;
-        }
-
-        if let Some(current) = self.selected_node {
-            if let Some(pos) = visible.iter().position(|&id| id == current) {
-                let new_pos = pos.saturating_sub(self.viewport_height);
-                self.selected_node = Some(visible[new_pos]);
-            }
-        } else {
-            self.selected_node = Some(visible[0]);
-        }
-    }
-
-    /// Move selection down by a page (viewport height)
-    pub fn select_page_down(&mut self) {
-        if self.viewport_height == 0 {
-            return;
-        }
-
-        let visible = self.filtered_visible_nodes();
-        if visible.is_empty() {
-            return;
-        }
-
-        if let Some(current) = self.selected_node {
-            if let Some(pos) = visible.iter().position(|&id| id == current) {
-                let new_pos = (pos + self.viewport_height).min(visible.len() - 1);
-                self.selected_node = Some(visible[new_pos]);
-            }
-        } else {
-            self.selected_node = Some(visible[0]);
-        }
-    }
-
-    /// Update scroll offset to ensure symmetric scrolling behavior
-    ///
-    /// This should be called after navigation to implement symmetric scrolling:
-    /// - When moving down, cursor moves to bottom of viewport before scrolling
-    /// - When moving up, cursor moves to top of viewport before scrolling
-    ///
-    /// Uses the stored viewport_height which is updated during rendering.
-    pub fn update_scroll_for_selection(&mut self) {
-        if self.viewport_height == 0 {
-            return;
-        }
-        let visible = self.filtered_visible_nodes();
-        self.update_scroll_with_nodes(&visible);
-    }
-
-    fn update_scroll_with_nodes(&mut self, visible: &[NodeId]) {
-        if self.viewport_height == 0 {
-            return;
-        }
-        if let Some(selected) = self.selected_node {
-            if let Some(pos) = visible.iter().position(|&id| id == selected) {
-                if pos < self.scroll_offset {
-                    self.scroll_offset = pos;
-                } else {
-                    // Sticky ancestors reduce the number of ordinary rows in
-                    // the viewport. Advance only far enough to expose the
-                    // selection under the current ancestor stack, then repeat
-                    // if crossing a tree boundary changes that stack.
-                    loop {
-                        let sticky = self
-                            .sticky_indices(visible, self.scroll_offset, self.viewport_height)
-                            .len();
-                        let ordinary_rows = self.viewport_height.saturating_sub(sticky).max(1);
-                        let ordinary_end = self.scroll_offset + ordinary_rows;
-                        if pos < ordinary_end {
-                            break;
-                        }
-                        self.scroll_offset += pos - ordinary_end + 1;
-                    }
-                }
-            }
+    /// Put the cursor on the row at `index` in the visible order — where a
+    /// page key lands, which the window that knows the page works out
+    /// (clears multi-selection).
+    pub fn select_index(&mut self, index: usize) {
+        self.show_selection();
+        self.clear_multi_selection();
+        if let Some(r) = self.projection().rows.get(index) {
+            self.selected_node = Some(r.id);
         }
     }
 
     /// Select the first visible node
     pub fn select_first(&mut self) {
+        self.show_selection();
         let visible = self.filtered_visible_nodes();
         if !visible.is_empty() {
             self.selected_node = Some(visible[0]);
@@ -591,6 +529,7 @@ impl FileTreeView {
 
     /// Select the last visible node
     pub fn select_last(&mut self) {
+        self.show_selection();
         let visible = self.filtered_visible_nodes();
         if !visible.is_empty() {
             self.selected_node = Some(*visible.last().unwrap());
@@ -611,6 +550,7 @@ impl FileTreeView {
 
     /// Extend the selection one step upward from the current cursor.
     pub fn extend_selection_up(&mut self) {
+        self.show_selection();
         let visible = self.filtered_visible_nodes();
         if visible.is_empty() {
             return;
@@ -640,11 +580,11 @@ impl FileTreeView {
             .unwrap_or(new_pos);
         let (lo, hi) = (new_pos.min(anchor_pos), new_pos.max(anchor_pos));
         self.multi_selection = visible[lo..=hi].iter().copied().collect();
-        self.update_scroll_with_nodes(&visible);
     }
 
     /// Extend the selection one step downward from the current cursor.
     pub fn extend_selection_down(&mut self) {
+        self.show_selection();
         let visible = self.filtered_visible_nodes();
         if visible.is_empty() {
             return;
@@ -674,7 +614,6 @@ impl FileTreeView {
             .unwrap_or(new_pos);
         let (lo, hi) = (new_pos.min(anchor_pos), new_pos.max(anchor_pos));
         self.multi_selection = visible[lo..=hi].iter().copied().collect();
-        self.update_scroll_with_nodes(&visible);
     }
 
     /// Select all currently visible nodes.
@@ -724,6 +663,7 @@ impl FileTreeView {
 
     /// Select the parent of the currently selected node
     pub fn select_parent(&mut self) {
+        self.show_selection();
         if let Some(current) = self.selected_node {
             if let Some(node) = self.tree.get_node(current) {
                 if let Some(mut parent_id) = node.parent {
@@ -744,51 +684,23 @@ impl FileTreeView {
         }
     }
 
-    /// Get the scroll offset
-    pub fn get_scroll_offset(&self) -> usize {
-        self.scroll_offset
+    /// Where the explorer's window last said it was. See `window_top`.
+    pub fn window_top(&self) -> usize {
+        self.window_top
     }
 
-    /// Set the scroll offset
-    pub fn set_scroll_offset(&mut self, offset: usize) {
-        self.scroll_offset = offset;
+    /// Record where the explorer's window went — the list's report, not a
+    /// request: the window is already there, and it answers every reveal
+    /// asked so far.
+    pub fn note_window(&mut self, top: usize) {
+        self.window_top = top;
+        self.answered = self.reveal;
     }
 
-    /// Ensure the selected node is visible within the viewport
-    ///
-    /// Adjusts scroll offset if necessary to keep the selected node visible.
-    ///
-    /// # Arguments
-    ///
-    /// * `viewport_height` - Number of visible lines in the viewport
-    pub fn ensure_visible(&mut self, viewport_height: usize) {
-        if viewport_height == 0 {
-            return;
-        }
-
-        if let Some(selected) = self.selected_node {
-            let visible = self.filtered_visible_nodes();
-            if let Some(pos) = visible.iter().position(|&id| id == selected) {
-                // If selection is above viewport, scroll up
-                if pos < self.scroll_offset {
-                    self.scroll_offset = pos;
-                }
-                // If selection is below viewport, scroll down
-                else {
-                    loop {
-                        let sticky = self
-                            .sticky_indices(&visible, self.scroll_offset, viewport_height)
-                            .len();
-                        let ordinary_rows = viewport_height.saturating_sub(sticky).max(1);
-                        let ordinary_end = self.scroll_offset + ordinary_rows;
-                        if pos < ordinary_end {
-                            break;
-                        }
-                        self.scroll_offset += pos - ordinary_end + 1;
-                    }
-                }
-            }
-        }
+    /// The reveal token the window at [`window_top`](Self::window_top)
+    /// already answers.
+    pub fn answered_token(&self) -> u64 {
+        self.answered
     }
 
     /// Get the sort mode
@@ -812,32 +724,26 @@ impl FileTreeView {
 
     /// Navigate to a specific path if it exists in the tree
     pub fn navigate_to_path(&mut self, path: &std::path::Path) {
+        self.show_selection();
         if let Some(node) = self.tree.get_node_by_path(path) {
             let id = node.id;
             self.selected_node = Some(self.promote_to_anchor(id));
-            self.update_scroll_for_selection();
         }
     }
 
     /// Get the index of the selected node in the visible list
     pub fn get_selected_index(&self) -> Option<usize> {
-        if let Some(selected) = self.selected_node {
-            let visible = self.filtered_visible_nodes();
-            visible.iter().position(|&id| id == selected)
-        } else {
-            None
-        }
+        self.projection().index_of(self.selected_node?)
     }
 
-    /// Get visible node at index (accounting for scroll offset)
+    /// The visible node at `index`, in the tree's display order.
     pub fn get_node_at_index(&self, index: usize) -> Option<NodeId> {
-        let visible = self.filtered_visible_nodes();
-        visible.get(index).copied()
+        self.projection().rows.get(index).map(|r| r.id)
     }
 
     /// Get the number of visible nodes
     pub fn visible_count(&self) -> usize {
-        self.filtered_visible_nodes().len()
+        self.projection().len()
     }
 
     /// Get reference to ignore patterns
@@ -847,17 +753,20 @@ impl FileTreeView {
 
     /// Get mutable reference to ignore patterns
     pub fn ignore_patterns_mut(&mut self) -> &mut IgnorePatterns {
+        self.changed();
         &mut self.ignore_patterns
     }
 
     /// Toggle showing hidden files
     pub fn toggle_show_hidden(&mut self) {
         self.ignore_patterns.toggle_show_hidden();
+        self.changed();
     }
 
     /// Toggle showing gitignored files
     pub fn toggle_show_gitignored(&mut self) {
         self.ignore_patterns.toggle_show_gitignored();
+        self.changed();
     }
 
     /// Check if a node should be visible (not filtered by ignore patterns)
@@ -881,6 +790,7 @@ impl FileTreeView {
     ) {
         self.ignore_patterns
             .load_gitignore_from_bytes(dir_path, contents, mtime);
+        self.changed();
     }
 
     /// Expand all parent directories and select the given file path
@@ -901,7 +811,11 @@ impl FileTreeView {
     /// - The path doesn't exist
     /// - There was an error expanding intermediate directories
     pub async fn expand_and_select_file(&mut self, path: &std::path::Path) -> bool {
-        if let Some(node_id) = self.tree.expand_to_path(path).await {
+        self.show_selection();
+        self.changed();
+        let found = self.tree.expand_to_path(path).await;
+        self.changed();
+        if let Some(node_id) = found {
             self.selected_node = Some(self.promote_to_anchor(node_id));
             true
         } else {
@@ -940,6 +854,11 @@ impl FileTreeView {
     /// Get the current search query
     pub fn search_query(&self) -> &str {
         self.search.query()
+    }
+
+    /// The search, while one is open: what a row's name is matched against.
+    pub fn search(&self) -> Option<&FileExplorerSearch> {
+        self.search.is_active().then_some(&self.search)
     }
 
     /// Check if search is active
@@ -986,15 +905,16 @@ impl FileTreeView {
 
     /// Jump to the first matching node
     fn jump_to_first_match(&mut self) {
+        self.show_selection();
         let matching = self.get_matching_nodes();
         if let Some(&first) = matching.first() {
             self.selected_node = Some(first);
-            self.update_scroll_for_selection();
         }
     }
 
     /// Select the next matching node (when search is active)
     pub fn select_next_match(&mut self) {
+        self.show_selection();
         if !self.search.is_active() {
             self.select_next();
             return;
@@ -1021,6 +941,7 @@ impl FileTreeView {
 
     /// Select the previous matching node (when search is active)
     pub fn select_prev_match(&mut self) {
+        self.show_selection();
         if !self.search.is_active() {
             self.select_prev();
             return;
@@ -1116,7 +1037,6 @@ mod tests {
         // Keep every ancestor on its own row so this fixture exercises the
         // sticky stack rather than compact-directory folding.
         view.set_compact_directories(false);
-        view.set_viewport_height(5);
         (temp_dir, view)
     }
 
@@ -1125,7 +1045,7 @@ mod tests {
         let (_temp_dir, view) = create_test_view().await;
 
         assert!(view.get_selected().is_some());
-        assert_eq!(view.get_scroll_offset(), 0);
+        assert_eq!(view.window_top(), 0);
         assert_eq!(view.get_sort_mode(), SortMode::Type);
     }
 
@@ -1197,81 +1117,84 @@ mod tests {
         assert_eq!(view.get_selected(), Some(root_id));
     }
 
+    /// **Each row knows its parent's row**, which is what the explorer's
+    /// window pins above a scrolled run: the expanded ancestors of the run's
+    /// first row. The window asks at layout; the answer is the projection's.
     #[tokio::test]
-    async fn test_ensure_visible() {
-        let (_temp_dir, mut view) = create_test_view().await;
-
-        let root_id = view.tree().root_id();
-        view.tree_mut().expand_node(root_id).await.unwrap();
-
-        let viewport_height = 2;
-
-        // Select last item
-        view.select_last();
-        view.ensure_visible(viewport_height);
-
-        // Scroll offset should be adjusted
-        let selected_index = view.get_selected_index().unwrap();
-        assert!(selected_index >= view.get_scroll_offset());
-        assert!(selected_index < view.get_scroll_offset() + viewport_height);
-
-        // Select first item
-        view.select_first();
-        view.ensure_visible(viewport_height);
-
-        // Scroll offset should be 0
-        assert_eq!(view.get_scroll_offset(), 0);
+    async fn each_row_names_the_row_of_its_parent() {
+        let (_temp_dir, view) = create_sticky_scroll_view().await;
+        let p = view.projection();
+        assert_eq!(p.len(), 10); // root + a/b/c + six files
+        let parents: Vec<Option<usize>> = p.rows.iter().map(|r| r.parent).collect();
+        assert_eq!(
+            parents,
+            [
+                None,
+                Some(0),
+                Some(1),
+                Some(2),
+                Some(3),
+                Some(3),
+                Some(3),
+                Some(3),
+                Some(3),
+                Some(3)
+            ]
+        );
     }
 
+    /// A compact chain shares its anchor's row, so the anchor's parent is
+    /// the row above the chain, not an absorbed directory without a row.
     #[tokio::test]
-    async fn sticky_ancestors_share_the_viewport_and_hit_mapping() {
+    async fn a_compact_chains_parent_is_the_row_above_the_chain() {
         let (_temp_dir, mut view) = create_sticky_scroll_view().await;
-        let display = view.get_display_nodes();
-        let ids: Vec<NodeId> = display.iter().map(|&(id, _)| id).collect();
-        assert_eq!(ids.len(), 10); // root + a/b/c + six files
-
-        view.set_scroll_offset(4);
-        assert_eq!(view.viewport_display_indices(), vec![0, 1, 2, 3, 4]);
-        for (row, &display_index) in [0usize, 1, 2, 3, 4].iter().enumerate() {
-            assert_eq!(
-                view.get_display_node_at_viewport_row(row).map(|(id, _)| id),
-                Some(ids[display_index])
-            );
-        }
-
-        // Four pinned parents leave one ordinary row, so reaching the last
-        // child requires a larger maximum than `count - viewport_height`.
-        assert_eq!(view.max_scroll_offset(), 9);
-        view.set_scroll_offset(view.max_scroll_offset());
-        assert_eq!(view.viewport_display_indices(), vec![0, 1, 2, 3, 9]);
+        view.set_compact_directories(true);
+        let p = view.projection();
+        let names: Vec<(String, Vec<String>, Option<usize>)> = p
+            .rows
+            .iter()
+            .map(|r| (r.entry.name.clone(), r.chain.clone(), r.parent))
+            .collect();
+        assert_eq!(names[1].0, "c");
+        assert_eq!(names[1].1, ["a", "b"], "a and b fold into c's row");
+        assert_eq!(names[1].2, Some(0), "c's row sits under the root's");
+        assert_eq!(names[2].2, Some(1), "the files under c's row");
     }
 
+    /// **Made once per change.** Reading the projection twice with nothing
+    /// in between hands out the same one; a change to what is visible makes
+    /// a new one.
     #[tokio::test]
-    async fn selection_auto_scroll_accounts_for_sticky_ancestors() {
+    async fn the_projection_is_made_again_only_after_a_change() {
         let (_temp_dir, mut view) = create_sticky_scroll_view().await;
+        let first = view.projection();
+        assert!(Arc::ptr_eq(&first, &view.projection()));
         view.select_last();
-        view.update_scroll_for_selection();
+        assert!(
+            Arc::ptr_eq(&first, &view.projection()),
+            "a selection is not a change to the rows"
+        );
 
-        let selected = view.get_selected_index().unwrap();
-        assert_eq!(selected, 9);
-        assert_eq!(view.get_scroll_offset(), view.max_scroll_offset());
-        assert!(view.viewport_display_indices().contains(&selected));
+        let c = first.rows[3].id;
+        view.toggle_with_chain(c).await.unwrap();
+        let folded = view.projection();
+        assert_eq!(folded.len(), 4, "c folded: its six files are gone");
+
+        view.set_compact_directories(true);
+        assert_eq!(view.projection().len(), 2, "a/b/c is one row");
     }
 
     #[tokio::test]
-    async fn collapsing_a_sticky_ancestor_keeps_it_selected_and_visible() {
+    async fn collapsing_a_sticky_ancestor_keeps_it_selected() {
         let (_temp_dir, mut view) = create_sticky_scroll_view().await;
         let display = view.get_display_nodes();
         let sticky_parent = display[1].0;
-        view.set_scroll_offset(6);
         view.set_selected(Some(sticky_parent));
 
         view.toggle_with_chain(sticky_parent).await.unwrap();
 
         assert_eq!(view.get_selected(), Some(sticky_parent));
-        assert_eq!(view.get_scroll_offset(), 1);
-        let selected = view.get_selected_index().unwrap();
-        assert!(view.viewport_display_indices().contains(&selected));
+        assert_eq!(view.get_selected_index(), Some(1));
     }
 
     #[tokio::test]

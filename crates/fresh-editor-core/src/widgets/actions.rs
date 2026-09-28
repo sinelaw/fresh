@@ -87,14 +87,29 @@ pub fn set_list_items_in_spec(
     }
     if let WidgetSpec::List {
         items,
+        item_specs,
         item_keys,
         key,
         ..
     } = spec
     {
         if key.as_deref() == Some(widget_key) {
-            *items = new_items;
-            *item_keys = new_item_keys;
+            // **A card list's rows are its cards.** `SetItems` carries
+            // text rows and their keys; applied to a list drawn from
+            // `item_specs`, the keys would be checked against rows it
+            // does not draw and the cards left keyed by the wrong count.
+            // A card list changes by a spec update.
+            if !item_specs.is_empty() {
+                tracing::error!(
+                    "SetItems on List {widget_key:?}: it draws cards (`itemSpecs`), not \
+                     items; update the spec instead. The mutation is dropped"
+                );
+                return true;
+            }
+            // Replaced, not edited: a frame that captured the old
+            // collection keeps it, and the next one captures this.
+            *items = new_items.into();
+            *item_keys = new_item_keys.into();
             return true;
         }
     }
@@ -134,8 +149,8 @@ pub fn set_tree_nodes_in_spec(
     } = spec
     {
         if key.as_deref() == Some(widget_key) {
-            *nodes = new_nodes;
-            *item_keys = new_item_keys;
+            *nodes = new_nodes.into();
+            *item_keys = new_item_keys.into();
             return true;
         }
     }
@@ -177,8 +192,22 @@ pub fn append_tree_nodes_in_spec(
     } = spec
     {
         if key.as_deref() == Some(widget_key) {
-            nodes.extend(new_nodes);
-            item_keys.extend(new_item_keys);
+            // Keys are the nodes' identity: an appended key the tree
+            // already has would make two nodes one. Refuse the batch
+            // whole rather than keep half of it.
+            let existing: std::collections::HashSet<&str> =
+                item_keys.iter().map(String::as_str).collect();
+            if let Some(dup) = new_item_keys.iter().find(|k| existing.contains(k.as_str())) {
+                tracing::error!(
+                    "AppendTreeNodes on Tree {widget_key:?}: key {dup:?} is already in the tree; \
+                     item keys must be unique, so the batch is dropped"
+                );
+                return true;
+            }
+            // Copy-on-write: in place when nothing else holds the
+            // collection, a fresh one when a described frame still does.
+            std::sync::Arc::make_mut(nodes).extend(new_nodes);
+            std::sync::Arc::make_mut(item_keys).extend(new_item_keys);
             return true;
         }
     }
@@ -249,7 +278,7 @@ pub fn set_tree_checked_keys_in_spec(
     {
         if key.as_deref() == Some(widget_key) {
             let target: std::collections::HashSet<&str> = keys.iter().map(String::as_str).collect();
-            for (i, node) in nodes.iter_mut().enumerate() {
+            for (i, node) in std::sync::Arc::make_mut(nodes).iter_mut().enumerate() {
                 if node.checked.is_none() {
                     continue;
                 }
@@ -429,8 +458,8 @@ mod tests {
     #[test]
     fn set_tree_nodes_in_spec_replaces_nodes() {
         let mut spec = WidgetSpec::Tree {
-            nodes: vec![node("old", 0, false)],
-            item_keys: vec!["k0".into()],
+            nodes: vec![node("old", 0, false)].into(),
+            item_keys: vec!["k0".into()].into(),
             selected_index: -1,
             visible_rows: Some(5),
             expanded_keys: vec![],
@@ -451,7 +480,7 @@ mod tests {
                 nodes, item_keys, ..
             } => {
                 assert_eq!(nodes.len(), 2);
-                assert_eq!(item_keys, &new_keys);
+                assert_eq!(**item_keys, new_keys);
             }
             _ => unreachable!(),
         }
@@ -470,8 +499,8 @@ mod tests {
         let mut c = node("c", 0, false);
         c.checked = Some(true);
         let mut spec = WidgetSpec::Tree {
-            nodes: vec![a, b, c],
-            item_keys: vec!["k_a".into(), "k_b".into(), "k_c".into()],
+            nodes: vec![a, b, c].into(),
+            item_keys: vec!["k_a".into(), "k_b".into(), "k_c".into()].into(),
             selected_index: -1,
             visible_rows: Some(5),
             expanded_keys: vec![],
@@ -512,8 +541,8 @@ mod tests {
         };
         let n_without = node("no-checkbox", 0, false); // checked: None
         let mut spec = WidgetSpec::Tree {
-            nodes: vec![n_with, n_without],
-            item_keys: vec!["k0".into(), "k1".into()],
+            nodes: vec![n_with, n_without].into(),
+            item_keys: vec!["k0".into(), "k1".into()].into(),
             selected_index: -1,
             visible_rows: Some(5),
             expanded_keys: vec![],
@@ -540,11 +569,85 @@ mod tests {
         }
     }
 
+    /// A card list draws its `item_specs`; `SetItems` carries text rows, so
+    /// applied to one it would leave the cards keyed by the wrong count
+    /// (and a lookup by row index past the keys). It is refused.
+    #[test]
+    fn set_items_leaves_a_card_list_alone() {
+        let mut spec: WidgetSpec = serde_json::from_value(serde_json::json!({
+            "kind": "list",
+            "key": "cards",
+            "items": [],
+            "itemSpecs": [
+                {"kind": "raw", "entries": [{"text": "a"}]},
+                {"kind": "raw", "entries": [{"text": "b"}]},
+            ],
+            "itemKeys": ["a", "b"],
+        }))
+        .unwrap();
+        assert!(set_list_items_in_spec(
+            &mut spec,
+            "cards",
+            vec![TextPropertyEntry::text("x")],
+            vec!["x".into()],
+        ));
+        let WidgetSpec::List {
+            item_keys, items, ..
+        } = &spec
+        else {
+            unreachable!()
+        };
+        assert_eq!(**item_keys, ["a", "b"], "the cards keep their keys");
+        assert!(items.is_empty());
+    }
+
+    /// An appended key the tree already has would make two nodes one:
+    /// the batch is refused whole.
+    #[test]
+    fn append_tree_nodes_refuses_a_key_the_tree_has() {
+        let mut spec = WidgetSpec::Tree {
+            nodes: vec![node("a", 0, false)].into(),
+            item_keys: vec!["k".into()].into(),
+            selected_index: -1,
+            visible_rows: Some(5),
+            expanded_keys: vec![],
+            checkable: false,
+            item_height: 1,
+            card_borders: false,
+            toggle_on_click: false,
+            columns: Vec::new(),
+            indent_cols: 2,
+            key: Some("t".into()),
+        };
+        let batch = vec![node("b", 0, false), node("c", 0, false)];
+        assert!(append_tree_nodes_in_spec(
+            &mut spec,
+            "t",
+            batch.clone(),
+            vec!["new".into(), "k".into()],
+        ));
+        let WidgetSpec::Tree { nodes, .. } = &spec else {
+            unreachable!()
+        };
+        assert_eq!(nodes.len(), 1, "no part of the batch lands");
+
+        assert!(append_tree_nodes_in_spec(
+            &mut spec,
+            "t",
+            batch,
+            vec!["b".into(), "c".into()],
+        ));
+        let WidgetSpec::Tree { item_keys, .. } = &spec else {
+            unreachable!()
+        };
+        assert_eq!(**item_keys, ["k", "b", "c"]);
+    }
+
     #[test]
     fn set_tree_nodes_in_spec_returns_false_for_unknown_key() {
         let mut spec = WidgetSpec::Tree {
-            nodes: vec![node("a", 0, false)],
-            item_keys: vec!["k".into()],
+            nodes: vec![node("a", 0, false)].into(),
+            item_keys: vec!["k".into()].into(),
             selected_index: -1,
             visible_rows: Some(5),
             expanded_keys: vec![],

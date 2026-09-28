@@ -2291,6 +2291,17 @@ function filesInDisplayOrder(): FileEntry[] {
  *  it is acting on. */
 let filesSelectedNodeKey = "";
 
+/** The directory / category rows the reader folded. Every group is open
+ *  by default, so the tree's expansion is `groupKeys` minus these — kept
+ *  here because a rebuild can bring groups the host has never seen (a new
+ *  directory, a filter cleared), and those must arrive open. */
+let filesCollapsedKeys = new Set<string>();
+
+/** The FILES tree's expanded set: every group but the folded ones. */
+function filesExpandedKeys(): string[] {
+    return filesTree.groupKeys.filter((k) => !filesCollapsedKeys.has(k));
+}
+
 /** The sidebar tree as last built — the map from a `select` event's node
  *  key back to a file. */
 let filesTree: FilesTree = {
@@ -2344,7 +2355,9 @@ function buildFilesPanelSpec(): WidgetSpec {
             // panel kept the old, shorter window until some unrelated
             // event happened to repaint it — the rows below the window
             // stayed blank with files still to show.
-            expandedKeys: filesTree.groupKeys,
+            // A seed only: the host owns expansion once the tree is up,
+            // so `renderFilesPanel` pushes the same set after every build.
+            expandedKeys: filesExpandedKeys(),
             indentCols: FILES_TREE_INDENT,
             key: FILES_TREE_KEY,
         }));
@@ -2494,6 +2507,9 @@ function panelVisible(panel: 'files' | 'diff' | 'comments'): boolean {
 function renderFilesPanel(): void {
     if (filesPanel === null || !panelVisible('files')) return;
     filesPanel.set(buildFilesPanelSpec());
+    // The spec's `expandedKeys` is ignored once the tree has state, and a
+    // rebuild can add groups that must open by default.
+    filesPanel.setExpandedKeys(FILES_TREE_KEY, filesExpandedKeys());
     pointSidebarAtCurrentFile();
 }
 
@@ -2631,8 +2647,15 @@ editor.on("widget_event", (data) => {
             }
             return;
         }
+        if (data.event_type === "expand") {
+            // The host has already flipped the row; remember the fold so
+            // the next rebuild keeps it.
+            const expanded = (data.payload as Record<string, unknown>)?.["expanded"] === true;
+            if (expanded) filesCollapsedKeys.delete(nodeKey);
+            else filesCollapsedKeys.add(nodeKey);
+        }
         adoptPanelFocusFromWidget('files');
-        return; // `expand` is host-owned; nothing else to mirror.
+        return;
     }
     if (data.widget_key === FILES_FILTER_KEY) {
         if (data.event_type === "focus") {
@@ -4377,8 +4400,8 @@ function startDiscardFilePrompt(f: FileEntry): void {
             : (tr("prompt.discard_file_lose") ?? "Permanently lose changes");
     editor.startPrompt(`${action} "${f.path}"? This cannot be undone.`, "review-discard-confirm");
     const suggestions: PromptSuggestion[] = [
-        { text: `${action} file`, description, value: "discard" },
-        { text: "Cancel", description: "Keep the file as-is", value: "cancel" },
+        { id: "discard", text: `${action} file`, description, value: "discard" },
+        { id: "cancel", text: "Cancel", description: "Keep the file as-is", value: "cancel" },
     ];
     editor.setPromptSuggestions(suggestions);
 }
@@ -4409,8 +4432,8 @@ function review_discard_file() {
             "review-discard-hunk-confirm"
         );
         const suggestions: PromptSuggestion[] = [
-            { text: "Discard hunk", description: "Permanently lose this change", value: "discard" },
-            { text: "Cancel", description: "Keep the hunk as-is", value: "cancel" },
+            { id: "discard", text: "Discard hunk", description: "Permanently lose this change", value: "discard" },
+            { id: "cancel", text: "Cancel", description: "Keep the hunk as-is", value: "cancel" },
         ];
         editor.setPromptSuggestions(suggestions);
         return;
@@ -7054,8 +7077,8 @@ async function review_delete_comment() {
     const preview = target.text.length > 40 ? target.text.substring(0, 37) + '...' : target.text;
     editor.startPrompt(`Delete "${preview}"?`, "review-delete-comment-confirm");
     const suggestions: PromptSuggestion[] = [
-        { text: "Delete", description: "Remove this comment", value: "delete" },
-        { text: "Cancel", description: "Keep the comment", value: "cancel" },
+        { id: "delete", text: "Delete", description: "Remove this comment", value: "delete" },
+        { id: "cancel", text: "Cancel", description: "Keep the comment", value: "cancel" },
     ];
     editor.setPromptSuggestions(suggestions);
 }
@@ -7551,6 +7574,7 @@ function stop_review_diff() {
     toolbarPanel = null;
     filesPanel = null;
     commentsPanel = null;
+    filesCollapsedKeys = new Set<string>();
     if (state.groupId !== null) {
         editor.closeBufferGroup(state.groupId);
         state.groupId = null;
@@ -7673,13 +7697,14 @@ async function fetchRangeDiff(range: ReviewRange): Promise<{ hunks: Hunk[]; file
 async function buildRangeSuggestions(): Promise<PromptSuggestion[]> {
     const suggestions: PromptSuggestion[] = [];
     // HEAD last commit.
-    suggestions.push({ text: "HEAD", description: "Review last commit", value: "HEAD" });
+    suggestions.push({ id: "HEAD", text: "HEAD", description: "Review last commit", value: "HEAD" });
     // Current-branch-vs-main style ranges.
     const tryRange = async (base: string) => {
         const cwd = gitCwd();
         const exists = await editor.spawnProcess("git", ["rev-parse", "--verify", base], cwd);
         if (exists.exit_code === 0) {
             suggestions.push({
+                id: `${base}..HEAD`,
                 text: `${base}..HEAD`,
                 description: `Review all commits on current branch vs ${base}`,
                 value: `${base}..HEAD`,
@@ -7699,6 +7724,7 @@ async function buildRangeSuggestions(): Promise<PromptSuggestion[]> {
                 const m = line.match(/^([0-9a-f]+)\s+(.*)$/);
                 if (m) {
                     suggestions.push({
+                        id: m[1],
                         text: m[1],
                         description: `Review commit: ${m[2]}`,
                         value: m[1],

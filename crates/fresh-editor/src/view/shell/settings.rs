@@ -434,7 +434,13 @@ pub fn categories(c: &Categories) -> Node<UiMsg> {
     // row theme only shows through the cells that name no ink of their own.
     let list = fresh_ui::List::windowed_stateful(
         n,
-        |i| fresh_ui::Key::Pair("settings_cat".into(), i as u64),
+        // By page and section, never by position: expanding a category
+        // inserts its sections, and the rows below must move, not be
+        // rewritten.
+        {
+            let rows = rows.clone();
+            move |i| rows[i].key()
+        },
         {
             let rows = rows.clone();
             let selected = c.selected;
@@ -458,7 +464,7 @@ pub fn categories(c: &Categories) -> Node<UiMsg> {
     };
     // The list's own ring stop is declined: the tree is one stop, and its
     // cursor is the host's (`SettingsState::tree_key`), not the list's.
-    let list = list.focusable(false);
+    let list = list.focusable(false).pager(c.pager.clone());
     categories_keys(fresh_ui::ComponentExt::node(list), c.focused)
 }
 
@@ -575,7 +581,12 @@ pub fn results(r: &Results) -> Node<UiMsg> {
     let sel = r.selected;
     let list = fresh_ui::List::windowed(
         n,
-        |i| fresh_ui::Key::Pair("settings_result".into(), i as u64),
+        // By what the result is, never by its rank: the results re-rank
+        // under every keystroke of the query.
+        {
+            let rows = rows.clone();
+            move |i| fresh_ui::Key::Str(format!("settings_result:{}", rows[i].id).into())
+        },
         move |i| result_card(&rows[i], i == sel),
     )
     .row_rows(RESULT_ROWS)
@@ -930,6 +941,7 @@ fn control(c: &Card, band: &str) -> Node<UiMsg> {
             slot: super::widgets::Slot::Settings,
             states: &states,
             h_pan: super::widgets::no_pan(),
+            projections: super::widgets::no_projections(),
             focus_key: focus_key.clone(),
             keyboard: true,
             hovered_key: None,
@@ -1398,6 +1410,10 @@ pub struct Categories {
     /// Whether the categories panel has the keyboard. It decides both the
     /// highlight's colour and whether the `>` is drawn, exactly as it did.
     pub focused: bool,
+    /// The dialog's page handle for the tree: the list records the window
+    /// its layout gave it, and the tree's PageUp/PageDown ask it for the row
+    /// a page away.
+    pub pager: Rc<fresh_ui::behavior::Pager>,
 }
 
 /// The search's results, which replace the page while a search is running.
@@ -1411,6 +1427,8 @@ pub struct Results {
 /// breadcrumb that says where it lives, and its description.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ResultRow {
+    /// What the result is (`SearchResult::id`); the row is keyed by it.
+    pub id: String,
     /// Already split at the match positions by the search, which is domain
     /// knowledge: what a fuzzy match *is* belongs to the matcher.
     pub name: Vec<Span>,
@@ -1443,6 +1461,8 @@ pub struct StripCat {
 #[derive(Clone, Debug, PartialEq)]
 pub enum CatRow {
     Category {
+        /// The page's path: what the row is. The row is keyed by it.
+        id: String,
         idx: usize,
         /// `▼`, `▶` or a space — the painter's own three states.
         chevron: &'static str,
@@ -1455,10 +1475,24 @@ pub enum CatRow {
         nested: bool,
     },
     Section {
+        /// The page's path and the section's first setting: what the row
+        /// is. A section's name is not unique; its first setting is.
+        id: String,
         cat: usize,
         section: usize,
         label: String,
     },
+}
+
+impl CatRow {
+    /// The row's key: its id, namespaced.
+    fn key(&self) -> fresh_ui::Key {
+        match self {
+            CatRow::Category { id, .. } | CatRow::Section { id, .. } => {
+                fresh_ui::Key::Str(format!("settings_cat:{id}").into())
+            }
+        }
+    }
 }
 
 pub fn search_key() -> fresh_ui::Key {
@@ -2043,6 +2077,7 @@ mod tests {
         Categories {
             rows: vec![
                 CatRow::Category {
+                    id: "/general".into(),
                     idx: 0,
                     chevron: "▼",
                     dirty: true,
@@ -2051,16 +2086,19 @@ mod tests {
                     nested: false,
                 },
                 CatRow::Section {
+                    id: "/general#/general/a".into(),
                     cat: 0,
                     section: 0,
                     label: "Startup".into(),
                 },
                 CatRow::Section {
+                    id: "/general#/general/b".into(),
                     cat: 0,
                     section: 1,
                     label: "Appearance".into(),
                 },
                 CatRow::Category {
+                    id: "/clipboard".into(),
                     idx: 1,
                     chevron: " ",
                     dirty: false,
@@ -2071,6 +2109,7 @@ mod tests {
             ],
             selected: Some(0),
             focused: true,
+            pager: fresh_ui::behavior::Pager::new(),
         }
     }
 
@@ -2185,6 +2224,25 @@ mod tests {
         c
     }
 
+    /// **A page of the body is a window's height of cards**, named by the
+    /// window that measured them: the body's paged anchor records the cards
+    /// (through whatever wraps them) and answers the one a page away — the
+    /// last card starting within a window's height of the selected one's
+    /// top. `select_next_page` stepped one card per row of that height.
+    #[test]
+    fn a_body_page_is_the_card_a_window_below() {
+        let anchor = fresh_ui::behavior::Anchor::paged();
+        let ui = with_chrome(paged(60, &anchor), 200, 40, None);
+        let window = ui
+            .rect_of(ui.find_by_key(&items_key()).expect("the body"))
+            .h as i32;
+        let top = |i: usize| ui.rect_of(ui.find_by_key(&card_key(i)).expect("a card")).y;
+        let want = (0..60).rposition(|i| top(i) - top(0) <= window).unwrap();
+        assert!(want > 1, "a window holds more than one card: {want}");
+        assert_eq!(anchor.page_key(&card_key(0), 1), Some(card_key(want)));
+        assert_eq!(anchor.page_key(&card_key(want), -1), Some(card_key(0)));
+    }
+
     /// The rows the body's window is showing, in order.
     fn body_rows(ui: &Ui<UiMsg>) -> Vec<String> {
         let vp = ui.find_by_key(&items_key()).expect("the body window");
@@ -2257,6 +2315,7 @@ mod tests {
                 selected,
                 rows: (0..12)
                     .map(|i| ResultRow {
+                        id: format!("/general/setting_{i}"),
                         name: vec![Span::new(
                             format!("result {i}"),
                             pair("ui.popup_text_fg", "ui.popup_bg"),
@@ -2740,6 +2799,57 @@ mod tests {
         assert!(panel.h > 0 && tree.h > 0, "both have a band to fill");
     }
 
+    /// **The tree's page is the window its list was laid out with**, not the
+    /// height of the box it sits in, read back after the frame
+    /// (`tree_page_rows`). A shorter dialog is a shorter page, and the
+    /// narrow layout, which draws a strip instead of this list, has none.
+    #[test]
+    fn the_trees_page_is_its_lists_window() {
+        // A tree taller than any box: a hundred pages.
+        let long = || {
+            let mut c = chrome();
+            let cats = c.categories.as_mut().unwrap();
+            let first = cats.rows[0].clone();
+            cats.rows = (0..100)
+                .map(|i| match first.clone() {
+                    CatRow::Category {
+                        chevron,
+                        dirty,
+                        icon,
+                        nested,
+                        ..
+                    } => CatRow::Category {
+                        id: format!("/page{i}"),
+                        idx: i,
+                        chevron,
+                        dirty,
+                        icon,
+                        label: format!("Page {i}"),
+                        nested,
+                    },
+                    other => other,
+                })
+                .collect();
+            c
+        };
+        let c = long();
+        let pager = c.categories.as_ref().unwrap().pager.clone();
+        let ui = with_chrome(c, 200, 60, None);
+        let tree = ui.rect_of(ui.find_by_key(&categories_key()).expect("the tree"));
+        let rows = pager.target(0, 1, 1000).expect("laid out, so a page");
+        assert!(
+            rows > 0 && rows <= tree.h as usize,
+            "{rows} rows in {}",
+            tree.h
+        );
+
+        let c = long();
+        let pager = c.categories.as_ref().unwrap().pager.clone();
+        let _ui = with_chrome(c, 200, 30, None);
+        let short = pager.target(0, 1, 1000).unwrap();
+        assert!(short < rows, "{short} < {rows}");
+    }
+
     /// **A press on a row is that row's identity**, which is what the four
     /// families of rectangle the painter filed were reconstructing.
     #[test]
@@ -2751,10 +2861,7 @@ mod tests {
             (3, UiFact::SettingsCategory(1)),
         ] {
             let mut ui = laid_out(200, 60, None);
-            let at = ui.rect_of(
-                ui.find_by_key(&fresh_ui::Key::Pair("settings_cat".into(), row as u64))
-                    .expect("a row"),
-            );
+            let at = ui.rect_of(ui.find_by_key(&tree().rows[row].key()).expect("a row"));
             // A `List` selects on the click, not on the press.
             let p = fresh_ui::Point::new(at.x + 6, at.y);
             let _ = ui.dispatch(fresh_ui::Input::press(
@@ -2782,7 +2889,7 @@ mod tests {
     fn a_click_on_the_chevron_is_the_rows_click() {
         let mut ui = laid_out(200, 60, None);
         let at = ui.rect_of(
-            ui.find_by_key(&fresh_ui::Key::Pair("settings_cat".into(), 0u64))
+            ui.find_by_key(&tree().rows[0].key())
                 .expect("the first row"),
         );
         // Column 0 is the cursor marker; the chevron is the one after it.

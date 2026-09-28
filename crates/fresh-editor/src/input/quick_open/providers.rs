@@ -79,10 +79,12 @@ impl QuickOpenProvider for CommandProvider {
         };
 
         let registry = self.command_registry.read().unwrap();
+        // By identity, not by the label: a plugin command can share a
+        // built-in's name, and the row the user chose is the one to run.
         let cmd = registry
             .get_all()
             .into_iter()
-            .find(|c| c.get_localized_name() == suggestion.text);
+            .find(|c| c.id() == suggestion.id);
 
         let Some(cmd) = cmd else {
             return QuickOpenResult::None;
@@ -162,7 +164,9 @@ impl QuickOpenProvider for BufferProvider {
                     Some(leaf) => format!("{GROUP_VALUE_PREFIX}{leaf}"),
                     None => buf.id.to_string(),
                 };
-                let suggestion = Suggestion::new(display_name)
+                // The value is the row's identity too: a buffer id, or a
+                // group's leaf in its own namespace.
+                let suggestion = Suggestion::new(value.clone(), display_name)
                     .with_description(buf.path.clone())
                     .with_value(value);
                 Some((suggestion, m.score, buf.id))
@@ -230,18 +234,20 @@ impl QuickOpenProvider for GotoLineProvider {
 
     fn suggestions(&self, query: &str, _context: &QuickOpenContext) -> Vec<Suggestion> {
         if query.is_empty() {
-            return vec![
-                Suggestion::disabled(t!("quick_open.goto_line_hint").to_string())
-                    .with_description(t!("quick_open.goto_line_desc").to_string()),
-            ];
+            return vec![Suggestion::disabled(
+                "status:goto-line-hint",
+                t!("quick_open.goto_line_hint").to_string(),
+            )
+            .with_description(t!("quick_open.goto_line_desc").to_string())];
         }
 
         // A bare sign isn't yet a valid number — show a hint and wait for digits.
         if query == "-" || query == "+" {
-            return vec![
-                Suggestion::disabled(t!("quick_open.goto_line_hint").to_string())
-                    .with_description(t!("quick_open.relative_line_desc").to_string()),
-            ];
+            return vec![Suggestion::disabled(
+                "status:relative-line-hint",
+                t!("quick_open.goto_line_hint").to_string(),
+            )
+            .with_description(t!("quick_open.relative_line_desc").to_string())];
         }
 
         match parse_goto_line_input(query) {
@@ -255,14 +261,15 @@ impl QuickOpenProvider for GotoLineProvider {
                         t!("quick_open.goto_line", line = format!("{:+}", d)).to_string()
                     }
                 };
-                vec![Suggestion::new(label)
+                vec![Suggestion::new(format!("line:{query}"), label)
                     .with_description(t!("quick_open.press_enter").to_string())
                     .with_value(query.to_string())]
             }
-            None => vec![
-                Suggestion::disabled(t!("quick_open.invalid_line").to_string())
-                    .with_description(query.to_string()),
-            ],
+            None => vec![Suggestion::disabled(
+                "status:invalid-line",
+                t!("quick_open.invalid_line").to_string(),
+            )
+            .with_description(query.to_string())],
         }
     }
 
@@ -878,6 +885,7 @@ impl QuickOpenProvider for FileProvider {
         // Show a clear error when the remote connection is lost
         if !self.filesystem.is_remote_connected() {
             return vec![Suggestion::disabled(
+                "status:remote-lost",
                 "Remote connection lost — cannot list files".to_string(),
             )];
         }
@@ -902,9 +910,15 @@ impl QuickOpenProvider for FileProvider {
 
         if !has_files && prefix_entries.is_empty() {
             if still_loading {
-                return vec![Suggestion::disabled("Loading files…".to_string())];
+                return vec![Suggestion::disabled(
+                    "status:loading",
+                    "Loading files…".to_string(),
+                )];
             } else {
-                return vec![Suggestion::disabled(t!("quick_open.no_files").to_string())];
+                return vec![Suggestion::disabled(
+                    "status:no-files",
+                    t!("quick_open.no_files").to_string(),
+                )];
             }
         }
 
@@ -979,7 +993,7 @@ impl QuickOpenProvider for FileProvider {
 
         let mut suggestions: Vec<Suggestion> = scored
             .into_iter()
-            .map(|(path, _)| Suggestion::new(path.clone()).with_value(path))
+            .map(|(path, _)| Suggestion::new(format!("file:{path}"), path.clone()).with_value(path))
             .collect();
 
         if still_loading {
@@ -988,7 +1002,7 @@ impl QuickOpenProvider for FileProvider {
             } else {
                 "Scanning for more files…"
             };
-            suggestions.push(Suggestion::disabled(msg.to_string()));
+            suggestions.push(Suggestion::disabled("status:scanning", msg.to_string()));
         }
 
         suggestions

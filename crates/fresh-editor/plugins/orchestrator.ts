@@ -46,6 +46,13 @@ import {
   type WidgetEvt,
 } from "./lib/widgets.ts";
 import { BIG_FILE_ARGS } from "./lib/git_repo.ts";
+import {
+  AGENT_REGISTRY,
+  agentEntryForBase,
+  namedSession,
+  type AgentEntry,
+  type AgentPromptArg,
+} from "./lib/agent_registry.ts";
 import { PathPicker, machinePicker, type BrowseEntry, type BrowseSource } from "./lib/pickers.ts";
 import {
   DISCOVER_ALL_KEY,
@@ -4613,6 +4620,9 @@ function refreshOpenDialog(): void {
   // skips any id that isn't currently open. Cleared in `closeOpenDialog`.
   if (dockMode) {
     editor.setWindowCycleOrder(openDialog.filteredIds.filter((id) => id > 0));
+    // The tree's `expandedKeys` is a seed too, and a rebuild can change
+    // what it should be (a search opening every folder, or clearing).
+    applyDockExpansion();
   }
 }
 
@@ -5056,6 +5066,7 @@ function openControlRoom(
     });
     // The column's width is the host's; nothing to re-issue.
     openPanel.update(buildDockSpec());
+    applyDockExpansion();
   } else {
     // 90% × 90% of the terminal — the open dialog wants room for
     // a real session list + preview pane, unlike the new-session
@@ -6174,7 +6185,9 @@ function toggleDockFolderExpansion(folderKey: string): void {
   if (set.has(folderKey)) set.delete(folderKey);
   else set.add(folderKey);
   saveExpanded();
-  openPanel.setExpandedKeys("sessions", Array.from(set));
+  // Through the reconciler: while a search holds every folder open, the
+  // flip is remembered for later rather than drawn.
+  applyDockExpansion();
   // Re-render so the hint-bar padding tracks the tree's new height
   // (see the `expand` widget_event mirror for the host-owned fold path).
   if (dockMode && openDialog) openPanel.update(buildDockSpec());
@@ -7678,155 +7691,6 @@ function splitAgentCmd(s: string): string[] {
   return out;
 }
 
-// =============================================================================
-// Agent resume registry
-//
-// How known coding agents rejoin a prior conversation after an editor restart.
-// This is *policy/data*: the host core knows none of it — it just persists the
-// resolved `resume` argv and runs it on restore (see the `resume` option on
-// `createWindowWithTerminal` and `terminal.resume_agents`). Two strategies,
-// preferring the first when an agent supports it:
-//
-//   provision — mint a session id at launch (`<agent> … --session-id <uuid>`)
-//               and resume with it (`<agent> --resume <uuid>`). Precise: the id
-//               is ours from birth, so there's nothing to capture and no need
-//               to read the agent's private state. The uuid is a plain argv
-//               element, never interpolated into a shell string.
-//   continue  — resume the most recent session in the cwd (`<agent> --continue`),
-//               no id. Relies on the orchestrator's one-agent-per-worktree
-//               model, where "latest in this cwd" is unambiguous.
-//
-// Matched by argv0 basename. Flags are each agent's documented resume
-// interface; entries are easy to add and intended to become user-overridable.
-// `{id}` in a template is replaced with the minted uuid (array slot only).
-interface AgentResumeSpec {
-  provision?: { idFlag: string; resumeArgs: string[] };
-  continue?: { resumeArgs: string[] };
-}
-// How an agent takes an initial prompt on the command line: as a trailing
-// positional (`claude "prompt"`) or behind a flag (`opencode --prompt "…"`,
-// `aider -m "…"`). Absent ⇒ the agent has no launch-prompt argument and the
-// New Session prompt box is hidden for it.
-type AgentPromptArg =
-  | { style: "positional" }
-  | { style: "flag"; flag: string };
-// How to hand an agent the "drive the Fresh editor from the shell" contract
-// when "Teach Fresh CLI" is on: appended to launch argv behind a flag
-// (`claude --append-system-prompt "…"`), or — for agents with no such flag
-// (codex/opencode) — prepended to the launch prompt. Absent ⇒ the agent has no
-// autonomous shell to drive the editor with, so the checkbox stays hidden.
-//
-// Deliberately not a file: an instruction file written into the workspace
-// lands in the user's repo, where it collides with their own and shows up in
-// `git status`.
-type AgentSystemPrompt =
-  | { via: "flag"; flag: string }
-  | { via: "prompt" };
-interface AgentEntry {
-  // The command the New Session dropdown fills in and the basename the matcher
-  // keys on.
-  id: string;
-  // Human label for the preset button. Falls back to `id` when omitted.
-  label?: string;
-  // Resolves a path/args form (e.g. `/usr/bin/claude --foo`) to this entry.
-  match: RegExp;
-  // Resume strategy across editor restarts (see `resolveAgentLaunch`).
-  spec: AgentResumeSpec;
-  // Flag(s) enabling the agent's "auto"/bypass-approvals mode. Absent ⇒ the
-  // agent has no such flag (opencode gates this via config, not a flag), so the
-  // "Auto mode" checkbox is hidden for it.
-  auto?: string[];
-  // How the agent accepts an initial prompt at launch. Absent ⇒ no prompt box.
-  prompt?: AgentPromptArg;
-  // How to inject the "drive the Fresh editor" system prompt when the user
-  // enables "Teach Fresh CLI". Absent ⇒ the agent has no autonomous shell to
-  // drive the editor (aider), so the checkbox stays hidden for it.
-  systemPrompt?: AgentSystemPrompt;
-}
-// The four launcher-priority agents come first (claude, codex, opencode), then
-// the long-standing aider entry. Order here drives the preset-row order.
-const AGENT_REGISTRY: AgentEntry[] = [
-  {
-    // Claude Code CLI: `--session-id <uuid>` pins the session at launch;
-    // `--resume <uuid>` rejoins it; `--continue` resumes the latest in cwd.
-    id: "claude",
-    label: "claude",
-    match: /^claude$/,
-    spec: {
-      provision: { idFlag: "--session-id", resumeArgs: ["--resume", "{id}"] },
-      continue: { resumeArgs: ["--continue"] },
-    },
-    // "Auto mode" = `--permission-mode auto`: the safe-autonomous mode (a
-    // classifier vets actions before they run) — deliberately NOT
-    // `--dangerously-skip-permissions` (which is `bypassPermissions`, the
-    // unchecked maximal bypass, reserved for isolated containers).
-    auto: ["--permission-mode", "auto"],
-    prompt: { style: "positional" },
-    systemPrompt: { via: "flag", flag: "--append-system-prompt" },
-  },
-  {
-    // OpenAI Codex CLI: resume is a *subcommand*, not a flag — `codex resume
-    // --last` rejoins the latest session in the cwd. There's no launch-time
-    // session-id to pin, so it's continue-only.
-    //
-    // Auto mode: `--full-auto` was REMOVED from the root command (recent Codex
-    // rejects `codex --full-auto` outright; it survives only under `codex exec`
-    // as a deprecation warning that redirects to `--sandbox workspace-write`).
-    // Codex runs model-proposed commands inside the workspace-write sandbox —
-    // deliberately NOT `-s danger-full-access` nor the
-    // `--dangerously-bypass-approvals-and-sandbox` full bypass.
-    //
-    // `--ask-for-approval on-request` + `approvals_reviewer = "auto_review"`
-    // is the counterpart of claude's `--permission-mode auto`: the model
-    // escalates when it needs out of the sandbox, and an automated reviewer —
-    // not the human — rules on the request. `never` cannot be used here: it
-    // fails escalations outright rather than reviewing them, which silently
-    // breaks "Teach Fresh CLI", since the editor's control socket lives
-    // outside the workspace and `connect()` to it is EPERM inside the sandbox.
-    //
-    // All of these are accepted on the root command AND on the `resume`
-    // subcommand, so they ride launch and resume alike. The initial prompt is
-    // a trailing positional (`codex "…"`).
-    id: "codex",
-    label: "codex",
-    match: /^codex$/,
-    spec: { continue: { resumeArgs: ["resume", "--last"] } },
-    auto: [
-      "--sandbox",
-      "workspace-write",
-      "--ask-for-approval",
-      "on-request",
-      "-c",
-      'approvals_reviewer="auto_review"',
-    ],
-    prompt: { style: "positional" },
-    systemPrompt: { via: "prompt" },
-  },
-  {
-    // opencode (SST): `--continue` resumes the latest session in the cwd.
-    // "Auto"/YOLO mode is config-driven (permissions in opencode.json), so it
-    // has no launch flag — the checkbox is hidden. `--prompt` submits the text as
-    // the first message (it does not merely seed the input box).
-    id: "opencode",
-    label: "opencode",
-    match: /^opencode$/,
-    spec: { continue: { resumeArgs: ["--continue"] } },
-    prompt: { style: "flag", flag: "--prompt" },
-    systemPrompt: { via: "prompt" },
-  },
-  {
-    // aider keeps its conversation in the repo and reloads it with
-    // `--restore-chat-history`; it has no caller-supplied session id, so it's
-    // a continue-only (strategy B) agent. `--yes-always` auto-confirms; `-m`
-    // hands it a message.
-    id: "aider",
-    label: "aider",
-    match: /^aider$/,
-    spec: { continue: { resumeArgs: ["--restore-chat-history"] } },
-    auto: ["--yes-always"],
-    prompt: { style: "flag", flag: "-m" },
-  },
-];
 
 // Whether a workspace's spawned agent gets a capability token at all. Passed to
 // the host as `allowScript` on *every* workspace creation, which mints a
@@ -7877,7 +7741,7 @@ function agentEntryForCmd(cmd: string): AgentEntry | null {
   const argv = splitAgentCmd(cmd);
   if (argv.length === 0) return null;
   const base = editor.pathBasename(argv[0]) || argv[0];
-  return AGENT_REGISTRY.find((e) => e.match.test(base)) ?? null;
+  return agentEntryForBase(base);
 }
 
 // The agent (if any) the form's current command resolves to.
@@ -7991,7 +7855,7 @@ function resolveAgentLaunch(
   if (argv.length === 0) return { launch: argv };
   const argv0 = argv[0];
   const base = editor.pathBasename(argv0) || argv0;
-  const entry = AGENT_REGISTRY.find((e) => e.match.test(base));
+  const entry = agentEntryForBase(base);
   // Unknown command (a plain shell / custom binary): pass through untouched.
   // Auto mode and the start prompt are agent-registry features, so there's
   // nothing to inject here.
@@ -8021,8 +7885,21 @@ function resolveAgentLaunch(
   const withAuto = [...argv, ...autoArgs, ...sysPromptArgs];
 
   if (entry.spec.provision) {
-    const id = agentSessionUuid();
     const { idFlag, resumeArgs } = entry.spec.provision;
+    // The command already names its session (an imported `claude --resume
+    // <id>`, a hand-typed `--session-id`): minting another id alongside it is
+    // rejected by the agent, so launch it as given and resume by the id it
+    // names — or, with none (`--continue`), by the agent's continue form.
+    const named = namedSession(argv, entry.spec.provision);
+    if (named) {
+      const resume = named.id
+        ? [argv0, ...resumeArgs.map((a) => a.replace("{id}", named.id!)), ...autoArgs]
+        : entry.spec.continue
+        ? [argv0, ...entry.spec.continue.resumeArgs, ...autoArgs]
+        : undefined;
+      return { launch: [...withAuto, ...promptArgs], resume };
+    }
+    const id = agentSessionUuid();
     return {
       launch: [...withAuto, idFlag, id, ...promptArgs],
       resume: [argv0, ...resumeArgs.map((a) => a.replace("{id}", id)), ...autoArgs],
@@ -10693,6 +10570,7 @@ function buildRepoDialogSpec(): WidgetSpec {
         label: editor.t("repo.list_title", { count: String(repos.length) }),
         child: list({
           items: repos.map((r) => ({ text: `${r.name.padEnd(w)}${repoRemoteLabel(r)}` })),
+          itemKeys: repos.map((r) => r.id),
           selectedIndex: Math.max(0, repos.findIndex((r) => r.id === d.repoId)),
           visibleRows: Math.min(6, repos.length),
           key: "repo_list",
@@ -16416,12 +16294,10 @@ function apiSetDockFilter(
     const nextIdx = prevId !== undefined ? openDialog.filteredIds.indexOf(prevId) : -1;
     openDialog.selectedIndex = nextIdx >= 0 ? nextIdx : 0;
   }
-  refreshOpenDialog();
   // A search force-opens every folder so matches aren't buried, and restores
-  // the user's expansion set when it clears — the same reconciliation the
-  // typed-into filter box runs. `refreshOpenDialog` just rebuilt the tree, so
-  // `dockKeys` is current.
-  if (dockMode) applyDockExpansion();
+  // the user's expansion set when it clears — `refreshOpenDialog` runs that
+  // reconciliation (`applyDockExpansion`) after it rebuilds the tree.
+  refreshOpenDialog();
   // Turning "all worktrees" ON re-scans *now* so the rows reflect every
   // project's on-disk worktrees at this moment — not just whatever the single
   // scan at dialog-open time happened to catch. Discovery walks every known
@@ -17618,6 +17494,9 @@ editor.on("widget_event", (e) => {
         // the blank padding between the tree and the bottom hint bar
         // re-balances and the hints stay pinned to the dock's bottom.
         if (dockMode && openPanel) openPanel.update(buildDockSpec());
+        // While a search holds every folder open the host's flip is undone
+        // here; otherwise this re-pushes the set the host already has.
+        if (dockMode) applyDockExpansion();
       }
       return;
     }

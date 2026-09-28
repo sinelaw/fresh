@@ -274,6 +274,139 @@ fn a_list_moves_its_selection_and_activates_it() {
     assert_eq!(key(&mut ui, KeyCode::Home), vec![Msg::Selected(0)]);
 }
 
+/// A page is the window layout gave the list, in items: ten rows in a
+/// ten-row frame. The owner's pager answers the same number the list's own
+/// PageDown moves by, and a page past either end stops at it.
+#[test]
+fn a_page_is_the_height_layout_gave_the_list() {
+    let pager = fresh_ui::behavior::Pager::new();
+    let list = |sel: usize| -> Node<Msg> {
+        List::windowed(100, fresh_ui::Key::from, |i| {
+            fresh_ui::text(format!("row {i}"))
+        })
+        .selected(sel)
+        .on_select(Msg::Selected)
+        .pager(pager.clone())
+        .node()
+    };
+    assert_eq!(pager.target(0, 1, 100), None, "not laid out: no page yet");
+
+    let mut ui: Ui<Msg> = Ui::new();
+    ui.frame(list(0), FRAME);
+    assert_eq!(pager.target(0, 1, 100), Some(FRAME.h as usize));
+    assert_eq!(pager.target(95, 1, 100), Some(99));
+    assert_eq!(pager.target(3, -1, 100), Some(0));
+
+    key(&mut ui, KeyCode::Tab);
+    assert_eq!(key(&mut ui, KeyCode::PageDown), vec![Msg::Selected(10)]);
+    ui.frame(list(10), FRAME);
+    assert_eq!(key(&mut ui, KeyCode::PageUp), vec![Msg::Selected(0)]);
+
+    // A shorter frame is a shorter page, on the next layout.
+    ui.frame(list(10), Size { w: 30, h: 4 });
+    assert_eq!(pager.target(10, 1, 100), Some(14));
+
+    // A list that has left the tree has no window, and so no page.
+    ui.frame(fresh_ui::text("gone"), FRAME);
+    assert_eq!(pager.target(10, 1, 100), None);
+}
+
+/// **A list that owns its window can start it somewhere.** An owner that
+/// mounts the list again — a panel handed out while a background task works
+/// on it — puts the window back where `on_scroll` last said it was; after
+/// that the window is the list's, and a wheel moves it.
+#[test]
+fn a_list_starts_where_it_is_told_and_then_keeps_its_own_window() {
+    let list = || -> Node<Msg> {
+        List::windowed(100, fresh_ui::Key::from, |i| {
+            fresh_ui::text(format!("row {i}"))
+        })
+        .selection(None)
+        .start_at(40)
+        .on_scroll(Msg::Scrolled)
+        .node()
+    };
+    let mut ui: Ui<Msg> = Ui::new();
+    ui.frame(list(), FRAME);
+    assert_eq!(texts(&ui).first().map(String::as_str), Some("row 40"));
+
+    let got = ui
+        .dispatch(Input::Wheel {
+            pos: Point::new(1, 1),
+            delta: 3,
+            axis: Axis::Vertical,
+            mods: Mods::NONE,
+        })
+        .msgs;
+    ui.frame(list(), FRAME);
+    assert_eq!(got, vec![Msg::Scrolled(43)]);
+    assert_eq!(
+        texts(&ui).first().map(String::as_str),
+        Some("row 43"),
+        "the start is read once; the wheel's move stands"
+    );
+
+    // Past the end, the window's ceiling is the answer.
+    let mut ui: Ui<Msg> = Ui::new();
+    let late = List::windowed(100, fresh_ui::Key::from, |i| {
+        fresh_ui::text(format!("row {i}"))
+    })
+    .selection(None)
+    .start_at(500)
+    .node();
+    ui.frame(late, FRAME);
+    assert_eq!(texts(&ui).last().map(String::as_str), Some("row 99"));
+}
+
+/// **The window follows the selected row, not its index.** Rows inserted
+/// above the selection move it down, but it is the same row: the wheel had
+/// taken the window away from it, and it stays away. Selecting another row
+/// brings the window to it.
+#[test]
+fn rows_inserted_above_the_selection_do_not_pull_the_window_back() {
+    let list = |first: usize, sel: usize| -> Node<Msg> {
+        let key = move |i: usize| match i < first {
+            true => fresh_ui::Key::Str(format!("new {i}").into()),
+            false => fresh_ui::Key::from(i - first),
+        };
+        List::windowed(100 + first, key, move |i| {
+            fresh_ui::text(match i < first {
+                true => format!("new {i}"),
+                false => format!("row {}", i - first),
+            })
+        })
+        .selected(sel)
+        .focusable(false)
+        .node()
+    };
+    let mut ui: Ui<Msg> = Ui::new();
+    ui.frame(list(0, 2), FRAME);
+    ui.dispatch(Input::Wheel {
+        pos: Point::new(1, 1),
+        delta: 50,
+        axis: Axis::Vertical,
+        mods: Mods::NONE,
+    });
+    ui.frame(list(0, 2), FRAME);
+    assert_eq!(texts(&ui).first().map(String::as_str), Some("row 50"));
+
+    // Three rows arrive above the selection; its index is now 5.
+    ui.frame(list(3, 5), FRAME);
+    assert_eq!(
+        texts(&ui).first().map(String::as_str),
+        Some("row 47"),
+        "the window keeps its offset, and is not pulled back to the selection: {:?}",
+        texts(&ui)
+    );
+
+    ui.frame(list(3, 6), FRAME);
+    assert!(
+        texts(&ui).iter().any(|t| t == "row 3"),
+        "a new selection is revealed: {:?}",
+        texts(&ui)
+    );
+}
+
 #[test]
 fn the_selected_row_is_marked_in_the_display_list() {
     let mut ui: Ui<Msg> = Ui::new();
@@ -400,6 +533,64 @@ fn a_row_under_the_pointer_reads_as_hovered() {
     assert_eq!(themes_of(&ui, "item 4"), vec!["mine.hover"]);
 }
 
+/// **A row inserted above keeps every other row's element and state.**
+///
+/// Rows are matched by key, so an insertion moves the rows below it rather
+/// than rewriting them in place — and the list's own element state goes with
+/// them: the hover names the row the pointer is over, not the position it was
+/// at, so the row that slides down under an insertion keeps its highlight and
+/// the newcomer does not inherit it.
+#[test]
+fn an_insertion_moves_the_rows_below_it_with_their_state() {
+    let list = |items: &[&'static str]| {
+        let items: Vec<&'static str> = items.to_vec();
+        List::keyed(
+            &items,
+            |s| fresh_ui::Key::Str((*s).into()),
+            |s| fresh_ui::text(format!("item {s}")),
+        )
+        .selected(0)
+        .row_theme(|_, st| match st {
+            fresh_ui::widgets::RowState::Hover => "mine.hover".into(),
+            _ => "mine.plain".into(),
+        })
+        .node()
+    };
+    let before = ["a", "b", "c", "d"];
+    let after = ["a", "new", "b", "c", "d"];
+    let key = |s: &str| fresh_ui::Key::Str(s.into());
+    let mut ui: Ui<Msg> = Ui::new();
+    ui.frame(list(&before), FRAME);
+    let c = ui.find_by_key(&key("c")).expect("row c");
+    let at = ui.rect_of(c);
+    ui.dispatch(Input::Move {
+        pos: Point::new(at.x, at.y),
+        mods: Mods::NONE,
+    });
+    ui.frame(list(&before), FRAME);
+    assert_eq!(themes_of(&ui, "item c"), vec!["mine.hover"]);
+    let ids: Vec<_> = before
+        .iter()
+        .map(|s| ui.find_by_key(&key(s)).expect("a row"))
+        .collect();
+
+    ui.frame(list(&after), FRAME);
+    for (s, id) in before.iter().zip(&ids) {
+        assert_eq!(
+            ui.find_by_key(&key(s)),
+            Some(*id),
+            "row {s} is the same element after the insertion"
+        );
+    }
+    assert_eq!(
+        themes_of(&ui, "item c"),
+        vec!["mine.hover"],
+        "the hover moved down with its row"
+    );
+    assert_eq!(themes_of(&ui, "item b"), vec!["mine.plain"]);
+    assert_eq!(themes_of(&ui, "item new"), vec!["mine.plain"]);
+}
+
 /// **Which click commits is the host's rule, not the widget's.**
 ///
 /// `on_activate` fired on the first click and won over `on_select`, so a list
@@ -496,7 +687,203 @@ fn a_million_row_list_does_a_screenful_of_work_per_frame() {
     );
 }
 
+/// **Rows of their own heights are windowed in cells.** Cards of three rows
+/// between one-row headers: the list builds the rows that overlap the window,
+/// the column scrolls a row at a time over all of them, and a selection far
+/// down is shown whole.
+#[test]
+fn rows_of_their_own_heights_are_windowed_in_cells() {
+    use std::cell::Cell;
+    let built = Rc::new(Cell::new(0usize));
+    let list = |sel: usize, built: Rc<Cell<usize>>| -> Node<Msg> {
+        List::windowed(1000, fresh_ui::Key::from, move |i| {
+            built.set(built.get() + 1);
+            match i % 2 {
+                0 => fresh_ui::text(format!("head {i}")),
+                _ => col().children((0..3).map(move |r| fresh_ui::text(format!("card {i}.{r}")))),
+            }
+        })
+        .row_heights(|i| if i % 2 == 0 { 1 } else { 3 })
+        .focusable(false)
+        .selected(sel)
+        .node()
+    };
+    let mut ui: Ui<Msg> = Ui::new();
+    let screen = support::screen::render(ui.frame(list(0, built.clone()), FRAME)).text();
+    assert!(screen.starts_with("head 0\ncard 1.0"), "{screen}");
+    assert!(
+        built.get() < 30,
+        "built {} rows for a ten-row window",
+        built.get()
+    );
+
+    // Row 801 starts at cell 1600 (400 pairs of 4 cells, then its head).
+    built.set(0);
+    ui.frame(list(801, built.clone()), FRAME);
+    let screen = support::screen::render(ui.frame(list(801, built.clone()), FRAME)).text();
+    for r in 0..3 {
+        assert!(
+            screen.contains(&format!("card 801.{r}")),
+            "all of card 801: {screen}"
+        );
+    }
+    assert!(built.get() < 60, "built {} rows to get there", built.get());
+
+    // A wheel moves a row, not a card: a card can be half in view.
+    ui.dispatch(Input::Wheel {
+        pos: Point::new(1, 1),
+        delta: 1,
+        axis: Axis::Vertical,
+        mods: Mods::NONE,
+    });
+    let before = screen.lines().next().unwrap_or_default().to_string();
+    let after = support::screen::render(ui.frame(list(801, built.clone()), FRAME)).text();
+    assert_ne!(after.lines().next().unwrap_or_default(), before, "{after}");
+}
+
+/// An empty list selects nothing, whatever its owner passed: with rows of
+/// their own heights, a selection of row 0 in an empty list asked for a band
+/// the heights do not have.
+#[test]
+fn an_empty_list_of_stated_heights_selects_nothing() {
+    let mut ui: Ui<Msg> = Ui::new();
+    let list = List::windowed(0, fresh_ui::Key::from, |i| {
+        fresh_ui::text(format!("row {i}"))
+    })
+    .row_heights(|_| 3)
+    .selected(0)
+    .on_select(Msg::Selected)
+    .node();
+    ui.frame(list, FRAME);
+    key(&mut ui, KeyCode::Tab);
+    assert_eq!(
+        key(&mut ui, KeyCode::Enter),
+        Vec::<Msg>::new(),
+        "nothing to confirm"
+    );
+}
+
+/// **The cut is the rows on screen.** With rows of their own heights the
+/// window is in cells, and the per-window work is handed the rows that
+/// overlap it — three rows of three cells in a ten-cell frame are four rows
+/// (the fourth half in view), not ten.
+#[test]
+fn the_cut_of_rows_of_stated_heights_is_the_rows_on_screen() {
+    use std::cell::RefCell;
+    let cuts: Rc<RefCell<Vec<std::ops::Range<usize>>>> = Rc::default();
+    let seen = cuts.clone();
+    let list = List::windowed_cut(
+        100,
+        fresh_ui::Key::from,
+        move |r| seen.borrow_mut().push(r),
+        |i, _, _: &()| fresh_ui::text(format!("row {i}")),
+    )
+    .row_heights(|_| 3)
+    .focusable(false)
+    .node();
+    let mut ui: Ui<Msg> = Ui::new();
+    ui.frame(list, FRAME);
+    let last = cuts.borrow().last().cloned().expect("the cut ran");
+    assert_eq!(last, 0..4, "{:?}", cuts.borrow());
+}
+
 // -- Tree --------------------------------------------------------------------
+
+/// **A windowed tree builds its window, over the owner's projection.** Ten
+/// folders of a hundred files each, all open, flattened by the owner; the
+/// tree asks for the rows on screen and nothing else, and pins the folder the
+/// run's first file is in above it.
+#[test]
+fn a_windowed_tree_builds_its_window_and_pins_the_folder_it_is_in() {
+    use fresh_ui::widgets::TreeRow;
+    use std::cell::Cell;
+    // Visible index i: folder when i % 101 == 0, else a file in it.
+    let built = Rc::new(Cell::new(0usize));
+    let tree = |built: Rc<Cell<usize>>| -> Node<Msg> {
+        fresh_ui::Tree::windowed(
+            1010,
+            fresh_ui::Key::from,
+            |i| TreeRow {
+                depth: usize::from(i % 101 != 0),
+                has_children: i % 101 == 0,
+                open: true,
+            },
+            move |i, row, _| {
+                built.set(built.get() + 1);
+                let name = match row.has_children {
+                    true => format!("dir {}", i / 101),
+                    false => format!("  file {}.{}", i / 101, i % 101),
+                };
+                fresh_ui::text(name)
+            },
+        )
+        .sticky(3, |i| (i % 101 != 0).then_some(i / 101 * 101))
+        .list()
+        .focusable(false)
+        .node()
+    };
+    let mut ui: Ui<Msg> = Ui::new();
+    let screen = support::screen::render(ui.frame(tree(built.clone()), FRAME)).text();
+    assert!(screen.starts_with("dir 0"), "{screen}");
+    assert!(
+        built.get() < 40,
+        "built {} rows for a ten-row window",
+        built.get()
+    );
+
+    // Into folder 3: its header stays above the run.
+    ui.dispatch(Input::Wheel {
+        pos: Point::new(1, 1),
+        delta: 350,
+        axis: Axis::Vertical,
+        mods: Mods::NONE,
+    });
+    let screen = support::screen::render(ui.frame(tree(built.clone()), FRAME)).text();
+    let first = screen
+        .lines()
+        .next()
+        .unwrap_or_default()
+        .trim_end()
+        .to_string();
+    assert_eq!(first, "dir 3", "{screen}");
+    assert!(screen.contains("file 3."), "{screen}");
+}
+
+/// **A reveal counts the run of the offset it lands on.** From the top of a
+/// deep tree nothing is pinned, so the run is the whole window; the offset
+/// that shows the last row pins its ancestors, and its run is that much
+/// shorter. Revealing by the run it had would leave the row under the fold.
+#[test]
+fn a_reveal_lands_in_the_run_under_the_pins_it_brings() {
+    use fresh_ui::widgets::TreeRow;
+    // a/b/c, then 30 files in c: every file's ancestors are rows 0, 1, 2.
+    let tree = |sel: usize| -> Node<Msg> {
+        fresh_ui::Tree::windowed(
+            33,
+            fresh_ui::Key::from,
+            |i| TreeRow {
+                depth: i.min(3),
+                has_children: i < 3,
+                open: true,
+            },
+            |i, _, _| fresh_ui::text(format!("row {i}")),
+        )
+        .sticky(7, |i| i.checked_sub(1).map(|p| p.min(2)))
+        .list()
+        .selected(sel)
+        .focusable(false)
+        .node()
+    };
+    let mut ui: Ui<Msg> = Ui::new();
+    ui.frame(tree(0), FRAME);
+    let screen = support::screen::render(ui.frame(tree(32), FRAME)).text();
+    let rows: Vec<&str> = screen.lines().map(str::trim_end).collect();
+    assert_eq!(&rows[..3], ["row 0", "row 1", "row 2"], "{screen}");
+    assert_eq!(
+        rows[9], "row 32",
+        "the selection is the run's last row: {screen}"
+    );
+}
 
 #[test]
 fn a_tree_expands_and_collapses_on_click() {
@@ -1623,6 +2010,225 @@ fn a_reveal_in_a_pinned_list_counts_only_the_run() {
     // Row 18 is the first past the run: one row of scroll, not none.
     ui.frame(pinned_list(&[0, 1], 10, Some(18)), FRAME);
     assert_eq!(ui.take_messages(), vec![Msg::Scrolled(11)]);
+}
+
+/// **Pins asked at layout.** Rows 0, 10, 20… head their groups of ten; the
+/// row heading the first row of the run is pinned above it. The window asks
+/// which at whatever offset it lands on — the owner is never told the offset
+/// and asked again — and its ceiling is the offset whose run, under that
+/// offset's own pin, reaches the last row.
+#[test]
+fn pins_that_depend_on_the_offset_are_asked_at_layout() {
+    let list = || -> Node<Msg> {
+        List::windowed(100, fresh_ui::Key::from, |i| {
+            fresh_ui::text(format!("row {i:02}"))
+        })
+        .focusable(false)
+        .pinned_at(|first| match first % 10 {
+            0 => Rc::from(Vec::new()),
+            _ => Rc::from(vec![first / 10 * 10]),
+        })
+        .node()
+    };
+    let mut ui: Ui<Msg> = Ui::new();
+    let screen = support::screen::render(ui.frame(list(), FRAME)).text();
+    assert!(screen.starts_with("row 00"), "{screen}");
+
+    // All the way down: the last row is on screen, under its group's head.
+    ui.dispatch(Input::Wheel {
+        pos: Point::new(1, 1),
+        delta: 200,
+        axis: Axis::Vertical,
+        mods: Mods::NONE,
+    });
+    let screen = support::screen::render(ui.frame(list(), FRAME)).text();
+    let rows: Vec<&str> = screen
+        .lines()
+        .map(str::trim_end)
+        .filter(|l| !l.is_empty())
+        .collect();
+    assert_eq!(rows.first(), Some(&"row 90"), "{screen}");
+    assert_eq!(rows.last(), Some(&"row 99"), "{screen}");
+    assert_eq!(rows.len(), FRAME.h as usize, "{screen}");
+}
+
+/// **A follow is of the selected row, not its index.** Rows arriving above
+/// the selection while the list follows it are followed past; after a wheel
+/// has taken the window elsewhere they do not pull it back. The owner's
+/// token does.
+#[test]
+fn a_follow_tracks_its_row_and_rows_arriving_above_do_not_rearm_it() {
+    let list = |first: usize, sel: usize, token: u64| -> Node<Msg> {
+        let key = move |i: usize| match i < first {
+            true => fresh_ui::Key::Str(format!("new {i}").into()),
+            false => fresh_ui::Key::from(i - first),
+        };
+        List::windowed(100 + first, key, move |i| {
+            fresh_ui::text(match i < first {
+                true => format!("new {i}"),
+                false => format!("row {}", i - first),
+            })
+        })
+        .focusable(false)
+        .selection(Some(sel))
+        .follow_selection(token)
+        .node()
+    };
+    let mut ui: Ui<Msg> = Ui::new();
+    let screen =
+        |ui: &mut Ui<Msg>, n: Node<Msg>| support::screen::render(ui.frame(n, FRAME)).text();
+
+    // Following row 60; twenty rows arrive above it. It is still in view.
+    assert!(screen(&mut ui, list(0, 60, 1)).contains("row 60"));
+    assert!(
+        screen(&mut ui, list(20, 80, 1)).contains("row 60"),
+        "the follow moved with its row"
+    );
+
+    // The wheel takes the window away; more rows arrive; it stays away.
+    ui.dispatch(Input::Wheel {
+        pos: Point::new(1, 1),
+        delta: -40,
+        axis: Axis::Vertical,
+        mods: Mods::NONE,
+    });
+    assert!(!screen(&mut ui, list(20, 80, 1)).contains("row 60"));
+    assert!(
+        !screen(&mut ui, list(25, 85, 1)).contains("row 60"),
+        "rows arriving above are not a new request"
+    );
+    assert!(
+        screen(&mut ui, list(25, 85, 2)).contains("row 60"),
+        "the owner's token is"
+    );
+}
+
+/// **A bar drag is the reader choosing where to look**, as the wheel is: a
+/// standing follow gives way to it, rather than pulling the window back to
+/// the followed row on the next layout.
+#[test]
+fn a_bar_drag_wins_over_a_standing_follow() {
+    let list = || -> Node<Msg> {
+        List::windowed(100, fresh_ui::Key::from, |i| {
+            fresh_ui::text(format!("row {i:02}"))
+        })
+        .focusable(false)
+        .scrollbar()
+        .selection(Some(0))
+        .follow_selection(1)
+        .node()
+    };
+    let mut ui: Ui<Msg> = Ui::new();
+    assert!(support::screen::render(ui.frame(list(), FRAME)).contains("row 00"));
+    let bar = FRAME.w as i32 - 1;
+    ui.dispatch(Input::Press {
+        pos: Point::new(bar, FRAME.h as i32 - 1),
+        button: fresh_ui::MouseButton::Left,
+        mods: Mods::NONE,
+        clicks: 1,
+    });
+    ui.dispatch(Input::Release {
+        pos: Point::new(bar, FRAME.h as i32 - 1),
+        button: fresh_ui::MouseButton::Left,
+        mods: Mods::NONE,
+    });
+    let screen = support::screen::render(ui.frame(list(), FRAME)).text();
+    assert!(
+        !screen.contains("row 00"),
+        "the bar moved the window: {screen}"
+    );
+    assert!(screen.contains("row 99"), "{screen}");
+}
+
+/// **Mounted again, a list starts where it was left.** An owner that saved
+/// the window (`start_at`) and the follow token it answers
+/// (`follow_answered`) gets it back; only a token moved since — a request
+/// made while the list was away — brings the selection into view instead.
+#[test]
+fn a_list_mounted_again_keeps_its_window_unless_asked_since() {
+    let list = |token: u64, answered: u64| -> Node<Msg> {
+        List::windowed(100, fresh_ui::Key::from, |i| {
+            fresh_ui::text(format!("row {i:02}"))
+        })
+        .focusable(false)
+        .selection(Some(0))
+        .follow_on(token)
+        .follow_answered(answered)
+        .start_at(40)
+        .node()
+    };
+    let top = |token, answered| {
+        let mut ui: Ui<Msg> = Ui::new();
+        let screen = support::screen::render(ui.frame(list(token, answered), FRAME)).text();
+        screen
+            .lines()
+            .next()
+            .unwrap_or_default()
+            .trim_end()
+            .to_string()
+    };
+    assert_eq!(top(7, 7), "row 40", "nothing asked since: where it was");
+    assert_eq!(top(8, 7), "row 00", "asked while away: the selection");
+}
+
+/// **`follow_on` follows the owner's token, not every selection move.** A
+/// selection the owner moves without it — a right-click picking the row a
+/// menu is about — leaves the window where it is.
+#[test]
+fn follow_on_leaves_the_window_for_a_selection_moved_without_the_token() {
+    let list = |sel: usize, token: u64| -> Node<Msg> {
+        List::windowed(100, fresh_ui::Key::from, |i| {
+            fresh_ui::text(format!("row {i:02}"))
+        })
+        .focusable(false)
+        .selection(Some(sel))
+        .follow_on(token)
+        .node()
+    };
+    let mut ui: Ui<Msg> = Ui::new();
+    let mut top = |sel, token| {
+        let screen = support::screen::render(ui.frame(list(sel, token), FRAME)).text();
+        screen
+            .lines()
+            .next()
+            .unwrap_or_default()
+            .trim_end()
+            .to_string()
+    };
+    assert_eq!(top(60, 1), format!("row {:02}", 60 + 1 - FRAME.h as usize));
+    let here = top(60, 1);
+    assert_eq!(top(2, 1), here, "moved without the token: the window stays");
+    assert_eq!(top(2, 2), "row 02", "the token: the window follows");
+}
+
+/// **A reveal answers a selection move, not new keys.** A controlled list
+/// that re-keys its rows under an unchanged selected index (rows prepended,
+/// keys regenerated) leaves a window the wheel moved where it is.
+#[test]
+fn new_keys_under_an_unchanged_selection_do_not_reveal_it_again() {
+    let list = |gen: u64| -> Node<Msg> {
+        List::windowed(
+            100,
+            move |i| fresh_ui::Key::Pair("g".into(), gen * 1000 + i as u64),
+            |i| fresh_ui::text(format!("row {i:02}")),
+        )
+        .focusable(false)
+        .selection(Some(0))
+        .node()
+    };
+    let mut ui: Ui<Msg> = Ui::new();
+    ui.frame(list(1), FRAME);
+    ui.dispatch(Input::Wheel {
+        pos: Point::new(1, 1),
+        delta: 30,
+        axis: Axis::Vertical,
+        mods: Mods::NONE,
+    });
+    let screen = support::screen::render(ui.frame(list(2), FRAME)).text();
+    assert!(
+        !screen.contains("row 00"),
+        "the wheel's window stays: {screen}"
+    );
 }
 
 /// **A following list keeps its selection in view on every layout** — not

@@ -88,6 +88,7 @@ pub fn search_result_row(result: &SearchResult) -> crate::view::shell::settings:
         None => (result.item.name.clone(), result.item.description.clone()),
     };
     ResultRow {
+        id: result.id(),
         // The row's own theme carries selection and hover, so the plain runs
         // name no colours of their own — only the matched characters do.
         name: highlight_spans(

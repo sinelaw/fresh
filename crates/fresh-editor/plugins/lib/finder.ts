@@ -44,6 +44,14 @@ import { byteLength } from "./text.ts";
  * How a result should be displayed
  */
 export interface DisplayEntry {
+  /**
+   * What this result is, unique among the results: a path, a match's
+   * `file:line:column`, a package's name. **Required** — the list keys its
+   * rows by it, so a re-rank or an insertion moves the other rows rather
+   * than rewriting them, and the selection stays on its result. Not the
+   * label: two results may read the same and still be different things.
+   */
+  id: string;
   /** Primary text (e.g., "src/main.rs:42") */
   label: string;
   /** Secondary text (e.g., code snippet) */
@@ -654,10 +662,7 @@ export class Finder<T> {
 
     // Save source context
     this.panelState.sourceSplitId = this.editor.getActiveSplitId();
-    this.panelState.items = options.items;
-    this.panelState.entries = options.items.map((item, i) =>
-      this.config.format(item, i)
-    );
+    [this.panelState.items, this.panelState.entries] = this.formatUnique(options.items);
 
     await this.showPanel(options.title, options.ratio ?? 0.3);
   }
@@ -673,17 +678,15 @@ export class Finder<T> {
     this.panelState.sourceSplitId = this.editor.getActiveSplitId();
 
     // Initial load
-    this.panelState.items = options.provider.getItems();
-    this.panelState.entries = this.panelState.items.map((item, i) =>
-      this.config.format(item, i)
+    [this.panelState.items, this.panelState.entries] = this.formatUnique(
+      options.provider.getItems(),
     );
 
     // Subscribe to updates
     this.panelState.unsubscribe = options.provider.subscribe(() => {
       if (this.isPanelMode && this.panelState.bufferId !== null) {
-        this.panelState.items = options.provider.getItems();
-        this.panelState.entries = this.panelState.items.map((item, i) =>
-          this.config.format(item, i)
+        [this.panelState.items, this.panelState.entries] = this.formatUnique(
+          options.provider.getItems(),
         );
         this.refreshPanel(options.title);
       }
@@ -962,6 +965,7 @@ export class Finder<T> {
       const display = errorMsg.replace(/^Error:\s*/, "");
       this.editor.setPromptSuggestions([
         {
+          id: "status:error",
           text: `⚠ ${display}`,
           value: "",
           disabled: true,
@@ -970,14 +974,35 @@ export class Finder<T> {
     }
   }
 
+  /**
+   * Format `items`, keeping one of any that share an id.
+   *
+   * **An id names one item**, and the host keys every row by it: two rows
+   * with one id are refused. A source can repeat itself — a language
+   * server returning a reference twice, a diagnostic published twice — and
+   * the repeat is the same item, so it is shown once. Items and entries
+   * stay parallel: a row's index is how its item is found.
+   */
+  private formatUnique(items: T[]): [T[], DisplayEntry[]] {
+    const seen = new Set<string>();
+    const keptItems: T[] = [];
+    const entries: DisplayEntry[] = [];
+    items.forEach((item, i) => {
+      const entry = this.config.format(item, i);
+      if (seen.has(entry.id)) return;
+      seen.add(entry.id);
+      keptItems.push(item);
+      entries.push(entry);
+    });
+    return [keptItems, entries];
+  }
+
   private updatePromptResults(results: T[]): void {
-    this.promptState.results = results;
-    this.promptState.entries = results.map((item, i) =>
-      this.config.format(item, i)
-    );
+    [this.promptState.results, this.promptState.entries] = this.formatUnique(results);
 
     const suggestions: PromptSuggestion[] = this.promptState.entries.map(
       (entry, i) => ({
+        id: entry.id,
         text: entry.label,
         description: entry.description,
         description_spans: entry.descriptionSpans,

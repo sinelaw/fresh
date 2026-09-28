@@ -68,7 +68,7 @@ editor.setStatus("buffer-plugin loaded ok");
     let screen = harness.screen_to_string();
     assert!(
         screen.contains("buffer-plugin loaded ok")
-            || screen.contains("Plugin 'my_plugin.ts' loaded from buffer"),
+            || screen.contains("Plugin 'my_plugin' loaded from my_plugin.ts"),
         "Expected plugin load success message. Screen:\n{}",
         screen
     );
@@ -255,4 +255,99 @@ editor.setStatus("v2 loaded");
         count,
         screen
     );
+}
+
+/// A saved plugin file is loaded from disk, so its relative imports are
+/// bundled (loading the buffer text alone left them undefined).
+#[test]
+fn test_load_plugin_from_buffer_bundles_imports() {
+    init_tracing_from_env();
+
+    let mut harness = EditorTestHarness::with_temp_project(200, 30).unwrap();
+    let project_dir = harness.project_dir().unwrap();
+    write_plugin_project_tsconfig(&project_dir);
+    std::fs::create_dir_all(project_dir.join("lib")).unwrap();
+    std::fs::write(
+        project_dir.join("lib").join("names.ts"),
+        "export const COMMAND_NAME = \"Imported Kiwi Command\";\n",
+    )
+    .unwrap();
+    let plugin_file = project_dir.join("importer.ts");
+    std::fs::write(
+        &plugin_file,
+        r#"import { COMMAND_NAME } from "./lib/names.ts";
+const editor = getEditor();
+editor.registerCommand(COMMAND_NAME, "Registered with an imported name", "importer_run", null);
+"#,
+    )
+    .unwrap();
+    harness.open_file(&plugin_file).unwrap();
+    harness.render().unwrap();
+
+    harness
+        .run_palette_command("Load Plugin from Buffer")
+        .unwrap();
+    harness
+        .wait_for_screen_contains("Plugin 'importer' loaded from importer.ts")
+        .unwrap();
+
+    // Loading again reloads the running copy instead of failing with
+    // "already registered".
+    harness
+        .run_palette_command("Load Plugin from Buffer")
+        .unwrap();
+    harness
+        .wait_for_screen_contains("Plugin 'importer' reloaded from importer.ts")
+        .unwrap();
+    harness.assert_no_plugin_errors();
+
+    // The imported name is what got registered.
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("Imported Kiwi Command").unwrap();
+    harness
+        .wait_for_palette_command("Imported Kiwi Command")
+        .unwrap();
+}
+
+/// A saved plugin with imports that fails to parse reports the failure,
+/// instead of a "loaded" status with nothing registered.
+#[test]
+fn test_load_plugin_from_buffer_reports_bundling_errors() {
+    init_tracing_from_env();
+
+    let mut harness = EditorTestHarness::with_temp_project(200, 30).unwrap();
+    let project_dir = harness.project_dir().unwrap();
+    write_plugin_project_tsconfig(&project_dir);
+    std::fs::create_dir_all(project_dir.join("lib")).unwrap();
+    std::fs::write(
+        project_dir.join("lib").join("names.ts"),
+        "export const X = 1;\n",
+    )
+    .unwrap();
+    let plugin_file = project_dir.join("broken.ts");
+    std::fs::write(
+        &plugin_file,
+        "import { X } from \"./lib/names.ts\";\nconst = X;\n",
+    )
+    .unwrap();
+    harness.open_file(&plugin_file).unwrap();
+    harness.render().unwrap();
+
+    harness
+        .run_palette_command("Load Plugin from Buffer")
+        .unwrap();
+    harness
+        .wait_for_screen_contains("Failed to load plugin")
+        .unwrap();
+}
+
+/// A plugin project as `fresh --cmd init plugin` makes it: with its own
+/// tsconfig.json, so loading doesn't start the scratch TypeScript workspace.
+/// Without one, a machine lacking typescript-language-server shows "not
+/// found" in the status bar, over the load result these tests wait for.
+fn write_plugin_project_tsconfig(project_dir: &std::path::Path) {
+    std::fs::write(project_dir.join("tsconfig.json"), "{}\n").unwrap();
 }

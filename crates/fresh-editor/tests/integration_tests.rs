@@ -498,19 +498,19 @@ fn test_popup_events() {
         transient: false,
         content: PopupContentData::List {
             items: vec![
-                PopupListItemData {
+                PopupListItemData { id: "t501".into(),
                     text: "Item 1".to_string(),
                     detail: Some("First item".to_string()),
                     icon: Some("📄".to_string()),
                     data: None,
                 },
-                PopupListItemData {
+                PopupListItemData { id: "t507".into(),
                     text: "Item 2".to_string(),
                     detail: Some("Second item".to_string()),
                     icon: Some("📄".to_string()),
                     data: None,
                 },
-                PopupListItemData {
+                PopupListItemData { id: "t513".into(),
                     text: "Item 3".to_string(),
                     detail: Some("Third item".to_string()),
                     icon: Some("📄".to_string()),

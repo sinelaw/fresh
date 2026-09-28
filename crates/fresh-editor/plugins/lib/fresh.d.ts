@@ -570,6 +570,17 @@ type ViewTokenStyle = {
 };
 type PromptSuggestion = {
 	/**
+	* What this row is, unique within the list: the plugin's own name for
+	* the item (a path, a match's `file:line:col`, a record id).
+	*
+	* **Required.** The list keys its rows by it, so an insertion or a
+	* re-rank moves the other rows instead of rewriting them, and the
+	* selection stays on the row it was on. Not the label: two rows may
+	* read the same and still be different things. `setPromptSuggestions`
+	* throws when two suggestions share an id.
+	*/
+	id: string;
+	/**
 	* The text to display
 	*/
 	text: string;
@@ -1977,11 +1988,13 @@ type WidgetSpec = {
 	*/
 	visibleRows?: number | null;
 	/**
-	* Initial-only set of expanded item keys. Once the widget
-	* has rendered, the host's instance-state `expanded_keys`
-	* is authoritative; updating this field on subsequent specs
-	* has no effect (use `WidgetMutation::SetExpandedKeys` to
-	* override host state).
+	* Seed set of expanded item keys, drawn until the host's
+	* instance state has an expansion of its own (a Right/Left,
+	* a disclosure click, a selection write, or
+	* `WidgetMutation::SetExpandedKeys`). From then on the
+	* instance state is what is drawn and navigated, and
+	* changing this field on later specs has no effect — use
+	* `WidgetMutation::SetExpandedKeys` to change it.
 	*/
 	expandedKeys: Array<string>;
 	/**

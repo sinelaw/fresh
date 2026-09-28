@@ -95,7 +95,7 @@ impl Editor {
                         .file_open_state
                         .as_ref()
                         .and_then(|s| {
-                            s.selected_index
+                            s.selected_index()
                                 .and_then(|idx| s.entries.get(idx))
                                 .map(|e| {
                                     (
@@ -436,6 +436,7 @@ impl Editor {
             .map(|enc| {
                 let is_default = *enc == Encoding::Utf8;
                 crate::input::commands::Suggestion {
+                    id: enc.display_name().to_string(),
                     description_spans: None,
                     text: format!("{} ({})", enc.display_name(), enc.description()),
                     description: if is_default {
@@ -460,7 +461,7 @@ impl Editor {
         // Pre-select UTF-8
         if let Some(prompt) = self.active_window_mut().prompt.as_mut() {
             if !prompt.suggestions.is_empty() {
-                prompt.selected_suggestion = Some(0); // UTF-8 is first
+                prompt.select_suggestion(Some(0)); // UTF-8 is first
                 let enc = Encoding::Utf8;
                 prompt.set_input_plain(format!("{} ({})", enc.display_name(), enc.description()));
             }
@@ -676,7 +677,7 @@ impl Editor {
         };
         if let Some(state) = &mut self.active_window_mut().file_open_state {
             state.active_section = FileOpenSection::Files;
-            state.selected_index = Some(index);
+            state.select_index(Some(index));
         }
         if let Some(prompt) = &mut self.active_window_mut().prompt {
             prompt.set_input_plain(name);

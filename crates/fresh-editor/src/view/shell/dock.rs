@@ -153,6 +153,7 @@ fn column(interior: Option<super::panel::Interior>) -> Node<UiMsg> {
                     slot: super::widgets::Slot::Dock,
                     states: &i.states,
                     h_pan: &i.h_pan,
+                    projections: &i.projections,
                     focus_key: i.focus_key.clone(),
                     keyboard: i.keyboard,
 
@@ -472,6 +473,7 @@ mod tests {
                     }),
                     states: Rc::new(Default::default()),
                     h_pan: Default::default(),
+                    projections: Default::default(),
                     focus_key: String::new(),
                     keyboard: true,
 
@@ -677,6 +679,7 @@ mod tests {
                     spec: Rc::new(spec),
                     states: Rc::new(Default::default()),
                     h_pan: Default::default(),
+                    projections: Default::default(),
                     focus_key: String::new(),
                     keyboard: true,
 

@@ -471,3 +471,50 @@ fn markdown_toc_lists_headings_and_follows_the_cursor_in_compose_mode() {
     assert_selection_follows_cursor(&mut harness, &md);
     assert_click_jumps(&mut harness, &md);
 }
+
+/// Screen column of the disclosure glyph (`glyph`) on the `index`-th
+/// Contents row.
+fn toc_glyph_column(harness: &EditorTestHarness, index: usize, glyph: char) -> u16 {
+    let row = toc_row_screen_row(harness, index);
+    let width = sidebar_width(harness);
+    let line = harness.screen_row_text(row);
+    line.chars()
+        .take(width)
+        .position(|c| c == glyph)
+        .unwrap_or_else(|| panic!("row {index} wears {glyph}: {line:?}")) as u16
+}
+
+/// **A disclosure click folds the outline by itself.** The plugin answers
+/// `expand` with `setExpandedKeys` alone — the spec's `expandedKeys` is a
+/// seed — so the fold has to be drawn from the host's state, not wait for
+/// the next rescan to re-send the spec. Collapsing `Setup` hides its two
+/// sub-headings; opening it again brings them back.
+#[test]
+fn markdown_toc_disclosure_click_folds_the_outline() {
+    let md = document();
+    let (mut harness, _path, _tmp) = toc_harness(&md);
+    assert_rows(&harness);
+
+    let row = toc_row_screen_row(&harness, 1);
+    let col = toc_glyph_column(&harness, 1, '▼');
+    harness.mouse_click(col, row).unwrap();
+    harness
+        .wait_until(|h| toc_rows(h).len() == EXPECTED_ROWS.len() - 2)
+        .unwrap();
+    let rows = toc_rows(&harness);
+    assert!(
+        rows[1]
+            .trim_start_matches(SELECTION_GLYPH)
+            .trim()
+            .ends_with("Setup")
+            && !rows.iter().any(|r| r.ends_with("Configure")),
+        "Setup is folded over Install and Configure: {rows:?}"
+    );
+
+    let col = toc_glyph_column(&harness, 1, '▶');
+    harness.mouse_click(col, row).unwrap();
+    harness
+        .wait_until(|h| toc_rows(h).len() == EXPECTED_ROWS.len())
+        .unwrap();
+    assert_rows(&harness);
+}

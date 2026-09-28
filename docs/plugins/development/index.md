@@ -12,7 +12,7 @@ Fresh supports three types of packages:
 | **Theme** | Color schemes for the editor | See `:pkg init theme` |
 | **Language Pack** | Syntax highlighting, language config, and LSP | [Language Packs](./language-packs.md) |
 
-Use `fresh --init` to scaffold any package type.
+Use `fresh --cmd init` to scaffold any package type. To get TypeScript types, autocomplete and live reload for a plugin project, follow [Project Setup](./setup.md).
 
 ## Introduction
 

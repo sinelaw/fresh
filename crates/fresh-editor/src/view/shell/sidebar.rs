@@ -328,6 +328,7 @@ fn panel_body(i: usize, p: &super::panel::Interior) -> Node<UiMsg> {
                 slot: super::widgets::Slot::Sidebar(i),
                 states: &interior.states,
                 h_pan: &interior.h_pan,
+                projections: &interior.projections,
                 focus_key: interior.focus_key.clone(),
                 keyboard: interior.keyboard,
                 hovered_key: interior.hovered_key.clone(),
@@ -670,9 +671,11 @@ mod tests {
 
     fn explorer_section(rows: u16) -> Section {
         let mut s = Section::explorer(Explorer {
-            body: Body::Rows(vec![row_of(0, "src"), row_of(1, "lib")]),
-            caret_row: None,
-            scroll: None,
+            body: Body::Tree(file_explorer::Tree::fixture(
+                vec![row_of(0, "src"), row_of(1, "lib")],
+                |_| None,
+                0,
+            )),
         });
         s.title = " Files ".to_string();
         s.rows = rows;
@@ -924,6 +927,7 @@ mod tests {
             spec: Rc::new(spec),
             states: Rc::new(Default::default()),
             h_pan: Default::default(),
+            projections: Default::default(),
             focus_key: String::new(),
             // The host's focus fact for the section: an unfocused one
             // holds no keyboard and marks nothing.

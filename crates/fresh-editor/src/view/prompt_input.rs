@@ -88,9 +88,9 @@ impl InputHandler for Prompt {
                 self.manual_scroll = false;
                 if !self.suggestions.is_empty() {
                     // Don't wrap around - stay at 0 if already at the beginning
-                    if let Some(selected) = self.selected_suggestion {
+                    if let Some(selected) = self.selected_suggestion() {
                         let new_selected = if selected == 0 { 0 } else { selected - 1 };
-                        self.selected_suggestion = Some(new_selected);
+                        self.select_suggestion(Some(new_selected));
                         // For non-plugin prompts (except QuickOpen), or plugin prompts
                         // with sync_input_on_navigate, update input to match selected suggestion
                         let should_sync = self.sync_input_on_navigate
@@ -132,9 +132,9 @@ impl InputHandler for Prompt {
                 self.manual_scroll = false;
                 if !self.suggestions.is_empty() {
                     // Don't wrap around - stay at end if already at the last item
-                    if let Some(selected) = self.selected_suggestion {
+                    if let Some(selected) = self.selected_suggestion() {
                         let new_selected = (selected + 1).min(self.suggestions.len() - 1);
-                        self.selected_suggestion = Some(new_selected);
+                        self.select_suggestion(Some(new_selected));
                         // For non-plugin prompts (except QuickOpen), or plugin prompts
                         // with sync_input_on_navigate, update input to match selected suggestion
                         let should_sync = self.sync_input_on_navigate
@@ -174,17 +174,17 @@ impl InputHandler for Prompt {
             }
             KeyCode::PageUp => {
                 self.manual_scroll = false;
-                if let Some(selected) = self.selected_suggestion {
-                    self.selected_suggestion = Some(selected.saturating_sub(10));
+                if let Some(selected) = self.selected_suggestion() {
+                    self.select_suggestion(Some(selected.saturating_sub(10)));
                 }
                 InputResult::Consumed
             }
             KeyCode::PageDown => {
                 self.manual_scroll = false;
-                if let Some(selected) = self.selected_suggestion {
+                if let Some(selected) = self.selected_suggestion() {
                     let len = self.suggestions.len();
                     let new_pos = selected + 10;
-                    self.selected_suggestion = Some(new_pos.min(len.saturating_sub(1)));
+                    self.select_suggestion(Some(new_pos.min(len.saturating_sub(1))));
                 }
                 InputResult::Consumed
             }
@@ -200,7 +200,7 @@ impl InputHandler for Prompt {
                 if self.overlay {
                     return InputResult::Consumed;
                 }
-                if let Some(selected) = self.selected_suggestion {
+                if let Some(selected) = self.selected_suggestion() {
                     if let Some(suggestion) = self.suggestions.get(selected) {
                         if !suggestion.disabled {
                             let value = suggestion.get_value().to_string();

@@ -157,6 +157,7 @@ impl Editor {
         // a tree laid out from the facts as they stand; and a key may change
         // any of them, so the description is stale once it has been handled,
         // and the next reader lays it out again.
+        self.mark_plugin_snapshot_dirty();
         self.lay_out_shell_if_stale();
         let r = self.handle_key_routed(code, modifiers);
         self.shell_description_stale = true;

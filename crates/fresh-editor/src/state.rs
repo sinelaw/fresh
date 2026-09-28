@@ -594,7 +594,7 @@ impl EditorState {
         let first_line = buffer.first_line_lossy();
         let detected = registry
             .find_by_path(path, first_line.as_deref())
-            .map(|entry| DetectedLanguage::from_entry(entry, registry))
+            .map(|entry| DetectedLanguage::from_entry_for_path(entry, path, registry))
             .unwrap_or_else(DetectedLanguage::plain_text);
         let mut state = Self::new_from_buffer(buffer);
         state.apply_language(detected);
@@ -1631,6 +1631,7 @@ pub(crate) fn convert_popup_data_to_popup(
             items: items
                 .iter()
                 .map(|item| PopupListItem {
+                    id: item.id.clone(),
                     text: item.text.clone(),
                     detail: item.detail.clone(),
                     icon: item.icon.clone(),

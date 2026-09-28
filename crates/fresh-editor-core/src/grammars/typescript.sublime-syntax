@@ -2,116 +2,635 @@
 ---
 # TypeScript syntax highlighting for Fresh editor.
 #
-# NOTE: `.ts` buffers are highlighted by tree-sitter, not by this grammar —
-# the grammar catalog deliberately skips "TypeScript" the same way it skips
-# "JavaScript" (see grammar/types.rs). This grammar exists for embedded
-# contexts resolved by language token: Vue `<script lang="ts">` blocks and
-# Markdown ```ts fences (docs/internal/embedded-language-highlighting.md).
+# Written for syntect's cost model: syntect tries every rule of the current
+# context at each token, so contexts stay small, each token family is one
+# regex, and ambiguity (ternary vs annotation `:`, object literal vs block,
+# division vs regex literal) is settled by pushed contexts and short
+# lookbehinds rather than long lookaheads.
+#
+# build.rs derives two variants from this file (`generate_js_ts_grammars`):
+# TypeScriptReact and JavaScript swap `angle-cast` for `jsx` and take their own
+# name, scope and extensions. Scope names carry no language suffix so the
+# variants share them.
 name: TypeScript
 file_extensions:
   - ts
-  - tsx
   - mts
   - cts
 scope: source.ts
 
+variables:
+  id: '[_$[:alpha:]][_$[:alnum:]]*'
+  # A statement keyword at the start of a line ends a type that ran on.
+  statement_start: '^\s*(?:export|import|const|let|var|function|class|interface|type|enum|declare|namespace|abstract|async|return|if|for|while|switch|try|throw|@)\b'
+
 contexts:
   main:
+    - match: '^#!.*$'
+      scope: comment.line.shebang
+    - include: statement
+
+  # ---- Statements and expressions -------------------------------------
+
+  statement:
+    - include: expression
+    - match: '(\??)(:)(?!:)'
+      captures:
+        1: keyword.operator.optional
+        2: keyword.operator.type.annotation
+      push: type-annotation
+
+  expression:
     - include: comments
-    - include: template-strings
-    - include: strings
-    - include: decorators
-    - include: keywords
-    - include: numbers
-    - include: functions
-    - include: types
+    - match: '"'
+      scope: punctuation.definition.string.begin
+      push: string-double
+    - match: "'"
+      scope: punctuation.definition.string.begin
+      push: string-single
+    - match: '`'
+      scope: punctuation.definition.string.template.begin
+      push: template
+    # Division after an operand, so the regex rule below only sees `/` where
+    # an expression starts.
+    - match: '(?<=[_$[:alnum:])\]])\s*(/=?)(?![/*])'
+      captures:
+        1: keyword.operator.arithmetic
+    - match: '/(?![/*])(?=(?:[^/\\\[]|\\.|\[(?:[^\]\\]|\\.)*\])+/[dgimsuyv]*(?![_$[:alnum:]]))'
+      scope: punctuation.definition.string.begin
+      push: regexp
+    - match: '\b(?:0[xX][0-9a-fA-F_]+|0[bB][01_]+|0[oO][0-7_]+|(?:\d[\d_]*)?\.?\d[\d_]*(?:[eE][+-]?\d+)?)n?\b'
+      scope: constant.numeric
+    - match: '@{{id}}'
+      scope: entity.name.function.decorator
+    - match: '\b(function)\b\s*(\*)?\s*({{id}})?'
+      captures:
+        1: storage.type.function
+        2: keyword.generator.asterisk
+        3: entity.name.function
+    - match: '\b(class)\b(?:\s+(?!extends\b|implements\b)({{id}}))?'
+      captures:
+        1: storage.type.class
+        2: entity.name.type.class
+      push: class-header
+    - match: '\b(interface)\s+({{id}})'
+      captures:
+        1: storage.type.interface
+        2: entity.name.type.interface
+      push: interface-header
+    - match: '\b(type)\s+({{id}})(?=\s*(?:<|=))'
+      captures:
+        1: storage.type.type
+        2: entity.name.type.alias
+      push: type-alias
+    - match: '\b(enum)\s+({{id}})'
+      captures:
+        1: storage.type.enum
+        2: entity.name.type.enum
+      push: enum-header
+    - match: '\b(namespace|module)\s+({{id}}(?:\.{{id}})*)'
+      captures:
+        1: storage.type.namespace
+        2: entity.name.type.module
+    - match: '\b(new)\s+({{id}})'
+      captures:
+        1: keyword.operator.new
+        2: entity.name.type
+    - match: '\b(case)\b'
+      scope: keyword.control.switch
+      push: case-label
+    - match: '\b(default)\s*(:)'
+      captures:
+        1: keyword.control.switch
+        2: punctuation.separator.case
+    - match: '\b(as|satisfies)\b(?!\s*[,;)}\]])'
+      scope: keyword.control.as
+      push: type-inline
+    # Keywords, one regex; the trailing spaces of those that can precede a
+    # regex literal are consumed so the division rule does not see them.
+    - match: |-
+        (?x)\b(?:
+          (import|export|from|default)
+          |(if|else|switch|case|for|while|do|break|continue|return|throw|try|catch|finally|await|yield|with|debugger)
+          |(const|let|var|using)
+          |(async|static|public|private|protected|readonly|abstract|declare|override|accessor|get|set)(?=\s+[_$[:alpha:]#\[*"'])
+          |(typeof|keyof|instanceof|in|of|void|delete)
+          |(this)|(super)
+          |(null)|(undefined)|(true|false)|(NaN|Infinity)
+        )\b(?:(?<=return|throw|case|yield|await|typeof|void|delete|in|of|else|do)\s*)?
+      captures:
+        1: keyword.control.import
+        2: keyword.control.flow
+        3: storage.type
+        4: storage.modifier
+        5: keyword.operator.expression
+        6: variable.language.this
+        7: variable.language.super
+        8: constant.language.null
+        9: constant.language.undefined
+        10: constant.language.boolean
+        11: constant.language.nan
+    - match: '\bMath\b'
+      scope: support.constant.math
+    - match: '\b(?:console|globalThis|window|document|process|Object|Array|Map|Set|WeakMap|WeakSet|Promise|JSON|Number|String|Boolean|Symbol|BigInt|Date|RegExp|Error|TypeError|RangeError|Reflect|Proxy|Intl|ArrayBuffer|Uint8Array|Int32Array|Float64Array|DataView|URL|TextEncoder|TextDecoder)\b(?!\s*:)'
+      scope: support.class.builtin
+    # A name bound to a function reads as a function.
+    - match: '{{id}}(?=\s*=\s*(?:async\s*)?(?:function\b|\([^()]*\)\s*(?::[^=]*)?=>|{{id}}\s*=>))'
+      scope: entity.name.function
+    - match: '{{id}}(?=\s*(?:<[^<>()]*(?:<[^<>()]*>[^<>()]*)*>)?\s*\()'
+      scope: entity.name.function
+    - match: '(\?\.|\.)\s*(?:(#?{{id}})(?=\s*(?:<[^<>()]*>)?\s*\()|(#?{{id}}))'
+      captures:
+        1: punctuation.accessor
+        2: entity.name.function
+        3: variable.other.property
+    - match: '#?{{id}}'
+      scope: variable.other.readwrite
+    - include: type-arguments
+    - include: angle-cast
+    - match: '=>'
+      scope: storage.type.function.arrow
+    - match: '\?(?![.?:=])'
+      scope: keyword.operator.ternary
+      push: ternary
+    - match: '\.\.\.|\?\?=?|\*\*=?|&&=?|\|\|=?|===?|!==?|<<=?|>>>?=?|<=|>=|\+\+|--|[-+*%&|^]=|[-+*%=!~&|^<>]'
+      scope: keyword.operator
+    - match: ';'
+      scope: punctuation.terminator.statement
+    - match: ','
+      scope: punctuation.separator.comma
+    - match: '\('
+      scope: meta.brace.round
+      push: paren
+    - match: '\['
+      scope: meta.brace.square
+      push: bracket
+    # An object literal follows a token that starts an expression; any other
+    # brace opens a block.
+    - match: '(?<=[=(,:?\[]|[=(,:?\[] |\breturn |&& |\|\| |\?\? )\{'
+      scope: punctuation.definition.block
+      push: object-literal
+    - match: '\{(?=\s*(?:#?{{id}}|"[^"]*"|''[^'']*'')\s*:(?!:))'
+      scope: punctuation.definition.block
+      push: object-literal
+    - match: '\{'
+      scope: punctuation.definition.block
+      push: block
+
+  # `<T>value`; the React variant includes `jsx` in its place.
+  angle-cast:
+    - match: '(?<![_$[:alnum:])\]])<(?=\s*{{id}}[\w$.\[\]<>|&, ]*>)'
+      scope: punctuation.definition.typeparameters.begin
+      push: type-args
+
+  # `f<T>(`, `new Map<K, V>()`, `class C<T>`.
+  type-arguments:
+    - match: '(?<=[_$[:alnum:]])<(?=[\w$.,\s\[\]|&<>''"?:()=]*?>\s*(?:\(|$|`))'
+      scope: punctuation.definition.typeparameters.begin
+      push: type-args
+
+  block:
+    - match: '\}'
+      scope: punctuation.definition.block
+      pop: true
+    - include: statement
+
+  paren:
+    - match: '\)'
+      scope: meta.brace.round
+      pop: true
+    - match: '(?<=\))(:)'
+      scope: keyword.operator.type.annotation
+      push: type-annotation
+    - include: statement
+
+  bracket:
+    - match: '\]'
+      scope: meta.brace.square
+      pop: true
+    - include: expression
+
+  case-label:
+    - match: ':'
+      scope: punctuation.separator.case
+      pop: true
+    - match: '(?=[;}])'
+      pop: true
+    - include: expression
+
+  ternary:
+    - match: ':'
+      scope: keyword.operator.ternary
+      pop: true
+    - match: '(?=[;)\]}])'
+      pop: true
+    - include: expression
+
+  object-literal:
+    - match: '\}'
+      scope: punctuation.definition.block
+      pop: true
+    - match: '(#?{{id}}|"(?:[^"\\]|\\.)*"|''(?:[^''\\]|\\.)*''|\d+)\s*(:)'
+      captures:
+        1: meta.object-literal.key
+        2: punctuation.separator.key-value
+    - match: '(?<=\))(:)'
+      scope: keyword.operator.type.annotation
+      push: type-annotation
+    - include: expression
+
+  # ---- Declarations ---------------------------------------------------
+
+  class-header:
+    - match: '\{'
+      scope: punctuation.definition.block
+      set: class-body
+    - match: '\b(extends|implements)\b'
+      scope: storage.modifier
+    - match: '<'
+      scope: punctuation.definition.typeparameters.begin
+      push: type-args
+    - match: '{{id}}'
+      scope: entity.other.inherited-class
+    - include: comments
+
+  class-body:
+    - match: '\}'
+      scope: punctuation.definition.block
+      pop: true
+    - include: comments
+    - match: '@{{id}}'
+      scope: entity.name.function.decorator
+    - match: '\b(?:static|public|private|protected|readonly|abstract|declare|override|accessor|async|get|set)\b(?=\s*[_$[:alpha:]#\[*"''])'
+      scope: storage.modifier
+    - match: '(#?{{id}})\s*(?=[<(])'
+      scope: entity.name.function
+      push: method-signature
+    - match: '(#?{{id}})\s*([?!]?)\s*(:)'
+      captures:
+        1: variable.other.property
+        2: keyword.operator.optional
+        3: keyword.operator.type.annotation
+      push: type-annotation
+    - match: '#?{{id}}'
+      scope: variable.other.property
+    - match: '\['
+      scope: meta.brace.square
+      push: index-signature
+    - match: '='
+      scope: keyword.operator.assignment
+      push: class-field-value
+    - match: ';'
+      scope: punctuation.terminator.statement
+
+  class-field-value:
+    - match: '(?=;|\}|^\s*(?:@|(?:static|public|private|protected|readonly|abstract|declare|override|async|get|set)\b|#?{{id}}\s*[?!]?\s*[:(<=]))'
+      pop: true
+    - include: expression
+
+  method-signature:
+    - match: '<'
+      scope: punctuation.definition.typeparameters.begin
+      push: type-args
+    - match: '\('
+      scope: meta.brace.round
+      set: [method-after-params, paren-params]
+
+  paren-params:
+    - match: '\)'
+      scope: meta.brace.round
+      pop: true
+    - include: statement
+
+  method-after-params:
+    - match: ':'
+      scope: keyword.operator.type.annotation
+      set: type-annotation
+    - match: '\{'
+      scope: punctuation.definition.block
+      set: block
+    - match: '(?=\S)'
+      pop: true
+
+  interface-header:
+    - match: '\{'
+      scope: punctuation.definition.block
+      set: type-members
+    - match: '\bextends\b'
+      scope: storage.modifier
+    - match: '<'
+      scope: punctuation.definition.typeparameters.begin
+      push: type-args
+    - match: '{{id}}'
+      scope: entity.other.inherited-class
+    - include: comments
+
+  enum-header:
+    - match: '\{'
+      scope: punctuation.definition.block
+      set: enum-body
+    - include: comments
+
+  enum-body:
+    - match: '\}'
+      scope: punctuation.definition.block
+      pop: true
+    - match: '{{id}}'
+      scope: variable.other.enummember
+    - include: expression
+
+  type-alias:
+    - match: ';'
+      scope: punctuation.terminator.statement
+      pop: true
+    - match: '(?={{statement_start}})'
+      pop: true
+    - match: '(?=\})'
+      pop: true
+    - include: type
+
+  # ---- Types ----------------------------------------------------------
+
+  # After `:`; ends at a delimiter, or at the end of a line that does not
+  # continue the type.
+  type-annotation:
+    - match: '(?=[,;)\]}]|=(?!>))'
+      pop: true
+    - match: '(?={{statement_start}})'
+      pop: true
+    - match: '(?<![:|&,<({=]|=>)(?<!\?)$'
+      pop: true
+    - match: '(?<=[_$[:alnum:])\]>"''])\s*(?=\{)'
+      pop: true
+    - include: type
+
+  # After `as` / `satisfies`: a single-line type.
+  type-inline:
+    - match: '(?=[,;)\]}=:?]|$|&&|\|\|)'
+      pop: true
+    - match: '(?<=[_$[:alnum:])\]>"''])\s*(?=\{)'
+      pop: true
+    - include: type
+
+  type:
+    - include: comments
+    - match: '"'
+      scope: punctuation.definition.string.begin
+      push: string-double
+    - match: "'"
+      scope: punctuation.definition.string.begin
+      push: string-single
+    - match: '`'
+      scope: punctuation.definition.string.template.begin
+      push: template
+    - match: '\b\d[\d_]*(?:\.\d+)?\b'
+      scope: constant.numeric
+    - match: '\b(?:(typeof|keyof|unique|readonly|infer|is|asserts|extends|in|as|new|const)|(null|undefined)|(true|false)|(this))\b'
+      captures:
+        1: keyword.operator.expression
+        2: support.type.primitive
+        3: constant.language.boolean
+        4: variable.language.this
+    - match: '\b(?:string|number|boolean|any|unknown|never|object|symbol|bigint|void)\b'
+      scope: support.type.primitive
+    - match: '{{id}}(?=\s*\.)'
+      scope: entity.name.type.module
+    - match: '{{id}}'
+      scope: entity.name.type
+    - match: '\.'
+      scope: punctuation.accessor
+    - match: '<'
+      scope: punctuation.definition.typeparameters.begin
+      push: type-args
+    - match: '\{'
+      scope: punctuation.definition.block
+      push: type-members
+    - match: '\('
+      scope: meta.brace.round
+      push: type-paren
+    - match: '\['
+      scope: meta.brace.square
+      push: type-tuple
+    - match: '=>'
+      scope: storage.type.function.arrow
+    - match: '[|&?:]|\.\.\.'
+      scope: keyword.operator.type
+    - match: ','
+      scope: punctuation.separator.comma
+
+  type-args:
+    - match: '>'
+      scope: punctuation.definition.typeparameters.end
+      pop: true
+    - match: '='
+      scope: keyword.operator.assignment
+    - include: type
+
+  type-paren:
+    - match: '\)'
+      scope: meta.brace.round
+      pop: true
+    - match: '(\.\.\.)?({{id}})\s*(\??)(:)'
+      captures:
+        1: keyword.operator.spread
+        2: variable.parameter
+        3: keyword.operator.optional
+        4: keyword.operator.type.annotation
+    - include: type
+
+  type-tuple:
+    - match: '\]'
+      scope: meta.brace.square
+      pop: true
+    - match: '({{id}})(\??)(:)'
+      captures:
+        1: variable.parameter
+        2: keyword.operator.optional
+        3: keyword.operator.type.annotation
+    - include: type
+
+  # Members of an interface or object type.
+  type-members:
+    - match: '\}'
+      scope: punctuation.definition.block
+      pop: true
+    - include: comments
+    - match: '\b(?:readonly)\b(?=\s+[_$[:alpha:]\[])'
+      scope: storage.modifier
+    - match: '(#?{{id}}|"(?:[^"\\]|\\.)*"|''(?:[^''\\]|\\.)*'')\s*(\??)\s*(?=[<(])'
+      captures:
+        1: entity.name.function
+        2: keyword.operator.optional
+    - match: '(#?{{id}}|"(?:[^"\\]|\\.)*"|''(?:[^''\\]|\\.)*''|\d+)\s*(\??)\s*(:)'
+      captures:
+        1: variable.object.property
+        2: keyword.operator.optional
+        3: keyword.operator.type.annotation
+      push: type-annotation
+    - match: '\['
+      scope: meta.brace.square
+      push: index-signature
+    - match: '\('
+      scope: meta.brace.round
+      push: type-paren
+    - match: '<'
+      scope: punctuation.definition.typeparameters.begin
+      push: type-args
+    - match: ':'
+      scope: keyword.operator.type.annotation
+      push: type-annotation
+    - match: '[;,]'
+      scope: punctuation.separator
+
+  index-signature:
+    - match: '\]'
+      scope: meta.brace.square
+      pop: true
+    - match: '({{id}})\s*(:|\bin\b)'
+      captures:
+        1: variable.parameter
+        2: keyword.operator.type.annotation
+    - include: type
+
+  # ---- Literals -------------------------------------------------------
 
   comments:
+    - match: '/\*\*?'
+      scope: punctuation.definition.comment
+      push: comment-block
     - match: '//'
-      scope: punctuation.definition.comment.ts
-      push:
-        - meta_scope: comment.line.double-slash.ts
-        - match: '$'
-          pop: true
-    - match: '/\*'
-      scope: punctuation.definition.comment.begin.ts
-      push:
-        - meta_scope: comment.block.ts
-        - match: '\*/'
-          scope: punctuation.definition.comment.end.ts
-          pop: true
+      scope: punctuation.definition.comment
+      push: comment-line
 
-  strings:
-    - match: '"'
-      scope: punctuation.definition.string.begin.ts
-      push:
-        - meta_scope: string.quoted.double.ts
-        - match: '\\.'
-          scope: constant.character.escape.ts
-        - match: '"'
-          scope: punctuation.definition.string.end.ts
-          pop: true
-        - match: '$'
-          pop: true
-    - match: "'"
-      scope: punctuation.definition.string.begin.ts
-      push:
-        - meta_scope: string.quoted.single.ts
-        - match: '\\.'
-          scope: constant.character.escape.ts
-        - match: "'"
-          scope: punctuation.definition.string.end.ts
-          pop: true
-        - match: '$'
-          pop: true
+  comment-block:
+    - meta_scope: comment.block
+    - match: '\*/'
+      scope: punctuation.definition.comment
+      pop: true
 
-  template-strings:
+  comment-line:
+    - meta_scope: comment.line.double-slash
+    - match: '$'
+      pop: true
+
+  string-double:
+    - meta_scope: string.quoted.double
+    - match: '\\.'
+      scope: constant.character.escape
+    - match: '"|$'
+      scope: punctuation.definition.string.end
+      pop: true
+
+  string-single:
+    - meta_scope: string.quoted.single
+    - match: '\\.'
+      scope: constant.character.escape
+    - match: "'|$"
+      scope: punctuation.definition.string.end
+      pop: true
+
+  template:
+    - meta_scope: string.template
+    - match: '\\.'
+      scope: constant.character.escape
     - match: '`'
-      scope: punctuation.definition.string.begin.ts
-      push:
-        - meta_scope: string.quoted.template.ts
-        - match: '\\.'
-          scope: constant.character.escape.ts
-        - match: '\$\{[^}]*\}'
-          scope: variable.interpolation.ts
-        - match: '`'
-          scope: punctuation.definition.string.end.ts
-          pop: true
+      scope: punctuation.definition.string.template.end
+      pop: true
+    - match: '\$\{'
+      scope: punctuation.definition.template-expression.begin string.template
+      push: template-expression
 
-  decorators:
-    - match: '@[A-Za-z_$][\w$]*'
-      scope: entity.name.decorator.ts
+  template-expression:
+    - clear_scopes: 1
+    - match: '\}'
+      scope: punctuation.definition.template-expression.end string.template
+      pop: true
+    - match: '\{'
+      scope: punctuation.definition.block
+      push: object-literal
+    - include: expression
 
-  keywords:
-    - match: '\b(import|export|from|default|as)\b'
-      scope: keyword.other.ts
-    - match: '\b(if|else|for|while|do|switch|case|break|continue|return|try|catch|finally|throw|yield|await)\b'
-      scope: keyword.control.ts
-    - match: '\b(const|let|var|function|class|extends|implements|interface|type|enum|namespace|module|declare|abstract|readonly|public|private|protected|static|get|set|async|constructor|satisfies|infer|asserts|is|keyof|override|accessor)\b'
-      scope: keyword.declaration.ts
-    - match: '\b(new|delete|typeof|instanceof|void|in|of)\b'
-      scope: keyword.operator.ts
-    - match: '\b(true|false|null|undefined|NaN|Infinity|this|super|globalThis)\b'
-      scope: constant.language.ts
+  regexp:
+    - meta_scope: string.regexp
+    - match: '(/)([dgimsuyv]*)'
+      captures:
+        1: punctuation.definition.string.end
+        2: keyword.other
+      pop: true
+    - match: '\\.'
+      scope: constant.character.escape
+    - match: '\[(?:[^\]\\]|\\.)*\]'
+      scope: constant.other.character-class.set.regexp
+    - match: '[*+?]|\{\d+(?:,\d*)?\}'
+      scope: keyword.operator.quantifier.regexp
 
-  numbers:
-    - match: '\b0[xX][0-9a-fA-F_]+n?\b'
-      scope: constant.numeric.hex.ts
-    - match: '\b0[bB][01_]+n?\b'
-      scope: constant.numeric.binary.ts
-    - match: '\b0[oO][0-7_]+n?\b'
-      scope: constant.numeric.octal.ts
-    - match: '\b\d[\d_]*(\.[\d_]+)?([eE][+-]?\d+)?n?\b'
-      scope: constant.numeric.decimal.ts
+  # ---- JSX (React variant only) --------------------------------------
 
-  functions:
-    - match: '(?<=\bfunction\s)[A-Za-z_$][\w$]*'
-      scope: entity.name.function.ts
-    - match: '\b[A-Za-z_$][\w$]*(?=\s*\()'
-      scope: variable.function.ts
+  jsx:
+    - match: '(?<![_$[:alnum:])\]])<(?=\s*(?:[_$[:alpha:]][\w$.:-]*(?:\s|/?>|$)|>))'
+      scope: punctuation.definition.tag.begin
+      push: jsx-tag
 
-  types:
-    - match: '\b(string|number|boolean|any|unknown|never|object|symbol|bigint)\b'
-      scope: support.type.primitive.ts
-    - match: '\b[A-Z][\w$]*\b'
-      scope: support.class.ts
+  jsx-tag:
+    - match: '/>'
+      scope: punctuation.definition.tag.end
+      pop: true
+    - match: '>'
+      scope: punctuation.definition.tag.end
+      set: jsx-children
+    - match: '(?<=<)\s*([A-Z][\w$]*(?:\.[\w$]+)*|[_$[:alpha:]][\w$]*\.[\w$.]+)'
+      captures:
+        1: support.class.component
+    - match: '(?<=<)\s*([_$[:alpha:]][\w$.:-]*)'
+      captures:
+        1: entity.name.tag
+    - match: '[_$[:alpha:]][\w$:-]*'
+      scope: entity.other.attribute-name
+    - match: '='
+      scope: keyword.operator.assignment
+    - match: '"'
+      scope: punctuation.definition.string.begin
+      push: jsx-string-double
+    - match: "'"
+      scope: punctuation.definition.string.begin
+      push: jsx-string-single
+    - match: '\{'
+      scope: punctuation.section.embedded.begin
+      push: jsx-expression
+    - include: comments
+
+  jsx-children:
+    - match: '(</)\s*(?:([A-Z][\w$]*(?:\.[\w$]+)*)|([_$[:alpha:]][\w$.:-]*))?\s*(>)'
+      captures:
+        1: punctuation.definition.tag.begin
+        2: support.class.component
+        3: entity.name.tag
+        4: punctuation.definition.tag.end
+      pop: true
+    - match: '<(?=\s*(?:[_$[:alpha:]]|>))'
+      scope: punctuation.definition.tag.begin
+      push: jsx-tag
+    - match: '\{'
+      scope: punctuation.section.embedded.begin
+      push: jsx-expression
+    - match: '&(?:[a-zA-Z0-9]+|#\d+|#x[0-9a-fA-F]+);'
+      scope: constant.character.entity
+
+  jsx-expression:
+    - match: '\}'
+      scope: punctuation.section.embedded.end
+      pop: true
+    - include: expression
+
+  # JSX attribute strings have no escapes and may span lines.
+  jsx-string-double:
+    - meta_scope: string.quoted.double
+    - match: '"'
+      scope: punctuation.definition.string.end
+      pop: true
+
+  jsx-string-single:
+    - meta_scope: string.quoted.single
+    - match: "'"
+      scope: punctuation.definition.string.end
+      pop: true

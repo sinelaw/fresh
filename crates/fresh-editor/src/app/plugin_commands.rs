@@ -2489,6 +2489,7 @@ impl Editor {
                     fresh_core::command::CommandSource::Plugin(name) => CommandSource::Plugin(name),
                 });
                 EditorSuggestion {
+                    id: s.id,
                     text: s.text,
                     description: s.description,
                     description_spans: s.description_spans,
@@ -2504,16 +2505,16 @@ impl Editor {
             // Set original_suggestions for Rust-side filtering (used by prompts that
             // don't handle their own filtering like theme editor dropdowns)
             prompt.original_suggestions = Some(internal_suggestions.clone());
-            prompt.suggestions = internal_suggestions;
+            prompt.set_suggestions(internal_suggestions);
             // Select first suggestion by default (or the specified index)
-            prompt.selected_suggestion = if prompt.suggestions.is_empty() {
+            prompt.select_suggestion(if prompt.suggestions.is_empty() {
                 None
             } else {
                 let idx = selected_index
                     .map(|i| (i as usize).min(prompt.suggestions.len() - 1))
                     .unwrap_or(0);
                 Some(idx)
-            };
+            });
             // A fresh result list re-engages keep-selection-visible scrolling
             // (issue #2119): a stale manual-scroll latch from the previous
             // query must not suppress it.

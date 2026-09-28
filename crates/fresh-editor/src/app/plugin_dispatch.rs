@@ -193,7 +193,154 @@ impl Editor {
         }
     }
 
+    /// Rebuild the plugin state snapshot if anything happened since the last
+    /// rebuild; an idle loop pass leaves it untouched.
+    pub(crate) fn refresh_plugin_state_snapshot(&mut self) {
+        let env_changed = self.take_env_probe_result();
+        if env_changed
+            || self.plugin_snapshot_dirty
+            || self.plugin_snapshot_liveness != self.remote_liveness_signature()
+        {
+            self.update_plugin_state_snapshot();
+        }
+    }
+
+    /// Which windows have a live remote connection, folded into one value.
+    /// Connections drop and return off the editor thread, so this is polled.
+    fn remote_liveness_signature(&self) -> u64 {
+        self.windows
+            .keys()
+            .filter(|id| self.window_connection_is_live(**id))
+            .fold(0u64, |acc, id| {
+                acc ^ id.0.wrapping_add(1).wrapping_mul(0x9E37_79B9_7F4A_7C15)
+            })
+    }
+
+    /// `detect_env` for the active root, re-probed only when the root, the
+    /// detectors or the authority change, or the root's entries change.
+    fn detected_env_json(&mut self) -> String {
+        /// How long a new root's first probe may hold the editor thread; a
+        /// local disk answers well inside it, a hung remote does not block.
+        const FIRST_PROBE_WAIT: std::time::Duration = std::time::Duration::from_millis(50);
+
+        let root = self.working_dir().to_path_buf();
+        let fs = Arc::clone(&self.authority().filesystem);
+        let fresh = self.detected_env_cache.as_ref().is_some_and(|c| {
+            c.root == root
+                && std::ptr::addr_eq(Arc::as_ptr(&c.fs), Arc::as_ptr(&fs))
+                && c.detectors == self.config.env.detectors
+        });
+        let first = !fresh;
+        if first {
+            if let Some(watch) = self.detected_env_cache.take().and_then(|c| c.watch) {
+                self.file_watcher_manager.unwatch(watch);
+            }
+            // Only a local root can be watched; a remote one re-probes when
+            // the file explorer sees its listing change.
+            let watch = if self.active_window().authority_spec.is_remote() {
+                None
+            } else {
+                self.async_bridge
+                    .as_ref()
+                    .and_then(|bridge| self.file_watcher_manager.watch(bridge, &root, false).ok())
+            };
+            self.detected_env_cache = Some(super::DetectedEnvCache {
+                root,
+                detectors: self.config.env.detectors.clone(),
+                fs,
+                answer: String::new(),
+                stale: true,
+                probe: None,
+                reprobe_at: None,
+                watch,
+            });
+        }
+        let cache = self.detected_env_cache.as_mut().expect("set above");
+        let due = cache
+            .reprobe_at
+            .is_none_or(|at| std::time::Instant::now() >= at);
+        if cache.stale && cache.probe.is_none() && due {
+            self.perf_counters.env_detections += 1;
+            let (tx, rx) = std::sync::mpsc::channel();
+            let (fs, root, detectors) = (
+                Arc::clone(&cache.fs),
+                cache.root.clone(),
+                cache.detectors.clone(),
+            );
+            let spawned = std::thread::Builder::new()
+                .name("fresh-env-probe".into())
+                .spawn(move || {
+                    let (env, incomplete) =
+                        crate::services::workspace_trust::probe_env(fs.as_ref(), &root, &detectors);
+                    let json = env
+                        .and_then(|d| serde_json::to_string(&d).ok())
+                        .unwrap_or_default();
+                    tx.send((json, incomplete)).ok();
+                });
+            match spawned {
+                Ok(_) => {
+                    if first {
+                        if let Ok(result) = rx.recv_timeout(FIRST_PROBE_WAIT) {
+                            Self::settle_env_probe(cache, result);
+                        } else {
+                            cache.probe = Some(rx);
+                        }
+                    } else {
+                        cache.probe = Some(rx);
+                    }
+                    cache.stale = cache.stale && cache.probe.is_none();
+                }
+                Err(e) => tracing::warn!("Could not start the environment probe: {e}"),
+            }
+        }
+        self.take_env_probe_result();
+        self.detected_env_cache
+            .as_ref()
+            .map(|c| c.answer.clone())
+            .unwrap_or_default()
+    }
+
+    /// Adopt a finished probe's `(answer, incomplete)`. An answer no watch
+    /// event would refresh (incomplete, or an unwatched root) is re-probed on
+    /// a rebuild once `ENV_REPROBE_INTERVAL` has passed.
+    fn settle_env_probe(cache: &mut super::DetectedEnvCache, (answer, incomplete): (String, bool)) {
+        const ENV_REPROBE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
+        cache.answer = answer;
+        cache.probe = None;
+        cache.stale = incomplete || cache.watch.is_none();
+        cache.reprobe_at = cache
+            .stale
+            .then(|| std::time::Instant::now() + ENV_REPROBE_INTERVAL);
+    }
+
+    /// Collect a finished environment probe; true when it changed the answer.
+    fn take_env_probe_result(&mut self) -> bool {
+        let Some(cache) = self.detected_env_cache.as_mut() else {
+            return false;
+        };
+        let Some(probe) = &cache.probe else {
+            return false;
+        };
+        match probe.try_recv() {
+            Ok(result) => {
+                let before = std::mem::take(&mut cache.answer);
+                Self::settle_env_probe(cache, result);
+                cache.answer != before
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => false,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                cache.probe = None;
+                false
+            }
+        }
+    }
+
+    /// Rebuild the plugin state snapshot unconditionally.
     pub fn update_plugin_state_snapshot(&mut self) {
+        self.plugin_snapshot_dirty = false;
+        self.plugin_snapshot_liveness = self.remote_liveness_signature();
+        self.perf_counters.plugin_snapshot_rebuilds += 1;
+
         // Rebuild the per-window filesystem registry so plugin file I/O resolves
         // against the correct window's authority (or the active one). This runs
         // on the same cadence as the snapshot, so it captures window
@@ -216,6 +363,8 @@ impl Editor {
         else {
             return;
         };
+        // Probed before taking the lock: a first probe may wait on the disk.
+        let detected_env = self.detected_env_json();
         let mut snapshot = snapshot_handle.write().unwrap();
 
         let shares = self
@@ -263,12 +412,7 @@ impl Editor {
         // has. The env-manager plugin reads this resolved result via
         // `editor.detectedEnv()` rather than probing the filesystem itself.
         // Empty string ⇒ no env detected.
-        snapshot.detected_env = crate::services::workspace_trust::detect_env(
-            self.working_dir(),
-            &self.config.env.detectors,
-        )
-        .and_then(|d| serde_json::to_string(&d).ok())
-        .unwrap_or_default();
+        snapshot.detected_env = detected_env;
 
         // Publish the session list so plugins (Orchestrator, etc.)
         // see updates from createWindow/closeWindow without
@@ -2384,7 +2528,7 @@ impl Editor {
         if let Some(prompt) = &mut self.active_window_mut().prompt {
             let len = prompt.suggestions.len();
             if len > 0 {
-                prompt.selected_suggestion = Some((index as usize).min(len - 1));
+                prompt.select_suggestion(Some((index as usize).min(len - 1)));
             }
         }
     }
@@ -4369,6 +4513,9 @@ impl Editor {
         let items: Vec<crate::model::event::PopupListItemData> = actions
             .iter()
             .map(|action| crate::model::event::PopupListItemData {
+                // Unique among the actions: the plugin API refuses a
+                // repeated one.
+                id: action.id.clone(),
                 text: action.label.clone(),
                 detail: None,
                 icon: None,
@@ -5510,6 +5657,9 @@ impl Editor {
         // The description reads what this writes; see
         // `Editor::shell_description_stale`.
         self.shell_description_stale = true;
+        if let Some(p) = self.tree_projections.borrow().get(panel_key) {
+            p.retain_trees_of(&spec);
+        }
         let prev = match self.widget_registry.instance_states(panel_key) {
             Some(s) => s.clone(),
             None => {
@@ -5562,7 +5712,7 @@ impl Editor {
     /// the full spec; it sends one targeted change. The host
     /// mutates the registry's spec / instance state and re-renders
     /// against the just-mutated state.
-    fn handle_widget_mutate(
+    pub(crate) fn handle_widget_mutate(
         &mut self,
         panel_key: &crate::widgets::PanelKey,
         mutation: fresh_core::api::WidgetMutation,
@@ -5650,7 +5800,7 @@ impl Editor {
                 // mutate.
                 if let Some(panel) = self.widget_registry.get_mut(panel_key) {
                     crate::widgets::set_toggle_checked_in_spec(
-                        &mut panel.spec,
+                        std::rc::Rc::make_mut(&mut panel.spec),
                         &widget_key,
                         checked,
                     );
@@ -5761,7 +5911,7 @@ impl Editor {
                 // List items live in the spec.
                 if let Some(panel) = self.widget_registry.get_mut(panel_key) {
                     crate::widgets::set_list_items_in_spec(
-                        &mut panel.spec,
+                        std::rc::Rc::make_mut(&mut panel.spec),
                         &widget_key,
                         items,
                         item_keys,
@@ -5812,7 +5962,7 @@ impl Editor {
                 // plugin.
                 if let Some(panel) = self.widget_registry.get_mut(panel_key) {
                     crate::widgets::set_tree_checked_keys_in_spec(
-                        &mut panel.spec,
+                        std::rc::Rc::make_mut(&mut panel.spec),
                         &widget_key,
                         checked,
                         &keys,
@@ -5826,7 +5976,7 @@ impl Editor {
             } => {
                 if let Some(panel) = self.widget_registry.get_mut(panel_key) {
                     crate::widgets::append_tree_nodes_in_spec(
-                        &mut panel.spec,
+                        std::rc::Rc::make_mut(&mut panel.spec),
                         &widget_key,
                         new_nodes,
                         new_item_keys,
@@ -5838,7 +5988,11 @@ impl Editor {
                 entries,
             } => {
                 if let Some(panel) = self.widget_registry.get_mut(panel_key) {
-                    crate::widgets::set_raw_entries_in_spec(&mut panel.spec, &widget_key, entries);
+                    crate::widgets::set_raw_entries_in_spec(
+                        std::rc::Rc::make_mut(&mut panel.spec),
+                        &widget_key,
+                        entries,
+                    );
                 }
             }
             WidgetMutation::SetFocusKey { widget_key } => {
@@ -5873,6 +6027,7 @@ impl Editor {
         self.page_anchors.remove(panel_key);
         self.pane_mirrors.remove(panel_key);
         self.prose_reveal.borrow_mut().remove(panel_key);
+        self.tree_projections.borrow_mut().remove(panel_key);
         match self.widget_registry.unmount(panel_key) {
             Some(buffer_id) => {
                 tracing::debug!(

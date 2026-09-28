@@ -2541,6 +2541,24 @@ fn rebase_overlay(o: &InlineOverlay, w: &WindowedBody, shift: usize) -> Option<I
     Some(out)
 }
 
+/// How many rows [`render_tree_row`] draws `node` in — known from the node
+/// alone, so a window over a tree of cards can place every row without
+/// rendering any: a bordered card is its `item_height` rows between its two
+/// borders, a folder header in a bordered tree one row, and anything else
+/// `item_height` rows.
+pub fn tree_row_rows(
+    node: &TreeNode,
+    checkable: bool,
+    item_height: u32,
+    card_borders: bool,
+) -> u32 {
+    match card_borders && item_height > 1 {
+        true if tree_node_is_card(node, checkable) => item_height + 2,
+        true => 1,
+        false => item_height.max(1),
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn render_tree_row(
     node: &TreeNode,
@@ -4655,8 +4673,12 @@ pub mod tests {
         key: Option<&str>,
     ) -> WidgetSpec {
         WidgetSpec::Tree {
-            nodes,
-            item_keys: item_keys.iter().map(|s| s.to_string()).collect(),
+            nodes: nodes.into(),
+            item_keys: item_keys
+                .iter()
+                .map(|s| s.to_string())
+                .collect::<Vec<_>>()
+                .into(),
             selected_index: selected,
             visible_rows: Some(visible),
             expanded_keys: expanded.iter().map(|s| s.to_string()).collect(),

@@ -390,8 +390,9 @@ pub fn resolve(
     resolve_seeded(spec_selected, spec_expanded, widget_key, prev)
 }
 
-/// [`resolve`] against the seeds directly, for the collector — which is
-/// handed a `Tree`'s fields unpacked rather than the spec node itself.
+/// [`resolve`] against the seeds directly, for a reader handed a `Tree`'s
+/// fields unpacked rather than the spec node itself — the shell's described
+/// `Tree` arms, which draw from what this returns.
 pub fn resolve_seeded(
     spec_selected: i32,
     spec_expanded: &[String],
@@ -458,7 +459,7 @@ pub fn select_move(
     };
     let new_pos = (cur_pos + delta).clamp(0, (visible_indices.len() as i32) - 1);
     let new_abs = visible_indices[new_pos as usize];
-    let new_key = item_keys.get(new_abs).cloned().unwrap_or_default();
+    let new_key = item_keys[new_abs].clone();
     panel.instance_states.insert(
         widget_key.to_string(),
         WidgetInstanceState::Tree {
@@ -509,8 +510,8 @@ pub fn lateral(
     let Some(node) = nodes.get(sel_idx) else {
         return;
     };
-    let key = item_keys.get(sel_idx).cloned().unwrap_or_default();
-    let was_expanded = !key.is_empty() && expanded.contains(&key);
+    let key = item_keys[sel_idx].clone();
+    let was_expanded = expanded.contains(&key);
 
     let mut new_sel = cur_sel;
     let mut expansion_changed: Option<bool> = None; // Some(new_state)
@@ -529,7 +530,7 @@ pub fn lateral(
     if expansion_changed.is_none() && new_sel == cur_sel {
         return;
     }
-    let final_key = item_keys.get(new_sel as usize).cloned().unwrap_or_default();
+    let final_key = item_keys[new_sel as usize].clone();
     panel.instance_states.insert(
         widget_key.to_string(),
         WidgetInstanceState::Tree {
@@ -573,7 +574,9 @@ pub fn activate_event(
     if sel < 0 {
         return None;
     }
-    let item_key = item_keys.get(sel as usize).cloned().unwrap_or_default();
+    // An index past the nodes selects nothing, so there is nothing to
+    // activate.
+    let item_key = item_keys.get(sel as usize)?.clone();
     Some(("activate".into(), json!({ "index": sel, "key": item_key, })))
 }
 
@@ -606,7 +609,7 @@ fn toggle_if_checkable_event(
     // No checkbox glyph on this row — let activate fire.
     let cur_checked = nodes.get(sel as usize).and_then(|n| n.checked)?;
     let new_checked = !cur_checked;
-    let item_key = item_keys.get(sel as usize).cloned().unwrap_or_default();
+    let item_key = item_keys[sel as usize].clone();
     Some((
         "toggle".into(),
         json!({ "index": sel, "key": item_key, "checked": new_checked, }),
@@ -630,9 +633,8 @@ pub fn collect_visible_tree_indices(
         if ancestor_open.iter().all(|open| *open) {
             visible.push(i);
         }
-        let key = item_keys.get(i).cloned().unwrap_or_default();
         let is_open = if node.has_children {
-            !key.is_empty() && expanded.contains(&key)
+            expanded.contains(&item_keys[i])
         } else {
             true
         };
@@ -663,8 +665,8 @@ mod tests {
 
     fn tree(toggle_on_click: bool) -> WidgetSpec {
         WidgetSpec::Tree {
-            nodes: vec![node("group", 0, true), node("leaf", 1, false)],
-            item_keys: vec!["g".into(), "l".into()],
+            nodes: vec![node("group", 0, true), node("leaf", 1, false)].into(),
+            item_keys: vec!["g".into(), "l".into()].into(),
             selected_index: -1,
             visible_rows: Some(5),
             expanded_keys: vec![],
@@ -681,7 +683,7 @@ mod tests {
     fn panel_of(spec: &WidgetSpec) -> crate::widgets::WidgetPanelState {
         crate::widgets::WidgetPanelState {
             buffer_id: None,
-            spec: spec.clone(),
+            spec: std::rc::Rc::new(spec.clone()),
             instance_states: HashMap::new(),
             focus_key: String::new(),
             auto_focus_first: true,

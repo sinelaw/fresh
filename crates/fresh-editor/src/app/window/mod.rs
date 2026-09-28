@@ -268,6 +268,13 @@ impl TerminalBuffer {
 /// server does this belong to?" answerable wherever the candidate travels.
 #[derive(Clone, Debug, PartialEq)]
 pub struct LspCompletionCandidate {
+    /// What this candidate is: the response it came in and its place in
+    /// it (`lsp:<response>:<ordinal>`). **The server's identity for it, not
+    /// the popup's**: filtering and re-ranking move a candidate's row, and
+    /// labels repeat (one `HashMap` per crate that exports one), so neither
+    /// the row's position nor its label names it. The response number keeps
+    /// a re-request for an incomplete list from reusing a position.
+    pub id: String,
     /// The candidate as the server sent it.
     pub item: lsp_types::CompletionItem,
 
@@ -279,8 +286,12 @@ pub struct LspCompletionCandidate {
 impl LspCompletionCandidate {
     /// A candidate with no server behind it — nothing can be resolved
     /// against a server that doesn't exist.
-    pub fn unattributed(item: lsp_types::CompletionItem) -> Self {
-        Self { item, server: None }
+    pub fn unattributed(id: String, item: lsp_types::CompletionItem) -> Self {
+        Self {
+            id,
+            item,
+            server: None,
+        }
     }
 }
 
@@ -440,6 +451,9 @@ pub struct Window {
     /// Original LSP completion candidates (for type-to-filter), merged
     /// from every server that answered.
     pub completion_items: Option<Vec<LspCompletionCandidate>>,
+    /// Completion responses merged into `completion_items` so far; numbers
+    /// each response for its candidates' ids (`LspCompletionCandidate::id`).
+    pub completion_responses: u64,
 
     /// The candidate behind each *LSP row* of the completion popup
     /// currently on screen, in row order. Rows past the end of this vector
@@ -772,8 +786,14 @@ pub struct Window {
         HashMap<String, Vec<crate::view::file_tree::FileExplorerDecoration>>,
 
     /// Compiled decoration lookup cache invalidated when
-    /// `file_explorer_decorations` changes.
-    pub file_explorer_decoration_cache: crate::view::file_tree::FileExplorerDecorationCache,
+    /// `file_explorer_decorations` changes. Shared with the explorer's
+    /// window, which describes its rows at layout; a rebuild replaces it.
+    pub file_explorer_decoration_cache:
+        std::rc::Rc<crate::view::file_tree::FileExplorerDecorationCache>,
+
+    /// The file explorer's window, as its page keys ask it: how far a page
+    /// is, which the list that draws the tree records at layout.
+    pub(crate) file_explorer_pager: std::rc::Rc<fresh_ui::behavior::Pager>,
 
     /// Slot overrides supplied by plugins for the file explorer keyed by
     /// namespace. These are additive overrides: unspecified fields continue to
@@ -782,8 +802,9 @@ pub struct Window {
         HashMap<String, Vec<fresh_core::file_explorer::FileExplorerSlotEntry>>,
 
     /// Compiled slot-override lookup cache invalidated when
-    /// `file_explorer_slot_overrides` changes.
-    pub file_explorer_slot_override_cache: crate::view::file_tree::FileExplorerSlotOverrideCache,
+    /// `file_explorer_slot_overrides` changes. Shared the same way.
+    pub file_explorer_slot_override_cache:
+        std::rc::Rc<crate::view::file_tree::FileExplorerSlotOverrideCache>,
 
     /// Hover-popup correlation state (which buffer / cursor a hover
     /// request was issued from). Per-window because hover requests
@@ -2393,6 +2414,7 @@ impl Window {
             next_lsp_request_id: 0,
             pending_completion_requests: std::collections::HashMap::new(),
             completion_items: None,
+            completion_responses: 0,
             completion_popup_lsp_items: Vec::new(),
             pending_completion_resolve_request: None,
             scheduled_completion_trigger: None,
@@ -2446,11 +2468,10 @@ impl Window {
             pending_file_explorer_show_hidden: None,
             pending_file_explorer_show_gitignored: None,
             file_explorer_decorations: HashMap::new(),
-            file_explorer_decoration_cache:
-                crate::view::file_tree::FileExplorerDecorationCache::default(),
+            file_explorer_decoration_cache: Default::default(),
+            file_explorer_pager: Default::default(),
             file_explorer_slot_overrides: HashMap::new(),
-            file_explorer_slot_override_cache:
-                crate::view::file_tree::FileExplorerSlotOverrideCache::default(),
+            file_explorer_slot_override_cache: Default::default(),
             hover: crate::app::hover::HoverState::default(),
             search_state: None,
             search_namespace: crate::view::overlay::OverlayNamespace::from_string(
@@ -4244,7 +4265,6 @@ impl Window {
     pub fn file_explorer_search_push_char(&mut self, c: char) {
         if let Some(explorer) = self.file_explorer.as_mut() {
             explorer.search_push_char(c);
-            explorer.update_scroll_for_selection();
         }
     }
 
@@ -4252,7 +4272,6 @@ impl Window {
     pub fn file_explorer_search_pop_char(&mut self) {
         if let Some(explorer) = self.file_explorer.as_mut() {
             explorer.search_pop_char();
-            explorer.update_scroll_for_selection();
         }
     }
 

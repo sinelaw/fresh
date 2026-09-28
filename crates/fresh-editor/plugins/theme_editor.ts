@@ -1656,17 +1656,19 @@ function getFieldByPath(path: string): ThemeField | null {
 function buildColorSuggestions(field: ThemeField): PromptSuggestion[] {
   const currentValue = formatColorValue(field.value as ColorValue);
   const suggestions: PromptSuggestion[] = [
-    { text: currentValue, description: editor.t("suggestion.current"), value: currentValue },
+    // Namespaced: the current value is often one of the named colours
+    // listed below it, and the two rows are different rows.
+    { id: "current", text: currentValue, description: editor.t("suggestion.current"), value: currentValue },
   ];
 
   // Add special colors (Default/Reset for terminal transparency)
   for (const name of SPECIAL_COLORS) {
-    suggestions.push({ text: name, description: editor.t("suggestion.terminal_native"), value: name });
+    suggestions.push({ id: `special:${name}`, text: name, description: editor.t("suggestion.terminal_native"), value: name });
   }
 
   // Add named colors (terminal native - no hex shown since actual color depends on terminal)
   for (const name of NAMED_COLOR_LIST) {
-    suggestions.push({ text: name, description: editor.t("suggestion.terminal_native"), value: name });
+    suggestions.push({ id: `named:${name}`, text: name, description: editor.t("suggestion.terminal_native"), value: name });
   }
 
   return suggestions;
@@ -1699,6 +1701,7 @@ function editModifierField(field: ThemeField): void {
     currentValue
   );
   editor.setPromptSuggestions(VALID_MODIFIERS.map(value => ({
+    id: value,
     text: value,
     description: "Toggleable text attribute",
     value,
@@ -1969,6 +1972,7 @@ editor.on("prompt_confirmed", async (args) => {
       state.saveAsPreFilled = true;
       editor.startPromptWithInitial(editor.t("prompt.save_as"), "theme-save-as", name);
       editor.setPromptSuggestions([{
+        id: "current",
         text: state.themeName,
         description: state.isBuiltin
           ? editor.t("suggestion.current_builtin")
@@ -1983,6 +1987,7 @@ editor.on("prompt_confirmed", async (args) => {
     if (state.builtinKeys.has(name)) {
       editor.startPromptWithInitial(editor.t("prompt.save_as_builtin_error"), "theme-save-as", name);
       editor.setPromptSuggestions([{
+        id: "current",
         text: state.themeName,
         description: state.isBuiltin
           ? editor.t("suggestion.current_builtin")
@@ -1998,8 +2003,8 @@ editor.on("prompt_confirmed", async (args) => {
       state.pendingSaveName = name;
       editor.startPrompt(editor.t("prompt.overwrite_confirm", { name }), "theme-overwrite-confirm");
       const suggestions: PromptSuggestion[] = [
-        { text: editor.t("prompt.overwrite_yes"), description: "", value: "overwrite" },
-        { text: editor.t("prompt.overwrite_no"), description: "", value: "cancel" },
+        { id: "overwrite", text: editor.t("prompt.overwrite_yes"), description: "", value: "overwrite" },
+        { id: "cancel", text: editor.t("prompt.overwrite_no"), description: "", value: "cancel" },
       ];
       editor.setPromptSuggestions(suggestions);
       return true;
@@ -2810,7 +2815,7 @@ async function open_theme_editor() : Promise<void> {
     const desc = isBuiltin
       ? (isCurrent ? editor.t("suggestion.builtin_theme_current") : editor.t("suggestion.builtin_theme"))
       : (isCurrent ? editor.t("suggestion.user_theme_current") : editor.t("suggestion.user_theme"));
-    const suggestion = { text: name, description: desc, value: key };
+    const suggestion = { id: key, text: name, description: desc, value: key };
     if (isBuiltin) {
       builtinSuggestions.push(suggestion);
     } else {
@@ -2892,9 +2897,9 @@ function theme_editor_close() : void {
     // Show confirmation prompt before closing with unsaved changes
     editor.startPrompt(editor.t("prompt.discard_confirm"), "theme-discard-confirm");
     const suggestions: PromptSuggestion[] = [
-      { text: editor.t("prompt.discard_no"), description: "", value: "keep" },
-      { text: editor.t("prompt.discard_save"), description: "", value: "save" },
-      { text: editor.t("prompt.discard_yes"), description: "", value: "discard" },
+      { id: "keep", text: editor.t("prompt.discard_no"), description: "", value: "keep" },
+      { id: "save", text: editor.t("prompt.discard_save"), description: "", value: "save" },
+      { id: "discard", text: editor.t("prompt.discard_yes"), description: "", value: "discard" },
     ];
     editor.setPromptSuggestions(suggestions);
     return;
@@ -2993,7 +2998,7 @@ function theme_editor_open() : void {
   for (const [key, {name}] of state.themeRegistry) {
     const isBuiltin = state.builtinKeys.has(key);
     const desc = isBuiltin ? editor.t("suggestion.builtin_theme") : editor.t("suggestion.user_theme");
-    const suggestion = { text: name, description: desc, value: key };
+    const suggestion = { id: key, text: name, description: desc, value: key };
     if (isBuiltin) {
       builtinSuggestions.push(suggestion);
     } else {
@@ -3038,8 +3043,8 @@ async function theme_editor_save() : Promise<void> {
     // File exists with this name - ask for confirmation
     editor.startPrompt(editor.t("prompt.overwrite_confirm", { name: state.themeName }), "theme-overwrite-confirm");
     const suggestions: PromptSuggestion[] = [
-      { text: editor.t("prompt.overwrite_yes"), description: "", value: "overwrite" },
-      { text: editor.t("prompt.overwrite_no"), description: "", value: "cancel" },
+      { id: "overwrite", text: editor.t("prompt.overwrite_yes"), description: "", value: "overwrite" },
+      { id: "cancel", text: editor.t("prompt.overwrite_no"), description: "", value: "cancel" },
     ];
     editor.setPromptSuggestions(suggestions);
     return;
@@ -3067,6 +3072,7 @@ function theme_editor_save_as() : void {
   editor.startPrompt(editor.t("prompt.save_as"), "theme-save-as");
 
   editor.setPromptSuggestions([{
+    id: "current",
     text: state.themeName,
     description: state.isBuiltin
       ? editor.t("suggestion.current_builtin")
@@ -3120,8 +3126,8 @@ function theme_editor_delete() : void {
   // Show confirmation dialog
   editor.startPrompt(editor.t("prompt.delete_confirm", { name: state.themeName }), "theme-delete-confirm");
   const suggestions: PromptSuggestion[] = [
-    { text: editor.t("prompt.delete_yes"), description: "", value: "delete" },
-    { text: editor.t("prompt.delete_no"), description: "", value: "cancel" },
+    { id: "delete", text: editor.t("prompt.delete_yes"), description: "", value: "delete" },
+    { id: "cancel", text: editor.t("prompt.delete_no"), description: "", value: "cancel" },
   ];
   editor.setPromptSuggestions(suggestions);
 }

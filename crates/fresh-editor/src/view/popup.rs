@@ -164,6 +164,15 @@ impl PopupTextSelection {
 /// A single item in a popup list
 #[derive(Debug, Clone, PartialEq)]
 pub struct PopupListItem {
+    /// What this row is, unique within its list: an action's key, an
+    /// LSP item's place in the server's answer, a header's name.
+    ///
+    /// **Required, and never the row's position or its label.** The list
+    /// keys its rows by it — completion labels repeat (one `HashMap` row per
+    /// crate that exports one), and a key taken from the label or the
+    /// position lets an insertion or a re-filter hand one row's element to
+    /// another.
+    pub id: String,
     /// Main text to display
     pub text: String,
     /// Optional secondary text (description, type info, etc.)
@@ -177,14 +186,22 @@ pub struct PopupListItem {
 }
 
 impl PopupListItem {
-    pub fn new(text: String) -> Self {
+    /// A row identified by `id` (unique in its list).
+    pub fn new(id: impl Into<String>, text: String) -> Self {
         Self {
+            id: id.into(),
             text,
             detail: None,
             icon: None,
             data: None,
             disabled: false,
         }
+    }
+
+    /// An actionable row whose action key is also what the row is: `key`
+    /// is both its id and the data its resolver acts on.
+    pub fn action(key: String, text: String) -> Self {
+        Self::new(key.clone(), text).with_data(key)
     }
 
     pub fn with_detail(mut self, detail: String) -> Self {
@@ -910,7 +927,8 @@ mod tests {
 
     #[test]
     fn test_popup_list_item() {
-        let item = PopupListItem::new("test".to_string()).with_detail("detail".to_string());
+        let item =
+            PopupListItem::new("t930_20", "test".to_string()).with_detail("detail".to_string());
 
         assert_eq!(item.text, "test");
         assert_eq!(item.detail, Some("detail".to_string()));
@@ -920,9 +938,9 @@ mod tests {
     fn test_popup_selection() {
         let theme = crate::view::theme::Theme::load_builtin(theme::THEME_DARK).unwrap();
         let items = vec![
-            PopupListItem::new("item1".to_string()),
-            PopupListItem::new("item2".to_string()),
-            PopupListItem::new("item3".to_string()),
+            PopupListItem::new("t940_13", "item1".to_string()),
+            PopupListItem::new("t941_13", "item2".to_string()),
+            PopupListItem::new("t942_13", "item3".to_string()),
         ];
 
         let mut popup = Popup::list(items, &theme);

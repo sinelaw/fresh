@@ -338,12 +338,12 @@ impl Editor {
         };
 
         if let Some(prompt) = &mut self.active_window_mut().prompt {
-            prompt.suggestions = suggestions;
-            prompt.selected_suggestion = if prompt.suggestions.is_empty() {
+            prompt.set_suggestions(suggestions);
+            prompt.select_suggestion(if prompt.suggestions.is_empty() {
                 None
             } else {
                 Some(0)
-            };
+            });
         }
 
         // Live preview for the goto-line provider: if the input is ":<N>" for a
@@ -961,7 +961,7 @@ impl Editor {
             if prompt.overlay {
                 self.cleanup_overlay_preview();
             }
-            let selected_index = prompt.selected_suggestion;
+            let selected_index = prompt.selected_suggestion();
             // For prompts with suggestions, prefer the selected suggestion over raw input
             let mut final_input = if prompt.sync_input_on_navigate {
                 // When sync_input_on_navigate is set, the input field is kept in sync
@@ -990,7 +990,7 @@ impl Editor {
                     | PromptType::LiveGrep
             ) {
                 // Use the selected suggestion if any
-                if let Some(selected_idx) = prompt.selected_suggestion {
+                if let Some(selected_idx) = prompt.selected_suggestion() {
                     if let Some(suggestion) = prompt.suggestions.get(selected_idx) {
                         // Don't confirm disabled suggestions
                         if suggestion.disabled {
@@ -1040,7 +1040,7 @@ impl Editor {
             if matches!(prompt.prompt_type, PromptType::RemoveRuler) {
                 if prompt.input_str().is_empty() {
                     // No typed text — use the selected suggestion
-                    if let Some(selected_idx) = prompt.selected_suggestion {
+                    if let Some(selected_idx) = prompt.selected_suggestion() {
                         if let Some(suggestion) = prompt.suggestions.get(selected_idx) {
                             final_input = suggestion.get_value().to_string();
                         }

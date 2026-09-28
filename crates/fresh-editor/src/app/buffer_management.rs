@@ -597,13 +597,15 @@ impl Editor {
 
         if let Some(state) = self
             .windows
-            .get(&self.active_window)
-            .map(|w| &w.buffers)
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
             .expect("active window present")
-            .get(&buffer_id)
+            .get_mut(&buffer_id)
         {
-            let buffer_len = state.buffer.len();
-            let position = offset.min(buffer_len);
+            // The offset is whatever was typed, and on multi-byte text most
+            // bytes are inside a character: the caret goes to the next whole
+            // one, or what is typed there splits the character (issue #3285).
+            let position = state.buffer.char_boundary_at_or_after(offset);
 
             let event = Event::MoveCursor {
                 cursor_id,

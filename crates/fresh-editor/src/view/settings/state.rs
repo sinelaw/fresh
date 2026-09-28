@@ -98,19 +98,8 @@ pub enum FocusPanel {
 pub struct BodyWindow {
     /// How far down the column the window starts.
     pub offset: u16,
-    /// How tall the window is.
-    pub height: u16,
-    /// How tall the column is.
-    pub content: u16,
     /// The card the window starts on.
     pub top_item: Option<usize>,
-}
-
-impl BodyWindow {
-    /// The furthest the window can move before its bottom meets the column's.
-    pub fn max_offset(&self) -> u16 {
-        self.content.saturating_sub(self.height)
-    }
 }
 
 /// The state of the settings UI
@@ -238,18 +227,14 @@ pub struct SettingsState {
     /// tree view. Only categories with `sections.len() > 1` are eligible —
     /// a category with zero or one section stays flat.
     pub expanded_categories: std::collections::HashSet<usize>,
-    /// How many rows a `PgUp` / `PgDn` moves the category cursor by: the
-    /// tree's own height, read off the box the tree placed
-    /// (`Editor::settle_modal_viewports`).
+    /// The category tree's page handle. The tree's list records the window
+    /// its layout placed, and PageUp/PageDown ask it for the row a page away.
     ///
-    /// **This is the whole of what the tree's old `ScrollablePanel` was still
-    /// doing.** Its offset and content height were written by
-    /// `ensure_focused_visible` walking `ScrollItem::height` over every row —
-    /// a second copy of the heights the list draws the rows with — and read by
-    /// nothing: the window is the list element's, so the wheel moves it and a
-    /// keyboard move reveals the selection, which is what `categories`
-    /// documents. A page is a number, not a panel.
-    pub tree_page_rows: u16,
+    /// It replaces `tree_page_rows`, the height of the box the tree was
+    /// placed in, read back after each frame —
+    /// the last thing the tree's old `ScrollablePanel` was still doing. The
+    /// window is the list element's; the page is that window, in rows.
+    pub tree_pager: std::rc::Rc<fresh_ui::behavior::Pager>,
     /// Cursor position inside the currently-selected category's tree row.
     /// `None` = cursor is on the category row itself (the category row
     /// shows the `>` indicator).
@@ -442,7 +427,7 @@ impl SettingsState {
             entry_delete_target_is_array_item: false,
             showing_help: false,
             body: BodyWindow::default(),
-            body_anchor: fresh_ui::behavior::Anchor::new(),
+            body_anchor: fresh_ui::behavior::Anchor::paged(),
             available_status_bar_tokens,
             hover_hit: None,
             hovered_popup_row: String::new(),
@@ -452,7 +437,7 @@ impl SettingsState {
             pending_deletions: std::collections::HashSet::new(),
             item_style: super::items::ItemBoxStyle::default(),
             expanded_categories: std::collections::HashSet::new(),
-            tree_page_rows: 0,
+            tree_pager: fresh_ui::behavior::Pager::new(),
             tree_cursor_section: None,
             cursor_drove_body: false,
             text_edit_snapshot: None,
@@ -769,6 +754,16 @@ impl SettingsState {
             })
             .collect();
         self.expanded_categories.extend(parents);
+    }
+
+    /// Move the tree cursor `pages` pages, by the window the tree's list was
+    /// last laid out with.
+    pub fn tree_page(&mut self, pages: i32) {
+        let rows = self.visible_tree();
+        let cur = self.tree_cursor_index(&rows);
+        if let Some(to) = self.tree_pager.target(cur, pages, rows.len()) {
+            self.tree_step(to as i32 - cur as i32);
+        }
     }
 
     /// Move the cursor in the categories tree by `delta` rows (positive =
@@ -1096,20 +1091,44 @@ impl SettingsState {
         }
     }
 
-    /// Move selection down by a page (viewport height worth of items)
+    /// Move the selection a page down: to the card a window's height of
+    /// content below the selected one's top.
     pub fn select_next_page(&mut self) {
-        let page_size = self.body.height.max(1);
-        for _ in 0..page_size {
-            self.select_next();
-        }
+        self.select_page(1);
     }
 
-    /// Move selection up by a page (viewport height worth of items)
+    /// Move the selection a page up.
     pub fn select_prev_page(&mut self) {
-        let page_size = self.body.height.max(1);
-        for _ in 0..page_size {
-            self.select_prev();
+        self.select_page(-1);
+    }
+
+    /// **A page of cards is a window's height of content, not a count of
+    /// them.** This stepped `select_next` once per row of the window's
+    /// height, so a page of three-row cards moved three windows. The body's
+    /// window records where its cards sit, and names the card a page away
+    /// (`Anchor::page_key`); off the settings panel, or before the body has
+    /// been laid out, nothing moves.
+    fn select_page(&mut self, pages: i32) {
+        use super::super::shell::settings::card_key;
+        if self.focus_panel() != FocusPanel::Settings {
+            return;
         }
+        let Some(to) = self
+            .body_anchor
+            .page_key(&card_key(self.selected_item), pages)
+        else {
+            return;
+        };
+        let n = self.current_page().map_or(0, |p| p.items.len());
+        let Some(i) = (0..n).find(|&i| card_key(i) == to) else {
+            return;
+        };
+        if i != self.selected_item {
+            self.update_control_focus(false);
+            self.selected_item = i;
+            self.enter_composite(pages > 0);
+        }
+        self.ensure_visible();
     }
 
     /// Ensure the selected item is visible in the viewport.

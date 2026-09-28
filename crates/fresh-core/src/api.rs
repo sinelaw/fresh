@@ -2345,6 +2345,27 @@ pub enum Elide {
     Head,
 }
 
+/// A widget's collection — a `List`'s items and keys, a `Tree`'s nodes and
+/// keys — in shared storage.
+///
+/// **Cloning one is a reference count, not a copy.** The host keeps a
+/// mounted panel's spec across frames and describes it every frame; a
+/// collection held by value was deep-copied by every description that
+/// needed to own its rows (`List`'s row builder is `'static`), which made
+/// each frame O(items) before a single row was on screen. Shared, the
+/// description captures a handle and the row builder reads item `i` out of
+/// the owner's storage when layout asks for it. A mutation replaces the
+/// collection, or edits it copy-on-write (`Arc::make_mut`), so a handle a
+/// frame captured never sees a change under it.
+///
+/// `Arc` rather than `Rc` because a spec crosses from the plugin thread.
+/// On the wire it is the plain array it always was.
+pub type Collection<T> = std::sync::Arc<Vec<T>>;
+
+fn collection_is_empty<T>(c: &Collection<T>) -> bool {
+    c.is_empty()
+}
+
 /// Declarative widget tree. Each variant is one node; nested
 /// composition is via `Row { children }` / `Col { children }`.
 ///
@@ -2791,17 +2812,19 @@ pub enum WidgetSpec {
     ///
     /// The plugin passes the *full dataset* of items + a
     /// `visible_rows` count (typically the panel's available
-    /// height). The host owns the scroll offset as widget instance
-    /// state, keyed by the spec's `key` — so a `key` is required for
-    /// any List that should preserve scroll across re-renders. The
-    /// scroll offset auto-clamps to keep `selected_index` in view;
-    /// plugins never compute scroll math.
+    /// height). The scroll offset is the list's viewport's, not
+    /// widget instance state: the viewport is identified by the
+    /// spec's `key`, so a `key` is required for any List that should
+    /// preserve scroll across re-renders. The viewport keeps the
+    /// selected row in view; plugins never compute scroll math.
     ///
     /// Each item is one rendered row (`TextPropertyEntry`).
     /// `item_keys` is a parallel array of stable per-item identifiers
-    /// the plugin uses to map a click event back to its model
-    /// (e.g. `"file:5/match:23"`); the array length must match
-    /// `items.len()`. Missing keys default to empty string.
+    /// (e.g. `"file:5/match:23"`): one per item, no two alike. The host
+    /// keeps each row's state — selection, hover, a card's widgets — by
+    /// its key, and events carry it back so the plugin can map a click
+    /// to its model. A spec whose keys don't match its items one to one
+    /// is rejected (see [`WidgetSpec::item_keys_problem`]).
     ///
     /// `selected_index` is the *absolute* index into `items`
     /// (`-1` for no selection); the host paints the selected row
@@ -2810,7 +2833,7 @@ pub enum WidgetSpec {
     ///                payload: { index, key } }`
     /// where `index` is the absolute (not visible-window) index.
     List {
-        items: Vec<crate::text_property::TextPropertyEntry>,
+        items: Collection<crate::text_property::TextPropertyEntry>,
         /// Optional parallel array of per-item widget specs. When
         /// non-empty it **overrides** `items`: each entry is rendered
         /// via the normal widget renderer into a multi-row block
@@ -2823,10 +2846,9 @@ pub enum WidgetSpec {
         /// still indexed per item. Interactive widgets nested inside a
         /// card aren't routed yet — the whole card is one `select`
         /// hit. Leave empty for the classic one-row-per-`items` list.
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        item_specs: Vec<WidgetSpec>,
-        #[serde(default)]
-        item_keys: Vec<String>,
+        #[serde(default, skip_serializing_if = "collection_is_empty")]
+        item_specs: Collection<WidgetSpec>,
+        item_keys: Collection<String>,
         #[serde(default = "default_list_selected")]
         selected_index: i32,
         /// Number of rows of the panel's available height the list
@@ -2863,18 +2885,25 @@ pub enum WidgetSpec {
     ///
     /// The plugin emits its tree as a depth-first flat list of
     /// `TreeNode`s (each carrying a `depth` and `has_children` flag)
-    /// plus a parallel `item_keys` array. The host filters out
+    /// plus a parallel `item_keys` array — one key per node, no two
+    /// alike, as for `List`. The host filters out
     /// descendants of collapsed nodes when rendering the visible
     /// window, so the plugin always emits the *full* tree — toggling
     /// expansion is host-owned (instance state) rather than the
     /// plugin re-emitting on every `▶`/`▼` press.
     ///
-    /// `expanded_keys` is initial-only (seeded into instance state
-    /// on first render); subsequent expansion changes flow through
-    /// `WidgetCommand::Key` (Right/Left) or click on the disclosure
-    /// glyph — neither requires the plugin to re-emit. Plugins that
+    /// Expansion has one owner, the host's instance state, and the
+    /// tree is drawn from it. `expanded_keys` is only a seed: it is
+    /// what the tree shows until something first sets the host's
+    /// state, and is ignored after that. Right/Left, a click on the
+    /// disclosure glyph (or on the row, with `toggle_on_click`) and
+    /// `WidgetMutation::SetExpandedKeys` all write that state and
+    /// redraw without the plugin re-emitting the spec. Plugins that
     /// need to react to expansion changes listen for
-    /// `widget_event { event_type: "expand" }`.
+    /// `widget_event { event_type: "expand" }`, and a plugin that
+    /// decides expansion itself (expand-all, open every group while
+    /// filtering) says so with `SetExpandedKeys`, never with a later
+    /// spec's `expanded_keys`.
     ///
     /// `selected_index` is the *absolute* index into `nodes`
     /// (initial-only; instance state takes over). Click on a row
@@ -2884,9 +2913,8 @@ pub enum WidgetSpec {
     /// expanded } }`. Enter/Space on the focused tree fires
     /// `widget_event { event_type: "activate", payload: { index, key } }`.
     Tree {
-        nodes: Vec<TreeNode>,
-        #[serde(default)]
-        item_keys: Vec<String>,
+        nodes: Collection<TreeNode>,
+        item_keys: Collection<String>,
         #[serde(default = "default_tree_selected")]
         selected_index: i32,
         /// Rows of the panel's available height the tree occupies.
@@ -2895,11 +2923,13 @@ pub enum WidgetSpec {
         /// fallback when the host has no height: 20 rows.)
         #[serde(default, skip_serializing_if = "Option::is_none")]
         visible_rows: Option<u32>,
-        /// Initial-only set of expanded item keys. Once the widget
-        /// has rendered, the host's instance-state `expanded_keys`
-        /// is authoritative; updating this field on subsequent specs
-        /// has no effect (use `WidgetMutation::SetExpandedKeys` to
-        /// override host state).
+        /// Seed set of expanded item keys, drawn until the host's
+        /// instance state has an expansion of its own (a Right/Left,
+        /// a disclosure click, a selection write, or
+        /// `WidgetMutation::SetExpandedKeys`). From then on the
+        /// instance state is what is drawn and navigated, and
+        /// changing this field on later specs has no effect — use
+        /// `WidgetMutation::SetExpandedKeys` to change it.
         #[serde(default)]
         expanded_keys: Vec<String>,
         /// When true, every node with `checked: Some(_)` renders a
@@ -3411,6 +3441,39 @@ impl WidgetSpec {
         k.as_deref().filter(|k| !k.is_empty())
     }
 
+    /// Why this spec's item keys can't identify its items, if they
+    /// can't: every `List` and `Tree` in it must give each item exactly
+    /// one key, and no two items the same one. The plugin API rejects a
+    /// spec this answers for; the host keys rows, selection and
+    /// expansion by these strings and has no other identity to fall
+    /// back on.
+    pub fn item_keys_problem(&self) -> Option<String> {
+        let own = match self {
+            WidgetSpec::List {
+                items,
+                item_specs,
+                item_keys,
+                key,
+                ..
+            } => {
+                let n = if item_specs.is_empty() {
+                    items.len()
+                } else {
+                    item_specs.len()
+                };
+                item_keys_problem("List", key.as_deref(), n, item_keys)
+            }
+            WidgetSpec::Tree {
+                nodes,
+                item_keys,
+                key,
+                ..
+            } => item_keys_problem("Tree", key.as_deref(), nodes.len(), item_keys),
+            _ => None,
+        };
+        own.or_else(|| self.children().find_map(WidgetSpec::item_keys_problem))
+    }
+
     pub fn children(&self) -> Box<dyn Iterator<Item = &WidgetSpec> + '_> {
         match self {
             WidgetSpec::Row { children, .. } | WidgetSpec::Col { children, .. } => {
@@ -3576,7 +3639,6 @@ pub enum WidgetMutation {
     SetItems {
         widget_key: String,
         items: Vec<crate::text_property::TextPropertyEntry>,
-        #[serde(default)]
         item_keys: Vec<String>,
     },
     /// Replace a `Tree`'s expanded-keys instance state. Plugins use
@@ -3607,7 +3669,6 @@ pub enum WidgetMutation {
     AppendTreeNodes {
         widget_key: String,
         new_nodes: Vec<crate::api::TreeNode>,
-        #[serde(default)]
         new_item_keys: Vec<String>,
     },
     /// Replace a `Raw` widget's entries in place. The streaming search
@@ -3627,6 +3688,27 @@ pub enum WidgetMutation {
     /// after mount, or to snap focus back to a "home" widget after a
     /// navigation event.
     SetFocusKey { widget_key: String },
+}
+
+impl WidgetMutation {
+    /// [`WidgetSpec::item_keys_problem`] for a mutation that carries
+    /// items: its keys must match its items one to one. (Whether an
+    /// appended key is new to the tree only the host can tell.)
+    pub fn item_keys_problem(&self) -> Option<String> {
+        match self {
+            WidgetMutation::SetItems {
+                widget_key,
+                items,
+                item_keys,
+            } => item_keys_problem("List", Some(widget_key), items.len(), item_keys),
+            WidgetMutation::AppendTreeNodes {
+                widget_key,
+                new_nodes,
+                new_item_keys,
+            } => item_keys_problem("Tree", Some(widget_key), new_nodes.len(), new_item_keys),
+            _ => None,
+        }
+    }
 }
 
 /// Cursor-dependent activation rule for a conceal range or soft break.
@@ -6423,6 +6505,35 @@ pub struct ActionPopupAction {
     pub label: String,
 }
 
+/// Why `keys` can't key the `n` items of the `kind` widget `key`, if
+/// they can't: there must be one key per item and no two alike.
+pub fn item_keys_problem(
+    kind: &str,
+    key: Option<&str>,
+    n: usize,
+    keys: &[String],
+) -> Option<String> {
+    let name = key.map_or_else(|| format!("unkeyed {kind}"), |k| format!("{kind} {k:?}"));
+    if keys.len() != n {
+        return Some(format!(
+            "{name} has {n} items but {} itemKeys: give each item one key",
+            keys.len()
+        ));
+    }
+    first_duplicate_id(keys.iter().map(String::as_str))
+        .map(|dup| format!("{name} has two items keyed {dup:?}: item keys must be unique"))
+}
+
+/// The first id a list repeats, if any.
+///
+/// A plugin list's ids are its rows' keys — suggestions, action-popup
+/// actions, LSP-menu rows — so a list that repeats one cannot be drawn
+/// without two rows claiming one identity, and is refused where it arrives.
+pub fn first_duplicate_id<'a>(ids: impl IntoIterator<Item = &'a str>) -> Option<&'a str> {
+    let mut seen = std::collections::HashSet::new();
+    ids.into_iter().find(|id| !seen.insert(*id))
+}
+
 /// Plugin-contributed row in the LSP-Servers popup.
 /// See `PluginCommand::SetLspMenuContributions`.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -7832,6 +7943,11 @@ impl PluginApi {
     /// Set the suggestions for the current prompt
     /// This updates the prompt's autocomplete/selection list
     pub fn set_prompt_suggestions(&self, suggestions: Vec<Suggestion>) -> Result<(), String> {
+        if let Some(id) = Suggestion::duplicate_id(&suggestions) {
+            return Err(format!(
+                "setPromptSuggestions: duplicate suggestion id {id:?}"
+            ));
+        }
         self.send_command(PluginCommand::SetPromptSuggestions {
             suggestions,
             selected_index: None,
@@ -7871,6 +7987,11 @@ impl PluginApi {
         plugin: String,
         spec: Option<WidgetSpec>,
     ) -> Result<(), String> {
+        // Refused here as the JavaScript API refuses it: rows are keyed by
+        // `itemKeys`, which must match the items one to one.
+        if let Some(problem) = spec.as_ref().and_then(WidgetSpec::item_keys_problem) {
+            return Err(problem);
+        }
         self.send_command(PluginCommand::SetPromptToolbar { plugin, spec })
     }
 
@@ -8231,6 +8352,51 @@ fn default_plugin_provider_priority() -> u32 {
 mod tests {
     use super::*;
     use std::path::Path;
+
+    /// Every List and Tree must key each item once, with no two alike —
+    /// wherever it sits in the spec — and a spec that doesn't is named
+    /// for what is wrong. A spec without `itemKeys` doesn't parse at all.
+    #[test]
+    fn item_keys_must_match_items_one_to_one() {
+        let tree = |keys: serde_json::Value| {
+            serde_json::from_value::<WidgetSpec>(serde_json::json!({
+                "kind": "col",
+                "children": [{
+                    "kind": "tree",
+                    "key": "t",
+                    "nodes": [{"text": {"text": "a"}}, {"text": {"text": "b"}}],
+                    "itemKeys": keys,
+                }],
+            }))
+        };
+        assert_eq!(
+            tree(serde_json::json!(["a", "b"]))
+                .unwrap()
+                .item_keys_problem(),
+            None
+        );
+
+        let short = tree(serde_json::json!(["a"])).unwrap().item_keys_problem();
+        assert!(short.unwrap().contains("2 items but 1 itemKeys"));
+
+        let dup = tree(serde_json::json!(["a", "a"]))
+            .unwrap()
+            .item_keys_problem();
+        assert!(dup.unwrap().contains("two items keyed \"a\""));
+
+        let missing = serde_json::from_value::<WidgetSpec>(serde_json::json!({
+            "kind": "list",
+            "items": [{"text": "a"}],
+        }));
+        assert!(missing.is_err(), "itemKeys is required");
+
+        let append = WidgetMutation::AppendTreeNodes {
+            widget_key: "t".into(),
+            new_nodes: vec![],
+            new_item_keys: vec!["x".into()],
+        };
+        assert!(append.item_keys_problem().is_some());
+    }
 
     #[test]
     fn test_plugin_api_creation() {
@@ -9008,8 +9174,8 @@ mod tests {
         // set_prompt_suggestions
         assert_dispatches!(
             |a: &PluginApi| a.set_prompt_suggestions(vec![
-                Suggestion::new("one".into()),
-                Suggestion::new("two".into()),
+                Suggestion::new("1".into(), "one".into()),
+                Suggestion::new("2".into(), "two".into()),
             ]),
             PluginCommand::SetPromptSuggestions { suggestions, .. }
                 if suggestions.len() == 2

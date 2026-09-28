@@ -1664,6 +1664,8 @@ impl Editor {
         if commands.is_empty() {
             return false;
         }
+        // Visual or not, a command can change what plugins read back.
+        self.mark_plugin_snapshot_dirty();
 
         // Classify each command as visual (needs re-render) or not.
         // `HookCompleted` is a pure ack. `SetStatusBarValue` is treated as

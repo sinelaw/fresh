@@ -708,6 +708,7 @@ function devcontainer_run_lifecycle(): void {
   }
 
   const suggestions: PromptSuggestion[] = defined.map(([name, cmd]) => ({
+    id: name,
     text: name,
     description: formatLifecycleCommand(cmd!),
     value: name,
@@ -1083,7 +1084,7 @@ function devcontainer_show_features(): void {
     } else if (typeof opts === "string") {
       desc = opts;
     }
-    return { text: id, description: desc || "(default options)" };
+    return { id, text: id, description: desc || "(default options)" };
   });
 
   editor.startPrompt(editor.t("prompt.features"), "devcontainer-features");
@@ -1154,8 +1155,10 @@ async function devcontainer_show_ports(): Promise<void> {
     if (binding) {
       desc += ` → ${binding}`;
     }
-    return { text: String(port), description: desc };
-  });
+    return { id: `port:${key}`, text: String(port), description: desc };
+  })
+    // A config can list a port twice; it is one port, shown once.
+    .filter((s, i, all) => all.findIndex((o) => o.id === s.id) === i);
 
   // Surface runtime-only ports (exposed by the container but not
   // listed in forwardPorts) so users see the full picture.
@@ -1168,6 +1171,7 @@ async function devcontainer_show_ports(): Promise<void> {
       (!Number.isNaN(portNum) && config.forwardPorts.some((p) => p === portNum));
     if (alreadyListed) continue;
     suggestions.push({
+      id: `runtime:${key}`,
       text: portStr,
       description: `${key} · runtime only → ${binding}`,
     });
