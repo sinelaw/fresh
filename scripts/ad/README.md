@@ -38,6 +38,7 @@ are crops of these recordings and its hero plays the calm cut.
 | `render.mjs` | Headless Chromium renders each frame and pipes PNGs to ffmpeg (`AD_PAGE`, `AD_AUDIO` pick the cut) |
 | `shots.html` + `shots.js` | Website stills: a crop of one recorded screen, drawn at 2× |
 | `site.sh` | Writes the stills and a 720×1280 encode of the calm cut into `homepage/public/assets/` |
+| `favicon.py` | Cuts the leaf out of `docs/logo.png`, brightens it, and writes the landing page's favicons |
 
 ## Editing the cut
 
