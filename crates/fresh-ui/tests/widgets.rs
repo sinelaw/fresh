@@ -651,14 +651,20 @@ fn rows_of_their_own_heights_are_windowed_in_cells() {
 #[test]
 fn an_empty_list_of_stated_heights_selects_nothing() {
     let mut ui: Ui<Msg> = Ui::new();
-    let list = List::windowed(0, fresh_ui::Key::from, |i| fresh_ui::text(format!("row {i}")))
-        .row_heights(|_| 3)
-        .selected(0)
-        .on_select(Msg::Selected)
-        .node();
+    let list = List::windowed(0, fresh_ui::Key::from, |i| {
+        fresh_ui::text(format!("row {i}"))
+    })
+    .row_heights(|_| 3)
+    .selected(0)
+    .on_select(Msg::Selected)
+    .node();
     ui.frame(list, FRAME);
     key(&mut ui, KeyCode::Tab);
-    assert_eq!(key(&mut ui, KeyCode::Enter), Vec::<Msg>::new(), "nothing to confirm");
+    assert_eq!(
+        key(&mut ui, KeyCode::Enter),
+        Vec::<Msg>::new(),
+        "nothing to confirm"
+    );
 }
 
 /// **The cut is the rows on screen.** With rows of their own heights the
