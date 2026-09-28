@@ -109,67 +109,6 @@ pub fn color_to_rgb(color: Color) -> Option<(u8, u8, u8)> {
     }
 }
 
-/// Brighten a color by adding an amount to each RGB component.
-/// Clamps values to 255.
-pub fn brighten_color(color: Color, amount: u8) -> Color {
-    if let Some((r, g, b)) = color_to_rgb(color) {
-        Color::Rgb(
-            r.saturating_add(amount),
-            g.saturating_add(amount),
-            b.saturating_add(amount),
-        )
-    } else {
-        color
-    }
-}
-
-/// Shift an RGB color a small amount toward the opposite end of the
-/// brightness spectrum: dark colors become slightly brighter, light colors
-/// slightly darker. Non-RGB colors are returned unchanged.
-///
-/// Used to derive subtle visual cues (e.g. the whitespace indicator drawn
-/// inside a selection) from a theme color without requiring theme authors to
-/// pick an explicit one.
-pub fn shade_toward_contrast(color: Color, amount: u8) -> Color {
-    if let Some((r, g, b)) = color_to_rgb(color) {
-        let avg = (u16::from(r) + u16::from(g) + u16::from(b)) / 3;
-        if avg < 128 {
-            Color::Rgb(
-                r.saturating_add(amount),
-                g.saturating_add(amount),
-                b.saturating_add(amount),
-            )
-        } else {
-            Color::Rgb(
-                r.saturating_sub(amount),
-                g.saturating_sub(amount),
-                b.saturating_sub(amount),
-            )
-        }
-    } else {
-        color
-    }
-}
-
-/// Foreground for a whitespace indicator drawn *inside* a selection, derived
-/// from the selection background when the theme does not name one.
-///
-/// A selected cell keeps its own foreground and only gains `selection_bg`
-/// behind it, so the indicator has to be legible against *that* background —
-/// `whitespace_indicator_fg` is chosen against the editor background and is
-/// frequently the same color as `selection_bg` (Dracula uses one value for
-/// both). Shifting the selection background toward contrast gives an
-/// indicator that reads as a faint mark on the selection instead of as text.
-/// Backgrounds with no RGB value (terminal-palette themes) have nothing to
-/// shift, so those fall back to the plain indicator color.
-pub fn selected_indicator_fg(selection_bg: Color, fallback: Color) -> Color {
-    if color_to_rgb(selection_bg).is_some() {
-        shade_toward_contrast(selection_bg, 55)
-    } else {
-        fallback
-    }
-}
-
 /// Serializable color representation
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(untagged)]
@@ -463,23 +402,21 @@ impl From<Color> for ColorDef {
 
 /// Serializable theme definition (matches JSON structure)
 ///
-/// The five color sections (`editor`, `ui`, `search`, `diagnostic`, `syntax`)
-/// are all optional. Every leaf field within each section already has a
-/// `#[serde(default = "…")]` fallback, so a theme JSON only needs to specify
-/// the colors it cares about. This matches the minimal example shipped in
-/// `docs/features/themes.md` and unblocks user-authored themes that override
-/// just `editor`/`syntax` (issue #1281).
+/// Every color key is optional in the file; a key the file leaves out is
+/// resolved from other keys, never from a color written into the code:
 ///
-/// **Inheritance**: when a theme omits whole sections, the unset fields are
-/// resolved against a *base* theme rather than against the per-field hardcoded
-/// fallback. The base is chosen in this order:
-///
-/// 1. Explicit `extends` field (`"builtin://light"`, `"dark"`, etc.).
-/// 2. If `editor.bg` is provided, the relative-luminance of that color picks
-///    `builtin://light` or `builtin://dark` automatically — so a user theme
-///    that sets a cream background gets light UI chrome without any extra
-///    configuration.
-/// 3. Otherwise, fall through to the per-field hardcoded defaults.
+/// 1. **`extends`**: with a base theme (`"builtin://light"`, `"dark"`, …),
+///    every key the theme leaves out is the base's.
+/// 2. **Standalone**: a theme without `extends` that names every *required*
+///    key (see [`Theme::is_required_key`], the keys theme files have had since
+///    the first theme format) stands on its own. Every other key it leaves out
+///    takes the style of its fallback key ([`Theme::fallback_key`]), following
+///    the chain to the first key the theme names.
+/// 3. **Partial**: a theme without `extends` that leaves out a required key
+///    gets an implicit base, as if it extended one: the relative luminance of
+///    its `editor.bg` picks `builtin://light` or `builtin://dark`, and with no
+///    `editor.bg` it extends `builtin://dark`. This keeps minimal themes that
+///    override just `editor`/`syntax` working (issue #1281).
 ///
 /// Only built-in themes are valid `extends` targets in this version. Chained
 /// inheritance across user themes is intentionally out of scope here.
@@ -549,20 +486,20 @@ fn default_syntax_colors() -> SyntaxColors {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct EditorColors {
     /// Editor background color
-    #[serde(default = "default_editor_bg")]
-    pub bg: ColorDef,
+    #[serde(default)]
+    pub bg: Option<ColorDef>,
     /// Default text color
-    #[serde(default = "default_editor_fg")]
-    pub fg: ColorDef,
+    #[serde(default)]
+    pub fg: Option<ColorDef>,
     /// Cursor color
-    #[serde(default = "default_cursor")]
-    pub cursor: ColorDef,
+    #[serde(default)]
+    pub cursor: Option<ColorDef>,
     /// Cursor color in unfocused splits
-    #[serde(default = "default_inactive_cursor")]
-    pub inactive_cursor: ColorDef,
+    #[serde(default)]
+    pub inactive_cursor: Option<ColorDef>,
     /// Selected text background
-    #[serde(default = "default_selection_bg")]
-    pub selection_bg: ColorDef,
+    #[serde(default)]
+    pub selection_bg: Option<ColorDef>,
     /// Optional text-attribute modifiers (e.g. `["reversed"]`) layered
     /// on top of `selection_bg`. Themes that want a terminal-adaptive
     /// visual selection (the canonical pattern for native-palette
@@ -573,20 +510,20 @@ pub struct EditorColors {
     #[serde(default)]
     pub selection_modifier: Option<ModifierDef>,
     /// Background of the line containing cursor
-    #[serde(default = "default_current_line_bg")]
-    pub current_line_bg: ColorDef,
+    #[serde(default)]
+    pub current_line_bg: Option<ColorDef>,
     /// Line number text color
-    #[serde(default = "default_line_number_fg")]
-    pub line_number_fg: ColorDef,
+    #[serde(default)]
+    pub line_number_fg: Option<ColorDef>,
     /// Line number gutter background
-    #[serde(default = "default_line_number_bg")]
-    pub line_number_bg: ColorDef,
+    #[serde(default)]
+    pub line_number_bg: Option<ColorDef>,
     /// Diff added line background
-    #[serde(default = "default_diff_add_bg")]
-    pub diff_add_bg: ColorDef,
+    #[serde(default)]
+    pub diff_add_bg: Option<ColorDef>,
     /// Diff removed line background
-    #[serde(default = "default_diff_remove_bg")]
-    pub diff_remove_bg: ColorDef,
+    #[serde(default)]
+    pub diff_remove_bg: Option<ColorDef>,
     /// Diff added word-level highlight background (optional override)
     /// When not set, computed by brightening diff_add_bg
     #[serde(default)]
@@ -596,8 +533,8 @@ pub struct EditorColors {
     #[serde(default)]
     pub diff_remove_highlight_bg: Option<ColorDef>,
     /// Diff modified line background
-    #[serde(default = "default_diff_modify_bg")]
-    pub diff_modify_bg: ColorDef,
+    #[serde(default)]
+    pub diff_modify_bg: Option<ColorDef>,
     /// Fallback fg for cells whose existing fg matches `diff_add_bg`
     /// (e.g. ANSI Green-on-Green). Only applied on collision; other
     /// tokens keep their syntax colour.
@@ -610,34 +547,34 @@ pub struct EditorColors {
     #[serde(default)]
     pub diff_modify_collision_fg: Option<ColorDef>,
     /// Vertical ruler background color
-    #[serde(default = "default_ruler_bg")]
-    pub ruler_bg: ColorDef,
+    #[serde(default)]
+    pub ruler_bg: Option<ColorDef>,
     /// Indentation guide foreground color. When omitted, inherits
     /// `whitespace_indicator_fg` so guides remain subtle in both dark and
     /// light themes while still allowing a dedicated override.
     #[serde(default)]
     pub indentation_guide_fg: Option<ColorDef>,
     /// Rainbow indentation-guide color (nesting level 1)
-    #[serde(default = "default_indent_rainbow_1")]
-    pub indent_rainbow_1: ColorDef,
+    #[serde(default)]
+    pub indent_rainbow_1: Option<ColorDef>,
     /// Rainbow indentation-guide color (nesting level 2)
-    #[serde(default = "default_indent_rainbow_2")]
-    pub indent_rainbow_2: ColorDef,
+    #[serde(default)]
+    pub indent_rainbow_2: Option<ColorDef>,
     /// Rainbow indentation-guide color (nesting level 3)
-    #[serde(default = "default_indent_rainbow_3")]
-    pub indent_rainbow_3: ColorDef,
+    #[serde(default)]
+    pub indent_rainbow_3: Option<ColorDef>,
     /// Rainbow indentation-guide color (nesting level 4)
-    #[serde(default = "default_indent_rainbow_4")]
-    pub indent_rainbow_4: ColorDef,
+    #[serde(default)]
+    pub indent_rainbow_4: Option<ColorDef>,
     /// Rainbow indentation-guide color (nesting level 5)
-    #[serde(default = "default_indent_rainbow_5")]
-    pub indent_rainbow_5: ColorDef,
+    #[serde(default)]
+    pub indent_rainbow_5: Option<ColorDef>,
     /// Rainbow indentation-guide color (nesting level 6)
-    #[serde(default = "default_indent_rainbow_6")]
-    pub indent_rainbow_6: ColorDef,
+    #[serde(default)]
+    pub indent_rainbow_6: Option<ColorDef>,
     /// Whitespace indicator foreground color (for tab arrows and space dots)
-    #[serde(default = "default_whitespace_indicator_fg")]
-    pub whitespace_indicator_fg: ColorDef,
+    #[serde(default)]
+    pub whitespace_indicator_fg: Option<ColorDef>,
     /// Whitespace indicator foreground color *inside a selection*. Selected
     /// cells keep their own foreground, so the plain
     /// `whitespace_indicator_fg` — picked to sit on the editor background —
@@ -648,31 +585,31 @@ pub struct EditorColors {
     #[serde(default)]
     pub whitespace_indicator_selected_fg: Option<ColorDef>,
     /// Bracket match highlight color (used when rainbow is disabled)
-    #[serde(default = "default_bracket_match_fg")]
-    pub bracket_match_fg: ColorDef,
+    #[serde(default)]
+    pub bracket_match_fg: Option<ColorDef>,
     /// Text attributes that mark the matched bracket pair when rainbow
     /// brackets are on. The pair keeps its depth color there, so the match
     /// is shown by these attributes instead. Default `["bold", "underlined"]`.
     #[serde(default = "default_bracket_rainbow_match_modifier")]
     pub bracket_rainbow_match_modifier: ModifierDef,
     /// Rainbow bracket color (nesting level 1)
-    #[serde(default = "default_bracket_rainbow_1")]
-    pub bracket_rainbow_1: ColorDef,
+    #[serde(default)]
+    pub bracket_rainbow_1: Option<ColorDef>,
     /// Rainbow bracket color (nesting level 2)
-    #[serde(default = "default_bracket_rainbow_2")]
-    pub bracket_rainbow_2: ColorDef,
+    #[serde(default)]
+    pub bracket_rainbow_2: Option<ColorDef>,
     /// Rainbow bracket color (nesting level 3)
-    #[serde(default = "default_bracket_rainbow_3")]
-    pub bracket_rainbow_3: ColorDef,
+    #[serde(default)]
+    pub bracket_rainbow_3: Option<ColorDef>,
     /// Rainbow bracket color (nesting level 4)
-    #[serde(default = "default_bracket_rainbow_4")]
-    pub bracket_rainbow_4: ColorDef,
+    #[serde(default)]
+    pub bracket_rainbow_4: Option<ColorDef>,
     /// Rainbow bracket color (nesting level 5)
-    #[serde(default = "default_bracket_rainbow_5")]
-    pub bracket_rainbow_5: ColorDef,
+    #[serde(default)]
+    pub bracket_rainbow_5: Option<ColorDef>,
     /// Rainbow bracket color (nesting level 6)
-    #[serde(default = "default_bracket_rainbow_6")]
-    pub bracket_rainbow_6: ColorDef,
+    #[serde(default)]
+    pub bracket_rainbow_6: Option<ColorDef>,
     /// Background color for lines after end-of-file (optional override).
     /// When not set, post-EOF rows keep the theme's editor `bg`, so the
     /// space below a short buffer reads as part of the same surface as the
@@ -683,87 +620,8 @@ pub struct EditorColors {
     pub after_eof_bg: Option<ColorDef>,
 }
 
-// Default editor colors (for minimal themes)
-fn default_editor_bg() -> ColorDef {
-    ColorDef::Rgb(30, 30, 30)
-}
-fn default_editor_fg() -> ColorDef {
-    ColorDef::Rgb(212, 212, 212)
-}
-fn default_cursor() -> ColorDef {
-    ColorDef::Rgb(255, 255, 255)
-}
-fn default_inactive_cursor() -> ColorDef {
-    ColorDef::Named("DarkGray".to_string())
-}
-fn default_selection_bg() -> ColorDef {
-    ColorDef::Rgb(38, 79, 120)
-}
-fn default_current_line_bg() -> ColorDef {
-    ColorDef::Rgb(40, 40, 40)
-}
-fn default_line_number_fg() -> ColorDef {
-    ColorDef::Rgb(100, 100, 100)
-}
-fn default_line_number_bg() -> ColorDef {
-    ColorDef::Rgb(30, 30, 30)
-}
-fn default_diff_add_bg() -> ColorDef {
-    ColorDef::Rgb(35, 60, 35) // Dark green
-}
-fn default_diff_remove_bg() -> ColorDef {
-    ColorDef::Rgb(70, 35, 35) // Dark red
-}
-fn default_diff_modify_bg() -> ColorDef {
-    ColorDef::Rgb(40, 38, 30) // Very subtle yellow tint, close to dark bg
-}
-fn default_ruler_bg() -> ColorDef {
-    ColorDef::Rgb(50, 50, 50) // Subtle dark gray, slightly lighter than default editor bg
-}
-fn default_whitespace_indicator_fg() -> ColorDef {
-    ColorDef::Rgb(70, 70, 70) // Subdued dark gray, subtle but visible
-}
-fn default_bracket_match_fg() -> ColorDef {
-    ColorDef::Rgb(255, 215, 0) // Gold
-}
 fn default_bracket_rainbow_match_modifier() -> ModifierDef {
     ModifierDef::from(Modifier::BOLD | Modifier::UNDERLINED)
-}
-fn default_bracket_rainbow_1() -> ColorDef {
-    ColorDef::Rgb(255, 215, 0) // Gold
-}
-fn default_bracket_rainbow_2() -> ColorDef {
-    ColorDef::Rgb(218, 112, 214) // Orchid
-}
-fn default_bracket_rainbow_3() -> ColorDef {
-    ColorDef::Rgb(50, 205, 50) // Lime Green
-}
-fn default_bracket_rainbow_4() -> ColorDef {
-    ColorDef::Rgb(30, 144, 255) // Dodger Blue
-}
-fn default_bracket_rainbow_5() -> ColorDef {
-    ColorDef::Rgb(255, 127, 80) // Coral
-}
-fn default_bracket_rainbow_6() -> ColorDef {
-    ColorDef::Rgb(147, 112, 219) // Medium Purple
-}
-fn default_indent_rainbow_1() -> ColorDef {
-    ColorDef::Rgb(255, 215, 0) // Gold
-}
-fn default_indent_rainbow_2() -> ColorDef {
-    ColorDef::Rgb(218, 112, 214) // Orchid
-}
-fn default_indent_rainbow_3() -> ColorDef {
-    ColorDef::Rgb(50, 205, 50) // Lime Green
-}
-fn default_indent_rainbow_4() -> ColorDef {
-    ColorDef::Rgb(30, 144, 255) // Dodger Blue
-}
-fn default_indent_rainbow_5() -> ColorDef {
-    ColorDef::Rgb(255, 127, 80) // Coral
-}
-fn default_indent_rainbow_6() -> ColorDef {
-    ColorDef::Rgb(147, 112, 219) // Medium Purple
 }
 
 /// UI element colors (tabs, menus, status bar, etc.)
@@ -787,74 +645,74 @@ fn default_indent_rainbow_6() -> ColorDef {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct UiColors {
     /// Active tab text color
-    #[serde(default = "default_tab_active_fg")]
-    pub tab_active_fg: ColorDef,
+    #[serde(default)]
+    pub tab_active_fg: Option<ColorDef>,
     /// Active tab background color
-    #[serde(default = "default_tab_active_bg")]
-    pub tab_active_bg: ColorDef,
+    #[serde(default)]
+    pub tab_active_bg: Option<ColorDef>,
     /// Inactive tab text color
-    #[serde(default = "default_tab_inactive_fg")]
-    pub tab_inactive_fg: ColorDef,
+    #[serde(default)]
+    pub tab_inactive_fg: Option<ColorDef>,
     /// Inactive tab background color
-    #[serde(default = "default_tab_inactive_bg")]
-    pub tab_inactive_bg: ColorDef,
+    #[serde(default)]
+    pub tab_inactive_bg: Option<ColorDef>,
     /// Tab bar separator color
-    #[serde(default = "default_tab_separator_bg")]
-    pub tab_separator_bg: ColorDef,
+    #[serde(default)]
+    pub tab_separator_bg: Option<ColorDef>,
     /// Tab close button hover color
-    #[serde(default = "default_tab_close_hover_fg")]
-    pub tab_close_hover_fg: ColorDef,
+    #[serde(default)]
+    pub tab_close_hover_fg: Option<ColorDef>,
     /// Tab hover background color
-    #[serde(default = "default_tab_hover_bg")]
-    pub tab_hover_bg: ColorDef,
+    #[serde(default)]
+    pub tab_hover_bg: Option<ColorDef>,
     /// Menu bar background
-    #[serde(default = "default_menu_bg")]
-    pub menu_bg: ColorDef,
+    #[serde(default)]
+    pub menu_bg: Option<ColorDef>,
     /// Menu bar text color
-    #[serde(default = "default_menu_fg")]
-    pub menu_fg: ColorDef,
+    #[serde(default)]
+    pub menu_fg: Option<ColorDef>,
     /// Active menu item background
-    #[serde(default = "default_menu_active_bg")]
-    pub menu_active_bg: ColorDef,
+    #[serde(default)]
+    pub menu_active_bg: Option<ColorDef>,
     /// Active menu item text color
-    #[serde(default = "default_menu_active_fg")]
-    pub menu_active_fg: ColorDef,
+    #[serde(default)]
+    pub menu_active_fg: Option<ColorDef>,
     /// Dropdown menu background
-    #[serde(default = "default_menu_dropdown_bg")]
-    pub menu_dropdown_bg: ColorDef,
+    #[serde(default)]
+    pub menu_dropdown_bg: Option<ColorDef>,
     /// Dropdown menu text color
-    #[serde(default = "default_menu_dropdown_fg")]
-    pub menu_dropdown_fg: ColorDef,
+    #[serde(default)]
+    pub menu_dropdown_fg: Option<ColorDef>,
     /// Highlighted menu item background
-    #[serde(default = "default_menu_highlight_bg")]
-    pub menu_highlight_bg: ColorDef,
+    #[serde(default)]
+    pub menu_highlight_bg: Option<ColorDef>,
     /// Highlighted menu item text color
-    #[serde(default = "default_menu_highlight_fg")]
-    pub menu_highlight_fg: ColorDef,
+    #[serde(default)]
+    pub menu_highlight_fg: Option<ColorDef>,
     /// Menu border color
-    #[serde(default = "default_menu_border_fg")]
-    pub menu_border_fg: ColorDef,
+    #[serde(default)]
+    pub menu_border_fg: Option<ColorDef>,
     /// Menu separator line color
-    #[serde(default = "default_menu_separator_fg")]
-    pub menu_separator_fg: ColorDef,
+    #[serde(default)]
+    pub menu_separator_fg: Option<ColorDef>,
     /// Menu item hover background
-    #[serde(default = "default_menu_hover_bg")]
-    pub menu_hover_bg: ColorDef,
+    #[serde(default)]
+    pub menu_hover_bg: Option<ColorDef>,
     /// Menu item hover text color
-    #[serde(default = "default_menu_hover_fg")]
-    pub menu_hover_fg: ColorDef,
+    #[serde(default)]
+    pub menu_hover_fg: Option<ColorDef>,
     /// Disabled menu item text color
-    #[serde(default = "default_menu_disabled_fg")]
-    pub menu_disabled_fg: ColorDef,
+    #[serde(default)]
+    pub menu_disabled_fg: Option<ColorDef>,
     /// Disabled menu item background
-    #[serde(default = "default_menu_disabled_bg")]
-    pub menu_disabled_bg: ColorDef,
+    #[serde(default)]
+    pub menu_disabled_bg: Option<ColorDef>,
     /// Status bar text color
-    #[serde(default = "default_status_bar_fg")]
-    pub status_bar_fg: ColorDef,
+    #[serde(default)]
+    pub status_bar_fg: Option<ColorDef>,
     /// Status bar background color
-    #[serde(default = "default_status_bar_bg")]
-    pub status_bar_bg: ColorDef,
+    #[serde(default)]
+    pub status_bar_bg: Option<ColorDef>,
     /// Command palette shortcut hint text color in status bar (falls back to status_bar_fg)
     #[serde(default)]
     pub status_palette_fg: Option<ColorDef>,
@@ -883,26 +741,26 @@ pub struct UiColors {
     #[serde(default)]
     pub status_lsp_actionable_bg: Option<ColorDef>,
     /// Command prompt text color
-    #[serde(default = "default_prompt_fg")]
-    pub prompt_fg: ColorDef,
+    #[serde(default)]
+    pub prompt_fg: Option<ColorDef>,
     /// Command prompt background
-    #[serde(default = "default_prompt_bg")]
-    pub prompt_bg: ColorDef,
+    #[serde(default)]
+    pub prompt_bg: Option<ColorDef>,
     /// Prompt selected text color
-    #[serde(default = "default_prompt_selection_fg")]
-    pub prompt_selection_fg: ColorDef,
+    #[serde(default)]
+    pub prompt_selection_fg: Option<ColorDef>,
     /// Prompt selection background
-    #[serde(default = "default_prompt_selection_bg")]
-    pub prompt_selection_bg: ColorDef,
+    #[serde(default)]
+    pub prompt_selection_bg: Option<ColorDef>,
     /// Popup window border color
-    #[serde(default = "default_popup_border_fg")]
-    pub popup_border_fg: ColorDef,
+    #[serde(default)]
+    pub popup_border_fg: Option<ColorDef>,
     /// Popup window background
-    #[serde(default = "default_popup_bg")]
-    pub popup_bg: ColorDef,
+    #[serde(default)]
+    pub popup_bg: Option<ColorDef>,
     /// Popup selected item background
-    #[serde(default = "default_popup_selection_bg")]
-    pub popup_selection_bg: ColorDef,
+    #[serde(default)]
+    pub popup_selection_bg: Option<ColorDef>,
     /// Selection background inside a widget Text input. Reads
     /// against `prompt_bg`, so it needs higher contrast against
     /// that tint than `editor.selection_bg` (which targets the
@@ -910,69 +768,69 @@ pub struct UiColors {
     /// blue used everywhere "selected item inside a chrome
     /// surface" is shown — same key the prompt selection uses, so
     /// the cue reads consistently across selection UIs.
-    #[serde(default = "default_text_input_selection_bg")]
-    pub text_input_selection_bg: ColorDef,
+    #[serde(default)]
+    pub text_input_selection_bg: Option<ColorDef>,
     /// Popup selected item text color
-    #[serde(default = "default_popup_selection_fg")]
-    pub popup_selection_fg: ColorDef,
+    #[serde(default)]
+    pub popup_selection_fg: Option<ColorDef>,
     /// Popup window text color. Per the `*_bg`/`*_fg` convention this
     /// is the foreground for `popup_bg`; `popup_fg` is accepted as an
     /// alias so theme JSON can use the convention-consistent name.
-    #[serde(default = "default_popup_text_fg", alias = "popup_fg")]
-    pub popup_text_fg: ColorDef,
+    #[serde(default, alias = "popup_fg")]
+    pub popup_text_fg: Option<ColorDef>,
     /// Autocomplete suggestion background
-    #[serde(default = "default_suggestion_bg")]
-    pub suggestion_bg: ColorDef,
+    #[serde(default)]
+    pub suggestion_bg: Option<ColorDef>,
     /// Text color for content drawn on `suggestion_bg` (autocomplete
     /// items, the overlay-prompt title/input field). Falls back to
     /// `popup_text_fg` so existing themes need no change.
     #[serde(default)]
     pub suggestion_fg: Option<ColorDef>,
     /// Selected suggestion background
-    #[serde(default = "default_suggestion_selected_bg")]
-    pub suggestion_selected_bg: ColorDef,
+    #[serde(default)]
+    pub suggestion_selected_bg: Option<ColorDef>,
     /// Help panel background
-    #[serde(default = "default_help_bg")]
-    pub help_bg: ColorDef,
+    #[serde(default)]
+    pub help_bg: Option<ColorDef>,
     /// Help panel text color
-    #[serde(default = "default_help_fg")]
-    pub help_fg: ColorDef,
+    #[serde(default)]
+    pub help_fg: Option<ColorDef>,
     /// Help keybinding text color
-    #[serde(default = "default_help_key_fg")]
-    pub help_key_fg: ColorDef,
+    #[serde(default)]
+    pub help_key_fg: Option<ColorDef>,
     /// Help panel separator color
-    #[serde(default = "default_help_separator_fg")]
-    pub help_separator_fg: ColorDef,
+    #[serde(default)]
+    pub help_separator_fg: Option<ColorDef>,
     /// Help indicator text color
-    #[serde(default = "default_help_indicator_fg")]
-    pub help_indicator_fg: ColorDef,
+    #[serde(default)]
+    pub help_indicator_fg: Option<ColorDef>,
     /// Help indicator background
-    #[serde(default = "default_help_indicator_bg")]
-    pub help_indicator_bg: ColorDef,
+    #[serde(default)]
+    pub help_indicator_bg: Option<ColorDef>,
     /// Inline code block background
-    #[serde(default = "default_inline_code_bg")]
-    pub inline_code_bg: ColorDef,
+    #[serde(default)]
+    pub inline_code_bg: Option<ColorDef>,
     /// Split pane separator color
-    #[serde(default = "default_split_separator_fg")]
-    pub split_separator_fg: ColorDef,
+    #[serde(default)]
+    pub split_separator_fg: Option<ColorDef>,
     /// Split separator hover color
-    #[serde(default = "default_split_separator_hover_fg")]
-    pub split_separator_hover_fg: ColorDef,
+    #[serde(default)]
+    pub split_separator_hover_fg: Option<ColorDef>,
     /// Scrollbar track color
-    #[serde(default = "default_scrollbar_track_fg")]
-    pub scrollbar_track_fg: ColorDef,
+    #[serde(default)]
+    pub scrollbar_track_fg: Option<ColorDef>,
     /// Scrollbar thumb color
-    #[serde(default = "default_scrollbar_thumb_fg")]
-    pub scrollbar_thumb_fg: ColorDef,
+    #[serde(default)]
+    pub scrollbar_thumb_fg: Option<ColorDef>,
     /// Scrollbar track hover color
-    #[serde(default = "default_scrollbar_track_hover_fg")]
-    pub scrollbar_track_hover_fg: ColorDef,
+    #[serde(default)]
+    pub scrollbar_track_hover_fg: Option<ColorDef>,
     /// Scrollbar thumb hover color
-    #[serde(default = "default_scrollbar_thumb_hover_fg")]
-    pub scrollbar_thumb_hover_fg: ColorDef,
+    #[serde(default)]
+    pub scrollbar_thumb_hover_fg: Option<ColorDef>,
     /// Compose mode margin background
-    #[serde(default = "default_compose_margin_bg")]
-    pub compose_margin_bg: ColorDef,
+    #[serde(default)]
+    pub compose_margin_bg: Option<ColorDef>,
     /// Text color of a git-blame block header band. Falls back to
     /// `ui.menu_fg` — see `blame_header_bg` for why that pair.
     #[serde(default)]
@@ -997,8 +855,8 @@ pub struct UiColors {
     #[serde(default)]
     pub blame_header_bg: Option<ColorDef>,
     /// Occurrence highlight (word under cursor, or the selected text)
-    #[serde(default = "default_semantic_highlight_bg")]
-    pub semantic_highlight_bg: ColorDef,
+    #[serde(default)]
+    pub semantic_highlight_bg: Option<ColorDef>,
     /// Optional text-attribute modifiers (e.g. `["bold"]` or
     /// `["reversed"]`) layered on top of `semantic_highlight_bg`.
     /// Per the canonical native-palette pattern, current-word
@@ -1008,50 +866,50 @@ pub struct UiColors {
     #[serde(default)]
     pub semantic_highlight_modifier: Option<ModifierDef>,
     /// Code tour step band background
-    #[serde(default = "default_tour_step_bg")]
-    pub tour_step_bg: ColorDef,
+    #[serde(default)]
+    pub tour_step_bg: Option<ColorDef>,
     /// Embedded terminal background (use Default for transparency)
-    #[serde(default = "default_terminal_bg")]
-    pub terminal_bg: ColorDef,
+    #[serde(default)]
+    pub terminal_bg: Option<ColorDef>,
     /// Embedded terminal default text color
-    #[serde(default = "default_terminal_fg")]
-    pub terminal_fg: ColorDef,
+    #[serde(default)]
+    pub terminal_fg: Option<ColorDef>,
     /// Warning indicator background in status bar
-    #[serde(default = "default_status_warning_indicator_bg")]
-    pub status_warning_indicator_bg: ColorDef,
+    #[serde(default)]
+    pub status_warning_indicator_bg: Option<ColorDef>,
     /// Warning indicator text color in status bar
-    #[serde(default = "default_status_warning_indicator_fg")]
-    pub status_warning_indicator_fg: ColorDef,
+    #[serde(default)]
+    pub status_warning_indicator_fg: Option<ColorDef>,
     /// Error indicator background in status bar
-    #[serde(default = "default_status_error_indicator_bg")]
-    pub status_error_indicator_bg: ColorDef,
+    #[serde(default)]
+    pub status_error_indicator_bg: Option<ColorDef>,
     /// Error indicator text color in status bar
-    #[serde(default = "default_status_error_indicator_fg")]
-    pub status_error_indicator_fg: ColorDef,
+    #[serde(default)]
+    pub status_error_indicator_fg: Option<ColorDef>,
     /// Warning indicator hover background
-    #[serde(default = "default_status_warning_indicator_hover_bg")]
-    pub status_warning_indicator_hover_bg: ColorDef,
+    #[serde(default)]
+    pub status_warning_indicator_hover_bg: Option<ColorDef>,
     /// Warning indicator hover text color
-    #[serde(default = "default_status_warning_indicator_hover_fg")]
-    pub status_warning_indicator_hover_fg: ColorDef,
+    #[serde(default)]
+    pub status_warning_indicator_hover_fg: Option<ColorDef>,
     /// Error indicator hover background
-    #[serde(default = "default_status_error_indicator_hover_bg")]
-    pub status_error_indicator_hover_bg: ColorDef,
+    #[serde(default)]
+    pub status_error_indicator_hover_bg: Option<ColorDef>,
     /// Error indicator hover text color
-    #[serde(default = "default_status_error_indicator_hover_fg")]
-    pub status_error_indicator_hover_fg: ColorDef,
+    #[serde(default)]
+    pub status_error_indicator_hover_fg: Option<ColorDef>,
     /// Tab drop zone background during drag
-    #[serde(default = "default_tab_drop_zone_bg")]
-    pub tab_drop_zone_bg: ColorDef,
+    #[serde(default)]
+    pub tab_drop_zone_bg: Option<ColorDef>,
     /// Tab drop zone border during drag
-    #[serde(default = "default_tab_drop_zone_border")]
-    pub tab_drop_zone_border: ColorDef,
+    #[serde(default)]
+    pub tab_drop_zone_border: Option<ColorDef>,
     /// Settings UI selected item background
-    #[serde(default = "default_settings_selected_bg")]
-    pub settings_selected_bg: ColorDef,
+    #[serde(default)]
+    pub settings_selected_bg: Option<ColorDef>,
     /// Settings UI selected item foreground (text on selected background)
-    #[serde(default = "default_settings_selected_fg")]
-    pub settings_selected_fg: ColorDef,
+    #[serde(default)]
+    pub settings_selected_fg: Option<ColorDef>,
     /// File status: added file color in file explorer (falls back to diagnostic.info_fg)
     #[serde(default)]
     pub file_status_added_fg: Option<ColorDef>,
@@ -1072,343 +930,69 @@ pub struct UiColors {
     pub file_status_conflicted_fg: Option<ColorDef>,
 }
 
-// Default tab close hover color (for backward compatibility with existing themes)
-// Default tab colors (for minimal themes)
-fn default_tab_active_fg() -> ColorDef {
-    ColorDef::Named("Yellow".to_string())
-}
-fn default_tab_active_bg() -> ColorDef {
-    ColorDef::Named("Blue".to_string())
-}
-fn default_tab_inactive_fg() -> ColorDef {
-    ColorDef::Named("White".to_string())
-}
-fn default_tab_inactive_bg() -> ColorDef {
-    ColorDef::Named("DarkGray".to_string())
-}
-fn default_tab_separator_bg() -> ColorDef {
-    ColorDef::Named("Black".to_string())
-}
-fn default_tab_close_hover_fg() -> ColorDef {
-    ColorDef::Rgb(255, 100, 100) // Red-ish color for close button hover
-}
-fn default_tab_hover_bg() -> ColorDef {
-    ColorDef::Rgb(70, 70, 75) // Slightly lighter than inactive tab bg for hover
-}
-
-// Default menu colors (for backward compatibility with existing themes)
-fn default_menu_bg() -> ColorDef {
-    ColorDef::Rgb(60, 60, 65)
-}
-fn default_menu_fg() -> ColorDef {
-    ColorDef::Rgb(220, 220, 220)
-}
-fn default_menu_active_bg() -> ColorDef {
-    ColorDef::Rgb(60, 60, 60)
-}
-fn default_menu_active_fg() -> ColorDef {
-    ColorDef::Rgb(255, 255, 255)
-}
-fn default_menu_dropdown_bg() -> ColorDef {
-    ColorDef::Rgb(50, 50, 50)
-}
-fn default_menu_dropdown_fg() -> ColorDef {
-    ColorDef::Rgb(220, 220, 220)
-}
-fn default_menu_highlight_bg() -> ColorDef {
-    ColorDef::Rgb(70, 130, 180)
-}
-fn default_menu_highlight_fg() -> ColorDef {
-    ColorDef::Rgb(255, 255, 255)
-}
-fn default_menu_border_fg() -> ColorDef {
-    ColorDef::Rgb(100, 100, 100)
-}
-fn default_menu_separator_fg() -> ColorDef {
-    ColorDef::Rgb(80, 80, 80)
-}
-fn default_menu_hover_bg() -> ColorDef {
-    ColorDef::Rgb(55, 55, 55)
-}
-fn default_menu_hover_fg() -> ColorDef {
-    ColorDef::Rgb(255, 255, 255)
-}
-fn default_menu_disabled_fg() -> ColorDef {
-    ColorDef::Rgb(100, 100, 100) // Gray for disabled items
-}
-fn default_menu_disabled_bg() -> ColorDef {
-    ColorDef::Rgb(50, 50, 50) // Same as dropdown bg
-}
-// Default status bar colors
-fn default_status_bar_fg() -> ColorDef {
-    ColorDef::Named("White".to_string())
-}
-fn default_status_bar_bg() -> ColorDef {
-    ColorDef::Named("DarkGray".to_string())
-}
-
-// Default prompt colors
-fn default_prompt_fg() -> ColorDef {
-    ColorDef::Named("White".to_string())
-}
-fn default_prompt_bg() -> ColorDef {
-    ColorDef::Named("Black".to_string())
-}
-fn default_prompt_selection_fg() -> ColorDef {
-    ColorDef::Named("White".to_string())
-}
-fn default_prompt_selection_bg() -> ColorDef {
-    ColorDef::Rgb(58, 79, 120)
-}
-
-// Default popup colors
-pub fn default_popup_border_fg() -> ColorDef {
-    ColorDef::Named("Gray".to_string())
-}
-pub fn default_popup_bg() -> ColorDef {
-    ColorDef::Rgb(30, 30, 30)
-}
-fn default_popup_selection_bg() -> ColorDef {
-    ColorDef::Rgb(58, 79, 120)
-}
-fn default_text_input_selection_bg() -> ColorDef {
-    // Match the popup-selection blue. Widget Text inputs sit on a
-    // `prompt_bg` field tint, so the selection needs the same
-    // "selected on chrome" contrast that popups + prompts use.
-    ColorDef::Rgb(58, 79, 120)
-}
-fn default_popup_selection_fg() -> ColorDef {
-    ColorDef::Rgb(255, 255, 255) // White text on selected popup item
-}
-fn default_popup_text_fg() -> ColorDef {
-    ColorDef::Named("White".to_string())
-}
-
-// Default suggestion colors
-fn default_suggestion_bg() -> ColorDef {
-    ColorDef::Rgb(30, 30, 30)
-}
-fn default_suggestion_selected_bg() -> ColorDef {
-    ColorDef::Rgb(58, 79, 120)
-}
-
-// Default help colors
-fn default_help_bg() -> ColorDef {
-    ColorDef::Named("Black".to_string())
-}
-fn default_help_fg() -> ColorDef {
-    ColorDef::Named("White".to_string())
-}
-fn default_help_key_fg() -> ColorDef {
-    ColorDef::Named("Cyan".to_string())
-}
-fn default_help_separator_fg() -> ColorDef {
-    ColorDef::Named("DarkGray".to_string())
-}
-fn default_help_indicator_fg() -> ColorDef {
-    ColorDef::Named("Red".to_string())
-}
-fn default_help_indicator_bg() -> ColorDef {
-    ColorDef::Named("Black".to_string())
-}
-
-fn default_inline_code_bg() -> ColorDef {
-    ColorDef::Named("DarkGray".to_string())
-}
-
-// Default split separator colors
-fn default_split_separator_fg() -> ColorDef {
-    ColorDef::Rgb(100, 100, 100)
-}
-fn default_split_separator_hover_fg() -> ColorDef {
-    ColorDef::Rgb(100, 149, 237) // Cornflower blue for visibility
-}
-fn default_scrollbar_track_fg() -> ColorDef {
-    ColorDef::Named("DarkGray".to_string())
-}
-fn default_scrollbar_thumb_fg() -> ColorDef {
-    ColorDef::Named("Gray".to_string())
-}
-fn default_scrollbar_track_hover_fg() -> ColorDef {
-    ColorDef::Named("Gray".to_string())
-}
-fn default_scrollbar_thumb_hover_fg() -> ColorDef {
-    ColorDef::Named("White".to_string())
-}
-fn default_compose_margin_bg() -> ColorDef {
-    ColorDef::Rgb(18, 18, 18) // Darker than editor_bg for "desk" effect
-}
-fn default_semantic_highlight_bg() -> ColorDef {
-    ColorDef::Rgb(60, 60, 80) // Subtle dark highlight for word occurrences
-}
-fn default_tour_step_bg() -> ColorDef {
-    // A code tour's step band is a full-width, multi-line region marker, not a
-    // text highlight: it wants a wash the eye can rest on, so it gets its own
-    // key instead of borrowing `semantic_highlight_bg` (whose job — standing
-    // apart from the selection on a few cells — pulls it the other way).
-    ColorDef::Rgb(60, 60, 80)
-}
-fn default_terminal_bg() -> ColorDef {
-    ColorDef::Named("Default".to_string()) // Use terminal's default background (preserves transparency)
-}
-fn default_terminal_fg() -> ColorDef {
-    ColorDef::Named("Default".to_string()) // Use terminal's default foreground
-}
-fn default_status_warning_indicator_bg() -> ColorDef {
-    ColorDef::Rgb(181, 137, 0) // Solarized yellow/amber - noticeable but not harsh
-}
-fn default_status_warning_indicator_fg() -> ColorDef {
-    ColorDef::Rgb(0, 0, 0) // Black text on amber background
-}
-fn default_status_error_indicator_bg() -> ColorDef {
-    ColorDef::Rgb(220, 50, 47) // Solarized red - clearly an error
-}
-fn default_status_error_indicator_fg() -> ColorDef {
-    ColorDef::Rgb(255, 255, 255) // White text on red background
-}
-fn default_status_warning_indicator_hover_bg() -> ColorDef {
-    ColorDef::Rgb(211, 167, 30) // Lighter amber for hover
-}
-fn default_status_warning_indicator_hover_fg() -> ColorDef {
-    ColorDef::Rgb(0, 0, 0) // Black text on hover
-}
-fn default_status_error_indicator_hover_bg() -> ColorDef {
-    ColorDef::Rgb(250, 80, 77) // Lighter red for hover
-}
-fn default_status_error_indicator_hover_fg() -> ColorDef {
-    ColorDef::Rgb(255, 255, 255) // White text on hover
-}
-fn default_tab_drop_zone_bg() -> ColorDef {
-    ColorDef::Rgb(70, 130, 180) // Steel blue with transparency effect
-}
-fn default_tab_drop_zone_border() -> ColorDef {
-    ColorDef::Rgb(100, 149, 237) // Cornflower blue for border
-}
-fn default_settings_selected_bg() -> ColorDef {
-    ColorDef::Rgb(60, 60, 70) // Subtle highlight for selected settings item
-}
-fn default_settings_selected_fg() -> ColorDef {
-    ColorDef::Rgb(255, 255, 255) // White text on selected background
-}
 /// Search result highlighting colors
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct SearchColors {
     /// Search match background color
-    #[serde(default = "default_search_match_bg")]
-    pub match_bg: ColorDef,
+    #[serde(default)]
+    pub match_bg: Option<ColorDef>,
     /// Search match text color
-    #[serde(default = "default_search_match_fg")]
-    pub match_fg: ColorDef,
+    #[serde(default)]
+    pub match_fg: Option<ColorDef>,
     /// Background of the *current* search match: the one Find Next / Find
     /// Previous just landed on, or the one Query Replace is asking about.
     /// Should stand out from `match_bg` so the current match is obvious
-    /// among the other highlighted matches.  Falls back to
-    /// `editor.selection_bg`.
+    /// among the other highlighted matches.
     #[serde(default)]
     pub current_match_bg: Option<ColorDef>,
     /// Text color of the current search match, optionally bundled with text
     /// attributes (`{"color": [255, 255, 255], "modifier": ["bold"]}`).
-    /// Falls back to `editor.fg`, bold on top of `editor.selection_modifier`.
     #[serde(default)]
     pub current_match_fg: Option<StyledColorDef>,
     /// Background color for jump labels (e.g. flash plugin labels).
     /// Should be visually distinct from `match_bg` so labels stand
     /// out against highlighted matches.  Default: bright magenta.
-    #[serde(default = "default_search_label_bg")]
-    pub label_bg: ColorDef,
+    #[serde(default)]
+    pub label_bg: Option<ColorDef>,
     /// Foreground color for jump labels.  Should be high contrast
     /// against `label_bg` so the single label letter is unambiguous
     /// even on small terminal cells.  Default: white.
-    #[serde(default = "default_search_label_fg")]
-    pub label_fg: ColorDef,
+    #[serde(default)]
+    pub label_fg: Option<ColorDef>,
 }
 
-// Default search colors
-fn default_search_match_bg() -> ColorDef {
-    ColorDef::Rgb(100, 100, 20)
-}
-fn default_search_match_fg() -> ColorDef {
-    ColorDef::Rgb(255, 255, 255)
-}
-
-/// The current search match's style for a theme that names no
-/// `search.current_match_*` keys: the selection's look — its background, the
-/// editor text color, and its text attributes — made bold. The current match
-/// is usually the selection too (Find Next selects it), so this reads as "the
-/// selected match", set apart from the other matches' `match_bg`.
-///
-/// Returns `(bg, fg, modifier)`.
-fn current_match_fallback(
-    selection_bg: Color,
-    editor_fg: Color,
-    selection_modifier: Modifier,
-) -> (Color, Color, Modifier) {
-    (selection_bg, editor_fg, Modifier::BOLD | selection_modifier)
-}
 // Mirrors flash.nvim's default FlashLabel (links to Substitute, which
 // is a magenta-family colour in most colorschemes).  The pairing is
 // chosen so labels pop visually distinct from `search.match_bg`
 // (typically yellow / orange).
-fn default_search_label_bg() -> ColorDef {
-    ColorDef::Rgb(199, 78, 189)
-}
-fn default_search_label_fg() -> ColorDef {
-    ColorDef::Rgb(255, 255, 255)
-}
 
 /// LSP diagnostic colors (errors, warnings, etc.)
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct DiagnosticColors {
     /// Error message text color
-    #[serde(default = "default_diagnostic_error_fg")]
-    pub error_fg: ColorDef,
+    #[serde(default)]
+    pub error_fg: Option<ColorDef>,
     /// Error highlight background
-    #[serde(default = "default_diagnostic_error_bg")]
-    pub error_bg: ColorDef,
+    #[serde(default)]
+    pub error_bg: Option<ColorDef>,
     /// Warning message text color
-    #[serde(default = "default_diagnostic_warning_fg")]
-    pub warning_fg: ColorDef,
+    #[serde(default)]
+    pub warning_fg: Option<ColorDef>,
     /// Warning highlight background
-    #[serde(default = "default_diagnostic_warning_bg")]
-    pub warning_bg: ColorDef,
+    #[serde(default)]
+    pub warning_bg: Option<ColorDef>,
     /// Info message text color
-    #[serde(default = "default_diagnostic_info_fg")]
-    pub info_fg: ColorDef,
+    #[serde(default)]
+    pub info_fg: Option<ColorDef>,
     /// Info highlight background
-    #[serde(default = "default_diagnostic_info_bg")]
-    pub info_bg: ColorDef,
+    #[serde(default)]
+    pub info_bg: Option<ColorDef>,
     /// Hint message text color
-    #[serde(default = "default_diagnostic_hint_fg")]
-    pub hint_fg: ColorDef,
+    #[serde(default)]
+    pub hint_fg: Option<ColorDef>,
     /// Hint highlight background
-    #[serde(default = "default_diagnostic_hint_bg")]
-    pub hint_bg: ColorDef,
-}
-
-// Default diagnostic colors
-fn default_diagnostic_error_fg() -> ColorDef {
-    ColorDef::Named("Red".to_string())
-}
-fn default_diagnostic_error_bg() -> ColorDef {
-    ColorDef::Rgb(60, 20, 20)
-}
-fn default_diagnostic_warning_fg() -> ColorDef {
-    ColorDef::Named("Yellow".to_string())
-}
-fn default_diagnostic_warning_bg() -> ColorDef {
-    ColorDef::Rgb(60, 50, 0)
-}
-fn default_diagnostic_info_fg() -> ColorDef {
-    ColorDef::Named("Blue".to_string())
-}
-fn default_diagnostic_info_bg() -> ColorDef {
-    ColorDef::Rgb(0, 30, 60)
-}
-fn default_diagnostic_hint_fg() -> ColorDef {
-    ColorDef::Named("Gray".to_string())
-}
-fn default_diagnostic_hint_bg() -> ColorDef {
-    ColorDef::Rgb(30, 30, 30)
+    #[serde(default)]
+    pub hint_bg: Option<ColorDef>,
 }
 
 /// Syntax highlighting colors.
@@ -1419,76 +1003,38 @@ fn default_diagnostic_hint_bg() -> ColorDef {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct SyntaxColors {
     /// Language keywords (if, for, fn, etc.)
-    #[serde(default = "default_syntax_keyword")]
-    pub keyword: StyledColorDef,
+    #[serde(default)]
+    pub keyword: Option<StyledColorDef>,
     /// String literals
-    #[serde(default = "default_syntax_string")]
-    pub string: StyledColorDef,
+    #[serde(default)]
+    pub string: Option<StyledColorDef>,
     /// Code comments
-    #[serde(default = "default_syntax_comment")]
-    pub comment: StyledColorDef,
+    #[serde(default)]
+    pub comment: Option<StyledColorDef>,
     /// Function names
-    #[serde(default = "default_syntax_function")]
-    pub function: StyledColorDef,
+    #[serde(default)]
+    pub function: Option<StyledColorDef>,
     /// Type names
-    #[serde(rename = "type", default = "default_syntax_type")]
-    pub type_: StyledColorDef,
+    #[serde(rename = "type", default)]
+    pub type_: Option<StyledColorDef>,
     /// Variable names
-    #[serde(default = "default_syntax_variable")]
-    pub variable: StyledColorDef,
+    #[serde(default)]
+    pub variable: Option<StyledColorDef>,
     /// Built-in language variables (self, this, super, etc.)
-    #[serde(default = "default_syntax_variable_builtin")]
-    pub variable_builtin: StyledColorDef,
+    #[serde(default)]
+    pub variable_builtin: Option<StyledColorDef>,
     /// Constants and literals
-    #[serde(default = "default_syntax_constant")]
-    pub constant: StyledColorDef,
+    #[serde(default)]
+    pub constant: Option<StyledColorDef>,
     /// Operators (+, -, =, etc.)
-    #[serde(default = "default_syntax_operator")]
-    pub operator: StyledColorDef,
+    #[serde(default)]
+    pub operator: Option<StyledColorDef>,
     /// Punctuation brackets ({, }, (, ), [, ])
-    #[serde(default = "default_syntax_punctuation_bracket")]
-    pub punctuation_bracket: StyledColorDef,
+    #[serde(default)]
+    pub punctuation_bracket: Option<StyledColorDef>,
     /// Punctuation delimiters (;, ,, .)
-    #[serde(default = "default_syntax_punctuation_delimiter")]
-    pub punctuation_delimiter: StyledColorDef,
-}
-
-// Default syntax colors (VSCode Dark+ inspired)
-fn default_syntax_keyword() -> StyledColorDef {
-    StyledColorDef::Plain(ColorDef::Rgb(86, 156, 214))
-}
-fn default_syntax_string() -> StyledColorDef {
-    StyledColorDef::Plain(ColorDef::Rgb(206, 145, 120))
-}
-fn default_syntax_comment() -> StyledColorDef {
-    StyledColorDef::Plain(ColorDef::Rgb(106, 153, 85))
-}
-fn default_syntax_function() -> StyledColorDef {
-    StyledColorDef::Plain(ColorDef::Rgb(220, 220, 170))
-}
-fn default_syntax_type() -> StyledColorDef {
-    StyledColorDef::Plain(ColorDef::Rgb(78, 201, 176))
-}
-fn default_syntax_variable() -> StyledColorDef {
-    StyledColorDef::Plain(ColorDef::Rgb(156, 220, 254))
-}
-fn default_syntax_variable_builtin() -> StyledColorDef {
-    // same as keyword — self/this/super are language-defined
-    StyledColorDef::Plain(ColorDef::Rgb(86, 156, 214))
-}
-fn default_syntax_constant() -> StyledColorDef {
-    StyledColorDef::Plain(ColorDef::Rgb(79, 193, 255))
-}
-fn default_syntax_operator() -> StyledColorDef {
-    StyledColorDef::Plain(ColorDef::Rgb(212, 212, 212))
-}
-fn default_syntax_punctuation_bracket() -> StyledColorDef {
-    // default foreground — brackets blend with text
-    StyledColorDef::Plain(ColorDef::Rgb(212, 212, 212))
-}
-fn default_syntax_punctuation_delimiter() -> StyledColorDef {
-    // default foreground — delimiters blend with text
-    StyledColorDef::Plain(ColorDef::Rgb(212, 212, 212))
+    #[serde(default)]
+    pub punctuation_delimiter: Option<StyledColorDef>,
 }
 
 /// Comprehensive theme structure with all UI colors
@@ -1731,96 +1277,75 @@ pub struct Theme {
     pub syntax_punctuation_delimiter_modifier: Modifier,
 }
 
+/// The color of a key a theme file may leave out, or a placeholder when it
+/// does. The placeholder never survives loading: [`Theme::fill_fallbacks`]
+/// replaces every key the file leaves out with its fallback key's color.
+fn placeholder(def: Option<ColorDef>) -> Color {
+    def.map(Color::from).unwrap_or(Color::Reset)
+}
+
+/// The color part of a styled key a theme file may leave out (see
+/// [`placeholder`]).
+fn styled_color(def: &Option<StyledColorDef>) -> Color {
+    placeholder(def.as_ref().map(|d| d.color().clone()))
+}
+
+/// The text attributes of a styled key; none when the file leaves it out.
+fn styled_modifier(def: &Option<StyledColorDef>) -> Modifier {
+    def.as_ref()
+        .map(StyledColorDef::modifier)
+        .unwrap_or_default()
+}
+
+/// Converts the keys a theme file names. Keys it leaves out hold serde
+/// defaults or [`placeholder`]s until [`Theme::fill_fallbacks`] runs, which
+/// every loading path does ([`Theme::from_json`], [`Theme::load_builtin`]).
 impl From<ThemeFile> for Theme {
     fn from(file: ThemeFile) -> Self {
-        let (fallback_bg, fallback_fg, fallback_modifier) = current_match_fallback(
-            file.editor.selection_bg.clone().into(),
-            file.editor.fg.clone().into(),
-            file.editor
-                .selection_modifier
-                .as_ref()
-                .map(Modifier::from)
-                .unwrap_or(Modifier::empty()),
-        );
-        let (current_match_fg, current_match_modifier) = match &file.search.current_match_fg {
-            Some(styled) => (styled.color().clone().into(), styled.modifier()),
-            None => (fallback_fg, fallback_modifier),
-        };
         Self {
             name: file.name,
-            editor_bg: file.editor.bg.clone().into(),
-            editor_fg: file.editor.fg.into(),
-            cursor: file.editor.cursor.into(),
-            inactive_cursor: file.editor.inactive_cursor.into(),
-            selection_bg: file.editor.selection_bg.clone().into(),
+            editor_bg: placeholder(file.editor.bg.clone()),
+            editor_fg: placeholder(file.editor.fg.clone()),
+            cursor: placeholder(file.editor.cursor.clone()),
+            inactive_cursor: placeholder(file.editor.inactive_cursor.clone()),
+            selection_bg: placeholder(file.editor.selection_bg.clone()),
             selection_modifier: file
                 .editor
                 .selection_modifier
                 .as_ref()
                 .map(Modifier::from)
                 .unwrap_or(Modifier::empty()),
-            current_line_bg: file.editor.current_line_bg.into(),
-            line_number_fg: file.editor.line_number_fg.into(),
-            line_number_bg: file.editor.line_number_bg.into(),
-            // Use explicit override if provided, otherwise stay on the
-            // theme's own editor background: the area below the last line is
-            // still the editor, and a derived shade there reads as a grayed
-            // out strip that belongs to no theme color.
-            after_eof_bg: file
-                .editor
-                .after_eof_bg
-                .clone()
-                .map(|c| c.into())
-                .unwrap_or_else(|| file.editor.bg.clone().into()),
-            ruler_bg: file.editor.ruler_bg.into(),
-            indentation_guide_fg: file
-                .editor
-                .indentation_guide_fg
-                .clone()
-                .unwrap_or_else(|| file.editor.whitespace_indicator_fg.clone())
-                .into(),
-            indent_rainbow_1: file.editor.indent_rainbow_1.into(),
-            indent_rainbow_2: file.editor.indent_rainbow_2.into(),
-            indent_rainbow_3: file.editor.indent_rainbow_3.into(),
-            indent_rainbow_4: file.editor.indent_rainbow_4.into(),
-            indent_rainbow_5: file.editor.indent_rainbow_5.into(),
-            indent_rainbow_6: file.editor.indent_rainbow_6.into(),
-            whitespace_indicator_fg: file.editor.whitespace_indicator_fg.clone().into(),
-            whitespace_indicator_selected_fg: file
-                .editor
-                .whitespace_indicator_selected_fg
-                .clone()
-                .map(|c| c.into())
-                .unwrap_or_else(|| {
-                    selected_indicator_fg(
-                        file.editor.selection_bg.clone().into(),
-                        file.editor.whitespace_indicator_fg.clone().into(),
-                    )
-                }),
-            bracket_match_fg: file.editor.bracket_match_fg.into(),
+            current_line_bg: placeholder(file.editor.current_line_bg.clone()),
+            line_number_fg: placeholder(file.editor.line_number_fg.clone()),
+            line_number_bg: placeholder(file.editor.line_number_bg.clone()),
+            after_eof_bg: placeholder(file.editor.after_eof_bg.clone()),
+            ruler_bg: placeholder(file.editor.ruler_bg.clone()),
+            indentation_guide_fg: placeholder(file.editor.indentation_guide_fg.clone()),
+            indent_rainbow_1: placeholder(file.editor.indent_rainbow_1.clone()),
+            indent_rainbow_2: placeholder(file.editor.indent_rainbow_2.clone()),
+            indent_rainbow_3: placeholder(file.editor.indent_rainbow_3.clone()),
+            indent_rainbow_4: placeholder(file.editor.indent_rainbow_4.clone()),
+            indent_rainbow_5: placeholder(file.editor.indent_rainbow_5.clone()),
+            indent_rainbow_6: placeholder(file.editor.indent_rainbow_6.clone()),
+            whitespace_indicator_fg: placeholder(file.editor.whitespace_indicator_fg.clone()),
+            whitespace_indicator_selected_fg: placeholder(
+                file.editor.whitespace_indicator_selected_fg.clone(),
+            ),
+            bracket_match_fg: placeholder(file.editor.bracket_match_fg.clone()),
             bracket_rainbow_match_modifier: Modifier::from(
                 &file.editor.bracket_rainbow_match_modifier,
             ),
-            bracket_rainbow_1: file.editor.bracket_rainbow_1.into(),
-            bracket_rainbow_2: file.editor.bracket_rainbow_2.into(),
-            bracket_rainbow_3: file.editor.bracket_rainbow_3.into(),
-            bracket_rainbow_4: file.editor.bracket_rainbow_4.into(),
-            bracket_rainbow_5: file.editor.bracket_rainbow_5.into(),
-            bracket_rainbow_6: file.editor.bracket_rainbow_6.into(),
-            diff_add_bg: file.editor.diff_add_bg.clone().into(),
-            diff_remove_bg: file.editor.diff_remove_bg.clone().into(),
-            diff_modify_bg: file.editor.diff_modify_bg.into(),
-            // Use explicit override if provided, otherwise brighten from base
-            diff_add_highlight_bg: file
-                .editor
-                .diff_add_highlight_bg
-                .map(|c| c.into())
-                .unwrap_or_else(|| brighten_color(file.editor.diff_add_bg.into(), 40)),
-            diff_remove_highlight_bg: file
-                .editor
-                .diff_remove_highlight_bg
-                .map(|c| c.into())
-                .unwrap_or_else(|| brighten_color(file.editor.diff_remove_bg.into(), 40)),
+            bracket_rainbow_1: placeholder(file.editor.bracket_rainbow_1.clone()),
+            bracket_rainbow_2: placeholder(file.editor.bracket_rainbow_2.clone()),
+            bracket_rainbow_3: placeholder(file.editor.bracket_rainbow_3.clone()),
+            bracket_rainbow_4: placeholder(file.editor.bracket_rainbow_4.clone()),
+            bracket_rainbow_5: placeholder(file.editor.bracket_rainbow_5.clone()),
+            bracket_rainbow_6: placeholder(file.editor.bracket_rainbow_6.clone()),
+            diff_add_bg: placeholder(file.editor.diff_add_bg.clone()),
+            diff_remove_bg: placeholder(file.editor.diff_remove_bg.clone()),
+            diff_modify_bg: placeholder(file.editor.diff_modify_bg.clone()),
+            diff_add_highlight_bg: placeholder(file.editor.diff_add_highlight_bg.clone()),
+            diff_remove_highlight_bg: placeholder(file.editor.diff_remove_highlight_bg.clone()),
             diff_add_collision_fg: file.editor.diff_add_collision_fg.clone().map(|c| c.into()),
             diff_remove_collision_fg: file
                 .editor
@@ -1832,214 +1357,141 @@ impl From<ThemeFile> for Theme {
                 .diff_modify_collision_fg
                 .clone()
                 .map(|c| c.into()),
-            tab_active_fg: file.ui.tab_active_fg.into(),
-            tab_active_bg: file.ui.tab_active_bg.into(),
-            tab_inactive_fg: file.ui.tab_inactive_fg.into(),
-            tab_inactive_bg: file.ui.tab_inactive_bg.into(),
-            tab_separator_bg: file.ui.tab_separator_bg.into(),
-            tab_close_hover_fg: file.ui.tab_close_hover_fg.into(),
-            tab_hover_bg: file.ui.tab_hover_bg.into(),
-            menu_bg: file.ui.menu_bg.clone().into(),
-            menu_fg: file.ui.menu_fg.clone().into(),
-            menu_active_bg: file.ui.menu_active_bg.into(),
-            menu_active_fg: file.ui.menu_active_fg.into(),
-            menu_dropdown_bg: file.ui.menu_dropdown_bg.into(),
-            menu_dropdown_fg: file.ui.menu_dropdown_fg.into(),
-            menu_highlight_bg: file.ui.menu_highlight_bg.into(),
-            menu_highlight_fg: file.ui.menu_highlight_fg.into(),
-            menu_border_fg: file.ui.menu_border_fg.into(),
-            menu_separator_fg: file.ui.menu_separator_fg.into(),
-            menu_hover_bg: file.ui.menu_hover_bg.into(),
-            menu_hover_fg: file.ui.menu_hover_fg.into(),
-            menu_disabled_fg: file.ui.menu_disabled_fg.into(),
-            menu_disabled_bg: file.ui.menu_disabled_bg.into(),
-            status_bar_fg: file.ui.status_bar_fg.clone().into(),
-            status_bar_bg: file.ui.status_bar_bg.clone().into(),
-            status_palette_fg: file
-                .ui
-                .status_palette_fg
-                .clone()
-                .map(|c| c.into())
-                .unwrap_or_else(|| file.ui.status_bar_fg.clone().into()),
-            status_palette_bg: file
-                .ui
-                .status_palette_bg
-                .clone()
-                .map(|c| c.into())
-                .unwrap_or_else(|| file.ui.status_bar_bg.clone().into()),
-            status_separator_fg: file
-                .ui
-                .status_separator_fg
-                .clone()
-                .map(|c| c.into())
-                .unwrap_or_else(|| file.ui.status_bar_fg.clone().into()),
-            status_separator_bg: file
-                .ui
-                .status_separator_bg
-                .clone()
-                .map(|c| c.into())
-                .unwrap_or_else(|| file.ui.status_bar_bg.clone().into()),
-            status_lsp_on_fg: file
-                .ui
-                .status_lsp_on_fg
-                .clone()
-                .map(|c| c.into())
-                .unwrap_or_else(|| file.ui.status_bar_fg.clone().into()),
-            status_lsp_on_bg: file
-                .ui
-                .status_lsp_on_bg
-                .clone()
-                .map(|c| c.into())
-                .unwrap_or_else(|| file.ui.status_bar_bg.clone().into()),
-            status_lsp_actionable_fg: file
-                .ui
-                .status_lsp_actionable_fg
-                .clone()
-                .map(|c| c.into())
-                .unwrap_or_else(|| file.ui.status_warning_indicator_fg.clone().into()),
-            status_lsp_actionable_bg: file
-                .ui
-                .status_lsp_actionable_bg
-                .clone()
-                .map(|c| c.into())
-                .unwrap_or_else(|| file.ui.status_warning_indicator_bg.clone().into()),
-            prompt_fg: file.ui.prompt_fg.into(),
-            prompt_bg: file.ui.prompt_bg.into(),
-            prompt_selection_fg: file.ui.prompt_selection_fg.into(),
-            prompt_selection_bg: file.ui.prompt_selection_bg.into(),
-            popup_border_fg: file.ui.popup_border_fg.into(),
-            popup_bg: file.ui.popup_bg.into(),
-            popup_selection_bg: file.ui.popup_selection_bg.into(),
-            popup_selection_fg: file.ui.popup_selection_fg.into(),
-            popup_text_fg: file.ui.popup_text_fg.clone().into(),
-            text_input_selection_bg: file.ui.text_input_selection_bg.into(),
-            suggestion_bg: file.ui.suggestion_bg.into(),
-            suggestion_fg: file
-                .ui
-                .suggestion_fg
-                .clone()
-                .map(|c| c.into())
-                .unwrap_or_else(|| file.ui.popup_text_fg.clone().into()),
-            suggestion_selected_bg: file.ui.suggestion_selected_bg.into(),
-            help_bg: file.ui.help_bg.into(),
-            help_fg: file.ui.help_fg.into(),
-            help_key_fg: file.ui.help_key_fg.into(),
-            help_separator_fg: file.ui.help_separator_fg.into(),
-            help_indicator_fg: file.ui.help_indicator_fg.into(),
-            help_indicator_bg: file.ui.help_indicator_bg.into(),
-            inline_code_bg: file.ui.inline_code_bg.into(),
-            split_separator_fg: file.ui.split_separator_fg.into(),
-            split_separator_hover_fg: file.ui.split_separator_hover_fg.into(),
-            scrollbar_track_fg: file.ui.scrollbar_track_fg.into(),
-            scrollbar_thumb_fg: file.ui.scrollbar_thumb_fg.into(),
-            scrollbar_track_hover_fg: file.ui.scrollbar_track_hover_fg.into(),
-            scrollbar_thumb_hover_fg: file.ui.scrollbar_thumb_hover_fg.into(),
-            compose_margin_bg: file.ui.compose_margin_bg.into(),
-            blame_header_fg: file
-                .ui
-                .blame_header_fg
-                .clone()
-                .unwrap_or_else(|| file.ui.menu_fg.clone())
-                .into(),
-            blame_header_bg: file
-                .ui
-                .blame_header_bg
-                .clone()
-                .unwrap_or_else(|| file.ui.menu_bg.clone())
-                .into(),
-            semantic_highlight_bg: file.ui.semantic_highlight_bg.into(),
+            tab_active_fg: placeholder(file.ui.tab_active_fg.clone()),
+            tab_active_bg: placeholder(file.ui.tab_active_bg.clone()),
+            tab_inactive_fg: placeholder(file.ui.tab_inactive_fg.clone()),
+            tab_inactive_bg: placeholder(file.ui.tab_inactive_bg.clone()),
+            tab_separator_bg: placeholder(file.ui.tab_separator_bg.clone()),
+            tab_close_hover_fg: placeholder(file.ui.tab_close_hover_fg.clone()),
+            tab_hover_bg: placeholder(file.ui.tab_hover_bg.clone()),
+            menu_bg: placeholder(file.ui.menu_bg.clone()),
+            menu_fg: placeholder(file.ui.menu_fg.clone()),
+            menu_active_bg: placeholder(file.ui.menu_active_bg.clone()),
+            menu_active_fg: placeholder(file.ui.menu_active_fg.clone()),
+            menu_dropdown_bg: placeholder(file.ui.menu_dropdown_bg.clone()),
+            menu_dropdown_fg: placeholder(file.ui.menu_dropdown_fg.clone()),
+            menu_highlight_bg: placeholder(file.ui.menu_highlight_bg.clone()),
+            menu_highlight_fg: placeholder(file.ui.menu_highlight_fg.clone()),
+            menu_border_fg: placeholder(file.ui.menu_border_fg.clone()),
+            menu_separator_fg: placeholder(file.ui.menu_separator_fg.clone()),
+            menu_hover_bg: placeholder(file.ui.menu_hover_bg.clone()),
+            menu_hover_fg: placeholder(file.ui.menu_hover_fg.clone()),
+            menu_disabled_fg: placeholder(file.ui.menu_disabled_fg.clone()),
+            menu_disabled_bg: placeholder(file.ui.menu_disabled_bg.clone()),
+            status_bar_fg: placeholder(file.ui.status_bar_fg.clone()),
+            status_bar_bg: placeholder(file.ui.status_bar_bg.clone()),
+            status_palette_fg: placeholder(file.ui.status_palette_fg.clone()),
+            status_palette_bg: placeholder(file.ui.status_palette_bg.clone()),
+            status_separator_fg: placeholder(file.ui.status_separator_fg.clone()),
+            status_separator_bg: placeholder(file.ui.status_separator_bg.clone()),
+            status_lsp_on_fg: placeholder(file.ui.status_lsp_on_fg.clone()),
+            status_lsp_on_bg: placeholder(file.ui.status_lsp_on_bg.clone()),
+            status_lsp_actionable_fg: placeholder(file.ui.status_lsp_actionable_fg.clone()),
+            status_lsp_actionable_bg: placeholder(file.ui.status_lsp_actionable_bg.clone()),
+            prompt_fg: placeholder(file.ui.prompt_fg.clone()),
+            prompt_bg: placeholder(file.ui.prompt_bg.clone()),
+            prompt_selection_fg: placeholder(file.ui.prompt_selection_fg.clone()),
+            prompt_selection_bg: placeholder(file.ui.prompt_selection_bg.clone()),
+            popup_border_fg: placeholder(file.ui.popup_border_fg.clone()),
+            popup_bg: placeholder(file.ui.popup_bg.clone()),
+            popup_selection_bg: placeholder(file.ui.popup_selection_bg.clone()),
+            popup_selection_fg: placeholder(file.ui.popup_selection_fg.clone()),
+            popup_text_fg: placeholder(file.ui.popup_text_fg.clone()),
+            text_input_selection_bg: placeholder(file.ui.text_input_selection_bg.clone()),
+            suggestion_bg: placeholder(file.ui.suggestion_bg.clone()),
+            suggestion_fg: placeholder(file.ui.suggestion_fg.clone()),
+            suggestion_selected_bg: placeholder(file.ui.suggestion_selected_bg.clone()),
+            help_bg: placeholder(file.ui.help_bg.clone()),
+            help_fg: placeholder(file.ui.help_fg.clone()),
+            help_key_fg: placeholder(file.ui.help_key_fg.clone()),
+            help_separator_fg: placeholder(file.ui.help_separator_fg.clone()),
+            help_indicator_fg: placeholder(file.ui.help_indicator_fg.clone()),
+            help_indicator_bg: placeholder(file.ui.help_indicator_bg.clone()),
+            inline_code_bg: placeholder(file.ui.inline_code_bg.clone()),
+            split_separator_fg: placeholder(file.ui.split_separator_fg.clone()),
+            split_separator_hover_fg: placeholder(file.ui.split_separator_hover_fg.clone()),
+            scrollbar_track_fg: placeholder(file.ui.scrollbar_track_fg.clone()),
+            scrollbar_thumb_fg: placeholder(file.ui.scrollbar_thumb_fg.clone()),
+            scrollbar_track_hover_fg: placeholder(file.ui.scrollbar_track_hover_fg.clone()),
+            scrollbar_thumb_hover_fg: placeholder(file.ui.scrollbar_thumb_hover_fg.clone()),
+            compose_margin_bg: placeholder(file.ui.compose_margin_bg.clone()),
+            blame_header_fg: placeholder(file.ui.blame_header_fg.clone()),
+            blame_header_bg: placeholder(file.ui.blame_header_bg.clone()),
+            semantic_highlight_bg: placeholder(file.ui.semantic_highlight_bg.clone()),
             semantic_highlight_modifier: file
                 .ui
                 .semantic_highlight_modifier
                 .as_ref()
                 .map(Modifier::from)
                 .unwrap_or(Modifier::empty()),
-            tour_step_bg: file.ui.tour_step_bg.into(),
-            terminal_bg: file.ui.terminal_bg.into(),
-            terminal_fg: file.ui.terminal_fg.into(),
-            status_warning_indicator_bg: file.ui.status_warning_indicator_bg.into(),
-            status_warning_indicator_fg: file.ui.status_warning_indicator_fg.into(),
-            status_error_indicator_bg: file.ui.status_error_indicator_bg.into(),
-            status_error_indicator_fg: file.ui.status_error_indicator_fg.into(),
-            status_warning_indicator_hover_bg: file.ui.status_warning_indicator_hover_bg.into(),
-            status_warning_indicator_hover_fg: file.ui.status_warning_indicator_hover_fg.into(),
-            status_error_indicator_hover_bg: file.ui.status_error_indicator_hover_bg.into(),
-            status_error_indicator_hover_fg: file.ui.status_error_indicator_hover_fg.into(),
-            tab_drop_zone_bg: file.ui.tab_drop_zone_bg.into(),
-            tab_drop_zone_border: file.ui.tab_drop_zone_border.into(),
-            settings_selected_bg: file.ui.settings_selected_bg.into(),
-            settings_selected_fg: file.ui.settings_selected_fg.into(),
-            file_status_added_fg: file
-                .ui
-                .file_status_added_fg
-                .map(|c| c.into())
-                .unwrap_or_else(|| file.diagnostic.info_fg.clone().into()),
-            file_status_modified_fg: file
-                .ui
-                .file_status_modified_fg
-                .map(|c| c.into())
-                .unwrap_or_else(|| file.diagnostic.warning_fg.clone().into()),
-            file_status_deleted_fg: file
-                .ui
-                .file_status_deleted_fg
-                .map(|c| c.into())
-                .unwrap_or_else(|| file.diagnostic.error_fg.clone().into()),
-            file_status_renamed_fg: file
-                .ui
-                .file_status_renamed_fg
-                .map(|c| c.into())
-                .unwrap_or_else(|| file.diagnostic.info_fg.clone().into()),
-            file_status_untracked_fg: file
-                .ui
-                .file_status_untracked_fg
-                .map(|c| c.into())
-                .unwrap_or_else(|| file.diagnostic.hint_fg.clone().into()),
-            file_status_conflicted_fg: file
-                .ui
-                .file_status_conflicted_fg
-                .map(|c| c.into())
-                .unwrap_or_else(|| file.diagnostic.error_fg.clone().into()),
-            search_match_bg: file.search.match_bg.into(),
-            search_match_fg: file.search.match_fg.into(),
-            search_current_match_bg: file
-                .search
-                .current_match_bg
-                .map(|c| c.into())
-                .unwrap_or(fallback_bg),
-            search_current_match_fg: current_match_fg,
-            search_current_match_modifier: current_match_modifier,
-            search_label_bg: file.search.label_bg.into(),
-            search_label_fg: file.search.label_fg.into(),
-            diagnostic_error_fg: file.diagnostic.error_fg.into(),
-            diagnostic_error_bg: file.diagnostic.error_bg.into(),
-            diagnostic_warning_fg: file.diagnostic.warning_fg.into(),
-            diagnostic_warning_bg: file.diagnostic.warning_bg.into(),
-            diagnostic_info_fg: file.diagnostic.info_fg.into(),
-            diagnostic_info_bg: file.diagnostic.info_bg.into(),
-            diagnostic_hint_fg: file.diagnostic.hint_fg.into(),
-            diagnostic_hint_bg: file.diagnostic.hint_bg.into(),
-            syntax_keyword: file.syntax.keyword.color().clone().into(),
-            syntax_keyword_modifier: file.syntax.keyword.modifier(),
-            syntax_string: file.syntax.string.color().clone().into(),
-            syntax_string_modifier: file.syntax.string.modifier(),
-            syntax_comment: file.syntax.comment.color().clone().into(),
-            syntax_comment_modifier: file.syntax.comment.modifier(),
-            syntax_function: file.syntax.function.color().clone().into(),
-            syntax_function_modifier: file.syntax.function.modifier(),
-            syntax_type: file.syntax.type_.color().clone().into(),
-            syntax_type_modifier: file.syntax.type_.modifier(),
-            syntax_variable: file.syntax.variable.color().clone().into(),
-            syntax_variable_modifier: file.syntax.variable.modifier(),
-            syntax_variable_builtin: file.syntax.variable_builtin.color().clone().into(),
-            syntax_variable_builtin_modifier: file.syntax.variable_builtin.modifier(),
-            syntax_constant: file.syntax.constant.color().clone().into(),
-            syntax_constant_modifier: file.syntax.constant.modifier(),
-            syntax_operator: file.syntax.operator.color().clone().into(),
-            syntax_operator_modifier: file.syntax.operator.modifier(),
-            syntax_punctuation_bracket: file.syntax.punctuation_bracket.color().clone().into(),
-            syntax_punctuation_bracket_modifier: file.syntax.punctuation_bracket.modifier(),
-            syntax_punctuation_delimiter: file.syntax.punctuation_delimiter.color().clone().into(),
-            syntax_punctuation_delimiter_modifier: file.syntax.punctuation_delimiter.modifier(),
+            tour_step_bg: placeholder(file.ui.tour_step_bg.clone()),
+            terminal_bg: placeholder(file.ui.terminal_bg.clone()),
+            terminal_fg: placeholder(file.ui.terminal_fg.clone()),
+            status_warning_indicator_bg: placeholder(file.ui.status_warning_indicator_bg.clone()),
+            status_warning_indicator_fg: placeholder(file.ui.status_warning_indicator_fg.clone()),
+            status_error_indicator_bg: placeholder(file.ui.status_error_indicator_bg.clone()),
+            status_error_indicator_fg: placeholder(file.ui.status_error_indicator_fg.clone()),
+            status_warning_indicator_hover_bg: placeholder(
+                file.ui.status_warning_indicator_hover_bg.clone(),
+            ),
+            status_warning_indicator_hover_fg: placeholder(
+                file.ui.status_warning_indicator_hover_fg.clone(),
+            ),
+            status_error_indicator_hover_bg: placeholder(
+                file.ui.status_error_indicator_hover_bg.clone(),
+            ),
+            status_error_indicator_hover_fg: placeholder(
+                file.ui.status_error_indicator_hover_fg.clone(),
+            ),
+            tab_drop_zone_bg: placeholder(file.ui.tab_drop_zone_bg.clone()),
+            tab_drop_zone_border: placeholder(file.ui.tab_drop_zone_border.clone()),
+            settings_selected_bg: placeholder(file.ui.settings_selected_bg.clone()),
+            settings_selected_fg: placeholder(file.ui.settings_selected_fg.clone()),
+            file_status_added_fg: placeholder(file.ui.file_status_added_fg.clone()),
+            file_status_modified_fg: placeholder(file.ui.file_status_modified_fg.clone()),
+            file_status_deleted_fg: placeholder(file.ui.file_status_deleted_fg.clone()),
+            file_status_renamed_fg: placeholder(file.ui.file_status_renamed_fg.clone()),
+            file_status_untracked_fg: placeholder(file.ui.file_status_untracked_fg.clone()),
+            file_status_conflicted_fg: placeholder(file.ui.file_status_conflicted_fg.clone()),
+            search_match_bg: placeholder(file.search.match_bg.clone()),
+            search_match_fg: placeholder(file.search.match_fg.clone()),
+            search_current_match_bg: placeholder(file.search.current_match_bg.clone()),
+            search_current_match_fg: styled_color(&file.search.current_match_fg),
+            search_current_match_modifier: styled_modifier(&file.search.current_match_fg),
+            search_label_bg: placeholder(file.search.label_bg.clone()),
+            search_label_fg: placeholder(file.search.label_fg.clone()),
+            diagnostic_error_fg: placeholder(file.diagnostic.error_fg.clone()),
+            diagnostic_error_bg: placeholder(file.diagnostic.error_bg.clone()),
+            diagnostic_warning_fg: placeholder(file.diagnostic.warning_fg.clone()),
+            diagnostic_warning_bg: placeholder(file.diagnostic.warning_bg.clone()),
+            diagnostic_info_fg: placeholder(file.diagnostic.info_fg.clone()),
+            diagnostic_info_bg: placeholder(file.diagnostic.info_bg.clone()),
+            diagnostic_hint_fg: placeholder(file.diagnostic.hint_fg.clone()),
+            diagnostic_hint_bg: placeholder(file.diagnostic.hint_bg.clone()),
+            syntax_keyword: styled_color(&file.syntax.keyword),
+            syntax_keyword_modifier: styled_modifier(&file.syntax.keyword),
+            syntax_string: styled_color(&file.syntax.string),
+            syntax_string_modifier: styled_modifier(&file.syntax.string),
+            syntax_comment: styled_color(&file.syntax.comment),
+            syntax_comment_modifier: styled_modifier(&file.syntax.comment),
+            syntax_function: styled_color(&file.syntax.function),
+            syntax_function_modifier: styled_modifier(&file.syntax.function),
+            syntax_type: styled_color(&file.syntax.type_),
+            syntax_type_modifier: styled_modifier(&file.syntax.type_),
+            syntax_variable: styled_color(&file.syntax.variable),
+            syntax_variable_modifier: styled_modifier(&file.syntax.variable),
+            syntax_variable_builtin: styled_color(&file.syntax.variable_builtin),
+            syntax_variable_builtin_modifier: styled_modifier(&file.syntax.variable_builtin),
+            syntax_constant: styled_color(&file.syntax.constant),
+            syntax_constant_modifier: styled_modifier(&file.syntax.constant),
+            syntax_operator: styled_color(&file.syntax.operator),
+            syntax_operator_modifier: styled_modifier(&file.syntax.operator),
+            syntax_punctuation_bracket: styled_color(&file.syntax.punctuation_bracket),
+            syntax_punctuation_bracket_modifier: styled_modifier(&file.syntax.punctuation_bracket),
+            syntax_punctuation_delimiter: styled_color(&file.syntax.punctuation_delimiter),
+            syntax_punctuation_delimiter_modifier: styled_modifier(
+                &file.syntax.punctuation_delimiter,
+            ),
         }
     }
 }
@@ -2052,73 +1504,73 @@ impl From<Theme> for ThemeFile {
             // inheritance is needed when serializing back out.
             extends: None,
             editor: EditorColors {
-                bg: theme.editor_bg.into(),
-                fg: theme.editor_fg.into(),
-                cursor: theme.cursor.into(),
-                inactive_cursor: theme.inactive_cursor.into(),
-                selection_bg: theme.selection_bg.into(),
+                bg: Some(theme.editor_bg.into()),
+                fg: Some(theme.editor_fg.into()),
+                cursor: Some(theme.cursor.into()),
+                inactive_cursor: Some(theme.inactive_cursor.into()),
+                selection_bg: Some(theme.selection_bg.into()),
                 selection_modifier: if theme.selection_modifier.is_empty() {
                     None
                 } else {
                     Some(theme.selection_modifier.into())
                 },
-                current_line_bg: theme.current_line_bg.into(),
-                line_number_fg: theme.line_number_fg.into(),
-                line_number_bg: theme.line_number_bg.into(),
-                diff_add_bg: theme.diff_add_bg.into(),
-                diff_remove_bg: theme.diff_remove_bg.into(),
+                current_line_bg: Some(theme.current_line_bg.into()),
+                line_number_fg: Some(theme.line_number_fg.into()),
+                line_number_bg: Some(theme.line_number_bg.into()),
+                diff_add_bg: Some(theme.diff_add_bg.into()),
+                diff_remove_bg: Some(theme.diff_remove_bg.into()),
                 diff_add_highlight_bg: Some(theme.diff_add_highlight_bg.into()),
                 diff_remove_highlight_bg: Some(theme.diff_remove_highlight_bg.into()),
-                diff_modify_bg: theme.diff_modify_bg.into(),
+                diff_modify_bg: Some(theme.diff_modify_bg.into()),
                 diff_add_collision_fg: theme.diff_add_collision_fg.map(|c| c.into()),
                 diff_remove_collision_fg: theme.diff_remove_collision_fg.map(|c| c.into()),
                 diff_modify_collision_fg: theme.diff_modify_collision_fg.map(|c| c.into()),
-                ruler_bg: theme.ruler_bg.into(),
+                ruler_bg: Some(theme.ruler_bg.into()),
                 indentation_guide_fg: Some(theme.indentation_guide_fg.into()),
-                indent_rainbow_1: theme.indent_rainbow_1.into(),
-                indent_rainbow_2: theme.indent_rainbow_2.into(),
-                indent_rainbow_3: theme.indent_rainbow_3.into(),
-                indent_rainbow_4: theme.indent_rainbow_4.into(),
-                indent_rainbow_5: theme.indent_rainbow_5.into(),
-                indent_rainbow_6: theme.indent_rainbow_6.into(),
-                whitespace_indicator_fg: theme.whitespace_indicator_fg.into(),
+                indent_rainbow_1: Some(theme.indent_rainbow_1.into()),
+                indent_rainbow_2: Some(theme.indent_rainbow_2.into()),
+                indent_rainbow_3: Some(theme.indent_rainbow_3.into()),
+                indent_rainbow_4: Some(theme.indent_rainbow_4.into()),
+                indent_rainbow_5: Some(theme.indent_rainbow_5.into()),
+                indent_rainbow_6: Some(theme.indent_rainbow_6.into()),
+                whitespace_indicator_fg: Some(theme.whitespace_indicator_fg.into()),
                 whitespace_indicator_selected_fg: Some(
                     theme.whitespace_indicator_selected_fg.into(),
                 ),
-                bracket_match_fg: theme.bracket_match_fg.into(),
+                bracket_match_fg: Some(theme.bracket_match_fg.into()),
                 bracket_rainbow_match_modifier: theme.bracket_rainbow_match_modifier.into(),
-                bracket_rainbow_1: theme.bracket_rainbow_1.into(),
-                bracket_rainbow_2: theme.bracket_rainbow_2.into(),
-                bracket_rainbow_3: theme.bracket_rainbow_3.into(),
-                bracket_rainbow_4: theme.bracket_rainbow_4.into(),
-                bracket_rainbow_5: theme.bracket_rainbow_5.into(),
-                bracket_rainbow_6: theme.bracket_rainbow_6.into(),
+                bracket_rainbow_1: Some(theme.bracket_rainbow_1.into()),
+                bracket_rainbow_2: Some(theme.bracket_rainbow_2.into()),
+                bracket_rainbow_3: Some(theme.bracket_rainbow_3.into()),
+                bracket_rainbow_4: Some(theme.bracket_rainbow_4.into()),
+                bracket_rainbow_5: Some(theme.bracket_rainbow_5.into()),
+                bracket_rainbow_6: Some(theme.bracket_rainbow_6.into()),
                 after_eof_bg: Some(theme.after_eof_bg.into()),
             },
             ui: UiColors {
-                tab_active_fg: theme.tab_active_fg.into(),
-                tab_active_bg: theme.tab_active_bg.into(),
-                tab_inactive_fg: theme.tab_inactive_fg.into(),
-                tab_inactive_bg: theme.tab_inactive_bg.into(),
-                tab_separator_bg: theme.tab_separator_bg.into(),
-                tab_close_hover_fg: theme.tab_close_hover_fg.into(),
-                tab_hover_bg: theme.tab_hover_bg.into(),
-                menu_bg: theme.menu_bg.into(),
-                menu_fg: theme.menu_fg.into(),
-                menu_active_bg: theme.menu_active_bg.into(),
-                menu_active_fg: theme.menu_active_fg.into(),
-                menu_dropdown_bg: theme.menu_dropdown_bg.into(),
-                menu_dropdown_fg: theme.menu_dropdown_fg.into(),
-                menu_highlight_bg: theme.menu_highlight_bg.into(),
-                menu_highlight_fg: theme.menu_highlight_fg.into(),
-                menu_border_fg: theme.menu_border_fg.into(),
-                menu_separator_fg: theme.menu_separator_fg.into(),
-                menu_hover_bg: theme.menu_hover_bg.into(),
-                menu_hover_fg: theme.menu_hover_fg.into(),
-                menu_disabled_fg: theme.menu_disabled_fg.into(),
-                menu_disabled_bg: theme.menu_disabled_bg.into(),
-                status_bar_fg: theme.status_bar_fg.into(),
-                status_bar_bg: theme.status_bar_bg.into(),
+                tab_active_fg: Some(theme.tab_active_fg.into()),
+                tab_active_bg: Some(theme.tab_active_bg.into()),
+                tab_inactive_fg: Some(theme.tab_inactive_fg.into()),
+                tab_inactive_bg: Some(theme.tab_inactive_bg.into()),
+                tab_separator_bg: Some(theme.tab_separator_bg.into()),
+                tab_close_hover_fg: Some(theme.tab_close_hover_fg.into()),
+                tab_hover_bg: Some(theme.tab_hover_bg.into()),
+                menu_bg: Some(theme.menu_bg.into()),
+                menu_fg: Some(theme.menu_fg.into()),
+                menu_active_bg: Some(theme.menu_active_bg.into()),
+                menu_active_fg: Some(theme.menu_active_fg.into()),
+                menu_dropdown_bg: Some(theme.menu_dropdown_bg.into()),
+                menu_dropdown_fg: Some(theme.menu_dropdown_fg.into()),
+                menu_highlight_bg: Some(theme.menu_highlight_bg.into()),
+                menu_highlight_fg: Some(theme.menu_highlight_fg.into()),
+                menu_border_fg: Some(theme.menu_border_fg.into()),
+                menu_separator_fg: Some(theme.menu_separator_fg.into()),
+                menu_hover_bg: Some(theme.menu_hover_bg.into()),
+                menu_hover_fg: Some(theme.menu_hover_fg.into()),
+                menu_disabled_fg: Some(theme.menu_disabled_fg.into()),
+                menu_disabled_bg: Some(theme.menu_disabled_bg.into()),
+                status_bar_fg: Some(theme.status_bar_fg.into()),
+                status_bar_bg: Some(theme.status_bar_bg.into()),
                 status_palette_fg: Some(theme.status_palette_fg.into()),
                 status_palette_bg: Some(theme.status_palette_bg.into()),
                 status_separator_fg: Some(theme.status_separator_fg.into()),
@@ -2127,56 +1579,60 @@ impl From<Theme> for ThemeFile {
                 status_lsp_on_bg: Some(theme.status_lsp_on_bg.into()),
                 status_lsp_actionable_fg: Some(theme.status_lsp_actionable_fg.into()),
                 status_lsp_actionable_bg: Some(theme.status_lsp_actionable_bg.into()),
-                prompt_fg: theme.prompt_fg.into(),
-                prompt_bg: theme.prompt_bg.into(),
-                prompt_selection_fg: theme.prompt_selection_fg.into(),
-                prompt_selection_bg: theme.prompt_selection_bg.into(),
-                popup_border_fg: theme.popup_border_fg.into(),
-                popup_bg: theme.popup_bg.into(),
-                popup_selection_bg: theme.popup_selection_bg.into(),
-                popup_selection_fg: theme.popup_selection_fg.into(),
-                popup_text_fg: theme.popup_text_fg.into(),
-                text_input_selection_bg: theme.text_input_selection_bg.into(),
-                suggestion_bg: theme.suggestion_bg.into(),
+                prompt_fg: Some(theme.prompt_fg.into()),
+                prompt_bg: Some(theme.prompt_bg.into()),
+                prompt_selection_fg: Some(theme.prompt_selection_fg.into()),
+                prompt_selection_bg: Some(theme.prompt_selection_bg.into()),
+                popup_border_fg: Some(theme.popup_border_fg.into()),
+                popup_bg: Some(theme.popup_bg.into()),
+                popup_selection_bg: Some(theme.popup_selection_bg.into()),
+                popup_selection_fg: Some(theme.popup_selection_fg.into()),
+                popup_text_fg: Some(theme.popup_text_fg.into()),
+                text_input_selection_bg: Some(theme.text_input_selection_bg.into()),
+                suggestion_bg: Some(theme.suggestion_bg.into()),
                 suggestion_fg: Some(theme.suggestion_fg.into()),
-                suggestion_selected_bg: theme.suggestion_selected_bg.into(),
-                help_bg: theme.help_bg.into(),
-                help_fg: theme.help_fg.into(),
-                help_key_fg: theme.help_key_fg.into(),
-                help_separator_fg: theme.help_separator_fg.into(),
-                help_indicator_fg: theme.help_indicator_fg.into(),
-                help_indicator_bg: theme.help_indicator_bg.into(),
-                inline_code_bg: theme.inline_code_bg.into(),
-                split_separator_fg: theme.split_separator_fg.into(),
-                split_separator_hover_fg: theme.split_separator_hover_fg.into(),
-                scrollbar_track_fg: theme.scrollbar_track_fg.into(),
-                scrollbar_thumb_fg: theme.scrollbar_thumb_fg.into(),
-                scrollbar_track_hover_fg: theme.scrollbar_track_hover_fg.into(),
-                scrollbar_thumb_hover_fg: theme.scrollbar_thumb_hover_fg.into(),
-                compose_margin_bg: theme.compose_margin_bg.into(),
+                suggestion_selected_bg: Some(theme.suggestion_selected_bg.into()),
+                help_bg: Some(theme.help_bg.into()),
+                help_fg: Some(theme.help_fg.into()),
+                help_key_fg: Some(theme.help_key_fg.into()),
+                help_separator_fg: Some(theme.help_separator_fg.into()),
+                help_indicator_fg: Some(theme.help_indicator_fg.into()),
+                help_indicator_bg: Some(theme.help_indicator_bg.into()),
+                inline_code_bg: Some(theme.inline_code_bg.into()),
+                split_separator_fg: Some(theme.split_separator_fg.into()),
+                split_separator_hover_fg: Some(theme.split_separator_hover_fg.into()),
+                scrollbar_track_fg: Some(theme.scrollbar_track_fg.into()),
+                scrollbar_thumb_fg: Some(theme.scrollbar_thumb_fg.into()),
+                scrollbar_track_hover_fg: Some(theme.scrollbar_track_hover_fg.into()),
+                scrollbar_thumb_hover_fg: Some(theme.scrollbar_thumb_hover_fg.into()),
+                compose_margin_bg: Some(theme.compose_margin_bg.into()),
                 blame_header_fg: Some(theme.blame_header_fg.into()),
                 blame_header_bg: Some(theme.blame_header_bg.into()),
-                semantic_highlight_bg: theme.semantic_highlight_bg.into(),
+                semantic_highlight_bg: Some(theme.semantic_highlight_bg.into()),
                 semantic_highlight_modifier: if theme.semantic_highlight_modifier.is_empty() {
                     None
                 } else {
                     Some(theme.semantic_highlight_modifier.into())
                 },
-                tour_step_bg: theme.tour_step_bg.into(),
-                terminal_bg: theme.terminal_bg.into(),
-                terminal_fg: theme.terminal_fg.into(),
-                status_warning_indicator_bg: theme.status_warning_indicator_bg.into(),
-                status_warning_indicator_fg: theme.status_warning_indicator_fg.into(),
-                status_error_indicator_bg: theme.status_error_indicator_bg.into(),
-                status_error_indicator_fg: theme.status_error_indicator_fg.into(),
-                status_warning_indicator_hover_bg: theme.status_warning_indicator_hover_bg.into(),
-                status_warning_indicator_hover_fg: theme.status_warning_indicator_hover_fg.into(),
-                status_error_indicator_hover_bg: theme.status_error_indicator_hover_bg.into(),
-                status_error_indicator_hover_fg: theme.status_error_indicator_hover_fg.into(),
-                tab_drop_zone_bg: theme.tab_drop_zone_bg.into(),
-                tab_drop_zone_border: theme.tab_drop_zone_border.into(),
-                settings_selected_bg: theme.settings_selected_bg.into(),
-                settings_selected_fg: theme.settings_selected_fg.into(),
+                tour_step_bg: Some(theme.tour_step_bg.into()),
+                terminal_bg: Some(theme.terminal_bg.into()),
+                terminal_fg: Some(theme.terminal_fg.into()),
+                status_warning_indicator_bg: Some(theme.status_warning_indicator_bg.into()),
+                status_warning_indicator_fg: Some(theme.status_warning_indicator_fg.into()),
+                status_error_indicator_bg: Some(theme.status_error_indicator_bg.into()),
+                status_error_indicator_fg: Some(theme.status_error_indicator_fg.into()),
+                status_warning_indicator_hover_bg: Some(
+                    theme.status_warning_indicator_hover_bg.into(),
+                ),
+                status_warning_indicator_hover_fg: Some(
+                    theme.status_warning_indicator_hover_fg.into(),
+                ),
+                status_error_indicator_hover_bg: Some(theme.status_error_indicator_hover_bg.into()),
+                status_error_indicator_hover_fg: Some(theme.status_error_indicator_hover_fg.into()),
+                tab_drop_zone_bg: Some(theme.tab_drop_zone_bg.into()),
+                tab_drop_zone_border: Some(theme.tab_drop_zone_border.into()),
+                settings_selected_bg: Some(theme.settings_selected_bg.into()),
+                settings_selected_fg: Some(theme.settings_selected_fg.into()),
                 file_status_added_fg: Some(theme.file_status_added_fg.into()),
                 file_status_modified_fg: Some(theme.file_status_modified_fg.into()),
                 file_status_deleted_fg: Some(theme.file_status_deleted_fg.into()),
@@ -2185,84 +1641,97 @@ impl From<Theme> for ThemeFile {
                 file_status_conflicted_fg: Some(theme.file_status_conflicted_fg.into()),
             },
             search: SearchColors {
-                match_bg: theme.search_match_bg.into(),
-                match_fg: theme.search_match_fg.into(),
+                match_bg: Some(theme.search_match_bg.into()),
+                match_fg: Some(theme.search_match_fg.into()),
                 current_match_bg: Some(theme.search_current_match_bg.into()),
                 current_match_fg: Some(StyledColorDef::from_parts(
                     theme.search_current_match_fg,
                     theme.search_current_match_modifier,
                 )),
-                label_bg: theme.search_label_bg.into(),
-                label_fg: theme.search_label_fg.into(),
+                label_bg: Some(theme.search_label_bg.into()),
+                label_fg: Some(theme.search_label_fg.into()),
             },
             diagnostic: DiagnosticColors {
-                error_fg: theme.diagnostic_error_fg.into(),
-                error_bg: theme.diagnostic_error_bg.into(),
-                warning_fg: theme.diagnostic_warning_fg.into(),
-                warning_bg: theme.diagnostic_warning_bg.into(),
-                info_fg: theme.diagnostic_info_fg.into(),
-                info_bg: theme.diagnostic_info_bg.into(),
-                hint_fg: theme.diagnostic_hint_fg.into(),
-                hint_bg: theme.diagnostic_hint_bg.into(),
+                error_fg: Some(theme.diagnostic_error_fg.into()),
+                error_bg: Some(theme.diagnostic_error_bg.into()),
+                warning_fg: Some(theme.diagnostic_warning_fg.into()),
+                warning_bg: Some(theme.diagnostic_warning_bg.into()),
+                info_fg: Some(theme.diagnostic_info_fg.into()),
+                info_bg: Some(theme.diagnostic_info_bg.into()),
+                hint_fg: Some(theme.diagnostic_hint_fg.into()),
+                hint_bg: Some(theme.diagnostic_hint_bg.into()),
             },
             syntax: SyntaxColors {
-                keyword: StyledColorDef::from_parts(
+                keyword: Some(StyledColorDef::from_parts(
                     theme.syntax_keyword,
                     theme.syntax_keyword_modifier,
-                ),
-                string: StyledColorDef::from_parts(
+                )),
+                string: Some(StyledColorDef::from_parts(
                     theme.syntax_string,
                     theme.syntax_string_modifier,
-                ),
-                comment: StyledColorDef::from_parts(
+                )),
+                comment: Some(StyledColorDef::from_parts(
                     theme.syntax_comment,
                     theme.syntax_comment_modifier,
-                ),
-                function: StyledColorDef::from_parts(
+                )),
+                function: Some(StyledColorDef::from_parts(
                     theme.syntax_function,
                     theme.syntax_function_modifier,
-                ),
-                type_: StyledColorDef::from_parts(theme.syntax_type, theme.syntax_type_modifier),
-                variable: StyledColorDef::from_parts(
+                )),
+                type_: Some(StyledColorDef::from_parts(
+                    theme.syntax_type,
+                    theme.syntax_type_modifier,
+                )),
+                variable: Some(StyledColorDef::from_parts(
                     theme.syntax_variable,
                     theme.syntax_variable_modifier,
-                ),
-                variable_builtin: StyledColorDef::from_parts(
+                )),
+                variable_builtin: Some(StyledColorDef::from_parts(
                     theme.syntax_variable_builtin,
                     theme.syntax_variable_builtin_modifier,
-                ),
-                constant: StyledColorDef::from_parts(
+                )),
+                constant: Some(StyledColorDef::from_parts(
                     theme.syntax_constant,
                     theme.syntax_constant_modifier,
-                ),
-                operator: StyledColorDef::from_parts(
+                )),
+                operator: Some(StyledColorDef::from_parts(
                     theme.syntax_operator,
                     theme.syntax_operator_modifier,
-                ),
-                punctuation_bracket: StyledColorDef::from_parts(
+                )),
+                punctuation_bracket: Some(StyledColorDef::from_parts(
                     theme.syntax_punctuation_bracket,
                     theme.syntax_punctuation_bracket_modifier,
-                ),
-                punctuation_delimiter: StyledColorDef::from_parts(
+                )),
+                punctuation_delimiter: Some(StyledColorDef::from_parts(
                     theme.syntax_punctuation_delimiter,
                     theme.syntax_punctuation_delimiter_modifier,
-                ),
+                )),
             },
         }
     }
 }
 
-/// Resolve the base theme that a parsed `ThemeFile` should be layered on top of.
-///
-/// See [`ThemeFile`] for the resolution order. Returns an error only when
-/// `extends` references a base that does not exist; the no-info-at-all case
-/// quietly falls through to the per-field hardcoded defaults so a theme of
-/// `{"name": "x"}` keeps working.
-fn resolve_base_theme(theme_file: &ThemeFile, raw: &serde_json::Value) -> Result<Theme, String> {
+/// Whether the theme JSON `raw` names the color key `"section.field"`
+/// (a JSON `null` counts as leaving it out).
+fn names_key(raw: &serde_json::Value, key: &str) -> bool {
+    split_theme_key(key).is_some_and(|(section, field)| {
+        raw.get(section)
+            .and_then(|s| s.get(field))
+            .is_some_and(|v| !v.is_null())
+    })
+}
+
+/// The base theme a parsed `ThemeFile` is layered on, or `None` for a
+/// standalone theme. See [`ThemeFile`] for the rules. Errors only when
+/// `extends` names a base that does not exist.
+fn resolve_base_theme(
+    theme_file: &ThemeFile,
+    raw: &serde_json::Value,
+) -> Result<Option<Theme>, String> {
     // 1. Explicit `extends`.
     if let Some(extends) = theme_file.extends.as_deref() {
         let name = extends.strip_prefix("builtin://").unwrap_or(extends);
-        return Theme::load_builtin(name).ok_or_else(|| {
+        return Theme::load_builtin(name).map(Some).ok_or_else(|| {
             let available: Vec<&str> = BUILTIN_THEMES.iter().map(|t| t.name).collect();
             format!(
                 "theme `extends: {:?}` does not match any built-in theme. \
@@ -2274,29 +1743,27 @@ fn resolve_base_theme(theme_file: &ThemeFile, raw: &serde_json::Value) -> Result
         });
     }
 
-    // 2. Auto-infer from explicit `editor.bg` luminance. We deliberately read
-    //    the *raw* JSON here instead of `theme_file.editor.bg` — the typed
-    //    struct fills in a default for `bg` even when the user didn't write
-    //    one, and inferring a base from a default we ourselves invented would
-    //    be circular.
-    if let Some(bg) = raw
+    // 2. Standalone: names every required key.
+    if Theme::COLOR_KEYS
+        .iter()
+        .filter(|key| Theme::is_required_key(key))
+        .all(|key| names_key(raw, key))
+    {
+        return Ok(None);
+    }
+
+    // 3. Partial: an implicit base, light or dark by `editor.bg`'s luminance.
+    let bg = raw
         .get("editor")
         .and_then(|e| e.get("bg"))
         .cloned()
         .and_then(|v| serde_json::from_value::<ColorDef>(v).ok())
-    {
-        let color: Color = bg.into();
-        if let Some((r, g, b)) = color_to_rgb(color) {
-            let lum = relative_luminance(r, g, b);
-            let base_name = if lum > 0.5 { THEME_LIGHT } else { THEME_DARK };
-            if let Some(base) = Theme::load_builtin(base_name) {
-                return Ok(base);
-            }
-        }
-    }
-
-    // 3. Fallback: per-field hardcoded defaults via the existing typed path.
-    Ok(theme_file.clone().into())
+        .and_then(|bg| color_to_rgb(bg.into()));
+    let base_name = match bg {
+        Some((r, g, b)) if relative_luminance(r, g, b) > 0.5 => THEME_LIGHT,
+        _ => THEME_DARK,
+    };
+    Ok(Theme::load_builtin(base_name))
 }
 
 /// Compute sRGB relative luminance (ITU-R BT.709) for an RGB triple in 0..=255.
@@ -2346,62 +1813,6 @@ fn apply_theme_overrides(theme: &mut Theme, theme_file: &ThemeFile, raw: &serde_
             }
         }
     }
-
-    if raw
-        .get("editor")
-        .and_then(|v| v.as_object())
-        .is_some_and(|editor| {
-            editor.contains_key("whitespace_indicator_fg")
-                && !editor.contains_key("indentation_guide_fg")
-        })
-    {
-        theme.indentation_guide_fg = theme.whitespace_indicator_fg;
-    }
-
-    // Same inheritance for the selected-whitespace color: it is *derived*
-    // from `selection_bg`, so a theme that overrides the selection background
-    // (or the plain indicator color it falls back to) without naming a
-    // selected-indicator color would otherwise keep the base theme's value
-    // and lose contrast against its own selection.
-    if raw
-        .get("editor")
-        .and_then(|v| v.as_object())
-        .is_some_and(|editor| {
-            (editor.contains_key("selection_bg") || editor.contains_key("whitespace_indicator_fg"))
-                && !editor.contains_key("whitespace_indicator_selected_fg")
-        })
-    {
-        theme.whitespace_indicator_selected_fg =
-            selected_indicator_fg(theme.selection_bg, theme.whitespace_indicator_fg);
-    }
-
-    // The current search match falls back to the selection's look, so a
-    // theme that restyles its selection without naming the current-match
-    // keys gets them from its own selection rather than keeping the base
-    // theme's (which may clash with, or match, its other colors).
-    let names = |section: &str, key: &str| {
-        raw.get(section)
-            .and_then(|v| v.as_object())
-            .and_then(|o| o.get(key))
-            .is_some_and(|v| !v.is_null())
-    };
-    if ["selection_bg", "fg", "selection_modifier"]
-        .iter()
-        .any(|key| names("editor", key))
-    {
-        let (bg, fg, modifier) = current_match_fallback(
-            theme.selection_bg,
-            theme.editor_fg,
-            theme.selection_modifier,
-        );
-        if !names("search", "current_match_bg") {
-            theme.search_current_match_bg = bg;
-        }
-        if !names("search", "current_match_fg") {
-            theme.search_current_match_fg = fg;
-            theme.search_current_match_modifier = modifier;
-        }
-    }
 }
 
 impl Theme {
@@ -2437,11 +1848,13 @@ impl Theme {
 
     /// Load a builtin theme by name (no I/O, uses embedded JSON).
     pub fn load_builtin(name: &str) -> Option<Self> {
-        BUILTIN_THEMES
-            .iter()
-            .find(|t| t.name == name)
-            .and_then(|t| serde_json::from_str::<ThemeFile>(t.json).ok())
-            .map(|tf| tf.into())
+        // Built-in themes are standalone: each names every required key.
+        let json = BUILTIN_THEMES.iter().find(|t| t.name == name)?.json;
+        let raw: serde_json::Value = serde_json::from_str(json).ok()?;
+        let theme_file: ThemeFile = serde_json::from_value(raw.clone()).ok()?;
+        let mut theme: Theme = theme_file.into();
+        theme.fill_fallbacks(&raw);
+        Some(theme)
     }
 
     /// Parse theme from JSON string (no I/O).
@@ -2455,17 +1868,55 @@ impl Theme {
     /// `override_colors`, so the supported set of keys stays in lock-step.
     pub fn from_json(json: &str) -> Result<Self, String> {
         // Dual-parse: the typed `ThemeFile` validates the schema and gives us
-        // `name` / `extends` cheaply; the raw `Value` tells us *which* fields
-        // the user actually specified, which we cannot recover from the typed
-        // struct because every field has a serde default.
+        // `name` / `extends` cheaply; the raw `Value` tells us *which* keys
+        // the theme names, including modifier-only keys and `null`s.
         let raw: serde_json::Value =
             serde_json::from_str(json).map_err(|e| format!("Failed to parse theme JSON: {}", e))?;
         let theme_file: ThemeFile = serde_json::from_value(raw.clone())
             .map_err(|e| format!("Failed to parse theme: {}", e))?;
 
-        let mut theme = resolve_base_theme(&theme_file, &raw)?;
-        apply_theme_overrides(&mut theme, &theme_file, &raw);
-        Ok(theme)
+        match resolve_base_theme(&theme_file, &raw)? {
+            Some(mut theme) => {
+                apply_theme_overrides(&mut theme, &theme_file, &raw);
+                Ok(theme)
+            }
+            None => {
+                let mut theme: Theme = theme_file.into();
+                theme.fill_fallbacks(&raw);
+                Ok(theme)
+            }
+        }
+    }
+
+    /// Give every color key the theme JSON `raw` leaves out the style of its
+    /// fallback key: the first key along its fallback chain that `raw` names,
+    /// or the chain's required key.
+    fn fill_fallbacks(&mut self, raw: &serde_json::Value) {
+        for &key in Self::COLOR_KEYS {
+            if names_key(raw, key) {
+                continue;
+            }
+            let mut source = key;
+            while let Some(next) = Self::fallback_key(source) {
+                source = next;
+                if names_key(raw, source) {
+                    break;
+                }
+            }
+            if source == key {
+                continue; // a required or optional key: nothing to fall back to
+            }
+            let modifier = self.resolve_modifier_key(source);
+            if let (Some(color), Some(slot)) = (
+                self.resolve_theme_key(source),
+                self.resolve_theme_key_mut(key),
+            ) {
+                *slot = color;
+            }
+            if let Some(slot) = self.resolve_modifier_key_mut(key) {
+                *slot = modifier;
+            }
+        }
     }
 
     /// The slot for a key that names text attributes alone, with no color
@@ -2525,7 +1976,7 @@ macro_rules! theme_color_keys {
     (
         $(
             $section:literal => {
-                $( $field_key:literal => $kind:tt $field:ident $(modifier $mod:ident)? ),* $(,)?
+                $( $field_key:literal => $kind:tt $field:ident $(modifier $mod:ident)? $(fallback $fb:literal)? ),* $(,)?
             }
         ),* $(,)?
     ) => {
@@ -2618,6 +2069,44 @@ macro_rules! theme_color_keys {
                     _ => None,
                 }
             }
+
+            /// Every color key, as `"section.field"`.
+            pub const COLOR_KEYS: &'static [&'static str] = &[
+                $( $( concat!($section, ".", $field_key), )* )*
+            ];
+
+            /// The key a color key takes its style from when a theme without
+            /// a base leaves it out. `None` for a required key (see
+            /// [`Theme::is_required_key`]) and for an optional `opt` key.
+            pub fn fallback_key(key: &str) -> Option<&'static str> {
+                let (section, field) = split_theme_key(key)?;
+                match section {
+                    $(
+                        $section => match field {
+                            $( $field_key => theme_color_keys!(@fallback $($fb)?), )*
+                            _ => None,
+                        },
+                    )*
+                    _ => None,
+                }
+            }
+
+            /// Whether every theme without a base must name this key: a color
+            /// key with no fallback.
+            pub fn is_required_key(key: &str) -> bool {
+                let Some((section, field)) = split_theme_key(key) else {
+                    return false;
+                };
+                match section {
+                    $(
+                        $section => match field {
+                            $( $field_key => theme_color_keys!(@required $kind $($fb)?), )*
+                            _ => false,
+                        },
+                    )*
+                    _ => false,
+                }
+            }
         }
     };
 
@@ -2634,128 +2123,134 @@ macro_rules! theme_color_keys {
     (@mod $self:ident, $mod:ident) => { $self.$mod };
     (@mod_mut $self:ident) => { None };
     (@mod_mut $self:ident, $mod:ident) => { Some(&mut $self.$mod) };
+
+    // Fallbacks. A `color` row without `fallback "<key>"` is required.
+    (@fallback) => { None };
+    (@fallback $fb:literal) => { Some($fb) };
+    (@required color) => { true };
+    (@required $kind:tt $($fb:literal)?) => { false };
 }
 
 theme_color_keys! {
     "editor" => {
-        "after_eof_bg" => color after_eof_bg,
+        "after_eof_bg" => color after_eof_bg fallback "editor.bg",
         "bg" => color editor_bg,
         "current_line_bg" => color current_line_bg,
         "cursor" => color cursor,
-        "diff_add_bg" => color diff_add_bg,
+        "diff_add_bg" => color diff_add_bg fallback "diagnostic.info_bg",
         "diff_add_collision_fg" => opt diff_add_collision_fg,
-        "diff_add_highlight_bg" => color diff_add_highlight_bg,
-        "diff_modify_bg" => color diff_modify_bg,
+        "diff_add_highlight_bg" => color diff_add_highlight_bg fallback "editor.diff_add_bg",
+        "diff_modify_bg" => color diff_modify_bg fallback "diagnostic.warning_bg",
         "diff_modify_collision_fg" => opt diff_modify_collision_fg,
-        "diff_remove_bg" => color diff_remove_bg,
+        "diff_remove_bg" => color diff_remove_bg fallback "diagnostic.error_bg",
         "diff_remove_collision_fg" => opt diff_remove_collision_fg,
-        "diff_remove_highlight_bg" => color diff_remove_highlight_bg,
+        "diff_remove_highlight_bg" => color diff_remove_highlight_bg fallback "editor.diff_remove_bg",
         "fg" => color editor_fg,
-        "inactive_cursor" => color inactive_cursor,
-        "indentation_guide_fg" => color indentation_guide_fg,
-        "indent_rainbow_1" => color indent_rainbow_1,
-        "indent_rainbow_2" => color indent_rainbow_2,
-        "indent_rainbow_3" => color indent_rainbow_3,
-        "indent_rainbow_4" => color indent_rainbow_4,
-        "indent_rainbow_5" => color indent_rainbow_5,
-        "indent_rainbow_6" => color indent_rainbow_6,
+        "inactive_cursor" => color inactive_cursor fallback "editor.line_number_fg",
+        "indentation_guide_fg" => color indentation_guide_fg fallback "editor.whitespace_indicator_fg",
+        "indent_rainbow_1" => color indent_rainbow_1 fallback "editor.indentation_guide_fg",
+        "indent_rainbow_2" => color indent_rainbow_2 fallback "editor.indentation_guide_fg",
+        "indent_rainbow_3" => color indent_rainbow_3 fallback "editor.indentation_guide_fg",
+        "indent_rainbow_4" => color indent_rainbow_4 fallback "editor.indentation_guide_fg",
+        "indent_rainbow_5" => color indent_rainbow_5 fallback "editor.indentation_guide_fg",
+        "indent_rainbow_6" => color indent_rainbow_6 fallback "editor.indentation_guide_fg",
         "line_number_bg" => color line_number_bg,
         "line_number_fg" => color line_number_fg,
-        "ruler_bg" => color ruler_bg,
+        "ruler_bg" => color ruler_bg fallback "editor.current_line_bg",
         "selection_bg" => color selection_bg,
-        "whitespace_indicator_fg" => color whitespace_indicator_fg,
-        "whitespace_indicator_selected_fg" => color whitespace_indicator_selected_fg,
-        "bracket_match_fg" => color bracket_match_fg,
-        "bracket_rainbow_1" => color bracket_rainbow_1,
-        "bracket_rainbow_2" => color bracket_rainbow_2,
-        "bracket_rainbow_3" => color bracket_rainbow_3,
-        "bracket_rainbow_4" => color bracket_rainbow_4,
-        "bracket_rainbow_5" => color bracket_rainbow_5,
-        "bracket_rainbow_6" => color bracket_rainbow_6,
+        "whitespace_indicator_fg" => color whitespace_indicator_fg fallback "editor.line_number_fg",
+        "whitespace_indicator_selected_fg" => color whitespace_indicator_selected_fg fallback "editor.whitespace_indicator_fg",
+        "bracket_match_fg" => color bracket_match_fg fallback "editor.cursor",
+        "bracket_rainbow_1" => color bracket_rainbow_1 fallback "syntax.keyword",
+        "bracket_rainbow_2" => color bracket_rainbow_2 fallback "syntax.function",
+        "bracket_rainbow_3" => color bracket_rainbow_3 fallback "syntax.type",
+        "bracket_rainbow_4" => color bracket_rainbow_4 fallback "syntax.string",
+        "bracket_rainbow_5" => color bracket_rainbow_5 fallback "syntax.constant",
+        "bracket_rainbow_6" => color bracket_rainbow_6 fallback "syntax.variable",
     },
     "ui" => {
-        "blame_header_bg" => color blame_header_bg,
-        "blame_header_fg" => color blame_header_fg,
-        "compose_margin_bg" => color compose_margin_bg,
-        "file_status_added_fg" => color file_status_added_fg,
-        "file_status_conflicted_fg" => color file_status_conflicted_fg,
-        "file_status_deleted_fg" => color file_status_deleted_fg,
-        "file_status_modified_fg" => color file_status_modified_fg,
-        "file_status_renamed_fg" => color file_status_renamed_fg,
-        "file_status_untracked_fg" => color file_status_untracked_fg,
+        "blame_header_bg" => color blame_header_bg fallback "ui.menu_bg",
+        "blame_header_fg" => color blame_header_fg fallback "ui.menu_fg",
+        "compose_margin_bg" => color compose_margin_bg fallback "editor.after_eof_bg",
+        "file_status_added_fg" => color file_status_added_fg fallback "diagnostic.info_fg",
+        "file_status_conflicted_fg" => color file_status_conflicted_fg fallback "diagnostic.error_fg",
+        "file_status_deleted_fg" => color file_status_deleted_fg fallback "diagnostic.error_fg",
+        "file_status_modified_fg" => color file_status_modified_fg fallback "diagnostic.warning_fg",
+        "file_status_renamed_fg" => color file_status_renamed_fg fallback "diagnostic.info_fg",
+        "file_status_untracked_fg" => color file_status_untracked_fg fallback "diagnostic.hint_fg",
         "help_bg" => color help_bg,
         "help_fg" => color help_fg,
         "help_indicator_bg" => color help_indicator_bg,
         "help_indicator_fg" => color help_indicator_fg,
         "help_key_fg" => color help_key_fg,
         "help_separator_fg" => color help_separator_fg,
-        "inline_code_bg" => color inline_code_bg,
-        "menu_active_bg" => color menu_active_bg,
-        "menu_active_fg" => color menu_active_fg,
-        "menu_bg" => color menu_bg,
-        "menu_border_fg" => color menu_border_fg,
-        "menu_disabled_bg" => color menu_disabled_bg,
-        "menu_disabled_fg" => color menu_disabled_fg,
-        "menu_dropdown_bg" => color menu_dropdown_bg,
-        "menu_dropdown_fg" => color menu_dropdown_fg,
-        "menu_fg" => color menu_fg,
-        "menu_highlight_bg" => color menu_highlight_bg,
-        "menu_highlight_fg" => color menu_highlight_fg,
-        "menu_hover_bg" => color menu_hover_bg,
-        "menu_hover_fg" => color menu_hover_fg,
-        "menu_separator_fg" => color menu_separator_fg,
+        "inline_code_bg" => color inline_code_bg fallback "editor.current_line_bg",
+        "menu_active_bg" => color menu_active_bg fallback "ui.popup_selection_bg",
+        "menu_active_fg" => color menu_active_fg fallback "ui.menu_fg",
+        "menu_bg" => color menu_bg fallback "ui.status_bar_bg",
+        "menu_border_fg" => color menu_border_fg fallback "ui.popup_border_fg",
+        "menu_disabled_bg" => color menu_disabled_bg fallback "ui.menu_dropdown_bg",
+        "menu_disabled_fg" => color menu_disabled_fg fallback "editor.line_number_fg",
+        "menu_dropdown_bg" => color menu_dropdown_bg fallback "ui.popup_bg",
+        "menu_dropdown_fg" => color menu_dropdown_fg fallback "ui.popup_text_fg",
+        "menu_fg" => color menu_fg fallback "ui.status_bar_fg",
+        "menu_highlight_bg" => color menu_highlight_bg fallback "ui.popup_selection_bg",
+        "menu_highlight_fg" => color menu_highlight_fg fallback "ui.popup_selection_fg",
+        "menu_hover_bg" => color menu_hover_bg fallback "ui.menu_highlight_bg",
+        "menu_hover_fg" => color menu_hover_fg fallback "ui.menu_highlight_fg",
+        "menu_separator_fg" => color menu_separator_fg fallback "ui.menu_border_fg",
         "popup_bg" => color popup_bg,
         "popup_border_fg" => color popup_border_fg,
         "popup_selection_bg" => color popup_selection_bg,
-        "popup_selection_fg" => color popup_selection_fg,
+        "popup_selection_fg" => color popup_selection_fg fallback "ui.popup_text_fg",
         "popup_text_fg" => color popup_text_fg,
         "prompt_bg" => color prompt_bg,
         "prompt_fg" => color prompt_fg,
         "prompt_selection_bg" => color prompt_selection_bg,
         "prompt_selection_fg" => color prompt_selection_fg,
-        "scrollbar_thumb_fg" => color scrollbar_thumb_fg,
-        "scrollbar_thumb_hover_fg" => color scrollbar_thumb_hover_fg,
-        "scrollbar_track_fg" => color scrollbar_track_fg,
-        "scrollbar_track_hover_fg" => color scrollbar_track_hover_fg,
-        "semantic_highlight_bg" => color semantic_highlight_bg,
-        "settings_selected_bg" => color settings_selected_bg,
-        "settings_selected_fg" => color settings_selected_fg,
+        "scrollbar_thumb_fg" => color scrollbar_thumb_fg fallback "editor.line_number_fg",
+        "scrollbar_thumb_hover_fg" => color scrollbar_thumb_hover_fg fallback "ui.scrollbar_thumb_fg",
+        "scrollbar_track_fg" => color scrollbar_track_fg fallback "editor.current_line_bg",
+        "scrollbar_track_hover_fg" => color scrollbar_track_hover_fg fallback "ui.scrollbar_track_fg",
+        "semantic_highlight_bg" => color semantic_highlight_bg fallback "editor.current_line_bg",
+        "settings_selected_bg" => color settings_selected_bg fallback "ui.popup_selection_bg",
+        "settings_selected_fg" => color settings_selected_fg fallback "ui.popup_selection_fg",
         "split_separator_fg" => color split_separator_fg,
-        "split_separator_hover_fg" => color split_separator_hover_fg,
+        "split_separator_hover_fg" => color split_separator_hover_fg fallback "ui.split_separator_fg",
         "status_bar_bg" => color status_bar_bg,
         "status_bar_fg" => color status_bar_fg,
-        "status_error_indicator_bg" => color status_error_indicator_bg,
-        "status_error_indicator_fg" => color status_error_indicator_fg,
-        "status_error_indicator_hover_bg" => color status_error_indicator_hover_bg,
-        "status_error_indicator_hover_fg" => color status_error_indicator_hover_fg,
-        "status_lsp_actionable_bg" => color status_lsp_actionable_bg,
-        "status_lsp_actionable_fg" => color status_lsp_actionable_fg,
-        "status_lsp_on_bg" => color status_lsp_on_bg,
-        "status_lsp_on_fg" => color status_lsp_on_fg,
-        "status_palette_bg" => color status_palette_bg,
-        "status_palette_fg" => color status_palette_fg,
-        "status_separator_bg" => color status_separator_bg,
-        "status_separator_fg" => color status_separator_fg,
-        "status_warning_indicator_bg" => color status_warning_indicator_bg,
-        "status_warning_indicator_fg" => color status_warning_indicator_fg,
-        "status_warning_indicator_hover_bg" => color status_warning_indicator_hover_bg,
-        "status_warning_indicator_hover_fg" => color status_warning_indicator_hover_fg,
+        "status_error_indicator_bg" => color status_error_indicator_bg fallback "diagnostic.error_bg",
+        "status_error_indicator_fg" => color status_error_indicator_fg fallback "diagnostic.error_fg",
+        "status_error_indicator_hover_bg" => color status_error_indicator_hover_bg fallback "ui.status_error_indicator_bg",
+        "status_error_indicator_hover_fg" => color status_error_indicator_hover_fg fallback "ui.status_error_indicator_fg",
+        "status_lsp_actionable_bg" => color status_lsp_actionable_bg fallback "ui.status_warning_indicator_bg",
+        "status_lsp_actionable_fg" => color status_lsp_actionable_fg fallback "ui.status_warning_indicator_fg",
+        "status_lsp_on_bg" => color status_lsp_on_bg fallback "ui.status_bar_bg",
+        "status_lsp_on_fg" => color status_lsp_on_fg fallback "ui.status_bar_fg",
+        "status_palette_bg" => color status_palette_bg fallback "ui.status_bar_bg",
+        "status_palette_fg" => color status_palette_fg fallback "ui.status_bar_fg",
+        "status_separator_bg" => color status_separator_bg fallback "ui.status_bar_bg",
+        "status_separator_fg" => color status_separator_fg fallback "ui.status_bar_fg",
+        "status_warning_indicator_bg" => color status_warning_indicator_bg fallback "diagnostic.warning_bg",
+        "status_warning_indicator_fg" => color status_warning_indicator_fg fallback "diagnostic.warning_fg",
+        "status_warning_indicator_hover_bg" => color status_warning_indicator_hover_bg fallback "ui.status_warning_indicator_bg",
+        "status_warning_indicator_hover_fg" => color status_warning_indicator_hover_fg fallback "ui.status_warning_indicator_fg",
         "suggestion_bg" => color suggestion_bg,
-        "suggestion_fg" => color suggestion_fg,
+        "suggestion_fg" => color suggestion_fg fallback "ui.popup_text_fg",
         "suggestion_selected_bg" => color suggestion_selected_bg,
         "tab_active_bg" => color tab_active_bg,
         "tab_active_fg" => color tab_active_fg,
-        "tab_close_hover_fg" => color tab_close_hover_fg,
-        "tab_drop_zone_bg" => color tab_drop_zone_bg,
-        "tab_drop_zone_border" => color tab_drop_zone_border,
-        "tab_hover_bg" => color tab_hover_bg,
+        "tab_close_hover_fg" => color tab_close_hover_fg fallback "diagnostic.error_fg",
+        "tab_drop_zone_bg" => color tab_drop_zone_bg fallback "editor.selection_bg",
+        "tab_drop_zone_border" => color tab_drop_zone_border fallback "ui.tab_active_fg",
+        "tab_hover_bg" => color tab_hover_bg fallback "ui.tab_inactive_bg",
         "tab_inactive_bg" => color tab_inactive_bg,
         "tab_inactive_fg" => color tab_inactive_fg,
         "tab_separator_bg" => color tab_separator_bg,
-        "terminal_bg" => color terminal_bg,
-        "terminal_fg" => color terminal_fg,
-        "text_input_selection_bg" => color text_input_selection_bg,
-        "tour_step_bg" => color tour_step_bg,
+        "terminal_bg" => color terminal_bg fallback "editor.bg",
+        "terminal_fg" => color terminal_fg fallback "editor.fg",
+        "text_input_selection_bg" => color text_input_selection_bg fallback "ui.popup_selection_bg",
+        "tour_step_bg" => color tour_step_bg fallback "ui.popup_selection_bg",
     },
     "syntax" => {
         "comment" => color syntax_comment modifier syntax_comment_modifier,
@@ -2763,12 +2258,12 @@ theme_color_keys! {
         "function" => color syntax_function modifier syntax_function_modifier,
         "keyword" => color syntax_keyword modifier syntax_keyword_modifier,
         "operator" => color syntax_operator modifier syntax_operator_modifier,
-        "punctuation_bracket" => color syntax_punctuation_bracket modifier syntax_punctuation_bracket_modifier,
-        "punctuation_delimiter" => color syntax_punctuation_delimiter modifier syntax_punctuation_delimiter_modifier,
+        "punctuation_bracket" => color syntax_punctuation_bracket modifier syntax_punctuation_bracket_modifier fallback "syntax.operator",
+        "punctuation_delimiter" => color syntax_punctuation_delimiter modifier syntax_punctuation_delimiter_modifier fallback "syntax.operator",
         "string" => color syntax_string modifier syntax_string_modifier,
         "type" => color syntax_type modifier syntax_type_modifier,
         "variable" => color syntax_variable modifier syntax_variable_modifier,
-        "variable_builtin" => color syntax_variable_builtin modifier syntax_variable_builtin_modifier,
+        "variable_builtin" => color syntax_variable_builtin modifier syntax_variable_builtin_modifier fallback "syntax.keyword",
     },
     "diagnostic" => {
         "error_bg" => color diagnostic_error_bg,
@@ -2781,10 +2276,10 @@ theme_color_keys! {
         "warning_fg" => color diagnostic_warning_fg,
     },
     "search" => {
-        "current_match_bg" => color search_current_match_bg,
-        "current_match_fg" => color search_current_match_fg modifier search_current_match_modifier,
-        "label_bg" => color search_label_bg,
-        "label_fg" => color search_label_fg,
+        "current_match_bg" => color search_current_match_bg fallback "editor.selection_bg",
+        "current_match_fg" => color search_current_match_fg modifier search_current_match_modifier fallback "editor.fg",
+        "label_bg" => color search_label_bg fallback "syntax.keyword",
+        "label_fg" => color search_label_fg fallback "editor.bg",
         "match_bg" => color search_match_bg,
         "match_fg" => color search_match_fg,
     },
@@ -2990,7 +2485,7 @@ mod tests {
     fn current_search_match_style_comes_from_the_theme() {
         // Bundled themes name the keys, and draw the current match bold.
         let dark = Theme::load_builtin(THEME_DARK).unwrap();
-        assert_eq!(dark.search_current_match_bg, Color::Rgb(200, 100, 0));
+        assert_eq!(dark.search_current_match_bg, Color::Rgb(64, 170, 230));
         assert_eq!(dark.search_current_match_modifier, Modifier::BOLD);
         assert_eq!(
             dark.resolve_modifier_key("search.current_match_fg"),
@@ -3027,66 +2522,102 @@ mod tests {
 
     #[test]
     fn current_search_match_falls_back_to_the_selection() {
-        // A standalone theme that names no current-match keys takes the
-        // selection's look, made bold.
-        let theme = Theme::from_json(
-            r#"{
-                "name": "no-current-match-keys",
-                "editor": {
-                    "fg": [10, 20, 30],
-                    "selection_bg": [40, 50, 60],
-                    "selection_modifier": ["italic"]
-                }
-            }"#,
-        )
-        .unwrap();
+        let theme = standalone(serde_json::json!({
+            "editor": { "selection_bg": [40, 50, 60], "fg": [10, 20, 30] }
+        }));
         assert_eq!(theme.search_current_match_bg, Color::Rgb(40, 50, 60));
         assert_eq!(theme.search_current_match_fg, Color::Rgb(10, 20, 30));
-        assert_eq!(
-            theme.search_current_match_modifier,
-            Modifier::BOLD | Modifier::ITALIC
-        );
+        assert!(theme.search_current_match_modifier.is_empty());
+    }
 
-        // Restyling the selection over a base theme derives the missing keys
-        // from the new selection instead of keeping the base theme's.
-        let restyled = Theme::from_json(
-            r#"{
-                "name": "restyled-selection",
-                "extends": "builtin://dark",
-                "editor": { "selection_bg": [40, 50, 60] }
-            }"#,
-        )
-        .unwrap();
-        let dark = Theme::load_builtin(THEME_DARK).unwrap();
-        assert_eq!(restyled.search_current_match_bg, Color::Rgb(40, 50, 60));
-        assert_eq!(restyled.search_current_match_fg, dark.editor_fg);
-        assert_eq!(restyled.search_current_match_modifier, Modifier::BOLD);
+    /// A standalone theme: names every required key (all `[1, 1, 1]`), plus
+    /// the keys in `extra` (`{"section": {"key": value}}`).
+    fn standalone(extra: serde_json::Value) -> Theme {
+        let mut raw = serde_json::json!({ "name": "standalone" });
+        for key in Theme::COLOR_KEYS
+            .iter()
+            .filter(|k| Theme::is_required_key(k))
+        {
+            let (section, field) = split_theme_key(key).unwrap();
+            raw[section][field] = serde_json::json!([1, 1, 1]);
+        }
+        for (section, keys) in extra.as_object().unwrap() {
+            for (field, value) in keys.as_object().unwrap() {
+                raw[section][field] = value.clone();
+            }
+        }
+        Theme::from_json(&raw.to_string()).unwrap()
+    }
 
-        // A key the theme does name is kept.
-        let named = Theme::from_json(
-            r#"{
-                "name": "restyled-selection-named-bg",
-                "extends": "builtin://dark",
-                "editor": { "selection_bg": [40, 50, 60] },
-                "search": { "current_match_bg": [7, 8, 9] }
-            }"#,
-        )
-        .unwrap();
-        assert_eq!(named.search_current_match_bg, Color::Rgb(7, 8, 9));
+    /// The required keys are the keys of the first theme file format; every
+    /// other color key falls back, along a chain with no cycles, to one.
+    #[test]
+    fn every_fallback_chain_ends_at_a_required_key() {
+        let required: Vec<_> = Theme::COLOR_KEYS
+            .iter()
+            .filter(|k| Theme::is_required_key(k))
+            .collect();
+        assert_eq!(required.len(), 49);
+        for &key in Theme::COLOR_KEYS {
+            let mut current = key;
+            let mut steps = 0;
+            while let Some(next) = Theme::fallback_key(current) {
+                assert!(
+                    Theme::COLOR_KEYS.contains(&next),
+                    "{key}: unknown fallback {next}"
+                );
+                current = next;
+                steps += 1;
+                assert!(steps < Theme::COLOR_KEYS.len(), "{key}: fallback cycle");
+            }
+            let optional = Theme::fallback_key(key).is_none() && !Theme::is_required_key(key);
+            assert!(
+                optional || Theme::is_required_key(current),
+                "{key}: chain ends at {current}, which is not required"
+            );
+        }
+    }
 
-        // Leaving the selection alone inherits the base theme's keys.
-        let inherited = Theme::from_json(
-            r#"{
-                "name": "inherits-current-match",
-                "extends": "builtin://dark",
-                "search": { "match_bg": [1, 1, 1] }
-            }"#,
-        )
-        .unwrap();
-        assert_eq!(
-            inherited.search_current_match_bg,
-            dark.search_current_match_bg
-        );
+    /// Built-in themes are standalone: each names every required key.
+    #[test]
+    fn builtin_themes_name_every_required_key() {
+        for builtin in BUILTIN_THEMES {
+            let raw: serde_json::Value = serde_json::from_str(builtin.json).unwrap();
+            for key in Theme::COLOR_KEYS
+                .iter()
+                .filter(|k| Theme::is_required_key(k))
+            {
+                assert!(names_key(&raw, key), "{}: missing {key}", builtin.name);
+            }
+        }
+    }
+
+    /// A key a standalone theme leaves out follows its chain to the first key
+    /// the theme names.
+    #[test]
+    fn standalone_theme_follows_the_fallback_chain() {
+        // menu_hover_bg -> menu_highlight_bg -> popup_selection_bg (required).
+        let theme = standalone(serde_json::json!({
+            "ui": { "status_bar_fg": [7, 7, 7], "popup_selection_bg": [8, 8, 8] }
+        }));
+        assert_eq!(theme.status_separator_fg, Color::Rgb(7, 7, 7));
+        assert_eq!(theme.menu_hover_bg, Color::Rgb(8, 8, 8));
+
+        let named_midway = standalone(serde_json::json!({
+            "ui": { "popup_selection_bg": [8, 8, 8], "menu_highlight_bg": [9, 9, 9] }
+        }));
+        assert_eq!(named_midway.menu_hover_bg, Color::Rgb(9, 9, 9));
+    }
+
+    /// A styled key that falls back to another styled key takes its text
+    /// attributes along with its color.
+    #[test]
+    fn fallback_carries_text_attributes() {
+        let theme = standalone(serde_json::json!({
+            "syntax": { "keyword": { "color": [5, 5, 5], "modifier": ["bold"] } }
+        }));
+        assert_eq!(theme.syntax_variable_builtin, Color::Rgb(5, 5, 5));
+        assert_eq!(theme.syntax_variable_builtin_modifier, Modifier::BOLD);
     }
 
     #[test]
@@ -3293,28 +2824,21 @@ mod tests {
         assert_eq!(theme.diagnostic_error_fg, dark.diagnostic_error_fg);
     }
 
-    /// With neither `extends` nor an explicit `editor.bg`, there's nothing to
-    /// infer from — the theme should still load and use the per-field
-    /// hardcoded defaults rather than failing or picking an arbitrary builtin.
+    /// With neither `extends` nor the required keys, the theme extends
+    /// `builtin://dark` — no color comes from the code itself.
     #[test]
-    fn test_no_inheritance_signal_uses_hardcoded_defaults() {
-        let json = r#"{ "name": "x" }"#;
-        let theme = Theme::from_json(json).expect("should parse");
-        // The hardcoded `default_editor_bg` is `Rgb(30, 30, 30)`. Pin that so
-        // a future change to the default prompts a deliberate test update.
-        assert_eq!(theme.editor_bg, Color::Rgb(30, 30, 30));
+    fn test_no_inheritance_signal_extends_dark() {
+        let theme = Theme::from_json(r#"{ "name": "x" }"#).expect("should parse");
+        let dark = Theme::load_builtin(THEME_DARK).expect("dark builtin");
+        assert_eq!(theme.editor_bg, dark.editor_bg);
+        assert_eq!(theme.menu_bg, dark.menu_bg);
     }
 
     #[test]
-    fn test_indentation_guide_fg_inherits_whitespace_indicator_fg_when_omitted() {
-        let json = r#"{
-            "name": "x",
-            "extends": "builtin://dark",
+    fn test_indentation_guide_fg_falls_back_to_whitespace_indicator_fg() {
+        let theme = standalone(serde_json::json!({
             "editor": { "whitespace_indicator_fg": [12, 34, 56] }
-        }"#;
-        let theme = Theme::from_json(json).expect("should parse");
-
-        assert_eq!(theme.whitespace_indicator_fg, Color::Rgb(12, 34, 56));
+        }));
         assert_eq!(theme.indentation_guide_fg, Color::Rgb(12, 34, 56));
     }
 
@@ -3322,11 +2846,10 @@ mod tests {
     /// color that is actually distinguishable from the selection background —
     /// otherwise the marks vanish exactly where they are needed. Several
     /// themes use one color for both `selection_bg` and
-    /// `whitespace_indicator_fg` (Dracula does), which is why the derived
-    /// value is based on the selection background rather than reusing the
-    /// plain indicator color.
+    /// `whitespace_indicator_fg` (Dracula does), so those name a
+    /// `whitespace_indicator_selected_fg` of their own.
     #[test]
-    fn test_builtin_themes_derive_a_visible_selected_indicator_color() {
+    fn test_builtin_themes_have_a_visible_selected_indicator_color() {
         for builtin in BUILTIN_THEMES {
             let theme = Theme::load_builtin(builtin.name).expect("builtin theme loads");
             let Some(bg) = color_to_rgb(theme.selection_bg) else {
@@ -3349,22 +2872,29 @@ mod tests {
         }
     }
 
+    /// `extends` takes precedence over fallbacks: a key the theme leaves out is
+    /// the base's, even when the theme restyles that key's fallback.
     #[test]
-    fn test_selected_indicator_fg_is_derived_from_selection_bg_when_omitted() {
-        let json = r#"{
-            "name": "x",
-            "extends": "builtin://dark",
-            "editor": { "selection_bg": [20, 20, 20] }
-        }"#;
-        let theme = Theme::from_json(json).expect("should parse");
+    fn test_extends_takes_precedence_over_fallbacks() {
+        let theme = Theme::from_json(
+            r#"{
+                "name": "x",
+                "extends": "builtin://dark",
+                "editor": { "selection_bg": [20, 20, 20] },
+                "ui": { "status_bar_fg": [1, 2, 3] }
+            }"#,
+        )
+        .expect("should parse");
+        let dark = Theme::load_builtin(THEME_DARK).unwrap();
 
         assert_eq!(theme.selection_bg, Color::Rgb(20, 20, 20));
         assert_eq!(
             theme.whitespace_indicator_selected_fg,
-            selected_indicator_fg(Color::Rgb(20, 20, 20), theme.whitespace_indicator_fg),
-            "a theme that moves its selection background must take the \
-             derived indicator color with it"
+            dark.whitespace_indicator_selected_fg
         );
+        assert_eq!(theme.status_bar_fg, Color::Rgb(1, 2, 3));
+        assert_eq!(theme.status_separator_fg, dark.status_separator_fg);
+        assert_eq!(theme.search_current_match_bg, dark.search_current_match_bg);
     }
 
     #[test]
@@ -3467,23 +2997,17 @@ mod tests {
 
     #[test]
     fn test_file_status_colors_fall_back_to_diagnostic_colors() {
-        // A theme with NO file_status_* keys should inherit from diagnostic colors
-        let json = r#"{
-            "name": "test-fallback",
-            "editor": {},
-            "ui": {},
-            "search": {},
+        // A standalone theme with no file_status_* keys takes diagnostic colors.
+        let theme = standalone(serde_json::json!({
             "diagnostic": {
                 "error_fg": [220, 50, 47],
                 "warning_fg": [181, 137, 0],
                 "info_fg": [38, 139, 210],
                 "hint_fg": [101, 123, 131]
-            },
-            "syntax": {}
-        }"#;
-        let theme = Theme::from_json(json).expect("Should parse theme without file_status keys");
+            }
+        }));
 
-        // Verify fallback: added/renamed -> info_fg
+        // added/renamed -> info_fg
         assert_eq!(theme.file_status_added_fg, Color::Rgb(38, 139, 210));
         assert_eq!(theme.file_status_renamed_fg, Color::Rgb(38, 139, 210));
         // modified -> warning_fg
@@ -3497,47 +3021,28 @@ mod tests {
 
     #[test]
     fn test_file_status_colors_explicit_override() {
-        // A theme WITH explicit file_status keys should use those, not the fallback
-        let json = r#"{
-            "name": "test-override",
-            "editor": {},
+        // Explicit file_status keys win over the fallback.
+        let theme = standalone(serde_json::json!({
             "ui": {
                 "file_status_added_fg": [80, 250, 123],
                 "file_status_modified_fg": [255, 184, 108]
             },
-            "search": {},
-            "diagnostic": {
-                "info_fg": [38, 139, 210],
-                "warning_fg": [181, 137, 0]
-            },
-            "syntax": {}
-        }"#;
-        let theme = Theme::from_json(json).expect("Should parse theme with file_status overrides");
+            "diagnostic": { "info_fg": [38, 139, 210], "warning_fg": [181, 137, 0] }
+        }));
 
-        // Explicit overrides should win
         assert_eq!(theme.file_status_added_fg, Color::Rgb(80, 250, 123));
         assert_eq!(theme.file_status_modified_fg, Color::Rgb(255, 184, 108));
-        // Non-overridden should still fall back
+        // Non-overridden still fall back
         assert_eq!(theme.file_status_renamed_fg, Color::Rgb(38, 139, 210));
     }
 
     #[test]
     fn test_file_status_colors_resolve_via_theme_key() {
-        let json = r#"{
-            "name": "test-resolve",
-            "editor": {},
-            "ui": {
-                "file_status_added_fg": [80, 250, 123]
-            },
-            "search": {},
-            "diagnostic": {
-                "warning_fg": [181, 137, 0]
-            },
-            "syntax": {}
-        }"#;
-        let theme = Theme::from_json(json).expect("Should parse theme");
+        let theme = standalone(serde_json::json!({
+            "ui": { "file_status_added_fg": [80, 250, 123] },
+            "diagnostic": { "warning_fg": [181, 137, 0] }
+        }));
 
-        // Theme key resolution should work for file_status keys
         assert_eq!(
             theme.resolve_theme_key("ui.file_status_added_fg"),
             Some(Color::Rgb(80, 250, 123))
@@ -3865,19 +3370,15 @@ mod tests {
         }
     }
 
-    /// A theme that names neither blame-header key borrows the menu surface's
-    /// colors *exactly* — the header is not tinted, shaded, or otherwise
+    /// A standalone theme that names neither blame-header key borrows the menu
+    /// surface's colors *exactly* — the header is not tinted, shaded, or otherwise
     /// computed from another color, so what a theme author reads off
     /// `ui.menu_bg` is what the band is painted with.
     #[test]
     fn blame_header_falls_back_to_the_exact_menu_colors() {
-        let json = r#"{
-            "name": "no-blame-keys",
+        let theme = standalone(serde_json::json!({
             "ui": { "menu_bg": [11, 22, 33], "menu_fg": [44, 55, 66] }
-        }"#;
-        let theme = Theme::from_json(json).expect("theme without blame keys");
-        assert_eq!(theme.blame_header_bg, theme.menu_bg);
-        assert_eq!(theme.blame_header_fg, theme.menu_fg);
+        }));
         assert_eq!(theme.blame_header_bg, Color::Rgb(11, 22, 33));
         assert_eq!(theme.blame_header_fg, Color::Rgb(44, 55, 66));
     }

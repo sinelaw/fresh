@@ -1298,19 +1298,16 @@ impl EditorState {
 
     /// Show a popup synthesized from replayed [`PopupData`].
     ///
-    /// The replay path has no theme handle, so the popup is built with theme
-    /// *defaults*. Editor-level callers
+    /// The replay path has no theme handle, so the popup is built with the
+    /// built-in dark theme's colors. Editor-level callers
     /// (`Editor::apply_event_to_active_buffer`) intercept `Event::ShowPopup`
     /// *before* it reaches `state.apply` and build the popup with the live
     /// theme — see `event_apply.rs`. This is reached only when tests drive
     /// `state.apply` directly (no surrounding `Editor`).
     fn apply_show_popup(&mut self, popup: &PopupData) {
-        use crate::view::theme::{default_popup_bg, default_popup_border_fg};
-        let popup_obj = convert_popup_data_to_popup(
-            popup,
-            default_popup_bg().into(),
-            default_popup_border_fg().into(),
-        );
+        use crate::view::theme::{Theme, THEME_DARK};
+        let theme = Theme::load_builtin(THEME_DARK).expect("dark builtin theme");
+        let popup_obj = convert_popup_data_to_popup(popup, theme.popup_bg, theme.popup_border_fg);
         self.popups.show_or_replace(popup_obj);
     }
 

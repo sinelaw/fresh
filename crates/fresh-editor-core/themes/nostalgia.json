@@ -25,7 +25,11 @@
     "bracket_rainbow_3": [255, 255, 0],
     "bracket_rainbow_4": [0, 255, 0],
     "bracket_rainbow_5": [255, 255, 85],
-    "bracket_rainbow_6": [255, 0, 255]
+    "bracket_rainbow_6": [255, 0, 255],
+    "diff_add_highlight_bg": [40, 140, 40],
+    "diff_remove_highlight_bg": [210, 40, 40],
+    "ruler_bg": [50, 50, 50],
+    "whitespace_indicator_selected_fg": [85, 85, 255]
   },
   "ui": {
     "tab_active_fg": [0, 0, 0],
@@ -95,13 +99,16 @@
     "status_error_indicator_hover_bg": [200, 30, 30],
     "status_error_indicator_hover_fg": [255, 255, 255],
     "tab_drop_zone_bg": [0, 170, 170],
-    "tab_drop_zone_border": [255, 255, 255]
+    "tab_drop_zone_border": [255, 255, 255],
+    "popup_selection_fg": [255, 255, 255]
   },
   "search": {
     "match_bg": [170, 85, 0],
     "match_fg": [255, 255, 255],
-    "current_match_bg": [255, 255, 85],
-    "current_match_fg": {"color": [0, 0, 0], "modifier": ["bold"]}
+    "current_match_bg": [85, 255, 255],
+    "current_match_fg": {"color": [0, 0, 0], "modifier": ["bold"]},
+    "label_bg": [199, 78, 189],
+    "label_fg": [255, 255, 255]
   },
   "diagnostic": {
     "error_fg": [255, 85, 85],
@@ -122,6 +129,8 @@
     "variable": [255, 255, 85],
     "variable_builtin": [255, 0, 255],
     "constant": [255, 0, 255],
-    "operator": [170, 170, 170]
+    "operator": [170, 170, 170],
+    "punctuation_bracket": [212, 212, 212],
+    "punctuation_delimiter": [212, 212, 212]
   }
 }

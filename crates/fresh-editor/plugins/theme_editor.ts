@@ -253,13 +253,24 @@ function fieldRefersToColorDef(fieldObj: Record<string, unknown>): boolean {
 }
 
 /**
- * Whether a property schema refers to `StyledColorDef` — a syntax value that
- * is either a bare color or a `{color, modifier}` bundle. Such a field is
+ * Whether a property schema refers to `StyledColorDef` — a value that is
+ * either a bare color or a `{color, modifier}` bundle — directly or wrapped
+ * in an `anyOf` (every theme key is optional, so the schema generator wraps
+ * it as `anyOf: [{$ref: StyledColorDef}, {type: null}]`). Such a field is
  * edited as a color plus a synthetic sibling `<name>_modifier` attributes row.
  */
 function fieldRefersToStyledColorDef(fieldObj: Record<string, unknown>): boolean {
   const refStr = fieldObj["$ref"];
-  return typeof refStr === "string" && refStr.endsWith("/StyledColorDef");
+  if (typeof refStr === "string" && refStr.endsWith("/StyledColorDef")) {
+    return true;
+  }
+  const anyOf = fieldObj["anyOf"];
+  return Array.isArray(anyOf) && anyOf.some((variant) => {
+    const r = variant && typeof variant === "object"
+      ? (variant as Record<string, unknown>)["$ref"]
+      : undefined;
+    return typeof r === "string" && r.endsWith("/StyledColorDef");
+  });
 }
 
 /**

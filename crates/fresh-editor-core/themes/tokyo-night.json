@@ -123,7 +123,7 @@
   "search": {
     "match_bg": [224, 175, 104],
     "match_fg": [26, 27, 38],
-    "current_match_bg": [255, 158, 100],
+    "current_match_bg": [125, 207, 255],
     "current_match_fg": {"color": [26, 27, 38], "modifier": ["bold"]},
     "label_bg": [187, 154, 247],
     "label_fg": [26, 27, 38]

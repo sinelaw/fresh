@@ -25,7 +25,11 @@
     "bracket_rainbow_3": [80, 250, 123],
     "bracket_rainbow_4": [139, 233, 253],
     "bracket_rainbow_5": [248, 248, 242],
-    "bracket_rainbow_6": [189, 147, 249]
+    "bracket_rainbow_6": [189, 147, 249],
+    "inactive_cursor": "DarkGray",
+    "diff_modify_bg": [40, 38, 30],
+    "ruler_bg": [50, 50, 50],
+    "whitespace_indicator_selected_fg": [123, 126, 145]
   },
   "ui": {
     "blame_header_fg": [248, 248, 242],
@@ -80,13 +84,33 @@
     "scrollbar_thumb_hover_fg": [139, 233, 253],
     "settings_selected_bg": [80, 83, 110],
     "settings_selected_fg": [248, 248, 242],
-    "popup_selection_fg": [248, 248, 242]
+    "popup_selection_fg": [248, 248, 242],
+    "tab_close_hover_fg": [255, 100, 100],
+    "status_lsp_actionable_fg": [0, 0, 0],
+    "status_lsp_actionable_bg": [181, 137, 0],
+    "inline_code_bg": "DarkGray",
+    "split_separator_hover_fg": [100, 149, 237],
+    "compose_margin_bg": [18, 18, 18],
+    "terminal_bg": "Default",
+    "terminal_fg": "Default",
+    "status_warning_indicator_bg": [181, 137, 0],
+    "status_warning_indicator_fg": [0, 0, 0],
+    "status_error_indicator_bg": [220, 50, 47],
+    "status_error_indicator_fg": [255, 255, 255],
+    "status_warning_indicator_hover_bg": [211, 167, 30],
+    "status_warning_indicator_hover_fg": [0, 0, 0],
+    "status_error_indicator_hover_bg": [250, 80, 77],
+    "status_error_indicator_hover_fg": [255, 255, 255],
+    "tab_drop_zone_bg": [70, 130, 180],
+    "tab_drop_zone_border": [100, 149, 237]
   },
   "search": {
     "match_bg": [241, 250, 140],
     "match_fg": [40, 42, 54],
-    "current_match_bg": [255, 184, 108],
-    "current_match_fg": {"color": [40, 42, 54], "modifier": ["bold"]}
+    "current_match_bg": [255, 121, 198],
+    "current_match_fg": {"color": [40, 42, 54], "modifier": ["bold"]},
+    "label_bg": [199, 78, 189],
+    "label_fg": [255, 255, 255]
   },
   "diagnostic": {
     "error_fg": [255, 85, 85],
@@ -107,6 +131,8 @@
     "variable": [248, 248, 242],
     "variable_builtin": [189, 147, 249],
     "constant": [189, 147, 249],
-    "operator": [255, 121, 198]
+    "operator": [255, 121, 198],
+    "punctuation_bracket": [212, 212, 212],
+    "punctuation_delimiter": [212, 212, 212]
   }
 }

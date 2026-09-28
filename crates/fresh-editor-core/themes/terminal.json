@@ -26,7 +26,14 @@
     "indent_rainbow_4": "Magenta",
     "indent_rainbow_5": "White",
     "indent_rainbow_6": "LightBlue",
-    "after_eof_bg": "Default"
+    "after_eof_bg": "Default",
+    "bracket_match_fg": [255, 215, 0],
+    "bracket_rainbow_1": [255, 215, 0],
+    "bracket_rainbow_2": [218, 112, 214],
+    "bracket_rainbow_3": [50, 205, 50],
+    "bracket_rainbow_4": [30, 144, 255],
+    "bracket_rainbow_5": [255, 127, 80],
+    "bracket_rainbow_6": [147, 112, 219]
   },
   "ui": {
     "tab_active_fg": "Yellow",
