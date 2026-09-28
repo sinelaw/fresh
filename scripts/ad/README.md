@@ -30,6 +30,7 @@ are crops of these recordings and its hero plays the calm cut.
 | `setup.sh` | Work dir: demo repo, isolated XDG config (Tokyo Night), fake `claude`/`codex` shims, a 2 GB log, fonts, logo |
 | `rec.py` | Drives `fresh` in a pty per clip from a key/mouse timeline; writes asciicast plus key (`k`) and mouse (`m`) marker events |
 | `rec_dock.py` | Records the landing page's Orchestrator loop by sampling a hand-built Fresh session running in tmux while it steps through the dock |
+| `waiting_agent.py` | A fake agent paused on a permission prompt, for the Orchestrator loop |
 | `cast2frames.py` | Replays a cast through `pyte` into deduplicated screen snapshots at 30 fps |
 | `music.py` | Fast cut's score: 137 BPM, D minor with a raised C♯ and G♯ (Ukrainian Dorian), reed lead, bass-heavy mix |
 | `music_calm.py` | Calm cut's score: 70 BPM, D major, rolled electric-piano chords over a pad and sub, convolution reverb |

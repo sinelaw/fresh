@@ -2,7 +2,7 @@
 // All clips are 140x75; crops keep the interesting part legible on a page.
 const SHOTS = {
   // also the poster of the looping dock walk (site.sh renders the clip)
-  'orchestrator': { clip: 'switch', t: 3.0, crop: [0, 0, 140, 44] },
+  'orchestrator': { clip: 'switch', t: 0.6, crop: [0, 0, 140, 44] },
   'review-diff':  { clip: 'agents', t: 176.5, crop: [0, 0, 100, 31] },
   'settings':     { clip: 'settings', t: 16.6, crop: [0, 1, 132, 42] },
   // one still per theme for the landing page's crossfade (settled after Fresh's own fade)
