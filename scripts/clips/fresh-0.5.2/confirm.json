@@ -56,21 +56,26 @@
           21
         ],
         "view": "card",
-        "band": true,
+        "band": false,
         "shot": "card",
         "cols": [
           70,
           106
         ],
-        "note": "Real confirm dialogs",
-        "note_at": "below-left"
+        "tag": {
+          "text": "Real confirm dialogs",
+          "at": "center",
+          "size": 76,
+          "width": 0.7,
+          "y": 0.18
+        }
       }
     ],
     "views": {
       "card": {
         "rows": [
-          10,
-          23
+          8,
+          24
         ],
         "cols": [
           36,

@@ -56,14 +56,18 @@
           7
         ],
         "view": "form",
-        "band": true,
+        "band": false,
         "shot": "form",
         "cols": [
           7,
           142
         ],
-        "note": "Live Grep, redesigned",
-        "note_at": "below-right"
+        "tag": {
+          "text": "Live Grep, redesigned",
+          "at": "bottom-center",
+          "size": 76,
+          "width": 0.7
+        }
       }
     ],
     "views": {

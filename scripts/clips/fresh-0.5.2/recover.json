@@ -45,21 +45,26 @@
           23
         ],
         "view": "card",
-        "band": true,
+        "band": false,
         "shot": "dialog",
         "cols": [
           58,
           106
         ],
-        "note": "Interrupted saves recover",
-        "note_at": "below-left"
+        "tag": {
+          "text": "Interrupted saves recover",
+          "at": "center",
+          "size": 76,
+          "width": 0.7,
+          "y": 0.17
+        }
       }
     ],
     "views": {
       "card": {
         "rows": [
-          8,
-          25
+          6,
+          26
         ],
         "cols": [
           36,

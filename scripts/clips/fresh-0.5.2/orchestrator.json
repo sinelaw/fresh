@@ -70,11 +70,10 @@
           40
         ],
         "tag": {
-          "text": "Orchestrator mode",
+          "text": "Orchestrator opens by default\nand stays running as a daemon",
           "at": "center",
           "size": 72,
-          "bg": true,
-          "width": 0.6
+          "width": 0.8
         }
       },
       {
@@ -83,14 +82,19 @@
           23
         ],
         "view": "card",
-        "band": true,
+        "band": false,
         "shot": "detach",
         "cols": [
           60,
           106
         ],
-        "note": "Ctrl+Q detaches",
-        "note_at": "below-right"
+        "tag": {
+          "text": "Ctrl+Q detaches",
+          "at": "center",
+          "size": 76,
+          "width": 0.7,
+          "y": 0.17
+        }
       }
     ],
     "views": {
@@ -106,8 +110,8 @@
       },
       "card": {
         "rows": [
-          9,
-          25
+          6,
+          26
         ],
         "cols": [
           36,

@@ -66,17 +66,19 @@
           22
         ],
         "view": "tree",
-        "band": true,
-        "shots": [
-          "open",
-          "keys"
-        ],
+        "band": false,
         "cols": [
           7,
           33
         ],
-        "note": "Settings, reorganized",
-        "note_at": "below-right"
+        "tag": {
+          "text": "Settings, reorganized",
+          "at": "center",
+          "size": 76,
+          "width": 0.7,
+          "y": 0.86
+        },
+        "shot": "keys"
       }
     ],
     "views": {

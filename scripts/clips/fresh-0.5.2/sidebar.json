@@ -74,9 +74,8 @@
         "tag": {
           "text": "Alt+Shift+N walks the sidebar",
           "at": "center",
-          "size": 72,
-          "bg": true,
-          "width": 0.6
+          "size": 76,
+          "width": 0.7
         }
       }
     ],

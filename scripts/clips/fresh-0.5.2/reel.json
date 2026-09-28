@@ -11,10 +11,6 @@
       "transition": "wipe"
     },
     {
-      "spec": "search.json",
-      "transition": "push"
-    },
-    {
       "spec": "grep.json",
       "transition": "wipe"
     },

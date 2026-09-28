@@ -151,9 +151,8 @@
         "tag": {
           "text": "Tokyo Night",
           "at": "center",
-          "size": 72,
-          "bg": true,
-          "width": 0.6
+          "size": 76,
+          "width": 0.7
         }
       },
       {
@@ -212,14 +211,13 @@
           4,
           90
         ],
+        "transition": "wipe",
         "tag": {
           "text": "Gruvbox",
           "at": "center",
-          "size": 72,
-          "bg": true,
-          "width": 0.6
-        },
-        "transition": "wipe"
+          "size": 76,
+          "width": 0.7
+        }
       }
     ],
     "views": {

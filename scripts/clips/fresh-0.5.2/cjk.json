@@ -46,14 +46,18 @@
           6
         ],
         "view": "text",
-        "band": true,
+        "band": false,
         "shot": "tabs",
         "cols": [
           0,
           22
         ],
-        "note": "CJK + tabs, fixed",
-        "note_at": "below-right"
+        "tag": {
+          "text": "CJK + tabs, fixed",
+          "at": "center-right",
+          "size": 76,
+          "width": 0.7
+        }
       }
     ],
     "views": {
