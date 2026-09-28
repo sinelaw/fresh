@@ -451,7 +451,8 @@ impl Editor {
             })
             .collect();
 
-        ranges.sort_unstable();
+        // By position, longest first, so the dedup keeps the longest overlay.
+        ranges.sort_unstable_by_key(|&(pos, len)| (pos, std::cmp::Reverse(len)));
         ranges.dedup_by_key(|(pos, _)| *pos);
         ranges.into_iter().unzip()
     }
@@ -574,11 +575,14 @@ impl Editor {
         // Find Next moves past the match at the cursor, which is normally the
         // current match. Once the user has deleted or typed over the current
         // match, the match at the cursor (if any) is one that slid up into
-        // its place: that one is next, and must not be skipped.
+        // its place: that one is next, and must not be skipped. That holds
+        // only while the caret is still where the edit left it (the collapsed
+        // mark's start); after the caret moves, or an undo restores the match,
+        // stepping works from the caret as usual.
         let current_match_gone = self
             .active_window()
             .current_search_match_range()
-            .is_some_and(|r| r.is_empty());
+            .is_some_and(|r| r.is_empty() && r.start == cursor_pos);
 
         if let Some(ref mut search_state) = self.active_window_mut().search_state {
             // Use overlay positions for small files (they auto-track edits),
@@ -678,6 +682,21 @@ impl Editor {
         }
     }
 
+    /// Whether a search is active and the primary cursor is on one of its
+    /// matches: at a stored match position, or on the current match (whose
+    /// mark tracks edits that leave the stored positions stale).
+    fn cursor_on_current_search_match(&self) -> bool {
+        let Some(search_state) = self.active_window().search_state.as_ref() else {
+            return false;
+        };
+        let cursor_pos = self.active_cursors().primary().position;
+        search_state.matches.binary_search(&cursor_pos).is_ok()
+            || self
+                .active_window()
+                .current_search_match_range()
+                .is_some_and(|mark| !mark.is_empty() && mark.start == cursor_pos)
+    }
+
     /// Find the next occurrence of the current selection (or word under cursor).
     /// This is a "quick find" that doesn't require opening the search panel.
     /// The search term is stored so subsequent Alt+N/Alt+P/F3 navigation works.
@@ -687,12 +706,9 @@ impl Editor {
     pub(super) fn find_selection_next(&mut self) {
         // If there's already a search active AND cursor is at a match position,
         // just continue to next match.
-        if let Some(ref search_state) = self.active_window().search_state {
-            let cursor_pos = self.active_cursors().primary().position;
-            if search_state.matches.binary_search(&cursor_pos).is_ok() {
-                self.find_next();
-                return;
-            }
+        if self.cursor_on_current_search_match() {
+            self.find_next();
+            return;
         }
 
         // Try to start a new search from the selection or word under cursor.
@@ -756,12 +772,9 @@ impl Editor {
     pub(super) fn find_selection_previous(&mut self) {
         // If there's already a search active AND cursor is at a match position,
         // just continue to previous match.
-        if let Some(ref search_state) = self.active_window().search_state {
-            let cursor_pos = self.active_cursors().primary().position;
-            if search_state.matches.binary_search(&cursor_pos).is_ok() {
-                self.find_previous();
-                return;
-            }
+        if self.cursor_on_current_search_match() {
+            self.find_previous();
+            return;
         }
 
         // Try to start a new search from the selection or word under cursor.

@@ -28,7 +28,6 @@
     "bracket_rainbow_4": [0, 128, 128],
     "bracket_rainbow_5": [0, 16, 128],
     "bracket_rainbow_6": [0, 112, 193],
-    "ruler_bg": [50, 50, 50],
     "whitespace_indicator_selected_fg": [170, 177, 187]
   },
   "ui": {
@@ -106,8 +105,7 @@
     "match_bg": [255, 255, 150],
     "match_fg": [0, 0, 0],
     "current_match_bg": [100, 170, 255],
-    "current_match_fg": {"color": [0, 0, 0], "modifier": ["bold"]},
-    "label_bg": [199, 78, 189]
+    "current_match_fg": {"color": [0, 0, 0], "modifier": ["bold"]}
   },
   "diagnostic": {
     "error_fg": [180, 0, 0],

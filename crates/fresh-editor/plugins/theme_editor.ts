@@ -554,10 +554,10 @@ const state: ThemeEditorState = {
  * from `editor.*` and `syntax.*`, and lean on bold + distinct syntax roles
  * to give each UI element its own visual identity.
  *
- * We don't need a client-side fallback chain: the core's `Theme` struct has
- * serde defaults for every field, so `resolve_theme_key` always returns a
- * value for any key listed here — a stub theme file can omit them and the
- * defaults still apply.
+ * We don't need a client-side fallback chain: the core resolves every key a
+ * theme leaves out (from its base theme, or from the key's fallback key), so
+ * `resolve_theme_key` always returns a value for any key listed here — a stub
+ * theme file can omit them.
  */
 const colors = {
   sectionHeader: "syntax.keyword",

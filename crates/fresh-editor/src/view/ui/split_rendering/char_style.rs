@@ -59,6 +59,24 @@ pub(super) struct CharStyleOutput {
     pub region: &'static str,
 }
 
+/// Whether an overlay paints a background of its own (not `Reset`).
+fn overlay_has_own_bg(overlay: &Overlay, theme: &Theme) -> bool {
+    let bg = match &overlay.face {
+        OverlayFace::Background { color } => Some(*color),
+        OverlayFace::Style { style } => style.bg,
+        OverlayFace::ThemedStyle {
+            fallback_style,
+            bg_theme,
+            ..
+        } => bg_theme
+            .as_deref()
+            .and_then(|key| theme.resolve_theme_key(key))
+            .or(fallback_style.bg),
+        OverlayFace::Underline { .. } | OverlayFace::Foreground { .. } => None,
+    };
+    bg.is_some_and(|c| c != Color::Reset)
+}
+
 /// Compute the style for a character by layering:
 /// token -> ANSI -> syntax -> semantic -> overlays -> selection -> cursor.
 /// Also tracks which theme keys produced the final fg/bg colors.
@@ -267,9 +285,23 @@ pub(super) fn compute_char_style(ctx: &CharStyleContext) -> CharStyleOutput {
     // of relying on a fixed bg color — see `Theme::selection_modifier`.
     //
     // An overlay marked `above_selection` (the current search match, which
-    // Find Next also selects) keeps its own look instead.
-    let covered_by_above_selection_overlay = ctx.active_overlays.iter().any(|o| o.above_selection);
-    if ctx.is_selected && !covered_by_above_selection_overlay {
+    // Find Next also selects) keeps its own look instead, when it has a
+    // background of its own. One without (a theme whose selection is only
+    // reverse video lends the current match its `Reset` selection
+    // background) is drawn like the selection, selected or not, so it still
+    // stands out.
+    let (above_with_bg, above_without_bg) = ctx
+        .active_overlays
+        .iter()
+        .filter(|o| o.above_selection)
+        .fold((false, false), |(with, without), o| {
+            if overlay_has_own_bg(o, ctx.theme) {
+                (true, without)
+            } else {
+                (with, true)
+            }
+        });
+    if (ctx.is_selected && !above_with_bg) || above_without_bg {
         style = style.bg(ctx.theme.selection_bg);
         if !ctx.theme.selection_modifier.is_empty() {
             style = style.add_modifier(ctx.theme.selection_modifier);
@@ -453,6 +485,32 @@ mod tests {
         let out = run_selected(&theme, &o);
 
         assert_eq!(out.style.bg, Some(Color::Rgb(1, 2, 3)));
+    }
+
+    /// An above-selection overlay with no background of its own (the current
+    /// match in a theme whose selection is only reverse video) is drawn like
+    /// the selection, even on a cell that is not selected.
+    #[test]
+    fn above_selection_overlay_without_bg_is_drawn_like_the_selection() {
+        let mut theme = Theme::load_builtin(crate::view::theme::THEME_DARK).unwrap();
+        theme.selection_bg = Color::Reset;
+        theme.selection_modifier = Modifier::REVERSED;
+        let mut ml = MarkerList::new();
+        ml.set_buffer_size(100);
+        let o = Overlay::new(
+            &mut ml,
+            0..10,
+            OverlayFace::Style {
+                style: Style::default().bg(Color::Reset),
+            },
+        )
+        .with_above_selection();
+
+        let unselected = run(&theme, &o, None);
+        assert!(unselected.style.add_modifier.contains(Modifier::REVERSED));
+
+        let selected = run_selected(&theme, &o);
+        assert!(selected.style.add_modifier.contains(Modifier::REVERSED));
     }
 
     #[test]

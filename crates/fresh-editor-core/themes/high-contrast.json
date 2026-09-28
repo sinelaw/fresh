@@ -28,7 +28,6 @@
     "bracket_rainbow_4": "Magenta",
     "bracket_rainbow_5": "White",
     "bracket_rainbow_6": "LightBlue",
-    "ruler_bg": [50, 50, 50],
     "whitespace_indicator_selected_fg": [105, 115, 145]
   },
   "ui": {
@@ -108,9 +107,7 @@
     "match_bg": [255, 255, 0],
     "match_fg": [0, 0, 0],
     "current_match_bg": [0, 255, 255],
-    "current_match_fg": {"color": [0, 0, 0], "modifier": ["bold"]},
-    "label_bg": [199, 78, 189],
-    "label_fg": [255, 255, 255]
+    "current_match_fg": {"color": [0, 0, 0], "modifier": ["bold"]}
   },
   "diagnostic": {
     "error_fg": [255, 80, 80],
@@ -131,8 +128,6 @@
     "variable": [255, 255, 255],
     "variable_builtin": [120, 130, 255],
     "constant": [120, 130, 255],
-    "operator": [255, 255, 255],
-    "punctuation_bracket": [212, 212, 212],
-    "punctuation_delimiter": [212, 212, 212]
+    "operator": [255, 255, 255]
   }
 }

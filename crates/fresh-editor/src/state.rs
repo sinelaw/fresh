@@ -1306,8 +1306,12 @@ impl EditorState {
     /// `state.apply` directly (no surrounding `Editor`).
     fn apply_show_popup(&mut self, popup: &PopupData) {
         use crate::view::theme::{Theme, THEME_DARK};
-        let theme = Theme::load_builtin(THEME_DARK).expect("dark builtin theme");
-        let popup_obj = convert_popup_data_to_popup(popup, theme.popup_bg, theme.popup_border_fg);
+        static POPUP_COLORS: std::sync::OnceLock<(Color, Color)> = std::sync::OnceLock::new();
+        let &(bg, border) = POPUP_COLORS.get_or_init(|| {
+            let theme = Theme::load_builtin(THEME_DARK).expect("dark builtin theme");
+            (theme.popup_bg, theme.popup_border_fg)
+        });
+        let popup_obj = convert_popup_data_to_popup(popup, bg, border);
         self.popups.show_or_replace(popup_obj);
     }
 

@@ -293,3 +293,123 @@ fn test_user_selection_still_prefills_search() {
 
     harness.assert_screen_contains("Search: word");
 }
+
+/// Esc ends Query Replace like `c` does: the current-match mark goes with it.
+#[test]
+fn test_query_replace_esc_clears_the_current_match_mark() {
+    let (_dir, mut harness) = open_with("aa foo bb foo cc\n");
+
+    harness
+        .send_key(
+            KeyCode::Char('r'),
+            KeyModifiers::CONTROL | KeyModifiers::ALT,
+        )
+        .unwrap();
+    harness.type_text("foo").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    assert_eq!(
+        bg_at(&harness, "aa foo bb", 4),
+        Some(current_match_bg(&harness))
+    );
+
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    assert!(
+        !harness.screen_to_string().contains("Replace?"),
+        "Esc should end Query Replace"
+    );
+    let (x, y) = harness.find_text_on_screen("aa foo bb").unwrap();
+    for offset in 0..14 {
+        assert_ne!(
+            harness.get_cell_style(x + offset, y).and_then(|s| s.bg),
+            Some(current_match_bg(&harness)),
+            "no current-match mark should remain after Esc"
+        );
+    }
+}
+
+/// After deleting the current match, moving the caret away and back onto a
+/// match start does not make F3 re-select that match: stepping works from the
+/// caret as usual once it has moved.
+#[test]
+fn test_find_next_after_deleting_and_moving_steps_past_the_caret() {
+    let (_dir, mut harness) = open_with("xfoo foo foo\n");
+
+    search(&mut harness, "foo", false);
+    assert_eq!(harness.cursor_position(), 1);
+    harness
+        .send_key(KeyCode::Delete, KeyModifiers::NONE)
+        .unwrap();
+    assert_eq!(harness.get_buffer_content().unwrap(), "x foo foo\n");
+
+    // Move the caret onto the start of the next match (" foo" -> 2).
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
+    assert_eq!(harness.cursor_position(), 2);
+
+    find_next(&mut harness);
+    assert_eq!(
+        harness.cursor_position(),
+        6,
+        "F3 moves past the match at the caret once the caret has moved"
+    );
+}
+
+/// Ctrl+F3 (find selection next) on the selected current match of a regex
+/// search continues that search rather than searching for the matched text.
+#[test]
+fn test_find_selection_next_on_current_match_continues_regex_search() {
+    let (_dir, mut harness) = open_with("<b>one</b> <b>two</b> <b>one</b>\n");
+
+    search(&mut harness, "<b>.*?</b>", true);
+    assert_eq!(harness.get_selected_text(), "<b>one</b>");
+
+    harness
+        .send_key(KeyCode::F(3), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.process_async_and_render().unwrap();
+    assert_eq!(
+        harness.get_selected_text(),
+        "<b>two</b>",
+        "Ctrl+F3 steps to the next regex match, not the next literal '<b>one</b>'"
+    );
+
+    harness
+        .send_key(KeyCode::F(3), KeyModifiers::CONTROL | KeyModifiers::SHIFT)
+        .unwrap();
+    harness.process_async_and_render().unwrap();
+    assert_eq!(harness.cursor_position(), 0);
+    assert_eq!(harness.get_selected_text(), "<b>one</b>");
+}
+
+/// The same after an edit has shifted the matches: the selected current match
+/// is still recognized, so Ctrl+F3 continues the regex search.
+#[test]
+fn test_find_selection_next_after_an_edit_continues_regex_search() {
+    let (_dir, mut harness) = open_with("<b>1</b> <b>22</b> <b>333</b> <b>4444</b>\n");
+
+    search(&mut harness, "<b>.*?</b>", true);
+    harness
+        .send_key(KeyCode::Delete, KeyModifiers::NONE)
+        .unwrap();
+    find_next(&mut harness);
+    assert_eq!(harness.get_selected_text(), "<b>22</b>");
+
+    harness
+        .send_key(KeyCode::F(3), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.process_async_and_render().unwrap();
+    assert_eq!(
+        harness.get_selected_text(),
+        "<b>333</b>",
+        "Ctrl+F3 steps to the next regex match, not a literal '<b>22</b>' search"
+    );
+}
