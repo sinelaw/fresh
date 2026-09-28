@@ -490,8 +490,10 @@ pub enum ScrollMode {
 pub enum Scroll {
     /// The framework's. The window starts here and is thereafter wherever the
     /// wheel, the bar and the anchor commands put it; the description's value
-    /// is read once, at the first layout. The default, at `(0, 0)`.
-    Own { x: u16, y: u16 },
+    /// is read once, at the first layout. The default, at `(0, 0)`. `y` is
+    /// an index for an index-scrolled window, which can be past a cell's
+    /// reach.
+    Own { x: u16, y: u32 },
     /// The owner's. The window is this far down — rows for a cell-scrolled
     /// window, items for an index-scrolled one — at *every* layout. The
     /// framework still moves its window for a wheel, a bar drag or an anchor
@@ -1591,7 +1593,7 @@ impl<M> Node<M> {
 
     /// Where the window starts. The initial value only: from the first layout
     /// on, the offset is framework-owned. See [`Scroll::Own`].
-    pub fn scroll_at(mut self, x: u16, y: u16) -> Self {
+    pub fn scroll_at(mut self, x: u16, y: u32) -> Self {
         match &mut self.desc {
             Desc::Viewport(p) => p.scroll = Scroll::Own { x, y },
             _ => panic!("scroll_at() applies to Viewport nodes only"),

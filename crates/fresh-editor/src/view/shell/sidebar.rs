@@ -671,9 +671,11 @@ mod tests {
 
     fn explorer_section(rows: u16) -> Section {
         let mut s = Section::explorer(Explorer {
-            body: Body::Rows(vec![row_of(0, "src"), row_of(1, "lib")]),
-            caret_row: None,
-            scroll: None,
+            body: Body::Tree(file_explorer::Tree::fixture(
+                vec![row_of(0, "src"), row_of(1, "lib")],
+                |_| None,
+                0,
+            )),
         });
         s.title = " Files ".to_string();
         s.rows = rows;

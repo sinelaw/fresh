@@ -15,6 +15,53 @@ pub(crate) struct BottomRowFlags {
 
 /// The explorer as the frame builds it: its content and the chrome its
 /// section wears, before the column it sits in has been assembled.
+/// What an explorer row reads, held for the window to describe its rows at
+/// layout: the model's projection of the tree, and handles to the rest.
+/// Made once per frame; the rows are described only for the window.
+struct ExplorerRows {
+    projection: std::sync::Arc<crate::view::file_tree::view::Projection>,
+    selected: Option<usize>,
+    multi: std::collections::HashSet<crate::view::file_tree::NodeId>,
+    focused: bool,
+    unsaved: std::collections::HashSet<std::path::PathBuf>,
+    cut: Vec<std::path::PathBuf>,
+    search: Option<crate::view::file_tree::FileExplorerSearch>,
+    decorations: std::rc::Rc<crate::view::file_tree::FileExplorerDecorationCache>,
+    slot_overrides: std::rc::Rc<crate::view::file_tree::FileExplorerSlotOverrideCache>,
+    slot_resolver: crate::view::file_tree::ExplorerSlotResolver<'static>,
+    /// The editor's theme, read when a row is described.
+    theme: std::sync::Arc<std::sync::RwLock<crate::view::theme::Theme>>,
+    collapsed: String,
+    expanded: String,
+}
+
+impl ExplorerRows {
+    fn describe(&self, i: usize) -> crate::view::shell::file_explorer::Row {
+        let node = &self.projection.rows[i];
+        let fuzzy = self
+            .search
+            .as_ref()
+            .and_then(|s| s.match_name(&node.entry.name));
+        let theme = self.theme.read().unwrap();
+        crate::view::ui::file_explorer::describe_row(crate::view::ui::file_explorer::RowDesc {
+            node,
+            row: i,
+            is_cursor: self.selected == Some(i),
+            is_multi: self.multi.contains(&node.id),
+            focused: self.focused,
+            unsaved: &self.unsaved,
+            cut: &self.cut,
+            fuzzy: fuzzy.as_ref(),
+            decorations: &self.decorations,
+            slot_overrides: &self.slot_overrides,
+            slot_resolver: &self.slot_resolver,
+            theme: &theme,
+            collapsed: &self.collapsed,
+            expanded: &self.expanded,
+        })
+    }
+}
+
 struct ExplorerSection {
     kind: crate::view::shell::file_explorer::Explorer,
     title: String,
@@ -3010,9 +3057,8 @@ impl Editor {
     /// spacer with a floor.
     ///
     /// `height` is the column's, which the caller derives from the same rule
-    /// `Frame::fixed_rows` states — the viewport's row count is model state
-    /// (`set_viewport_height` drives scrolling and the web projection), so it
-    /// has to be known before the description exists.
+    /// `Frame::fixed_rows` states: the sections are sized from it before the
+    /// description exists (see `resolve_sidebar_sections`).
     fn sidebar_content(
         &mut self,
         chrome_area: ratatui::layout::Rect,
@@ -3058,7 +3104,7 @@ impl Editor {
             let rows = rows.get(i).copied().unwrap_or(0);
             let section = match kind {
                 SidebarSectionKind::Explorer => {
-                    let e = self.explorer_section(rows);
+                    let e = self.explorer_section();
                     Section {
                         kind: SectionKind::Explorer(e.kind),
                         title: e.title,
@@ -3114,9 +3160,8 @@ impl Editor {
         })
     }
 
-    /// The explorer as a section: its chrome, and its rows for a body
-    /// `rows` tall.
-    fn explorer_section(&mut self, rows: u16) -> ExplorerSection {
+    /// The explorer as a section: its chrome, and its rows.
+    fn explorer_section(&self) -> ExplorerSection {
         use crate::view::shell::file_explorer as fe;
         // The explorer reads as focused only when it actually owns the
         // keyboard — not when a focused orchestrator dock has stolen it out
@@ -3131,13 +3176,9 @@ impl Editor {
         let (title_theme, border_theme) = fe::chrome_themes(disconnected, focused);
         let close_hovered = matches!(self.shell_hover, Some(HoverTarget::FileExplorerCloseButton));
         let title = self.explorer_title(remote.as_deref());
-        let (body, scroll) = self.explorer_body(rows, focused);
-        let caret_row = focused.then(|| self.explorer_caret_row()).flatten();
         ExplorerSection {
             kind: fe::Explorer {
-                body,
-                caret_row,
-                scroll,
+                body: self.explorer_body(focused),
             },
             title,
             title_theme,
@@ -3181,118 +3222,62 @@ impl Editor {
         }
     }
 
-    /// The row the caret sits on, by display index, when the panel owns the
-    /// keyboard — `None` when the selection is scrolled out of the window,
-    /// where there is no row to carry it.
-    fn explorer_caret_row(&self) -> Option<usize> {
-        let view = self.file_explorer()?;
-        let selected = view.get_selected_index()?;
-        view.viewport_display_indices()
-            .contains(&selected)
-            .then_some(selected)
-    }
-
-    /// One row per visible tree node — or the loading placeholder while the
-    /// tree is still being built.
+    /// The tree as the explorer's window reads it — or the loading
+    /// placeholder while the tree is still being built.
     ///
-    /// The viewport height is set here because it is model state: scrolling and
-    /// the web projection both read it, and it must be current whether or not
-    /// anything paints.
-    #[allow(clippy::type_complexity)]
-    fn explorer_body(
-        &mut self,
-        rows: u16,
-        focused: bool,
-    ) -> (
-        crate::view::shell::file_explorer::Body,
-        Option<crate::view::shell::file_explorer::Scroll>,
-    ) {
+    /// Nothing here knows how tall the window is. The rows are described at
+    /// layout, for the window the list placed, from the model's projection
+    /// and handles to what a row reads (see [`ExplorerRows`]).
+    fn explorer_body(&self, focused: bool) -> crate::view::shell::file_explorer::Body {
         use crate::view::shell::file_explorer as fe;
-        // The body's rows: the section's, borders already taken off.
-        let viewport_rows = rows as usize;
-        if let Some(view) = self.file_explorer_mut() {
-            view.set_viewport_height(viewport_rows);
-            // **One offset for the rows and the window.** The tree can shrink
-            // under a deep offset — a collapse, a search that admits three
-            // files — and the model shows rows from wherever its offset
-            // lands, while the window is declared at the clamped one; the
-            // rows it asks for would then not be the rows described. Clamp
-            // through the owner, here, so the two are the same number. This
-            // is also what the window's bar used to disagree with the rows
-            // about.
-            let max = view.max_scroll_offset();
-            if view.get_scroll_offset() > max {
-                view.set_scroll_offset(max);
-            }
-        }
-        if self.file_explorer().is_none() {
-            return (
-                fe::Body::Loading(fresh_i18n::t!("explorer.loading").to_string()),
-                None,
-            );
-        }
-        let unsaved = self.explorer_unsaved_paths();
-        let cut: Vec<std::path::PathBuf> = self
-            .active_window()
+        let Some(view) = self.file_explorer() else {
+            return fe::Body::Loading(fresh_i18n::t!("explorer.loading").to_string());
+        };
+        let win = self.active_window();
+        let projection = view.projection();
+        let selected = view.get_selected_index();
+        let cut: Vec<std::path::PathBuf> = win
             .file_explorer_clipboard
             .as_ref()
             .filter(|cb| cb.is_cut)
             .map(|cb| cb.paths.clone())
             .unwrap_or_default();
-        let indicators = (
-            self.config.file_explorer.tree_indicator_collapsed.clone(),
-            self.config.file_explorer.tree_indicator_expanded.clone(),
-        );
-        let slot_resolver = self.file_explorer_slot_resolver();
-        let theme = self.theme.read().unwrap().clone();
-        let win = self.active_window();
-        let view = win.file_explorer.as_ref().expect("checked above");
-        let display = view.get_display_nodes();
-        let indices = view.viewport_display_indices();
-        let selected = view.get_selected_index();
-        let multi = view.multi_selection();
-        let search = view.is_search_active();
-        let rows: Vec<fe::Row> = indices
-            .iter()
-            .filter_map(|&actual| {
-                let &(node_id, indent) = display.get(actual)?;
-                let matched = search.then(|| view.get_match_for_node(node_id)).flatten();
-                crate::view::ui::file_explorer::describe_row(
-                    crate::view::ui::file_explorer::RowDesc {
-                        view,
-                        node_id,
-                        indent,
-                        row: actual,
-                        is_cursor: selected == Some(actual),
-                        is_multi: multi.contains(&node_id),
-                        focused,
-                        unsaved: &unsaved,
-                        cut: &cut,
-                        fuzzy: matched.as_ref(),
-                        decorations: &win.file_explorer_decoration_cache,
-                        slot_overrides: &win.file_explorer_slot_override_cache,
-                        slot_resolver: &slot_resolver,
-                        theme: &theme,
-                        collapsed: &indicators.0,
-                        expanded: &indicators.1,
-                    },
-                )
-            })
-            .collect();
-        // The window, in tree rows, as the viewport is told it: what the
-        // tree holds, where the run starts, and which ancestors are pinned
-        // above it. Whether there is a bar is the viewport's answer (issue
-        // #2859: a tree that fits draws none). The ceiling it derives from
-        // the pins is the model's `max_scroll_offset` for this offset —
-        // pinned ancestors put it past `total - rows`, and a bar that assumed
-        // otherwise showed the thumb at the end while the wheel still moved
-        // the tree.
-        let scroll = fe::Scroll {
-            offset: view.get_scroll_offset(),
-            total: display.len(),
-            pinned: view.sticky_display_indices(),
-        };
-        (fe::Body::Rows(rows), Some(scroll))
+        let rows = std::rc::Rc::new(ExplorerRows {
+            projection: projection.clone(),
+            selected,
+            multi: view.multi_selection().clone(),
+            focused,
+            unsaved: self.explorer_unsaved_paths(),
+            cut,
+            search: view.search().cloned(),
+            decorations: win.file_explorer_decoration_cache.clone(),
+            slot_overrides: win.file_explorer_slot_override_cache.clone(),
+            slot_resolver: self.file_explorer_slot_resolver(),
+            theme: self.theme.clone(),
+            collapsed: self.config.file_explorer.tree_indicator_collapsed.clone(),
+            expanded: self.config.file_explorer.tree_indicator_expanded.clone(),
+        });
+        let (keys, parents, nodes) = (projection.clone(), projection.clone(), projection.clone());
+        fe::Body::Tree(fe::Tree {
+            count: projection.len(),
+            key: std::rc::Rc::new(move |i| fe::row_key(&keys.rows[i].entry.path)),
+            row: std::rc::Rc::new(move |i| rows.describe(i)),
+            parent: std::rc::Rc::new(move |i| parents.rows.get(i).and_then(|r| r.parent)),
+            node: std::rc::Rc::new(move |i| {
+                let r = &nodes.rows[i];
+                fresh_ui::widgets::TreeRow {
+                    depth: r.indent,
+                    has_children: r.is_dir(),
+                    open: r.is_expanded(),
+                }
+            }),
+            selected,
+            reveal: view.reveal_token(),
+            caret: focused,
+            start: view.window_top(),
+            owner: win.id.0,
+            pager: Some(win.file_explorer_pager.clone()),
+        })
     }
 
     /// Paths with unsaved changes, which a row's status slot reads.

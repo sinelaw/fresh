@@ -28,23 +28,15 @@ impl crate::app::window::Window {
         );
     }
 
-    /// Put the file explorer's window at `offset` — where the library moved
-    /// it for a wheel or a bar drag, clamped to the model's own ceiling. The
-    /// wheel moves the view, not the selection: moving the selected entry
-    /// (and letting it drag the viewport) is jumpy and surprising.
-    ///
-    /// **The clamp is the model's, not the window's.** The window derives
-    /// its ceiling from the ancestors pinned at the offset it is *at*, and
-    /// only the model can say how many are pinned at the offset it is
-    /// moving *to* — `max_scroll_offset` walks the candidates. So the window
-    /// proposes and the model disposes; see `Scroll::At` in `fresh_ui`.
+    /// Record where the file explorer's window went — the list's report
+    /// after a wheel, a bar drag or a reveal. The window is the list's and
+    /// is already there; the record is what a list mounted again starts from
+    /// (see `FileTreeView::window_top`). The wheel moves the view, not the
+    /// selection: moving the selected entry (and letting it drag the
+    /// viewport) is jumpy and surprising.
     pub(super) fn scroll_file_explorer_to(&mut self, offset: usize) {
         if let Some(explorer) = self.file_explorer.as_mut() {
-            if explorer.visible_count() == 0 {
-                return;
-            }
-            let max_scroll = explorer.max_scroll_offset();
-            explorer.set_scroll_offset(offset.min(max_scroll));
+            explorer.note_window(offset);
         }
     }
 

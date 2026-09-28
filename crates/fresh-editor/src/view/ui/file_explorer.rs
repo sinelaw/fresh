@@ -1,6 +1,7 @@
 use crate::input::fuzzy::FuzzyMatch;
 use crate::primitives::display_width::str_width;
-use crate::view::file_tree::{ExplorerSlotContext, FileTreeView, NodeId};
+use crate::view::file_tree::view::VisibleRow;
+use crate::view::file_tree::ExplorerSlotContext;
 use crate::view::theme::Theme;
 
 use std::collections::HashSet;
@@ -28,9 +29,8 @@ fn folder_has_modified_files(
 
 /// Everything one row needs to describe itself.
 pub struct RowDesc<'a> {
-    pub view: &'a FileTreeView,
-    pub node_id: NodeId,
-    pub indent: usize,
+    /// The node, as the tree's projection saw it.
+    pub node: &'a VisibleRow,
     /// The row's index in the tree's display order — its key, what
     /// hit-testing answers with, and the unit the window counts in.
     pub row: usize,
@@ -63,11 +63,11 @@ pub struct RowDesc<'a> {
 /// the tree measures it. So is `trailing_slot_screen_bounds`, the 45-line
 /// second derivation that existed only so a hover could find the slot the
 /// painter had already placed.
-pub fn describe_row(d: RowDesc<'_>) -> Option<crate::view::shell::file_explorer::Row> {
+pub fn describe_row(d: RowDesc<'_>) -> crate::view::shell::file_explorer::Row {
     use crate::app::shell_host::shell_theme::{literal, pair};
     use crate::view::shell::file_explorer as fe;
 
-    let node = d.view.tree().get_node(d.node_id)?;
+    let node = d.node;
     let is_hidden = node
         .entry
         .metadata
@@ -119,8 +119,8 @@ pub fn describe_row(d: RowDesc<'_>) -> Option<crate::view::shell::file_explorer:
     };
 
     let mut left: fe::Runs = Vec::new();
-    if d.indent > 0 {
-        left.push((" ".repeat(d.indent * 2), pair(neutral, ground)));
+    if node.indent > 0 {
+        left.push((" ".repeat(node.indent * 2), pair(neutral, ground)));
     }
 
     // The indicator column is sized from the configured glyphs so names stay
@@ -129,11 +129,12 @@ pub fn describe_row(d: RowDesc<'_>) -> Option<crate::view::shell::file_explorer:
     let expanded_w = str_width(d.expanded);
     let indicator_width = collapsed_w.max(expanded_w).max(1) + 1;
     if node.is_dir() {
-        let (glyph, w) = if node.is_expanded() {
+        use crate::view::file_tree::NodeState;
+        let (glyph, w) = if node.state == NodeState::Expanded {
             (format!("{} ", d.expanded), expanded_w + 1)
-        } else if node.is_collapsed() {
+        } else if node.state == NodeState::Collapsed {
             (format!("{} ", d.collapsed), collapsed_w + 1)
-        } else if node.is_loading() {
+        } else if node.state == NodeState::Loading {
             ("⟳ ".to_string(), 2)
         } else {
             ("! ".to_string(), 2)
@@ -155,11 +156,9 @@ pub fn describe_row(d: RowDesc<'_>) -> Option<crate::view::shell::file_explorer:
     }
 
     // Ancestors that compact mode folded into this row, outermost first.
-    for id in d.view.compact_chain_for_anchor(d.node_id) {
-        if let Some(n) = d.view.tree().get_node(id) {
-            left.push((n.entry.name.clone(), pair("syntax.keyword", ground)));
-            left.push(("/".to_string(), pair("editor.line_number_fg", ground)));
-        }
+    for name in &node.chain {
+        left.push((name.clone(), pair("syntax.keyword", ground)));
+        left.push(("/".to_string(), pair("editor.line_number_fg", ground)));
     }
 
     match d.fuzzy {
@@ -190,7 +189,7 @@ pub fn describe_row(d: RowDesc<'_>) -> Option<crate::view::shell::file_explorer:
         None => left.push((node.entry.name.clone(), pair(&name_fg, ground))),
     }
 
-    Some(fe::Row {
+    fe::Row {
         index: d.row,
         theme: pair("editor.fg", ground),
         left,
@@ -199,10 +198,9 @@ pub fn describe_row(d: RowDesc<'_>) -> Option<crate::view::shell::file_explorer:
             theme: pair(&literal(slot.fg), ground),
             path: node.entry.path.clone(),
         }),
-        error: node
-            .is_error()
+        error: matches!(node.state, crate::view::file_tree::NodeState::Error(_))
             .then(|| (" [Error]".to_string(), pair("diagnostic.error_fg", ground))),
-    })
+    }
 }
 
 #[cfg(test)]
@@ -211,7 +209,9 @@ mod tests {
     // Only the tests build rows straight from the caches; `describe_row`
     // takes them through `ExplorerSlotContext`.
     use crate::model::filesystem::StdFileSystem;
-    use crate::view::file_tree::{FileExplorerDecorationCache, FileExplorerSlotOverrideCache};
+    use crate::view::file_tree::{
+        FileExplorerDecorationCache, FileExplorerSlotOverrideCache, FileTreeView, NodeId,
+    };
     // The module itself no longer paints, so `Style` is a test-only type here:
     // `build_line` resolves theme *names* back to styles so these tests can go
     // on asserting about colours.
@@ -261,10 +261,12 @@ mod tests {
         theme: &Theme,
     ) -> Vec<(String, Style)> {
         let resolver = crate::view::file_tree::default_slot_providers().resolver();
+        let projection = view.projection();
+        let mut node =
+            projection.rows[projection.index_of(node_id).expect("a visible node")].clone();
+        node.indent = indent;
         let row = describe_row(RowDesc {
-            view,
-            node_id,
-            indent,
+            node: &node,
             row: 0,
             is_cursor: false,
             is_multi: false,
@@ -278,8 +280,7 @@ mod tests {
             theme,
             collapsed: ">",
             expanded: "▼",
-        })
-        .expect("the node exists");
+        });
         let resolve = |name: &str| crate::app::shell_host::shell_theme::resolve(name, theme);
         row.left
             .into_iter()

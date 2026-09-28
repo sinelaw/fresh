@@ -2896,7 +2896,7 @@ impl crate::app::window::Window {
                 width: self.file_explorer_width,
                 side: self.file_explorer_side,
                 expanded_dirs,
-                scroll_offset: explorer.get_scroll_offset(),
+                scroll_offset: explorer.window_top(),
                 show_hidden: explorer.ignore_patterns().show_hidden(),
                 show_gitignored: explorer.ignore_patterns().show_gitignored(),
                 sections: Vec::new(),
