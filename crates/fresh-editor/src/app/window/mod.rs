@@ -5070,10 +5070,15 @@ impl Window {
 
     /// Handle a `Recenter` event using the active split's viewport.
     pub(crate) fn handle_recenter_event(&mut self) {
-        let Some((mgr, vs_map)) = self.buffers.splits() else {
+        if self.buffers.splits().is_none() {
             return;
-        };
-        let active_split = mgr.active_split();
+        }
+        // The pane the user is in — a shown group's focused panel. The split
+        // manager's active leaf is the pane *showing* the group, and its
+        // buffer is the one behind it: recentering that moved a file nobody
+        // could see and left the panel where it was.
+        let active_split = self.effective_active_split();
+        let (mgr, vs_map) = self.buffers.splits().expect("splits checked above");
 
         let sync_group = vs_map.get(&active_split).and_then(|vs| vs.sync_group);
         let splits_to_recenter = if let Some(group_id) = sync_group {
@@ -5083,8 +5088,7 @@ impl Window {
         };
 
         for split_id in splits_to_recenter {
-            let (mgr, _) = self.buffers.splits().expect("splits checked above");
-            let Some(buffer_id) = mgr.buffer_for_split(split_id) else {
+            let Some(buffer_id) = self.buffer_for_leaf(split_id) else {
                 continue;
             };
 

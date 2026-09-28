@@ -4404,7 +4404,9 @@ impl Editor {
     /// produce a one-frame lag on cursor moves that trigger a scroll-sync anchor
     /// change (e.g. `G` in a side-by-side diff).
     fn pre_sync_and_scroll_sync(&mut self) {
-        let active_split = self.active_window().split_manager().active_split();
+        // The pane the user is in: a shown group's focused panel, not the
+        // pane showing the group, whose buffer tab is behind it.
+        let active_split = self.effective_active_split();
         {
             let _span = tracing::info_span!("pre_sync_ensure_visible").entered();
             self.active_window_mut()
@@ -5269,7 +5271,7 @@ impl Editor {
         let size = ratatui::layout::Rect::new(0, 0, width, height);
 
         // Replicate the pre-render sync steps from render()
-        let active_split = self.active_window().split_manager().active_split();
+        let active_split = self.effective_active_split();
         self.active_window_mut()
             .pre_sync_ensure_visible(active_split);
         self.active_window_mut().sync_scroll_groups();

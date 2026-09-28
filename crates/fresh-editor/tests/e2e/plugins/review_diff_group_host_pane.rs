@@ -180,9 +180,10 @@ fn test_goto_line_preview_in_a_group_leaves_the_hidden_file_alone() {
     harness.wait_for_prompt_closed().unwrap();
     harness.wait_until(review_diff_showing).unwrap();
 
-    // Read once the group is up: while the palette that opened it was on
-    // screen the file was still shown, in less room, and scrolled to keep
-    // its caret in view — the file's own business, before it was hidden.
+    // Read once the group is up, so what is compared is only what happens
+    // while the file is behind it. (The recenter a goto-line jump ends in
+    // used to land on this file — the split manager's active leaf — and
+    // move its top, while the panel the jump was in stayed put.)
     let parked = hidden_view(&harness);
     assert!(
         parked.0 > 0 && parked.1 > 0,
