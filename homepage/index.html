@@ -7,7 +7,7 @@
     <meta name="description" content="Fresh is a terminal IDE. One static binary, instant startup, broad LSP coverage, magit-style diff review, project-wide search, huge-file editing, SSH remote editing, and TypeScript plugins.">
     <meta name="theme-color" content="#0c0d0f">
     <meta property="og:title" content="Fresh — the terminal IDE">
-    <meta property="og:description" content="Some tools simply get out of your way. A terminal editor and IDE with the keys and mouse you already know, and nothing to configure.">
+    <meta property="og:description" content="A modern terminal IDE. Familiar keys, a working mouse, LSP and git review, plus a home for the coding agents you already use.">
     <meta property="og:image" content="public/assets/shots/orchestrator.webp">
     <link rel="icon" type="image/png" href="public/assets/logo-64.png">
     <!-- The version badge fetch fires while the page is still parsing, so
@@ -234,6 +234,7 @@
         .hero-text .install { margin-left: 0; }
         .hero-text .install-tabs, .hero-text .hero-links { justify-content: flex-start; }
         .hero-links .free { color: var(--faint); }
+        .keep { white-space: nowrap; }
 
         /* The film, in a slim black frame */
         .film {
@@ -584,6 +585,13 @@
 
         /* Closing card */
         .closing { text-align: center; padding: 190px 0 150px; }
+        .closing .kicker {
+            font-family: var(--serif);
+            font-size: clamp(1.9rem, 3.6vw, 2.8rem);
+            line-height: 1.15;
+            color: var(--paper-2);
+            margin-bottom: 72px;
+        }
         .closing .mark { width: 76px; height: 76px; border-radius: 18px; }
         .closing .name {
             display: block;
@@ -711,9 +719,9 @@
     <header class="hero" id="top">
         <div class="wrap hero-grid">
             <div class="hero-text">
-                <span class="eyebrow reveal">Fresh &nbsp;·&nbsp; The terminal IDE</span>
-                <h1 class="reveal">Some tools simply get out of <em>your way.</em></h1>
-                <p class="lede reveal">Keys you already know. A mouse that just works. The depth of an IDE, right in your terminal, with nothing to configure.</p>
+                <span class="eyebrow reveal">Fresh</span>
+                <h1 class="reveal">A modern<br><em class="keep">terminal IDE.</em></h1>
+                <p class="lede reveal">Familiar keys, a working mouse, LSP and git review, plus a home for the coding agents you already use. One binary, nothing to configure.</p>
 
                 <div class="install reveal">
                     <div class="install-tabs" role="tablist" aria-label="Operating system">
@@ -1280,6 +1288,7 @@
     <!-- Closing -->
     <section class="closing wrap">
         <div class="reveal">
+            <p class="kicker">Some tools simply get out of <em>your way.</em></p>
             <img class="mark" src="public/assets/logo.webp" alt="" width="76" height="76" loading="lazy">
             <span class="name">Fresh</span>
             <p class="tag">The terminal IDE, <em>refined.</em></p>
