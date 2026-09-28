@@ -139,5 +139,9 @@ for w in Regular Bold ExtraBold; do
 done
 [[ -f "$W/fonts/Inter-900.woff2" ]] || curl -fsSL -o "$W/fonts/Inter-900.woff2" \
   "https://cdn.jsdelivr.net/npm/@fontsource-variable/inter/files/inter-latin-wght-normal.woff2"
+for f in instrument-serif-latin-400-normal instrument-serif-latin-400-italic; do
+  [[ -f "$W/fonts/$f.woff2" ]] || curl -fsSL -o "$W/fonts/$f.woff2" \
+    "https://cdn.jsdelivr.net/npm/@fontsource/instrument-serif/files/$f.woff2"
+done
 python3 -c "from PIL import Image; im=Image.open('$REPO/docs/logo.png'); im.thumbnail((600,600)); im.save('$W/logo.png')"
 echo "work dir ready: $W"

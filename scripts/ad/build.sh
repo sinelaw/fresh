@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Record every clip, synthesize the soundtrack and render the 30 s vertical ad.
+# Record every clip, synthesize the soundtracks and render both 30 s vertical cuts:
+# fresh-ad.mp4 (fast, 137 BPM) and fresh-ad-calm.mp4 (calm, 70 BPM).
 #   scripts/ad/build.sh            # full run
 #   SKIP_RECORD=1 scripts/ad/build.sh   # re-render from existing recordings
 set -euo pipefail
@@ -15,8 +16,9 @@ if [[ -z "${SKIP_RECORD:-}" ]]; then
 fi
 for c in $CLIPS; do python3 "$HERE/cast2frames.py" "$AD_WORK/casts/$c.cast" "$AD_WORK/frames/$c.json"; done
 python3 "$HERE/music.py" "$AD_WORK/music.wav"
+python3 "$HERE/music_calm.py" "$AD_WORK/music_calm.wav"
 
-cp "$HERE/ad.html" "$HERE/scenes.js" "$HERE/render.mjs" "$AD_WORK/"
+cp "$HERE"/{engine.js,ad.html,scenes.js,calm.html,calm.js,render.mjs} "$AD_WORK/"
 cd "$AD_WORK"
 PORT="${AD_PORT:-8765}"
 python3 -m http.server "$PORT" --bind 127.0.0.1 >/dev/null 2>&1 &
@@ -28,4 +30,5 @@ FFMPEG="${FFMPEG:-$(command -v ffmpeg || python3 -c 'import imageio_ffmpeg; prin
 AD_PORT="$PORT" FFMPEG="$FFMPEG" node render.mjs video raw.mp4
 # loudness to about -14 LUFS, where the social platforms normalise
 "$FFMPEG" -loglevel error -y -i raw.mp4 -c:v copy -af volume=-4.5dB -c:a aac -b:a 192k -movflags +faststart fresh-ad.mp4
-echo "wrote $AD_WORK/fresh-ad.mp4"
+AD_PORT="$PORT" AD_PAGE=calm.html AD_AUDIO=music_calm.wav FFMPEG="$FFMPEG" node render.mjs video fresh-ad-calm.mp4
+echo "wrote $AD_WORK/fresh-ad.mp4 and $AD_WORK/fresh-ad-calm.mp4"
