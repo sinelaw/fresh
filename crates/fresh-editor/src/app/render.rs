@@ -3723,6 +3723,7 @@ impl Editor {
                     crate::view::popup::PopupResolver::WorkspaceTrust
                 ),
                 selected_hint: p.accept_key_hint.clone(),
+                pager: p.pager.clone(),
             },
             transient: p.transient,
             keys: None,

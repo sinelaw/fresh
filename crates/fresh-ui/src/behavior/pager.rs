@@ -50,6 +50,13 @@ impl Pager {
         self.rows.set(None);
     }
 
+    /// How many items the window held when the list was last laid out;
+    /// `None` when it has not been, or is gone. For an owner that keeps a
+    /// window of its own in step with the one drawn.
+    pub fn window(&self) -> Option<usize> {
+        self.rows.get()
+    }
+
     /// The item `pages` pages from `from` (negative: up) in a list of `len`
     /// items, clamped to the list: a page past the end lands on the last
     /// item, and one before the start on the first.

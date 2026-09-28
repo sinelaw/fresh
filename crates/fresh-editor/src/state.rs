@@ -1711,6 +1711,7 @@ pub(crate) fn convert_popup_data_to_popup(
         border_style: Style::default().fg(popup_border_fg),
         background_style: Style::default().bg(popup_bg),
         scroll_offset: 0,
+        pager: Default::default(),
         text_selection: None,
         accept_key_hint: None,
         resolver,
