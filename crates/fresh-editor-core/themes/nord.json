@@ -72,7 +72,7 @@
     "match_bg": [235, 203, 139],
     "match_fg": [46, 52, 64],
     "current_match_bg": [208, 135, 112],
-    "current_match_fg": [46, 52, 64]
+    "current_match_fg": {"color": [46, 52, 64], "modifier": ["bold"]}
   },
   "diagnostic": {
     "error_fg": [191, 97, 106],

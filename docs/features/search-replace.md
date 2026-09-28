@@ -59,13 +59,16 @@ same keys work after the bar is closed, continuing from the last search.
 
 `Enter` jumps to the current match and closes the bar; `Esc` cancels.
 
-The match you land on is **selected** in full, and drawn bold in its own
-current-match color so it stands out from the other highlighted matches. For
+The match you land on is **selected** in full, and drawn in its own
+current-match style (bold, in a distinct color) so it stands out from the
+other highlighted matches. For
 a regex search this shows exactly how far the match reaches. Because it is a
 selection, `Delete` removes the whole match and typing replaces it; `F3` then
 continues with the next match, even one that now starts where the deleted
-match was. The colors are the theme's `search.current_match_bg` and
-`search.current_match_fg`.
+match was. The style comes from the theme's `search.current_match_bg` and
+`search.current_match_fg`. Like a syntax color, `current_match_fg` can bundle
+text attributes: `{"color": [255, 255, 255], "modifier": ["bold"]}`; a bare
+color means no attributes.
 
 ## Regex and Capture Groups
 

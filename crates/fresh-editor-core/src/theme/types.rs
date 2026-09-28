@@ -1305,9 +1305,11 @@ pub struct SearchColors {
     /// among the other highlighted matches.  Default: orange.
     #[serde(default = "default_search_current_match_bg")]
     pub current_match_bg: ColorDef,
-    /// Text color of the current search match.  Default: white.
+    /// Text color of the current search match, optionally bundled with text
+    /// attributes (`{"color": [255, 255, 255], "modifier": ["bold"]}`).
+    /// Default: bold white.
     #[serde(default = "default_search_current_match_fg")]
-    pub current_match_fg: ColorDef,
+    pub current_match_fg: StyledColorDef,
     /// Background color for jump labels (e.g. flash plugin labels).
     /// Should be visually distinct from `match_bg` so labels stand
     /// out against highlighted matches.  Default: bright magenta.
@@ -1330,8 +1332,11 @@ fn default_search_match_fg() -> ColorDef {
 fn default_search_current_match_bg() -> ColorDef {
     ColorDef::Rgb(200, 100, 0)
 }
-fn default_search_current_match_fg() -> ColorDef {
-    ColorDef::Rgb(255, 255, 255)
+fn default_search_current_match_fg() -> StyledColorDef {
+    StyledColorDef::Styled {
+        color: ColorDef::Rgb(255, 255, 255),
+        modifier: Some(ModifierDef(vec!["bold".to_string()])),
+    }
 }
 // Mirrors flash.nvim's default FlashLabel (links to Substitute, which
 // is a magenta-family colour in most colorschemes).  The pairing is
@@ -1680,6 +1685,7 @@ pub struct Theme {
     pub search_match_fg: Color,
     pub search_current_match_bg: Color,
     pub search_current_match_fg: Color,
+    pub search_current_match_modifier: Modifier,
     pub search_label_bg: Color,
     pub search_label_fg: Color,
 
@@ -1976,7 +1982,8 @@ impl From<ThemeFile> for Theme {
             search_match_bg: file.search.match_bg.into(),
             search_match_fg: file.search.match_fg.into(),
             search_current_match_bg: file.search.current_match_bg.into(),
-            search_current_match_fg: file.search.current_match_fg.into(),
+            search_current_match_fg: file.search.current_match_fg.color().clone().into(),
+            search_current_match_modifier: file.search.current_match_fg.modifier(),
             search_label_bg: file.search.label_bg.into(),
             search_label_fg: file.search.label_fg.into(),
             diagnostic_error_fg: file.diagnostic.error_fg.into(),
@@ -2157,7 +2164,10 @@ impl From<Theme> for ThemeFile {
                 match_bg: theme.search_match_bg.into(),
                 match_fg: theme.search_match_fg.into(),
                 current_match_bg: theme.search_current_match_bg.into(),
-                current_match_fg: theme.search_current_match_fg.into(),
+                current_match_fg: StyledColorDef::from_parts(
+                    theme.search_current_match_fg,
+                    theme.search_current_match_modifier,
+                ),
                 label_bg: theme.search_label_bg.into(),
                 label_fg: theme.search_label_fg.into(),
             },
@@ -2720,7 +2730,7 @@ theme_color_keys! {
     },
     "search" => {
         "current_match_bg" => color search_current_match_bg,
-        "current_match_fg" => color search_current_match_fg,
+        "current_match_fg" => color search_current_match_fg modifier search_current_match_modifier,
         "label_bg" => color search_label_bg,
         "label_fg" => color search_label_fg,
         "match_bg" => color search_match_bg,
@@ -2922,6 +2932,44 @@ mod tests {
         )
         .unwrap();
         assert!(cleared.resolve_modifier_key("syntax.keyword").is_empty());
+    }
+
+    #[test]
+    fn current_search_match_style_comes_from_the_theme() {
+        // Bundled themes draw the current match bold.
+        let dark = Theme::load_builtin(THEME_DARK).unwrap();
+        assert_eq!(dark.search_current_match_modifier, Modifier::BOLD);
+        assert_eq!(
+            dark.resolve_modifier_key("search.current_match_fg"),
+            Modifier::BOLD
+        );
+
+        // A theme can pick other attributes, or none with a bare color.
+        let underlined = Theme::from_json(
+            r#"{
+                "name": "current-match-underlined",
+                "extends": "builtin://dark",
+                "search": {
+                    "current_match_fg": { "color": [1, 2, 3], "modifier": ["underlined"] }
+                }
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(underlined.search_current_match_fg, Color::Rgb(1, 2, 3));
+        assert_eq!(
+            underlined.search_current_match_modifier,
+            Modifier::UNDERLINED
+        );
+
+        let plain = Theme::from_json(
+            r#"{
+                "name": "current-match-plain",
+                "extends": "builtin://dark",
+                "search": { "current_match_fg": [1, 2, 3] }
+            }"#,
+        )
+        .unwrap();
+        assert!(plain.search_current_match_modifier.is_empty());
     }
 
     #[test]

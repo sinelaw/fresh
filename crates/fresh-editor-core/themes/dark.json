@@ -103,7 +103,7 @@
     "match_bg": [100, 100, 20],
     "match_fg": [255, 255, 255],
     "current_match_bg": [200, 100, 0],
-    "current_match_fg": [255, 255, 255]
+    "current_match_fg": {"color": [255, 255, 255], "modifier": ["bold"]}
   },
   "diagnostic": {
     "error_fg": "Red",

@@ -66,12 +66,20 @@ impl Editor {
     /// Mark `position..position + len` as the current search match, so it
     /// stands out from the other highlighted matches.
     fn mark_current_match(&mut self, position: usize, len: usize) {
-        let (fg, bg) = {
+        let (fg, bg, modifier) = {
             let theme = self.theme.read().unwrap();
-            (theme.search_current_match_fg, theme.search_current_match_bg)
+            (
+                theme.search_current_match_fg,
+                theme.search_current_match_bg,
+                theme.search_current_match_modifier,
+            )
         };
-        self.active_window_mut()
-            .set_current_search_match(position..position + len, fg, bg);
+        self.active_window_mut().set_current_search_match(
+            position..position + len,
+            fg,
+            bg,
+            modifier,
+        );
     }
 
     /// Jump to a search match, select all of it and mark it current.

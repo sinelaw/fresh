@@ -3508,13 +3508,15 @@ impl Window {
     /// Mark `range` as the current search match, replacing any previous one.
     ///
     /// The overlay sits above the ordinary match highlight and above the
-    /// selection, and is bold, so the current match stands out even when
-    /// Find Next has selected it. An empty range just clears the mark.
+    /// selection, so the current match stands out even when Find Next has
+    /// selected it. `modifier` carries the theme's text attributes for it
+    /// (bold by default). An empty range just clears the mark.
     pub fn set_current_search_match(
         &mut self,
         range: std::ops::Range<usize>,
         fg: ratatui::style::Color,
         bg: ratatui::style::Color,
+        modifier: ratatui::style::Modifier,
     ) {
         self.clear_current_search_match();
         if range.is_empty() {
@@ -3529,7 +3531,7 @@ impl Window {
                 style: ratatui::style::Style::default()
                     .fg(fg)
                     .bg(bg)
-                    .add_modifier(ratatui::style::Modifier::BOLD),
+                    .add_modifier(modifier),
             },
             ns,
         )
