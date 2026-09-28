@@ -62,16 +62,21 @@
     "annotations": [
       {
         "rows": [
-          0,
-          34
+          5,
+          22
         ],
         "view": "tree",
-        "band": false,
-        "head": "Settings, reorganized",
+        "band": true,
         "shots": [
           "open",
           "keys"
-        ]
+        ],
+        "cols": [
+          7,
+          33
+        ],
+        "note": "Settings, reorganized",
+        "note_at": "below-right"
       }
     ],
     "views": {

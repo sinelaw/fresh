@@ -52,13 +52,18 @@
     "annotations": [
       {
         "rows": [
-          0,
-          34
+          2,
+          7
         ],
         "view": "form",
-        "band": false,
-        "head": "Live Grep, redesigned",
-        "shot": "form"
+        "band": true,
+        "shot": "form",
+        "cols": [
+          7,
+          142
+        ],
+        "note": "Live Grep, redesigned",
+        "note_at": "below-right"
       }
     ],
     "views": {

@@ -77,7 +77,7 @@
       "outro": 1.6
     },
     "header_height": 72,
-    "caption_height": 112
+    "note_size": 58
   },
   "encode": {
     "crf": 18,

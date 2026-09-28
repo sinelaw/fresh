@@ -94,12 +94,11 @@
     "annotations": [
       {
         "rows": [
-          0,
-          34
+          18,
+          27
         ],
         "view": "all",
         "band": false,
-        "head": "New theme: Tokyo Night",
         "swipe": {
           "to": "tokyo",
           "rows": [
@@ -144,16 +143,26 @@
           "edge": 4
         },
         "hold": 1.5,
-        "shot": "hc"
+        "shot": "hc",
+        "cols": [
+          4,
+          90
+        ],
+        "tag": {
+          "text": "Tokyo Night",
+          "at": "center",
+          "size": 72,
+          "bg": true,
+          "width": 0.6
+        }
       },
       {
         "rows": [
-          0,
-          34
+          18,
+          27
         ],
         "view": "all",
         "band": false,
-        "head": "New theme: Gruvbox",
         "swipe": {
           "to": "gruvbox",
           "rows": [
@@ -198,7 +207,19 @@
           "edge": 4
         },
         "hold": 1.5,
-        "shot": "tokyo"
+        "shot": "tokyo",
+        "cols": [
+          4,
+          90
+        ],
+        "tag": {
+          "text": "Gruvbox",
+          "at": "center",
+          "size": 72,
+          "bg": true,
+          "width": 0.6
+        },
+        "transition": "wipe"
       }
     ],
     "views": {

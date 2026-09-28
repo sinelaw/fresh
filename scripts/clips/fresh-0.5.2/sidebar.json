@@ -56,18 +56,28 @@
     "annotations": [
       {
         "rows": [
-          0,
-          34
+          22,
+          27
         ],
         "view": "all",
         "band": false,
-        "head": "Alt+Shift+N walks the sidebar",
         "hold": 1.8,
         "shots": [
           "doc",
           "n1",
           "n2"
-        ]
+        ],
+        "cols": [
+          0,
+          44
+        ],
+        "tag": {
+          "text": "Alt+Shift+N walks the sidebar",
+          "at": "center",
+          "size": 72,
+          "bg": true,
+          "width": 0.6
+        }
       }
     ],
     "views": {

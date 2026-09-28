@@ -60,22 +60,37 @@
       {
         "rows": [
           0,
-          34
+          4
         ],
         "view": "all",
         "band": false,
-        "head": "Orchestrator mode",
-        "shot": "dock"
+        "shot": "dock",
+        "cols": [
+          0,
+          40
+        ],
+        "tag": {
+          "text": "Orchestrator mode",
+          "at": "center",
+          "size": 72,
+          "bg": true,
+          "width": 0.6
+        }
       },
       {
         "rows": [
-          0,
-          34
+          20,
+          23
         ],
         "view": "card",
-        "band": false,
-        "head": "Ctrl+Q: detach, don't kill",
-        "shot": "detach"
+        "band": true,
+        "shot": "detach",
+        "cols": [
+          60,
+          106
+        ],
+        "note": "Ctrl+Q detaches",
+        "note_at": "below-right"
       }
     ],
     "views": {

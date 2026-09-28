@@ -41,13 +41,18 @@
     "annotations": [
       {
         "rows": [
-          0,
-          34
+          21,
+          23
         ],
         "view": "card",
-        "band": false,
-        "head": "Interrupted saves, recoverable",
-        "shot": "dialog"
+        "band": true,
+        "shot": "dialog",
+        "cols": [
+          58,
+          106
+        ],
+        "note": "Interrupted saves recover",
+        "note_at": "below-left"
       }
     ],
     "views": {

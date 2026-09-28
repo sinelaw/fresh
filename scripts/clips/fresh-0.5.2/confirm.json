@@ -52,13 +52,18 @@
     "annotations": [
       {
         "rows": [
-          0,
-          34
+          19,
+          21
         ],
         "view": "card",
-        "band": false,
-        "head": "Real confirm dialogs",
-        "shot": "card"
+        "band": true,
+        "shot": "card",
+        "cols": [
+          70,
+          106
+        ],
+        "note": "Real confirm dialogs",
+        "note_at": "below-left"
       }
     ],
     "views": {

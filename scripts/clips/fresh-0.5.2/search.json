@@ -51,13 +51,18 @@
     "annotations": [
       {
         "rows": [
-          0,
-          34
+          7,
+          20
         ],
         "view": "hits",
-        "band": false,
-        "head": "Search ignores case",
-        "shot": "hits"
+        "band": true,
+        "shot": "hits",
+        "cols": [
+          6,
+          12
+        ],
+        "note": "todo finds TODO, Todo",
+        "note_at": "below-right"
       }
     ],
     "views": {

@@ -42,13 +42,18 @@
     "annotations": [
       {
         "rows": [
-          0,
-          34
+          3,
+          6
         ],
         "view": "text",
-        "band": false,
-        "head": "CJK + tabs, fixed",
-        "shot": "tabs"
+        "band": true,
+        "shot": "tabs",
+        "cols": [
+          0,
+          22
+        ],
+        "note": "CJK + tabs, fixed",
+        "note_at": "below-right"
       }
     ],
     "views": {
