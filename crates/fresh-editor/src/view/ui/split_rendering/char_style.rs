@@ -265,7 +265,11 @@ pub(super) fn compute_char_style(ctx: &CharStyleContext) -> CharStyleOutput {
     // Themes may also opt into SGR text attributes here (e.g. `Reversed`)
     // so a native-palette theme can swap fg/bg via the terminal instead
     // of relying on a fixed bg color — see `Theme::selection_modifier`.
-    if ctx.is_selected {
+    //
+    // An overlay marked `above_selection` (the current search match, which
+    // Find Next also selects) keeps its own look instead.
+    let covered_by_above_selection_overlay = ctx.active_overlays.iter().any(|o| o.above_selection);
+    if ctx.is_selected && !covered_by_above_selection_overlay {
         style = style.bg(ctx.theme.selection_bg);
         if !ctx.theme.selection_modifier.is_empty() {
             style = style.add_modifier(ctx.theme.selection_modifier);
@@ -388,6 +392,67 @@ mod tests {
 
         assert!(out.style.add_modifier.contains(Modifier::BOLD));
         assert!(out.style.add_modifier.contains(Modifier::ITALIC));
+    }
+
+    fn run_selected(theme: &Theme, overlay: &Overlay) -> CharStyleOutput {
+        let overlays: Vec<&Overlay> = vec![overlay];
+        compute_char_style(&CharStyleContext {
+            byte_pos: Some(0),
+            token_style: None,
+            ansi_style: Style::default(),
+            is_cursor: false,
+            is_selected: true,
+            theme,
+            highlight_color: None,
+            highlight_theme_key: None,
+            highlight_bg: None,
+            highlight_bg_theme_key: None,
+            semantic_token_color: None,
+            active_overlays: &overlays,
+            primary_cursor_position: 0,
+            is_active: true,
+            skip_primary_cursor_reverse: true,
+            is_cursor_line_highlighted: false,
+            current_line_bg: theme.current_line_bg,
+        })
+    }
+
+    #[test]
+    fn selection_paints_over_ordinary_overlay() {
+        let theme = Theme::load_builtin(crate::view::theme::THEME_DARK).unwrap();
+        let mut ml = MarkerList::new();
+        ml.set_buffer_size(100);
+        let o = Overlay::new(
+            &mut ml,
+            0..10,
+            OverlayFace::Style {
+                style: Style::default().bg(Color::Rgb(1, 2, 3)),
+            },
+        );
+
+        let out = run_selected(&theme, &o);
+
+        assert_eq!(out.style.bg, Some(theme.selection_bg));
+        assert_eq!(out.bg_theme_key, Some("editor.selection_bg"));
+    }
+
+    #[test]
+    fn above_selection_overlay_keeps_its_bg_on_selected_text() {
+        let theme = Theme::load_builtin(crate::view::theme::THEME_DARK).unwrap();
+        let mut ml = MarkerList::new();
+        ml.set_buffer_size(100);
+        let o = Overlay::new(
+            &mut ml,
+            0..10,
+            OverlayFace::Style {
+                style: Style::default().bg(Color::Rgb(1, 2, 3)),
+            },
+        )
+        .with_above_selection();
+
+        let out = run_selected(&theme, &o);
+
+        assert_eq!(out.style.bg, Some(Color::Rgb(1, 2, 3)));
     }
 
     #[test]

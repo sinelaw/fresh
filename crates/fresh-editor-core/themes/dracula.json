@@ -84,7 +84,9 @@
   },
   "search": {
     "match_bg": [241, 250, 140],
-    "match_fg": [40, 42, 54]
+    "match_fg": [40, 42, 54],
+    "current_match_bg": [255, 184, 108],
+    "current_match_fg": [40, 42, 54]
   },
   "diagnostic": {
     "error_fg": [255, 85, 85],

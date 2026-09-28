@@ -113,6 +113,8 @@
   "search": {
     "match_bg": "Yellow",
     "match_fg": "Black",
+    "current_match_bg": "Cyan",
+    "current_match_fg": "Black",
     "label_bg": "Magenta",
     "label_fg": "White"
   },

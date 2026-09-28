@@ -63,6 +63,34 @@ impl Editor {
             .jump_active_cursor_to(position, super::navigation::JumpOptions::navigation());
     }
 
+    /// Mark `position..position + len` as the current search match, so it
+    /// stands out from the other highlighted matches.
+    fn mark_current_match(&mut self, position: usize, len: usize) {
+        let (fg, bg) = {
+            let theme = self.theme.read().unwrap();
+            (theme.search_current_match_fg, theme.search_current_match_bg)
+        };
+        self.active_window_mut()
+            .set_current_search_match(position..position + len, fg, bg);
+    }
+
+    /// Jump to a search match, select all of it and mark it current.
+    ///
+    /// The caret goes to the start of the match and the anchor to its end.
+    /// Keeping the caret at the start keeps "search from the cursor" stepping
+    /// unchanged, and shows the start of a long match first. The selection
+    /// lets the user see exactly how much a regex matched, and Delete or
+    /// typing acts on the whole match.
+    fn select_match(&mut self, position: usize, len: usize) {
+        if len > 0 {
+            self.active_window_mut()
+                .jump_active_cursor_selecting(position, position + len);
+        } else {
+            self.move_cursor_to_match(position);
+        }
+        self.mark_current_match(position, len);
+    }
+
     pub(super) fn perform_search(&mut self, query: &str) {
         if query.is_empty() {
             self.active_window_mut().search_state = None;
@@ -163,9 +191,11 @@ impl Editor {
             .position(|&pos| pos >= cursor_pos)
             .unwrap_or(0);
 
-        // Move cursor to the first match
+        // Select the first match. Done before the overlays are built so a
+        // large file's viewport-only overlays cover where the match scrolled.
         let match_pos = matches[current_match_index];
-        self.move_cursor_to_match(match_pos);
+        let match_len = match_lengths[current_match_index];
+        self.select_match(match_pos, match_len);
 
         let num_matches = matches.len();
 
@@ -392,24 +422,30 @@ impl Editor {
         }
     }
 
-    /// Get current match positions from search overlays (which use markers
-    /// that auto-track edits).  Only useful for small files where we create
-    /// overlays for ALL matches.
-    fn get_search_match_positions(&self) -> Vec<usize> {
+    /// Get current match positions and lengths from search overlays (which
+    /// use markers that auto-track edits).  Only useful for small files where
+    /// we create overlays for ALL matches.
+    ///
+    /// Returns parallel, position-sorted `(positions, lengths)` vectors.
+    fn get_search_match_positions(&self) -> (Vec<usize>, Vec<usize>) {
         let ns = &self.active_window().search_namespace;
         let state = self.active_state();
 
-        let mut positions: Vec<usize> = state
+        let mut ranges: Vec<(usize, usize)> = state
             .overlays
             .all()
             .iter()
             .filter(|o| o.namespace.as_ref() == Some(ns))
-            .filter_map(|o| state.marker_list.get_position(o.start_marker))
+            .filter_map(|o| {
+                let start = state.marker_list.get_position(o.start_marker)?;
+                let end = state.marker_list.get_position(o.end_marker)?;
+                Some((start, end.saturating_sub(start)))
+            })
             .collect();
 
-        positions.sort_unstable();
-        positions.dedup();
-        positions
+        ranges.sort_unstable();
+        ranges.dedup_by_key(|(pos, _)| *pos);
+        ranges.into_iter().unzip()
     }
 
     // `search_match_at_primary_cursor` moved to `impl Window` —
@@ -506,7 +542,7 @@ impl Editor {
     /// IntelliJ, etc.) where find always searches from the cursor, not from
     /// a stored match index.
     fn find_match_in_direction(&mut self, direction: SearchDirection) {
-        let overlay_positions = self.get_search_match_positions();
+        let (overlay_positions, overlay_lengths) = self.get_search_match_positions();
         let is_large = self.active_state().buffer.is_large_file();
 
         // While the search bar is open its incremental highlighting refreshes
@@ -527,6 +563,15 @@ impl Editor {
                 .unwrap_or(0)
         };
 
+        // Find Next moves past the match at the cursor, which is normally the
+        // current match. Once the user has deleted or typed over the current
+        // match, the match at the cursor (if any) is one that slid up into
+        // its place: that one is next, and must not be skipped.
+        let current_match_gone = self
+            .active_window()
+            .current_search_match_range()
+            .is_some_and(|r| r.is_empty());
+
         if let Some(ref mut search_state) = self.active_window_mut().search_state {
             // Use overlay positions for small files (they auto-track edits),
             // otherwise reference search_state.matches directly to avoid cloning.
@@ -534,10 +579,10 @@ impl Editor {
                 && !search_bar_open
                 && !overlay_positions.is_empty()
                 && search_state.search_range.is_none();
-            let match_positions: &[usize] = if use_overlays {
-                &overlay_positions
+            let (match_positions, match_lengths): (&[usize], &[usize]) = if use_overlays {
+                (&overlay_positions, &overlay_lengths)
             } else {
-                &search_state.matches
+                (&search_state.matches, &search_state.match_lengths)
             };
 
             if match_positions.is_empty() {
@@ -546,8 +591,14 @@ impl Editor {
 
             let target_index = match direction {
                 SearchDirection::Forward => {
-                    // First match strictly after the cursor position.
-                    let idx = match match_positions.binary_search(&(cursor_pos + 1)) {
+                    // First match strictly after the cursor position, or at
+                    // it once the current match is gone.
+                    let from = if current_match_gone {
+                        cursor_pos
+                    } else {
+                        cursor_pos + 1
+                    };
+                    let idx = match match_positions.binary_search(&from) {
                         Ok(i) | Err(i) => {
                             if i < match_positions.len() {
                                 Some(i)
@@ -594,9 +645,10 @@ impl Editor {
 
             search_state.current_match_index = Some(target_index);
             let match_pos = match_positions[target_index];
+            let match_len = match_lengths.get(target_index).copied().unwrap_or(0);
             let matches_len = match_positions.len();
 
-            self.move_cursor_to_match(match_pos);
+            self.select_match(match_pos, match_len);
 
             self.set_status_message(
                 t!(
@@ -945,9 +997,7 @@ impl Editor {
         self.active_window_mut().search_state = None;
 
         // Clear any search highlight overlays
-        let ns = self.active_window().search_namespace.clone();
-        let state = self.active_state_mut();
-        state.overlays.clear_namespace(&ns, &mut state.marker_list);
+        self.active_window_mut().clear_search_overlays();
 
         // Set status message
         self.set_status_message(
@@ -1016,8 +1066,9 @@ impl Editor {
             regex: compiled_regex,
         });
 
-        // Move cursor to first match
+        // Move cursor to first match and mark it as the one being asked about
         self.move_cursor_to_match(first_match_pos);
+        self.mark_current_match(first_match_pos, first_match_len);
 
         // Show the query-replace prompt
         self.set_prompt(Prompt::new(
@@ -1322,6 +1373,7 @@ impl Editor {
     /// Move cursor to the current match in interactive replace
     pub(super) fn move_to_current_match(&mut self, ir_state: &InteractiveReplaceState) {
         self.move_cursor_to_match(ir_state.current_match_pos);
+        self.mark_current_match(ir_state.current_match_pos, ir_state.current_match_len);
 
         // Update the prompt message (show [Wrapped] if we've wrapped around)
         let msg = if ir_state.has_wrapped {
@@ -1343,9 +1395,7 @@ impl Editor {
         self.drop_prompt(); // Clear the query-replace prompt
 
         // Clear search highlights
-        let ns = self.active_window().search_namespace.clone();
-        let state = self.active_state_mut();
-        state.overlays.clear_namespace(&ns, &mut state.marker_list);
+        self.active_window_mut().clear_search_overlays();
 
         self.set_status_message(t!("search.replaced_count", count = replacements_made).to_string());
     }

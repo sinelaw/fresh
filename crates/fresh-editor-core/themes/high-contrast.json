@@ -104,7 +104,9 @@
   },
   "search": {
     "match_bg": [255, 255, 0],
-    "match_fg": [0, 0, 0]
+    "match_fg": [0, 0, 0],
+    "current_match_bg": [0, 255, 255],
+    "current_match_fg": [0, 0, 0]
   },
   "diagnostic": {
     "error_fg": [255, 80, 80],

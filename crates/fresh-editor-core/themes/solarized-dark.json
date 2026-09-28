@@ -70,7 +70,9 @@
   },
   "search": {
     "match_bg": [181, 137, 0],
-    "match_fg": [253, 246, 227]
+    "match_fg": [253, 246, 227],
+    "current_match_bg": [203, 75, 22],
+    "current_match_fg": [253, 246, 227]
   },
   "diagnostic": {
     "error_fg": [220, 50, 47],

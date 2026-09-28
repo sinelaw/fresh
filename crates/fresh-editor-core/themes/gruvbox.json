@@ -123,6 +123,8 @@
   "search": {
     "match_bg": [250, 189, 47],
     "match_fg": [40, 40, 40],
+    "current_match_bg": [254, 128, 25],
+    "current_match_fg": [40, 40, 40],
     "label_bg": [211, 134, 155],
     "label_fg": [40, 40, 40]
   },

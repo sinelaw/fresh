@@ -334,12 +334,11 @@ fn test_search_highlight_does_not_extend_on_adjacent_insert() {
         .and_then(|s| s.bg)
         .expect("matched char should have a highlight background");
 
-    // Move just past the match and type a character.
-    for _ in 0..3 {
-        harness
-            .send_key(KeyCode::Right, KeyModifiers::NONE)
-            .unwrap();
-    }
+    // Move just past the match and type a character. The search selected the
+    // match, so Right collapses the selection to its end.
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
     harness.type_text("X").unwrap();
     harness.render().unwrap();
 
@@ -393,7 +392,9 @@ fn test_search_highlight_clears_when_edit_breaks_match() {
         .expect("matched char should have a highlight background");
 
     // Move one char into the match and type a character, breaking the match
-    // ("def" -> "dXef").
+    // ("def" -> "dXef"). The search selected the match, so Left first
+    // collapses the selection to the match start.
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
     harness
         .send_key(KeyCode::Right, KeyModifiers::NONE)
         .unwrap();
@@ -446,13 +447,12 @@ fn test_search_highlight_clears_when_whole_word_boundary_breaks() {
         .and_then(|s| s.bg)
         .expect("matched char should have a highlight background");
 
-    // Move just past the match (3 chars) and type a character. "def" -> "defX"
-    // is no longer a whole word, so the highlight must clear.
-    for _ in 0..3 {
-        harness
-            .send_key(KeyCode::Right, KeyModifiers::NONE)
-            .unwrap();
-    }
+    // Move just past the match and type a character. "def" -> "defX" is no
+    // longer a whole word, so the highlight must clear. The search selected
+    // the match, so Right collapses the selection to its end.
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
     harness.type_text("X").unwrap();
     harness.process_async_and_render().unwrap();
 
@@ -2055,10 +2055,10 @@ fn test_find_selection_invalidates_on_cursor_move() {
         "First Ctrl+F3 should move to second 'hello'"
     );
 
-    // Now manually move cursor to "world" at position 18 using End then Home to go to second line
-    // Actually, let's use arrow keys to move to position 18 (start of second "world")
-    // From position 12, we need to move 6 positions right
-    for _ in 0..6 {
+    // Now move the cursor to "world" at position 18 (start of second "world")
+    // with arrow keys. The found "hello" (12..17) is selected, so the first
+    // Right collapses the selection to its end (17); one more reaches 18.
+    for _ in 0..2 {
         harness
             .send_key(KeyCode::Right, KeyModifiers::NONE)
             .unwrap();

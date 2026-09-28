@@ -39,6 +39,13 @@ fn test_find_selection_next_on_punctuation_does_not_hijack_query() {
 
     // The lone `}` is at byte offset 30 (line 4, col 1). Move the cursor there.
     let brace_pos = content.find('}').unwrap();
+    // The search selected its first match; drop that selection so the
+    // cursor is a plain caret, as moving it in the UI would leave it.
+    harness
+        .editor_mut()
+        .active_cursors_mut()
+        .primary_mut()
+        .clear_selection();
     harness
         .editor_mut()
         .active_cursors_mut()
@@ -100,6 +107,13 @@ fn test_find_selection_next_on_whitespace_does_not_hijack_query() {
     // Park the cursor on the space between "sub" and "two" on line 2.
     let space_pos = "sub one\nsub".len();
     assert_eq!(&content[space_pos..space_pos + 1], " ");
+    // The search selected its first match; drop that selection so the
+    // cursor is a plain caret, as moving it in the UI would leave it.
+    harness
+        .editor_mut()
+        .active_cursors_mut()
+        .primary_mut()
+        .clear_selection();
     harness
         .editor_mut()
         .active_cursors_mut()

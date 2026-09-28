@@ -43,14 +43,15 @@ fn test_ctrl_d_after_search_uses_match_not_word() {
 
     run_search(&mut harness, "foo");
 
-    // After search, cursor should be at the first match (position 0) with no
-    // selection.
+    // The search selects the first match: the 3-byte substring "foo" (0..3),
+    // not the whole word "foobar" (0..6), with the caret at its start.
     {
-        let primary = harness.editor().active_cursors().primary();
+        let primary = *harness.editor().active_cursors().primary();
         assert_eq!(primary.position, 0, "cursor should be at first match");
-        assert!(
-            primary.anchor.is_none(),
-            "search should not leave a selection on the cursor"
+        assert_eq!(
+            primary.selection_range(),
+            Some(0..3),
+            "search should select just the search match, not the surrounding word"
         );
     }
 
@@ -96,4 +97,41 @@ fn test_ctrl_d_after_search_uses_match_not_word() {
          got positions {:?}",
         positions
     );
+}
+
+/// With the cursor on a search match but nothing selected (the user dropped
+/// the selection the search left), Ctrl-D still selects the search match
+/// rather than the surrounding word.
+#[test]
+fn test_ctrl_d_on_unselected_search_match_selects_match_not_word() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.txt");
+    std::fs::write(&file_path, "foobar foo foo").unwrap();
+
+    let mut harness =
+        EditorTestHarness::create(80, 24, HarnessOptions::new().without_empty_plugins_dir())
+            .unwrap();
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    run_search(&mut harness, "foo");
+
+    harness
+        .editor_mut()
+        .active_cursors_mut()
+        .primary_mut()
+        .clear_selection();
+
+    harness
+        .send_key(KeyCode::Char('d'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    let primary = *harness.editor().active_cursors().primary();
+    assert_eq!(
+        primary.selection_range(),
+        Some(0..3),
+        "Ctrl-D should select just the search match, not the word 'foobar'"
+    );
+    assert_eq!(harness.editor().active_cursors().iter().count(), 1);
 }

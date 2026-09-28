@@ -196,6 +196,14 @@ pub struct Overlay {
     /// Recorded at creation time so the theme inspector can show the exact key
     /// without reverse-mapping colors.
     pub theme_key: Option<&'static str>,
+
+    /// Paint this overlay over the selection instead of under it.
+    ///
+    /// Normally the selection background wins over every overlay. The
+    /// current search match is also the selection after Find Next, and must
+    /// keep its own color there so it still stands out from the other
+    /// matches.
+    pub above_selection: bool,
 }
 
 impl Overlay {
@@ -224,6 +232,7 @@ impl Overlay {
             extend_to_line_end: false,
             url: None,
             theme_key: None,
+            above_selection: false,
         }
     }
 
@@ -272,6 +281,7 @@ impl Overlay {
                     extend_to_line_end: false,
                     url: None,
                     theme_key: None,
+                    above_selection: false,
                 },
             )
             .collect()
@@ -306,6 +316,7 @@ impl Overlay {
             extend_to_line_end: false,
             url: None,
             theme_key: None,
+            above_selection: false,
         }
     }
 
@@ -342,6 +353,12 @@ impl Overlay {
     /// Set the theme key that produced this overlay's color
     pub fn with_theme_key(mut self, key: &'static str) -> Self {
         self.theme_key = Some(key);
+        self
+    }
+
+    /// Paint this overlay over the selection (see [`Overlay::above_selection`])
+    pub fn with_above_selection(mut self) -> Self {
+        self.above_selection = true;
         self
     }
 
