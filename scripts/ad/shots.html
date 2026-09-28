@@ -15,15 +15,16 @@ html, body { margin: 0; background: #000; }
 <script src="shots.js"></script>
 <script>
 // Stills for the website: a crop of one recorded screen, drawn at 2x.
-// renderShot(name) sizes the canvas to the crop and returns once drawn.
+// renderShot(name[, t, scale]) sizes the canvas to the crop and returns once
+// drawn; t overrides the shot's recording time (for rendering clips).
 const SCENES = [];
-window.renderShot = async (name) => {
+window.renderShot = async (name, t, k = 2) => {
   const s = SHOTS[name];
   if (!clips[s.clip]) clips[s.clip] = await (await fetch('frames/' + s.clip + '.json')).json();
-  const [c0, r0, c1, r1] = s.crop, k = 2;
+  const [c0, r0, c1, r1] = s.crop;
   cv.width = Math.round((c1 - c0) * CW * k); cv.height = Math.round((r1 - r0) * CHH * k);
   ctx.setTransform(k, 0, 0, k, -c0 * CW * k, -r0 * CHH * k);
-  drawCells(clips[s.clip], s.t, { cursor: false });
+  drawCells(clips[s.clip], t ?? s.t, { cursor: false });
   return [cv.width, cv.height];
 };
 window.ready = Promise.all([document.fonts.load('400 20px JBM'), document.fonts.load('700 20px JBM')]);
