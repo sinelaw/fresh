@@ -23,7 +23,8 @@ REPO = os.path.dirname(os.path.dirname(HERE))
 S = os.environ.get("AD_WORK", os.path.join(REPO, "target", "ad"))   # setup.sh fills this
 DEMO = os.path.join(S, "demo")
 FRESH = os.environ.get("FRESH", os.path.join(REPO, "target", "debug", "fresh"))
-COLS, ROWS = 68, 36
+# One uniform size for every clip; the compositor zooms/crops for legibility.
+COLS, ROWS = 140, 75
 
 ESC = "\x1b"
 KEYS = {
@@ -216,7 +217,8 @@ def clip_blitz():
 
 
 def new_ws(t, pick, prompt):
-    """pick: list of keys to reach the agent field and choose it."""
+    """New Workspace dialog: `pick` reaches and chooses the agent; Tab x8 from
+    the prompt lands on [ Launch ], which creates the worktree and visits it."""
     t.key("Ctrl+P", 0.6, show=False).type("Orchestrator: New Workspace", d=0.02).wait(1.5)
     t.key("Enter", 0.3, show=False).wait(3.0)
     for k in pick:
@@ -227,21 +229,41 @@ def new_ws(t, pick, prompt):
     t.wait(1.0)
     t.keys("Tab", 3, 0.7, show=False)
     t.type(prompt, d=0.04, first=0.5).wait(0.8)
-    t.keys("Tab", 8, 0.5, show=False).key("Enter", 0.5, show=False).wait(7.0)
+    t.keys("Tab", 8, 0.5, show=False).key("Enter", 0.5, show=False).wait(8.0)
+    return t
+
+
+def palette(t, cmd, wait=2.0):
+    t.key("Ctrl+P", 0.6, show=False).type(cmd, d=0.03, first=0.6).wait(1.0)
+    t.key("Enter", 0.3, show=False).wait(wait)
     return t
 
 
 def clip_agents():
-    t = T().wait(8.0)
+    """Three workspaces that look different: the main checkout reviewing its
+    diff, a worktree with an agent full-screen, and a worktree with a file
+    split beside its agent."""
+    t = T().wait(9.0)
+    palette(t, "review diff", 4.0)
     new_ws(t, ["Enter", "Down", "Down", "Enter"], "add rate limiting")
     new_ws(t, ["BTab", "BTab", "BTab", "Enter", "Down", "Enter"], "speed up the db pool")
-    new_ws(t, ["BTab", "BTab", "BTab", "Enter", "Up", "Enter"], "fix the auth bypass")
-    t.wait(3.0)
-    t.raw(ESC + "o", 0.5).wait(1.5)
-    for k in ("Up", "Up", "Down", "Down", "Up"):
+    palette(t, "split vertical", 2.5)
+    t.key("Ctrl+P", 0.6, show=False).wait(0.8).key("BS", 0.3, show=False)
+    t.type("server.rs", d=0.05, first=0.4).wait(1.2).key("Enter", 0.3, show=False).wait(3.0)
+    t.raw(ESC + "o", 0.5).wait(2.0)
+    for k in ("Up", "Up", "Down", "Down", "Up", "Up"):
         t.key(k, 2.5, show=False)
     t.wait(1.5)
-    return [FRESH_BARE], t, (84, 45), "config-orch"
+    return [FRESH_BARE], t, (COLS, ROWS), "config-orch"
+
+
+def clip_settings():
+    t = T().wait(4.0)
+    palette(t, "open settings", 2.5)
+    t.key("Down", 0.9, show=False).key("Down", 0.9, show=False).wait(1.5)
+    t.key("Tab", 0.8, show=False).key("Down", 0.8, show=False).wait(0.6)
+    t.raw(" ", 0.8).wait(1.2).raw(" ", 1.0).wait(1.5)
+    return [FRESH_ARGS, "src/server.rs"], t
 
 
 FRESH_ARGS = "__fresh__"
@@ -249,7 +271,7 @@ FRESH_BARE = "__bare__"
 CLIPS = {
     "code": clip_code, "mouse": clip_mouse, "palette": clip_palette, "themes": clip_themes,
     "multicursor": clip_multicursor, "grep": clip_grep, "huge": clip_huge,
-    "review": clip_review, "agents": clip_agents, "terminal": clip_terminal, "blitz": clip_blitz,
+    "review": clip_review, "agents": clip_agents, "settings": clip_settings, "terminal": clip_terminal, "blitz": clip_blitz,
 }
 
 
@@ -276,7 +298,7 @@ def reset_state():
         f.write("PS1='\\[\\e[1;32m\\]❯\\[\\e[0m\\] '\n")
     os.system(f"cd {DEMO} && git worktree list --porcelain | grep '^worktree' | tail -n +2 | cut -d' ' -f2 | xargs -r -n1 git worktree remove --force; "
               f"git worktree prune; git branch | grep -v main | xargs -r git branch -D >/dev/null 2>&1; rm -rf {S}/demo-* {S}/.worktrees; "
-              f"git checkout -q -- . 2>/dev/null; "
+              f"git reset -q; git checkout -q -- . 2>/dev/null; "
               f"sed -i 's/let port = 8080;/let port = env_port().unwrap_or(8080);/' src/main.rs; "
               f"sed -i 's|        let cache = Cache::with_capacity(1024);|        let cache = Cache::with_capacity(4096);\\n        log::info!(\"cache ready\");|' src/server.rs")
 

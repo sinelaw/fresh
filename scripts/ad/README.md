@@ -4,8 +4,11 @@ Two 30-second 1080×1920 cuts for short-video social media, from the same
 recordings. Every shot of the editor is a live recording of the current build,
 driven by a script, not the blog showcase GIFs.
 
-- **`fresh-ad.mp4`**: fast. 137 BPM, a cut every bar, beat-synced keypresses.
 - **`fresh-ad-calm.mp4`**: calm. 70 BPM, one long shot per bar, serif type, no flashes.
+  The Orchestrator gets two bars: a file split beside an agent, an agent on its
+  own, and the main checkout's Review Diff; the end card carries a slow ticker
+  of the rest of the features.
+- **`fresh-ad.mp4`**: fast. 137 BPM, a cut every bar, beat-synced keypresses.
 
 ```sh
 scripts/ad/build.sh                    # record all clips, render both cuts into target/ad/
@@ -24,7 +27,7 @@ imageio-ffmpeg`). Work files go to `target/ad/` (`AD_WORK` overrides).
 | `rec.py` | Drives `fresh` in a pty per clip from a key/mouse timeline; writes asciicast plus key (`k`) and mouse (`m`) marker events |
 | `cast2frames.py` | Replays a cast through `pyte` into deduplicated screen snapshots at 30 fps |
 | `music.py` | Fast cut's score: 137 BPM, D minor with a raised C♯ and G♯ (Ukrainian Dorian), reed lead, bass-heavy mix |
-| `music_calm.py` | Calm cut's score: 70 BPM, D major, rolled electric-piano chords over a pad, convolution reverb |
+| `music_calm.py` | Calm cut's score: 70 BPM, D major, rolled electric-piano chords over a pad and sub, convolution reverb |
 | `engine.js` | Shared canvas compositor: terminal cells, window, captions, chips. `renderAt(t)` draws any frame |
 | `ad.html` + `scenes.js` | Fast cut: page and cut list |
 | `calm.html` + `calm.js` | Calm cut: page, style overrides and cut list |
@@ -38,8 +41,13 @@ scene time to recording time with a piecewise-linear `map` of
 beats: put a keypress's recording time (listed in the clip's `keys`) at a
 multiple of `B`. A repeated scene time is a hard cut inside the recording.
 
-The Orchestrator clip runs in an 84×45 terminal; the others are 68×36.
-The fake agents are pinned to `COLUMNS=58`: in that narrow layout the agent's
-pty reports more columns than the pane Fresh draws, so a cursor-up redraw
-(as Ink-based agents do) leaves stale spinner lines behind. At 160 columns the
-same agent redraws cleanly.
+Every clip is recorded at one size, 140×75: wide enough for the dock and a
+split, and the same aspect as the vertical window. A shot's camera `z` zooms
+into that screen (1 = all of it); shots anchor to the left edge (`fx: 0`) so the
+gutter is never cropped, and the palette anchors bottom-left so its input line
+stays in frame.
+
+The fake agents are pinned to the width of the pane they are filmed in
+(`claude` 98 columns, `codex` 47 in half a split). Without that, in a narrow
+layout the agent's pty reports more columns than the pane Fresh draws, and a
+cursor-up redraw (as Ink-based agents do) leaves stale spinner lines behind.

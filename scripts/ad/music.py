@@ -53,11 +53,11 @@ def onepole_lp(x, cutoff):
 def kick(level=1.0):
     n = int(0.45 * SR)
     t = np.arange(n) / SR
-    f = 52 + 110 * np.exp(-t / 0.03)
+    f = 58 + 110 * np.exp(-t / 0.03)
     ph = 2 * np.pi * np.cumsum(f) / SR
     s = np.sin(ph) * np.exp(-t / 0.16)
     click = rng.standard_normal(n) * np.exp(-t / 0.003) * 0.3
-    return np.tanh((s + click) * 1.6) * level * 0.6
+    return np.tanh((s + click) * 1.9) * level * 0.85
 
 
 def clap():
@@ -90,12 +90,13 @@ def saw(freq, n, detune=0.0):
 
 def bass_note(freq, length):
     n = int(length * SR)
-    s = saw(freq, n, 0.004) + 0.6 * np.sin(2 * np.pi * freq * np.arange(n) / SR)
+    t = np.arange(n) / SR
+    s = saw(freq, n, 0.004) + 1.1 * np.sin(2 * np.pi * freq * t) + 0.2 * np.sin(np.pi * freq * t)
     cut = 320 + 1100 * np.exp(-np.arange(n) / SR / 0.06)
     s = onepole_lp(s, cut)
     e = env(n, 0.003, 0.5)
     e[-200:] *= np.linspace(1, 0, 200)
-    return np.tanh(s * 2.2) * e * 0.55
+    return np.tanh(s * 2.6) * e * 0.7
 
 
 def pluck(freq, length=0.22):
@@ -190,7 +191,7 @@ for bar in range(1, 14):
         root = BASS_ROOTS[ci]
         if ci == 3 and beat >= 2:
             root = 38
-        add(bass_note(mtof(root), BEAT / 2 * 0.95), t + BEAT / 2, 1.0)
+        add(bass_note(mtof(root), BEAT / 2 * 0.95), t + BEAT / 2, 1.35)
         hats = 4 if blitz else 2
         for h in range(hats):
             if hats == 2 and h == 0:

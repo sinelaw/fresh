@@ -57,21 +57,62 @@ function label(text, lt, y, alpha = 1, size = 26, color = K.mute) {
   ctx.restore();
 }
 
-// a terminal shot: slow push-in, gentle rise, dip to the background at both ends
+// camera keyframes [[sceneT, {z, fx, fy}], ...], eased slowly between keys
+function camPath(keys, lt, ease = 0.9) {
+  let cur = keys[0][1];
+  for (let i = 1; i < keys.length; i++) {
+    const [kt, k] = keys[i];
+    if (lt < kt) break;
+    const f = easeInOut((lt - kt) / ease);
+    cur = { z: lerp(cur.z, k.z, f), fx: lerp(cur.fx, k.fx, f), fy: lerp(cur.fy, k.fy, f) };
+  }
+  return cur;
+}
+
+// a terminal shot: slow push-in, gentle rise, dip to the background at both ends.
+// All clips share one 140x75 screen; shots anchor left (fx 0) unless panning on purpose.
 function calmShot(o) {
   return (lt, dur, t) => {
     const clip = clips[o.clip];
     const a = shotAlpha(lt, dur);
-    const p = lt / dur;
-    const z = lerp(o.z0 ?? 1.0, o.z1 ?? 1.1, easeInOut(p));
+    const cam = o.cam ? camPath(o.cam, lt) : { z: lerp(o.z0, o.z1, easeInOut(lt / dur)), fx: 0, fy: 0 };
     drawWindow({
       clip, r: pmap(o.map, lt), title: o.title, alpha: a, dy: (1 - easeOut(lt / 1.2)) * 36,
-      cam: { z, fx: o.fx ?? 0.5, fy: o.fy ?? 0.3 }, scale: Math.min(TW / (clip.cols * CW), TH / (clip.rows * CHH)),
+      cam, scale: Math.min(TW / (clip.cols * CW), TH / (clip.rows * CHH)),
     });
     if (o.label) label(o.label, lt, 215, a);
-    softCaption(o.caption, lt, dur, o.capOpts);
+    for (const [from, to, text] of o.captions) {
+      if (lt >= from && lt < to) softCaption(text, lt - from, to - from, o.capOpts);
+    }
     grain(t);
   };
+}
+
+// a slow ticker of every feature, in tracked caps between hairlines
+const FEATURES = [
+  'Command palette', 'Multi-cursor', 'Live grep', 'Themes', 'LSP', 'Go to definition',
+  'Review diff', 'Git log', 'Git blame', 'Split panes', 'Integrated terminal', 'File explorer',
+  'Keyboard macros', 'Vim mode', 'SSH remote editing', 'Multi-GB files', 'Hot exit',
+  'Markdown compose', 'Code tours', 'TypeScript plugins', 'Settings UI', 'Keybinding editor',
+  'Orchestrator', 'Git worktrees', 'Coding agents', 'Search & replace', 'Dev containers',
+];
+function ticker(lt, y, speed, offset, alpha) {
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.font = '500 24px Inter'; ctx.letterSpacing = '6px';
+  ctx.fillStyle = '#9a9ca0'; ctx.textBaseline = 'middle';
+  const text = FEATURES.slice(offset).concat(FEATURES.slice(0, offset)).map(f => f.toUpperCase()).join('   ·   ') + '   ·   ';
+  const w = ctx.measureText(text).width;
+  let x = -((lt * speed) % w);
+  if (speed < 0) x = -w - ((lt * speed) % w);
+  for (; x < W; x += w) ctx.fillText(text, x, y);
+  ctx.restore();
+  // soft edges
+  for (const [x0, x1] of [[0, 160], [W, W - 160]]) {
+    const g = ctx.createLinearGradient(x0, 0, x1, 0);
+    g.addColorStop(0, K.ink); g.addColorStop(1, 'rgba(12,13,15,0)');
+    ctx.fillStyle = g; ctx.fillRect(Math.min(x0, x1), y - 24, 160, 48);
+  }
 }
 
 const SCENES = [
@@ -103,33 +144,24 @@ const SCENES = [
   {
     start: 2, bars: 1, clip: 'code',
     draw: calmShot({
-      clip: 'code', title: 'main.rs', z0: 1.35, z1: 1.5, fx: 0.15, fy: 0.12,
+      clip: 'code', title: 'main.rs', z0: 2.4, z1: 2.6,
       map: [[0, 8.55], [3.43, 12.0]],
-      caption: 'Familiar from the\n*first keystroke.*',
+      captions: [[0, 3.43, 'Familiar from the\n*first keystroke.*']],
     }),
   },
 
-  // 3 — the palette
+  // 3 — themes, crossfaded
   {
-    start: 3, bars: 1, clip: 'palette',
-    draw: calmShot({
-      clip: 'palette', title: 'server.rs', z0: 1.15, z1: 1.3, fx: 0.5, fy: 0.95,
-      map: [[0, 4.1], [3.43, 7.6]],
-      caption: 'Everything, one\nshortcut *away.*',
-    }),
-  },
-
-  // 4 — themes, crossfaded
-  {
-    start: 4, bars: 1, clip: 'themes',
+    start: 3, bars: 1, clip: 'themes',
     draw(lt, dur, t) {
       const clip = clips.themes;
       const a = shotAlpha(lt, dur);
-      const z = lerp(1.05, 1.15, easeInOut(lt / dur));
+      const z = lerp(2.0, 2.15, easeInOut(lt / dur));
       const looks = [11.6, 14.3, 15.2];          // nord, gruvbox, dracula (settled frames)
       const seg = dur / looks.length;
       const i = Math.min(looks.length - 1, Math.floor(lt / seg));
-      const common = { title: 'server.rs', cam: { z, fx: 0.3, fy: 0.25 }, dy: (1 - easeOut(lt / 1.2)) * 36 };
+      const common = { title: 'server.rs', cam: { z, fx: 0, fy: 0 }, dy: (1 - easeOut(lt / 1.2)) * 36,
+        scale: Math.min(TW / (clip.cols * CW), TH / (clip.rows * CHH)) };
       drawWindow(Object.assign({ clip, r: looks[i], alpha: a }, common));
       const x = (lt - (i + 1) * seg + 0.45) / 0.45;   // crossfade into the next look
       if (i + 1 < looks.length && x > 0) drawWindow(Object.assign({ clip, r: looks[i + 1], alpha: a * easeInOut(x) }, common));
@@ -138,44 +170,51 @@ const SCENES = [
     },
   },
 
-  // 5 — the Orchestrator
+  // 4 — settings, without the config files
   {
-    start: 5, bars: 1, clip: 'agents',
+    start: 4, bars: 1, clip: 'settings',
     draw: calmShot({
-      clip: 'agents', title: 'orchestrator', z0: 1.12, z1: 1.2, fx: 0, fy: 0,
-      map: [[0, 96.7], [3.43, 100.2]],
+      clip: 'settings', title: 'settings', z0: 1.75, z1: 1.85,
+      map: [[0, 11.0], [3.43, 16.3]],
+      captions: [[0, 3.43, 'Settings, not\n*config files.*']],
+    }),
+  },
+
+  // 5-6 — the Orchestrator, in real time: split (agent + file), then an agent, then a diff
+  {
+    start: 5, bars: 2, clip: 'agents',
+    draw: calmShot({
+      clip: 'agents', title: 'orchestrator',
+      map: [[0, 86.4], [6.86, 93.26]],
+      cam: [[0, { z: 1.3, fx: 1, fy: 0.55 }], [2.6, { z: 1.7, fx: 0, fy: 0 }]],
       label: 'ORCHESTRATOR',
-      caption: 'Your agents,\nside by *side.*',
+      captions: [[0, 3.43, 'Every task, its\nown *workspace.*'], [3.43, 6.86, 'Agents, diffs and code,\nside by *side.*']],
     }),
   },
 
-  // 6 — the two-gigabyte log
-  {
-    start: 6, bars: 1, clip: 'huge',
-    draw: calmShot({
-      clip: 'huge', title: 'huge.log', z0: 1.45, z1: 1.55, fx: 0, fy: 0,
-      map: [[0, 3.85], [0.95, 4.9], [1.6, 5.65], [2.15, 6.2], [2.2, 9.6], [3.43, 10.9]],
-      caption: 'Two gigabytes.\n*Unbothered.*',
-    }),
-  },
-
-  // 7-8 — end card
+  // 7-8 — end card, with the rest of the features drifting past
   {
     start: 7, bars: 1.75,
     draw(lt, dur, t) {
       const out = 1 - easeInOut((lt - (dur - 1.0)) / 1.0);
       ctx.save(); ctx.globalAlpha = easeInOut(lt / 1.2) * out;
       const s = 170;
-      ctx.drawImage(imgs.logo, W / 2 - s / 2, 660 - s / 2, s, s);
+      ctx.drawImage(imgs.logo, W / 2 - s / 2, 600 - s / 2, s, s);
       ctx.restore();
-      softCaption('Fresh', lt, 99, { y: 960, size: 170, delay: 0.3, stagger: 0, alpha: out });
-      softCaption('The terminal IDE, *refined.*', lt, 99, { y: 1070, size: 58, delay: 0.9, stagger: 0.07, color: '#b9b6b0', alpha: out });
-      label('GETFRESH.DEV', lt - 1.8, 1330, out, 38, K.sage);
+      softCaption('Fresh', lt, 99, { y: 900, size: 170, delay: 0.3, stagger: 0, alpha: out });
+      softCaption('The terminal IDE, *refined.*', lt, 99, { y: 1010, size: 58, delay: 0.9, stagger: 0.07, color: '#b9b6b0', alpha: out });
+      label('GETFRESH.DEV', lt - 1.8, 1240, out, 38, K.sage);
       ctx.save(); ctx.globalAlpha = easeInOut((lt - 1.9) / 0.9) * out;
       ctx.strokeStyle = 'rgba(236,233,226,0.25)'; ctx.lineWidth = 1.5;
-      ctx.beginPath(); ctx.moveTo(W / 2 - 70, 1392); ctx.lineTo(W / 2 + 70, 1392); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(W / 2 - 70, 1302); ctx.lineTo(W / 2 + 70, 1302); ctx.stroke();
       ctx.restore();
-      softCaption('Free and open source.', lt, 99, { y: 1450, size: 40, delay: 2.4, stagger: 0.05, color: K.mute, alpha: out });
+      softCaption('Free and open source.', lt, 99, { y: 1360, size: 40, delay: 2.4, stagger: 0.05, color: K.mute, alpha: out });
+      const ta = easeInOut((lt - 0.6) / 1.5) * out;
+      ctx.save(); ctx.globalAlpha = ta * 0.35; ctx.fillStyle = K.paper;
+      ctx.fillRect(140, 1560, W - 280, 1); ctx.fillRect(140, 1700, W - 280, 1);
+      ctx.restore();
+      ticker(lt, 1605, 55, 0, ta * 0.9);
+      ticker(lt, 1655, -45, 13, ta * 0.6);
       grain(t);
     },
   },

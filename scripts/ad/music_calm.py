@@ -114,7 +114,9 @@ for bar in range(nbars):
         if not final and bar >= 1:
             add(epiano(mtof(m), 2.5, 0.45), t0 + 2 * BEAT + i * 0.03, 0.17, pan=(2 - i) * 0.18)
     add(pad([mtof(m) for m in voicing[:4]], length), t0, 0.3)
-    add(sub(mtof(root), length), t0, 0.1)
+    add(sub(mtof(root), length), t0, 0.17)
+    # a low piano root an octave up, so the bass reads on phone speakers too
+    add(epiano(mtof(root + 12), min(length, 4.0), 0.6), t0, 0.26)
     for beat, m in MELODY.get(bar, []):
         add(epiano(mtof(m), 3.0, 0.7), t0 + beat * BEAT, 0.3, pan=0.25)
     if 1 <= bar < 8:

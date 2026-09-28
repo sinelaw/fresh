@@ -29,13 +29,14 @@ json.dump(c, open(f"{w}/xdg/config-orch/fresh/config.json", "w"), indent=1)
 PY
 
 # `fresh` on PATH for the shell clips, and fake `claude`/`codex` agents (staged output,
-# see tests/fixtures/coding_agent.py). COLUMNS pins the agent to the pane width: in a
-# narrow Orchestrator layout the agent's pty reports more columns than the pane shows,
-# and its cursor-up redraw leaves stale spinner lines behind.
+# see tests/fixtures/coding_agent.py). COLUMNS pins each agent to the pane it is filmed
+# in (claude full-width beside the dock, codex in half a split): when the agent's pty
+# reports more columns than the pane shows, its cursor-up redraw leaves stale lines.
 printf '#!/bin/sh\nexec "%s" --no-upgrade-check --no-restore "$@"\n' "${FRESH:-$REPO/target/debug/fresh}" > "$W/bin/fresh"
 cp "$REPO/crates/fresh-editor/tests/fixtures/coding_agent.py" "$W/bin/"
-for a in claude codex; do
-  printf '#!/bin/sh\nCOLUMNS=58 exec python3 "%s/bin/coding_agent.py" --as %s "$@"\n' "$W" "$a" > "$W/bin/$a"
+for spec in claude:98 codex:47; do
+  a=${spec%%:*}; cols=${spec##*:}
+  printf '#!/bin/sh\nCOLUMNS=%s exec python3 "%s/bin/coding_agent.py" --as %s "$@"\n' "$cols" "$W" "$a" > "$W/bin/$a"
 done
 chmod +x "$W"/bin/*
 
