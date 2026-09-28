@@ -5,1354 +5,669 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Fresh - The Terminal IDE</title>
     <meta name="description" content="Fresh is a terminal IDE. One static binary, instant startup, broad LSP coverage, magit-style diff review, project-wide search, huge-file editing, SSH remote editing, and TypeScript plugins.">
-    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext x='12' y='70' font-family='monospace' font-size='60' font-weight='bold' fill='%23222'%3E%3E_%3C/text%3E%3C/svg%3E">
+    <meta name="theme-color" content="#0c0d0f">
+    <meta property="og:title" content="Fresh — the terminal IDE">
+    <meta property="og:description" content="Some tools simply get out of your way. A terminal editor and IDE with the keys and mouse you already know, and nothing to configure.">
+    <meta property="og:image" content="public/assets/shots/orchestrator.webp">
+    <link rel="icon" type="image/png" href="public/assets/logo-64.png">
     <!-- The version badge fetch fires while the page is still parsing, so
          warming this connection early pays off. No preconnect for the
          analytics beacon on purpose: it is deliberately held back until after
          load, and an early connection would only compete with the assets that
          actually matter. -->
     <link rel="preconnect" href="https://api.github.com" crossorigin>
-    <!-- The player's stylesheet only ever styles the hero demo, which JS
-         builds after the page is up. Loading it as print media keeps it off
-         the critical path; the onload handler promotes it once it arrives.
-         No <noscript> counterpart on purpose — without JS there is no player
-         to style, just the fallback PNG. -->
-    <link rel="stylesheet" href="public/vendor/asciinema-player/asciinema-player.css"
-          media="print" onload="this.media='all'; this.onload=null;">
+    <!-- Self-hosted fonts (see public/fonts/README.md). The two the first
+         screen needs are preloaded; the italic arrives with the first <em>. -->
+    <link rel="preload" href="public/fonts/instrument-serif-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin>
+    <link rel="preload" href="public/fonts/inter-latin-var.woff2" as="font" type="font/woff2" crossorigin>
+    <script>document.documentElement.classList.add('js');</script>
     <style>
-        :root {
-            --bg-dark: #0a0a0a;
-            --bg-darker: #050505;
-            --bg-card: #111111;
-            --text-light: #e5e5e5;
-            --text-muted: #888888;
-            --accent-green: #10b981;
-            --accent-green-dim: rgba(16, 185, 129, 0.15);
-            --accent-yellow: #fbbf24;
-            --accent-blue: #60a5fa;
-            --accent-purple: #a78bfa;
-            --border-color: #222222;
-            --font-mono: 'SF Mono', 'Cascadia Code', 'Fira Code', 'JetBrains Mono', Consolas, 'Liberation Mono', Menlo, monospace;
+        @font-face {
+            font-family: 'Instrument Serif';
+            src: url(public/fonts/instrument-serif-latin-400-normal.woff2) format('woff2');
+            font-weight: 400; font-style: normal; font-display: swap;
+        }
+        @font-face {
+            font-family: 'Instrument Serif';
+            src: url(public/fonts/instrument-serif-latin-400-italic.woff2) format('woff2');
+            font-weight: 400; font-style: italic; font-display: swap;
+        }
+        @font-face {
+            font-family: 'Inter';
+            src: url(public/fonts/inter-latin-var.woff2) format('woff2');
+            font-weight: 100 900; font-style: normal; font-display: swap;
         }
 
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
+        /* The palette of the calm film: warm ink, paper-white type, one sage
+           accent. Everything else is hairlines and space. */
+        :root {
+            --ink: #0c0d0f;
+            --ink-2: #121316;
+            --ink-3: #17191d;
+            --line: rgba(236, 233, 226, 0.09);
+            --line-2: rgba(236, 233, 226, 0.16);
+            --paper: #ece9e2;
+            --paper-2: #c4c1ba;
+            --mute: #8a8d91;
+            --faint: #5f6368;
+            --sage: #a3c9ae;
+            --sage-deep: #7fae8c;
+            --sage-dim: rgba(163, 201, 174, 0.12);
+            --serif: 'Instrument Serif', 'Iowan Old Style', 'Palatino Linotype', Georgia, serif;
+            --sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            --mono: 'SF Mono', 'Cascadia Code', 'Fira Code', 'JetBrains Mono', Consolas, 'Liberation Mono', Menlo, monospace;
+            --measure: 1180px;
+            --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
         }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
 
         html {
             scroll-behavior: smooth;
-            /* The nav is fixed and 60px tall, so an #anchor would otherwise
-               land with its heading tucked underneath it. Reset below 980px,
-               where the nav goes back to being part of the flow. */
-            scroll-padding-top: 76px;
+            /* The nav is fixed and 68px tall, so an #anchor would otherwise
+               land with its heading tucked underneath it. */
+            scroll-padding-top: 88px;
+            -webkit-text-size-adjust: 100%;
         }
-
         @media (prefers-reduced-motion: reduce) {
-            html {
-                scroll-behavior: auto;
-            }
+            html { scroll-behavior: auto; }
         }
 
-        /* Three-size typography system:
-             H1 display — clamp(2.5rem, 6vw, 4rem)   ≈ 40–64 px
-             H2 / hero claim — 1.875rem               = 30 px
-             Everything else — 1rem                   = 16 px
-
-           Almost no other font-size declarations in this file; most
-           elements inherit the body 1rem. Weight, case and color
-           carry hierarchy within tier 3 (e.g. uppercase card labels).
-        */
         body {
-            background-color: var(--bg-dark);
-            color: var(--text-light);
-            font-family: var(--font-mono);
-            font-size: 1rem;
-            line-height: 1.6;
+            background: var(--ink);
+            color: var(--paper);
+            font-family: var(--sans);
+            font-size: 17px;
+            line-height: 1.65;
             overflow-x: hidden;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+        }
+        /* One slow light across the top of the page, and a whisper of grain. */
+        body::before {
+            content: '';
+            position: fixed; inset: 0;
+            background:
+                radial-gradient(1100px 700px at 30% -10%, rgba(163, 201, 174, 0.10), transparent 70%),
+                radial-gradient(900px 600px at 100% 110%, rgba(163, 201, 174, 0.04), transparent 70%);
+            pointer-events: none;
+            z-index: -1;
+        }
+        body::after {
+            content: '';
+            position: fixed; inset: -50%;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.55'/%3E%3C/svg%3E");
+            opacity: 0.045;
+            pointer-events: none;
+            z-index: 200;
         }
 
-        a {
-            color: var(--accent-green);
-            text-decoration: none;
-            transition: color 0.2s;
+        a { color: var(--paper); text-decoration: none; transition: color 0.3s var(--ease); }
+        a:hover { color: var(--sage); }
+        ::selection { background: rgba(163, 201, 174, 0.28); }
+
+        code {
+            font-family: var(--mono);
+            font-size: 0.86em;
+            color: var(--sage);
         }
 
-        a:hover {
-            color: var(--text-light);
+        em { font-style: italic; }
+        .serif { font-family: var(--serif); font-weight: 400; }
+
+        .eyebrow {
+            font-family: var(--sans);
+            font-size: 12.5px;
+            font-weight: 500;
+            letter-spacing: 0.32em;
+            text-transform: uppercase;
+            color: var(--mute);
         }
 
-        /* Every section and sub-section heading carries a permalink, so any
-           part of the page can be linked to directly. It stays invisible
-           until you hover the heading (or tab onto the link itself) so it
-           never competes with the heading text — but it always occupies its
+        .wrap { max-width: var(--measure); margin: 0 auto; padding: 0 32px; }
+
+        /* Every section and sub-section heading carries a permalink, invisible
+           until you hover the heading (or tab onto it) but always taking its
            space, so revealing it shifts nothing. */
         .anchor-link {
-            font-weight: 400;
-            margin-left: 8px;
+            font-family: var(--sans);
+            font-size: 0.45em;
+            font-style: normal;
+            color: var(--faint);
+            margin-left: 0.4em;
+            vertical-align: middle;
             opacity: 0;
-            transition: opacity 0.2s;
+            transition: opacity 0.3s var(--ease);
+        }
+        h2:hover > .anchor-link, h3:hover > .anchor-link,
+        .anchor-link:hover, .anchor-link:focus-visible { opacity: 1; }
+        @media (hover: none) { .anchor-link { opacity: 0.5; } }
+
+        /* Quiet entrances. Without JS (or with reduced motion) everything is
+           simply there. */
+        .js .reveal { opacity: 0; transform: translateY(18px); transition: opacity 1.1s var(--ease), transform 1.1s var(--ease); }
+        .js .reveal.in { opacity: 1; transform: none; }
+        @media (prefers-reduced-motion: reduce) {
+            .js .reveal { opacity: 1; transform: none; transition: none; }
         }
 
-        /* These two headings are flex containers with their own gap, which
-           already supplies the separation. */
-        .feature-content h2 > .anchor-link,
-        .install-card h3 > .anchor-link {
-            margin-left: 0;
-        }
-
-        h2:hover > .anchor-link,
-        h3:hover > .anchor-link,
-        .anchor-link:hover,
-        .anchor-link:focus-visible {
-            opacity: 1;
-        }
-
-        /* Nothing to hover with, so keep them permanently but faintly on. */
-        @media (hover: none) {
-            .anchor-link {
-                opacity: 0.5;
-            }
-        }
-
-        /* Navigation */
+        /* ---------- Navigation ---------- */
         nav {
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
+            position: fixed; top: 0; left: 0; right: 0;
             z-index: 100;
-            background: rgba(10, 10, 10, 0.9);
-            backdrop-filter: blur(10px);
-            border-bottom: 1px solid var(--border-color);
+            transition: background 0.4s var(--ease), border-color 0.4s var(--ease);
+            border-bottom: 1px solid transparent;
         }
-
+        nav.scrolled {
+            background: rgba(12, 13, 15, 0.78);
+            -webkit-backdrop-filter: blur(14px) saturate(1.2);
+            backdrop-filter: blur(14px) saturate(1.2);
+            border-bottom-color: var(--line);
+        }
         .nav-container {
-            max-width: 1200px;
+            max-width: var(--measure);
             margin: 0 auto;
-            padding: 0 24px;
-            height: 60px;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
+            padding: 0 32px;
+            height: 68px;
+            display: flex; align-items: center; justify-content: space-between;
         }
-
-        .nav-logo {
-            font-weight: 700;
-            color: var(--accent-green);
-            display: flex;
-            align-items: center;
-            gap: 8px;
+        .nav-logo { display: flex; align-items: center; gap: 11px; color: var(--paper); }
+        .nav-logo:hover { color: var(--paper); }
+        .nav-logo img { width: 28px; height: 28px; border-radius: 7px; }
+        .nav-logo .wordmark { font-family: var(--serif); font-size: 27px; line-height: 1; letter-spacing: 0.005em; }
+        #version-badge {
+            font-family: var(--mono);
+            font-size: 11.5px;
+            color: var(--mute);
+            border: 1px solid var(--line-2);
+            border-radius: 20px;
+            padding: 2px 9px;
+            margin-left: 2px;
         }
-
-        .nav-logo span {
-            color: var(--text-muted);
-            font-weight: 400;
+        #version-badge:empty { display: none; }
+        .nav-links { display: flex; gap: 30px; align-items: center; }
+        .nav-links a { color: var(--mute); font-size: 14.5px; }
+        .nav-links a:hover { color: var(--paper); }
+        .btn-quiet {
+            display: inline-flex; align-items: center; gap: 8px;
+            border: 1px solid var(--line-2);
+            border-radius: 999px;
+            padding: 7px 16px;
+            color: var(--paper-2) !important;
+            transition: border-color 0.3s var(--ease), color 0.3s var(--ease);
         }
+        .btn-quiet:hover { border-color: var(--sage); color: var(--paper) !important; }
+        .btn-quiet img { filter: invert(0.85); opacity: 0.9; }
 
-        .nav-links {
-            display: flex;
-            gap: 32px;
-            align-items: center;
-        }
-
-        .nav-links a {
-            color: var(--text-muted);
-        }
-
-        .nav-links a:hover {
-            color: var(--text-light);
-        }
-
-        .btn-github {
-            display: flex;
-            align-items: center;
-            gap: 6px;
-            background: var(--bg-card);
-            border: 1px solid var(--border-color);
-            padding: 8px 16px;
-            border-radius: 6px;
-            color: var(--text-light);
-        }
-
-        .btn-github:hover {
-            background: #1a1a1a;
-            border-color: #333;
-        }
-
-        .btn-github img {
-            filter: invert(1);
-        }
-
-        /* Hamburger Menu */
         .hamburger {
-            display: none;
-            flex-direction: column;
-            gap: 5px;
-            background: transparent;
-            border: none;
-            cursor: pointer;
-            padding: 8px;
+            display: none; flex-direction: column; gap: 6px;
+            background: transparent; border: none; cursor: pointer; padding: 10px;
         }
-
-        .hamburger span {
-            width: 24px;
-            height: 2px;
-            background: var(--accent-green);
-            transition: all 0.3s;
-            border-radius: 2px;
-        }
-
-        .hamburger.active span:nth-child(1) {
-            transform: rotate(45deg) translate(7px, 7px);
-        }
-
-        .hamburger.active span:nth-child(2) {
-            opacity: 0;
-        }
-
-        .hamburger.active span:nth-child(3) {
-            transform: rotate(-45deg) translate(7px, -7px);
-        }
-
+        .hamburger span { width: 22px; height: 1.5px; background: var(--paper); transition: transform 0.3s var(--ease), opacity 0.3s; }
+        .hamburger.active span:nth-child(1) { transform: translateY(7.5px) rotate(45deg); }
+        .hamburger.active span:nth-child(2) { opacity: 0; }
+        .hamburger.active span:nth-child(3) { transform: translateY(-7.5px) rotate(-45deg); }
         .mobile-menu {
             display: none;
-            position: fixed;
-            top: 60px;
-            left: 0;
-            right: 0;
-            background: var(--bg-darker);
-            border-bottom: 1px solid var(--border-color);
-            max-height: 0;
-            overflow: hidden;
-            transition: max-height 0.3s ease;
+            position: fixed; top: 68px; left: 0; right: 0;
+            background: rgba(12, 13, 15, 0.97);
+            border-bottom: 1px solid var(--line);
+            max-height: 0; overflow: hidden;
+            transition: max-height 0.4s var(--ease);
             z-index: 99;
         }
-
         /* Tall enough for any number of entries — a fixed max-height silently
            cut off the last links, since .mobile-menu sets overflow: hidden. */
-        .mobile-menu.active {
-            max-height: calc(100vh - 60px);
-            overflow-y: auto;
-        }
-
-        .mobile-menu-content {
-            display: flex;
-            flex-direction: column;
-            padding: 16px;
-            gap: 8px;
-        }
-
-        .mobile-menu-content a {
-            padding: 12px 16px;
-            border-radius: 6px;
-            color: var(--text-light);
-            transition: background 0.2s;
-        }
-
-        .mobile-menu-content a:hover {
-            background: var(--bg-card);
-        }
-
-        /* Hero Section */
-        .hero {
-            min-height: 100vh;
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-            align-items: center;
-            padding: 70px 24px 40px;
-            text-align: center;
-            position: relative;
-        }
-
-        .hero-content {
-            max-width: 900px;
-            margin-bottom: 24px;
-        }
-
-        .hero h1 {
-            /* Tier 1: display. Only used by the "Fresh" title. */
-            font-size: clamp(2.5rem, 6vw, 4rem);
-            font-weight: 700;
-            color: var(--accent-green);
-            margin-bottom: 16px;
-            letter-spacing: -0.02em;
-            text-shadow: 0 0 60px rgba(16, 185, 129, 0.3);
-        }
-
-        .hero-tagline {
-            font-size: clamp(1.1rem, 3vw, 1.5rem);
-            color: var(--text-muted);
-            margin-bottom: 32px;
-            max-width: 600px;
-            margin-left: auto;
-            margin-right: auto;
-        }
-
-        .hero-features {
-            display: flex;
-            flex-wrap: wrap;
-            justify-content: center;
-            gap: 24px;
-            margin-bottom: 40px;
-        }
-
-        .hero-feature {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            color: var(--text-muted);
-            font-size: 0.95rem;
-        }
-
-        .hero-feature::before {
-            content: '>';
-            color: var(--accent-green);
-            font-weight: bold;
-        }
-
-        /* Loud hero claim — tier 2 heading. */
-        .hero-claim {
-            font-size: 1.875rem;
-            color: var(--text-light);
-            font-weight: 600;
-            margin: 0 auto 8px;
-            max-width: 780px;
-            line-height: 1.35;
-            letter-spacing: -0.01em;
-        }
-
-        .hero-claim-sub {
-            display: inline-block;
-            margin-top: 6px;
-            color: var(--text-muted);
-            font-size: 0.85em;
-            font-weight: 400;
-        }
-
-        /* Hero feature list — flat inline items separated by a
-           middle-dot. Reads quieter than rounded pills, fits the
-           dev-tool aesthetic. */
-        .feature-pills {
-            list-style: none;
-            display: block;
-            padding: 0;
-            margin: 32px auto 48px;
-            max-width: 900px;
-            color: var(--text-muted);
-            line-height: 1.8;
-            text-align: center;
-        }
-
-        .feature-pills li {
-            display: inline;
-            white-space: nowrap;
-            transition: color 0.15s ease;
-        }
-
-        .feature-pills li:hover {
-            color: var(--text-light);
-        }
-
-        /* Dot separator between adjacent list items. Wraps with the
-           following item so we never get an orphan dot starting a line. */
-        .feature-pills li + li::before {
-            content: ' · ';
-            color: var(--border-color);
-            margin: 0 6px;
-            white-space: normal;
-        }
-
-        /* The trailing "and more!" link is an inviting affordance to
-           the full feature list at the bottom of the page. */
-        .feature-pills .feature-pill-more a {
-            color: var(--accent-green);
-            text-decoration: underline;
-            text-decoration-color: rgba(16, 185, 129, 0.35);
-            text-underline-offset: 3px;
-            transition: text-decoration-color 0.15s ease;
-        }
-
-        .feature-pills .feature-pill-more a:hover {
-            text-decoration-color: var(--accent-green);
-        }
-
-        /* Show the first six benefit-led items plus the trailing
-           "and more!" link. The rest stay in the DOM (for screen
-           readers and SEO) but are not rendered. */
-        .feature-pills li:nth-child(n+7):not(.feature-pill-more) {
-            display: none;
-        }
-
-        @media (prefers-reduced-motion: reduce) {
-            .rotator-track {
-                transition: none !important;
-            }
-            .rotator-item {
-                transition: none !important;
-            }
-        }
-
-        /* Single install pill with OS tabs */
-        .install-single {
-            width: 100%;
-            max-width: 720px;
-            margin: 0 auto;
-        }
-
-        .install-tabs {
-            display: flex;
-            gap: 4px;
-            margin-bottom: 8px;
-        }
-
-        .install-tab {
-            background: transparent;
-            border: 1px solid var(--border-color);
-            border-radius: 6px;
-            color: var(--text-muted);
-            font-family: inherit;
-            padding: 6px 14px;
-            cursor: pointer;
-            transition: border-color 0.15s, color 0.15s, background 0.15s;
-        }
-
-        .install-tab:hover {
-            color: var(--text-light);
-            border-color: #333;
-        }
-
-        .install-tab.active {
-            color: var(--accent-green);
-            border-color: var(--accent-green);
-            background: rgba(16, 185, 129, 0.08);
-        }
-
-        .install-pill {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            background: var(--bg-card);
-            border: 1px solid var(--border-color);
-            border-radius: 8px;
-            padding: 8px 12px;
-            cursor: pointer;
-            transition: border-color 0.15s;
-            position: relative;
-        }
-
-        .install-pill:hover {
-            border-color: #333;
-        }
-
-        .install-pill.primary {
-            border-color: var(--border-color);
-        }
-
-        .install-pill code {
-            flex: 1;
-            color: var(--accent-green);
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-            padding: 4px 4px 4px 8px;
-        }
-
-        .install-pill .copied-popup {
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            background: var(--accent-green);
-            color: var(--bg-dark);
-            padding: 4px 12px;
-            border-radius: 4px;
-            font-weight: 600;
-            opacity: 0;
-            pointer-events: none;
-            transition: opacity 0.15s;
-            z-index: 5;
-        }
-
-        .install-pill .copied-popup.show {
-            opacity: 1;
-        }
-
-        /* Install pill + "More installation methods" sit on one row so
-           the curl command and the alternate-install link stay visually
-           connected. The pill can shrink, the link stays at its natural
-           width; on narrow screens the link wraps below. */
-        .install-row {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 12px;
-            flex-wrap: wrap;
-        }
-
-        .install-row .install-pill {
-            /* flex-basis: 260px is the preferred width — below that the
-               row wraps and the "More options…" link drops to a new
-               line rather than squeezing the command into unreadable
-               ellipsis. min-width: 0 is still needed so text-overflow
-               on the code can kick in when the pill is narrower than
-               its intrinsic content width (long curl URL). */
-            flex: 1 1 260px;
-            min-width: 0;
-            max-width: 520px;
-        }
-
-        .install-row-label {
-            color: var(--text-light);
-            font-weight: 600;
-            white-space: nowrap;
-            flex-shrink: 0;
-        }
-
-        .install-more-link {
-            color: var(--accent-green);
-            white-space: nowrap;
-            text-decoration: underline;
-            text-decoration-color: rgba(16, 185, 129, 0.35);
-            text-underline-offset: 3px;
-            flex-shrink: 0;
-        }
-
-        .install-more-link:hover {
-            color: var(--text-light);
-            text-decoration-color: var(--accent-green);
-        }
-
-        /* Download Buttons */
-        .download-section {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            gap: 16px;
-        }
-
-        .download-buttons {
-            display: flex;
-            flex-wrap: wrap;
-            justify-content: center;
-            gap: 12px;
-        }
-
-        .btn-download {
-            display: inline-flex;
-            align-items: center;
-            gap: 10px;
-            background: var(--accent-green);
-            color: var(--bg-dark);
-            padding: 14px 28px;
-            border-radius: 8px;
-            font-weight: 600;
-            font-size: 1rem;
-            transition: all 0.2s;
-            border: none;
-            cursor: pointer;
-        }
-
-        .btn-download:hover {
-            background: #34d399;
-            color: var(--bg-dark);
-            transform: translateY(-2px);
-            box-shadow: 0 8px 30px rgba(16, 185, 129, 0.3);
-        }
-
-        .btn-secondary {
-            background: transparent;
-            border: 1px solid var(--border-color);
-            color: var(--text-light);
-        }
-
-        .btn-secondary:hover {
-            background: var(--bg-card);
-            border-color: #333;
-            color: var(--text-light);
-            box-shadow: none;
-        }
-
-        .install-hint {
-            color: var(--text-muted);
-            font-size: 0.85rem;
-        }
-
-        .install-hint code {
-            background: var(--bg-card);
-            padding: 4px 10px;
-            border-radius: 4px;
-            border: 1px solid var(--border-color);
-            color: var(--accent-green);
-        }
-
-        .quick-install {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            gap: 12px;
-            width: 100%;
-        }
-
-        .quick-install-row {
-            display: flex;
-            align-items: baseline;
-            gap: 12px;
-        }
-
-        .mobile-only {
-            display: none;
-        }
-
-        .quick-install-label {
-            font-size: 1.25rem;
-            font-weight: 600;
-            color: var(--text-light);
-            flex-shrink: 0;
-        }
-
-        .quick-install-cmd {
-            cursor: pointer;
-            transition: border-color 0.2s, background 0.2s;
-            position: relative;
-            display: inline-flex;
-            align-items: center;
-        }
-
-        .copied-popup {
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            background: var(--accent-green);
-            color: var(--bg-dark);
-            padding: 8px 16px;
-            border-radius: 6px;
-            font-size: 0.9rem;
-            font-weight: 600;
-            opacity: 0;
-            pointer-events: none;
-            transition: opacity 0.3s;
-            z-index: 10;
-        }
-
-        .copied-popup.show {
-            opacity: 1;
-        }
-
-        .quick-install-cmd.copyable code {
-            font-size: 1.25rem;
-            overflow: hidden !important;
-            white-space: nowrap;
-        }
-
-        .quick-install-cmd:hover {
-            border-color: var(--accent-green);
-            background: rgba(16, 185, 129, 0.05);
-        }
-
-        .install-more-link {
-            color: var(--accent-green);
-            font-size: 1.25rem;
-            font-weight: 600;
-            white-space: nowrap;
-            text-decoration: underline;
-            text-underline-offset: 4px;
-            transition: all 0.2s;
-        }
-
-        .install-more-link:hover {
-            color: var(--text-light);
-        }
-
-        /* Hero Screenshot */
-        .hero-screenshot {
-            max-width: 1000px;
-            width: 100%;
-            position: relative;
-        }
-
-        .screenshot-wrapper {
-            position: relative;
-            border-radius: 12px;
-            overflow: hidden;
-            box-shadow:
-                0 0 0 1px var(--border-color),
-                0 25px 50px -12px rgba(0, 0, 0, 0.8),
-                0 0 100px rgba(16, 185, 129, 0.1);
-        }
-
-        .screenshot-wrapper img {
-            width: 100%;
-            height: auto;
-            display: block;
-            cursor: zoom-in;
-        }
-
-        /* Asciinema-player host — fills the hero window frame. */
-        .asciinema-host {
-            width: 100%;
-            background: var(--bg-darker);
-            display: block;
-        }
-        .asciinema-host .ap-wrapper,
-        .asciinema-host .ap-player {
-            background: var(--bg-darker) !important;
-            border: none !important;
-        }
-        .asciinema-host .ap-terminal {
-            padding: 8px !important;
-            /* 3.12.x hardcodes its own monospace stack on pre.ap-terminal, so
-               restate the stack the hero was tuned against — the demo is a TUI
-               and its box-drawing characters only line up in these fonts. */
-            font-family: "Cascadia Code", "Source Code Pro", Menlo, Consolas,
-                         "DejaVu Sans Mono", monospace, "Symbols Nerd Font" !important;
-        }
-        /* Keep the player muted — no control bar chrome in the hero. */
-        .asciinema-host .ap-control-bar {
-            display: none !important;
-        }
-        .asciinema-host img {
-            width: 100%;
-            height: auto;
-            display: block;
-        }
-
-        .screenshot-glow {
-            position: absolute;
-            inset: 0;
-            background: linear-gradient(180deg, transparent 60%, var(--bg-dark) 100%);
-            pointer-events: none;
-        }
-
-        /* Hero window titlebar (larger) */
-        .window-titlebar {
-            height: 36px;
-            background: var(--bg-darker);
-            border-bottom: 1px solid var(--border-color);
-            display: flex;
-            align-items: center;
-            padding-left: 12px;
-        }
-
-        .window-dots {
-            display: flex;
-            gap: 8px;
-        }
-
-        .window-dots span {
-            width: 12px;
-            height: 12px;
-            border-radius: 50%;
-        }
-
-        .window-dots span:nth-child(1) {
-            background: #ff5f57;
-        }
-
-        .window-dots span:nth-child(2) {
-            background: #febc2e;
-        }
-
-        .window-dots span:nth-child(3) {
-            background: #28c840;
-        }
-
-        /* Feature Sections */
-        .features {
-            padding: 80px 24px;
-            max-width: 1200px;
-            margin: 0 auto;
-        }
-
-        .feature-section {
+        .mobile-menu.active { max-height: calc(100vh - 68px); overflow-y: auto; }
+        .mobile-menu-content { padding: 12px 32px 28px; display: flex; flex-direction: column; }
+        .mobile-menu-content a { color: var(--paper-2); padding: 13px 0; border-bottom: 1px solid var(--line); font-size: 16px; }
+
+        /* ---------- Hero ---------- */
+        .hero { padding: 150px 0 0; }
+        .hero-grid {
             display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 60px;
+            grid-template-columns: minmax(0, 1fr) 380px;
+            gap: 90px;
             align-items: center;
-            padding: 60px 0;
-            border-bottom: 1px solid var(--border-color);
         }
+        .hero-text { min-width: 0; }
+        .hero-text .install { margin-left: 0; }
+        .hero-text .install-tabs, .hero-text .hero-links { justify-content: flex-start; }
+        .hero-links .free { color: var(--faint); }
 
-        .feature-section:last-child {
-            border-bottom: none;
-        }
-
-        .feature-section:nth-child(even) {
-            direction: rtl;
-        }
-
-        .feature-section:nth-child(even) > * {
-            direction: ltr;
-        }
-
-        .feature-content h2 {
-            font-size: 1.875rem;
-            color: var(--text-light);
-            margin-bottom: 16px;
-            display: flex;
-            align-items: center;
-            gap: 12px;
-        }
-
-        .feature-content h2::before {
-            content: '';
-            width: 4px;
-            height: 28px;
-            background: var(--accent-green);
-            border-radius: 2px;
-        }
-
-        .feature-content p {
-            color: var(--text-muted);
-            line-height: 1.75;
-            margin-bottom: 20px;
-        }
-
-        .feature-list {
-            list-style: none;
-        }
-
-        .feature-list li {
-            color: var(--text-muted);
-            padding: 8px 0 8px 22px;
+        /* The film, in a slim black frame */
+        .film {
             position: relative;
-            line-height: 1.65;
+            margin: 0;
+            border-radius: 26px;
+            padding: 8px;
+            background: #050506;
+            border: 1px solid var(--line-2);
+            box-shadow: 0 60px 120px -40px rgba(0, 0, 0, 0.9), 0 0 0 1px rgba(0, 0, 0, 0.6);
         }
-
-        /* The "> " marker is absolutely positioned so that inline
-           children of the <li> (text, <code> spans, punctuation) can
-           flow naturally. When display: flex was here, every inline
-           child became a flex item and text wrapped one-word-per-line
-           at the container boundary. */
-        .feature-list li::before {
-            content: '>';
-            color: var(--accent-green);
-            font-weight: bold;
-            position: absolute;
-            left: 0;
-            top: 8px;
-            line-height: 1.65;
+        .film video {
+            display: block; width: 100%; height: auto;
+            aspect-ratio: 9 / 16;
+            border-radius: 19px;
+            background: #0c0d0f;
+            cursor: pointer;
         }
-
-        .feature-visual {
-            background: var(--bg-card);
-            border: 1px solid var(--border-color);
-            border-radius: 8px;
-            padding-top: 24px;
-            position: relative;
-            overflow: hidden;
+        .film-sound {
+            position: absolute; right: 22px; bottom: 22px;
+            background: rgba(12, 13, 15, 0.72);
+            -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+            border: 1px solid var(--line-2);
+            border-radius: 999px;
+            color: var(--paper-2);
+            font-family: var(--sans); font-size: 12.5px; letter-spacing: 0.06em;
+            padding: 7px 14px;
+            cursor: pointer;
+            transition: border-color 0.3s var(--ease), color 0.3s var(--ease);
         }
-
-        .feature-visual::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            height: 24px;
-            background: var(--bg-darker);
-            border-bottom: 1px solid var(--border-color);
-        }
-
-        .feature-visual-dots {
-            position: absolute;
-            top: 8px;
-            left: 8px;
-            display: flex;
-            gap: 5px;
-            z-index: 1;
-        }
-
-        .feature-visual-dots span {
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-        }
-
-        .feature-visual-dots span:nth-child(1) {
-            background: #ff5f57;
-        }
-
-        .feature-visual-dots span:nth-child(2) {
-            background: #febc2e;
-        }
-
-        .feature-visual-dots span:nth-child(3) {
-            background: #28c840;
-        }
-
-        .feature-visual img {
-            width: 100%;
-            height: auto;
-            display: block;
-            cursor: zoom-in;
-        }
-
-        .feature-code {
-            padding: 24px;
-            line-height: 1.7;
-            /* Command lines are single unbreakable tokens; scroll them rather
-               than letting them push the page wider than the viewport. */
-            overflow-x: auto;
-        }
-
-        .code-line {
-            display: block;
-            padding: 2px 0;
-        }
-
-        .code-comment { color: #6a737d; }
-        .code-keyword { color: var(--accent-purple); }
-        .code-function { color: var(--accent-blue); }
-        .code-string { color: var(--accent-green); }
-        .code-number { color: var(--accent-yellow); }
-
-        /* Installation Section */
-        .install-section {
-            padding: 80px 24px;
-            background: var(--bg-darker);
-            border-top: 1px solid var(--border-color);
-            border-bottom: 1px solid var(--border-color);
-        }
-
-        .install-container {
-            max-width: 1000px;
-            margin: 0 auto;
-        }
-
-        .install-section h2 {
-            text-align: center;
-            font-size: 1.875rem;
-            margin-bottom: 48px;
-            color: var(--text-light);
-        }
-
-        .install-even-more {
+        .film-sound:hover { color: var(--paper); border-color: var(--sage); }
+        .hero .eyebrow { display: block; margin-bottom: 30px; }
+        .hero h1 {
+            font-family: var(--serif);
             font-weight: 400;
-            text-decoration: underline;
-            text-underline-offset: 4px;
+            font-size: clamp(3.1rem, 6.4vw, 6rem);
+            line-height: 1.02;
+            letter-spacing: -0.012em;
+            color: var(--paper);
+        }
+        .hero h1 em, h2 em, .closing em { color: var(--sage); }
+        .lede {
+            max-width: 34rem;
+            margin: 30px 0 0;
+            font-size: 19px;
+            line-height: 1.6;
+            color: var(--paper-2);
         }
 
+        .install { margin: 44px 0 0; max-width: 620px; }
+        .install-tabs { display: flex; justify-content: center; gap: 26px; margin-bottom: 14px; }
+        .install-tab {
+            background: none; border: none; cursor: pointer;
+            font-family: var(--sans); font-size: 13.5px; letter-spacing: 0.04em;
+            color: var(--faint);
+            padding: 4px 0;
+            border-bottom: 1px solid transparent;
+            transition: color 0.3s var(--ease), border-color 0.3s var(--ease);
+        }
+        .install-tab:hover { color: var(--paper-2); }
+        .install-tab.active { color: var(--paper); border-bottom-color: var(--sage); }
+        .install-pill {
+            position: relative;
+            display: flex; align-items: center; gap: 14px;
+            background: rgba(18, 19, 22, 0.8);
+            border: 1px solid var(--line-2);
+            border-radius: 14px;
+            padding: 15px 16px 15px 22px;
+            cursor: pointer;
+            text-align: left;
+            transition: border-color 0.3s var(--ease);
+        }
+        .install-pill:hover { border-color: rgba(163, 201, 174, 0.55); }
+        .install-pill .prompt { font-family: var(--mono); color: var(--faint); font-size: 14px; }
+        .install-pill code {
+            flex: 1; min-width: 0;
+            font-size: 14px; color: var(--paper);
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        }
+        .copy-btn {
+            flex-shrink: 0;
+            display: inline-flex; align-items: center; justify-content: center;
+            width: 34px; height: 34px;
+            background: transparent;
+            border: 1px solid var(--line);
+            border-radius: 9px;
+            cursor: pointer;
+            transition: border-color 0.3s var(--ease), background 0.3s var(--ease);
+        }
+        .copy-btn img { filter: invert(0.8); opacity: 0.75; }
+        .copy-btn:hover { border-color: var(--line-2); background: var(--ink-3); }
+        .copy-btn.copied { border-color: var(--sage); background: var(--sage-dim); }
+        .copied-popup {
+            position: absolute; right: 12px; top: -34px;
+            font-size: 12.5px; letter-spacing: 0.06em;
+            color: var(--ink); background: var(--sage);
+            border-radius: 7px; padding: 4px 10px;
+            opacity: 0; transform: translateY(6px);
+            transition: opacity 0.3s var(--ease), transform 0.3s var(--ease);
+            pointer-events: none;
+        }
+        .copied-popup.show { opacity: 1; transform: none; }
+        .hero-links { margin-top: 20px; display: flex; flex-wrap: wrap; justify-content: center; gap: 10px 28px; font-size: 14.5px; }
+        .hero-links a { color: var(--mute); }
+        .hero-links a:hover { color: var(--paper); }
+
+        /* A window, quietly framed: monochrome chrome, one hairline, a long
+           soft shadow. Used for the live demo and every still below. */
+        .window {
+            position: relative;
+            background: #16161e;
+            border: 1px solid var(--line-2);
+            border-radius: 14px;
+            overflow: hidden;
+            box-shadow: 0 50px 120px -30px rgba(0, 0, 0, 0.85), 0 18px 40px -20px rgba(0, 0, 0, 0.6);
+        }
+        .window-bar {
+            display: flex; align-items: center; gap: 8px;
+            height: 38px; padding: 0 16px;
+            background: #131418;
+            border-bottom: 1px solid var(--line);
+        }
+        .window-bar span { width: 10px; height: 10px; border-radius: 50%; background: #34373c; }
+        .window-bar .title {
+            width: auto; height: auto; background: none; border-radius: 0;
+            flex: 1; text-align: center; margin-right: 46px;
+            font-size: 12.5px; color: var(--faint); letter-spacing: 0.02em;
+        }
+        .window img { display: block; width: 100%; height: auto; }
+
+        /* Every feature, drifting past: the end card of the film. */
+        .ticker {
+            margin: 110px 0 0;
+            border-top: 1px solid var(--line);
+            border-bottom: 1px solid var(--line);
+            padding: 22px 0;
+            overflow: hidden;
+            -webkit-mask-image: linear-gradient(90deg, transparent, #000 12%, #000 88%, transparent);
+            mask-image: linear-gradient(90deg, transparent, #000 12%, #000 88%, transparent);
+        }
+        .ticker-row { display: flex; width: max-content; animation: drift 110s linear infinite; }
+        .ticker-row + .ticker-row { margin-top: 12px; animation-duration: 140s; animation-direction: reverse; }
+        .ticker-row span {
+            font-size: 12.5px; font-weight: 500; letter-spacing: 0.26em; text-transform: uppercase;
+            color: var(--mute); white-space: nowrap; padding: 0 22px;
+        }
+        .ticker-row span::after { content: '·'; margin-left: 44px; color: var(--faint); }
+        .ticker-row + .ticker-row span { color: var(--faint); }
+        @keyframes drift { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+        @media (prefers-reduced-motion: reduce) { .ticker-row { animation: none; } }
+
+        /* ---------- Chapters ---------- */
+        .chapters { padding: 70px 0 20px; }
+        .chapter {
+            display: grid;
+            grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+            gap: 80px;
+            align-items: center;
+            padding: 110px 0;
+        }
+        .chapter + .chapter { border-top: 1px solid var(--line); }
+        .chapter.flip { grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); }
+        .chapter.flip .chapter-text { order: 2; }
+        .chapter-text .eyebrow { display: block; margin-bottom: 22px; }
+        .chapter-text .eyebrow b { color: var(--sage); font-weight: 500; margin-right: 10px; }
+        h2 {
+            font-family: var(--serif);
+            font-weight: 400;
+            font-size: clamp(2.3rem, 4.2vw, 3.5rem);
+            line-height: 1.06;
+            letter-spacing: -0.008em;
+            color: var(--paper);
+        }
+        .chapter-text p { margin-top: 24px; color: var(--paper-2); font-size: 17px; }
+        .points { list-style: none; margin-top: 28px; border-top: 1px solid var(--line); }
+        .points li {
+            position: relative;
+            padding: 12px 0 12px 26px;
+            border-bottom: 1px solid var(--line);
+            font-size: 15.5px;
+            color: var(--paper-2);
+        }
+        .points li::before {
+            content: '';
+            position: absolute; left: 2px; top: 23px;
+            width: 12px; height: 1px; background: var(--sage);
+        }
+        .chapter-visual a { display: block; }
+        .chapter-visual .window { transition: transform 0.9s var(--ease), box-shadow 0.9s var(--ease); }
+        .chapter-visual a:hover .window { transform: translateY(-4px); }
+
+        /* Three quieter notes: things that are better read than seen. */
+        .notes {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 0;
+            border-top: 1px solid var(--line);
+            border-bottom: 1px solid var(--line);
+            margin-top: 20px;
+        }
+        .note { padding: 56px 40px 60px 0; }
+        .note + .note { padding-left: 40px; border-left: 1px solid var(--line); }
+        .note h3 {
+            font-family: var(--serif); font-weight: 400;
+            font-size: 1.95rem; line-height: 1.12; color: var(--paper);
+        }
+        .note h3 em { color: var(--sage); }
+        .note p { margin-top: 16px; font-size: 15.5px; color: var(--paper-2); }
+        .note .points { margin-top: 20px; }
+        .note .points li { font-size: 14.5px; }
+        .snippet {
+            margin-top: 22px;
+            padding: 18px 20px;
+            background: var(--ink-2);
+            border: 1px solid var(--line);
+            border-radius: 12px;
+            font-family: var(--mono);
+            font-size: 13px;
+            line-height: 1.75;
+            color: var(--paper-2);
+            overflow-x: auto;
+            white-space: pre;
+        }
+        .snippet .c { color: var(--faint); }
+        .snippet .k { color: var(--sage); }
+
+        /* ---------- The Orchestrator, in three beats ---------- */
+        .orchestra {
+            padding: 150px 0 140px;
+            border-top: 1px solid var(--line);
+            border-bottom: 1px solid var(--line);
+            background: linear-gradient(180deg, rgba(163, 201, 174, 0.035), transparent 40%);
+        }
+        .section-head .eyebrow b.num { color: var(--sage); font-weight: 500; margin-right: 10px; }
+        .orchestra-hero { max-width: 1060px; margin: 0 auto; }
+        .beats {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 56px;
+            margin: 90px 0 80px;
+        }
+        .beat h3 {
+            font-family: var(--serif); font-weight: 400;
+            font-size: 1.95rem; line-height: 1.12; color: var(--paper);
+        }
+        .beat h3 em { color: var(--sage); }
+        .beat p { margin-top: 14px; color: var(--paper-2); font-size: 16px; }
+        .orchestra-review {
+            display: grid;
+            grid-template-columns: minmax(0, 7fr) minmax(0, 4fr);
+            gap: 64px;
+            align-items: center;
+        }
+
+        /* ---------- Sections with a centred head ---------- */
+        .section { padding: 150px 0 0; }
+        .section-head { text-align: center; max-width: 720px; margin: 0 auto 64px; }
+        .section-head .eyebrow { display: block; margin-bottom: 22px; }
+        .section-head p { margin-top: 20px; color: var(--paper-2); }
+        .section-head p a { color: var(--sage); }
+
+        /* Install */
         .install-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr));
-            gap: 20px;
+            grid-template-columns: repeat(auto-fill, minmax(262px, 1fr));
+            border-top: 1px solid var(--line);
+            border-left: 1px solid var(--line);
         }
-
         .install-card {
-            background: var(--bg-card);
-            border: 1px solid var(--border-color);
-            border-radius: 8px;
-            padding: 24px;
-            transition: border-color 0.2s;
+            padding: 30px 28px 32px;
+            border-right: 1px solid var(--line);
+            border-bottom: 1px solid var(--line);
+            display: flex; flex-direction: column; gap: 14px;
         }
-
-        .install-card:hover {
-            border-color: #333;
-        }
-
-        .install-card h3 {
-            color: var(--text-light);
-            margin-bottom: 12px;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-
-        .install-card h3::before {
-            content: '>';
-            color: var(--accent-green);
-        }
-
+        .install-card h3 { font-family: var(--sans); font-size: 15px; font-weight: 500; color: var(--paper); letter-spacing: 0.01em; }
         .copyable {
-            display: flex;
-            align-items: center;
-            background: var(--bg-darker);
-            border: 1px solid var(--border-color);
-            border-radius: 6px;
-            padding: 4px;
-            margin-top: 8px;
-            gap: 8px;
+            display: flex; align-items: center; gap: 10px;
+            background: var(--ink-2);
+            border: 1px solid var(--line);
+            border-radius: 10px;
+            padding: 8px 8px 8px 14px;
         }
-
         .copyable code {
-            flex: 1;
-            padding: 8px 12px;
-            color: var(--accent-green);
-            overflow-x: auto;
-            white-space: nowrap;
+            flex: 1; min-width: 0;
+            font-size: 13px; color: var(--paper);
+            overflow-x: auto; white-space: nowrap;
+            scrollbar-width: none;
         }
+        .copyable code::-webkit-scrollbar { display: none; }
+        .copyable .copy-btn { width: 30px; height: 30px; }
+        .install-card-note { font-size: 14px; color: var(--mute); }
+        .install-card-note a { color: var(--paper-2); border-bottom: 1px solid var(--line-2); }
+        .install-card-note a:hover { color: var(--sage); border-bottom-color: var(--sage); }
 
-        .copy-btn {
-            background: #222;
-            border: 1px solid #333;
-            border-radius: 4px;
-            padding: 8px 10px;
-            cursor: pointer;
-            transition: all 0.2s;
-            flex-shrink: 0;
-        }
-
-        .copy-btn:hover {
-            background: #333;
-        }
-
-        .copy-btn img {
-            width: 14px;
-            height: 14px;
-            filter: invert(0.7);
-            display: block;
-        }
-
-        .copy-btn.copied {
-            background: var(--accent-green);
-            border-color: var(--accent-green);
-        }
-
-        .copy-btn.copied img {
-            filter: invert(0);
-        }
-
-        .install-card-note {
-            color: var(--text-muted);
-            margin-top: 12px;
-        }
-
-        .install-card-note a {
-            color: var(--accent-green);
-        }
-
-        /* Full feature list — dense, comma-separated vibe,
-           no cards, no boxes. */
-        .feature-list-section {
-            padding: 60px 24px;
-            max-width: 1100px;
-            margin: 0 auto;
-        }
-
-        .feature-list-section h2 {
-            text-align: center;
-            font-size: 1.875rem;
-            margin-bottom: 48px;
-            color: var(--text-light);
-        }
-
+        /* Full feature list */
         .full-feature-list {
             list-style: none;
-            padding: 0;
-            display: flex;
-            flex-wrap: wrap;
-            justify-content: center;
-            gap: 8px 20px;
-            color: var(--text-muted);
-            line-height: 1.7;
+            columns: 3 260px;
+            column-gap: 56px;
         }
-
         .full-feature-list li {
-            position: relative;
-            padding-left: 16px;
-        }
-
-        .full-feature-list li::before {
-            content: '>';
-            color: var(--accent-green);
-            font-weight: 700;
-            position: absolute;
-            left: 0;
-            top: 0;
-        }
-
-        .full-feature-list code {
-            color: var(--accent-green);
-            white-space: nowrap;
-        }
-
-        /* All Features Grid */
-        .all-features {
-            padding: 80px 24px;
-            max-width: 1200px;
-            margin: 0 auto;
-        }
-
-        .all-features h2 {
-            text-align: center;
-            font-size: 1.875rem;
-            margin-bottom: 48px;
-        }
-
-        .features-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(min(250px, 100%), 1fr));
-            gap: 24px;
-        }
-
-        .feature-card {
-            background: var(--bg-card);
-            border: 1px solid var(--border-color);
-            border-radius: 8px;
-            padding: 24px;
-        }
-
-        .feature-card h3 {
-            color: var(--accent-green);
-            margin-bottom: 12px;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-        }
-
-        .feature-card p {
-            color: var(--text-muted);
-            line-height: 1.65;
-        }
-
-        /* Footer */
-        footer {
-            padding: 48px 24px;
-            text-align: center;
-            border-top: 1px solid var(--border-color);
-        }
-
-        .footer-links {
-            display: flex;
-            justify-content: center;
-            gap: 32px;
-            margin-bottom: 24px;
-        }
-
-        .footer-links a {
-            color: var(--text-muted);
-        }
-
-        .footer-credit {
-            color: var(--text-muted);
+            break-inside: avoid;
+            padding: 11px 0;
+            border-bottom: 1px solid var(--line);
+            font-size: 15px;
+            color: var(--paper-2);
         }
 
         /* Testimonials */
-        .testimonials {
-            padding: 80px 24px;
-            max-width: 1200px;
-            margin: 0 auto;
-        }
-
-        .testimonials h2 {
-            text-align: center;
-            font-size: 1.875rem;
-            margin-bottom: 48px;
-            color: var(--text-light);
-        }
-
-        .testimonials-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr));
-            gap: 24px;
-        }
-
+        .testimonials-grid { columns: 3 300px; column-gap: 28px; }
         .testimonial {
-            background: var(--bg-card);
-            border: 1px solid var(--border-color);
-            border-radius: 8px;
-            padding: 24px;
-            display: flex;
-            flex-direction: column;
+            break-inside: avoid;
+            display: flex; flex-direction: column;
+            margin-bottom: 28px;
+            padding: 30px 30px 26px;
+            background: rgba(18, 19, 22, 0.6);
+            border: 1px solid var(--line);
+            border-radius: 16px;
         }
-
         .testimonial-quote {
-            color: var(--text-light);
-            line-height: 1.7;
-            font-style: italic;
+            font-family: var(--serif);
+            font-size: 1.32rem;
+            line-height: 1.42;
+            color: var(--paper);
         }
-
-        .testimonial-source {
-            color: var(--text-muted);
-            margin-top: auto;
-            padding-top: 16px;
-        }
-
-        /* Only the first rows show until the reader asks for the rest. The
+        .testimonial-quote::before { content: '“'; color: var(--sage); margin-right: 1px; }
+        .testimonial-quote::after { content: '”'; color: var(--sage); margin-left: 1px; }
+        .testimonial-source { margin-top: 18px; font-size: 13.5px; color: var(--mute); }
+        .testimonial-source a { color: var(--paper-2); }
+        .testimonial-source a:hover { color: var(--sage); }
+        /* Only the first quotes show until the reader asks for the rest. The
            markup carries every quote either way — see the <noscript> block. */
-        .testimonial.extra {
-            display: none;
-        }
-
-        .testimonials-grid.expanded .testimonial.extra {
-            display: flex;
-        }
-
-        .testimonials-toggle-row {
-            display: flex;
-            justify-content: center;
-            margin-top: 32px;
-        }
-
+        .testimonial.extra { display: none; }
+        .testimonials-grid.expanded .testimonial.extra { display: flex; }
+        .testimonials-toggle-row { display: flex; justify-content: center; margin-top: 18px; }
         .testimonials-toggle {
             background: transparent;
-            border: 1px solid var(--border-color);
-            border-radius: 6px;
-            color: var(--text-muted);
-            font-family: inherit;
-            font-size: inherit;
-            padding: 10px 20px;
+            border: 1px solid var(--line-2);
+            border-radius: 999px;
+            color: var(--paper-2);
+            font-family: var(--sans);
+            font-size: 14.5px;
+            padding: 11px 24px;
             cursor: pointer;
-            transition: all 0.2s;
+            transition: border-color 0.3s var(--ease), color 0.3s var(--ease);
         }
+        .testimonials-toggle:hover { color: var(--paper); border-color: var(--sage); }
 
-        .testimonials-toggle:hover {
-            color: var(--text-light);
-            border-color: #333;
+        /* Closing card */
+        .closing { text-align: center; padding: 190px 0 150px; }
+        .closing .mark { width: 76px; height: 76px; border-radius: 18px; }
+        .closing .name {
+            display: block;
+            font-family: var(--serif);
+            font-size: clamp(4rem, 10vw, 7.5rem);
+            line-height: 1;
+            margin-top: 26px;
         }
-
-        .testimonial-quote::before {
-            content: '"';
-            color: var(--accent-green);
-            font-style: normal;
-            margin-right: 4px;
+        .closing .tag { font-family: var(--serif); font-size: clamp(1.5rem, 3vw, 2.1rem); color: var(--paper-2); margin-top: 14px; }
+        .closing-actions { margin-top: 48px; display: flex; justify-content: center; gap: 16px; flex-wrap: wrap; }
+        .btn-solid {
+            display: inline-flex; align-items: center;
+            background: var(--paper);
+            color: var(--ink) !important;
+            border-radius: 999px;
+            padding: 13px 28px;
+            font-size: 15px; font-weight: 500;
+            transition: background 0.3s var(--ease);
         }
+        .btn-solid:hover { background: var(--sage); }
+        .closing .btn-quiet { padding: 12px 26px; font-size: 15px; }
+        .closing .fine { margin-top: 40px; font-size: 13px; letter-spacing: 0.24em; text-transform: uppercase; color: var(--faint); }
 
-        .testimonial-quote::after {
-            content: '"';
-            color: var(--accent-green);
-            font-style: normal;
-            margin-left: 4px;
-        }
+        footer { border-top: 1px solid var(--line); padding: 44px 0 56px; }
+        .footer-row { display: flex; justify-content: space-between; align-items: center; gap: 24px; flex-wrap: wrap; }
+        .footer-links { display: flex; gap: 26px; flex-wrap: wrap; }
+        .footer-links a { color: var(--mute); font-size: 14px; }
+        .footer-links a:hover { color: var(--paper); }
+        .footer-credit { font-size: 14px; color: var(--faint); }
 
-        /* Responsive */
-
+        /* ---------- Responsive ---------- */
         /* The full nav row needs ~980px to fit. Below that it overruns the
            viewport, and because body sets overflow-x: hidden the trailing
            buttons are clipped silently rather than scrolled to. Collapse to
            the hamburger menu instead. */
         @media (max-width: 980px) {
-            html {
-                scroll-padding-top: 0;
-            }
-
-            nav {
-                position: relative;
-            }
-
-            .nav-links {
-                display: none;
-            }
-
-            .hamburger {
-                display: flex;
-            }
-
-            .mobile-menu {
-                display: block;
-                position: absolute;
-                top: 60px;
-            }
+            .hero-grid { grid-template-columns: minmax(0, 1fr); gap: 72px; text-align: center; }
+            .hero-text .lede { margin-left: auto; margin-right: auto; }
+            .hero-text .install { margin-left: auto; margin-right: auto; }
+            .hero-text .install-tabs, .hero-text .hero-links { justify-content: center; }
+            .film { max-width: 360px; margin: 0 auto; }
+            .beats { grid-template-columns: 1fr; gap: 40px; margin: 64px 0; }
+            .orchestra-review { grid-template-columns: 1fr; gap: 36px; }
+            .nav-links { display: none; }
+            .hamburger { display: flex; }
+            .mobile-menu { display: block; }
+            .chapter, .chapter.flip { grid-template-columns: 1fr; gap: 48px; padding: 84px 0; }
+            .chapter.flip .chapter-text { order: 0; }
+            .notes { grid-template-columns: 1fr; }
+            .note, .note + .note { padding: 44px 0; border-left: none; }
+            .note + .note { border-top: 1px solid var(--line); }
         }
-
-        @media (max-width: 768px) {
-            .nav-container {
-                height: 60px;
-                flex-direction: row;
-                align-items: center;
-                justify-content: space-between;
-                padding: 0 16px;
-            }
-
-            .nav-logo {
-                width: auto;
-            }
-
-            #version-badge {
-                display: none;
-            }
-
-            .footer-links {
-                flex-wrap: wrap;
-                gap: 16px 24px;
-            }
-
-            .feature-section {
-                grid-template-columns: 1fr;
-                gap: 40px;
-            }
-
-            .feature-section:nth-child(even) {
-                direction: ltr;
-            }
-
-            .hero {
-                padding: 40px 16px 24px;
-                min-height: auto;
-                justify-content: flex-start;
-            }
-
-            .hero-content {
-                margin-bottom: 16px;
-                width: 100%;
-                max-width: 100%;
-            }
-
-            .download-section {
-                width: 100%;
-                max-width: 100%;
-            }
-
-            .install-single {
-                max-width: 100%;
-            }
-
-            .install-tabs {
-                justify-content: center;
-            }
-
-            .hero-claim {
-                padding: 0 8px;
-            }
-
-            .feature-pills {
-                margin: 20px auto 24px;
-                padding: 0 8px;
-                gap: 6px;
-            }
-        }
-
-        /* Animations */
-        @keyframes fadeInUp {
-            from {
-                opacity: 0;
-                transform: translateY(20px);
-            }
-            to {
-                opacity: 1;
-                transform: translateY(0);
-            }
-        }
-
-        .hero-content {
-            animation: fadeInUp 0.6s ease-out;
-        }
-
-        .hero-screenshot {
-            animation: fadeInUp 0.8s ease-out 0.2s both;
+        @media (max-width: 640px) {
+            body { font-size: 16px; }
+            .wrap, .nav-container { padding-left: 20px; padding-right: 20px; }
+            .hero { padding-top: 132px; }
+            .lede { font-size: 17px; }
+            .install-pill { padding: 12px 12px 12px 16px; }
+            .install-pill code, .install-pill .prompt { font-size: 12.5px; }
+            .window { border-radius: 10px; }
+            .window-bar { height: 30px; }
+            .ticker { margin-top: 80px; }
+            .orchestra { padding: 110px 0 100px; }
+            .film { max-width: 300px; }
+            .section { padding-top: 110px; }
+            .closing { padding: 130px 0 110px; }
+            .footer-row { flex-direction: column; align-items: flex-start; }
         }
     </style>
     <noscript>
         <style>
-            .testimonial.extra {
-                display: flex;
-            }
-
-            .testimonials-toggle-row {
-                display: none;
-            }
+            .testimonial.extra { display: flex; }
+            .testimonials-toggle-row { display: none; }
         </style>
     </noscript>
 </head>
 <body>
     <!-- Navigation -->
-    <nav>
+    <nav id="nav">
         <div class="nav-container">
-            <a href="#top" class="nav-logo">
-                >_ Fresh <span id="version-badge"></span>
+            <a href="#top" class="nav-logo" aria-label="Fresh, back to top">
+                <img src="public/assets/logo.webp" alt="" width="28" height="28">
+                <span class="wordmark">Fresh</span>
+                <span id="version-badge"></span>
             </a>
             <button class="hamburger" onclick="toggleMobileMenu()" aria-label="Menu" aria-controls="mobile-menu" aria-expanded="false">
                 <span></span>
@@ -1366,12 +681,12 @@
                 <a href="docs/">Docs</a>
                 <a href="docs/blog/">Blog</a>
                 <a href="https://github.com/sinelaw/fresh/blob/master/CHANGELOG.md" target="_blank">Changelog</a>
-                <a href="https://discord.gg/gqGh3K4uW3" target="_blank" class="btn-github">
-                    <img src="public/discord-icon.svg" alt="Discord" width="16" height="16">
+                <a href="https://discord.gg/gqGh3K4uW3" target="_blank" class="btn-quiet">
+                    <img src="public/discord-icon.svg" alt="" width="15" height="15">
                     Discord
                 </a>
-                <a href="https://github.com/sinelaw/fresh" target="_blank" class="btn-github">
-                    <img src="public/github-icon.svg" alt="GitHub" width="16" height="16">
+                <a href="https://github.com/sinelaw/fresh" target="_blank" class="btn-quiet">
+                    <img src="public/github-icon.svg" alt="" width="15" height="15">
                     GitHub
                 </a>
             </div>
@@ -1392,357 +707,335 @@
         </div>
     </div>
 
-    <!-- Hero Section -->
-    <section class="hero" id="top">
-        <div class="hero-content">
-            <h1>Fresh</h1>
-            <p class="hero-claim">A powerful terminal text editor and IDE.</p>
+    <!-- Hero: the opening line of the film, and the film itself -->
+    <header class="hero" id="top">
+        <div class="wrap hero-grid">
+            <div class="hero-text">
+                <span class="eyebrow reveal">Fresh &nbsp;·&nbsp; The terminal IDE</span>
+                <h1 class="reveal">Some tools simply get out of <em>your way.</em></h1>
+                <p class="lede reveal">Keys you already know. A mouse that just works. The depth of an IDE, right in your terminal, with nothing to configure.</p>
 
-            <ul class="feature-pills">
-                <li>Intuitive keys &amp; mouse</li>
-                <li>Fast &amp; light</li>
-                <li>Huge files</li>
-                <li>Agents &amp; worktrees</li>
-                <li>TypeScript plugins</li>
-                <li>Open source</li>
-                <li>Themes</li>
-                <li>Multi-cursor</li>
-                <li>Keyboard macros</li>
-                <li>LSP</li>
-                <li>Magit-style git review</li>
-                <li>Fuzzy file finder</li>
-                <li>Project-wide grep</li>
-                <li>SSH remote editing</li>
-                <li>Vim mode</li>
-                <li class="feature-pill-more"><a href="#full-features">and more!</a></li>
-            </ul>
-
-            <div class="download-section">
-                <div class="install-single">
-                    <div class="install-tabs" role="tablist">
+                <div class="install reveal">
+                    <div class="install-tabs" role="tablist" aria-label="Operating system">
                         <button type="button" class="install-tab active" data-os="linux" onclick="selectInstallOS('linux')">Linux</button>
                         <button type="button" class="install-tab" data-os="mac" onclick="selectInstallOS('mac')">macOS</button>
                         <button type="button" class="install-tab" data-os="windows" onclick="selectInstallOS('windows')">Windows</button>
                     </div>
-                    <div class="install-row">
-                        <span class="install-row-label">Install:</span>
-                        <div class="install-pill primary" id="install-pill" onclick="copyInstallPill(this)">
-                            <code id="install-cmd">curl -fsSL https://raw.githubusercontent.com/sinelaw/fresh/refs/heads/master/scripts/install.sh | sh</code>
-                            <button class="copy-btn" onclick="event.stopPropagation(); copyInstallPill(document.getElementById('install-pill'))" aria-label="Copy install command">
-                                <img src="public/copy-icon.svg" alt="" width="16" height="16">
-                            </button>
-                            <span class="copied-popup">Copied</span>
-                        </div>
-                        <a href="#install" class="install-more-link">More options…</a>
+                    <div class="install-pill" id="install-pill" onclick="copyInstallPill(this)">
+                        <span class="prompt" aria-hidden="true">$</span>
+                        <code id="install-cmd">curl -fsSL https://raw.githubusercontent.com/sinelaw/fresh/refs/heads/master/scripts/install.sh | sh</code>
+                        <button class="copy-btn" onclick="event.stopPropagation(); copyInstallPill(document.getElementById('install-pill'))" aria-label="Copy install command">
+                            <img src="public/copy-icon.svg" alt="" width="15" height="15">
+                        </button>
+                        <span class="copied-popup">Copied</span>
+                    </div>
+                    <div class="hero-links">
+                        <a href="#install">More ways to install</a>
+                        <a href="docs/">Read the docs</a>
+                        <span class="free">Free &amp; open source</span>
                     </div>
                 </div>
             </div>
+
+            <!-- The 30-second film, cut from live recordings of the current
+                 build (scripts/ad). Muted autoplay loop; with reduced motion it
+                 waits on its poster until asked. -->
+            <figure class="film reveal">
+                <video id="film" src="public/assets/fresh-film.mp4" poster="public/assets/fresh-film-poster.webp"
+                       width="720" height="1280" muted loop playsinline preload="metadata"
+                       aria-label="A 30-second film of Fresh: familiar editing, themes, the settings editor and the Orchestrator"></video>
+                <button type="button" class="film-sound" id="film-sound" aria-pressed="false">Sound on</button>
+            </figure>
         </div>
 
-        <div class="hero-screenshot">
-            <div class="screenshot-wrapper">
-                <div class="window-titlebar">
-                    <div class="window-dots">
-                        <span></span><span></span><span></span>
-                    </div>
-                </div>
-                <div id="demo-player" class="asciinema-host">
-                    <a href="public/assets/hero.png" target="_blank"><img src="public/assets/hero.png" alt="Fresh editor showing file explorer, syntax-highlighted code, and integrated terminal" id="demo-fallback" width="1402" height="900" fetchpriority="high" decoding="async"></a>
-                </div>
-                <div class="screenshot-glow"></div>
+        <div class="ticker" aria-hidden="true">
+            <div class="ticker-row"><span>Command palette</span><span>Multi-cursor</span><span>Live grep</span><span>Fuzzy file finder</span><span>Themes</span><span>LSP</span><span>Go to definition</span><span>Review diff</span><span>Git log</span><span>Git blame</span><span>Split panes</span><span>Integrated terminal</span><span>File explorer</span><span>Keyboard macros</span><span>Vim mode</span><span>SSH remote editing</span><span>Multi-GB files</span><span>Hot exit</span><span>Markdown compose</span><span>Code tours</span><span>TypeScript plugins</span><span>Settings UI</span><span>Keybinding editor</span><span>Orchestrator</span><span>Git worktrees</span><span>Coding agents</span><span>Search &amp; replace</span><span>Dev containers</span><span>Mouse support</span><span>Rainbow brackets</span><span>Detachable daemon</span><span>Package manager</span><span>Command palette</span><span>Multi-cursor</span><span>Live grep</span><span>Fuzzy file finder</span><span>Themes</span><span>LSP</span><span>Go to definition</span><span>Review diff</span><span>Git log</span><span>Git blame</span><span>Split panes</span><span>Integrated terminal</span><span>File explorer</span><span>Keyboard macros</span><span>Vim mode</span><span>SSH remote editing</span><span>Multi-GB files</span><span>Hot exit</span><span>Markdown compose</span><span>Code tours</span><span>TypeScript plugins</span><span>Settings UI</span><span>Keybinding editor</span><span>Orchestrator</span><span>Git worktrees</span><span>Coding agents</span><span>Search &amp; replace</span><span>Dev containers</span><span>Mouse support</span><span>Rainbow brackets</span><span>Detachable daemon</span><span>Package manager</span></div>
+            <div class="ticker-row"><span>Multi-GB files</span><span>Hot exit</span><span>Markdown compose</span><span>Code tours</span><span>TypeScript plugins</span><span>Settings UI</span><span>Keybinding editor</span><span>Orchestrator</span><span>Git worktrees</span><span>Coding agents</span><span>Search &amp; replace</span><span>Dev containers</span><span>Mouse support</span><span>Rainbow brackets</span><span>Detachable daemon</span><span>Package manager</span><span>Command palette</span><span>Multi-cursor</span><span>Live grep</span><span>Fuzzy file finder</span><span>Themes</span><span>LSP</span><span>Go to definition</span><span>Review diff</span><span>Git log</span><span>Git blame</span><span>Split panes</span><span>Integrated terminal</span><span>File explorer</span><span>Keyboard macros</span><span>Vim mode</span><span>SSH remote editing</span><span>Multi-GB files</span><span>Hot exit</span><span>Markdown compose</span><span>Code tours</span><span>TypeScript plugins</span><span>Settings UI</span><span>Keybinding editor</span><span>Orchestrator</span><span>Git worktrees</span><span>Coding agents</span><span>Search &amp; replace</span><span>Dev containers</span><span>Mouse support</span><span>Rainbow brackets</span><span>Detachable daemon</span><span>Package manager</span><span>Command palette</span><span>Multi-cursor</span><span>Live grep</span><span>Fuzzy file finder</span><span>Themes</span><span>LSP</span><span>Go to definition</span><span>Review diff</span><span>Git log</span><span>Git blame</span><span>Split panes</span><span>Integrated terminal</span><span>File explorer</span><span>Keyboard macros</span><span>Vim mode</span><span>SSH remote editing</span></div>
+        </div>
+    </header>
+
+    <!-- Chapters -->
+    <main>
+    <section class="chapters wrap" id="features">
+        <div class="chapter" id="keyboard">
+            <div class="chapter-text reveal">
+                <span class="eyebrow"><b>01</b>Familiar</span>
+                <h2>Familiar from the <em>first keystroke.</em><a class="anchor-link" href="#keyboard" aria-label="Permalink to Keyboard &amp; editing">#</a></h2>
+                <p>Ctrl+S saves. Ctrl+C copies. Click, drag, scroll. If you have used a modern editor, you already know how to use Fresh. There are no modes to learn and no cheat sheet to keep open.</p>
+                <ul class="points">
+                    <li>Menus and a command palette for everything, one shortcut away</li>
+                    <li>Multi-cursor editing, macros, regex search &amp; replace</li>
+                    <li>Vim mode, if that is how you think</li>
+                </ul>
+            </div>
+            <div class="chapter-visual reveal">
+                <a href="public/assets/shots/multicursor.webp" target="_blank"><div class="window">
+                    <div class="window-bar"><span></span><span></span><span></span><span class="title">server.rs</span></div>
+                    <img src="public/assets/shots/multicursor.webp" alt="Renaming a variable everywhere at once with multiple cursors" width="2000" height="1401" loading="lazy" decoding="async">
+                </div></a>
+            </div>
+        </div>
+
+        <div class="chapter flip" id="themes">
+            <div class="chapter-text reveal">
+                <span class="eyebrow"><b>02</b>Themes</span>
+                <h2>Make it <em>yours.</em><a class="anchor-link" href="#themes" aria-label="Permalink to Themes, status bar &amp; i18n">#</a></h2>
+                <p>Browse the themes and the whole editor changes as you go. Tokyo Night, Gruvbox, Dracula, Nord and more are built in, and the theme editor works live.</p>
+                <ul class="points">
+                    <li>A status bar you arrange yourself, clock included</li>
+                    <li>Rulers, whitespace, rainbow brackets, per-language wrap</li>
+                    <li>In Japanese, Korean, Chinese, Vietnamese and more</li>
+                </ul>
+            </div>
+            <div class="chapter-visual reveal">
+                <a href="public/assets/shots/themes.webp" target="_blank"><div class="window">
+                    <div class="window-bar"><span></span><span></span><span></span><span class="title">server.rs</span></div>
+                    <img src="public/assets/shots/themes.webp" alt="Code shown in one of the built-in themes, chosen from the live theme picker" width="2000" height="1313" loading="lazy" decoding="async">
+                </div></a>
+            </div>
+        </div>
+
+        <div class="chapter" id="settings">
+            <div class="chapter-text reveal">
+                <span class="eyebrow"><b>03</b>Settings</span>
+                <h2>Settings, not <em>config files.</em><a class="anchor-link" href="#settings" aria-label="Permalink to Settings">#</a></h2>
+                <p>Every option lives in one settings editor, with its description and its default right beside it. There are no dotfiles to hunt down and no syntax to get wrong.</p>
+                <ul class="points">
+                    <li>Press <code>/</code> to search every setting</li>
+                    <li>A keybinding editor that catches conflicts</li>
+                    <li>Plugin settings, in the same place</li>
+                </ul>
+            </div>
+            <div class="chapter-visual reveal">
+                <a href="public/assets/shots/settings.webp" target="_blank"><div class="window">
+                    <div class="window-bar"><span></span><span></span><span></span><span class="title">settings</span></div>
+                    <img src="public/assets/shots/settings.webp" alt="The Settings editor: categories on the left, editor options with descriptions and defaults on the right" width="2000" height="1306" loading="lazy" decoding="async">
+                </div></a>
             </div>
         </div>
     </section>
 
-    <!-- Feature Sections -->
-    <section class="features" id="features">
-        <div class="feature-section" id="fast-and-light">
-            <div class="feature-content">
-                <h2>Fast &amp; light<a class="anchor-link" href="#fast-and-light" aria-label="Permalink to Fast &amp; light">#</a></h2>
-                <p>Instant startup. Text appears as you type. Small memory footprint. Stays responsive on multi-GB files and remote editing over SSH.</p>
-                <ul class="feature-list">
-                    <li>Instant startup, low-latency input</li>
-                    <li>Low memory footprint</li>
-                    <li>Multi-GB files open without blocking the UI</li>
-                    <li>SSH remote editing transfers only the diff — small edits to huge remote files stay snappy</li>
-                    <li>Project-wide search &amp; replace, even across unsaved buffers</li>
-                </ul>
+    <!-- The Orchestrator, in three beats, as in the film -->
+    <section class="orchestra" id="orchestrator">
+        <div class="wrap">
+            <div class="section-head reveal">
+                <span class="eyebrow"><b class="num">04</b>Orchestrator</span>
+                <h2>Every task gets its own <em>workspace.</em><a class="anchor-link" href="#orchestrator" aria-label="Permalink to Multitask with the Orchestrator">#</a></h2>
+                <p>Each task gets its own git worktree, with its own tabs, terminals and agent. Hop between tasks with an arrow key while the rest keep working.</p>
             </div>
-            <div class="feature-visual">
-                <div class="feature-visual-dots">
-                    <span></span><span></span><span></span>
+            <div class="orchestra-hero reveal">
+                <a href="public/assets/shots/orchestrator.webp" target="_blank"><div class="window">
+                    <div class="window-bar"><span></span><span></span><span></span><span class="title">orchestrator</span></div>
+                    <img src="public/assets/shots/orchestrator.webp" alt="The Orchestrator dock listing three workspaces; the selected one shows a coding agent working beside the file it is changing" width="2000" height="1321" loading="lazy" decoding="async">
+                </div></a>
+            </div>
+            <div class="beats">
+                <div class="beat reveal">
+                    <h3>An agent, right beside <em>your code.</em></h3>
+                    <p>Put <code>claude</code>, <code>codex</code>, <code>opencode</code> or <code>aider</code> to work in any workspace. Restart Fresh and the sessions pick up where they left off.</p>
                 </div>
-                <a href="public/assets/multicursor.png" target="_blank"><img src="public/assets/multicursor.png" alt="Multi-cursor editing in a large file" width="1202" height="807" loading="lazy" decoding="async"></a>
-            </div>
-        </div>
-
-        <div class="feature-section" id="orchestrator">
-            <div class="feature-content">
-                <h2>Multitask with the Orchestrator<a class="anchor-link" href="#orchestrator" aria-label="Permalink to Multitask with the Orchestrator">#</a></h2>
-                <p>Start each task in its own worktree, hop between them with an arrow key, and leave the rest running.</p>
-                <ul class="feature-list">
-                    <li>Add a workspace and Fresh cuts the worktree and branch</li>
-                    <li>Set <code style="color: var(--accent-green);">claude</code>, <code style="color: var(--accent-green);">codex</code>, <code style="color: var(--accent-green);">opencode</code> or <code style="color: var(--accent-green);">aider</code> loose in any of them</li>
-                    <li>Check branch, diff and PR status from the dock</li>
-                    <li>Restart and pick the agent sessions back up</li>
-                    <li>Reach a remote box from the same list</li>
-                </ul>
-            </div>
-            <div class="feature-visual">
-                <div class="feature-visual-dots">
-                    <span></span><span></span><span></span>
+                <div class="beat reveal">
+                    <h3>Every change, ready to <em>review.</em></h3>
+                    <p>Branch, diff and PR status sit in the dock. Review hunk by hunk: stage, unstage, discard, and leave notes as you go.</p>
                 </div>
-                <a href="public/assets/orchestrator.gif" target="_blank"><img src="public/assets/orchestrator.gif" alt="Switching between three git worktrees from the Orchestrator dock, each workspace with its own tabs and a coding agent running beside the code" width="1800" height="864" loading="lazy" decoding="async"></a>
+                <div class="beat reveal">
+                    <h3>Local or <em>remote.</em></h3>
+                    <p>Fresh cuts the worktree and branch for you, and a remote machine sits in the same list as your laptop.</p>
+                </div>
             </div>
-        </div>
-
-        <div class="feature-section" id="git-review">
-            <div class="feature-content">
-                <h2>Git review &amp; diff<a class="anchor-link" href="#git-review" aria-label="Permalink to Git review &amp; diff">#</a></h2>
-                <p>Split-panel review with staged / unstaged / untracked files on the left and the selected diff on the right. Stage, unstage or discard individual hunks; leave line comments and review notes; export to Markdown. Side-by-side diff view for file comparisons.</p>
-                <ul class="feature-list">
+            <div class="orchestra-review reveal" id="git-review">
+                <a href="public/assets/shots/review-diff.webp" target="_blank"><div class="window">
+                    <div class="window-bar"><span></span><span></span><span></span><span class="title">review diff</span></div>
+                    <img src="public/assets/shots/review-diff.webp" alt="Review Diff showing two files' hunks, with added and removed lines" width="2000" height="1303" loading="lazy" decoding="async">
+                </div></a>
+                <ul class="points">
                     <li>Hunk-level stage / unstage / discard</li>
                     <li>Side-by-side diff view</li>
-                    <li>Line comments and review notes</li>
+                    <li>Line comments and review notes, exported to Markdown</li>
                     <li>Git gutter, git log viewer, git grep</li>
                 </ul>
             </div>
-            <div class="feature-visual">
-                <div class="feature-visual-dots">
-                    <span></span><span></span><span></span>
-                </div>
-                <a href="public/assets/gitlog.png" target="_blank"><img src="public/assets/gitlog.png" alt="Git log view in Fresh" width="1202" height="900" loading="lazy" decoding="async"></a>
+        </div>
+    </section>
+
+    <section class="chapters wrap">
+        <div class="chapter flip" id="fast-and-light">
+            <div class="chapter-text reveal">
+                <span class="eyebrow"><b>05</b>Performance</span>
+                <h2>Two gigabytes. <em>Unbothered.</em><a class="anchor-link" href="#fast-and-light" aria-label="Permalink to Fast &amp; light">#</a></h2>
+                <p>Open a multi-gigabyte log and the editor stays responsive: jump to the last line and keep scrolling. Startup is instant and memory stays small, even over SSH.</p>
+                <ul class="points">
+                    <li>Multi-GB files open without blocking the UI</li>
+                    <li>SSH saves send only the diff</li>
+                    <li>Search &amp; replace across the project, unsaved buffers included</li>
+                </ul>
+            </div>
+            <div class="chapter-visual reveal">
+                <a href="public/assets/shots/huge-file.webp" target="_blank"><div class="window">
+                    <div class="window-bar"><span></span><span></span><span></span><span class="title">huge.log — 2.1 GB</span></div>
+                    <img src="public/assets/shots/huge-file.webp" alt="A 2 GB log file open at its last lines, with byte offsets in the gutter" width="1600" height="1050" loading="lazy" decoding="async">
+                </div></a>
             </div>
         </div>
 
-        <div class="feature-section" id="lsp">
-            <div class="feature-content">
-                <h2>Language Server Protocol<a class="anchor-link" href="#lsp" aria-label="Permalink to Language Server Protocol">#</a></h2>
-                <p>Run multiple LSP servers per language (for example pylsp + pyright) with feature routing and merged completions. Per-project workspace roots detected from configurable markers like <code style="color: var(--accent-green);">Cargo.toml</code> or <code style="color: var(--accent-green);">package.json</code>.</p>
-                <ul class="feature-list">
-                    <li>Configs shipped for Python, TypeScript, Rust, Go, Java, C/C++, Ruby, PHP, Bash, Vue, Svelte, Terraform, Haskell, OCaml, Elixir and many more</li>
-                    <li>Goto, references and hover in library paths (<code style="color: var(--accent-green);">node_modules</code>, <code style="color: var(--accent-green);">site-packages</code>, <code style="color: var(--accent-green);">.cargo</code>)</li>
+        <div class="chapter" id="plugins">
+            <div class="chapter-text reveal">
+                <span class="eyebrow"><b>06</b>Extensible</span>
+                <h2>Extend it in <em>TypeScript.</em><a class="anchor-link" href="#plugins" aria-label="Permalink to TypeScript plugins">#</a></h2>
+                <p>Plugins are written in TypeScript and run sandboxed inside the same single binary, with no <code>node_modules</code> on disk. Language packs bring a grammar, settings and LSP config in one install.</p>
+                <ul class="points">
+                    <li>An API for buffers, splits, cursors, processes and overlays</li>
+                    <li>Your own keybinding modes and embedded terminals</li>
+                    <li>Start a new package with <code>--init</code></li>
+                </ul>
+            </div>
+            <div class="chapter-visual reveal">
+                <a href="public/assets/shots/palette.webp" target="_blank"><div class="window">
+                    <div class="window-bar"><span></span><span></span><span></span><span class="title">command palette</span></div>
+                    <img src="public/assets/shots/palette.webp" alt="The command palette filtered to split commands" width="2000" height="714" loading="lazy" decoding="async">
+                </div></a>
+            </div>
+        </div>
+
+        <div class="notes">
+            <div class="note reveal" id="lsp">
+                <span class="eyebrow">Language servers</span>
+                <h3 style="margin-top:18px">Many servers, <em>one editor.</em><a class="anchor-link" href="#lsp" aria-label="Permalink to Language Server Protocol">#</a></h3>
+                <p>Run several LSP servers per language (pylsp and pyright, say) with feature routing and merged completions. Workspace roots come from markers like <code>Cargo.toml</code> or <code>package.json</code>.</p>
+                <ul class="points">
+                    <li>Configs for Python, TypeScript, Rust, Go, Java, C/C++, Ruby and many more</li>
+                    <li>Goto, references and hover in library paths</li>
                     <li>Code actions with workspace edits</li>
                 </ul>
             </div>
-            <div class="feature-visual">
-                <div class="feature-visual-dots">
-                    <span></span><span></span><span></span>
-                </div>
-                <a href="public/assets/fresh-lsp-hover.png" target="_blank"><img src="public/assets/fresh-lsp-hover.png" alt="LSP hover documentation" width="1895" height="1117" loading="lazy" decoding="async"></a>
-            </div>
-        </div>
+            <div class="note reveal" id="daemon">
+                <span class="eyebrow">Daemon</span>
+                <h3 style="margin-top:18px">Detach, <em>come back.</em><a class="anchor-link" href="#daemon" aria-label="Permalink to Detachable daemon">#</a></h3>
+                <p>Start a named daemon and reattach across terminal disconnects. <code>--wait</code> makes Fresh your <code>$EDITOR</code>; Hot Exit keeps every buffer across restarts and crashes.</p>
+                <div class="snippet"><span class="c"># Use Fresh as your git editor</span>
+<span class="k">git</span> config --global core.editor "fresh --wait"
 
-        <div class="feature-section" id="daemon">
-            <div class="feature-content">
-                <h2>Detachable daemon<a class="anchor-link" href="#daemon" aria-label="Permalink to Detachable daemon">#</a></h2>
-                <p>Start a named daemon, detach and reattach across terminal disconnects. The <code style="color: var(--accent-green);">--wait</code> flag blocks until the buffer is closed, which lets Fresh serve as <code style="color: var(--accent-green);">git core.editor</code> or <code style="color: var(--accent-green);">$EDITOR</code>. Hot Exit persists every buffer across restarts and crashes.</p>
-                <ul class="feature-list">
-                    <li>Named and directory-based daemons (<code style="color: var(--accent-green);">fresh -a myproject</code>)</li>
-                    <li><code style="color: var(--accent-green);">--wait</code> for commit messages, rebases and scripted flows</li>
-                    <li>Hot Exit with crash recovery, including unnamed scratch buffers</li>
-                </ul>
+<span class="c"># Attach a persistent daemon</span>
+<span class="k">fresh</span> -a myproject</div>
             </div>
-            <div class="feature-visual">
-                <div class="feature-visual-dots">
-                    <span></span><span></span><span></span>
-                </div>
-                <div class="feature-code">
-                    <span class="code-line"><span class="code-comment"># Use Fresh as your git editor</span></span>
-                    <span class="code-line"><span class="code-function">git</span> <span class="code-string">config --global core.editor "fresh --wait"</span></span>
-                    <span class="code-line"></span>
-                    <span class="code-line"><span class="code-comment"># Attach a persistent daemon</span></span>
-                    <span class="code-line"><span class="code-function">fresh</span> <span class="code-string">-a myproject</span></span>
-                    <span class="code-line"></span>
-                    <span class="code-line"><span class="code-comment"># Open a file in the running daemon</span></span>
-                    <span class="code-line"><span class="code-function">fresh</span> <span class="code-string">--cmd daemon open-file myproject src/main.rs:42</span></span>
-                </div>
-            </div>
-        </div>
+            <div class="note reveal" id="ssh">
+                <span class="eyebrow">Remote</span>
+                <h3 style="margin-top:18px">Remote files, <em>close at hand.</em><a class="anchor-link" href="#ssh" aria-label="Permalink to SSH remote editing">#</a></h3>
+                <p>Open files on an SSH host with <code>fresh user@host:path</code>. It reconnects in the background, and saves to large files send only the patch.</p>
+                <div class="snippet"><span class="c"># Open nginx.conf on prod</span>
+<span class="k">fresh</span> deploy@prod:/etc/nginx/nginx.conf
 
-        <div class="feature-section" id="ssh">
-            <div class="feature-content">
-                <h2>SSH remote editing<a class="anchor-link" href="#ssh" aria-label="Permalink to SSH remote editing">#</a></h2>
-                <p>Open files on an SSH host with <code style="color: var(--accent-green);">fresh user@host:path</code>. Connections reconnect in the background if they drop. Saves to large files transfer only the patch, not the whole file.</p>
-                <ul class="feature-list">
-                    <li>Password and key authentication, sudo save</li>
-                    <li>Remote file finder (Ctrl+P) and remote grep</li>
-                    <li>Background reconnect with disconnected-state indicator</li>
-                </ul>
-            </div>
-            <div class="feature-visual">
-                <div class="feature-visual-dots">
-                    <span></span><span></span><span></span>
-                </div>
-                <div class="feature-code">
-                    <span class="code-line"><span class="code-comment"># Open /etc/nginx/nginx.conf on prod</span></span>
-                    <span class="code-line"><span class="code-function">fresh</span> <span class="code-string">deploy@prod:/etc/nginx/nginx.conf</span></span>
-                    <span class="code-line"></span>
-                    <span class="code-line"><span class="code-comment"># Ctrl+P fuzzy-finds remote files</span></span>
-                    <span class="code-line"><span class="code-comment"># Save over SSH with sudo</span></span>
-                    <span class="code-line"><span class="code-comment"># Auto-reconnects on drops</span></span>
-                </div>
-            </div>
-        </div>
-
-        <div class="feature-section" id="plugins">
-            <div class="feature-content">
-                <h2>TypeScript plugins<a class="anchor-link" href="#plugins" aria-label="Permalink to TypeScript plugins">#</a></h2>
-                <p>Plugins are compiled with OXC and run in an embedded QuickJS VM, sandboxed and shipped inside the same binary. No <code style="color: var(--accent-green);">node_modules</code> on disk. Packages are installed from the official registry; language packs bundle a grammar, settings and LSP config together.</p>
-                <ul class="feature-list">
-                    <li>Plugin API for buffers, splits, cursors, processes, virtual buffers and overlays</li>
-                    <li>Custom keybinding modes and embedded terminals</li>
-                    <li>Package scaffolding with <code style="color: var(--accent-green);">--init</code></li>
-                </ul>
-            </div>
-            <div class="feature-visual">
-                <div class="feature-visual-dots">
-                    <span></span><span></span><span></span>
-                </div>
-                <a href="public/assets/palette.png" target="_blank"><img src="public/assets/palette.png" alt="Command palette" width="1202" height="807" loading="lazy" decoding="async"></a>
-            </div>
-        </div>
-
-        <div class="feature-section" id="themes">
-            <div class="feature-content">
-                <h2>Themes, status bar &amp; i18n<a class="anchor-link" href="#themes" aria-label="Permalink to Themes, status bar &amp; i18n">#</a></h2>
-                <p>Both sides of the status bar are configurable via a visual picker, with reorderable elements including a <code style="color: var(--accent-green);">{clock}</code>, git branch and LSP status. Themes are edited live. The interface is translated into several languages including Japanese, Korean, Chinese and Vietnamese.</p>
-                <ul class="feature-list">
-                    <li>Live theme editor with "Inspect Theme at Cursor"</li>
-                    <li>Built-in themes: high-contrast, Gruvbox, Dracula, Nord, Solarized, Tokyo Night and more</li>
-                    <li>Vertical rulers, whitespace indicators, rainbow brackets, per-language wrap</li>
-                    <li>Nerd-font icons and CJK-safe rendering</li>
-                </ul>
-            </div>
-            <div class="feature-visual">
-                <div class="feature-visual-dots">
-                    <span></span><span></span><span></span>
-                </div>
-                <a href="public/assets/fresh-i18nlight.png" target="_blank"><img src="public/assets/fresh-i18nlight.png" alt="Fresh with Japanese UI and light theme" width="1895" height="1114" loading="lazy" decoding="async"></a>
-            </div>
-        </div>
-
-        <div class="feature-section" id="keyboard">
-            <div class="feature-content">
-                <h2>Keyboard &amp; editing<a class="anchor-link" href="#keyboard" aria-label="Permalink to Keyboard &amp; editing">#</a></h2>
-                <p>Command palette with prefix routing (<code style="color: var(--accent-green);">&gt;</code> commands, <code style="color: var(--accent-green);">#</code> buffers, <code style="color: var(--accent-green);">:</code> lines). Keybinding editor with conflict detection and per-context bindings. Full mouse support.</p>
-                <ul class="feature-list">
-                    <li>Vim mode with operators, motions, text objects and colon commands</li>
-                    <li>Multi-cursor, block selection, surround, smart home and smart backspace</li>
-                    <li>Keyboard macros and regex find &amp; replace with capture groups</li>
-                    <li>Integrated terminal with persistent scrollback</li>
-                </ul>
-            </div>
-            <div class="feature-visual">
-                <div class="feature-visual-dots">
-                    <span></span><span></span><span></span>
-                </div>
-                <a href="public/assets/hero.png" target="_blank"><img src="public/assets/hero.png" alt="Fresh editor with file explorer and integrated terminal" width="1402" height="900"></a>
+<span class="c"># Ctrl+P finds remote files; sudo save works</span></div>
             </div>
         </div>
     </section>
 
-    <!-- Installation Section -->
-    <section class="install-section" id="install">
-        <div class="install-container">
-            <h2>Installation<a class="anchor-link" href="#install" aria-label="Permalink to Installation">#</a> <a href="https://github.com/sinelaw/fresh?tab=readme-ov-file#installation" target="_blank" class="install-even-more">even more options →</a></h2>
-            <div class="install-grid">
-                <div class="install-card" id="install-quick">
-                    <h3>Linux / macOS (quick install)<a class="anchor-link" href="#install-quick" aria-label="Permalink to Linux / macOS (quick install)">#</a></h3>
-                    <div class="copyable">
-                        <code id="cmd-curl">curl -fsSL https://raw.githubusercontent.com/sinelaw/fresh/refs/heads/master/scripts/install.sh | sh</code>
-                        <button class="copy-btn" onclick="copyCode('cmd-curl', this)">
-                            <img src="public/copy-icon.svg" alt="Copy" width="16" height="16">
-                        </button>
-                    </div>
-                    <p class="install-card-note">One-line install. No toolchain required.</p>
+    <!-- Installation -->
+    <section class="section wrap" id="install">
+        <div class="section-head reveal">
+            <span class="eyebrow">Install</span>
+            <h2>Ready in <em>one line.</em><a class="anchor-link" href="#install" aria-label="Permalink to Installation">#</a></h2>
+            <p>One static binary, no runtime. Pick your platform, or see <a href="https://github.com/sinelaw/fresh?tab=readme-ov-file#installation" target="_blank">even more options</a>.</p>
+        </div>
+        <div class="install-grid reveal">
+            <div class="install-card" id="install-quick">
+                <h3>Linux / macOS (quick install)<a class="anchor-link" href="#install-quick" aria-label="Permalink to Linux / macOS (quick install)">#</a></h3>
+                <div class="copyable">
+                    <code id="cmd-curl">curl -fsSL https://raw.githubusercontent.com/sinelaw/fresh/refs/heads/master/scripts/install.sh | sh</code>
+                    <button class="copy-btn" onclick="copyCode('cmd-curl', this)" aria-label="Copy">
+                        <img src="public/copy-icon.svg" alt="" width="14" height="14">
+                    </button>
                 </div>
+                <p class="install-card-note">One-line install. No toolchain required.</p>
+            </div>
 
-                <div class="install-card" id="install-homebrew">
-                    <h3>macOS (Homebrew)<a class="anchor-link" href="#install-homebrew" aria-label="Permalink to macOS (Homebrew)">#</a></h3>
-                    <div class="copyable">
-                        <code id="cmd-brew">brew install fresh-editor</code>
-                        <button class="copy-btn" onclick="copyCode('cmd-brew', this)">
-                            <img src="public/copy-icon.svg" alt="Copy" width="16" height="16">
-                        </button>
-                    </div>
+            <div class="install-card" id="install-homebrew">
+                <h3>macOS (Homebrew)<a class="anchor-link" href="#install-homebrew" aria-label="Permalink to macOS (Homebrew)">#</a></h3>
+                <div class="copyable">
+                    <code id="cmd-brew">brew install fresh-editor</code>
+                    <button class="copy-btn" onclick="copyCode('cmd-brew', this)" aria-label="Copy">
+                        <img src="public/copy-icon.svg" alt="" width="14" height="14">
+                    </button>
                 </div>
+            </div>
 
-                <div class="install-card" id="install-winget">
-                    <h3>Windows (winget)<a class="anchor-link" href="#install-winget" aria-label="Permalink to Windows (winget)">#</a></h3>
-                    <div class="copyable">
-                        <code id="cmd-winget">winget install fresh-editor</code>
-                        <button class="copy-btn" onclick="copyCode('cmd-winget', this)">
-                            <img src="public/copy-icon.svg" alt="Copy" width="16" height="16">
-                        </button>
-                    </div>
+            <div class="install-card" id="install-winget">
+                <h3>Windows (winget)<a class="anchor-link" href="#install-winget" aria-label="Permalink to Windows (winget)">#</a></h3>
+                <div class="copyable">
+                    <code id="cmd-winget">winget install fresh-editor</code>
+                    <button class="copy-btn" onclick="copyCode('cmd-winget', this)" aria-label="Copy">
+                        <img src="public/copy-icon.svg" alt="" width="14" height="14">
+                    </button>
                 </div>
+            </div>
 
-                <div class="install-card" id="install-debian">
-                    <h3>Debian / Ubuntu<a class="anchor-link" href="#install-debian" aria-label="Permalink to Debian / Ubuntu">#</a></h3>
-                    <p class="install-card-note" style="margin-top: 0;">
-                        <a href="https://github.com/sinelaw/fresh/releases" target="_blank">Grab the <code style="color: var(--accent-green);">.deb</code> from Releases</a>, then:
-                    </p>
-                    <div class="copyable">
-                        <code id="cmd-deb">sudo dpkg -i fresh-editor_*.deb</code>
-                        <button class="copy-btn" onclick="copyCode('cmd-deb', this)">
-                            <img src="public/copy-icon.svg" alt="Copy" width="16" height="16">
-                        </button>
-                    </div>
+            <div class="install-card" id="install-debian">
+                <h3>Debian / Ubuntu<a class="anchor-link" href="#install-debian" aria-label="Permalink to Debian / Ubuntu">#</a></h3>
+                <p class="install-card-note">
+                    <a href="https://github.com/sinelaw/fresh/releases" target="_blank">Grab the <code>.deb</code> from Releases</a>, then:
+                </p>
+                <div class="copyable">
+                    <code id="cmd-deb">sudo dpkg -i fresh-editor_*.deb</code>
+                    <button class="copy-btn" onclick="copyCode('cmd-deb', this)" aria-label="Copy">
+                        <img src="public/copy-icon.svg" alt="" width="14" height="14">
+                    </button>
                 </div>
+            </div>
 
-                <div class="install-card" id="install-aur">
-                    <h3>Arch Linux (AUR)<a class="anchor-link" href="#install-aur" aria-label="Permalink to Arch Linux (AUR)">#</a></h3>
-                    <div class="copyable">
-                        <code id="cmd-aur">yay -S fresh-editor</code>
-                        <button class="copy-btn" onclick="copyCode('cmd-aur', this)">
-                            <img src="public/copy-icon.svg" alt="Copy" width="16" height="16">
-                        </button>
-                    </div>
-                    <p class="install-card-note">
-                        <a href="https://aur.archlinux.org/packages/fresh-editor" target="_blank">View on AUR</a> — aarch64 supported.
-                    </p>
+            <div class="install-card" id="install-aur">
+                <h3>Arch Linux (AUR)<a class="anchor-link" href="#install-aur" aria-label="Permalink to Arch Linux (AUR)">#</a></h3>
+                <div class="copyable">
+                    <code id="cmd-aur">yay -S fresh-editor</code>
+                    <button class="copy-btn" onclick="copyCode('cmd-aur', this)" aria-label="Copy">
+                        <img src="public/copy-icon.svg" alt="" width="14" height="14">
+                    </button>
                 </div>
+                <p class="install-card-note">
+                    <a href="https://aur.archlinux.org/packages/fresh-editor" target="_blank">View on AUR</a> — aarch64 supported.
+                </p>
+            </div>
 
-                <div class="install-card" id="install-npm">
-                    <h3>npm / npx (no install)<a class="anchor-link" href="#install-npm" aria-label="Permalink to npm / npx (no install)">#</a></h3>
-                    <div class="copyable">
-                        <code id="cmd-npx">npx @fresh-editor/fresh-editor</code>
-                        <button class="copy-btn" onclick="copyCode('cmd-npx', this)">
-                            <img src="public/copy-icon.svg" alt="Copy" width="16" height="16">
-                        </button>
-                    </div>
-                    <p class="install-card-note">
-                        Or global: <code style="color: var(--accent-green);">npm install -g @fresh-editor/fresh-editor</code>
-                    </p>
+            <div class="install-card" id="install-npm">
+                <h3>npm / npx (no install)<a class="anchor-link" href="#install-npm" aria-label="Permalink to npm / npx (no install)">#</a></h3>
+                <div class="copyable">
+                    <code id="cmd-npx">npx @fresh-editor/fresh-editor</code>
+                    <button class="copy-btn" onclick="copyCode('cmd-npx', this)" aria-label="Copy">
+                        <img src="public/copy-icon.svg" alt="" width="14" height="14">
+                    </button>
                 </div>
+                <p class="install-card-note">
+                    Or global: <code>npm install -g @fresh-editor/fresh-editor</code>
+                </p>
+            </div>
 
-                <div class="install-card" id="install-binaries">
-                    <h3>Pre-built Binaries<a class="anchor-link" href="#install-binaries" aria-label="Permalink to Pre-built Binaries">#</a></h3>
-                    <p class="install-card-note" style="margin-top: 0;">
-                        Linux, macOS, Windows, FreeBSD binaries on
-                        <a href="https://github.com/sinelaw/fresh/releases" target="_blank">GitHub Releases</a>. Drop anywhere on <code style="color: var(--accent-green);">$PATH</code>.
-                    </p>
-                </div>
+            <div class="install-card" id="install-binaries">
+                <h3>Pre-built Binaries<a class="anchor-link" href="#install-binaries" aria-label="Permalink to Pre-built Binaries">#</a></h3>
+                <p class="install-card-note">
+                    Linux, macOS, Windows, FreeBSD binaries on
+                    <a href="https://github.com/sinelaw/fresh/releases" target="_blank">GitHub Releases</a>. Drop anywhere on <code>$PATH</code>.
+                </p>
+            </div>
 
-                <div class="install-card" id="install-cargo">
-                    <h3>From source (Cargo)<a class="anchor-link" href="#install-cargo" aria-label="Permalink to From source (Cargo)">#</a></h3>
-                    <div class="copyable">
-                        <code id="cmd-cargo">cargo install --locked fresh-editor</code>
-                        <button class="copy-btn" onclick="copyCode('cmd-cargo', this)">
-                            <img src="public/copy-icon.svg" alt="Copy" width="16" height="16">
-                        </button>
-                    </div>
-                    <p class="install-card-note">If you already have a Rust toolchain.</p>
+            <div class="install-card" id="install-cargo">
+                <h3>From source (Cargo)<a class="anchor-link" href="#install-cargo" aria-label="Permalink to From source (Cargo)">#</a></h3>
+                <div class="copyable">
+                    <code id="cmd-cargo">cargo install --locked fresh-editor</code>
+                    <button class="copy-btn" onclick="copyCode('cmd-cargo', this)" aria-label="Copy">
+                        <img src="public/copy-icon.svg" alt="" width="14" height="14">
+                    </button>
                 </div>
+                <p class="install-card-note">If you already have a Rust toolchain.</p>
             </div>
         </div>
     </section>
 
     <!-- Full feature list -->
-    <section class="feature-list-section" id="full-features">
-        <h2>Full feature list<a class="anchor-link" href="#full-features" aria-label="Permalink to Full feature list">#</a></h2>
-        <ul class="full-feature-list">
+    <section class="section wrap" id="full-features">
+        <div class="section-head reveal">
+            <span class="eyebrow">Everything else</span>
+            <h2>And so much <em>more.</em><a class="anchor-link" href="#full-features" aria-label="Permalink to Full feature list">#</a></h2>
+        </div>
+        <ul class="full-feature-list reveal">
             <li>Multi-GB file support</li>
             <li>Intuitive out of the box</li>
             <li>No config file fiddling required</li>
@@ -1799,9 +1092,12 @@
     </section>
 
     <!-- Testimonials -->
-    <section class="testimonials" id="testimonials">
-        <h2>Testimonials<a class="anchor-link" href="#testimonials" aria-label="Permalink to Testimonials">#</a></h2>
-        <div class="testimonials-grid" id="testimonials-grid">
+    <section class="section wrap" id="testimonials">
+        <div class="section-head reveal">
+            <span class="eyebrow">Kind words</span>
+            <h2>In their <em>own words.</em><a class="anchor-link" href="#testimonials" aria-label="Permalink to Testimonials">#</a></h2>
+        </div>
+        <div class="testimonials-grid reveal" id="testimonials-grid">
             <div class="testimonial">
                 <p class="testimonial-quote">how come nobody is talking about [Fresh] … by far the best terminal-based ADE/orchestration tool i've used so far 🔥🔥🔥</p>
                 <p class="testimonial-source">— <a href="https://x.com/paulbettner/status/2080210336381292995" target="_blank">Paul Bettner (@paulbettner)</a>, X</p>
@@ -1981,20 +1277,38 @@
         </div>
     </section>
 
+    <!-- Closing -->
+    <section class="closing wrap">
+        <div class="reveal">
+            <img class="mark" src="public/assets/logo.webp" alt="" width="76" height="76" loading="lazy">
+            <span class="name">Fresh</span>
+            <p class="tag">The terminal IDE, <em>refined.</em></p>
+            <div class="closing-actions">
+                <a href="#install" class="btn-solid">Install Fresh</a>
+                <a href="https://github.com/sinelaw/fresh" target="_blank" class="btn-quiet">
+                    <img src="public/github-icon.svg" alt="" width="15" height="15">
+                    Star on GitHub
+                </a>
+            </div>
+            <p class="fine">Free and open source &nbsp;·&nbsp; Linux · macOS · Windows · FreeBSD</p>
+        </div>
+    </section>
+    </main>
+
     <!-- Footer -->
     <footer>
-        <div class="footer-links">
-            <a href="https://github.com/sinelaw/fresh" target="_blank">GitHub</a>
-            <a href="https://discord.gg/gqGh3K4uW3" target="_blank">Discord</a>
-            <a href="docs/">Documentation</a>
-            <a href="https://github.com/sinelaw/fresh/releases" target="_blank">Releases</a>
-            <a href="https://github.com/sinelaw/fresh/blob/master/CHANGELOG.md" target="_blank">Changelog</a>
-            <a href="https://github.com/sinelaw/fresh/issues" target="_blank">Issues</a>
-            <a href="https://github.com/sinelaw/fresh/discussions" target="_blank">Discussions</a>
+        <div class="wrap footer-row">
+            <div class="footer-links">
+                <a href="https://github.com/sinelaw/fresh" target="_blank">GitHub</a>
+                <a href="https://discord.gg/gqGh3K4uW3" target="_blank">Discord</a>
+                <a href="docs/">Documentation</a>
+                <a href="https://github.com/sinelaw/fresh/releases" target="_blank">Releases</a>
+                <a href="https://github.com/sinelaw/fresh/blob/master/CHANGELOG.md" target="_blank">Changelog</a>
+                <a href="https://github.com/sinelaw/fresh/issues" target="_blank">Issues</a>
+                <a href="https://github.com/sinelaw/fresh/discussions" target="_blank">Discussions</a>
+            </div>
+            <p class="footer-credit">Created by Noam Lewis</p>
         </div>
-        <p class="footer-credit">
-            Created by Noam Lewis
-        </p>
     </footer>
 
     <script>
@@ -2101,53 +1415,6 @@
             });
     </script>
 
-    <!-- Asciinema player: recorded demo of Fresh. Keeps the static hero PNG if
-         the bundle or cast fail to load.
-
-         Vendored build: asciinema-player 3.12.1, from
-         https://cdn.jsdelivr.net/npm/asciinema-player@3.12.1/dist/bundle/
-         (asciinema-player.min.js + asciinema-player.css).
-
-         Pinned to 3.12.1 on purpose — do not bump blindly (see issue #3106).
-         From 3.13.0 on, the renderer splits the terminal into three stacked
-         layers inside div.ap-term: a <canvas> painting every cell's BACKGROUND
-         colour, an <svg>, and a <pre> holding only the text. On Chrome/Linux
-         that canvas intermittently never paints — about half of page loads —
-         and because the cell backgrounds live nowhere else, the hero collapses
-         to an unreadable near-black rectangle even though the text spans are
-         present and visible. 3.12.1 is the last release whose renderer is a
-         single <pre class="ap-terminal"> with per-span background colours, so
-         there is no separate compositing layer that can fail.
-
-         The bundle is deferred so its ~160KB never blocks the parser. Deferred
-         scripts run before DOMContentLoaded, so by the time the listener below
-         fires, AsciinemaPlayer is defined. -->
-    <script defer src="public/vendor/asciinema-player/asciinema-player.min.js"></script>
-    <script>
-        document.addEventListener('DOMContentLoaded', function () {
-            if (typeof AsciinemaPlayer === 'undefined') return;
-            const host = document.getElementById('demo-player');
-            if (!host) return;
-            const fallback = document.getElementById('demo-fallback');
-            try {
-                host.textContent = '';
-                AsciinemaPlayer.create('public/fresh-demo.cast', host, {
-                    autoPlay: true,
-                    loop: true,
-                    preload: true,
-                    idleTimeLimit: 1.5,
-                    speed: 1.25,
-                    cols: 110,
-                    rows: 30,
-                    controls: false,
-                    fit: 'width',
-                    theme: 'asciinema'
-                });
-            } catch (err) {
-                if (fallback) host.appendChild(fallback);
-            }
-        });
-    </script>
 
     <!-- Cloudflare Web Analytics, one token per domain the site is served from.
          Injected after the load event instead of shipped as a <script> tag:
@@ -2175,6 +1442,65 @@
             const start = () => setTimeout(loadBeacons, 0);
             if (document.readyState === 'complete') start();
             else window.addEventListener('load', start);
+        })();
+    </script>
+
+    <!-- The film plays, muted, while it is on screen, and pauses when it
+         is not. With reduced motion it waits on its poster until clicked. -->
+    <script>
+        (function () {
+            const v = document.getElementById('film');
+            const btn = document.getElementById('film-sound');
+            if (!v) return;
+            const calm = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+            let wanted = !calm;
+            const setSound = on => {
+                v.muted = !on;
+                btn.textContent = on ? 'Sound off' : 'Sound on';
+                btn.setAttribute('aria-pressed', on);
+            };
+            btn.addEventListener('click', e => {
+                e.stopPropagation();
+                setSound(v.muted);
+                wanted = true;
+                v.play().catch(() => {});
+            });
+            v.addEventListener('click', () => {
+                if (v.paused) { wanted = true; v.play().catch(() => {}); }
+                else { wanted = false; v.pause(); }
+            });
+            if ('IntersectionObserver' in window) {
+                new IntersectionObserver(([e]) => {
+                    if (e.isIntersecting && wanted) v.play().catch(() => {});
+                    else if (!e.isIntersecting) v.pause();
+                }, { threshold: 0.35 }).observe(v);
+            } else if (wanted) {
+                v.play().catch(() => {});
+            }
+        })();
+    </script>
+
+    <!-- The nav gains its glass once the page scrolls; sections fade in as
+         they arrive. Both are decoration: without JS, the nav is transparent
+         and every section is already visible. -->
+    <script>
+        (function () {
+            const nav = document.getElementById('nav');
+            const onScroll = () => nav.classList.toggle('scrolled', window.scrollY > 24);
+            window.addEventListener('scroll', onScroll, { passive: true });
+            onScroll();
+
+            const items = document.querySelectorAll('.reveal');
+            if (!('IntersectionObserver' in window)) {
+                items.forEach(el => el.classList.add('in'));
+                return;
+            }
+            const io = new IntersectionObserver(entries => {
+                for (const e of entries) {
+                    if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); }
+                }
+            }, { rootMargin: '0px 0px -6% 0px', threshold: 0 });
+            items.forEach(el => io.observe(el));
         })();
     </script>
 </body>

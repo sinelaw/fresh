@@ -19,7 +19,17 @@ const grab = async t => {
   const b64 = await page.evaluate(t => { window.renderAt(t); return document.getElementById('c').toDataURL('image/png').split(',')[1]; }, t);
   return Buffer.from(b64, 'base64');
 };
-if (mode === 'stills') {
+if (mode === 'shots') {
+  // website stills: node render.mjs shots OUTDIR name...  (page: shots.html)
+  const [outDir, ...names] = rest;
+  fs.mkdirSync(outDir, { recursive: true });
+  for (const name of names) {
+    const [w, h] = await page.evaluate(n => window.renderShot(n), name);
+    const b64 = await page.evaluate(() => document.getElementById('c').toDataURL('image/png').split(',')[1]);
+    fs.writeFileSync(`${outDir}/${name}.png`, Buffer.from(b64, 'base64'));
+    console.log(name, w, 'x', h);
+  }
+} else if (mode === 'stills') {
   fs.mkdirSync('stills', { recursive: true });
   for (const t of rest) fs.writeFileSync(`stills/${t}.png`, await grab(parseFloat(t)));
 } else {

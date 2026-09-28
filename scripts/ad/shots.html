@@ -1,0 +1,32 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Fresh Stills</title>
+<style>
+@font-face { font-family: 'JBM'; src: url(fonts/JBM-Regular.woff2); font-weight: 400; }
+@font-face { font-family: 'JBM'; src: url(fonts/JBM-Bold.woff2); font-weight: 700; }
+html, body { margin: 0; background: #000; }
+</style>
+</head>
+<body>
+<canvas id="c" width="1080" height="1920"></canvas>
+<script src="engine.js"></script>
+<script src="shots.js"></script>
+<script>
+// Stills for the website: a crop of one recorded screen, drawn at 2x.
+// renderShot(name) sizes the canvas to the crop and returns once drawn.
+const SCENES = [];
+window.renderShot = async (name) => {
+  const s = SHOTS[name];
+  if (!clips[s.clip]) clips[s.clip] = await (await fetch('frames/' + s.clip + '.json')).json();
+  const [c0, r0, c1, r1] = s.crop, k = 2;
+  cv.width = Math.round((c1 - c0) * CW * k); cv.height = Math.round((r1 - r0) * CHH * k);
+  ctx.setTransform(k, 0, 0, k, -c0 * CW * k, -r0 * CHH * k);
+  drawCells(clips[s.clip], s.t, { cursor: false });
+  return [cv.width, cv.height];
+};
+window.ready = Promise.all([document.fonts.load('400 20px JBM'), document.fonts.load('700 20px JBM')]);
+</script>
+</body>
+</html>
