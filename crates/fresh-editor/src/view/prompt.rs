@@ -266,6 +266,9 @@ pub struct Prompt {
     /// keyboard or the suggestion list is rebuilt, so normal navigation
     /// re-engages the keep-selection-visible behaviour.
     pub manual_scroll: bool,
+    /// The suggestion list's page: its layout records the window it was
+    /// given here, and PageUp/PageDown ask it for the row a page away.
+    pub pager: std::rc::Rc<fresh_ui::behavior::Pager>,
     /// Tracks the input value when suggestions were last set by a plugin.
     /// Used to skip Rust-side filtering when plugin has already filtered for this input.
     pub suggestions_set_for_input: Option<String>,
@@ -405,6 +408,7 @@ impl Prompt {
             selection: Default::default(),
             scroll_offset: 0,
             manual_scroll: false,
+            pager: fresh_ui::behavior::Pager::new(),
             suggestions_set_for_input: None,
             sync_input_on_navigate: false,
             overlay: false,
@@ -447,6 +451,7 @@ impl Prompt {
             selection,
             scroll_offset: 0,
             manual_scroll: false,
+            pager: fresh_ui::behavior::Pager::new(),
             suggestions_set_for_input: None,
             sync_input_on_navigate: false,
             overlay: false,
@@ -502,6 +507,7 @@ impl Prompt {
             selection: Default::default(),
             scroll_offset: 0,
             manual_scroll: false,
+            pager: fresh_ui::behavior::Pager::new(),
             suggestions_set_for_input: None,
             sync_input_on_navigate: false,
             overlay: false,

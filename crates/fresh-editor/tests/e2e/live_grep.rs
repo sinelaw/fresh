@@ -1497,3 +1497,63 @@ fn test_live_grep_provider_dropdown_keeps_its_keys_while_open() {
         harness.screen_to_string()
     );
 }
+
+/// Seed `n` results named `r000.txt:1` … and select the first.
+fn seed_many_results(harness: &mut EditorTestHarness, n: usize) {
+    let labels: Vec<String> = (0..n).map(|i| format!("r{i:03}.txt:1")).collect();
+    let labels: Vec<&str> = labels.iter().map(String::as_str).collect();
+    seed_overlay_results(harness, &labels, Some(0));
+    harness.render().unwrap();
+}
+
+/// The results on screen, by index, top to bottom.
+fn results_on_screen(harness: &EditorTestHarness) -> Vec<usize> {
+    harness
+        .screen_to_string()
+        .lines()
+        .filter_map(|l| {
+            let at = l.find(" r")? + 2;
+            l.get(at..at + 3)?.parse().ok()
+        })
+        .collect()
+}
+
+fn selected_result(harness: &EditorTestHarness) -> Option<usize> {
+    harness
+        .editor()
+        .active_window()
+        .prompt
+        .as_ref()
+        .and_then(|p| p.selected_suggestion())
+}
+
+/// **PageDown in Live Grep moves by the results on screen.** It moved a
+/// fixed ten rows, whatever the results band's height; the list records the
+/// window its layout placed, and a page is that.
+#[test]
+fn test_live_grep_page_down_moves_by_the_results_window() {
+    let (mut harness, _tmp) = open_live_grep_overlay(&[], Default::default());
+    seed_many_results(&mut harness, 200);
+    let rows = results_on_screen(&harness).len();
+    assert!(
+        rows > 10,
+        "the band shows more than ten results:\n{}",
+        harness.screen_to_string()
+    );
+
+    harness
+        .send_key(KeyCode::PageDown, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    assert_eq!(selected_result(&harness), Some(rows));
+    assert!(
+        results_on_screen(&harness).contains(&rows),
+        "the window follows the selection:\n{}",
+        harness.screen_to_string()
+    );
+    harness
+        .send_key(KeyCode::PageUp, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    assert_eq!(selected_result(&harness), Some(0));
+}

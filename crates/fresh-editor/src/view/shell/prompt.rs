@@ -286,7 +286,7 @@ pub mod stats {
 }
 
 /// The list itself.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Suggestions {
     pub rows: Rows,
     /// Which row is selected, if any. Controlled: the editor holds it.
@@ -300,6 +300,10 @@ pub struct Suggestions {
     /// row minus the popup minus that same one". Two subtractions that had to
     /// agree. Stacked in the layer, the agreement is the stacking.
     pub hints: Option<String>,
+    /// The prompt's page handle: the list records the window its layout
+    /// gave it here, and the prompt's PageUp/PageDown ask it for the row a
+    /// page away.
+    pub pager: Rc<fresh_ui::behavior::Pager>,
 }
 
 impl Suggestions {
@@ -725,7 +729,8 @@ pub fn suggestions(s: &Suggestions) -> Node<UiMsg> {
     // list that declines focus still answers clicks and the wheel.
     .focusable(false)
     .on_select(|i| UiMsg::Ui(UiFact::SuggestionSelect(i)))
-    .on_activate(|i| UiMsg::Ui(UiFact::SuggestionConfirm(i)));
+    .on_activate(|i| UiMsg::Ui(UiFact::SuggestionConfirm(i)))
+    .pager(s.pager.clone());
     if let Some(i) = selected {
         list = list.selected(i);
     }
@@ -1078,6 +1083,7 @@ mod tests {
                 selected: Some(0),
                 place: Place::AbovePrompt,
                 hints: None,
+                pager: Default::default(),
             },
             40,
             8,
@@ -1111,6 +1117,7 @@ mod tests {
                 selected: Some(0),
                 place: Place::AbovePrompt,
                 hints: None,
+                pager: Default::default(),
             },
             40,
             8,
@@ -1158,6 +1165,7 @@ mod tests {
                 selected: Some(0),
                 place: Place::AbovePrompt,
                 hints: None,
+                pager: Default::default(),
             })
         };
         ui.frame(tree(), Size::new(40, 8));
@@ -1197,6 +1205,7 @@ mod tests {
                 selected: None,
                 place: Place::AbovePrompt,
                 hints: None,
+                pager: Default::default(),
             })
         };
         let before = rows(5);
@@ -1271,6 +1280,7 @@ mod tests {
                 selected: Some(0),
                 place: Place::AbovePrompt,
                 hints: None,
+                pager: Default::default(),
             },
             40,
             MAX_VISIBLE_SUGGESTIONS as u16,
@@ -1301,6 +1311,7 @@ mod tests {
             selected: Some(0),
             place: Place::AbovePrompt,
             hints: None,
+            pager: Default::default(),
         };
         let spec = ui.frame(popup(&s), Size::new(40, 6)).clone();
         assert!(
@@ -1340,6 +1351,7 @@ mod tests {
                         selected: Some(0),
                         place: Place::AbovePrompt,
                         hints: None,
+                        pager: Default::default(),
                     }),
                     ..Frame::default()
                 }),
@@ -1370,6 +1382,7 @@ mod tests {
                 selected: Some(0),
                 place: Place::AbovePrompt,
                 hints: None,
+                pager: Default::default(),
             };
             let ui = laid_out(s, 16, 4);
             let spec = ui.spec();
@@ -1436,6 +1449,7 @@ mod tests {
             selected: Some(0),
             place: Place::AbovePrompt,
             hints: None,
+            pager: Default::default(),
         };
         // Wide enough that the description is not elided: the name column has
         // a thirty-cell floor, and this test is about the span's ink.
@@ -1504,6 +1518,7 @@ mod tests {
                         selected: Some(0),
                         place: Place::InCard,
                         hints: None,
+                        pager: Default::default(),
                     }),
                     ..Frame::default()
                 }),
@@ -1552,6 +1567,7 @@ mod tests {
                         selected: Some(0),
                         place: Place::AbovePrompt,
                         hints: None,
+                        pager: Default::default(),
                     }),
                     ..Frame::default()
                 }),
@@ -1577,6 +1593,7 @@ mod tests {
                     selected: Some(0),
                     place: Place::AbovePrompt,
                     hints: None,
+                    pager: Default::default(),
                 })),
                 Size::new(60, 40),
             );
@@ -1618,6 +1635,7 @@ mod tests {
                 selected: Some(0),
                 place: Place::AbovePrompt,
                 hints: None,
+                pager: Default::default(),
             })),
             Size::new(60, 20),
         );
@@ -1656,6 +1674,7 @@ mod tests {
                     selected: Some(0),
                     place: Place::AbovePrompt,
                     hints: None,
+                    pager: Default::default(),
                 }),
                 Size::new(40, 6),
             );
@@ -1692,6 +1711,7 @@ mod tests {
                     selected: Some(0),
                     place: Place::AbovePrompt,
                     hints: None,
+                    pager: Default::default(),
                 }),
                 ..Frame::default()
             }),
@@ -1733,6 +1753,7 @@ mod tests {
                 selected: Some(0),
                 place: Place::AbovePrompt,
                 hints: None,
+                pager: Default::default(),
             };
             let ui = laid_out(s, w, 4);
             ui.rect_of(ui.find_by_key(&name_key("")).expect("the name column"))

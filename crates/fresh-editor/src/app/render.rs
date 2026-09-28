@@ -4043,6 +4043,7 @@ impl Editor {
             listing,
             selected: files.then_some(state.selected_index()).flatten(),
             hover,
+            pager: state.pager.clone(),
         })
     }
 
@@ -4105,6 +4106,7 @@ impl Editor {
             hints: (!prompt.overlay
                 && prompt.prompt_type == crate::view::prompt::PromptType::QuickOpen)
                 .then(|| fresh_i18n::t!("quick_open.mode_hints").to_string()),
+            pager: prompt.pager.clone(),
         })
     }
 
