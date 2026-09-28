@@ -19,6 +19,7 @@ trap 'kill $SERVER 2>/dev/null || true' EXIT
 sleep 1
 
 SHOTS=$(node -e "eval(require('fs').readFileSync('shots.js','utf8') + ';console.log(Object.keys(SHOTS).join(\" \"))')")
+rm -rf shots   # only this run's stills, not leftovers from an older SHOTS list
 AD_PORT="$PORT" AD_PAGE=shots.html node render.mjs shots shots $SHOTS
 mkdir -p "$OUT/shots"
 python3 - "$OUT/shots" <<'PY'
@@ -29,7 +30,7 @@ for p in sorted(glob.glob('shots/*.png')):
     im = Image.open(p).convert('RGB')
     name = os.path.basename(p)[:-4]
     # dense screens (the log) compress poorly; keep them a little smaller
-    width, q = (1600, 80) if name == 'huge-file' else (2000, 88)
+    width, q = (1600, 80) if name == 'huge-file' else (1600, 84) if name.startswith('theme-') else (2000, 88)
     if im.width > width:
         im = im.resize((width, round(im.height * width / im.width)), Image.LANCZOS)
     im.save(f'{out}/{name}.webp', 'WEBP', quality=q, method=6)

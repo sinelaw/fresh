@@ -7,7 +7,7 @@
     <meta name="description" content="Fresh is a terminal IDE. One static binary, instant startup, broad LSP coverage, magit-style diff review, project-wide search, huge-file editing, SSH remote editing, and TypeScript plugins.">
     <meta name="theme-color" content="#0c0d0f">
     <meta property="og:title" content="Fresh — the terminal IDE">
-    <meta property="og:description" content="A modern terminal IDE. Familiar keys, a working mouse, LSP and git review, plus a home for the coding agents you already use.">
+    <meta property="og:description" content="A modern terminal IDE and a home for the coding agents you already use, each in its own workspace. Familiar keys, a working mouse, LSP and git review.">
     <meta property="og:image" content="public/assets/shots/orchestrator.webp">
     <link rel="icon" href="public/assets/favicon.ico" sizes="16x16 32x32 48x48">
     <link rel="icon" type="image/png" sizes="32x32" href="public/assets/favicon-32.png">
@@ -437,7 +437,7 @@
             border-bottom: 1px solid var(--line);
             margin-top: 20px;
         }
-        .note { padding: 56px 40px 60px 0; }
+        .note { padding: 56px 40px 60px 0; min-width: 0; }
         .note + .note { padding-left: 40px; border-left: 1px solid var(--line); }
         .note h3 {
             font-family: var(--serif); font-weight: 400;
@@ -462,6 +462,107 @@
         }
         .snippet .c { color: var(--faint); }
         .snippet .k { color: var(--sage); }
+
+
+        /* Themes: six stills stacked, each fading in over the one before.
+           6 slots x 3 s = 18 s; an image stays up until the next has covered
+           it, and the last fades out to reveal the first underneath. */
+        .theme-cycle { position: relative; }
+        .theme-cycle img + img {
+            position: absolute; inset: 0;
+            width: 100%; height: 100%;
+            opacity: 0;
+            animation: theme-in 18s linear infinite both;
+            animation-delay: calc(var(--i) * 3s);
+        }
+        .theme-cycle img:last-of-type { animation-name: theme-last; }
+        @keyframes theme-in {
+            0% { opacity: 0; } 5% { opacity: 1; } 21.6% { opacity: 1; } 21.7% { opacity: 0; } 100% { opacity: 0; }
+        }
+        @keyframes theme-last {
+            0% { opacity: 0; } 5% { opacity: 1; } 16.7% { opacity: 1; } 21.7% { opacity: 0; } 100% { opacity: 0; }
+        }
+        .theme-names {
+            position: absolute; right: 14px; bottom: 14px;
+            height: 30px; min-width: 150px;
+        }
+        .theme-names span {
+            position: absolute; right: 0; bottom: 0;
+            white-space: nowrap;
+            font-size: 11.5px; font-weight: 500; letter-spacing: 0.22em; text-transform: uppercase;
+            color: var(--paper-2);
+            background: rgba(12, 13, 15, 0.78);
+            -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+            border: 1px solid var(--line-2);
+            border-radius: 999px;
+            padding: 6px 13px;
+            opacity: 0;
+            animation: theme-name 18s linear infinite both;
+            animation-delay: calc(var(--i) * 3s);
+        }
+        @keyframes theme-name {
+            0% { opacity: 0; } 4% { opacity: 1; } 15.5% { opacity: 1; } 18% { opacity: 0; } 100% { opacity: 0; }
+        }
+        @media (prefers-reduced-motion: reduce) {
+            .theme-cycle img + img { animation: none; opacity: 0; }
+            .theme-names span { animation: none; }
+            .theme-names span:first-child { opacity: 1; }
+        }
+
+        /* Zoom: a screenshot opens enlarged over the page; a second click
+           (anywhere) or Esc closes it. */
+        .zoomable { cursor: zoom-in; }
+        .zoom {
+            position: fixed; inset: 0;
+            z-index: 300;
+            display: flex; align-items: center; justify-content: center;
+            background: rgba(8, 9, 10, 0.86);
+            -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+            cursor: zoom-out;
+            opacity: 0;
+            transition: opacity 0.35s var(--ease);
+        }
+        .zoom.open { opacity: 1; }
+        .zoom .window { transform-origin: 0 0; box-shadow: 0 60px 160px -30px rgba(0, 0, 0, 0.95); }
+
+
+        /* Hero footnote: the agents it works with */
+        .works { margin-top: 18px; font-size: 14.5px; color: var(--mute); }
+        .works code { font-size: 13.5px; }
+        .works span { color: var(--faint); margin: 0 4px; }
+
+        /* Light enough to run almost anywhere */
+        .light { margin-top: 110px; text-align: center; }
+        .light-head { font-family: var(--serif); font-size: clamp(1.9rem, 3.4vw, 2.6rem); line-height: 1.15; color: var(--paper); }
+        .light-head em { color: var(--sage); }
+        .light-facts {
+            list-style: none;
+            display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
+            margin: 40px auto 0; max-width: 980px;
+            border-top: 1px solid var(--line); border-bottom: 1px solid var(--line);
+        }
+        .light-facts li { padding: 26px 18px; display: flex; flex-direction: column; gap: 6px; }
+        .light-facts li + li { border-left: 1px solid var(--line); }
+        .light-facts b { font-family: var(--serif); font-weight: 400; font-size: 1.85rem; line-height: 1.1; color: var(--paper); }
+        .light-facts span { font-size: 13.5px; color: var(--mute); }
+        .light + .ticker { margin-top: 70px; }
+
+        /* Agents that drive the editor */
+        .teach {
+            display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
+            gap: 56px; align-items: center;
+            margin: 0 0 90px;
+            padding: 48px;
+            background: rgba(18, 19, 22, 0.55);
+            border: 1px solid var(--line);
+            border-radius: 20px;
+        }
+        .teach .eyebrow { display: block; margin-bottom: 16px; color: var(--sage); }
+        .teach h3 { font-family: var(--serif); font-weight: 400; font-size: 2.2rem; line-height: 1.1; color: var(--paper); }
+        .teach h3 em { color: var(--sage); }
+        .teach p { margin-top: 16px; color: var(--paper-2); font-size: 16px; }
+        .teach .snippet { margin-top: 0; font-size: 12.5px; min-width: 0; }
+        .teach-text { min-width: 0; }
 
         /* ---------- The Orchestrator, in three beats ---------- */
         .orchestra {
@@ -637,6 +738,10 @@
             .film { max-width: 360px; margin: 0 auto; }
             .beats { grid-template-columns: 1fr; gap: 40px; margin: 64px 0; }
             .orchestra-review { grid-template-columns: 1fr; gap: 36px; }
+            .teach { grid-template-columns: 1fr; gap: 28px; padding: 30px 24px; }
+            .light-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+            .light-facts li:nth-child(3) { border-left: none; }
+            .light-facts li:nth-child(n+3) { border-top: 1px solid var(--line); }
             .nav-links { display: none; }
             .hamburger { display: flex; }
             .mobile-menu { display: block; }
@@ -685,6 +790,7 @@
                 <span></span>
             </button>
             <div class="nav-links">
+                <a href="#orchestrator">Agents</a>
                 <a href="#features">Features</a>
                 <a href="#testimonials">Testimonials</a>
                 <a href="#install">Install</a>
@@ -706,6 +812,7 @@
     <!-- Mobile Menu -->
     <div class="mobile-menu" id="mobile-menu">
         <div class="mobile-menu-content">
+            <a href="#orchestrator" onclick="toggleMobileMenu()">Agents</a>
             <a href="#features" onclick="toggleMobileMenu()">Features</a>
             <a href="#testimonials" onclick="toggleMobileMenu()">Testimonials</a>
             <a href="#install" onclick="toggleMobileMenu()">Install</a>
@@ -723,7 +830,8 @@
             <div class="hero-text">
                 <span class="eyebrow reveal">Fresh</span>
                 <h1 class="reveal">A modern<br><em class="keep">terminal IDE.</em></h1>
-                <p class="lede reveal">Familiar keys, a working mouse, LSP and git review, plus a home for the coding agents you already use. One binary, nothing to configure.</p>
+                <p class="lede reveal">A home for the coding agents you already use, each in its own workspace, with a real editor around them: familiar keys, a working mouse, LSP and git review. One binary, nothing to configure.</p>
+                <p class="works reveal">Works with <code>claude</code> <span>·</span> <code>codex</code> <span>·</span> <code>opencode</code></p>
 
                 <div class="install reveal">
                     <div class="install-tabs" role="tablist" aria-label="Operating system">
@@ -758,6 +866,17 @@
             </figure>
         </div>
 
+        <!-- Light enough to run almost anywhere -->
+        <div class="wrap light reveal">
+            <p class="light-head">Light enough to run <em>almost anywhere.</em></p>
+            <ul class="light-facts">
+                <li><b>Small</b><span>a quick download</span></li>
+                <li><b>Lean</b><span>on memory, even with big files open</span></li>
+                <li><b>One</b><span>static binary, no runtime</span></li>
+                <li><b>Linux · macOS</b><span>Windows · FreeBSD · over SSH</span></li>
+            </ul>
+        </div>
+
         <div class="ticker" aria-hidden="true">
             <div class="ticker-row"><span>Command palette</span><span>Multi-cursor</span><span>Live grep</span><span>Fuzzy file finder</span><span>Themes</span><span>LSP</span><span>Go to definition</span><span>Review diff</span><span>Git log</span><span>Git blame</span><span>Split panes</span><span>Integrated terminal</span><span>File explorer</span><span>Keyboard macros</span><span>Vim mode</span><span>SSH remote editing</span><span>Multi-GB files</span><span>Hot exit</span><span>Markdown compose</span><span>Code tours</span><span>TypeScript plugins</span><span>Settings UI</span><span>Keybinding editor</span><span>Orchestrator</span><span>Git worktrees</span><span>Coding agents</span><span>Search &amp; replace</span><span>Dev containers</span><span>Mouse support</span><span>Rainbow brackets</span><span>Detachable daemon</span><span>Package manager</span><span>Command palette</span><span>Multi-cursor</span><span>Live grep</span><span>Fuzzy file finder</span><span>Themes</span><span>LSP</span><span>Go to definition</span><span>Review diff</span><span>Git log</span><span>Git blame</span><span>Split panes</span><span>Integrated terminal</span><span>File explorer</span><span>Keyboard macros</span><span>Vim mode</span><span>SSH remote editing</span><span>Multi-GB files</span><span>Hot exit</span><span>Markdown compose</span><span>Code tours</span><span>TypeScript plugins</span><span>Settings UI</span><span>Keybinding editor</span><span>Orchestrator</span><span>Git worktrees</span><span>Coding agents</span><span>Search &amp; replace</span><span>Dev containers</span><span>Mouse support</span><span>Rainbow brackets</span><span>Detachable daemon</span><span>Package manager</span></div>
             <div class="ticker-row"><span>Multi-GB files</span><span>Hot exit</span><span>Markdown compose</span><span>Code tours</span><span>TypeScript plugins</span><span>Settings UI</span><span>Keybinding editor</span><span>Orchestrator</span><span>Git worktrees</span><span>Coding agents</span><span>Search &amp; replace</span><span>Dev containers</span><span>Mouse support</span><span>Rainbow brackets</span><span>Detachable daemon</span><span>Package manager</span><span>Command palette</span><span>Multi-cursor</span><span>Live grep</span><span>Fuzzy file finder</span><span>Themes</span><span>LSP</span><span>Go to definition</span><span>Review diff</span><span>Git log</span><span>Git blame</span><span>Split panes</span><span>Integrated terminal</span><span>File explorer</span><span>Keyboard macros</span><span>Vim mode</span><span>SSH remote editing</span><span>Multi-GB files</span><span>Hot exit</span><span>Markdown compose</span><span>Code tours</span><span>TypeScript plugins</span><span>Settings UI</span><span>Keybinding editor</span><span>Orchestrator</span><span>Git worktrees</span><span>Coding agents</span><span>Search &amp; replace</span><span>Dev containers</span><span>Mouse support</span><span>Rainbow brackets</span><span>Detachable daemon</span><span>Package manager</span><span>Command palette</span><span>Multi-cursor</span><span>Live grep</span><span>Fuzzy file finder</span><span>Themes</span><span>LSP</span><span>Go to definition</span><span>Review diff</span><span>Git log</span><span>Git blame</span><span>Split panes</span><span>Integrated terminal</span><span>File explorer</span><span>Keyboard macros</span><span>Vim mode</span><span>SSH remote editing</span></div>
@@ -766,10 +885,70 @@
 
     <!-- Chapters -->
     <main>
+    <!-- The Orchestrator, in three beats, as in the film -->
+    <section class="orchestra" id="orchestrator">
+        <div class="wrap">
+            <div class="section-head reveal">
+                <span class="eyebrow"><b class="num">01</b>Orchestrator</span>
+                <h2>Every task gets its own <em>workspace.</em><a class="anchor-link" href="#orchestrator" aria-label="Permalink to Multitask with the Orchestrator">#</a></h2>
+                <p>Each task gets its own git worktree, with its own tabs, terminals and agent. Hop between tasks with an arrow key while the rest keep working.</p>
+            </div>
+            <div class="orchestra-hero reveal">
+                <a href="public/assets/shots/orchestrator.webp" target="_blank"><div class="window">
+                    <div class="window-bar"><span></span><span></span><span></span><span class="title">orchestrator</span></div>
+                    <img src="public/assets/shots/orchestrator.webp" alt="The Orchestrator dock listing three workspaces; the selected one shows a coding agent working beside the file it is changing" width="2000" height="1321" loading="lazy" decoding="async">
+                </div></a>
+            </div>
+            <div class="beats">
+                <div class="beat reveal">
+                    <h3>An agent, right beside <em>your code.</em></h3>
+                    <p>Put <code>claude</code>, <code>codex</code> or <code>opencode</code> to work in any workspace. Restart Fresh and the sessions pick up where they left off.</p>
+                </div>
+                <div class="beat reveal">
+                    <h3>Every change, ready to <em>review.</em></h3>
+                    <p>Branch, diff and PR status sit in the dock. Review hunk by hunk: stage, unstage, discard, and leave notes as you go.</p>
+                </div>
+                <div class="beat reveal">
+                    <h3>Here, or <em>anywhere.</em></h3>
+                    <p>Workspaces run on this machine, on any host in your <code>~/.ssh/config</code>, in Kubernetes or in a dev container. On a remote, Fresh cuts the worktree right there.</p>
+                </div>
+            </div>
+            <div class="teach reveal" id="cli">
+                <div class="teach-text">
+                    <span class="eyebrow">Teach Fresh CLI</span>
+                    <h3>Agents that drive <em>the editor.</em><a class="anchor-link" href="#cli" aria-label="Permalink to the agent CLI">#</a></h3>
+                    <p>Fresh's command line is built for agents as much as for you. Let an agent use it and it can organize your workspaces into folders, start new sessions, wait on other agents, split panes and open files for you to look at. Only the agents you allow get the key, and they learn the ropes from <code>fresh --skill</code>.</p>
+                </div>
+                <div class="snippet"><span class="c"># from inside an agent's workspace</span>
+<span class="k">fresh</span> --cmd workspace list
+<span class="k">fresh</span> --cmd agent wait demo-2
+<span class="k">fresh</span> --cmd agent start codex --prompt "review this branch"
+
+<span class="c"># anything a plugin can do, as a script</span>
+<span class="k">echo</span> 'editor.executeAction("split_vertical");
+      await editor.openFile("src/cache.rs")' \
+  | <span class="k">fresh</span> --cmd script run -</div>
+            </div>
+
+            <div class="orchestra-review reveal" id="git-review">
+                <a href="public/assets/shots/review-diff.webp" target="_blank"><div class="window">
+                    <div class="window-bar"><span></span><span></span><span></span><span class="title">review diff</span></div>
+                    <img src="public/assets/shots/review-diff.webp" alt="Review Diff showing two files' hunks, with added and removed lines" width="2000" height="1303" loading="lazy" decoding="async">
+                </div></a>
+                <ul class="points">
+                    <li>Hunk-level stage / unstage / discard</li>
+                    <li>Side-by-side diff view</li>
+                    <li>Line comments and review notes, exported to Markdown</li>
+                    <li>Git gutter, git log viewer, git grep</li>
+                </ul>
+            </div>
+        </div>
+    </section>
+
     <section class="chapters wrap" id="features">
         <div class="chapter" id="keyboard">
             <div class="chapter-text reveal">
-                <span class="eyebrow"><b>01</b>Familiar</span>
+                <span class="eyebrow"><b>02</b>Familiar</span>
                 <h2>Familiar from the <em>first keystroke.</em><a class="anchor-link" href="#keyboard" aria-label="Permalink to Keyboard &amp; editing">#</a></h2>
                 <p>Ctrl+S saves. Ctrl+C copies. Click, drag, scroll. If you have used a modern editor, you already know how to use Fresh. There are no modes to learn and no cheat sheet to keep open.</p>
                 <ul class="points">
@@ -788,7 +967,7 @@
 
         <div class="chapter flip" id="themes">
             <div class="chapter-text reveal">
-                <span class="eyebrow"><b>02</b>Themes</span>
+                <span class="eyebrow"><b>03</b>Themes</span>
                 <h2>Make it <em>yours.</em><a class="anchor-link" href="#themes" aria-label="Permalink to Themes, status bar &amp; i18n">#</a></h2>
                 <p>Browse the themes and the whole editor changes as you go. Tokyo Night, Gruvbox, Dracula, Nord and more are built in, and the theme editor works live.</p>
                 <ul class="points">
@@ -798,16 +977,25 @@
                 </ul>
             </div>
             <div class="chapter-visual reveal">
-                <a href="public/assets/shots/themes.webp" target="_blank"><div class="window">
+                <a href="public/assets/shots/theme-tokyo-night.webp" target="_blank"><div class="window">
                     <div class="window-bar"><span></span><span></span><span></span><span class="title">server.rs</span></div>
-                    <img src="public/assets/shots/themes.webp" alt="Code shown in one of the built-in themes, chosen from the live theme picker" width="2000" height="1313" loading="lazy" decoding="async">
+                    <!-- One still per built-in theme, crossfading on a loop (CSS only). -->
+                    <div class="theme-cycle">
+                        <img src="public/assets/shots/theme-tokyo-night.webp" alt="The same code shown in the built-in themes, switching from Tokyo Night to Gruvbox, Nord, Light, Dracula and Solarized Dark" width="1600" height="1051" loading="lazy" decoding="async">
+                        <img src="public/assets/shots/theme-gruvbox.webp" alt="" aria-hidden="true" width="1600" height="1051" loading="lazy" decoding="async" style="--i:1">
+                        <img src="public/assets/shots/theme-nord.webp" alt="" aria-hidden="true" width="1600" height="1051" loading="lazy" decoding="async" style="--i:2">
+                        <img src="public/assets/shots/theme-light.webp" alt="" aria-hidden="true" width="1600" height="1051" loading="lazy" decoding="async" style="--i:3">
+                        <img src="public/assets/shots/theme-dracula.webp" alt="" aria-hidden="true" width="1600" height="1051" loading="lazy" decoding="async" style="--i:4">
+                        <img src="public/assets/shots/theme-solarized-dark.webp" alt="" aria-hidden="true" width="1600" height="1051" loading="lazy" decoding="async" style="--i:5">
+                        <div class="theme-names" aria-hidden="true"><span style="--i:0">Tokyo Night</span><span style="--i:1">Gruvbox</span><span style="--i:2">Nord</span><span style="--i:3">Light</span><span style="--i:4">Dracula</span><span style="--i:5">Solarized Dark</span></div>
+                    </div>
                 </div></a>
             </div>
         </div>
 
         <div class="chapter" id="settings">
             <div class="chapter-text reveal">
-                <span class="eyebrow"><b>03</b>Settings</span>
+                <span class="eyebrow"><b>04</b>Settings</span>
                 <h2>Settings, not <em>config files.</em><a class="anchor-link" href="#settings" aria-label="Permalink to Settings">#</a></h2>
                 <p>Every option lives in one settings editor, with its description and its default right beside it. There are no dotfiles to hunt down and no syntax to get wrong.</p>
                 <ul class="points">
@@ -821,49 +1009,6 @@
                     <div class="window-bar"><span></span><span></span><span></span><span class="title">settings</span></div>
                     <img src="public/assets/shots/settings.webp" alt="The Settings editor: categories on the left, editor options with descriptions and defaults on the right" width="2000" height="1306" loading="lazy" decoding="async">
                 </div></a>
-            </div>
-        </div>
-    </section>
-
-    <!-- The Orchestrator, in three beats, as in the film -->
-    <section class="orchestra" id="orchestrator">
-        <div class="wrap">
-            <div class="section-head reveal">
-                <span class="eyebrow"><b class="num">04</b>Orchestrator</span>
-                <h2>Every task gets its own <em>workspace.</em><a class="anchor-link" href="#orchestrator" aria-label="Permalink to Multitask with the Orchestrator">#</a></h2>
-                <p>Each task gets its own git worktree, with its own tabs, terminals and agent. Hop between tasks with an arrow key while the rest keep working.</p>
-            </div>
-            <div class="orchestra-hero reveal">
-                <a href="public/assets/shots/orchestrator.webp" target="_blank"><div class="window">
-                    <div class="window-bar"><span></span><span></span><span></span><span class="title">orchestrator</span></div>
-                    <img src="public/assets/shots/orchestrator.webp" alt="The Orchestrator dock listing three workspaces; the selected one shows a coding agent working beside the file it is changing" width="2000" height="1321" loading="lazy" decoding="async">
-                </div></a>
-            </div>
-            <div class="beats">
-                <div class="beat reveal">
-                    <h3>An agent, right beside <em>your code.</em></h3>
-                    <p>Put <code>claude</code>, <code>codex</code>, <code>opencode</code> or <code>aider</code> to work in any workspace. Restart Fresh and the sessions pick up where they left off.</p>
-                </div>
-                <div class="beat reveal">
-                    <h3>Every change, ready to <em>review.</em></h3>
-                    <p>Branch, diff and PR status sit in the dock. Review hunk by hunk: stage, unstage, discard, and leave notes as you go.</p>
-                </div>
-                <div class="beat reveal">
-                    <h3>Local or <em>remote.</em></h3>
-                    <p>Fresh cuts the worktree and branch for you, and a remote machine sits in the same list as your laptop.</p>
-                </div>
-            </div>
-            <div class="orchestra-review reveal" id="git-review">
-                <a href="public/assets/shots/review-diff.webp" target="_blank"><div class="window">
-                    <div class="window-bar"><span></span><span></span><span></span><span class="title">review diff</span></div>
-                    <img src="public/assets/shots/review-diff.webp" alt="Review Diff showing two files' hunks, with added and removed lines" width="2000" height="1303" loading="lazy" decoding="async">
-                </div></a>
-                <ul class="points">
-                    <li>Hunk-level stage / unstage / discard</li>
-                    <li>Side-by-side diff view</li>
-                    <li>Line comments and review notes, exported to Markdown</li>
-                    <li>Git gutter, git log viewer, git grep</li>
-                </ul>
             </div>
         </div>
     </section>
@@ -1058,7 +1203,9 @@
             <li>File explorer with git status</li>
             <li>Tabs and split panes</li>
             <li>Orchestrator dock: one workspace per git worktree</li>
-            <li>Coding agents per workspace (claude, codex, opencode, aider)</li>
+            <li>Coding agents per workspace (claude, codex, opencode)</li>
+            <li>Remote workspaces over SSH, Kubernetes and dev containers</li>
+            <li>An agent-facing CLI (<code>fresh --cmd</code>, <code>fresh --skill</code>)</li>
             <li>Agent sessions that resume after a restart</li>
             <li>Side-by-side diff view</li>
             <li>Markdown preview (compose mode)</li>
@@ -1488,6 +1635,65 @@
             } else if (wanted) {
                 v.play().catch(() => {});
             }
+        })();
+    </script>
+
+    <!-- Click a screenshot to see it large; click again (or Esc) to close.
+         Without JS the link still opens the image on its own. -->
+    <script>
+        (function () {
+            const calm = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+            const links = document.querySelectorAll('.chapter-visual a, .orchestra-hero a, .orchestra-review a');
+            let open = null;
+
+            function close() {
+                if (!open) return;
+                const { overlay, from, win, link } = open;
+                open = null;
+                overlay.classList.remove('open');
+                const to = link.querySelector('.window').getBoundingClientRect();
+                const done = () => { overlay.remove(); document.documentElement.style.overflow = ''; link.focus({ preventScroll: true }); };
+                if (calm) return done();
+                win.animate([{ transform: 'none' }, { transform: flip(win.getBoundingClientRect(), to) }],
+                            { duration: 380, easing: 'cubic-bezier(0.22, 0.61, 0.36, 1)', fill: 'forwards' }).onfinish = done;
+            }
+
+            // the transform that makes rect `a` sit where rect `b` is
+            function flip(a, b) {
+                return `translate(${b.left - a.left}px, ${b.top - a.top}px) scale(${b.width / a.width})`;
+            }
+
+            links.forEach(link => {
+                link.classList.add('zoomable');
+                link.addEventListener('click', e => {
+                    if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+                    e.preventDefault();
+                    const src = link.querySelector('.window');
+                    const from = src.getBoundingClientRect();
+                    const overlay = document.createElement('div');
+                    overlay.className = 'zoom';
+                    overlay.setAttribute('role', 'dialog');
+                    overlay.setAttribute('aria-modal', 'true');
+                    overlay.setAttribute('aria-label', 'Enlarged screenshot; click or press Escape to close');
+                    overlay.tabIndex = -1;
+                    const win = src.cloneNode(true);
+                    const ratio = from.height / from.width;
+                    const w = Math.min(window.innerWidth * 0.94, 1600, (window.innerHeight * 0.92) / ratio);
+                    win.style.width = w + 'px';
+                    overlay.appendChild(win);
+                    overlay.addEventListener('click', close);
+                    document.body.appendChild(overlay);
+                    document.documentElement.style.overflow = 'hidden';
+                    open = { overlay, from, win, link };
+                    requestAnimationFrame(() => overlay.classList.add('open'));
+                    overlay.focus({ preventScroll: true });
+                    if (!calm) {
+                        win.animate([{ transform: flip(win.getBoundingClientRect(), from) }, { transform: 'none' }],
+                                    { duration: 480, easing: 'cubic-bezier(0.22, 0.61, 0.36, 1)' });
+                    }
+                });
+            });
+            document.addEventListener('keydown', e => { if (e.key === 'Escape') close(); });
         })();
     </script>
 

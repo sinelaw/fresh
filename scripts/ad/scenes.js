@@ -296,9 +296,9 @@ const SCENES = [
         ctx.fillStyle = C.green2; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
         ctx.fillText(label, W / 2, 223);
         ctx.restore();
-        ['claude', 'codex', 'opencode', 'aider'].forEach((a, i) => {
+        ['claude', 'codex', 'opencode'].forEach((a, i) => {
           const at = 1.752 + i * B / 2;
-          if (lt > at) chip(a, 170 + i * 247, 1745, clamp((lt - at) / 0.18), { size: 34, border: [C.green, C.blue, C.purple, C.yellow][i] });
+          if (lt > at) chip(a, 250 + i * 290, 1745, clamp((lt - at) / 0.18), { size: 34, border: [C.green, C.blue, C.purple][i] });
         });
       },
     }),
