@@ -505,10 +505,15 @@ includes cloud sessions this machine never saw.
   | Claude on this machine | `claude agents --json` (interactive, desktop, `--bg`) | on |
   | Codex on this machine | running `codex` processes (`ps`, cwd via `lsof` or `/proc`); not on Windows | on |
   | Codex Cloud | `codex cloud list --json` (applied tasks hidden) | on |
-  | Claude cloud | `GET /v1/code/sessions` — the list `claude --teleport` reads — with the Claude CLI's own sign-in (`~/.claude/.credentials.json`, or the macOS Keychain) | **off** (opt-in) |
+  | Claude cloud + Remote Control | `GET /v1/code/sessions` (paged, newest first) — the list `claude --teleport` reads — with the Claude CLI's own sign-in (`~/.claude/.credentials.json`, or the macOS Keychain) | on |
 
-  The Claude cloud source is not a published API and can change with any
-  Claude Code release, which is why it is opt-in. The token goes out only as a
+  Every source is on by default; the Claude cloud one is also a checkbox in
+  the dock's Menu ("Claude cloud sessions", saved like any setting), because
+  it is the one a user may want off: it is not a published API and can
+  change with any Claude Code release, and on macOS reading the Keychain may
+  ask once. Remote Control sessions (`environment_kind: "bridge"` — a Claude
+  on one of the user's own machines, driven from the web app) come in the
+  same list; a disconnected one is not shown. The token goes out only as a
   request header (`editor.httpFetch`'s `headers`, added for this), never on a
   command line, and is never refreshed here: refreshing rotates the refresh
   token and would sign the CLI out; an expired sign-in reads as a problem
@@ -711,7 +716,7 @@ Implemented (shipped):
   rejoin.
 - One-session-per-canonical-directory enforcement.
 - Elsewhere group: Claude/Codex sessions open outside the editor (local
-  processes, `--bg` jobs, Codex Cloud, opt-in Claude cloud), materialized
+  processes, `--bg` jobs, Codex Cloud, Claude cloud and Remote Control), materialized
   into workspaces on open or on Move to Folder (§5.3a).
 
 Planned / aspirational (in design docs, not in code):

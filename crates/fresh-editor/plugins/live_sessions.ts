@@ -15,8 +15,11 @@
  */
 
 import {
+  CLAUDE_CLOUD_MAX_PAGES,
+  CLAUDE_CLOUD_PAGE_SIZE,
   CLAUDE_CLOUD_SESSIONS_URL,
   claudeAccessToken,
+  claudeCloudPageInfo,
   codexLocalSessions,
   parseClaudeAgents,
   parseClaudeCloud,
@@ -39,9 +42,9 @@ editor.defineConfigBoolean("claudeLocal", {
   description: "List Claude sessions running on this machine, from `claude agents --json`.",
 });
 editor.defineConfigBoolean("claudeCloud", {
-  default: false,
+  default: true,
   description:
-    "List your Claude Code cloud sessions (claude.ai/code). Off by default: it reads the Claude CLI's sign-in (~/.claude/.credentials.json, or the macOS Keychain) and calls the session list `claude --teleport` uses, which is not a published API and may change with any Claude Code release.",
+    "List your Claude Code cloud and Remote Control sessions (claude.ai/code). Reads the Claude CLI's sign-in (~/.claude/.credentials.json, or the macOS Keychain, which may ask once) and calls the session list `claude --teleport` uses — not a published API, so it may change with any Claude Code release. Also a checkbox in the dock's Menu.",
 });
 editor.defineConfigBoolean("codexLocal", {
   default: true,
@@ -92,7 +95,7 @@ function settings(): Required<Settings> {
   return {
     enabled: s.enabled ?? true,
     claudeLocal: s.claudeLocal ?? true,
-    claudeCloud: s.claudeCloud ?? false,
+    claudeCloud: s.claudeCloud ?? true,
     codexLocal: s.codexLocal ?? true,
     codexCloud: s.codexCloud ?? true,
     claudeCommand: s.claudeCommand?.trim() || "claude",
@@ -116,6 +119,11 @@ export interface LiveSessionsApi {
   refresh(): Promise<void>;
   /** The last answer, for a dock opened after it was pushed. */
   snapshot(): { sessions: LiveSession[]; problems: string[]; commands: { claude: string; codex: string } };
+  /** Whether the Claude cloud source is on. */
+  claudeCloudEnabled(): boolean;
+  /** Turn it on or off: saved to the user's config (as the Settings UI
+   *  would), then re-listed, so the dock's Menu can own the setting. */
+  setClaudeCloud(on: boolean): Promise<void>;
 }
 
 declare global {
@@ -215,20 +223,34 @@ async function listClaudeCloud(s: Required<Settings>, force: boolean): Promise<L
   if (!token) {
     throw new Error("Claude cloud: not signed in, or the sign-in expired — run `claude` once to refresh it");
   }
-  const target = editor.pathJoin(editor.getDataDir(), "orchestrator", "elsewhere-claude-cloud.json");
-  editor.createDir(editor.localPath(editor.pathJoin(editor.getDataDir(), "orchestrator")));
-  const r = await editor.httpFetch(CLAUDE_CLOUD_SESSIONS_URL, target, {
+  const target = editor.pathJoin(probeDir(), "claude-cloud-page.json");
+  const headers = {
     Authorization: `Bearer ${token}`,
     "anthropic-version": "2023-06-01",
     "Content-Type": "application/json",
-  });
-  if (r.exit_code === 401 || r.exit_code === 403) {
-    claudeToken = null;
-    throw new Error("Claude cloud: the sign-in was refused — run `claude` once to refresh it");
+  };
+  // The list is paged and newest first: walk it until the cursor runs out,
+  // or its rows fall past the age cap (older pages hold nothing shown).
+  const now = Date.now();
+  const cutoff = s.cloudMaxAgeDays > 0 ? now - s.cloudMaxAgeDays * 86_400_000 : null;
+  const byId = new Map<string, LiveSession>();
+  let cursor: string | null = null;
+  for (let page = 0; page < CLAUDE_CLOUD_MAX_PAGES; page++) {
+    const url = `${CLAUDE_CLOUD_SESSIONS_URL}?limit=${CLAUDE_CLOUD_PAGE_SIZE}` +
+      (cursor ? `&cursor=${encodeURIComponent(cursor)}` : "");
+    const r = await editor.httpFetch(url, target, headers);
+    if (r.exit_code === 401 || r.exit_code === 403) {
+      claudeToken = null;
+      throw new Error("Claude cloud: the sign-in was refused — run `claude` once to refresh it");
+    }
+    if (r.exit_code !== 0) throw new Error(`Claude cloud: ${r.stderr || `HTTP ${r.exit_code}`}`);
+    const body = editor.readFile(editor.localPath(target)) ?? "";
+    for (const row of parseClaudeCloud(body, now, s.cloudMaxAgeDays)) byId.set(row.id, row);
+    const info = claudeCloudPageInfo(body);
+    cursor = info.next;
+    if (!cursor || (cutoff !== null && info.oldest !== undefined && info.oldest < cutoff)) break;
   }
-  if (r.exit_code !== 0) throw new Error(`Claude cloud: ${r.stderr || `HTTP ${r.exit_code}`}`);
-  const body = editor.readFile(editor.localPath(target)) ?? "";
-  return parseClaudeCloud(body, Date.now(), s.cloudMaxAgeDays);
+  return [...byId.values()];
 }
 
 async function listCodexCloud(s: Required<Settings>): Promise<LiveSession[]> {
@@ -340,7 +362,17 @@ registerHandler("live_sessions_refresh", async () => {
 });
 editor.registerCommand("%cmd.refresh", "%cmd.refresh_desc", "live_sessions_refresh");
 
+async function setClaudeCloud(on: boolean): Promise<void> {
+  editor.saveSetting("plugins.live_sessions.settings.claudeCloud", on);
+  // The write is applied asynchronously; the source is switched by the
+  // re-read in `settings()`, so wait for it before re-listing.
+  for (let i = 0; i < 20 && settings().claudeCloud !== on; i++) await editor.delay(50);
+  await poll(true);
+}
+
 editor.exportPluginApi("live-sessions", {
   refresh: () => poll(true),
   snapshot,
+  claudeCloudEnabled: () => settings().claudeCloud,
+  setClaudeCloud,
 } satisfies LiveSessionsApi);

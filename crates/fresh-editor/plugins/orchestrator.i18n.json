@@ -518,7 +518,8 @@
     "dock.ctx_refresh": "Опресняване",
     "status.elsewhere_in_place": "%{name} продължава да работи там, където е; папката му е отворена като работно пространство",
     "status.elsewhere_cannot_open": "%{name} не може да се отвори: %{why}",
-    "status.elsewhere_browser": "%{name} е отворено в браузъра"
+    "status.elsewhere_browser": "%{name} е отворено в браузъра",
+    "dock.claude_cloud": "Облачни сесии на Claude"
   },
   "cs": {
     "backend.devcontainer": "Devcontainer",
@@ -1039,7 +1040,8 @@
     "dock.ctx_refresh": "Obnovit",
     "status.elsewhere_in_place": "%{name} dál běží tam, kde je; jeho složka byla otevřena jako pracovní prostor",
     "status.elsewhere_cannot_open": "%{name} nelze otevřít: %{why}",
-    "status.elsewhere_browser": "%{name} otevřeno v prohlížeči"
+    "status.elsewhere_browser": "%{name} otevřeno v prohlížeči",
+    "dock.claude_cloud": "Cloudové relace Claude"
   },
   "de": {
     "backend.devcontainer": "Devcontainer",
@@ -1560,7 +1562,8 @@
     "dock.ctx_refresh": "Aktualisieren",
     "status.elsewhere_in_place": "%{name} läuft weiter, wo es ist; sein Ordner wurde als Arbeitsbereich geöffnet",
     "status.elsewhere_cannot_open": "%{name} kann nicht geöffnet werden: %{why}",
-    "status.elsewhere_browser": "%{name} im Browser geöffnet"
+    "status.elsewhere_browser": "%{name} im Browser geöffnet",
+    "dock.claude_cloud": "Claude-Cloud-Sitzungen"
   },
   "en": {
     "backend.devcontainer": "Devcontainer",
@@ -2081,7 +2084,8 @@
     "dock.ctx_refresh": "Refresh",
     "status.elsewhere_in_place": "%{name} keeps running where it is; opened its folder as a workspace",
     "status.elsewhere_cannot_open": "Cannot open %{name}: %{why}",
-    "status.elsewhere_browser": "Opened %{name} in the browser"
+    "status.elsewhere_browser": "Opened %{name} in the browser",
+    "dock.claude_cloud": "Claude cloud sessions"
   },
   "es": {
     "backend.devcontainer": "Devcontainer",
@@ -2602,7 +2606,8 @@
     "dock.ctx_refresh": "Actualizar",
     "status.elsewhere_in_place": "%{name} sigue ejecutándose donde está; su carpeta se abrió como espacio de trabajo",
     "status.elsewhere_cannot_open": "No se puede abrir %{name}: %{why}",
-    "status.elsewhere_browser": "%{name} abierto en el navegador"
+    "status.elsewhere_browser": "%{name} abierto en el navegador",
+    "dock.claude_cloud": "Sesiones de Claude en la nube"
   },
   "fr": {
     "backend.devcontainer": "Devcontainer",
@@ -3123,7 +3128,8 @@
     "dock.ctx_refresh": "Actualiser",
     "status.elsewhere_in_place": "%{name} continue de tourner là où il est ; son dossier a été ouvert comme espace de travail",
     "status.elsewhere_cannot_open": "Impossible d’ouvrir %{name} : %{why}",
-    "status.elsewhere_browser": "%{name} ouvert dans le navigateur"
+    "status.elsewhere_browser": "%{name} ouvert dans le navigateur",
+    "dock.claude_cloud": "Sessions Claude dans le cloud"
   },
   "it": {
     "backend.devcontainer": "Devcontainer",
@@ -3644,7 +3650,8 @@
     "dock.ctx_refresh": "Aggiorna",
     "status.elsewhere_in_place": "%{name} continua a funzionare dove si trova; la sua cartella è stata aperta come area di lavoro",
     "status.elsewhere_cannot_open": "Impossibile aprire %{name}: %{why}",
-    "status.elsewhere_browser": "%{name} aperto nel browser"
+    "status.elsewhere_browser": "%{name} aperto nel browser",
+    "dock.claude_cloud": "Sessioni Claude nel cloud"
   },
   "ja": {
     "backend.devcontainer": "Devcontainer",
@@ -4165,7 +4172,8 @@
     "dock.ctx_refresh": "更新",
     "status.elsewhere_in_place": "%{name} は元の場所で動作を続けます。そのフォルダーをワークスペースとして開きました",
     "status.elsewhere_cannot_open": "%{name} を開けません: %{why}",
-    "status.elsewhere_browser": "%{name} をブラウザーで開きました"
+    "status.elsewhere_browser": "%{name} をブラウザーで開きました",
+    "dock.claude_cloud": "Claude のクラウドセッション"
   },
   "ko": {
     "backend.devcontainer": "Devcontainer",
@@ -4686,7 +4694,8 @@
     "dock.ctx_refresh": "새로 고침",
     "status.elsewhere_in_place": "%{name}은(는) 원래 위치에서 계속 실행됩니다. 해당 폴더를 작업 공간으로 열었습니다",
     "status.elsewhere_cannot_open": "%{name}을(를) 열 수 없음: %{why}",
-    "status.elsewhere_browser": "%{name}을(를) 브라우저에서 열었습니다"
+    "status.elsewhere_browser": "%{name}을(를) 브라우저에서 열었습니다",
+    "dock.claude_cloud": "Claude 클라우드 세션"
   },
   "pt-BR": {
     "backend.devcontainer": "Devcontainer",
@@ -5207,7 +5216,8 @@
     "dock.ctx_refresh": "Atualizar",
     "status.elsewhere_in_place": "%{name} continua rodando onde está; a pasta dele foi aberta como espaço de trabalho",
     "status.elsewhere_cannot_open": "Não é possível abrir %{name}: %{why}",
-    "status.elsewhere_browser": "%{name} aberto no navegador"
+    "status.elsewhere_browser": "%{name} aberto no navegador",
+    "dock.claude_cloud": "Sessões do Claude na nuvem"
   },
   "ru": {
     "backend.devcontainer": "Devcontainer",
@@ -5728,7 +5738,8 @@
     "dock.ctx_refresh": "Обновить",
     "status.elsewhere_in_place": "%{name} продолжает работать там, где запущен; его папка открыта как рабочее пространство",
     "status.elsewhere_cannot_open": "Не удаётся открыть %{name}: %{why}",
-    "status.elsewhere_browser": "%{name} открыт в браузере"
+    "status.elsewhere_browser": "%{name} открыт в браузере",
+    "dock.claude_cloud": "Облачные сеансы Claude"
   },
   "th": {
     "backend.devcontainer": "Devcontainer",
@@ -6249,7 +6260,8 @@
     "dock.ctx_refresh": "รีเฟรช",
     "status.elsewhere_in_place": "%{name} ยังคงทำงานอยู่ที่เดิม เปิดโฟลเดอร์ของมันเป็นพื้นที่ทำงานแล้ว",
     "status.elsewhere_cannot_open": "ไม่สามารถเปิด %{name}: %{why}",
-    "status.elsewhere_browser": "เปิด %{name} ในเบราว์เซอร์แล้ว"
+    "status.elsewhere_browser": "เปิด %{name} ในเบราว์เซอร์แล้ว",
+    "dock.claude_cloud": "เซสชัน Claude บนคลาวด์"
   },
   "uk": {
     "backend.devcontainer": "Devcontainer",
@@ -6770,7 +6782,8 @@
     "dock.ctx_refresh": "Оновити",
     "status.elsewhere_in_place": "%{name} продовжує працювати там, де запущений; його теку відкрито як робочий простір",
     "status.elsewhere_cannot_open": "Не вдається відкрити %{name}: %{why}",
-    "status.elsewhere_browser": "%{name} відкрито в браузері"
+    "status.elsewhere_browser": "%{name} відкрито в браузері",
+    "dock.claude_cloud": "Хмарні сеанси Claude"
   },
   "vi": {
     "backend.devcontainer": "Devcontainer",
@@ -7291,7 +7304,8 @@
     "dock.ctx_refresh": "Làm mới",
     "status.elsewhere_in_place": "%{name} vẫn tiếp tục chạy tại chỗ; đã mở thư mục của nó thành không gian làm việc",
     "status.elsewhere_cannot_open": "Không thể mở %{name}: %{why}",
-    "status.elsewhere_browser": "Đã mở %{name} trong trình duyệt"
+    "status.elsewhere_browser": "Đã mở %{name} trong trình duyệt",
+    "dock.claude_cloud": "Phiên Claude trên đám mây"
   },
   "zh-CN": {
     "backend.devcontainer": "Devcontainer",
@@ -7812,6 +7826,7 @@
     "dock.ctx_refresh": "刷新",
     "status.elsewhere_in_place": "%{name} 仍在原处运行；已将其文件夹作为工作区打开",
     "status.elsewhere_cannot_open": "无法打开 %{name}：%{why}",
-    "status.elsewhere_browser": "已在浏览器中打开 %{name}"
+    "status.elsewhere_browser": "已在浏览器中打开 %{name}",
+    "dock.claude_cloud": "Claude 云端会话"
   }
 }

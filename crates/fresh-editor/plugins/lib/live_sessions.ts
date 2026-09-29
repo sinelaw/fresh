@@ -11,9 +11,9 @@
  *
  *  - Claude on this machine: `claude agents --json` (interactive, desktop and
  *    `--bg` sessions, with their status).
- *  - Claude cloud (opt-in): the session list behind `claude --teleport`, read
- *    with the Claude CLI's own sign-in. Not a published API; see
- *    `CLAUDE_CLOUD_SESSIONS_URL`.
+ *  - Claude cloud and Remote Control: the session list behind
+ *    `claude --teleport`, read with the Claude CLI's own sign-in. Not a
+ *    published API; see `CLAUDE_CLOUD_SESSIONS_URL`.
  *  - Codex Cloud: `codex cloud list --json`.
  *  - Codex on this machine: running `codex` processes (Codex has no listing
  *    command for them), from `ps`.
@@ -51,11 +51,15 @@ export interface LiveSession {
   jobId?: string;
   /** What a waiting session is waiting for, when the source says. */
   waitingFor?: string;
+  /** A Claude Remote Control session: it runs on one of the user's own
+   *  machines and is driven from claude.ai, so it is in the cloud list. */
+  remoteControl?: boolean;
 }
 
 /** The Claude cloud session list: what `claude --teleport` reads. Not a
  *  published API — it can change under any Claude Code release, which is why
- *  the source is opt-in and a failure reads as a note, never an error. */
+ *  a failure reads as a note in the group's menu, never an error, and the
+ *  dock's Menu can switch the source off. */
 export const CLAUDE_CLOUD_SESSIONS_URL = "https://api.anthropic.com/v1/code/sessions";
 
 const DAY_MS = 86_400_000;
@@ -187,7 +191,29 @@ export function repoFromUrl(url: string | undefined): string | undefined {
   return m ? m[1] : undefined;
 }
 
-/** The session list's JSON (`{ data: [...] }`), open sessions only. */
+/** Rows per page asked of the session list, and the most pages read. The
+ *  list is newest first, so the pages past the age cap are never needed. */
+export const CLAUDE_CLOUD_PAGE_SIZE = 100;
+export const CLAUDE_CLOUD_MAX_PAGES = 10;
+
+/** One page's cursor for the next, and the activity time of its last (so
+ *  oldest) row, so the walk can stop once pages fall past the age cap. */
+export function claudeCloudPageInfo(body: string): { next: string | null; oldest?: number } {
+  const root = asRecord(parseJson(body));
+  const data = root && Array.isArray(root.data) ? root.data : [];
+  const last = asRecord(data[data.length - 1]);
+  return {
+    next: root ? str(root.next_cursor) ?? null : null,
+    oldest: last ? when(last.last_event_at) ?? when(last.created_at) : undefined,
+  };
+}
+
+/** The session list's JSON (`{ data: [...] }`), open sessions only.
+ *
+ *  Remote Control sessions (`environment_kind: "bridge"`) are in the same
+ *  list: a Claude running on one of the user's machines, driven from the web
+ *  app. One whose machine has gone (`connection_status: "disconnected"`) is
+ *  not open, and one with no title is not one the CLI shows either. */
 export function parseClaudeCloud(body: string, now: number, maxAgeDays: number): LiveSession[] {
   const root = asRecord(parseJson(body));
   const data = root && Array.isArray(root.data) ? root.data : [];
@@ -198,6 +224,8 @@ export function parseClaudeCloud(body: string, now: number, maxAgeDays: number):
     if (!e || !id) continue;
     const status = (str(e.status) ?? "").toLowerCase();
     if (CLAUDE_CLOUD_CLOSED.has(status)) continue;
+    const remoteControl = e.environment_kind === "bridge";
+    if (remoteControl && (e.connection_status === "disconnected" || !str(e.title)?.trim())) continue;
     const updatedAt = when(e.last_event_at) ?? when(e.updated_at) ?? when(e.created_at);
     if (tooOld(updatedAt, now, maxAgeDays)) continue;
     const config = asRecord(e.config);
@@ -214,6 +242,7 @@ export function parseClaudeCloud(body: string, now: number, maxAgeDays: number):
       repo: repoFromUrl(str(git?.url)),
       url: `https://claude.ai/code/${id}`,
       updatedAt,
+      ...(remoteControl ? { remoteControl: true } : {}),
     });
   }
   return out;
@@ -527,7 +556,9 @@ export function unrepresented(
 
 /** The short dim tail a row carries: where the session is. */
 export function liveDetail(s: LiveSession): string {
-  const place = s.source === "claude-cloud"
+  const place = s.remoteControl
+    ? "remote control"
+    : s.source === "claude-cloud"
     ? "claude.ai"
     : s.source === "codex-cloud"
     ? "codex cloud"

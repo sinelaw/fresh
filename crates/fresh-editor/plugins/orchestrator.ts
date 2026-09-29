@@ -1748,12 +1748,22 @@ function setElsewhereSessions(update: ElsewhereUpdate): void {
   if (openPanel && dockMode) refreshOpenDialog();
 }
 
+// The feed plugin's side (`live_sessions.ts`), or null when it isn't loaded.
+interface ElsewhereFeed {
+  refresh(): Promise<void>;
+  snapshot(): ElsewhereUpdate;
+  claudeCloudEnabled(): boolean;
+  setClaudeCloud(on: boolean): Promise<void>;
+}
+
+function elsewhereFeed(): ElsewhereFeed | null {
+  return editor.getPluginApi("live-sessions") as ElsewhereFeed | null;
+}
+
 // Ask the feed for a fresh answer (the dock just opened, or the user asked),
 // and take whatever it already has in the meantime.
 function refreshElsewhere(): void {
-  const feed = editor.getPluginApi("live-sessions") as
-    | { refresh(): Promise<void>; snapshot(): ElsewhereUpdate }
-    | null;
+  const feed = elsewhereFeed();
   if (!feed) return;
   setElsewhereSessions(feed.snapshot());
   void feed.refresh();
@@ -5942,6 +5952,14 @@ function dockMainGroups(): DockMenuGroup[] {
       opts: [
         { key: "main:empty", label: check(!openDialog.hideTrivial) + editor.t("dock.show_empty") },
         { key: "main:worktrees", label: check(openDialog.showWorktrees) + editor.t("dock.all_worktrees") },
+        // The Elsewhere source that reads the Claude CLI's sign-in and a
+        // private API, switchable here rather than only in Settings.
+        ...(elsewhereFeed()
+          ? [{
+            key: "main:claude-cloud",
+            label: check(elsewhereFeed()!.claudeCloudEnabled()) + editor.t("dock.claude_cloud"),
+          }]
+          : []),
       ],
     },
   ];
@@ -6222,6 +6240,14 @@ function runDockMenuOption(optKey: string): void {
   if (optKey === "main:empty") {
     toggleHideTrivial();
     renderMainMenu();
+    return;
+  }
+  if (optKey === "main:claude-cloud") {
+    const feed = elsewhereFeed();
+    if (feed) {
+      // Saved like any setting; the checkmark follows once it has landed.
+      void feed.setClaudeCloud(!feed.claudeCloudEnabled()).then(renderMainMenu);
+    }
     return;
   }
   if (optKey === "main:worktrees") {
