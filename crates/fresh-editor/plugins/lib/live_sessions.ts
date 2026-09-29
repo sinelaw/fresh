@@ -54,6 +54,8 @@ export interface LiveSession {
   /** A Claude Remote Control session: it runs on one of the user's own
    *  machines and is driven from claude.ai, so it is in the cloud list. */
   remoteControl?: boolean;
+  /** A Remote Control session whose machine is not connected right now. */
+  offline?: boolean;
 }
 
 /** The Claude cloud session list: what `claude --teleport` reads. Not a
@@ -194,7 +196,7 @@ export function repoFromUrl(url: string | undefined): string | undefined {
 /** Rows per page asked of the session list, and the most pages read. The
  *  list is newest first, so the pages past the age cap are never needed. */
 export const CLAUDE_CLOUD_PAGE_SIZE = 100;
-export const CLAUDE_CLOUD_MAX_PAGES = 10;
+export const CLAUDE_CLOUD_MAX_PAGES = 20;
 
 /** One page's cursor for the next, and the activity time of its last (so
  *  oldest) row, so the walk can stop once pages fall past the age cap. */
@@ -208,24 +210,34 @@ export function claudeCloudPageInfo(body: string): { next: string | null; oldest
   };
 }
 
-/** The session list's JSON (`{ data: [...] }`), open sessions only.
+/** The id a user sees for a cloud session: the list returns `cse_<x>`, while
+ *  claude.ai's links — and what `claude --cloud` / `--teleport` are given —
+ *  use `session_<x>`, the conversion the CLI itself makes. */
+export function claudeSessionId(apiId: string): string {
+  return apiId.startsWith("cse_") ? "session_" + apiId.slice(4) : apiId;
+}
+
+/** The session list's JSON (`{ data: [...] }`): every session still active,
+ *  i.e. not archived.
  *
  *  Remote Control sessions (`environment_kind: "bridge"`) are in the same
  *  list: a Claude running on one of the user's machines, driven from the web
- *  app. One whose machine has gone (`connection_status: "disconnected"`) is
- *  not open, and one with no title is not one the CLI shows either. */
+ *  app. One whose machine is not connected right now
+ *  (`connection_status: "disconnected"`) is still active, so it is listed,
+ *  marked offline. */
 export function parseClaudeCloud(body: string, now: number, maxAgeDays: number): LiveSession[] {
   const root = asRecord(parseJson(body));
   const data = root && Array.isArray(root.data) ? root.data : [];
   const out: LiveSession[] = [];
   for (const raw of data) {
     const e = asRecord(raw);
-    const id = e ? str(e.id) : undefined;
-    if (!e || !id) continue;
+    const apiId = e ? str(e.id) : undefined;
+    if (!e || !apiId) continue;
+    const id = claudeSessionId(apiId);
     const status = (str(e.status) ?? "").toLowerCase();
     if (CLAUDE_CLOUD_CLOSED.has(status)) continue;
     const remoteControl = e.environment_kind === "bridge";
-    if (remoteControl && (e.connection_status === "disconnected" || !str(e.title)?.trim())) continue;
+    const offline = remoteControl && e.connection_status === "disconnected";
     const updatedAt = when(e.last_event_at) ?? when(e.updated_at) ?? when(e.created_at);
     if (tooOld(updatedAt, now, maxAgeDays)) continue;
     const config = asRecord(e.config);
@@ -237,12 +249,16 @@ export function parseClaudeCloud(body: string, now: number, maxAgeDays: number):
       id,
       agent: "claude",
       where: "cloud",
-      title: str(e.title) ?? id,
-      state: claudeState(str(e.worker_status) ?? status),
+      title: str(e.title)?.trim() || id,
+      // An offline machine is doing nothing anyone can see.
+      // `worker_status` is the activity; `status` is only the lifecycle, and
+      // its `active` means "not archived", not "working".
+      state: offline ? "unknown" : claudeState(str(e.worker_status) ?? (status === "active" ? undefined : status)),
       repo: repoFromUrl(str(git?.url)),
       url: `https://claude.ai/code/${id}`,
       updatedAt,
       ...(remoteControl ? { remoteControl: true } : {}),
+      ...(offline ? { offline: true } : {}),
     });
   }
   return out;
@@ -557,7 +573,7 @@ export function unrepresented(
 /** The short dim tail a row carries: where the session is. */
 export function liveDetail(s: LiveSession): string {
   const place = s.remoteControl
-    ? "remote control"
+    ? s.offline ? "remote control · offline" : "remote control"
     : s.source === "claude-cloud"
     ? "claude.ai"
     : s.source === "codex-cloud"

@@ -63,11 +63,11 @@ editor.defineConfigString("codexCommand", {
   description: "The Codex CLI to run: a name on PATH or a full path.",
 });
 editor.defineConfigInteger("cloudMaxAgeDays", {
-  default: 7,
+  default: 0,
   minimum: 0,
   maximum: 365,
   description:
-    "Hide cloud sessions with no activity for this many days (archived ones are always hidden). 0 shows every open one.",
+    "Hide cloud sessions with no activity for this many days. 0 (the default) shows every session still active; archived ones are never shown.",
 });
 editor.defineConfigInteger("pollSeconds", {
   default: 15,
@@ -100,7 +100,7 @@ function settings(): Required<Settings> {
     codexCloud: s.codexCloud ?? true,
     claudeCommand: s.claudeCommand?.trim() || "claude",
     codexCommand: s.codexCommand?.trim() || "codex",
-    cloudMaxAgeDays: s.cloudMaxAgeDays ?? 7,
+    cloudMaxAgeDays: s.cloudMaxAgeDays ?? 0,
     pollSeconds: s.pollSeconds ?? 15,
   };
 }
@@ -236,7 +236,9 @@ async function listClaudeCloud(s: Required<Settings>, force: boolean): Promise<L
   const byId = new Map<string, LiveSession>();
   let cursor: string | null = null;
   for (let page = 0; page < CLAUDE_CLOUD_MAX_PAGES; page++) {
-    const url = `${CLAUDE_CLOUD_SESSIONS_URL}?limit=${CLAUDE_CLOUD_PAGE_SIZE}` +
+    // `statuses=active` has the server leave archived sessions out, which
+    // are most of the list.
+    const url = `${CLAUDE_CLOUD_SESSIONS_URL}?limit=${CLAUDE_CLOUD_PAGE_SIZE}&statuses=active` +
       (cursor ? `&cursor=${encodeURIComponent(cursor)}` : "");
     const r = await editor.httpFetch(url, target, headers);
     if (r.exit_code === 401 || r.exit_code === 403) {

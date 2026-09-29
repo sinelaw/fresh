@@ -505,7 +505,7 @@ includes cloud sessions this machine never saw.
   | Claude on this machine | `claude agents --json` (interactive, desktop, `--bg`) | on |
   | Codex on this machine | running `codex` processes (`ps`, cwd via `lsof` or `/proc`); not on Windows | on |
   | Codex Cloud | `codex cloud list --json` (applied tasks hidden) | on |
-  | Claude cloud + Remote Control | `GET /v1/code/sessions` (paged, newest first) — the list `claude --teleport` reads — with the Claude CLI's own sign-in (`~/.claude/.credentials.json`, or the macOS Keychain) | on |
+  | Claude cloud + Remote Control | `GET /v1/code/sessions?statuses=active` (paged) — the list `claude --teleport` reads, asked for active sessions only — with the Claude CLI's own sign-in (`~/.claude/.credentials.json`, or the macOS Keychain) | on |
 
   Every source is on by default; the Claude cloud one is also a checkbox in
   the dock's Menu ("Claude cloud sessions", saved like any setting), because
@@ -513,12 +513,16 @@ includes cloud sessions this machine never saw.
   change with any Claude Code release, and on macOS reading the Keychain may
   ask once. Remote Control sessions (`environment_kind: "bridge"` — a Claude
   on one of the user's own machines, driven from the web app) come in the
-  same list; a disconnected one is not shown. The token goes out only as a
+  same list; one whose machine is disconnected is still active, so it is
+  listed, marked offline. A session's activity comes from its
+  `worker_status` only (`status: "active"` just means not archived). The
+  token goes out only as a
   request header (`editor.httpFetch`'s `headers`, added for this), never on a
   command line, and is never refreshed here: refreshing rotates the refresh
   token and would sign the CLI out; an expired sign-in reads as a problem
-  line ("run `claude` once") until the CLI next runs. Cloud rows older than
-  `cloudMaxAgeDays` (default 7; 0 = none) are hidden; archived ones always.
+  line ("run `claude` once") until the CLI next runs. Every active session is
+  listed; `cloudMaxAgeDays` (default 0 = none) can hide idle ones, and
+  archived ones are never shown.
 - **Rows** are kept apart from `orchestratorSessions` (they are not
   workspaces, so none of Stop / Archive / Delete / rename apply). The group
   header is a `folder` node with the reserved id `__elsewhere`, so it folds
@@ -536,6 +540,11 @@ includes cloud sessions this machine never saw.
   | Claude `--bg` job | the job's cwd | `claude attach <job>` |
   | Claude / Codex in another terminal | its cwd | a shell — never a second copy of the agent, which would write the same conversation twice |
   | Codex Cloud task (when filed) | `<data>/orchestrator/elsewhere/codex-cloud-<id>` | `codex cloud status <id>`, then a shell |
+
+  A Claude cloud row's menu also has **Teleport Here…** — taking the session
+  over: the New Workspace form opens with `claude --teleport <id>` filled in,
+  on a fresh worktree (the teleport checks the session's branch out), pointed
+  at an open workspace of the same repository when there is one.
 
   Arrowing onto a row never opens it (unlike a workspace row, which
   live-switches): opening creates a workspace. **Move to Folder…** on a row

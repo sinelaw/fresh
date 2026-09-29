@@ -61,6 +61,7 @@ import {
   type FormSeed,
 } from "./lib/discovery.ts";
 import {
+  liveBaseName,
   liveDetail,
   liveNormPath,
   livePlan,
@@ -1838,6 +1839,27 @@ function elsewhereGroupEntry(live: LiveSession[]): TextPropertyEntry {
     live.length,
     rollup,
   );
+}
+
+// Take a Claude cloud session over: `claude --teleport <id>` moves it into a
+// local checkout and resumes it there. Which checkout is the user's call —
+// the New Workspace form opens with the command filled in, on a fresh
+// worktree (the teleport checks the session's branch out), pointed at a
+// workspace of the same repository when one is open.
+function teleportLiveSession(key: string): void {
+  const s = liveByKey(key);
+  if (!s) return;
+  const repoName = s.repo ? liveBaseName(s.repo) : undefined;
+  const match = repoName
+    ? [...orchestratorSessions.values()].find((w) =>
+      w.id > 0 && !w.remote && liveBaseName(w.projectPath) === repoName
+    )
+    : undefined;
+  openWorkspaceForm({ kind: "option", key: "local" }, {
+    projectPath: match?.projectPath ?? "",
+    cmd: `${elsewhereCommands.claude} --teleport ${s.id}`,
+    createWorktree: true,
+  });
 }
 
 // Open a URL with the platform's opener. Fire-and-forget: only one of the
@@ -6639,6 +6661,10 @@ function buildDockMenuSpec(state: DockMenuState): WidgetSpec {
       { label: editor.t("dock.ctx_open"), key: "ctx-live-open", intent: "primary" },
       { label: editor.t("dock.ctx_move"), key: "ctx-live-move" },
     ];
+    // Take a cloud session over: teleport moves it into a local checkout.
+    if (s?.source === "claude-cloud" && !s.remoteControl) {
+      items.push({ label: editor.t("dock.ctx_teleport"), key: "ctx-live-teleport" });
+    }
     if (s?.url) items.push({ label: editor.t("dock.ctx_open_browser"), key: "ctx-live-browser" });
     return contextMenuSpec(s ? `${ELSEWHERE_GLYPH[s.where]} ${s.title}` : state.target.key, items);
   }
@@ -11919,7 +11945,7 @@ let machinesState: { index: number } | null = null;
 let pendingFormMachine: FormSeed | undefined = undefined;
 /** Fields the next New Workspace form opens with, set when a discovered
  *  session is rejoined. Consumed once, like `pendingFormMachine`. */
-let pendingFormPrefill: { projectPath: string; cmd: string } | null = null;
+let pendingFormPrefill: { projectPath: string; cmd: string; createWorktree?: boolean } | null = null;
 
 interface MachinesRow {
   key: string;
@@ -12650,7 +12676,10 @@ function resumeArgv(agent: string, id: string): { argv: string[]; exact: boolean
 /** Open the New Workspace form on `seed` with `prefill` filled in; how a
  *  discovered session is rejoined. The form, not a silent launch, so the
  *  reader sees what will run where and a connect gets its trust decision. */
-function openWorkspaceForm(seed: FormSeed, prefill: { projectPath: string; cmd: string }): void {
+function openWorkspaceForm(
+  seed: FormSeed,
+  prefill: { projectPath: string; cmd: string; createWorktree?: boolean },
+): void {
   pendingFormPrefill = prefill;
   if (seed.kind === "option") {
     pendingFormMachine = seed;
@@ -13770,12 +13799,17 @@ function openForm(options?: { fromPicker?: boolean; target?: RunAgentTarget }): 
     completion: { field: null, items: [], selectedIndex: 0, anchor: "", token: 0 },
   };
   // Rejoining a discovered session: no worktree, since the session's files
-  // are already in that directory.
+  // are already in that directory — unless the caller asks for one (a
+  // teleport checks its branch out, which belongs in a tree of its own).
   const prefill = pendingFormPrefill;
   pendingFormPrefill = null;
   if (prefill) {
     form.cmd = { value: prefill.cmd, cursor: prefill.cmd.length };
-    form.createWorktree = false;
+    // The command is the choice: without this the Agent field still reads
+    // "Choose an agent…" (no command was saved from a previous launch) and
+    // the prefilled one is hidden behind it.
+    form.agentUnset = false;
+    form.createWorktree = prefill.createWorktree ?? false;
     form.agentCustom = !agentPresets().some((pr) => !pr.custom && pr.cmd === prefill.cmd.trim());
   }
   formPanel = new FloatingWidgetPanel();
@@ -17222,6 +17256,9 @@ editor.on("widget_event", (e) => {
         } else if (e.widget_key === "ctx-live-move") {
           closeDockContextMenu();
           openDockMenu({ kind: "move-live", liveKey: target.key, index: 0 });
+        } else if (e.widget_key === "ctx-live-teleport") {
+          closeDockContextMenu();
+          teleportLiveSession(target.key);
         } else if (e.widget_key === "ctx-live-browser") {
           closeDockContextMenu();
           const s = liveByKey(target.key);

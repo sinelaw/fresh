@@ -2,6 +2,7 @@
 import {
   claudeAccessToken,
   claudeCloudPageInfo,
+  claudeSessionId,
   codexLocalSessions,
   elsewhereRoot,
   isCodexSessionArgv,
@@ -69,6 +70,8 @@ eq([cloud[0].state, cloud[0].repo, cloud[0].url], ["working", "sinelaw/fresh", "
 eq(cloud[1].state, "blocked", "claude cloud: waiting needs you");
 eq(parseClaudeCloud(cloudBody, NOW, 0).length, 3, "claude cloud: an age cap of 0 keeps every open session");
 eq(repoFromUrl("git@github.com:o/n.git"), "o/n", "repoFromUrl: ssh form");
+eq(claudeSessionId("cse_01ABC"), "session_01ABC", "claude cloud: the list's cse_ id is the session_ id users see");
+eq(parseClaudeCloud(JSON.stringify({ data: [{ id: "cse_01ABC", title: "t", status: "active", worker_status: "idle" }] }), NOW, 0)[0].url, "https://claude.ai/code/session_01ABC", "claude cloud: links use the session_ id");
 
 const rcBody = JSON.stringify({
   data: [
@@ -79,8 +82,13 @@ const rcBody = JSON.stringify({
   next_cursor: "c2",
 });
 const rc = parseClaudeCloud(rcBody, NOW, 7);
-eq(rc.map((s) => [s.id, s.state, s.remoteControl]), [["session_rc1", "blocked", true]], "claude cloud: a connected Remote Control session is listed; a disconnected or untitled one is not");
+eq(
+  rc.map((s) => [s.id, s.title, s.state, s.offline ?? false]),
+  [["session_rc1", "On my box", "blocked", false], ["session_rc2", "Box is off", "unknown", true], ["session_rc3", "session_rc3", "unknown", false]],
+  "claude cloud: every active Remote Control session is listed, a disconnected one as offline, an untitled one by id",
+);
 eq(liveDetail(rc[0]), "remote control", "detail: a Remote Control session says so");
+eq(liveDetail(rc[1]), "remote control · offline", "detail: and says when its machine is offline");
 eq(claudeCloudPageInfo(rcBody), { next: "c2", oldest: NOW }, "claude cloud: a page's cursor and oldest row");
 eq(claudeCloudPageInfo(cloudBody).next, null, "claude cloud: the last page has no cursor");
 
