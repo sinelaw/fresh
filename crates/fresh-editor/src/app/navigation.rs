@@ -80,10 +80,7 @@ impl crate::app::window::Window {
     /// `anchor`, leaving the caret at `position`.
     pub fn jump_active_cursor_selecting(&mut self, position: usize, anchor: usize) {
         self.jump_active_cursor_to(position, JumpOptions::navigation());
-        let active_split = self.split_manager().active_split();
-        if let Some(view_state) = self.split_view_states_mut().get_mut(&active_split) {
-            view_state.cursors.primary_mut().set_anchor(anchor);
-        }
+        self.active_cursors_mut().primary_mut().set_anchor(anchor);
     }
 
     /// Guarantee the active cursor is visible in the active viewport.
