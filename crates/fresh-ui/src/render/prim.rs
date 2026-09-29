@@ -234,8 +234,13 @@ pub fn wrap_rows(text: &str, width: u16, mode: Wrap) -> Vec<Row> {
             // A chunk too long for a row of its own is cut, and the remainder
             // opens the next row — still behind the indent.
             while w(&row.text) > width {
-                let head: String = row.text.chars().take(width).collect();
-                let tail: String = row.text.chars().skip(width).collect();
+                let split = fitting_prefix(&row.text, width);
+                // A lone glyph wider than the row: nothing left to cut.
+                if split == row.text.len() {
+                    break;
+                }
+                let (head, tail) = row.text.split_at(split);
+                let (head, tail) = (head.to_string(), tail.to_string());
                 // The indent is spaces, so `head` is `row.indent` added bytes
                 // followed by that many fewer bytes of source: the cut lands
                 // on a source boundary as well as a char one.
@@ -263,6 +268,27 @@ pub fn wrap_rows(text: &str, width: u16, mode: Wrap) -> Vec<Row> {
         });
     }
     out
+}
+
+/// The byte length of the longest prefix of `s` that fits in `width` cells.
+///
+/// Measured by grapheme cluster, as [`glyph`](super::glyph) paints: a wide
+/// glyph (CJK) takes two cells, so cutting after `width` *chars* overfills the
+/// row and paint clips what does not fit. The prefix holds at least one
+/// cluster, so a glyph wider than the whole row still makes progress.
+fn fitting_prefix(s: &str, width: usize) -> usize {
+    use unicode_segmentation::UnicodeSegmentation;
+    let mut used = 0usize;
+    let mut end = 0usize;
+    for (i, g) in s.grapheme_indices(true) {
+        let gw = super::glyph::width(g) as usize;
+        if i > 0 && used + gw > width {
+            break;
+        }
+        used += gw;
+        end = i + g.len();
+    }
+    end
 }
 
 /// The rows an unwrapped string is: its lines, and nothing added or dropped
@@ -2438,6 +2464,28 @@ mod byte_mapping_tests {
             byte_of(&rows, text, 1, 6),
             Some(3),
             "an empty row is one cell"
+        );
+    }
+
+    #[test]
+    fn an_over_long_run_of_wide_glyphs_is_cut_by_cells() {
+        // No spaces to break at, so the run is cut — two wide glyphs per
+        // four-cell row, not four glyphs overflowing it.
+        let text = "日本語の文章";
+        let rows = rows_of(text, 4, Wrap::Word);
+        assert_eq!(
+            shape(&rows),
+            vec![("日本", 0, 0..6), ("語の", 0, 6..12), ("文章", 0, 12..18)]
+        );
+        // A wide glyph wider than the row still gets a row of its own.
+        let rows = rows_of("日本", 1, Wrap::Word);
+        assert_eq!(shape(&rows), vec![("日", 0, 0..3), ("本", 0, 3..6)]);
+        // The cut falls between grapheme clusters: a combining accent stays
+        // with its base letter, in the one cell they share.
+        let rows = rows_of("e\u{301}e\u{301}e\u{301}", 2, Wrap::Word);
+        assert_eq!(
+            shape(&rows),
+            vec![("e\u{301}e\u{301}", 0, 0..6), ("e\u{301}", 0, 6..9)]
         );
     }
 
