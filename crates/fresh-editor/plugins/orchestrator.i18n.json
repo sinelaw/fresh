@@ -2092,7 +2092,7 @@
     "status.elsewhere_cannot_open": "Cannot open %{name}: %{why}",
     "status.elsewhere_browser": "Opened %{name} in the browser",
     "dock.claude_cloud": "Claude cloud sessions",
-    "dock.ctx_teleport": "Teleport Here…",
+    "dock.ctx_teleport": "Take Over Here (Teleport)…",
     "status.elsewhere_desktop": "Opened %{name} in Claude Desktop"
   },
   "es": {

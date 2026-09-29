@@ -189,7 +189,7 @@ eq(livePlan({ ...agents[0], tmux: "work:@3.%7" }, env, false), {
   label: "fresh-04",
   command: ["env", "-u", "TMUX", "tmux", "attach-session", "-t", "work", ";", "select-window", "-t", "@3", ";", "select-pane", "-t", "%7"],
 }, "plan: a terminal session in tmux is connected to by attaching its pane");
-eq(livePlan(cloud[0], env, false), { kind: "browser", url: "https://claude.ai/code/session_01" }, "plan: Enter on a Claude cloud session opens its page");
+eq(livePlan(cloud[0], env, false), { kind: "teleport", command: ["claude", "--teleport", "session_01"] }, "plan: opening a Claude cloud session takes it over");
 eq(livePlan(cloud[0], env, true), { kind: "teleport", command: ["claude", "--teleport", "session_01"] }, "plan: making a Claude cloud session a workspace teleports it");
 eq(livePlan(agents[1], env, false), {
   kind: "workspace",

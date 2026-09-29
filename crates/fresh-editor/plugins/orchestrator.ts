@@ -1878,6 +1878,17 @@ function openInBrowser(url: string): void {
   editor.spawnHostProcess("open", [url]);
 }
 
+// Enter or a click on an Elsewhere row. A Claude cloud session has two
+// equally likely wants — take it over here, or look at it on the web — so
+// it offers both (its context menu, at the row); anything else opens.
+function activateLiveRow(key: string): void {
+  if (liveByKey(key)?.source === "claude-cloud") {
+    openDockContextMenuFromKeyboard();
+    return;
+  }
+  void openLiveSession(key, { materialize: false, dive: true });
+}
+
 // Open an Elsewhere row. Enter and a click `materialize: false` (a Codex
 // Cloud task then opens its page); filing it into a folder always makes a
 // workspace, and files that workspace. `dive` hands the keyboard to it.
@@ -6670,15 +6681,21 @@ function buildDockMenuSpec(state: DockMenuState): WidgetSpec {
   // (which opens it as a workspace there), or open its page on the web.
   if (state.target.kind === "live") {
     const s = liveByKey(state.target.key);
-    const items: { label: string; key: string; intent?: "primary" | "danger" }[] = [
-      { label: editor.t("dock.ctx_open"), key: "ctx-live-open", intent: "primary" },
-      { label: editor.t("dock.ctx_move"), key: "ctx-live-move" },
-    ];
-    // Take a cloud session over: teleport moves it into a local checkout.
-    if (s?.source === "claude-cloud" && !s.remoteControl) {
-      items.push({ label: editor.t("dock.ctx_teleport"), key: "ctx-live-teleport" });
-    }
-    if (s?.url) items.push({ label: editor.t("dock.ctx_open_browser"), key: "ctx-live-browser" });
+    // A Claude cloud session (Remote Control too) is taken over — teleport
+    // moves it into a local checkout — or visited on the web; this menu is
+    // also what a click on one opens, so the two choices come first.
+    const items: { label: string; key: string; intent?: "primary" | "danger" }[] =
+      s?.source === "claude-cloud"
+        ? [
+          { label: editor.t("dock.ctx_teleport"), key: "ctx-live-teleport", intent: "primary" },
+          ...(s.url ? [{ label: editor.t("dock.ctx_open_browser"), key: "ctx-live-browser" }] : []),
+          { label: editor.t("dock.ctx_move"), key: "ctx-live-move" },
+        ]
+        : [
+          { label: editor.t("dock.ctx_open"), key: "ctx-live-open", intent: "primary" },
+          { label: editor.t("dock.ctx_move"), key: "ctx-live-move" },
+          ...(s?.url ? [{ label: editor.t("dock.ctx_open_browser"), key: "ctx-live-browser" }] : []),
+        ];
     return contextMenuSpec(s ? `${ELSEWHERE_GLYPH[s.where]} ${s.title}` : state.target.key, items);
   }
   // A folder's context menu: organise actions (Rename / New Subfolder /
@@ -16843,7 +16860,7 @@ function dockActivate(): void {
     return;
   }
   if (node && node.kind === "live") {
-    void openLiveSession(node.liveKey, { materialize: false, dive: true });
+    activateLiveRow(node.liveKey);
     return;
   }
   const id = dockSelectedSessionId();
@@ -17836,9 +17853,7 @@ editor.on("widget_event", (e) => {
           // happen by scrolling past it); a click opens it.
           if (node && node.kind === "live") {
             dockSwitchToken++;
-            if (payload.via === "click") {
-              void openLiveSession(node.liveKey, { materialize: false, dive: true });
-            }
+            if (payload.via === "click") activateLiveRow(node.liveKey);
             return;
           }
           const fromEdge = idx > prevIdx ? "bottom" : idx < prevIdx ? "top" : null;

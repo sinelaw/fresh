@@ -532,21 +532,23 @@ includes cloud sessions this machine never saw.
   already a workspace here is not listed (the workspace stands for it), nor is
   a cloud session already materialized.
 - **Opening** a row (Enter, a click, context menu *Open*) *materializes* a
-  local one — a workspace that attaches to it — and opens a cloud one's page
-  in the browser. `claude --cloud <id>`, which would attach a terminal to a
-  Claude cloud session without moving it, is account-gated ("not enabled
-  for your account" on an ordinary one), so it is not used.
+  local one — a workspace that attaches to it — and opens a Codex Cloud
+  task's page in the browser. A Claude cloud row (Remote Control included)
+  instead opens its menu at the row: **Take Over Here (Teleport)…** first,
+  then **Open in Browser** — the two things a click on one can mean.
+  `claude --cloud <id>`, which would attach a terminal to a Claude cloud
+  session without moving it, is account-gated ("not enabled for your
+  account" on an ordinary one), so it is not used.
 
   | Row | Workspace root | Terminal runs |
   | --- | --- | --- |
-  | Claude cloud (when filed, or Teleport Here…) | a checkout the user picks in the New Workspace form, on a fresh worktree | `claude --teleport <id>` |
+  | Claude cloud (Take Over Here…, or filed) | a checkout the user picks in the New Workspace form, on a fresh worktree | `claude --teleport <id>` |
   | Claude `--bg` job | the job's cwd | `claude attach <job>` |
   | Claude in a terminal inside tmux (the registry records its pane) | its cwd | `env -u TMUX tmux attach-session -t <session> ; select-window ; select-pane` — the live session itself |
   | Claude / Codex in another terminal | its cwd | a shell — never a second copy of the agent, which would write the same conversation twice |
   | Codex Cloud task (when filed) | `<data>/orchestrator/elsewhere/codex-cloud-<id>` | `codex cloud status <id>`, then a shell |
 
-  A Claude cloud row's menu also has **Teleport Here…** — taking the session
-  over: the New Workspace form opens with `claude --teleport <id>` filled in,
+  **Take Over Here…** — taking the session over: the New Workspace form opens with `claude --teleport <id>` filled in,
   on a fresh worktree (the teleport checks the session's branch out), pointed
   at an open workspace of the same repository when there is one. Filing the
   row into a folder takes the same path, and the form files the workspace it

@@ -662,19 +662,20 @@ export interface LivePlanEnv {
 
 /** How a session becomes a workspace (`materialize`) or is opened with Enter.
  *
- *  A cloud session opens its page on Enter. Making one a workspace differs by
- *  vendor: a Claude cloud session is teleported (`claude --cloud <id>`, which
- *  would attach without moving it, is an account-gated feature — "not enabled
- *  for your account" on an ordinary one); a Codex Cloud task, which has no
- *  terminal to attach, becomes a workspace showing its status with a shell
- *  for `codex cloud diff/apply`.
+ *  A Claude cloud session (Remote Control included) is taken over with
+ *  `claude --teleport <id>` either way (`claude --cloud <id>`, which would
+ *  attach without moving it, is an account-gated feature — "not enabled for
+ *  your account" on an ordinary one). A Codex Cloud task opens its page on
+ *  Enter; as a workspace, having no terminal to attach, it shows its status
+ *  with a shell for `codex cloud diff/apply`.
  *
  *  A session running in another terminal is never started a second time —
  *  two processes on one conversation both write it. Its folder opens instead. */
 export function livePlan(s: LiveSession, env: LivePlanEnv, materialize: boolean): LivePlan {
   switch (s.source) {
     case "claude-cloud":
-      if (!materialize && s.url) return { kind: "browser", url: s.url };
+      // Taken over, whether opened or filed: its page stays one menu item
+      // away ("Open in Browser").
       return { kind: "teleport", command: [env.claude, "--teleport", s.id] };
     case "codex-cloud": {
       if (!materialize && s.url) return { kind: "browser", url: s.url };
