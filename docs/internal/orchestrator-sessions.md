@@ -571,6 +571,9 @@ includes cloud sessions this machine never saw.
   non-interactive listing and are not shown; Codex processes carry no session
   id, so their rows open the folder only; sessions running locally on *other*
   machines appear only if they are cloud sessions.
+- **Continuing a session elsewhere** is designed in session-transfer.md: in
+  another agent (Claude ↔ Codex) or another place (SSH, cloud), carrying the
+  conversation and the uncommitted work. It is not implemented.
 
 ### 5.4 Lifecycle actions
 
@@ -752,6 +755,7 @@ Planned / aspirational (in design docs, not in code):
 - Dock as a first-class `KeyContext` chrome (resolves focus gaps F1/F2).
 - Broader agent registry, per-resume confirm policy, path/branch completion.
 - Collapsible project-group headers (currently a flat list with per-row tag).
+- Session transfer: Continue In… another agent or place (session-transfer.md).
 
 ---
 
