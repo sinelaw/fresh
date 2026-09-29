@@ -1776,15 +1776,18 @@ function refreshElsewhere(): void {
 
 // The group's rows: sessions not already a workspace here, matching the
 // dock's search, in first-seen order. Only workspaces on this machine can
-// stand for a local session; a cloud one is matched by the directory it
-// materializes into.
+// stand for a local session, and one on its host for a session over SSH; a
+// cloud one is matched by the directory it materializes into.
 function elsewhereVisible(): LiveSession[] {
   const roots: string[] = [];
+  const remoteRoots: { host: string; root: string }[] = [];
   for (const s of orchestratorSessions.values()) {
     if (s.id > 0 && !s.remote) roots.push(s.root);
+    // A session taken over on its SSH host is that host's workspace now.
+    if (s.id > 0 && s.remote?.kind === "ssh") remoteRoots.push({ host: s.remote.detail, root: s.root });
   }
   const needle = (openDialog?.filter.value ?? "").trim().toLowerCase();
-  return unrepresented(elsewhereSessions, roots, editor.getDataDir())
+  return unrepresented(elsewhereSessions, roots, editor.getDataDir(), remoteRoots)
     .filter((s) =>
       needle === "" ||
       `${s.title} ${liveDetail(s)} ${s.agent}`.toLowerCase().includes(needle)
@@ -1878,15 +1881,77 @@ function openInBrowser(url: string): void {
   editor.spawnHostProcess("open", [url]);
 }
 
-// Enter or a click on an Elsewhere row. A Claude cloud session has two
-// equally likely wants — take it over here, or look at it on the web — so
-// it offers both (its context menu, at the row); anything else opens.
+// What opening `s` does, with this editor's settings.
+function elsewherePlan(s: LiveSession, materialize: boolean): LivePlan {
+  return livePlan(s, {
+    dataDir: editor.getDataDir(),
+    claude: elsewhereCommands.claude,
+    codex: elsewhereCommands.codex,
+    windows: editor.getEnv("OS") === "Windows_NT",
+  }, materialize);
+}
+
+// Enter or a click on an Elsewhere row. What takes the session over or
+// connects to it here runs at once; anything that would leave the editor —
+// a page in the browser, Claude Desktop — or teleport a cloud session is
+// offered instead (the row's menu, at the row), never done on a click.
 function activateLiveRow(key: string): void {
-  if (liveByKey(key)?.source === "claude-cloud") {
+  const s = liveByKey(key);
+  if (!s) return;
+  const plan = elsewherePlan(s, false);
+  if (plan.kind === "browser" || plan.kind === "teleport") {
     openDockContextMenuFromKeyboard();
     return;
   }
   void openLiveSession(key, { materialize: false, dive: true });
+}
+
+// The link Claude Desktop opens a session of its own with.
+function desktopLink(s: LiveSession): string | null {
+  return s.desktopId ? `claude://code/continue?session=${encodeURIComponent(s.desktopId)}` : null;
+}
+
+// A page or app outside the editor, opened from a menu item.
+function openLiveOutside(s: LiveSession, url: string): void {
+  openInBrowser(url);
+  editor.setStatus(editor.t(
+    url.startsWith("claude://") ? "status.elsewhere_desktop" : "status.elsewhere_browser",
+    { name: s.title },
+  ));
+}
+
+// Take a session over on the SSH host it runs on (a Claude Desktop session
+// over SSH): a remote workspace there, in its folder, whose terminal stops
+// the copy running now and resumes the conversation. The same create the New
+// Workspace dialog's SSH backend runs — its placeholder row, its host-key
+// prompt, its errors — with the takeover as the terminal's command.
+async function takeOverOnHost(
+  s: LiveSession,
+  plan: Extract<LivePlan, { kind: "ssh" }>,
+  opts: { dive: boolean; folderId?: string | null },
+): Promise<void> {
+  const built = buildSshSpec({
+    auto: false,
+    prompt: "",
+    teach: false,
+    host: plan.target,
+    name: plan.label,
+    cmd: "",
+    remotePath: plan.path,
+    identity: plan.identity ?? "",
+    extraArgs: [],
+  });
+  if (!built.ok) {
+    editor.setStatus(editor.t("status.elsewhere_cannot_open", { name: s.title, why: built.error }));
+    return;
+  }
+  if (built.spec.backend === "ssh") built.spec.spec.command = plan.command;
+  editor.setStatus(editor.t("status.elsewhere_taking_over", { name: s.title, host: plan.target }));
+  const pendingId = await startPendingWorkspace(built.spec, { visit: opts.dive });
+  if (opts.folderId === undefined) return;
+  // A remote workspace has no window to file until its connect lands.
+  const outcome = await awaitCreateOutcome(pendingId);
+  if (outcome.ok && outcome.windowId) assignSessionToFolder(outcome.windowId, opts.folderId);
 }
 
 // Open an Elsewhere row. Enter and a click `materialize: false` (a Codex
@@ -1898,27 +1963,22 @@ async function openLiveSession(
 ): Promise<void> {
   const s = liveByKey(key);
   if (!s) return;
-  const plan: LivePlan = livePlan(s, {
-    dataDir: editor.getDataDir(),
-    claude: elsewhereCommands.claude,
-    codex: elsewhereCommands.codex,
-    windows: editor.getEnv("OS") === "Windows_NT",
-  }, opts.materialize);
+  const plan: LivePlan = elsewherePlan(s, opts.materialize);
   if (plan.kind === "none") {
     editor.setStatus(editor.t("status.elsewhere_cannot_open", { name: s.title, why: plan.why }));
     return;
   }
   if (plan.kind === "browser") {
-    openInBrowser(plan.url);
-    editor.setStatus(editor.t(
-      plan.url.startsWith("claude://") ? "status.elsewhere_desktop" : "status.elsewhere_browser",
-      { name: s.title },
-    ));
+    openLiveOutside(s, plan.url);
     return;
   }
   if (plan.kind === "teleport") {
     // The checkout is the user's to choose; the form files the result.
     teleportLiveSession(key, opts.folderId);
+    return;
+  }
+  if (plan.kind === "ssh") {
+    await takeOverOnHost(s, plan, opts);
     return;
   }
   let id: number;
@@ -6681,21 +6741,25 @@ function buildDockMenuSpec(state: DockMenuState): WidgetSpec {
   // (which opens it as a workspace there), or open its page on the web.
   if (state.target.kind === "live") {
     const s = liveByKey(state.target.key);
-    // A Claude cloud session (Remote Control too) is taken over — teleport
-    // moves it into a local checkout — or visited on the web; this menu is
-    // also what a click on one opens, so the two choices come first.
-    const items: { label: string; key: string; intent?: "primary" | "danger" }[] =
-      s?.source === "claude-cloud"
-        ? [
-          { label: editor.t("dock.ctx_teleport"), key: "ctx-live-teleport", intent: "primary" },
-          ...(s.url ? [{ label: editor.t("dock.ctx_open_browser"), key: "ctx-live-browser" }] : []),
-          { label: editor.t("dock.ctx_move"), key: "ctx-live-move" },
-        ]
-        : [
-          { label: editor.t("dock.ctx_open"), key: "ctx-live-open", intent: "primary" },
-          { label: editor.t("dock.ctx_move"), key: "ctx-live-move" },
-          ...(s?.url ? [{ label: editor.t("dock.ctx_open_browser"), key: "ctx-live-browser" }] : []),
-        ];
+    // What opening it here does comes first (none when it only opens
+    // outside the editor); then the places outside it, each named: this
+    // menu is also what a click on such a row opens.
+    const items: { label: string; key: string; intent?: "primary" | "danger" }[] = [];
+    const plan = s ? elsewherePlan(s, false) : null;
+    if (plan?.kind === "teleport") {
+      items.push({ label: editor.t("dock.ctx_teleport"), key: "ctx-live-teleport", intent: "primary" });
+    } else if (plan?.kind === "ssh" || (plan?.kind === "workspace" && plan.takeover)) {
+      items.push({ label: editor.t("dock.ctx_take_over"), key: "ctx-live-open", intent: "primary" });
+    } else if (plan && plan.kind !== "browser") {
+      items.push({ label: editor.t("dock.ctx_open"), key: "ctx-live-open", intent: "primary" });
+    }
+    if (s && desktopLink(s)) {
+      items.push({ label: editor.t("dock.ctx_open_desktop"), key: "ctx-live-desktop", ...(items.length ? {} : { intent: "primary" as const }) });
+    }
+    if (s?.url) {
+      items.push({ label: editor.t("dock.ctx_open_browser"), key: "ctx-live-browser", ...(items.length ? {} : { intent: "primary" as const }) });
+    }
+    items.push({ label: editor.t("dock.ctx_move"), key: "ctx-live-move" });
     return contextMenuSpec(s ? `${ELSEWHERE_GLYPH[s.where]} ${s.title}` : state.target.key, items);
   }
   // A folder's context menu: organise actions (Rename / New Subfolder /
@@ -17303,7 +17367,12 @@ editor.on("widget_event", (e) => {
         } else if (e.widget_key === "ctx-live-browser") {
           closeDockContextMenu();
           const s = liveByKey(target.key);
-          if (s?.url) openInBrowser(s.url);
+          if (s?.url) openLiveOutside(s, s.url);
+        } else if (e.widget_key === "ctx-live-desktop") {
+          closeDockContextMenu();
+          const s = liveByKey(target.key);
+          const link = s ? desktopLink(s) : null;
+          if (s && link) openLiveOutside(s, link);
         }
         return;
       }

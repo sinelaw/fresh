@@ -5,6 +5,10 @@ import {
   claudeSessionId,
   parseClaudeRegistry,
   parseDesktopSessions,
+  parseDesktopSshConnections,
+  desktopRemoteCli,
+  sshTargetOf,
+  takeoverArgv,
   mergeDesktopSessions,
   registryTmuxPanes,
   tmuxAttachArgv,
@@ -172,9 +176,59 @@ eq(shown.map((s) => s.key), ["claude-local/5e55", "claude-cloud/session_01"], "u
 
 const env: LivePlanEnv = { dataDir: DATA, claude: "claude", codex: "codex", windows: false };
 eq(livePlan(desktop[1], env, true), { kind: "workspace", root: "/home/u/blog", label: "Draft a post", command: ["claude", "--resume", "cli-b"] }, "plan: filing a stopped Desktop session resumes it in its folder");
-eq(livePlan(desktop[1], env, false), { kind: "browser", url: "claude://code/continue?session=local_b" }, "plan: Enter on a Desktop session opens it in Claude Desktop");
-eq(livePlan(desktop[2], env, false), { kind: "browser", url: "claude://code/continue?session=local_c" }, "plan: an SSH one too: Desktop reconnects it");
-eq(livePlan(desktop[2], env, true).kind, "none", "plan: an SSH Desktop session cannot be made a workspace here");
+eq(livePlan(desktop[1], env, false), livePlan(desktop[1], env, true), "plan: Enter on a stopped Desktop session resumes it here too, no browser");
+{
+  const ssh = livePlan(desktop[2], env, false);
+  eq(ssh.kind === "ssh" ? [ssh.target, ssh.path, ssh.command.slice(3)] : ssh.kind, ["me@box", "/srv/app", ["sh", "cli-c", ""]], "plan: an SSH Desktop session is taken over on its host, in its folder");
+  eq(livePlan(desktop[2], env, true), ssh, "plan: filing it takes it over the same way");
+  const running = livePlan(merged[0], env, false);
+  eq(running.kind === "workspace" ? [running.root, running.takeover, running.command!.slice(3)] : running.kind, ["/home/u/site", true, ["sh", "desk1", "claude"]], "plan: a session running in Claude Desktop is taken over here: Desktop's copy stopped, resumed");
+  eq(livePlan(merged[0], { ...env, windows: true }, false), { kind: "browser", url: "claude://code/continue?session=local_a" }, "plan: without a POSIX shell, Desktop's own link (from the menu)");
+  eq(livePlan(desktop[2], env, false).kind === "ssh" && livePlan({ ...desktop[2], cwd: "/" }, env, false).kind, "none", "plan: an SSH session with no folder cannot be taken over");
+}
+const conns = parseDesktopSshConnections([
+  JSON.stringify({ configs: [{ id: "c1", name: "dev", sshHost: "me@dev.example.com", sshPort: 2222, sshIdentityFile: "~/.ssh/id_dev" }], trustedHosts: [] }),
+  JSON.stringify({ sshConfigs: [{ id: "c2", name: "Shared", sshHost: "team@vm" }, { id: "c1", sshHost: "shadowed" }] }),
+  "not json",
+]);
+eq([...conns.entries()], [["c1", { sshHost: "me@dev.example.com", sshPort: 2222, sshIdentityFile: "~/.ssh/id_dev" }], ["c2", { sshHost: "team@vm" }]], "desktop ssh: saved connections from ssh_configs.json and settings, first wins");
+const onDev = parseDesktopSessions([
+  JSON.stringify({ sessionId: "local_e", cliSessionId: "cli-e", cwd: "/srv/repo", worktreePath: "/srv/repo/.claude/worktrees/x", title: "In a tree", sshConfig: { id: "c1", name: "dev", sshHost: "me@dev.example.com", sshPort: 2222, sshIdentityFile: "~/.ssh/id_dev" } }),
+  JSON.stringify({ sessionId: "local_f", cliSessionId: "cli-f", cwd: "/srv/other", title: "By id", sshConfigId: "c2" }),
+], conns);
+eq(onDev.map((d) => [d.cwd, sshTargetOf(d), d.sshIdentity ?? null]), [["/srv/repo/.claude/worktrees/x", "me@dev.example.com:2222", "~/.ssh/id_dev"], ["/srv/other", "team@vm", null]], "desktop ssh: the connection's port and key; the CLI runs in the worktree when there is one");
+const state = JSON.stringify({ hostFacts: {
+  "ssh:devbox@127.0.0.1:2222": { cliRelPath: ".claude/remote/ccd-cli/2.1.284", cliKey: "k" },
+  "ssh:team@vm:22": { cliRelPath: "/abs/claude", cliKey: "k" },
+  "ssh:bad@vm:22": { cliRelPath: "../../etc/x", cliKey: "k" },
+} });
+eq([desktopRemoteCli(state, "devbox@127.0.0.1", 2222), desktopRemoteCli(state, "devbox@127.0.0.1"), desktopRemoteCli(state, "team@vm"), desktopRemoteCli(state, "bad@vm"), desktopRemoteCli("{}", "x")], [".claude/remote/ccd-cli/2.1.284", ".claude/remote/ccd-cli/2.1.284", undefined, undefined, undefined], "desktop ssh: the CLI Desktop installed on the host, only inside the home directory");
+
+// The takeover script itself, run: the copy the registry names is stopped,
+// a registry file whose pid runs something else is left alone, and the
+// conversation resumes with the CLI given.
+{
+  const { mkdtempSync, writeFileSync, mkdirSync, chmodSync } = await import("node:fs");
+  const { spawn, spawnSync } = await import("node:child_process");
+  const { tmpdir } = await import("node:os");
+  const dir = mkdtempSync(`${tmpdir()}/takeover-`);
+  mkdirSync(`${dir}/cfg/sessions`, { recursive: true });
+  writeFileSync(`${dir}/claude`, "#!/bin/sh\nsleep 30\n");
+  writeFileSync(`${dir}/resume`, "#!/bin/sh\necho RESUMED \"$@\"\n");
+  chmodSync(`${dir}/claude`, 0o755);
+  chmodSync(`${dir}/resume`, 0o755);
+  const copy = spawn(`${dir}/claude`, [], { stdio: "ignore" });
+  const other = spawn("sleep", ["30"], { stdio: "ignore" });
+  writeFileSync(`${dir}/cfg/sessions/${copy.pid}.json`, JSON.stringify({ pid: copy.pid, sessionId: "sess-1" }));
+  writeFileSync(`${dir}/cfg/sessions/${other.pid}.json`, JSON.stringify({ pid: other.pid, sessionId: "sess-1" }));
+  await new Promise((r) => setTimeout(r, 200));
+  const [cmd, ...args] = takeoverArgv("sess-1", `${dir}/resume`);
+  const run = spawnSync(cmd, args, { env: { ...process.env, CLAUDE_CONFIG_DIR: `${dir}/cfg` }, encoding: "utf8" });
+  const alive = (pid: number | undefined) => { try { process.kill(pid!, 0); return true; } catch { return false; } };
+  await new Promise((r) => setTimeout(r, 100));
+  eq([run.stdout.trim(), alive(copy.pid), alive(other.pid)], [`Taking over: stopping the copy running now (pid ${copy.pid})\nRESUMED --resume sess-1`, false, true], "takeover: stops the running copy, spares an unrelated pid, resumes");
+  other.kill();
+}
 
 const panes = registryTmuxPanes([
   JSON.stringify({ pid: 11, sessionId: "t1", kind: "interactive", tmux: "work:@3.%7" }),
@@ -214,6 +268,21 @@ eq(parseClaudeAgents(JSON.stringify([{ pid: 8, cwd: "/", kind: "interactive", se
 eq(liveDetail(cloud[0]), "sinelaw/fresh · claude.ai", "detail: repository and place");
 eq(liveDetail(agents[1]), "claude --bg", "detail: no directory when the title already is it");
 eq(liveDetail({ ...agents[0], jobId: undefined }), "fresh · pid 123", "detail: directory when it is not the title");
+
+
+// A session on an SSH host is represented only by a workspace on that host,
+// in its folder — never by a local folder that happens to share the path.
+eq(
+  unrepresented([desktop[2]], ["/srv/app"], DATA, [{ host: "other@box", root: "/srv/app" }]).length,
+  1,
+  "unrepresented: an SSH session is not hidden by a local folder or another host",
+);
+eq(
+  unrepresented([desktop[2]], [], DATA, [{ host: "me@box", root: "/srv/app/" }]).length,
+  0,
+  "unrepresented: an SSH session taken over on its host drops out",
+);
+
 
 if (failures > 0) {
   console.log(`${failures} failure(s)`);

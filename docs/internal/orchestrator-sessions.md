@@ -503,7 +503,7 @@ includes cloud sessions this machine never saw.
   | Source | From | Default |
   | --- | --- | --- |
   | Claude on this machine | `claude agents --json` (terminal and `--bg` sessions), plus the CLI's registry of running sessions (`~/.claude/sessions/<pid>.json`, live pids only) for the SDK-driven ones it skips — Claude Desktop's and editor extensions' | on |
-  | Claude Desktop (Code tab) | Desktop's own records, `<userData>/claude-code-sessions/<account>/<org>/local_<id>.json` (`userData` = `~/Library/Application Support/Claude`, `~/.config/Claude`, `%APPDATA%\Claude`): every session not `isArchived`, running or not, merged with the running ones by CLI session id. A stopped one opens as `claude --resume <id>` in its folder; one over SSH (`sshConfig`) is listed with its host but runs there | on (with the Claude source) |
+  | Claude Desktop (Code tab) | Desktop's own records, `<userData>/claude-code-sessions/<account>/<org>/local_<id>.json` (`userData` = `~/Library/Application Support/Claude`, `~/.config/Claude`, `%APPDATA%\Claude`): every session not `isArchived`, running or not, merged with the running ones by CLI session id; its folder is `worktreePath`, else `cwd`. One over SSH carries its connection (`sshConfig`: `sshHost`, `sshPort`, `sshIdentityFile`; a record naming only an id is resolved from `<userData>/ssh_configs.json` or the `sshConfigs` of the Claude settings), and the CLI Desktop installed on that host comes from `<userData>/ssh-remote-server-state.json` (`hostFacts["ssh:<sshHost>:<port>"].cliRelPath`, e.g. `.claude/remote/ccd-cli/<version>`) | on (with the Claude source) |
   | Codex on this machine | running `codex` processes (`ps`, cwd via `lsof` or `/proc`); not on Windows | on |
   | Codex Cloud | `codex cloud list --json` (applied tasks hidden) | on |
   | Claude cloud + Remote Control | `GET /v1/code/sessions?statuses=active` (paged) — the list `claude --teleport` reads, asked for active sessions only — with the Claude CLI's own sign-in (`~/.claude/.credentials.json`, or the macOS Keychain) | on |
@@ -530,25 +530,49 @@ includes cloud sessions this machine never saw.
   and rolls up `●n ✓n` like a folder; it starts open, and the fold is what is
   remembered. Rows keep first-seen order. A local session whose directory is
   already a workspace here is not listed (the workspace stands for it), nor is
-  a cloud session already materialized.
-- **Opening** a row (Enter, a click, context menu *Open*) *materializes* a
-  local one — a workspace that attaches to it — and opens a Codex Cloud
-  task's page in the browser. A Claude cloud row (Remote Control included)
-  instead opens its menu at the row: **Take Over Here (Teleport)…** first,
-  then **Open in Browser** — the two things a click on one can mean.
-  `claude --cloud <id>`, which would attach a terminal to a Claude cloud
-  session without moving it, is account-gated ("not enabled for your
-  account" on an ordinary one), so it is not used.
+  a cloud session already materialized, nor a session over SSH that is a
+  workspace on its host, in its folder.
+- **Opening** a row (Enter, a click, context menu *Open* / *Take Over
+  Here*) connects to the session or takes it over here. Nothing leaves the
+  editor on a click: a row that could only be opened outside it — a Codex
+  Cloud task's page, a Claude cloud session (teleporting it is a choice of
+  checkout), a Desktop session with no POSIX shell to take it over — opens
+  its menu at the row instead, where **Take Over Here…**, **Open in Claude
+  Desktop** (`claude://code/continue?session=<Desktop's local_ id>`) and
+  **Open in Browser** are each named. `claude --cloud <id>`, which would
+  attach a terminal to a Claude cloud session without moving it, is
+  account-gated ("not enabled for your account" on an ordinary one), so it
+  is not used.
 
-  | Row | Workspace root | Terminal runs |
+  | Row | Workspace | Terminal runs |
   | --- | --- | --- |
   | Claude cloud (Take Over Here…, or filed) | a checkout the user picks in the New Workspace form, on a fresh worktree | `claude --teleport <id>` |
+  | Claude Desktop session over SSH | a remote workspace on that host (the dialog's SSH create: its placeholder row, host-key prompt, errors), in the session's folder | the takeover (below), resuming with the CLI Desktop installed there, else `claude` |
+  | Claude Desktop session running in Desktop | its folder | the takeover (below) |
+  | Claude Desktop session not running | its folder | `claude --resume <id>` |
   | Claude `--bg` job | the job's cwd | `claude attach <job>` |
   | Claude in a terminal inside tmux (the registry records its pane) | its cwd | `env -u TMUX tmux attach-session -t <session> ; select-window ; select-pane` — the live session itself |
   | Claude / Codex in another terminal | its cwd | a shell — never a second copy of the agent, which would write the same conversation twice |
   | Codex Cloud task (when filed) | `<data>/orchestrator/elsewhere/codex-cloud-<id>` | `codex cloud status <id>`, then a shell |
 
-  **Take Over Here…** — taking the session over: the New Workspace form opens with `claude --teleport <id>` filled in,
+  **The takeover** (`takeoverArgv`, POSIX `sh`, run where the session runs):
+  find the copy running now in the CLI's registry (`<config>/sessions/<pid>.json`
+  names the session), stop it — only a pid still running `claude`, since a
+  registry file can outlive its process and the pid be reused — wait for it
+  to exit, then `exec <cli> --resume <id>`. One copy writes the conversation
+  at any time. This is what Claude Desktop's own SSH sessions are: Desktop
+  deploys a server to `~/.claude/remote/` on the host, which runs its CLI
+  (`~/.claude/remote/ccd-cli/<version>`) as an SDK session in the session's
+  folder and re-adopts it across reconnects; the conversation is the CLI's
+  own transcript on the host (`~/.claude/projects/<folder>/<id>.jsonl`, which
+  Desktop byte-syncs a copy of). Verified against Desktop 2.9939.4 and a
+  host it deployed to: the taken-over session resumed with its history, and
+  the running copy was stopped. Two caveats: Desktop hands its CLI a sign-in
+  at each spawn and leaves none on the host, so the first takeover on a host
+  where `claude` was never signed in asks for a sign-in there; and Desktop,
+  if the session is opened in it again, starts its own copy once more.
+
+  For a Claude cloud session, **Take Over Here…** opens the New Workspace form with `claude --teleport <id>` filled in,
   on a fresh worktree (the teleport checks the session's branch out), pointed
   at an open workspace of the same repository when there is one. Filing the
   row into a folder takes the same path, and the form files the workspace it
@@ -557,10 +581,9 @@ includes cloud sessions this machine never saw.
   **Connecting to a live session.** There is no general way to attach a
   terminal to a Claude session another process runs (`claude --resume` of a
   running conversation starts a second copy). What connects: `claude attach`
-  for a `--bg` job; the tmux pane for a terminal session in tmux; and, for a
-  Claude Desktop session — running, stopped or over SSH — Enter opens
-  `claude://code/continue?session=<Desktop's local_ id>`, which Desktop
-  handles by bringing that session up (reconnecting an SSH one itself).
+  for a `--bg` job; the tmux pane for a terminal session in tmux. A Claude
+  Desktop session has no terminal to attach to, so it is taken over instead
+  (above); Desktop's own link to it stays in the row's menu.
 
   Arrowing onto a row never opens it (unlike a workspace row, which
   live-switches): opening creates a workspace. **Move to Folder…** on a row

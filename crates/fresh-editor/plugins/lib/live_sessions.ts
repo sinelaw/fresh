@@ -64,6 +64,12 @@ export interface LiveSession {
   stopped?: boolean;
   /** The SSH host a Claude Desktop session runs on; its `cwd` is there. */
   sshHost?: string;
+  /** That connection's port and key, when Desktop saved them. */
+  sshPort?: number;
+  sshIdentity?: string;
+  /** The Claude CLI Desktop installed on that host, relative to the home
+   *  directory there (`.claude/remote/ccd-cli/<version>`). */
+  remoteCli?: string;
   /** Claude Desktop's own id for the session (`local_…`): what its
    *  `claude://code/continue?session=` link opens. */
   desktopId?: string;
@@ -270,19 +276,71 @@ export function tmuxAttachArgv(pane: string): string[] {
   return ["env", "-u", "TMUX", "tmux", "attach-session", "-t", session, ";", "select-window", "-t", win, ";", "select-pane", "-t", p];
 }
 
+/** One SSH connection Claude Desktop saved: `{name, sshHost, sshPort?,
+ *  sshIdentityFile?, id}`, in `<userData>/ssh_configs.json` (`configs`) or the
+ *  `sshConfigs` of `~/.claude/settings.json`; a session record carries a copy
+ *  as its `sshConfig`. */
+export interface DesktopSshConnection {
+  sshHost: string;
+  sshPort?: number;
+  sshIdentityFile?: string;
+}
+
+function sshConnection(v: unknown): DesktopSshConnection | undefined {
+  const c = asRecord(v);
+  const sshHost = str(c?.sshHost) ?? str(c?.host);
+  if (!sshHost) return undefined;
+  const port = num(c?.sshPort);
+  const identity = str(c?.sshIdentityFile);
+  return { sshHost, ...(port ? { sshPort: port } : {}), ...(identity ? { sshIdentityFile: identity } : {}) };
+}
+
+/** Desktop's saved SSH connections by id, from any of the files that hold
+ *  them (`{configs: [...]}` or `{sshConfigs: [...]}`). */
+export function parseDesktopSshConnections(texts: string[]): Map<string, DesktopSshConnection> {
+  const out = new Map<string, DesktopSshConnection>();
+  for (const text of texts) {
+    const root = asRecord(parseJson(text));
+    const list = Array.isArray(root?.configs) ? root!.configs : Array.isArray(root?.sshConfigs) ? root!.sshConfigs : [];
+    for (const c of list as unknown[]) {
+      const id = str(asRecord(c)?.id);
+      const conn = sshConnection(c);
+      if (id && conn && !out.has(id)) out.set(id, conn);
+    }
+  }
+  return out;
+}
+
+/** The Claude CLI Desktop installed on an SSH host, relative to the home
+ *  directory there, from the `hostFacts` Desktop keeps in
+ *  `<userData>/ssh-remote-server-state.json` (keyed `ssh:<sshHost>:<port>`). */
+export function desktopRemoteCli(stateText: string, sshHost: string, sshPort?: number): string | undefined {
+  const facts = asRecord(asRecord(parseJson(stateText))?.hostFacts);
+  if (!facts) return undefined;
+  const exact = asRecord(facts[`ssh:${sshHost}:${sshPort ?? 22}`]);
+  const any = exact ?? Object.entries(facts)
+    .filter(([k]) => k === `ssh:${sshHost}` || k.startsWith(`ssh:${sshHost}:`))
+    .map(([, v]) => asRecord(v))
+    .find((v) => v !== null) ?? null;
+  const rel = str(any?.cliRelPath);
+  // Relative to the home directory, inside it: nothing else is Desktop's.
+  return rel && !rel.startsWith("/") && !rel.split("/").includes("..") ? rel : undefined;
+}
+
 /** Claude Desktop's Code-tab sessions, from the records it keeps under
  *  `<userData>/claude-code-sessions/<account>/<org>/local_<id>.json`
- *  (`sessionId`, `cliSessionId`, `cwd`, `title`, `createdAt`,
- *  `lastActivityAt`, `isArchived`, and the SSH connection for one that runs
- *  over SSH). An archived one is left out; a deleted one has no file.
+ *  (`sessionId`, `cliSessionId`, `cwd`, `worktreePath`, `title`, `createdAt`,
+ *  `lastActivityAt`, `isArchived`, and `sshConfig` — the connection — for
+ *  one that runs over SSH). An archived one is left out; a deleted one has no
+ *  file. The CLI runs in the worktree when the session has one.
  *
  *  Keyed by the CLI session id, the one the CLI's registry uses too, so a
  *  Desktop session that is running merges with its live row (see
- *  `mergeDesktopSessions`). `sshNames` maps a connection id to its host, from
- *  the `sshConfigs` Desktop saves in `~/.claude/settings.json`. */
+ *  `mergeDesktopSessions`). `sshNames` maps a connection id to the connection
+ *  (see `parseDesktopSshConnections`), for a record that names only its id. */
 export function parseDesktopSessions(
   records: string[],
-  sshNames: Map<string, string> = new Map(),
+  sshNames: Map<string, DesktopSshConnection | string> = new Map(),
 ): LiveSession[] {
   const out: LiveSession[] = [];
   for (const text of records) {
@@ -291,10 +349,12 @@ export function parseDesktopSessions(
     const id = str(e.cliSessionId) ?? str(e.sessionId);
     if (!id) continue;
     const desktopId = str(e.sessionId);
-    const cwd = str(e.cwd);
-    const ssh = asRecord(e.sshConfig);
-    const sshHost = str(ssh?.sshHost) ?? str(ssh?.host) ?? str(ssh?.name) ??
-      (str(e.sshConfigId) ? sshNames.get(str(e.sshConfigId)!) ?? str(e.sshConfigId) : undefined);
+    const cwd = str(e.worktreePath) ?? str(e.cwd);
+    const named = str(e.sshConfigId) ? sshNames.get(str(e.sshConfigId)!) : undefined;
+    const conn = sshConnection(e.sshConfig) ??
+      (typeof named === "string" ? { sshHost: named } : named) ??
+      (str(asRecord(e.sshConfig)?.name) ? { sshHost: str(asRecord(e.sshConfig)?.name)! } : undefined);
+    const sshHost = conn?.sshHost ?? str(e.sshConfigId);
     out.push({
       key: `claude-local/${id}`,
       source: "claude-local",
@@ -309,6 +369,8 @@ export function parseDesktopSessions(
       host: "Claude Desktop",
       stopped: true,
       ...(sshHost ? { sshHost } : {}),
+      ...(conn?.sshPort ? { sshPort: conn.sshPort } : {}),
+      ...(conn?.sshIdentityFile ? { sshIdentity: conn.sshIdentityFile } : {}),
       ...(desktopId ? { desktopId } : {}),
     });
   }
@@ -329,6 +391,9 @@ export function mergeDesktopSessions(running: LiveSession[], desktop: LiveSessio
       title: d.title,
       host: "Claude Desktop",
       ...(d.sshHost ? { sshHost: d.sshHost } : {}),
+      ...(d.sshPort ? { sshPort: d.sshPort } : {}),
+      ...(d.sshIdentity ? { sshIdentity: d.sshIdentity } : {}),
+      ...(d.remoteCli ? { remoteCli: d.remoteCli } : {}),
       ...(d.desktopId ? { desktopId: d.desktopId } : {}),
     };
   });
@@ -641,7 +706,13 @@ export type LivePlan =
       command?: string[];
       /** Why no agent was attached, for the status bar. */
       note?: string;
+      /** It stops the copy running elsewhere and continues the session
+       *  here (see `takeoverArgv`). */
+      takeover?: boolean;
     }
+  /** Take a session over on the SSH host it runs on: a workspace there, in
+   *  its folder, running `command`. `target` is `[user@]host[:port]`. */
+  | { kind: "ssh"; target: string; identity?: string; path: string; label: string; command: string[] }
   /** A link the OS opens: a web page, or a `claude://` link Claude Desktop
    *  handles. */
   | { kind: "browser"; url: string }
@@ -690,11 +761,6 @@ export function livePlan(s: LiveSession, env: LivePlanEnv, materialize: boolean)
       };
     }
     case "claude-local":
-      // A Claude Desktop session: Desktop itself connects to it — running,
-      // stopped or over SSH — through its own link to that session.
-      if (s.desktopId && !materialize) {
-        return { kind: "browser", url: `claude://code/continue?session=${encodeURIComponent(s.desktopId)}` };
-      }
       // A session in a tmux pane: attach to the pane, which is the live
       // session itself, not a copy of it.
       if (s.tmux && !s.stopped) {
@@ -705,8 +771,21 @@ export function livePlan(s: LiveSession, env: LivePlanEnv, materialize: boolean)
           command: tmuxAttachArgv(s.tmux),
         };
       }
-      // A Desktop session over SSH runs, and keeps its folder, on that host.
-      if (s.sshHost) return { kind: "none", why: `it runs on ${s.sshHost} over SSH — open it from Claude Desktop` };
+      // A Claude Desktop session over SSH runs, and keeps its conversation,
+      // on that host: take it over there, with the CLI Desktop installed.
+      if (s.sshHost) {
+        if (!s.cwd || isFilesystemRoot(s.cwd)) {
+          return { kind: "none", why: `it runs on ${s.sshHost} over SSH, in a folder Claude Desktop did not record` };
+        }
+        return {
+          kind: "ssh",
+          target: sshTargetOf(s)!,
+          ...(s.sshIdentity ? { identity: s.sshIdentity } : {}),
+          path: s.cwd,
+          label: s.title,
+          command: takeoverArgv(s.id, s.remoteCli ?? ""),
+        };
+      }
       // Not running (a Desktop session left open): resume it here.
       if (s.stopped && s.cwd && !isFilesystemRoot(s.cwd)) {
         return {
@@ -724,10 +803,52 @@ export function livePlan(s: LiveSession, env: LivePlanEnv, materialize: boolean)
           command: [env.claude, "attach", s.jobId],
         };
       }
+      // A Claude Desktop session running in Desktop: no terminal to attach
+      // to, so take it over — stop Desktop's copy, resume it here. Without
+      // a POSIX shell to do that, Desktop's own link to it (the menu has it).
+      if (s.desktopId && s.cwd && !isFilesystemRoot(s.cwd)) {
+        if (env.windows) {
+          return materialize
+            ? inPlace(s)
+            : { kind: "browser", url: `claude://code/continue?session=${encodeURIComponent(s.desktopId)}` };
+        }
+        return { kind: "workspace", root: s.cwd, label: s.title, command: takeoverArgv(s.id, env.claude), takeover: true };
+      }
       return inPlace(s);
     case "codex-local":
       return inPlace(s);
   }
+}
+
+/** Take a Claude session over where it runs: stop the copy running now, if
+ *  any, then resume the conversation in this terminal. The copy is found in
+ *  the CLI's own registry of running sessions (`<config>/sessions/<pid>.json`,
+ *  which names the session), and only a pid still running `claude` is
+ *  stopped: a registry file can outlive its process, and its pid be reused.
+ *  `cli` is the Claude CLI to resume with: a program name, an absolute path,
+ *  or a path relative to the home directory (where Claude Desktop installs
+ *  its own on an SSH host); `claude` when empty or not there. POSIX `sh`. */
+export function takeoverArgv(id: string, cli: string): string[] {
+  const script = [
+    'id=$1; cli=$2',
+    'case $cli in "") cli=claude ;; /*) ;; */*) if [ -x "$HOME/$cli" ]; then cli="$HOME/$cli"; else cli=claude; fi ;; esac',
+    'for f in "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"/sessions/*.json; do',
+    '  [ -f "$f" ] && grep -q "$id" "$f" || continue',
+    '  pid=$(basename "$f" .json)',
+    '  case "$(ps -p "$pid" -o args= 2>/dev/null)" in *claude*) ;; *) continue ;; esac',
+    '  echo "Taking over: stopping the copy running now (pid $pid)"',
+    '  kill "$pid"',
+    '  i=0; while kill -0 "$pid" 2>/dev/null && [ $i -lt 50 ]; do sleep 0.1; i=$((i+1)); done',
+    'done',
+    'exec "$cli" --resume "$id"',
+  ].join("\n");
+  return ["sh", "-c", script, "sh", id, cli];
+}
+
+/** `[user@]host[:port]` for an SSH connection Desktop saved. */
+export function sshTargetOf(s: LiveSession): string | undefined {
+  if (!s.sshHost) return undefined;
+  return s.sshPort && s.sshPort !== 22 ? `${s.sshHost}:${s.sshPort}` : s.sshHost;
 }
 
 /** A session running in another terminal opens as its folder. */
@@ -739,18 +860,25 @@ function inPlace(s: LiveSession): LivePlan {
 
 /** Sessions not already on screen as a workspace. A local session running in
  *  a workspace's directory is that workspace's (the agent in its terminal, or
- *  one beside it); a cloud session opened here lives at its `elsewhereRoot`. */
+ *  one beside it); a cloud session opened here lives at its `elsewhereRoot`;
+ *  a session on an SSH host is a workspace on that host, in its folder
+ *  (`remoteRoots`: `[user@]host` without the port, and the remote root). */
 export function unrepresented(
   sessions: LiveSession[],
   workspaceRoots: Iterable<string>,
   dataDir: string,
+  remoteRoots: Iterable<{ host: string; root: string }> = [],
 ): LiveSession[] {
   const roots = new Set<string>();
   for (const r of workspaceRoots) roots.add(liveNormPath(r));
+  const remote = new Set<string>();
+  for (const r of remoteRoots) remote.add(`${r.host}\n${liveNormPath(r.root)}`);
   return sessions.filter((s) => {
     if (s.where === "cloud") return !roots.has(liveNormPath(elsewhereRoot(dataDir, s)));
     // A local session with no directory cannot be matched: keep it.
-    return !s.cwd || !roots.has(liveNormPath(s.cwd));
+    if (!s.cwd) return true;
+    if (s.sshHost) return !remote.has(`${s.sshHost}\n${liveNormPath(s.cwd)}`);
+    return !roots.has(liveNormPath(s.cwd));
   });
 }
 

@@ -26,10 +26,13 @@ import {
   parseClaudeRegistry,
   registryTmuxPanes,
   parseDesktopSessions,
+  parseDesktopSshConnections,
+  desktopRemoteCli,
   mergeDesktopSessions,
   parseCodexCloud,
   parseCodexProcesses,
   parseLsofCwds,
+  type DesktopSshConnection,
   type LiveSession,
   type LiveSource,
 } from "./lib/live_sessions.ts";
@@ -252,28 +255,35 @@ function listDesktopSessions(): LiveSession[] {
     }
   }
   if (records.length === 0) return [];
-  return parseDesktopSessions(records, desktopSshHosts());
+  return withRemoteCli(parseDesktopSessions(records, desktopSshHosts()));
 }
 
-/** The SSH connections Desktop saves (`sshConfigs` in the Claude settings),
- *  by id, so a session that names only its connection shows the host. */
-function desktopSshHosts(): Map<string, string> {
-  const hosts = new Map<string, string>();
-  const text = editor.readFile(editor.localPath(editor.pathJoin(claudeConfigDir(), "settings.json")));
-  if (!text) return hosts;
-  try {
-    const configs = (JSON.parse(text) as { sshConfigs?: unknown }).sshConfigs;
-    if (Array.isArray(configs)) {
-      for (const c of configs as { id?: unknown; sshHost?: unknown; name?: unknown }[]) {
-        if (typeof c?.id === "string" && (typeof c.sshHost === "string" || typeof c.name === "string")) {
-          hosts.set(c.id, String(c.sshHost ?? c.name));
-        }
-      }
+/** The SSH connections Desktop saves, by id: `<userData>/ssh_configs.json`
+ *  (where its dialog puts them) and the `sshConfigs` of the Claude settings
+ *  (where an administrator or the user can pre-configure them). */
+function desktopSshHosts(): Map<string, DesktopSshConnection> {
+  const texts = [
+    ...desktopUserDataDirs().map((d) => editor.pathJoin(d, "ssh_configs.json")),
+    editor.pathJoin(claudeConfigDir(), "settings.json"),
+  ].map((f) => editor.readFile(editor.localPath(f)) ?? "").filter((x) => x !== "");
+  return parseDesktopSshConnections(texts);
+}
+
+/** The Claude CLI Desktop installed on each session's SSH host, from what it
+ *  records about the hosts it deployed to. */
+function withRemoteCli(sessions: LiveSession[]): LiveSession[] {
+  if (!sessions.some((s) => s.sshHost)) return sessions;
+  const states = desktopUserDataDirs()
+    .map((d) => editor.readFile(editor.localPath(editor.pathJoin(d, "ssh-remote-server-state.json"))) ?? "")
+    .filter((x) => x !== "");
+  return sessions.map((s) => {
+    if (!s.sshHost) return s;
+    for (const text of states) {
+      const cli = desktopRemoteCli(text, s.sshHost, s.sshPort);
+      if (cli) return { ...s, remoteCli: cli };
     }
-  } catch {
-    // Not ours to report: the CLI says so when its settings file is broken.
-  }
-  return hosts;
+    return s;
+  });
 }
 
 async function readClaudeRegistry(): Promise<{ rows: LiveSession[]; panes: Map<string, string> }> {

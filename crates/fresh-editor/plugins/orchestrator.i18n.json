@@ -521,7 +521,10 @@
     "status.elsewhere_browser": "%{name} е отворено в браузъра",
     "dock.claude_cloud": "Облачни сесии на Claude",
     "dock.ctx_teleport": "Телепортиране тук…",
-    "status.elsewhere_desktop": "%{name} е отворено в Claude Desktop"
+    "dock.ctx_take_over": "Поемане тук",
+    "dock.ctx_open_desktop": "Отваряне в Claude Desktop",
+    "status.elsewhere_desktop": "%{name} е отворено в Claude Desktop",
+    "status.elsewhere_taking_over": "Поемане на %{name} на %{host}…"
   },
   "cs": {
     "backend.devcontainer": "Devcontainer",
@@ -1045,7 +1048,10 @@
     "status.elsewhere_browser": "%{name} otevřeno v prohlížeči",
     "dock.claude_cloud": "Cloudové relace Claude",
     "dock.ctx_teleport": "Teleportovat sem…",
-    "status.elsewhere_desktop": "%{name} otevřeno v Claude Desktop"
+    "dock.ctx_take_over": "Převzít sem",
+    "dock.ctx_open_desktop": "Otevřít v Claude Desktop",
+    "status.elsewhere_desktop": "%{name} otevřeno v Claude Desktop",
+    "status.elsewhere_taking_over": "Přebírání %{name} na %{host}…"
   },
   "de": {
     "backend.devcontainer": "Devcontainer",
@@ -1569,7 +1575,10 @@
     "status.elsewhere_browser": "%{name} im Browser geöffnet",
     "dock.claude_cloud": "Claude-Cloud-Sitzungen",
     "dock.ctx_teleport": "Hierher teleportieren…",
-    "status.elsewhere_desktop": "%{name} in Claude Desktop geöffnet"
+    "dock.ctx_take_over": "Hier übernehmen",
+    "dock.ctx_open_desktop": "In Claude Desktop öffnen",
+    "status.elsewhere_desktop": "%{name} in Claude Desktop geöffnet",
+    "status.elsewhere_taking_over": "%{name} auf %{host} wird übernommen…"
   },
   "en": {
     "backend.devcontainer": "Devcontainer",
@@ -2093,7 +2102,10 @@
     "status.elsewhere_browser": "Opened %{name} in the browser",
     "dock.claude_cloud": "Claude cloud sessions",
     "dock.ctx_teleport": "Take Over Here (Teleport)…",
-    "status.elsewhere_desktop": "Opened %{name} in Claude Desktop"
+    "dock.ctx_take_over": "Take Over Here",
+    "dock.ctx_open_desktop": "Open in Claude Desktop",
+    "status.elsewhere_desktop": "Opened %{name} in Claude Desktop",
+    "status.elsewhere_taking_over": "Taking over %{name} on %{host}…"
   },
   "es": {
     "backend.devcontainer": "Devcontainer",
@@ -2617,7 +2629,10 @@
     "status.elsewhere_browser": "%{name} abierto en el navegador",
     "dock.claude_cloud": "Sesiones de Claude en la nube",
     "dock.ctx_teleport": "Teletransportar aquí…",
-    "status.elsewhere_desktop": "%{name} abierto en Claude Desktop"
+    "dock.ctx_take_over": "Tomar el control aquí",
+    "dock.ctx_open_desktop": "Abrir en Claude Desktop",
+    "status.elsewhere_desktop": "%{name} abierto en Claude Desktop",
+    "status.elsewhere_taking_over": "Tomando el control de %{name} en %{host}…"
   },
   "fr": {
     "backend.devcontainer": "Devcontainer",
@@ -3141,7 +3156,10 @@
     "status.elsewhere_browser": "%{name} ouvert dans le navigateur",
     "dock.claude_cloud": "Sessions Claude dans le cloud",
     "dock.ctx_teleport": "Téléporter ici…",
-    "status.elsewhere_desktop": "%{name} ouvert dans Claude Desktop"
+    "dock.ctx_take_over": "Reprendre ici",
+    "dock.ctx_open_desktop": "Ouvrir dans Claude Desktop",
+    "status.elsewhere_desktop": "%{name} ouvert dans Claude Desktop",
+    "status.elsewhere_taking_over": "Reprise de %{name} sur %{host}…"
   },
   "it": {
     "backend.devcontainer": "Devcontainer",
@@ -3665,7 +3683,10 @@
     "status.elsewhere_browser": "%{name} aperto nel browser",
     "dock.claude_cloud": "Sessioni Claude nel cloud",
     "dock.ctx_teleport": "Teletrasporta qui…",
-    "status.elsewhere_desktop": "%{name} aperto in Claude Desktop"
+    "dock.ctx_take_over": "Prendi il controllo qui",
+    "dock.ctx_open_desktop": "Apri in Claude Desktop",
+    "status.elsewhere_desktop": "%{name} aperto in Claude Desktop",
+    "status.elsewhere_taking_over": "Presa di controllo di %{name} su %{host}…"
   },
   "ja": {
     "backend.devcontainer": "Devcontainer",
@@ -4189,7 +4210,10 @@
     "status.elsewhere_browser": "%{name} をブラウザーで開きました",
     "dock.claude_cloud": "Claude のクラウドセッション",
     "dock.ctx_teleport": "ここにテレポート…",
-    "status.elsewhere_desktop": "%{name} を Claude Desktop で開きました"
+    "dock.ctx_take_over": "ここで引き継ぐ",
+    "dock.ctx_open_desktop": "Claude Desktop で開く",
+    "status.elsewhere_desktop": "%{name} を Claude Desktop で開きました",
+    "status.elsewhere_taking_over": "%{host} の %{name} を引き継いでいます…"
   },
   "ko": {
     "backend.devcontainer": "Devcontainer",
@@ -4713,7 +4737,10 @@
     "status.elsewhere_browser": "%{name}을(를) 브라우저에서 열었습니다",
     "dock.claude_cloud": "Claude 클라우드 세션",
     "dock.ctx_teleport": "여기로 텔레포트…",
-    "status.elsewhere_desktop": "%{name}을(를) Claude Desktop에서 열었습니다"
+    "dock.ctx_take_over": "여기서 이어받기",
+    "dock.ctx_open_desktop": "Claude Desktop에서 열기",
+    "status.elsewhere_desktop": "%{name}을(를) Claude Desktop에서 열었습니다",
+    "status.elsewhere_taking_over": "%{host}의 %{name} 이어받는 중…"
   },
   "pt-BR": {
     "backend.devcontainer": "Devcontainer",
@@ -5237,7 +5264,10 @@
     "status.elsewhere_browser": "%{name} aberto no navegador",
     "dock.claude_cloud": "Sessões do Claude na nuvem",
     "dock.ctx_teleport": "Teletransportar para cá…",
-    "status.elsewhere_desktop": "%{name} aberto no Claude Desktop"
+    "dock.ctx_take_over": "Assumir aqui",
+    "dock.ctx_open_desktop": "Abrir no Claude Desktop",
+    "status.elsewhere_desktop": "%{name} aberto no Claude Desktop",
+    "status.elsewhere_taking_over": "Assumindo %{name} em %{host}…"
   },
   "ru": {
     "backend.devcontainer": "Devcontainer",
@@ -5761,7 +5791,10 @@
     "status.elsewhere_browser": "%{name} открыт в браузере",
     "dock.claude_cloud": "Облачные сеансы Claude",
     "dock.ctx_teleport": "Телепортировать сюда…",
-    "status.elsewhere_desktop": "%{name} открыт в Claude Desktop"
+    "dock.ctx_take_over": "Перехватить сюда",
+    "dock.ctx_open_desktop": "Открыть в Claude Desktop",
+    "status.elsewhere_desktop": "%{name} открыт в Claude Desktop",
+    "status.elsewhere_taking_over": "Перехват %{name} на %{host}…"
   },
   "th": {
     "backend.devcontainer": "Devcontainer",
@@ -6285,7 +6318,10 @@
     "status.elsewhere_browser": "เปิด %{name} ในเบราว์เซอร์แล้ว",
     "dock.claude_cloud": "เซสชัน Claude บนคลาวด์",
     "dock.ctx_teleport": "เทเลพอร์ตมาที่นี่…",
-    "status.elsewhere_desktop": "เปิด %{name} ใน Claude Desktop แล้ว"
+    "dock.ctx_take_over": "รับช่วงต่อที่นี่",
+    "dock.ctx_open_desktop": "เปิดใน Claude Desktop",
+    "status.elsewhere_desktop": "เปิด %{name} ใน Claude Desktop แล้ว",
+    "status.elsewhere_taking_over": "กำลังรับช่วง %{name} บน %{host}…"
   },
   "uk": {
     "backend.devcontainer": "Devcontainer",
@@ -6809,7 +6845,10 @@
     "status.elsewhere_browser": "%{name} відкрито в браузері",
     "dock.claude_cloud": "Хмарні сеанси Claude",
     "dock.ctx_teleport": "Телепортувати сюди…",
-    "status.elsewhere_desktop": "%{name} відкрито в Claude Desktop"
+    "dock.ctx_take_over": "Перехопити сюди",
+    "dock.ctx_open_desktop": "Відкрити в Claude Desktop",
+    "status.elsewhere_desktop": "%{name} відкрито в Claude Desktop",
+    "status.elsewhere_taking_over": "Перехоплення %{name} на %{host}…"
   },
   "vi": {
     "backend.devcontainer": "Devcontainer",
@@ -7333,7 +7372,10 @@
     "status.elsewhere_browser": "Đã mở %{name} trong trình duyệt",
     "dock.claude_cloud": "Phiên Claude trên đám mây",
     "dock.ctx_teleport": "Dịch chuyển về đây…",
-    "status.elsewhere_desktop": "Đã mở %{name} trong Claude Desktop"
+    "dock.ctx_take_over": "Tiếp quản tại đây",
+    "dock.ctx_open_desktop": "Mở trong Claude Desktop",
+    "status.elsewhere_desktop": "Đã mở %{name} trong Claude Desktop",
+    "status.elsewhere_taking_over": "Đang tiếp quản %{name} trên %{host}…"
   },
   "zh-CN": {
     "backend.devcontainer": "Devcontainer",
@@ -7857,6 +7899,9 @@
     "status.elsewhere_browser": "已在浏览器中打开 %{name}",
     "dock.claude_cloud": "Claude 云端会话",
     "dock.ctx_teleport": "传送到此处…",
-    "status.elsewhere_desktop": "已在 Claude Desktop 中打开 %{name}"
+    "dock.ctx_take_over": "在此接管",
+    "dock.ctx_open_desktop": "在 Claude Desktop 中打开",
+    "status.elsewhere_desktop": "已在 Claude Desktop 中打开 %{name}",
+    "status.elsewhere_taking_over": "正在接管 %{host} 上的 %{name}…"
   }
 }
