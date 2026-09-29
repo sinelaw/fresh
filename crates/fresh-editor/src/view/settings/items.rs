@@ -629,8 +629,9 @@ pub fn clean_description(name: &str, description: Option<&str>) -> Option<String
 /// A page of settings (corresponds to a category)
 #[derive(Debug, Clone)]
 pub struct SettingsPage {
-    /// Page name
+    /// Page name. Stable across locales; see [`SettingCategory::name`].
     pub name: String,
+    pub display_name: String,
     /// JSON path prefix
     pub path: String,
     /// Description
@@ -736,7 +737,8 @@ fn build_page(category: &SettingCategory, ctx: &BuildContext) -> SettingsPage {
     };
 
     // Sort items: by section first (None comes last), then by x-order
-    // (items without one last), then alphabetically by name.
+    // (items without one last), then alphabetically by path, which unlike
+    // the name does not change with the locale.
     ordered.sort_by(|(ord_a, a), (ord_b, b)| {
         let sections = match (&a.section, &b.section) {
             (Some(sec_a), Some(sec_b)) => {
@@ -748,7 +750,7 @@ fn build_page(category: &SettingCategory, ctx: &BuildContext) -> SettingsPage {
         };
         sections
             .then_with(|| by_order(*ord_a, *ord_b))
-            .then_with(|| a.name.cmp(&b.name))
+            .then_with(|| a.path.cmp(&b.path))
     });
     let mut items: Vec<SettingItem> = ordered.into_iter().map(|(_, item)| item).collect();
 
@@ -783,6 +785,7 @@ fn build_page(category: &SettingCategory, ctx: &BuildContext) -> SettingsPage {
 
     SettingsPage {
         name: category.name.clone(),
+        display_name: category.display_name.clone(),
         path: category.path.clone(),
         description: category.description.clone(),
         nullable: category.nullable,

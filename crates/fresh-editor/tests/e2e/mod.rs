@@ -160,6 +160,7 @@ pub mod odin_language;
 pub mod pascal_indent;
 #[cfg(feature = "plugins")]
 pub mod placeholder_window_embed;
+pub mod settings_localized_labels;
 pub mod suspend_process;
 
 pub mod close_buffer_shared_split_cursor;

@@ -110,7 +110,7 @@ pub fn search_settings(pages: &[SettingsPage], query: &str) -> Vec<SearchResult>
                     page_index,
                     item_index,
                     item: item.clone(),
-                    breadcrumb: page.name.clone(),
+                    breadcrumb: page.display_name.clone(),
                     score: total_score,
                     name_matches,
                     description_matches: desc_matches,
@@ -124,7 +124,7 @@ pub fn search_settings(pages: &[SettingsPage], query: &str) -> Vec<SearchResult>
                 page_index,
                 item_index,
                 item,
-                &page.name,
+                &page.display_name,
                 &query_lower,
             );
         }
@@ -402,6 +402,7 @@ mod tests {
     fn make_page(name: &str, items: Vec<SettingItem>) -> SettingsPage {
         SettingsPage {
             name: name.to_string(),
+            display_name: name.to_string(),
             path: format!("/{}", name.to_lowercase()),
             description: None,
             nullable: false,

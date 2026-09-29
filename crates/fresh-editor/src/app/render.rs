@@ -1,6 +1,7 @@
 use super::lsp_status::compose_lsp_status;
 use super::*;
 use crate::config::FileExplorerSide;
+use crate::view::settings::schema::section_display_name;
 use crate::view::settings::surface::SettingsSurface as _;
 
 /// The bottom-row visibility facts (see [`Editor::bottom_row_flags`]):
@@ -2253,7 +2254,7 @@ impl Editor {
                             },
                             dirty: s.page_has_pending_changes(idx),
                             icon: crate::view::settings::render::category_icon(&page.name, nerd),
-                            label: page.name.clone(),
+                            label: page.display_name.clone(),
                             nested,
                         }
                     }
@@ -2274,7 +2275,7 @@ impl Editor {
                             ),
                             cat: cat_idx,
                             section: section_idx,
-                            label: section.name.clone(),
+                            label: section_display_name(&section.name),
                         }
                     }
                 })
@@ -2303,7 +2304,7 @@ impl Editor {
         let page = (!s.search_active).then(|| {
             let p = s.current_page();
             st::Page {
-                title: p.map(|p| p.name.clone()).unwrap_or_default(),
+                title: p.map(|p| p.display_name.clone()).unwrap_or_default(),
                 clear: if p.is_some_and(|p| p.nullable) {
                     s.current_category_has_values()
                 } else {
@@ -2334,7 +2335,7 @@ impl Editor {
                 .map(|idx| (idx, &s.pages[idx]))
                 .map(|(idx, page)| st::StripCat {
                     idx,
-                    label: page.name.clone(),
+                    label: page.display_name.clone(),
                     dirty: s.page_has_pending_changes(idx),
                     selected: idx == s.selected_category,
                 })
