@@ -6068,6 +6068,10 @@ function buildDockSpec(): WidgetSpec {
       // scroll/selection in node units either way.
       itemHeight: dockView === "card" ? DOCK_CARD_HEIGHT : 1,
       cardBorders: dockView === "card",
+      // One column per level, not two: the dock is narrow, a row's first
+      // columns are already the ▼/▶ gutter and its state glyph, and a
+      // folder's rows read as its own at one column in from its name.
+      indentCols: 1,
       // Focusable in the dock (unlike the modal, where Up/Down forward
       // from the filter): the tree itself is the default focus so ↑↓
       // drive live-switch, →← fold, and Enter dives / toggles a folder.
