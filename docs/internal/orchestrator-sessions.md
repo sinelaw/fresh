@@ -594,6 +594,9 @@ includes cloud sessions this machine never saw.
   non-interactive listing and are not shown; Codex processes carry no session
   id, so their rows open the folder only; sessions running locally on *other*
   machines appear only if they are cloud sessions.
+- **Continuing a session elsewhere** is designed in session-transfer.md: in
+  another agent (Claude ↔ Codex) or another place (SSH, cloud), carrying the
+  conversation and the uncommitted work. It is not implemented.
 
 ### 5.4 Lifecycle actions
 
@@ -691,11 +694,18 @@ editor.setWindowState("project_path", effectiveProjectPath);
 editor.setWindowState("shared_worktree", sharedWorktree);
 ```
 
-`createWindowWithTerminal` is dispatched into core, which enforces
-**one-session-per-canonical-directory** (reuses an existing window if `root` is
-already open) and persists the `command` / `resume` argv onto the terminal. The
-two `setWindowState` keys land in the window's `session_plugin_state` and are
-read back at boot.
+`createWindowWithTerminal` is dispatched into core, which persists the
+`command` / `resume` argv onto the terminal. It always mints a new window, or
+grows the preparing window named by `adoptWindow`. The
+**one-session-per-canonical-directory** rule is enforced only by
+`createWindow` (`create_window_at`) and by the orchestrator's own root checks
+before it calls this API.
+
+The two `setWindowState` keys land in the `session_plugin_state` of whichever
+window is *active* when core processes them, and are read back at boot. That
+is the new window, except after a background create with `adoptWindow`: there
+core has already switched back to the user's previous window, which is a known
+bug (session-transfer.md §8.3, gap G1).
 
 Type-aware New Session forms for SSH/Kubernetes backends
 (NEW_SESSION_DIALOG_WIREFRAMES.md, segmented-tab "Option A") are **designed, not
@@ -775,6 +785,7 @@ Planned / aspirational (in design docs, not in code):
 - Dock as a first-class `KeyContext` chrome (resolves focus gaps F1/F2).
 - Broader agent registry, per-resume confirm policy, path/branch completion.
 - Collapsible project-group headers (currently a flat list with per-row tag).
+- Session transfer: Continue In… another agent or place (session-transfer.md).
 
 ---
 
