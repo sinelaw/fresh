@@ -481,6 +481,67 @@ window yet**. They carry a synthetic **negative id** and no terminal id; diving
 *attaches* a new session to that `root`, and the row is dropped from the
 in-memory session map the moment a real window opens there.
 
+### 5.3a Elsewhere: sessions open outside the editor
+
+A collapsible **Elsewhere** group at the foot of the dock lists Claude and
+Codex sessions that are open right now but are not a workspace here — running
+in another terminal, as a `claude --bg` job, or in the vendor's cloud. It
+complements the on-demand Import dialog (`agent_discovery.ts`), which reads the
+tools' transcript *history*: this answers "what is open", automatically, and
+includes cloud sessions this machine never saw.
+
+- **Feed** — `live_sessions.ts`, a plugin of its own, polls while the dock is
+  open (local sources every `pollSeconds`, default 15; cloud at most once a
+  minute) and pushes to the orchestrator's `setElsewhereSessions`. Opening the
+  dock asks for a fresh listing (`refreshElsewhere`). Parsing and the
+  open-a-row rules are pure, in `lib/live_sessions.ts`
+  (`plugins/tests/live_sessions.test.ts`). A separate plugin so the
+  orchestrator's own e2e tests — which load only the orchestrator — never see
+  the real machine's sessions.
+- **Sources** (each a plugin setting under `plugins.live_sessions`):
+
+  | Source | From | Default |
+  | --- | --- | --- |
+  | Claude on this machine | `claude agents --json` (interactive, desktop, `--bg`) | on |
+  | Codex on this machine | running `codex` processes (`ps`, cwd via `lsof` or `/proc`); not on Windows | on |
+  | Codex Cloud | `codex cloud list --json` (applied tasks hidden) | on |
+  | Claude cloud | `GET /v1/code/sessions` — the list `claude --teleport` reads — with the Claude CLI's own sign-in (`~/.claude/.credentials.json`, or the macOS Keychain) | **off** (opt-in) |
+
+  The Claude cloud source is not a published API and can change with any
+  Claude Code release, which is why it is opt-in. The token goes out only as a
+  request header (`editor.httpFetch`'s `headers`, added for this), never on a
+  command line, and is never refreshed here: refreshing rotates the refresh
+  token and would sign the CLI out; an expired sign-in reads as a problem
+  line ("run `claude` once") until the CLI next runs. Cloud rows older than
+  `cloudMaxAgeDays` (default 7; 0 = none) are hidden; archived ones always.
+- **Rows** are kept apart from `orchestratorSessions` (they are not
+  workspaces, so none of Stop / Archive / Delete / rename apply). The group
+  header is a `folder` node with the reserved id `__elsewhere`, so it folds
+  and rolls up `●n ✓n` like a folder; it starts open, and the fold is what is
+  remembered. Rows keep first-seen order. A local session whose directory is
+  already a workspace here is not listed (the workspace stands for it), nor is
+  a cloud session already materialized.
+- **Opening** a row (Enter, a click, context menu *Open*) *materializes* it —
+  a workspace that attaches to it — except a Codex Cloud task, which opens
+  its page in the browser:
+
+  | Row | Workspace root | Terminal runs |
+  | --- | --- | --- |
+  | Claude cloud | `<data>/orchestrator/elsewhere/claude-cloud-<id>` | `claude --cloud <id>` |
+  | Claude `--bg` job | the job's cwd | `claude attach <job>` |
+  | Claude / Codex in another terminal | its cwd | a shell — never a second copy of the agent, which would write the same conversation twice |
+  | Codex Cloud task (when filed) | `<data>/orchestrator/elsewhere/codex-cloud-<id>` | `codex cloud status <id>`, then a shell |
+
+  Arrowing onto a row never opens it (unlike a workspace row, which
+  live-switches): opening creates a workspace. **Move to Folder…** on a row
+  (context menu, or `Orchestrator: Move to Folder`) materializes it straight
+  into the chosen folder, or a new one. Once materialized it is an ordinary
+  workspace and drops out of the group.
+- **Gaps** — the Codex desktop app's sessions on its shared app-server have no
+  non-interactive listing and are not shown; Codex processes carry no session
+  id, so their rows open the folder only; sessions running locally on *other*
+  machines appear only if they are cloud sessions.
+
 ### 5.4 Lifecycle actions
 
 Shipped via a process-group signal API (`editor.signalTerminal`, SIGTERM→SIGKILL
@@ -649,6 +710,9 @@ Implemented (shipped):
 - Agent resume (provision/continue), resume-spec persistence, deferred-to-dive
   rejoin.
 - One-session-per-canonical-directory enforcement.
+- Elsewhere group: Claude/Codex sessions open outside the editor (local
+  processes, `--bg` jobs, Codex Cloud, opt-in Claude cloud), materialized
+  into workspaces on open or on Move to Folder (§5.3a).
 
 Planned / aspirational (in design docs, not in code):
 

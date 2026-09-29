@@ -1554,9 +1554,10 @@ impl Editor {
             PluginCommand::HttpFetch {
                 url,
                 target_path,
+                headers,
                 callback_id,
             } => {
-                self.handle_http_fetch(url, target_path, callback_id);
+                self.handle_http_fetch(url, target_path, headers, callback_id);
             }
 
             PluginCommand::SpawnBackgroundProcess {
@@ -5514,6 +5515,7 @@ impl Editor {
         &mut self,
         url: String,
         target_path: std::path::PathBuf,
+        headers: Vec<(String, String)>,
         callback_id: fresh_core::api::JsCallbackId,
     ) {
         if let (Some(runtime), Some(bridge)) = (&self.tokio_runtime, &self.async_bridge) {
@@ -5522,7 +5524,7 @@ impl Editor {
 
             runtime.spawn(async move {
                 let fetch = tokio::task::spawn_blocking(move || {
-                    crate::services::http::download_to_file(&url, &target_path)
+                    crate::services::http::download_to_file(&url, &target_path, &headers)
                 })
                 .await;
 

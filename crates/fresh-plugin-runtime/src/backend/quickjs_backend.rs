@@ -8031,25 +8031,49 @@ impl JsEditorApi {
     ///
     /// This uses the editor's built-in HTTP client (`ureq`), so plugins
     /// don't need `curl`/`wget` on PATH.
+    ///
+    /// `headers` are extra request headers (`{ "Authorization": "Bearer …" }`).
+    /// They travel in the request only: never logged, never on a command line,
+    /// which is why a credential goes here rather than through `curl -H`.
+    /// Non-string values are ignored.
     #[plugin_api(async_thenable, js_name = "httpFetch", ts_return = "SpawnResult")]
     #[qjs(rename = "_httpFetchStart")]
-    pub fn http_fetch_start(
+    pub fn http_fetch_start<'js>(
         &self,
-        _ctx: rquickjs::Ctx<'_>,
+        ctx: rquickjs::Ctx<'js>,
         url: String,
         target_path: String,
+        #[plugin_api(ts_type = "Record<string, string> | null")] headers: rquickjs::function::Opt<
+            rquickjs::Value<'js>,
+        >,
     ) -> u64 {
         let id = self.alloc_request_id();
+        let headers: Vec<(String, String)> = match headers.0 {
+            Some(v) if !v.is_null() && !v.is_undefined() => match js_to_json(&ctx, v) {
+                serde_json::Value::Object(map) => map
+                    .into_iter()
+                    .filter_map(|(k, v)| match v {
+                        serde_json::Value::String(s) => Some((k, s)),
+                        _ => None,
+                    })
+                    .collect(),
+                _ => Vec::new(),
+            },
+            _ => Vec::new(),
+        };
+        // Header names only: values may be credentials.
         tracing::info!(
-            "http_fetch_start: plugin='{}', url='{}', target='{}', callback_id={}",
+            "http_fetch_start: plugin='{}', url='{}', target='{}', headers={:?}, callback_id={}",
             self.plugin_name,
             url,
             target_path,
+            headers.iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>(),
             id
         );
         let _ = self.command_sender.send(PluginCommand::HttpFetch {
             url,
             target_path: std::path::PathBuf::from(target_path),
+            headers,
             callback_id: JsCallbackId::new(id),
         });
         id
