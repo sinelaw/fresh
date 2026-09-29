@@ -106,9 +106,26 @@ fn wait_for_search_finished(harness: &mut EditorTestHarness) {
         .unwrap();
 }
 
-/// Trigger Replace All (Alt+Enter), accept the confirmation prompt, and wait
+/// Text only the Replace confirmation dialog shows (its undo caveat).
+const CONFIRM_DIALOG_TEXT: &str = "Undo only covers";
+
+/// Wait for the Replace confirmation dialog to open.
+fn wait_for_confirm_dialog(harness: &mut EditorTestHarness) {
+    harness
+        .wait_until(|h| h.screen_to_string().contains(CONFIRM_DIALOG_TEXT))
+        .unwrap();
+}
+
+/// Wait for the Replace confirmation dialog to close.
+fn wait_for_confirm_dialog_closed(harness: &mut EditorTestHarness) {
+    harness
+        .wait_until(|h| !h.screen_to_string().contains(CONFIRM_DIALOG_TEXT))
+        .unwrap();
+}
+
+/// Trigger Replace All (Alt+Enter), accept the confirmation dialog, and wait
 /// for the "Replaced" status. Used by every test that exercises a successful
-/// replacement — the confirmation prompt was added to guard against the
+/// replacement — the confirmation was added to guard against the
 /// accidental-replace-you-can't-undo case described in bug #1.
 fn confirm_replace_all(harness: &mut EditorTestHarness) {
     // Alt+Enter is dropped outright while the search is still streaming, so
@@ -117,7 +134,7 @@ fn confirm_replace_all(harness: &mut EditorTestHarness) {
     wait_for_search_finished(harness);
     harness.send_key(KeyCode::Enter, KeyModifiers::ALT).unwrap();
     // If the replace was refused after all, say so here instead of waiting
-    // out the external timeout on a prompt that will never open.
+    // out the external timeout on a dialog that will never open.
     harness
         .wait_until(|h| {
             let screen = h.screen_to_string();
@@ -126,13 +143,14 @@ fn confirm_replace_all(harness: &mut EditorTestHarness) {
                     "Replace All was dropped: the search was still streaming. Screen:\n{screen}"
                 );
             }
-            h.editor().is_prompting()
+            screen.contains(CONFIRM_DIALOG_TEXT)
         })
         .unwrap();
+    // Focus starts on the dialog's Replace button, so Enter confirms.
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
-    harness.wait_for_prompt_closed().unwrap();
+    wait_for_confirm_dialog_closed(harness);
     harness
         .wait_until(|h| h.screen_to_string().contains("Replaced"))
         .unwrap();
@@ -1246,14 +1264,14 @@ fn test_search_replace_multiple_matches_same_line() {
         harness.screen_to_string()
     );
 
-    // Alt+Enter to execute Replace All (confirms via prompt).
+    // Alt+Enter to execute Replace All (confirms via the dialog).
     eprintln!("[DEBUG {}] pressing Alt+Enter to Replace All", elapsed());
     harness.send_key(KeyCode::Enter, KeyModifiers::ALT).unwrap();
-    harness.wait_for_prompt().unwrap();
+    wait_for_confirm_dialog(&mut harness);
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
-    harness.wait_for_prompt_closed().unwrap();
+    wait_for_confirm_dialog_closed(&mut harness);
     eprintln!(
         "[DEBUG {}] Alt+Enter sent and confirmation accepted",
         elapsed()
@@ -1692,11 +1710,11 @@ fn test_search_replace_panel_not_duplicated_in_tabs() {
     );
 }
 
-/// Bug 1 (upstream) companion: pressing Alt+Enter opens a confirmation
-/// prompt explaining that the replace is not restore-safe.  Cancelling the
-/// prompt must leave the file unchanged.
+/// Bug 1 (upstream) companion: pressing Alt+Enter opens a modal
+/// confirmation dialog explaining that the replace is not restore-safe.
+/// Cancelling it must leave the file unchanged.
 #[test]
-fn test_search_replace_confirmation_prompt_cancel_leaves_files_untouched() {
+fn test_search_replace_confirmation_dialog_cancel_leaves_files_untouched() {
     init_tracing_from_env();
     let (_temp_dir, project_root) = setup_search_replace_project();
 
@@ -1724,21 +1742,39 @@ fn test_search_replace_confirmation_prompt_cancel_leaves_files_untouched() {
         })
         .unwrap();
 
-    // Trigger Replace All — expect the confirmation prompt to open.
+    // Trigger Replace All — expect the confirmation dialog to open. It is
+    // a modal dialog, not the prompt line at the bottom of the screen.
     harness.send_key(KeyCode::Enter, KeyModifiers::ALT).unwrap();
-    harness.wait_for_prompt().unwrap();
-
-    // Prompt text should warn about the undo caveat.
-    let prompt_screen = harness.screen_to_string();
+    wait_for_confirm_dialog(&mut harness);
+    let dialog_screen = harness.screen_to_string();
     assert!(
-        prompt_screen.contains("Undo only covers"),
-        "Confirmation prompt should warn about undo scope.  Screen:\n{}",
-        prompt_screen
+        dialog_screen.contains("match(es) in")
+            && dialog_screen.contains("[ Cancel ]")
+            && dialog_screen.contains("[ Replace ]"),
+        "Confirmation dialog should state the counts and offer Cancel / \
+         Replace.  Screen:\n{}",
+        dialog_screen
+    );
+    assert!(
+        !harness.editor().is_prompting(),
+        "Confirmation must not use the bottom prompt line"
     );
 
-    // Cancel the prompt with Escape.
+    // Keys the Search/Replace panel would act on stay in the modal dialog:
+    // Alt+R must not flip the panel's Regex toggle behind it.
+    harness
+        .send_key(KeyCode::Char('r'), KeyModifiers::ALT)
+        .unwrap();
+    harness.render().unwrap();
+    assert!(
+        harness.screen_to_string().contains("[ ] Regex"),
+        "Alt+R reached the panel behind the modal dialog. Screen:\n{}",
+        harness.screen_to_string()
+    );
+
+    // Cancel the dialog with Escape.
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
-    harness.wait_for_prompt_closed().unwrap();
+    wait_for_confirm_dialog_closed(&mut harness);
     harness
         .wait_until(|h| h.screen_to_string().contains("Replacement cancelled"))
         .unwrap();

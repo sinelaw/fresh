@@ -3,8 +3,10 @@ import {
   button,
   col,
   flexSpacer,
+  FloatingWidgetPanel,
   hintBar,
   key as widgetKey,
+  label,
   parseHintString,
   raw,
   row,
@@ -20,6 +22,7 @@ import {
   type WidgetAction,
   WidgetPanel,
   type WidgetSpec,
+  wrappingRow,
 } from "./lib/widgets.ts";
 
 const editor = getEditor();
@@ -604,35 +607,41 @@ function getViewportWidth(): number {
 // Panel content builder — compact two-line control bar + match tree
 // =============================================================================
 
-// Build the typed Row spec for the options line (3 toggles + Replace
-// All button). Was previously hand-built into entries with manual
-// byte-offset overlay arithmetic (see git history pre-widget); now
-// dispatched through the host's Toggle/Button widgets so styling,
-// theme keys, and focus affordance match every other plugin.
+// The Replace All button. Its label tracks scope (§1):
+//   * allFiles=true  → "Replace All (Alt+Ret)"
+//   * allFiles=false → "Replace All in <file> (Alt+Ret)"
+// sourceBufferRelPath is empty for an unsaved buffer, in which case we
+// fall back to the all-files label since restricting to a path-less
+// buffer can't match anything anyway.
+function replaceAllButtonSpec(): WidgetSpec {
+  const scoped = !!panel && !panel.allFiles && !!panel.sourceBufferRelPath;
+  const replLabel = scoped
+    ? editor.t("panel.replace_all_in_file_btn", { file: panel!.sourceBufferRelPath })
+    : editor.t("panel.replace_all_btn");
+  return button(replLabel, { intent: "primary", key: "replaceAll" });
+}
+
+// True when the Replace All button sits on the scope row rather than the
+// options row: a one-file scope names the file in the button, which then
+// no longer fits beside the toggles (it was cut off against them).
+function replaceAllOnScopeRow(): boolean {
+  return !!panel && !panel.allFiles && !!panel.sourceBufferRelPath;
+}
+
+// Build the typed Row spec for the options line (the toggles, plus the
+// Replace All button unless it sits on the scope row). Dispatched through
+// the host's Toggle/Button widgets so styling, theme keys, and focus
+// affordance match every other plugin.
 function buildOptionsRowSpec(): WidgetSpec {
   if (!panel) return col();
-  const { focusPanel, optionIndex, caseSensitive, useRegex, wholeWords, allFiles } = panel;
-  const W = Math.max(MIN_WIDTH, panel.viewportWidth - 2);
-  const oFocus = focusPanel === "options";
+  const { caseSensitive, useRegex, wholeWords, allFiles } = panel;
 
   const caseLabel = editor.t("panel.case_toggle");
   const regexLabel = editor.t("panel.regex_toggle");
   const wholeLabel = editor.t("panel.whole_toggle");
   const allFilesLabel = editor.t("panel.all_files_toggle");
-  // Replace All button label tracks scope (§1):
-  //   * allFiles=true  → "Replace All (Alt+Ret)"
-  //   * allFiles=false → "Replace All in <file> (Alt+Ret)"
-  // sourceBufferRelPath is empty for an unsaved buffer, in which
-  // case we fall back to the all-files label since restricting to
-  // a path-less buffer can't match anything anyway.
-  const replLabel = (!allFiles && panel.sourceBufferRelPath)
-    ? editor.t("panel.replace_all_in_file_btn", { file: panel.sourceBufferRelPath })
-    : editor.t("panel.replace_all_btn");
-  void oFocus;
-  void optionIndex;
-  void W;
 
-  return row(
+  const children: WidgetSpec[] = [
     spacer(1),
     toggle(allFiles, allFilesLabel, { key: "allFiles" }),
     spacer(2),
@@ -641,25 +650,34 @@ function buildOptionsRowSpec(): WidgetSpec {
     toggle(useRegex, regexLabel, { key: "regex" }),
     spacer(2),
     toggle(wholeWords, wholeLabel, { key: "whole" }),
-    flexSpacer(),
-    button(replLabel, { intent: "primary", key: "replaceAll" }),
-  );
+  ];
+  if (!replaceAllOnScopeRow()) {
+    children.push(flexSpacer(), replaceAllButtonSpec());
+  }
+  return row(...children);
 }
 
 // Build the scope-info row shown only when allFiles=false. Tells the
-// user which single file the search is restricted to. When allFiles=true
-// the function returns an empty col() (the spec composer skips it).
+// user which single file the search is restricted to, and carries the
+// "Replace All in <file>" button after it. When
+// allFiles=true the function returns an empty col() (the spec composer
+// skips it).
 function buildScopeRowSpec(): WidgetSpec {
   if (!panel) return col();
   if (panel.allFiles) return col();
-  const label = panel.sourceBufferRelPath
+  const scopeLabel = panel.sourceBufferRelPath
     ? editor.t("panel.scope_row_file", { file: panel.sourceBufferRelPath })
     : editor.t("panel.scope_row_unnamed");
-  return raw([{
-    text: " " + label,
+  const scopeText = raw([{
+    text: " " + scopeLabel,
     properties: { type: "scope-row" },
     style: { fg: C.label, italic: true },
   }]);
+  if (!replaceAllOnScopeRow()) return scopeText;
+  // Wrapping, so a panel too narrow for both puts the button on a line of
+  // its own instead of cutting its label off. The button carries its own
+  // one-cell indent, so a wrapped line keeps the rows' left margin.
+  return wrappingRow(scopeText, spacer(1), row(spacer(1), replaceAllButtonSpec()));
 }
 
 // Build the typed Row spec for line 1 (search + replace fields with
@@ -1982,6 +2000,67 @@ registerHandler("search_replace_replace_scoped", search_replace_replace_scoped);
 // Action handlers
 // =============================================================================
 
+// =============================================================================
+// Replace confirmation dialog
+// =============================================================================
+//
+// Replacements write to disk immediately and Undo only covers files that
+// stay open, so a replace asks first. It used to ask on the prompt line at
+// the bottom of the screen, which was easy to miss; this is a modal dialog
+// centred on the screen instead. Enter replaces (focus starts on Replace),
+// Esc / Cancel / the [×] back out.
+
+let confirmDialog: { panel: FloatingWidgetPanel; resolve: (ok: boolean) => void } | null = null;
+
+function confirmReplace(count: number, files: number): Promise<boolean> {
+  settleConfirmDialog(false);
+  return new Promise((resolve) => {
+    const dialog = new FloatingWidgetPanel();
+    confirmDialog = { panel: dialog, resolve };
+    dialog.mount(
+      col(
+        spacer(0),
+        label(" " + editor.t("dialog.confirm_replace_body", {
+          count: String(count),
+          files: String(files),
+        }), { wrap: true }),
+        label(" " + editor.t("dialog.confirm_replace_undo_note"), {
+          wrap: true,
+          style: { fg: C.label, italic: true },
+        }),
+        spacer(0),
+        row(
+          flexSpacer(),
+          button(editor.t("dialog.cancel_btn"), { key: "confirmCancel" }),
+          spacer(2),
+          button(editor.t("dialog.confirm_replace_btn"), { intent: "primary", key: "confirmReplace" }),
+          spacer(1),
+        ),
+      ),
+      {
+        widthPct: 50,
+        heightPct: 30,
+        focusMarker: true,
+        title: editor.t("dialog.confirm_replace_title"),
+        closable: true,
+      },
+    );
+    // Centre on the whole screen, not just the area beside the dock.
+    editor.floatingPanelControl(dialog.id(), "fullscreen", 1);
+    dialog.setFocusKey("confirmReplace");
+  });
+}
+
+/** Resolve the open confirmation, if any. `unmount` is false when the host
+ *  has already taken the dialog down (Esc, click outside, the [×]). */
+function settleConfirmDialog(ok: boolean, unmount = true): void {
+  if (!confirmDialog) return;
+  const { panel: dialog, resolve } = confirmDialog;
+  confirmDialog = null;
+  if (unmount) dialog.unmount();
+  resolve(ok);
+}
+
 /** Lock against re-entrant Replace All / Replace Scoped. Set as soon
  *  as doReplaceAll/doReplaceScoped enters and cleared in a try/finally
  *  around the whole flow. Without this, a user mashing Alt+Enter
@@ -2028,17 +2107,11 @@ async function doReplaceAllInner(): Promise<void> {
   // Confirm before applying.  Replacements write to disk immediately; Undo
   // only covers files that remain open in this session (see bug #1 report).
   const fileCount = new Set(selected.map(r => r.match.file)).size;
-  const confirmed = await editor.prompt(
-    editor.t("prompt.confirm_replace", {
-      count: String(selected.length),
-      files: String(fileCount),
-    }),
-    "",
-  );
-  if (confirmed === null) {
+  if (!await confirmReplace(selected.length, fileCount)) {
     editor.setStatus(editor.t("status.replace_cancelled"));
     return;
   }
+  if (!panel) return;
   panel.busy = true;
   editor.setStatus(editor.t("status.replacing", { count: String(selected.length) }));
   const statusMsg = await executeReplacements(selected);
@@ -2093,17 +2166,11 @@ async function doReplaceScopedInner(): Promise<void> {
   }
 
   const fileCount = new Set(toReplace.map(r => r.match.file)).size;
-  const confirmed = await editor.prompt(
-    editor.t("prompt.confirm_replace", {
-      count: String(toReplace.length),
-      files: String(fileCount),
-    }),
-    "",
-  );
-  if (confirmed === null) {
+  if (!await confirmReplace(toReplace.length, fileCount)) {
     editor.setStatus(editor.t("status.replace_cancelled"));
     return;
   }
+  if (!panel) return;
 
   panel.busy = true;
   editor.setStatus(editor.t("status.replacing", { count: String(toReplace.length) }));
@@ -2381,6 +2448,7 @@ function search_replace_close(): void {
     editor.closeSplit(panel.resultsSplitId);
   }
   panel = null;
+  settleConfirmDialog(false);
   // Restore focus to the split the user came from. Without this,
   // `getActiveBufferId()` on the next invocation can return the
   // utility dock's leftover buffer, and the §1 current-file scope
@@ -2446,6 +2514,7 @@ editor.on("buffer_closed", (args) => {
     clearMatchMarkers();
     panel.widgetPanel?.unmount();
     panel = null;
+    settleConfirmDialog(false);
   }
 });
 
@@ -2468,6 +2537,16 @@ editor.on("after_file_open", (args) => {
 // `focusPanel`/`optionIndex` to the clicked widget before applying
 // the state change.
 editor.on("widget_event", (args) => {
+  if (confirmDialog && args.panel_id === confirmDialog.panel.id()) {
+    if (args.event_type === "cancel") {
+      // Esc / click outside / [×]: the host has already unmounted it.
+      settleConfirmDialog(false, false);
+    } else if (args.event_type === "activate") {
+      if (args.widget_key === "confirmReplace") settleConfirmDialog(true);
+      else if (args.widget_key === "confirmCancel") settleConfirmDialog(false);
+    }
+    return;
+  }
   if (!panel || args.panel_id !== panel.widgetPanel?.id()) return;
 
   // `change` — fired for TextInput edits (Backspace, Delete,
