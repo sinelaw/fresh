@@ -499,7 +499,7 @@ impl Editor {
             .split_view_states_mut()
             .get_mut(&split_id)
         {
-            if let Some(buf_state) = view_state.keyed_states.get_mut(&buffer_id) {
+            if let Some(buf_state) = view_state.buffer_state_mut(buffer_id) {
                 buf_state.cursors = crate::model::cursor::Cursors::new();
             }
         }

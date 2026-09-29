@@ -149,7 +149,12 @@ impl Editor {
                 Some(vs) => vs,
                 None => return,
             };
-            (rect, gw, vs.compose_width, *vs.cursors.primary())
+            (
+                rect,
+                gw,
+                vs.buffer_tab_state().compose_width,
+                *vs.buffer_tab_state().cursors.primary(),
+            )
         };
 
         // Compute cursor screen position (needs &mut buffer for line_iterator).
@@ -157,6 +162,7 @@ impl Editor {
         // pass `&mut buffer` to cursor_screen_position without
         // overlapping with the splits read.
         let viewport = self.active_window().splits().1[&active_split]
+            .buffer_tab_state()
             .viewport
             .clone();
         let state = match self.active_window_mut().buffers.get_mut(&active_buffer) {

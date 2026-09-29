@@ -412,7 +412,7 @@ fn shade_pane_edges(
     // leaves no row here. Exact where the thumb only rounds, and it can only
     // ever withdraw the shading.
     let content_below = below_the_bottom_row && rows_drawn >= rect.height as usize;
-    let anchor = view_state.viewport.anchor;
+    let anchor = view_state.buffer_tab_state().viewport.anchor;
     let content_above = anchor.byte > 0 || anchor.row_offset != 0;
 
     // The band the caret is in is left alone, both of them if the pane is
@@ -527,7 +527,12 @@ pub(crate) fn settle_pane_view(
         .buffers
         .splits()
         .and_then(|(_, vs)| vs.get(&pane))
-        .map(|vs| (vs.compose_width, vs.viewport.top_byte()))
+        .map(|vs| {
+            (
+                vs.buffer_tab_state().compose_width,
+                vs.buffer_tab_state().viewport.top_byte(),
+            )
+        })
         .unwrap_or((None, 0));
     win.pane_handle_for(pane).settle(
         rect,
@@ -558,7 +563,10 @@ fn frame_pane_sets(
             win.buffers.splits().map(|(_, vs_map)| {
                 vs_map
                     .iter()
-                    .filter(|(leaf, svs)| win.split_terminal_scrollback(**leaf, svs.active_buffer))
+                    .filter(|(leaf, svs)| {
+                        svs.shown_buffer()
+                            .is_some_and(|b| win.split_terminal_scrollback(**leaf, b))
+                    })
                     .map(|(leaf, _)| *leaf)
                     .collect()
             })
@@ -622,7 +630,7 @@ pub fn reconcile_body(
                         pass.visible
                             .iter()
                             .filter_map(|(_, leaf, ..)| {
-                                let v = &vs.get(leaf)?.active_state().viewport;
+                                let v = &vs.get(leaf)?.buffer_tab_state().viewport;
                                 Some((*leaf, v.top_byte(), v.left_column))
                             })
                             .collect()
@@ -871,7 +879,7 @@ pub(crate) fn paint_embed(
     // the panes paint their grids — a PTY left at the size it had when last
     // active draws a taller frame than the box shows.
     if let Some(win) = editor.windows.get_mut(&window) {
-        for (leaf, buffer_id) in win.panes_with_buffers() {
+        for (leaf, buffer_id) in win.buffer_panes() {
             let Some(content) = rects.content(leaf) else {
                 continue;
             };
@@ -1857,7 +1865,7 @@ impl Editor {
             Slot::PromptToolbar => self.prompt_toolbar_key(),
             Slot::Pane(leaf) => {
                 let buffer = self
-                    .window_panes()
+                    .window_buffer_panes()
                     .into_iter()
                     .find(|(l, _)| l == leaf)
                     .map(|(_, b)| b)?;
@@ -2340,7 +2348,7 @@ impl Editor {
                     // surface, so a mounted panel's rows never lit under the
                     // pointer at all.
                     Slot::Pane(leaf) => self
-                        .window_panes()
+                        .window_buffer_panes()
                         .into_iter()
                         .find(|(l, _)| *l == leaf)
                         .and_then(|(_, buffer)| {

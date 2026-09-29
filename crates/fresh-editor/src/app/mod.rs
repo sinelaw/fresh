@@ -1967,24 +1967,12 @@ impl Editor {
     /// Uses `effective_active_split` so focused buffer-group panels return
     /// their own cursors (not the outer split's stale ones).
     pub fn active_cursors(&self) -> &Cursors {
-        let split_id = self.effective_active_split();
-        &self
-            .active_window()
-            .split_view_states()
-            .get(&split_id)
-            .unwrap()
-            .cursors
+        self.active_window().active_cursors()
     }
 
     /// Get the cursors for the active buffer in the active split (mutable)
     pub fn active_cursors_mut(&mut self) -> &mut Cursors {
-        let split_id = self.effective_active_split();
-        &mut self
-            .active_window_mut()
-            .split_view_states_mut()
-            .get_mut(&split_id)
-            .unwrap()
-            .cursors
+        self.active_window_mut().active_cursors_mut()
     }
 
     /// Set completion items for type-to-filter (for testing).
@@ -2022,11 +2010,11 @@ impl Editor {
         let Some(vs) = view_states.get(&leaf) else {
             return 0;
         };
-        if !vs.show_line_numbers {
+        if !vs.buffer_tab_state().show_line_numbers {
             return 0;
         }
         match w.buffers.get(&buffer_id) {
-            Some(state) => vs.viewport.gutter_width(&state.buffer) as u16,
+            Some(state) => vs.buffer_tab_state().viewport.gutter_width(&state.buffer) as u16,
             None => 0,
         }
     }
@@ -2180,24 +2168,15 @@ impl Editor {
 }
 
 impl crate::app::window::Window {
-    /// Get the viewport for the active split
+    /// The viewport of the buffer the user is on (`focused_view`) — a
+    /// shown group's focused panel, never the buffer behind the group.
     pub fn active_viewport(&self) -> &crate::view::viewport::Viewport {
-        let active_split = self.split_manager().active_split();
-        &self
-            .split_view_states()
-            .get(&active_split)
-            .unwrap()
-            .viewport
+        &self.focused_view().viewport
     }
 
-    /// Get the viewport for the active split (mutable)
+    /// The same, mutably.
     pub fn active_viewport_mut(&mut self) -> &mut crate::view::viewport::Viewport {
-        let active_split = self.split_manager().active_split();
-        &mut self
-            .split_view_states_mut()
-            .get_mut(&active_split)
-            .unwrap()
-            .viewport
+        &mut self.focused_view_mut().viewport
     }
 }
 
@@ -4585,7 +4564,8 @@ mod tests {
             "Close Others should leave only the kept buffer"
         );
         assert_eq!(
-            view_state.active_buffer, keep,
+            view_state.shown_buffer(),
+            Some(keep),
             "and it is the tab the pane is on, so it is the tab revealed"
         );
     }

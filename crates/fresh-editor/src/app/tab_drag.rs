@@ -278,7 +278,7 @@ impl Editor {
             .active_window()
             .split_view_states()
             .get(&target_split_id)
-            .is_none_or(|target| !target.keyed_states.contains_key(&buffer_id))
+            .is_none_or(|target| !target.has_buffer_state(buffer_id))
             .then(|| {
                 self.active_window()
                     .carried_view_state(source_split_id, buffer_id)
@@ -332,7 +332,7 @@ impl Editor {
         // then early-return because the split tree already reports
         // `buffer_id` as active, so it never reaches `set_pane_buffer`
         // either — and the next keystroke panics in
-        // `apply_event_to_state` on `keyed_states.get_mut(...).unwrap()`.
+        // `apply_event_to_state` on `buffer_state_mut(*...).unwrap()`.
         self.active_window_mut()
             .set_pane_buffer(target_split_id, buffer_id);
         // `set_pane_buffer` seeds a default entry for the buffer; overwrite it
@@ -344,7 +344,7 @@ impl Editor {
                 .split_view_states_mut()
                 .get_mut(&target_split_id)
             {
-                target_view_state.keyed_states.insert(buffer_id, carried);
+                target_view_state.insert_buffer_state(buffer_id, carried);
             }
         }
         self.active_window_mut()
@@ -472,23 +472,25 @@ impl Editor {
                 let (width, height) = (self.terminal_width, self.terminal_height);
                 let mut new_view_state =
                     crate::view::split::SplitViewState::with_buffer(width, height, buffer_id);
-                new_view_state.apply_config_defaults(crate::view::split::ViewConfigDefaults {
-                    line_numbers: self.config.editor.line_numbers,
-                    highlight_current_line: self.config.editor.highlight_current_line,
-                    line_wrap: self.active_window().resolve_line_wrap_for_buffer(buffer_id),
-                    wrap_indent: self.config.editor.wrap_indent,
-                    wrap_column: self
-                        .active_window()
-                        .resolve_wrap_column_for_buffer(buffer_id),
-                    rulers: self.config.editor.rulers.clone(),
-                    scroll_offset: self.config.editor.scroll_offset,
-                });
+                new_view_state.buffer_tab_state_mut().apply_config_defaults(
+                    crate::view::split::ViewConfigDefaults {
+                        line_numbers: self.config.editor.line_numbers,
+                        highlight_current_line: self.config.editor.highlight_current_line,
+                        line_wrap: self.active_window().resolve_line_wrap_for_buffer(buffer_id),
+                        wrap_indent: self.config.editor.wrap_indent,
+                        wrap_column: self
+                            .active_window()
+                            .resolve_wrap_column_for_buffer(buffer_id),
+                        rulers: self.config.editor.rulers.clone(),
+                        scroll_offset: self.config.editor.scroll_offset,
+                    },
+                );
 
                 // The dragged tab's own view state, cursors included — not the
                 // source split's *active* buffer's, which is a different tab
                 // whenever the drag started from an unfocused one.
                 if let Some(carried) = carried_state {
-                    new_view_state.keyed_states.insert(buffer_id, carried);
+                    new_view_state.insert_buffer_state(buffer_id, carried);
                 }
 
                 self.active_window_mut()
@@ -552,8 +554,7 @@ impl crate::app::window::Window {
     ) -> Option<crate::view::split::BufferViewState> {
         self.split_view_states()
             .get(&source_split_id)?
-            .keyed_states
-            .get(&buffer_id)
+            .buffer_state(buffer_id)
             .cloned()
     }
 

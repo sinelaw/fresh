@@ -258,7 +258,10 @@ impl Editor {
             .split_view_states_mut()
             .get_mut(&active_split)
         {
-            view_state.viewport.release_hold_for_key();
+            view_state
+                .buffer_tab_state_mut()
+                .viewport
+                .release_hold_for_key();
         }
 
         // The pre-band's chrome keyboard grabs are gone. The stage existed

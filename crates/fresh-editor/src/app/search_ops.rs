@@ -285,12 +285,17 @@ impl Editor {
         let ns = self.active_window().search_namespace.clone();
 
         // Determine the visible byte range from the active viewport
-        let active_split = self.active_window().split_manager().active_split();
+        let active_split = self.effective_active_split();
         let (top_byte, visible_height) = self
             .active_window()
             .split_view_states()
             .get(&active_split)
-            .map(|vs| (vs.viewport.top_byte(), vs.viewport.height.saturating_sub(2)))
+            .map(|vs| {
+                (
+                    vs.buffer_tab_state().viewport.top_byte(),
+                    vs.buffer_tab_state().viewport.height.saturating_sub(2),
+                )
+            })
             .unwrap_or((0, 20));
 
         // Remember the viewport we computed overlays for so we can detect
@@ -367,12 +372,12 @@ impl Editor {
         if !self.active_state().buffer.is_large_file() {
             return false;
         }
-        let active_split = self.active_window().split_manager().active_split();
+        let active_split = self.effective_active_split();
         let current_top = self
             .active_window()
             .split_view_states()
             .get(&active_split)
-            .map(|vs| vs.viewport.top_byte());
+            .map(|vs| vs.buffer_tab_state().viewport.top_byte());
         if current_top != self.active_window_mut().search_overlay_top_byte {
             self.refresh_search_overlays();
             true
@@ -568,7 +573,7 @@ impl Editor {
             self.active_window()
                 .split_view_states()
                 .get(&active_split)
-                .map(|vs| vs.cursors.primary().position)
+                .map(|vs| vs.buffer_tab_state().cursors.primary().position)
                 .unwrap_or(0)
         };
 

@@ -171,28 +171,19 @@ impl Editor {
 }
 
 impl crate::app::window::Window {
-    /// Check if line numbers are visible in the active split.
+    /// Check if line numbers are visible for the buffer the user is on.
     pub(crate) fn is_line_numbers_visible(&self) -> bool {
-        let (mgr, vs) = self.splits();
-        vs.get(&mgr.active_split())
-            .map(|vs| vs.show_line_numbers)
-            .unwrap_or(true)
+        self.focused_view().show_line_numbers
     }
 
-    /// Check if line wrap is enabled in the active split.
+    /// Check if line wrap is enabled for the buffer the user is on.
     pub(crate) fn is_line_wrap_enabled(&self) -> bool {
-        let (mgr, vs) = self.splits();
-        vs.get(&mgr.active_split())
-            .map(|vs| vs.viewport.line_wrap_enabled)
-            .unwrap_or(false)
+        self.focused_view().viewport.line_wrap_enabled
     }
 
     /// Check if compose mode is active in the current buffer.
     pub(crate) fn is_page_view(&self) -> bool {
-        let (mgr, vs) = self.splits();
-        vs.get(&mgr.active_split())
-            .map(|vs| vs.view_mode == crate::state::ViewMode::PageView)
-            .unwrap_or(false)
+        self.focused_view().view_mode == crate::state::ViewMode::PageView
     }
 
     /// Check if the file explorer is currently focused.
@@ -237,16 +228,16 @@ impl crate::app::window::Window {
     }
 
     /// Check if the active buffer is shown in more than one visible split.
+    ///
+    /// Counted over the panes that show a buffer (`buffer_panes`): a pane
+    /// showing a group tab does not show the buffer behind it.
     pub(crate) fn has_same_buffer_splits(&self) -> bool {
-        let (mgr, vs) = self.splits();
-        let active_split = mgr.active_split();
-        let active_buf_id = mgr.buffer_for_split(active_split);
-        if let Some(buf_id) = active_buf_id {
-            vs.keys()
-                .any(|&s| s != active_split && mgr.buffer_for_split(s) == Some(buf_id))
-        } else {
-            false
-        }
+        let active = self.active_buffer();
+        self.buffer_panes()
+            .into_iter()
+            .filter(|(_, b)| *b == active)
+            .count()
+            > 1
     }
 
     /// Check if a formatter is configured for the current buffer's language.

@@ -131,8 +131,7 @@ impl Window {
 
         if let Some(view_state) = self.split_view_states_mut().get_mut(&active_split) {
             view_state.add_buffer(buffer_id);
-            view_state.active_group_tab = None;
-            view_state.focused_group_leaf = None;
+            view_state.show_buffer(buffer_id);
             if let Some(previous_target) = previous_target {
                 view_state.push_focus(previous_target);
             }
@@ -240,7 +239,7 @@ impl Window {
         // leaf of a Grouped subtree stashed in `grouped_subtrees`. For those
         // we don't change `split_manager.active_split` (the group's host
         // split remains active). Instead, find the host split and update
-        // its `focused_group_leaf` marker so `active_buffer()` routes to
+        // its shown group's focused panel so `active_buffer()` routes to
         // the clicked inner panel buffer.
         let in_main_tree = self.splits().0.root().leaf_split_ids().contains(&split_id);
         if !in_main_tree {
@@ -268,11 +267,10 @@ impl Window {
             if let Some((host, group_leaf_id)) = host_split {
                 self.split_manager_mut().set_active_split(host);
                 if let Some(vs) = self.split_view_states_mut().get_mut(&host) {
-                    vs.active_group_tab = Some(group_leaf_id);
-                    vs.focused_group_leaf = Some(split_id);
+                    vs.show_group(group_leaf_id, split_id);
                 }
                 if let Some(inner_vs) = self.split_view_states_mut().get_mut(&split_id) {
-                    inner_vs.switch_buffer(buffer_id);
+                    inner_vs.set_buffer_tab(buffer_id);
                 }
                 self.key_context = crate::input::keybindings::KeyContext::Normal;
                 return FocusSplitOutcome::Handled;
@@ -298,7 +296,7 @@ impl Window {
 
             // Atomic pane-buffer update: tree + SVS in lockstep. Replaces
             // the previous pair of split_manager.set_active_buffer_id +
-            // view_state.switch_buffer that could desync if either leg
+            // view_state.set_buffer_tab that could desync if either leg
             // silently no-op'd (issue #1620).
             self.set_pane_buffer(split_id, buffer_id);
 

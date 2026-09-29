@@ -68,12 +68,10 @@ impl crate::app::window::Window {
     /// build the event themselves and call
     /// [`Editor::ensure_active_cursor_visible_for_navigation`] afterwards.
     pub fn jump_active_cursor_to(&mut self, position: usize, opts: JumpOptions) {
-        let active_split = self.split_manager().active_split();
-        if let Some(view_state) = self.split_view_states_mut().get_mut(&active_split) {
-            view_state.cursors.primary_mut().position = position;
-            if opts.clear_anchor {
-                view_state.cursors.primary_mut().anchor = None;
-            }
+        let cursors = self.active_cursors_mut();
+        cursors.primary_mut().position = position;
+        if opts.clear_anchor {
+            cursors.primary_mut().anchor = None;
         }
         self.ensure_active_cursor_visible_for_navigation(opts.recenter_on_scroll);
     }
@@ -124,9 +122,13 @@ impl crate::app::window::Window {
         active_buffer: crate::model::event::BufferId,
         recenter_on_scroll: bool,
     ) {
-        let Some(active_split) = self.buffers.split_manager().map(|m| m.active_split()) else {
+        // The pane the user is in — a shown group's focused panel, whose
+        // view state is the one `active_buffer` has; the pane showing the
+        // group holds the buffer behind it.
+        if self.buffers.splits().is_none() {
             return;
-        };
+        }
+        let active_split = self.effective_active_split();
         self.buffers
             .with_buffer_and_split(active_buffer, active_split, |state, view_state| {
                 // 1. Clear stale skip flag — a prior recenter (or scroll action) may

@@ -804,12 +804,12 @@ impl Editor {
 
     /// Start the remove ruler prompt with current rulers as suggestions
     pub(super) fn start_remove_ruler_prompt(&mut self) {
-        let active_split = self.active_window().split_manager().active_split();
+        let active_split = self.effective_active_split();
         let rulers = self
             .active_window()
             .split_view_states()
             .get(&active_split)
-            .map(|vs| vs.rulers.clone())
+            .map(|vs| vs.buffer_tab_state().rulers.clone())
             .unwrap_or_default();
 
         if rulers.is_empty() {

@@ -434,8 +434,12 @@ impl Editor {
             return;
         }
 
-        let buffer_id = self.active_buffer();
-        let split_id = self.active_window().split_manager().active_split();
+        // The pane the cursor and viewport below are read from: the one the
+        // user is in, a shown group's focused panel included.
+        let (split_id, buffer_id) = {
+            let (split, buffer) = (self.effective_active_split(), self.active_buffer());
+            (split, buffer)
+        };
         let (cursor_id, position, anchor, sticky_column) = {
             let cursors = self.active_cursors();
             let primary = cursors.primary();
@@ -483,8 +487,7 @@ impl Editor {
 
         // If the active buffer/split has changed (shouldn't happen during a
         // quick-open prompt, but be defensive), just drop the snapshot.
-        if self.active_buffer() != snap.buffer_id
-            || self.active_window().split_manager().active_split() != snap.split_id
+        if self.active_buffer() != snap.buffer_id || self.effective_active_split() != snap.split_id
         {
             return;
         }
@@ -511,13 +514,14 @@ impl Editor {
         self.active_window_mut()
             .apply_event_to_buffer(snap.buffer_id, snap.split_id, &event);
 
-        if let Some(view_state) = self
+        if let Some(view) = self
             .active_window_mut()
             .splits_mut()
             .1
             .get_mut(&snap.split_id)
+            .and_then(|vs| vs.buffer_state_mut(snap.buffer_id))
         {
-            let vp = &mut view_state.viewport;
+            let vp = &mut view.viewport;
             vp.set_top_byte(snap.viewport_top_byte);
             vp.set_top_view_line_offset(snap.viewport_top_view_line_offset);
             vp.left_column = snap.viewport_left_column;

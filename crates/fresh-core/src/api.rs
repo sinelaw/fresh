@@ -5472,7 +5472,7 @@ pub enum PluginCommand {
     /// file-backed buffer for another when the user navigates to a
     /// new commit, without rebuilding the group layout. Both
     /// `group.panel_buffers[panel_name]` and the corresponding
-    /// `SplitViewState.active_buffer` are updated; layout is marked
+    /// panel split's buffer tab are updated; layout is marked
     /// dirty for the next render.
     ///
     /// Resolves with `true` on success, `false` if the group or panel

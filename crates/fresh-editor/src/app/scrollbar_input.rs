@@ -114,12 +114,12 @@ impl crate::app::window::Window {
 
         if let Some(view_state) = self.split_view_states_mut().get_mut(&target_split) {
             // Line wrap makes horizontal scroll a no-op.
-            if view_state.viewport.line_wrap_enabled {
+            if view_state.buffer_tab_state_mut().viewport.line_wrap_enabled {
                 return Ok(());
             }
 
             let columns_to_scroll = delta.unsigned_abs() as usize;
-            let viewport = &mut view_state.viewport;
+            let viewport = &mut view_state.buffer_tab_state_mut().viewport;
             if delta < 0 {
                 viewport.left_column = viewport.left_column.saturating_sub(columns_to_scroll);
             } else {
@@ -176,14 +176,14 @@ impl crate::app::window::Window {
         let viewport_height = self
             .split_view_states()
             .get(&split_id)
-            .map(|vs| vs.viewport.height as usize)
+            .map(|vs| vs.buffer_tab_state().viewport.height as usize)
             .unwrap_or(10);
 
         // Check if line wrapping is enabled
         let line_wrap_enabled = self
             .split_view_states()
             .get(&split_id)
-            .map(|vs| vs.viewport.line_wrap_enabled)
+            .map(|vs| vs.buffer_tab_state().viewport.line_wrap_enabled)
             .unwrap_or(false);
 
         // Effective wrap width / gutter for scroll math.  Must match
@@ -198,10 +198,13 @@ impl crate::app::window::Window {
             .get(&split_id)
             .map(|vs| {
                 (
-                    vs.viewport.effective_width(gutter_width) as usize,
+                    vs.buffer_tab_state().viewport.effective_width(gutter_width) as usize,
                     // Terminal-grid wrap (fresh#2649): scroll-back rows
                     // break at the capture-time PTY width.
-                    vs.viewport.grid_wrap.then(|| vs.viewport.grid_cols()),
+                    vs.buffer_tab_state()
+                        .viewport
+                        .grid_wrap
+                        .then(|| vs.buffer_tab_state().viewport.grid_cols()),
                 )
             })
             .unwrap_or((80, None));
@@ -332,12 +335,19 @@ impl crate::app::window::Window {
 
         // Set viewport top to this position in SplitViewState
         if let Some(view_state) = self.split_view_states_mut().get_mut(&split_id) {
-            view_state.viewport.set_top_byte(scroll_position.0);
             view_state
+                .buffer_tab_state_mut()
+                .viewport
+                .set_top_byte(scroll_position.0);
+            view_state
+                .buffer_tab_state_mut()
                 .viewport
                 .set_top_view_line_offset(scroll_position.1);
             // Skip ensure_visible so the scroll position isn't undone during render
-            view_state.viewport.set_skip_ensure_visible();
+            view_state
+                .buffer_tab_state_mut()
+                .viewport
+                .set_skip_ensure_visible();
         }
 
         Ok(())
@@ -384,14 +394,14 @@ impl crate::app::window::Window {
         let viewport_height = self
             .split_view_states()
             .get(&split_id)
-            .map(|vs| vs.viewport.height as usize)
+            .map(|vs| vs.buffer_tab_state().viewport.height as usize)
             .unwrap_or(10);
 
         // Check if line wrapping is enabled
         let line_wrap_enabled = self
             .split_view_states()
             .get(&split_id)
-            .map(|vs| vs.viewport.line_wrap_enabled)
+            .map(|vs| vs.buffer_tab_state().viewport.line_wrap_enabled)
             .unwrap_or(false);
 
         let gutter_width = self.buffers.get(&buffer_id).map_or(0, |state| {
@@ -402,10 +412,13 @@ impl crate::app::window::Window {
             .get(&split_id)
             .map(|vs| {
                 (
-                    vs.viewport.effective_width(gutter_width) as usize,
+                    vs.buffer_tab_state().viewport.effective_width(gutter_width) as usize,
                     // Terminal-grid wrap (fresh#2649): scroll-back rows
                     // break at the capture-time PTY width.
-                    vs.viewport.grid_wrap.then(|| vs.viewport.grid_cols()),
+                    vs.buffer_tab_state()
+                        .viewport
+                        .grid_wrap
+                        .then(|| vs.buffer_tab_state().viewport.grid_cols()),
                 )
             })
             .unwrap_or((80, None));
@@ -504,12 +517,19 @@ impl crate::app::window::Window {
 
         // Set viewport top to this position in SplitViewState
         if let Some(view_state) = self.split_view_states_mut().get_mut(&split_id) {
-            view_state.viewport.set_top_byte(scroll_position.0);
             view_state
+                .buffer_tab_state_mut()
+                .viewport
+                .set_top_byte(scroll_position.0);
+            view_state
+                .buffer_tab_state_mut()
                 .viewport
                 .set_top_view_line_offset(scroll_position.1);
             // Skip ensure_visible so the scroll position isn't undone during render
-            view_state.viewport.set_skip_ensure_visible();
+            view_state
+                .buffer_tab_state_mut()
+                .viewport
+                .set_skip_ensure_visible();
         }
 
         Ok(())
@@ -625,7 +645,7 @@ fn fold_ranges_for_split(
         .splits()
         .map(|(_, vs)| vs)
         .and_then(|vs| vs.get(&split_id))
-        .map(|vs| &vs.folds)
+        .map(|vs| &vs.buffer_tab_state().folds)
     else {
         return Vec::new();
     };

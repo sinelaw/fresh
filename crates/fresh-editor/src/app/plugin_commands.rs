@@ -1222,7 +1222,7 @@ impl Editor {
             .split_view_states_mut()
             .get_mut(&leaf_id)
         {
-            view_state.switch_buffer(buffer_id);
+            view_state.set_buffer_tab(buffer_id);
         }
 
         // If this is the active split, update active buffer with all side effects
@@ -1486,7 +1486,10 @@ impl Editor {
                 .split_view_states_mut()
                 .get_mut(&leaf_id)
             {
-                view_state.cursors.adjust_for_edit(position, 0, text_len);
+                view_state
+                    .buffer_tab_state_mut()
+                    .cursors
+                    .adjust_for_edit(position, 0, text_len);
             }
         }
         // Keep search-match highlights consistent with the edit (issue #2414).
@@ -1556,9 +1559,11 @@ impl Editor {
                 .split_view_states_mut()
                 .get_mut(&leaf_id)
             {
-                view_state
-                    .cursors
-                    .adjust_for_edit(delete_start, delete_len, 0);
+                view_state.buffer_tab_state_mut().cursors.adjust_for_edit(
+                    delete_start,
+                    delete_len,
+                    0,
+                );
             }
         }
         // Keep search-match highlights consistent with the edit (issue #2414).
@@ -1630,7 +1635,7 @@ impl Editor {
             text,
             cursor_id: CursorId(0),
         };
-        let split_id = self.active_window().split_manager().active_split();
+        let split_id = self.effective_active_split();
         let active_buf = self.active_buffer();
         // Gated as in `handle_insert_text`.
         let lsp_changes = if self.active_window().lsp_change_could_be_sent(active_buf) {
@@ -1960,18 +1965,16 @@ impl Editor {
         // Set on the specified buffer's per-split view state.
         // Use buffer_id to target the correct buffer (not just the active one)
         // so that "toggle compose all" can affect non-active buffers.
-        let active_split = self.active_window().split_manager().active_split();
+        // In the pane the user is in, on `buffer_id`'s own state — created
+        // when the pane has none yet, never borrowed from whatever buffer
+        // the pane has as its tab.
+        let active_split = self.effective_active_split();
         if let Some(view_state) = self
             .active_window_mut()
             .split_view_states_mut()
             .get_mut(&active_split)
         {
-            if let Some(buf_state) = view_state.buffer_state_mut(buffer_id) {
-                buf_state.view_mode = view_mode;
-            } else {
-                // Buffer not yet in this split — fall back to setting on active
-                view_state.view_mode = view_mode;
-            }
+            view_state.ensure_buffer_state(buffer_id).view_mode = view_mode;
         }
     }
 
@@ -4432,18 +4435,14 @@ impl crate::app::window::Window {
     /// Handle MoveTabLeft command - move active tab left in its split
     pub(super) fn handle_move_tab_left(&mut self) {
         let split_id = self.split_manager().active_split();
-        if let Some(buffer_id) = self.split_manager().get_buffer_id(split_id.into()) {
-            if let Some(view_state) = self.split_view_states_mut().get_mut(&split_id) {
-                use crate::view::split::TabTarget;
-                if let Some(current_idx) = view_state
-                    .open_buffers
-                    .iter()
-                    .position(|t| *t == TabTarget::Buffer(buffer_id))
-                {
-                    if current_idx > 0 {
-                        view_state.open_buffers.swap(current_idx, current_idx - 1);
-                        tracing::info!("Moved tab left in split {:?}", split_id);
-                    }
+        // The tab the pane shows — a group tab while a group is shown, not
+        // the buffer tab behind it.
+        if let Some(view_state) = self.split_view_states_mut().get_mut(&split_id) {
+            let active = view_state.active_target();
+            if let Some(current_idx) = view_state.open_buffers.iter().position(|t| *t == active) {
+                if current_idx > 0 {
+                    view_state.open_buffers.swap(current_idx, current_idx - 1);
+                    tracing::info!("Moved tab left in split {:?}", split_id);
                 }
             }
         }
@@ -4452,18 +4451,14 @@ impl crate::app::window::Window {
     /// Handle MoveTabRight command - move active tab right in its split
     pub(super) fn handle_move_tab_right(&mut self) {
         let split_id = self.split_manager().active_split();
-        if let Some(buffer_id) = self.split_manager().get_buffer_id(split_id.into()) {
-            if let Some(view_state) = self.split_view_states_mut().get_mut(&split_id) {
-                use crate::view::split::TabTarget;
-                if let Some(current_idx) = view_state
-                    .open_buffers
-                    .iter()
-                    .position(|t| *t == TabTarget::Buffer(buffer_id))
-                {
-                    if current_idx < view_state.open_buffers.len() - 1 {
-                        view_state.open_buffers.swap(current_idx, current_idx + 1);
-                        tracing::info!("Moved tab right in split {:?}", split_id);
-                    }
+        // The tab the pane shows — a group tab while a group is shown, not
+        // the buffer tab behind it.
+        if let Some(view_state) = self.split_view_states_mut().get_mut(&split_id) {
+            let active = view_state.active_target();
+            if let Some(current_idx) = view_state.open_buffers.iter().position(|t| *t == active) {
+                if current_idx < view_state.open_buffers.len() - 1 {
+                    view_state.open_buffers.swap(current_idx, current_idx + 1);
+                    tracing::info!("Moved tab right in split {:?}", split_id);
                 }
             }
         }
@@ -4490,9 +4485,11 @@ impl crate::app::window::Window {
         }
     }
 
-    /// Run `f` against `buffer_id`'s view state in the active split, falling
-    /// back to the split's active buffer when this split has no state for that
-    /// buffer yet.
+    /// Run `f` against `buffer_id`'s view state in the active split, creating
+    /// it when this split has none for that buffer yet — so the setting is
+    /// there when the buffer is shown here. Never another buffer's state:
+    /// this used to fall back to whatever buffer the split had as its tab,
+    /// handing one buffer's line-number setting to another.
     ///
     /// Shared by the two line-number entry points so they cannot drift apart
     /// on which view state they land on.
@@ -4501,15 +4498,11 @@ impl crate::app::window::Window {
         buffer_id: BufferId,
         f: impl FnOnce(&mut BufferViewState),
     ) {
-        let active_split = self.split_manager().active_split();
+        // The pane the user is in — a shown group's focused panel, not the
+        // pane showing the group.
+        let active_split = self.effective_active_split();
         if let Some(view_state) = self.split_view_states_mut().get_mut(&active_split) {
-            if let Some(buf_state) = view_state.buffer_state_mut(buffer_id) {
-                f(buf_state);
-            } else {
-                // Buffer not yet in this split — fall back to the active one,
-                // which `SplitViewState` derefs to.
-                f(view_state);
-            }
+            f(view_state.ensure_buffer_state(buffer_id));
         }
     }
 
@@ -4527,14 +4520,13 @@ impl crate::app::window::Window {
         buffer_id: BufferId,
         enabled: Option<bool>,
     ) {
-        let active_split = self.split_manager().active_split();
+        // On `buffer_id`'s own state in the pane the user is in — created
+        // when the pane has none yet, never another buffer's.
+        let active_split = self.effective_active_split();
         if let Some(view_state) = self.split_view_states_mut().get_mut(&active_split) {
-            if let Some(buf_state) = view_state.buffer_state_mut(buffer_id) {
-                buf_state.fold_indicators_plugin_override = enabled;
-            } else {
-                // Buffer not yet in this split — fall back to setting on active
-                view_state.fold_indicators_plugin_override = enabled;
-            }
+            view_state
+                .ensure_buffer_state(buffer_id)
+                .fold_indicators_plugin_override = enabled;
         }
     }
 
@@ -4560,19 +4552,25 @@ impl crate::app::window::Window {
                 let showing: Vec<LeafId> = self
                     .split_view_states()
                     .iter()
-                    .filter(|(_, vs)| vs.active_buffer == buffer_id)
+                    .filter(|(_, vs)| vs.buffer_tab() == buffer_id)
                     .map(|(leaf_id, _)| *leaf_id)
                     .collect();
                 if showing.is_empty() {
-                    vec![self.split_manager().active_split()]
+                    vec![self.effective_active_split()]
                 } else {
                     showing
                 }
             }
         };
+        // On `buffer_id`'s own view state in each target — never on
+        // whatever buffer the target pane happens to have as its tab, which
+        // for the active-split fallback is some other buffer entirely.
         for target_split in targets {
             if let Some(view_state) = self.split_view_states_mut().get_mut(&target_split) {
-                view_state.viewport.line_wrap_enabled = enabled;
+                view_state
+                    .ensure_buffer_state(buffer_id)
+                    .viewport
+                    .line_wrap_enabled = enabled;
             }
         }
     }

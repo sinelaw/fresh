@@ -246,12 +246,12 @@ impl Editor {
         let other_buffers = self.collect_other_buffer_slices(active_buf_id);
 
         // Get viewport bounds for proximity scoring.
-        let split_id = self.active_window().split_manager().active_split();
+        let split_id = self.effective_active_split();
         let viewport_top_byte = self
             .active_window()
             .split_view_states()
             .get(&split_id)
-            .map(|sv| sv.viewport.top_byte())
+            .map(|sv| sv.buffer_tab_state().viewport.top_byte())
             .unwrap_or(0);
         // Estimate bottom by adding a generous window.
         let viewport_bottom_byte = (viewport_top_byte + 8192).min(buffer_len);
