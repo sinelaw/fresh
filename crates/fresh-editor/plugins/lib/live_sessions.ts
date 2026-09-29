@@ -117,6 +117,22 @@ function parseJson(text: string): unknown {
 }
 
 /** Last path segment, either separator. */
+/** A session title as a git branch and folder name: lower case, words
+ *  joined by `-`, nothing git or a file system would refuse; `session` when
+ *  nothing is left. "Fix the auth bug (login.ts)" → `fix-the-auth-bug-login.ts`. */
+export function liveBranchName(title: string): string {
+  const slug = title
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/[-.]{2,}/g, "-")
+    .replace(/^[-.]+|[-.]+$/g, "")
+    .slice(0, 48)
+    .replace(/[-.]+$/g, "");
+  return slug || "session";
+}
+
 export function liveBaseName(p: string): string {
   const parts = p.split(/[\\/]+/).filter((x) => x.length > 0);
   return parts[parts.length - 1] ?? p;

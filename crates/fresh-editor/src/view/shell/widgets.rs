@@ -4287,9 +4287,19 @@ fn hit_node(
         std::rc::Rc::new(move |e: &fresh_ui::Event| match e.button {
             fresh_ui::MouseButton::Left => {
                 e.stop();
+                // A row that can raise a menu says where the press landed,
+                // as its right press does: a plugin that answers a click
+                // with a menu anchors it at the pointer, not at a guess.
+                let mut event = hit.clone();
+                if hit.context_click {
+                    if let Some(obj) = event.payload.as_object_mut() {
+                        obj.insert("col".to_string(), serde_json::json!(e.pos.x.max(0)));
+                        obj.insert("row".to_string(), serde_json::json!(e.pos.y.max(0)));
+                    }
+                }
                 Some(UiMsg::Ui(super::msg::UiFact::WidgetHit {
                     slot,
-                    event: hit.clone(),
+                    event,
                     // The library's answer, not a column of our own: only the
                     // shaping that drew the row knows where each character
                     // landed in it. See `UiFact::WidgetHit::byte`.

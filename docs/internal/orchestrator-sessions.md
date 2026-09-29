@@ -578,6 +578,15 @@ includes cloud sessions this machine never saw.
   row into a folder takes the same path, and the form files the workspace it
   creates (`intoFolder`) the moment it is born.
 
+  Teleport **copies**; it does not move. Per the Claude Code docs, "the
+  terminal gets its own copy of the session: new work there stays local and
+  doesn't appear in the cloud session on claude.ai"; the cloud session is
+  left as it was, still active, until it is archived or its environment
+  expires. So after a teleport the row stays in Elsewhere (it is still an
+  active cloud session). The form names the workspace after the session: the
+  worktree and branch get a slug of its title (`liveBranchName`), and the
+  workspace is renamed to the title itself.
+
   **Connecting to a live session.** There is no general way to attach a
   terminal to a Claude session another process runs (`claude --resume` of a
   running conversation starts a second copy). What connects: `claude attach`

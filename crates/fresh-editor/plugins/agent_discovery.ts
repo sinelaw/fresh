@@ -548,7 +548,12 @@ function openWorkspaceForDiscovered(
   }
   const reach = target.reach;
   closeDiscoverDialog();
-  host()?.openWorkspaceForm(reach, { projectPath: session.cwd ?? "", cmd: quoted.join(" ") });
+  host()?.openWorkspaceForm(reach, {
+    projectPath: session.cwd ?? "",
+    cmd: quoted.join(" "),
+    // The workspace takes the session's name, not a generated one.
+    ...(session.title ? { label: session.title } : {}),
+  });
   // An inexact resume rejoins the newest session in the directory, which may
   // not be this row. Said after the form opens so its status does not overwrite it.
   if (verb.kind === "resume" && !verb.exact) {

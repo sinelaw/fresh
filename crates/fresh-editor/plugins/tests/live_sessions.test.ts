@@ -16,6 +16,7 @@ import {
   elsewhereRoot,
   isCodexSessionArgv,
   liveDetail,
+  liveBranchName,
   livePlan,
   parseClaudeAgents,
   parseClaudeCloud,
@@ -283,6 +284,13 @@ eq(
   "unrepresented: an SSH session taken over on its host drops out",
 );
 
+
+// An imported session's name, as the worktree and branch it gets.
+eq(
+  ["Fix the auth bug (login.ts)", "  Déjà vu: ünïcode!  ", "..hidden//../x", "", "a".repeat(80)].map(liveBranchName),
+  ["fix-the-auth-bug-login.ts", "deja-vu-unicode", "hidden-x", "session", "a".repeat(48)],
+  "branch name: a session title as a git branch and folder name",
+);
 
 if (failures > 0) {
   console.log(`${failures} failure(s)`);

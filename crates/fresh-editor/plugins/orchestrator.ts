@@ -62,6 +62,7 @@ import {
 } from "./lib/discovery.ts";
 import {
   liveBaseName,
+  liveBranchName,
   liveDetail,
   liveNormPath,
   livePlan,
@@ -531,6 +532,10 @@ interface NewSessionForm {
   // when the form was opened to file something there — an Elsewhere row
   // moved into a folder. Undefined: the form files nothing.
   intoFolder?: string | null;
+  // The name the created workspace takes on the dock when it is not the
+  // name field's (a session imported with a worktree: the field names the
+  // worktree and branch, so it holds a slug of this). Undefined: the field's.
+  displayName?: string;
   // Whether to create a new git worktree under
   // `<XDG>/orchestrator/<slug>/<session>/` (true) or run the
   // session directly inside `projectPath` (false). Enabled
@@ -1865,6 +1870,7 @@ function teleportLiveSession(key: string, folderId?: string | null): void {
   openWorkspaceForm({ kind: "option", key: "local" }, {
     projectPath: match?.projectPath ?? "",
     cmd: `${elsewhereCommands.claude} --teleport ${s.id}`,
+    label: s.title,
     createWorktree: true,
     folderId,
   });
@@ -1895,12 +1901,15 @@ function elsewherePlan(s: LiveSession, materialize: boolean): LivePlan {
 // connects to it here runs at once; anything that would leave the editor —
 // a page in the browser, Claude Desktop — or teleport a cloud session is
 // offered instead (the row's menu, at the row), never done on a click.
-function activateLiveRow(key: string): void {
+// `at` is where a click landed, so the menu opens at the pointer; Enter has
+// none and opens it at the row.
+function activateLiveRow(key: string, at?: { index: number; col: number; row: number }): void {
   const s = liveByKey(key);
   if (!s) return;
   const plan = elsewherePlan(s, false);
   if (plan.kind === "browser" || plan.kind === "teleport") {
-    openDockContextMenuFromKeyboard();
+    if (at) openDockContextMenu(at.index, at.col, at.row);
+    else openDockContextMenuFromKeyboard();
     return;
   }
   void openLiveSession(key, { materialize: false, dive: true });
@@ -12040,7 +12049,14 @@ let pendingFormMachine: FormSeed | undefined = undefined;
 /** Fields the next New Workspace form opens with, set when a discovered
  *  session is rejoined. Consumed once, like `pendingFormMachine`. */
 let pendingFormPrefill:
-  | { projectPath: string; cmd: string; createWorktree?: boolean; folderId?: string | null }
+  | {
+    projectPath: string;
+    cmd: string;
+    createWorktree?: boolean;
+    folderId?: string | null;
+    /** The session's own name, for the workspace it becomes. */
+    label?: string;
+  }
   | null = null;
 
 interface MachinesRow {
@@ -12774,7 +12790,14 @@ function resumeArgv(agent: string, id: string): { argv: string[]; exact: boolean
  *  reader sees what will run where and a connect gets its trust decision. */
 function openWorkspaceForm(
   seed: FormSeed,
-  prefill: { projectPath: string; cmd: string; createWorktree?: boolean; folderId?: string | null },
+  prefill: {
+    projectPath: string;
+    cmd: string;
+    createWorktree?: boolean;
+    folderId?: string | null;
+    /** The session's own name, for the workspace it becomes. */
+    label?: string;
+  },
 ): void {
   pendingFormPrefill = prefill;
   if (seed.kind === "option") {
@@ -13907,6 +13930,14 @@ function openForm(options?: { fromPicker?: boolean; target?: RunAgentTarget }): 
     form.agentUnset = false;
     form.createWorktree = prefill.createWorktree ?? false;
     form.intoFolder = prefill.folderId;
+    // An imported session keeps its name. With a worktree the name field
+    // also names the worktree and its branch, so it gets a branch-safe
+    // form of the name and the workspace is renamed to the name itself.
+    if (prefill.label) {
+      const name = form.createWorktree ? liveBranchName(prefill.label) : prefill.label;
+      form.name = { value: name, cursor: utf8Len(name) };
+      if (name !== prefill.label) form.displayName = prefill.label;
+    }
     form.agentCustom = !agentPresets().some((pr) => !pr.custom && pr.cmd === prefill.cmd.trim());
   }
   formPanel = new FloatingWidgetPanel();
@@ -15682,7 +15713,15 @@ async function submitForm(visit: boolean): Promise<void> {
   editor.setGlobalState("orchestrator.last_machine", picked ? picked.key : "");
   // Read before the create closes the form.
   const intoFolder = form.intoFolder;
+  const displayName = form.displayName;
   const id = await startPendingWorkspace(captured.spec, { visit });
+  // Named from birth, like the folder below: a local workspace has its
+  // durable id already.
+  const born = displayName ? orchestratorSessions.get(id) : undefined;
+  if (born?.stableId && displayName) {
+    renameWorkspace(born, displayName);
+    if (intoFolder === undefined) refreshDockTree();
+  }
   // Filed by its durable id, which a workspace has from birth, so the row
   // lands in the folder while it is still being built.
   if (intoFolder !== undefined) {
@@ -17922,7 +17961,14 @@ editor.on("widget_event", (e) => {
           // happen by scrolling past it); a click opens it.
           if (node && node.kind === "live") {
             dockSwitchToken++;
-            if (payload.via === "click") activateLiveRow(node.liveKey);
+            if (payload.via === "click") {
+              activateLiveRow(
+                node.liveKey,
+                typeof payload.col === "number" && typeof payload.row === "number"
+                  ? { index: openDialog.dockKeys.indexOf(key!), col: payload.col, row: payload.row }
+                  : undefined,
+              );
+            }
             return;
           }
           const fromEdge = idx > prevIdx ? "bottom" : idx < prevIdx ? "top" : null;

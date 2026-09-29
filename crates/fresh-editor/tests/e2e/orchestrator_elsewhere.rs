@@ -240,3 +240,40 @@ fn moving_an_elsewhere_row_into_a_folder_materializes_it() {
     })
     .unwrap();
 }
+
+/// A click on a row that opens outside the editor (a Codex Cloud task's page)
+/// opens the row's menu instead, and at the pointer: the menu's box starts
+/// where the click landed, not at a column the plugin guessed.
+#[test]
+fn clicking_a_row_opens_its_menu_at_the_pointer() {
+    let (_tmp, root, config) = setup();
+    let mut h = EditorTestHarness::with_config_and_working_dir(140, 36, config, root).unwrap();
+    h.render().unwrap();
+    open_dock(&mut h);
+    h.wait_until(|h| h.screen_to_string().contains(CODEX_TASK_TITLE))
+        .unwrap();
+
+    let (col, row) = pos_of(&h, CODEX_TASK_TITLE);
+    // Well into the title, so a menu at the row's start would be visibly off.
+    let click = (col + 8, row);
+    h.mouse_click(click.0, click.1).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Open in Browser"))
+        .unwrap();
+
+    let screen = h.screen_to_string();
+    let (item_col, item_row) = pos_of(&h, "Open in Browser");
+    assert!(
+        item_row > click.1 && item_row <= click.1 + 3,
+        "the menu opens just below the click (row {}), not elsewhere:\n{screen}",
+        click.1
+    );
+    assert!(
+        item_col >= click.0 && item_col <= click.0 + 4,
+        "the menu opens at the click's column ({}), not the row's start:\n{screen}",
+        click.0
+    );
+    assert!(
+        !screen.contains("STATUS-task_a"),
+        "a click does not open the task itself:\n{screen}"
+    );
+}
