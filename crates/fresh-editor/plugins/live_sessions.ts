@@ -163,6 +163,15 @@ function missingTool(r: SpawnResult): boolean {
   return r.exit_code === -1 || /not found|No such file|cannot find|ENOENT/i.test(r.stderr);
 }
 
+/** Where the listing commands run. Not the editor's working directory: that
+ *  is the user's project, and `codex cloud` writes an `error.log` into
+ *  whatever directory it runs in. */
+function probeDir(): string {
+  const dir = editor.pathJoin(editor.getDataDir(), "orchestrator", "elsewhere", "probe");
+  editor.createDir(editor.localPath(dir));
+  return dir;
+}
+
 function firstLine(s: string): string {
   return s.trim().split("\n")[0]?.slice(0, 200) ?? "";
 }
@@ -170,7 +179,7 @@ function firstLine(s: string): string {
 // ── Sources ───────────────────────────────────────────────────────
 
 async function listClaudeLocal(s: Required<Settings>): Promise<LiveSession[]> {
-  const r = await editor.spawnHostProcess(s.claudeCommand, ["agents", "--json"]);
+  const r = await editor.spawnHostProcess(s.claudeCommand, ["agents", "--json"], probeDir());
   if (r.exit_code !== 0) {
     if (missingTool(r)) return [];
     throw new Error(`claude agents: ${firstLine(r.stderr) || `exit ${r.exit_code}`}`);
@@ -223,7 +232,11 @@ async function listClaudeCloud(s: Required<Settings>, force: boolean): Promise<L
 }
 
 async function listCodexCloud(s: Required<Settings>): Promise<LiveSession[]> {
-  const r = await editor.spawnHostProcess(s.codexCommand, ["cloud", "list", "--json", "--limit", "20"]);
+  const r = await editor.spawnHostProcess(
+    s.codexCommand,
+    ["cloud", "list", "--json", "--limit", "20"],
+    probeDir(),
+  );
   if (r.exit_code !== 0) {
     if (missingTool(r)) return [];
     // Not signed in to ChatGPT is the common case and not an error worth a
