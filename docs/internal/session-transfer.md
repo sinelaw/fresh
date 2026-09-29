@@ -67,6 +67,18 @@ between releases. Every claim below about them has a version attached.
   original file byte-identical (same md5). This fits the orchestrator's
   *provision* strategy: Fresh mints the id, exactly as it does for
   `--session-id` today (orchestrator-sessions.md §8).
+- **Compaction is recorded in the file, not by rewriting it.** A `/compact`
+  appends several records:
+  - a `system` record with `subtype: "compact_boundary"`, carrying
+    `compactMetadata` and `logicalParentUuid`, which points at the pre-compact
+    leaf
+  - a `user` record with `isCompactSummary: true`, holding the summary text
+  - `isMeta` caveat records, plus the `/compact` command and its stdout as
+    `user` records
+
+  Everything before the boundary stays in the file. A reader that wants what
+  the model sees starts at the last boundary: the summary, then the records
+  after it. It skips `isMeta` records and local-command records.
 - **No importer for other agents' sessions.** `claude import [codex|gemini|cursor]`
   is described as importing *config*. In this build it prints "not yet
   available".
@@ -88,6 +100,14 @@ between releases. Every claim below about them has a version attached.
     `message`, `function_call`, `function_call_output`, `reasoning`).
   - Alongside them are `event_msg`, `turn_context`, `world_state` and
     `token_usage_record`.
+  - Compaction and rollback are also records:
+    - a top-level `compacted` record, whose `replacement_history` replaces
+      every item before it
+    - a `thread_rolled_back` record
+
+    Both names come from the 0.159 binary's strings. Neither was triggered in
+    the checks. A reader that wants what the model sees takes the last
+    `replacement_history` plus the items after it, and applies any rollbacks.
   - New sessions record `history_mode: "paginated"`, and a
     `codex migrate-rollouts` command exists. The format is moving.
 - **A hand-written rollout resumes.** Five records were enough: a minimal
@@ -121,12 +141,20 @@ between releases. Every claim below about them has a version attached.
   - Codex records every import in `$CODEX_HOME/external_agent_session_imports.json`,
     with the source path, its sha256 and the thread id.
   - Constraints found:
-    - The `path` must be a session Codex's own detection finds: under
-      `$HOME/.claude/projects`, and within its default age limit. A copy
-      elsewhere fails with `session_not_detected`.
+    - The `path` must be under `$HOME/.claude/projects`. A copy anywhere else
+      fails with `session_not_detected`.
+    - Age does not block an explicit import. `detect` hid a session backdated
+      nine months, but `import` of that same path succeeded.
     - The `cwd` parameter is **ignored**. The thread takes the transcript's
       recorded `cwd`, so a remapped copy has to be staged with its `cwd`
-      rewritten (§4.3).
+      rewritten (§5.2 step 3).
+    - **Re-importing an unchanged file is a silent no-op.** The reply lists no
+      successes and no failures. The existing thread id is only in the ledger,
+      where Fresh looks it up by `source_path` and `content_sha256`.
+    - **Compaction is not honoured.** A compacted transcript came across whole:
+      the pre-compact turns, then the summary, then the `/compact` command
+      records, all as messages. Fresh therefore imports a staged copy trimmed
+      to what the model last saw (§2.1), not the original file.
 - **Resume and fork by id**:
   - `codex resume <uuid|name>`
   - `codex fork <uuid>`
@@ -678,15 +706,14 @@ Tests:
   conversation, and Codex's behaviour on an oversized imported rollout is
   untested. A first cut: estimate tokens at chars/4 and switch at half of the
   destination model's window.
-- **Codex importer age limit.** `detect` takes `maxSessionAgeDays`, but `import`
-  re-detects with the default. What is the default? And does an old but
-  explicitly named session fail? If it does, the fallback writer handles it.
-  The planner needs to know in advance, so that the form's tier line is right.
 - **Remote Control rows on another machine.** Can `--teleport` take over a bridge
   session? If not, the only transfer from such a row is at its machine.
-- **`--remote-control` with `--resume`.** Is the combination supported for the
-  "keep it local, reachable" route? The help lists both, but the pair is
-  untested.
+- **`--remote-control` with `--resume`.** The pair parses, but it has only been
+  tried in `-p` mode, which is not the interactive session the route needs.
+  One gotcha is already known: `--remote-control [name]` takes an optional
+  value, so a positional start prompt placed after it is eaten as the session
+  name. The argv must give it an explicit name (`--remote-control=<name>`), or
+  put it somewhere no positional follows.
 - **Codex Desktop app threads.** Their rollouts live in the same store
   (`originator` names the app), so they are transferable as sources. Stopping
   them is not possible, so they are always forks.
