@@ -1,7 +1,8 @@
 # The frontend protocol: one wire format for web and native clients
 
 > _Design note. Status: **PARTLY IMPLEMENTED.** *Collections and the window*
-> shipped in #3420, and its IMPLEMENTED and PLANNED parts are marked there;
+> shipped in #3420 and #3435, and its IMPLEMENTED and PLANNED parts are marked
+> there;
 > the protocol itself — everything else here — is **PLANNED**. It began as the
 > answer to "can the web UI protocol carry the higher-level layout tree
 > instead of the low-level cells the terminal draws?", and now also answers
@@ -731,7 +732,7 @@ lives with its owner in shared storage; the description holds a handle to it,
 never a copy; the library cuts the window during layout; and one domain key
 names an item from the data to the client's node.**
 
-**IMPLEMENTED** in #3420, except where a part below says PLANNED. The
+**IMPLEMENTED** in #3420 and #3435, except where a part below says PLANNED. The
 remaining gaps are listed in *Appendix: gaps in the current implementation*.
 
 ### The layers, and the one cut
@@ -861,16 +862,21 @@ frame):
   disclosure is drawn. The plugin tree and the file explorer run on it.
 - **`Pager`** — a list's answer to "a page from here", recorded at layout. A
   focusable `List` answers PageUp/PageDown with it; an owner that keeps its own
-  selection asks it. **`Anchor::paged()` / `page_key`** does the same for a
-  column of children of different heights, by their bands.
+  selection asks it (the prompt, Live Grep, the Open File browser, list
+  popups), and `Pager::window` says how many rows were drawn. A list that has
+  not been laid out has no page, and a page key then moves nothing.
+  **`Anchor::paged()` / `page_key`** does the same for a column of children of
+  different heights, by their bands, and **`Anchor::start`** says where such a
+  window starts and which keyed child holds its first row (the Settings
+  category highlight follows the body through it).
 - **`List::row_heights`** — rows of their own known heights, windowed in
   cells.
 - **`List::pinned_at` / `Node::pinned_at`** — pinned rows as a function of the
   offset, evaluated by the window at layout.
 - **`List::start_at`** — where a viewport-owned window starts, for an owner
   that mounts the list again.
-- **PLANNED:** retire the eager, uncontrolled `Tree::new`, which only its own
-  test still uses.
+- The eager, uncontrolled `Tree::new` is gone (#3435); `Tree::windowed` is the
+  only tree.
 
 ### The plugin API
 
@@ -1008,17 +1014,15 @@ clients; every other step pays for itself on the web and the terminal.
    frontend protocol gets frames on the data channel, beside terminal
    clients and browsers on the same editor; add the `native-menu` capability
    and the all-clients rule of *Surfaces the operating system owns*.
-8. **Layout's own answers for paging and reveal.** IMPLEMENTED in #3420 for
-   Settings (the category tree and the body), the keybinding editor and the
-   file explorer, through `Pager`, `Anchor::paged` and the windowed `Tree`.
-   Left: the prompt's, Live Grep's and the file browser's paging, Live Grep's
-   results window, and the Settings category highlight that follows the body
-   by reading card rectangles back (*Appendix: gaps in the current
-   implementation*).
+8. **Layout's own answers for paging and reveal.** IMPLEMENTED in #3420 and
+   #3435: Settings, the keybinding editor, the file explorer, the prompt,
+   Live Grep, the Open File browser, list popups, the tab strip's name cap
+   and the multi-line text widget all take their page or window from layout.
+   Left: the read-backs in *Appendix: gaps in the current implementation*.
 9. **Collections as *Collections and the window* describes.** IMPLEMENTED in
-   #3420, except the keyed plugin collection operations, card lists measured
-   with `UniformMeasured`, and the eager `Tree::new` (*Appendix: gaps in the
-   current implementation*).
+   #3420 and #3435, except the keyed plugin collection operations and card
+   lists measured with `UniformMeasured` (*Appendix: gaps in the current
+   implementation*).
 10. **A Windows client.** WinUI 3, per *Client application*: the chrome panel
     and pools, the Composition row visuals, brushes, the class table's Fluent
     look, the OS menu bar and file dialog, clipboard, IME, and UI Automation.
@@ -1060,36 +1064,37 @@ inside layout.
 explorer asks the explorer's region whether it was the title row
 (`explorer_body_context`).
 
-**Settings modal.** Keyboard: body and category-tree PageUp/PageDown page at
-layout since #3420 (the body by the cards its window measured, the tree by
-its list's `Pager`). Still read back after layout: the left tree's highlight
-follows the body's scroll through `top_item`, found by walking the cards'
-rectangles when the body's offset moved (`refresh_settings_body_window`,
-`current_section_index`, also used by `jump_to_search_result`); the search
-results' and entry dialogs' scroll offsets are read off their viewports for
-the count row. The web reaches Settings through a second, index-based input
-path (`dispatch_settings_hit` with a `SettingsHit`), which retires with its
-projection (*Native look, native behaviour, and where each belongs*).
+**Settings modal.** No keyboard read-back since #3420 and #3435: the body and
+category tree page at layout, and the left tree's highlight follows the body
+through `Anchor::start` rather than a walk of card rectangles. Still read back
+after layout: the search results' and entry dialogs' scroll offsets, read off
+their viewports with `ui.scroll` for the count row
+(`refresh_settings_body_window`). The web reaches Settings through a second,
+index-based input path (`dispatch_settings_hit` with a `SettingsHit`), which
+retires with its projection (*Native look, native behaviour, and where each
+belongs*).
 
 **Keybinding editor.** No keyboard read-back since #3420: PageUp/PageDown page
 by the table's `Pager`, and the hand-counted `table_rows` and the `scroll`
 state are gone. The web selects rows through an index-based path
 (`kbedit_select_display_row`), which retires with its projection.
 
-**Prompt and palette.** Keyboard: PageUp/PageDown still move by a fixed 10.
-The column widths are measured at the cut since #3420 (`List::windowed_cut`);
-the `suggestions_window` read-back is gone, and the web scene reads the window
-straight off the tree. The Live Grep card still scrolls its selection into the
-results region's height, read off the card after layout
-(`settle_prompt_suggestions`, `ensure_selected_visible_within`), and its
-preview viewport is resized to the card's inner rectangle.
+**Prompt and palette.** No read-back since #3420 and #3435: the columns are
+measured at the cut (`List::windowed_cut`), PageUp/PageDown page by the list's
+`Pager`, and Live Grep's results window follows its selection inside the list
+(the old `settle_prompt_suggestions` offset had no reader left and is gone).
+The Live Grep card's preview viewport is still resized to the card's inner
+rectangle.
 
 **Popups (completion, hover, signature, action).** Placement: anchored to the
 caret cell and the completion word's start column, read from the pane's
 settled view (`publish_popup_carets`, `popup_caret_cells`). Pointer: hover
 stays alive while the pointer is over a popup's rectangle
-(`is_mouse_over_transient_popup` via `popup_rects`). Keyboard: paging uses the
-model's `max_height`, not the drawn height.
+(`is_mouse_over_transient_popup` via `popup_rects`). Keyboard: a list popup pages by
+the window its list recorded in the popup's `Pager` (#3435); a text or markdown
+popup still pages `Popup::scroll_offset`, which only the web projection and
+`link_at_position` read, so in the terminal those keys change nothing on
+screen.
 
 **Status bar.** Placement: popups opened from a status element (LSP status,
 remote indicator, read-only, update) are placed above that element from the
@@ -1100,8 +1105,9 @@ description time.
 **Tabs.** Pointer: drag drop zones and insertion index (`compute_tab_drop_zone`
 via `tab_rects` and `pane_strip_at`). Keyboard: reveal-active-tab is decided in
 layout; tab-switch animations use the pane's content rectangle
-(`cycle_tab` via `pane_or_group_content_rect`). Feedback: whether tab names
-are shortened comes from the last frame's strip width (`Window::pane_strips`).
+(`cycle_tab` via `pane_or_group_content_rect`). Whether tab names are
+shortened is decided at layout since #3435, by a layout reader in the strip
+window's place, in the frame it applies to.
 
 **File explorer.** No keyboard read-back since #3420: it is a
 `Tree::windowed(..).sticky(..)` over `FileTreeView`'s projection, the list owns
@@ -1159,46 +1165,92 @@ the current implementation*.
 
 Where today's code falls short of *Collections and the window*, *Designed for
 in-place patching* and *Native look, native behaviour, and where each belongs*.
-Checked against master after #3420 merged. None is fixed by the protocol; most
-matter to the terminal as much as to any client.
+Checked against master after #3420 and #3435 merged. None is fixed by the
+protocol; most matter to the terminal as much as to any client.
+
+**Still open, needing a decision**
+
+- **Card lists measure every card.** A plugin `List` of `item_specs` uses
+  `RowHeight::UniformMeasured` and builds every card up front. Three things
+  stand in the way of windowing it: a card is an arbitrary widget subtree whose
+  height can depend on width (wrapping or markdown text, nested lists, window
+  embeds); the row builder is `'static` while describing a card borrows the
+  panel's context; and the band is deliberately uniform, so the tallest card
+  still needs every card measured. Options, from #3435: memoise the arm on the
+  spec's `Arc` identity and the selection so the build runs only when the list
+  changes (smallest; behaviour unchanged); or count heights for the kinds that
+  can be counted, use `row_heights` with the uniform maximum when every card
+  answers, and give the builder an owned context; or per-card heights, which
+  changes how card lists look.
+- **Visible terminals' PTY size is hand arithmetic.**
+  `Window::resize_visible_terminals` sizes the PTY to the scroll-back view's
+  content slot (one column and one row less than the live slot) in both modes,
+  so toggling live and scroll-back never reflows the grid (#2649). The tree lays
+  out only the slot for the mode showing, so the size is subtracted by hand,
+  while `paint_embed` sizes embedded terminals to the live slot; the two paths
+  disagree by a column and a row. Options, from #3435: describe the scroll-back
+  slot as a keyed node even in live mode and size both paths from it (keeps
+  behaviour, removes the arithmetic); always reserve the scroll-back slot
+  (drops the reclaimed scrollbar column); or apply the visible rule to
+  `paint_embed` too (consistent, keeps the arithmetic).
 
 **Still open**
 
 - **Keyed plugin collection operations.** A plugin collection changes only by
   `setItems` or `appendTreeNodes`, so a large list that changes re-sends
-  everything. Keys are now required, so keyed insert, remove, update and move
+  everything. Keys are required now, so keyed insert, remove, update and move
   can follow (*The plugin API*).
-- **Card lists measure every item.** A plugin `List` of `item_specs` uses
-  `RowHeight::UniformMeasured`, which builds every card to find the tallest.
-  Its builder needs the panel's context, which is why the cards are built up
-  front; a card whose height is known from its spec could use
-  `List::row_heights`, as the card tree now does.
-- **The eager `fresh_ui::Tree::new`** flattens the whole tree every frame and
-  keeps its expansion private. No production code uses it any more; only its
-  own test does. Retire it in favour of `Tree::windowed`.
-- **Fixed paging.** The prompt, Live Grep and the Open File browser move
-  PageUp/PageDown by a fixed 10 rows, whatever is visible. `Pager` exists for
-  exactly this.
-- **Live Grep's results window** is kept around the selection by reading the
-  results region's height off the card after layout
-  (`ensure_selected_visible_within`), instead of the list following its own
-  selection.
-- **The Settings category highlight** follows the body's scroll through a
-  `top_item` found by walking card rectangles after layout.
-- **The tab strip** decides whether to shorten tab names from the width the
-  previous frame gave its window (`Window::pane_strips`, `cap_names`).
-- **The multi-line text widget** pages by its spec's row count, not the height
-  of a growing box.
+- **Text and markdown popups page an offset nothing draws from.**
+  `Popup::scroll_offset` is read only by the web projection and
+  `link_at_position`; the drawn popup is a viewport that owns its window, so
+  PageUp/PageDown on a text or markdown popup changes nothing on screen in the
+  terminal. Reading the window off the tree for the web would retire the
+  offset.
+- **Settings search results and entry dialogs read their offsets back** after
+  layout (`ui.scroll` in `refresh_settings_body_window`), for the count row —
+  the same shape the body's read-back had.
+- **A page key before the first layout does nothing.** The prompt, Live Grep,
+  the Open File browser (also while its listing loads or shows an error) and
+  list popups page by a `Pager` that has no window until the list is drawn, so
+  a PageUp/PageDown batched with the key that opened them is consumed without
+  moving. This matches the keybinding editor's rule; a fixed fallback is the
+  alternative.
 
-**Inconsistencies from the read-back sweep**
+**Fragile but working** (from #3435's review)
 
-- `ensure_cursor_visible_for_navigation` assumes a 6-column gutter instead of
-  the measured one.
-- Popups page by `max_height`, but can be drawn shorter than that.
-- Visible terminals compute their PTY size by hand-subtracting rows and
-  columns off the pane box, while embedded windows use the tree's rectangle.
-- The Settings entry dialog's `viewport_height` never changes from its
-  default of 20.
+- The tab strip's cap is decided from the width a `flex(1)` layout reader is
+  offered; the reader can run more than once per frame and the last call
+  decides. Correct and tested today; a change to how rows measure flexible
+  children could bring back a mismatch.
+- A text widget's page is looked up by its key (`Editor::widget_viewport`, the
+  first item-scrolling viewport under it); a keyed text box containing another
+  scrolling viewport under the same key would page by that one.
+- Settings card keys (`("settings_card", i)`) do not name their page, so for
+  one frame after a category switch the previous page's first-card index is
+  read against the new page's sections.
+
+**Pre-existing bugs found along the way** (from #3435, not fixed there)
+
+- After a wheel scroll, a new query that keeps the selection on the first row
+  does not scroll the palette back to it.
+- A click inside a multi-line text box focuses it but does not place the caret.
+- Two clicks whose four mouse events arrive in one input read are not taken
+  for a double click.
+- Quick Open's `path:line:col` may not scroll horizontally to the column (seen
+  once in a harness run with wrapping off; not investigated).
+- Two elided tab names that differ only in the elided part read the same.
+
+**Closed by #3435**
+
+- The eager `fresh_ui::Tree::new`.
+- Fixed ten-row paging in the prompt, Live Grep and the Open File browser.
+- Live Grep's results window kept by reading the results band's height back.
+- The Settings category highlight found by walking card rectangles.
+- The tab strip deciding its name cap from the previous frame's width.
+- The multi-line text widget paging by its spec's rows.
+- The hard-coded 6-column gutter in `ensure_cursor_visible_for_navigation`.
+- List popups paging by `max_height` rather than the rows drawn.
+- The Settings entry dialog's dead `viewport_height`.
 
 **Closed by #3420**
 
