@@ -1753,6 +1753,11 @@ async function openPanelInner(opts?: { allFiles?: boolean }): Promise<void> {
 // Replacements
 // =============================================================================
 
+/** Files the last replace rewrote. An undo there puts the replaced matches
+ *  back, so the panel re-runs its search when one of them changes (see the
+ *  `buffer_modified` handler). Cleared when the panel closes. */
+let lastReplacedFiles = new Set<string>();
+
 async function executeReplacements(results?: SearchResult[]): Promise<string> {
   if (!panel) return "";
   const toReplace = results || panel.searchResults.filter(r => r.selected);
@@ -1790,6 +1795,7 @@ async function executeReplacements(results?: SearchResult[]): Promise<string> {
 
   const groupList: Group[] = [];
   groups.forEach((g) => groupList.push(g));
+  lastReplacedFiles = new Set(groupList.map((g) => g.filePath));
   for (const group of groupList) {
     try {
       const result = await editor.replaceInFile(
@@ -2449,6 +2455,7 @@ function search_replace_close(): void {
   }
   panel = null;
   settleConfirmDialog(false);
+  lastReplacedFiles.clear();
   // Restore focus to the split the user came from. Without this,
   // `getActiveBufferId()` on the next invocation can return the
   // utility dock's leftover buffer, and the §1 current-file scope
@@ -2515,12 +2522,33 @@ editor.on("buffer_closed", (args) => {
     panel.widgetPanel?.unmount();
     panel = null;
     settleConfirmDialog(false);
+    lastReplacedFiles.clear();
   }
 });
 
 // When a file is opened after the search captured it (e.g. the user steps
 // into a result whose file wasn't open), register anchor markers for that
 // file's matches so subsequent edits to it keep them in sync (#2583).
+// Keep the results current when a file the panel is about changes — above
+// all when the replace itself is undone, which puts every replaced match
+// back in one bulk edit (no `after_insert` / `after_delete` fires for it).
+// Only edits to the source file, a file with results, or a file the last
+// replace rewrote re-run the search; typing elsewhere leaves it alone.
+editor.on("buffer_modified", (args) => {
+  if (!panel || !panel.searchPattern || replaceInProgress) return true;
+  if (args.buffer_id === panel.resultsBufferId) return true;
+  if (panelWatchesBuffer(args.buffer_id)) rerunSearchDebounced();
+  return true;
+});
+
+function panelWatchesBuffer(bufferId: number): boolean {
+  if (!panel) return false;
+  if (bufferId === panel.sourceBufferId) return true;
+  const path = editor.getBufferPath(bufferId);
+  if (!path) return false;
+  return lastReplacedFiles.has(path) || panel.fileGroups.some((g) => g.absPath === path);
+}
+
 editor.on("after_file_open", (args) => {
   if (panel) ensureMarkersForPath(args.path);
   return true;

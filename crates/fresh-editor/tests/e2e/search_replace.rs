@@ -1121,6 +1121,61 @@ fn test_search_replace_regex_expands_capture_groups() {
     assert_eq!(closed, "bent\n");
 }
 
+/// Undoing a replace in the edited file puts the matches back, and the
+/// panel shows them again without the user re-running the search. The
+/// replace and its undo are one bulk edit each, which fire no
+/// `after_insert` / `after_delete`, so the panel listens for
+/// `buffer_modified`. It used to keep reading "No matches found".
+#[test]
+fn test_search_replace_undo_in_file_shows_matches_again() {
+    init_tracing_from_env();
+    let (_temp_dir, project_root) = setup_search_replace_project();
+
+    // `qxzv`, not a word the copied plugin sources contain.
+    let file = project_root.join("undo_refresh.txt");
+    fs::write(&file, "qxzv one\nqxzv two\n").unwrap();
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        160,
+        40,
+        Default::default(),
+        project_root.clone(),
+    )
+    .unwrap();
+    harness.open_file(&file).unwrap();
+    harness.render().unwrap();
+
+    open_search_replace_via_palette(&mut harness);
+    enter_search_and_replace(&mut harness, "qxzv", "done");
+    harness
+        .wait_until_stable(|h| h.screen_to_string().contains("(2 matches / 1 files)"))
+        .unwrap();
+    confirm_replace_all(&mut harness);
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("done one") && s.contains("No matches found")
+        })
+        .unwrap();
+
+    // Focus the edited file (the panel stays open) and undo there.
+    let (col, row) = harness
+        .find_text_on_screen("done one")
+        .expect("the edited file is on screen");
+    harness.mouse_click(col, row).unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Char('z'), KeyModifiers::CONTROL)
+        .unwrap();
+
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("qxzv one") && s.contains("(2 matches / 1 files)")
+        })
+        .unwrap();
+}
+
 /// Multiple matches on the same line — all occurrences on the line get replaced.
 #[test]
 fn test_search_replace_multiple_matches_same_line() {

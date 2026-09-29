@@ -5972,6 +5972,16 @@ interface HookEventMap {
 		end_line: number;
 		lines_removed: number;
 	};
+	/**
+	* Fired after any edit changes a buffer's content — including the bulk
+	* edits (multi-cursor typing, a whole-buffer replace, and the undo or redo
+	* of either) that fire no `after_insert` / `after_delete`. Carries no
+	* positions: it says the buffer changed, so re-read it.
+	*/
+	buffer_modified: {
+		buffer_id: number;
+		window_id: number;
+	};
 	// ── cursor & viewport ────────────────────────────────────────────────────
 	cursor_moved: {
 		buffer_id: number;
