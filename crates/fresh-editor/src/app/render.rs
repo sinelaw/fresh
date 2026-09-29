@@ -480,7 +480,7 @@ impl Editor {
                     .active_window()
                     .split_view_states()
                     .get(&split_id)
-                    .map(|vs| vs.viewport.top_byte())
+                    .map(|vs| vs.buffer_tab_state().viewport.top_byte())
                     .unwrap_or(0);
 
                 // Whether this buffer is being composed in any split, read from
@@ -962,9 +962,9 @@ impl Editor {
                     continue;
                 }
                 let current = (
-                    view_state.viewport.top_byte(),
-                    view_state.viewport.width,
-                    view_state.viewport.height,
+                    view_state.buffer_tab_state().viewport.top_byte(),
+                    view_state.buffer_tab_state().viewport.width,
+                    view_state.buffer_tab_state().viewport.height,
                 );
                 // Arriving on screen is itself the change. Skipping it (the
                 // old behaviour) left a pane that then never resizes — a
@@ -1021,11 +1021,9 @@ impl Editor {
                             .get(&buffer_id)
                             .and_then(|state| {
                                 if state.buffer.line_count().is_some() {
-                                    Some(
-                                        state
-                                            .buffer
-                                            .get_line_number(view_state.viewport.top_byte()),
-                                    )
+                                    Some(state.buffer.get_line_number(
+                                        view_state.buffer_tab_state().viewport.top_byte(),
+                                    ))
                                 } else {
                                     None
                                 }
@@ -1034,7 +1032,7 @@ impl Editor {
                             "Firing viewport_changed hook: split={:?} buffer={:?} top_byte={} top_line={:?}",
                             split_id,
                             buffer_id,
-                            view_state.viewport.top_byte(),
+                            view_state.buffer_tab_state().viewport.top_byte(),
                             top_line
                         );
                         let Ok(pm) = self.plugin_manager.try_read() else {
@@ -1047,10 +1045,10 @@ impl Editor {
                                 split_id: (*split_id).into(),
                                 buffer_id,
                                 window_id: self.active_window.0,
-                                top_byte: view_state.viewport.top_byte(),
+                                top_byte: view_state.buffer_tab_state().viewport.top_byte(),
                                 top_line,
-                                width: view_state.viewport.width,
-                                height: view_state.viewport.height,
+                                width: view_state.buffer_tab_state().viewport.width,
+                                height: view_state.buffer_tab_state().viewport.height,
                             },
                         );
                     }
@@ -1085,9 +1083,9 @@ impl Editor {
                 (
                     *split_id,
                     (
-                        view_state.viewport.top_byte(),
-                        view_state.viewport.width,
-                        view_state.viewport.height,
+                        view_state.buffer_tab_state().viewport.top_byte(),
+                        view_state.buffer_tab_state().viewport.width,
+                        view_state.buffer_tab_state().viewport.height,
                     ),
                 )
             })
@@ -1129,10 +1127,6 @@ impl Editor {
         // writes when the title actually changes so we don't flood stdout
         // with OSC sequences every frame.
         self.update_terminal_title(&display_name);
-
-        // Render file browser popup or suggestions popup AFTER status bar + prompt,
-        // so they overlay on top of both (fixes bottom border being overwritten by status bar)
-        self.settle_prompt_suggestions();
 
         // Render editor-level popups (e.g. plugin action popups) on top of any
         // buffer content so they stay visible across buffer switches and over
@@ -1464,7 +1458,7 @@ impl Editor {
             .get(&self.active_window)
             .and_then(|w| w.buffers.splits())
             .and_then(|(_, vs)| vs.get(&active))
-            .map(|vs| vs.cursors.primary().position)?;
+            .map(|vs| vs.buffer_tab_state().cursors.primary().position)?;
         let word_start = {
             use crate::primitives::word_navigation::find_completion_word_start;
             find_completion_word_start(&self.active_state().buffer, primary)
@@ -1820,71 +1814,33 @@ impl Editor {
         })
     }
 
-    /// Read the settings body's window back off the tree.
+    /// Follow the settings body's window, and read the other windows back.
     ///
-    /// **The direction of travel is the point.** `ScrollablePanel` owned the
-    /// window and re-derived the column's height from `SettingItem::layout_box`
-    /// to bound it — the same arithmetic the painter drew each card with, in a
-    /// second place. The `viewport` owns it now, so this reads rather than
-    /// computes, and the state's scroll methods ask for a move by handle
-    /// instead of writing an offset.
+    /// The body's is layout's answer: its paged anchor records where the
+    /// window starts and which card that is, where the cards are placed.
     fn refresh_settings_body_window(&mut self) {
         use crate::view::shell::settings as st;
         let Some(ui) = self.shell_ui.as_ref() else {
             return;
         };
-        // **Three windows, three answers, and no one of them gates the
-        // others.** The cards' viewport is only in the tree while the body is
-        // showing cards: a search replaces it with the results list, so
-        // returning here when it is missing left the results' own offset
-        // unread, and the count row went on reporting "(1-10 of 176)" however
-        // far the wheel had taken the list.
-        let body = ui.find_by_key(&st::items_key());
-        let vpr = body.map(|vp| ui.rect_of(vp)).unwrap_or_default();
-        let scroll = match body {
-            Some(vp) => ui.scroll(vp).0,
-            None => Default::default(),
-        };
-        let offset = scroll.y.max(0) as u16;
-        let moved = body.is_some()
-            && self
-                .settings_state
-                .as_ref()
-                .is_some_and(|s| s.body.offset != offset);
-        // Which card the window starts on. Only worth a walk when the window
-        // has actually moved — it is the left tree's highlight that reads it,
-        // and that only has to change when the body does.
-        let top_item = match moved {
-            false => self.settings_state.as_ref().and_then(|s| s.body.top_item),
-            true => {
-                let n = self
-                    .settings_state
-                    .as_ref()
-                    .and_then(|s| s.pages.get(s.selected_category))
-                    .map(|p| p.items.len())
-                    .unwrap_or(0);
-                (0..n).find(|&i| {
-                    body.and_then(|vp| ui.find_by_key_in(vp, &st::card_key(i)))
-                        .map(|e| ui.rect_of(e))
-                        // The first card whose bottom edge is below the
-                        // window's top is the one the window starts on.
-                        .is_some_and(|r| r.y + r.h as i32 > vpr.y)
-                })
-            }
-        };
         let Some(s) = self.settings_state.as_mut() else {
             return;
         };
-        if body.is_some() {
-            s.body = crate::view::settings::state::BodyWindow { offset, top_item };
-        }
-        // The left tree's highlight follows the body, in both directions —
-        // the same contract the wheel and the scrollbar had, stated once
-        // against the window rather than at each thing that moves it.
-        // ...but not when the cursor is what moved it: see
-        // `SettingsState::cursor_drove_body`.
-        if moved && !s.take_cursor_drove_body() {
-            s.sync_tree_cursor_to_body_scroll();
+        // **Three windows, three answers, and no one of them gates the
+        // others.** The cards' window only answers while the body is showing
+        // cards: a search replaces it with the results list, whose own
+        // offset is still read below.
+        if let Some(start) = s.body_anchor.start() {
+            let moved = s.body_offset != start.offset;
+            s.body_offset = start.offset;
+            // The left tree's highlight follows the body, in both directions
+            // — the same contract the wheel and the scrollbar had, stated
+            // once against the window rather than at each thing that moves
+            // it. ...but not when the cursor is what moved it: see
+            // `SettingsState::cursor_drove_body`.
+            if moved && !s.take_cursor_drove_body() {
+                s.sync_tree_cursor_to_body_scroll();
+            }
         }
         // The search results' window, on the same terms. The list moves its
         // own window when the selection leaves it, so what the count row
@@ -3765,6 +3721,7 @@ impl Editor {
                     crate::view::popup::PopupResolver::WorkspaceTrust
                 ),
                 selected_hint: p.accept_key_hint.clone(),
+                pager: p.pager.clone(),
             },
             transient: p.transient,
             keys: None,
@@ -3860,8 +3817,7 @@ impl Editor {
     ///
     /// Only the outer rectangle and two counts. Everything the painter derived
     /// from them — the header band's height, where the body starts, how the
-    /// body splits — is what the description states, and
-    /// `overlay_prompt::regions_of` is where the painter reads it back.
+    /// body splits — is what the description states.
     ///
     /// The toolbar's row count is the one thing that has to be *measured*
     /// rather than declared: a plugin's toolbar is two rows on a wide terminal
@@ -4043,6 +3999,7 @@ impl Editor {
             listing,
             selected: files.then_some(state.selected_index()).flatten(),
             hover,
+            pager: state.pager.clone(),
         })
     }
 
@@ -4105,6 +4062,7 @@ impl Editor {
             hints: (!prompt.overlay
                 && prompt.prompt_type == crate::view::prompt::PromptType::QuickOpen)
                 .then(|| fresh_i18n::t!("quick_open.mode_hints").to_string()),
+            pager: prompt.pager.clone(),
         })
     }
 
@@ -4406,7 +4364,9 @@ impl Editor {
     /// produce a one-frame lag on cursor moves that trigger a scroll-sync anchor
     /// change (e.g. `G` in a side-by-side diff).
     fn pre_sync_and_scroll_sync(&mut self) {
-        let active_split = self.active_window().split_manager().active_split();
+        // The pane the user is in: a shown group's focused panel, not the
+        // pane showing the group, whose buffer tab is behind it.
+        let active_split = self.effective_active_split();
         {
             let _span = tracing::info_span!("pre_sync_ensure_visible").entered();
             self.active_window_mut()
@@ -4426,10 +4386,13 @@ impl Editor {
         {
             let _span = tracing::info_span!("compute_semantic_ranges").entered();
             for (split_id, view_state) in self.active_window().split_view_states() {
+                // A pane of the tree that shows its buffer — not one showing
+                // a group, whose buffer tab is behind it and not visible.
                 if let Some(buffer_id) = self
                     .active_window()
                     .split_manager()
                     .get_buffer_id((*split_id).into())
+                    .and(view_state.shown_buffer())
                 {
                     if let Some(state) = self
                         .windows
@@ -4438,10 +4401,14 @@ impl Editor {
                         .expect("active window present")
                         .get(&buffer_id)
                     {
-                        let start_line =
-                            state.buffer.get_line_number(view_state.viewport.top_byte());
-                        let visible_lines =
-                            view_state.viewport.visible_line_count().saturating_sub(1);
+                        let start_line = state
+                            .buffer
+                            .get_line_number(view_state.buffer_tab_state().viewport.top_byte());
+                        let visible_lines = view_state
+                            .buffer_tab_state()
+                            .viewport
+                            .visible_line_count()
+                            .saturating_sub(1);
                         let end_line = start_line.saturating_add(visible_lines);
                         semantic_ranges
                             .entry(buffer_id)
@@ -4480,8 +4447,17 @@ impl Editor {
             vs_map
                 .iter()
                 .filter_map(|(split_id, vs)| {
+                    // Not a pane showing a group: its buffer tab is behind
+                    // the group, not on screen.
                     mgr.get_buffer_id((*split_id).into())
-                        .map(|bid| (bid, vs.viewport.top_byte(), vs.viewport.height))
+                        .and(vs.shown_buffer())
+                        .map(|bid| {
+                            (
+                                bid,
+                                vs.buffer_tab_state().viewport.top_byte(),
+                                vs.buffer_tab_state().viewport.height,
+                            )
+                        })
                 })
                 .collect()
         };
@@ -4625,45 +4601,6 @@ impl Editor {
         crate::view::dimming::apply_dimming_excluding(frame, size, Some(terminal_area));
     }
 
-    /// Settle the open overlay prompt's selection window against the results
-    /// band the tree placed. Nothing is painted here — the list, the bottom
-    /// popup and the overlay card are the tree's.
-    fn settle_prompt_suggestions(&mut self) {
-        let Some(prompt) = &self.active_window_mut().prompt else {
-            return;
-        };
-
-        // Overlay prompts (Live Grep, issue #1796) get a dedicated
-        // centred floating frame instead of the bottom-anchored popup.
-        // Centre it in the chrome area (right of a left dock) so it never
-        // overlaps the dock column.
-        if prompt.overlay {
-            // The card is the tree's; what is left here is the selection's
-            // window. How many rows the list can show is the results band's
-            // height, read off the card rather than counted — so the
-            // selection scrolls only when it genuinely passes the bottom, not
-            // when it crosses the bottom-popup default cap.
-            let visible = crate::view::shell::overlay_prompt::regions_of(
-                self.shell_ui.as_ref().expect("the shell tree is in place"),
-            )
-            .iter()
-            .find(|(k, _)| *k == crate::view::shell::overlay_prompt::CardRegion::Results)
-            .map(|(_, r)| r.height as usize)
-            .unwrap_or(0);
-            if let Some(prompt) = self.active_window_mut().prompt.as_mut() {
-                // Skip when the user has wheel-scrolled the list — keeping
-                // the selection pinned in view would undo their scroll
-                // (issue #2119).
-                if !prompt.manual_scroll {
-                    prompt.ensure_selected_visible_within(visible);
-                }
-            }
-        }
-        // Nothing is painted here, and nothing is carried to the next frame:
-        // the columns that used to measure against the window this layout
-        // settled are measured at the cut now (`shell::prompt::suggestions`).
-    }
-
     /// Resolve the overlay's currently-selected match into a real
     /// `Buffer` parked in a phantom `LeafId`, so the preview pane can
     /// reuse the regular per-leaf renderer (with syntax highlighting,
@@ -4805,7 +4742,7 @@ impl Editor {
                 let __buffer_keys: Vec<BufferId> = __win.buffers.ids();
                 let (__mgr, __vs_map) = __win.splits_mut();
                 if let Some(source_state) = __vs_map.get_mut(&source_split) {
-                    if source_state.active_buffer == buffer_id {
+                    if source_state.buffer_tab() == buffer_id {
                         let fallback = source_state
                             .open_buffers
                             .iter()
@@ -4817,7 +4754,7 @@ impl Editor {
                                     .find(|b| *b != buffer_id && !preview_loaded.contains(b))
                             });
                         if let Some(fb) = fallback {
-                            source_state.switch_buffer(fb);
+                            source_state.set_buffer_tab(fb);
                             __mgr.set_split_buffer(source_split, fb);
                         }
                     }
@@ -4849,17 +4786,19 @@ impl Editor {
                 self.terminal_height,
                 buffer_id,
             );
-            view_state.apply_config_defaults(crate::view::split::ViewConfigDefaults {
-                line_numbers: self.config.editor.line_numbers,
-                highlight_current_line: self.config.editor.highlight_current_line,
-                line_wrap: self.active_window().resolve_line_wrap_for_buffer(buffer_id),
-                wrap_indent: self.config.editor.wrap_indent,
-                wrap_column: self
-                    .active_window()
-                    .resolve_wrap_column_for_buffer(buffer_id),
-                rulers: self.config.editor.rulers.clone(),
-                scroll_offset: self.config.editor.scroll_offset,
-            });
+            view_state.buffer_tab_state_mut().apply_config_defaults(
+                crate::view::split::ViewConfigDefaults {
+                    line_numbers: self.config.editor.line_numbers,
+                    highlight_current_line: self.config.editor.highlight_current_line,
+                    line_wrap: self.active_window().resolve_line_wrap_for_buffer(buffer_id),
+                    wrap_indent: self.config.editor.wrap_indent,
+                    wrap_column: self
+                        .active_window()
+                        .resolve_wrap_column_for_buffer(buffer_id),
+                    rulers: self.config.editor.rulers.clone(),
+                    scroll_offset: self.config.editor.scroll_offset,
+                },
+            );
             let mut loaded_buffers = std::collections::HashSet::new();
             // Whether this *first* preview buffer was newly loaded.
             // The pre-existing case skips the `was_open` branch so
@@ -4892,7 +4831,7 @@ impl Editor {
                 .is_some_and(|meta| meta.hidden_from_tabs);
             if let Some(state) = self.active_window_mut().overlay_preview_state.as_mut() {
                 if state.buffer_id != buffer_id {
-                    state.view_state.switch_buffer(buffer_id);
+                    state.view_state.set_buffer_tab(buffer_id);
                     // Keep the struct's `buffer_id` in lockstep with the
                     // view-state's active buffer: the renderer looks up the
                     // buffer to draw via this field, so a stale value here
@@ -4978,25 +4917,43 @@ impl Editor {
             let preview_buffer = win.buffers.get_mut(&buffer_id);
             let preview_state = win.overlay_preview_state.as_mut();
             if let (Some(state), Some(pstate)) = (preview_buffer, preview_state) {
-                pstate.view_state.cursors.primary_mut().position = byte_offset;
+                pstate
+                    .view_state
+                    .buffer_tab_state_mut()
+                    .cursors
+                    .primary_mut()
+                    .position = byte_offset;
                 // Force line wrapping on for the preview regardless of the
                 // global `editor.line_wrap` setting (and of a switched-in
                 // buffer's fresh default): the preview pane has no
                 // horizontal scroll affordance, so without wrapping a match
                 // deep in a long line scrolls off-screen. Wrapping moots
                 // horizontal scroll, so reset it to the left edge.
-                // `view_state` derefs to the active buffer's
-                // `BufferViewState`, so this targets the rendered buffer.
-                pstate.view_state.viewport.line_wrap_enabled = true;
+                // The preview's buffer tab is the rendered buffer, so its
+                // `BufferViewState` is the one to change.
+                pstate
+                    .view_state
+                    .buffer_tab_state_mut()
+                    .viewport
+                    .line_wrap_enabled = true;
                 // Recentre only when the selected match changed (issue
                 // #2119) so a mouse-wheel scroll of the preview is
                 // preserved; `center_on_position` counts real visual rows so
                 // a match deep in a wrapped doc still lands mid-pane.
                 if pstate.centered_byte != Some(byte_offset) {
-                    pstate.view_state.viewport.left_column = 0;
-                    pstate.view_state.viewport.horizontal_scroll_offset = 0;
                     pstate
                         .view_state
+                        .buffer_tab_state_mut()
+                        .viewport
+                        .left_column = 0;
+                    pstate
+                        .view_state
+                        .buffer_tab_state_mut()
+                        .viewport
+                        .horizontal_scroll_offset = 0;
+                    pstate
+                        .view_state
+                        .buffer_tab_state_mut()
                         .viewport
                         .center_on_position(&mut state.buffer, byte_offset);
                     pstate.centered_byte = Some(byte_offset);
@@ -5012,8 +4969,9 @@ impl Editor {
                     .overlays
                     .clear_namespace(&preview_ns, &mut state.marker_list);
                 if let Some(re) = &preview_regex {
-                    let visible_start = pstate.view_state.viewport.top_byte();
-                    let visible_rows = pstate.view_state.viewport.height as usize;
+                    let visible_start = pstate.view_state.buffer_tab_state().viewport.top_byte();
+                    let visible_rows =
+                        pstate.view_state.buffer_tab_state().viewport.height as usize;
                     let mut visible_end = visible_start;
                     {
                         let mut iter = state.buffer.line_iterator(visible_start, 80);
@@ -5129,6 +5087,7 @@ impl Editor {
         }
         preview_state
             .view_state
+            .buffer_tab_state_mut()
             .viewport
             .resize(inner.width, inner.height);
         let buffer_id = preview_state.buffer_id;
@@ -5138,7 +5097,7 @@ impl Editor {
         // Deref the SplitViewState once to a concrete `&mut BufferViewState`
         // so disjoint field splits (`viewport` + `folds`) are visible to the
         // borrow checker.
-        let buf_state = preview_state.view_state.active_state_mut();
+        let buf_state = preview_state.view_state.buffer_tab_state_mut();
         let cursors = buf_state.cursors.clone();
         let view_mode = buf_state.view_mode.clone();
         let compose_width = buf_state.compose_width;
@@ -5233,7 +5192,7 @@ impl Editor {
         let size = ratatui::layout::Rect::new(0, 0, width, height);
 
         // Replicate the pre-render sync steps from render()
-        let active_split = self.active_window().split_manager().active_split();
+        let active_split = self.effective_active_split();
         self.active_window_mut()
             .pre_sync_ensure_visible(active_split);
         self.active_window_mut().sync_scroll_groups();
@@ -5533,7 +5492,7 @@ impl Editor {
     ) -> std::collections::HashMap<crate::model::event::LeafId, crate::view::shell::panel::Interior>
     {
         let mut out = std::collections::HashMap::new();
-        for (leaf, buffer) in self.window_panes() {
+        for (leaf, buffer) in self.window_buffer_panes() {
             if let Some(i) = self.pane_panel_interior(buffer) {
                 out.insert(leaf, i);
             }
@@ -5562,8 +5521,7 @@ impl Editor {
             Some(crate::app::types::HoverTarget::NewTabButton(pane)) => Some(*pane),
             _ => None,
         };
-        self.active_window()
-            .pane_strips(chrome, hover, hover_plus, self.shell_ui.as_ref())
+        self.active_window().pane_strips(chrome, hover, hover_plus)
     }
 
     /// Each visible pane's leaf handle, for the frame's description — the
@@ -5602,7 +5560,7 @@ impl Editor {
         use crate::input::keybindings::KeyContext;
         let win = self.active_window();
         let terminal = win.key_context == KeyContext::Terminal;
-        self.window_panes()
+        self.window_buffer_panes()
             .into_iter()
             .filter_map(|(pane, buffer)| {
                 if pane == active && terminal {
@@ -5622,22 +5580,28 @@ impl Editor {
     /// building one: this is the painter's question, asked once per frame, and
     /// an `Interior` clones the spec and the whole instance-state map.
     pub(crate) fn described_panes(&self) -> std::collections::HashSet<crate::model::event::LeafId> {
-        self.window_panes()
+        self.window_buffer_panes()
             .into_iter()
             .filter(|(_, buffer)| self.pane_panel_is_described(*buffer))
             .map(|(leaf, _)| leaf)
             .collect()
     }
 
-    /// Every pane of the active window with the buffer it shows — the panes
-    /// *inside* a buffer group included.
-    ///
-    /// A group's leaves are panes of the same grid, dispatched at render time
-    /// into their outer pane's interior, and `SplitManager::visible_leaves`
-    /// does not walk into them because a group's layout lives in a side map.
-    /// Both halves of C.5 need the same list, so it is stated once.
-    pub(crate) fn window_panes(&self) -> Vec<(crate::model::event::LeafId, fresh_core::BufferId)> {
-        self.active_window().panes_with_buffers()
+    /// Every pane of the active window with the tab it shows — the panes
+    /// *inside* a buffer group included (`Window::panes`). A pane showing a
+    /// group tab carries the group, not the buffer it showed before.
+    pub(crate) fn window_panes(
+        &self,
+    ) -> Vec<(crate::model::event::LeafId, crate::view::split::TabTarget)> {
+        self.active_window().panes()
+    }
+
+    /// The active window's panes that show a buffer, with that buffer
+    /// (`Window::buffer_panes`).
+    pub(crate) fn window_buffer_panes(
+        &self,
+    ) -> Vec<(crate::model::event::LeafId, fresh_core::BufferId)> {
+        self.active_window().buffer_panes()
     }
 
     /// An embedded window's grid, described as the frame describes the
@@ -5670,7 +5634,7 @@ impl Editor {
             hscroll: false,
         });
         let groups = win.pane_groups();
-        let strips = win.pane_strips(&chrome, None, None, None);
+        let strips = win.pane_strips(&chrome, None, None);
         let rowless: std::collections::HashSet<_> = groups.keys().copied().collect();
         let hosts = win.pane_hosts(&rowless);
         Some(std::rc::Rc::new(Splits {
@@ -6101,7 +6065,7 @@ impl Editor {
             .with_buffer_and_view_states(active_buf, |state, vs_map| {
                 let cursors = vs_map
                     .get(&active_split)
-                    .map(|v| &v.cursors)
+                    .map(|v| &v.buffer_tab_state().cursors)
                     .unwrap_or(&default_cursors);
                 let config = &self.config.editor.status_bar;
                 let mut status_ctx = crate::view::ui::status_bar::StatusBarContext {

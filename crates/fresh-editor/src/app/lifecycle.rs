@@ -807,8 +807,14 @@ impl crate::app::window::Window {
         if let Some(view_states) = self.buffers.split_view_states_mut() {
             for (split_id, view_state) in view_states.iter_mut() {
                 match visible_rects.get(split_id) {
-                    Some(area) => view_state.viewport.resize(area.width, area.height),
-                    None => view_state.viewport.resize(content_width, height),
+                    Some(area) => view_state
+                        .buffer_tab_state_mut()
+                        .viewport
+                        .resize(area.width, area.height),
+                    None => view_state
+                        .buffer_tab_state_mut()
+                        .viewport
+                        .resize(content_width, height),
                 }
             }
         }

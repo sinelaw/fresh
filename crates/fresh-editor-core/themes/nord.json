@@ -21,7 +21,10 @@
     "bracket_rainbow_3": [136, 192, 208],
     "bracket_rainbow_4": [143, 188, 187],
     "bracket_rainbow_5": [216, 222, 233],
-    "bracket_rainbow_6": [180, 142, 173]
+    "bracket_rainbow_6": [180, 142, 173],
+    "diff_add_highlight_bg": [75, 100, 75],
+    "diff_remove_highlight_bg": [110, 75, 75],
+    "whitespace_indicator_selected_fg": [135, 147, 171]
   },
   "ui": {
     "blame_header_fg": [236, 239, 244],
@@ -66,11 +69,15 @@
     "scrollbar_track_hover_fg": [67, 76, 94],
     "scrollbar_thumb_hover_fg": [136, 192, 208],
     "settings_selected_bg": [94, 129, 172],
-    "settings_selected_fg": [236, 239, 244]
+    "settings_selected_fg": [236, 239, 244],
+    "status_lsp_actionable_fg": [0, 0, 0],
+    "status_lsp_actionable_bg": [181, 137, 0]
   },
   "search": {
     "match_bg": [235, 203, 139],
-    "match_fg": [46, 52, 64]
+    "match_fg": [46, 52, 64],
+    "current_match_bg": [136, 192, 208],
+    "current_match_fg": {"color": [46, 52, 64], "modifier": ["bold"]}
   },
   "diagnostic": {
     "error_fg": [191, 97, 106],

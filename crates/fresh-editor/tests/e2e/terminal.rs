@@ -4655,7 +4655,11 @@ fn test_terminal_buffers_always_grid_wrap() {
     harness.render().unwrap();
     let win = harness.editor().active_window();
     let (mgr, view_states) = win.buffers.splits().unwrap();
-    let vp = &view_states.get(&mgr.active_split()).unwrap().viewport;
+    let vp = &view_states
+        .get(&mgr.active_split())
+        .unwrap()
+        .buffer_tab_state()
+        .viewport;
     assert!(
         vp.line_wrap_enabled && vp.grid_wrap,
         "terminal viewport must be healed into grid-wrap mode (line_wrap_enabled={}, grid_wrap={})",
@@ -4693,7 +4697,7 @@ fn primary_selection_active(harness: &EditorTestHarness) -> bool {
     view_states
         .get(&mgr.active_split())
         .map(|vs| {
-            let c = vs.cursors.primary();
+            let c = vs.buffer_tab_state().cursors.primary();
             c.anchor.is_some_and(|a| a != c.position)
         })
         .unwrap_or(false)

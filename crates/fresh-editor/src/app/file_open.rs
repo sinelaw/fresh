@@ -141,6 +141,10 @@ pub struct FileOpenState {
 
     /// Filesystem for checking path existence (used for drive letter detection on Windows)
     filesystem: Arc<dyn FileSystem + Send + Sync>,
+
+    /// The list's page: its layout records the window it was given here,
+    /// and PageUp/PageDown ask it for the entry a page away.
+    pub pager: std::rc::Rc<fresh_ui::behavior::Pager>,
 }
 
 impl FileOpenState {
@@ -170,6 +174,7 @@ impl FileOpenState {
             show_hidden,
             detect_encoding: true,
             filesystem,
+            pager: fresh_ui::behavior::Pager::new(),
         }
     }
 
@@ -578,26 +583,29 @@ impl FileOpenState {
     }
 
     /// Page up
-    pub fn page_up(&mut self, page_size: usize) {
-        if self.active_section == FileOpenSection::Files {
-            if let Some(idx) = self.selected_index() {
-                self.select_index(Some(idx.saturating_sub(page_size)));
-            } else if !self.entries.is_empty() {
-                self.select_index(Some(0));
-            }
-        }
+    pub fn page_up(&mut self) {
+        self.page(-1);
     }
 
     /// Page down
-    pub fn page_down(&mut self, page_size: usize) {
-        if self.active_section == FileOpenSection::Files {
-            if let Some(idx) = self.selected_index() {
-                self.select_index(Some(
-                    (idx + page_size).min(self.entries.len().saturating_sub(1)),
-                ));
-            } else if !self.entries.is_empty() {
-                self.select_index(Some(self.entries.len().saturating_sub(1)));
-            }
+    pub fn page_down(&mut self) {
+        self.page(1);
+    }
+
+    /// Move the selection `pages` pages, by the window the list was last
+    /// laid out with. With nothing selected, a page up lands on the first
+    /// entry and a page down on the last.
+    fn page(&mut self, pages: i32) {
+        if self.active_section != FileOpenSection::Files || self.entries.is_empty() {
+            return;
+        }
+        let to = match self.selected_index() {
+            Some(idx) => self.pager.target(idx, pages, self.entries.len()),
+            None if pages < 0 => Some(0),
+            None => Some(self.entries.len() - 1),
+        };
+        if let Some(to) = to {
+            self.select_index(Some(to));
         }
     }
 

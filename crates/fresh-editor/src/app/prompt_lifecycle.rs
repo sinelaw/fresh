@@ -73,7 +73,29 @@ impl Editor {
 
         let selection_range = self.active_cursors().primary().selection_range();
 
-        let selected_text = if let Some(range) = selection_range.clone() {
+        // Find Next selects the match it lands on. Reopening the bar on that
+        // selection should bring back the query that found it (which may be
+        // a regex), not the literal text it happened to match.
+        let selection_is_current_match = selection_range.as_ref().is_some_and(|range| {
+            self.active_window()
+                .current_search_match_range()
+                .is_some_and(|current| current == *range)
+        });
+        let current_query = self
+            .active_window()
+            .search_state
+            .as_ref()
+            .map(|s| s.query.clone())
+            .filter(|q| selection_is_current_match && !q.is_empty());
+
+        let prefilled_current_query = current_query.is_some();
+        let selected_text = if prefilled_current_query {
+            current_query
+        } else if selection_is_current_match {
+            // Left over from a search that has since ended: not something the
+            // user chose to search for, so fall back to the history.
+            None
+        } else if let Some(range) = selection_range.clone() {
             let state = self.active_state_mut();
             let text = state.get_text_range(range.start, range.end);
             if !text.contains('\n') && !text.is_empty() {
@@ -87,10 +109,17 @@ impl Editor {
 
         if use_selection_range {
             self.active_window_mut().pending_search_range = selection_range;
+        } else if selection_is_current_match {
+            // A new search is starting; the selection the last one made would
+            // only linger as a stale match (and pre-fill a later prompt with
+            // its text), so drop it and leave the caret where it was.
+            self.active_cursors_mut().primary_mut().clear_selection();
         }
 
-        // Determine the default text: selection > last history > empty
-        let from_history = selected_text.is_none();
+        // Determine the default text: selection > last history > empty.
+        // The current match's query is normally the latest history entry, so
+        // Up steps back from it just as from a history pre-fill.
+        let from_history = selected_text.is_none() || prefilled_current_query;
         let default_text = selected_text.or_else(|| {
             self.get_prompt_history("search")
                 .and_then(|h| h.last().map(|s| s.to_string()))
@@ -405,8 +434,12 @@ impl Editor {
             return;
         }
 
-        let buffer_id = self.active_buffer();
-        let split_id = self.active_window().split_manager().active_split();
+        // The pane the cursor and viewport below are read from: the one the
+        // user is in, a shown group's focused panel included.
+        let (split_id, buffer_id) = {
+            let (split, buffer) = (self.effective_active_split(), self.active_buffer());
+            (split, buffer)
+        };
         let (cursor_id, position, anchor, sticky_column) = {
             let cursors = self.active_cursors();
             let primary = cursors.primary();
@@ -454,8 +487,7 @@ impl Editor {
 
         // If the active buffer/split has changed (shouldn't happen during a
         // quick-open prompt, but be defensive), just drop the snapshot.
-        if self.active_buffer() != snap.buffer_id
-            || self.active_window().split_manager().active_split() != snap.split_id
+        if self.active_buffer() != snap.buffer_id || self.effective_active_split() != snap.split_id
         {
             return;
         }
@@ -482,13 +514,14 @@ impl Editor {
         self.active_window_mut()
             .apply_event_to_buffer(snap.buffer_id, snap.split_id, &event);
 
-        if let Some(view_state) = self
+        if let Some(view) = self
             .active_window_mut()
             .splits_mut()
             .1
             .get_mut(&snap.split_id)
+            .and_then(|vs| vs.buffer_state_mut(snap.buffer_id))
         {
-            let vp = &mut view_state.viewport;
+            let vp = &mut view.viewport;
             vp.set_top_byte(snap.viewport_top_byte);
             vp.set_top_view_line_offset(snap.viewport_top_view_line_offset);
             vp.left_column = snap.viewport_left_column;
@@ -1214,6 +1247,9 @@ impl Editor {
                 self.update_quick_open_suggestions(&input);
             }
             PromptType::Search | PromptType::ReplaceSearch | PromptType::QueryReplaceSearch => {
+                // The current match belongs to the query as it was; once the
+                // query is edited it no longer applies.
+                self.active_window_mut().clear_current_search_match();
                 // Update incremental search highlights as user types
                 self.update_search_highlights(&input);
                 // Reset history navigation when user types - allows Up to navigate history
@@ -1314,9 +1350,7 @@ impl Window {
                 // Also cancel interactive replace if active
                 self.interactive_replace_state = None;
                 // Clear search highlights from current buffer
-                let ns = self.search_namespace.clone();
-                let state = self.active_state_mut();
-                state.overlays.clear_namespace(&ns, &mut state.marker_list);
+                self.clear_search_overlays();
             }
         }
     }

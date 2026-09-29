@@ -687,7 +687,7 @@ impl Editor {
             .active_window()
             .split_view_states()
             .get(&split_id)
-            .and_then(|vs| vs.compose_width);
+            .and_then(|vs| vs.buffer_tab_state().compose_width);
 
         // Convert screen position to buffer byte position
         let Some(byte_pos) = super::click_geometry::screen_to_buffer_position(

@@ -27,7 +27,9 @@
     "bracket_rainbow_3": [220, 220, 170],
     "bracket_rainbow_4": [78, 201, 176],
     "bracket_rainbow_5": [156, 220, 254],
-    "bracket_rainbow_6": [79, 193, 255]
+    "bracket_rainbow_6": [79, 193, 255],
+    "ruler_bg": [50, 50, 50],
+    "whitespace_indicator_selected_fg": [105, 105, 115]
   },
   "ui": {
     "tab_active_fg": "Yellow",
@@ -97,11 +99,16 @@
     "status_error_indicator_hover_bg": [250, 80, 77],
     "status_error_indicator_hover_fg": [255, 255, 255],
     "tab_drop_zone_bg": [70, 130, 180],
-    "tab_drop_zone_border": [100, 149, 237]
+    "tab_drop_zone_border": [100, 149, 237],
+    "popup_selection_fg": [255, 255, 255]
   },
   "search": {
     "match_bg": [100, 100, 20],
-    "match_fg": [255, 255, 255]
+    "match_fg": [255, 255, 255],
+    "current_match_bg": [64, 170, 230],
+    "current_match_fg": {"color": [0, 0, 0], "modifier": ["bold"]},
+    "label_bg": [199, 78, 189],
+    "label_fg": [255, 255, 255]
   },
   "diagnostic": {
     "error_fg": "Red",

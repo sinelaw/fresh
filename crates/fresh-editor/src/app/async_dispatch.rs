@@ -1047,15 +1047,10 @@ impl Editor {
                     crate::app::types::PointerDrag::Selection(_)
                         | crate::app::types::PointerDrag::TerminalPress { .. }
                 )
-            ) || win
-                .buffers
-                .splits()
-                .and_then(|(mgr, view_states)| view_states.get(&mgr.active_split()))
-                .map(|vs| {
-                    let c = vs.cursors.primary();
-                    c.anchor.is_some_and(|a| a != c.position)
-                })
-                .unwrap_or(false)
+            ) || (win.buffers.splits().is_some() && {
+                let c = win.focused_view().cursors.primary();
+                c.anchor.is_some_and(|a| a != c.position)
+            })
         };
         if self.config.terminal.jump_to_end_on_output
             && !self.active_window().focused_terminal_live()
@@ -1607,7 +1602,7 @@ impl Editor {
                     .map(|(_, vs_map)| {
                         vs_map
                             .iter()
-                            .filter(|(_, svs)| svs.active_buffer == buffer_id)
+                            .filter(|(_, svs)| svs.buffer_tab() == buffer_id)
                             .map(|(leaf, _)| *leaf)
                             .collect()
                     })

@@ -86,22 +86,6 @@ pub enum FocusPanel {
     Footer,
 }
 
-/// What the settings body's window is, read back from the tree after each
-/// layout.
-///
-/// **Read, never computed.** `ScrollablePanel` kept these numbers by walking
-/// `SettingItem::layout_box` over every item on the page — the same
-/// arithmetic the painter used to draw the cards, in a second place, which is
-/// exactly what goal 5 forbids. The cards are a `col` in a `viewport` now:
-/// the column measures each of them once, and this is what it measured.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct BodyWindow {
-    /// How far down the column the window starts.
-    pub offset: u16,
-    /// The card the window starts on.
-    pub top_item: Option<usize>,
-}
-
 /// The state of the settings UI
 #[derive(Debug)]
 pub struct SettingsState {
@@ -178,14 +162,10 @@ pub struct SettingsState {
     pub entry_delete_target_is_array_item: bool,
     /// Whether the help overlay is showing
     pub showing_help: bool,
-    /// What the body's window *is*, read back from the tree after each
-    /// layout.
-    ///
-    /// **Read, never computed.** `ScrollablePanel` kept the same three numbers
-    /// by re-deriving every item's height from `SettingItem::layout_box` —
-    /// the second layout tree this migration exists to remove. The column in
-    /// the `viewport` measures the cards once; these are what it measured.
-    pub body: BodyWindow,
+    /// The body window's offset when the tree's highlight last looked, so
+    /// a frame can tell that the window moved. The offset is layout's
+    /// answer ([`fresh_ui::behavior::Anchor::start`]).
+    pub body_offset: i32,
     /// The body window's handle.
     ///
     /// **The window is the tree's; this is how the keyboard reaches it.** The
@@ -426,7 +406,7 @@ impl SettingsState {
             entry_delete_target_name: String::new(),
             entry_delete_target_is_array_item: false,
             showing_help: false,
-            body: BodyWindow::default(),
+            body_offset: 0,
             body_anchor: fresh_ui::behavior::Anchor::paged(),
             available_status_bar_tokens,
             hover_hit: None,
@@ -664,12 +644,12 @@ impl SettingsState {
     /// The left-panel section indicator follows this so scrolling visibly
     /// moves the highlight in the tree, not just keyboard navigation.
     ///
-    /// It used to be computed here, from the scroll offset and a walk of
-    /// every item's `ScrollItem::height` — the same heights the painter
-    /// planned each card with, kept in step by hand. The cards are laid out
-    /// once now, and this is which one the window is showing.
+    /// Which card that is is layout's answer: the window records its cards'
+    /// bands where it places them, and says which one its first row is in.
+    /// `None` while the body is not showing cards (a search replaces them).
     pub fn topmost_visible_item_index(&self) -> Option<usize> {
-        self.body.top_item
+        let first = self.body_anchor.start()?.first?;
+        super::super::shell::settings::card_index(&first)
     }
 
     /// Section currently displayed in the body — the section whose item

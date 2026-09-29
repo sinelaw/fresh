@@ -709,14 +709,18 @@ impl crate::app::window::Window {
         buffer_id: crate::model::event::BufferId,
         byte_pos: usize,
     ) {
-        let Some(split_id) = self.buffers.split_manager().map(|m| m.active_split()) else {
+        if self.buffers.splits().is_none() {
             return;
-        };
+        }
+        // The pane the user is in — a shown group's focused panel, not the
+        // pane showing the group — with a view state for `buffer_id`.
+        let split_id = self.effective_active_split();
+        if let Some(vs) = self.split_view_states_mut().get_mut(&split_id) {
+            vs.ensure_buffer_state(buffer_id);
+        }
 
         self.buffers
-            .with_buffer_and_split(buffer_id, split_id, |state, view_state| {
-                let buf_state = view_state.ensure_buffer_state(buffer_id);
-
+            .with_buffer_and_split(buffer_id, split_id, |state, buf_state| {
                 // Try to unfold first — check if this byte's line is a fold header.
                 let header_byte = {
                     use crate::view::folding::indent_folding;

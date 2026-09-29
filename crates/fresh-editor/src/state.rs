@@ -1298,19 +1298,20 @@ impl EditorState {
 
     /// Show a popup synthesized from replayed [`PopupData`].
     ///
-    /// The replay path has no theme handle, so the popup is built with theme
-    /// *defaults*. Editor-level callers
+    /// The replay path has no theme handle, so the popup is built with the
+    /// built-in dark theme's colors. Editor-level callers
     /// (`Editor::apply_event_to_active_buffer`) intercept `Event::ShowPopup`
     /// *before* it reaches `state.apply` and build the popup with the live
     /// theme — see `event_apply.rs`. This is reached only when tests drive
     /// `state.apply` directly (no surrounding `Editor`).
     fn apply_show_popup(&mut self, popup: &PopupData) {
-        use crate::view::theme::{default_popup_bg, default_popup_border_fg};
-        let popup_obj = convert_popup_data_to_popup(
-            popup,
-            default_popup_bg().into(),
-            default_popup_border_fg().into(),
-        );
+        use crate::view::theme::{Theme, THEME_DARK};
+        static POPUP_COLORS: std::sync::OnceLock<(Color, Color)> = std::sync::OnceLock::new();
+        let &(bg, border) = POPUP_COLORS.get_or_init(|| {
+            let theme = Theme::load_builtin(THEME_DARK).expect("dark builtin theme");
+            (theme.popup_bg, theme.popup_border_fg)
+        });
+        let popup_obj = convert_popup_data_to_popup(popup, bg, border);
         self.popups.show_or_replace(popup_obj);
     }
 
@@ -1711,6 +1712,7 @@ pub(crate) fn convert_popup_data_to_popup(
         border_style: Style::default().fg(popup_border_fg),
         background_style: Style::default().bg(popup_bg),
         scroll_offset: 0,
+        pager: Default::default(),
         text_selection: None,
         accept_key_hint: None,
         resolver,

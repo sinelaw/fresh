@@ -3576,7 +3576,7 @@ impl Editor {
         line: usize,
     ) {
         let actual_split_id = if split_id.0 == 0 {
-            self.active_window().split_manager().active_split()
+            self.effective_active_split()
         } else {
             LeafId(split_id)
         };
@@ -3588,7 +3588,7 @@ impl Editor {
             .split_view_states()
             .get(&actual_split_id)
         {
-            view_state.viewport.height as usize
+            view_state.buffer_tab_state().viewport.height as usize
         } else {
             return;
         };
@@ -3631,7 +3631,7 @@ impl Editor {
         // Main tree: walk its leaves.
         for leaf_id in self.active_window().split_manager().root().leaf_split_ids() {
             if let Some(vs) = self.active_window().split_view_states().get(&leaf_id) {
-                if vs.active_buffer == buffer_id {
+                if vs.buffer_tab() == buffer_id {
                     target_leaves.push(leaf_id);
                 }
             }
@@ -3642,7 +3642,7 @@ impl Editor {
             if let crate::view::split::SplitNode::Grouped { layout, .. } = node {
                 for inner_leaf in layout.leaf_split_ids() {
                     if let Some(vs) = self.active_window().split_view_states().get(&inner_leaf) {
-                        if vs.active_buffer == buffer_id && !target_leaves.contains(&inner_leaf) {
+                        if vs.buffer_tab() == buffer_id && !target_leaves.contains(&inner_leaf) {
                             target_leaves.push(inner_leaf);
                         }
                     }
@@ -4264,19 +4264,21 @@ impl Editor {
                     self.terminal_height,
                     buffer_id,
                 );
-                view_state.apply_config_defaults(crate::view::split::ViewConfigDefaults {
-                    line_numbers: self.config.editor.line_numbers,
-                    highlight_current_line: self.config.editor.highlight_current_line,
-                    line_wrap: line_wrap.unwrap_or_else(|| {
-                        self.active_window().resolve_line_wrap_for_buffer(buffer_id)
-                    }),
-                    wrap_indent: self.config.editor.wrap_indent,
-                    wrap_column: self
-                        .active_window()
-                        .resolve_wrap_column_for_buffer(buffer_id),
-                    rulers: self.config.editor.rulers.clone(),
-                    scroll_offset: self.config.editor.scroll_offset,
-                });
+                view_state.buffer_tab_state_mut().apply_config_defaults(
+                    crate::view::split::ViewConfigDefaults {
+                        line_numbers: self.config.editor.line_numbers,
+                        highlight_current_line: self.config.editor.highlight_current_line,
+                        line_wrap: line_wrap.unwrap_or_else(|| {
+                            self.active_window().resolve_line_wrap_for_buffer(buffer_id)
+                        }),
+                        wrap_indent: self.config.editor.wrap_indent,
+                        wrap_column: self
+                            .active_window()
+                            .resolve_wrap_column_for_buffer(buffer_id),
+                        rulers: self.config.editor.rulers.clone(),
+                        scroll_offset: self.config.editor.scroll_offset,
+                    },
+                );
                 view_state.ensure_buffer_state(buffer_id).show_line_numbers = show_line_numbers;
                 self.active_window_mut()
                     .split_view_states_mut()
@@ -4413,22 +4415,22 @@ impl Editor {
         self.active_window_mut().set_pane_buffer(leaf_id, buffer_id);
 
         // Fall-through to the cursor/open_buffers housekeeping
-        // that used to follow the manual switch_buffer. We keep
+        // that used to follow the manual buffer switch. We keep
         // the `if let Some(view_state)` block below — set_pane_buffer
-        // already called switch_buffer, but the downstream code
+        // already called set_buffer_tab, but the downstream code
         // also nudges open_buffers and focus_history.
         if let Some(view_state) = self
             .active_window_mut()
             .split_view_states_mut()
             .get_mut(&leaf_id)
         {
-            view_state.switch_buffer(buffer_id);
+            view_state.set_buffer_tab(buffer_id);
             view_state.add_buffer(buffer_id);
             view_state.ensure_buffer_state(buffer_id).show_line_numbers = show_line_numbers;
 
             // Apply line_wrap setting if provided
             if let Some(wrap) = line_wrap {
-                view_state.active_state_mut().viewport.line_wrap_enabled = wrap;
+                view_state.buffer_tab_state_mut().viewport.line_wrap_enabled = wrap;
             }
         }
 
@@ -7080,19 +7082,27 @@ impl Window {
             // Regular buffers live in exactly one split's keyed_states.
             // Panel (hidden) buffers natively live inside a group's inner
             // split — but the close-buffer path can leave a *shadow*
-            // entry in the group's host split (from `switch_buffer`'s
-            // auto-insert, kept to preserve the
-            // `active_buffer ∈ keyed_states` invariant). For hidden
+            // entry in the group's host split (from `set_buffer_tab`'s
+            // auto-insert, kept because the buffer tab always has a view
+            // state). For hidden
             // buffers we therefore skip group-host splits and pick the
             // inner split, which is the authoritative home.
             let is_hidden = self
                 .buffer_metadata
                 .get(buffer_id)
                 .is_some_and(|m| m.hidden_from_tabs);
-            let source_split = vs_ref.iter().find(|(split_id, vs)| {
-                vs.keyed_states.contains_key(buffer_id)
-                    && !(is_hidden && self.grouped_subtrees.contains_key(split_id))
-            });
+            // A pane that shows the buffer first: its cursor is the one on
+            // screen. Only then any pane keeping a state for it — which can
+            // be a default one made for a buffer that pane never showed.
+            let source_split = vs_ref
+                .iter()
+                .find(|(_, vs)| vs.shown_buffer() == Some(*buffer_id))
+                .or_else(|| {
+                    vs_ref.iter().find(|(split_id, vs)| {
+                        vs.has_buffer_state(*buffer_id)
+                            && !(is_hidden && self.grouped_subtrees.contains_key(split_id))
+                    })
+                });
             let cursor_pos = source_split
                 .and_then(|(_, vs)| vs.buffer_state(*buffer_id))
                 .map(|bs| bs.cursors.primary().position)
@@ -7122,7 +7132,7 @@ impl Window {
         // the split manager's outer `active_split()`. When the active
         // split holds a buffer-group tab, the user's keystrokes (and
         // therefore the meaningful cursor) live in the focused inner
-        // panel's leaf — `focused_group_leaf` — not the outer leaf.
+        // panel's leaf — `Shown::Group::panel` — not the outer leaf.
         // Reading the outer's cursor here would publish (0, 0) into
         // the snapshot while the user is editing the inner panel,
         // which is what `editor.getCursorPosition()` then sees.
@@ -7140,7 +7150,7 @@ impl Window {
             .with_all_mut(|buffers_mut, mgr, vs_map| {
                 if let Some(active_vs) = vs_map.get(&active_split_id) {
                     // Primary cursor (from SplitViewState)
-                    let active_cursors = &active_vs.cursors;
+                    let active_cursors = &active_vs.buffer_tab_state().cursors;
                     let primary = active_cursors.primary();
                     let primary_position = primary.position;
                     let primary_selection = primary.selection_range();
@@ -7188,19 +7198,22 @@ impl Window {
                     }
 
                     // Viewport — get from SplitViewState (the authoritative source)
-                    let top_line = buffers_mut.get(&active_buf_id).and_then(|state| {
-                        if state.buffer.line_count().is_some() {
-                            Some(state.buffer.get_line_number(active_vs.viewport.top_byte()))
-                        } else {
-                            None
-                        }
-                    });
+                    let top_line =
+                        buffers_mut.get(&active_buf_id).and_then(|state| {
+                            if state.buffer.line_count().is_some() {
+                                Some(state.buffer.get_line_number(
+                                    active_vs.buffer_tab_state().viewport.top_byte(),
+                                ))
+                            } else {
+                                None
+                            }
+                        });
                     snapshot.viewport = Some(ViewportInfo {
-                        top_byte: active_vs.viewport.top_byte(),
+                        top_byte: active_vs.buffer_tab_state().viewport.top_byte(),
                         top_line,
-                        left_column: active_vs.viewport.left_column,
-                        width: active_vs.viewport.width,
-                        height: active_vs.viewport.height,
+                        left_column: active_vs.buffer_tab_state().viewport.left_column,
+                        width: active_vs.buffer_tab_state().viewport.width,
+                        height: active_vs.buffer_tab_state().viewport.height,
                     });
                 } else {
                     snapshot.primary_cursor = None;
@@ -7223,10 +7236,19 @@ impl Window {
                     let Some(vs) = vs_map.get(&leaf_id) else {
                         continue;
                     };
-                    let buf_id = vs.active_buffer;
+                    // A pane showing a group tab shows no buffer: the one
+                    // behind the group is not on screen, so it is not this
+                    // pane's to report.
+                    let Some(buf_id) = vs.shown_buffer() else {
+                        continue;
+                    };
                     let top_line = buffers_mut.get(&buf_id).and_then(|state| {
                         if state.buffer.line_count().is_some() {
-                            Some(state.buffer.get_line_number(vs.viewport.top_byte()))
+                            Some(
+                                state
+                                    .buffer
+                                    .get_line_number(vs.buffer_tab_state().viewport.top_byte()),
+                            )
                         } else {
                             None
                         }
@@ -7240,11 +7262,11 @@ impl Window {
                         width: rect.width,
                         height: rect.height,
                         viewport: ViewportInfo {
-                            top_byte: vs.viewport.top_byte(),
+                            top_byte: vs.buffer_tab_state().viewport.top_byte(),
                             top_line,
-                            left_column: vs.viewport.left_column,
-                            width: vs.viewport.width,
-                            height: vs.viewport.height,
+                            left_column: vs.buffer_tab_state().viewport.left_column,
+                            width: vs.buffer_tab_state().viewport.width,
+                            height: vs.buffer_tab_state().viewport.height,
                         },
                     });
                 }
@@ -7293,7 +7315,7 @@ impl Window {
         // Merge from Rust-side plugin_state (source of truth for persisted state)
         if let Some(vs_map) = self.buffers.split_view_states() {
             if let Some(active_vs) = vs_map.get(&active_split_id) {
-                for (buffer_id, buf_state) in &active_vs.keyed_states {
+                for (buffer_id, buf_state) in active_vs.buffer_states() {
                     if !buf_state.plugin_state.is_empty() {
                         let entry = snapshot.plugin_view_states.entry(*buffer_id).or_default();
                         for (key, value) in &buf_state.plugin_state {

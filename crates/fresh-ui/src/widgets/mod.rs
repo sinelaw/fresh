@@ -24,8 +24,6 @@ pub mod misc;
 
 pub use button::{Button, Toggle};
 pub use field::{Number, TextField};
-pub use list::{
-    Activate, DualList, List, RowHeight, RowState, Tree, TreeNode, TreeRow, WindowedTree,
-};
+pub use list::{Activate, DualList, List, RowHeight, RowState, Tree, TreeRow, WindowedTree};
 pub use menu::{Dropdown, RadioGroup};
 pub use misc::{divider, spacer};

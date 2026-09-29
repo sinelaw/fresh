@@ -139,7 +139,7 @@ impl Editor {
     /// The editor always has at least one buffer, so this never fails.
     ///
     /// When the active split has a buffer-group tab as its active target
-    /// (i.e., `active_group_tab.is_some()`), this returns the buffer of the
+    /// (`Shown::Group`), this returns the buffer of the
     /// currently-focused inner panel — so that input routing, command palette
     /// context, buffer mode, and other "what is the user looking at" queries
     /// resolve to the panel the user is actually interacting with rather than
@@ -170,18 +170,14 @@ impl Editor {
     /// target. This is the single source of truth — both `active_buffer` and
     /// `effective_active_split` derive from it so they can never disagree.
     ///
-    /// Returned invariant: `split_view_states[split]` exists, its
-    /// `active_buffer` equals the returned buffer id, `self.buffers`
-    /// contains the returned buffer id, and `split.keyed_states` contains
-    /// an entry for the returned buffer id. Consequently the mutation path
-    /// in `apply_event_to_active_buffer` (which indexes into
-    /// `keyed_states[buffer]`) is always well-defined for the returned pair.
+    /// Returned invariant: `split_view_states[split]` exists, it shows the
+    /// returned buffer id, `self.buffers` contains the returned buffer id,
+    /// and the split keeps a view state for it. Consequently the mutation
+    /// path in `apply_event_to_active_buffer` (which reads the split's state
+    /// for that buffer) is always well-defined for the returned pair.
     ///
-    /// If a buffer-group panel is focused but any of the invariants above
-    /// is not satisfied for the inner leaf (for example because the panel
-    /// buffer was freed without clearing `focused_group_leaf`), the helper
-    /// falls back to the outer split's own leaf. The fallback is also
-    /// validated before being returned.
+    /// While the active pane shows a group the pair is one of its panels,
+    /// never the buffer behind the group (`Window::effective_active_pair`).
     #[inline]
     fn effective_active_pair(&self) -> (crate::model::event::LeafId, BufferId) {
         self.active_window().effective_active_pair()

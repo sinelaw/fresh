@@ -1042,22 +1042,28 @@ mod tests {
         // diagnostic-info), causing the status bar's color band to
         // break at the far right.
         //
-        // Now they're driven by dedicated theme keys whose defaults
-        // resolve to the status-bar palette, so the bar reads as a
-        // single continuous color out of the box, while still letting
-        // themes override these elements independently. Off / Error
-        // LSP states keep their vivid diagnostic palette so real
-        // problems still pop.
-        let theme = crate::view::theme::Theme::from_json(
-            r#"{"name":"t","editor":{},"ui":{},"search":{},"diagnostic":{},"syntax":{}}"#,
-        )
-        .expect("minimal theme should parse");
-
-        // Defaults: dedicated keys resolve to the status-bar palette.
-        assert_eq!(theme.status_palette_fg, theme.status_bar_fg);
-        assert_eq!(theme.status_palette_bg, theme.status_bar_bg);
-        assert_eq!(theme.status_lsp_on_fg, theme.status_bar_fg);
-        assert_eq!(theme.status_lsp_on_bg, theme.status_bar_bg);
+        // Now they're driven by dedicated theme keys that fall back to
+        // the status-bar palette, so the bar reads as a single
+        // continuous color out of the box, while still letting themes
+        // override these elements independently. Off / Error LSP states
+        // keep their vivid diagnostic palette so real problems still pop.
+        use crate::view::theme::Theme;
+        assert_eq!(
+            Theme::fallback_key("ui.status_palette_fg"),
+            Some("ui.status_bar_fg")
+        );
+        assert_eq!(
+            Theme::fallback_key("ui.status_palette_bg"),
+            Some("ui.status_bar_bg")
+        );
+        assert_eq!(
+            Theme::fallback_key("ui.status_lsp_on_fg"),
+            Some("ui.status_bar_fg")
+        );
+        assert_eq!(
+            Theme::fallback_key("ui.status_lsp_on_bg"),
+            Some("ui.status_bar_bg")
+        );
 
         assert_eq!(PALETTE, ("ui.status_palette_fg", "ui.status_palette_bg"));
         let keys = |lsp| lsp_look(lsp).0;

@@ -753,6 +753,14 @@ pub fn card_key(i: usize) -> fresh_ui::Key {
     fresh_ui::Key::Pair("settings_card".into(), i as u64)
 }
 
+/// The card a [`card_key`] names.
+pub fn card_index(key: &fresh_ui::Key) -> Option<usize> {
+    match key {
+        fresh_ui::Key::Pair(name, i) if &**name == "settings_card" => usize::try_from(*i).ok(),
+        _ => None,
+    }
+}
+
 /// The page's cards, in the window that scrolls them.
 ///
 /// **This is what `ItemBox` was.** The painter planned each item as five row

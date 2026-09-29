@@ -844,6 +844,9 @@ impl<M: 'static> Ui<M> {
             crate::event::Axis::Vertical => vp.data.window.map_or(vp.data.size.h, |w| w.h),
             crate::event::Axis::Horizontal => vp.data.window.map_or(vp.data.size.w, |w| w.w),
         } as i32;
+        // Where the window is now: the commands before this have moved it
+        // already, and the bands are in content coordinates either way.
+        let offset = main(axis, vp.data.scroll);
         let inset = match axis {
             crate::event::Axis::Vertical => 0,
             crate::event::Axis::Horizontal => {
@@ -886,7 +889,11 @@ impl<M: 'static> Ui<M> {
                 })
             })
             .collect::<Vec<_>>();
-        (!run.is_empty()).then_some(crate::behavior::anchor::Bands { window, run })
+        (!run.is_empty()).then_some(crate::behavior::anchor::Bands {
+            window,
+            offset,
+            run,
+        })
     }
 
     /// The run an index-scrolled window would show at offset `y`. See

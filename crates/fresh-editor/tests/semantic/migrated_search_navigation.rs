@@ -70,9 +70,8 @@ fn migrated_find_next_respects_cursor_position_after_move() {
         initial_text: NEEDLE_FILE.into(),
         actions,
         expected_text: NEEDLE_FILE.into(),
-        expected_primary: CursorExpect::at(match3),
-        // Search may leave the match selected — we only assert
-        // cursor position pin, not selection.
+        // FindNext selects the match, caret at its start.
+        expected_primary: CursorExpect::range(match3 + "NEEDLE".len(), match3),
         ..Default::default()
     });
 }
@@ -103,7 +102,8 @@ fn migrated_find_previous_respects_cursor_position_after_move() {
         initial_text: NEEDLE_FILE.into(),
         actions,
         expected_text: NEEDLE_FILE.into(),
-        expected_primary: CursorExpect::at(match3),
+        // FindPrevious selects the match, caret at its start.
+        expected_primary: CursorExpect::range(match3 + "NEEDLE".len(), match3),
         ..Default::default()
     });
 }
@@ -129,7 +129,8 @@ fn migrated_find_previous_lands_on_match_before_cursor() {
         initial_text: NEEDLE_FILE.into(),
         actions,
         expected_text: NEEDLE_FILE.into(),
-        expected_primary: CursorExpect::at(match2),
+        // FindPrevious selects the match, caret at its start.
+        expected_primary: CursorExpect::range(match2 + "NEEDLE".len(), match2),
         ..Default::default()
     });
 }

@@ -34,7 +34,14 @@ impl Editor {
         let theme = self.theme.read().unwrap().clone();
         let panes = self.window_panes();
         let win = self.active_window_mut();
-        for (pane, buffer_id) in panes {
+        for (pane, shows) in panes {
+            // A pane showing a group tab has no bars of its own — its
+            // group's panels each settle theirs — and no buffer to read
+            // facts from: the one it showed before is not on screen.
+            let crate::view::split::TabTarget::Buffer(buffer_id) = shows else {
+                win.pane_handle_for(pane).settle_bars(None, None);
+                continue;
+            };
             let c = chrome.get(&pane).copied().unwrap_or_default();
             let hover_cell = match hover {
                 Some(HoverTarget::ScrollbarTrack(p, row)) if p == pane => Some(row),
@@ -70,7 +77,7 @@ impl Editor {
                         .then(|| BarFacts::plain(0, 0, BarWindow::Cells(1)));
                     return (v, h);
                 }
-                let bvs = vs.active_state_mut();
+                let bvs = vs.buffer_tab_state_mut();
                 let buffer_len = state.buffer.len();
                 let v = c.vscroll.then(|| {
                     let fold_ranges = state.fold_ranges(&bvs.folds);

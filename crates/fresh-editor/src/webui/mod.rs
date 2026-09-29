@@ -1934,8 +1934,12 @@ fn scene_json(editor: &mut Editor, cols: u16, rows: u16) -> Value {
                 // buffer text after the gutter; `gutter` is the line-number
                 // column. When line numbers are off, gutterWidth is 0 and
                 // `cells` is the whole pane.
-                let gw = editor
-                    .leaf_gutter_width(*leaf, *bufid)
+                // A pane showing a group tab has no buffer and no gutter:
+                // its content is the group's grid, whose panels are panes
+                // of their own in this list.
+                let bufid = bufid.as_buffer();
+                let gw = bufid
+                    .map_or(0, |b| editor.leaf_gutter_width(*leaf, b))
                     .min(content_rect.width);
                 let gutter_rect =
                     Rect::new(content_rect.x, content_rect.y, gw, content_rect.height);
@@ -1947,7 +1951,7 @@ fn scene_json(editor: &mut Editor, cols: u16, rows: u16) -> Value {
                 );
                 json!({
                     "leaf": leaf.0 .0,
-                    "buffer": bufid.0,
+                    "buffer": bufid.map(|b| b.0),
                     "content": rect_json(*content_rect),
                     "gutterWidth": gw,
                     "gutter": if gw > 0 { cells_json(&buf, gutter_rect) } else { Value::Null },

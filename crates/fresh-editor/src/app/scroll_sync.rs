@@ -55,7 +55,7 @@ impl crate::app::window::Window {
                     return None;
                 }
 
-                let active_top_byte = vs_map.get(&active_split)?.viewport.top_byte();
+                let active_top_byte = vs_map.get(&active_split)?.buffer_tab_state().viewport.top_byte();
                 let active_buffer_id = mgr.buffer_for_split(active_split)?;
                 let buffer_state = self.buffers.get(&active_buffer_id)?;
                 let buffer_len = buffer_state.buffer.len();
@@ -113,10 +113,12 @@ impl crate::app::window::Window {
                 .buffers
                 .splits()
                 .expect("window must have a populated split layout");
-            let active_top_byte = vs_map.get(&active_split).map(|vs| vs.viewport.top_byte());
+            let active_top_byte = vs_map
+                .get(&active_split)
+                .map(|vs| vs.buffer_tab_state().viewport.top_byte());
             let active_viewport_height = vs_map
                 .get(&active_split)
-                .map(|vs| vs.viewport.visible_line_count())
+                .map(|vs| vs.buffer_tab_state().viewport.visible_line_count())
                 .unwrap_or(0);
 
             if let Some(top_byte) = active_top_byte {
@@ -151,8 +153,14 @@ impl crate::app::window::Window {
                         .expect("window must have a populated split layout");
                     for other_split in other_splits {
                         if let Some(view_state) = vs_map_mut.get_mut(&other_split) {
-                            view_state.viewport.set_top_byte(top_byte);
-                            view_state.viewport.sync_scroll_to_end = at_bottom;
+                            view_state
+                                .buffer_tab_state_mut()
+                                .viewport
+                                .set_top_byte(top_byte);
+                            view_state
+                                .buffer_tab_state_mut()
+                                .viewport
+                                .sync_scroll_to_end = at_bottom;
                         }
                     }
                 }
@@ -194,7 +202,10 @@ impl crate::app::window::Window {
 
             if let Some((_, vs_map)) = self.buffers.splits_mut() {
                 if let Some(view_state) = vs_map.get_mut(&LeafId(other_split)) {
-                    view_state.viewport.set_skip_ensure_visible();
+                    view_state
+                        .buffer_tab_state_mut()
+                        .viewport
+                        .set_skip_ensure_visible();
                     tracing::debug!(
                         "pre_sync_ensure_visible: marked other split {:?} to skip ensure_visible",
                         other_split
@@ -236,7 +247,10 @@ impl crate::app::window::Window {
         if let Some((_, vs_map)) = self.buffers.splits_mut() {
             for other_split in other_same_buffer_splits {
                 if let Some(view_state) = vs_map.get_mut(&other_split) {
-                    view_state.viewport.set_skip_ensure_visible();
+                    view_state
+                        .buffer_tab_state_mut()
+                        .viewport
+                        .set_skip_ensure_visible();
                 }
             }
         }

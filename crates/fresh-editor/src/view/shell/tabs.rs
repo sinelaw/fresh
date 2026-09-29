@@ -71,19 +71,6 @@ pub struct Strip {
     pub hover: Option<(TabTarget, bool)>,
     /// The pointer is on this pane's `+`.
     pub hover_plus: bool,
-    /// Whether the tabs, at their full names, are wider than the strip —
-    /// [`natural_width`] against the window's outer width, from the frame
-    /// before this one.
-    ///
-    /// **Feedback, the same shape as the palette's column widths.** The cap is
-    /// a rule about whether the names *fit*, so it needs the room; the room is
-    /// layout's answer and the description is what layout is about to run on.
-    /// Read back from the last frame it is one frame late after a resize and
-    /// unset on the very first, which shows whole names — the conservative
-    /// direction, and the window scrolls either way. Capping unconditionally
-    /// instead, which is what this replaces, elided a 26-column name on a
-    /// 160-column screen showing one tab.
-    pub cap_names: bool,
     /// The handle the strip's window is addressed by, so the host can ask it
     /// to show a tab (`Anchor::reveal_key`).
     ///
@@ -99,10 +86,11 @@ pub struct Strip {
 }
 
 impl Strip {
-    /// The cap to build this strip's labels with: `TAB_NAME_MAX_COLS` when the
-    /// names do not fit, and no cap at all when they do.
-    fn name_cap(&self) -> usize {
-        match self.cap_names {
+    /// The cap to build this strip's labels with, in a window `room` cells
+    /// wide: `TAB_NAME_MAX_COLS` when the names do not fit, and no cap at all
+    /// when they do.
+    fn name_cap(&self, room: u16) -> usize {
+        match natural_width(&self.tabs, &self.preview_label) > usize::from(room) {
             true => TAB_NAME_MAX_COLS,
             false => usize::MAX,
         }
@@ -432,9 +420,9 @@ fn cluster(pane: LeafId, c: Cluster) -> Node<UiMsg> {
 /// something has to compare them against the room. What was deleted was the
 /// strip *laying itself out* from that comparison: slicing labels by column,
 /// placing the `+`, deciding which arrows to draw. This decides one boolean,
-/// and it is deliberately a function of the names alone — the caller compares
+/// and it is deliberately a function of the names alone — the strip compares
 /// it against the window's **outer** width, which is what the strip row gives
-/// the viewport after the cluster and does not depend on the names. So the
+/// the window after the cluster and does not depend on the names. So the
 /// predicate cannot feed itself: capping never changes the answer, which is
 /// what keeps a frame from capping, fitting, un-capping and overflowing again.
 ///
@@ -471,6 +459,27 @@ pub fn natural_width(tabs: &[Tab], preview_label: &str) -> usize {
 /// remaining say is *which tab to show* — `Anchor::reveal_key` on the active
 /// tab, which is a fact about the pane and not about columns.
 pub fn strip(pane: LeafId, s: &Strip, c: Cluster) -> Node<UiMsg> {
+    // **Whether the names are capped is decided where the room is known.**
+    // The window is the flexible child of the strip row, beside a cluster of
+    // fixed width, so what layout offers it here is its outer width in the
+    // frame it applies to — a tab that opens or a split that resizes is
+    // capped or not in the frame that shows it.
+    let s = Rc::new(s.clone());
+    let window = fresh_ui::layout_reader(move |info: fresh_ui::LayoutInfo| {
+        tab_window(pane, &s, s.name_cap(info.constraints.max_w))
+    })
+    .flex(1)
+    .h(Sizing::Cells(1));
+
+    row()
+        .theme(ground())
+        .h(Sizing::Cells(1))
+        .children([window, cluster(pane, c)])
+}
+
+/// The tabs in the window that scrolls across them, with their names capped
+/// at `cap` columns.
+fn tab_window(pane: LeafId, s: &Strip, cap: usize) -> Node<UiMsg> {
     let mut cells: Vec<Node<UiMsg>> = Vec::new();
     for (i, t) in s.tabs.iter().enumerate() {
         if i > 0 {
@@ -481,12 +490,7 @@ pub fn strip(pane: LeafId, s: &Strip, c: Cluster) -> Node<UiMsg> {
         // whole tab into the window rather than stopping with its label flush
         // against the edge. The two keep their own keys inside it.
         cells.push(row().key(tab_span_key(pane, t.target)).children([
-            name_node(
-                pane,
-                t.target,
-                label(t, s.name_cap(), &s.preview_label),
-                name_ink,
-            ),
+            name_node(pane, t.target, label(t, cap, &s.preview_label), name_ink),
             close_node(pane, t.target, CLOSE.to_string(), close_ink),
         ]));
     }
@@ -521,16 +525,13 @@ pub fn strip(pane: LeafId, s: &Strip, c: Cluster) -> Node<UiMsg> {
         .scroll_cap_width(NEW_TAB_BUTTON_WIDTH as u16)
         .scrollbar_theme(pair("ui.tab_inactive_fg", "ui.tab_inactive_bg"))
         .scrollbar_hover_theme(pair("ui.tab_close_hover_fg", "ui.tab_inactive_bg"))
-        .flex(1)
+        // The whole of the room the strip row gave it.
+        .w(Sizing::Pct(100))
         .h(Sizing::Cells(1));
     if let Some(a) = &s.reveal {
         window = window.anchor_to(a.clone());
     }
-
-    row()
-        .theme(ground())
-        .h(Sizing::Cells(1))
-        .children([window, cluster(pane, c)])
+    window
 }
 
 /// A tab's rectangles, read back off the tree.
@@ -652,7 +653,6 @@ mod tests {
             active_pane: true,
             hover: None,
             hover_plus: false,
-            cap_names: true,
             reveal: None,
             preview_label: "(preview)".into(),
         }
@@ -680,6 +680,12 @@ mod tests {
 
     fn laid_out(s: Strip, controls: PaneControls, w: u16) -> Ui<UiMsg> {
         let mut ui: Ui<UiMsg> = Ui::new();
+        lay_out(&mut ui, s, controls, w);
+        ui
+    }
+
+    /// One more frame of `ui`, with this strip, `w` cells wide.
+    fn lay_out(ui: &mut Ui<UiMsg>, s: Strip, controls: PaneControls, w: u16) {
         let mut chrome = std::collections::HashMap::new();
         chrome.insert(
             pane(),
@@ -716,7 +722,6 @@ mod tests {
             }),
             Size::new(w, 10),
         );
-        ui
     }
 
     fn facts(d: fresh_ui::Dispatch<UiMsg>) -> Vec<UiFact> {
@@ -979,24 +984,17 @@ mod tests {
         assert_eq!(got, vec![UiFact::PaneMaximize(pane())]);
     }
 
-    /// **A name is capped at twenty-five columns, always.**
-    ///
-    /// The cap used to depend on the strip's width — full names when they all
-    /// fit, twenty-five when they did not — which meant measuring every label
-    /// before the description existed, and was half of why the strip was a
-    /// `layout_reader`. A window can show what does not fit, so the cap is a
-    /// rule about tab names rather than about the room they have: it stops one
-    /// 151-character name from being a scroll of its own (issue #2650).
     /// **A name is capped when the names do not fit, and whole when they do.**
     ///
-    /// This asserted the cap applied at every width, which is what the strip
-    /// did for a while: `label` truncated the string as the description was
-    /// built, so there was nothing to decide it against. That elided a
-    /// 26-column name on a 160-column screen showing one tab, and the rule it
-    /// replaced — cap only on overflow — is what four tests elsewhere were
-    /// written against. The decision is the caller's now (`Strip::cap_names`,
-    /// from `natural_width` against the window the last frame gave it), and
-    /// what this checks is that the strip honours it both ways.
+    /// Capping at every width elided a 26-column name on a 160-column screen
+    /// showing one tab; the rule is to cap only on overflow, which is what
+    /// four tests elsewhere were written against.
+    ///
+    /// **And it is decided in the frame it applies to.** The decision was the
+    /// host's, from the window's width read back off the frame before, so the
+    /// frame that narrowed the strip still showed whole names and the frame
+    /// that widened it still capped them. The strip decides it at layout,
+    /// where its width is known.
     #[test]
     fn a_name_is_capped_only_when_the_names_do_not_fit() {
         let long = |n: usize| Tab {
@@ -1008,39 +1006,32 @@ mod tests {
         };
         let mut s = strip_of(0);
         s.tabs = vec![long(0)];
+        let whole = str_width(&label(&long(0), usize::MAX, "(preview)"));
+        let capped = TAB_NAME_MAX_COLS + 2;
 
-        s.cap_names = false;
-        let ui = laid_out(s.clone(), PaneControls::default(), 120);
-        let whole = rect(&ui, tab_key(pane(), buf(0)));
-        assert_eq!(
-            whole.w as usize,
-            str_width(&label(&long(0), usize::MAX, "(preview)")),
-            "room for the name, so the name"
-        );
+        let mut ui: Ui<UiMsg> = Ui::new();
+        lay_out(&mut ui, s.clone(), PaneControls::default(), 120);
+        let w = |ui: &Ui<UiMsg>| rect(ui, tab_key(pane(), buf(0))).w as usize;
+        assert_eq!(w(&ui), whole, "room for the name, so the name");
 
-        s.cap_names = true;
-        let ui = laid_out(s.clone(), PaneControls::default(), 120);
-        let capped = rect(&ui, tab_key(pane(), buf(0)));
-        assert_eq!(
-            capped.w as usize,
-            TAB_NAME_MAX_COLS + 2,
-            "and capped when not"
-        );
+        lay_out(&mut ui, s.clone(), PaneControls::default(), 40);
+        assert_eq!(w(&ui), capped, "capped in the frame that narrowed it");
+
+        lay_out(&mut ui, s.clone(), PaneControls::default(), 120);
+        assert_eq!(w(&ui), whole, "whole in the frame that widened it");
+
+        // Tabs that no longer fit are capped in the frame they open in.
+        s.tabs.extend([long(1), long(2)]);
+        lay_out(&mut ui, s, PaneControls::default(), 120);
+        assert_eq!(w(&ui), capped, "capped in the frame the tab opened in");
     }
 
-    /// And the caller's arithmetic: what the strip would measure with every
-    /// name whole, which is the only thing `cap_names` is decided from.
+    /// And the strip's arithmetic: what it would measure with every name
+    /// whole, which is the only thing the cap is decided from.
     #[test]
     fn natural_width_counts_what_the_strip_builds() {
         let s = strip_of(3);
-        let ui = laid_out(
-            Strip {
-                cap_names: false,
-                ..s.clone()
-            },
-            PaneControls::default(),
-            400,
-        );
+        let ui = laid_out(s.clone(), PaneControls::default(), 400);
         let content: usize = (0..3)
             .map(|i| rect(&ui, tab_span_key(pane(), buf(i))).w as usize)
             .sum::<usize>()

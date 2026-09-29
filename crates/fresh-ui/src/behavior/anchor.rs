@@ -57,12 +57,24 @@ pub struct Anchor {
 }
 
 /// The keyed children of a paged window's content, in order, with the bands
-/// the last layout gave them, and the window's own extent — all along the
-/// axis it scrolls.
+/// the last layout gave them, and the window's own extent and offset — all
+/// along the axis it scrolls.
 #[derive(Debug, Clone)]
 pub(crate) struct Bands {
     pub(crate) window: i32,
+    pub(crate) offset: i32,
     pub(crate) run: Vec<(crate::key::Key, i32, i32)>,
+}
+
+/// Where a paged window starts, as the last layout left it. See
+/// [`Anchor::start`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Start {
+    /// How far along the axis it scrolls the window starts.
+    pub offset: i32,
+    /// The keyed child holding the window's first row; `None` when every
+    /// child ends above it.
+    pub first: Option<crate::key::Key>,
 }
 
 impl Anchor {
@@ -125,6 +137,30 @@ impl Anchor {
             std::cmp::Ordering::Equal => at,
         };
         Some(b.run[to].0.clone())
+    }
+
+    /// Where the window starts: its offset, and the keyed child whose band
+    /// holds its first row — the first child that reaches past the window's
+    /// top, so a card scrolled half away is still the one the window is on.
+    ///
+    /// For an owner whose own state follows what the reader is looking at
+    /// (a list of sections beside a page of cards): which card that is is
+    /// layout's answer, as a page is.
+    ///
+    /// `None` when the window was not built [`paged`](Anchor::paged), has not
+    /// been laid out, or is gone.
+    pub fn start(&self) -> Option<Start> {
+        let bands = self.bands.borrow();
+        let b = bands.as_ref()?;
+        let first = b
+            .run
+            .iter()
+            .find(|(_, top, h)| top + h > b.offset)
+            .map(|(k, _, _)| k.clone());
+        Some(Start {
+            offset: b.offset,
+            first,
+        })
     }
 
     /// The element this anchor addresses, once it has mounted.

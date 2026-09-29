@@ -1,5 +1,17 @@
 # Release Notes
 
+## Unreleased
+
+### Features
+
+* **Find Next selects the whole match and marks it as the current match** - F3 / Shift+F3 (and Enter in the search bar) select the entire match, so a regex shows exactly how far it reaches and Delete removes the whole match; F3 after a Delete lands on a match that slid into its place. The current match, in Find Next and in Query Replace alike, is drawn bold in its own color, set by the new theme keys `search.current_match_bg` / `search.current_match_fg`. Reopening Ctrl+F on it brings back the query (e.g. the regex), not the matched text
+
+### Themes
+
+* **Theme colors come from other colors, never from values built into Fresh** - the 49 colors of the first theme format are required; every other color names a fallback color, and a theme that sets all 49 takes each color it leaves out from its fallback chain. The built-in themes look the same, except that Dracula, Nord, Solarized Dark, Nostalgia, Light and Terminal now derive colors they never set (menus, diff and indicator backgrounds, bracket colors…) from their own palette instead of generic dark-theme grays. See [Themes → Fallbacks](https://getfresh.dev/docs/features/themes#fallbacks)
+* **`extends` takes precedence** - a theme with `extends` takes every color it doesn't set from its base, even when it changes the color that one would fall back to. Themes that extend a built-in and change `editor.selection_bg` or `editor.whitespace_indicator_fg` no longer get the selected-whitespace and indentation-guide colors re-derived from them; set those keys explicitly if the base's clash
+* **Complete user themes stand on their own** - a user theme that sets all 49 required colors (as most full themes and theme packs do) no longer takes its remaining colors from the built-in dark or light theme but from its own fallback colors, so its menus, diff backgrounds and similar may look different after upgrading. A theme missing any required color still gets a light or dark base as before
+
 ## 0.5.2
 
 For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).

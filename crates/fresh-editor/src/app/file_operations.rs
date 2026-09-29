@@ -764,12 +764,17 @@ impl Editor {
         }
 
         // Save scroll position (from SplitViewState) and cursor positions before reloading
-        let active_split = self.active_window().split_manager().active_split();
+        let active_split = self.effective_active_split();
         let (old_top_byte, old_left_column) = self
             .active_window()
             .split_view_states()
             .get(&active_split)
-            .map(|vs| (vs.viewport.top_byte(), vs.viewport.left_column))
+            .map(|vs| {
+                (
+                    vs.buffer_tab_state().viewport.top_byte(),
+                    vs.buffer_tab_state().viewport.left_column,
+                )
+            })
             .unwrap_or((0, 0));
         let old_cursors = self.active_cursors().clone();
 
@@ -815,13 +820,13 @@ impl Editor {
         }
 
         // Restore cursor positions in SplitViewState (clamped to valid range for new file size)
-        let active_split = self.active_window().split_manager().active_split();
+        let active_split = self.effective_active_split();
         if let Some(view_state) = self
             .active_window_mut()
             .split_view_states_mut()
             .get_mut(&active_split)
         {
-            view_state.cursors = restored_cursors;
+            view_state.buffer_tab_state_mut().cursors = restored_cursors;
         }
 
         // Restore scroll position in SplitViewState (clamped to valid range for new file size)
@@ -831,9 +836,10 @@ impl Editor {
             .get_mut(&active_split)
         {
             view_state
+                .buffer_tab_state_mut()
                 .viewport
                 .set_top_byte(old_top_byte.min(new_file_size));
-            view_state.viewport.left_column = old_left_column;
+            view_state.buffer_tab_state_mut().viewport.left_column = old_left_column;
         }
 
         // Clear the undo/redo history for this buffer
@@ -1435,8 +1441,8 @@ impl Editor {
             .split_view_states()
             .values()
             .find_map(|vs| {
-                if vs.keyed_states.contains_key(&buffer_id) {
-                    vs.keyed_states.get(&buffer_id).map(|bs| bs.cursors.clone())
+                if vs.has_buffer_state(buffer_id) {
+                    vs.buffer_state(buffer_id).map(|bs| bs.cursors.clone())
                 } else {
                     None
                 }
@@ -1501,7 +1507,7 @@ impl Editor {
             .split_view_states_mut()
             .values_mut()
         {
-            if let Some(buf_state) = vs.keyed_states.get_mut(&buffer_id) {
+            if let Some(buf_state) = vs.buffer_state_mut(buffer_id) {
                 buf_state.cursors = restored_cursors.clone();
             }
         }

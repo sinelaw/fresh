@@ -248,7 +248,12 @@ impl Window {
             .buffers
             .splits()
             .and_then(|(_, vs)| vs.get(&split_id))
-            .map(|vs| (vs.viewport.top_byte(), vs.compose_width))
+            .map(|vs| {
+                (
+                    vs.buffer_tab_state().viewport.top_byte(),
+                    vs.buffer_tab_state().compose_width,
+                )
+            })
             .unwrap_or((0, None));
 
         // `allow_gutter_click = false`: a click in the gutter isn't on a path.
@@ -391,7 +396,7 @@ impl super::Editor {
             .and_then(|w| w.buffers.splits_mut())
             .and_then(|(_, vs)| vs.get_mut(&split_id))
         {
-            let cursor = view_state.cursors.primary_mut();
+            let cursor = view_state.buffer_tab_state_mut().cursors.primary_mut();
             cursor.position = head;
             cursor.anchor = Some(anchor);
         }
@@ -437,7 +442,7 @@ impl super::Editor {
             .and_then(|w| w.buffers.splits_mut())
             .and_then(|(_, vs)| vs.get_mut(&split_id))
         {
-            let cursor = view_state.cursors.primary_mut();
+            let cursor = view_state.buffer_tab_state_mut().cursors.primary_mut();
             cursor.position = pos;
             cursor.anchor = None;
         }
@@ -450,7 +455,7 @@ impl super::Editor {
             .and_then(|w| w.buffers.splits())
             .and_then(|(_, vs)| vs.get(&split_id))
             .map(|vs| {
-                let c = vs.cursors.primary();
+                let c = vs.buffer_tab_state().cursors.primary();
                 (c.selection_start(), c.selection_end())
             })
         {
@@ -492,7 +497,7 @@ impl super::Editor {
             .and_then(|w| w.buffers.splits_mut())
             .and_then(|(_, vs)| vs.get_mut(&split_id))
         {
-            let cursor = view_state.cursors.primary_mut();
+            let cursor = view_state.buffer_tab_state_mut().cursors.primary_mut();
             cursor.position = pos;
             cursor.anchor = None;
         }
@@ -563,11 +568,14 @@ impl super::Editor {
         let (_, view_states) = win.buffers.splits()?;
         let vs = view_states.get(&split_id)?;
         let state = win.buffers.get(&buffer_id)?;
-        let (top_line, _) = state.buffer.position_to_line_col(vs.viewport.top_byte());
+        let (top_line, _) = state
+            .buffer
+            .position_to_line_col(vs.buffer_tab_state().viewport.top_byte());
         let grid_row = row.saturating_sub(content_rect.y) as usize;
         // Account for horizontal scroll (a pinned view starts at 0, but an
         // explicit scrollback view may have been scrolled right).
-        let grid_col = col.saturating_sub(content_rect.x) as usize + vs.viewport.left_column;
+        let grid_col = col.saturating_sub(content_rect.x) as usize
+            + vs.buffer_tab_state().viewport.left_column;
 
         // Grid-wrapped scroll-back (fresh#2649): visual rows are exact-column
         // wrap segments of the logical lines, so walk the segments from the
@@ -575,9 +583,11 @@ impl super::Editor {
         // line per grid row (which was only ever true for unwrapped lines —
         // a grid row that continued a wrapped line used to resolve to the
         // wrong buffer line entirely).
-        if vs.viewport.grid_wrap && vs.viewport.line_wrap_enabled {
-            let cols = vs.viewport.grid_cols();
-            let mut remaining = vs.viewport.top_view_line_offset() + grid_row;
+        if vs.buffer_tab_state().viewport.grid_wrap
+            && vs.buffer_tab_state().viewport.line_wrap_enabled
+        {
+            let cols = vs.buffer_tab_state().viewport.grid_cols();
+            let mut remaining = vs.buffer_tab_state().viewport.top_view_line_offset() + grid_row;
             let mut line_idx = top_line;
             loop {
                 let Some(bytes) = state.buffer.get_line(line_idx) else {

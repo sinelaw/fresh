@@ -467,7 +467,9 @@ impl Editor {
             .and_then(|w| w.buffers.splits())
             .map(|(_, vs)| vs)?
             .values()
-            .find(|vs| vs.buffer_state(buffer_id).is_some() && vs.viewport.width > 0)
+            .find(|vs| {
+                vs.buffer_state(buffer_id).is_some() && vs.buffer_tab_state().viewport.width > 0
+            })
             .and_then(|vs| vs.buffer_state(buffer_id))
             .and_then(|b| b.compose_width)
     }
@@ -707,7 +709,7 @@ impl Editor {
             None => {
                 let buffer = self.widget_registry.get(panel_key)?.buffer_id?;
                 let leaf = self
-                    .window_panes()
+                    .window_buffer_panes()
                     .into_iter()
                     .find(|(_, b)| *b == buffer)
                     .map(|(leaf, _)| leaf)?;
@@ -1141,7 +1143,7 @@ impl Editor {
             None => {}
         }
         let buffer = self.widget_registry.get(panel_key)?.buffer_id?;
-        self.window_panes()
+        self.window_buffer_panes()
             .into_iter()
             .find(|(_, b)| *b == buffer)
             .map(|(leaf, _)| Slot::Pane(leaf))
@@ -1776,16 +1778,16 @@ impl Editor {
         let Some(state) = window.and_then(|w| w.buffers.get(&buffer_id)) else {
             return Vec::new();
         };
-        let Some((manager, view_states)) = window.and_then(|w| w.buffers.splits()) else {
+        let Some((_, view_states)) = window.and_then(|w| w.buffers.splits()) else {
             return Vec::new();
         };
-        let active = manager.active_split();
+        let active = self.effective_active_split();
         let mut leaves = self.splits_showing_buffer(buffer_id);
         leaves.sort_by_key(|l| *l != active);
         let Some(vs) = leaves.first().and_then(|l| view_states.get(l)) else {
             return Vec::new();
         };
-        let mut ranges = vs.cursors.selections();
+        let mut ranges = vs.buffer_tab_state().cursors.selections();
         ranges.sort_by_key(|r| r.start);
         let mut bands = Vec::new();
         for range in ranges {
@@ -1914,13 +1916,24 @@ impl Editor {
     /// one would keep a stale caret without this.
     pub(super) fn splits_showing_buffer(&self, buffer_id: BufferId) -> Vec<LeafId> {
         let (manager, view_states) = self.active_window().splits();
-        let mut splits = manager.splits_for_buffer(buffer_id);
+        // A pane whose buffer *tab* is `buffer_id` but which shows a group
+        // does not show it: `splits_for_buffer` reads the tree, which only
+        // knows tabs, so the view state decides.
+        let mut splits: Vec<LeafId> = manager
+            .splits_for_buffer(buffer_id)
+            .into_iter()
+            .filter(|leaf| {
+                view_states
+                    .get(leaf)
+                    .is_none_or(|vs| vs.shown_buffer() == Some(buffer_id))
+            })
+            .collect();
         for node in self.active_window().grouped_subtrees.values() {
             if let crate::view::split::SplitNode::Grouped { layout, .. } = node {
                 for inner_leaf in layout.leaf_split_ids() {
                     if view_states
                         .get(&inner_leaf)
-                        .is_some_and(|vs| vs.active_buffer == buffer_id)
+                        .is_some_and(|vs| vs.shown_buffer() == Some(buffer_id))
                         && !splits.contains(&inner_leaf)
                     {
                         splits.push(inner_leaf);
@@ -3208,14 +3221,7 @@ impl crate::app::window::Window {
     /// `SplitViewState`, and the flag has to land on that one too.
     pub(super) fn pin_widget_panel_horizontal_scroll(&mut self, buffer_id: BufferId) {
         for vs in self.split_view_states_mut().values_mut() {
-            if vs.buffer_state(buffer_id).is_none() {
-                continue;
-            }
-            if vs.active_buffer == buffer_id {
-                vs.viewport.horizontal_scroll_enabled = false;
-                vs.viewport.left_column = 0;
-            }
-            if let Some(bs) = vs.keyed_states.get_mut(&buffer_id) {
+            if let Some(bs) = vs.buffer_state_mut(buffer_id) {
                 bs.viewport.horizontal_scroll_enabled = false;
                 bs.viewport.left_column = 0;
             }
@@ -3871,10 +3877,18 @@ mod tests {
         editor: &Editor,
         key: &crate::widgets::PanelKey,
     ) -> crate::primitives::text_edit::TextEdit {
+        prose_editor_of(editor, key, "prose")
+    }
+
+    fn prose_editor_of(
+        editor: &Editor,
+        key: &crate::widgets::PanelKey,
+        widget: &str,
+    ) -> crate::primitives::text_edit::TextEdit {
         match editor
             .widget_registry
             .get(key)
-            .and_then(|p| p.instance_states.get("prose"))
+            .and_then(|p| p.instance_states.get(widget))
         {
             Some(crate::widgets::WidgetInstanceState::Text { editor, .. }) => editor.clone(),
             other => panic!("expected the prose's Text state, got {other:?}"),
@@ -3925,6 +3939,53 @@ mod tests {
             "wrapped into rows at the dock's width: {}",
             rows.len()
         );
+    }
+
+    /// **A growing text box pages by the height layout gave it.** The box
+    /// states two rows and grows to eight with its text; PageDown moved the
+    /// caret by the spec's `rows - 1`, one line, where the box showed eight.
+    #[test]
+    fn a_growing_text_box_pages_by_its_laid_out_height() {
+        let (mut editor, _t) = make_editor();
+        let key = crate::widgets::PanelKey::new("notes", 1);
+        let value = (0..30)
+            .map(|i| format!("line {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let spec = WidgetSpec::Text {
+            value,
+            cursor_byte: 0,
+            focused: true,
+            label: String::new(),
+            placeholder: None,
+            rows: 2,
+            field_width: 0,
+            max_visible_chars: 0,
+            full_width: false,
+            completions: Vec::new(),
+            completions_visible_rows: 0,
+            min_rows: 2,
+            max_rows: 8,
+            block_caret: false,
+            sel_start: -1,
+            sel_end: -1,
+            label_width: 0,
+            read_only: false,
+            markdown: false,
+            combo: false,
+            key: Some("notes".into()),
+        };
+        mount_prose_panel(&mut editor, &key, spec);
+        let line = |editor: &Editor| {
+            let e = prose_editor_of(editor, &key, "notes");
+            e.value()[..e.flat_cursor_byte()].matches('\n').count()
+        };
+
+        editor.handle_widget_key(&key, &keyseq("PageDown"));
+        assert_eq!(line(&editor), 7, "a page is the eight rows shown, less one");
+        frame_the_shell(&mut editor);
+        editor.handle_widget_key(&key, &keyseq("PageUp"));
+        assert_eq!(line(&editor), 0);
     }
 
     /// **`Up`/`Down`/`Home`/`End` move by rendered row, resolved host-side.**

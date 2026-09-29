@@ -116,7 +116,7 @@ impl super::Editor {
             // tab bar is the only tab bar shown.
             vs.suppress_chrome = true;
             vs.hide_tilde = true;
-            if let Some(bs) = vs.keyed_states.get_mut(&buffer_id) {
+            if let Some(bs) = vs.buffer_state_mut(buffer_id) {
                 bs.show_line_numbers = false;
                 bs.highlight_current_line = false;
                 // Panel content is composed by the plugin at a width it
@@ -157,8 +157,7 @@ impl super::Editor {
                 TabTarget::Buffer(b) => !hidden_panel_ids.contains(b),
                 TabTarget::Group(_) => true,
             });
-            vs.keyed_states
-                .retain(|bid, _| !hidden_panel_ids.contains(bid));
+            vs.retain_buffer_states(|bid| !hidden_panel_ids.contains(&bid));
         }
 
         // Add the group as a tab in the CURRENT split's tab bar and make it
@@ -171,8 +170,7 @@ impl super::Editor {
             .get_mut(&current_split_id)
         {
             current_vs.add_group(group_leaf_id);
-            current_vs.set_active_group_tab(group_leaf_id);
-            current_vs.focused_group_leaf = Some(active_inner_leaf);
+            current_vs.show_group(group_leaf_id, active_inner_leaf);
         }
 
         // Register the group metadata
@@ -392,7 +390,6 @@ impl super::Editor {
     /// Close a buffer group — remove the Grouped subtree, close all panel
     /// buffers, and remove the group tab from any split's tab bar.
     pub(super) fn close_buffer_group(&mut self, group_id: usize) {
-        use crate::view::split::TabTarget;
         let bg_id = BufferGroupId(group_id);
         if let Some(group) = self.active_window_mut().buffer_groups.remove(&bg_id) {
             // Remove reverse mappings
@@ -413,17 +410,11 @@ impl super::Editor {
                     .split_view_states_mut()
                     .values_mut()
                 {
-                    vs.open_buffers
-                        .retain(|t| *t != TabTarget::Group(group_leaf_id));
+                    // Leaves the group too, if the pane was showing it —
+                    // and with it the focused panel, which only exists
+                    // inside a shown group.
+                    vs.remove_group(group_leaf_id);
                     vs.remove_group_from_history(group_leaf_id);
-                    if vs.active_group_tab == Some(group_leaf_id) {
-                        vs.active_group_tab = None;
-                    }
-                    if let Some(focused) = vs.focused_group_leaf {
-                        if group.panel_splits.values().any(|&l| l == focused) {
-                            vs.focused_group_leaf = None;
-                        }
-                    }
                 }
             }
 
@@ -553,7 +544,7 @@ impl super::Editor {
             let mut vs = SplitViewState::with_buffer(tw, th, buffer_id);
             vs.suppress_chrome = true;
             vs.hide_tilde = true;
-            if let Some(bs) = vs.keyed_states.get_mut(&buffer_id) {
+            if let Some(bs) = vs.buffer_state_mut(buffer_id) {
                 bs.show_line_numbers = false;
                 bs.highlight_current_line = false;
                 bs.viewport.line_wrap_enabled = false;
@@ -594,11 +585,11 @@ impl super::Editor {
             .split_view_states_mut()
             .values_mut()
         {
-            if let (Some(focused), Some(fallback)) = (vs.focused_group_leaf, fallback_leaf) {
+            if let (Some((_, focused)), Some(fallback)) = (vs.shown_group(), fallback_leaf) {
                 if !visible_leaves.contains(&focused)
                     && existing_leaves.values().any(|l| *l == focused)
                 {
-                    vs.focused_group_leaf = Some(fallback);
+                    vs.focus_group_panel(fallback);
                 }
             }
         }
@@ -737,8 +728,7 @@ impl super::Editor {
                 .split_view_states_mut()
                 .get_mut(&host_split)
             {
-                vs.active_group_tab = Some(group_leaf_id);
-                vs.focused_group_leaf = Some(inner_leaf);
+                vs.show_group(group_leaf_id, inner_leaf);
             }
             // Persist the choice on the SplitNode so a tab-away/back round
             // trip restores the same panel — `activate_group_tab` reads
@@ -762,7 +752,7 @@ impl super::Editor {
     ///
     /// Updates two places: `group.panel_buffers[panel_name]` (the
     /// authoritative name → buffer mapping for the group) and the
-    /// panel split's `SplitViewState.active_buffer` (which buffer the
+    /// panel split's buffer tab, `SplitViewState::buffer_tab` (which buffer the
     /// panel actually renders). Marks the split's layout dirty so the
     /// next render sees the swap.
     ///
@@ -917,7 +907,7 @@ impl super::Editor {
                 buf_state.viewport.line_wrap_enabled = false;
             }
             // 2) Now flip the active pointer.
-            vs.active_buffer = new_buffer_id;
+            vs.set_buffer_tab(new_buffer_id);
         }
 
         // Mark the new buffer as hidden from tabs (panel buffers
@@ -978,14 +968,14 @@ impl super::Editor {
         // Record the group as the active-tab and focused inner leaf for
         // this split. The inner leaf is NOT in the main split tree — it
         // only exists inside the stashed Grouped subtree — so focus is
-        // routed via `focused_group_leaf` rather than `focus_split`.
+        // routed via the shown group's focused panel rather than
+        // `focus_split`.
         if let Some(vs) = self
             .active_window_mut()
             .split_view_states_mut()
             .get_mut(&split_id)
         {
-            vs.active_group_tab = Some(group_leaf);
-            vs.focused_group_leaf = Some(inner_leaf);
+            vs.show_group(group_leaf, inner_leaf);
         }
     }
 

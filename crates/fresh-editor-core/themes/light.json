@@ -27,7 +27,8 @@
     "bracket_rainbow_3": [121, 94, 38],
     "bracket_rainbow_4": [0, 128, 128],
     "bracket_rainbow_5": [0, 16, 128],
-    "bracket_rainbow_6": [0, 112, 193]
+    "bracket_rainbow_6": [0, 112, 193],
+    "whitespace_indicator_selected_fg": [170, 177, 187]
   },
   "ui": {
     "tab_active_fg": [40, 40, 40],
@@ -102,7 +103,9 @@
   },
   "search": {
     "match_bg": [255, 255, 150],
-    "match_fg": [0, 0, 0]
+    "match_fg": [0, 0, 0],
+    "current_match_bg": [100, 170, 255],
+    "current_match_fg": {"color": [0, 0, 0], "modifier": ["bold"]}
   },
   "diagnostic": {
     "error_fg": [180, 0, 0],

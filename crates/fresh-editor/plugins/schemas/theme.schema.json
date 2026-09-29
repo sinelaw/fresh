@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "ThemeFile",
-  "description": "Serializable theme definition (matches JSON structure)\n\nThe five color sections (`editor`, `ui`, `search`, `diagnostic`, `syntax`)\nare all optional. Every leaf field within each section already has a\n`#[serde(default = \"…\")]` fallback, so a theme JSON only needs to specify\nthe colors it cares about. This matches the minimal example shipped in\n`docs/features/themes.md` and unblocks user-authored themes that override\njust `editor`/`syntax` (issue #1281).\n\n**Inheritance**: when a theme omits whole sections, the unset fields are\nresolved against a *base* theme rather than against the per-field hardcoded\nfallback. The base is chosen in this order:\n\n1. Explicit `extends` field (`\"builtin://light\"`, `\"dark\"`, etc.).\n2. If `editor.bg` is provided, the relative-luminance of that color picks\n   `builtin://light` or `builtin://dark` automatically — so a user theme\n   that sets a cream background gets light UI chrome without any extra\n   configuration.\n3. Otherwise, fall through to the per-field hardcoded defaults.\n\nOnly built-in themes are valid `extends` targets in this version. Chained\ninheritance across user themes is intentionally out of scope here.",
+  "description": "Serializable theme definition (matches JSON structure)\n\nEvery color key is optional in the file; a key the file leaves out is\nresolved from other keys, never from a color written into the code:\n\n1. **`extends`**: with a base theme (`\"builtin://light\"`, `\"dark\"`, …),\n   every key the theme leaves out is the base's.\n2. **Standalone**: a theme without `extends` that names every *required*\n   key (see [`Theme::is_required_key`], the keys theme files have had since\n   the first theme format) stands on its own. Every other key it leaves out\n   takes the style of its fallback key ([`Theme::fallback_key`]), following\n   the chain to the first key the theme names.\n3. **Partial**: a theme without `extends` that leaves out a required key\n   gets an implicit base, as if it extended one: the relative luminance of\n   its `editor.bg` picks `builtin://light` or `builtin://dark`, and with no\n   `editor.bg` it extends `builtin://dark`. This keeps minimal themes that\n   override just `editor`/`syntax` working (issue #1281).\n\nOnly built-in themes are valid `extends` targets in this version. Chained\ninheritance across user themes is intentionally out of scope here.",
   "type": "object",
   "properties": {
     "name": {
@@ -19,144 +19,44 @@
       "description": "Editor area colors",
       "$ref": "#/$defs/EditorColors",
       "default": {
-        "bg": [
-          30,
-          30,
-          30
-        ],
-        "fg": [
-          212,
-          212,
-          212
-        ],
-        "cursor": [
-          255,
-          255,
-          255
-        ],
-        "inactive_cursor": "DarkGray",
-        "selection_bg": [
-          38,
-          79,
-          120
-        ],
+        "bg": null,
+        "fg": null,
+        "cursor": null,
+        "inactive_cursor": null,
+        "selection_bg": null,
         "selection_modifier": null,
-        "current_line_bg": [
-          40,
-          40,
-          40
-        ],
-        "line_number_fg": [
-          100,
-          100,
-          100
-        ],
-        "line_number_bg": [
-          30,
-          30,
-          30
-        ],
-        "diff_add_bg": [
-          35,
-          60,
-          35
-        ],
-        "diff_remove_bg": [
-          70,
-          35,
-          35
-        ],
+        "current_line_bg": null,
+        "line_number_fg": null,
+        "line_number_bg": null,
+        "diff_add_bg": null,
+        "diff_remove_bg": null,
         "diff_add_highlight_bg": null,
         "diff_remove_highlight_bg": null,
-        "diff_modify_bg": [
-          40,
-          38,
-          30
-        ],
+        "diff_modify_bg": null,
         "diff_add_collision_fg": null,
         "diff_remove_collision_fg": null,
         "diff_modify_collision_fg": null,
-        "ruler_bg": [
-          50,
-          50,
-          50
-        ],
+        "ruler_bg": null,
         "indentation_guide_fg": null,
-        "indent_rainbow_1": [
-          255,
-          215,
-          0
-        ],
-        "indent_rainbow_2": [
-          218,
-          112,
-          214
-        ],
-        "indent_rainbow_3": [
-          50,
-          205,
-          50
-        ],
-        "indent_rainbow_4": [
-          30,
-          144,
-          255
-        ],
-        "indent_rainbow_5": [
-          255,
-          127,
-          80
-        ],
-        "indent_rainbow_6": [
-          147,
-          112,
-          219
-        ],
-        "whitespace_indicator_fg": [
-          70,
-          70,
-          70
-        ],
+        "indent_rainbow_1": null,
+        "indent_rainbow_2": null,
+        "indent_rainbow_3": null,
+        "indent_rainbow_4": null,
+        "indent_rainbow_5": null,
+        "indent_rainbow_6": null,
+        "whitespace_indicator_fg": null,
         "whitespace_indicator_selected_fg": null,
-        "bracket_match_fg": [
-          255,
-          215,
-          0
-        ],
+        "bracket_match_fg": null,
         "bracket_rainbow_match_modifier": [
           "bold",
           "underlined"
         ],
-        "bracket_rainbow_1": [
-          255,
-          215,
-          0
-        ],
-        "bracket_rainbow_2": [
-          218,
-          112,
-          214
-        ],
-        "bracket_rainbow_3": [
-          50,
-          205,
-          50
-        ],
-        "bracket_rainbow_4": [
-          30,
-          144,
-          255
-        ],
-        "bracket_rainbow_5": [
-          255,
-          127,
-          80
-        ],
-        "bracket_rainbow_6": [
-          147,
-          112,
-          219
-        ],
+        "bracket_rainbow_1": null,
+        "bracket_rainbow_2": null,
+        "bracket_rainbow_3": null,
+        "bracket_rainbow_4": null,
+        "bracket_rainbow_5": null,
+        "bracket_rainbow_6": null,
         "after_eof_bg": null
       }
     },
@@ -164,93 +64,29 @@
       "description": "UI element colors (tabs, menus, status bar, etc.)",
       "$ref": "#/$defs/UiColors",
       "default": {
-        "tab_active_fg": "Yellow",
-        "tab_active_bg": "Blue",
-        "tab_inactive_fg": "White",
-        "tab_inactive_bg": "DarkGray",
-        "tab_separator_bg": "Black",
-        "tab_close_hover_fg": [
-          255,
-          100,
-          100
-        ],
-        "tab_hover_bg": [
-          70,
-          70,
-          75
-        ],
-        "menu_bg": [
-          60,
-          60,
-          65
-        ],
-        "menu_fg": [
-          220,
-          220,
-          220
-        ],
-        "menu_active_bg": [
-          60,
-          60,
-          60
-        ],
-        "menu_active_fg": [
-          255,
-          255,
-          255
-        ],
-        "menu_dropdown_bg": [
-          50,
-          50,
-          50
-        ],
-        "menu_dropdown_fg": [
-          220,
-          220,
-          220
-        ],
-        "menu_highlight_bg": [
-          70,
-          130,
-          180
-        ],
-        "menu_highlight_fg": [
-          255,
-          255,
-          255
-        ],
-        "menu_border_fg": [
-          100,
-          100,
-          100
-        ],
-        "menu_separator_fg": [
-          80,
-          80,
-          80
-        ],
-        "menu_hover_bg": [
-          55,
-          55,
-          55
-        ],
-        "menu_hover_fg": [
-          255,
-          255,
-          255
-        ],
-        "menu_disabled_fg": [
-          100,
-          100,
-          100
-        ],
-        "menu_disabled_bg": [
-          50,
-          50,
-          50
-        ],
-        "status_bar_fg": "White",
-        "status_bar_bg": "DarkGray",
+        "tab_active_fg": null,
+        "tab_active_bg": null,
+        "tab_inactive_fg": null,
+        "tab_inactive_bg": null,
+        "tab_separator_bg": null,
+        "tab_close_hover_fg": null,
+        "tab_hover_bg": null,
+        "menu_bg": null,
+        "menu_fg": null,
+        "menu_active_bg": null,
+        "menu_active_fg": null,
+        "menu_dropdown_bg": null,
+        "menu_dropdown_fg": null,
+        "menu_highlight_bg": null,
+        "menu_highlight_fg": null,
+        "menu_border_fg": null,
+        "menu_separator_fg": null,
+        "menu_hover_bg": null,
+        "menu_hover_fg": null,
+        "menu_disabled_fg": null,
+        "menu_disabled_bg": null,
+        "status_bar_fg": null,
+        "status_bar_bg": null,
         "status_palette_fg": null,
         "status_palette_bg": null,
         "status_separator_fg": null,
@@ -259,148 +95,52 @@
         "status_lsp_on_bg": null,
         "status_lsp_actionable_fg": null,
         "status_lsp_actionable_bg": null,
-        "prompt_fg": "White",
-        "prompt_bg": "Black",
-        "prompt_selection_fg": "White",
-        "prompt_selection_bg": [
-          58,
-          79,
-          120
-        ],
-        "popup_border_fg": "Gray",
-        "popup_bg": [
-          30,
-          30,
-          30
-        ],
-        "popup_selection_bg": [
-          58,
-          79,
-          120
-        ],
-        "text_input_selection_bg": [
-          58,
-          79,
-          120
-        ],
-        "popup_selection_fg": [
-          255,
-          255,
-          255
-        ],
-        "popup_text_fg": "White",
-        "suggestion_bg": [
-          30,
-          30,
-          30
-        ],
+        "prompt_fg": null,
+        "prompt_bg": null,
+        "prompt_selection_fg": null,
+        "prompt_selection_bg": null,
+        "popup_border_fg": null,
+        "popup_bg": null,
+        "popup_selection_bg": null,
+        "text_input_selection_bg": null,
+        "popup_selection_fg": null,
+        "popup_text_fg": null,
+        "suggestion_bg": null,
         "suggestion_fg": null,
-        "suggestion_selected_bg": [
-          58,
-          79,
-          120
-        ],
-        "help_bg": "Black",
-        "help_fg": "White",
-        "help_key_fg": "Cyan",
-        "help_separator_fg": "DarkGray",
-        "help_indicator_fg": "Red",
-        "help_indicator_bg": "Black",
-        "inline_code_bg": "DarkGray",
-        "split_separator_fg": [
-          100,
-          100,
-          100
-        ],
-        "split_separator_hover_fg": [
-          100,
-          149,
-          237
-        ],
-        "scrollbar_track_fg": "DarkGray",
-        "scrollbar_thumb_fg": "Gray",
-        "scrollbar_track_hover_fg": "Gray",
-        "scrollbar_thumb_hover_fg": "White",
-        "compose_margin_bg": [
-          18,
-          18,
-          18
-        ],
+        "suggestion_selected_bg": null,
+        "help_bg": null,
+        "help_fg": null,
+        "help_key_fg": null,
+        "help_separator_fg": null,
+        "help_indicator_fg": null,
+        "help_indicator_bg": null,
+        "inline_code_bg": null,
+        "split_separator_fg": null,
+        "split_separator_hover_fg": null,
+        "scrollbar_track_fg": null,
+        "scrollbar_thumb_fg": null,
+        "scrollbar_track_hover_fg": null,
+        "scrollbar_thumb_hover_fg": null,
+        "compose_margin_bg": null,
         "blame_header_fg": null,
         "blame_header_bg": null,
-        "semantic_highlight_bg": [
-          60,
-          60,
-          80
-        ],
+        "semantic_highlight_bg": null,
         "semantic_highlight_modifier": null,
-        "tour_step_bg": [
-          60,
-          60,
-          80
-        ],
-        "terminal_bg": "Default",
-        "terminal_fg": "Default",
-        "status_warning_indicator_bg": [
-          181,
-          137,
-          0
-        ],
-        "status_warning_indicator_fg": [
-          0,
-          0,
-          0
-        ],
-        "status_error_indicator_bg": [
-          220,
-          50,
-          47
-        ],
-        "status_error_indicator_fg": [
-          255,
-          255,
-          255
-        ],
-        "status_warning_indicator_hover_bg": [
-          211,
-          167,
-          30
-        ],
-        "status_warning_indicator_hover_fg": [
-          0,
-          0,
-          0
-        ],
-        "status_error_indicator_hover_bg": [
-          250,
-          80,
-          77
-        ],
-        "status_error_indicator_hover_fg": [
-          255,
-          255,
-          255
-        ],
-        "tab_drop_zone_bg": [
-          70,
-          130,
-          180
-        ],
-        "tab_drop_zone_border": [
-          100,
-          149,
-          237
-        ],
-        "settings_selected_bg": [
-          60,
-          60,
-          70
-        ],
-        "settings_selected_fg": [
-          255,
-          255,
-          255
-        ],
+        "tour_step_bg": null,
+        "terminal_bg": null,
+        "terminal_fg": null,
+        "status_warning_indicator_bg": null,
+        "status_warning_indicator_fg": null,
+        "status_error_indicator_bg": null,
+        "status_error_indicator_fg": null,
+        "status_warning_indicator_hover_bg": null,
+        "status_warning_indicator_hover_fg": null,
+        "status_error_indicator_hover_bg": null,
+        "status_error_indicator_hover_fg": null,
+        "tab_drop_zone_bg": null,
+        "tab_drop_zone_border": null,
+        "settings_selected_bg": null,
+        "settings_selected_fg": null,
         "file_status_added_fg": null,
         "file_status_modified_fg": null,
         "file_status_deleted_fg": null,
@@ -413,117 +153,43 @@
       "description": "Search result highlighting colors",
       "$ref": "#/$defs/SearchColors",
       "default": {
-        "match_bg": [
-          100,
-          100,
-          20
-        ],
-        "match_fg": [
-          255,
-          255,
-          255
-        ],
-        "label_bg": [
-          199,
-          78,
-          189
-        ],
-        "label_fg": [
-          255,
-          255,
-          255
-        ]
+        "match_bg": null,
+        "match_fg": null,
+        "current_match_bg": null,
+        "current_match_fg": null,
+        "label_bg": null,
+        "label_fg": null
       }
     },
     "diagnostic": {
       "description": "LSP diagnostic colors (errors, warnings, etc.)",
       "$ref": "#/$defs/DiagnosticColors",
       "default": {
-        "error_fg": "Red",
-        "error_bg": [
-          60,
-          20,
-          20
-        ],
-        "warning_fg": "Yellow",
-        "warning_bg": [
-          60,
-          50,
-          0
-        ],
-        "info_fg": "Blue",
-        "info_bg": [
-          0,
-          30,
-          60
-        ],
-        "hint_fg": "Gray",
-        "hint_bg": [
-          30,
-          30,
-          30
-        ]
+        "error_fg": null,
+        "error_bg": null,
+        "warning_fg": null,
+        "warning_bg": null,
+        "info_fg": null,
+        "info_bg": null,
+        "hint_fg": null,
+        "hint_bg": null
       }
     },
     "syntax": {
       "description": "Syntax highlighting colors",
       "$ref": "#/$defs/SyntaxColors",
       "default": {
-        "keyword": [
-          86,
-          156,
-          214
-        ],
-        "string": [
-          206,
-          145,
-          120
-        ],
-        "comment": [
-          106,
-          153,
-          85
-        ],
-        "function": [
-          220,
-          220,
-          170
-        ],
-        "type": [
-          78,
-          201,
-          176
-        ],
-        "variable": [
-          156,
-          220,
-          254
-        ],
-        "variable_builtin": [
-          86,
-          156,
-          214
-        ],
-        "constant": [
-          79,
-          193,
-          255
-        ],
-        "operator": [
-          212,
-          212,
-          212
-        ],
-        "punctuation_bracket": [
-          212,
-          212,
-          212
-        ],
-        "punctuation_delimiter": [
-          212,
-          212,
-          212
-        ]
+        "keyword": null,
+        "string": null,
+        "comment": null,
+        "function": null,
+        "type": null,
+        "variable": null,
+        "variable_builtin": null,
+        "constant": null,
+        "operator": null,
+        "punctuation_bracket": null,
+        "punctuation_delimiter": null
       }
     }
   },
@@ -537,44 +203,63 @@
       "properties": {
         "bg": {
           "description": "Editor background color",
-          "$ref": "#/$defs/ColorDef",
-          "default": [
-            30,
-            30,
-            30
-          ]
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "fg": {
           "description": "Default text color",
-          "$ref": "#/$defs/ColorDef",
-          "default": [
-            212,
-            212,
-            212
-          ]
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "cursor": {
           "description": "Cursor color",
-          "$ref": "#/$defs/ColorDef",
-          "default": [
-            255,
-            255,
-            255
-          ]
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "inactive_cursor": {
           "description": "Cursor color in unfocused splits",
-          "$ref": "#/$defs/ColorDef",
-          "default": "DarkGray"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "selection_bg": {
           "description": "Selected text background",
-          "$ref": "#/$defs/ColorDef",
-          "default": [
-            38,
-            79,
-            120
-          ]
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "selection_modifier": {
           "description": "Optional text-attribute modifiers (e.g. `[\"reversed\"]`) layered\non top of `selection_bg`. Themes that want a terminal-adaptive\nvisual selection (the canonical pattern for native-palette\nthemes — vim/neovim Visual, helix term16, htop, less) set\n`[\"reversed\"]` here; the renderer ORs `Modifier::REVERSED` into\nthe selected cells, which works on any terminal because it\ninverts whatever fg/bg the terminal already uses.",
@@ -590,48 +275,63 @@
         },
         "current_line_bg": {
           "description": "Background of the line containing cursor",
-          "$ref": "#/$defs/ColorDef",
-          "default": [
-            40,
-            40,
-            40
-          ]
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "line_number_fg": {
           "description": "Line number text color",
-          "$ref": "#/$defs/ColorDef",
-          "default": [
-            100,
-            100,
-            100
-          ]
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "line_number_bg": {
           "description": "Line number gutter background",
-          "$ref": "#/$defs/ColorDef",
-          "default": [
-            30,
-            30,
-            30
-          ]
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "diff_add_bg": {
           "description": "Diff added line background",
-          "$ref": "#/$defs/ColorDef",
-          "default": [
-            35,
-            60,
-            35
-          ]
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "diff_remove_bg": {
           "description": "Diff removed line background",
-          "$ref": "#/$defs/ColorDef",
-          "default": [
-            70,
-            35,
-            35
-          ]
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "diff_add_highlight_bg": {
           "description": "Diff added word-level highlight background (optional override)\nWhen not set, computed by brightening diff_add_bg",
@@ -659,12 +359,15 @@
         },
         "diff_modify_bg": {
           "description": "Diff modified line background",
-          "$ref": "#/$defs/ColorDef",
-          "default": [
-            40,
-            38,
-            30
-          ]
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "diff_add_collision_fg": {
           "description": "Fallback fg for cells whose existing fg matches `diff_add_bg`\n(e.g. ANSI Green-on-Green). Only applied on collision; other\ntokens keep their syntax colour.",
@@ -704,12 +407,15 @@
         },
         "ruler_bg": {
           "description": "Vertical ruler background color",
-          "$ref": "#/$defs/ColorDef",
-          "default": [
-            50,
-            50,
-            50
-          ]
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "indentation_guide_fg": {
           "description": "Indentation guide foreground color. When omitted, inherits\n`whitespace_indicator_fg` so guides remain subtle in both dark and\nlight themes while still allowing a dedicated override.",
@@ -725,66 +431,87 @@
         },
         "indent_rainbow_1": {
           "description": "Rainbow indentation-guide color (nesting level 1)",
-          "$ref": "#/$defs/ColorDef",
-          "default": [
-            255,
-            215,
-            0
-          ]
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "indent_rainbow_2": {
           "description": "Rainbow indentation-guide color (nesting level 2)",
-          "$ref": "#/$defs/ColorDef",
-          "default": [
-            218,
-            112,
-            214
-          ]
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "indent_rainbow_3": {
           "description": "Rainbow indentation-guide color (nesting level 3)",
-          "$ref": "#/$defs/ColorDef",
-          "default": [
-            50,
-            205,
-            50
-          ]
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "indent_rainbow_4": {
           "description": "Rainbow indentation-guide color (nesting level 4)",
-          "$ref": "#/$defs/ColorDef",
-          "default": [
-            30,
-            144,
-            255
-          ]
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "indent_rainbow_5": {
           "description": "Rainbow indentation-guide color (nesting level 5)",
-          "$ref": "#/$defs/ColorDef",
-          "default": [
-            255,
-            127,
-            80
-          ]
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "indent_rainbow_6": {
           "description": "Rainbow indentation-guide color (nesting level 6)",
-          "$ref": "#/$defs/ColorDef",
-          "default": [
-            147,
-            112,
-            219
-          ]
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "whitespace_indicator_fg": {
           "description": "Whitespace indicator foreground color (for tab arrows and space dots)",
-          "$ref": "#/$defs/ColorDef",
-          "default": [
-            70,
-            70,
-            70
-          ]
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "whitespace_indicator_selected_fg": {
           "description": "Whitespace indicator foreground color *inside a selection*. Selected\ncells keep their own foreground, so the plain\n`whitespace_indicator_fg` — picked to sit on the editor background —\nis often invisible on `selection_bg` (several themes use the very\nsame color for both). When omitted, this is derived from\n`selection_bg` by shifting it toward contrast: legible against the\nselection, still clearly dimmer than the selected text.",
@@ -800,12 +527,15 @@
         },
         "bracket_match_fg": {
           "description": "Bracket match highlight color (used when rainbow is disabled)",
-          "$ref": "#/$defs/ColorDef",
-          "default": [
-            255,
-            215,
-            0
-          ]
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "bracket_rainbow_match_modifier": {
           "description": "Text attributes that mark the matched bracket pair when rainbow\nbrackets are on. The pair keeps its depth color there, so the match\nis shown by these attributes instead. Default `[\"bold\", \"underlined\"]`.",
@@ -817,57 +547,75 @@
         },
         "bracket_rainbow_1": {
           "description": "Rainbow bracket color (nesting level 1)",
-          "$ref": "#/$defs/ColorDef",
-          "default": [
-            255,
-            215,
-            0
-          ]
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "bracket_rainbow_2": {
           "description": "Rainbow bracket color (nesting level 2)",
-          "$ref": "#/$defs/ColorDef",
-          "default": [
-            218,
-            112,
-            214
-          ]
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "bracket_rainbow_3": {
           "description": "Rainbow bracket color (nesting level 3)",
-          "$ref": "#/$defs/ColorDef",
-          "default": [
-            50,
-            205,
-            50
-          ]
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "bracket_rainbow_4": {
           "description": "Rainbow bracket color (nesting level 4)",
-          "$ref": "#/$defs/ColorDef",
-          "default": [
-            30,
-            144,
-            255
-          ]
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "bracket_rainbow_5": {
           "description": "Rainbow bracket color (nesting level 5)",
-          "$ref": "#/$defs/ColorDef",
-          "default": [
-            255,
-            127,
-            80
-          ]
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "bracket_rainbow_6": {
           "description": "Rainbow bracket color (nesting level 6)",
-          "$ref": "#/$defs/ColorDef",
-          "default": [
-            147,
-            112,
-            219
-          ]
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "after_eof_bg": {
           "description": "Background color for lines after end-of-file (optional override).\nWhen not set, post-EOF rows keep the theme's editor `bg`, so the\nspace below a short buffer reads as part of the same surface as the\ntext. Themes that want the post-EOF area called out (issue #779) can\nname a shade here; `~` markers (`editor.show_tilde`) mark the end of\nthe buffer either way.",
@@ -931,182 +679,279 @@
       "properties": {
         "tab_active_fg": {
           "description": "Active tab text color",
-          "$ref": "#/$defs/ColorDef",
-          "default": "Yellow"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "tab_active_bg": {
           "description": "Active tab background color",
-          "$ref": "#/$defs/ColorDef",
-          "default": "Blue"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "tab_inactive_fg": {
           "description": "Inactive tab text color",
-          "$ref": "#/$defs/ColorDef",
-          "default": "White"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "tab_inactive_bg": {
           "description": "Inactive tab background color",
-          "$ref": "#/$defs/ColorDef",
-          "default": "DarkGray"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "tab_separator_bg": {
           "description": "Tab bar separator color",
-          "$ref": "#/$defs/ColorDef",
-          "default": "Black"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "tab_close_hover_fg": {
           "description": "Tab close button hover color",
-          "$ref": "#/$defs/ColorDef",
-          "default": [
-            255,
-            100,
-            100
-          ]
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "tab_hover_bg": {
           "description": "Tab hover background color",
-          "$ref": "#/$defs/ColorDef",
-          "default": [
-            70,
-            70,
-            75
-          ]
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "menu_bg": {
           "description": "Menu bar background",
-          "$ref": "#/$defs/ColorDef",
-          "default": [
-            60,
-            60,
-            65
-          ]
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "menu_fg": {
           "description": "Menu bar text color",
-          "$ref": "#/$defs/ColorDef",
-          "default": [
-            220,
-            220,
-            220
-          ]
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "menu_active_bg": {
           "description": "Active menu item background",
-          "$ref": "#/$defs/ColorDef",
-          "default": [
-            60,
-            60,
-            60
-          ]
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "menu_active_fg": {
           "description": "Active menu item text color",
-          "$ref": "#/$defs/ColorDef",
-          "default": [
-            255,
-            255,
-            255
-          ]
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "menu_dropdown_bg": {
           "description": "Dropdown menu background",
-          "$ref": "#/$defs/ColorDef",
-          "default": [
-            50,
-            50,
-            50
-          ]
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "menu_dropdown_fg": {
           "description": "Dropdown menu text color",
-          "$ref": "#/$defs/ColorDef",
-          "default": [
-            220,
-            220,
-            220
-          ]
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "menu_highlight_bg": {
           "description": "Highlighted menu item background",
-          "$ref": "#/$defs/ColorDef",
-          "default": [
-            70,
-            130,
-            180
-          ]
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "menu_highlight_fg": {
           "description": "Highlighted menu item text color",
-          "$ref": "#/$defs/ColorDef",
-          "default": [
-            255,
-            255,
-            255
-          ]
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "menu_border_fg": {
           "description": "Menu border color",
-          "$ref": "#/$defs/ColorDef",
-          "default": [
-            100,
-            100,
-            100
-          ]
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "menu_separator_fg": {
           "description": "Menu separator line color",
-          "$ref": "#/$defs/ColorDef",
-          "default": [
-            80,
-            80,
-            80
-          ]
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "menu_hover_bg": {
           "description": "Menu item hover background",
-          "$ref": "#/$defs/ColorDef",
-          "default": [
-            55,
-            55,
-            55
-          ]
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "menu_hover_fg": {
           "description": "Menu item hover text color",
-          "$ref": "#/$defs/ColorDef",
-          "default": [
-            255,
-            255,
-            255
-          ]
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "menu_disabled_fg": {
           "description": "Disabled menu item text color",
-          "$ref": "#/$defs/ColorDef",
-          "default": [
-            100,
-            100,
-            100
-          ]
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "menu_disabled_bg": {
           "description": "Disabled menu item background",
-          "$ref": "#/$defs/ColorDef",
-          "default": [
-            50,
-            50,
-            50
-          ]
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "status_bar_fg": {
           "description": "Status bar text color",
-          "$ref": "#/$defs/ColorDef",
-          "default": "White"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "status_bar_bg": {
           "description": "Status bar background color",
-          "$ref": "#/$defs/ColorDef",
-          "default": "DarkGray"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "status_palette_fg": {
           "description": "Command palette shortcut hint text color in status bar (falls back to status_bar_fg)",
@@ -1206,82 +1051,135 @@
         },
         "prompt_fg": {
           "description": "Command prompt text color",
-          "$ref": "#/$defs/ColorDef",
-          "default": "White"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "prompt_bg": {
           "description": "Command prompt background",
-          "$ref": "#/$defs/ColorDef",
-          "default": "Black"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "prompt_selection_fg": {
           "description": "Prompt selected text color",
-          "$ref": "#/$defs/ColorDef",
-          "default": "White"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "prompt_selection_bg": {
           "description": "Prompt selection background",
-          "$ref": "#/$defs/ColorDef",
-          "default": [
-            58,
-            79,
-            120
-          ]
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "popup_border_fg": {
           "description": "Popup window border color",
-          "$ref": "#/$defs/ColorDef",
-          "default": "Gray"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "popup_bg": {
           "description": "Popup window background",
-          "$ref": "#/$defs/ColorDef",
-          "default": [
-            30,
-            30,
-            30
-          ]
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "popup_selection_bg": {
           "description": "Popup selected item background",
-          "$ref": "#/$defs/ColorDef",
-          "default": [
-            58,
-            79,
-            120
-          ]
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "text_input_selection_bg": {
           "description": "Selection background inside a widget Text input. Reads\nagainst `prompt_bg`, so it needs higher contrast against\nthat tint than `editor.selection_bg` (which targets the\neditor surface). Defaults to the same `popup_selection_bg`\nblue used everywhere \"selected item inside a chrome\nsurface\" is shown — same key the prompt selection uses, so\nthe cue reads consistently across selection UIs.",
-          "$ref": "#/$defs/ColorDef",
-          "default": [
-            58,
-            79,
-            120
-          ]
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "popup_selection_fg": {
           "description": "Popup selected item text color",
-          "$ref": "#/$defs/ColorDef",
-          "default": [
-            255,
-            255,
-            255
-          ]
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "popup_text_fg": {
           "description": "Popup window text color. Per the `*_bg`/`*_fg` convention this\nis the foreground for `popup_bg`; `popup_fg` is accepted as an\nalias so theme JSON can use the convention-consistent name.",
-          "$ref": "#/$defs/ColorDef",
-          "default": "White"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "suggestion_bg": {
           "description": "Autocomplete suggestion background",
-          "$ref": "#/$defs/ColorDef",
-          "default": [
-            30,
-            30,
-            30
-          ]
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "suggestion_fg": {
           "description": "Text color for content drawn on `suggestion_bg` (autocomplete\nitems, the overlay-prompt title/input field). Falls back to\n`popup_text_fg` so existing themes need no change.",
@@ -1297,94 +1195,183 @@
         },
         "suggestion_selected_bg": {
           "description": "Selected suggestion background",
-          "$ref": "#/$defs/ColorDef",
-          "default": [
-            58,
-            79,
-            120
-          ]
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "help_bg": {
           "description": "Help panel background",
-          "$ref": "#/$defs/ColorDef",
-          "default": "Black"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "help_fg": {
           "description": "Help panel text color",
-          "$ref": "#/$defs/ColorDef",
-          "default": "White"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "help_key_fg": {
           "description": "Help keybinding text color",
-          "$ref": "#/$defs/ColorDef",
-          "default": "Cyan"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "help_separator_fg": {
           "description": "Help panel separator color",
-          "$ref": "#/$defs/ColorDef",
-          "default": "DarkGray"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "help_indicator_fg": {
           "description": "Help indicator text color",
-          "$ref": "#/$defs/ColorDef",
-          "default": "Red"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "help_indicator_bg": {
           "description": "Help indicator background",
-          "$ref": "#/$defs/ColorDef",
-          "default": "Black"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "inline_code_bg": {
           "description": "Inline code block background",
-          "$ref": "#/$defs/ColorDef",
-          "default": "DarkGray"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "split_separator_fg": {
           "description": "Split pane separator color",
-          "$ref": "#/$defs/ColorDef",
-          "default": [
-            100,
-            100,
-            100
-          ]
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "split_separator_hover_fg": {
           "description": "Split separator hover color",
-          "$ref": "#/$defs/ColorDef",
-          "default": [
-            100,
-            149,
-            237
-          ]
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "scrollbar_track_fg": {
           "description": "Scrollbar track color",
-          "$ref": "#/$defs/ColorDef",
-          "default": "DarkGray"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "scrollbar_thumb_fg": {
           "description": "Scrollbar thumb color",
-          "$ref": "#/$defs/ColorDef",
-          "default": "Gray"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "scrollbar_track_hover_fg": {
           "description": "Scrollbar track hover color",
-          "$ref": "#/$defs/ColorDef",
-          "default": "Gray"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "scrollbar_thumb_hover_fg": {
           "description": "Scrollbar thumb hover color",
-          "$ref": "#/$defs/ColorDef",
-          "default": "White"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "compose_margin_bg": {
           "description": "Compose mode margin background",
-          "$ref": "#/$defs/ColorDef",
-          "default": [
-            18,
-            18,
-            18
-          ]
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "blame_header_fg": {
           "description": "Text color of a git-blame block header band. Falls back to\n`ui.menu_fg` — see `blame_header_bg` for why that pair.",
@@ -1412,12 +1399,15 @@
         },
         "semantic_highlight_bg": {
           "description": "Occurrence highlight (word under cursor, or the selected text)",
-          "$ref": "#/$defs/ColorDef",
-          "default": [
-            60,
-            60,
-            80
-          ]
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "semantic_highlight_modifier": {
           "description": "Optional text-attribute modifiers (e.g. `[\"bold\"]` or\n`[\"reversed\"]`) layered on top of `semantic_highlight_bg`.\nPer the canonical native-palette pattern, current-word\nhighlights are often shown via `Bold` (so the word stands\nout against other variables without altering its color slot)\nor `Reversed`. See `EditorColors::selection_modifier`.",
@@ -1433,130 +1423,183 @@
         },
         "tour_step_bg": {
           "description": "Code tour step band background",
-          "$ref": "#/$defs/ColorDef",
-          "default": [
-            60,
-            60,
-            80
-          ]
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "terminal_bg": {
           "description": "Embedded terminal background (use Default for transparency)",
-          "$ref": "#/$defs/ColorDef",
-          "default": "Default"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "terminal_fg": {
           "description": "Embedded terminal default text color",
-          "$ref": "#/$defs/ColorDef",
-          "default": "Default"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "status_warning_indicator_bg": {
           "description": "Warning indicator background in status bar",
-          "$ref": "#/$defs/ColorDef",
-          "default": [
-            181,
-            137,
-            0
-          ]
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "status_warning_indicator_fg": {
           "description": "Warning indicator text color in status bar",
-          "$ref": "#/$defs/ColorDef",
-          "default": [
-            0,
-            0,
-            0
-          ]
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "status_error_indicator_bg": {
           "description": "Error indicator background in status bar",
-          "$ref": "#/$defs/ColorDef",
-          "default": [
-            220,
-            50,
-            47
-          ]
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "status_error_indicator_fg": {
           "description": "Error indicator text color in status bar",
-          "$ref": "#/$defs/ColorDef",
-          "default": [
-            255,
-            255,
-            255
-          ]
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "status_warning_indicator_hover_bg": {
           "description": "Warning indicator hover background",
-          "$ref": "#/$defs/ColorDef",
-          "default": [
-            211,
-            167,
-            30
-          ]
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "status_warning_indicator_hover_fg": {
           "description": "Warning indicator hover text color",
-          "$ref": "#/$defs/ColorDef",
-          "default": [
-            0,
-            0,
-            0
-          ]
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "status_error_indicator_hover_bg": {
           "description": "Error indicator hover background",
-          "$ref": "#/$defs/ColorDef",
-          "default": [
-            250,
-            80,
-            77
-          ]
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "status_error_indicator_hover_fg": {
           "description": "Error indicator hover text color",
-          "$ref": "#/$defs/ColorDef",
-          "default": [
-            255,
-            255,
-            255
-          ]
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "tab_drop_zone_bg": {
           "description": "Tab drop zone background during drag",
-          "$ref": "#/$defs/ColorDef",
-          "default": [
-            70,
-            130,
-            180
-          ]
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "tab_drop_zone_border": {
           "description": "Tab drop zone border during drag",
-          "$ref": "#/$defs/ColorDef",
-          "default": [
-            100,
-            149,
-            237
-          ]
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "settings_selected_bg": {
           "description": "Settings UI selected item background",
-          "$ref": "#/$defs/ColorDef",
-          "default": [
-            60,
-            60,
-            70
-          ]
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "settings_selected_fg": {
           "description": "Settings UI selected item foreground (text on selected background)",
-          "$ref": "#/$defs/ColorDef",
-          "default": [
-            255,
-            255,
-            255
-          ]
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "file_status_added_fg": {
           "description": "File status: added file color in file explorer (falls back to diagnostic.info_fg)",
@@ -1638,206 +1681,75 @@
       "properties": {
         "match_bg": {
           "description": "Search match background color",
-          "$ref": "#/$defs/ColorDef",
-          "default": [
-            100,
-            100,
-            20
-          ]
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "match_fg": {
           "description": "Search match text color",
-          "$ref": "#/$defs/ColorDef",
-          "default": [
-            255,
-            255,
-            255
-          ]
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "current_match_bg": {
+          "description": "Background of the *current* search match: the one Find Next / Find\nPrevious just landed on, or the one Query Replace is asking about.\nShould stand out from `match_bg` so the current match is obvious\namong the other highlighted matches.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "current_match_fg": {
+          "description": "Text color of the current search match, optionally bundled with text\nattributes (`{\"color\": [255, 255, 255], \"modifier\": [\"bold\"]}`).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StyledColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "label_bg": {
           "description": "Background color for jump labels (e.g. flash plugin labels).\nShould be visually distinct from `match_bg` so labels stand\nout against highlighted matches.  Default: bright magenta.",
-          "$ref": "#/$defs/ColorDef",
-          "default": [
-            199,
-            78,
-            189
-          ]
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "label_fg": {
           "description": "Foreground color for jump labels.  Should be high contrast\nagainst `label_bg` so the single label letter is unambiguous\neven on small terminal cells.  Default: white.",
-          "$ref": "#/$defs/ColorDef",
-          "default": [
-            255,
-            255,
-            255
-          ]
-        }
-      }
-    },
-    "DiagnosticColors": {
-      "description": "LSP diagnostic colors (errors, warnings, etc.)",
-      "type": "object",
-      "properties": {
-        "error_fg": {
-          "description": "Error message text color",
-          "$ref": "#/$defs/ColorDef",
-          "default": "Red"
-        },
-        "error_bg": {
-          "description": "Error highlight background",
-          "$ref": "#/$defs/ColorDef",
-          "default": [
-            60,
-            20,
-            20
-          ]
-        },
-        "warning_fg": {
-          "description": "Warning message text color",
-          "$ref": "#/$defs/ColorDef",
-          "default": "Yellow"
-        },
-        "warning_bg": {
-          "description": "Warning highlight background",
-          "$ref": "#/$defs/ColorDef",
-          "default": [
-            60,
-            50,
-            0
-          ]
-        },
-        "info_fg": {
-          "description": "Info message text color",
-          "$ref": "#/$defs/ColorDef",
-          "default": "Blue"
-        },
-        "info_bg": {
-          "description": "Info highlight background",
-          "$ref": "#/$defs/ColorDef",
-          "default": [
-            0,
-            30,
-            60
-          ]
-        },
-        "hint_fg": {
-          "description": "Hint message text color",
-          "$ref": "#/$defs/ColorDef",
-          "default": "Gray"
-        },
-        "hint_bg": {
-          "description": "Hint highlight background",
-          "$ref": "#/$defs/ColorDef",
-          "default": [
-            30,
-            30,
-            30
-          ]
-        }
-      }
-    },
-    "SyntaxColors": {
-      "description": "Syntax highlighting colors.\n\nEach field is a [`StyledColorDef`]: a bare color, or a color bundled with\nthe text attributes to render it with. The bundle keeps a category's color\nand its attributes in one value — no parallel `*_modifier` keys.",
-      "type": "object",
-      "properties": {
-        "keyword": {
-          "description": "Language keywords (if, for, fn, etc.)",
-          "$ref": "#/$defs/StyledColorDef",
-          "default": [
-            86,
-            156,
-            214
-          ]
-        },
-        "string": {
-          "description": "String literals",
-          "$ref": "#/$defs/StyledColorDef",
-          "default": [
-            206,
-            145,
-            120
-          ]
-        },
-        "comment": {
-          "description": "Code comments",
-          "$ref": "#/$defs/StyledColorDef",
-          "default": [
-            106,
-            153,
-            85
-          ]
-        },
-        "function": {
-          "description": "Function names",
-          "$ref": "#/$defs/StyledColorDef",
-          "default": [
-            220,
-            220,
-            170
-          ]
-        },
-        "type": {
-          "description": "Type names",
-          "$ref": "#/$defs/StyledColorDef",
-          "default": [
-            78,
-            201,
-            176
-          ]
-        },
-        "variable": {
-          "description": "Variable names",
-          "$ref": "#/$defs/StyledColorDef",
-          "default": [
-            156,
-            220,
-            254
-          ]
-        },
-        "variable_builtin": {
-          "description": "Built-in language variables (self, this, super, etc.)",
-          "$ref": "#/$defs/StyledColorDef",
-          "default": [
-            86,
-            156,
-            214
-          ]
-        },
-        "constant": {
-          "description": "Constants and literals",
-          "$ref": "#/$defs/StyledColorDef",
-          "default": [
-            79,
-            193,
-            255
-          ]
-        },
-        "operator": {
-          "description": "Operators (+, -, =, etc.)",
-          "$ref": "#/$defs/StyledColorDef",
-          "default": [
-            212,
-            212,
-            212
-          ]
-        },
-        "punctuation_bracket": {
-          "description": "Punctuation brackets ({, }, (, ), [, ])",
-          "$ref": "#/$defs/StyledColorDef",
-          "default": [
-            212,
-            212,
-            212
-          ]
-        },
-        "punctuation_delimiter": {
-          "description": "Punctuation delimiters (;, ,, .)",
-          "$ref": "#/$defs/StyledColorDef",
-          "default": [
-            212,
-            212,
-            212
-          ]
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       }
     },
@@ -1871,6 +1783,246 @@
           ]
         }
       ]
+    },
+    "DiagnosticColors": {
+      "description": "LSP diagnostic colors (errors, warnings, etc.)",
+      "type": "object",
+      "properties": {
+        "error_fg": {
+          "description": "Error message text color",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "error_bg": {
+          "description": "Error highlight background",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "warning_fg": {
+          "description": "Warning message text color",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "warning_bg": {
+          "description": "Warning highlight background",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "info_fg": {
+          "description": "Info message text color",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "info_bg": {
+          "description": "Info highlight background",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "hint_fg": {
+          "description": "Hint message text color",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "hint_bg": {
+          "description": "Hint highlight background",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      }
+    },
+    "SyntaxColors": {
+      "description": "Syntax highlighting colors.\n\nEach field is a [`StyledColorDef`]: a bare color, or a color bundled with\nthe text attributes to render it with. The bundle keeps a category's color\nand its attributes in one value — no parallel `*_modifier` keys.",
+      "type": "object",
+      "properties": {
+        "keyword": {
+          "description": "Language keywords (if, for, fn, etc.)",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StyledColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "string": {
+          "description": "String literals",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StyledColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "comment": {
+          "description": "Code comments",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StyledColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "function": {
+          "description": "Function names",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StyledColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "type": {
+          "description": "Type names",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StyledColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "variable": {
+          "description": "Variable names",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StyledColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "variable_builtin": {
+          "description": "Built-in language variables (self, this, super, etc.)",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StyledColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "constant": {
+          "description": "Constants and literals",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StyledColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "operator": {
+          "description": "Operators (+, -, =, etc.)",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StyledColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "punctuation_bracket": {
+          "description": "Punctuation brackets ({, }, (, ), [, ])",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StyledColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "punctuation_delimiter": {
+          "description": "Punctuation delimiters (;, ,, .)",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StyledColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      }
     }
   }
 }

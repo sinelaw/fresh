@@ -266,6 +266,11 @@ pub struct Popup {
     /// Scroll offset for content (for scrolling through long lists)
     pub scroll_offset: usize,
 
+    /// A list popup's page: the drawn list records the window its layout
+    /// gave it here, which a popup clamped to the space it has can make
+    /// shorter than `max_height` says.
+    pub pager: std::rc::Rc<fresh_ui::behavior::Pager>,
+
     /// Text selection for copy/paste (None if no selection)
     pub text_selection: Option<PopupTextSelection>,
 
@@ -310,6 +315,7 @@ impl Popup {
             border_style: Style::default().fg(theme.popup_border_fg),
             background_style: Style::default().bg(theme.popup_bg),
             scroll_offset: 0,
+            pager: Default::default(),
             text_selection: None,
             accept_key_hint: None,
             resolver: PopupResolver::None,
@@ -341,6 +347,7 @@ impl Popup {
             border_style: Style::default().fg(theme.popup_border_fg),
             background_style: Style::default().bg(theme.popup_bg),
             scroll_offset: 0,
+            pager: Default::default(),
             text_selection: None,
             accept_key_hint: None,
             resolver: PopupResolver::None,
@@ -364,6 +371,7 @@ impl Popup {
             border_style: Style::default().fg(theme.popup_border_fg),
             background_style: Style::default().bg(theme.popup_bg),
             scroll_offset: 0,
+            pager: Default::default(),
             text_selection: None,
             accept_key_hint: None,
             resolver: PopupResolver::None,
@@ -431,8 +439,13 @@ impl Popup {
         }
     }
 
-    /// Get the actual visible content height (accounting for borders)
+    /// The rows the content shows: the window the drawn list was given,
+    /// or, before a list is laid out and for text, `max_height` less the
+    /// borders.
     fn visible_height(&self) -> usize {
+        if let (PopupContent::List { .. }, Some(rows)) = (&self.content, self.pager.window()) {
+            return rows;
+        }
         let border_offset = if self.bordered { 2 } else { 0 };
         (self.max_height as usize).saturating_sub(border_offset)
     }

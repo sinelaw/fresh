@@ -1440,19 +1440,21 @@ impl crate::app::window::Window {
                             self.terminal_height,
                             second_buffer_id,
                         );
-                        view_state.apply_config_defaults(crate::view::split::ViewConfigDefaults {
-                            line_numbers: self.resources.config.editor.line_numbers,
-                            highlight_current_line: self
-                                .resources
-                                .config
-                                .editor
-                                .highlight_current_line,
-                            line_wrap: self.resolve_line_wrap_for_buffer(second_buffer_id),
-                            wrap_indent: self.resources.config.editor.wrap_indent,
-                            wrap_column: self.resolve_wrap_column_for_buffer(second_buffer_id),
-                            rulers: self.resources.config.editor.rulers.clone(),
-                            scroll_offset: self.resources.config.editor.scroll_offset,
-                        });
+                        view_state.buffer_tab_state_mut().apply_config_defaults(
+                            crate::view::split::ViewConfigDefaults {
+                                line_numbers: self.resources.config.editor.line_numbers,
+                                highlight_current_line: self
+                                    .resources
+                                    .config
+                                    .editor
+                                    .highlight_current_line,
+                                line_wrap: self.resolve_line_wrap_for_buffer(second_buffer_id),
+                                wrap_indent: self.resources.config.editor.wrap_indent,
+                                wrap_column: self.resolve_wrap_column_for_buffer(second_buffer_id),
+                                rulers: self.resources.config.editor.rulers.clone(),
+                                scroll_offset: self.resources.config.editor.scroll_offset,
+                            },
+                        );
                         self.split_view_states_mut().insert(new_leaf_id, view_state);
 
                         // Map the container split ID (though we mainly care about leaves)
@@ -1807,7 +1809,7 @@ impl crate::app::window::Window {
                 // (see `SerializedSplitViewState`); the per-buffer restore
                 // above is the only one there is.
                 if let Some(active_buf_id) = active_buffer_id {
-                    view_state.switch_buffer(active_buf_id);
+                    view_state.set_buffer_tab(active_buf_id);
                 }
                 active_buffer_id
             })
@@ -2140,7 +2142,7 @@ impl crate::app::window::Window {
             None => return,
         };
 
-        let primary_cursor = view_state.cursors.primary();
+        let primary_cursor = view_state.buffer_tab_state().cursors.primary();
         let file_state = SerializedFileState {
             cursor: SerializedCursor {
                 position: primary_cursor.position,
@@ -2148,6 +2150,7 @@ impl crate::app::window::Window {
                 sticky_column: primary_cursor.sticky_column.unwrap_or(0),
             },
             additional_cursors: view_state
+                .buffer_tab_state()
                 .cursors
                 .iter()
                 .skip(1)
@@ -2158,9 +2161,12 @@ impl crate::app::window::Window {
                 })
                 .collect(),
             scroll: SerializedScroll {
-                top_byte: view_state.viewport.top_byte(),
-                top_view_line_offset: view_state.viewport.top_view_line_offset(),
-                left_column: view_state.viewport.left_column,
+                top_byte: view_state.buffer_tab_state().viewport.top_byte(),
+                top_view_line_offset: view_state
+                    .buffer_tab_state()
+                    .viewport
+                    .top_view_line_offset(),
+                left_column: view_state.buffer_tab_state().viewport.left_column,
             },
             view_mode: Default::default(),
             compose_width: None,
@@ -3328,7 +3334,7 @@ fn serialize_split_view_state(
 
     // Serialize file states for ALL buffers in keyed_states (not just the active one)
     let mut file_states = HashMap::new();
-    for (buffer_id, buf_state) in &view_state.keyed_states {
+    for (buffer_id, buf_state) in view_state.buffer_states() {
         let Some(meta) = buffer_metadata.get(buffer_id) else {
             continue;
         };

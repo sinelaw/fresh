@@ -52,25 +52,20 @@ impl Editor {
     /// they are built never to have. Other views pick the new default up from
     /// `apply_config_defaults`, the path that owns that stamping.
     pub fn toggle_line_numbers(&mut self) {
-        let active_split = self.active_window().split_manager().active_split();
         let new_value = !self.config.editor.line_numbers;
-        let Some(resolved) = self
-            .active_window_mut()
-            .split_view_states_mut()
-            .get_mut(&active_split)
-            .map(|vs| {
-                // The user is expressing a global intent on this view, so drop
-                // any per-buffer pin here — otherwise the override would revert
-                // this change on the next view-mode switch / restart. Cleared
-                // before resolving, so the resolve below sees the same state a
-                // later `apply_config_defaults` will.
-                vs.line_numbers_override = None;
-                let resolved = vs.line_numbers_visible(new_value);
-                vs.show_line_numbers = resolved;
-                resolved
-            })
-        else {
-            return;
+        let resolved = {
+            // The buffer the user is on (`Window::focused_view_mut`): a
+            // shown group's focused panel, never the buffer behind it.
+            let vs = self.active_window_mut().focused_view_mut();
+            // The user is expressing a global intent on this view, so drop
+            // any per-buffer pin here — otherwise the override would revert
+            // this change on the next view-mode switch / restart. Cleared
+            // before resolving, so the resolve below sees the same state a
+            // later `apply_config_defaults` will.
+            vs.line_numbers_override = None;
+            let resolved = vs.line_numbers_visible(new_value);
+            vs.show_line_numbers = resolved;
+            resolved
         };
 
         // `editor.line_numbers` is a global preference, so persist the toggle
@@ -104,21 +99,16 @@ impl Editor {
     /// view state, which is persisted in the per-file workspace state so the
     /// choice survives a restart (issue #474 follow-up).
     pub fn toggle_line_numbers_current_buffer(&mut self) {
-        let active_split = self.active_window().split_manager().active_split();
-        let Some(new_value) = self
-            .active_window_mut()
-            .split_view_states_mut()
-            .get_mut(&active_split)
-            .map(|vs| {
-                // Deref reaches the active buffer's BufferViewState, so this
-                // scopes the override to the current buffer in this split only.
-                let new_value = !vs.show_line_numbers;
-                vs.show_line_numbers = new_value;
-                vs.line_numbers_override = Some(new_value);
-                new_value
-            })
-        else {
-            return;
+        let new_value = {
+            // The buffer the user is on (`Window::focused_view_mut`): a
+            // shown group's focused panel, never the buffer behind it.
+            let vs = self.active_window_mut().focused_view_mut();
+            // The focused buffer's own view state in its pane, so this
+            // scopes the override to that buffer in that pane only.
+            let new_value = !vs.show_line_numbers;
+            vs.show_line_numbers = new_value;
+            vs.line_numbers_override = Some(new_value);
+            new_value
         };
 
         let status = if new_value {
@@ -136,26 +126,21 @@ impl Editor {
     /// other buffers. Records an explicit per-buffer override, persisted in the
     /// per-file workspace state.
     pub fn toggle_line_wrap_current_buffer(&mut self) {
-        let active_split = self.active_window().split_manager().active_split();
         let buffer_id = self.active_buffer();
         let wrap_column = self
             .active_window()
             .resolve_wrap_column_for_buffer(buffer_id);
         let wrap_indent = self.config.editor.wrap_indent;
-        let Some(new_value) = self
-            .active_window_mut()
-            .split_view_states_mut()
-            .get_mut(&active_split)
-            .map(|vs| {
-                let new_value = !vs.viewport.line_wrap_enabled;
-                vs.viewport.line_wrap_enabled = new_value;
-                vs.viewport.wrap_indent = wrap_indent;
-                vs.viewport.wrap_column = wrap_column;
-                vs.line_wrap_override = Some(new_value);
-                new_value
-            })
-        else {
-            return;
+        let new_value = {
+            // The buffer the user is on (`Window::focused_view_mut`): a
+            // shown group's focused panel, never the buffer behind it.
+            let vs = self.active_window_mut().focused_view_mut();
+            let new_value = !vs.viewport.line_wrap_enabled;
+            vs.viewport.line_wrap_enabled = new_value;
+            vs.viewport.wrap_indent = wrap_indent;
+            vs.viewport.wrap_column = wrap_column;
+            vs.line_wrap_override = Some(new_value);
+            new_value
         };
 
         let state = if new_value {
@@ -241,25 +226,20 @@ impl Editor {
         // The pin lives on the split's view state (like line numbers and the
         // current-line highlight), so the same buffer in another split keeps
         // its own choice.
-        let active_split = self.active_window().split_manager().active_split();
-        let Some(new_value) = self
-            .active_window_mut()
-            .split_view_states_mut()
-            .get_mut(&active_split)
-            .map(|vs| {
-                let currently_on = resolve_indentation_guide_mode(IndentationGuideInputs {
-                    global,
-                    user_override: vs.indentation_guide_user_override,
-                    plugin_override,
-                    language_gate,
-                    is_virtual_buffer,
-                }) != IndentationGuideMode::None;
-                let new_value = !currently_on;
-                vs.indentation_guide_user_override = Some(new_value);
-                new_value
-            })
-        else {
-            return;
+        let new_value = {
+            // The buffer the user is on (`Window::focused_view_mut`): a
+            // shown group's focused panel, never the buffer behind it.
+            let vs = self.active_window_mut().focused_view_mut();
+            let currently_on = resolve_indentation_guide_mode(IndentationGuideInputs {
+                global,
+                user_override: vs.indentation_guide_user_override,
+                plugin_override,
+                language_gate,
+                is_virtual_buffer,
+            }) != IndentationGuideMode::None;
+            let new_value = !currently_on;
+            vs.indentation_guide_user_override = Some(new_value);
+            new_value
         };
 
         let status = if new_value {
@@ -276,21 +256,16 @@ impl Editor {
     /// setting. `BufferViewState` already stores the flag per (split, buffer),
     /// so this pins it there and records the intent for persistence.
     pub fn toggle_current_line_highlight_current_buffer(&mut self) {
-        let active_split = self.active_window().split_manager().active_split();
-        let Some(new_value) = self
-            .active_window_mut()
-            .split_view_states_mut()
-            .get_mut(&active_split)
-            .map(|vs| {
-                // Deref reaches the active buffer's BufferViewState, so this
-                // scopes the override to the current buffer in this split only.
-                let new_value = !vs.highlight_current_line;
-                vs.highlight_current_line = new_value;
-                vs.highlight_current_line_override = Some(new_value);
-                new_value
-            })
-        else {
-            return;
+        let new_value = {
+            // The buffer the user is on (`Window::focused_view_mut`): a
+            // shown group's focused panel, never the buffer behind it.
+            let vs = self.active_window_mut().focused_view_mut();
+            // The focused buffer's own view state in its pane, so this
+            // scopes the override to that buffer in that pane only.
+            let new_value = !vs.highlight_current_line;
+            vs.highlight_current_line = new_value;
+            vs.highlight_current_line_override = Some(new_value);
+            new_value
         };
 
         let state = if new_value {
@@ -350,18 +325,13 @@ impl Editor {
         // The pin lives on the split's view state (like line numbers and the
         // current-line highlight), so the same buffer in another split keeps
         // its own choice.
-        let active_split = self.active_window().split_manager().active_split();
-        let Some(new_value) = self
-            .active_window_mut()
-            .split_view_states_mut()
-            .get_mut(&active_split)
-            .map(|vs| {
-                let new_value = !vs.fold_indicators_visible();
-                vs.fold_indicators_override = Some(new_value);
-                new_value
-            })
-        else {
-            return;
+        let new_value = {
+            // The buffer the user is on (`Window::focused_view_mut`): a
+            // shown group's focused panel, never the buffer behind it.
+            let vs = self.active_window_mut().focused_view_mut();
+            let new_value = !vs.fold_indicators_visible();
+            vs.fold_indicators_override = Some(new_value);
+            new_value
         };
 
         let status = if new_value {
@@ -678,42 +648,29 @@ impl Editor {
         let wrap_column = self
             .active_window()
             .resolve_wrap_column_for_buffer(buffer_id);
-        let leaf_ids: Vec<_> = self
-            .active_window()
-            .split_view_states()
-            .keys()
-            .copied()
-            .collect();
-        for leaf_id in leaf_ids {
-            if self
-                .active_window_mut()
-                .split_manager_mut()
-                .get_buffer_id(leaf_id.into())
-                != Some(buffer_id)
-            {
-                continue;
-            }
-            if let Some(view_state) = self
-                .windows
-                .get_mut(&self.active_window)
-                .and_then(|w| w.buffers.split_view_states_mut())
-                .expect("active window must have a populated split layout")
-                .get_mut(&leaf_id)
-            {
-                view_state.line_numbers_override = None;
-                view_state.line_wrap_override = None;
-                view_state.highlight_current_line_override = None;
-                view_state.indentation_guide_user_override = None;
-                view_state.fold_indicators_override = None;
-                view_state.apply_config_defaults(crate::view::split::ViewConfigDefaults {
-                    line_numbers: self.config.editor.line_numbers,
-                    highlight_current_line: self.config.editor.highlight_current_line,
-                    line_wrap,
-                    wrap_indent: self.config.editor.wrap_indent,
-                    wrap_column,
-                    rulers: self.config.editor.rulers.clone(),
-                    scroll_offset: self.config.editor.scroll_offset,
-                });
+        // `buffer_id`'s own view state in every pane that keeps one — its
+        // tab or not, a group's panel included.
+        let defaults = crate::view::split::ViewConfigDefaults {
+            line_numbers: self.config.editor.line_numbers,
+            highlight_current_line: self.config.editor.highlight_current_line,
+            line_wrap,
+            wrap_indent: self.config.editor.wrap_indent,
+            wrap_column,
+            rulers: self.config.editor.rulers.clone(),
+            scroll_offset: self.config.editor.scroll_offset,
+        };
+        for vs in self
+            .active_window_mut()
+            .split_view_states_mut()
+            .values_mut()
+        {
+            if let Some(view) = vs.buffer_state_mut(buffer_id) {
+                view.line_numbers_override = None;
+                view.line_wrap_override = None;
+                view.highlight_current_line_override = None;
+                view.indentation_guide_user_override = None;
+                view.fold_indicators_override = None;
+                view.apply_config_defaults(defaults.clone());
             }
         }
 

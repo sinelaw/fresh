@@ -818,6 +818,12 @@ pub struct Window {
     /// because the overlays it scopes are per-buffer (per-window).
     pub search_namespace: crate::view::overlay::OverlayNamespace,
 
+    /// Overlay namespace for the one *current* search match (the match
+    /// Find Next landed on, or the one Query Replace is asking about).
+    /// Kept apart from `search_namespace` because that namespace's overlay
+    /// markers are the source of truth for match positions.
+    pub search_current_namespace: crate::view::overlay::OverlayNamespace,
+
     /// Range that should be reused when the next search is confirmed
     /// (e.g. after the user picks a hit in the search overlay).
     pub pending_search_range: Option<std::ops::Range<usize>>,
@@ -1821,23 +1827,16 @@ impl Window {
             .is_some()
     }
 
-    /// Same as [`apply_event_to_buffer`] but operates on a buffer-group
-    /// panel's keyed cursor (the `keyed_states[buffer_id].cursors`
-    /// inside the host split's view state, not the host's own cursors).
-    /// Used by event-apply paths that target a focused inner panel of
-    /// a Grouped split rather than the outer split's leaf buffer.
+    /// Same as [`apply_event_to_buffer`], which now always applies to
+    /// `buffer_id`'s own cursors in the split — kept for the event-apply
+    /// paths that name a buffer-group panel's keyed state.
     pub fn apply_event_to_keyed_buffer(
         &mut self,
         buffer_id: BufferId,
         split_id: LeafId,
         event: &crate::model::event::Event,
     ) {
-        self.buffers
-            .with_buffer_and_split(buffer_id, split_id, |state, vs| {
-                if let Some(keyed) = vs.keyed_states.get_mut(&buffer_id) {
-                    state.apply(&mut keyed.cursors, event);
-                }
-            });
+        self.apply_event_to_buffer(buffer_id, split_id, event);
     }
 
     /// Scroll the named split's viewport so the buffer's primary cursor
@@ -1887,7 +1886,7 @@ impl Window {
         self.buffers
             .with_buffer_and_view_states(buffer_id, |state, vs_map| {
                 for vs in vs_map.values_mut() {
-                    if vs.keyed_states.contains_key(&buffer_id) {
+                    if vs.has_buffer_state(buffer_id) {
                         let buf_state = vs.ensure_buffer_state(buffer_id);
                         buf_state.folds.add(
                             &state.buffer,
@@ -1908,7 +1907,7 @@ impl Window {
         self.buffers
             .with_buffer_and_view_states(buffer_id, |state, vs_map| {
                 for vs in vs_map.values_mut() {
-                    if vs.keyed_states.contains_key(&buffer_id) {
+                    if vs.has_buffer_state(buffer_id) {
                         let buf_state = vs.ensure_buffer_state(buffer_id);
                         buf_state.folds.clear(&mut state.marker_list);
                     }
@@ -1930,7 +1929,7 @@ impl Window {
             .with_buffer_and_view_states(buffer_id, |state, vs_map| {
                 let mut pruned = false;
                 for vs in vs_map.values_mut() {
-                    if let Some(buf_state) = vs.keyed_states.get_mut(&buffer_id) {
+                    if let Some(buf_state) = vs.buffer_state_mut(buffer_id) {
                         pruned |= buf_state
                             .folds
                             .prune_orphaned(&state.buffer, &mut state.marker_list);
@@ -1977,7 +1976,7 @@ impl Window {
                     let Some(view_state) = vs_map.get_mut(leaf_id) else {
                         continue;
                     };
-                    let cursor = view_state.cursors.primary_mut();
+                    let cursor = view_state.buffer_tab_state_mut().cursors.primary_mut();
                     cursor.move_to(position, extend);
                     // An absolute placement is a jump, not a vertical move,
                     // so it clears the goal column — the same thing every
@@ -2002,7 +2001,9 @@ impl Window {
                     // all absolute placements, none of them a vertical
                     // motion.
                     cursor.sticky_column = None;
-                    view_state.ensure_cursor_visible(&mut state.buffer, &state.marker_list);
+                    view_state
+                        .buffer_tab_state_mut()
+                        .ensure_cursor_visible(&mut state.buffer, &state.marker_list);
                 }
             });
     }
@@ -2053,11 +2054,18 @@ impl Window {
                     let Some(view_state) = vs_map.get_mut(leaf_id) else {
                         continue;
                     };
-                    let viewport_height = view_state.viewport.height as usize;
+                    let viewport_height =
+                        view_state.buffer_tab_state_mut().viewport.height as usize;
                     let lines_above = viewport_height / 3;
                     let target = line.saturating_sub(lines_above);
-                    view_state.viewport.scroll_to(&mut state.buffer, target);
-                    view_state.viewport.set_skip_ensure_visible();
+                    view_state
+                        .buffer_tab_state_mut()
+                        .viewport
+                        .scroll_to(&mut state.buffer, target);
+                    view_state
+                        .buffer_tab_state_mut()
+                        .viewport
+                        .set_skip_ensure_visible();
                 }
             });
     }
@@ -2078,10 +2086,7 @@ impl Window {
         file_state: &crate::workspace::SerializedFileState,
     ) {
         self.buffers
-            .with_buffer_and_split(buffer_id, split_id, |buffer_state, vs| {
-                let Some(buf_state) = vs.keyed_states.get_mut(&buffer_id) else {
-                    return;
-                };
+            .with_buffer_and_split(buffer_id, split_id, |buffer_state, buf_state| {
                 let max_pos = buffer_state.buffer.len();
                 let cursor_pos = file_state.cursor.position.min(max_pos);
                 buf_state.cursors.primary_mut().position = cursor_pos;
@@ -2114,7 +2119,7 @@ impl Window {
                 let total = state.buffer.total_bytes();
                 for vs in vs_map.values_mut() {
                     if vs.has_buffer(buffer_id) {
-                        vs.cursors.primary_mut().position = total;
+                        vs.buffer_tab_state_mut().cursors.primary_mut().position = total;
                         // Disable gutter + current-line highlight for the
                         // terminal buffer's per-buffer view state so that
                         // exiting terminal mode on a restored terminal
@@ -2153,7 +2158,7 @@ impl Window {
                 // Resolved before the mutable buffer borrow below: the
                 // row-space path needs only `&Buffer`.
                 let scroll_geometry = wrap_scroll_geometry(view_state, state);
-                let hidden_ranges = collapsed_hidden_ranges(view_state, state, buffer_id);
+                let hidden_ranges = collapsed_hidden_ranges(view_state, state);
                 let top_byte_before = view_state.viewport.top_byte();
                 if let Some(geometry) = scroll_geometry {
                     // Row arithmetic off the wrap index: no text is read, so a
@@ -2189,26 +2194,31 @@ impl Window {
                 view_state.viewport.set_skip_ensure_visible();
 
                 let buffer = &mut state.buffer;
-                if let Some(folds) = view_state.keyed_states.get(&buffer_id).map(|bs| &bs.folds) {
-                    if !folds.is_empty() {
+                // Resolved first, from the folds and viewport as they are;
+                // the viewport is written after.
+                let snap_to = (!view_state.folds.is_empty())
+                    .then(|| {
                         let top_line = buffer.get_line_number(view_state.viewport.top_byte());
-                        if let Some(range) = folds
+                        let range = view_state
+                            .folds
                             .resolved_ranges(buffer, &state.marker_list)
-                            .iter()
-                            .find(|r| top_line >= r.start_line && top_line <= r.end_line)
-                        {
-                            let target_line = if delta >= 0 {
-                                range.end_line.saturating_add(1)
-                            } else {
-                                range.header_line
-                            };
-                            let target_byte = buffer
+                            .into_iter()
+                            .find(|r| top_line >= r.start_line && top_line <= r.end_line)?;
+                        let target_line = if delta >= 0 {
+                            range.end_line.saturating_add(1)
+                        } else {
+                            range.header_line
+                        };
+                        Some(
+                            buffer
                                 .line_start_offset(target_line)
-                                .unwrap_or_else(|| buffer.len());
-                            view_state.viewport.set_top_byte(target_byte);
-                            view_state.viewport.set_top_view_line_offset(0);
-                        }
-                    }
+                                .unwrap_or_else(|| buffer.len()),
+                        )
+                    })
+                    .flatten();
+                if let Some(target_byte) = snap_to {
+                    view_state.viewport.set_top_byte(target_byte);
+                    view_state.viewport.set_top_view_line_offset(0);
                 }
                 tracing::trace!(
                     "scroll_split_by_lines: delta={}, top_byte {} -> {}",
@@ -2245,7 +2255,7 @@ impl Window {
         let Some(ps) = self.overlay_preview_state.as_mut() else {
             return false;
         };
-        let viewport = &mut ps.view_state.active_state_mut().viewport;
+        let viewport = &mut ps.view_state.buffer_tab_state_mut().viewport;
         // The preview loads plain file buffers and exposes no fold controls,
         // so there are never collapsed regions to skip here.
         if delta < 0 {
@@ -2279,7 +2289,7 @@ impl Window {
                 state.virtual_texts.clear(&mut state.marker_list);
                 state.folding_ranges.clear(&mut state.marker_list);
                 for view_state in vs_map.values_mut() {
-                    if let Some(buf_state) = view_state.keyed_states.get_mut(&buffer_id) {
+                    if let Some(buf_state) = view_state.buffer_state_mut(buffer_id) {
                         buf_state.folds.clear(&mut state.marker_list);
                     }
                 }
@@ -2477,6 +2487,9 @@ impl Window {
             search_namespace: crate::view::overlay::OverlayNamespace::from_string(
                 "search".to_string(),
             ),
+            search_current_namespace: crate::view::overlay::OverlayNamespace::from_string(
+                "current-search-match".to_string(),
+            ),
             pending_search_range: None,
             overlay_preview_state: None,
             file_rapid_change_counts: HashMap::new(),
@@ -2621,29 +2634,41 @@ impl Window {
 
     /// Resolve the effective (split, buffer) pair for the currently-
     /// focused target inside this window. Returned invariant: the split
-    /// id is in `splits.1` (view_states), its `active_buffer` equals
-    /// the returned buffer id, `self.buffers` contains the buffer id,
-    /// and the split's `keyed_states` contains an entry for the buffer.
+    /// id is in `splits.1` (view_states), its buffer tab is the returned
+    /// buffer id and is on screen, `self.buffers` contains the buffer id,
+    /// and the split keeps a view state for the buffer.
     ///
-    /// Falls back to the outer split when a buffer-group panel is
-    /// focused but any of those invariants doesn't hold for the inner
-    /// leaf. Mirrors `Editor::effective_active_pair`.
+    /// **While the active pane shows a group, the pair is one of the
+    /// group's panels — never the buffer behind the group.** That buffer is
+    /// not on screen, and every key, edit and command routed through this
+    /// pair would land in a file nobody can see. The focused panel first;
+    /// if its state is gone, any panel of the group still standing. Only
+    /// when none is does this fall through, loudly, to the outer pane.
+    /// Mirrors `Editor::effective_active_pair`.
     pub fn effective_active_pair(&self) -> (LeafId, BufferId) {
         let (mgr, vs_map) = self.splits();
         let active_split = mgr.active_split();
-        if let Some(vs) = vs_map.get(&active_split) {
-            if vs.active_group_tab.is_some() {
-                if let Some(inner_leaf) = vs.focused_group_leaf {
-                    if let Some(inner_vs) = vs_map.get(&inner_leaf) {
-                        let inner_buf = inner_vs.active_buffer;
-                        if self.buffers.get(&inner_buf).is_some()
-                            && inner_vs.keyed_states.contains_key(&inner_buf)
-                        {
-                            return (inner_leaf, inner_buf);
-                        }
-                    }
-                }
+        let panel_pair = |leaf: LeafId| {
+            let buffer = vs_map.get(&leaf)?.shown_buffer()?;
+            self.buffers.get(&buffer)?;
+            Some((leaf, buffer))
+        };
+        if let Some((group, panel)) = vs_map.get(&active_split).and_then(|vs| vs.shown_group()) {
+            let others = self
+                .grouped_subtrees
+                .get(&group)
+                .map(|node| node.leaf_split_ids())
+                .unwrap_or_default();
+            if let Some(pair) = std::iter::once(panel).chain(others).find_map(panel_pair) {
+                return pair;
             }
+            tracing::error!(
+                ?group,
+                ?panel,
+                ?active_split,
+                "effective_active_pair: the active pane shows a group none of whose \
+                 panels has a live buffer; falling back to the pane's own buffer tab"
+            );
         }
         let outer_buf = mgr
             .active_buffer_id()
@@ -2772,21 +2797,56 @@ impl Window {
             crate::view::shell::geometry::PaneRects::offscreen(&splits, self.editor_content_area());
     }
 
-    /// Every pane of this window with the buffer it shows — the panes
-    /// *inside* a buffer group included.
+    /// Every pane of this window with the tab it shows — the panes *inside*
+    /// a buffer group included.
     ///
-    /// A group's leaves are panes of the same grid, dispatched at render time
-    /// into their outer pane's interior, and `SplitManager::visible_leaves`
-    /// does not walk into them because a group's layout lives in a side map.
-    pub(crate) fn panes_with_buffers(&self) -> Vec<(LeafId, BufferId)> {
-        let Some((mgr, _)) = self.buffers.splits() else {
+    /// **A pane shows one tab: a buffer, or a group.** A pane showing a
+    /// group tab still has a buffer in the split tree and a buffer tab
+    /// (`Shown::Group::behind`) — the tab it showed before, kept to return
+    /// to — and `SplitManager::visible_leaves` reports that buffer as
+    /// if it were on screen. It is not: the pane's content is the group's
+    /// grid. So such a pane is `TabTarget::Group` here and carries no buffer
+    /// at all; a caller that wants the buffer a pane shows has to match, and
+    /// the hidden one is not on offer (`buffer_panes`).
+    ///
+    /// A group's panels follow as panes of the same grid, dispatched at
+    /// render time into their outer pane's interior; `visible_leaves` does
+    /// not walk into them because a group's layout lives in a side map.
+    pub(crate) fn panes(&self) -> Vec<(LeafId, crate::view::split::TabTarget)> {
+        use crate::view::split::TabTarget;
+        let Some((mgr, vs_map)) = self.buffers.splits() else {
             return Vec::new();
         };
-        let mut out = mgr.visible_leaves();
-        for g in self.pane_groups().values() {
-            out.extend(g.visible_leaves());
+        let mut out = Vec::new();
+        let mut panels = Vec::new();
+        for (leaf, buffer) in mgr.visible_leaves() {
+            let group = vs_map
+                .get(&leaf)
+                .and_then(|vs| vs.shown_group_tab())
+                .and_then(|g| Some((g, self.grouped_subtrees.get(&g)?)));
+            match group {
+                Some((g, node)) => {
+                    out.push((leaf, TabTarget::Group(g)));
+                    panels.extend(node.visible_leaves());
+                }
+                None => out.push((leaf, TabTarget::Buffer(buffer))),
+            }
         }
+        out.extend(
+            panels
+                .into_iter()
+                .map(|(leaf, buffer)| (leaf, TabTarget::Buffer(buffer))),
+        );
         out
+    }
+
+    /// The panes of this window that show a buffer, with that buffer — a
+    /// pane showing a group tab is not one of them (`panes`).
+    pub(crate) fn buffer_panes(&self) -> Vec<(LeafId, BufferId)> {
+        self.panes()
+            .into_iter()
+            .filter_map(|(leaf, shows)| Some((leaf, shows.as_buffer()?)))
+            .collect()
     }
 
     /// Each visible pane's leaf handle, for a description of this window's
@@ -2807,11 +2867,7 @@ impl Window {
         // their outer pane's content slot (`PaneRects` keys them the same
         // way). A pane keeps its handle while it exists: the whole partition
         // stays live, a maximized sibling's hidden panes included.
-        let visible: Vec<LeafId> = self
-            .panes_with_buffers()
-            .into_iter()
-            .map(|(leaf, _)| leaf)
-            .collect();
+        let visible: Vec<LeafId> = self.panes().into_iter().map(|(leaf, _)| leaf).collect();
         let live: Vec<LeafId> = {
             let Some((mgr, _)) = self.buffers.splits() else {
                 return Default::default();
@@ -2845,17 +2901,11 @@ impl Window {
     /// holds the group. `hover` is the tab under the pointer, by target,
     /// pane and whether it is the close button — the frame's, or none for a
     /// grid nothing points at.
-    /// `ui` is the frame before this one, and the only thing read off it is
-    /// each strip window's outer width — what decides whether the tabs fit
-    /// with their names whole. `None` (a window with no laid-out tree of its
-    /// own, such as one painted as an embed) shows whole names, which the
-    /// window can scroll across.
     pub(crate) fn pane_strips(
         &self,
         chrome: &HashMap<LeafId, crate::view::shell::splits::PaneChrome>,
         hover: Option<(crate::view::split::TabTarget, LeafId, bool)>,
         hover_plus: Option<LeafId>,
-        ui: Option<&fresh_ui::Ui<crate::view::shell::msg::UiMsg>>,
     ) -> HashMap<LeafId, crate::view::shell::tabs::Strip> {
         use crate::view::shell::tabs::{Strip, Tab};
         use crate::view::split::TabTarget;
@@ -2913,19 +2963,6 @@ impl Window {
                     })
                 })
                 .collect();
-            // The room the last frame gave this strip's window, against what
-            // these tabs measure uncapped. The window's *outer* width: it is
-            // what the strip row leaves after the control cluster, so it does
-            // not move with the names and the answer cannot feed itself.
-            let cap_names = ui
-                .and_then(|ui| {
-                    let k = crate::view::shell::tabs::tab_window_key(leaf);
-                    let w = ui.find_by_key(&k).map(|e| ui.rect_of(e).w)?;
-                    Some(
-                        crate::view::shell::tabs::natural_width(&tabs, &preview_label) > w as usize,
-                    )
-                })
-                .unwrap_or(false);
             out.insert(
                 leaf,
                 Strip {
@@ -2934,7 +2971,6 @@ impl Window {
                     active_pane: leaf == active_split,
                     hover: hover.and_then(|(t, pane, close)| (pane == leaf).then_some((t, close))),
                     hover_plus: hover_plus == Some(leaf),
-                    cap_names,
                     reveal: Some(self.tab_reveal_for(leaf)),
                     preview_label: preview_label.clone(),
                 },
@@ -3129,28 +3165,54 @@ impl Window {
         self.buffers.get(&id)
     }
 
-    /// Read-only cursor set for the active buffer in the active split.
-    /// Group panels return their own cursors, not the outer split's
-    /// stale ones.
-    pub fn active_cursors(&self) -> &crate::model::cursor::Cursors {
-        let split_id = self.effective_active_split();
-        &self
+    /// The view state of the buffer the user is on: the focused pane's
+    /// buffer — a shown group's focused panel, not the pane showing the
+    /// group.
+    ///
+    /// **Keyed by the pane and the buffer both** (`effective_active_pair`),
+    /// so it is never the state of a buffer that is not on screen. The split
+    /// manager's `active_split` is the pane *showing* a group, and its
+    /// buffer tab is the one behind the group; a toggle, a scroll or a
+    /// cursor read aimed there lands on a file nobody can see.
+    ///
+    /// Should the pane keep no state for that buffer — the split tree and
+    /// the view states out of step (#1939) — it is the focused pane's own
+    /// buffer tab, which is on screen: the focused pane is never one showing
+    /// a group.
+    pub fn focused_view(&self) -> &crate::view::split::BufferViewState {
+        let (split_id, buffer_id) = self.effective_active_pair();
+        let vs = self
             .splits()
             .1
             .get(&split_id)
-            .expect("active split must be in view-state map")
-            .cursors
+            .expect("the focused pane has a view state");
+        vs.buffer_state(buffer_id)
+            .unwrap_or_else(|| vs.buffer_tab_state())
     }
 
-    /// Mutable cursor set for the active buffer in the active split.
-    pub fn active_cursors_mut(&mut self) -> &mut crate::model::cursor::Cursors {
-        let split_id = self.effective_active_split();
-        &mut self
+    /// The same, mutably.
+    pub fn focused_view_mut(&mut self) -> &mut crate::view::split::BufferViewState {
+        let (split_id, buffer_id) = self.effective_active_pair();
+        let vs = self
             .splits_mut()
             .1
             .get_mut(&split_id)
-            .expect("active split must be in view-state map")
-            .cursors
+            .expect("the focused pane has a view state");
+        if vs.has_buffer_state(buffer_id) {
+            vs.buffer_state_mut(buffer_id).expect("checked just above")
+        } else {
+            vs.buffer_tab_state_mut()
+        }
+    }
+
+    /// Read-only cursor set for the buffer the user is on (`focused_view`).
+    pub fn active_cursors(&self) -> &crate::model::cursor::Cursors {
+        &self.focused_view().cursors
+    }
+
+    /// Mutable cursor set for the buffer the user is on (`focused_view`).
+    pub fn active_cursors_mut(&mut self) -> &mut crate::model::cursor::Cursors {
+        &mut self.focused_view_mut().cursors
     }
 
     /// Read-only event log for the active buffer.
@@ -3277,7 +3339,7 @@ impl Window {
             return;
         };
         for vs in vs_map.values_mut() {
-            for (buffer_id, buffer_state) in vs.keyed_states.iter_mut() {
+            for (buffer_id, buffer_state) in vs.buffer_states_mut() {
                 if let Some(cols) = cols_by_buffer.get(buffer_id) {
                     let vp = &mut buffer_state.viewport;
                     vp.line_wrap_enabled = true;
@@ -3374,7 +3436,8 @@ impl Window {
     ///
     /// A group's layout lives in `grouped_subtrees` rather than in the split
     /// tree, and is dispatched at render time into the pane's *interior* —
-    /// past its strip and its scrollbar column. This is that dispatch, stated
+    /// under its strip; the pane has no bars of its own while it shows a
+    /// group (`PaneKind::hosts_group`). This is that dispatch, stated
     /// once, so the description of the grid and the painter agree about which
     /// pane holds which group.
     pub fn pane_groups(&self) -> HashMap<LeafId, crate::view::split::SplitNode> {
@@ -3393,48 +3456,52 @@ impl Window {
     /// the tab bar's visibility and the two scrollbar config flags — which the
     /// preview embed narrows before calling (it suppresses both bars).
     ///
-    /// A buffer group's *panel* is not here: it is not one of the split
-    /// manager's leaves, and it resolves where the render loop expands it.
+    /// Read off `panes`, so a pane showing a group tab resolves from the
+    /// group it shows and never from the buffer it showed before.
     pub fn pane_chrome(
         &self,
         window: crate::view::shell::splits::PaneChrome,
     ) -> HashMap<LeafId, crate::view::shell::splits::PaneChrome> {
         use crate::view::shell::splits::{PaneChrome, PaneKind};
+        use crate::view::split::TabTarget;
         let Some((mgr, vs_map)) = self.buffers.splits() else {
             return HashMap::new();
         };
-        let mut out: HashMap<LeafId, PaneChrome> = HashMap::new();
-        let resolve = |leaf: LeafId, buffer: BufferId, inner: bool| {
-            let terminal = self
-                .buffer_metadata
-                .get(&buffer)
-                .and_then(|m| m.virtual_mode())
-                .is_some_and(|m| m == "terminal");
-            let kind = PaneKind {
-                inner_group_leaf: inner,
-                suppress_chrome: vs_map.get(&leaf).is_some_and(|vs| vs.suppress_chrome),
-                scrollable: self.buffers.get(&buffer).is_none_or(|s| s.scrollable),
-                terminal_live_grid: terminal && !self.split_terminal_scrollback(leaf, buffer),
-            };
-            (leaf, PaneChrome::resolve(window, kind))
-        };
-        for (leaf, buffer) in mgr.visible_leaves() {
-            let (k, v) = resolve(leaf, buffer, false);
-            out.insert(k, v);
-            // A group's panels are panes too — they sit inside this one's
-            // interior, which is what `inner_group_leaf` says about them.
-            let Some(group) = vs_map.get(&leaf).and_then(|vs| vs.active_group_tab) else {
-                continue;
-            };
-            let Some(node) = self.grouped_subtrees.get(&group) else {
-                continue;
-            };
-            for (inner_leaf, inner_buffer) in node.visible_leaves() {
-                let (k, v) = resolve(inner_leaf, inner_buffer, true);
-                out.insert(k, v);
-            }
-        }
-        out
+        // A group's panels are panes too — they sit inside their outer
+        // pane's interior, which is what `inner_group_leaf` says about them.
+        let outer: std::collections::HashSet<LeafId> =
+            mgr.visible_leaves().into_iter().map(|(l, _)| l).collect();
+        let suppress_chrome = |leaf: LeafId| vs_map.get(&leaf).is_some_and(|vs| vs.suppress_chrome);
+        self.panes()
+            .into_iter()
+            .map(|(leaf, shows)| {
+                let kind = match shows {
+                    // What the pane shows is the group's grid: nothing of
+                    // the buffer it showed before decides its chrome.
+                    TabTarget::Group(_) => PaneKind {
+                        hosts_group: true,
+                        suppress_chrome: suppress_chrome(leaf),
+                        ..PaneKind::default()
+                    },
+                    TabTarget::Buffer(buffer) => {
+                        let terminal = self
+                            .buffer_metadata
+                            .get(&buffer)
+                            .and_then(|m| m.virtual_mode())
+                            .is_some_and(|m| m == "terminal");
+                        PaneKind {
+                            inner_group_leaf: !outer.contains(&leaf),
+                            hosts_group: false,
+                            suppress_chrome: suppress_chrome(leaf),
+                            scrollable: self.buffers.get(&buffer).is_none_or(|s| s.scrollable),
+                            terminal_live_grid: terminal
+                                && !self.split_terminal_scrollback(leaf, buffer),
+                        }
+                    }
+                };
+                (leaf, PaneChrome::resolve(window, kind))
+            })
+            .collect()
     }
 
     /// Whether `split` is viewing terminal `buffer_id` in read-only scrollback.
@@ -3512,6 +3579,65 @@ impl Window {
     /// preserving search state so F3/Shift+F3 still work.
     pub fn clear_search_overlays(&mut self) {
         let ns = self.search_namespace.clone();
+        let state = self.active_state_mut();
+        state.overlays.clear_namespace(&ns, &mut state.marker_list);
+        self.clear_current_search_match();
+    }
+
+    /// Mark `range` as the current search match, replacing any previous one.
+    ///
+    /// The overlay sits above the ordinary match highlight and above the
+    /// selection, so the current match stands out even when Find Next has
+    /// selected it. `modifier` carries the theme's text attributes for it
+    /// (bold by default). An empty range just clears the mark.
+    pub fn set_current_search_match(
+        &mut self,
+        range: std::ops::Range<usize>,
+        fg: ratatui::style::Color,
+        bg: ratatui::style::Color,
+        modifier: ratatui::style::Modifier,
+    ) {
+        self.clear_current_search_match();
+        if range.is_empty() {
+            return;
+        }
+        let ns = self.search_current_namespace.clone();
+        let state = self.active_state_mut();
+        let overlay = crate::view::overlay::Overlay::with_namespace_fixed_end(
+            &mut state.marker_list,
+            range,
+            crate::view::overlay::OverlayFace::Style {
+                style: ratatui::style::Style::default()
+                    .fg(fg)
+                    .bg(bg)
+                    .add_modifier(modifier),
+            },
+            ns,
+        )
+        .with_priority_value(11)
+        .with_theme_key("search.current_match_bg")
+        .with_above_selection();
+        state.overlays.add(overlay);
+    }
+
+    /// The range of the current-search-match mark in the active buffer, if
+    /// one is set.
+    ///
+    /// The mark's markers track edits, so once the user deletes or types over
+    /// the current match the range is empty.
+    pub fn current_search_match_range(&self) -> Option<std::ops::Range<usize>> {
+        let ns = &self.search_current_namespace;
+        let state = self.active_state();
+        state
+            .overlays
+            .in_namespace(ns)
+            .next()
+            .map(|o| o.range(&state.marker_list))
+    }
+
+    /// Remove the current-search-match mark from the active buffer.
+    pub fn clear_current_search_match(&mut self) {
+        let ns = self.search_current_namespace.clone();
         let state = self.active_state_mut();
         state.overlays.clear_namespace(&ns, &mut state.marker_list);
     }
@@ -3711,7 +3837,7 @@ impl Window {
         let view_state = self.splits().1.values().find(|vs| vs.has_buffer(buffer_id));
 
         let view_state = view_state?;
-        let buf_state = view_state.keyed_states.get(&buffer_id)?;
+        let buf_state = view_state.buffer_state(buffer_id)?;
 
         let primary_cursor = buf_state.cursors.primary();
         let file_state = SerializedFileState {
@@ -4123,7 +4249,12 @@ impl Window {
             .splits()
             .1
             .get(&active_split)
-            .map(|vs| (vs.viewport.top_byte(), vs.viewport.height.saturating_sub(2)))
+            .map(|vs| {
+                (
+                    vs.buffer_tab_state().viewport.top_byte(),
+                    vs.buffer_tab_state().viewport.height.saturating_sub(2),
+                )
+            })
             .unwrap_or((0, 20));
 
         let state = self.active_state_mut();
@@ -4206,9 +4337,11 @@ impl Window {
         let text = state.get_text_range(win_start, win_end);
 
         let mut new_overlays = Vec::new();
+        let mut new_ranges = Vec::new();
         for mat in regex.find_iter(&text) {
             let absolute_pos = win_start + mat.start();
             let match_len = mat.end() - mat.start();
+            new_ranges.push(absolute_pos..absolute_pos + match_len);
             let search_style = ratatui::style::Style::default().fg(search_fg).bg(search_bg);
             new_overlays.push(
                 crate::view::overlay::Overlay::with_namespace_fixed_end(
@@ -4229,6 +4362,16 @@ impl Window {
             new_overlays,
             &mut state.marker_list,
         );
+
+        // The current-match mark follows the same rule: once the edit leaves
+        // it on text that is no longer a match, it goes. An empty mark (the
+        // current match was deleted) stays, since find-next reads it.
+        if let Some(mark) = self.current_search_match_range() {
+            let in_window = mark.start < win_end && mark.end > win_start;
+            if !mark.is_empty() && in_window && !new_ranges.contains(&mark) {
+                self.clear_current_search_match();
+            }
+        }
     }
 
     // ---- File-explorer leaf delegators ----
@@ -4870,13 +5013,14 @@ impl Window {
             if let Some(view_state) = vs_map.get_mut(&split_id) {
                 for (edit_pos, old_len, new_len) in &adjustments {
                     view_state
+                        .buffer_tab_state_mut()
                         .cursors
                         .adjust_for_edit(*edit_pos, *old_len, *new_len);
                 }
                 // A cursor can still sit past the end when the edit shrank
                 // the tail out from under it; clamp so no view holds an
                 // out-of-bounds position.
-                view_state.cursors.map(|cursor| {
+                view_state.buffer_tab_state_mut().cursors.map(|cursor| {
                     cursor.position = cursor.position.min(buffer_len);
                     cursor.anchor = cursor.anchor.map(|a| a.min(buffer_len));
                 });
@@ -4895,7 +5039,7 @@ impl Window {
     pub(crate) fn buffer_for_leaf(&self, leaf_id: LeafId) -> Option<BufferId> {
         let (mgr, vs_map) = self.buffers.splits()?;
         mgr.buffer_for_split(leaf_id)
-            .or_else(|| vs_map.get(&leaf_id).map(|vs| vs.active_buffer))
+            .or_else(|| vs_map.get(&leaf_id).and_then(|vs| vs.shown_buffer()))
     }
 
     /// Handle scroll events using the focused split's viewport.
@@ -4935,10 +5079,10 @@ impl Window {
             let right = group.right_split;
             if let Some(vs_map) = self.buffers.split_view_states_mut() {
                 if let Some(vs) = vs_map.get_mut(&LeafId(left)) {
-                    vs.viewport.set_skip_ensure_visible();
+                    vs.buffer_tab_state_mut().viewport.set_skip_ensure_visible();
                 }
                 if let Some(vs) = vs_map.get_mut(&LeafId(right)) {
-                    vs.viewport.set_skip_ensure_visible();
+                    vs.buffer_tab_state_mut().viewport.set_skip_ensure_visible();
                 }
             }
         }
@@ -4960,7 +5104,7 @@ impl Window {
                 .with_buffer_and_split(buffer_id, split_id, |state, view_state| {
                     let soft_breaks = state.collect_soft_break_positions();
                     let virtual_lines = state.collect_virtual_line_positions();
-                    let hidden_ranges = collapsed_hidden_ranges(view_state, state, buffer_id);
+                    let hidden_ranges = collapsed_hidden_ranges(view_state, state);
                     let buffer = &mut state.buffer;
                     if line_offset > 0 {
                         view_state.viewport.scroll_down(
@@ -4986,10 +5130,15 @@ impl Window {
 
     /// Handle a `Recenter` event using the active split's viewport.
     pub(crate) fn handle_recenter_event(&mut self) {
-        let Some((mgr, vs_map)) = self.buffers.splits() else {
+        if self.buffers.splits().is_none() {
             return;
-        };
-        let active_split = mgr.active_split();
+        }
+        // The pane the user is in — a shown group's focused panel. The split
+        // manager's active leaf is the pane *showing* the group, and its
+        // buffer is the one behind it: recentering that moved a file nobody
+        // could see and left the panel where it was.
+        let active_split = self.effective_active_split();
+        let (mgr, vs_map) = self.buffers.splits().expect("splits checked above");
 
         let sync_group = vs_map.get(&active_split).and_then(|vs| vs.sync_group);
         let splits_to_recenter = if let Some(group_id) = sync_group {
@@ -4999,8 +5148,7 @@ impl Window {
         };
 
         for split_id in splits_to_recenter {
-            let (mgr, _) = self.buffers.splits().expect("splits checked above");
-            let Some(buffer_id) = mgr.buffer_for_split(split_id) else {
+            let Some(buffer_id) = self.buffer_for_leaf(split_id) else {
                 continue;
             };
 
@@ -5020,7 +5168,8 @@ impl Window {
 
     /// Atomically update both sides of the pane-buffer invariant for a
     /// given leaf split: the split tree's stored buffer AND the matching
-    /// `SplitViewState.active_buffer` / `keyed_states` map.
+    /// view state's buffer tab (`SplitViewState::set_buffer_tab`), which
+    /// goes behind the group when the pane shows one.
     ///
     /// This is the one place that's allowed to change "which buffer is
     /// shown in pane `leaf`". The two stores can never drift if every
@@ -5043,7 +5192,7 @@ impl Window {
         let (mgr, vs_map) = self.splits_mut();
         mgr.set_split_buffer(leaf, buffer_id);
         if let Some(view_state) = vs_map.get_mut(&leaf) {
-            view_state.switch_buffer(buffer_id);
+            view_state.set_buffer_tab(buffer_id);
             view_state.add_buffer(buffer_id);
         }
         if leaf == self.effective_active_split() {
@@ -5057,15 +5206,11 @@ impl Window {
 /// lines spends its budget on rows nobody sees, so the viewport stalls while
 /// the cursor runs ahead into the hidden region.
 fn collapsed_hidden_ranges(
-    view_state: &crate::view::split::SplitViewState,
+    view: &crate::view::split::BufferViewState,
     state: &crate::state::EditorState,
-    buffer_id: BufferId,
 ) -> Vec<(usize, usize)> {
-    let Some(folds) = view_state.keyed_states.get(&buffer_id).map(|bs| &bs.folds) else {
-        return Vec::new();
-    };
     state
-        .fold_ranges(folds)
+        .fold_ranges(&view.folds)
         .into_iter()
         .map(|r| (r.start, r.end))
         .collect()
@@ -5077,7 +5222,7 @@ fn collapsed_hidden_ranges(
 /// render there is nothing to read row positions from, and building an index
 /// here would trade a cheap walk for an O(buffer) pass.
 fn wrap_scroll_geometry(
-    view_state: &crate::view::split::SplitViewState,
+    view_state: &crate::view::split::BufferViewState,
     state: &crate::state::EditorState,
 ) -> Option<crate::view::wrap_index::WrapIndexGeometry> {
     if !view_state.viewport.line_wrap_enabled || state.wrap_indices.is_empty() {

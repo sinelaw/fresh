@@ -2,7 +2,7 @@
 
 *   **Search:** Press `Ctrl+F` to open the search prompt.
 *   **Replace:** Press `Ctrl+R` to open the search and replace prompt.
-*   **Query Replace:** Use "Query Replace" from the command palette for interactive replacement (y/n/!/q prompts for each match).
+*   **Query Replace:** Press `Ctrl+Alt+R`, or use "Query Replace" from the command palette, for interactive replacement (y/n/!/q prompts for each match). The match being asked about is shown in the current-match color, so you can check exactly what a regex matched before answering. Leave the replacement empty to delete matches one by one.
 
 The search toolbar shows toggle buttons for:
 - **Case Sensitive** (`Alt+C`) — match exact case
@@ -58,6 +58,19 @@ toggles stay reachable. The status bar reports `Match N of M` as you go. The
 same keys work after the bar is closed, continuing from the last search.
 
 `Enter` jumps to the current match and closes the bar; `Esc` cancels.
+
+The match you land on is **selected** in full, and drawn in its own
+current-match style (bold, in a distinct color) so it stands out from the
+other highlighted matches. For
+a regex search this shows exactly how far the match reaches. Because it is a
+selection, `Delete` removes the whole match and typing replaces it; `F3` then
+continues with the next match, even one that now starts where the deleted
+match was. The style comes from the theme's `search.current_match_bg` and
+`search.current_match_fg`. Like a syntax color, `current_match_fg` can bundle
+text attributes: `{"color": [255, 255, 255], "modifier": ["bold"]}`; a bare
+color means no attributes. In a theme that doesn't set them, they fall back
+to `editor.selection_bg` and `editor.fg` (see
+[Theme fallbacks](./themes.md#fallbacks)).
 
 ## Regex and Capture Groups
 

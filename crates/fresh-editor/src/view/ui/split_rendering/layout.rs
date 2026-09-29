@@ -99,12 +99,12 @@ pub(super) fn resolve_view_preferences(
     if let Some(view_states) = split_view_states {
         if let Some(view_state) = view_states.get(&split_id) {
             return ViewPreferences {
-                view_mode: view_state.view_mode.clone(),
-                compose_width: view_state.compose_width,
-                compose_column_guides: view_state.compose_column_guides.clone(),
-                rulers: view_state.rulers.clone(),
-                show_line_numbers: view_state.show_line_numbers,
-                highlight_current_line: view_state.highlight_current_line,
+                view_mode: view_state.buffer_tab_state().view_mode.clone(),
+                compose_width: view_state.buffer_tab_state().compose_width,
+                compose_column_guides: view_state.buffer_tab_state().compose_column_guides.clone(),
+                rulers: view_state.buffer_tab_state().rulers.clone(),
+                show_line_numbers: view_state.buffer_tab_state().show_line_numbers,
+                highlight_current_line: view_state.buffer_tab_state().highlight_current_line,
             };
         }
     }

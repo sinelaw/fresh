@@ -29,7 +29,7 @@ impl crate::app::window::Window {
         let viewport_height = self
             .split_view_states()
             .get(&active_split)
-            .map(|vs| vs.viewport.height)
+            .map(|vs| vs.buffer_tab_state().viewport.height)
             .unwrap_or(24);
 
         // A cursor motion that is not a block-select step ends block
@@ -44,7 +44,7 @@ impl crate::app::window::Window {
                 .splits_mut()
                 .and_then(|(_, vs_map)| vs_map.get_mut(&active_split))
             {
-                clear_block_selection_if_active(&mut vs.cursors);
+                clear_block_selection_if_active(&mut vs.buffer_tab_state_mut().cursors);
             }
         }
 
@@ -132,7 +132,11 @@ impl crate::app::window::Window {
         // which clamps the cursor to EOF on a one-line document (the
         // PageDown-overshoots bug on minified files).
         let viewport_pos = |w: &Self| -> Option<(usize, usize)> {
-            let vp = &w.split_view_states().get(&split_id)?.viewport;
+            let vp = &w
+                .split_view_states()
+                .get(&split_id)?
+                .buffer_tab_state()
+                .viewport;
             Some((vp.top_byte(), vp.top_view_line_offset()))
         };
 
@@ -143,7 +147,12 @@ impl crate::app::window::Window {
         // scroll-off margin, so the very next Down or Right scrolled the view
         // back to restore the margin, and it reset the column to 1 (#3398).
         let (caret_row, goal_col) = {
-            let primary = *self.split_view_states().get(&split_id)?.cursors.primary();
+            let primary = *self
+                .split_view_states()
+                .get(&split_id)?
+                .buffer_tab_state()
+                .cursors
+                .primary();
             let row = self
                 .pane_view(split_id)
                 .and_then(|view| view.find_visual_row(primary.position));
@@ -220,7 +229,11 @@ impl crate::app::window::Window {
         // cursor is on screen by construction, and each press advances the
         // view by exactly a full page of rows — the same way it does when
         // line wrap is off.
-        let cursors = &self.split_view_states().get(&split_id)?.cursors;
+        let cursors = &self
+            .split_view_states()
+            .get(&split_id)?
+            .buffer_tab_state()
+            .cursors;
         let events: Vec<Event> = cursors
             .iter()
             .map(|(cursor_id, cursor)| {
@@ -254,7 +267,7 @@ impl crate::app::window::Window {
             .splits()
             .map(|(_, vs)| vs)
             .and_then(|vs| vs.get(&split_id))
-            .map(|vs| vs.viewport.line_wrap_enabled)
+            .map(|vs| vs.buffer_tab_state().viewport.line_wrap_enabled)
             .unwrap_or_else(|| self.config().editor.line_wrap)
     }
 
@@ -330,7 +343,7 @@ impl crate::app::window::Window {
                         .split_view_states()
                         .get(&active_split)
                         .is_some_and(|vs| {
-                            vs.cursors.iter().any(|(_, c)| {
+                            vs.buffer_tab_state().cursors.iter().any(|(_, c)| {
                                 c.position == state.buffer.len() && c.virtual_lines_below > 0
                             })
                         });
@@ -348,7 +361,12 @@ impl crate::app::window::Window {
         let cursor_data: Vec<_> = {
             let active_split = self.effective_active_split();
             let active_buffer = self.active_buffer();
-            let cursors = &self.split_view_states().get(&active_split).unwrap().cursors;
+            let cursors = &self
+                .split_view_states()
+                .get(&active_split)
+                .unwrap()
+                .buffer_tab_state()
+                .cursors;
             let state = self.buffers.get(&active_buffer).unwrap();
             cursors
                 .iter()
@@ -744,15 +762,15 @@ impl crate::app::window::Window {
         let state = self.buffers.get(&active_buffer)?;
         let vs = self.buffers.splits().map(|(_, vs)| vs)?.get(&split_id)?;
         // Terminal-grid wrap (fresh#2649): rows are exactly the grid width.
-        if vs.viewport.grid_wrap {
-            return Some(vs.viewport.grid_cols());
+        if vs.buffer_tab_state().viewport.grid_wrap {
+            return Some(vs.buffer_tab_state().viewport.grid_cols());
         }
-        let gutter = vs.viewport.gutter_width(&state.buffer);
+        let gutter = vs.buffer_tab_state().viewport.gutter_width(&state.buffer);
         let wrap = WrapConfig::new(
-            vs.viewport.effective_width(gutter) as usize,
+            vs.buffer_tab_state().viewport.effective_width(gutter) as usize,
             gutter,
             true,
-            vs.viewport.wrap_indent,
+            vs.buffer_tab_state().viewport.wrap_indent,
         );
         Some(wrap.first_line_width)
     }

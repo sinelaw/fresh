@@ -401,15 +401,17 @@ impl crate::app::window::Window {
         } else {
             let mut view_state =
                 SplitViewState::with_buffer(terminal_width, terminal_height, buffer_id);
-            view_state.apply_config_defaults(crate::view::split::ViewConfigDefaults {
-                line_numbers: cfg.line_numbers,
-                highlight_current_line: cfg.highlight_current_line,
-                line_wrap,
-                wrap_indent: cfg.wrap_indent,
-                wrap_column,
-                rulers: cfg.rulers,
-                scroll_offset: cfg.scroll_offset,
-            });
+            view_state.buffer_tab_state_mut().apply_config_defaults(
+                crate::view::split::ViewConfigDefaults {
+                    line_numbers: cfg.line_numbers,
+                    highlight_current_line: cfg.highlight_current_line,
+                    line_wrap,
+                    wrap_indent: cfg.wrap_indent,
+                    wrap_column,
+                    rulers: cfg.rulers,
+                    scroll_offset: cfg.scroll_offset,
+                },
+            );
             self.split_view_states_mut()
                 .insert(active_split, view_state);
         }
@@ -518,7 +520,7 @@ impl crate::app::window::Window {
                 let new_len = state.buffer.len();
                 let buffer = &state.buffer;
                 for view_state in vs_map.values_mut() {
-                    let Some(buf_state) = view_state.keyed_states.get_mut(&buffer_id) else {
+                    let Some(buf_state) = view_state.buffer_state_mut(buffer_id) else {
                         continue;
                     };
                     buf_state.cursors.map(|cursor| {

@@ -49,6 +49,10 @@ fn search_for(harness: &mut EditorTestHarness, needle: &str) {
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
+    // The search selects the match it found. Collapse that selection: a
+    // restored selection would pre-fill the prompt itself and mask what the
+    // history offers.
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 }
 
