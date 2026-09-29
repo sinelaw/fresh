@@ -96,14 +96,20 @@ eq(isCodexSessionArgv(["codex", "app-server"]), false, "codex argv: the app serv
 eq(isCodexSessionArgv(["node", "/x/bin/codex.js", "mcp"]), false, "codex argv: the npm launcher's subcommand is read");
 eq(isCodexSessionArgv(["/usr/bin/vim", "codex"]), false, "codex argv: another program is not");
 
+eq(isCodexSessionArgv(["codex", "-c", "key=value", "app-server"]), false, "codex argv: a flag's value is not the subcommand");
+eq(isCodexSessionArgv(["codex", "--model", "o3", "resume"]), true, "codex argv: flags with values before a session subcommand");
+
 const procs = parseCodexProcesses([
-  "  100     1 node /usr/lib/node_modules/@openai/codex/bin/codex.js",
-  "  101   100 /usr/lib/node_modules/@openai/codex-linux-x64/vendor/bin/codex",
-  "  200     1 codex app-server",
-  "  300     1 /usr/bin/zsh",
-  "  400     1 codex exec fix the tests",
+  "  100     1 pts/3  node /usr/lib/node_modules/@openai/codex/bin/codex.js",
+  "  101   100 pts/3  /usr/lib/node_modules/@openai/codex-linux-x64/vendor/bin/codex",
+  "  200     1 pts/4  codex app-server",
+  "  300     1 pts/5  /usr/bin/zsh",
+  "  400     1 ttys002 codex exec fix the tests",
+  // An app's helper: no terminal (macOS `??`, Linux `?`), whatever its args.
+  "  500     1 ??     /Applications/Codex.app/Contents/Resources/codex -c k=v serve",
+  "  600     1 ?      /opt/codex/codex",
 ].join("\n"));
-eq(procs.map((p) => p.pid), [100, 400], "codex processes: the launcher and its binary are one session");
+eq(procs.map((p) => p.pid), [100, 400], "codex processes: on a terminal only; the launcher and its binary are one session");
 const cwds = parseLsofCwds("p100\nfcwd\nn/home/u/proj\np400\nfcwd\nn/home/u/other\n");
 eq([...cwds.entries()], [[100, "/home/u/proj"], [400, "/home/u/other"]], "lsof: pid to cwd");
 const codexLocal = codexLocalSessions(procs, cwds);
@@ -138,6 +144,9 @@ eq(livePlan(codexCloud[0], env, false), { kind: "browser", url: "https://chatgpt
 const filed = livePlan(codexCloud[0], env, true);
 eq(filed.kind === "workspace" ? filed.command?.slice(0, 2) : null, ["sh", "-c"], "plan: filing a Codex task makes a workspace with its status");
 eq(livePlan({ ...codexLocal[0], cwd: undefined }, env, false).kind, "none", "plan: a process with no known directory has nothing to open");
+eq(livePlan({ ...codexLocal[0], cwd: "/" }, env, false).kind, "none", "plan: a session in the filesystem root never opens a workspace there");
+eq(codexLocalSessions([{ pid: 7, argv: ["codex"] }], new Map([[7, "/"]]))[0].title, "codex (pid 7)", "codex processes: a root directory is not a title");
+eq(parseClaudeAgents(JSON.stringify([{ pid: 8, cwd: "/", kind: "interactive", sessionId: "abcdef1234", status: "idle" }]))[0].title, "claude abcdef12", "claude agents: a root directory is not a title");
 
 eq(liveDetail(cloud[0]), "sinelaw/fresh · claude.ai", "detail: repository and place");
 eq(liveDetail(agents[1]), "claude --bg", "detail: no directory when the title already is it");

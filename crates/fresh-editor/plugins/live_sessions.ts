@@ -249,7 +249,7 @@ async function listCodexCloud(s: Required<Settings>): Promise<LiveSession[]> {
 
 async function listCodexLocal(): Promise<LiveSession[]> {
   if (WINDOWS) return [];
-  const ps = await editor.spawnHostProcess("ps", ["-Ao", "pid=,ppid=,args="]);
+  const ps = await editor.spawnHostProcess("ps", ["-Ao", "pid=,ppid=,tty=,args="]);
   if (ps.exit_code !== 0) return [];
   const procs = parseCodexProcesses(ps.stdout);
   if (procs.length === 0) return [];

@@ -96,6 +96,12 @@ export function liveBaseName(p: string): string {
   return parts[parts.length - 1] ?? p;
 }
 
+/** `/`, or a Windows drive root (`C:\\`). Never a project: a workspace
+ *  there would stand for every session that happens to run there. */
+export function isFilesystemRoot(p: string): boolean {
+  return /^([A-Za-z]:)?[\\/]*$/.test(p.trim());
+}
+
 /** A directory compared as a key: separators unified, no trailing one. */
 export function liveNormPath(p: string): string {
   const s = p.replace(/\\/g, "/");
@@ -154,7 +160,8 @@ export function parseClaudeAgents(stdout: string): LiveSession[] {
       id,
       agent: "claude",
       where: "local",
-      title: str(e.name) ?? (cwd ? liveBaseName(cwd) : id.slice(0, 8)),
+      title: str(e.name) ??
+        (cwd && !isFilesystemRoot(cwd) ? liveBaseName(cwd) : `claude ${id.slice(0, 8)}`),
       // A background entry carries its own rolled-up `state`; an
       // interactive one only its `status`.
       state: claudeState(str(e.state) ?? str(e.status)),
@@ -298,6 +305,32 @@ const CODEX_NOT_A_SESSION = new Set([
   "responses-api-proxy",
 ]);
 
+/** Codex's global options that take a value, so the word after one is that
+ *  value and not the subcommand: `codex -c key=value app-server` is the app
+ *  server, not a session named `key=value`. */
+const CODEX_VALUE_FLAGS = new Set([
+  "-c",
+  "--config",
+  "-m",
+  "--model",
+  "-p",
+  "--profile",
+  "-s",
+  "--sandbox",
+  "-a",
+  "--ask-for-approval",
+  "-C",
+  "--cd",
+  "-i",
+  "--image",
+  "--enable",
+  "--disable",
+  "--add-dir",
+  "--local-provider",
+  "--remote",
+  "--remote-auth-token-env",
+]);
+
 /** Whether a process's argv (`ps` args, whitespace-split) is a Codex
  *  conversation: the program is `codex` (the native binary, or the npm
  *  launcher `codex.js` under node) and the subcommand is not a tool one. */
@@ -312,19 +345,41 @@ export function isCodexSessionArgv(argv: string[]): boolean {
   } else {
     return false;
   }
-  const sub = rest.find((a) => !a.startsWith("-"));
+  let sub: string | undefined;
+  for (let i = 0; i < rest.length; i++) {
+    const a = rest[i];
+    if (a.startsWith("-")) {
+      // `--flag value`, not `--flag=value`: skip the value too.
+      if (CODEX_VALUE_FLAGS.has(a)) i++;
+      continue;
+    }
+    sub = a;
+    break;
+  }
   return sub === undefined || !CODEX_NOT_A_SESSION.has(sub);
 }
 
-/** Codex conversations from `ps -Ao pid=,ppid=,args=`. The npm launcher and
- *  the native binary it starts are one session: a match whose parent also
- *  matched is dropped in favour of the parent. */
+/** A `ps` tty column meaning "no terminal": `?` (Linux), `??` (macOS). */
+function noTerminal(tty: string): boolean {
+  return tty === "" || tty === "-" || /^\?+$/.test(tty);
+}
+
+/** Codex conversations from `ps -Ao pid=,ppid=,tty=,args=`.
+ *
+ *  Only a process on a terminal is one someone is talking to. The Codex
+ *  desktop app and editor extensions run `codex` helpers of their own —
+ *  servers, and whatever else a future release adds — with no terminal
+ *  (and `/` for a directory); they are not sessions, and listing them gave
+ *  a row per helper with nothing to open.
+ *
+ *  The npm launcher and the native binary it starts are one session: a match
+ *  whose parent also matched is dropped in favour of the parent. */
 export function parseCodexProcesses(psOut: string): { pid: number; argv: string[] }[] {
   const rows: { pid: number; ppid: number; argv: string[] }[] = [];
   for (const line of psOut.split("\n")) {
-    const m = line.trim().match(/^(\d+)\s+(\d+)\s+(.*)$/);
-    if (!m) continue;
-    const argv = m[3].split(/\s+/).filter((a) => a.length > 0);
+    const m = line.trim().match(/^(\d+)\s+(\d+)\s+(\S+)\s+(.*)$/);
+    if (!m || noTerminal(m[3])) continue;
+    const argv = m[4].split(/\s+/).filter((a) => a.length > 0);
     if (!isCodexSessionArgv(argv)) continue;
     rows.push({ pid: Number(m[1]), ppid: Number(m[2]), argv });
   }
@@ -350,13 +405,14 @@ export function codexLocalSessions(
 ): LiveSession[] {
   return procs.map(({ pid }) => {
     const cwd = cwds.get(pid);
+    const dir = cwd ? liveBaseName(cwd) : "";
     return {
       key: `codex-local/${pid}`,
       source: "codex-local" as const,
       id: String(pid),
       agent: "codex" as const,
       where: "local" as const,
-      title: cwd ? liveBaseName(cwd) : `codex (pid ${pid})`,
+      title: dir && !isFilesystemRoot(dir) ? dir : `codex (pid ${pid})`,
       // A process listing says nothing about activity.
       state: "unknown" as const,
       cwd,
@@ -448,6 +504,7 @@ export function livePlan(s: LiveSession, env: LivePlanEnv, materialize: boolean)
 /** A session running in another terminal opens as its folder. */
 function inPlace(s: LiveSession): LivePlan {
   if (!s.cwd) return { kind: "none", why: "its directory could not be read" };
+  if (isFilesystemRoot(s.cwd)) return { kind: "none", why: "it runs in the filesystem root, not a project" };
   return { kind: "workspace", root: s.cwd, label: s.title, note: "running in another terminal" };
 }
 
