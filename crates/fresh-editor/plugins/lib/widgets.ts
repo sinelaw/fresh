@@ -591,6 +591,10 @@ export function treeNode(
   options?: {
     depth?: number;
     hasChildren?: boolean;
+    /** A leaf drawn with no disclosure gutter, flush with its indent (a
+     * top-level row beside folders that should start at the panel's
+     * edge). Ignored when `hasChildren`. */
+    flush?: boolean;
     checked?: boolean;
     /** Continuation lines rendered below `text` when the parent
      * `tree` has `itemHeight > 1`. Each entry is one screen row,
@@ -641,6 +645,7 @@ export function treeNode(
     text,
     depth: options?.depth ?? 0,
     hasChildren: options?.hasChildren ?? false,
+    ...(options?.flush ? { flush: true } : {}),
   };
   if (options?.checked !== undefined) {
     node.checked = options.checked;

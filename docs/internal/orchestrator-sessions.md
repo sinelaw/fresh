@@ -448,6 +448,23 @@ Filters checkboxes still override it for the rest of the session
 touched). Settings are re-read on every dock open, so an edit takes effect on
 the next toggle of the dock, no reload required.
 
+### 5.0a Folders
+
+The dock's tree lists workspaces outside every folder first, then the
+folders (depth first), then the external sessions groups (§5.3a). A
+workspace or external session row is a `flush` tree leaf: it draws no
+disclosure gutter, so it starts in the column its folder's child folders
+put their ▼/▶ — a folder's members line up with its subfolders, and a
+top-level row sits at the left edge.
+
+**Move to Folder…** (a row's context menu, or `Orchestrator: Move to
+Folder`) does not open a list of folders. It puts the dock in a pick: a
+banner names what is moving and offers **Top level**, **New folder…** and
+Cancel; workspace and session rows dim, and a click or Enter on a folder
+files the item there. Esc, or leaving the dock, cancels. The pick is the
+same for a workspace (`moveWorkspace`) and an external session row (filed
+as it is, §5.3a).
+
 ### 5.1 Project scoping (the "yesterday's directories" fix)
 
 Globally-listed sessions confused users by combining unrelated projects. The
@@ -549,21 +566,25 @@ includes cloud sessions this machine never saw.
   its menu at the row instead — one row below the click, so the row stays
   in sight — where **Take Over Here** / **Fork Here (Teleport)…**, **Open in Claude
   Desktop** (`claude://code/continue?session=<Desktop's local_ id>`) and
-  **Open in Browser** are each named. `claude --cloud <id>`, which would
+  **Open in Browser** are each named. A Claude cloud row's menu reads **Open
+  in Browser**, **Fork Here (Teleport)…**, **Move to Folder…** (with **Go to
+  <workspace>** first once it has a copy here). Clicking a row that opens
+  its menu leaves the dock's highlight on that row; it does not jump back to
+  the active workspace while the menu is up. `claude --cloud <id>`, which would
   attach a terminal to a Claude cloud session without moving it, is
   account-gated ("not enabled for your account" on an ordinary one), so it
   is not used.
 
   | Row | Workspace | Terminal runs |
   | --- | --- | --- |
-  | Claude cloud (Fork Here (Teleport)…, or filed) | a checkout the user picks in the New Workspace form, on a fresh worktree | `claude --teleport <id>` |
+  | Claude cloud (Fork Here (Teleport)…) | a checkout the user picks in the New Workspace form, on a fresh worktree | `claude --teleport <id>` |
   | Claude Desktop session over SSH | a remote workspace on that host (the dialog's SSH create: its placeholder row, host-key prompt, errors), in the session's folder | the takeover (below), resuming with the CLI Desktop installed there, else `claude` |
   | Claude Desktop session running in Desktop | its folder | the takeover (below) |
   | Claude Desktop session not running | its folder | `claude --resume <id>` |
   | Claude `--bg` job | the job's cwd | `claude attach <job>` |
   | Claude in a terminal inside tmux (the registry records its pane) | its cwd | `env -u TMUX tmux attach-session -t <session> ; select-window ; select-pane` — the live session itself |
   | Claude / Codex in another terminal | its cwd | a shell — never a second copy of the agent, which would write the same conversation twice |
-  | Codex Cloud task (when filed) | `<data>/orchestrator/external-sessions/codex-cloud-<id>` | `codex cloud status <id>`, then a shell |
+  | Codex Cloud task (when opened here) | `<data>/orchestrator/external-sessions/codex-cloud-<id>` | `codex cloud status <id>`, then a shell |
 
   **The takeover** (`takeoverArgv`, POSIX `sh`, run where the session runs):
   find the copy running now in the CLI's registry (`<config>/sessions/<pid>.json`
@@ -585,9 +606,9 @@ includes cloud sessions this machine never saw.
   For a Claude cloud session, **Fork Here (Teleport)…** (named for what it
   does, below) opens the New Workspace form with `claude --teleport <id>` filled in,
   on a fresh worktree (the teleport checks the session's branch out), pointed
-  at an open workspace of the same repository when there is one. Filing the
-  row into a folder takes the same path, and the form files the workspace it
-  creates (`intoFolder`) the moment it is born.
+  at an open workspace of the same repository when there is one. When the
+  row is filed in a folder, the form files the workspace it creates there
+  (`intoFolder`) the moment it is born.
 
   Teleport **copies**; it does not move. Per the Claude Code docs, "the
   terminal gets its own copy of the session: new work there stays local and
@@ -611,9 +632,12 @@ includes cloud sessions this machine never saw.
 
   Arrowing onto a row never opens it (unlike a workspace row, which
   live-switches): opening creates a workspace. **Move to Folder…** on a row
-  (context menu, or `Orchestrator: Move to Folder`) materializes it straight
-  into the chosen folder, or a new one. Once materialized it is an ordinary
-  workspace and drops out of the group.
+  files the row itself (§5.0a) — nothing is opened, forked or teleported:
+  the row leaves its product group and is drawn in the folder, among the
+  workspaces, while the session stays open (global state
+  `orchestrator.external_folders`, row key → folder id; a row whose folder
+  is gone returns to its group). Once opened it is an ordinary workspace and
+  drops out of the listing.
 - **Gaps** — the Codex desktop app's sessions on its shared app-server have no
   non-interactive listing and are not shown; Codex processes carry no session
   id, so their rows open the folder only; sessions running locally on *other*
@@ -789,7 +813,7 @@ Implemented (shipped):
 - One-session-per-canonical-directory enforcement.
 - external sessions group: Claude/Codex sessions open outside the editor (local
   processes, `--bg` jobs, Codex Cloud, Claude cloud and Remote Control), materialized
-  into workspaces on open or on Move to Folder (§5.3a).
+  into workspaces on open, and filed into folders as they are (§5.3a).
 
 Planned / aspirational (in design docs, not in code):
 

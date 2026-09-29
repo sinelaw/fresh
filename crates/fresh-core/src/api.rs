@@ -2180,6 +2180,13 @@ pub struct TreeNode {
     /// the row width occupies the full row.
     #[serde(default)]
     pub has_children: bool,
+    /// A leaf drawn with no disclosure gutter: its text starts at its
+    /// indent, not two columns in. For rows that stand at a tree's top level
+    /// beside folders and should read as flush with the panel's edge (the
+    /// orchestrator dock's unfiled workspaces). Ignored on a node with
+    /// children, whose ▶/▼ is the gutter.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub flush: bool,
     /// Per-node checkbox state. Only rendered when the parent
     /// `Tree` has `checkable: true`. `None` = no checkbox glyph;
     /// `Some(true)` = `[v]`; `Some(false)` = `[ ]`. The plugin

@@ -215,11 +215,12 @@ fn opening_an_external_row_attaches_it_in_a_new_workspace() {
     .unwrap();
 }
 
-/// Filing an external session row into a folder materializes it there: a Codex
-/// Cloud task becomes a workspace showing its status, filed under the folder
-/// (which then counts it), and the group — now empty — goes away.
+/// Filing an external session row into a folder moves the row there and
+/// nothing else: the Codex Cloud task is not forked or opened (its status
+/// never runs), it just shows under the folder (which counts it), and its
+/// product group — now empty — goes away.
 #[test]
-fn moving_an_external_row_into_a_folder_materializes_it() {
+fn moving_an_external_row_into_a_folder_files_it_without_forking() {
     let (_tmp, root, config) = setup();
     let mut h = EditorTestHarness::with_config_and_working_dir(140, 36, config, root).unwrap();
     h.render().unwrap();
@@ -256,20 +257,34 @@ fn moving_an_external_row_into_a_folder_materializes_it() {
     );
     let (mcol, mrow) = pos_of(&h, "Move to Folder");
     h.mouse_click(mcol, mrow).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("Top level"))
+    // The dock asks for the target; a click on the "Cloud" folder files it.
+    h.wait_until(|h| h.screen_to_string().contains("click a folder"))
         .unwrap();
-    h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    let (fcol, frow) = pos_of(&h, "▼ Cloud");
+    h.mouse_click(fcol + 2, frow).unwrap();
 
-    // The task is a workspace now: its terminal ran `codex cloud status`,
-    // and it is filed under Cloud.
-    h.wait_until(|h| h.screen_to_string().contains("STATUS-task_a"))
-        .unwrap();
+    // The row is under Cloud now, and the Codex group (empty) is gone.
     h.wait_until(|h| {
         let s = h.screen_to_string();
-        s.contains("Cloud") && s.contains("(1)")
+        !s.contains("click a folder") && !s.contains("▼ Codex") && s.contains(CODEX_TASK_TITLE)
     })
     .unwrap();
+    let screen = h.screen_to_string();
+    let folder = pos_of(&h, "▼ Cloud").1;
+    assert!(
+        screen.lines().nth(folder as usize).unwrap().contains("(1)")
+            && pos_of(&h, CODEX_TASK_TITLE).1 == folder + 1,
+        "the task sits under Cloud, which counts it:\n{screen}"
+    );
+    // Filing forked nothing: no workspace ran the task's status.
+    for _ in 0..10 {
+        h.render().unwrap();
+    }
+    assert!(
+        !h.screen_to_string().contains("STATUS-task_a"),
+        "filing does not open the task:\n{}",
+        h.screen_to_string()
+    );
 }
 
 /// A click on a row that opens outside the editor (a Codex Cloud task's page)

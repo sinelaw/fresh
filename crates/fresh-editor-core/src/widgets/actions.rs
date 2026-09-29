@@ -406,6 +406,7 @@ mod tests {
             text: TextPropertyEntry::text(text),
             depth,
             has_children,
+            flush: false,
             checked: None,
             extra_lines: Vec::new(),
             window_anchor: None,

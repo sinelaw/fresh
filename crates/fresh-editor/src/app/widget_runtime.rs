@@ -4901,6 +4901,7 @@ mod tests {
             text: fresh_core::text_property::TextPropertyEntry::text(t),
             depth,
             has_children,
+            flush: false,
             checked: None,
             extra_lines: Vec::new(),
             window_anchor: None,

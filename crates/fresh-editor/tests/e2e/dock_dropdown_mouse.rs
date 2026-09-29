@@ -1,5 +1,5 @@
 //! The Orchestrator dock's dropdowns — the header's Menu and the row context
-//! menu's "Move to Folder…" — must be usable with the mouse: clicking an
+//! menu — and its "Move to Folder…" pick must be usable with the mouse: clicking an
 //! option picks it, and clicking away dismisses the menu.
 //!
 //! Regression: both dropdowns render as an `Overlay`, a popup the widget
@@ -115,38 +115,66 @@ fn create_empty_folder(h: &mut EditorTestHarness, name: &str) {
     .unwrap();
 }
 
-/// Right-click the session row and pick "Move to Folder…" so the move
-/// dropdown is showing over the dock.
-fn open_move_dropdown(h: &mut EditorTestHarness, session: &str) {
+/// "Move to Folder…" from a row's menu: the dock asks for the target — a
+/// banner names what is moving — and waits for a folder to be clicked.
+fn start_move_pick(h: &mut EditorTestHarness, session: &str) {
     let session_row = row_of(h, session);
     h.mouse_right_click(4, session_row).unwrap();
     h.wait_until(|h| h.screen_to_string().contains("Move to Folder"))
         .unwrap();
     let (mcol, mrow) = pos_of(h, "Move to Folder");
     h.mouse_click(mcol, mrow).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("Top level"))
+    h.wait_until(|h| h.screen_to_string().contains("click a folder"))
         .unwrap();
 }
 
-/// Clicking a folder in the "Move to Folder…" dropdown files the session
-/// into it — the same outcome ↓/Enter produces.
+/// Clicking a folder in the tree while the dock asks for a target files the
+/// session into it — the same outcome Enter on the folder produces.
 #[test]
-fn move_to_folder_dropdown_option_is_clickable() {
+fn move_to_folder_pick_files_into_the_clicked_folder() {
     let (_tmp, root) = setup_project("alphaproj");
     let mut h = launch(root);
     create_empty_folder(&mut h, "Docs");
-    open_move_dropdown(&mut h, "alphaproj");
+    start_move_pick(&mut h, "alphaproj");
 
     let (dcol, drow) = pos_of(&h, "Docs");
     h.mouse_click(dcol, drow).unwrap();
 
     // The folder now reports one member: the session was filed into it,
-    // and the dropdown closed behind the pick.
+    // and the banner is gone behind the pick.
     h.wait_until(|h| {
         let s = h.screen_to_string();
-        s.contains("Docs") && s.contains("(1)") && !s.contains("Top level")
+        s.contains("Docs") && s.contains("(1)") && !s.contains("click a folder")
     })
     .unwrap();
+}
+
+/// While the dock asks for a folder, a workspace row is not a target: a
+/// click on it files nothing and the pick stays up. Esc then cancels it,
+/// leaving everything where it was.
+#[test]
+fn move_to_folder_pick_ignores_workspaces_and_esc_cancels() {
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h = launch(root);
+    create_empty_folder(&mut h, "Docs");
+    start_move_pick(&mut h, "alphaproj");
+
+    let (scol, srow) = pos_of(&h, "alphaproj");
+    h.mouse_click(scol, srow).unwrap();
+    for _ in 0..5 {
+        h.render().unwrap();
+    }
+    let screen = h.screen_to_string();
+    assert!(
+        screen.contains("click a folder") && !screen.contains("(1)"),
+        "a click on a workspace is not a target:\n{screen}"
+    );
+
+    h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| !h.screen_to_string().contains("click a folder"))
+        .unwrap();
+    let screen = h.screen_to_string();
+    assert!(!screen.contains("(1)"), "Esc files nothing:\n{screen}");
 }
 
 /// Clicking an option in the Menu activates it.
@@ -169,23 +197,29 @@ fn dock_menu_option_is_clickable() {
         .unwrap();
 }
 
-/// Clicking away from an open dropdown dismisses it, the way any menu
-/// behaves — here, a click out in the editor area.
+/// Clicking away from the dock while it asks for a folder cancels the pick,
+/// the way clicking away dismisses any menu — here, a click out in the
+/// editor area.
 #[test]
-fn dock_dropdown_dismisses_on_click_outside() {
+fn move_to_folder_pick_ends_on_click_outside() {
     let (_tmp, root) = setup_project("alphaproj");
     let mut h = launch(root);
     create_empty_folder(&mut h, "Docs");
-    open_move_dropdown(&mut h, "alphaproj");
+    start_move_pick(&mut h, "alphaproj");
 
     h.mouse_click(90, 20).unwrap();
 
-    // The menu is gone and the dock is still there behind it.
+    // The banner is gone, nothing was filed, and the dock is still there.
     h.wait_until(|h| {
         let s = h.screen_to_string();
-        !s.contains("Top level") && s.contains("+ New")
+        !s.contains("click a folder") && s.contains("+ New")
     })
     .unwrap();
+    let screen = h.screen_to_string();
+    assert!(
+        !screen.contains("(1)"),
+        "a click away files nothing:\n{screen}"
+    );
 }
 
 /// A dropdown is opaque: a click on its frame — inside the popup but on no
@@ -196,26 +230,40 @@ fn dock_dropdown_dismisses_on_click_outside() {
 fn dock_dropdown_swallows_clicks_on_its_own_frame() {
     let (_tmp, root) = setup_project("alphaproj");
     let mut h = launch(root);
-    create_empty_folder(&mut h, "Docs");
-    open_move_dropdown(&mut h, "alphaproj");
+    open_dock_menu(&mut h);
+    let focused_before = h.editor().is_dock_focused();
 
-    // Column 0 of an option's row is the popup's left border.
-    let (_, drow) = pos_of(&h, "Docs");
-    h.mouse_click(0, drow).unwrap();
+    // The popup's left border on the row of its first option.
+    let (fcol, frow) = pos_of(&h, "New folder…");
+    let line = h
+        .screen_to_string()
+        .lines()
+        .nth(frow as usize)
+        .unwrap()
+        .to_string();
+    let border = line
+        .chars()
+        .take(fcol as usize)
+        .collect::<Vec<_>>()
+        .iter()
+        .rposition(|&c| c == '│')
+        .unwrap_or_else(|| panic!("no popup border left of the option:\n{line}"))
+        as u16;
+    h.mouse_click(border, frow).unwrap();
+    for _ in 0..5 {
+        h.render().unwrap();
+    }
 
-    // Nothing happened: the menu is still up, still unpicked (the folder
-    // has no members), and the dock did not dive into a session.
+    // Nothing happened: the menu is still up, no option was picked, and
+    // the dock did not dive into a session.
     let screen = h.screen_to_string();
     assert!(
-        screen.contains("Top level") && screen.contains("Docs"),
-        "a click on the popup frame must leave the menu open; screen:\n{screen}"
+        screen.contains("New folder…") && !screen.contains("Folder name"),
+        "a click on the popup frame must leave the menu open, unpicked; screen:\n{screen}"
     );
-    assert!(
-        !screen.contains("(1)"),
-        "a click on the popup frame must not pick an option; screen:\n{screen}"
-    );
-    assert!(
+    assert_eq!(
         h.editor().is_dock_focused(),
+        focused_before,
         "a click on the popup frame must not reach the tree behind it and \
          dive out of the dock; screen:\n{screen}"
     );
