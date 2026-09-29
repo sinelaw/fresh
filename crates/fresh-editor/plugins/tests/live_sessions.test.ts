@@ -6,6 +6,8 @@ import {
   parseClaudeRegistry,
   parseDesktopSessions,
   mergeDesktopSessions,
+  registryTmuxPanes,
+  tmuxAttachArgv,
   codexLocalSessions,
   elsewhereRoot,
   isCodexSessionArgv,
@@ -169,8 +171,24 @@ const shown = unrepresented([...agents, ...cloud], ["/home/u/fresh/", elsewhereR
 eq(shown.map((s) => s.key), ["claude-local/5e55", "claude-cloud/session_01"], "unrepresented: sessions already open as a workspace are hidden");
 
 const env: LivePlanEnv = { dataDir: DATA, claude: "claude", codex: "codex", windows: false };
-eq(livePlan(desktop[1], env, false), { kind: "workspace", root: "/home/u/blog", label: "Draft a post", command: ["claude", "--resume", "cli-b"] }, "plan: a stopped Desktop session is resumed in its folder");
-eq(livePlan(desktop[2], env, false).kind, "none", "plan: one over SSH cannot be resumed here");
+eq(livePlan(desktop[1], env, true), { kind: "workspace", root: "/home/u/blog", label: "Draft a post", command: ["claude", "--resume", "cli-b"] }, "plan: filing a stopped Desktop session resumes it in its folder");
+eq(livePlan(desktop[1], env, false), { kind: "browser", url: "claude://code/continue?session=local_b" }, "plan: Enter on a Desktop session opens it in Claude Desktop");
+eq(livePlan(desktop[2], env, false), { kind: "browser", url: "claude://code/continue?session=local_c" }, "plan: an SSH one too: Desktop reconnects it");
+eq(livePlan(desktop[2], env, true).kind, "none", "plan: an SSH Desktop session cannot be made a workspace here");
+
+const panes = registryTmuxPanes([
+  JSON.stringify({ pid: 11, sessionId: "t1", kind: "interactive", tmux: "work:@3.%7" }),
+  JSON.stringify({ pid: 12, sessionId: "t2", kind: "interactive", tmux: "work:@3.%8; rm -rf /" }),
+  JSON.stringify({ pid: 13, sessionId: "t3", kind: "interactive", tmux: "dead:@1.%1" }),
+], new Set([11, 12]));
+eq([...panes.entries()], [["t1", "work:@3.%7"]], "tmux: a live session's pane; a malformed target or a dead pid is not trusted");
+eq(tmuxAttachArgv("work:@3.%7"), ["env", "-u", "TMUX", "tmux", "attach-session", "-t", "work", ";", "select-window", "-t", "@3", ";", "select-pane", "-t", "%7"], "tmux: attach lands on the session, window and pane");
+eq(livePlan({ ...agents[0], tmux: "work:@3.%7" }, env, false), {
+  kind: "workspace",
+  root: "/home/u/fresh",
+  label: "fresh-04",
+  command: ["env", "-u", "TMUX", "tmux", "attach-session", "-t", "work", ";", "select-window", "-t", "@3", ";", "select-pane", "-t", "%7"],
+}, "plan: a terminal session in tmux is connected to by attaching its pane");
 eq(livePlan(cloud[0], env, false), { kind: "browser", url: "https://claude.ai/code/session_01" }, "plan: Enter on a Claude cloud session opens its page");
 eq(livePlan(cloud[0], env, true), { kind: "teleport", command: ["claude", "--teleport", "session_01"] }, "plan: making a Claude cloud session a workspace teleports it");
 eq(livePlan(agents[1], env, false), {

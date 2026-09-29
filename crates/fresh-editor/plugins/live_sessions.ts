@@ -24,6 +24,7 @@ import {
   parseClaudeAgents,
   parseClaudeCloud,
   parseClaudeRegistry,
+  registryTmuxPanes,
   parseDesktopSessions,
   mergeDesktopSessions,
   parseCodexCloud,
@@ -203,9 +204,15 @@ async function listClaudeLocal(s: Required<Settings>): Promise<LiveSession[]> {
   if (r.exit_code !== 0 && !missingTool(r)) {
     throw new Error(`claude agents: ${firstLine(r.stderr) || `exit ${r.exit_code}`}`);
   }
-  const listed = r.exit_code === 0 ? parseClaudeAgents(r.stdout) : [];
+  const registry = await readClaudeRegistry();
+  // A terminal session in tmux can be attached to; `agents` does not say
+  // where it is, the registry does.
+  const listed = (r.exit_code === 0 ? parseClaudeAgents(r.stdout) : []).map((x) => {
+    const pane = registry.panes.get(x.id);
+    return pane ? { ...x, tmux: pane } : x;
+  });
   const seen = new Set(listed.map((x) => x.id));
-  const running = [...listed, ...(await listClaudeRegistry()).filter((x) => !seen.has(x.id))];
+  const running = [...listed, ...registry.rows.filter((x) => !seen.has(x.id))];
   return mergeDesktopSessions(running, listDesktopSessions());
 }
 
@@ -269,10 +276,11 @@ function desktopSshHosts(): Map<string, string> {
   return hosts;
 }
 
-async function listClaudeRegistry(): Promise<LiveSession[]> {
+async function readClaudeRegistry(): Promise<{ rows: LiveSession[]; panes: Map<string, string> }> {
+  const none = { rows: [], panes: new Map<string, string>() };
   // A pid is checked with `ps`, which Windows lacks; there the registry's
   // SDK sessions go unlisted.
-  if (WINDOWS) return [];
+  if (WINDOWS) return none;
   const dir = editor.pathJoin(claudeConfigDir(), "sessions");
   const records: string[] = [];
   const pids: number[] = [];
@@ -283,13 +291,13 @@ async function listClaudeRegistry(): Promise<LiveSession[]> {
     records.push(text);
     pids.push(Number(entry.name.slice(0, -".json".length)));
   }
-  if (pids.length === 0) return [];
+  if (pids.length === 0) return none;
   // Which of them are still running: a session that crashed leaves its file.
   const ps = await editor.spawnHostProcess("ps", ["-o", "pid=", "-p", pids.join(",")]);
   const alive = new Set(
     ps.stdout.split("\n").map((l) => Number(l.trim())).filter((n) => n > 0),
   );
-  return parseClaudeRegistry(records, alive);
+  return { rows: parseClaudeRegistry(records, alive), panes: registryTmuxPanes(records, alive) };
 }
 
 /** The Claude CLI's sign-in: its credentials file, else (macOS) its Keychain

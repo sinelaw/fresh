@@ -541,6 +541,7 @@ includes cloud sessions this machine never saw.
   | --- | --- | --- |
   | Claude cloud (when filed, or Teleport Here…) | a checkout the user picks in the New Workspace form, on a fresh worktree | `claude --teleport <id>` |
   | Claude `--bg` job | the job's cwd | `claude attach <job>` |
+  | Claude in a terminal inside tmux (the registry records its pane) | its cwd | `env -u TMUX tmux attach-session -t <session> ; select-window ; select-pane` — the live session itself |
   | Claude / Codex in another terminal | its cwd | a shell — never a second copy of the agent, which would write the same conversation twice |
   | Codex Cloud task (when filed) | `<data>/orchestrator/elsewhere/codex-cloud-<id>` | `codex cloud status <id>`, then a shell |
 
@@ -550,6 +551,14 @@ includes cloud sessions this machine never saw.
   at an open workspace of the same repository when there is one. Filing the
   row into a folder takes the same path, and the form files the workspace it
   creates (`intoFolder`) the moment it is born.
+
+  **Connecting to a live session.** There is no general way to attach a
+  terminal to a Claude session another process runs (`claude --resume` of a
+  running conversation starts a second copy). What connects: `claude attach`
+  for a `--bg` job; the tmux pane for a terminal session in tmux; and, for a
+  Claude Desktop session — running, stopped or over SSH — Enter opens
+  `claude://code/continue?session=<Desktop's local_ id>`, which Desktop
+  handles by bringing that session up (reconnecting an SSH one itself).
 
   Arrowing onto a row never opens it (unlike a workspace row, which
   live-switches): opening creates a workspace. **Move to Folder…** on a row

@@ -64,6 +64,12 @@ export interface LiveSession {
   stopped?: boolean;
   /** The SSH host a Claude Desktop session runs on; its `cwd` is there. */
   sshHost?: string;
+  /** Claude Desktop's own id for the session (`local_…`): what its
+   *  `claude://code/continue?session=` link opens. */
+  desktopId?: string;
+  /** The tmux pane a terminal session runs in (`session:@window.%pane`), as
+   *  the CLI records it: attaching to it connects to the live session. */
+  tmux?: string;
 }
 
 /** The Claude cloud session list: what `claude --teleport` reads. Not a
@@ -217,6 +223,7 @@ export function parseClaudeRegistry(records: string[], alive: Set<number>): Live
     if (pid === undefined || !id || !alive.has(pid)) continue;
     const cwd = str(e.cwd);
     const host = claudeHostName(str(e.entrypoint));
+    const tmux = str(e.tmux);
     out.push({
       key: `claude-local/${id}`,
       source: "claude-local",
@@ -230,9 +237,37 @@ export function parseClaudeRegistry(records: string[], alive: Set<number>): Live
       updatedAt: when(e.updatedAt) ?? when(e.startedAt),
       pid,
       host,
+      ...(tmux && TMUX_PANE_RE.test(tmux) ? { tmux } : {}),
     });
   }
   return out;
+}
+
+/** The CLI's own shape for a pane (`session:@window.%pane`); anything else
+ *  in the field is not trusted as a tmux target. */
+const TMUX_PANE_RE = /^[A-Za-z0-9_.-]{1,64}:@?\d{1,6}\.%?\d{1,6}$/;
+
+/** The tmux pane each running session is in, by session id, from the
+ *  registry (`claude agents --json` does not report it). */
+export function registryTmuxPanes(records: string[], alive: Set<number>): Map<string, string> {
+  const panes = new Map<string, string>();
+  for (const text of records) {
+    const e = asRecord(parseJson(text));
+    const pid = e ? num(e.pid) : undefined;
+    const id = e ? str(e.sessionId) : undefined;
+    const tmux = e ? str(e.tmux) : undefined;
+    if (id && tmux && pid !== undefined && alive.has(pid) && TMUX_PANE_RE.test(tmux)) panes.set(id, tmux);
+  }
+  return panes;
+}
+
+/** `tmux attach` argv that lands on `pane`: its session, then its window and
+ *  the pane itself. `TMUX` is cleared so it works from a terminal that is
+ *  itself inside tmux (tmux refuses a nested attach otherwise). */
+export function tmuxAttachArgv(pane: string): string[] {
+  const [session, rest] = [pane.slice(0, pane.lastIndexOf(":")), pane.slice(pane.lastIndexOf(":") + 1)];
+  const [win, p] = rest.split(".");
+  return ["env", "-u", "TMUX", "tmux", "attach-session", "-t", session, ";", "select-window", "-t", win, ";", "select-pane", "-t", p];
 }
 
 /** Claude Desktop's Code-tab sessions, from the records it keeps under
@@ -255,6 +290,7 @@ export function parseDesktopSessions(
     if (!e || e.isArchived === true) continue;
     const id = str(e.cliSessionId) ?? str(e.sessionId);
     if (!id) continue;
+    const desktopId = str(e.sessionId);
     const cwd = str(e.cwd);
     const ssh = asRecord(e.sshConfig);
     const sshHost = str(ssh?.sshHost) ?? str(ssh?.host) ?? str(ssh?.name) ??
@@ -273,6 +309,7 @@ export function parseDesktopSessions(
       host: "Claude Desktop",
       stopped: true,
       ...(sshHost ? { sshHost } : {}),
+      ...(desktopId ? { desktopId } : {}),
     });
   }
   return out;
@@ -287,7 +324,13 @@ export function mergeDesktopSessions(running: LiveSession[], desktop: LiveSessio
     const d = byId.get(r.id);
     if (!d) return r;
     byId.delete(r.id);
-    return { ...r, title: d.title, host: "Claude Desktop", ...(d.sshHost ? { sshHost: d.sshHost } : {}) };
+    return {
+      ...r,
+      title: d.title,
+      host: "Claude Desktop",
+      ...(d.sshHost ? { sshHost: d.sshHost } : {}),
+      ...(d.desktopId ? { desktopId: d.desktopId } : {}),
+    };
   });
   return [...merged, ...byId.values()];
 }
@@ -599,6 +642,8 @@ export type LivePlan =
       /** Why no agent was attached, for the status bar. */
       note?: string;
     }
+  /** A link the OS opens: a web page, or a `claude://` link Claude Desktop
+   *  handles. */
   | { kind: "browser"; url: string }
   /** Take a Claude cloud session over: `claude --teleport <id>` in a local
    *  checkout the user picks (it checks the session's branch out). */
@@ -644,8 +689,23 @@ export function livePlan(s: LiveSession, env: LivePlanEnv, materialize: boolean)
       };
     }
     case "claude-local":
+      // A Claude Desktop session: Desktop itself connects to it — running,
+      // stopped or over SSH — through its own link to that session.
+      if (s.desktopId && !materialize) {
+        return { kind: "browser", url: `claude://code/continue?session=${encodeURIComponent(s.desktopId)}` };
+      }
+      // A session in a tmux pane: attach to the pane, which is the live
+      // session itself, not a copy of it.
+      if (s.tmux && !s.stopped) {
+        return {
+          kind: "workspace",
+          root: s.cwd && !isFilesystemRoot(s.cwd) ? s.cwd : elsewhereRoot(env.dataDir, s),
+          label: s.title,
+          command: tmuxAttachArgv(s.tmux),
+        };
+      }
       // A Desktop session over SSH runs, and keeps its folder, on that host.
-      if (s.sshHost) return { kind: "none", why: `it runs on ${s.sshHost} over SSH` };
+      if (s.sshHost) return { kind: "none", why: `it runs on ${s.sshHost} over SSH — open it from Claude Desktop` };
       // Not running (a Desktop session left open): resume it here.
       if (s.stopped && s.cwd && !isFilesystemRoot(s.cwd)) {
         return {

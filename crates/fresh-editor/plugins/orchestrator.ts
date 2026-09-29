@@ -1899,7 +1899,10 @@ async function openLiveSession(
   }
   if (plan.kind === "browser") {
     openInBrowser(plan.url);
-    editor.setStatus(editor.t("status.elsewhere_browser", { name: s.title }));
+    editor.setStatus(editor.t(
+      plan.url.startsWith("claude://") ? "status.elsewhere_desktop" : "status.elsewhere_browser",
+      { name: s.title },
+    ));
     return;
   }
   if (plan.kind === "teleport") {
