@@ -5019,6 +5019,9 @@ interface EditorAPI {
 	* Show an action popup
 	* 
 	* Takes a typed ActionPopupOptions struct - serde validates field names at runtime
+	* 
+	* Each action's `id` is its row's key and must be unique among the
+	* actions; a repeated one throws.
 	*/
 	showActionPopup(opts: ActionPopupOptions): boolean;
 	/**
@@ -5036,6 +5039,9 @@ interface EditorAPI {
 	* Contribute (or replace, or clear) menu rows for the LSP-Servers
 	* popup. Pass an empty `items` to clear this plugin's slice for
 	* the given language. See `PluginCommand::SetLspMenuContributions`.
+	* 
+	* Each item's `id` is its row's key and must be unique among the
+	* items; a repeated one throws.
 	*/
 	setLspMenuContributions(pluginId: string, language: string, items: TsLspMenuItem[]): boolean;
 	/**
@@ -5381,8 +5387,13 @@ interface EditorAPI {
 	* 
 	* This uses the editor's built-in HTTP client (`ureq`), so plugins
 	* don't need `curl`/`wget` on PATH.
+	* 
+	* `headers` are extra request headers (`{ "Authorization": "Bearer …" }`).
+	* They travel in the request only: never logged, never on a command line,
+	* which is why a credential goes here rather than through `curl -H`.
+	* Non-string values are ignored.
 	*/
-	httpFetch(url: string, targetPath: string): ProcessHandle<SpawnResult>;
+	httpFetch(url: string, targetPath: string, headers?: Record<string, string> | null): ProcessHandle<SpawnResult>;
 	/**
 	* Wait for a process to complete and get its result (async)
 	*/

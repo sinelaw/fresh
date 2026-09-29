@@ -481,6 +481,120 @@ window yet**. They carry a synthetic **negative id** and no terminal id; diving
 *attaches* a new session to that `root`, and the row is dropped from the
 in-memory session map the moment a real window opens there.
 
+### 5.3a Elsewhere: sessions open outside the editor
+
+A collapsible **Elsewhere** group at the foot of the dock lists Claude and
+Codex sessions that are open right now but are not a workspace here — running
+in another terminal, as a `claude --bg` job, or in the vendor's cloud. It
+complements the on-demand Import dialog (`agent_discovery.ts`), which reads the
+tools' transcript *history*: this answers "what is open", automatically, and
+includes cloud sessions this machine never saw.
+
+- **Feed** — `live_sessions.ts`, a plugin of its own, polls while the dock is
+  open (local sources every `pollSeconds`, default 15; cloud at most once a
+  minute) and pushes to the orchestrator's `setElsewhereSessions`. Opening the
+  dock asks for a fresh listing (`refreshElsewhere`). Parsing and the
+  open-a-row rules are pure, in `lib/live_sessions.ts`
+  (`plugins/tests/live_sessions.test.ts`). A separate plugin so the
+  orchestrator's own e2e tests — which load only the orchestrator — never see
+  the real machine's sessions.
+- **Sources** (each a plugin setting under `plugins.live_sessions`):
+
+  | Source | From | Default |
+  | --- | --- | --- |
+  | Claude on this machine | `claude agents --json` (terminal and `--bg` sessions), plus the CLI's registry of running sessions (`~/.claude/sessions/<pid>.json`, live pids only) for the SDK-driven ones it skips — Claude Desktop's and editor extensions' | on |
+  | Claude Desktop (Code tab) | Desktop's own records, `<userData>/claude-code-sessions/<account>/<org>/local_<id>.json` (`userData` = `~/Library/Application Support/Claude`, `~/.config/Claude`, `%APPDATA%\Claude`): every session not `isArchived`, running or not, merged with the running ones by CLI session id; its folder is `worktreePath`, else `cwd`. One over SSH carries its connection (`sshConfig`: `sshHost`, `sshPort`, `sshIdentityFile`; a record naming only an id is resolved from `<userData>/ssh_configs.json` or the `sshConfigs` of the Claude settings), and the CLI Desktop installed on that host comes from `<userData>/ssh-remote-server-state.json` (`hostFacts["ssh:<sshHost>:<port>"].cliRelPath`, e.g. `.claude/remote/ccd-cli/<version>`) | on (with the Claude source) |
+  | Codex on this machine | running `codex` processes (`ps`, cwd via `lsof` or `/proc`); not on Windows | on |
+  | Codex Cloud | `codex cloud list --json` (applied tasks hidden) | on |
+  | Claude cloud + Remote Control | `GET /v1/code/sessions?statuses=active` (paged) — the list `claude --teleport` reads, asked for active sessions only — with the Claude CLI's own sign-in (`~/.claude/.credentials.json`, or the macOS Keychain) | on |
+
+  Every source is on by default; the Claude cloud one is also a checkbox in
+  the dock's Menu ("Claude cloud sessions", saved like any setting), because
+  it is the one a user may want off: it is not a published API and can
+  change with any Claude Code release, and on macOS reading the Keychain may
+  ask once. Remote Control sessions (`environment_kind: "bridge"` — a Claude
+  on one of the user's own machines, driven from the web app) come in the
+  same list; one whose machine is disconnected is still active, so it is
+  listed, marked offline. A session's activity comes from its
+  `worker_status` only (`status: "active"` just means not archived). The
+  token goes out only as a
+  request header (`editor.httpFetch`'s `headers`, added for this), never on a
+  command line, and is never refreshed here: refreshing rotates the refresh
+  token and would sign the CLI out; an expired sign-in reads as a problem
+  line ("run `claude` once") until the CLI next runs. Every active session is
+  listed; `cloudMaxAgeDays` (default 0 = none) can hide idle ones, and
+  archived ones are never shown.
+- **Rows** are kept apart from `orchestratorSessions` (they are not
+  workspaces, so none of Stop / Archive / Delete / rename apply). The group
+  header is a `folder` node with the reserved id `__elsewhere`, so it folds
+  and rolls up `●n ✓n` like a folder; it starts open, and the fold is what is
+  remembered. Rows keep first-seen order. A local session whose directory is
+  already a workspace here is not listed (the workspace stands for it), nor is
+  a cloud session already materialized, nor a session over SSH that is a
+  workspace on its host, in its folder.
+- **Opening** a row (Enter, a click, context menu *Open* / *Take Over
+  Here*) connects to the session or takes it over here. Nothing leaves the
+  editor on a click: a row that could only be opened outside it — a Codex
+  Cloud task's page, a Claude cloud session (teleporting it is a choice of
+  checkout), a Desktop session with no POSIX shell to take it over — opens
+  its menu at the row instead, where **Take Over Here…**, **Open in Claude
+  Desktop** (`claude://code/continue?session=<Desktop's local_ id>`) and
+  **Open in Browser** are each named. `claude --cloud <id>`, which would
+  attach a terminal to a Claude cloud session without moving it, is
+  account-gated ("not enabled for your account" on an ordinary one), so it
+  is not used.
+
+  | Row | Workspace | Terminal runs |
+  | --- | --- | --- |
+  | Claude cloud (Take Over Here…, or filed) | a checkout the user picks in the New Workspace form, on a fresh worktree | `claude --teleport <id>` |
+  | Claude Desktop session over SSH | a remote workspace on that host (the dialog's SSH create: its placeholder row, host-key prompt, errors), in the session's folder | the takeover (below), resuming with the CLI Desktop installed there, else `claude` |
+  | Claude Desktop session running in Desktop | its folder | the takeover (below) |
+  | Claude Desktop session not running | its folder | `claude --resume <id>` |
+  | Claude `--bg` job | the job's cwd | `claude attach <job>` |
+  | Claude in a terminal inside tmux (the registry records its pane) | its cwd | `env -u TMUX tmux attach-session -t <session> ; select-window ; select-pane` — the live session itself |
+  | Claude / Codex in another terminal | its cwd | a shell — never a second copy of the agent, which would write the same conversation twice |
+  | Codex Cloud task (when filed) | `<data>/orchestrator/elsewhere/codex-cloud-<id>` | `codex cloud status <id>`, then a shell |
+
+  **The takeover** (`takeoverArgv`, POSIX `sh`, run where the session runs):
+  find the copy running now in the CLI's registry (`<config>/sessions/<pid>.json`
+  names the session), stop it — only a pid still running `claude`, since a
+  registry file can outlive its process and the pid be reused — wait for it
+  to exit, then `exec <cli> --resume <id>`. One copy writes the conversation
+  at any time. This is what Claude Desktop's own SSH sessions are: Desktop
+  deploys a server to `~/.claude/remote/` on the host, which runs its CLI
+  (`~/.claude/remote/ccd-cli/<version>`) as an SDK session in the session's
+  folder and re-adopts it across reconnects; the conversation is the CLI's
+  own transcript on the host (`~/.claude/projects/<folder>/<id>.jsonl`, which
+  Desktop byte-syncs a copy of). Verified against Desktop 2.9939.4 and a
+  host it deployed to: the taken-over session resumed with its history, and
+  the running copy was stopped. Two caveats: Desktop hands its CLI a sign-in
+  at each spawn and leaves none on the host, so the first takeover on a host
+  where `claude` was never signed in asks for a sign-in there; and Desktop,
+  if the session is opened in it again, starts its own copy once more.
+
+  For a Claude cloud session, **Take Over Here…** opens the New Workspace form with `claude --teleport <id>` filled in,
+  on a fresh worktree (the teleport checks the session's branch out), pointed
+  at an open workspace of the same repository when there is one. Filing the
+  row into a folder takes the same path, and the form files the workspace it
+  creates (`intoFolder`) the moment it is born.
+
+  **Connecting to a live session.** There is no general way to attach a
+  terminal to a Claude session another process runs (`claude --resume` of a
+  running conversation starts a second copy). What connects: `claude attach`
+  for a `--bg` job; the tmux pane for a terminal session in tmux. A Claude
+  Desktop session has no terminal to attach to, so it is taken over instead
+  (above); Desktop's own link to it stays in the row's menu.
+
+  Arrowing onto a row never opens it (unlike a workspace row, which
+  live-switches): opening creates a workspace. **Move to Folder…** on a row
+  (context menu, or `Orchestrator: Move to Folder`) materializes it straight
+  into the chosen folder, or a new one. Once materialized it is an ordinary
+  workspace and drops out of the group.
+- **Gaps** — the Codex desktop app's sessions on its shared app-server have no
+  non-interactive listing and are not shown; Codex processes carry no session
+  id, so their rows open the folder only; sessions running locally on *other*
+  machines appear only if they are cloud sessions.
+
 ### 5.4 Lifecycle actions
 
 Shipped via a process-group signal API (`editor.signalTerminal`, SIGTERM→SIGKILL
@@ -649,6 +763,9 @@ Implemented (shipped):
 - Agent resume (provision/continue), resume-spec persistence, deferred-to-dive
   rejoin.
 - One-session-per-canonical-directory enforcement.
+- Elsewhere group: Claude/Codex sessions open outside the editor (local
+  processes, `--bg` jobs, Codex Cloud, Claude cloud and Remote Control), materialized
+  into workspaces on open or on Move to Folder (§5.3a).
 
 Planned / aspirational (in design docs, not in code):
 

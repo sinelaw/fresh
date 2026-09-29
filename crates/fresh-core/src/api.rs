@@ -4078,6 +4078,8 @@ pub enum PluginCommand {
     HttpFetch {
         url: String,
         target_path: PathBuf,
+        /// Extra request headers. May carry credentials: never logged.
+        headers: Vec<(String, String)>,
         callback_id: JsCallbackId,
     },
 

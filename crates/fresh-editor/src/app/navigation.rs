@@ -80,10 +80,7 @@ impl crate::app::window::Window {
     /// `anchor`, leaving the caret at `position`.
     pub fn jump_active_cursor_selecting(&mut self, position: usize, anchor: usize) {
         self.jump_active_cursor_to(position, JumpOptions::navigation());
-        let active_split = self.split_manager().active_split();
-        if let Some(view_state) = self.split_view_states_mut().get_mut(&active_split) {
-            view_state.cursors.primary_mut().set_anchor(anchor);
-        }
+        self.active_cursors_mut().primary_mut().set_anchor(anchor);
     }
 
     /// Guarantee the active cursor is visible in the active viewport.
@@ -335,11 +332,10 @@ mod tests {
         let window = editor.active_window_mut();
         window.jump_active_cursor_to(target, JumpOptions::default());
         let (width, gutter, left) = {
-            let split = window.split_manager().active_split();
-            let vs = &window.split_view_states()[&split];
+            let viewport = &window.focused_view().viewport;
             let state = window.buffers.get(&buffer).unwrap();
-            let gutter = vs.viewport.gutter_width(&state.buffer);
-            (vs.viewport.width as usize, gutter, vs.viewport.left_column)
+            let gutter = viewport.gutter_width(&state.buffer);
+            (viewport.width as usize, gutter, viewport.left_column)
         };
         assert!(gutter > 6, "the drawn gutter is wider than six: {gutter}");
         // The text area: the pane less the gutter and the scrollbar.

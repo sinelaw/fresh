@@ -66,8 +66,14 @@ mod imp {
     ///
     /// Returns the HTTP status code on success. Non-2xx responses are returned
     /// as their status code without writing to the target file. Transport
-    /// errors (DNS, TLS, timeout, …) are returned as `Err`.
-    pub fn download_to_file(url: &str, target: &Path) -> Result<u16, String> {
+    /// errors (DNS, TLS, timeout, …) are returned as `Err`. `headers` are
+    /// added to the request as given; they may carry credentials, so nothing
+    /// here logs them.
+    pub fn download_to_file(
+        url: &str,
+        target: &Path,
+        headers: &[(String, String)],
+    ) -> Result<u16, String> {
         // Use the platform's native certificate verifier so requests work in
         // environments with TLS-intercepting proxies or custom enterprise root
         // CAs that aren't in Mozilla's bundled webpki-roots.
@@ -82,9 +88,11 @@ mod imp {
             .build()
             .new_agent();
 
-        let response = agent
-            .get(url)
-            .header("User-Agent", "fresh-editor")
+        let mut request = agent.get(url).header("User-Agent", "fresh-editor");
+        for (name, value) in headers {
+            request = request.header(name.as_str(), value.as_str());
+        }
+        let response = request
             .call()
             .map_err(|e| format!("HTTP request failed: {}", e))?;
 
@@ -121,7 +129,11 @@ mod imp {
 
     pub fn post_telemetry(_url: &'static str, _body: String) {}
 
-    pub fn download_to_file(_url: &str, _target: &Path) -> Result<u16, String> {
+    pub fn download_to_file(
+        _url: &str,
+        _target: &Path,
+        _headers: &[(String, String)],
+    ) -> Result<u16, String> {
         Err(DISABLED.to_string())
     }
 }
