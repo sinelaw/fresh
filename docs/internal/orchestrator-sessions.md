@@ -582,8 +582,12 @@ includes cloud sessions this machine never saw.
   terminal gets its own copy of the session: new work there stays local and
   doesn't appear in the cloud session on claude.ai"; the cloud session is
   left as it was, still active, until it is archived or its environment
-  expires. So after a teleport the row stays in Elsewhere (it is still an
-  active cloud session). The form names the workspace after the session: the
+  expires. Fresh keeps it that way — a fork, never archived — so after a
+  teleport the row stays in Elsewhere (it is still an active cloud session),
+  marked `teleported → <workspace>`: the form records which workspace the
+  copy became (global state `orchestrator.teleported`, cloud id → the
+  workspace's durable id), and the row's menu then offers **Go to
+  <workspace>** first, above another teleport (a second copy). The form names the workspace after the session: the
   worktree and branch get a slug of its title (`liveBranchName`), and the
   workspace is renamed to the title itself.
 

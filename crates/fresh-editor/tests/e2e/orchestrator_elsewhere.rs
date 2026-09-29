@@ -277,3 +277,124 @@ fn clicking_a_row_opens_its_menu_at_the_pointer() {
         "a click does not open the task itself:\n{screen}"
     );
 }
+
+/// Teleporting a Claude cloud session makes a local copy, named after the
+/// session, and the cloud session's row stays (teleport copies, it does not
+/// move) but says where the copy went and offers to go there first.
+///
+/// The cloud list is private API, so a stand-in feed plugin (exporting the
+/// same `live-sessions` API the real one does) reports one cloud session, and
+/// a fake `claude` answers `--teleport` with a marker.
+#[test]
+fn teleporting_a_cloud_session_names_the_copy_and_marks_the_row() {
+    const TITLE: &str = "Fix the auth bug";
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let root = temp_dir.path().join("homeproj");
+    fs::create_dir(&root).unwrap();
+    let plugins_dir = root.join("plugins");
+    fs::create_dir(&plugins_dir).unwrap();
+    copy_plugin_lib(&plugins_dir);
+    copy_plugin(&plugins_dir, "orchestrator");
+    fs::write(root.join("readme.txt"), "hello\n").unwrap();
+    let git = |args: &[&str]| {
+        assert!(std::process::Command::new("git")
+            .args(args)
+            .current_dir(&root)
+            .status()
+            .unwrap()
+            .success());
+    };
+    git(&["init", "-q"]);
+    git(&["add", "readme.txt"]);
+    git(&[
+        "-c",
+        "user.email=t@t",
+        "-c",
+        "user.name=t",
+        "commit",
+        "-qm",
+        "init",
+    ]);
+
+    let claude = temp_dir.path().join("fake-claude");
+    write_script(
+        &claude,
+        "#!/bin/sh\n[ \"$1\" = --teleport ] && echo \"TELEPORTED-$2\"\nexec sleep 30\n",
+    );
+    let session = serde_json::json!({
+        "key": "claude-cloud/session_x",
+        "source": "claude-cloud",
+        "id": "session_x",
+        "agent": "claude",
+        "where": "cloud",
+        "title": TITLE,
+        "state": "idle",
+        "repo": "acme/homeproj",
+        "url": "https://example.invalid/session_x",
+    });
+    let snapshot = serde_json::json!({
+        "sessions": [session],
+        "problems": [],
+        "commands": { "claude": claude.display().to_string() },
+    });
+    fs::write(
+        plugins_dir.join("fake_feed.ts"),
+        format!(
+            "const editor = getEditor();\n\
+             const snap = {snapshot};\n\
+             editor.exportPluginApi(\"live-sessions\", {{\n\
+               refresh: async () => {{ editor.getPluginApi(\"orchestrator\")?.setElsewhereSessions(snap); }},\n\
+               snapshot: () => snap,\n\
+               claudeCloudEnabled: () => true,\n\
+               setClaudeCloud: async () => {{}},\n\
+             }});\n"
+        ),
+    )
+    .unwrap();
+
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(160, 40, Config::default(), root).unwrap();
+    h.render().unwrap();
+    open_dock(&mut h);
+    h.wait_until(|h| h.screen_to_string().contains(TITLE))
+        .unwrap();
+
+    // A click on the cloud row offers the teleport (it never runs on a click).
+    let (col, row) = pos_of(&h, TITLE);
+    h.mouse_click(col, row).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Take Over Here (Teleport)"))
+        .unwrap();
+    let (tcol, trow) = pos_of(&h, "Take Over Here (Teleport)");
+    h.mouse_click(tcol, trow).unwrap();
+
+    // The form carries the session's name, as a branch-safe worktree name.
+    h.wait_until(|h| {
+        h.screen_to_string()
+            .contains("new worktree fix-the-auth-bug")
+    })
+    .unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::CONTROL).unwrap();
+
+    h.wait_until(|h| h.screen_to_string().contains("TELEPORTED-session_x"))
+        .unwrap();
+    // The copy is a workspace named as the session; the cloud row stays and
+    // says where the copy went.
+    // (The dock is narrow: the tail is cut after the arrow; the menu below
+    // names the workspace in full.)
+    h.wait_until(|h| {
+        let s = h.screen_to_string();
+        s.contains("teleported →") && s.contains("· Fix the auth bug")
+    })
+    .unwrap();
+    let screen = h.screen_to_string();
+    assert!(
+        !screen.contains("homeproj-1"),
+        "no generated name for the copy:\n{screen}"
+    );
+
+    // Its menu now offers the copy first.
+    let (col, row) = pos_of(&h, "teleported →");
+    h.mouse_click(col, row).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Go to Fix the auth bug"))
+        .unwrap();
+}

@@ -536,6 +536,9 @@ interface NewSessionForm {
   // name field's (a session imported with a worktree: the field names the
   // worktree and branch, so it holds a slug of this). Undefined: the field's.
   displayName?: string;
+  // The Claude cloud session the created workspace is a teleported copy of,
+  // remembered so the session's Elsewhere row can say where the copy went.
+  teleportOf?: string;
   // Whether to create a new git worktree under
   // `<XDG>/orchestrator/<slug>/<session>/` (true) or run the
   // session directly inside `projectPath` (false). Enabled
@@ -1795,13 +1798,48 @@ function elsewhereVisible(): LiveSession[] {
   return unrepresented(elsewhereSessions, roots, editor.getDataDir(), remoteRoots)
     .filter((s) =>
       needle === "" ||
-      `${s.title} ${liveDetail(s)} ${s.agent}`.toLowerCase().includes(needle)
+      `${s.title} ${liveTail(s)} ${s.agent}`.toLowerCase().includes(needle)
     )
     .sort((a, b) => (elsewhereOrder.get(a.key) ?? 0) - (elsewhereOrder.get(b.key) ?? 0));
 }
 
 function liveByKey(key: string): LiveSession | undefined {
   return elsewhereSessions.find((s) => s.key === key);
+}
+
+// Teleporting copies a cloud session: the cloud one goes on as it was, so
+// its row stays. Which workspace each copy became is remembered (cloud id →
+// the workspace's durable id), so the row can say where it went and offer
+// to go there rather than make another copy.
+const TELEPORTED_KEY = "orchestrator.teleported";
+
+function teleportedMap(): Record<string, string> {
+  const v = editor.getGlobalState(TELEPORTED_KEY);
+  return v && typeof v === "object" ? { ...(v as Record<string, string>) } : {};
+}
+
+function rememberTeleport(cloudId: string, stableId: string): void {
+  const map = teleportedMap();
+  map[cloudId] = stableId;
+  // Forget copies whose workspace is gone, so the record stays small.
+  const live = new Set([...orchestratorSessions.values()].map((w) => w.stableId).filter(Boolean));
+  for (const [k, v] of Object.entries(map)) if (!live.has(v) && k !== cloudId) delete map[k];
+  editor.setGlobalState(TELEPORTED_KEY, map);
+}
+
+/** The workspace a cloud session was teleported into, while it exists. */
+function teleportedWorkspace(s: LiveSession): AgentSession | undefined {
+  if (s.source !== "claude-cloud") return undefined;
+  const stableId = teleportedMap()[s.id];
+  if (!stableId) return undefined;
+  return [...orchestratorSessions.values()].find((w) => w.id > 0 && w.stableId === stableId);
+}
+
+// The dim tail of a row: where the session is, or, for a cloud session
+// copied here, which workspace the copy is.
+function liveTail(s: LiveSession): string {
+  const w = teleportedWorkspace(s);
+  return w ? editor.t("dock.live_teleported", { name: w.label }) : liveDetail(s);
 }
 
 function liveStateEntry(s: LiveSession): Entry {
@@ -1819,7 +1857,7 @@ function liveNodeEntry(s: LiveSession): TextPropertyEntry {
     liveStateEntry(s),
     liveGlyphEntry(s),
     { text: s.title, style: { bold: true } },
-    { text: "  " + liveDetail(s), style: { fg: "ui.menu_disabled_fg", italic: true } },
+    { text: "  " + liveTail(s), style: { fg: "ui.menu_disabled_fg", italic: true } },
   ];
   return styledRow(segs as Parameters<typeof styledRow>[0]);
 }
@@ -1834,7 +1872,7 @@ function liveCardPrimary(s: LiveSession): TextPropertyEntry {
 
 function liveCardExtraLines(s: LiveSession): TextPropertyEntry[] {
   return [
-    cardSplitRow([{ text: "  " + liveDetail(s), style: { fg: "ui.menu_disabled_fg", italic: true } }], []),
+    cardSplitRow([{ text: "  " + liveTail(s), style: { fg: "ui.menu_disabled_fg", italic: true } }], []),
   ];
 }
 
@@ -1871,6 +1909,7 @@ function teleportLiveSession(key: string, folderId?: string | null): void {
     projectPath: match?.projectPath ?? "",
     cmd: `${elsewhereCommands.claude} --teleport ${s.id}`,
     label: s.title,
+    teleportOf: s.id,
     createWorktree: true,
     folderId,
   });
@@ -6755,8 +6794,14 @@ function buildDockMenuSpec(state: DockMenuState): WidgetSpec {
     // menu is also what a click on such a row opens.
     const items: { label: string; key: string; intent?: "primary" | "danger" }[] = [];
     const plan = s ? elsewherePlan(s, false) : null;
+    // Already copied here: going to that copy comes first; another teleport
+    // (a second copy) is still there, below it.
+    const copy = s ? teleportedWorkspace(s) : undefined;
+    if (copy) {
+      items.push({ label: editor.t("dock.ctx_goto_workspace", { name: copy.label }), key: "ctx-live-goto", intent: "primary" });
+    }
     if (plan?.kind === "teleport") {
-      items.push({ label: editor.t("dock.ctx_teleport"), key: "ctx-live-teleport", intent: "primary" });
+      items.push({ label: editor.t("dock.ctx_teleport"), key: "ctx-live-teleport", ...(copy ? {} : { intent: "primary" as const }) });
     } else if (plan?.kind === "ssh" || (plan?.kind === "workspace" && plan.takeover)) {
       items.push({ label: editor.t("dock.ctx_take_over"), key: "ctx-live-open", intent: "primary" });
     } else if (plan && plan.kind !== "browser") {
@@ -12056,6 +12101,8 @@ let pendingFormPrefill:
     folderId?: string | null;
     /** The session's own name, for the workspace it becomes. */
     label?: string;
+    /** The Claude cloud session this workspace is a teleported copy of. */
+    teleportOf?: string;
   }
   | null = null;
 
@@ -12797,6 +12844,8 @@ function openWorkspaceForm(
     folderId?: string | null;
     /** The session's own name, for the workspace it becomes. */
     label?: string;
+    /** The Claude cloud session this workspace is a teleported copy of. */
+    teleportOf?: string;
   },
 ): void {
   pendingFormPrefill = prefill;
@@ -13930,6 +13979,7 @@ function openForm(options?: { fromPicker?: boolean; target?: RunAgentTarget }): 
     form.agentUnset = false;
     form.createWorktree = prefill.createWorktree ?? false;
     form.intoFolder = prefill.folderId;
+    form.teleportOf = prefill.teleportOf;
     // An imported session keeps its name. With a worktree the name field
     // also names the worktree and its branch, so it gets a branch-safe
     // form of the name and the workspace is renamed to the name itself.
@@ -15714,7 +15764,10 @@ async function submitForm(visit: boolean): Promise<void> {
   // Read before the create closes the form.
   const intoFolder = form.intoFolder;
   const displayName = form.displayName;
+  const teleportOf = form.teleportOf;
   const id = await startPendingWorkspace(captured.spec, { visit });
+  const bornWs = teleportOf ? orchestratorSessions.get(id) : undefined;
+  if (teleportOf && bornWs?.stableId) rememberTeleport(teleportOf, bornWs.stableId);
   // Named from birth, like the folder below: a local workspace has its
   // durable id already.
   const born = displayName ? orchestratorSessions.get(id) : undefined;
@@ -17400,6 +17453,18 @@ editor.on("widget_event", (e) => {
         } else if (e.widget_key === "ctx-live-move") {
           closeDockContextMenu();
           openDockMenu({ kind: "move-live", liveKey: target.key, index: 0 });
+        } else if (e.widget_key === "ctx-live-goto") {
+          closeDockContextMenu();
+          const s = liveByKey(target.key);
+          const w = s ? teleportedWorkspace(s) : undefined;
+          if (w) {
+            if (w.id !== editor.activeWindow()) editor.setActiveWindow(w.id);
+            if (dockMode && openPanel) {
+              dockDiveBlur = true;
+              dockBlurred = true;
+              editor.floatingPanelControl(openPanel.id(), "blur", 0);
+            }
+          }
         } else if (e.widget_key === "ctx-live-teleport") {
           closeDockContextMenu();
           teleportLiveSession(target.key);
