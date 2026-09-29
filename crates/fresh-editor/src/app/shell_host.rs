@@ -41,8 +41,56 @@ pub(crate) struct WidgetDrag {
     pub byte: Option<usize>,
     pub clicks: u8,
     /// The drag has been over another row. Back on its own row, the release
-    /// is a drag given up rather than a click.
+    /// is a drag given up rather than a click — and from the first stray on,
+    /// the plugin hears where the drag is (`drag`, then `dragend`), so a
+    /// plain click never flashes a drag's styling.
     pub strayed: bool,
+    /// The row the plugin was last told the drag is over.
+    pub target: Option<String>,
+}
+
+impl crate::app::Editor {
+    /// Tell the plugin where the held drag is: `drag`, `{ key, target }` —
+    /// the row lifted and the row under the pointer (`null` off every row).
+    /// What a drop there would do is the plugin's to show.
+    fn announce_widget_drag(&mut self) {
+        let Some(d) = self.widget_drag.clone() else {
+            return;
+        };
+        let ev = crate::widgets::WidgetEvent {
+            row_target: false,
+            context_click: false,
+            drag_source: false,
+            payload: serde_json::json!({ "key": row_key(&d.press), "target": d.target }),
+            event_type: "drag",
+            ..d.press
+        };
+        if let Some(panel_key) = self.panel_key_of_slot(&d.slot) {
+            self.deliver_widget_hit(&panel_key, &ev, None);
+        }
+    }
+
+    /// The tree's drag is over: forget the held row, and tell the plugin the
+    /// drag it heard about has ended (`dragend`), dropped or not.
+    fn end_widget_drag(&mut self) {
+        let Some(d) = self.widget_drag.take() else {
+            return;
+        };
+        if !d.strayed {
+            return;
+        }
+        let ev = crate::widgets::WidgetEvent {
+            row_target: false,
+            context_click: false,
+            drag_source: false,
+            payload: serde_json::json!({ "key": row_key(&d.press) }),
+            event_type: "dragend",
+            ..d.press
+        };
+        if let Some(panel_key) = self.panel_key_of_slot(&d.slot) {
+            self.deliver_widget_hit(&panel_key, &ev, None);
+        }
+    }
 }
 
 /// The row a tree event names: its `key` in the payload.
@@ -1706,6 +1754,7 @@ impl Editor {
         // ask here.
         let tree_stale = ui.needs_frame();
         let autoscroll = ui.drag_autoscroll();
+        let dragging = ui.dragging();
         self.shell_ui = Some(ui);
         self.note_drag_autoscroll(autoscroll);
         // Claimed is reported, not inferred. Producing a message and taking
@@ -1731,6 +1780,13 @@ impl Editor {
         let mut msgs = result.msgs;
         msgs.extend(settled);
         let applied = self.apply_shell_messages(msgs, facts);
+        // **A drag ends when the tree's does**, after its drop was applied:
+        // dropped, released off every row, or its row gone before the
+        // release — the tree knows which drag is held, and nothing else
+        // needs to be told.
+        if !dragging {
+            self.end_widget_drag();
+        }
         // **The claim is the tree's word, and only the tree's.** A seam that
         // hands a key to a host interior — the prompt's, a focused panel's —
         // `stop()`s it, because the key *is* that surface's: what the surface
@@ -2273,19 +2329,41 @@ impl Editor {
                     byte,
                     clicks,
                     strayed: false,
+                    target: None,
                 });
             }
             UiFact::WidgetDragOver { slot, event } => {
+                let over = row_key(&event).map(str::to_string);
                 if let Some(d) = self.widget_drag.as_mut() {
-                    d.strayed |= row_key(&d.press) != row_key(&event);
+                    d.strayed |= row_key(&d.press) != over.as_deref();
+                    if d.strayed {
+                        d.target = over.clone();
+                        self.announce_widget_drag();
+                    }
                 }
-                // What a drag has instead of the pointer's hover, which the
-                // capture holds on the row it started from.
+                // A card's hover band is the panel's memo; a compact row's is
+                // its list's, which takes the drag's hover itself.
                 let hover = UiFact::WidgetHover {
                     slot,
                     widget: event.widget_key.clone(),
-                    item: row_key(&event).unwrap_or_default().to_string(),
+                    item: over.unwrap_or_default(),
                     entered: true,
+                };
+                self.apply_ui_fact(hover, ev, applied);
+            }
+            UiFact::WidgetDragLeave { slot, event } => {
+                let off = row_key(&event).map(str::to_string);
+                if let Some(d) = self.widget_drag.as_mut() {
+                    if d.strayed && d.target == off {
+                        d.target = None;
+                        self.announce_widget_drag();
+                    }
+                }
+                let hover = UiFact::WidgetHover {
+                    slot,
+                    widget: event.widget_key.clone(),
+                    item: off.unwrap_or_default(),
+                    entered: false,
                 };
                 self.apply_ui_fact(hover, ev, applied);
             }
@@ -2296,7 +2374,7 @@ impl Editor {
             // else — another widget, its own row after straying — is a drag
             // given up. The release that follows ends it either way.
             UiFact::WidgetDrop { slot, event } => {
-                let Some(drag) = self.widget_drag.take() else {
+                let Some(drag) = self.widget_drag.clone() else {
                     return;
                 };
                 if drag.slot != slot || drag.press.widget_key != event.widget_key {
@@ -2331,9 +2409,6 @@ impl Editor {
                     ..event
                 };
                 self.deliver_widget_hit(&panel_key, &dropped, None);
-            }
-            UiFact::WidgetDragEnd => {
-                self.widget_drag = None;
             }
             UiFact::WidgetFocus { slot, widget } => {
                 // **The one slot→panel resolver.** This match was a copy of

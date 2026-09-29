@@ -73,8 +73,6 @@ impl UiFact {
                 | UiFact::WidgetWheel { .. }
                 | UiFact::WidgetProseDrag { .. }
                 | UiFact::WidgetProseRelease { .. }
-                | UiFact::WidgetDragOver { .. }
-                | UiFact::WidgetDragEnd
                 | UiFact::SettingsItemHover(_)
                 | UiFact::SettingsInheritHover(_)
                 | UiFact::SettingsEntryItemHover(_)
@@ -151,20 +149,23 @@ pub enum UiFact {
     },
     /// A drag came onto a row that takes drops: the row's hover, and the
     /// drag has now been somewhere other than where it started if `event`
-    /// names another row.
+    /// names another row — from then on the plugin hears where it is.
     WidgetDragOver {
         slot: super::widgets::Slot,
         event: crate::widgets::WidgetEvent,
     },
+    /// A drag went off a row that takes drops.
+    WidgetDragLeave {
+        slot: super::widgets::Slot,
+        event: crate::widgets::WidgetEvent,
+    },
     /// A drag was released on a row that takes drops; `event` is that row's
-    /// `select`. Raised before the dragged row's own release.
+    /// `select`. The drag itself ends when the tree's does
+    /// (`fresh_ui::Ui::dragging`), after this is applied.
     WidgetDrop {
         slot: super::widgets::Slot,
         event: crate::widgets::WidgetEvent,
     },
-    /// The dragged row's press was released, on a row or anywhere else: the
-    /// drag is over.
-    WidgetDragEnd,
     /// A press landed on a plugin widget, carrying what that press means.
     ///
     /// **What replaces the byte-range scan.** The runtime recorded a

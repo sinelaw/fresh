@@ -476,6 +476,19 @@ Held on the list's first or last visible row, or past it, a drag scrolls
 the list toward the pointer while there is more that way, faster the
 farther out, so a folder out of sight can be reached.
 
+While a row is dragged the dock shows what is in hand and where it would
+land. The row itself is drawn lifted: its text inverted and slanted, which
+shows on any band (a dimmed colour on the selection band is lifted back to
+a legible one). The row a drop would file it into — the folder, or for an
+external session going home its product's group, kept on screen for the
+drag even when empty — wears `ui.list_drop_target_bg` across the whole row.
+That is a theme colour of its own: the tab drop zone's is the selection
+colour in several themes, and the selected row is on screen too. The host
+tells the plugin where the drag is (`drag`, `{ key, target }`, from the
+first row the drag leaves its own for) and when it is over (`dragend`,
+dropped or not, when the tree's drag ends — `fresh_ui::Ui::dragging`), so
+a plain click never flashes any of it.
+
 ### 5.1 Project scoping (the "yesterday's directories" fix)
 
 Globally-listed sessions confused users by combining unrelated projects. The

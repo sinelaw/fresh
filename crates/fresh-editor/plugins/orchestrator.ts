@@ -2230,10 +2230,17 @@ function buildDockTree(filtered: number[]): DockTree {
     return out;
   };
   const searching = (openDialog?.filter.value ?? "") !== "";
+  // A drag in progress: the row lifted, and the row a drop now would land in.
+  const lifted = dockDrag?.key ?? null;
+  const dropKey = dockDropTargetKey();
+  const liftedGroup = lifted?.startsWith(LIVE_NODE_PREFIX)
+    ? liveByKey(lifted.slice(LIVE_NODE_PREFIX.length))?.agent ?? null
+    : null;
 
   const emitFolder = (f: DockFolder, depth: number): void => {
+    const entry = folderNodeEntry(f, countRec(f.id), attentionCounts(membersRec(f.id)));
     nodes.push(
-      treeNode(folderNodeEntry(f, countRec(f.id), attentionCounts(membersRec(f.id))), {
+      treeNode(folderNodeKey(f.id) === dropKey ? dropTargetEntry(entry) : entry, {
         depth,
         hasChildren: true,
       }),
@@ -2248,8 +2255,10 @@ function buildDockTree(filtered: number[]): DockTree {
   const card = dockMode && dockView === "card";
   const emitSession = (id: number, depth: number): void => {
     const plain = card ? sessionCardPrimary(id) : sessionNodeEntry(id);
-    // Choosing a folder: a workspace is not a target.
-    const primary = movePick ? dimEntry(plain) : plain;
+    // Choosing a folder: a workspace is not a target. Dragged: lifted.
+    const primary = movePick
+      ? dimEntry(plain)
+      : sessionNodeKey(id) === lifted ? liftedEntry(plain) : plain;
     nodes.push(
       treeNode(primary, {
         depth,
@@ -2268,8 +2277,11 @@ function buildDockTree(filtered: number[]): DockTree {
   };
   const emitLive = (s: LiveSession, depth: number): void => {
     const plain = card ? liveCardPrimary(s) : liveNodeEntry(s);
+    const primary = movePick
+      ? dimEntry(plain)
+      : liveNodeKey(s.key) === lifted ? liftedEntry(plain) : plain;
     nodes.push(
-      treeNode(movePick ? dimEntry(plain) : plain, {
+      treeNode(primary, {
         depth,
         hasChildren: false,
         flush: true,
@@ -2298,10 +2310,16 @@ function buildDockTree(filtered: number[]): DockTree {
   for (const group of EXTERNAL_GROUPS) {
     const live = liveUnfiled.filter((s) => s.agent === group);
     // A group whose source failed (a sign-in that expired) stays, empty, so
-    // its menu can say what went wrong.
-    if (live.length === 0 && externalGroupProblems(group).length === 0) continue;
-    const header = externalGroupEntry(group, live);
-    nodes.push(treeNode(movePick ? dimEntry(header) : header, { depth: 0, hasChildren: live.length > 0 }));
+    // its menu can say what went wrong; and while one of its sessions is
+    // dragged from a folder, so the way home has a row to light.
+    if (live.length === 0 && externalGroupProblems(group).length === 0 && liftedGroup !== group) {
+      continue;
+    }
+    const plainHeader = externalGroupEntry(group, live);
+    const header = movePick
+      ? dimEntry(plainHeader)
+      : externalGroupKey(group) === dropKey ? dropTargetEntry(plainHeader) : plainHeader;
+    nodes.push(treeNode(header, { depth: 0, hasChildren: live.length > 0 }));
     keys.push(externalGroupKey(group));
     model.push({ kind: "folder", folderId: externalFolderId(group) });
     for (const s of live) emitLive(s, 1);
@@ -7188,6 +7206,57 @@ function dropFolderFor(row: DockNode, to: DockNode): string | null | undefined {
       return f !== null || external ? f : undefined;
     }
   }
+}
+
+// ── A row being dragged ────────────────────────────────────────────────────
+// Set while a draggable dock row is dragged with the mouse, from the host's
+// `drag` events: the row lifted and the row under the pointer (null off every
+// row). The dock draws the one lifted and lights the folder a drop there
+// would file it into; `dragend` clears it, dropped or not.
+let dockDrag: { key: string; target: string | null } | null = null;
+
+function dockNodeAt(key: string): DockNode | null {
+  const d = openDialog;
+  if (!d) return null;
+  const i = d.dockKeys.indexOf(key);
+  return i >= 0 ? d.dockNodes[i] ?? null : null;
+}
+
+/** The row (its node key) standing for where a drop right now would file the
+ *  dragged row: the folder it names, or for an external session sent home,
+ *  its product's group. None over a row it cannot go to, or back on itself,
+ *  and none for a workspace's top level, which has no row. */
+function dockDropTargetKey(): string | null {
+  if (!dockDrag?.target || dockDrag.target === dockDrag.key) return null;
+  const from = dockNodeAt(dockDrag.key);
+  const to = dockNodeAt(dockDrag.target);
+  if (!from || !to || from.kind === "folder") return null;
+  const folderId = dropFolderFor(from, to);
+  if (folderId === undefined) return null;
+  if (folderId !== null) return folderNodeKey(folderId);
+  if (from.kind !== "live") return null;
+  const s = liveByKey(from.liveKey);
+  return s ? externalGroupKey(s.agent) : null;
+}
+
+/** The row being dragged: lifted out of the list — its text inverted and
+ *  slanted, a chip in hand rather than a row in place. Inverted rather than
+ *  dimmed: a dim colour on the selection band (the row dragged is often the
+ *  selected one) is lifted back to a legible one, and would not show. */
+function liftedEntry(e: TextPropertyEntry): TextPropertyEntry {
+  const lift = { italic: true, reversed: true };
+  const segs = (e.segments ?? []).map((s) => ({ text: s.text, style: lift }));
+  return styledRow(segs.length ? segs : [{ text: e.text, style: lift }]);
+}
+
+/** The folder a drop would land in: the list drop-target colour across the
+ *  whole row. Its own theme key, not the tab drop zone's: in several themes
+ *  that one is the selection colour, and the selected row is on screen too. */
+function dropTargetEntry(e: TextPropertyEntry): TextPropertyEntry {
+  return {
+    ...e,
+    style: { ...(e.style ?? {}), bg: "ui.list_drop_target_bg", bold: true, extendToLineEnd: true },
+  };
 }
 
 /** A row dragged onto another dock row with the mouse. */
@@ -18203,6 +18272,16 @@ editor.on("widget_event", (e) => {
         { text: value },
         { cursorByte: typeof cursor === "number" ? cursor : undefined },
       );
+      return;
+    }
+    // A row being dragged with the mouse: where it is, for the dock to show
+    // what it lifted and where it would land; and the drag's end.
+    if ((e.event_type === "drag" || e.event_type === "dragend") && e.widget_key === "sessions") {
+      const payload = (e.payload ?? {}) as Record<string, unknown>;
+      dockDrag = e.event_type === "drag" && typeof payload.key === "string"
+        ? { key: payload.key, target: typeof payload.target === "string" ? payload.target : null }
+        : null;
+      if (openPanel && dockMode) openPanel.update(buildDockSpec());
       return;
     }
     // A row dragged onto another with the mouse (`draggable` rows): filed

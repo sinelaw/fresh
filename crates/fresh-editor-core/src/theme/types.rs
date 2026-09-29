@@ -904,6 +904,11 @@ pub struct UiColors {
     /// Tab drop zone border during drag
     #[serde(default)]
     pub tab_drop_zone_border: Option<ColorDef>,
+    /// A list row a drag would drop into (the Orchestrator dock's target
+    /// folder). Must read apart from the selection and hover bands, which
+    /// are on screen at the same time.
+    #[serde(default)]
+    pub list_drop_target_bg: Option<ColorDef>,
     /// Settings UI selected item background
     #[serde(default)]
     pub settings_selected_bg: Option<ColorDef>,
@@ -1220,6 +1225,7 @@ pub struct Theme {
     // Tab drag-and-drop colors
     pub tab_drop_zone_bg: Color,
     pub tab_drop_zone_border: Color,
+    pub list_drop_target_bg: Color,
 
     // Settings UI colors
     pub settings_selected_bg: Color,
@@ -1445,6 +1451,7 @@ impl From<ThemeFile> for Theme {
             ),
             tab_drop_zone_bg: placeholder(file.ui.tab_drop_zone_bg.clone()),
             tab_drop_zone_border: placeholder(file.ui.tab_drop_zone_border.clone()),
+            list_drop_target_bg: placeholder(file.ui.list_drop_target_bg.clone()),
             settings_selected_bg: placeholder(file.ui.settings_selected_bg.clone()),
             settings_selected_fg: placeholder(file.ui.settings_selected_fg.clone()),
             file_status_added_fg: placeholder(file.ui.file_status_added_fg.clone()),
@@ -1631,6 +1638,7 @@ impl From<Theme> for ThemeFile {
                 status_error_indicator_hover_fg: Some(theme.status_error_indicator_hover_fg.into()),
                 tab_drop_zone_bg: Some(theme.tab_drop_zone_bg.into()),
                 tab_drop_zone_border: Some(theme.tab_drop_zone_border.into()),
+                list_drop_target_bg: Some(theme.list_drop_target_bg.into()),
                 settings_selected_bg: Some(theme.settings_selected_bg.into()),
                 settings_selected_fg: Some(theme.settings_selected_fg.into()),
                 file_status_added_fg: Some(theme.file_status_added_fg.into()),
@@ -2185,6 +2193,7 @@ theme_color_keys! {
         "help_key_fg" => color help_key_fg,
         "help_separator_fg" => color help_separator_fg,
         "inline_code_bg" => color inline_code_bg fallback "editor.current_line_bg",
+        "list_drop_target_bg" => color list_drop_target_bg fallback "ui.tab_drop_zone_bg",
         "menu_active_bg" => color menu_active_bg fallback "ui.popup_selection_bg",
         "menu_active_fg" => color menu_active_fg fallback "ui.popup_selection_fg",
         "menu_bg" => color menu_bg fallback "ui.tab_inactive_bg",

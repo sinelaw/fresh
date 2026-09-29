@@ -4263,13 +4263,7 @@ fn takes_drops(nodes: &[fresh_core::api::TreeNode]) -> bool {
 fn drop_row(n: Node<UiMsg>, slot: Slot, row: crate::widgets::WidgetEvent) -> Node<UiMsg> {
     use fresh_ui::GestureKind;
     use std::rc::Rc;
-    let item = row
-        .payload
-        .get("key")
-        .and_then(|v| v.as_str())
-        .unwrap_or_default()
-        .to_string();
-    let (over, dropped) = (row.clone(), row);
+    let (over, left, dropped) = (row.clone(), row.clone(), row);
     fresh_ui::gesture(n)
         .on(
             GestureKind::DragEnter,
@@ -4282,16 +4276,11 @@ fn drop_row(n: Node<UiMsg>, slot: Slot, row: crate::widgets::WidgetEvent) -> Nod
         )
         .on(
             GestureKind::DragLeave,
-            Rc::new({
-                let widget = dropped.widget_key.clone();
-                move |_: &fresh_ui::Event| {
-                    Some(UiMsg::Ui(super::msg::UiFact::WidgetHover {
-                        slot,
-                        widget: widget.clone(),
-                        item: item.clone(),
-                        entered: false,
-                    }))
-                }
+            Rc::new(move |_: &fresh_ui::Event| {
+                Some(UiMsg::Ui(super::msg::UiFact::WidgetDragLeave {
+                    slot,
+                    event: left.clone(),
+                }))
             }),
         )
         .on(
@@ -4369,7 +4358,6 @@ fn hit_node(
             }) as fresh_ui::Handler<UiMsg>
         }
     });
-    let drag_source = hit.drag_source;
     let n = fresh_ui::gesture(n).on(
         fresh_ui::GestureKind::Press,
         std::rc::Rc::new(move |e: &fresh_ui::Event| match e.button {
@@ -4433,18 +4421,6 @@ fn hit_node(
             _ => None,
         }),
     );
-    // The drag's release comes back here by capture, wherever the pointer
-    // is; the row it landed on, if any, has already said so.
-    let n = match drag_source {
-        false => n,
-        true => n.on(
-            fresh_ui::GestureKind::Release,
-            std::rc::Rc::new(|e: &fresh_ui::Event| {
-                e.stop();
-                Some(UiMsg::Ui(super::msg::UiFact::WidgetDragEnd))
-            }),
-        ),
-    };
     match hover {
         None => n,
         Some(h) => n.on_enter(h(true)).on_leave(h(false)),
@@ -4463,14 +4439,18 @@ fn hit_node(
 ///
 /// Only a background can extend: a fill paints spaces, and a foreground on a
 /// space is nothing. So this reports the ink of the last overlay that asks and
-/// carries one, and the row wears it — under its own runs, which paint over it
-/// exactly where they have glyphs.
+/// carries one — else the entry's own style, when that asks for the whole row
+/// (the dock's drop-target folder) — and the row wears it, under its own runs,
+/// which paint over it exactly where they have glyphs.
 fn extended_ground(entry: &TextPropertyEntry, base: &Ink) -> Option<Ink> {
+    let asks = |s: &&OverlayOptions| s.extend_to_line_end && s.bg.is_some();
     entry
         .inline_overlays
         .iter()
-        .rfind(|o| o.style.extend_to_line_end && o.style.bg.is_some())
-        .map(|o| ink_of(&o.style, base))
+        .map(|o| &o.style)
+        .rfind(asks)
+        .or(entry.style.as_ref().filter(asks))
+        .map(|s| ink_of(s, base))
 }
 
 /// A button, built from its **naked label** and the classes that say what it
@@ -4917,7 +4897,13 @@ fn row_pieces(
             ));
         }
     }
-    row().h(Sizing::Cells(1)).children(kids)
+    // A row that asks for its ground to reach the end of the line wears it
+    // whole, as [`entry_row_elided`] does for a row with no hits.
+    let r = row().h(Sizing::Cells(1)).children(kids);
+    match extended_ground(entry, surface) {
+        Some(ink) => r.theme(ink.to_string()),
+        None => r,
+    }
 }
 
 /// The styled pieces of an entry, each with the byte range it covers.

@@ -342,10 +342,51 @@ fn dragging_an_external_row_onto_a_folder_files_it() {
     );
 
     // Back onto the Claude group's header: an external row goes home to its
-    // own product's group, whichever group it is dropped on.
+    // own product's group, whichever group it is dropped on. While it is held
+    // there, that home — the Codex group, empty and so not shown until now —
+    // is on screen and lit as where it would land; the Claude group is not.
+    use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+    let at = |kind, col, row| MouseEvent {
+        kind,
+        column: col,
+        row,
+        modifiers: crossterm::event::KeyModifiers::empty(),
+    };
     let (tcol, trow) = pos_of(&h, CODEX_TASK_TITLE);
     let (_, grow) = pos_of(&h, "▼ Claude");
-    h.mouse_drag(tcol, trow, tcol, grow).unwrap();
+    let far = 25;
+    let plain_ground = h.get_cell_style(far, grow).unwrap().bg;
+    h.send_mouse(at(MouseEventKind::Down(MouseButton::Left), tcol, trow))
+        .unwrap();
+    let step = if grow > trow { 1i32 } else { -1 };
+    let mut r = trow as i32;
+    while r != grow as i32 {
+        r += step;
+        h.send_mouse(at(MouseEventKind::Drag(MouseButton::Left), tcol, r as u16))
+            .unwrap();
+    }
+    let lit = |h: &EditorTestHarness, needle: &str| {
+        let s = h.screen_to_string();
+        s.lines()
+            .position(|l| l.contains(needle))
+            .is_some_and(|row| h.get_cell_style(far, row as u16).unwrap().bg != plain_ground)
+    };
+    h.wait_until(|h| lit(h, "▼ Codex") || lit(h, "Codex"))
+        .unwrap();
+    let screen = h.screen_to_string();
+    let (_, crow) = pos_of(&h, "Codex");
+    let band = h.get_cell_style(far, crow).unwrap().bg;
+    let (_, grow) = pos_of(&h, "Claude");
+    // Under the pointer the Claude group wears the hover band; what it must
+    // not wear is the drop target's.
+    assert_ne!(
+        h.get_cell_style(far, grow).unwrap().bg,
+        band,
+        "the group under the pointer is not where it would land:\n{screen}"
+    );
+    let (_, grow) = pos_of(&h, "Claude");
+    h.send_mouse(at(MouseEventKind::Up(MouseButton::Left), tcol, grow))
+        .unwrap();
     h.wait_until(|h| h.screen_to_string().contains("▼ Codex"))
         .unwrap();
 }

@@ -329,6 +329,89 @@ fn a_rows_right_click_menu_opens_below_the_pointer() {
     );
 }
 
+/// **While a row is dragged, the dock shows what is in hand and where it
+/// would land**: the dragged row is drawn lifted (its text inverted and
+/// slanted), and the folder a drop there would file it into wears the list
+/// drop-target band across the whole row — a colour of its own, not the
+/// selection's. Released, both go.
+#[test]
+fn a_drag_shows_the_lifted_row_and_the_folder_it_would_land_in() {
+    use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+    use ratatui::style::Modifier;
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h = launch(root);
+    create_empty_folder(&mut h, "Docs");
+    create_empty_folder(&mut h, "Else");
+
+    let at = |kind, col, row| MouseEvent {
+        kind,
+        column: col,
+        row,
+        modifiers: crossterm::event::KeyModifiers::empty(),
+    };
+    let (acol, arow) = pos_of(&h, "alphaproj");
+    let (_, drow) = pos_of(&h, "Docs");
+    let (_, erow) = pos_of(&h, "Else");
+    // A cell well past every row's text, still inside the dock.
+    let far = 25;
+    let plain_ground = h.get_cell_style(far, erow).unwrap().bg;
+
+    h.send_mouse(at(MouseEventKind::Down(MouseButton::Left), acol, arow))
+        .unwrap();
+    for r in (arow + 1)..=drow {
+        h.send_mouse(at(MouseEventKind::Drag(MouseButton::Left), acol, r))
+            .unwrap();
+    }
+    let lifted = |h: &EditorTestHarness| {
+        let m = h.get_cell_style(acol, arow).unwrap().add_modifier;
+        m.contains(Modifier::REVERSED) && m.contains(Modifier::ITALIC)
+    };
+    h.wait_until(|h| lifted(h) && h.get_cell_style(far, drow).unwrap().bg != plain_ground)
+        .unwrap();
+    let screen = h.screen_to_string();
+    let band = h.get_cell_style(far, drow).unwrap().bg;
+    assert_eq!(
+        h.get_cell_style(0, drow).unwrap().bg,
+        band,
+        "the band runs the whole row, from its first cell:\n{screen}"
+    );
+    assert_eq!(
+        h.get_cell_style(far, erow).unwrap().bg,
+        plain_ground,
+        "only the folder the drop would land in is lit:\n{screen}"
+    );
+    assert_ne!(
+        band,
+        h.get_cell_style(far, arow).unwrap().bg,
+        "the drop target's band is not the selection's:\n{screen}"
+    );
+
+    h.send_mouse(at(MouseEventKind::Up(MouseButton::Left), acol, drow))
+        .unwrap();
+    h.wait_until(|h| {
+        let s = h.screen_to_string();
+        s.lines().any(|l| l.contains("Docs") && l.contains("(1)"))
+    })
+    .unwrap();
+    let screen = h.screen_to_string();
+    let (_, drow) = pos_of(&h, "Docs");
+    let (acol, arow) = pos_of(&h, "alphaproj");
+    assert!(
+        !h.get_cell_style(acol, arow)
+            .unwrap()
+            .add_modifier
+            .contains(Modifier::REVERSED),
+        "dropped, the row is no longer drawn lifted:\n{screen}"
+    );
+    // The pointer is still over the folder, so it may wear the hover band;
+    // what must be gone is the drop target's.
+    assert_ne!(
+        h.get_cell_style(far, drow).unwrap().bg,
+        band,
+        "dropped, the folder's drop-target band is gone:\n{screen}"
+    );
+}
+
 /// Clicking an option in the Menu activates it.
 ///
 /// Not a reproducer — this dropdown anchors high enough in the dock that

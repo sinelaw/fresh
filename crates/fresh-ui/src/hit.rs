@@ -876,6 +876,14 @@ impl<M: 'static> Ui<M> {
         self.autoscroll_target(p).map(|_| p)
     }
 
+    /// Whether a drag ([`Event::start_drag`]) is held. The tree is the one
+    /// authority on it: a host that keeps state for a drag ends it when this
+    /// goes false, whichever way the drag ended — dropped, released off every
+    /// target, or its captor gone before the release.
+    pub fn dragging(&self) -> bool {
+        self.drag.is_some()
+    }
+
     /// A drag's release: the target under the pointer hears `Drop`, and what
     /// the drag was over that is no longer under the pointer hears
     /// `DragLeave`. What is still under it is handed back to hover by the

@@ -1182,8 +1182,11 @@ cannot be written. The rules, which the sidebar divider's `SidebarDrag` on the
 A plugin tree's draggable row keeps its drag on the `Editor` too
 (`widget_drag`, a `WidgetDrag`), on the same rules: the press builds it whole
 — the row's own press, deferred, so a release back on the row is delivered
-as the click it was — a drop target's `Drop` reads it, and the dragged row's
-release takes it.
+as the click it was — a drop target's `Drop` reads it, and the end of the
+tree's drag (`Ui::dragging` false after a dispatch) takes it. Not the
+dragged row's own release: a row dragged out of a virtual list's window is
+gone before its release, and the tree is the one that knows the drag is
+over.
 
 ---
 

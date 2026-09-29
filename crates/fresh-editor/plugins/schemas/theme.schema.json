@@ -139,6 +139,7 @@
         "status_error_indicator_hover_fg": null,
         "tab_drop_zone_bg": null,
         "tab_drop_zone_border": null,
+        "list_drop_target_bg": null,
         "settings_selected_bg": null,
         "settings_selected_fg": null,
         "file_status_added_fg": null,
@@ -1567,6 +1568,18 @@
         },
         "tab_drop_zone_border": {
           "description": "Tab drop zone border during drag",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "list_drop_target_bg": {
+          "description": "A list row a drag would drop into (the Orchestrator dock's target\nfolder). Must read apart from the selection and hover bands, which\nare on screen at the same time.",
           "anyOf": [
             {
               "$ref": "#/$defs/ColorDef"
