@@ -3884,13 +3884,16 @@ impl Editor {
         let cwd = self.working_dir().to_path_buf();
         let query_len = pattern.len();
 
-        // The project walk below is rooted at `cwd`, so a source buffer backed
-        // by a file *outside* the workspace root (e.g. opened from /tmp) is
-        // never reached and a current-file search finds nothing. Queue that
-        // file explicitly so it flows through the same per-file search path
-        // (which also handles the dirty-buffer hybrid plan). In-root files are
-        // left to the walk to avoid searching them twice.
-        let out_of_root_source = (source_buffer_id != 0)
+        // The project walk below misses files the user can plainly have open:
+        // anything outside `cwd` (e.g. opened from /tmp), hidden files such as
+        // `.fresh-tour.json`, and files under skipped directories. A
+        // current-file search filters this walk's results, so for those it
+        // found nothing. Queue the source buffer's file explicitly, ahead of
+        // the walk, so it flows through the same per-file search path (which
+        // also handles the dirty-buffer hybrid plan) and its matches arrive
+        // before `max_results` can cut them off. The walk skips that path so
+        // it isn't searched twice.
+        let source_file = (source_buffer_id != 0)
             .then_some(BufferId(source_buffer_id))
             .and_then(|bid| {
                 self.windows
@@ -3898,8 +3901,15 @@ impl Editor {
                     .and_then(|w| w.buffers.get(&bid))
             })
             .and_then(|state| state.buffer.file_path().map(|p| p.to_path_buf()))
-            .filter(|path| !path.starts_with(&cwd))
-            .filter(|path| search_file_glob_matches(&file_glob, &path.to_string_lossy()));
+            .filter(|path| {
+                // Match globs against the path the walk would have given
+                // (relative, `/`-separated) when the file is in the root.
+                let shown = match path.strip_prefix(&cwd) {
+                    Ok(rel) => rel.to_string_lossy().replace('\\', "/"),
+                    Err(_) => path.to_string_lossy().into_owned(),
+                };
+                search_file_glob_matches(&file_glob, &shown)
+            });
 
         let Some(runtime) = &self.tokio_runtime else {
             finish_with(
@@ -3914,6 +3924,13 @@ impl Editor {
         runtime.spawn(async move {
             let (path_tx, mut path_rx) = tokio::sync::mpsc::channel::<std::path::PathBuf>(256);
 
+            if let Some(path) = source_file.clone() {
+                // The receive loop below is the only consumer and is still
+                // alive, so a send error here just means the search was
+                // cancelled — discarding the path is correct.
+                path_tx.send(path).await.ok();
+            }
+
             let walker_handle = Arc::clone(&handle_for_task);
             let walk_tx = path_tx.clone();
             let walk_file_glob = file_glob.clone();
@@ -3923,7 +3940,10 @@ impl Editor {
                     IGNORED_DIRS,
                     &walker_handle.cancel,
                     &mut |path, rel| {
-                        if search_file_glob_matches(&walk_file_glob, rel) {
+                        if source_file.as_deref() == Some(path) {
+                            // Already queued ahead of the walk.
+                            true
+                        } else if search_file_glob_matches(&walk_file_glob, rel) {
                             walk_tx.blocking_send(path.to_path_buf()).is_ok()
                         } else {
                             true
@@ -3933,13 +3953,6 @@ impl Editor {
                     tracing::warn!("BeginSearch walk_files failed: {}", e);
                 }
             });
-
-            if let Some(path) = out_of_root_source {
-                // The receive loop below is the only consumer and is still
-                // alive, so a send error here just means the search was
-                // cancelled — discarding the path is correct.
-                path_tx.send(path).await.ok();
-            }
             // Drop our retained sender so the receive loop terminates once the
             // walker's clone is also dropped.
             drop(path_tx);

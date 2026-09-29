@@ -719,6 +719,64 @@ fn test_search_replace_current_file_outside_workspace() {
     );
 }
 
+/// "Search and Replace in Current File" must work on a hidden file such as
+/// `.fresh-tour.json`. The project walk skips dotfiles, and current-file scope
+/// only filters the walk's results, so it used to report "No matches found"
+/// for a file that was open and plainly contained the pattern. The replace
+/// must also land exactly once: the file is searched directly and the walk
+/// must not add it a second time.
+#[test]
+fn test_search_replace_current_file_hidden() {
+    init_tracing_from_env();
+    let (_temp_dir, project_root) = setup_search_replace_project();
+    create_test_files(&project_root);
+
+    let hidden_file = project_root.join(".hidden-notes.txt");
+    fs::write(&hidden_file, "Line 1: testing the search\nplain line\n").unwrap();
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        160,
+        30,
+        Default::default(),
+        project_root.clone(),
+    )
+    .unwrap();
+    harness.open_file(&hidden_file).unwrap();
+    harness.render().unwrap();
+
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness
+        .type_text("Search and Replace in Current File")
+        .unwrap();
+    harness
+        .wait_until(|h| {
+            h.screen_to_string()
+                .contains("Search and Replace in Current File")
+        })
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+
+    enter_search_and_replace(&mut harness, "testing", "done");
+    wait_for_search_finished(&mut harness);
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("Matches (1 in 1 files)"),
+        "Current-file search must find the match in the open hidden file. \
+         Got:\n{}",
+        screen
+    );
+
+    confirm_replace_all(&mut harness);
+
+    let content = fs::read_to_string(&hidden_file).unwrap();
+    assert_eq!(content, "Line 1: done the search\nplain line\n");
+}
+
 /// Searching for a pattern with no matches shows the "No matches" message.
 #[test]
 fn test_search_replace_no_matches() {
