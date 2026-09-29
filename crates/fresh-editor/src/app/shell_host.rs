@@ -24,6 +24,31 @@
 //! between them.
 
 use crate::app::types::PointerDrag;
+
+/// A draggable tree row held by the pointer (`TreeNode::draggable`).
+///
+/// **The press builds it whole, and the release takes it** — the rules of
+/// `docs/internal/retained-mode-ui.md`, *A drag's state is the gesture's*.
+/// The row took the pointer with `fresh_ui::Event::start_drag`, so the tree
+/// routes the release back to it and tells the row under the pointer; this is
+/// what the drag has to remember in between.
+#[derive(Debug, Clone)]
+pub(crate) struct WidgetDrag {
+    pub slot: crate::view::shell::widgets::Slot,
+    /// The press, whole: what a release back on its own row delivers as the
+    /// click it was.
+    pub press: crate::widgets::WidgetEvent,
+    pub byte: Option<usize>,
+    pub clicks: u8,
+    /// The drag has been over another row. Back on its own row, the release
+    /// is a drag given up rather than a click.
+    pub strayed: bool,
+}
+
+/// The row a tree event names: its `key` in the payload.
+fn row_key(ev: &crate::widgets::WidgetEvent) -> Option<&str> {
+    ev.payload.get("key").and_then(|v| v.as_str())
+}
 use crate::view::settings::surface::SettingsSurface as _;
 use std::collections::HashSet;
 
@@ -2069,6 +2094,7 @@ impl Editor {
                     let ev = crate::widgets::WidgetEvent {
                         row_target: false,
                         context_click: false,
+                        drag_source: false,
                         widget_key: key,
                         widget_kind: "overlay",
                         payload: serde_json::json!({}),
@@ -2125,6 +2151,7 @@ impl Editor {
                             let ev = crate::widgets::WidgetEvent {
                                 row_target: false,
                                 context_click: false,
+                                drag_source: false,
                                 widget_key,
                                 widget_kind: "dropdown",
                                 payload: serde_json::json!({}),
@@ -2231,6 +2258,80 @@ impl Editor {
             }
             UiFact::WidgetProseRelease { .. } => {
                 self.prose_drag = None;
+            }
+            UiFact::WidgetDragStart {
+                slot,
+                event,
+                byte,
+                clicks,
+            } => {
+                self.widget_drag = Some(WidgetDrag {
+                    slot,
+                    press: event,
+                    byte,
+                    clicks,
+                    strayed: false,
+                });
+            }
+            UiFact::WidgetDragOver { slot, event } => {
+                if let Some(d) = self.widget_drag.as_mut() {
+                    d.strayed |= row_key(&d.press) != row_key(&event);
+                }
+                // What a drag has instead of the pointer's hover, which the
+                // capture holds on the row it started from.
+                let hover = UiFact::WidgetHover {
+                    slot,
+                    widget: event.widget_key.clone(),
+                    item: row_key(&event).unwrap_or_default().to_string(),
+                    entered: true,
+                };
+                self.apply_ui_fact(hover, ev, applied);
+            }
+            // **Where it landed decides what the drag was.** On another row
+            // of the same widget it is a drop, which the plugin hears; back
+            // on its own row without having left it, it was a click all
+            // along, and the press it deferred is delivered now. Anything
+            // else — another widget, its own row after straying — is a drag
+            // given up. The release that follows ends it either way.
+            UiFact::WidgetDrop { slot, event } => {
+                let Some(drag) = self.widget_drag.take() else {
+                    return;
+                };
+                if drag.slot != slot || drag.press.widget_key != event.widget_key {
+                    return;
+                }
+                let (from, to) = (row_key(&drag.press), row_key(&event));
+                if from == to {
+                    if !drag.strayed {
+                        let click = UiFact::WidgetHit {
+                            slot,
+                            event: drag.press,
+                            byte: drag.byte,
+                            clicks: drag.clicks,
+                        };
+                        self.apply_ui_fact(click, ev, applied);
+                    }
+                    return;
+                }
+                let Some(panel_key) = self.panel_key_of_slot(&slot) else {
+                    return;
+                };
+                let dropped = crate::widgets::WidgetEvent {
+                    row_target: false,
+                    context_click: false,
+                    drag_source: false,
+                    payload: serde_json::json!({
+                        "key": from,
+                        "target": to,
+                        "index": event.payload.get("index"),
+                    }),
+                    event_type: "drop",
+                    ..event
+                };
+                self.deliver_widget_hit(&panel_key, &dropped, None);
+            }
+            UiFact::WidgetDragEnd => {
+                self.widget_drag = None;
             }
             UiFact::WidgetFocus { slot, widget } => {
                 // **The one slot→panel resolver.** This match was a copy of

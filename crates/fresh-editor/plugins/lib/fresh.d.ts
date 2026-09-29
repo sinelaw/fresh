@@ -1486,6 +1486,13 @@ type TreeNode = {
 	*/
 	flush?: boolean;
 	/**
+	* The row can be picked up with the pointer and dropped on another row
+	* of the same tree, which the plugin hears as a `drop` event
+	* (`{ key, target }`). A press on it then activates on release, not on
+	* the press, so a drag does not first act on the row it lifts.
+	*/
+	draggable?: boolean;
+	/**
 	* Per-node checkbox state. Only rendered when the parent
 	* `Tree` has `checkable: true`. `None` = no checkbox glyph;
 	* `Some(true)` = `[v]`; `Some(false)` = `[ ]`. The plugin

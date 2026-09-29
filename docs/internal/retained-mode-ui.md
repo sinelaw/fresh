@@ -165,6 +165,23 @@ and both pane scrollbars work, and why the old `PointerGrab` roster is down to
 one member. While a `Modality::blocks_pointer` layer is up, an event nothing
 answered is claimed by the layer itself.
 
+**A drag and drop is a capture that still looks under the pointer.** A capture
+hides what the pointer is over, which is right for a grip and wrong for a drag
+whose point is where it lands. `Event::start_drag` captures as
+`capture_pointer` does and marks the capture a drag. While it is held, the
+tree also finds the **drop target** under the pointer — the innermost node on
+the topmost path that listens for `GestureKind::Drop`; listening is what makes
+a node one — and tells it `DragEnter` / `DragLeave` as the pointer crosses it
+(one node, not propagated, like `Enter` / `Leave`). The release is offered to
+the target as `Drop` *before* the captor hears its own `Release`, so the
+captor's release, which ends the drag, finds the landing already reported.
+What is dragged is not the tree's: the handler that starts the drag says so
+in its message, and the owner of that state reads it back when the drop
+arrives. A plain capture (a grip, a scrollbar, a text selection) offers
+nothing to drop targets. First consumer: the Orchestrator dock's rows
+(`TreeNode::draggable`; the editor keeps the held row as
+`Editor::widget_drag`).
+
 `Dispatch { msgs, claimed }` comes back. **The claim is the tree's word alone** —
 producing a message and taking the event are different things, and there is no
 second verdict folded in afterwards.
@@ -1145,6 +1162,12 @@ cannot be written. The rules, which the sidebar divider's `SidebarDrag` on the
 4. Nothing else clears it. A capture that ends without a release (the node
    unmounted) leaves a value no move can reach, and the next press replaces
    it.
+
+A plugin tree's draggable row keeps its drag on the `Editor` too
+(`widget_drag`, a `WidgetDrag`), on the same rules: the press builds it whole
+— the row's own press, deferred, so a release back on the row is delivered
+as the click it was — a drop target's `Drop` reads it, and the dragged row's
+release takes it.
 
 ---
 

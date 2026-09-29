@@ -133,6 +133,15 @@ pub struct WidgetEvent {
     /// mounted-panel arc, not an oversight at the producer sites,
     /// which declare the capability wherever a row select exists.
     pub context_click: bool,
+    /// Capability, declared by the kind: a press on this target picks the
+    /// row up rather than activating it — a Tree row the plugin marked
+    /// `draggable`. The press starts a drag (`fresh_ui::Event::start_drag`);
+    /// released on another row of the same widget it is a `drop` event, and
+    /// released where it was pressed it is this target's own click.
+    ///
+    /// SCOPE: read by `view::shell::widgets::hit_node` and the tree's rows,
+    /// which are the drop targets.
+    pub drag_source: bool,
 }
 
 impl WidgetEvent {

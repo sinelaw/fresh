@@ -496,6 +496,8 @@ pub struct Ui<M> {
     /// by nodes that draw their own affordance — see [`Geom::pointer`].
     pub(crate) pointer: Option<Point>,
     pub(crate) captured: Option<ElementId>,
+    /// The drag the capture is, if it is one ([`crate::Event::start_drag`]).
+    pub(crate) drag: Option<crate::hit::Drag>,
     /// The elements a press landed on, which button it was, and which press
     /// of a run it was — the last so the `Click` it completes can report it.
     pub(crate) press: Option<(Vec<ElementId>, crate::event::MouseButton, u8)>,
@@ -582,6 +584,7 @@ impl<M: 'static> Ui<M> {
             hover: Vec::new(),
             pointer: None,
             captured: None,
+            drag: None,
             press: None,
             focus: None,
             focus_selection: crate::event::SelectionOnFocus::None,

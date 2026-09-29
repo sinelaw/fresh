@@ -1683,3 +1683,154 @@ fn an_owned_window_reports_and_keeps_its_moves() {
     ui.tick();
     assert_eq!(ui.scroll(vp).0.y, 4, "framework-owned: the move stands");
 }
+
+/// A row that logs what a drag does to it. `source` rows start a drag on a
+/// press (or only capture, when `drag` is false); every row is a drop target.
+fn drag_row(name: &'static str, log: &Log, source: bool, drag: bool) -> Node<()> {
+    let l = |kind: &'static str| {
+        let log = log.clone();
+        Rc::new(move |_: &Event| note(&log, format!("{kind} {name}"))) as fresh_ui::Handler<()>
+    };
+    let g = gesture(text(name))
+        .on(GestureKind::DragEnter, l("enter"))
+        .on(GestureKind::DragLeave, l("leave"))
+        .on(GestureKind::Drop, l("drop"));
+    match source {
+        false => g,
+        true => g
+            .on(
+                GestureKind::Press,
+                Rc::new(move |e: &Event| {
+                    match drag {
+                        true => e.start_drag(),
+                        false => e.capture_pointer(),
+                    }
+                    None
+                }),
+            )
+            .on(GestureKind::Release, l("release")),
+    }
+}
+
+fn move_to(ui: &mut Ui<()>, x: i32, y: i32) {
+    ui.dispatch(Input::Move {
+        pos: Point::new(x, y),
+        mods: Mods::NONE,
+    });
+}
+
+/// **A drag sees what is under the pointer; a capture alone does not.** While
+/// a drag holds the pointer, the drop target under it hears `DragEnter` and
+/// `DragLeave` as the pointer crosses it — ground that is no target ends the
+/// last one — and the release is that target's `Drop`, heard before the
+/// captor's own `Release` ends the drag.
+#[test]
+fn a_drag_tells_the_targets_it_crosses_and_drops_on_the_one_under_the_release() {
+    let log: Log = Rc::default();
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(
+        col().children([
+            drag_row("a", &log, true, true),
+            drag_row("b", &log, false, false),
+            text("plain"),
+        ]),
+        FRAME,
+    );
+    ui.dispatch(Input::press(
+        Point::new(0, 0),
+        MouseButton::Left,
+        Mods::NONE,
+    ));
+    move_to(&mut ui, 0, 1);
+    move_to(&mut ui, 0, 2);
+    move_to(&mut ui, 0, 1);
+    ui.dispatch(Input::release(
+        Point::new(0, 1),
+        MouseButton::Left,
+        Mods::NONE,
+    ));
+    assert_eq!(
+        *log.borrow(),
+        vec!["enter b", "leave b", "enter b", "drop b", "release a"]
+    );
+    assert!(ui.captured().is_none(), "the release ends the drag");
+
+    // Over, the drag offers nothing: a bare move is not one.
+    log.borrow_mut().clear();
+    move_to(&mut ui, 0, 0);
+    move_to(&mut ui, 0, 1);
+    assert!(log.borrow().is_empty(), "{:?}", log.borrow());
+}
+
+/// **Released where it was pressed is a drop on the source**, when the source
+/// is a target too; the owner of the drag decides that it was a click.
+#[test]
+fn a_drag_released_on_its_own_row_drops_there() {
+    let log: Log = Rc::default();
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(
+        col().children([
+            drag_row("a", &log, true, true),
+            drag_row("b", &log, false, false),
+        ]),
+        FRAME,
+    );
+    click(&mut ui, 0, 0);
+    assert_eq!(*log.borrow(), vec!["drop a", "release a"]);
+}
+
+/// **A release off every target drops nothing**, and the target the drag
+/// was last over is told it has gone.
+#[test]
+fn a_drag_released_off_every_target_only_leaves() {
+    let log: Log = Rc::default();
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(
+        col().children([
+            drag_row("a", &log, true, true),
+            drag_row("b", &log, false, false),
+            text("plain"),
+        ]),
+        FRAME,
+    );
+    ui.dispatch(Input::press(
+        Point::new(0, 0),
+        MouseButton::Left,
+        Mods::NONE,
+    ));
+    move_to(&mut ui, 0, 1);
+    ui.dispatch(Input::release(
+        Point::new(0, 2),
+        MouseButton::Left,
+        Mods::NONE,
+    ));
+    assert_eq!(*log.borrow(), vec!["enter b", "leave b", "release a"]);
+}
+
+/// **A capture that is not a drag is exactly what it was.** The scrollbars,
+/// the grips and a text selection capture the pointer too; a drop target
+/// under one of those drags hears nothing.
+#[test]
+fn a_plain_capture_offers_nothing_to_drop_targets() {
+    let log: Log = Rc::default();
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(
+        col().children([
+            drag_row("a", &log, true, false),
+            drag_row("b", &log, false, false),
+        ]),
+        FRAME,
+    );
+    ui.dispatch(Input::press(
+        Point::new(0, 0),
+        MouseButton::Left,
+        Mods::NONE,
+    ));
+    move_to(&mut ui, 0, 1);
+    ui.dispatch(Input::release(
+        Point::new(0, 1),
+        MouseButton::Left,
+        Mods::NONE,
+    ));
+    assert_eq!(*log.borrow(), vec!["release a"]);
+}

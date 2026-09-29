@@ -1079,6 +1079,7 @@ fn list_rows(p: &ListRows) -> Node<UiMsg> {
                 // for a described panel, a row that does not declare
                 // the capability raises no context menu at all.
                 context_click: true,
+                drag_source: false,
                 widget_key: hit_keys[i].clone(),
                 widget_kind: "list",
                 payload: serde_json::json!({
@@ -1160,6 +1161,7 @@ fn tree_rows_plain(p: &TreeRows) -> Node<UiMsg> {
     let (slot, checkable, indent) = (p.slot, p.checkable, p.indent);
     let surface = p.surface.clone();
     let n = visible.len();
+    let droppable = takes_drops(&nodes);
 
     // **A table** (`columns`): the rows that carry cells lay them on
     // the table's columns, and a header row of titles stands over
@@ -1225,6 +1227,7 @@ fn tree_rows_plain(p: &TreeRows) -> Node<UiMsg> {
                         crate::widgets::WidgetEvent {
                             row_target,
                             context_click: row_target,
+                            drag_source: false,
                             widget_key: tree_key.clone(),
                             widget_kind: "tree",
                             payload,
@@ -1270,13 +1273,16 @@ fn tree_rows_plain(p: &TreeRows) -> Node<UiMsg> {
                         false,
                     ));
                 }
-                hits.push(hit(
+                let mut select = hit(
                     "select",
                     0,
                     end,
                     serde_json::json!({ "index": abs, "key": item_key }),
                     true,
-                ));
+                );
+                select.1.drag_source = node.draggable;
+                let row_event = select.1.clone();
+                hits.push(select);
                 let piece = match table {
                     Some(t) => table_row(t, &r, &hits, &node.cells, slot, &surface),
                     None => entry_row_hits(&r.entry, slot, &surface, &hits),
@@ -1295,7 +1301,7 @@ fn tree_rows_plain(p: &TreeRows) -> Node<UiMsg> {
                     fresh_ui::widgets::RowState::Selected
                         | fresh_ui::widgets::RowState::SelectedBlur
                 );
-                if selected && matches!(slot, Slot::Sidebar(_)) {
+                let piece = if selected && matches!(slot, Slot::Sidebar(_)) {
                     let ink = surface.with_fg(Paint::key("editor.cursor")).to_string();
                     fresh_ui::stack().h(Sizing::Cells(1)).children([
                         piece,
@@ -1305,6 +1311,10 @@ fn tree_rows_plain(p: &TreeRows) -> Node<UiMsg> {
                     ])
                 } else {
                     piece
+                };
+                match droppable {
+                    true => drop_row(piece, slot, row_event),
+                    false => piece,
                 }
             },
         )
@@ -1420,6 +1430,7 @@ fn tree_rows_cards(p: &CardTreeRows) -> Node<UiMsg> {
     let tree_key = key.clone().unwrap_or_default();
     let (h_pan, slot) = (p.h_pan, p.slot);
     let n = visible.len();
+    let droppable = takes_drops(&nodes);
     let rows_of = {
         let (nodes, visible) = (nodes.clone(), visible.clone());
         move |i: usize| {
@@ -1512,6 +1523,7 @@ fn tree_rows_cards(p: &CardTreeRows) -> Node<UiMsg> {
             let select = |row_target: bool| crate::widgets::WidgetEvent {
                 row_target,
                 context_click: row_target,
+                drag_source: row_target && n.draggable,
                 widget_key: tree_key.clone(),
                 widget_kind: "tree",
                 payload: serde_json::json!({ "index": abs, "key": item_key }),
@@ -1579,9 +1591,13 @@ fn tree_rows_cards(p: &CardTreeRows) -> Node<UiMsg> {
                 )
             });
             let block = col().children(rows);
-            match edge {
+            let block = match edge {
                 Some(e) => block.child(e),
                 None => block,
+            };
+            match droppable {
+                true => drop_row(block, slot, select(true)),
+                false => block,
             }
         }
     };
@@ -2077,6 +2093,7 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                 crate::widgets::WidgetEvent {
                     row_target: false,
                     context_click: false,
+                    drag_source: false,
                     widget_key: key.unwrap_or("").to_string(),
                     widget_kind: "number",
                     payload: serde_json::json!({}),
@@ -2247,6 +2264,7 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                 crate::widgets::WidgetEvent {
                     row_target: false,
                     context_click: false,
+                    drag_source: false,
                     widget_key: key.unwrap_or("").to_string(),
                     widget_kind: "toggle",
                     payload: serde_json::json!({ "checked": !checked }),
@@ -2299,6 +2317,7 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                         crate::widgets::WidgetEvent {
                             row_target: false,
                             context_click: false,
+                            drag_source: false,
                             widget_key: widget_key.clone(),
                             widget_kind: "radio",
                             payload: serde_json::json!({ "index": index }),
@@ -2377,6 +2396,7 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                     crate::widgets::WidgetEvent {
                         row_target: false,
                         context_click: false,
+                        drag_source: false,
                         widget_key: key.unwrap_or("").to_string(),
                         widget_kind: "button",
                         payload: serde_json::json!({}),
@@ -2665,6 +2685,7 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                     event: crate::widgets::WidgetEvent {
                         row_target: true,
                         context_click: true,
+                        drag_source: false,
                         widget_key: item_key.clone(),
                         widget_kind: "list",
                         payload: serde_json::json!({
@@ -2980,6 +3001,7 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                                         crate::widgets::WidgetEvent {
                                             row_target: false,
                                             context_click: false,
+                                            drag_source: false,
                                             widget_key: widget_key.clone(),
                                             widget_kind: "text",
                                             payload: serde_json::json!({}),
@@ -3239,6 +3261,7 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                 crate::widgets::WidgetEvent {
                     row_target: false,
                     context_click: false,
+                    drag_source: false,
                     widget_key: widget_key.clone(),
                     widget_kind: "dropdown",
                     payload: serde_json::json!({}),
@@ -3550,6 +3573,7 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                 (at < popup.visible as usize).then(|| crate::widgets::WidgetEvent {
                     row_target: true,
                     context_click: false,
+                    drag_source: false,
                     widget_key: k.to_string(),
                     widget_kind: "text",
                     payload: serde_json::json!({ "index": popup.scroll as usize + at }),
@@ -3705,6 +3729,7 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                                 crate::widgets::WidgetEvent {
                                     row_target: false,
                                     context_click: false,
+                                    drag_source: false,
                                     widget_key: widget_key.clone(),
                                     widget_kind: "dual_list",
                                     payload: serde_json::json!({
@@ -4159,6 +4184,7 @@ fn popup_layer(p: &crate::widgets::PanelPopup, cx: &Ctx<'_>) -> Node<UiMsg> {
                 crate::widgets::WidgetEvent {
                     row_target: true,
                     context_click: false,
+                    drag_source: false,
                     widget_key: p.widget_key.clone(),
                     widget_kind: "dropdown",
                     payload: serde_json::json!({ "index": idx }),
@@ -4216,6 +4242,66 @@ fn popup_layer(p: &crate::widgets::PanelPopup, cx: &Ctx<'_>) -> Node<UiMsg> {
         .dismiss(fresh_ui::Dismiss::OUTSIDE_POINTER.or(fresh_ui::Dismiss::ESCAPE))
         .on_dismiss(move |_| UiMsg::Ui(super::msg::UiFact::WidgetPopupDismiss { slot }))
         .child(box_node)
+}
+
+/// Whether a tree's rows take drops: it has a row that can be dragged
+/// (`TreeNode::draggable`), and so somewhere to drag it to.
+fn takes_drops(nodes: &[fresh_core::api::TreeNode]) -> bool {
+    nodes.iter().any(|n| n.draggable)
+}
+
+/// **A tree row that takes drops**: the row whole, under a drag lifted from a
+/// draggable row of its tree. It is a drop target by listening for
+/// `GestureKind::Drop` — the library finds it under the pointer while the
+/// drag holds the capture — and `row` is the row's own `select`, which is how
+/// the applier knows where the drag is and where it landed.
+///
+/// Coming onto the row lights it the way the pointer's hover does, which is
+/// what a drag has instead of a hover: the capture keeps the pointer's own
+/// hover on the row the drag started from.
+fn drop_row(n: Node<UiMsg>, slot: Slot, row: crate::widgets::WidgetEvent) -> Node<UiMsg> {
+    use fresh_ui::GestureKind;
+    use std::rc::Rc;
+    let item = row
+        .payload
+        .get("key")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .to_string();
+    let (over, dropped) = (row.clone(), row);
+    fresh_ui::gesture(n)
+        .on(
+            GestureKind::DragEnter,
+            Rc::new(move |_: &fresh_ui::Event| {
+                Some(UiMsg::Ui(super::msg::UiFact::WidgetDragOver {
+                    slot,
+                    event: over.clone(),
+                }))
+            }),
+        )
+        .on(
+            GestureKind::DragLeave,
+            Rc::new({
+                let widget = dropped.widget_key.clone();
+                move |_: &fresh_ui::Event| {
+                    Some(UiMsg::Ui(super::msg::UiFact::WidgetHover {
+                        slot,
+                        widget: widget.clone(),
+                        item: item.clone(),
+                        entered: false,
+                    }))
+                }
+            }),
+        )
+        .on(
+            GestureKind::Drop,
+            Rc::new(move |_: &fresh_ui::Event| {
+                Some(UiMsg::Ui(super::msg::UiFact::WidgetDrop {
+                    slot,
+                    event: dropped.clone(),
+                }))
+            }),
+        )
 }
 
 /// Wrap a widget's node so a press on it delivers what that press means.
@@ -4282,6 +4368,7 @@ fn hit_node(
             }) as fresh_ui::Handler<UiMsg>
         }
     });
+    let drag_source = hit.drag_source;
     let n = fresh_ui::gesture(n).on(
         fresh_ui::GestureKind::Press,
         std::rc::Rc::new(move |e: &fresh_ui::Event| match e.button {
@@ -4297,20 +4384,35 @@ fn hit_node(
                         obj.insert("row".to_string(), serde_json::json!(e.pos.y.max(0)));
                     }
                 }
+                // The library's answer, not a column of our own: only the
+                // shaping that drew the row knows where each character
+                // landed in it. See `UiFact::WidgetHit::byte`.
+                //
+                // `text_byte` is measured from the start of the piece the
+                // pointer is on, and the widget's breadcrumbs are measured
+                // from the start of its row, so the piece says where it
+                // began. For a hit drawn as one piece the two agree and
+                // this adds nothing; for a field whose caret split its row
+                // they do not.
+                let byte = e.text_byte.map(|b| piece_at + b);
+                // **A row that can be picked up acts on its release.** The
+                // press lifts it — the library holds the pointer for the drag
+                // and finds the row it is released on — and hands the press
+                // over whole, to be delivered as the click it was if the
+                // release comes back to this row.
+                if hit.drag_source {
+                    e.start_drag();
+                    return Some(UiMsg::Ui(super::msg::UiFact::WidgetDragStart {
+                        slot,
+                        event,
+                        byte,
+                        clicks: e.clicks,
+                    }));
+                }
                 Some(UiMsg::Ui(super::msg::UiFact::WidgetHit {
                     slot,
                     event,
-                    // The library's answer, not a column of our own: only the
-                    // shaping that drew the row knows where each character
-                    // landed in it. See `UiFact::WidgetHit::byte`.
-                    //
-                    // `text_byte` is measured from the start of the piece the
-                    // pointer is on, and the widget's breadcrumbs are measured
-                    // from the start of its row, so the piece says where it
-                    // began. For a hit drawn as one piece the two agree and
-                    // this adds nothing; for a field whose caret split its row
-                    // they do not.
-                    byte: e.text_byte.map(|b| piece_at + b),
+                    byte,
                     clicks: e.clicks,
                 }))
             }
@@ -4330,6 +4432,18 @@ fn hit_node(
             _ => None,
         }),
     );
+    // The drag's release comes back here by capture, wherever the pointer
+    // is; the row it landed on, if any, has already said so.
+    let n = match drag_source {
+        false => n,
+        true => n.on(
+            fresh_ui::GestureKind::Release,
+            std::rc::Rc::new(|e: &fresh_ui::Event| {
+                e.stop();
+                Some(UiMsg::Ui(super::msg::UiFact::WidgetDragEnd))
+            }),
+        ),
+    };
     match hover {
         None => n,
         Some(h) => n.on_enter(h(true)).on_leave(h(false)),
@@ -5274,6 +5388,7 @@ pub(crate) mod tests {
             crate::widgets::WidgetEvent {
                 row_target: false,
                 context_click: false,
+                drag_source: false,
                 widget_key: key.into(),
                 widget_kind: kind,
                 payload,
@@ -5935,6 +6050,7 @@ pub(crate) mod tests {
             depth,
             has_children,
             flush: false,
+            draggable: false,
             checked: None,
             extra_lines: Vec::new(),
             window_anchor: None,
@@ -6242,6 +6358,7 @@ pub(crate) mod tests {
         let hit = |kind: &'static str| crate::widgets::WidgetEvent {
             row_target: false,
             context_click: false,
+            drag_source: false,
             widget_key: "t".into(),
             widget_kind: "tree",
             payload: serde_json::json!({}),
@@ -7145,6 +7262,7 @@ pub(crate) mod tests {
                     depth: 0,
                     has_children: false,
                     flush: false,
+                    draggable: false,
                     checked: None,
                     extra_lines: vec![raw(&format!("branch-{i}")), raw("2 files")],
                     window_anchor: None,

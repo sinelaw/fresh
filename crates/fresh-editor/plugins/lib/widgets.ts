@@ -595,6 +595,12 @@ export function treeNode(
      * top-level row beside folders that should start at the panel's
      * edge). Ignored when `hasChildren`. */
     flush?: boolean;
+    /** The row can be dragged with the mouse onto another row of the same
+     * tree: the plugin hears `widget_event` `eventType: "drop"` with
+     * `payload: { key, target }` — the dragged row's key and the key of the
+     * row it was released on. A click on a draggable row selects it on the
+     * release rather than the press. */
+    draggable?: boolean;
     checked?: boolean;
     /** Continuation lines rendered below `text` when the parent
      * `tree` has `itemHeight > 1`. Each entry is one screen row,
@@ -646,6 +652,7 @@ export function treeNode(
     depth: options?.depth ?? 0,
     hasChildren: options?.hasChildren ?? false,
     ...(options?.flush ? { flush: true } : {}),
+    ...(options?.draggable ? { draggable: true } : {}),
   };
   if (options?.checked !== undefined) {
     node.checked = options.checked;

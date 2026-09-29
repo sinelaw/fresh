@@ -797,6 +797,12 @@ impl<M: 'static> Ui<M> {
     fn forget_element(&mut self, id: ElementId) {
         if self.captured == Some(id) {
             self.captured = None;
+            self.drag = None;
+        }
+        // A drop target that goes away mid-drag is simply no longer under
+        // the pointer; it is not told, having nothing left to tell.
+        if let Some(d) = self.drag.as_mut().filter(|d| d.over == Some(id)) {
+            d.over = None;
         }
         if self.focus == Some(id) {
             // Nothing is told it lost focus: the element is already gone, and

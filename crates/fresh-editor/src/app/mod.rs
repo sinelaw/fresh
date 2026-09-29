@@ -1598,6 +1598,9 @@ pub struct Editor {
     /// routing is the tree's capture; this only says a press is live, which
     /// a `Move` event cannot say for itself.
     pub(crate) prose_drag: Option<(crate::widgets::PanelKey, String)>,
+    /// A draggable tree row held by the pointer, from its press to its
+    /// release. See [`shell_host::WidgetDrag`].
+    pub(crate) widget_drag: Option<shell_host::WidgetDrag>,
     /// Each mounted panel's memoised tree projections, kept across frames so
     /// the description of an unchanged tree is not an O(nodes) walk. Keyed
     /// the way `prose_reveal` is, and dropped with the panel.

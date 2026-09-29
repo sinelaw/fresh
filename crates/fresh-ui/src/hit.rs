@@ -69,6 +69,15 @@ impl<M: std::fmt::Debug> std::fmt::Debug for Dispatch<M> {
     }
 }
 
+/// A drag in progress: a capture taken with [`Event::start_drag`].
+///
+/// Only the drop target the pointer is over is kept. The captor is
+/// `Ui::captured`, and what is being dragged belongs to whoever started it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub(crate) struct Drag {
+    pub over: Option<ElementId>,
+}
+
 /// What one stacked path did with a wheel notch.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Chain {
@@ -132,6 +141,7 @@ impl<M: 'static> Ui<M> {
                     1,
                     out,
                 );
+                self.update_drop_target(pos, mods, out);
                 claimed || self.pointer_owned()
             }
             Input::Press {
@@ -147,6 +157,7 @@ impl<M: 'static> Ui<M> {
                 // press. Routing it to that element would send a click on
                 // one pane to the pane pressed before it, forever.
                 self.captured = None;
+                self.drag = None;
                 // Dismissal happens for any button; it *claims* only for the
                 // primary one.
                 //
@@ -216,6 +227,10 @@ impl<M: 'static> Ui<M> {
                 if self.scrollbar_drag.take().is_some() {
                     return true;
                 }
+                // **The drop comes first.** The captor's release ends the
+                // drag it started, so by the time it runs, the target must
+                // already have said where the drag landed.
+                self.drop_at(pos, mods, out);
                 let paths = self.route(pos);
                 let (mut claimed, _) = self.propagate_all(
                     &paths,
@@ -254,6 +269,7 @@ impl<M: 'static> Ui<M> {
                     }
                 }
                 self.captured = None;
+                self.drag = None;
                 claimed || self.pointer_owned()
             }
             Input::Wheel {
@@ -628,6 +644,7 @@ impl<M: 'static> Ui<M> {
     fn apply_controls(&mut self, ctl: &Ctl, out: &mut Vec<M>) {
         if let Some(c) = ctl.capture_request.take() {
             self.captured = Some(c);
+            self.drag = ctl.drag_request.take().then(Drag::default);
         }
         if let Some((id, sel)) = ctl.focus_request.take() {
             self.focus_element(id, sel, out);
@@ -679,6 +696,53 @@ impl<M: 'static> Ui<M> {
                 .iter()
                 .any(|l| l.kind == GestureKind::Press && !l.capture),
             _ => false,
+        }
+    }
+
+    // -- drag and drop -------------------------------------------------------
+
+    /// The drop target under a point: the innermost node on the topmost path
+    /// that listens for [`GestureKind::Drop`]. Found by what is under the
+    /// pointer, not by the capture — the capture is the thing being dragged.
+    fn drop_target_at(&self, p: Point) -> Option<ElementId> {
+        self.hit_paths(p).into_iter().find_map(|path| {
+            path.into_iter()
+                .rev()
+                .find(|&n| !self.listeners(n, GestureKind::Drop, false).is_empty())
+        })
+    }
+
+    /// A drag's move: tell the drop targets it crossed. Nothing while no drag
+    /// is held — a bare hover, or a capture that is not a drag.
+    fn update_drop_target(&mut self, pos: Point, mods: Mods, out: &mut Vec<M>) {
+        let Some(drag) = self.drag else {
+            return;
+        };
+        let now = self.drop_target_at(pos);
+        if now == drag.over {
+            return;
+        }
+        self.drag = Some(Drag { over: now });
+        if let Some(old) = drag.over {
+            self.fire_at(old, GestureKind::DragLeave, pos, mods, out);
+        }
+        if let Some(new) = now {
+            self.fire_at(new, GestureKind::DragEnter, pos, mods, out);
+        }
+    }
+
+    /// A drag's release: the target under the pointer hears `Drop`, and one
+    /// the drag was last over that is somewhere else hears `DragLeave`.
+    fn drop_at(&mut self, pos: Point, mods: Mods, out: &mut Vec<M>) {
+        let Some(drag) = self.drag.take() else {
+            return;
+        };
+        let target = self.drop_target_at(pos);
+        if let Some(old) = drag.over.filter(|&o| Some(o) != target) {
+            self.fire_at(old, GestureKind::DragLeave, pos, mods, out);
+        }
+        if let Some(t) = target {
+            self.fire_at(t, GestureKind::Drop, pos, mods, out);
         }
     }
 

@@ -791,6 +791,7 @@ impl Editor {
             sidebar_layout_hints: std::collections::HashMap::new(),
             sidebar_drag: None,
             prose_drag: None,
+            widget_drag: None,
             prose_reveal: std::cell::RefCell::new(HashMap::new()),
             tree_projections: std::cell::RefCell::new(HashMap::new()),
         };

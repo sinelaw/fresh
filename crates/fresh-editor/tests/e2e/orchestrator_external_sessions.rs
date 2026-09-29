@@ -287,6 +287,69 @@ fn moving_an_external_row_into_a_folder_files_it_without_forking() {
     );
 }
 
+/// **Dragging an external row onto a folder files it**, as Move to Folder
+/// does: the row moves under the folder, nothing is opened, and dragged back
+/// onto its product's group it returns there.
+#[test]
+fn dragging_an_external_row_onto_a_folder_files_it() {
+    let (_tmp, root, config) = setup();
+    let mut h = EditorTestHarness::with_config_and_working_dir(140, 36, config, root).unwrap();
+    h.render().unwrap();
+    open_dock(&mut h);
+
+    let (mcol, mrow) = pos_of(&h, "Menu ▾");
+    h.mouse_click(mcol, mrow).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("New folder…"))
+        .unwrap();
+    let (fcol, frow) = pos_of(&h, "New folder…");
+    h.mouse_click(fcol, frow).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Folder name"))
+        .unwrap();
+    h.type_text("Cloud").unwrap();
+    h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    h.send_key(KeyCode::Char(' '), KeyModifiers::NONE).unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::CONTROL).unwrap();
+    h.wait_until(|h| {
+        let s = h.screen_to_string();
+        !s.contains("Folder name") && s.contains("Cloud") && s.contains(CODEX_TASK_TITLE)
+    })
+    .unwrap();
+
+    let (tcol, trow) = pos_of(&h, CODEX_TASK_TITLE);
+    let (_, frow) = pos_of(&h, "▼ Cloud");
+    h.mouse_drag(tcol, trow, tcol, frow).unwrap();
+
+    h.wait_until(|h| {
+        let s = h.screen_to_string();
+        !s.contains("▼ Codex") && s.contains(CODEX_TASK_TITLE)
+    })
+    .unwrap();
+    let screen = h.screen_to_string();
+    let folder = pos_of(&h, "▼ Cloud").1;
+    assert!(
+        screen.lines().nth(folder as usize).unwrap().contains("(1)")
+            && pos_of(&h, CODEX_TASK_TITLE).1 == folder + 1,
+        "the task sits under Cloud, which counts it:\n{screen}"
+    );
+    // A drag is not a click: no menu opened, and nothing was forked.
+    for _ in 0..10 {
+        h.render().unwrap();
+    }
+    let screen = h.screen_to_string();
+    assert!(
+        !screen.contains("Open in Browser") && !screen.contains("STATUS-task_a"),
+        "dragging the row neither opens its menu nor the task:\n{screen}"
+    );
+
+    // Back onto the Claude group's header: an external row goes home to its
+    // own product's group, whichever group it is dropped on.
+    let (tcol, trow) = pos_of(&h, CODEX_TASK_TITLE);
+    let (_, grow) = pos_of(&h, "▼ Claude");
+    h.mouse_drag(tcol, trow, tcol, grow).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("▼ Codex"))
+        .unwrap();
+}
+
 /// A click on a row that opens outside the editor (a Codex Cloud task's page)
 /// opens the row's menu instead, and at the pointer: the menu's box starts
 /// where the click landed, not at a column the plugin guessed.

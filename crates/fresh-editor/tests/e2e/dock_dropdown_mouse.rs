@@ -1,5 +1,6 @@
 //! The Orchestrator dock's dropdowns — the header's Menu and the row context
-//! menu — and its "Move to Folder…" pick must be usable with the mouse: clicking an
+//! menu — its "Move to Folder…" pick, and dragging rows onto folders must be
+//! usable with the mouse: clicking an
 //! option picks it, and clicking away dismisses the menu.
 //!
 //! Regression: both dropdowns render as an `Overlay`, a popup the widget
@@ -175,6 +176,53 @@ fn move_to_folder_pick_ignores_workspaces_and_esc_cancels() {
         .unwrap();
     let screen = h.screen_to_string();
     assert!(!screen.contains("(1)"), "Esc files nothing:\n{screen}");
+}
+
+/// **A workspace row dragged onto a folder is filed into it** — the mouse's
+/// way to do what Move to Folder does.
+#[test]
+fn dragging_a_workspace_onto_a_folder_files_it() {
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h = launch(root);
+    create_empty_folder(&mut h, "Docs");
+
+    let (scol, srow) = pos_of(&h, "alphaproj");
+    let (_, drow) = pos_of(&h, "Docs");
+    h.mouse_drag(scol, srow, scol, drow).unwrap();
+
+    h.wait_until(|h| {
+        let s = h.screen_to_string();
+        s.contains("Docs") && s.contains("(1)")
+    })
+    .unwrap();
+    let (_, drow) = pos_of(&h, "Docs");
+    assert_eq!(
+        pos_of(&h, "alphaproj").1,
+        drow + 1,
+        "the workspace sits under Docs:\n{}",
+        h.screen_to_string()
+    );
+}
+
+/// **A drag that ends off every row files nothing**: released in the editor,
+/// the workspace stays where it was.
+#[test]
+fn a_workspace_dragged_off_the_tree_stays_put() {
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h = launch(root);
+    create_empty_folder(&mut h, "Docs");
+
+    let (scol, srow) = pos_of(&h, "alphaproj");
+    h.mouse_drag(scol, srow, 90, srow).unwrap();
+    for _ in 0..5 {
+        h.render().unwrap();
+    }
+    let screen = h.screen_to_string();
+    assert!(!screen.contains("(1)"), "nothing was filed:\n{screen}");
+    assert!(
+        pos_of(&h, "alphaproj").1 < pos_of(&h, "Docs").1,
+        "the workspace is still at the top level:\n{screen}"
+    );
 }
 
 /// Clicking an option in the Menu activates it.

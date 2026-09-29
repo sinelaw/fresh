@@ -2258,6 +2258,8 @@ function buildDockTree(filtered: number[]): DockTree {
         // and folders at one level line up (at the dock's edge for the top
         // level).
         flush: true,
+        // Dragged onto another row, it is filed where that row is.
+        draggable: true,
         extraLines: card ? sessionCardExtraLines(id) : undefined,
       }),
     );
@@ -2271,6 +2273,7 @@ function buildDockTree(filtered: number[]): DockTree {
         depth,
         hasChildren: false,
         flush: true,
+        draggable: true,
         extraLines: card ? liveCardExtraLines(s) : undefined,
       }),
     );
@@ -7156,9 +7159,52 @@ function applyMovePick(folderId: string | null): void {
   const p = movePick;
   movePick = null;
   if (!p) return;
-  if (p.kind === "session") apiMoveWorkspace(p.id, folderId);
-  else setExternalFolder(p.key, folderId);
+  fileDockRow(p.kind === "session" ? { kind: "session", sessionId: p.id } : { kind: "live", liveKey: p.key }, folderId);
+}
+
+/** File a workspace or external session row under a folder (`null`: the top
+ *  level for a workspace, its product's group for an external session). */
+function fileDockRow(row: DockNode, folderId: string | null): void {
+  if (row.kind === "session") apiMoveWorkspace(row.sessionId, folderId);
+  else if (row.kind === "live") setExternalFolder(row.liveKey, folderId);
   refreshDockTree();
+}
+
+/** Where a row dropped on the dock row `to` goes: the folder that row
+ *  stands for — the folder itself, or the one a workspace or external
+ *  session row sits in. `undefined` when `to` is no place for `row`: a
+ *  workspace does not go into an external sessions group, nor beside a row
+ *  that is only in one. */
+function dropFolderFor(row: DockNode, to: DockNode): string | null | undefined {
+  const external = row.kind === "live";
+  switch (to.kind) {
+    case "folder":
+      if (!isExternalFolder(to.folderId)) return to.folderId;
+      return external ? null : undefined;
+    case "session":
+      return folderOfSession(to.sessionId);
+    case "live": {
+      const f = externalFolderOf(to.liveKey);
+      return f !== null || external ? f : undefined;
+    }
+  }
+}
+
+/** A row dragged onto another dock row with the mouse. */
+function dropOnDockRow(fromKey: string, toKey: string): void {
+  const d = openDialog;
+  if (!d) return;
+  const at = (k: string): DockNode | null => {
+    const i = d.dockKeys.indexOf(k);
+    return i >= 0 ? d.dockNodes[i] ?? null : null;
+  };
+  const from = at(fromKey);
+  const to = at(toKey);
+  if (!from || !to || from.kind === "folder") return;
+  const folderId = dropFolderFor(from, to);
+  if (folderId === undefined) return;
+  endMovePick();
+  fileDockRow(from, folderId);
 }
 
 function movePickNew(): void {
@@ -18157,6 +18203,15 @@ editor.on("widget_event", (e) => {
         { text: value },
         { cursorByte: typeof cursor === "number" ? cursor : undefined },
       );
+      return;
+    }
+    // A row dragged onto another with the mouse (`draggable` rows): filed
+    // where the row it landed on is.
+    if (e.event_type === "drop" && e.widget_key === "sessions") {
+      const payload = (e.payload ?? {}) as Record<string, unknown>;
+      if (typeof payload.key === "string" && typeof payload.target === "string") {
+        dropOnDockRow(payload.key, payload.target);
+      }
       return;
     }
     // Right-click on a tree node → open its context menu. Only the dock

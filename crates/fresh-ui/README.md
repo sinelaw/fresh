@@ -88,7 +88,7 @@ because a frame its own content can paint over is not a frame.
 | Layout | box constraints in integer cells, relayout boundaries, the constraint cache, incremental relink/arrange | [`src/render/layout.rs`](src/render/layout.rs), [`src/render/geom.rs`](src/render/geom.rs) |
 | Render objects | the `RenderObject` trait and the primitives' implementations | [`src/render/object.rs`](src/render/object.rs), [`src/render/prim.rs`](src/render/prim.rs) |
 | Display list | the flat, ordered, absolute, keyed `LayoutSpec` seam, and the paint walk | [`src/render/spec.rs`](src/render/spec.rs), [`src/render/paint.rs`](src/render/paint.rs) |
-| Pointer | hit-testing, capture/target/bubble, stacked paths, pointer capture, scroll chaining | [`src/hit.rs`](src/hit.rs) |
+| Pointer | hit-testing, capture/target/bubble, stacked paths, pointer capture, drag and drop, scroll chaining | [`src/hit.rs`](src/hit.rs) |
 | Focus | a separate focus tree, reading-order and directional traversal, the Shortcuts → Intents → Actions chain | [`src/focus/`](src/focus/) |
 | Events | `Input`, `Event`, `GestureKind`, `Flow`, keys and modifiers | [`src/event.rs`](src/event.rs) |
 | Behaviors | `Tasks`, `Ticker`, `Cache`, `Controller`, `Anchor`, `Persisted`, `Focusable` | [`src/behavior/`](src/behavior/) |
