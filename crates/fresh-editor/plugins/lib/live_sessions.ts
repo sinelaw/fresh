@@ -489,6 +489,9 @@ export type LivePlan =
       note?: string;
     }
   | { kind: "browser"; url: string }
+  /** Take a Claude cloud session over: `claude --teleport <id>` in a local
+   *  checkout the user picks (it checks the session's branch out). */
+  | { kind: "teleport"; command: string[] }
   /** Nothing to open it with, and why. */
   | { kind: "none"; why: string };
 
@@ -502,23 +505,21 @@ export interface LivePlanEnv {
 }
 
 /** How a session becomes a workspace (`materialize`) or is opened with Enter.
- *  They differ only for a Codex Cloud task: Enter opens its page, since a
- *  task has no terminal to attach; filing it into a folder makes a workspace
- *  that shows its status and leaves a shell for `codex cloud diff/apply`.
+ *
+ *  A cloud session opens its page on Enter. Making one a workspace differs by
+ *  vendor: a Claude cloud session is teleported (`claude --cloud <id>`, which
+ *  would attach without moving it, is an account-gated feature — "not enabled
+ *  for your account" on an ordinary one); a Codex Cloud task, which has no
+ *  terminal to attach, becomes a workspace showing its status with a shell
+ *  for `codex cloud diff/apply`.
  *
  *  A session running in another terminal is never started a second time —
  *  two processes on one conversation both write it. Its folder opens instead. */
 export function livePlan(s: LiveSession, env: LivePlanEnv, materialize: boolean): LivePlan {
   switch (s.source) {
     case "claude-cloud":
-      return {
-        kind: "workspace",
-        root: elsewhereRoot(env.dataDir, s),
-        label: s.title,
-        // Attaches this terminal to the cloud session; the session keeps
-        // running there.
-        command: [env.claude, "--cloud", s.id],
-      };
+      if (!materialize && s.url) return { kind: "browser", url: s.url };
+      return { kind: "teleport", command: [env.claude, "--teleport", s.id] };
     case "codex-cloud": {
       if (!materialize && s.url) return { kind: "browser", url: s.url };
       const status = [env.codex, "cloud", "status", s.id];

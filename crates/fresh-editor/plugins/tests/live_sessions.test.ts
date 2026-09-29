@@ -145,12 +145,8 @@ const shown = unrepresented([...agents, ...cloud], ["/home/u/fresh/", elsewhereR
 eq(shown.map((s) => s.key), ["claude-local/5e55", "claude-cloud/session_01"], "unrepresented: sessions already open as a workspace are hidden");
 
 const env: LivePlanEnv = { dataDir: DATA, claude: "claude", codex: "codex", windows: false };
-eq(livePlan(cloud[0], env, false), {
-  kind: "workspace",
-  root: "/data/fresh/orchestrator/elsewhere/claude-cloud-session_01",
-  label: "Show all sessions in the dock",
-  command: ["claude", "--cloud", "session_01"],
-}, "plan: a Claude cloud session attaches in its own workspace");
+eq(livePlan(cloud[0], env, false), { kind: "browser", url: "https://claude.ai/code/session_01" }, "plan: Enter on a Claude cloud session opens its page");
+eq(livePlan(cloud[0], env, true), { kind: "teleport", command: ["claude", "--teleport", "session_01"] }, "plan: making a Claude cloud session a workspace teleports it");
 eq(livePlan(agents[1], env, false), {
   kind: "workspace",
   root: "/home/u/api",

@@ -530,13 +530,15 @@ includes cloud sessions this machine never saw.
   remembered. Rows keep first-seen order. A local session whose directory is
   already a workspace here is not listed (the workspace stands for it), nor is
   a cloud session already materialized.
-- **Opening** a row (Enter, a click, context menu *Open*) *materializes* it —
-  a workspace that attaches to it — except a Codex Cloud task, which opens
-  its page in the browser:
+- **Opening** a row (Enter, a click, context menu *Open*) *materializes* a
+  local one — a workspace that attaches to it — and opens a cloud one's page
+  in the browser. `claude --cloud <id>`, which would attach a terminal to a
+  Claude cloud session without moving it, is account-gated ("not enabled
+  for your account" on an ordinary one), so it is not used.
 
   | Row | Workspace root | Terminal runs |
   | --- | --- | --- |
-  | Claude cloud | `<data>/orchestrator/elsewhere/claude-cloud-<id>` | `claude --cloud <id>` |
+  | Claude cloud (when filed, or Teleport Here…) | a checkout the user picks in the New Workspace form, on a fresh worktree | `claude --teleport <id>` |
   | Claude `--bg` job | the job's cwd | `claude attach <job>` |
   | Claude / Codex in another terminal | its cwd | a shell — never a second copy of the agent, which would write the same conversation twice |
   | Codex Cloud task (when filed) | `<data>/orchestrator/elsewhere/codex-cloud-<id>` | `codex cloud status <id>`, then a shell |
@@ -544,7 +546,9 @@ includes cloud sessions this machine never saw.
   A Claude cloud row's menu also has **Teleport Here…** — taking the session
   over: the New Workspace form opens with `claude --teleport <id>` filled in,
   on a fresh worktree (the teleport checks the session's branch out), pointed
-  at an open workspace of the same repository when there is one.
+  at an open workspace of the same repository when there is one. Filing the
+  row into a folder takes the same path, and the form files the workspace it
+  creates (`intoFolder`) the moment it is born.
 
   Arrowing onto a row never opens it (unlike a workspace row, which
   live-switches): opening creates a workspace. **Move to Folder…** on a row

@@ -527,6 +527,10 @@ interface NewSessionForm {
   // back on. The selector shows `Choose an agent…` and nothing launches
   // until one is picked — the terminal is a choice, not a silent default.
   agentUnset: boolean;
+  // The dock folder the created workspace is filed under (null = top level),
+  // when the form was opened to file something there — an Elsewhere row
+  // moved into a folder. Undefined: the form files nothing.
+  intoFolder?: string | null;
   // Whether to create a new git worktree under
   // `<XDG>/orchestrator/<slug>/<session>/` (true) or run the
   // session directly inside `projectPath` (false). Enabled
@@ -1846,7 +1850,7 @@ function elsewhereGroupEntry(live: LiveSession[]): TextPropertyEntry {
 // the New Workspace form opens with the command filled in, on a fresh
 // worktree (the teleport checks the session's branch out), pointed at a
 // workspace of the same repository when one is open.
-function teleportLiveSession(key: string): void {
+function teleportLiveSession(key: string, folderId?: string | null): void {
   const s = liveByKey(key);
   if (!s) return;
   const repoName = s.repo ? liveBaseName(s.repo) : undefined;
@@ -1859,6 +1863,7 @@ function teleportLiveSession(key: string): void {
     projectPath: match?.projectPath ?? "",
     cmd: `${elsewhereCommands.claude} --teleport ${s.id}`,
     createWorktree: true,
+    folderId,
   });
 }
 
@@ -1895,6 +1900,11 @@ async function openLiveSession(
   if (plan.kind === "browser") {
     openInBrowser(plan.url);
     editor.setStatus(editor.t("status.elsewhere_browser", { name: s.title }));
+    return;
+  }
+  if (plan.kind === "teleport") {
+    // The checkout is the user's to choose; the form files the result.
+    teleportLiveSession(key, opts.folderId);
     return;
   }
   let id: number;
@@ -11945,7 +11955,9 @@ let machinesState: { index: number } | null = null;
 let pendingFormMachine: FormSeed | undefined = undefined;
 /** Fields the next New Workspace form opens with, set when a discovered
  *  session is rejoined. Consumed once, like `pendingFormMachine`. */
-let pendingFormPrefill: { projectPath: string; cmd: string; createWorktree?: boolean } | null = null;
+let pendingFormPrefill:
+  | { projectPath: string; cmd: string; createWorktree?: boolean; folderId?: string | null }
+  | null = null;
 
 interface MachinesRow {
   key: string;
@@ -12678,7 +12690,7 @@ function resumeArgv(agent: string, id: string): { argv: string[]; exact: boolean
  *  reader sees what will run where and a connect gets its trust decision. */
 function openWorkspaceForm(
   seed: FormSeed,
-  prefill: { projectPath: string; cmd: string; createWorktree?: boolean },
+  prefill: { projectPath: string; cmd: string; createWorktree?: boolean; folderId?: string | null },
 ): void {
   pendingFormPrefill = prefill;
   if (seed.kind === "option") {
@@ -13810,6 +13822,7 @@ function openForm(options?: { fromPicker?: boolean; target?: RunAgentTarget }): 
     // the prefilled one is hidden behind it.
     form.agentUnset = false;
     form.createWorktree = prefill.createWorktree ?? false;
+    form.intoFolder = prefill.folderId;
     form.agentCustom = !agentPresets().some((pr) => !pr.custom && pr.cmd === prefill.cmd.trim());
   }
   formPanel = new FloatingWidgetPanel();
@@ -15583,7 +15596,15 @@ async function submitForm(visit: boolean): Promise<void> {
   }
   const picked = machineOptions()[form.machinePick];
   editor.setGlobalState("orchestrator.last_machine", picked ? picked.key : "");
-  await startPendingWorkspace(captured.spec, { visit });
+  // Read before the create closes the form.
+  const intoFolder = form.intoFolder;
+  const id = await startPendingWorkspace(captured.spec, { visit });
+  // Filed by its durable id, which a workspace has from birth, so the row
+  // lands in the folder while it is still being built.
+  if (intoFolder !== undefined) {
+    assignSessionToFolder(id, intoFolder);
+    refreshDockTree();
+  }
 }
 
 /// Open a session in an existing worktree without creating one —
