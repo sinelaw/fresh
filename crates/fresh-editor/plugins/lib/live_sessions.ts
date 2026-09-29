@@ -899,6 +899,34 @@ export function unrepresented(
 }
 
 /** The short dim tail a row carries: where the session is. */
+/** Where a session is listed from and runs, for its menu: "Claude on
+ *  claude.ai", "Claude Desktop over SSH (me@box)", "Codex Cloud", … */
+export function liveSource(s: LiveSession): string {
+  switch (s.source) {
+    case "claude-cloud":
+      return s.remoteControl
+        ? `Claude Remote Control${s.offline ? " (machine offline)" : ""}`
+        : "Claude on claude.ai";
+    case "codex-cloud":
+      return "Codex Cloud";
+    case "codex-local":
+      return "Codex in a terminal";
+    case "claude-local": {
+      if (s.jobId) return "Claude background job (claude --bg)";
+      if (s.host) {
+        const where = s.sshHost ? `${s.host} over SSH (${s.sshHost})` : s.host;
+        return s.stopped ? `${where}, not running` : where;
+      }
+      return s.tmux ? "Claude in a terminal (tmux)" : "Claude in a terminal";
+    }
+  }
+}
+
+/** The folder a session runs in, or the repository a cloud one works on. */
+export function liveWhere(s: LiveSession): string | undefined {
+  return s.cwd ?? s.repo;
+}
+
 export function liveDetail(s: LiveSession): string {
   const place = s.remoteControl
     ? s.offline ? "remote control · offline" : "remote control"

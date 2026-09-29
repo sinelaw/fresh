@@ -77,11 +77,11 @@ editor.defineConfigInteger("cloudMaxAgeDays", {
     "Hide cloud sessions with no activity for this many days. 0 (the default) shows every session still active; archived ones are never shown.",
 });
 editor.defineConfigInteger("pollSeconds", {
-  default: 15,
+  default: 60,
   minimum: 5,
   maximum: 3600,
   description:
-    "How often sessions on this machine are re-listed while the dock is open. Cloud lists are fetched at most once a minute.",
+    "How often sessions are re-listed while the dock is open (and once when it opens; the group's Refresh re-lists at once). Cloud lists are fetched at most once a minute.",
 });
 
 interface Settings {
@@ -108,7 +108,7 @@ function settings(): Required<Settings> {
     claudeCommand: s.claudeCommand?.trim() || "claude",
     codexCommand: s.codexCommand?.trim() || "codex",
     cloudMaxAgeDays: s.cloudMaxAgeDays ?? 0,
-    pollSeconds: s.pollSeconds ?? 15,
+    pollSeconds: s.pollSeconds ?? 60,
   };
 }
 
@@ -125,7 +125,13 @@ export interface LiveSessionsApi {
   /** Re-list now, cloud included. Resolves once the dock has the answer. */
   refresh(): Promise<void>;
   /** The last answer, for a dock opened after it was pushed. */
-  snapshot(): { sessions: LiveSession[]; problems: string[]; commands: { claude: string; codex: string } };
+  snapshot(): {
+    sessions: LiveSession[];
+    problems: string[];
+    /** The same problems, by the source that had them. */
+    problemsBySource: Partial<Record<LiveSource, string>>;
+    commands: { claude: string; codex: string };
+  };
   /** Whether the Claude cloud source is on. */
   claudeCloudEnabled(): boolean;
   /** Turn it on or off: saved to the user's config (as the Settings UI
@@ -163,6 +169,7 @@ function snapshot(): ReturnType<LiveSessionsApi["snapshot"]> {
   return {
     sessions,
     problems: [...problemBySource.values()],
+    problemsBySource: Object.fromEntries(problemBySource),
     commands: { claude: s.claudeCommand, codex: s.codexCommand },
   };
 }

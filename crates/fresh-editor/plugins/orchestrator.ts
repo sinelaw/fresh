@@ -63,6 +63,8 @@ import {
 import {
   liveBaseName,
   liveBranchName,
+  liveSource,
+  liveWhere,
   liveDetail,
   liveNormPath,
   livePlan,
@@ -1121,7 +1123,6 @@ const FOLDER_COUNTER_KEY = "orchestrator.dock.folder_counter";
 
 const FOLDER_NODE_PREFIX = "folder:";
 const SESSION_NODE_PREFIX = "session:";
-const FOLDER_GLYPH = "▤";
 
 // Lazily-hydrated in-memory caches, written through to global state on
 // every mutation so a later read (or the next launch) sees the change.
@@ -1693,16 +1694,23 @@ function assignSessionToFolder(id: number, folderId: string | null): void {
 // would otherwise have to learn that some of its rows are not workspaces.
 // =============================================================================
 
-// The group header is a `folder` node with this reserved id, so it folds,
-// counts and rolls up like a folder. `allocFolderId` only mints `df<n>`.
-const ELSEWHERE_FOLDER_ID = "__elsewhere";
+// Sessions outside the editor are grouped by product — "Claude", "Codex" —
+// each row saying where it runs. Each header is a `folder` node with a
+// reserved id (`__elsewhere:<agent>`), so it folds, counts and rolls up like
+// a folder. `allocFolderId` only mints `df<n>`.
+type ElsewhereGroup = LiveSession["agent"];
+const ELSEWHERE_FOLDER_PREFIX = "__elsewhere:";
+const ELSEWHERE_GROUPS: ElsewhereGroup[] = ["claude", "codex"];
+const ELSEWHERE_GROUP_NAME: Record<ElsewhereGroup, string> = { claude: "Claude", codex: "Codex" };
 const LIVE_NODE_PREFIX = "live:";
-// The group starts open, unlike a folder, so what is remembered is the fold.
-const ELSEWHERE_COLLAPSED_KEY = "orchestrator.dock.elsewhere_collapsed";
-const ELSEWHERE_GLYPH: Record<LiveSession["where"], string> = { cloud: "☁", local: "⇄" };
+// A group starts open, unlike a folder, so what is remembered is the fold:
+// the ids of the folded groups.
+const ELSEWHERE_COLLAPSED_KEY = "orchestrator.dock.elsewhere_collapsed_groups";
 
 let elsewhereSessions: LiveSession[] = [];
 let elsewhereProblems: string[] = [];
+// What went wrong with each source, so its group can say so.
+let elsewhereProblemsBySource: Partial<Record<LiveSession["source"], string>> = {};
 // The CLIs the feed was configured to run, so a materialized session attaches
 // with the same program the listing came from.
 let elsewhereCommands = { claude: "claude", codex: "codex" };
@@ -1714,30 +1722,69 @@ let nextElsewhereOrder = 0;
 interface ElsewhereUpdate {
   sessions: LiveSession[];
   problems: string[];
+  problemsBySource?: Partial<Record<LiveSession["source"], string>>;
   commands?: { claude?: string; codex?: string };
 }
 
-function elsewhereGroupKey(): string {
-  return folderNodeKey(ELSEWHERE_FOLDER_ID);
+function elsewhereFolderId(group: ElsewhereGroup): string {
+  return ELSEWHERE_FOLDER_PREFIX + group;
+}
+
+function isElsewhereFolder(id: string | null | undefined): boolean {
+  return typeof id === "string" && id.startsWith(ELSEWHERE_FOLDER_PREFIX);
+}
+
+function elsewhereGroupOf(folderId: string): ElsewhereGroup {
+  return folderId.slice(ELSEWHERE_FOLDER_PREFIX.length) as ElsewhereGroup;
+}
+
+function elsewhereGroupKey(group: ElsewhereGroup): string {
+  return folderNodeKey(elsewhereFolderId(group));
+}
+
+/** The group a folder-node key names, if it is one of the Elsewhere groups. */
+function elsewhereGroupOfKey(key: string): ElsewhereGroup | null {
+  return ELSEWHERE_GROUPS.find((g) => elsewhereGroupKey(g) === key) ?? null;
+}
+
+// A product name, not translated.
+function elsewhereGroupName(group: ElsewhereGroup): string {
+  return ELSEWHERE_GROUP_NAME[group];
+}
+
+// What went wrong with a group's sources (a sign-in that expired, a CLI
+// that failed), for its menu.
+function elsewhereGroupProblems(group: ElsewhereGroup): string[] {
+  return Object.entries(elsewhereProblemsBySource)
+    .filter(([src, msg]) => src.startsWith(`${group}-`) && typeof msg === "string")
+    .map(([, msg]) => msg as string);
 }
 
 function liveNodeKey(key: string): string {
   return LIVE_NODE_PREFIX + key;
 }
 
-function elsewhereCollapsed(): boolean {
-  return editor.getGlobalState(ELSEWHERE_COLLAPSED_KEY) === true;
+function elsewhereCollapsedSet(): Set<string> {
+  const v = editor.getGlobalState(ELSEWHERE_COLLAPSED_KEY);
+  return new Set(Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
 }
 
-function setElsewhereCollapsed(collapsed: boolean): void {
-  editor.setGlobalState(ELSEWHERE_COLLAPSED_KEY, collapsed);
+function elsewhereCollapsed(group: ElsewhereGroup): boolean {
+  return elsewhereCollapsedSet().has(group);
+}
+
+function setElsewhereCollapsed(group: ElsewhereGroup, collapsed: boolean): void {
+  const set = elsewhereCollapsedSet();
+  if (collapsed) set.add(group);
+  else set.delete(group);
+  editor.setGlobalState(ELSEWHERE_COLLAPSED_KEY, [...set]);
 }
 
 // Every expansion the dock's tree is drawn with: the user's open folders,
 // plus the Elsewhere group unless they folded it.
 function dockExpandedKeys(): string[] {
   const keys = Array.from(loadExpanded());
-  if (!elsewhereCollapsed()) keys.push(elsewhereGroupKey());
+  for (const g of ELSEWHERE_GROUPS) if (!elsewhereCollapsed(g)) keys.push(elsewhereGroupKey(g));
   return keys;
 }
 
@@ -1748,6 +1795,9 @@ let elsewhereSignature = "";
 function setElsewhereSessions(update: ElsewhereUpdate): void {
   elsewhereSessions = Array.isArray(update?.sessions) ? update.sessions : [];
   elsewhereProblems = Array.isArray(update?.problems) ? update.problems : [];
+  elsewhereProblemsBySource = update?.problemsBySource && typeof update.problemsBySource === "object"
+    ? update.problemsBySource
+    : {};
   elsewhereCommands = {
     claude: update?.commands?.claude || "claude",
     codex: update?.commands?.codex || "codex",
@@ -1755,7 +1805,7 @@ function setElsewhereSessions(update: ElsewhereUpdate): void {
   for (const s of elsewhereSessions) {
     if (!elsewhereOrder.has(s.key)) elsewhereOrder.set(s.key, nextElsewhereOrder++);
   }
-  const signature = JSON.stringify([elsewhereSessions, elsewhereProblems]);
+  const signature = JSON.stringify([elsewhereSessions, elsewhereProblems, elsewhereProblemsBySource]);
   if (signature === elsewhereSignature) return;
   elsewhereSignature = signature;
   if (openPanel && dockMode) refreshOpenDialog();
@@ -1842,22 +1892,32 @@ function liveTail(s: LiveSession): string {
   return w ? editor.t("dock.live_teleported", { name: w.label }) : liveDetail(s);
 }
 
+// What an Elsewhere row is, for the top of its menu: read-only lines.
+function liveInfoLines(s: LiveSession): string[] {
+  const lines = [`${editor.t("dock.live_source")}: ${liveSource(s)}`];
+  const where = liveWhere(s);
+  if (where) lines.push(`${editor.t("dock.live_where")}: ${where}`);
+  if (s.state !== "unknown") {
+    const state = editor.t(`preview.state_${s.state}`);
+    lines.push(`${editor.t("dock.live_state")}: ${s.waitingFor ? `${state} — ${s.waitingFor}` : state}`);
+  }
+  if (s.updatedAt) lines.push(`${editor.t("dock.live_active")}: ${agoText(s.updatedAt)}`);
+  const copy = teleportedWorkspace(s);
+  if (copy) lines.push(editor.t("dock.live_teleported", { name: copy.label }));
+  return lines;
+}
+
 function liveStateEntry(s: LiveSession): Entry {
   const sym = STATE_SYMBOL[s.state];
   return { text: sym.glyph + " ", style: { fg: sym.fg, bold: true } };
 }
 
-function liveGlyphEntry(s: LiveSession): Entry {
-  return { text: ELSEWHERE_GLYPH[s.where] + " ", style: { fg: "diagnostic.info_fg", bold: true } };
-}
-
-// Compact: state, where it runs, the title, and a dim "repo · place" tail.
+// Compact: the state and the title. Where it runs is in its menu (a tail
+// here would only be cut off at the dock's edge).
 function liveNodeEntry(s: LiveSession): TextPropertyEntry {
   const segs: Entry[] = [
     liveStateEntry(s),
-    liveGlyphEntry(s),
     { text: s.title, style: { bold: true } },
-    { text: "  " + liveTail(s), style: { fg: "ui.menu_disabled_fg", italic: true } },
   ];
   return styledRow(segs as Parameters<typeof styledRow>[0]);
 }
@@ -1865,7 +1925,7 @@ function liveNodeEntry(s: LiveSession): TextPropertyEntry {
 // Card: the same two rows a workspace card has — name and agent, then where.
 function liveCardPrimary(s: LiveSession): TextPropertyEntry {
   return cardSplitRow(
-    [liveStateEntry(s), liveGlyphEntry(s), { text: s.title, style: { bold: true } }],
+    [liveStateEntry(s), { text: s.title, style: { bold: true } }],
     [{ text: s.agent, style: { fg: "ui.menu_disabled_fg" } }],
   );
 }
@@ -1878,14 +1938,14 @@ function liveCardExtraLines(s: LiveSession): TextPropertyEntry[] {
 
 // The group header: a folder row, with the same `●n ✓n` roll-up, so a
 // folded group still says when a session out there needs you.
-function elsewhereGroupEntry(live: LiveSession[]): TextPropertyEntry {
+function elsewhereGroupEntry(group: ElsewhereGroup, live: LiveSession[]): TextPropertyEntry {
   const rollup = { blocked: 0, done: 0 };
   for (const s of live) {
     if (s.state === "blocked") rollup.blocked++;
     else if (s.state === "done") rollup.done++;
   }
   return folderNodeEntry(
-    { id: ELSEWHERE_FOLDER_ID, name: editor.t("dock.elsewhere"), parent: null },
+    { id: elsewhereFolderId(group), name: elsewhereGroupName(group), parent: null },
     live.length,
     rollup,
   );
@@ -1947,7 +2007,8 @@ function activateLiveRow(key: string, at?: { index: number; col: number; row: nu
   if (!s) return;
   const plan = elsewherePlan(s, false);
   if (plan.kind === "browser" || plan.kind === "teleport") {
-    if (at) openDockContextMenu(at.index, at.col, at.row);
+    // One row below the click, so the row stays in sight above its menu.
+    if (at) openDockContextMenu(at.index, at.col, at.row + 1);
     else openDockContextMenuFromKeyboard();
     return;
   }
@@ -2094,7 +2155,7 @@ type DockNode =
   | { kind: "folder"; folderId: string }
   | { kind: "session"; sessionId: number }
   // A row of the Elsewhere group (whose own header is a `folder` node with
-  // the reserved `ELSEWHERE_FOLDER_ID`, so it folds like one).
+  // a reserved `__elsewhere:<agent>` id, so it folds like one).
   | { kind: "live"; liveKey: string };
 
 interface DockTree {
@@ -2174,11 +2235,15 @@ function buildDockTree(filtered: number[]): DockTree {
 
   // The Elsewhere group, last: the dock's own workspaces come first. Absent
   // while there is nothing in it (or the feed plugin is not loaded).
-  const live = dockMode ? elsewhereVisible() : [];
-  if (live.length > 0) {
-    nodes.push(treeNode(elsewhereGroupEntry(live), { depth: 0, hasChildren: true }));
-    keys.push(elsewhereGroupKey());
-    model.push({ kind: "folder", folderId: ELSEWHERE_FOLDER_ID });
+  const allLive = dockMode ? elsewhereVisible() : [];
+  for (const group of ELSEWHERE_GROUPS) {
+    const live = allLive.filter((s) => s.agent === group);
+    // A group whose source failed (a sign-in that expired) stays, empty, so
+    // its menu can say what went wrong.
+    if (live.length === 0 && elsewhereGroupProblems(group).length === 0) continue;
+    nodes.push(treeNode(elsewhereGroupEntry(group, live), { depth: 0, hasChildren: live.length > 0 }));
+    keys.push(elsewhereGroupKey(group));
+    model.push({ kind: "folder", folderId: elsewhereFolderId(group) });
     for (const s of live) {
       nodes.push(
         treeNode(card ? liveCardPrimary(s) : liveNodeEntry(s), {
@@ -2195,8 +2260,9 @@ function buildDockTree(filtered: number[]): DockTree {
   return { nodes, keys, model };
 }
 
-// One tree row for a folder: a folder glyph, the (bold) name, the
-// recursive session count in dim parentheses, and — so a collapsed
+// One tree row for a folder: the (bold) name — the tree's own ▼/▶ already
+// says it is a folder, so no glyph of its own spends two more columns on
+// every level — the recursive session count in dim parentheses, and — so a collapsed
 // folder can't hide a workspace that needs you — the roll-up of its
 // members' blocked (`●n`) and done (`✓n`) counts in the state colours.
 function folderNodeEntry(
@@ -2205,7 +2271,6 @@ function folderNodeEntry(
   rollup: { blocked: number; done: number } = { blocked: 0, done: 0 },
 ): TextPropertyEntry {
   const segs: Entry[] = [
-    { text: FOLDER_GLYPH + " ", style: { fg: "ui.menu_disabled_fg" } },
     { text: f.name, style: { bold: true } },
   ];
   if (count > 0) {
@@ -6702,8 +6767,9 @@ function closeCreateFolderDialog(): void {
 // host-owned tree state.
 function toggleDockFolderExpansion(folderKey: string): void {
   if (!openPanel) return;
-  if (folderKey === elsewhereGroupKey()) {
-    setElsewhereCollapsed(!elsewhereCollapsed());
+  const group = elsewhereGroupOfKey(folderKey);
+  if (group) {
+    setElsewhereCollapsed(group, !elsewhereCollapsed(group));
   } else {
     const set = loadExpanded();
     if (set.has(folderKey)) set.delete(folderKey);
@@ -6778,11 +6844,12 @@ function buildDockMenuSpec(state: DockMenuState): WidgetSpec {
   }
   // The Elsewhere group: nothing to organise, but a way to re-list now, and
   // what went wrong with a source, if anything did (a sign-in that expired).
-  if (state.target.kind === "folder" && state.target.id === ELSEWHERE_FOLDER_ID) {
+  if (state.target.kind === "folder" && isElsewhereFolder(state.target.id)) {
+    const group = elsewhereGroupOf(state.target.id);
     return contextMenuSpec(
-      ELSEWHERE_GLYPH.cloud + " " + editor.t("dock.elsewhere"),
+      elsewhereGroupName(group),
       [{ label: editor.t("dock.ctx_refresh"), key: "ctx-elsewhere-refresh", intent: "primary" }],
-      elsewhereProblems,
+      elsewhereGroupProblems(group),
     );
   }
   // An Elsewhere row: open it (attach, or its folder), file it into a folder
@@ -6814,14 +6881,14 @@ function buildDockMenuSpec(state: DockMenuState): WidgetSpec {
       items.push({ label: editor.t("dock.ctx_open_browser"), key: "ctx-live-browser", ...(items.length ? {} : { intent: "primary" as const }) });
     }
     items.push({ label: editor.t("dock.ctx_move"), key: "ctx-live-move" });
-    return contextMenuSpec(s ? `${ELSEWHERE_GLYPH[s.where]} ${s.title}` : state.target.key, items);
+    return contextMenuSpec(s ? s.title : state.target.key, items, [], s ? liveInfoLines(s) : []);
   }
   // A folder's context menu: organise actions (Rename / New Subfolder /
   // Delete Folder).
   if (state.target.kind === "folder") {
     const f = folderById(state.target.id);
     const label = f?.name ?? `[${state.target.id}]`;
-    return contextMenuSpec(FOLDER_GLYPH + " " + label, [
+    return contextMenuSpec(label, [
       { label: editor.t("dock.ctx_rename"), key: "ctx-rename", intent: "primary" },
       { label: editor.t("dock.ctx_new_subfolder"), key: "ctx-new-subfolder" },
       { label: editor.t("dock.ctx_delete_folder"), key: "ctx-delete-folder", intent: "danger" },
@@ -6888,9 +6955,16 @@ function contextMenuSpec(
   items: { label: string; key: string; intent?: "primary" | "danger"; disabled?: boolean }[],
   // Warning lines under the actions (the Elsewhere group's source problems).
   notes: string[] = [],
+  // Read-only lines under the title, before the actions: what the target is
+  // (an Elsewhere row's source, folder, state).
+  info: string[] = [],
 ): WidgetSpec {
   return col(
     { kind: "raw", entries: [styledRow([{ text: " " + title, style: { bold: true } }])] },
+    ...info.map((n): WidgetSpec => ({
+      kind: "raw",
+      entries: [styledRow([{ text: " " + n, style: { fg: "ui.menu_disabled_fg" } }])],
+    })),
     ...menuRows(items),
     ...notes.map((n): WidgetSpec => ({
       kind: "raw",
@@ -17439,7 +17513,7 @@ editor.on("widget_event", (e) => {
       return;
     }
     if (e.event_type === "activate") {
-      if (target.kind === "folder" && target.id === ELSEWHERE_FOLDER_ID) {
+      if (target.kind === "folder" && isElsewhereFolder(target.id)) {
         if (e.widget_key === "ctx-elsewhere-refresh") {
           closeDockContextMenu();
           refreshElsewhere();
@@ -18192,8 +18266,9 @@ editor.on("widget_event", (e) => {
       const key = payload.key;
       const expanded = payload.expanded;
       if (typeof key === "string" && key.startsWith(FOLDER_NODE_PREFIX)) {
-        if (key === elsewhereGroupKey()) {
-          setElsewhereCollapsed(expanded !== true);
+        const group = elsewhereGroupOfKey(key);
+        if (group) {
+          setElsewhereCollapsed(group, expanded !== true);
         } else {
           const set = loadExpanded();
           if (expanded === true) set.add(key);

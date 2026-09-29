@@ -1,5 +1,6 @@
-//! E2E coverage for the dock's Elsewhere group: Claude and Codex sessions
-//! open outside this editor, listed by the `live_sessions` plugin.
+//! E2E coverage for the dock's Elsewhere groups: Claude and Codex sessions
+//! open outside this editor, listed by the `live_sessions` plugin under a
+//! group per product ("Claude", "Codex").
 //!
 //! The sources are real CLIs, so the tests point the plugin at fake ones
 //! (its `claudeCommand` / `codexCommand` settings): a `claude` whose
@@ -130,8 +131,8 @@ fn pos_of(h: &EditorTestHarness, needle: &str) -> (u16, u16) {
         .unwrap_or_else(|| panic!("screen missing '{needle}':\n{screen}"))
 }
 
-/// Opening the dock lists what the fake CLIs report, under Elsewhere, with
-/// the group's count and the "needs you" roll-up of the waiting job.
+/// Opening the dock lists what the fake CLIs report, a group per product
+/// ("Claude", "Codex"), each with its count.
 #[test]
 fn elsewhere_group_lists_sessions_open_outside_the_editor() {
     let (_tmp, root, config) = setup();
@@ -141,22 +142,51 @@ fn elsewhere_group_lists_sessions_open_outside_the_editor() {
 
     h.wait_until(|h| {
         let s = h.screen_to_string();
-        s.contains("Elsewhere") && s.contains(CLAUDE_JOB_TITLE) && s.contains(CODEX_TASK_TITLE)
+        s.contains("▼ Claude") && s.contains(CLAUDE_JOB_TITLE) && s.contains(CODEX_TASK_TITLE)
     })
     .unwrap();
     let screen = h.screen_to_string();
+    let claude_group = pos_of(&h, "▼ Claude").1;
+    let codex_group = pos_of(&h, "▼ Codex").1;
     assert!(
-        screen.contains("(2)"),
-        "the group counts its rows:\n{screen}"
+        screen
+            .lines()
+            .nth(claude_group as usize)
+            .unwrap()
+            .contains("(1)")
+            && screen
+                .lines()
+                .nth(codex_group as usize)
+                .unwrap()
+                .contains("(1)"),
+        "each product has its group, counting its rows:\n{screen}"
     );
     assert!(
-        // The dock is narrow, so a row's tail may be cut; its start is not.
-        screen.contains("jobdir · ") && screen.contains("acme/api · "),
-        "each row says where it runs:\n{screen}"
+        claude_group < pos_of(&h, CLAUDE_JOB_TITLE).1
+            && codex_group < pos_of(&h, CODEX_TASK_TITLE).1
+            && pos_of(&h, CLAUDE_JOB_TITLE).1 < codex_group,
+        "each session sits under its product:\n{screen}"
     );
+    // A row is its state and title; what it is and where it runs are the
+    // first lines of its menu, read-only.
+    let (col, row) = pos_of(&h, CLAUDE_JOB_TITLE);
+    h.mouse_right_click(col, row).unwrap();
+    h.wait_until(|h| {
+        h.screen_to_string()
+            .contains("Source: Claude background job")
+    })
+    .unwrap();
+    let menu = h.screen_to_string();
+    assert!(
+        menu.contains("Where: ") && menu.contains("jobdir") && menu.contains("State: needs you"),
+        "the menu says where it runs and its state:\n{menu}"
+    );
+    h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| !h.screen_to_string().contains("Source: "))
+        .unwrap();
     // The workspace itself is still listed above the group.
     let ws_row = pos_of(&h, "homeproj").1;
-    let group_row = pos_of(&h, "Elsewhere").1;
+    let group_row = claude_group;
     assert!(ws_row < group_row, "workspaces come first:\n{screen}");
 }
 
@@ -177,9 +207,10 @@ fn opening_an_elsewhere_row_attaches_it_in_a_new_workspace() {
 
     h.wait_until(|h| h.screen_to_string().contains("ATTACHED-job7"))
         .unwrap();
+    // The Claude group, now empty, goes away; Codex's stays.
     h.wait_until(|h| {
         let s = h.screen_to_string();
-        s.contains("Elsewhere") && s.contains("(1)")
+        !s.contains("▼ Claude") && s.contains("▼ Codex")
     })
     .unwrap();
 }
@@ -261,16 +292,25 @@ fn clicking_a_row_opens_its_menu_at_the_pointer() {
         .unwrap();
 
     let screen = h.screen_to_string();
-    let (item_col, item_row) = pos_of(&h, "Open in Browser");
-    assert!(
-        item_row > click.1 && item_row <= click.1 + 3,
-        "the menu opens just below the click (row {}), not elsewhere:\n{screen}",
+    // The menu's box starts one row below the click, at its column, so the
+    // clicked row stays in sight above it.
+    let top = screen.lines().nth(click.1 as usize + 1).unwrap_or("");
+    assert_eq!(
+        top.chars().nth(click.0 as usize),
+        Some('┌'),
+        "the menu's corner sits just below the click ({}, {}):\n{screen}",
+        click.0,
         click.1
     );
+    let clicked_line = screen.lines().nth(click.1 as usize).unwrap();
     assert!(
-        item_col >= click.0 && item_col <= click.0 + 4,
-        "the menu opens at the click's column ({}), not the row's start:\n{screen}",
-        click.0
+        clicked_line.contains(CODEX_TASK_TITLE),
+        "the clicked row stays in sight above its menu:\n{screen}"
+    );
+    // Read-only lines say what the row is.
+    assert!(
+        screen.contains("Source: Codex Cloud") && screen.contains("Where: acme/api"),
+        "the menu says what the row is:\n{screen}"
     );
     assert!(
         !screen.contains("STATUS-task_a"),
@@ -362,9 +402,9 @@ fn teleporting_a_cloud_session_names_the_copy_and_marks_the_row() {
     // A click on the cloud row offers the teleport (it never runs on a click).
     let (col, row) = pos_of(&h, TITLE);
     h.mouse_click(col, row).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("Take Over Here (Teleport)"))
+    h.wait_until(|h| h.screen_to_string().contains("Fork Here (Teleport)"))
         .unwrap();
-    let (tcol, trow) = pos_of(&h, "Take Over Here (Teleport)");
+    let (tcol, trow) = pos_of(&h, "Fork Here (Teleport)");
     h.mouse_click(tcol, trow).unwrap();
 
     // The form carries the session's name, as a branch-safe worktree name.
@@ -379,22 +419,30 @@ fn teleporting_a_cloud_session_names_the_copy_and_marks_the_row() {
         .unwrap();
     // The copy is a workspace named as the session; the cloud row stays and
     // says where the copy went.
-    // (The dock is narrow: the tail is cut after the arrow; the menu below
-    // names the workspace in full.)
-    h.wait_until(|h| {
-        let s = h.screen_to_string();
-        s.contains("teleported →") && s.contains("· Fix the auth bug")
-    })
-    .unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("· Fix the auth bug"))
+        .unwrap();
     let screen = h.screen_to_string();
     assert!(
         !screen.contains("homeproj-1"),
         "no generated name for the copy:\n{screen}"
     );
 
-    // Its menu now offers the copy first.
-    let (col, row) = pos_of(&h, "teleported →");
+    // The cloud row (the last "Fix the auth bug" on screen, under Claude) is
+    // still there; its menu says where the copy went and offers it first.
+    let group_row = pos_of(&h, "▼ Claude").1;
+    let row = h
+        .screen_to_string()
+        .lines()
+        .enumerate()
+        .skip(group_row as usize + 1)
+        .find(|(_, l)| l.contains(TITLE))
+        .map(|(r, _)| r as u16)
+        .expect("the cloud row stays");
+    let col = pos_of(&h, "▼ Claude").0 + 4;
     h.mouse_click(col, row).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("Go to Fix the auth bug"))
-        .unwrap();
+    h.wait_until(|h| {
+        let s = h.screen_to_string();
+        s.contains("Go to Fix the auth bug") && s.contains("teleported → Fix the auth bug")
+    })
+    .unwrap();
 }

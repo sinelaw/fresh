@@ -17,6 +17,8 @@ import {
   isCodexSessionArgv,
   liveDetail,
   liveBranchName,
+  liveSource,
+  liveWhere,
   livePlan,
   parseClaudeAgents,
   parseClaudeCloud,
@@ -291,6 +293,20 @@ eq(
   ["fix-the-auth-bug-login.ts", "deja-vu-unicode", "hidden-x", "session", "a".repeat(48)],
   "branch name: a session title as a git branch and folder name",
 );
+
+// What a row is, for its menu: where it is listed from and runs.
+eq(
+  [registry[0], desktop[1], desktop[2], agents.find((a) => a.jobId)!, cloud[0]].map(liveSource),
+  [
+    "Claude Desktop",
+    "Claude Desktop, not running",
+    "Claude Desktop over SSH (me@box), not running",
+    "Claude background job (claude --bg)",
+    "Claude on claude.ai",
+  ],
+  "source: each kind of row says where it comes from",
+);
+eq([liveWhere(desktop[1]), liveWhere(cloud[0])], ["/home/u/blog", cloud[0].repo], "where: the folder, or the cloud session's repository");
 
 if (failures > 0) {
   console.log(`${failures} failure(s)`);
