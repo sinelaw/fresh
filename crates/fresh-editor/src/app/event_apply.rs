@@ -299,6 +299,17 @@ impl Editor {
 
         // 4. Trigger plugin hooks for this event (with pre-calculated line info)
         self.trigger_plugin_hooks_for_event(event, line_info);
+        // A bulk edit (and the undo/redo of one) fires no per-edit hook
+        // above, so say that the content changed for every kind of edit.
+        if event.modifies_buffer() {
+            self.plugin_manager.read().unwrap().run_hook(
+                "buffer_modified",
+                crate::services::plugins::hooks::HookArgs::BufferModified {
+                    buffer_id: self.active_buffer(),
+                    window_id: self.active_window.0,
+                },
+            );
+        }
 
         // 5. Notify LSP of the change using pre-calculated positions
         // For BulkEdit events (undo/redo of code actions, renames, etc.),

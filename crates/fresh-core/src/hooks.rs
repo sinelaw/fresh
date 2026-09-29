@@ -120,6 +120,12 @@ pub enum HookArgs {
         lines_removed: usize,
     },
 
+    /// A buffer's content changed: after any applied edit, including the
+    /// bulk edits (multi-cursor typing, a whole-buffer replace, and the undo
+    /// or redo of either) that fire no `AfterInsert` / `AfterDelete`. Carries
+    /// no positions; it tells a plugin to re-read the buffer, not what moved.
+    BufferModified { buffer_id: BufferId, window_id: u64 },
+
     /// Cursor moved to a new position
     CursorMoved {
         buffer_id: BufferId,

@@ -8566,11 +8566,18 @@ impl JsEditorApi {
     /// Replace matches in a file's buffer (async)
     /// Opens the file if not already in a buffer, applies edits via the buffer model,
     /// and saves. All edits are grouped as a single undo action.
+    ///
+    /// Pass `regex` — the search the matches came from — to treat
+    /// `replacement` as a template: `$1`, `${name}` and `\n` are expanded
+    /// per match. Without it, `replacement` is written as is.
     #[plugin_api(
         async_promise,
         js_name = "replaceInFile",
-        ts_raw = "replaceInFile(filePath: string, matches: number[][], replacement: string, bufferId?: number): Promise<ReplaceResult>"
+        ts_raw = "replaceInFile(filePath: string, matches: number[][], replacement: string, bufferId?: number, regex?: { pattern: string; caseSensitive?: boolean; wholeWords?: boolean }): Promise<ReplaceResult>"
     )]
+    // Positional: the JS wrapper unpacks the `regex` object into the
+    // trailing three arguments (see `editor.replaceInFile` below).
+    #[allow(clippy::too_many_arguments)]
     #[qjs(rename = "_replaceInFileStart")]
     pub fn replace_in_file_start(
         &self,
@@ -8579,6 +8586,9 @@ impl JsEditorApi {
         matches: Vec<Vec<u32>>,
         replacement: String,
         buffer_id: rquickjs::function::Opt<u32>,
+        regex_pattern: rquickjs::function::Opt<String>,
+        case_sensitive: rquickjs::function::Opt<bool>,
+        whole_words: rquickjs::function::Opt<bool>,
     ) -> u64 {
         let id = self.alloc_request_id();
         // Convert [[offset, length], ...] to Vec<(usize, usize)>
@@ -8586,11 +8596,19 @@ impl JsEditorApi {
             .iter()
             .map(|m| (m[0] as usize, m[1] as usize))
             .collect();
+        let regex = regex_pattern
+            .0
+            .map(|pattern| fresh_core::api::ReplaceRegex {
+                pattern,
+                case_sensitive: case_sensitive.0.unwrap_or(true),
+                whole_words: whole_words.0.unwrap_or(false),
+            });
         let _ = self.command_sender.send(PluginCommand::ReplaceInBuffer {
             file_path: PathBuf::from(file_path),
             buffer_id: buffer_id.0.unwrap_or(0) as usize,
             matches: match_pairs,
             replacement,
+            regex,
             callback_id: JsCallbackId::new(id),
         });
         id
@@ -9441,7 +9459,17 @@ const EDITOR_PROMISE_BOOTSTRAP: &str = r#"
                     }
                 })();
                 editor.grepProject = _wrapAsync("_grepProjectStart", "grepProject");
-                editor.replaceInFile = _wrapAsync("_replaceInFileStart", "replaceInFile");
+                // Unpack the optional `regex` search into the positional
+                // arguments `_replaceInFileStart` takes.
+                editor.replaceInFile = (function(start) {
+                    return function(filePath, matches, replacement, bufferId, regex) {
+                        const args = [filePath, matches, replacement, bufferId || 0];
+                        if (regex) {
+                            args.push(regex.pattern, regex.caseSensitive !== false, !!regex.wholeWords);
+                        }
+                        return start(...args);
+                    };
+                })(_wrapAsync("_replaceInFileStart", "replaceInFile"));
                 editor.openFileStreaming = _wrapAsync("_openFileStreamingStart", "openFileStreaming");
                 editor.refreshBufferFromDisk = _wrapAsync("_refreshBufferFromDiskStart", "refreshBufferFromDisk");
                 editor.setBufferGroupPanelBuffer = _wrapAsync("_setBufferGroupPanelBufferStart", "setBufferGroupPanelBuffer");

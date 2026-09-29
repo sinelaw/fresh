@@ -717,6 +717,7 @@ fn plugin_replace_needing_sudo_leaves_no_temp_file() {
             buffer_id: 0,
             matches: vec![(0, "modified".len())],
             replacement: "replaced".to_string(),
+            regex: None,
             callback_id: fresh_core::api::JsCallbackId::from(1),
         })
         .unwrap();
@@ -894,6 +895,7 @@ fn save_and_quit_is_not_held_by_a_hidden_buffer() {
             buffer_id: 0,
             matches: vec![(0, "original".len())],
             replacement: "replaced".to_string(),
+            regex: None,
             callback_id: fresh_core::api::JsCallbackId::from(1),
         })
         .unwrap();
