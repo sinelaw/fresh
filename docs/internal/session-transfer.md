@@ -347,9 +347,15 @@ Notes on specific cells:
 
 1. **Fetch the transcript** to a staging file under
    `<data>/orchestrator/transfers/<xfer-id>/`.
-   - A Fresh SSH workspace reads it with `editor.openMachine({kind:"window",…})`
-     and `readFilePrefixes` (a large `maxBytes`). That path already goes through
-     the authority, and no new ssh process is spawned.
+   - A Fresh SSH workspace reads it with `editor.openMachine({kind:"window", window: N})`,
+     which borrows window N's authority even when N is not active.
+     - `walkTree` gives the file's size.
+     - `readFilePrefixes` with `maxBytes` of that size reads the whole file.
+       There is no cap, but a missing `maxBytes` reads nothing, and the text is
+       decoded as lossy UTF-8. That is fine for JSONL.
+     - The same machine's `run()` runs the host-side git commands in step 2.
+     - No new ssh process is spawned, and the Import dialog's scanners already
+       find transcripts this way.
    - A Desktop SSH row runs `ssh -o BatchMode=yes <host> sh -c '…cat…'` through
      `spawnHostProcess`, with argv only. The remote script resolves
      `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/<encodeProjectDir(cwd)>/<id>.jsonl`
@@ -402,7 +408,9 @@ and there is no documented way to register a session in it.
      for a checkout path on the host.
 2. **Copy the transcript** into the host's bucket (Claude), or write a translated
    or copied rollout into the host's `$CODEX_HOME/sessions/YYYY/MM/DD/` (Codex).
-   The copy goes through the workspace authority. Codex's importer is not used
+   The copy goes through the workspace authority, via
+   `writeFile(editor.windowPath(N, path), text)`. A FreshMachine has no write
+   method. Codex's importer is not used
    on a remote host in the first versions; the host would need a new enough
    Codex and a detected path.
 3. **Launch** the resume argv through the authority, as §8 of
@@ -450,8 +458,9 @@ Four rules:
    the source is running or not.
 2. **Stopping is opt-in and comes last.** The **Stop the original** checkbox is
    the difference between a move and a fork. It is:
-   - *on* for a workspace row, whose agent Fresh owns, stops with
-     `signalTerminal`, and can relaunch
+   - *on* for a workspace row, whose agent Fresh owns and can relaunch. It is
+     stopped the way the dock's Stop already does it: `stopOne` sends
+     `signalWindow(id, "SIGTERM")` and then `"SIGKILL"` two seconds later
    - *on* for a Claude `--bg` job, via `claude stop <job>`, which keeps the
      conversation
    - *absent* for anything Fresh cannot stop cleanly: another terminal's
@@ -469,8 +478,10 @@ Four rules:
    does not block.
 
 In-place moves (§3.3) stop the original *first*, since they share a tree.
-Fresh then checks that the agent's process group is gone before launching the
-destination. If it cannot confirm that, it falls back to a new worktree.
+Fresh cannot yet check that the agent's whole process group is gone.
+`terminal_exit` reports only the leader, and `signalWindow`'s per-group results
+are only logged (§8.3, gap G5). So in-place moves wait for the core query that
+answers this. Until then, every move goes to a new worktree.
 
 ---
 
@@ -481,9 +492,13 @@ destination. If it cannot confirm that, it falls back to a new worktree.
 - **Today a workspace row cannot say which conversation it holds.**
   `resolveAgentLaunch` mints the Claude uuid and hands `{command, resume}` to
   `createWindowWithTerminal`, but nothing the plugin can read back keeps it.
-- **Fresh adds** `setWindowState("agent_session", {agent, id?, resume})` at
-  create time, next to `project_path`/`shared_worktree`. It is persisted in
-  `session_plugin_state`.
+- **The orchestrator records it at create time** in its own global state:
+  `agent_session` = `{agent, id?, resume}`, keyed `"id:" + stableId`.
+  - This is the pattern it already uses for names and folders.
+  - `stableId` comes back from `createWindowWithTerminal`.
+  - It deliberately does not use `setWindowState`. That call writes to
+    whichever window is active when core processes it, and cannot be read for
+    any other window (§8.3, gap G1).
   - `id` is present for provisioned agents (Claude).
   - For Codex, `id` is filled in after launch, by matching the newest rollout
     whose `session_meta.cwd` is the root and whose timestamp is after the
@@ -586,7 +601,148 @@ plan: snapshot → worktree → stage-conversation → create-window → launch 
 
 ---
 
-## 8. Code shape
+## 8. Plugin vs core
+
+### 8.1 The split
+
+- **All of the transfer logic is plugin code.** That covers:
+  - the matrix and the planner
+  - the transcript readers and writers
+  - the git recipes
+  - the UI
+  - the step runner
+
+  This follows the rule the orchestrator already keeps (orchestrator-sessions.md
+  §8): no agent-specific logic lives in Rust. Every fact about Claude or Codex
+  (paths, record shapes, flags) changes with their releases. It belongs in
+  TypeScript, which ships with the plugin and is tested by node unit tests.
+- **Core gets only generic host-API changes**, each justified by a gap in §8.3
+  and none of them about agents. **Phase 1 needs no core change.** It works
+  around every gap in the plugin. The core items make later phases possible or
+  remove a workaround, and each is a separate PR.
+
+### 8.2 Host APIs the plugin uses, and their limits
+
+All of these were traced into the Rust implementation, not just `fresh.d.ts`.
+
+| Need | API | Limits that shape the design |
+| --- | --- | --- |
+| Run git, ssh, `claude`, `codex` on this machine | `spawnHostProcess(cmd, args, cwd?)` | See the notes below the table. |
+| Run commands on a remote workspace's host | `openMachine({kind:"window", window: N}).run()` | Borrows window N's authority, even when N is not active. `spawnProcess` would use only the *active* window's authority. |
+| Read a transcript remotely | `openMachine(…).walkTree` + `readFilePrefixes` | Whole-file reads work when `maxBytes` ≥ size. The text is lossy UTF-8. |
+| Write a file locally | `writeFile(path, text)` | Create-only: returns false if the file exists. This is what makes staging idempotent (§7.4). |
+| Write a file remotely | `writeFile(editor.windowPath(N, path), text)` | Routed to window N's authority on every call, and fails if N has closed. |
+| Create the destination workspace | `createWindowWithTerminal({root, label, command, resume, env, adoptWindow, allowScript})` | Returns `windowId`, `terminalId` and `stableId`. It always mints a new window: it does **not** reuse one at the same root. orchestrator-sessions.md §7 said it did, and is corrected in this change. The orchestrator dedups roots itself. `env` reaches a local terminal. |
+| Stop the original | `signalWindow(id, "SIGTERM" \| "SIGKILL")` | See the notes below the table. |
+| Know the original stopped | hook `terminal_exit {terminal_id, window_id, exit_code}` | Fires for background windows too, but covers only the PTY leader. |
+| Per-workspace plugin data | `setGlobalState` keyed `"id:"+stableId` | Readable for any workspace, active or not (§7.1). |
+
+Notes on `spawnHostProcess`:
+- It sets no stdin, so the child **inherits the editor's**, and no env, so the
+  child inherits the editor's environment.
+- There is no timeout, and output is buffered with no cap.
+- `kill()` sends SIGKILL to the pid only, so children of an `sh` wrapper
+  survive it.
+
+Notes on `signalWindow`:
+- It signals every process group registered for that window (`kill(-pgid)`),
+  and works on background windows.
+- Escalation is the caller's job, as `stopOne` does it.
+- For a remote window it signals the *local* ssh/kubectl carrier, not the
+  remote processes.
+- It is an error on Windows.
+
+### 8.3 Gaps, and what to do about each
+
+- **G1: per-window plugin state is active-window-only.**
+  - What happens today:
+    - `setWindowState` writes to the window that is active when core processes
+      the command (`handle_set_session_state`, `plugin_commands.rs`).
+    - `getWindowState` reads only the active window.
+    - No API takes a window id.
+  - This is a live bug, on master as well as here. `runLocalCreate` in
+    orchestrator.ts creates with `adoptWindow`. When the user created in the
+    background or moved on, core switches focus back to their previous window
+    (`window_actions.rs`, after seeding the terminal). The following
+    `setWindowState("project_path" / "shared_worktree")` calls then tag the
+    **user's current window**, and the new workspace gets neither.
+  - Transfer avoids the gap by using global state keyed by `stableId` (§7.1).
+  - Core fix, in its own PR:
+    - Add `windowState?: Record<string, unknown>` to
+      `CreateWindowWithTerminalOptions`, applied atomically when the window is
+      created.
+    - Add an optional `windowId` to `setWindowState` / `getWindowState`.
+    - The orchestrator's two existing keys then move onto the create call.
+- **G2: a terminal's launch and resume argv cannot be read back.**
+  - Core stores them in `Window.terminal_commands` /
+    `terminal_resume_commands` and serializes them as `agent_resume`, but no
+    plugin API returns them, and none can change them after spawn.
+  - The plugin works around this by recording `agent_session` itself (§7.1),
+    with discovery for workspaces created before that.
+  - A core getter such as `listWindowTerminals(id)` returning
+    `{terminalId, command, resume, exited}` would retire the discovery path.
+    It is nice to have, not required.
+- **G3: no stdin for a spawned process.** Codex's importer is JSON-RPC over
+  `codex app-server`'s stdin.
+  - The plugin works around this with an `sh` pipeline (§6.1), as it already
+    does for `codex cloud status`. That is Unix-only, and on Windows the
+    transfer uses Fresh's own rollout writer instead.
+  - A related hazard: with stdin inherited, a child that reads stdin shares
+    the editor's input when the editor runs in-process on a TTY. Every
+    transfer command is therefore either given `</dev/null` inside its `sh`
+    script or is one that never reads stdin. Every ssh call gets
+    `-o BatchMode=yes`.
+  - Core fix: a `stdin?: string` option on `spawnHostProcess`, with a null
+    stdin when it is absent. This is generic hardening, and it lets the import
+    run without `sh` on every platform.
+- **G4: no timeout.** An ssh or `git fetch` to an unreachable host can hang.
+  - The plugin works around this with `-o ConnectTimeout=10` on every ssh, a
+    plugin-side timer that calls `kill()`, and direct execs rather than `sh`
+    wrappers where the step allows, since `kill()` misses a wrapper's
+    children.
+  - Core fix, optional: a `timeoutMs` spawn option that kills the process
+    group.
+- **G5: no confirmation that a stopped agent is fully gone.**
+  - `terminal_exit` covers the leader only, and an agent's tool subprocesses
+    can outlive it and keep writing files.
+  - A move to a new worktree does not care. An **in-place** move does, because
+    it would start the destination in a tree the old agent may still be
+    writing.
+  - Core fix, required before in-place moves ship:
+    `windowProcessGroups(id) → [{leaderPid, alive}]`, or `signalWindow`
+    returning the per-group result it currently only logs.
+- **G6: no plugin API to restart or replace a terminal in place.**
+  `createTerminal({windowId, command, resume})` can add the destination's
+  terminal to the original window, even a background one. That is enough for
+  in-place moves once G5 is closed, so no new API is needed.
+- **G7: e2e isolation of child processes.**
+  - e2e tests run in-process. Children inherit the test process's
+    environment, and only `editor.getHomeDir()` is redirected to the
+    harness's temp home.
+  - Transfer therefore never relies on inherited `CLAUDE_CONFIG_DIR` /
+    `CODEX_HOME`. It resolves both once, through the settings
+    `claudeConfigDir` / `codexHome`, which default to the environment and then
+    to the home dir. It passes them to every child explicitly:
+    `env CODEX_HOME=… codex …` in argv for spawns, and the `env` option for
+    terminals.
+  - Tests set those settings, so no core change is needed. The harness's
+    existing `set_var` pattern (`with_fake_devcontainer` plus a global lock)
+    is not needed either.
+- **Not a gap: `httpFetch` is GET-only.** Transfer never writes to a cloud
+  API. Cloud sessions and tasks are created by the vendors' own CLIs in a
+  terminal.
+
+Remote windows carry extra limits, which matter for Phase 2 and not for
+Phase 1:
+- `kill()` on `spawnProcess` does nothing there.
+- `signalWindow` reaches only the local carrier.
+- A terminal's `env` does not reach the remote shell.
+
+So on an SSH destination, the settings travel in the argv itself
+(`env K=V claude …`), composed through the authority's command wrapper as agent
+argv already is.
+
+### 8.4 Where the plugin code goes
 
 - **`plugins/lib/session_transfer.ts`**: pure, no editor calls.
   - `destinationsFor(source: TransferSource, machines): Destination[]`: the §4
@@ -611,10 +767,10 @@ plan: snapshot → worktree → stage-conversation → create-window → launch 
   - the menu items
   - `openTransfer(sourceKey)`, which shows the picker and then opens the form
     with the plan
-  - `runTransfer(plan)`, which runs the steps through `spawnHostProcess` /
-    `spawnProcess` (per authority), `openMachine`, `writeFile`, and
-    `createWindowWithTerminal`
-  - the `agent_session` window state (§7.1)
+  - `runTransfer(plan)`, which runs the steps with the APIs in §8.2:
+    `spawnHostProcess` here, and `openMachine({kind:"window"}).run()` on a
+    remote workspace's host
+  - the `agent_session` record in global state (§7.1)
 - **`plugins/live_sessions.ts`**: exports a transcript locator for its rows,
   meaning the path, and the host for SSH. The parsers already carry `sshHost`,
   `cwd` and the CLI id.
@@ -626,7 +782,9 @@ plan: snapshot → worktree → stage-conversation → create-window → launch 
 ### Phase 1: same machine, Claude ↔ Codex, workspaces and local rows
 
 Scope:
-- §7.1 `agent_session` window state, with discovery fallback.
+- §7.1 `agent_session` record (global state keyed by `stableId`), with
+  discovery fallback.
+- The `claudeConfigDir` / `codexHome` settings (§8.3, gap G7).
 - Sources:
   - workspace rows
   - Claude local Elsewhere rows (stopped, `--bg`, Desktop non-SSH)
@@ -642,7 +800,9 @@ Scope:
 
 Tests:
 - **Unit tests** (`plugins/tests/session_transfer.test.ts`, run by
-  `plugins/tests/run.sh`):
+  `plugins/tests/run.sh`). `plugins/tests/README.md` says that script is not
+  run by CI, so Phase 1 adds one CI step (or a Rust test) that runs it. Without
+  that step the format tests below would guard nothing:
   - `destinationsFor` for every source kind
   - chain walking: branches, sidechains, compaction
   - both writers, round-tripped through the readers
@@ -668,12 +828,16 @@ Tests:
     - the staged transcript file under a test config dir
     - the terminal text `RESUMED-<new id>`
     - the original workspace left running, or stopped when ticked
-  - **Blocker:** the e2e harness has no fake `HOME`. The live_sessions readers
-    and the new staging code would touch the real `~/.claude` and `~/.codex`.
-    Phase 1 therefore adds `claudeConfigDir` and `codexHome` plugin settings,
-    which default to the CLIs' own resolution (`CLAUDE_CONFIG_DIR`,
-    `CODEX_HOME`). The e2e tests point both at the test root. This also closes
-    the same leak in `orchestrator_elsewhere.rs`.
+  - **Isolation.** The harness already redirects `editor.getHomeDir()` to a
+    temp home. It does not change the process environment, though, so two
+    leaks remain:
+    - A runner with `CLAUDE_CONFIG_DIR` set leaks the real registry into
+      `live_sessions` today.
+    - Spawned CLIs see the real `HOME`.
+
+    The `claudeConfigDir` / `codexHome` settings, passed explicitly to every
+    child (§8.3, gap G7), close both. The e2e tests set them to the test
+    root, and `orchestrator_elsewhere.rs` gets the same fix.
 - **Real-CLI check, opt-in, not in CI:** the Appendix A procedure as a script,
   so a CLI upgrade that breaks the formats is caught by running one command.
 
