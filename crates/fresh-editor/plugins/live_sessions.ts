@@ -231,22 +231,41 @@ async function listClaudeRegistry(): Promise<LiveSession[]> {
 
 /** The Claude CLI's sign-in: its credentials file, else (macOS) its Keychain
  *  item. Never refreshed here (see `claudeAccessToken`). */
+// Whether the last look found a sign-in at all (only an expired one), so the
+// problem line can say which of the two it is.
+let claudeSignInExpired = false;
+
 async function readClaudeToken(force: boolean): Promise<string | null> {
   const now = Date.now();
   if (claudeToken && now - claudeToken.readAt < 10 * 60_000) return claudeToken.token;
   const configDir = claudeConfigDir();
   const file = editor.readFile(editor.localPath(editor.pathJoin(configDir, ".credentials.json")));
   let token = file ? claudeAccessToken(file, now) : null;
-  if (!token && !file && !WINDOWS && (force || !keychainRefused)) {
+  // `claudeAccessToken(…, 0)` ignores expiry: is there a sign-in at all?
+  let found = file ? claudeAccessToken(file, 0) !== null : false;
+  // On macOS the CLI keeps its sign-in in the Keychain. A credentials file can
+  // sit beside it — left by an older CLI, expired long ago — so the Keychain
+  // is asked whenever the file has no live token, not only when there is no
+  // file: stopping at a stale file read as "expired" however often `claude`
+  // refreshed the Keychain. The service and account are the CLI's own. (With
+  // `CLAUDE_CONFIG_DIR` set the CLI suffixes the service with a hash of that
+  // directory, which is not recomputed here.)
+  if (!token && !WINDOWS && (force || !keychainRefused)) {
+    const user = editor.getEnv("USER");
     const r = await editor.spawnHostProcess("security", [
       "find-generic-password",
+      ...(user ? ["-a", user] : []),
       "-s",
       "Claude Code-credentials",
       "-w",
     ]);
-    token = r.exit_code === 0 ? claudeAccessToken(r.stdout, now) : null;
+    if (r.exit_code === 0) {
+      token = claudeAccessToken(r.stdout, now);
+      found = found || claudeAccessToken(r.stdout, 0) !== null;
+    }
     keychainRefused = r.exit_code !== 0;
   }
+  claudeSignInExpired = !token && found;
   claudeToken = token ? { token, readAt: now } : null;
   return token;
 }
@@ -254,7 +273,11 @@ async function readClaudeToken(force: boolean): Promise<string | null> {
 async function listClaudeCloud(s: Required<Settings>, force: boolean): Promise<LiveSession[]> {
   const token = await readClaudeToken(force);
   if (!token) {
-    throw new Error("Claude cloud: not signed in, or the sign-in expired — run `claude` once to refresh it");
+    throw new Error(
+      claudeSignInExpired
+        ? "Claude cloud: the Claude CLI's sign-in has expired — start `claude` in a terminal and send one message to refresh it"
+        : "Claude cloud: no Claude CLI sign-in found — run `claude auth login`",
+    );
   }
   const target = editor.pathJoin(probeDir(), "claude-cloud-page.json");
   const headers = {
