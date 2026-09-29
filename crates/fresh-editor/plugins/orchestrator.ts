@@ -683,6 +683,12 @@ interface CreateFolderDialogState {
   // prompts for a workspace name and submit pins a manual name on the
   // session's root. null ⇒ not a workspace rename.
   renameSessionId: number | null;
+  // An Elsewhere row (by `LiveSession.key`) the checkbox organizes instead
+  // of a workspace: it is opened as a workspace, filed under the new
+  // folder, only once the folder is created — asked first, so the dialog
+  // is never raced by whatever opening the workspace brings up (the trust
+  // prompt for a folder seen for the first time). null ⇒ none.
+  liveKey: string | null;
 }
 let createFolderDialog: CreateFolderDialogState | null = null;
 let createFolderPanel: FloatingWidgetPanel | null = null;
@@ -1840,7 +1846,7 @@ function openInBrowser(url: string): void {
 // workspace, and files that workspace. `dive` hands the keyboard to it.
 async function openLiveSession(
   key: string,
-  opts: { materialize: boolean; dive: boolean; folderId?: string | null; newFolder?: boolean },
+  opts: { materialize: boolean; dive: boolean; folderId?: string | null },
 ): Promise<void> {
   const s = liveByKey(key);
   if (!s) return;
@@ -1907,11 +1913,6 @@ async function openLiveSession(
   }
   if (opts.folderId !== undefined) assignSessionToFolder(id, opts.folderId);
   if (plan.note) editor.setStatus(editor.t("status.elsewhere_in_place", { name: s.title }));
-  if (opts.newFolder) {
-    // The folder dialog files the workspace itself once the folder exists.
-    openCreateFolderDialog(null, id);
-    return;
-  }
   if (opts.dive && dockMode && openPanel) {
     dockDiveBlur = true;
     dockBlurred = true;
@@ -6233,11 +6234,17 @@ function runDockMenuOption(optKey: string): void {
   if (optKey.startsWith("move:") && menu?.kind === "move-live") {
     const target = optKey.slice("move:".length);
     closeDockMenu();
+    if (target === "new") {
+      // The folder's name first; the workspace is opened into it on Create.
+      openCreateFolderDialog(null, undefined, menu.liveKey);
+      return;
+    }
+    // Filing opens it as the active workspace, so it takes the keyboard too
+    // (see `submitCreateFolder`).
     void openLiveSession(menu.liveKey, {
       materialize: true,
-      dive: false,
-      folderId: target === "new" || target === "root" ? null : target,
-      newFolder: target === "new",
+      dive: true,
+      folderId: target === "root" ? null : target,
     });
     return;
   }
@@ -6287,13 +6294,15 @@ function dockSelectedSessionId(): number | null {
 function openCreateFolderDialog(
   parent: string | null,
   assignSession?: number,
+  assignLive?: string,
 ): void {
   // The session the "organize under this folder" checkbox targets: the
-  // explicitly-moved session when given, else the active window.
+  // explicitly-moved session when given, else the active window — unless
+  // an Elsewhere row is being filed, which the checkbox then names.
   const candidate = typeof assignSession === "number"
     ? assignSession
     : editor.activeWindow();
-  const sessionId = candidate > 0 && orchestratorSessions.has(candidate)
+  const sessionId = assignLive === undefined && candidate > 0 && orchestratorSessions.has(candidate)
     ? candidate
     : null;
   createFolderDialog = {
@@ -6306,6 +6315,7 @@ function openCreateFolderDialog(
     sessionId,
     renameId: null,
     renameSessionId: null,
+    liveKey: assignLive ?? null,
   };
   mountFolderDialog();
 }
@@ -6337,6 +6347,7 @@ function openRenameFolderDialog(id: string): void {
     sessionId: null,
     renameId: id,
     renameSessionId: null,
+    liveKey: null,
   };
   mountFolderDialog();
 }
@@ -6358,6 +6369,7 @@ function openRenameWorkspaceDialog(id: number): void {
     sessionId: null,
     renameId: null,
     renameSessionId: id,
+    liveKey: null,
   };
   mountFolderDialog();
 }
@@ -6400,6 +6412,7 @@ function buildCreateFolderSpec(): WidgetSpec {
   const renamingSession = d.renameSessionId !== null;
   const renaming = d.renameId !== null || renamingSession;
   const sess = d.sessionId != null ? orchestratorSessions.get(d.sessionId) : undefined;
+  const organizeName = sess?.label ?? (d.liveKey ? liveByKey(d.liveKey)?.title : undefined);
   const promptLabel = renamingSession
     ? editor.t("dock.rename_workspace_prompt")
     : editor.t("dock.new_folder_prompt");
@@ -6419,9 +6432,9 @@ function buildCreateFolderSpec(): WidgetSpec {
       key: "folder-name",
     }),
   ];
-  if (sess) {
+  if (organizeName !== undefined) {
     children.push(
-      toggle(d.organizeCurrent, editor.t("dock.new_folder_organize", { name: sess.label }), {
+      toggle(d.organizeCurrent, editor.t("dock.new_folder_organize", { name: organizeName }), {
         key: "folder-organize",
         labelWidth: labelW,
       }),
@@ -6488,7 +6501,11 @@ function submitCreateFolder(): void {
   if (d.organizeCurrent && d.sessionId != null) {
     apiMoveWorkspace(d.sessionId, id);
   }
+  const liveKey = d.organizeCurrent ? d.liveKey : null;
   closeCreateFolderDialog();
+  // Opening it makes it the active workspace, so it takes the keyboard too:
+  // whatever it opens with (the trust prompt for a new folder) is answerable.
+  if (liveKey) void openLiveSession(liveKey, { materialize: true, dive: true, folderId: id });
 }
 
 // Tear down the dialog. The host hands the keyboard back to whatever
@@ -6582,13 +6599,10 @@ function buildDockMenuSpec(state: DockMenuState): WidgetSpec {
   // The Elsewhere group: nothing to organise, but a way to re-list now, and
   // what went wrong with a source, if anything did (a sign-in that expired).
   if (state.target.kind === "folder" && state.target.id === ELSEWHERE_FOLDER_ID) {
-    return col(
-      contextMenuSpec(ELSEWHERE_GLYPH.cloud + " " + editor.t("dock.elsewhere"), [
-        { label: editor.t("dock.ctx_refresh"), key: "ctx-elsewhere-refresh", intent: "primary" },
-      ]),
-      ...elsewhereProblems.map((p) =>
-        ({ kind: "raw", entries: [styledRow([{ text: " " + p, style: { fg: "diagnostic.warning_fg" } }])] }) as WidgetSpec
-      ),
+    return contextMenuSpec(
+      ELSEWHERE_GLYPH.cloud + " " + editor.t("dock.elsewhere"),
+      [{ label: editor.t("dock.ctx_refresh"), key: "ctx-elsewhere-refresh", intent: "primary" }],
+      elsewhereProblems,
     );
   }
   // An Elsewhere row: open it (attach, or its folder), file it into a folder
@@ -6672,10 +6686,16 @@ function buildDockMenuSpec(state: DockMenuState): WidgetSpec {
 function contextMenuSpec(
   title: string,
   items: { label: string; key: string; intent?: "primary" | "danger"; disabled?: boolean }[],
+  // Warning lines under the actions (the Elsewhere group's source problems).
+  notes: string[] = [],
 ): WidgetSpec {
   return col(
     { kind: "raw", entries: [styledRow([{ text: " " + title, style: { bold: true } }])] },
     ...menuRows(items),
+    ...notes.map((n): WidgetSpec => ({
+      kind: "raw",
+      entries: [styledRow([{ text: " " + n, style: { fg: "diagnostic.warning_fg" } }])],
+    })),
     { kind: "raw", entries: [
       styledRow([
         { text: " " + editor.t("dock.ctx_esc_close"), style: { fg: "ui.menu_disabled_fg" } },
