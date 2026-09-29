@@ -503,6 +503,7 @@ includes cloud sessions this machine never saw.
   | Source | From | Default |
   | --- | --- | --- |
   | Claude on this machine | `claude agents --json` (terminal and `--bg` sessions), plus the CLI's registry of running sessions (`~/.claude/sessions/<pid>.json`, live pids only) for the SDK-driven ones it skips — Claude Desktop's and editor extensions' | on |
+  | Claude Desktop (Code tab) | Desktop's own records, `<userData>/claude-code-sessions/<account>/<org>/local_<id>.json` (`userData` = `~/Library/Application Support/Claude`, `~/.config/Claude`, `%APPDATA%\Claude`): every session not `isArchived`, running or not, merged with the running ones by CLI session id. A stopped one opens as `claude --resume <id>` in its folder; one over SSH (`sshConfig`) is listed with its host but runs there | on (with the Claude source) |
   | Codex on this machine | running `codex` processes (`ps`, cwd via `lsof` or `/proc`); not on Windows | on |
   | Codex Cloud | `codex cloud list --json` (applied tasks hidden) | on |
   | Claude cloud + Remote Control | `GET /v1/code/sessions?statuses=active` (paged) — the list `claude --teleport` reads, asked for active sessions only — with the Claude CLI's own sign-in (`~/.claude/.credentials.json`, or the macOS Keychain) | on |

@@ -59,6 +59,11 @@ export interface LiveSession {
   /** The app a local session runs inside, when it is not a terminal:
    *  "Claude Desktop", "VS Code", … */
   host?: string;
+  /** A session with no process running it (a Claude Desktop session not
+   *  archived): it can be resumed, not attached to. */
+  stopped?: boolean;
+  /** The SSH host a Claude Desktop session runs on; its `cwd` is there. */
+  sshHost?: string;
 }
 
 /** The Claude cloud session list: what `claude --teleport` reads. Not a
@@ -228,6 +233,63 @@ export function parseClaudeRegistry(records: string[], alive: Set<number>): Live
     });
   }
   return out;
+}
+
+/** Claude Desktop's Code-tab sessions, from the records it keeps under
+ *  `<userData>/claude-code-sessions/<account>/<org>/local_<id>.json`
+ *  (`sessionId`, `cliSessionId`, `cwd`, `title`, `createdAt`,
+ *  `lastActivityAt`, `isArchived`, and the SSH connection for one that runs
+ *  over SSH). An archived one is left out; a deleted one has no file.
+ *
+ *  Keyed by the CLI session id, the one the CLI's registry uses too, so a
+ *  Desktop session that is running merges with its live row (see
+ *  `mergeDesktopSessions`). `sshNames` maps a connection id to its host, from
+ *  the `sshConfigs` Desktop saves in `~/.claude/settings.json`. */
+export function parseDesktopSessions(
+  records: string[],
+  sshNames: Map<string, string> = new Map(),
+): LiveSession[] {
+  const out: LiveSession[] = [];
+  for (const text of records) {
+    const e = asRecord(parseJson(text));
+    if (!e || e.isArchived === true) continue;
+    const id = str(e.cliSessionId) ?? str(e.sessionId);
+    if (!id) continue;
+    const cwd = str(e.cwd);
+    const ssh = asRecord(e.sshConfig);
+    const sshHost = str(ssh?.sshHost) ?? str(ssh?.host) ?? str(ssh?.name) ??
+      (str(e.sshConfigId) ? sshNames.get(str(e.sshConfigId)!) ?? str(e.sshConfigId) : undefined);
+    out.push({
+      key: `claude-local/${id}`,
+      source: "claude-local",
+      id,
+      agent: "claude",
+      where: "local",
+      title: str(e.title)?.trim() ||
+        (cwd && !isFilesystemRoot(cwd) ? liveBaseName(cwd) : `claude ${id.slice(0, 8)}`),
+      state: "idle",
+      cwd,
+      updatedAt: when(e.lastActivityAt) ?? when(e.createdAt),
+      host: "Claude Desktop",
+      stopped: true,
+      ...(sshHost ? { sshHost } : {}),
+    });
+  }
+  return out;
+}
+
+/** Desktop's records beside what is running. A Desktop session with a live
+ *  process is already listed (from the registry): it keeps its live state and
+ *  takes Desktop's title and SSH host. The rest are listed as stopped. */
+export function mergeDesktopSessions(running: LiveSession[], desktop: LiveSession[]): LiveSession[] {
+  const byId = new Map(desktop.map((d) => [d.id, d]));
+  const merged = running.map((r) => {
+    const d = byId.get(r.id);
+    if (!d) return r;
+    byId.delete(r.id);
+    return { ...r, title: d.title, host: "Claude Desktop", ...(d.sshHost ? { sshHost: d.sshHost } : {}) };
+  });
+  return [...merged, ...byId.values()];
 }
 
 // ── Claude cloud ──────────────────────────────────────────────────
@@ -582,6 +644,17 @@ export function livePlan(s: LiveSession, env: LivePlanEnv, materialize: boolean)
       };
     }
     case "claude-local":
+      // A Desktop session over SSH runs, and keeps its folder, on that host.
+      if (s.sshHost) return { kind: "none", why: `it runs on ${s.sshHost} over SSH` };
+      // Not running (a Desktop session left open): resume it here.
+      if (s.stopped && s.cwd && !isFilesystemRoot(s.cwd)) {
+        return {
+          kind: "workspace",
+          root: s.cwd,
+          label: s.title,
+          command: [env.claude, "--resume", s.id],
+        };
+      }
       if (s.jobId && s.cwd) {
         return {
           kind: "workspace",
@@ -631,7 +704,11 @@ export function liveDetail(s: LiveSession): string {
     : s.jobId
     ? "claude --bg"
     : s.host
-    ? s.host
+    ? s.sshHost
+      ? `${s.host} · ssh ${s.sshHost}`
+      : s.stopped
+      ? `${s.host} · stopped`
+      : s.host
     : s.pid !== undefined
     ? `pid ${s.pid}`
     : "local";

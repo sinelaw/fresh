@@ -4,6 +4,8 @@ import {
   claudeCloudPageInfo,
   claudeSessionId,
   parseClaudeRegistry,
+  parseDesktopSessions,
+  mergeDesktopSessions,
   codexLocalSessions,
   elsewhereRoot,
   isCodexSessionArgv,
@@ -57,6 +59,17 @@ const registry = parseClaudeRegistry([
 ], new Set([501, 502, 503]));
 eq(registry.map((s) => [s.id, s.title, s.state, s.host]), [["desk1", "Fix the build", "working", "Claude Desktop"], ["vs1", "api", "idle", "VS Code"]], "claude registry: SDK sessions (Desktop, VS Code) that agents skips; not terminal ones, not dead ones");
 eq(liveDetail(registry[0]), "site · Claude Desktop", "detail: a Desktop session says so");
+
+const desktop = parseDesktopSessions([
+  JSON.stringify({ sessionId: "local_a", cliSessionId: "desk1", cwd: "/home/u/site", title: "Fix the build (Desktop)", createdAt: 1, lastActivityAt: 2 }),
+  JSON.stringify({ sessionId: "local_b", cliSessionId: "cli-b", cwd: "/home/u/blog", title: "Draft a post", createdAt: 1, lastActivityAt: 2 }),
+  JSON.stringify({ sessionId: "local_c", cliSessionId: "cli-c", cwd: "/srv/app", title: "On the box", createdAt: 1, lastActivityAt: 2, sshConfig: { id: "s1", name: "box", sshHost: "me@box" } }),
+  JSON.stringify({ sessionId: "local_d", cliSessionId: "cli-d", cwd: "/home/u/old", title: "Archived", createdAt: 1, lastActivityAt: 2, isArchived: true }),
+]);
+eq(desktop.map((d) => [d.id, d.title, d.sshHost ?? null]), [["desk1", "Fix the build (Desktop)", null], ["cli-b", "Draft a post", null], ["cli-c", "On the box", "me@box"]], "desktop: every Code-tab session not archived, keyed by its CLI session id");
+const merged = mergeDesktopSessions(registry, desktop);
+eq(merged.map((m) => [m.id, m.title, m.state, m.stopped ?? false]), [["desk1", "Fix the build (Desktop)", "working", false], ["vs1", "api", "idle", false], ["cli-b", "Draft a post", "idle", true], ["cli-c", "On the box", "idle", true]], "desktop: a running one keeps its live state and takes its Desktop title; the rest are stopped");
+eq([liveDetail(desktop[1]), liveDetail(desktop[2])], ["blog · Claude Desktop · stopped", "srv/app".split("/").pop() + " · Claude Desktop · ssh me@box"], "detail: stopped and SSH Desktop sessions say so");
 
 // ── Claude cloud ──────────────────────────────────────────────────
 
@@ -156,6 +169,8 @@ const shown = unrepresented([...agents, ...cloud], ["/home/u/fresh/", elsewhereR
 eq(shown.map((s) => s.key), ["claude-local/5e55", "claude-cloud/session_01"], "unrepresented: sessions already open as a workspace are hidden");
 
 const env: LivePlanEnv = { dataDir: DATA, claude: "claude", codex: "codex", windows: false };
+eq(livePlan(desktop[1], env, false), { kind: "workspace", root: "/home/u/blog", label: "Draft a post", command: ["claude", "--resume", "cli-b"] }, "plan: a stopped Desktop session is resumed in its folder");
+eq(livePlan(desktop[2], env, false).kind, "none", "plan: one over SSH cannot be resumed here");
 eq(livePlan(cloud[0], env, false), { kind: "browser", url: "https://claude.ai/code/session_01" }, "plan: Enter on a Claude cloud session opens its page");
 eq(livePlan(cloud[0], env, true), { kind: "teleport", command: ["claude", "--teleport", "session_01"] }, "plan: making a Claude cloud session a workspace teleports it");
 eq(livePlan(agents[1], env, false), {

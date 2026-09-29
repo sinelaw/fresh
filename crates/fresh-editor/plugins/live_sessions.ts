@@ -24,6 +24,8 @@ import {
   parseClaudeAgents,
   parseClaudeCloud,
   parseClaudeRegistry,
+  parseDesktopSessions,
+  mergeDesktopSessions,
   parseCodexCloud,
   parseCodexProcesses,
   parseLsofCwds,
@@ -203,7 +205,68 @@ async function listClaudeLocal(s: Required<Settings>): Promise<LiveSession[]> {
   }
   const listed = r.exit_code === 0 ? parseClaudeAgents(r.stdout) : [];
   const seen = new Set(listed.map((x) => x.id));
-  return [...listed, ...(await listClaudeRegistry()).filter((x) => !seen.has(x.id))];
+  const running = [...listed, ...(await listClaudeRegistry()).filter((x) => !seen.has(x.id))];
+  return mergeDesktopSessions(running, listDesktopSessions());
+}
+
+/** Claude Desktop's data folders that exist here (its Electron `userData`). */
+function desktopUserDataDirs(): string[] {
+  const home = editor.getHomeDir();
+  const candidates = WINDOWS
+    ? [editor.pathJoin(editor.getEnv("APPDATA") || editor.pathJoin(home, "AppData", "Roaming"), "Claude")]
+    : [
+      editor.pathJoin(home, "Library", "Application Support", "Claude"),
+      editor.pathJoin(editor.getEnv("XDG_CONFIG_HOME") || editor.pathJoin(home, ".config"), "Claude"),
+    ];
+  return candidates.filter((d) => editor.fileExists(editor.localPath(d)));
+}
+
+/** Child directories of `dir` (Desktop keys its store by account, then org). */
+function subdirs(dir: string): string[] {
+  return editor.readDir(editor.localPath(dir))
+    .filter((e) => e.is_dir)
+    .map((e) => editor.pathJoin(dir, e.name));
+}
+
+/** Every Code-tab session Claude Desktop keeps and has not archived, running
+ *  or not. See `parseDesktopSessions`. */
+function listDesktopSessions(): LiveSession[] {
+  const records: string[] = [];
+  for (const userData of desktopUserDataDirs()) {
+    const store = editor.pathJoin(userData, "claude-code-sessions");
+    for (const account of subdirs(store)) {
+      for (const org of subdirs(account)) {
+        for (const e of editor.readDir(editor.localPath(org))) {
+          if (!e.is_file || !e.name.startsWith("local_") || !e.name.endsWith(".json")) continue;
+          const text = editor.readFile(editor.localPath(editor.pathJoin(org, e.name)));
+          if (text) records.push(text);
+        }
+      }
+    }
+  }
+  if (records.length === 0) return [];
+  return parseDesktopSessions(records, desktopSshHosts());
+}
+
+/** The SSH connections Desktop saves (`sshConfigs` in the Claude settings),
+ *  by id, so a session that names only its connection shows the host. */
+function desktopSshHosts(): Map<string, string> {
+  const hosts = new Map<string, string>();
+  const text = editor.readFile(editor.localPath(editor.pathJoin(claudeConfigDir(), "settings.json")));
+  if (!text) return hosts;
+  try {
+    const configs = (JSON.parse(text) as { sshConfigs?: unknown }).sshConfigs;
+    if (Array.isArray(configs)) {
+      for (const c of configs as { id?: unknown; sshHost?: unknown; name?: unknown }[]) {
+        if (typeof c?.id === "string" && (typeof c.sshHost === "string" || typeof c.name === "string")) {
+          hosts.set(c.id, String(c.sshHost ?? c.name));
+        }
+      }
+    }
+  } catch {
+    // Not ours to report: the CLI says so when its settings file is broken.
+  }
+  return hosts;
 }
 
 async function listClaudeRegistry(): Promise<LiveSession[]> {
