@@ -1866,44 +1866,51 @@ fn drag_move(ui: &mut Ui<u32>, y: i32) -> Vec<u32> {
     .msgs
 }
 
-/// **A drag past the edge of its window scrolls the window toward it**, a
-/// step per move, bigger the farther past; inside the window it scrolls
-/// nothing, and the tree says while a drag rests where a repeat would scroll.
+/// **A drag on the edge row of its window, or past it, scrolls the window
+/// toward it**, a step per move, bigger the farther out; inside the window it
+/// scrolls nothing, and the tree says while a drag rests where a repeat
+/// would scroll. At the end of the content the edge row is just a row.
 #[test]
-fn a_drag_past_its_windows_edge_scrolls_the_window() {
+fn a_drag_at_its_windows_edge_scrolls_the_window() {
     let mut ui: Ui<u32> = Ui::new();
     ui.frame(drag_window(), FRAME);
-    // The window is rows 1..6 of the frame.
+    // The window is rows 1..6 of the frame: 1 and 5 are its edge rows.
     ui.dispatch(Input::press(
-        Point::new(1, 2),
+        Point::new(1, 3),
         MouseButton::Left,
         Mods::NONE,
     ));
+    assert!(drag_move(&mut ui, 4).is_empty(), "inside: no scroll");
+    assert_eq!(ui.drag_autoscroll(), None);
     assert!(
-        drag_move(&mut ui, 5).is_empty(),
-        "on the last row: no scroll"
+        drag_move(&mut ui, 1).is_empty(),
+        "the top row, at the top: a row"
     );
     assert_eq!(ui.drag_autoscroll(), None);
 
-    assert_eq!(drag_move(&mut ui, 6), vec![1], "one past: one row");
-    assert_eq!(ui.drag_autoscroll(), Some(Point::new(1, 6)));
-    assert_eq!(drag_move(&mut ui, 8), vec![4], "three past: three rows");
+    assert_eq!(drag_move(&mut ui, 5), vec![1], "on the edge row: one row");
+    assert_eq!(ui.drag_autoscroll(), Some(Point::new(1, 5)));
+    assert_eq!(drag_move(&mut ui, 7), vec![4], "two past: three rows");
     assert_eq!(drag_move(&mut ui, 9), vec![8], "capped at the fastest step");
 
     // Held there, the repeats run the window to its end, and then there is
-    // nothing more to ask for.
+    // nothing more to ask for — not even on the edge row.
     let mut last = 8;
     while ui.drag_autoscroll().is_some() {
         last = *drag_move(&mut ui, 9).last().expect("a step");
     }
     assert_eq!(last, 15, "twenty rows in a five-row window end at fifteen");
+    assert!(
+        drag_move(&mut ui, 5).is_empty(),
+        "the last row, at the end: a row"
+    );
 
-    // Above the window, back up.
-    assert_eq!(drag_move(&mut ui, 0), vec![14]);
+    // On the top row, back up.
+    assert_eq!(drag_move(&mut ui, 1), vec![14]);
 
-    // Released, a move past the edge is only a move.
+    // Released, a move to the edge is only a move.
     ui.dispatch(Input::release(
-        Point::new(1, 0),
+        Point::new(1, 1),
         MouseButton::Left,
         Mods::NONE,
     ));
@@ -1979,4 +1986,36 @@ fn a_drag_survives_its_source_going_away() {
         Mods::NONE,
     ));
     assert_eq!(*log.borrow(), vec!["enter b", "drop b"]);
+}
+
+/// **A drag's hover is every node under the pointer**, as the pointer's hover
+/// is — not only the drop target — so a container around a target (a list's
+/// row, around the piece that takes the drop) can show where the drag is.
+#[test]
+fn a_drags_hover_reaches_what_is_around_the_target() {
+    let log: Log = Rc::default();
+    let l = |kind: &'static str, name: &'static str| {
+        let log = log.clone();
+        Rc::new(move |_: &Event| note(&log, format!("{kind} {name}"))) as fresh_ui::Handler<()>
+    };
+    let row_b = gesture(drag_row("b", &log, false, false))
+        .on(GestureKind::DragEnter, l("enter", "row"))
+        .on(GestureKind::DragLeave, l("leave", "row"));
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(
+        col().children([drag_row("a", &log, true, true), row_b, text("plain")]),
+        FRAME,
+    );
+    ui.dispatch(Input::press(
+        Point::new(0, 0),
+        MouseButton::Left,
+        Mods::NONE,
+    ));
+    move_to(&mut ui, 0, 1);
+    move_to(&mut ui, 0, 2);
+    assert_eq!(
+        *log.borrow(),
+        vec!["enter row", "enter b", "leave b", "leave row"],
+        "outermost enters first and leaves last, as hover does"
+    );
 }

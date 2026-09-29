@@ -88,8 +88,10 @@ pub const AUTOSCROLL_MAX_STEP: i32 = 4;
 /// out of it.
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
 pub(crate) struct Drag {
-    /// The drop target the pointer is over.
-    pub over: Option<ElementId>,
+    /// What the drag is over: every element under the pointer, as hover
+    /// would have it if the capture did not hold the pointer's own hover on
+    /// the thing dragged.
+    pub under: Vec<ElementId>,
     /// The captor's ancestors when the drag began, outermost first.
     pub lifted_from: Vec<ElementId>,
 }
@@ -158,7 +160,7 @@ impl<M: 'static> Ui<M> {
                     out,
                 );
                 self.autoscroll_drag(pos, out);
-                self.update_drop_target(pos, mods, out);
+                self.update_drag_hover(pos, mods, out);
                 claimed || self.pointer_owned()
             }
             Input::Press {
@@ -247,7 +249,7 @@ impl<M: 'static> Ui<M> {
                 // **The drop comes first.** The captor's release ends the
                 // drag it started, so by the time it runs, the target must
                 // already have said where the drag landed.
-                self.drop_at(pos, mods, out);
+                let dragged = self.drop_at(pos, mods, out);
                 let paths = self.route(pos);
                 let (mut claimed, _) = self.propagate_all(
                     &paths,
@@ -287,6 +289,14 @@ impl<M: 'static> Ui<M> {
                 }
                 self.captured = None;
                 self.drag = None;
+                // **The pointer's hover comes back from the drag.** The capture
+                // held it on the thing dragged while the drag's own hover
+                // followed the pointer; with both gone, hover is what is under
+                // the pointer now, not what was under it at the press.
+                if dragged {
+                    let paths = self.hit_paths(pos);
+                    self.update_hover(&paths, pos, mods, out);
+                }
                 claimed || self.pointer_owned()
             }
             Input::Wheel {
@@ -662,7 +672,7 @@ impl<M: 'static> Ui<M> {
         if let Some(c) = ctl.capture_request.take() {
             self.captured = Some(c);
             self.drag = ctl.drag_request.take().then(|| Drag {
-                over: None,
+                under: Vec::new(),
                 lifted_from: self.ancestors_of(c),
             });
         }
@@ -732,24 +742,43 @@ impl<M: 'static> Ui<M> {
         })
     }
 
-    /// A drag's move: tell the drop targets it crossed. Nothing while no drag
-    /// is held — a bare hover, or a capture that is not a drag.
-    fn update_drop_target(&mut self, pos: Point, mods: Mods, out: &mut Vec<M>) {
-        let Some(was) = self.drag.as_ref().map(|d| d.over) else {
+    /// Every element under a point, across the stacked paths — the set hover
+    /// is computed over.
+    fn under(&self, p: Point) -> Vec<ElementId> {
+        let mut now: Vec<ElementId> = Vec::new();
+        for path in self.hit_paths(p) {
+            for e in path {
+                if !now.contains(&e) {
+                    now.push(e);
+                }
+            }
+        }
+        now
+    }
+
+    /// **A drag's hover.** What a drag is over is told the way hover is:
+    /// every element the pointer comes onto hears `DragEnter`, every one it
+    /// goes off hears `DragLeave`, one node at a time and not propagated — so
+    /// a list row can tint itself under a drag exactly as it does under the
+    /// pointer, which the capture holds on the row being dragged. Nothing
+    /// while no drag is held: a bare hover, or a capture that is not a drag.
+    fn update_drag_hover(&mut self, pos: Point, mods: Mods, out: &mut Vec<M>) {
+        let Some(was) = self.drag.as_ref().map(|d| d.under.clone()) else {
             return;
         };
-        let now = self.drop_target_at(pos);
+        let now = self.under(pos);
         if now == was {
             return;
         }
         if let Some(d) = self.drag.as_mut() {
-            d.over = now;
+            d.under = now.clone();
         }
-        if let Some(old) = was {
-            self.fire_at(old, GestureKind::DragLeave, pos, mods, out);
+        let left: Vec<ElementId> = was.iter().copied().filter(|e| !now.contains(e)).collect();
+        for n in left.into_iter().rev() {
+            self.fire_at(n, GestureKind::DragLeave, pos, mods, out);
         }
-        if let Some(new) = now {
-            self.fire_at(new, GestureKind::DragEnter, pos, mods, out);
+        for n in now.into_iter().filter(|e| !was.contains(e)) {
+            self.fire_at(n, GestureKind::DragEnter, pos, mods, out);
         }
     }
 
@@ -758,10 +787,12 @@ impl<M: 'static> Ui<M> {
     ///
     /// The window is the nearest one around the dragged row that can move that
     /// way — the wheel's rule, walked from the thing being dragged rather than
-    /// from the pointer, which is outside it — and the chain stops at a layer
-    /// as the wheel's does. *Past* the edge, not on the edge row: a drop on
-    /// the first or last row in sight must not have the row scrolled out from
-    /// under it. The farther past, the bigger the step, up to
+    /// from the pointer, which may be outside it — and the chain stops at a
+    /// layer as the wheel's does. **On the edge row or past it**: a window
+    /// flush with the screen's edge has no cell beyond it to point at, so the
+    /// edge row itself must scroll; it does only while there is more that
+    /// way, so at either end of the content it is an ordinary row to drop on.
+    /// One step on the edge row and one more per row past it, up to
     /// [`AUTOSCROLL_MAX_STEP`], in the window's own unit (a row, or an item
     /// for a window that scrolls by items).
     ///
@@ -798,10 +829,10 @@ impl<M: 'static> Ui<M> {
                     node.data.scroll_max.x,
                 ),
             };
-            let step = if p < lo {
-                -(lo - p).min(AUTOSCROLL_MAX_STEP)
-            } else if p >= hi {
-                (p - hi + 1).min(AUTOSCROLL_MAX_STEP)
+            let step = if p <= lo {
+                -(lo - p + 1).min(AUTOSCROLL_MAX_STEP)
+            } else if p >= hi - 1 {
+                (p - hi + 2).min(AUTOSCROLL_MAX_STEP)
             } else {
                 0
             };
@@ -845,19 +876,28 @@ impl<M: 'static> Ui<M> {
         self.autoscroll_target(p).map(|_| p)
     }
 
-    /// A drag's release: the target under the pointer hears `Drop`, and one
-    /// the drag was last over that is somewhere else hears `DragLeave`.
-    fn drop_at(&mut self, pos: Point, mods: Mods, out: &mut Vec<M>) {
+    /// A drag's release: the target under the pointer hears `Drop`, and what
+    /// the drag was over that is no longer under the pointer hears
+    /// `DragLeave`. What is still under it is handed back to hover by the
+    /// caller, once the capture is gone. Reports whether a drag was held.
+    fn drop_at(&mut self, pos: Point, mods: Mods, out: &mut Vec<M>) -> bool {
         let Some(drag) = self.drag.take() else {
-            return;
+            return false;
         };
-        let target = self.drop_target_at(pos);
-        if let Some(old) = drag.over.filter(|&o| Some(o) != target) {
-            self.fire_at(old, GestureKind::DragLeave, pos, mods, out);
+        let now = self.under(pos);
+        let left: Vec<ElementId> = drag
+            .under
+            .iter()
+            .copied()
+            .filter(|e| !now.contains(e))
+            .collect();
+        for n in left.into_iter().rev() {
+            self.fire_at(n, GestureKind::DragLeave, pos, mods, out);
         }
-        if let Some(t) = target {
+        if let Some(t) = self.drop_target_at(pos) {
             self.fire_at(t, GestureKind::Drop, pos, mods, out);
         }
+        true
     }
 
     // -- hover ---------------------------------------------------------------

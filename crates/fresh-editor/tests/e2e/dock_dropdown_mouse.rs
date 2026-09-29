@@ -300,6 +300,35 @@ fn a_drag_held_past_the_lists_edge_scrolls_it_to_a_folder_out_of_sight() {
     .unwrap();
 }
 
+/// **A right-click's menu opens one row below the pointer**, as a click's
+/// does, so the row it is for stays in sight above it rather than under the
+/// menu's top edge.
+#[test]
+fn a_rows_right_click_menu_opens_below_the_pointer() {
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h = launch(root);
+    let (scol, srow) = pos_of(&h, "alphaproj");
+    let click = (scol + 3, srow);
+    h.mouse_right_click(click.0, click.1).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Move to Folder"))
+        .unwrap();
+    let screen = h.screen_to_string();
+    let corner = pos_of(&h, "┌");
+    assert_eq!(
+        corner,
+        (click.0, click.1 + 1),
+        "the menu's corner is one row below the pointer, at its column:\n{screen}"
+    );
+    assert!(
+        screen
+            .lines()
+            .nth(srow as usize)
+            .unwrap()
+            .contains("alphaproj"),
+        "the row stays in sight:\n{screen}"
+    );
+}
+
 /// Clicking an option in the Menu activates it.
 ///
 /// Not a reproducer — this dropdown anchors high enough in the dock that

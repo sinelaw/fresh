@@ -128,10 +128,12 @@ pub enum GestureKind {
     Key,
     FocusGained,
     FocusLost,
-    /// A drag ([`Event::start_drag`]) brought the pointer onto this drop
-    /// target. Fired on the node itself, not propagated, like `Enter`.
+    /// A drag ([`Event::start_drag`]) brought the pointer onto this node.
+    /// Fired on the node itself, not propagated, like `Enter` — and on every
+    /// node the pointer comes onto, as `Enter` is, not only drop targets: it
+    /// is the drag's hover, which the capture keeps from `Enter`.
     DragEnter,
-    /// A drag took the pointer off this drop target, or ended elsewhere.
+    /// A drag took the pointer off this node, or ended elsewhere.
     DragLeave,
     /// A drag was released over this node. Listening for it is what makes a
     /// node a **drop target**; see [`Event::start_drag`].
@@ -379,11 +381,12 @@ impl Event {
     /// Capture the pointer for a **drag and drop**: everything
     /// [`capture_pointer`](Self::capture_pointer) does, and while the press is
     /// held the tree also watches what is *under* the pointer, which a
-    /// capture otherwise hides. The drop target there — the innermost node on
-    /// the topmost path that listens for [`GestureKind::Drop`] — hears
-    /// `DragEnter` when the pointer comes onto it and `DragLeave` when it goes
-    /// off, and the release is offered to it as `Drop` before this element
-    /// hears its own `Release`.
+    /// capture otherwise hides: every node the pointer comes onto hears
+    /// `DragEnter`, and `DragLeave` when it goes off — the drag's hover. The
+    /// release is offered as `Drop` to the drop target under the pointer, the
+    /// innermost node on the topmost path that listens for
+    /// [`GestureKind::Drop`], before this element hears its own `Release`;
+    /// then the pointer's hover is resynced to what is under it.
     ///
     /// What is being dragged is not the tree's to carry. The handler that
     /// starts the drag says so in the message it returns, and the owner of

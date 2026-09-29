@@ -18229,7 +18229,9 @@ editor.on("widget_event", (e) => {
       const idx = payload.index;
       const col = typeof payload.col === "number" ? payload.col : 0;
       const row = typeof payload.row === "number" ? payload.row : 0;
-      if (typeof idx === "number") openDockContextMenu(idx, col, row);
+      // One row below the pointer, as a click's menu opens, so the row it
+      // is for stays in sight above it.
+      if (typeof idx === "number") openDockContextMenu(idx, col, row + 1);
       return;
     }
     // List selection. Keyboard nav fires this with `widget_key`

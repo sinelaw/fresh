@@ -799,13 +799,11 @@ impl<M: 'static> Ui<M> {
             self.captured = None;
         }
         // A drag outlives its captor (see `hit::Drag`), but nothing it holds
-        // may name an element that is gone. A drop target that goes away
-        // mid-drag is simply no longer under the pointer; it is not told,
-        // having nothing left to tell.
+        // may name an element that is gone. One that goes away mid-drag is
+        // simply no longer under the pointer; it is not told, having nothing
+        // left to tell.
         if let Some(d) = self.drag.as_mut() {
-            if d.over == Some(id) {
-                d.over = None;
-            }
+            d.under.retain(|&e| e != id);
             d.lifted_from.retain(|&e| e != id);
         }
         if self.focus == Some(id) {

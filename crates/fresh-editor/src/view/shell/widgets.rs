@@ -4256,9 +4256,10 @@ fn takes_drops(nodes: &[fresh_core::api::TreeNode]) -> bool {
 /// drag holds the capture — and `row` is the row's own `select`, which is how
 /// the applier knows where the drag is and where it landed.
 ///
-/// Coming onto the row lights it the way the pointer's hover does, which is
-/// what a drag has instead of a hover: the capture keeps the pointer's own
-/// hover on the row the drag started from.
+/// A compact row is tinted by its list, which takes the drag's hover as
+/// hover (`fresh_ui::GestureKind::DragEnter`). A card draws its hover band
+/// from the panel's hover memo instead, so coming onto the row writes that
+/// memo too, the way the pointer's own hover does.
 fn drop_row(n: Node<UiMsg>, slot: Slot, row: crate::widgets::WidgetEvent) -> Node<UiMsg> {
     use fresh_ui::GestureKind;
     use std::rc::Rc;

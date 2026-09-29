@@ -971,7 +971,10 @@ impl<M: 'static> Component<M> for List<M> {
             Rc::new(move |k: Key| {
                 let up = up.clone();
                 let h: crate::desc::Handler<M> = Rc::new(move |e: &Event| {
-                    let over = e.kind == GestureKind::Enter;
+                    // Under a drag the row the pointer is over is the hovered
+                    // one too: the capture holds the pointer's own hover on
+                    // the row being dragged, and the drag's hover follows it.
+                    let over = matches!(e.kind, GestureKind::Enter | GestureKind::DragEnter);
                     let k = k.clone();
                     up.set(move |st: &mut ListState| {
                         if over {
@@ -1083,7 +1086,9 @@ impl<M: 'static> Component<M> for List<M> {
                 let content = row.theme(theme).h(Sizing::Cells(rows_h));
                 let g = gesture(content)
                     .on_enter(hover(k.clone()))
-                    .on_leave(hover(k.clone()));
+                    .on_leave(hover(k.clone()))
+                    .on(GestureKind::DragEnter, hover(k.clone()))
+                    .on(GestureKind::DragLeave, hover(k.clone()));
                 let g = match &click {
                     Some(mk) => g.on(GestureKind::Click, mk(i)),
                     None => g,

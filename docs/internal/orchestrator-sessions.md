@@ -472,8 +472,8 @@ external session dropped on an external sessions group goes back to its own
 product's group; a workspace is never filed there. The rows are
 `draggable` tree nodes: a click on one acts on the release, and a drag that
 ends off the tree, or back on its own row after leaving it, does nothing.
-Held past the top or bottom of the list (on the divider above it, the key
-hints below it), a drag scrolls the list toward the pointer, faster the
+Held on the list's first or last visible row, or past it, a drag scrolls
+the list toward the pointer while there is more that way, faster the
 farther out, so a folder out of sight can be reached.
 
 ### 5.1 Project scoping (the "yesterday's directories" fix)
