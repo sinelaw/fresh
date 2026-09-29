@@ -56,6 +56,9 @@ export interface LiveSession {
   remoteControl?: boolean;
   /** A Remote Control session whose machine is not connected right now. */
   offline?: boolean;
+  /** The app a local session runs inside, when it is not a terminal:
+   *  "Claude Desktop", "VS Code", … */
+  host?: string;
 }
 
 /** The Claude cloud session list: what `claude --teleport` reads. Not a
@@ -176,6 +179,52 @@ export function parseClaudeAgents(stdout: string): LiveSession[] {
       pid: num(e.pid),
       jobId,
       waitingFor: str(e.waitingFor),
+    });
+  }
+  return out;
+}
+
+/** The app behind an SDK-driven session, from the `entrypoint` the CLI
+ *  records for it. */
+export function claudeHostName(entrypoint: string | undefined): string {
+  const e = (entrypoint ?? "").toLowerCase();
+  if (e.includes("desktop")) return "Claude Desktop";
+  if (e.includes("vscode")) return "VS Code";
+  if (e.includes("jetbrains") || e.includes("intellij")) return "JetBrains";
+  return "SDK";
+}
+
+/** Sessions in the CLI's registry (`~/.claude/sessions/<pid>.json`, one
+ *  record per running `claude`) that `claude agents --json` leaves out: it
+ *  reports only `interactive` and `bg` sessions, so an SDK-driven one —
+ *  Claude Desktop's, an editor extension's — is missing from it. Only a
+ *  record whose process is in `alive` counts: a crashed session leaves its
+ *  file behind. */
+export function parseClaudeRegistry(records: string[], alive: Set<number>): LiveSession[] {
+  const out: LiveSession[] = [];
+  for (const text of records) {
+    const e = asRecord(parseJson(text));
+    if (!e) continue;
+    const kind = str(e.kind);
+    if (kind === "interactive" || kind === "bg") continue;
+    const pid = num(e.pid);
+    const id = str(e.sessionId);
+    if (pid === undefined || !id || !alive.has(pid)) continue;
+    const cwd = str(e.cwd);
+    const host = claudeHostName(str(e.entrypoint));
+    out.push({
+      key: `claude-local/${id}`,
+      source: "claude-local",
+      id,
+      agent: "claude",
+      where: "local",
+      title: str(e.name) ??
+        (cwd && !isFilesystemRoot(cwd) ? liveBaseName(cwd) : `claude ${id.slice(0, 8)}`),
+      state: claudeState(str(e.status)),
+      cwd,
+      updatedAt: when(e.updatedAt) ?? when(e.startedAt),
+      pid,
+      host,
     });
   }
   return out;
@@ -581,6 +630,8 @@ export function liveDetail(s: LiveSession): string {
     ? "codex cloud"
     : s.jobId
     ? "claude --bg"
+    : s.host
+    ? s.host
     : s.pid !== undefined
     ? `pid ${s.pid}`
     : "local";

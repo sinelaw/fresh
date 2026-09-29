@@ -3,6 +3,7 @@ import {
   claudeAccessToken,
   claudeCloudPageInfo,
   claudeSessionId,
+  parseClaudeRegistry,
   codexLocalSessions,
   elsewhereRoot,
   isCodexSessionArgv,
@@ -46,6 +47,16 @@ eq(agents[0].state, "working", "claude agents: busy is working");
 eq(agents[0].title, "fresh-04", "claude agents: the session's name is the title");
 eq([agents[1].state, agents[1].jobId, agents[1].waitingFor], ["blocked", "job7", "permission"], "claude agents: a background job keeps its job id and rolled-up state");
 eq(parseClaudeAgents("not json"), [], "claude agents: junk output is no sessions");
+
+const registry = parseClaudeRegistry([
+  JSON.stringify({ pid: 501, sessionId: "desk1", cwd: "/home/u/site", kind: "sdk", entrypoint: "claude-desktop", status: "busy", name: "Fix the build" }),
+  JSON.stringify({ pid: 502, sessionId: "vs1", cwd: "/home/u/api", kind: "sdk", entrypoint: "claude-vscode", status: "idle" }),
+  JSON.stringify({ pid: 503, sessionId: "term1", cwd: "/home/u/x", kind: "interactive", status: "idle" }),
+  JSON.stringify({ pid: 504, sessionId: "gone1", cwd: "/home/u/y", kind: "sdk", entrypoint: "claude-desktop", status: "idle" }),
+  "not json",
+], new Set([501, 502, 503]));
+eq(registry.map((s) => [s.id, s.title, s.state, s.host]), [["desk1", "Fix the build", "working", "Claude Desktop"], ["vs1", "api", "idle", "VS Code"]], "claude registry: SDK sessions (Desktop, VS Code) that agents skips; not terminal ones, not dead ones");
+eq(liveDetail(registry[0]), "site · Claude Desktop", "detail: a Desktop session says so");
 
 // ── Claude cloud ──────────────────────────────────────────────────
 

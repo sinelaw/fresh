@@ -23,6 +23,7 @@ import {
   codexLocalSessions,
   parseClaudeAgents,
   parseClaudeCloud,
+  parseClaudeRegistry,
   parseCodexCloud,
   parseCodexProcesses,
   parseLsofCwds,
@@ -186,13 +187,46 @@ function firstLine(s: string): string {
 
 // ── Sources ───────────────────────────────────────────────────────
 
+/** The Claude CLI's config directory: `$CLAUDE_CONFIG_DIR`, or `~/.claude`. */
+function claudeConfigDir(): string {
+  return editor.getEnv("CLAUDE_CONFIG_DIR") || editor.pathJoin(editor.getHomeDir(), ".claude");
+}
+
+/** Claude sessions running here: `claude agents --json` (terminal and `--bg`
+ *  sessions, with a background job's state), plus what it leaves out — the
+ *  SDK-driven sessions Claude Desktop and editor extensions run — read from
+ *  the CLI's registry of running sessions. */
 async function listClaudeLocal(s: Required<Settings>): Promise<LiveSession[]> {
   const r = await editor.spawnHostProcess(s.claudeCommand, ["agents", "--json"], probeDir());
-  if (r.exit_code !== 0) {
-    if (missingTool(r)) return [];
+  if (r.exit_code !== 0 && !missingTool(r)) {
     throw new Error(`claude agents: ${firstLine(r.stderr) || `exit ${r.exit_code}`}`);
   }
-  return parseClaudeAgents(r.stdout);
+  const listed = r.exit_code === 0 ? parseClaudeAgents(r.stdout) : [];
+  const seen = new Set(listed.map((x) => x.id));
+  return [...listed, ...(await listClaudeRegistry()).filter((x) => !seen.has(x.id))];
+}
+
+async function listClaudeRegistry(): Promise<LiveSession[]> {
+  // A pid is checked with `ps`, which Windows lacks; there the registry's
+  // SDK sessions go unlisted.
+  if (WINDOWS) return [];
+  const dir = editor.pathJoin(claudeConfigDir(), "sessions");
+  const records: string[] = [];
+  const pids: number[] = [];
+  for (const entry of editor.readDir(editor.localPath(dir))) {
+    if (!entry.is_file || !/^\d+\.json$/.test(entry.name)) continue;
+    const text = editor.readFile(editor.localPath(editor.pathJoin(dir, entry.name)));
+    if (!text) continue;
+    records.push(text);
+    pids.push(Number(entry.name.slice(0, -".json".length)));
+  }
+  if (pids.length === 0) return [];
+  // Which of them are still running: a session that crashed leaves its file.
+  const ps = await editor.spawnHostProcess("ps", ["-o", "pid=", "-p", pids.join(",")]);
+  const alive = new Set(
+    ps.stdout.split("\n").map((l) => Number(l.trim())).filter((n) => n > 0),
+  );
+  return parseClaudeRegistry(records, alive);
 }
 
 /** The Claude CLI's sign-in: its credentials file, else (macOS) its Keychain
@@ -200,8 +234,7 @@ async function listClaudeLocal(s: Required<Settings>): Promise<LiveSession[]> {
 async function readClaudeToken(force: boolean): Promise<string | null> {
   const now = Date.now();
   if (claudeToken && now - claudeToken.readAt < 10 * 60_000) return claudeToken.token;
-  const configDir = editor.getEnv("CLAUDE_CONFIG_DIR") ||
-    editor.pathJoin(editor.getHomeDir(), ".claude");
+  const configDir = claudeConfigDir();
   const file = editor.readFile(editor.localPath(editor.pathJoin(configDir, ".credentials.json")));
   let token = file ? claudeAccessToken(file, now) : null;
   if (!token && !file && !WINDOWS && (force || !keychainRefused)) {

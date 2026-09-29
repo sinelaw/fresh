@@ -502,7 +502,7 @@ includes cloud sessions this machine never saw.
 
   | Source | From | Default |
   | --- | --- | --- |
-  | Claude on this machine | `claude agents --json` (interactive, desktop, `--bg`) | on |
+  | Claude on this machine | `claude agents --json` (terminal and `--bg` sessions), plus the CLI's registry of running sessions (`~/.claude/sessions/<pid>.json`, live pids only) for the SDK-driven ones it skips — Claude Desktop's and editor extensions' | on |
   | Codex on this machine | running `codex` processes (`ps`, cwd via `lsof` or `/proc`); not on Windows | on |
   | Codex Cloud | `codex cloud list --json` (applied tasks hidden) | on |
   | Claude cloud + Remote Control | `GET /v1/code/sessions?statuses=active` (paged) — the list `claude --teleport` reads, asked for active sessions only — with the Claude CLI's own sign-in (`~/.claude/.credentials.json`, or the macOS Keychain) | on |
