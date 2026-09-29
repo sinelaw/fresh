@@ -28,6 +28,29 @@ const WHEEL_COLUMNS: i32 = crate::widgets::render::PAN_COLUMNS;
 /// short enough that the view never feels behind the wheel.
 const SMOOTH_SCROLL_LINE: Duration = Duration::from_millis(16);
 
+/// How often a drag resting past a list's edge scrolls it another step
+/// (`fresh_ui::Ui::drag_autoscroll`). Slow enough to stop on the row wanted,
+/// fast enough to cross a long list; the tree makes the step bigger the
+/// farther past the edge the pointer is.
+const DRAG_AUTOSCROLL_STEP: Duration = Duration::from_millis(60);
+
+/// A drag held past the edge of the list it was lifted from, which keeps
+/// scrolling it while it rests there.
+///
+/// **The tree decides what the drag means; this only supplies the time.**
+/// A step is a pointer move — the tree scrolls the window toward a drag
+/// that moves past its edge — and a drag held still produces no moves, so
+/// the host repeats the pointer where it rests, through the same dispatch
+/// the real moves took, for as long as the tree says a repeat would scroll.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct DragAutoscroll {
+    col: u16,
+    row: u16,
+    /// When the last step was taken. Advanced by the interval, so the pace
+    /// does not drift with frame times.
+    last_step: Instant,
+}
+
 /// A wheel gesture still playing out.
 ///
 /// One notch asks for several lines at once. Handing them over one at a
@@ -547,6 +570,56 @@ impl Editor {
         if self.deliver_wheel(col, row, direction, due).wheel_forwarded {
             self.pending_wheel_scroll = None;
         }
+    }
+
+    /// Record where the tree says a drag rests past a list's edge, after a
+    /// dispatch. A drag that was already scrolling keeps its pace; one that
+    /// has just arrived there took its first step with the move that
+    /// brought it.
+    pub(crate) fn note_drag_autoscroll(&mut self, at: Option<fresh_ui::Point>) {
+        let last_step = self
+            .drag_autoscroll
+            .map_or_else(Instant::now, |d| d.last_step);
+        self.drag_autoscroll = at.map(|p| DragAutoscroll {
+            col: p.x.max(0) as u16,
+            row: p.y.max(0) as u16,
+            last_step,
+        });
+    }
+
+    /// True while a drag rests where the tree would scroll the list under
+    /// it. The event loop keeps producing frames while it does.
+    pub fn has_drag_autoscroll(&self) -> bool {
+        self.drag_autoscroll.is_some()
+    }
+
+    /// When the held drag's next step comes due, for the loop's wait.
+    pub fn drag_autoscroll_deadline(&self) -> Option<Instant> {
+        self.drag_autoscroll
+            .map(|d| d.last_step + DRAG_AUTOSCROLL_STEP)
+    }
+
+    /// Repeat the pointer where a drag rests past a list's edge, once its
+    /// step is due. Called once per frame, before layout, beside the wheel
+    /// walk, so the step lands in the frame about to be painted.
+    pub(crate) fn step_drag_autoscroll(&mut self) {
+        let Some(d) = self.drag_autoscroll.as_mut() else {
+            return;
+        };
+        if d.last_step.elapsed() < DRAG_AUTOSCROLL_STEP {
+            return;
+        }
+        d.last_step += DRAG_AUTOSCROLL_STEP;
+        // A loop away for a long while does not owe the steps it missed: the
+        // pace restarts from now rather than scrolling them all at once.
+        if d.last_step.elapsed() >= DRAG_AUTOSCROLL_STEP {
+            d.last_step = Instant::now();
+        }
+        let pos = fresh_ui::Point::new(d.col as i32, d.row as i32);
+        self.shell_dispatch(fresh_ui::Input::Move {
+            pos,
+            mods: fresh_ui::Mods::NONE,
+        });
     }
 
     /// Update LSP hover state based on mouse position

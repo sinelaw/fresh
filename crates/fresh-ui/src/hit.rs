@@ -69,13 +69,29 @@ impl<M: std::fmt::Debug> std::fmt::Debug for Dispatch<M> {
     }
 }
 
+/// The most a drag past a window's edge scrolls it per step, in the window's
+/// own unit. A pointer this far out or farther moves it at the fastest rate.
+pub const AUTOSCROLL_MAX_STEP: i32 = 4;
+
 /// A drag in progress: a capture taken with [`Event::start_drag`].
 ///
-/// Only the drop target the pointer is over is kept. The captor is
-/// `Ui::captured`, and what is being dragged belongs to whoever started it.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+/// What is being dragged belongs to whoever started it; the tree keeps only
+/// where the drag is.
+///
+/// **A drag outlives its captor.** The thing dragged can scroll out of a
+/// virtual list's window — which is what dragging past the edge does — and
+/// its element goes with it. The capture must go too (an id is recycled, and
+/// the next element in the slot would inherit it), but the drag is still in
+/// the user's hand: the moves still find targets and the release still drops.
+/// So the drag does not read the captor. It keeps the path it was lifted
+/// from, for [`Ui::drag_autoscroll`], and an element that goes away is taken
+/// out of it.
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
 pub(crate) struct Drag {
+    /// The drop target the pointer is over.
     pub over: Option<ElementId>,
+    /// The captor's ancestors when the drag began, outermost first.
+    pub lifted_from: Vec<ElementId>,
 }
 
 /// What one stacked path did with a wheel notch.
@@ -141,6 +157,7 @@ impl<M: 'static> Ui<M> {
                     1,
                     out,
                 );
+                self.autoscroll_drag(pos, out);
                 self.update_drop_target(pos, mods, out);
                 claimed || self.pointer_owned()
             }
@@ -644,7 +661,10 @@ impl<M: 'static> Ui<M> {
     fn apply_controls(&mut self, ctl: &Ctl, out: &mut Vec<M>) {
         if let Some(c) = ctl.capture_request.take() {
             self.captured = Some(c);
-            self.drag = ctl.drag_request.take().then(Drag::default);
+            self.drag = ctl.drag_request.take().then(|| Drag {
+                over: None,
+                lifted_from: self.ancestors_of(c),
+            });
         }
         if let Some((id, sel)) = ctl.focus_request.take() {
             self.focus_element(id, sel, out);
@@ -715,20 +735,114 @@ impl<M: 'static> Ui<M> {
     /// A drag's move: tell the drop targets it crossed. Nothing while no drag
     /// is held — a bare hover, or a capture that is not a drag.
     fn update_drop_target(&mut self, pos: Point, mods: Mods, out: &mut Vec<M>) {
-        let Some(drag) = self.drag else {
+        let Some(was) = self.drag.as_ref().map(|d| d.over) else {
             return;
         };
         let now = self.drop_target_at(pos);
-        if now == drag.over {
+        if now == was {
             return;
         }
-        self.drag = Some(Drag { over: now });
-        if let Some(old) = drag.over {
+        if let Some(d) = self.drag.as_mut() {
+            d.over = now;
+        }
+        if let Some(old) = was {
             self.fire_at(old, GestureKind::DragLeave, pos, mods, out);
         }
         if let Some(new) = now {
             self.fire_at(new, GestureKind::DragEnter, pos, mods, out);
         }
+    }
+
+    /// **A drag past the edge of the window it was lifted from scrolls that
+    /// window toward the pointer**, so a target out of sight can be reached.
+    ///
+    /// The window is the nearest one around the dragged row that can move that
+    /// way — the wheel's rule, walked from the thing being dragged rather than
+    /// from the pointer, which is outside it — and the chain stops at a layer
+    /// as the wheel's does. *Past* the edge, not on the edge row: a drop on
+    /// the first or last row in sight must not have the row scrolled out from
+    /// under it. The farther past, the bigger the step, up to
+    /// [`AUTOSCROLL_MAX_STEP`], in the window's own unit (a row, or an item
+    /// for a window that scrolls by items).
+    ///
+    /// One step per move. A drag held still past the edge produces no moves,
+    /// and the tree has no clock to make its own: the host, which does, asks
+    /// [`Ui::drag_autoscroll`] and repeats the pointer at its own cadence.
+    fn autoscroll_target(&self, pos: Point) -> Option<(RenderId, i32)> {
+        let drag = self.drag.as_ref()?;
+        for &n in drag.lifted_from.iter().rev() {
+            let Some(r) = self.render_for(n) else {
+                continue;
+            };
+            let node = self.render.get(r)?;
+            if node.out_of_flow {
+                return None;
+            }
+            if !node.clips {
+                continue;
+            }
+            let rect = node.data.rect;
+            let (p, lo, hi, at, max) = match node.data.scroll_axis {
+                Axis::Vertical => (
+                    pos.y,
+                    rect.y,
+                    rect.bottom(),
+                    node.data.scroll.y,
+                    node.data.scroll_max.y,
+                ),
+                Axis::Horizontal => (
+                    pos.x,
+                    rect.x,
+                    rect.right(),
+                    node.data.scroll.x,
+                    node.data.scroll_max.x,
+                ),
+            };
+            let step = if p < lo {
+                -(lo - p).min(AUTOSCROLL_MAX_STEP)
+            } else if p >= hi {
+                (p - hi + 1).min(AUTOSCROLL_MAX_STEP)
+            } else {
+                0
+            };
+            if step != 0 && (at + step).clamp(0, max.max(0)) != at {
+                return Some((r, step));
+            }
+        }
+        None
+    }
+
+    fn autoscroll_drag(&mut self, pos: Point, out: &mut Vec<M>) {
+        let Some((r, step)) = self.autoscroll_target(pos) else {
+            return;
+        };
+        let Some(node) = self.render.get_mut(r) else {
+            return;
+        };
+        let (max, axis) = (node.data.scroll_max, node.data.scroll_axis);
+        let next = match axis {
+            Axis::Vertical => {
+                node.data.scroll.y = (node.data.scroll.y + step).clamp(0, max.y.max(0));
+                node.data.scroll.y
+            }
+            Axis::Horizontal => {
+                node.data.scroll.x = (node.data.scroll.x + step).clamp(0, max.x.max(0));
+                node.data.scroll.x
+            }
+        };
+        self.release_follow(r);
+        self.mark_render_dirty(r);
+        self.report_scroll(r, next, out);
+    }
+
+    /// Where a drag is resting past the edge of a window it can still scroll
+    /// — the pointer, for the host to repeat as a move until this is `None`.
+    /// See `autoscroll_target`: the tree takes one step per move and has no
+    /// clock of its own, so a drag held still keeps scrolling only because
+    /// the host keeps asking.
+    pub fn drag_autoscroll(&self) -> Option<Point> {
+        let p = self.pointer?;
+        self.autoscroll_target(p).map(|_| p)
     }
 
     /// A drag's release: the target under the pointer hears `Drop`, and one

@@ -1509,6 +1509,10 @@ pub struct Editor {
     /// [`PendingWheelScroll`].
     pub(crate) pending_wheel_scroll: Option<crate::app::mouse_input::PendingWheelScroll>,
 
+    /// A drag resting past the edge of the list it was lifted from. See
+    /// [`crate::app::mouse_input::DragAutoscroll`].
+    pub(crate) drag_autoscroll: Option<crate::app::mouse_input::DragAutoscroll>,
+
     /// Deferred plugin animations targeting a virtual buffer whose
     /// on-screen Rect wasn't in the cached split layout at command
     /// dispatch time. Drained at the top of each render pass once

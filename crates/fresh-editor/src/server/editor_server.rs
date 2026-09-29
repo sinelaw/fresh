@@ -612,6 +612,7 @@ impl EditorServer {
                 if editor.active_window().animations.is_active()
                     || editor.active_window_mut().animations.take_settle_frame()
                     || editor.has_pending_wheel_scroll()
+                    || editor.has_drag_autoscroll()
                 {
                     needs_render = true;
                 }

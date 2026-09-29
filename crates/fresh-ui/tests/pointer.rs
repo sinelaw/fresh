@@ -1834,3 +1834,149 @@ fn a_plain_capture_offers_nothing_to_drop_targets() {
     ));
     assert_eq!(*log.borrow(), vec!["release a"]);
 }
+
+/// A five-row window over twenty draggable rows, between a line above it and
+/// a line below it, reporting every move of the window as its offset.
+fn drag_window() -> Node<u32> {
+    let rows: Vec<Node<u32>> = (0..20)
+        .map(|i| {
+            gesture(text(format!("row {i}"))).on(
+                GestureKind::Press,
+                Rc::new(|e: &Event| {
+                    e.start_drag();
+                    None
+                }),
+            )
+        })
+        .collect();
+    col().children([
+        text("above"),
+        viewport(col().children(rows))
+            .h(Sizing::Cells(5))
+            .on_scroll(|y| y),
+        text("below"),
+    ])
+}
+
+fn drag_move(ui: &mut Ui<u32>, y: i32) -> Vec<u32> {
+    ui.dispatch(Input::Move {
+        pos: Point::new(1, y),
+        mods: Mods::NONE,
+    })
+    .msgs
+}
+
+/// **A drag past the edge of its window scrolls the window toward it**, a
+/// step per move, bigger the farther past; inside the window it scrolls
+/// nothing, and the tree says while a drag rests where a repeat would scroll.
+#[test]
+fn a_drag_past_its_windows_edge_scrolls_the_window() {
+    let mut ui: Ui<u32> = Ui::new();
+    ui.frame(drag_window(), FRAME);
+    // The window is rows 1..6 of the frame.
+    ui.dispatch(Input::press(
+        Point::new(1, 2),
+        MouseButton::Left,
+        Mods::NONE,
+    ));
+    assert!(
+        drag_move(&mut ui, 5).is_empty(),
+        "on the last row: no scroll"
+    );
+    assert_eq!(ui.drag_autoscroll(), None);
+
+    assert_eq!(drag_move(&mut ui, 6), vec![1], "one past: one row");
+    assert_eq!(ui.drag_autoscroll(), Some(Point::new(1, 6)));
+    assert_eq!(drag_move(&mut ui, 8), vec![4], "three past: three rows");
+    assert_eq!(drag_move(&mut ui, 9), vec![8], "capped at the fastest step");
+
+    // Held there, the repeats run the window to its end, and then there is
+    // nothing more to ask for.
+    let mut last = 8;
+    while ui.drag_autoscroll().is_some() {
+        last = *drag_move(&mut ui, 9).last().expect("a step");
+    }
+    assert_eq!(last, 15, "twenty rows in a five-row window end at fifteen");
+
+    // Above the window, back up.
+    assert_eq!(drag_move(&mut ui, 0), vec![14]);
+
+    // Released, a move past the edge is only a move.
+    ui.dispatch(Input::release(
+        Point::new(1, 0),
+        MouseButton::Left,
+        Mods::NONE,
+    ));
+    assert!(drag_move(&mut ui, 0).is_empty());
+    assert_eq!(ui.drag_autoscroll(), None);
+}
+
+/// **Only a drag scrolls.** A plain capture — a grip, a text selection — past
+/// the same edge leaves the window where it is.
+#[test]
+fn a_plain_capture_past_the_edge_scrolls_nothing() {
+    let rows: Vec<Node<u32>> = (0..20)
+        .map(|i| {
+            gesture(text(format!("row {i}"))).on(
+                GestureKind::Press,
+                Rc::new(|e: &Event| {
+                    e.capture_pointer();
+                    None
+                }),
+            )
+        })
+        .collect();
+    let mut ui: Ui<u32> = Ui::new();
+    ui.frame(
+        col().children([
+            text("above"),
+            viewport(col().children(rows))
+                .h(Sizing::Cells(5))
+                .on_scroll(|y| y),
+            text("below"),
+        ]),
+        FRAME,
+    );
+    ui.dispatch(Input::press(
+        Point::new(1, 2),
+        MouseButton::Left,
+        Mods::NONE,
+    ));
+    assert!(drag_move(&mut ui, 9).is_empty());
+    assert_eq!(ui.drag_autoscroll(), None);
+}
+
+/// **A drag outlives the row it lifted.** Dragged out of a virtual list's
+/// window, the row's element goes away, and the capture with it — an id is
+/// recycled — but the drag is still in hand: the target under the pointer
+/// still hears it, and the release still drops there.
+#[test]
+fn a_drag_survives_its_source_going_away() {
+    let log: Log = Rc::default();
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(
+        col().children([
+            drag_row("a", &log, true, true).key("a"),
+            drag_row("b", &log, false, false).key("b"),
+        ]),
+        FRAME,
+    );
+    ui.dispatch(Input::press(
+        Point::new(0, 0),
+        MouseButton::Left,
+        Mods::NONE,
+    ));
+    // The source scrolls out of the window: only "b" is described now.
+    ui.frame(
+        col().children([drag_row("b", &log, false, false).key("b")]),
+        FRAME,
+    );
+    assert!(ui.captured().is_none(), "the capture went with its element");
+    move_to(&mut ui, 0, 0);
+    ui.dispatch(Input::release(
+        Point::new(0, 0),
+        MouseButton::Left,
+        Mods::NONE,
+    ));
+    assert_eq!(*log.borrow(), vec!["enter b", "drop b"]);
+}

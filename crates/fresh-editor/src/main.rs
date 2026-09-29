@@ -6756,7 +6756,7 @@ where
         let lsp_progress_active = editor.active_window().has_active_lsp_progress();
         // Same for a wheel gesture still walking its lines: each frame
         // hands over the next one.
-        let wheel_scroll_active = editor.has_pending_wheel_scroll();
+        let wheel_scroll_active = editor.has_pending_wheel_scroll() || editor.has_drag_autoscroll();
         if animations_active || lsp_progress_active || wheel_scroll_active {
             needs_render = true;
         }

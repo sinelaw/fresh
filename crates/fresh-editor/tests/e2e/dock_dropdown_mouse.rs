@@ -225,6 +225,81 @@ fn a_workspace_dragged_off_the_tree_stays_put() {
     );
 }
 
+/// [`create_empty_folder`] for a folder that may land below the tree's
+/// window: nothing on screen to wait for but the dialog closing and the
+/// dock's key hints coming back under the tree.
+fn create_empty_folder_below(h: &mut EditorTestHarness, name: &str) {
+    open_dock_menu(h);
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Folder name"))
+        .unwrap();
+    h.type_text(name).unwrap();
+    h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    h.send_key(KeyCode::Char(' '), KeyModifiers::NONE).unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::CONTROL).unwrap();
+    h.wait_until(|h| {
+        let s = h.screen_to_string();
+        !s.contains("Folder name") && s.contains("switch")
+    })
+    .unwrap();
+}
+
+/// **A drag held past the end of the list scrolls it**, so a folder out of
+/// sight can be reached: the workspace is picked up at the top, held on the
+/// hint line below the tree until the last folder scrolls into view, and
+/// dropped on it.
+#[test]
+fn a_drag_held_past_the_lists_edge_scrolls_it_to_a_folder_out_of_sight() {
+    use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 18, Default::default(), root).unwrap();
+    h.render().unwrap();
+    open_dock(&mut h);
+    // More folders than the tree has rows for, so the last one is several
+    // steps out of sight: one move past the edge scrolls a single row, and
+    // only the held drag's repeats reach the rest.
+    for i in 0..16 {
+        create_empty_folder_below(&mut h, &format!("f{i:02}"));
+    }
+    create_empty_folder_below(&mut h, "zlast");
+    let screen = h.screen_to_string();
+    assert!(
+        screen.contains("alphaproj") && !screen.contains("zlast"),
+        "the last folder starts out of sight:\n{screen}"
+    );
+
+    let at = |kind, col, row| MouseEvent {
+        kind,
+        column: col,
+        row,
+        modifiers: crossterm::event::KeyModifiers::empty(),
+    };
+    let (acol, arow) = pos_of(&h, "alphaproj");
+    // The first line of the dock's key hints, just below the tree.
+    let (_, hint) = pos_of(&h, "switch");
+    h.send_mouse(at(MouseEventKind::Down(MouseButton::Left), acol, arow))
+        .unwrap();
+    h.send_mouse(at(MouseEventKind::Drag(MouseButton::Left), acol, arow + 1))
+        .unwrap();
+    h.send_mouse(at(MouseEventKind::Drag(MouseButton::Left), acol, hint))
+        .unwrap();
+    // Held still there: the list keeps scrolling until the last folder shows.
+    h.wait_until(|h| h.screen_to_string().contains("zlast"))
+        .unwrap();
+
+    let (_, zrow) = pos_of(&h, "zlast");
+    h.send_mouse(at(MouseEventKind::Drag(MouseButton::Left), acol, zrow))
+        .unwrap();
+    h.send_mouse(at(MouseEventKind::Up(MouseButton::Left), acol, zrow))
+        .unwrap();
+    h.wait_until(|h| {
+        let s = h.screen_to_string();
+        s.lines().any(|l| l.contains("zlast") && l.contains("(1)"))
+    })
+    .unwrap();
+}
+
 /// Clicking an option in the Menu activates it.
 ///
 /// Not a reproducer — this dropdown anchors high enough in the dock that

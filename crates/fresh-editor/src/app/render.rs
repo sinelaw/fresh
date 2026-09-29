@@ -292,6 +292,8 @@ impl Editor {
         // is what makes it read as a slide — and gives the scroll fade a
         // row at a time to work with.
         self.step_pending_wheel_scroll();
+        // And a drag resting past a list's edge takes its next step.
+        self.step_drag_autoscroll();
 
         self.pre_sync_and_scroll_sync();
 

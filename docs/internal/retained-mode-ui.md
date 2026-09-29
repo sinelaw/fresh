@@ -182,6 +182,20 @@ nothing to drop targets. First consumer: the Orchestrator dock's rows
 (`TreeNode::draggable`; the editor keeps the held row as
 `Editor::widget_drag`).
 
+**A drag past the edge of the window it came from scrolls that window.** The
+window is the nearest one around the dragged row that can move toward the
+pointer (the wheel's rule, walked from the row, and stopped at a layer); the
+pointer must be *past* its edge, so a drop on the first or last row in sight
+never has that row scrolled away, and the step grows with the distance, up
+to `AUTOSCROLL_MAX_STEP`. The tree takes one step per move and has no clock,
+so a drag held still would stop: `Ui::drag_autoscroll` says where a drag
+rests that a repeat would scroll, and the host repeats the pointer there at
+its own pace (`Editor::step_drag_autoscroll`, beside the wheel walk and on
+the same frame deadline). **A drag also outlives its captor.** A row dragged
+out of a virtual list's window unmounts, and its capture goes with it (ids
+are recycled), but the drag keeps the path it was lifted from and still
+finds targets and drops.
+
 `Dispatch { msgs, claimed }` comes back. **The claim is the tree's word alone** —
 producing a message and taking the event are different things, and there is no
 second verdict folded in afterwards.

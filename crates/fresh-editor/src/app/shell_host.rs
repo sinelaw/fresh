@@ -1705,7 +1705,9 @@ impl Editor {
         // a behavior with something to deliver — and it is the right one to
         // ask here.
         let tree_stale = ui.needs_frame();
+        let autoscroll = ui.drag_autoscroll();
         self.shell_ui = Some(ui);
+        self.note_drag_autoscroll(autoscroll);
         // Claimed is reported, not inferred. Producing a message and taking
         // the event are different things: a hover moves a highlight without
         // claiming the pointer, and a dismissal closes a menu while leaving a
