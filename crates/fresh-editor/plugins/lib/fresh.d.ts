@@ -5574,8 +5574,16 @@ interface EditorAPI {
 	* Replace matches in a file's buffer (async)
 	* Opens the file if not already in a buffer, applies edits via the buffer model,
 	* and saves. All edits are grouped as a single undo action.
+	* 
+	* Pass `regex` — the search the matches came from — to treat
+	* `replacement` as a template: `$1`, `${name}` and `\n` are expanded
+	* per match. Without it, `replacement` is written as is.
 	*/
-	replaceInFile(filePath: string, matches: number[][], replacement: string, bufferId?: number): Promise<ReplaceResult>;
+	replaceInFile(filePath: string, matches: number[][], replacement: string, bufferId?: number, regex?: {
+		pattern: string;
+		caseSensitive?: boolean;
+		wholeWords?: boolean;
+	}): Promise<ReplaceResult>;
 	/**
 	* Send LSP request (async, returns request_id)
 	*/

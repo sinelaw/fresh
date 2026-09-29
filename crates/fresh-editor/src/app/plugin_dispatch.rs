@@ -2222,6 +2222,7 @@ impl Editor {
                 buffer_id,
                 matches,
                 replacement,
+                regex,
                 callback_id,
             } => {
                 self.handle_replace_in_buffer(
@@ -2229,6 +2230,7 @@ impl Editor {
                     buffer_id,
                     matches,
                     replacement,
+                    regex,
                     callback_id,
                 );
             }

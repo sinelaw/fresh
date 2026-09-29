@@ -1764,6 +1764,12 @@ async function executeReplacements(results?: SearchResult[]): Promise<string> {
   let replacementsCount = 0;
   const errors: string[] = [];
 
+  // In regex mode the replacement is a template (`$1`, `${name}`, `\n`);
+  // the host expands it per match against the search that found it.
+  const regex = panel.useRegex
+    ? { pattern: panel.searchPattern, caseSensitive: panel.caseSensitive, wholeWords: panel.wholeWords }
+    : undefined;
+
   const groupList: Group[] = [];
   groups.forEach((g) => groupList.push(g));
   for (const group of groupList) {
@@ -1772,7 +1778,8 @@ async function executeReplacements(results?: SearchResult[]): Promise<string> {
         group.filePath,
         group.matches,
         panel.replaceText,
-        group.bufferId
+        group.bufferId,
+        regex
       );
       replacementsCount += result.replacements;
       if (result.replacements > 0) filesModified++;

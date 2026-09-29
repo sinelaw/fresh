@@ -4123,6 +4123,7 @@ impl Editor {
         buffer_id: usize,
         matches: Vec<(usize, usize)>,
         replacement: String,
+        regex: Option<fresh_core::api::ReplaceRegex>,
         callback_id: JsCallbackId,
     ) {
         if matches.is_empty() {
@@ -4194,19 +4195,68 @@ impl Editor {
         let mut sorted_matches = matches;
         sorted_matches.sort_by_key(|a| std::cmp::Reverse(a.0));
 
+        // Owned tuples for helpers that don't take references. A regex
+        // replace expands `$1` / `${name}` against each match's own text,
+        // using the regex the search found the matches with.
+        let edits_owned: Vec<(usize, usize, String)> = match regex {
+            None => sorted_matches
+                .iter()
+                .map(|&(offset, len)| (offset, len, replacement.clone()))
+                .collect(),
+            Some(regex) => {
+                let opts =
+                    make_search_opts(false, regex.case_sensitive, regex.whole_words, usize::MAX);
+                let re = match crate::model::filesystem::build_search_regex(&regex.pattern, &opts) {
+                    Ok(re) => re,
+                    Err(e) => {
+                        self.plugin_manager
+                            .read()
+                            .unwrap()
+                            .reject_callback(callback_id, format!("Invalid regex: {}", e));
+                        return;
+                    }
+                };
+                let Some(state) = self
+                    .windows
+                    .get_mut(&self.active_window)
+                    .expect("active window present")
+                    .buffer_state_mut(buffer_id)
+                else {
+                    self.plugin_manager.read().unwrap().reject_callback(
+                        callback_id,
+                        format!("Buffer for {:?} is gone", file_path),
+                    );
+                    return;
+                };
+                let expanded: AnyhowResult<Vec<(usize, usize, String)>> = sorted_matches
+                    .iter()
+                    .map(|&(offset, len)| {
+                        let bytes = state.buffer.get_text_range_mut(offset, len)?;
+                        let text =
+                            super::regex_replace::expand_replacement(&re, &bytes, &replacement);
+                        Ok((offset, len, text))
+                    })
+                    .collect();
+                match expanded {
+                    Ok(edits) => edits,
+                    Err(e) => {
+                        self.plugin_manager.read().unwrap().reject_callback(
+                            callback_id,
+                            format!("Failed to read matches in {:?}: {}", file_path, e),
+                        );
+                        return;
+                    }
+                }
+            }
+        };
+
         // Build bulk edits: (start, del_len, replacement)
-        let edits: Vec<(usize, usize, &str)> = sorted_matches
+        let edits: Vec<(usize, usize, &str)> = edits_owned
             .iter()
-            .map(|&(offset, len)| (offset, len, replacement.as_str()))
+            .map(|(offset, len, text)| (*offset, *len, text.as_str()))
             .collect();
 
         let replacements = edits.len();
-
-        // Owned tuples for helpers that don't take references.
-        let edits_owned: Vec<(usize, usize, String)> = sorted_matches
-            .iter()
-            .map(|&(offset, len)| (offset, len, replacement.clone()))
-            .collect();
         // Merged edit-lengths list for marker/margin replay on undo/redo.
         // Mirrors the merging logic in `apply_events_as_bulk_edit`.
         let edit_lengths: Vec<(usize, usize, usize)> = {

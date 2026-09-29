@@ -1004,6 +1004,47 @@ fn test_search_replace_delete_pattern() {
     );
 }
 
+/// With Regex on, the replacement is a template: `$1` expands to the
+/// match's first capture group, in the open file and in one on disk alike.
+/// It used to be written as the literal text `$1ent`. (`qxz` rather than
+/// the reported `est`, which the copied plugin sources are full of.)
+#[test]
+fn test_search_replace_regex_expands_capture_groups() {
+    init_tracing_from_env();
+    let (_temp_dir, project_root) = setup_search_replace_project();
+
+    fs::write(project_root.join("open.txt"), "tqxz rqxz lqxz\n").unwrap();
+    fs::write(project_root.join("closed.txt"), "bqxz\n").unwrap();
+
+    let start_file = project_root.join("open.txt");
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        30,
+        Default::default(),
+        project_root.clone(),
+    )
+    .unwrap();
+    harness.open_file(&start_file).unwrap();
+    harness.render().unwrap();
+
+    open_search_replace_via_palette(&mut harness);
+    harness
+        .send_key(KeyCode::Char('r'), KeyModifiers::ALT)
+        .unwrap();
+    harness.render().unwrap();
+    enter_search_and_replace(&mut harness, "(.)qxz", "$1ent");
+    harness
+        .wait_until_stable(|h| h.screen_to_string().contains("(4 matches / 2 files)"))
+        .unwrap();
+
+    confirm_replace_all(&mut harness);
+
+    let open = fs::read_to_string(project_root.join("open.txt")).unwrap();
+    assert_eq!(open, "tent rent lent\n");
+    let closed = fs::read_to_string(project_root.join("closed.txt")).unwrap();
+    assert_eq!(closed, "bent\n");
+}
+
 /// Multiple matches on the same line — all occurrences on the line get replaced.
 #[test]
 fn test_search_replace_multiple_matches_same_line() {

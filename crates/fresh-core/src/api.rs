@@ -3736,6 +3736,18 @@ pub struct MarkerActivation {
     pub scope_end: usize,
 }
 
+/// The search a project replace's matches came from, so the host can
+/// expand capture-group references in the replacement for each match.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct ReplaceRegex {
+    /// The regex pattern, as the search was given it.
+    pub pattern: String,
+    /// Whether the search was case-sensitive.
+    pub case_sensitive: bool,
+    /// Whether the search matched whole words only.
+    pub whole_words: bool,
+}
+
 /// Plugin command - allows plugins to send commands to the editor
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
@@ -6053,6 +6065,11 @@ pub enum PluginCommand {
         matches: Vec<(usize, usize)>,
         /// Replacement text
         replacement: String,
+        /// The regex the matches were found with. When set, `replacement`
+        /// is a template: `$1`, `${name}` and `\n` are expanded per match,
+        /// as the in-buffer replace does. `None` writes `replacement` as is.
+        #[serde(default)]
+        regex: Option<ReplaceRegex>,
         /// Callback ID for async response
         callback_id: JsCallbackId,
     },
