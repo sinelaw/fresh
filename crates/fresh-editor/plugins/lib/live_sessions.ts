@@ -1,7 +1,7 @@
 /// <reference path="./fresh.d.ts" />
 
 /**
- * The dock's "Elsewhere" group: Claude and Codex sessions that are open right
+ * The dock's "External sessions" group: Claude and Codex sessions that are open right
  * now but not in a workspace here — running in another terminal, as a
  * background job, or in the vendor's cloud.
  *
@@ -707,9 +707,9 @@ export function codexLocalSessions(
  *  in as a workspace. One per session, because a workspace is one per
  *  directory: sharing one would fold every cloud session into a single
  *  workspace. Under the editor's data dir, never the user's tree. */
-export function elsewhereRoot(dataDir: string, s: LiveSession): string {
+export function externalRoot(dataDir: string, s: LiveSession): string {
   const safe = s.id.replace(/[^A-Za-z0-9_.-]/g, "_");
-  return `${dataDir.replace(/[\\/]+$/, "")}/orchestrator/elsewhere/${s.source}-${safe}`;
+  return `${dataDir.replace(/[\\/]+$/, "")}/orchestrator/external-sessions/${s.source}-${safe}`;
 }
 
 /** What opening a row means. */
@@ -769,7 +769,7 @@ export function livePlan(s: LiveSession, env: LivePlanEnv, materialize: boolean)
       const status = [env.codex, "cloud", "status", s.id];
       return {
         kind: "workspace",
-        root: elsewhereRoot(env.dataDir, s),
+        root: externalRoot(env.dataDir, s),
         label: s.title,
         command: env.windows
           ? status
@@ -782,7 +782,7 @@ export function livePlan(s: LiveSession, env: LivePlanEnv, materialize: boolean)
       if (s.tmux && !s.stopped) {
         return {
           kind: "workspace",
-          root: s.cwd && !isFilesystemRoot(s.cwd) ? s.cwd : elsewhereRoot(env.dataDir, s),
+          root: s.cwd && !isFilesystemRoot(s.cwd) ? s.cwd : externalRoot(env.dataDir, s),
           label: s.title,
           command: tmuxAttachArgv(s.tmux),
         };
@@ -876,7 +876,7 @@ function inPlace(s: LiveSession): LivePlan {
 
 /** Sessions not already on screen as a workspace. A local session running in
  *  a workspace's directory is that workspace's (the agent in its terminal, or
- *  one beside it); a cloud session opened here lives at its `elsewhereRoot`;
+ *  one beside it); a cloud session opened here lives at its `externalRoot`;
  *  a session on an SSH host is a workspace on that host, in its folder
  *  (`remoteRoots`: `[user@]host` without the port, and the remote root). */
 export function unrepresented(
@@ -890,7 +890,7 @@ export function unrepresented(
   const remote = new Set<string>();
   for (const r of remoteRoots) remote.add(`${r.host}\n${liveNormPath(r.root)}`);
   return sessions.filter((s) => {
-    if (s.where === "cloud") return !roots.has(liveNormPath(elsewhereRoot(dataDir, s)));
+    if (s.where === "cloud") return !roots.has(liveNormPath(externalRoot(dataDir, s)));
     // A local session with no directory cannot be matched: keep it.
     if (!s.cwd) return true;
     if (s.sshHost) return !remote.has(`${s.sshHost}\n${liveNormPath(s.cwd)}`);

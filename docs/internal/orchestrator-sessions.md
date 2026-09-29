@@ -481,10 +481,10 @@ window yet**. They carry a synthetic **negative id** and no terminal id; diving
 *attaches* a new session to that `root`, and the row is dropped from the
 in-memory session map the moment a real window opens there.
 
-### 5.3a Elsewhere: sessions open outside the editor
+### 5.3a External sessions: sessions open outside the editor
 
 Collapsible groups at the foot of the dock, one per product (**Claude**,
-**Codex**; the "Elsewhere" groups), list Claude and Codex sessions that are open right now but are not a workspace here — running
+**Codex**; the external sessions groups), list Claude and Codex sessions that are open right now but are not a workspace here — running
 in another terminal, as a `claude --bg` job, or in the vendor's cloud. It
 complements the on-demand Import dialog (`agent_discovery.ts`), which reads the
 tools' transcript *history*: this answers "what is open", automatically, and
@@ -492,8 +492,8 @@ includes cloud sessions this machine never saw.
 
 - **Feed** — `live_sessions.ts`, a plugin of its own, polls while the dock is
   open (every `pollSeconds`, default 60, and when it opens; cloud at most once a
-  minute) and pushes to the orchestrator's `setElsewhereSessions`. Opening the
-  dock asks for a fresh listing (`refreshElsewhere`). Parsing and the
+  minute) and pushes to the orchestrator's `setExternalSessions`. Opening the
+  dock asks for a fresh listing (`refreshExternal`). Parsing and the
   open-a-row rules are pure, in `lib/live_sessions.ts`
   (`plugins/tests/live_sessions.test.ts`). A separate plugin so the
   orchestrator's own e2e tests — which load only the orchestrator — never see
@@ -526,8 +526,8 @@ includes cloud sessions this machine never saw.
   archived ones are never shown.
 - **Rows** are kept apart from `orchestratorSessions` (they are not
   workspaces, so none of Stop / Archive / Delete / rename apply). Each group
-  header is a `folder` node with a reserved id (`__elsewhere:claude`,
-  `__elsewhere:codex`), so it folds and rolls up `●n ✓n` like a folder; it
+  header is a `folder` node with a reserved id (`__external:claude`,
+  `__external:codex`), so it folds and rolls up `●n ✓n` like a folder; it
   starts open, and the fold is what is remembered. A row is its state and
   title only (a tail would be cut off at the dock's edge, and neither the
   folder ▤ nor a ☁/⇄ glyph is drawn: the tree's ▼/▶ says what a folder is).
@@ -563,7 +563,7 @@ includes cloud sessions this machine never saw.
   | Claude `--bg` job | the job's cwd | `claude attach <job>` |
   | Claude in a terminal inside tmux (the registry records its pane) | its cwd | `env -u TMUX tmux attach-session -t <session> ; select-window ; select-pane` — the live session itself |
   | Claude / Codex in another terminal | its cwd | a shell — never a second copy of the agent, which would write the same conversation twice |
-  | Codex Cloud task (when filed) | `<data>/orchestrator/elsewhere/codex-cloud-<id>` | `codex cloud status <id>`, then a shell |
+  | Codex Cloud task (when filed) | `<data>/orchestrator/external-sessions/codex-cloud-<id>` | `codex cloud status <id>`, then a shell |
 
   **The takeover** (`takeoverArgv`, POSIX `sh`, run where the session runs):
   find the copy running now in the CLI's registry (`<config>/sessions/<pid>.json`
@@ -594,7 +594,7 @@ includes cloud sessions this machine never saw.
   doesn't appear in the cloud session on claude.ai"; the cloud session is
   left as it was, still active, until it is archived or its environment
   expires. Fresh keeps it that way — a fork, never archived — so after a
-  teleport the row stays in Elsewhere (it is still an active cloud session),
+  teleport the row stays in its group (it is still an active cloud session),
   marked `teleported → <workspace>`: the form records which workspace the
   copy became (global state `orchestrator.teleported`, cloud id → the
   workspace's durable id), and the row's menu then offers **Go to
@@ -787,7 +787,7 @@ Implemented (shipped):
 - Agent resume (provision/continue), resume-spec persistence, deferred-to-dive
   rejoin.
 - One-session-per-canonical-directory enforcement.
-- Elsewhere group: Claude/Codex sessions open outside the editor (local
+- external sessions group: Claude/Codex sessions open outside the editor (local
   processes, `--bg` jobs, Codex Cloud, Claude cloud and Remote Control), materialized
   into workspaces on open or on Move to Folder (§5.3a).
 

@@ -1,4 +1,4 @@
-//! E2E coverage for the dock's Elsewhere groups: Claude and Codex sessions
+//! E2E coverage for the dock's external sessions groups: Claude and Codex sessions
 //! open outside this editor, listed by the `live_sessions` plugin under a
 //! group per product ("Claude", "Codex").
 //!
@@ -27,7 +27,7 @@ fn write_script(path: &Path, body: &str) {
     fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
 }
 
-/// A git project with the orchestrator and the Elsewhere feed installed, the
+/// A git project with the orchestrator and the external sessions feed installed, the
 /// fake CLIs beside it, and a directory the fake Claude job "runs" in.
 fn setup() -> (tempfile::TempDir, PathBuf, Config) {
     let temp_dir = tempfile::TempDir::new().unwrap();
@@ -134,7 +134,7 @@ fn pos_of(h: &EditorTestHarness, needle: &str) -> (u16, u16) {
 /// Opening the dock lists what the fake CLIs report, a group per product
 /// ("Claude", "Codex"), each with its count.
 #[test]
-fn elsewhere_group_lists_sessions_open_outside_the_editor() {
+fn external_group_lists_sessions_open_outside_the_editor() {
     let (_tmp, root, config) = setup();
     let mut h = EditorTestHarness::with_config_and_working_dir(140, 36, config, root).unwrap();
     h.render().unwrap();
@@ -194,7 +194,7 @@ fn elsewhere_group_lists_sessions_open_outside_the_editor() {
 /// (`claude attach <job>`), and the job leaves the group: it is a workspace
 /// now.
 #[test]
-fn opening_an_elsewhere_row_attaches_it_in_a_new_workspace() {
+fn opening_an_external_row_attaches_it_in_a_new_workspace() {
     let (_tmp, root, config) = setup();
     let mut h = EditorTestHarness::with_config_and_working_dir(140, 36, config, root).unwrap();
     h.render().unwrap();
@@ -215,11 +215,11 @@ fn opening_an_elsewhere_row_attaches_it_in_a_new_workspace() {
     .unwrap();
 }
 
-/// Filing an Elsewhere row into a folder materializes it there: a Codex
+/// Filing an external session row into a folder materializes it there: a Codex
 /// Cloud task becomes a workspace showing its status, filed under the folder
 /// (which then counts it), and the group — now empty — goes away.
 #[test]
-fn moving_an_elsewhere_row_into_a_folder_materializes_it() {
+fn moving_an_external_row_into_a_folder_materializes_it() {
     let (_tmp, root, config) = setup();
     let mut h = EditorTestHarness::with_config_and_working_dir(140, 36, config, root).unwrap();
     h.render().unwrap();
@@ -383,7 +383,7 @@ fn teleporting_a_cloud_session_names_the_copy_and_marks_the_row() {
             "const editor = getEditor();\n\
              const snap = {snapshot};\n\
              editor.exportPluginApi(\"live-sessions\", {{\n\
-               refresh: async () => {{ editor.getPluginApi(\"orchestrator\")?.setElsewhereSessions(snap); }},\n\
+               refresh: async () => {{ editor.getPluginApi(\"orchestrator\")?.setExternalSessions(snap); }},\n\
                snapshot: () => snap,\n\
                claudeCloudEnabled: () => true,\n\
                setClaudeCloud: async () => {{}},\n\

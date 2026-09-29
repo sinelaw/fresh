@@ -515,9 +515,9 @@
     "dock.ctx_open": "Отваряне",
     "dock.ctx_open_browser": "Отваряне в браузъра",
     "dock.ctx_refresh": "Опресняване",
-    "status.elsewhere_in_place": "%{name} продължава да работи там, където е; папката му е отворена като работно пространство",
-    "status.elsewhere_cannot_open": "%{name} не може да се отвори: %{why}",
-    "status.elsewhere_browser": "%{name} е отворено в браузъра",
+    "status.external_in_place": "%{name} продължава да работи там, където е; папката му е отворена като работно пространство",
+    "status.external_cannot_open": "%{name} не може да се отвори: %{why}",
+    "status.external_browser": "%{name} е отворено в браузъра",
     "dock.claude_cloud": "Облачни сесии на Claude",
     "dock.ctx_teleport": "Разклоняване тук (телепорт)…",
     "dock.ctx_goto_workspace": "Към %{name}",
@@ -528,8 +528,8 @@
     "dock.live_active": "Последна активност",
     "dock.ctx_take_over": "Поемане тук",
     "dock.ctx_open_desktop": "Отваряне в Claude Desktop",
-    "status.elsewhere_desktop": "%{name} е отворено в Claude Desktop",
-    "status.elsewhere_taking_over": "Поемане на %{name} на %{host}…"
+    "status.external_desktop": "%{name} е отворено в Claude Desktop",
+    "status.external_taking_over": "Поемане на %{name} на %{host}…"
   },
   "cs": {
     "backend.devcontainer": "Devcontainer",
@@ -1047,9 +1047,9 @@
     "dock.ctx_open": "Otevřít",
     "dock.ctx_open_browser": "Otevřít v prohlížeči",
     "dock.ctx_refresh": "Obnovit",
-    "status.elsewhere_in_place": "%{name} dál běží tam, kde je; jeho složka byla otevřena jako pracovní prostor",
-    "status.elsewhere_cannot_open": "%{name} nelze otevřít: %{why}",
-    "status.elsewhere_browser": "%{name} otevřeno v prohlížeči",
+    "status.external_in_place": "%{name} dál běží tam, kde je; jeho složka byla otevřena jako pracovní prostor",
+    "status.external_cannot_open": "%{name} nelze otevřít: %{why}",
+    "status.external_browser": "%{name} otevřeno v prohlížeči",
     "dock.claude_cloud": "Cloudové relace Claude",
     "dock.ctx_teleport": "Rozvětvit sem (teleport)…",
     "dock.ctx_goto_workspace": "Přejít na %{name}",
@@ -1060,8 +1060,8 @@
     "dock.live_active": "Naposledy aktivní",
     "dock.ctx_take_over": "Převzít sem",
     "dock.ctx_open_desktop": "Otevřít v Claude Desktop",
-    "status.elsewhere_desktop": "%{name} otevřeno v Claude Desktop",
-    "status.elsewhere_taking_over": "Přebírání %{name} na %{host}…"
+    "status.external_desktop": "%{name} otevřeno v Claude Desktop",
+    "status.external_taking_over": "Přebírání %{name} na %{host}…"
   },
   "de": {
     "backend.devcontainer": "Devcontainer",
@@ -1579,9 +1579,9 @@
     "dock.ctx_open": "Öffnen",
     "dock.ctx_open_browser": "Im Browser öffnen",
     "dock.ctx_refresh": "Aktualisieren",
-    "status.elsewhere_in_place": "%{name} läuft weiter, wo es ist; sein Ordner wurde als Arbeitsbereich geöffnet",
-    "status.elsewhere_cannot_open": "%{name} kann nicht geöffnet werden: %{why}",
-    "status.elsewhere_browser": "%{name} im Browser geöffnet",
+    "status.external_in_place": "%{name} läuft weiter, wo es ist; sein Ordner wurde als Arbeitsbereich geöffnet",
+    "status.external_cannot_open": "%{name} kann nicht geöffnet werden: %{why}",
+    "status.external_browser": "%{name} im Browser geöffnet",
     "dock.claude_cloud": "Claude-Cloud-Sitzungen",
     "dock.ctx_teleport": "Hier abzweigen (Teleport)…",
     "dock.ctx_goto_workspace": "Zu %{name} wechseln",
@@ -1592,8 +1592,8 @@
     "dock.live_active": "Zuletzt aktiv",
     "dock.ctx_take_over": "Hier übernehmen",
     "dock.ctx_open_desktop": "In Claude Desktop öffnen",
-    "status.elsewhere_desktop": "%{name} in Claude Desktop geöffnet",
-    "status.elsewhere_taking_over": "%{name} auf %{host} wird übernommen…"
+    "status.external_desktop": "%{name} in Claude Desktop geöffnet",
+    "status.external_taking_over": "%{name} auf %{host} wird übernommen…"
   },
   "en": {
     "backend.devcontainer": "Devcontainer",
@@ -2111,9 +2111,9 @@
     "dock.ctx_open": "Open",
     "dock.ctx_open_browser": "Open in Browser",
     "dock.ctx_refresh": "Refresh",
-    "status.elsewhere_in_place": "%{name} keeps running where it is; opened its folder as a workspace",
-    "status.elsewhere_cannot_open": "Cannot open %{name}: %{why}",
-    "status.elsewhere_browser": "Opened %{name} in the browser",
+    "status.external_in_place": "%{name} keeps running where it is; opened its folder as a workspace",
+    "status.external_cannot_open": "Cannot open %{name}: %{why}",
+    "status.external_browser": "Opened %{name} in the browser",
     "dock.claude_cloud": "Claude cloud sessions",
     "dock.ctx_teleport": "Fork Here (Teleport)…",
     "dock.ctx_goto_workspace": "Go to %{name}",
@@ -2124,8 +2124,8 @@
     "dock.live_active": "Last active",
     "dock.ctx_take_over": "Take Over Here",
     "dock.ctx_open_desktop": "Open in Claude Desktop",
-    "status.elsewhere_desktop": "Opened %{name} in Claude Desktop",
-    "status.elsewhere_taking_over": "Taking over %{name} on %{host}…"
+    "status.external_desktop": "Opened %{name} in Claude Desktop",
+    "status.external_taking_over": "Taking over %{name} on %{host}…"
   },
   "es": {
     "backend.devcontainer": "Devcontainer",
@@ -2643,9 +2643,9 @@
     "dock.ctx_open": "Abrir",
     "dock.ctx_open_browser": "Abrir en el navegador",
     "dock.ctx_refresh": "Actualizar",
-    "status.elsewhere_in_place": "%{name} sigue ejecutándose donde está; su carpeta se abrió como espacio de trabajo",
-    "status.elsewhere_cannot_open": "No se puede abrir %{name}: %{why}",
-    "status.elsewhere_browser": "%{name} abierto en el navegador",
+    "status.external_in_place": "%{name} sigue ejecutándose donde está; su carpeta se abrió como espacio de trabajo",
+    "status.external_cannot_open": "No se puede abrir %{name}: %{why}",
+    "status.external_browser": "%{name} abierto en el navegador",
     "dock.claude_cloud": "Sesiones de Claude en la nube",
     "dock.ctx_teleport": "Bifurcar aquí (teletransporte)…",
     "dock.ctx_goto_workspace": "Ir a %{name}",
@@ -2656,8 +2656,8 @@
     "dock.live_active": "Última actividad",
     "dock.ctx_take_over": "Tomar el control aquí",
     "dock.ctx_open_desktop": "Abrir en Claude Desktop",
-    "status.elsewhere_desktop": "%{name} abierto en Claude Desktop",
-    "status.elsewhere_taking_over": "Tomando el control de %{name} en %{host}…"
+    "status.external_desktop": "%{name} abierto en Claude Desktop",
+    "status.external_taking_over": "Tomando el control de %{name} en %{host}…"
   },
   "fr": {
     "backend.devcontainer": "Devcontainer",
@@ -3175,9 +3175,9 @@
     "dock.ctx_open": "Ouvrir",
     "dock.ctx_open_browser": "Ouvrir dans le navigateur",
     "dock.ctx_refresh": "Actualiser",
-    "status.elsewhere_in_place": "%{name} continue de tourner là où il est ; son dossier a été ouvert comme espace de travail",
-    "status.elsewhere_cannot_open": "Impossible d’ouvrir %{name} : %{why}",
-    "status.elsewhere_browser": "%{name} ouvert dans le navigateur",
+    "status.external_in_place": "%{name} continue de tourner là où il est ; son dossier a été ouvert comme espace de travail",
+    "status.external_cannot_open": "Impossible d’ouvrir %{name} : %{why}",
+    "status.external_browser": "%{name} ouvert dans le navigateur",
     "dock.claude_cloud": "Sessions Claude dans le cloud",
     "dock.ctx_teleport": "Dupliquer ici (téléportation)…",
     "dock.ctx_goto_workspace": "Aller à %{name}",
@@ -3188,8 +3188,8 @@
     "dock.live_active": "Dernière activité",
     "dock.ctx_take_over": "Reprendre ici",
     "dock.ctx_open_desktop": "Ouvrir dans Claude Desktop",
-    "status.elsewhere_desktop": "%{name} ouvert dans Claude Desktop",
-    "status.elsewhere_taking_over": "Reprise de %{name} sur %{host}…"
+    "status.external_desktop": "%{name} ouvert dans Claude Desktop",
+    "status.external_taking_over": "Reprise de %{name} sur %{host}…"
   },
   "it": {
     "backend.devcontainer": "Devcontainer",
@@ -3707,9 +3707,9 @@
     "dock.ctx_open": "Apri",
     "dock.ctx_open_browser": "Apri nel browser",
     "dock.ctx_refresh": "Aggiorna",
-    "status.elsewhere_in_place": "%{name} continua a funzionare dove si trova; la sua cartella è stata aperta come area di lavoro",
-    "status.elsewhere_cannot_open": "Impossibile aprire %{name}: %{why}",
-    "status.elsewhere_browser": "%{name} aperto nel browser",
+    "status.external_in_place": "%{name} continua a funzionare dove si trova; la sua cartella è stata aperta come area di lavoro",
+    "status.external_cannot_open": "Impossibile aprire %{name}: %{why}",
+    "status.external_browser": "%{name} aperto nel browser",
     "dock.claude_cloud": "Sessioni Claude nel cloud",
     "dock.ctx_teleport": "Biforca qui (teletrasporto)…",
     "dock.ctx_goto_workspace": "Vai a %{name}",
@@ -3720,8 +3720,8 @@
     "dock.live_active": "Ultima attività",
     "dock.ctx_take_over": "Prendi il controllo qui",
     "dock.ctx_open_desktop": "Apri in Claude Desktop",
-    "status.elsewhere_desktop": "%{name} aperto in Claude Desktop",
-    "status.elsewhere_taking_over": "Presa di controllo di %{name} su %{host}…"
+    "status.external_desktop": "%{name} aperto in Claude Desktop",
+    "status.external_taking_over": "Presa di controllo di %{name} su %{host}…"
   },
   "ja": {
     "backend.devcontainer": "Devcontainer",
@@ -4239,9 +4239,9 @@
     "dock.ctx_open": "開く",
     "dock.ctx_open_browser": "ブラウザーで開く",
     "dock.ctx_refresh": "更新",
-    "status.elsewhere_in_place": "%{name} は元の場所で動作を続けます。そのフォルダーをワークスペースとして開きました",
-    "status.elsewhere_cannot_open": "%{name} を開けません: %{why}",
-    "status.elsewhere_browser": "%{name} をブラウザーで開きました",
+    "status.external_in_place": "%{name} は元の場所で動作を続けます。そのフォルダーをワークスペースとして開きました",
+    "status.external_cannot_open": "%{name} を開けません: %{why}",
+    "status.external_browser": "%{name} をブラウザーで開きました",
     "dock.claude_cloud": "Claude のクラウドセッション",
     "dock.ctx_teleport": "ここにフォーク (テレポート)…",
     "dock.ctx_goto_workspace": "%{name} へ移動",
@@ -4252,8 +4252,8 @@
     "dock.live_active": "最終アクティブ",
     "dock.ctx_take_over": "ここで引き継ぐ",
     "dock.ctx_open_desktop": "Claude Desktop で開く",
-    "status.elsewhere_desktop": "%{name} を Claude Desktop で開きました",
-    "status.elsewhere_taking_over": "%{host} の %{name} を引き継いでいます…"
+    "status.external_desktop": "%{name} を Claude Desktop で開きました",
+    "status.external_taking_over": "%{host} の %{name} を引き継いでいます…"
   },
   "ko": {
     "backend.devcontainer": "Devcontainer",
@@ -4771,9 +4771,9 @@
     "dock.ctx_open": "열기",
     "dock.ctx_open_browser": "브라우저에서 열기",
     "dock.ctx_refresh": "새로 고침",
-    "status.elsewhere_in_place": "%{name}은(는) 원래 위치에서 계속 실행됩니다. 해당 폴더를 작업 공간으로 열었습니다",
-    "status.elsewhere_cannot_open": "%{name}을(를) 열 수 없음: %{why}",
-    "status.elsewhere_browser": "%{name}을(를) 브라우저에서 열었습니다",
+    "status.external_in_place": "%{name}은(는) 원래 위치에서 계속 실행됩니다. 해당 폴더를 작업 공간으로 열었습니다",
+    "status.external_cannot_open": "%{name}을(를) 열 수 없음: %{why}",
+    "status.external_browser": "%{name}을(를) 브라우저에서 열었습니다",
     "dock.claude_cloud": "Claude 클라우드 세션",
     "dock.ctx_teleport": "여기로 포크 (텔레포트)…",
     "dock.ctx_goto_workspace": "%{name}(으)로 이동",
@@ -4784,8 +4784,8 @@
     "dock.live_active": "마지막 활동",
     "dock.ctx_take_over": "여기서 이어받기",
     "dock.ctx_open_desktop": "Claude Desktop에서 열기",
-    "status.elsewhere_desktop": "%{name}을(를) Claude Desktop에서 열었습니다",
-    "status.elsewhere_taking_over": "%{host}의 %{name} 이어받는 중…"
+    "status.external_desktop": "%{name}을(를) Claude Desktop에서 열었습니다",
+    "status.external_taking_over": "%{host}의 %{name} 이어받는 중…"
   },
   "pt-BR": {
     "backend.devcontainer": "Devcontainer",
@@ -5303,9 +5303,9 @@
     "dock.ctx_open": "Abrir",
     "dock.ctx_open_browser": "Abrir no navegador",
     "dock.ctx_refresh": "Atualizar",
-    "status.elsewhere_in_place": "%{name} continua rodando onde está; a pasta dele foi aberta como espaço de trabalho",
-    "status.elsewhere_cannot_open": "Não é possível abrir %{name}: %{why}",
-    "status.elsewhere_browser": "%{name} aberto no navegador",
+    "status.external_in_place": "%{name} continua rodando onde está; a pasta dele foi aberta como espaço de trabalho",
+    "status.external_cannot_open": "Não é possível abrir %{name}: %{why}",
+    "status.external_browser": "%{name} aberto no navegador",
     "dock.claude_cloud": "Sessões do Claude na nuvem",
     "dock.ctx_teleport": "Bifurcar aqui (teleporte)…",
     "dock.ctx_goto_workspace": "Ir para %{name}",
@@ -5316,8 +5316,8 @@
     "dock.live_active": "Última atividade",
     "dock.ctx_take_over": "Assumir aqui",
     "dock.ctx_open_desktop": "Abrir no Claude Desktop",
-    "status.elsewhere_desktop": "%{name} aberto no Claude Desktop",
-    "status.elsewhere_taking_over": "Assumindo %{name} em %{host}…"
+    "status.external_desktop": "%{name} aberto no Claude Desktop",
+    "status.external_taking_over": "Assumindo %{name} em %{host}…"
   },
   "ru": {
     "backend.devcontainer": "Devcontainer",
@@ -5835,9 +5835,9 @@
     "dock.ctx_open": "Открыть",
     "dock.ctx_open_browser": "Открыть в браузере",
     "dock.ctx_refresh": "Обновить",
-    "status.elsewhere_in_place": "%{name} продолжает работать там, где запущен; его папка открыта как рабочее пространство",
-    "status.elsewhere_cannot_open": "Не удаётся открыть %{name}: %{why}",
-    "status.elsewhere_browser": "%{name} открыт в браузере",
+    "status.external_in_place": "%{name} продолжает работать там, где запущен; его папка открыта как рабочее пространство",
+    "status.external_cannot_open": "Не удаётся открыть %{name}: %{why}",
+    "status.external_browser": "%{name} открыт в браузере",
     "dock.claude_cloud": "Облачные сеансы Claude",
     "dock.ctx_teleport": "Ответвить сюда (телепорт)…",
     "dock.ctx_goto_workspace": "Перейти к %{name}",
@@ -5848,8 +5848,8 @@
     "dock.live_active": "Последняя активность",
     "dock.ctx_take_over": "Перехватить сюда",
     "dock.ctx_open_desktop": "Открыть в Claude Desktop",
-    "status.elsewhere_desktop": "%{name} открыт в Claude Desktop",
-    "status.elsewhere_taking_over": "Перехват %{name} на %{host}…"
+    "status.external_desktop": "%{name} открыт в Claude Desktop",
+    "status.external_taking_over": "Перехват %{name} на %{host}…"
   },
   "th": {
     "backend.devcontainer": "Devcontainer",
@@ -6367,9 +6367,9 @@
     "dock.ctx_open": "เปิด",
     "dock.ctx_open_browser": "เปิดในเบราว์เซอร์",
     "dock.ctx_refresh": "รีเฟรช",
-    "status.elsewhere_in_place": "%{name} ยังคงทำงานอยู่ที่เดิม เปิดโฟลเดอร์ของมันเป็นพื้นที่ทำงานแล้ว",
-    "status.elsewhere_cannot_open": "ไม่สามารถเปิด %{name}: %{why}",
-    "status.elsewhere_browser": "เปิด %{name} ในเบราว์เซอร์แล้ว",
+    "status.external_in_place": "%{name} ยังคงทำงานอยู่ที่เดิม เปิดโฟลเดอร์ของมันเป็นพื้นที่ทำงานแล้ว",
+    "status.external_cannot_open": "ไม่สามารถเปิด %{name}: %{why}",
+    "status.external_browser": "เปิด %{name} ในเบราว์เซอร์แล้ว",
     "dock.claude_cloud": "เซสชัน Claude บนคลาวด์",
     "dock.ctx_teleport": "แยกสาขามาที่นี่ (เทเลพอร์ต)…",
     "dock.ctx_goto_workspace": "ไปที่ %{name}",
@@ -6380,8 +6380,8 @@
     "dock.live_active": "ใช้งานล่าสุด",
     "dock.ctx_take_over": "รับช่วงต่อที่นี่",
     "dock.ctx_open_desktop": "เปิดใน Claude Desktop",
-    "status.elsewhere_desktop": "เปิด %{name} ใน Claude Desktop แล้ว",
-    "status.elsewhere_taking_over": "กำลังรับช่วง %{name} บน %{host}…"
+    "status.external_desktop": "เปิด %{name} ใน Claude Desktop แล้ว",
+    "status.external_taking_over": "กำลังรับช่วง %{name} บน %{host}…"
   },
   "uk": {
     "backend.devcontainer": "Devcontainer",
@@ -6899,9 +6899,9 @@
     "dock.ctx_open": "Відкрити",
     "dock.ctx_open_browser": "Відкрити в браузері",
     "dock.ctx_refresh": "Оновити",
-    "status.elsewhere_in_place": "%{name} продовжує працювати там, де запущений; його теку відкрито як робочий простір",
-    "status.elsewhere_cannot_open": "Не вдається відкрити %{name}: %{why}",
-    "status.elsewhere_browser": "%{name} відкрито в браузері",
+    "status.external_in_place": "%{name} продовжує працювати там, де запущений; його теку відкрито як робочий простір",
+    "status.external_cannot_open": "Не вдається відкрити %{name}: %{why}",
+    "status.external_browser": "%{name} відкрито в браузері",
     "dock.claude_cloud": "Хмарні сеанси Claude",
     "dock.ctx_teleport": "Відгалузити сюди (телепорт)…",
     "dock.ctx_goto_workspace": "Перейти до %{name}",
@@ -6912,8 +6912,8 @@
     "dock.live_active": "Остання активність",
     "dock.ctx_take_over": "Перехопити сюди",
     "dock.ctx_open_desktop": "Відкрити в Claude Desktop",
-    "status.elsewhere_desktop": "%{name} відкрито в Claude Desktop",
-    "status.elsewhere_taking_over": "Перехоплення %{name} на %{host}…"
+    "status.external_desktop": "%{name} відкрито в Claude Desktop",
+    "status.external_taking_over": "Перехоплення %{name} на %{host}…"
   },
   "vi": {
     "backend.devcontainer": "Devcontainer",
@@ -7431,9 +7431,9 @@
     "dock.ctx_open": "Mở",
     "dock.ctx_open_browser": "Mở trong trình duyệt",
     "dock.ctx_refresh": "Làm mới",
-    "status.elsewhere_in_place": "%{name} vẫn tiếp tục chạy tại chỗ; đã mở thư mục của nó thành không gian làm việc",
-    "status.elsewhere_cannot_open": "Không thể mở %{name}: %{why}",
-    "status.elsewhere_browser": "Đã mở %{name} trong trình duyệt",
+    "status.external_in_place": "%{name} vẫn tiếp tục chạy tại chỗ; đã mở thư mục của nó thành không gian làm việc",
+    "status.external_cannot_open": "Không thể mở %{name}: %{why}",
+    "status.external_browser": "Đã mở %{name} trong trình duyệt",
     "dock.claude_cloud": "Phiên Claude trên đám mây",
     "dock.ctx_teleport": "Phân nhánh tại đây (dịch chuyển)…",
     "dock.ctx_goto_workspace": "Đi tới %{name}",
@@ -7444,8 +7444,8 @@
     "dock.live_active": "Hoạt động gần nhất",
     "dock.ctx_take_over": "Tiếp quản tại đây",
     "dock.ctx_open_desktop": "Mở trong Claude Desktop",
-    "status.elsewhere_desktop": "Đã mở %{name} trong Claude Desktop",
-    "status.elsewhere_taking_over": "Đang tiếp quản %{name} trên %{host}…"
+    "status.external_desktop": "Đã mở %{name} trong Claude Desktop",
+    "status.external_taking_over": "Đang tiếp quản %{name} trên %{host}…"
   },
   "zh-CN": {
     "backend.devcontainer": "Devcontainer",
@@ -7963,9 +7963,9 @@
     "dock.ctx_open": "打开",
     "dock.ctx_open_browser": "在浏览器中打开",
     "dock.ctx_refresh": "刷新",
-    "status.elsewhere_in_place": "%{name} 仍在原处运行；已将其文件夹作为工作区打开",
-    "status.elsewhere_cannot_open": "无法打开 %{name}：%{why}",
-    "status.elsewhere_browser": "已在浏览器中打开 %{name}",
+    "status.external_in_place": "%{name} 仍在原处运行；已将其文件夹作为工作区打开",
+    "status.external_cannot_open": "无法打开 %{name}：%{why}",
+    "status.external_browser": "已在浏览器中打开 %{name}",
     "dock.claude_cloud": "Claude 云端会话",
     "dock.ctx_teleport": "在此分叉(传送)…",
     "dock.ctx_goto_workspace": "转到 %{name}",
@@ -7976,7 +7976,7 @@
     "dock.live_active": "最近活动",
     "dock.ctx_take_over": "在此接管",
     "dock.ctx_open_desktop": "在 Claude Desktop 中打开",
-    "status.elsewhere_desktop": "已在 Claude Desktop 中打开 %{name}",
-    "status.elsewhere_taking_over": "正在接管 %{host} 上的 %{name}…"
+    "status.external_desktop": "已在 Claude Desktop 中打开 %{name}",
+    "status.external_taking_over": "正在接管 %{host} 上的 %{name}…"
   }
 }

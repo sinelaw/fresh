@@ -1,4 +1,4 @@
-/** The dock's "Elsewhere" rows: each source's listing in, open sessions out. */
+/** The dock's "External sessions" rows: each source's listing in, open sessions out. */
 import {
   claudeAccessToken,
   claudeCloudPageInfo,
@@ -13,7 +13,7 @@ import {
   registryTmuxPanes,
   tmuxAttachArgv,
   codexLocalSessions,
-  elsewhereRoot,
+  externalRoot,
   isCodexSessionArgv,
   liveDetail,
   liveBranchName,
@@ -174,7 +174,7 @@ eq(codexLocal.map((s) => [s.key, s.title]), [["codex-local/100", "proj"], ["code
 // ── Filtering and plans ───────────────────────────────────────────
 
 const DATA = "/data/fresh";
-const shown = unrepresented([...agents, ...cloud], ["/home/u/fresh/", elsewhereRoot(DATA, cloud[1])], DATA);
+const shown = unrepresented([...agents, ...cloud], ["/home/u/fresh/", externalRoot(DATA, cloud[1])], DATA);
 eq(shown.map((s) => s.key), ["claude-local/5e55", "claude-cloud/session_01"], "unrepresented: sessions already open as a workspace are hidden");
 
 const env: LivePlanEnv = { dataDir: DATA, claude: "claude", codex: "codex", windows: false };

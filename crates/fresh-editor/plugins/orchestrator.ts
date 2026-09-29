@@ -531,7 +531,7 @@ interface NewSessionForm {
   // until one is picked — the terminal is a choice, not a silent default.
   agentUnset: boolean;
   // The dock folder the created workspace is filed under (null = top level),
-  // when the form was opened to file something there — an Elsewhere row
+  // when the form was opened to file something there — an external session row
   // moved into a folder. Undefined: the form files nothing.
   intoFolder?: string | null;
   // The name the created workspace takes on the dock when it is not the
@@ -539,7 +539,7 @@ interface NewSessionForm {
   // worktree and branch, so it holds a slug of this). Undefined: the field's.
   displayName?: string;
   // The Claude cloud session the created workspace is a teleported copy of,
-  // remembered so the session's Elsewhere row can say where the copy went.
+  // remembered so the session's external session row can say where the copy went.
   teleportOf?: string;
   // Whether to create a new git worktree under
   // `<XDG>/orchestrator/<slug>/<session>/` (true) or run the
@@ -698,7 +698,7 @@ interface CreateFolderDialogState {
   // prompts for a workspace name and submit pins a manual name on the
   // session's root. null ⇒ not a workspace rename.
   renameSessionId: number | null;
-  // An Elsewhere row (by `LiveSession.key`) the checkbox organizes instead
+  // An external session row (by `LiveSession.key`) the checkbox organizes instead
   // of a workspace: it is opened as a workspace, filed under the new
   // folder, only once the folder is created — asked first, so the dialog
   // is never raced by whatever opening the workspace brings up (the trust
@@ -872,7 +872,7 @@ type DockDropdown =
   // The Menu, a panel of its own (`mainMenuPanel`).
   | { kind: "main" }
   | { kind: "move"; sessionId: number; index: number }
-  // Filing an Elsewhere row: choosing a folder opens it as a workspace there.
+  // Filing an external session row: choosing a folder opens it as a workspace there.
   | { kind: "move-live"; liveKey: string; index: number };
 let openDialog: OpenDialogState | null = null;
 let openPanel: FloatingWidgetPanel | null = null;
@@ -911,7 +911,7 @@ let dockSwitchToken = 0;
 type DockMenuTarget =
   | { kind: "session"; id: number }
   | { kind: "folder"; id: string }
-  // An Elsewhere row, by `LiveSession.key`.
+  // An external session row, by `LiveSession.key`.
   | { kind: "live"; key: string };
 type DockMenuState =
   | { target: DockMenuTarget; anchorCol: number; anchorRow: number; stage: "menu" }
@@ -1679,11 +1679,11 @@ function assignSessionToFolder(id: number, folderId: string | null): void {
 }
 
 // =============================================================================
-// Elsewhere: Claude and Codex sessions open outside this editor
+// External sessions: Claude and Codex sessions open outside this editor
 //
 // The `live_sessions` plugin polls each tool's own listing (another terminal,
 // a `claude --bg` job, Claude or Codex cloud) and hands the answer to
-// `setElsewhereSessions`. They are drawn as a group of their own at the foot
+// `setExternalSessions`. They are drawn as a group of their own at the foot
 // of the dock, not as workspaces: nothing here owns them, so none of the
 // workspace verbs (Stop, Archive, Delete, rename) apply. Opening one — Enter,
 // a click, or filing it into a folder — *materializes* it: a workspace is
@@ -1696,66 +1696,66 @@ function assignSessionToFolder(id: number, folderId: string | null): void {
 
 // Sessions outside the editor are grouped by product — "Claude", "Codex" —
 // each row saying where it runs. Each header is a `folder` node with a
-// reserved id (`__elsewhere:<agent>`), so it folds, counts and rolls up like
+// reserved id (`__external:<agent>`), so it folds, counts and rolls up like
 // a folder. `allocFolderId` only mints `df<n>`.
-type ElsewhereGroup = LiveSession["agent"];
-const ELSEWHERE_FOLDER_PREFIX = "__elsewhere:";
-const ELSEWHERE_GROUPS: ElsewhereGroup[] = ["claude", "codex"];
-const ELSEWHERE_GROUP_NAME: Record<ElsewhereGroup, string> = { claude: "Claude", codex: "Codex" };
+type ExternalGroup = LiveSession["agent"];
+const EXTERNAL_FOLDER_PREFIX = "__external:";
+const EXTERNAL_GROUPS: ExternalGroup[] = ["claude", "codex"];
+const EXTERNAL_GROUP_NAME: Record<ExternalGroup, string> = { claude: "Claude", codex: "Codex" };
 const LIVE_NODE_PREFIX = "live:";
 // A group starts open, unlike a folder, so what is remembered is the fold:
 // the ids of the folded groups.
-const ELSEWHERE_COLLAPSED_KEY = "orchestrator.dock.elsewhere_collapsed_groups";
+const EXTERNAL_COLLAPSED_KEY = "orchestrator.dock.external_collapsed_groups";
 
-let elsewhereSessions: LiveSession[] = [];
-let elsewhereProblems: string[] = [];
+let externalSessions: LiveSession[] = [];
+let externalProblems: string[] = [];
 // What went wrong with each source, so its group can say so.
-let elsewhereProblemsBySource: Partial<Record<LiveSession["source"], string>> = {};
+let externalProblemsBySource: Partial<Record<LiveSession["source"], string>> = {};
 // The CLIs the feed was configured to run, so a materialized session attaches
 // with the same program the listing came from.
-let elsewhereCommands = { claude: "claude", codex: "codex" };
+let externalCommands = { claude: "claude", codex: "codex" };
 // First-seen order, so a poll never reshuffles the group (the dock's rule for
 // workspaces too, see `rootDisplayOrder`).
-const elsewhereOrder = new Map<string, number>();
-let nextElsewhereOrder = 0;
+const externalOrder = new Map<string, number>();
+let nextExternalOrder = 0;
 
-interface ElsewhereUpdate {
+interface ExternalUpdate {
   sessions: LiveSession[];
   problems: string[];
   problemsBySource?: Partial<Record<LiveSession["source"], string>>;
   commands?: { claude?: string; codex?: string };
 }
 
-function elsewhereFolderId(group: ElsewhereGroup): string {
-  return ELSEWHERE_FOLDER_PREFIX + group;
+function externalFolderId(group: ExternalGroup): string {
+  return EXTERNAL_FOLDER_PREFIX + group;
 }
 
-function isElsewhereFolder(id: string | null | undefined): boolean {
-  return typeof id === "string" && id.startsWith(ELSEWHERE_FOLDER_PREFIX);
+function isExternalFolder(id: string | null | undefined): boolean {
+  return typeof id === "string" && id.startsWith(EXTERNAL_FOLDER_PREFIX);
 }
 
-function elsewhereGroupOf(folderId: string): ElsewhereGroup {
-  return folderId.slice(ELSEWHERE_FOLDER_PREFIX.length) as ElsewhereGroup;
+function externalGroupOf(folderId: string): ExternalGroup {
+  return folderId.slice(EXTERNAL_FOLDER_PREFIX.length) as ExternalGroup;
 }
 
-function elsewhereGroupKey(group: ElsewhereGroup): string {
-  return folderNodeKey(elsewhereFolderId(group));
+function externalGroupKey(group: ExternalGroup): string {
+  return folderNodeKey(externalFolderId(group));
 }
 
-/** The group a folder-node key names, if it is one of the Elsewhere groups. */
-function elsewhereGroupOfKey(key: string): ElsewhereGroup | null {
-  return ELSEWHERE_GROUPS.find((g) => elsewhereGroupKey(g) === key) ?? null;
+/** The group a folder-node key names, if it is one of the external sessions groups. */
+function externalGroupOfKey(key: string): ExternalGroup | null {
+  return EXTERNAL_GROUPS.find((g) => externalGroupKey(g) === key) ?? null;
 }
 
 // A product name, not translated.
-function elsewhereGroupName(group: ElsewhereGroup): string {
-  return ELSEWHERE_GROUP_NAME[group];
+function externalGroupName(group: ExternalGroup): string {
+  return EXTERNAL_GROUP_NAME[group];
 }
 
 // What went wrong with a group's sources (a sign-in that expired, a CLI
 // that failed), for its menu.
-function elsewhereGroupProblems(group: ElsewhereGroup): string[] {
-  return Object.entries(elsewhereProblemsBySource)
+function externalGroupProblems(group: ExternalGroup): string[] {
+  return Object.entries(externalProblemsBySource)
     .filter(([src, msg]) => src.startsWith(`${group}-`) && typeof msg === "string")
     .map(([, msg]) => msg as string);
 }
@@ -1764,71 +1764,71 @@ function liveNodeKey(key: string): string {
   return LIVE_NODE_PREFIX + key;
 }
 
-function elsewhereCollapsedSet(): Set<string> {
-  const v = editor.getGlobalState(ELSEWHERE_COLLAPSED_KEY);
+function externalCollapsedSet(): Set<string> {
+  const v = editor.getGlobalState(EXTERNAL_COLLAPSED_KEY);
   return new Set(Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
 }
 
-function elsewhereCollapsed(group: ElsewhereGroup): boolean {
-  return elsewhereCollapsedSet().has(group);
+function externalCollapsed(group: ExternalGroup): boolean {
+  return externalCollapsedSet().has(group);
 }
 
-function setElsewhereCollapsed(group: ElsewhereGroup, collapsed: boolean): void {
-  const set = elsewhereCollapsedSet();
+function setExternalCollapsed(group: ExternalGroup, collapsed: boolean): void {
+  const set = externalCollapsedSet();
   if (collapsed) set.add(group);
   else set.delete(group);
-  editor.setGlobalState(ELSEWHERE_COLLAPSED_KEY, [...set]);
+  editor.setGlobalState(EXTERNAL_COLLAPSED_KEY, [...set]);
 }
 
 // Every expansion the dock's tree is drawn with: the user's open folders,
-// plus the Elsewhere group unless they folded it.
+// plus the external sessions group unless they folded it.
 function dockExpandedKeys(): string[] {
   const keys = Array.from(loadExpanded());
-  for (const g of ELSEWHERE_GROUPS) if (!elsewhereCollapsed(g)) keys.push(elsewhereGroupKey(g));
+  for (const g of EXTERNAL_GROUPS) if (!externalCollapsed(g)) keys.push(externalGroupKey(g));
   return keys;
 }
 
 // The last answer drawn, so a poll that changed nothing costs no repaint.
-let elsewhereSignature = "";
+let externalSignature = "";
 
-// The feed's push (published as `setElsewhereSessions`).
-function setElsewhereSessions(update: ElsewhereUpdate): void {
-  elsewhereSessions = Array.isArray(update?.sessions) ? update.sessions : [];
-  elsewhereProblems = Array.isArray(update?.problems) ? update.problems : [];
-  elsewhereProblemsBySource = update?.problemsBySource && typeof update.problemsBySource === "object"
+// The feed's push (published as `setExternalSessions`).
+function setExternalSessions(update: ExternalUpdate): void {
+  externalSessions = Array.isArray(update?.sessions) ? update.sessions : [];
+  externalProblems = Array.isArray(update?.problems) ? update.problems : [];
+  externalProblemsBySource = update?.problemsBySource && typeof update.problemsBySource === "object"
     ? update.problemsBySource
     : {};
-  elsewhereCommands = {
+  externalCommands = {
     claude: update?.commands?.claude || "claude",
     codex: update?.commands?.codex || "codex",
   };
-  for (const s of elsewhereSessions) {
-    if (!elsewhereOrder.has(s.key)) elsewhereOrder.set(s.key, nextElsewhereOrder++);
+  for (const s of externalSessions) {
+    if (!externalOrder.has(s.key)) externalOrder.set(s.key, nextExternalOrder++);
   }
-  const signature = JSON.stringify([elsewhereSessions, elsewhereProblems, elsewhereProblemsBySource]);
-  if (signature === elsewhereSignature) return;
-  elsewhereSignature = signature;
+  const signature = JSON.stringify([externalSessions, externalProblems, externalProblemsBySource]);
+  if (signature === externalSignature) return;
+  externalSignature = signature;
   if (openPanel && dockMode) refreshOpenDialog();
 }
 
 // The feed plugin's side (`live_sessions.ts`), or null when it isn't loaded.
-interface ElsewhereFeed {
+interface ExternalFeed {
   refresh(): Promise<void>;
-  snapshot(): ElsewhereUpdate;
+  snapshot(): ExternalUpdate;
   claudeCloudEnabled(): boolean;
   setClaudeCloud(on: boolean): Promise<void>;
 }
 
-function elsewhereFeed(): ElsewhereFeed | null {
-  return editor.getPluginApi("live-sessions") as ElsewhereFeed | null;
+function externalFeed(): ExternalFeed | null {
+  return editor.getPluginApi("live-sessions") as ExternalFeed | null;
 }
 
 // Ask the feed for a fresh answer (the dock just opened, or the user asked),
 // and take whatever it already has in the meantime.
-function refreshElsewhere(): void {
-  const feed = elsewhereFeed();
+function refreshExternal(): void {
+  const feed = externalFeed();
   if (!feed) return;
-  setElsewhereSessions(feed.snapshot());
+  setExternalSessions(feed.snapshot());
   void feed.refresh();
 }
 
@@ -1836,7 +1836,7 @@ function refreshElsewhere(): void {
 // dock's search, in first-seen order. Only workspaces on this machine can
 // stand for a local session, and one on its host for a session over SSH; a
 // cloud one is matched by the directory it materializes into.
-function elsewhereVisible(): LiveSession[] {
+function externalVisible(): LiveSession[] {
   const roots: string[] = [];
   const remoteRoots: { host: string; root: string }[] = [];
   for (const s of orchestratorSessions.values()) {
@@ -1845,16 +1845,16 @@ function elsewhereVisible(): LiveSession[] {
     if (s.id > 0 && s.remote?.kind === "ssh") remoteRoots.push({ host: s.remote.detail, root: s.root });
   }
   const needle = (openDialog?.filter.value ?? "").trim().toLowerCase();
-  return unrepresented(elsewhereSessions, roots, editor.getDataDir(), remoteRoots)
+  return unrepresented(externalSessions, roots, editor.getDataDir(), remoteRoots)
     .filter((s) =>
       needle === "" ||
       `${s.title} ${liveTail(s)} ${s.agent}`.toLowerCase().includes(needle)
     )
-    .sort((a, b) => (elsewhereOrder.get(a.key) ?? 0) - (elsewhereOrder.get(b.key) ?? 0));
+    .sort((a, b) => (externalOrder.get(a.key) ?? 0) - (externalOrder.get(b.key) ?? 0));
 }
 
 function liveByKey(key: string): LiveSession | undefined {
-  return elsewhereSessions.find((s) => s.key === key);
+  return externalSessions.find((s) => s.key === key);
 }
 
 // Teleporting copies a cloud session: the cloud one goes on as it was, so
@@ -1892,7 +1892,7 @@ function liveTail(s: LiveSession): string {
   return w ? editor.t("dock.live_teleported", { name: w.label }) : liveDetail(s);
 }
 
-// What an Elsewhere row is, for the top of its menu: read-only lines.
+// What an external session row is, for the top of its menu: read-only lines.
 function liveInfoLines(s: LiveSession): string[] {
   const lines = [`${editor.t("dock.live_source")}: ${liveSource(s)}`];
   const where = liveWhere(s);
@@ -1938,14 +1938,14 @@ function liveCardExtraLines(s: LiveSession): TextPropertyEntry[] {
 
 // The group header: a folder row, with the same `●n ✓n` roll-up, so a
 // folded group still says when a session out there needs you.
-function elsewhereGroupEntry(group: ElsewhereGroup, live: LiveSession[]): TextPropertyEntry {
+function externalGroupEntry(group: ExternalGroup, live: LiveSession[]): TextPropertyEntry {
   const rollup = { blocked: 0, done: 0 };
   for (const s of live) {
     if (s.state === "blocked") rollup.blocked++;
     else if (s.state === "done") rollup.done++;
   }
   return folderNodeEntry(
-    { id: elsewhereFolderId(group), name: elsewhereGroupName(group), parent: null },
+    { id: externalFolderId(group), name: externalGroupName(group), parent: null },
     live.length,
     rollup,
   );
@@ -1967,7 +1967,7 @@ function teleportLiveSession(key: string, folderId?: string | null): void {
     : undefined;
   openWorkspaceForm({ kind: "option", key: "local" }, {
     projectPath: match?.projectPath ?? "",
-    cmd: `${elsewhereCommands.claude} --teleport ${s.id}`,
+    cmd: `${externalCommands.claude} --teleport ${s.id}`,
     label: s.title,
     teleportOf: s.id,
     createWorktree: true,
@@ -1987,16 +1987,16 @@ function openInBrowser(url: string): void {
 }
 
 // What opening `s` does, with this editor's settings.
-function elsewherePlan(s: LiveSession, materialize: boolean): LivePlan {
+function externalPlan(s: LiveSession, materialize: boolean): LivePlan {
   return livePlan(s, {
     dataDir: editor.getDataDir(),
-    claude: elsewhereCommands.claude,
-    codex: elsewhereCommands.codex,
+    claude: externalCommands.claude,
+    codex: externalCommands.codex,
     windows: editor.getEnv("OS") === "Windows_NT",
   }, materialize);
 }
 
-// Enter or a click on an Elsewhere row. What takes the session over or
+// Enter or a click on an external session row. What takes the session over or
 // connects to it here runs at once; anything that would leave the editor —
 // a page in the browser, Claude Desktop — or teleport a cloud session is
 // offered instead (the row's menu, at the row), never done on a click.
@@ -2005,7 +2005,7 @@ function elsewherePlan(s: LiveSession, materialize: boolean): LivePlan {
 function activateLiveRow(key: string, at?: { index: number; col: number; row: number }): void {
   const s = liveByKey(key);
   if (!s) return;
-  const plan = elsewherePlan(s, false);
+  const plan = externalPlan(s, false);
   if (plan.kind === "browser" || plan.kind === "teleport") {
     // One row below the click, so the row stays in sight above its menu.
     if (at) openDockContextMenu(at.index, at.col, at.row + 1);
@@ -2024,7 +2024,7 @@ function desktopLink(s: LiveSession): string | null {
 function openLiveOutside(s: LiveSession, url: string): void {
   openInBrowser(url);
   editor.setStatus(editor.t(
-    url.startsWith("claude://") ? "status.elsewhere_desktop" : "status.elsewhere_browser",
+    url.startsWith("claude://") ? "status.external_desktop" : "status.external_browser",
     { name: s.title },
   ));
 }
@@ -2051,11 +2051,11 @@ async function takeOverOnHost(
     extraArgs: [],
   });
   if (!built.ok) {
-    editor.setStatus(editor.t("status.elsewhere_cannot_open", { name: s.title, why: built.error }));
+    editor.setStatus(editor.t("status.external_cannot_open", { name: s.title, why: built.error }));
     return;
   }
   if (built.spec.backend === "ssh") built.spec.spec.command = plan.command;
-  editor.setStatus(editor.t("status.elsewhere_taking_over", { name: s.title, host: plan.target }));
+  editor.setStatus(editor.t("status.external_taking_over", { name: s.title, host: plan.target }));
   const pendingId = await startPendingWorkspace(built.spec, { visit: opts.dive });
   if (opts.folderId === undefined) return;
   // A remote workspace has no window to file until its connect lands.
@@ -2063,7 +2063,7 @@ async function takeOverOnHost(
   if (outcome.ok && outcome.windowId) assignSessionToFolder(outcome.windowId, opts.folderId);
 }
 
-// Open an Elsewhere row. Enter and a click `materialize: false` (a Codex
+// Open an external session row. Enter and a click `materialize: false` (a Codex
 // Cloud task then opens its page); filing it into a folder always makes a
 // workspace, and files that workspace. `dive` hands the keyboard to it.
 async function openLiveSession(
@@ -2072,9 +2072,9 @@ async function openLiveSession(
 ): Promise<void> {
   const s = liveByKey(key);
   if (!s) return;
-  const plan: LivePlan = elsewherePlan(s, opts.materialize);
+  const plan: LivePlan = externalPlan(s, opts.materialize);
   if (plan.kind === "none") {
-    editor.setStatus(editor.t("status.elsewhere_cannot_open", { name: s.title, why: plan.why }));
+    editor.setStatus(editor.t("status.external_cannot_open", { name: s.title, why: plan.why }));
     return;
   }
   if (plan.kind === "browser") {
@@ -2137,7 +2137,7 @@ async function openLiveSession(
     }
   }
   if (opts.folderId !== undefined) assignSessionToFolder(id, opts.folderId);
-  if (plan.note) editor.setStatus(editor.t("status.elsewhere_in_place", { name: s.title }));
+  if (plan.note) editor.setStatus(editor.t("status.external_in_place", { name: s.title }));
   if (opts.dive && dockMode && openPanel) {
     dockDiveBlur = true;
     dockBlurred = true;
@@ -2154,8 +2154,8 @@ async function openLiveSession(
 type DockNode =
   | { kind: "folder"; folderId: string }
   | { kind: "session"; sessionId: number }
-  // A row of the Elsewhere group (whose own header is a `folder` node with
-  // a reserved `__elsewhere:<agent>` id, so it folds like one).
+  // A row of the external sessions group (whose own header is a `folder` node with
+  // a reserved `__external:<agent>` id, so it folds like one).
   | { kind: "live"; liveKey: string };
 
 interface DockTree {
@@ -2233,17 +2233,17 @@ function buildDockTree(filtered: number[]): DockTree {
   walk(null, 0);
   for (const sid of membersByFolder.get(null) ?? []) emitSession(sid, 0);
 
-  // The Elsewhere group, last: the dock's own workspaces come first. Absent
+  // The external sessions group, last: the dock's own workspaces come first. Absent
   // while there is nothing in it (or the feed plugin is not loaded).
-  const allLive = dockMode ? elsewhereVisible() : [];
-  for (const group of ELSEWHERE_GROUPS) {
+  const allLive = dockMode ? externalVisible() : [];
+  for (const group of EXTERNAL_GROUPS) {
     const live = allLive.filter((s) => s.agent === group);
     // A group whose source failed (a sign-in that expired) stays, empty, so
     // its menu can say what went wrong.
-    if (live.length === 0 && elsewhereGroupProblems(group).length === 0) continue;
-    nodes.push(treeNode(elsewhereGroupEntry(group, live), { depth: 0, hasChildren: live.length > 0 }));
-    keys.push(elsewhereGroupKey(group));
-    model.push({ kind: "folder", folderId: elsewhereFolderId(group) });
+    if (live.length === 0 && externalGroupProblems(group).length === 0) continue;
+    nodes.push(treeNode(externalGroupEntry(group, live), { depth: 0, hasChildren: live.length > 0 }));
+    keys.push(externalGroupKey(group));
+    model.push({ kind: "folder", folderId: externalFolderId(group) });
     for (const s of live) {
       nodes.push(
         treeNode(card ? liveCardPrimary(s) : liveNodeEntry(s), {
@@ -5637,9 +5637,9 @@ function openControlRoom(
   // project); the dialog renders immediately with live sessions and
   // gains the discovered rows when the scan lands.
   void refreshDiscoveredWorktrees();
-  // The Elsewhere group, the same way: what the feed already has now, a
+  // The external sessions group, the same way: what the feed already has now, a
   // fresh listing when it lands.
-  if (asDock) refreshElsewhere();
+  if (asDock) refreshExternal();
 }
 
 // When the modal Open picker was floated over a still-mounted dock,
@@ -6171,12 +6171,12 @@ function dockMainGroups(): DockMenuGroup[] {
       opts: [
         { key: "main:empty", label: check(!openDialog.hideTrivial) + editor.t("dock.show_empty") },
         { key: "main:worktrees", label: check(openDialog.showWorktrees) + editor.t("dock.all_worktrees") },
-        // The Elsewhere source that reads the Claude CLI's sign-in and a
+        // The external sessions source that reads the Claude CLI's sign-in and a
         // private API, switchable here rather than only in Settings.
-        ...(elsewhereFeed()
+        ...(externalFeed()
           ? [{
             key: "main:claude-cloud",
-            label: check(elsewhereFeed()!.claudeCloudEnabled()) + editor.t("dock.claude_cloud"),
+            label: check(externalFeed()!.claudeCloudEnabled()) + editor.t("dock.claude_cloud"),
           }]
           : []),
       ],
@@ -6191,7 +6191,7 @@ function dockMoveOptions(sessionId: number): MenuOption[] {
 }
 
 // The same list for a row with no folder yet (`cur` undefined marks none):
-// an Elsewhere row, which only becomes a workspace by being filed.
+// an external session row, which only becomes a workspace by being filed.
 function folderMoveOptions(cur: string | null | undefined): MenuOption[] {
   const opts: MenuOption[] = [
     { key: "move:root", label: editor.t("dock.move_root"), marked: cur === null },
@@ -6462,7 +6462,7 @@ function runDockMenuOption(optKey: string): void {
     return;
   }
   if (optKey === "main:claude-cloud") {
-    const feed = elsewhereFeed();
+    const feed = externalFeed();
     if (feed) {
       // Saved like any setting; the checkmark follows once it has landed.
       void feed.setClaudeCloud(!feed.claudeCloudEnabled()).then(renderMainMenu);
@@ -6474,7 +6474,7 @@ function runDockMenuOption(optKey: string): void {
     renderMainMenu();
     return;
   }
-  // Filing an Elsewhere row materializes it: a workspace attached to the
+  // Filing an external session row materializes it: a workspace attached to the
   // session, created straight into the chosen folder (or a new one).
   if (optKey.startsWith("move:") && menu?.kind === "move-live") {
     const target = optKey.slice("move:".length);
@@ -6543,7 +6543,7 @@ function openCreateFolderDialog(
 ): void {
   // The session the "organize under this folder" checkbox targets: the
   // explicitly-moved session when given, else the active window — unless
-  // an Elsewhere row is being filed, which the checkbox then names.
+  // an external session row is being filed, which the checkbox then names.
   const candidate = typeof assignSession === "number"
     ? assignSession
     : editor.activeWindow();
@@ -6767,9 +6767,9 @@ function closeCreateFolderDialog(): void {
 // host-owned tree state.
 function toggleDockFolderExpansion(folderKey: string): void {
   if (!openPanel) return;
-  const group = elsewhereGroupOfKey(folderKey);
+  const group = externalGroupOfKey(folderKey);
   if (group) {
-    setElsewhereCollapsed(group, !elsewhereCollapsed(group));
+    setExternalCollapsed(group, !externalCollapsed(group));
   } else {
     const set = loadExpanded();
     if (set.has(folderKey)) set.delete(folderKey);
@@ -6842,17 +6842,17 @@ function buildDockMenuSpec(state: DockMenuState): WidgetSpec {
     // `confirm-<action>`, handled in the dock-menu `widget_event` block.
     return buildConfirmBody({ action: state.action, ids: [state.target.id] });
   }
-  // The Elsewhere group: nothing to organise, but a way to re-list now, and
+  // The external sessions group: nothing to organise, but a way to re-list now, and
   // what went wrong with a source, if anything did (a sign-in that expired).
-  if (state.target.kind === "folder" && isElsewhereFolder(state.target.id)) {
-    const group = elsewhereGroupOf(state.target.id);
+  if (state.target.kind === "folder" && isExternalFolder(state.target.id)) {
+    const group = externalGroupOf(state.target.id);
     return contextMenuSpec(
-      elsewhereGroupName(group),
-      [{ label: editor.t("dock.ctx_refresh"), key: "ctx-elsewhere-refresh", intent: "primary" }],
-      elsewhereGroupProblems(group),
+      externalGroupName(group),
+      [{ label: editor.t("dock.ctx_refresh"), key: "ctx-external-refresh", intent: "primary" }],
+      externalGroupProblems(group),
     );
   }
-  // An Elsewhere row: open it (attach, or its folder), file it into a folder
+  // An external session row: open it (attach, or its folder), file it into a folder
   // (which opens it as a workspace there), or open its page on the web.
   if (state.target.kind === "live") {
     const s = liveByKey(state.target.key);
@@ -6860,7 +6860,7 @@ function buildDockMenuSpec(state: DockMenuState): WidgetSpec {
     // outside the editor); then the places outside it, each named: this
     // menu is also what a click on such a row opens.
     const items: { label: string; key: string; intent?: "primary" | "danger" }[] = [];
-    const plan = s ? elsewherePlan(s, false) : null;
+    const plan = s ? externalPlan(s, false) : null;
     // Already copied here: going to that copy comes first; another teleport
     // (a second copy) is still there, below it.
     const copy = s ? teleportedWorkspace(s) : undefined;
@@ -6953,10 +6953,10 @@ function buildDockMenuSpec(state: DockMenuState): WidgetSpec {
 function contextMenuSpec(
   title: string,
   items: { label: string; key: string; intent?: "primary" | "danger"; disabled?: boolean }[],
-  // Warning lines under the actions (the Elsewhere group's source problems).
+  // Warning lines under the actions (the external sessions group's source problems).
   notes: string[] = [],
   // Read-only lines under the title, before the actions: what the target is
-  // (an Elsewhere row's source, folder, state).
+  // (an external session row's source, folder, state).
   info: string[] = [],
 ): WidgetSpec {
   return col(
@@ -7076,7 +7076,7 @@ function openMoveToFolderForCurrent(): void {
   if (!openPanel || !openDialog || !dockMode) return;
   let id: number | null = null;
   const selKey = openDialog.dockSelKey;
-  // An Elsewhere row is filed by materializing it into the chosen folder.
+  // An external session row is filed by materializing it into the chosen folder.
   if (selKey?.startsWith(LIVE_NODE_PREFIX)) {
     dockBlurred = false;
     editor.floatingPanelControl(openPanel.id(), "focus", 0);
@@ -16256,10 +16256,10 @@ export type DockFilterOptions = {
 /// promise / thrown error, and a caller that is guessing can branch on the
 /// boolean without wrapping everything in try/catch.
 export type OrchestratorApi = DiscoveryHost & {
-  /** Replace the dock's Elsewhere group: Claude/Codex sessions open outside
+  /** Replace the dock's external sessions group: Claude/Codex sessions open outside
    *  this editor, as `live_sessions.ts` lists them. `commands` are the CLI
    *  programs it ran, so opening a row attaches with the same ones. */
-  setElsewhereSessions(update: ElsewhereUpdate): void;
+  setExternalSessions(update: ExternalUpdate): void;
   /** Launch a coding agent in THIS workspace — the headless twin of the
    *  "Run Agent…" dialog. By default resolves once the launch has been seen
    *  to come up (its terminal produced output within `readyTimeoutMs`);
@@ -17024,8 +17024,8 @@ function apiSetDockFilter(
 }
 
 editor.exportPluginApi("orchestrator", {
-  // The Elsewhere group's feed (`live_sessions.ts`).
-  setElsewhereSessions,
+  // The external sessions group's feed (`live_sessions.ts`).
+  setExternalSessions,
   // `DiscoveryHost`: what the Everything dialog (`agent_discovery.ts`) needs.
   scanTargets,
   resumeArgv,
@@ -17513,10 +17513,10 @@ editor.on("widget_event", (e) => {
       return;
     }
     if (e.event_type === "activate") {
-      if (target.kind === "folder" && isElsewhereFolder(target.id)) {
-        if (e.widget_key === "ctx-elsewhere-refresh") {
+      if (target.kind === "folder" && isExternalFolder(target.id)) {
+        if (e.widget_key === "ctx-external-refresh") {
           closeDockContextMenu();
-          refreshElsewhere();
+          refreshExternal();
         }
         return;
       }
@@ -18095,7 +18095,7 @@ editor.on("widget_event", (e) => {
             if (payload.via === "click") toggleDockFolderExpansion(key!);
             return;
           }
-          // An Elsewhere row is not a window: arrowing onto it only moves
+          // An external session row is not a window: arrowing onto it only moves
           // the highlight (opening one creates a workspace, which must not
           // happen by scrolling past it); a click opens it.
           if (node && node.kind === "live") {
@@ -18266,9 +18266,9 @@ editor.on("widget_event", (e) => {
       const key = payload.key;
       const expanded = payload.expanded;
       if (typeof key === "string" && key.startsWith(FOLDER_NODE_PREFIX)) {
-        const group = elsewhereGroupOfKey(key);
+        const group = externalGroupOfKey(key);
         if (group) {
-          setElsewhereCollapsed(group, expanded !== true);
+          setExternalCollapsed(group, expanded !== true);
         } else {
           const set = loadExpanded();
           if (expanded === true) set.add(key);
