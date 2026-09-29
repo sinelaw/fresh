@@ -818,6 +818,12 @@ pub struct Window {
     /// because the overlays it scopes are per-buffer (per-window).
     pub search_namespace: crate::view::overlay::OverlayNamespace,
 
+    /// Overlay namespace for the one *current* search match (the match
+    /// Find Next landed on, or the one Query Replace is asking about).
+    /// Kept apart from `search_namespace` because that namespace's overlay
+    /// markers are the source of truth for match positions.
+    pub search_current_namespace: crate::view::overlay::OverlayNamespace,
+
     /// Range that should be reused when the next search is confirmed
     /// (e.g. after the user picks a hit in the search overlay).
     pub pending_search_range: Option<std::ops::Range<usize>>,
@@ -2477,6 +2483,9 @@ impl Window {
             search_namespace: crate::view::overlay::OverlayNamespace::from_string(
                 "search".to_string(),
             ),
+            search_current_namespace: crate::view::overlay::OverlayNamespace::from_string(
+                "current-search-match".to_string(),
+            ),
             pending_search_range: None,
             overlay_preview_state: None,
             file_rapid_change_counts: HashMap::new(),
@@ -3514,6 +3523,65 @@ impl Window {
         let ns = self.search_namespace.clone();
         let state = self.active_state_mut();
         state.overlays.clear_namespace(&ns, &mut state.marker_list);
+        self.clear_current_search_match();
+    }
+
+    /// Mark `range` as the current search match, replacing any previous one.
+    ///
+    /// The overlay sits above the ordinary match highlight and above the
+    /// selection, so the current match stands out even when Find Next has
+    /// selected it. `modifier` carries the theme's text attributes for it
+    /// (bold by default). An empty range just clears the mark.
+    pub fn set_current_search_match(
+        &mut self,
+        range: std::ops::Range<usize>,
+        fg: ratatui::style::Color,
+        bg: ratatui::style::Color,
+        modifier: ratatui::style::Modifier,
+    ) {
+        self.clear_current_search_match();
+        if range.is_empty() {
+            return;
+        }
+        let ns = self.search_current_namespace.clone();
+        let state = self.active_state_mut();
+        let overlay = crate::view::overlay::Overlay::with_namespace_fixed_end(
+            &mut state.marker_list,
+            range,
+            crate::view::overlay::OverlayFace::Style {
+                style: ratatui::style::Style::default()
+                    .fg(fg)
+                    .bg(bg)
+                    .add_modifier(modifier),
+            },
+            ns,
+        )
+        .with_priority_value(11)
+        .with_theme_key("search.current_match_bg")
+        .with_above_selection();
+        state.overlays.add(overlay);
+    }
+
+    /// The range of the current-search-match mark in the active buffer, if
+    /// one is set.
+    ///
+    /// The mark's markers track edits, so once the user deletes or types over
+    /// the current match the range is empty.
+    pub fn current_search_match_range(&self) -> Option<std::ops::Range<usize>> {
+        let ns = &self.search_current_namespace;
+        let state = self.active_state();
+        state
+            .overlays
+            .in_namespace(ns)
+            .next()
+            .map(|o| o.range(&state.marker_list))
+    }
+
+    /// Remove the current-search-match mark from the active buffer.
+    pub fn clear_current_search_match(&mut self) {
+        let ns = self.search_current_namespace.clone();
+        let state = self.active_state_mut();
+        state.overlays.clear_namespace(&ns, &mut state.marker_list);
     }
 
     /// Clear all search highlights from the active buffer and reset
@@ -4206,9 +4274,11 @@ impl Window {
         let text = state.get_text_range(win_start, win_end);
 
         let mut new_overlays = Vec::new();
+        let mut new_ranges = Vec::new();
         for mat in regex.find_iter(&text) {
             let absolute_pos = win_start + mat.start();
             let match_len = mat.end() - mat.start();
+            new_ranges.push(absolute_pos..absolute_pos + match_len);
             let search_style = ratatui::style::Style::default().fg(search_fg).bg(search_bg);
             new_overlays.push(
                 crate::view::overlay::Overlay::with_namespace_fixed_end(
@@ -4229,6 +4299,16 @@ impl Window {
             new_overlays,
             &mut state.marker_list,
         );
+
+        // The current-match mark follows the same rule: once the edit leaves
+        // it on text that is no longer a match, it goes. An empty mark (the
+        // current match was deleted) stays, since find-next reads it.
+        if let Some(mark) = self.current_search_match_range() {
+            let in_window = mark.start < win_end && mark.end > win_start;
+            if !mark.is_empty() && in_window && !new_ranges.contains(&mark) {
+                self.clear_current_search_match();
+            }
+        }
     }
 
     // ---- File-explorer leaf delegators ----

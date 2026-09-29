@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use super::types::{Theme, ThemeFile, ThemeInfo, BUILTIN_THEMES};
+use super::types::{Theme, ThemeInfo, BUILTIN_THEMES};
 
 /// Normalize a theme name for consistent lookup and storage.
 ///
@@ -357,8 +357,7 @@ impl ThemeLoader {
 
         // Load all embedded themes (key = name for builtins)
         for builtin in BUILTIN_THEMES {
-            if let Ok(theme_file) = serde_json::from_str::<ThemeFile>(builtin.json) {
-                let theme: Theme = theme_file.into();
+            if let Some(theme) = Theme::load_builtin(builtin.name) {
                 let normalized = normalize_theme_name(builtin.name);
                 let info = ThemeInfo::new(&normalized, builtin.pack);
                 themes.insert(info.key.clone(), theme);

@@ -377,7 +377,14 @@ built-ins are keyed by bare name, user themes by a `file://` path; resolution
 allows a `builtin://NAME` form to force the built-in, while a relative name
 resolves to a user theme overriding the matching built-in. Inheritance via
 `extends` or auto-base selection (luminance-based light/dark auto-pick) is applied
-on top of overrides. The planned plugin API for listing built-in themes exists.
+on top of overrides. No color comes from the code: a theme that names the 49
+required keys (those of the first theme file format) stands alone, and every
+other key it leaves out takes the value of its fallback key, declared as a
+`fallback` column in the key table (`theme_color_keys!`), with every chain ending
+at a required key. A theme with `extends` (or an auto-picked base, for a theme
+missing a required key) takes every key it leaves out from the base instead. The
+built-in themes are standalone. The planned plugin API for listing built-in
+themes exists.
 
 ### 5.3 Live preview (IMPLEMENTED) and the theme editor
 

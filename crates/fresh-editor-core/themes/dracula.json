@@ -25,7 +25,8 @@
     "bracket_rainbow_3": [80, 250, 123],
     "bracket_rainbow_4": [139, 233, 253],
     "bracket_rainbow_5": [248, 248, 242],
-    "bracket_rainbow_6": [189, 147, 249]
+    "bracket_rainbow_6": [189, 147, 249],
+    "whitespace_indicator_selected_fg": [123, 126, 145]
   },
   "ui": {
     "blame_header_fg": [248, 248, 242],
@@ -80,11 +81,15 @@
     "scrollbar_thumb_hover_fg": [139, 233, 253],
     "settings_selected_bg": [80, 83, 110],
     "settings_selected_fg": [248, 248, 242],
-    "popup_selection_fg": [248, 248, 242]
+    "popup_selection_fg": [248, 248, 242],
+    "status_lsp_actionable_fg": [0, 0, 0],
+    "status_lsp_actionable_bg": [181, 137, 0]
   },
   "search": {
     "match_bg": [241, 250, 140],
-    "match_fg": [40, 42, 54]
+    "match_fg": [40, 42, 54],
+    "current_match_bg": [255, 121, 198],
+    "current_match_fg": {"color": [40, 42, 54], "modifier": ["bold"]}
   },
   "diagnostic": {
     "error_fg": [255, 85, 85],

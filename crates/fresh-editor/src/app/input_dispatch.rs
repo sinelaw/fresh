@@ -294,8 +294,14 @@ impl Editor {
                 self.handle_interactive_replace_key(c)?;
             }
             DeferredAction::CancelInteractiveReplace => {
-                self.cancel_prompt();
-                self.active_window_mut().interactive_replace_state = None;
+                // End the session exactly as `c`/`q` do, which also clears
+                // the search highlights and the current-match mark.
+                let replacements_made = self
+                    .active_window()
+                    .interactive_replace_state
+                    .as_ref()
+                    .map_or(0, |s| s.replacements_made);
+                self.finish_interactive_replace(replacements_made);
             }
 
             // Terminal mode actions

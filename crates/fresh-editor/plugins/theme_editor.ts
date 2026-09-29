@@ -253,13 +253,24 @@ function fieldRefersToColorDef(fieldObj: Record<string, unknown>): boolean {
 }
 
 /**
- * Whether a property schema refers to `StyledColorDef` — a syntax value that
- * is either a bare color or a `{color, modifier}` bundle. Such a field is
+ * Whether a property schema refers to `StyledColorDef` — a value that is
+ * either a bare color or a `{color, modifier}` bundle — directly or wrapped
+ * in an `anyOf` (every theme key is optional, so the schema generator wraps
+ * it as `anyOf: [{$ref: StyledColorDef}, {type: null}]`). Such a field is
  * edited as a color plus a synthetic sibling `<name>_modifier` attributes row.
  */
 function fieldRefersToStyledColorDef(fieldObj: Record<string, unknown>): boolean {
   const refStr = fieldObj["$ref"];
-  return typeof refStr === "string" && refStr.endsWith("/StyledColorDef");
+  if (typeof refStr === "string" && refStr.endsWith("/StyledColorDef")) {
+    return true;
+  }
+  const anyOf = fieldObj["anyOf"];
+  return Array.isArray(anyOf) && anyOf.some((variant) => {
+    const r = variant && typeof variant === "object"
+      ? (variant as Record<string, unknown>)["$ref"]
+      : undefined;
+    return typeof r === "string" && r.endsWith("/StyledColorDef");
+  });
 }
 
 /**
@@ -543,10 +554,10 @@ const state: ThemeEditorState = {
  * from `editor.*` and `syntax.*`, and lean on bold + distinct syntax roles
  * to give each UI element its own visual identity.
  *
- * We don't need a client-side fallback chain: the core's `Theme` struct has
- * serde defaults for every field, so `resolve_theme_key` always returns a
- * value for any key listed here — a stub theme file can omit them and the
- * defaults still apply.
+ * We don't need a client-side fallback chain: the core resolves every key a
+ * theme leaves out (from its base theme, or from the key's fallback key), so
+ * `resolve_theme_key` always returns a value for any key listed here — a stub
+ * theme file can omit them.
  */
 const colors = {
   sectionHeader: "syntax.keyword",
@@ -761,43 +772,49 @@ function setNestedValue(obj: Record<string, unknown>, path: string, value: unkno
 }
 
 // =============================================================================
-// Syntax style bundling
+// Style bundling
 //
-// On disk a syntax key is either a bare color (`[r,g,b]` / `"Named"`) or a
-// `{color, modifier}` bundle. Internally the editor works with a flat model —
-// a color at `<key>` and its attributes at `<key>_modifier` — so the whole
-// field pipeline treats attributes like any other value. These two helpers
-// bridge the on-disk bundle and the flat in-memory form.
+// On disk a styled key (every syntax key, and a few others such as
+// `search.current_match_fg`) is either a bare color (`[r,g,b]` / `"Named"`)
+// or a `{color, modifier}` bundle. Internally the editor works with a flat
+// model — a color at `<key>` and its attributes at `<key>_modifier` — so the
+// whole field pipeline treats attributes like any other value. These two
+// helpers bridge the on-disk bundle and the flat in-memory form.
 // =============================================================================
 
 const MODIFIER_SUFFIX = "_modifier";
 
-/** Expand on-disk `{color, modifier}` bundles into flat color + `_modifier`. */
-function expandSyntaxBundles(themeData: Record<string, unknown>): void {
-  const syntax = themeData.syntax;
-  if (!syntax || typeof syntax !== "object" || Array.isArray(syntax)) return;
-  const obj = syntax as Record<string, unknown>;
-  for (const [key, value] of Object.entries(obj)) {
-    // A bundle is a plain object; a bare color is an array or string.
-    if (!value || typeof value !== "object" || Array.isArray(value)) continue;
-    const bundle = value as Record<string, unknown>;
-    obj[key] = bundle.color;
-    if (Array.isArray(bundle.modifier) && bundle.modifier.length > 0) {
-      obj[`${key}${MODIFIER_SUFFIX}`] = bundle.modifier;
+/** Expand on-disk `{color, modifier}` bundles into flat color + `_modifier`,
+ * in every section. */
+function expandStyleBundles(themeData: Record<string, unknown>): void {
+  for (const section of Object.values(themeData)) {
+    if (!section || typeof section !== "object" || Array.isArray(section)) continue;
+    const obj = section as Record<string, unknown>;
+    for (const [key, value] of Object.entries(obj)) {
+      // A bundle is a plain object; a bare color is an array or string.
+      if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+      const bundle = value as Record<string, unknown>;
+      obj[key] = bundle.color;
+      if (Array.isArray(bundle.modifier) && bundle.modifier.length > 0) {
+        obj[`${key}${MODIFIER_SUFFIX}`] = bundle.modifier;
+      }
     }
   }
 }
 
 /**
- * Collapse a flat syntax section (color + `<key>_modifier`) back to the
- * on-disk form: a `{color, modifier}` bundle when attributes are present,
- * otherwise the bare color.
+ * Collapse a flat section (color + `<key>_modifier`) back to the on-disk
+ * form: a `{color, modifier}` bundle when attributes are present, otherwise
+ * the bare color. A `_modifier` key with no color key beside it is a key of
+ * its own (e.g. `editor.selection_modifier`) and is kept as is.
  */
-function collapseSyntaxBundles(syntax: Record<string, unknown>): Record<string, unknown> {
+function collapseStyleBundles(section: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(syntax)) {
-    if (key.endsWith(MODIFIER_SUFFIX)) continue;
-    const modifier = syntax[`${key}${MODIFIER_SUFFIX}`];
+  for (const [key, value] of Object.entries(section)) {
+    if (key.endsWith(MODIFIER_SUFFIX) && key.slice(0, -MODIFIER_SUFFIX.length) in section) {
+      continue;
+    }
+    const modifier = section[`${key}${MODIFIER_SUFFIX}`];
     if (Array.isArray(modifier) && modifier.length > 0) {
       out[key] = { color: value, modifier };
     } else {
@@ -841,7 +858,7 @@ async function loadThemeRegistry(): Promise<void> {
 function loadThemeFile(key: string): Record<string, unknown> | null {
   try {
     const data = editor.getThemeData(key) as Record<string, unknown> | null;
-    if (data) expandSyntaxBundles(data);
+    if (data) expandStyleBundles(data);
     return data;
   } catch (e) {
     editor.debug(`[theme_editor] Failed to load theme data for '${key}': ${e}`);
@@ -2137,9 +2154,8 @@ async function saveTheme(name?: string, restorePath?: string | null): Promise<bo
           sectionData[field.key] = value;
         }
       }
-      // Re-bundle syntax color + attributes into the single on-disk value.
-      completeTheme[section.name] =
-        section.name === "syntax" ? collapseSyntaxBundles(sectionData) : sectionData;
+      // Re-bundle color + attributes into the single on-disk value.
+      completeTheme[section.name] = collapseStyleBundles(sectionData);
     }
 
     const content = JSON.stringify(completeTheme, null, 2);
