@@ -2518,10 +2518,6 @@ impl Editor {
                     .unwrap_or(0);
                 Some(idx)
             });
-            // A fresh result list re-engages keep-selection-visible scrolling
-            // (issue #2119): a stale manual-scroll latch from the previous
-            // query must not suppress it.
-            prompt.manual_scroll = false;
             // Track that suggestions were set for this input value.
             // If filter_suggestions is called with the same input, we skip filtering
             // because the plugin has already provided filtered results.

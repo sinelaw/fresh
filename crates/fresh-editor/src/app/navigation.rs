@@ -178,7 +178,12 @@ impl crate::app::window::Window {
                 // no usable visible width.
                 if !view_state.viewport.line_wrap_enabled {
                     let cursor_visual_col = visual_column_of(&mut state.buffer, cursor_pos);
-                    let gutter_width = if view_state.show_line_numbers { 6 } else { 0 };
+                    // The gutter the pane draws: its width follows the
+                    // buffer's line count.
+                    let gutter_width = match view_state.show_line_numbers {
+                        true => view_state.viewport.gutter_width(&state.buffer),
+                        false => 0,
+                    };
                     let scrollbar_width = 1;
                     let visible_width = (view_state.viewport.width as usize)
                         .saturating_sub(gutter_width)
@@ -286,4 +291,64 @@ pub(crate) fn reconcile_restored_buffer_view(
     // Restore code already calls set_skip_resize_sync; we don't need to also
     // pin against ensure_visible because the next render will see the cursor
     // is already inside the viewport range we just chose.
+}
+
+#[cfg(test)]
+mod tests {
+    use super::JumpOptions;
+    use crate::app::Editor;
+    use crate::config::Config;
+    use crate::config_io::DirectoryContext;
+    use std::sync::Arc;
+
+    /// **A jump keeps its margin inside the gutter the pane draws.** Deep in
+    /// an unwrapped line, the pane scrolls sideways until the cursor is a
+    /// margin inside the text area's right edge. The text area was counted
+    /// after a six-column gutter, which is the drawn one only while the
+    /// buffer has fewer than a hundred lines; the gutter grows a column per
+    /// digit of the line count, and the cursor fell short of its margin by
+    /// as many columns.
+    #[test]
+    fn a_jump_counts_its_margin_after_the_drawn_gutter() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let path = temp_dir.path().join("long.txt");
+        // Ten thousand lines: a five-digit gutter.
+        let rest = "y\n".repeat(9_999);
+        std::fs::write(&path, format!("{}\n{rest}", "x".repeat(400))).unwrap();
+        let mut config = Config::default();
+        config.editor.line_wrap = false;
+        let fs: Arc<dyn crate::model::filesystem::FileSystem + Send + Sync> =
+            Arc::new(crate::model::filesystem::StdFileSystem);
+        let mut editor = Editor::new(
+            config,
+            80,
+            24,
+            DirectoryContext::for_testing(temp_dir.path()),
+            crate::view::color_support::ColorCapability::TrueColor,
+            fs,
+        )
+        .unwrap();
+        editor.open_file(&path).unwrap();
+
+        let target = 250;
+        let buffer = editor.active_buffer();
+        let window = editor.active_window_mut();
+        window.jump_active_cursor_to(target, JumpOptions::default());
+        let (width, gutter, left) = {
+            let split = window.split_manager().active_split();
+            let vs = &window.split_view_states()[&split];
+            let state = window.buffers.get(&buffer).unwrap();
+            let gutter = vs.viewport.gutter_width(&state.buffer);
+            (vs.viewport.width as usize, gutter, vs.viewport.left_column)
+        };
+        assert!(gutter > 6, "the drawn gutter is wider than six: {gutter}");
+        // The text area: the pane less the gutter and the scrollbar.
+        let text = width - gutter - 1;
+        let margin = (text / 8).min(8);
+        assert_eq!(
+            target - left,
+            text - margin - 1,
+            "the cursor sits a margin inside the text area's right edge"
+        );
+    }
 }

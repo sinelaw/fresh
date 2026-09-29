@@ -243,6 +243,10 @@ pub struct Browser {
     /// Which of the dialog's own controls the pointer is over. The rows are
     /// not here: their hover is the `List`'s own state.
     pub hover: Option<BrowserPart>,
+    /// The model's page handle: the list records the window its layout
+    /// gave it here, and the model's PageUp/PageDown ask it for the entry a
+    /// page away.
+    pub pager: std::rc::Rc<fresh_ui::behavior::Pager>,
 }
 
 /// The dialog's key.
@@ -684,7 +688,8 @@ fn entries(b: &Browser, rows: &Entries) -> Node<UiMsg> {
     // every frame.
     .focusable(false)
     .on_select(|i| UiMsg::Ui(UiFact::BrowserSelect(i)))
-    .on_activate(|i| UiMsg::Ui(UiFact::BrowserActivate(i)));
+    .on_activate(|i| UiMsg::Ui(UiFact::BrowserActivate(i)))
+    .pager(b.pager.clone());
     fresh_ui::scope(
         dir_scope(&b.dir),
         col()
@@ -878,6 +883,7 @@ mod tests {
             listing: Listing::Entries((0..n).map(entry).collect::<Vec<_>>().into()),
             selected: None,
             hover: None,
+            pager: fresh_ui::behavior::Pager::new(),
         }
     }
 

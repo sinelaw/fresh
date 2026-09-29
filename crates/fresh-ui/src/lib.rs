@@ -73,5 +73,4 @@ pub use schedule::{BuildCx, DirtyCause, InitCx, NullRenderer, Renderer, Sched, U
 pub use services::{GeomHandle, GeomSnapshot, Geometry, Job, Services};
 pub use widgets::{
     Button, Dropdown, DualList, List, Number, RadioGroup, RowHeight, TextField, Toggle, Tree,
-    TreeNode,
 };

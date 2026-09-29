@@ -68,13 +68,13 @@ impl Editor {
             }
             Action::PromptPageUp => {
                 if let Some(state) = &mut self.active_window_mut().file_open_state {
-                    state.page_up(10);
+                    state.page_up();
                 }
                 true
             }
             Action::PromptPageDown => {
                 if let Some(state) = &mut self.active_window_mut().file_open_state {
-                    state.page_down(10);
+                    state.page_down();
                 }
                 true
             }

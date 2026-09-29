@@ -200,6 +200,8 @@ impl Viewport {
             WidgetSpec::List { visible_rows, .. } | WidgetSpec::Tree { visible_rows, .. } => {
                 *visible_rows
             }
+            // A text box's editing rows, as the spec states them.
+            WidgetSpec::Text { rows, .. } => Some(*rows),
             _ => None,
         }
         .unwrap_or(fresh_core::api::LEGACY_VISIBLE_ROWS_FALLBACK)

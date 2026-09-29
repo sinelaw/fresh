@@ -1128,10 +1128,6 @@ impl Editor {
         // with OSC sequences every frame.
         self.update_terminal_title(&display_name);
 
-        // Render file browser popup or suggestions popup AFTER status bar + prompt,
-        // so they overlay on top of both (fixes bottom border being overwritten by status bar)
-        self.settle_prompt_suggestions();
-
         // Render editor-level popups (e.g. plugin action popups) on top of any
         // buffer content so they stay visible across buffer switches and over
         // virtual buffers (Dashboard, diagnostics) that own the whole split.
@@ -1818,71 +1814,33 @@ impl Editor {
         })
     }
 
-    /// Read the settings body's window back off the tree.
+    /// Follow the settings body's window, and read the other windows back.
     ///
-    /// **The direction of travel is the point.** `ScrollablePanel` owned the
-    /// window and re-derived the column's height from `SettingItem::layout_box`
-    /// to bound it — the same arithmetic the painter drew each card with, in a
-    /// second place. The `viewport` owns it now, so this reads rather than
-    /// computes, and the state's scroll methods ask for a move by handle
-    /// instead of writing an offset.
+    /// The body's is layout's answer: its paged anchor records where the
+    /// window starts and which card that is, where the cards are placed.
     fn refresh_settings_body_window(&mut self) {
         use crate::view::shell::settings as st;
         let Some(ui) = self.shell_ui.as_ref() else {
             return;
         };
-        // **Three windows, three answers, and no one of them gates the
-        // others.** The cards' viewport is only in the tree while the body is
-        // showing cards: a search replaces it with the results list, so
-        // returning here when it is missing left the results' own offset
-        // unread, and the count row went on reporting "(1-10 of 176)" however
-        // far the wheel had taken the list.
-        let body = ui.find_by_key(&st::items_key());
-        let vpr = body.map(|vp| ui.rect_of(vp)).unwrap_or_default();
-        let scroll = match body {
-            Some(vp) => ui.scroll(vp).0,
-            None => Default::default(),
-        };
-        let offset = scroll.y.max(0) as u16;
-        let moved = body.is_some()
-            && self
-                .settings_state
-                .as_ref()
-                .is_some_and(|s| s.body.offset != offset);
-        // Which card the window starts on. Only worth a walk when the window
-        // has actually moved — it is the left tree's highlight that reads it,
-        // and that only has to change when the body does.
-        let top_item = match moved {
-            false => self.settings_state.as_ref().and_then(|s| s.body.top_item),
-            true => {
-                let n = self
-                    .settings_state
-                    .as_ref()
-                    .and_then(|s| s.pages.get(s.selected_category))
-                    .map(|p| p.items.len())
-                    .unwrap_or(0);
-                (0..n).find(|&i| {
-                    body.and_then(|vp| ui.find_by_key_in(vp, &st::card_key(i)))
-                        .map(|e| ui.rect_of(e))
-                        // The first card whose bottom edge is below the
-                        // window's top is the one the window starts on.
-                        .is_some_and(|r| r.y + r.h as i32 > vpr.y)
-                })
-            }
-        };
         let Some(s) = self.settings_state.as_mut() else {
             return;
         };
-        if body.is_some() {
-            s.body = crate::view::settings::state::BodyWindow { offset, top_item };
-        }
-        // The left tree's highlight follows the body, in both directions —
-        // the same contract the wheel and the scrollbar had, stated once
-        // against the window rather than at each thing that moves it.
-        // ...but not when the cursor is what moved it: see
-        // `SettingsState::cursor_drove_body`.
-        if moved && !s.take_cursor_drove_body() {
-            s.sync_tree_cursor_to_body_scroll();
+        // **Three windows, three answers, and no one of them gates the
+        // others.** The cards' window only answers while the body is showing
+        // cards: a search replaces it with the results list, whose own
+        // offset is still read below.
+        if let Some(start) = s.body_anchor.start() {
+            let moved = s.body_offset != start.offset;
+            s.body_offset = start.offset;
+            // The left tree's highlight follows the body, in both directions
+            // — the same contract the wheel and the scrollbar had, stated
+            // once against the window rather than at each thing that moves
+            // it. ...but not when the cursor is what moved it: see
+            // `SettingsState::cursor_drove_body`.
+            if moved && !s.take_cursor_drove_body() {
+                s.sync_tree_cursor_to_body_scroll();
+            }
         }
         // The search results' window, on the same terms. The list moves its
         // own window when the selection leaves it, so what the count row
@@ -3763,6 +3721,7 @@ impl Editor {
                     crate::view::popup::PopupResolver::WorkspaceTrust
                 ),
                 selected_hint: p.accept_key_hint.clone(),
+                pager: p.pager.clone(),
             },
             transient: p.transient,
             keys: None,
@@ -3858,8 +3817,7 @@ impl Editor {
     ///
     /// Only the outer rectangle and two counts. Everything the painter derived
     /// from them — the header band's height, where the body starts, how the
-    /// body splits — is what the description states, and
-    /// `overlay_prompt::regions_of` is where the painter reads it back.
+    /// body splits — is what the description states.
     ///
     /// The toolbar's row count is the one thing that has to be *measured*
     /// rather than declared: a plugin's toolbar is two rows on a wide terminal
@@ -4041,6 +3999,7 @@ impl Editor {
             listing,
             selected: files.then_some(state.selected_index()).flatten(),
             hover,
+            pager: state.pager.clone(),
         })
     }
 
@@ -4103,6 +4062,7 @@ impl Editor {
             hints: (!prompt.overlay
                 && prompt.prompt_type == crate::view::prompt::PromptType::QuickOpen)
                 .then(|| fresh_i18n::t!("quick_open.mode_hints").to_string()),
+            pager: prompt.pager.clone(),
         })
     }
 
@@ -4639,45 +4599,6 @@ impl Editor {
     ) {
         let size = frame.area();
         crate::view::dimming::apply_dimming_excluding(frame, size, Some(terminal_area));
-    }
-
-    /// Settle the open overlay prompt's selection window against the results
-    /// band the tree placed. Nothing is painted here — the list, the bottom
-    /// popup and the overlay card are the tree's.
-    fn settle_prompt_suggestions(&mut self) {
-        let Some(prompt) = &self.active_window_mut().prompt else {
-            return;
-        };
-
-        // Overlay prompts (Live Grep, issue #1796) get a dedicated
-        // centred floating frame instead of the bottom-anchored popup.
-        // Centre it in the chrome area (right of a left dock) so it never
-        // overlaps the dock column.
-        if prompt.overlay {
-            // The card is the tree's; what is left here is the selection's
-            // window. How many rows the list can show is the results band's
-            // height, read off the card rather than counted — so the
-            // selection scrolls only when it genuinely passes the bottom, not
-            // when it crosses the bottom-popup default cap.
-            let visible = crate::view::shell::overlay_prompt::regions_of(
-                self.shell_ui.as_ref().expect("the shell tree is in place"),
-            )
-            .iter()
-            .find(|(k, _)| *k == crate::view::shell::overlay_prompt::CardRegion::Results)
-            .map(|(_, r)| r.height as usize)
-            .unwrap_or(0);
-            if let Some(prompt) = self.active_window_mut().prompt.as_mut() {
-                // Skip when the user has wheel-scrolled the list — keeping
-                // the selection pinned in view would undo their scroll
-                // (issue #2119).
-                if !prompt.manual_scroll {
-                    prompt.ensure_selected_visible_within(visible);
-                }
-            }
-        }
-        // Nothing is painted here, and nothing is carried to the next frame:
-        // the columns that used to measure against the window this layout
-        // settled are measured at the cut now (`shell::prompt::suggestions`).
     }
 
     /// Resolve the overlay's currently-selected match into a real
@@ -5600,8 +5521,7 @@ impl Editor {
             Some(crate::app::types::HoverTarget::NewTabButton(pane)) => Some(*pane),
             _ => None,
         };
-        self.active_window()
-            .pane_strips(chrome, hover, hover_plus, self.shell_ui.as_ref())
+        self.active_window().pane_strips(chrome, hover, hover_plus)
     }
 
     /// Each visible pane's leaf handle, for the frame's description — the
@@ -5714,7 +5634,7 @@ impl Editor {
             hscroll: false,
         });
         let groups = win.pane_groups();
-        let strips = win.pane_strips(&chrome, None, None, None);
+        let strips = win.pane_strips(&chrome, None, None);
         let rowless: std::collections::HashSet<_> = groups.keys().copied().collect();
         let hosts = win.pane_hosts(&rowless);
         Some(std::rc::Rc::new(Splits {

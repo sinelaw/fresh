@@ -67,8 +67,6 @@ pub struct EntryDialogState {
     pub delete_requested: bool,
     /// Scroll offset for the items area
     pub scroll_offset: usize,
-    /// Last known viewport height (updated during render)
-    pub viewport_height: usize,
     /// The field window's handle. The twin of `SettingsState::body_anchor`,
     /// one surface in: the fields are a `col` in a `viewport`, so how far the
     /// window has moved is layout's answer and moving it is a message.
@@ -269,7 +267,6 @@ impl EntryDialogState {
             focus_on_buttons,
             delete_requested: false,
             scroll_offset: 0,
-            viewport_height: 20, // Default, updated during render
             body_anchor: fresh_ui::behavior::Anchor::new(),
             hover_item: None,
             hover_button: None,
@@ -353,7 +350,6 @@ impl EntryDialogState {
             focus_on_buttons,
             delete_requested: false,
             scroll_offset: 0,
-            viewport_height: 20,
             body_anchor: fresh_ui::behavior::Anchor::new(),
             hover_item: None,
             hover_button: None,
@@ -802,7 +798,7 @@ impl EntryDialogState {
             self.focus_on_buttons = true;
             self.focused_button = 0;
         }
-        self.ensure_selected_visible(self.viewport_height);
+        self.ensure_selected_visible();
     }
 
     /// Retreat focus to the previous *field* (control), skipping per-field
@@ -818,7 +814,7 @@ impl EntryDialogState {
             self.focus_on_buttons = true;
             self.focused_button = self.button_count().saturating_sub(1);
         }
-        self.ensure_selected_visible(self.viewport_height);
+        self.ensure_selected_visible();
     }
 
     pub fn focus_next(&mut self) {
@@ -868,7 +864,7 @@ impl EntryDialogState {
             }
         }
 
-        self.ensure_selected_visible(self.viewport_height);
+        self.ensure_selected_visible();
     }
 
     /// Move focus to previous editable item, navigating within composite controls first.
@@ -918,7 +914,7 @@ impl EntryDialogState {
             }
         }
 
-        self.ensure_selected_visible(self.viewport_height);
+        self.ensure_selected_visible();
     }
 
     /// Step a map's or an object array's list cursor down (`true`) — the
@@ -1044,7 +1040,7 @@ impl EntryDialogState {
     /// The buttons are not in the window, so putting the keyboard on them
     /// asks for the last field instead — which is what "scroll to bottom"
     /// meant.
-    pub fn ensure_selected_visible(&mut self, _viewport_height: usize) {
+    pub fn ensure_selected_visible(&mut self) {
         let target = match self.focus_on_buttons {
             true => self.items.len().saturating_sub(1),
             false => self.selected_item,
@@ -1077,27 +1073,6 @@ impl EntryDialogState {
             crate::view::shell::entry::item_key(self.selected_item),
             1 + cursor_row as u32,
         );
-    }
-
-    /// Scroll up by one line
-    pub fn scroll_up(&mut self) {
-        self.scroll_by(-1);
-    }
-
-    /// Scroll down by one line
-    pub fn scroll_down(&mut self, _viewport_height: usize) {
-        self.scroll_by(1);
-    }
-
-    /// Move the field window by `delta` rows.
-    ///
-    /// The window clamps itself against the column it holds, so there is no
-    /// content height to compute here — which is what `total_content_height`
-    /// was for, and it was the fourth walk of every field's rows.
-    fn scroll_by(&mut self, delta: i32) {
-        let y = (self.scroll_offset as i32 + delta).max(0);
-        self.body_anchor.scroll_to(fresh_ui::Point::new(0, y));
-        self.scroll_offset = y as usize;
     }
 
     /// Enter on the selected field, or a press that means the same: the

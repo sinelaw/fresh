@@ -2901,17 +2901,11 @@ impl Window {
     /// holds the group. `hover` is the tab under the pointer, by target,
     /// pane and whether it is the close button — the frame's, or none for a
     /// grid nothing points at.
-    /// `ui` is the frame before this one, and the only thing read off it is
-    /// each strip window's outer width — what decides whether the tabs fit
-    /// with their names whole. `None` (a window with no laid-out tree of its
-    /// own, such as one painted as an embed) shows whole names, which the
-    /// window can scroll across.
     pub(crate) fn pane_strips(
         &self,
         chrome: &HashMap<LeafId, crate::view::shell::splits::PaneChrome>,
         hover: Option<(crate::view::split::TabTarget, LeafId, bool)>,
         hover_plus: Option<LeafId>,
-        ui: Option<&fresh_ui::Ui<crate::view::shell::msg::UiMsg>>,
     ) -> HashMap<LeafId, crate::view::shell::tabs::Strip> {
         use crate::view::shell::tabs::{Strip, Tab};
         use crate::view::split::TabTarget;
@@ -2969,19 +2963,6 @@ impl Window {
                     })
                 })
                 .collect();
-            // The room the last frame gave this strip's window, against what
-            // these tabs measure uncapped. The window's *outer* width: it is
-            // what the strip row leaves after the control cluster, so it does
-            // not move with the names and the answer cannot feed itself.
-            let cap_names = ui
-                .and_then(|ui| {
-                    let k = crate::view::shell::tabs::tab_window_key(leaf);
-                    let w = ui.find_by_key(&k).map(|e| ui.rect_of(e).w)?;
-                    Some(
-                        crate::view::shell::tabs::natural_width(&tabs, &preview_label) > w as usize,
-                    )
-                })
-                .unwrap_or(false);
             out.insert(
                 leaf,
                 Strip {
@@ -2990,7 +2971,6 @@ impl Window {
                     active_pane: leaf == active_split,
                     hover: hover.and_then(|(t, pane, close)| (pane == leaf).then_some((t, close))),
                     hover_plus: hover_plus == Some(leaf),
-                    cap_names,
                     reveal: Some(self.tab_reveal_for(leaf)),
                     preview_label: preview_label.clone(),
                 },

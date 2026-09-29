@@ -254,12 +254,12 @@ impl Editor {
             }
             DeferredAction::FileBrowserPageUp => {
                 if let Some(state) = &mut self.active_window_mut().file_open_state {
-                    state.page_up(10);
+                    state.page_up();
                 }
             }
             DeferredAction::FileBrowserPageDown => {
                 if let Some(state) = &mut self.active_window_mut().file_open_state {
-                    state.page_down(10);
+                    state.page_down();
                 }
             }
             DeferredAction::FileBrowserConfirm => {

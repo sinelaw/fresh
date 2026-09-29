@@ -7,8 +7,7 @@ mod support;
 use fresh_ui::Axis;
 use fresh_ui::{
     col, Button, ComponentExt, Draw, Dropdown, Input, KeyCode, KeyPress, List, Mods, MouseButton,
-    Node, Number, Point, RadioGroup, RowHeight, Size, Sizing, TextField, Toggle, Tree, TreeNode,
-    Ui,
+    Node, Number, Point, RadioGroup, RowHeight, Size, Sizing, TextField, Toggle, Tree, Ui,
 };
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -885,34 +884,65 @@ fn a_reveal_lands_in_the_run_under_the_pins_it_brings() {
     );
 }
 
+/// **A windowed tree's expansion is its owner's.** The row offers the
+/// toggle; the owner applies it and describes the new projection, and the
+/// children appear and go with it.
 #[test]
-fn a_tree_expands_and_collapses_on_click() {
-    let mut ui: Ui<Msg> = Ui::new();
-    let tree = || -> Node<Msg> {
-        Tree::new(vec![TreeNode::branch(
-            "src",
-            fresh_ui::text("src"),
-            vec![
-                TreeNode::leaf("main", fresh_ui::text("main.rs")),
-                TreeNode::leaf("lib", fresh_ui::text("lib.rs")),
-            ],
-        )])
+fn a_windowed_tree_expands_and_collapses_through_its_owner() {
+    use fresh_ui::widgets::TreeRow;
+    let tree = |open: bool| -> Node<Msg> {
+        let rows: Vec<(&str, usize)> = match open {
+            true => vec![("src", 0), ("main.rs", 1), ("lib.rs", 1)],
+            false => vec![("src", 0)],
+        };
+        let rows = Rc::new(rows);
+        let (k, n, r) = (rows.clone(), rows.clone(), rows);
+        Tree::windowed(
+            r.len(),
+            move |i| fresh_ui::Key::from(k[i].0),
+            move |i| TreeRow {
+                depth: n[i].1,
+                has_children: i == 0,
+                open,
+            },
+            move |i, row, _| {
+                let mark = match (row.has_children, row.open) {
+                    (false, _) => "  ",
+                    (true, true) => "v ",
+                    (true, false) => "> ",
+                };
+                let name = r[i].0;
+                fresh_ui::gesture(fresh_ui::text(format!(
+                    "{}{mark}{name}",
+                    "  ".repeat(row.depth)
+                )))
+                .on_click(move |_| Msg::Opened(name.to_string()))
+            },
+        )
+        .list()
         .node()
     };
-    ui.frame(tree(), FRAME);
+    let mut ui: Ui<Msg> = Ui::new();
+    let mut open = false;
+    ui.frame(tree(open), FRAME);
     assert!(!texts(&ui).iter().any(|t| t.contains("main.rs")));
 
-    click(&mut ui, 2, 0);
-    ui.tick();
-    let shown = texts(&ui).join("|");
-    assert!(
-        shown.contains("main.rs") && shown.contains("lib.rs"),
-        "{shown}"
-    );
-
-    click(&mut ui, 2, 0);
-    ui.tick();
-    assert!(!texts(&ui).iter().any(|t| t.contains("main.rs")));
+    for want in [true, false] {
+        let msgs = click(&mut ui, 2, 0);
+        assert!(
+            msgs.iter()
+                .any(|m| matches!(m, Msg::Opened(k) if k == "src")),
+            "{msgs:?}"
+        );
+        open = !open;
+        ui.frame(tree(open), FRAME);
+        let shown = texts(&ui).join("|");
+        assert_eq!(
+            shown.contains("main.rs") && shown.contains("lib.rs"),
+            want,
+            "{shown}"
+        );
+    }
 }
 
 // -- Dropdown ----------------------------------------------------------------
