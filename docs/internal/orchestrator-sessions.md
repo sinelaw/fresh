@@ -472,9 +472,11 @@ external session dropped on an external sessions group goes back to its own
 product's group; a workspace is never filed there. The rows are
 `draggable` tree nodes: a click on one acts on the release, and a drag that
 ends off the tree, or back on its own row after leaving it, does nothing.
-Held on the list's first or last visible row, or past it, a drag scrolls
-the list toward the pointer while there is more that way, faster the
-farther out, so a folder out of sight can be reached.
+Held past the top or bottom of the list — on the divider above it or the
+key hints below it; on its first or last row only where the list meets the
+screen's edge — a drag scrolls the list toward the pointer while there is
+more that way, faster the farther out, so a folder out of sight can be
+reached.
 
 While a row is dragged the dock shows what is in hand and where it would
 land. The row itself is drawn lifted: its text inverted and slanted, which
@@ -608,7 +610,6 @@ includes cloud sessions this machine never saw.
   | Claude `--bg` job | the job's cwd | `claude attach <job>` |
   | Claude in a terminal inside tmux (the registry records its pane) | its cwd | `env -u TMUX tmux attach-session -t <session> ; select-window ; select-pane` — the live session itself |
   | Claude / Codex in another terminal | its cwd | a shell — never a second copy of the agent, which would write the same conversation twice |
-  | Codex Cloud task (when opened here) | `<data>/orchestrator/external-sessions/codex-cloud-<id>` | `codex cloud status <id>`, then a shell |
 
   **The takeover** (`takeoverArgv`, POSIX `sh`, run where the session runs):
   find the copy running now in the CLI's registry (`<config>/sessions/<pid>.json`

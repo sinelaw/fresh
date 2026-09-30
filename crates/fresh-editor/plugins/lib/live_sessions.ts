@@ -116,12 +116,15 @@ function parseJson(text: string): unknown {
   }
 }
 
-/** Last path segment, either separator. */
 /** A session title as a git branch and folder name: lower case, words
  *  joined by `-`, nothing git or a file system would refuse; `session` when
- *  nothing is left. "Fix the auth bug (login.ts)" → `fix-the-auth-bug-login.ts`. */
+ *  nothing is left. "Fix the auth bug (login.ts)" → `fix-the-auth-bug-login.ts`.
+ *
+ *  Beyond the character set: git refuses a ref ending in `.lock`, and Windows
+ *  a folder named for a device (`con`, `nul`, `com1`, … with or without an
+ *  extension), so neither comes out. */
 export function liveBranchName(title: string): string {
-  const slug = title
+  let slug = title
     .normalize("NFKD")
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase()
@@ -130,9 +133,12 @@ export function liveBranchName(title: string): string {
     .replace(/^[-.]+|[-.]+$/g, "")
     .slice(0, 48)
     .replace(/[-.]+$/g, "");
+  while (slug.endsWith(".lock")) slug = slug.slice(0, -".lock".length).replace(/[-.]+$/g, "");
+  if (/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\.|$)/.test(slug)) slug = `${slug}-session`;
   return slug || "session";
 }
 
+/** Last path segment, either separator. */
 export function liveBaseName(p: string): string {
   const parts = p.split(/[\\/]+/).filter((x) => x.length > 0);
   return parts[parts.length - 1] ?? p;
@@ -898,7 +904,6 @@ export function unrepresented(
   });
 }
 
-/** The short dim tail a row carries: where the session is. */
 /** Where a session is listed from and runs, for its menu: "Claude on
  *  claude.ai", "Claude Desktop over SSH (me@box)", "Codex Cloud", … */
 export function liveSource(s: LiveSession): string {
@@ -927,6 +932,8 @@ export function liveWhere(s: LiveSession): string | undefined {
   return s.cwd ?? s.repo;
 }
 
+/** Where the session is, in a few words — a card's second line, and what the
+ *  dock's search matches besides the title. */
 export function liveDetail(s: LiveSession): string {
   const place = s.remoteControl
     ? s.offline ? "remote control · offline" : "remote control"

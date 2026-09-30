@@ -182,18 +182,24 @@ nothing to drop targets. First consumer: the Orchestrator dock's rows
 (`TreeNode::draggable`; the editor keeps the held row as
 `Editor::widget_drag`).
 
-**A drag at the edge of the window it came from scrolls that window.** The
+**A drag past the edge of the window it came from scrolls that window.** The
 window is the nearest one around the dragged row that can move toward the
 pointer (the wheel's rule, walked from the row, and stopped at a layer). The
-pointer scrolls it on the edge row or past it — a window flush with the
-screen's edge has no cell beyond it to point at — but only while there is
-more that way, so at either end of the content the edge row is an ordinary
-drop target. The step grows by one per row farther out, up to
-`AUTOSCROLL_MAX_STEP`. The tree takes one step per move and has no clock,
-so a drag held still would stop: `Ui::drag_autoscroll` says where a drag
-rests that a repeat would scroll, and the host repeats the pointer there at
-its own pace (`Editor::step_drag_autoscroll`, beside the wheel walk and on
-the same frame deadline). **A drag also outlives its captor.** A row dragged
+band is past the edge, so a drop on the first or last row in sight never
+has that row scrolled away; only a window flush with the frame's own edge,
+which has no cell past it to point at, takes its edge row as the band — and
+only while there is more that way. The step grows by one per row farther
+out, up to `AUTOSCROLL_MAX_STEP`. The tree takes one step per move and has
+no clock, so a drag held still would stop: `Ui::drag_autoscroll` says where
+a drag rests that a repeat would still change, and the host repeats the
+pointer there at its own pace (`Editor::step_drag_autoscroll`, beside the
+wheel walk and on the same frame deadline), after each frame. **A scroll
+leaves the drag unsettled.** Hit-testing reads the last layout, and a
+dispatch lays nothing out, so a move takes the drag's hover first — on rows
+a frame has settled — and scrolls after; the move that scrolled asks for one
+more repeat, which takes the hover again over the rows that scrolled in, so
+the row shown as the target is the row a release there drops on. A press
+ends a drag whose release was lost and tells what it was over `DragLeave`. **A drag also outlives its captor.** A row dragged
 out of a virtual list's window unmounts, and its capture goes with it (ids
 are recycled), but the drag keeps the path it was lifted from and still
 finds targets and drops.

@@ -2188,9 +2188,14 @@ pub struct TreeNode {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub flush: bool,
     /// The row can be picked up with the pointer and dropped on another row
-    /// of the same tree, which the plugin hears as a `drop` event
-    /// (`{ key, target }`). A press on it then activates on release, not on
-    /// the press, so a drag does not first act on the row it lifts.
+    /// of the same tree. The plugin hears, as `widget_event`s on the tree:
+    /// `drag` (`{ key, target }`: the row lifted and the row under the
+    /// pointer, `null` off every row) each time that changes, from the first
+    /// row the drag leaves its own for; `drop` (`{ key, target, index }`)
+    /// when it is released on another row; and `dragend` (`{ key }`) when
+    /// the drag is over, dropped or not. A plain click hears none of them. A
+    /// press on the row activates on release, not on the press, so a drag
+    /// does not first act on the row it lifts.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub draggable: bool,
     /// Per-node checkbox state. Only rendered when the parent

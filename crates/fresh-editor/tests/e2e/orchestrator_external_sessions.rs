@@ -444,9 +444,13 @@ fn clicking_a_row_opens_its_menu_at_the_pointer() {
 /// The cloud list is private API, so a stand-in feed plugin (exporting the
 /// same `live-sessions` API the real one does) reports one cloud session, and
 /// a fake `claude` answers `--teleport` with a marker.
-#[test]
-fn teleporting_a_cloud_session_names_the_copy_and_marks_the_row() {
-    const TITLE: &str = "Fix the auth bug";
+const TELEPORT_TITLE: &str = "Fix the auth bug";
+
+/// A git project, a stand-in feed reporting one Claude cloud session titled
+/// [`TELEPORT_TITLE`], and a fake `claude` that answers `--teleport` by
+/// printing `TELEPORTED-<id>`; the dock open with the session's row showing.
+fn teleport_setup() -> (tempfile::TempDir, PathBuf, EditorTestHarness) {
+    const TITLE: &str = TELEPORT_TITLE;
     let temp_dir = tempfile::TempDir::new().unwrap();
     let root = temp_dir.path().join("homeproj");
     fs::create_dir(&root).unwrap();
@@ -512,12 +516,63 @@ fn teleporting_a_cloud_session_names_the_copy_and_marks_the_row() {
     .unwrap();
 
     let mut h =
-        EditorTestHarness::with_config_and_working_dir(160, 40, Config::default(), root).unwrap();
+        EditorTestHarness::with_config_and_working_dir(160, 40, Config::default(), root.clone())
+            .unwrap();
     h.render().unwrap();
     open_dock(&mut h);
     h.wait_until(|h| h.screen_to_string().contains(TITLE))
         .unwrap();
 
+    (temp_dir, root, h)
+}
+
+/// Click the cloud session's row under the Claude group and choose
+/// "Fork Here (Teleport)…"; the New Workspace form opens proposing its name.
+fn start_teleport(h: &mut EditorTestHarness) {
+    let group_row = pos_of(h, "▼ Claude").1;
+    let row = h
+        .screen_to_string()
+        .lines()
+        .enumerate()
+        .skip(group_row as usize + 1)
+        .find(|(_, l)| l.contains(TELEPORT_TITLE))
+        .map(|(r, _)| r as u16)
+        .expect("the cloud row");
+    let col = pos_of(h, "▼ Claude").0 + 4;
+    h.mouse_click(col, row).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Fork Here (Teleport)"))
+        .unwrap();
+    let (tcol, trow) = pos_of(h, "Fork Here (Teleport)");
+    h.mouse_click(tcol, trow).unwrap();
+    h.wait_until(|h| {
+        h.screen_to_string()
+            .contains("new worktree fix-the-auth-bug")
+    })
+    .unwrap();
+}
+
+/// The worktree folders the project's repository has, by name.
+fn worktree_names(root: &Path) -> Vec<String> {
+    let out = std::process::Command::new("git")
+        .args(["worktree", "list", "--porcelain"])
+        .current_dir(root)
+        .output()
+        .unwrap();
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter_map(|l| l.strip_prefix("worktree "))
+        .filter_map(|p| {
+            Path::new(p)
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+        })
+        .collect()
+}
+
+#[test]
+fn teleporting_a_cloud_session_names_the_copy_and_marks_the_row() {
+    const TITLE: &str = TELEPORT_TITLE;
+    let (_tmp, _root, mut h) = teleport_setup();
     // A click on the cloud row offers the teleport (it never runs on a click).
     let (col, row) = pos_of(&h, TITLE);
     h.mouse_click(col, row).unwrap();
@@ -564,4 +619,221 @@ fn teleporting_a_cloud_session_names_the_copy_and_marks_the_row() {
         s.contains("Go to Fix the auth bug") && s.contains("teleported → Fix the auth bug")
     })
     .unwrap();
+}
+
+/// **A second copy of a cloud session gets a worktree of its own.** The form
+/// proposes the session's name, and a worktree by that name already exists —
+/// the first copy's. Opening the second copy in it would put two workspaces
+/// in one directory; it takes the next free name instead.
+#[test]
+fn teleporting_the_same_session_twice_gives_each_copy_its_own_worktree() {
+    let (_tmp, root, mut h) = teleport_setup();
+    start_teleport(&mut h);
+    h.send_key(KeyCode::Enter, KeyModifiers::CONTROL).unwrap();
+    h.wait_until(|h| {
+        worktree_names(&root)
+            .iter()
+            .any(|n| n == "fix-the-auth-bug")
+    })
+    .unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("· Fix the auth bug"))
+        .unwrap();
+
+    start_teleport(&mut h);
+    h.send_key(KeyCode::Enter, KeyModifiers::CONTROL).unwrap();
+    h.wait_until(|h| {
+        worktree_names(&root)
+            .iter()
+            .any(|n| n == "fix-the-auth-bug-2")
+    })
+    .unwrap();
+    let names = worktree_names(&root);
+    assert_eq!(
+        names
+            .iter()
+            .filter(|n| n.starts_with("fix-the-auth-bug"))
+            .count(),
+        2,
+        "one worktree per copy: {names:?}"
+    );
+}
+
+/// **A name typed over the proposed one is the user's.** The form proposes
+/// the session's name for the worktree and branch, and names the workspace
+/// after the session — unless the user wrote a name of their own, which then
+/// names both.
+#[test]
+fn a_name_typed_over_the_proposed_one_names_the_copy() {
+    let (_tmp, root, mut h) = teleport_setup();
+    start_teleport(&mut h);
+    let (dcol, drow) = pos_of(&h, "Details");
+    h.mouse_click(dcol, drow).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("New branch:"))
+        .unwrap();
+    // Into the name field, past its end, and write over it.
+    let (fcol, frow) = pos_of(&h, "[fix-the-auth-bug");
+    h.mouse_click(fcol + 1 + "fix-the-auth-bug".len() as u16, frow)
+        .unwrap();
+    for _ in 0.."fix-the-auth-bug".len() {
+        h.send_key(KeyCode::Backspace, KeyModifiers::NONE).unwrap();
+    }
+    h.type_text("auth-work").unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("[auth-work"))
+        .unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::CONTROL).unwrap();
+
+    h.wait_until(|h| worktree_names(&root).iter().any(|n| n == "auth-work"))
+        .unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("· auth-work"))
+        .unwrap();
+    // The workspaces are the rows above the Claude group, whose own row
+    // for the cloud session keeps the session's title.
+    let screen = h.screen_to_string();
+    let workspaces: Vec<&str> = screen
+        .lines()
+        .take_while(|l| !l.contains("▼ Claude"))
+        .collect();
+    assert!(
+        !workspaces.iter().any(|l| l.contains("Fix the auth bug")),
+        "the typed name, not the session's, names the workspace:\n{screen}"
+    );
+}
+
+/// Make an empty dock folder through the Menu (its "organize" box off).
+fn create_empty_folder(h: &mut EditorTestHarness, name: &str) {
+    let (mcol, mrow) = pos_of(h, "Menu ▾");
+    h.mouse_click(mcol, mrow).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("New folder…"))
+        .unwrap();
+    let (fcol, frow) = pos_of(h, "New folder…");
+    h.mouse_click(fcol, frow).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Folder name"))
+        .unwrap();
+    h.type_text(name).unwrap();
+    h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    h.send_key(KeyCode::Char(' '), KeyModifiers::NONE).unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::CONTROL).unwrap();
+    h.wait_until(|h| {
+        let s = h.screen_to_string();
+        !s.contains("Folder name") && s.contains(name)
+    })
+    .unwrap();
+}
+
+/// A mouse event at a cell.
+fn mouse_at(
+    kind: crossterm::event::MouseEventKind,
+    col: u16,
+    row: u16,
+) -> crossterm::event::MouseEvent {
+    crossterm::event::MouseEvent {
+        kind,
+        column: col,
+        row,
+        modifiers: KeyModifiers::empty(),
+    }
+}
+
+/// **A folder's roll-up counts the external sessions filed in it**, so a
+/// collapsed folder can't hide one that needs you: a blocked background job
+/// dragged into a folder shows as the folder's `●1` once it is folded.
+#[test]
+fn a_folder_rolls_up_the_external_sessions_filed_in_it() {
+    let (_tmp, root, config) = setup();
+    let mut h = EditorTestHarness::with_config_and_working_dir(140, 36, config, root).unwrap();
+    h.render().unwrap();
+    open_dock(&mut h);
+    h.wait_until(|h| h.screen_to_string().contains(CLAUDE_JOB_TITLE))
+        .unwrap();
+    create_empty_folder(&mut h, "Jobs");
+
+    let (jcol, jrow) = pos_of(&h, CLAUDE_JOB_TITLE);
+    let (_, frow) = pos_of(&h, "▼ Jobs");
+    h.mouse_drag(jcol, jrow, jcol, frow).unwrap();
+    h.wait_until(|h| {
+        let s = h.screen_to_string();
+        s.lines().any(|l| l.contains("▼ Jobs") && l.contains("(1)"))
+    })
+    .unwrap();
+
+    // Folded, the folder still says one of its sessions needs you.
+    let (fcol, frow) = pos_of(&h, "▼ Jobs");
+    h.mouse_click(fcol, frow).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("▶ Jobs"))
+        .unwrap();
+    let screen = h.screen_to_string();
+    assert!(
+        screen
+            .lines()
+            .any(|l| l.contains("▶ Jobs") && l.contains("●1")),
+        "the folded folder rolls up its blocked external session:\n{screen}"
+    );
+}
+
+/// **A drag whose release was lost stops being drawn.** A release that never
+/// arrives (let go outside the terminal) leaves the drag to the next press;
+/// a press on another row that can be dragged starts a drag of its own, and
+/// the first one's lifted row and lit destination must go with it.
+#[test]
+fn a_drag_whose_release_is_lost_stops_being_drawn() {
+    use crossterm::event::{MouseButton, MouseEventKind};
+    use ratatui::style::Modifier;
+    let (_tmp, root, config) = setup();
+    let mut h = EditorTestHarness::with_config_and_working_dir(140, 36, config, root).unwrap();
+    h.render().unwrap();
+    open_dock(&mut h);
+    h.wait_until(|h| {
+        let s = h.screen_to_string();
+        s.contains(CODEX_TASK_TITLE) && s.contains(CLAUDE_JOB_TITLE)
+    })
+    .unwrap();
+
+    // The Codex task, held over the Claude group: it would go home to the
+    // Codex group, which is lit.
+    let (tcol, trow) = pos_of(&h, CODEX_TASK_TITLE);
+    let (_, grow) = pos_of(&h, "▼ Claude");
+    let far = 25;
+    let plain = h.get_cell_style(far, grow).unwrap().bg;
+    h.send_mouse(mouse_at(
+        MouseEventKind::Down(MouseButton::Left),
+        tcol,
+        trow,
+    ))
+    .unwrap();
+    let step: i32 = if grow > trow { 1 } else { -1 };
+    let mut r = trow as i32;
+    while r != grow as i32 {
+        r += step;
+        h.send_mouse(mouse_at(
+            MouseEventKind::Drag(MouseButton::Left),
+            tcol,
+            r as u16,
+        ))
+        .unwrap();
+    }
+    let lifted = |h: &EditorTestHarness| {
+        let (c, r) = pos_of(h, CODEX_TASK_TITLE);
+        h.get_cell_style(c, r)
+            .unwrap()
+            .add_modifier
+            .contains(Modifier::REVERSED)
+    };
+    let codex_band = |h: &EditorTestHarness| {
+        let r = pos_of(h, "Codex").1;
+        h.get_cell_style(far, r).unwrap().bg
+    };
+    h.wait_until(|h| lifted(h) && codex_band(h) != plain)
+        .unwrap();
+    let band = codex_band(&h);
+
+    // The release is lost; the next press lands on another draggable row.
+    let (jcol, jrow) = pos_of(&h, CLAUDE_JOB_TITLE);
+    h.send_mouse(mouse_at(
+        MouseEventKind::Down(MouseButton::Left),
+        jcol,
+        jrow,
+    ))
+    .unwrap();
+    h.wait_until(|h| !lifted(h) && codex_band(h) != band)
+        .unwrap();
 }

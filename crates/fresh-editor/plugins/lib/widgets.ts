@@ -596,10 +596,15 @@ export function treeNode(
      * edge). Ignored when `hasChildren`. */
     flush?: boolean;
     /** The row can be dragged with the mouse onto another row of the same
-     * tree: the plugin hears `widget_event` `eventType: "drop"` with
-     * `payload: { key, target }` — the dragged row's key and the key of the
-     * row it was released on. A click on a draggable row selects it on the
-     * release rather than the press. */
+     * tree. The plugin hears `widget_event`s on the tree:
+     * - `drag`, `payload: { key, target }` — the row lifted and the row under
+     *   the pointer (`null` off every row), each time that changes, from the
+     *   first row the drag leaves its own for. Draw what a drop there would
+     *   do from it.
+     * - `drop`, `payload: { key, target, index }` — released on another row.
+     * - `dragend`, `payload: { key }` — the drag is over, dropped or not.
+     * A plain click hears none of them. A click on a draggable row selects
+     * it on the release rather than the press. */
     draggable?: boolean;
     checked?: boolean;
     /** Continuation lines rendered below `text` when the parent

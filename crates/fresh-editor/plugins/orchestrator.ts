@@ -530,14 +530,15 @@ interface NewSessionForm {
   // back on. The selector shows `Choose an agent…` and nothing launches
   // until one is picked — the terminal is a choice, not a silent default.
   agentUnset: boolean;
-  // The dock folder the created workspace is filed under (null = top level),
-  // when the form was opened to file something there — an external session row
-  // moved into a folder. Undefined: the form files nothing.
-  intoFolder?: string | null;
   // The name the created workspace takes on the dock when it is not the
   // name field's (a session imported with a worktree: the field names the
   // worktree and branch, so it holds a slug of this). Undefined: the field's.
+  // Only while the field still reads `prefillName`: a name typed over the
+  // proposed one is the user's, for the workspace as for its worktree.
   displayName?: string;
+  // The name field's value as a prefill proposed it (an imported session's
+  // name), so a submit can tell it from one the user typed.
+  prefillName?: string;
   // The Claude cloud session the created workspace is a teleported copy of,
   // remembered so the session's external session row can say where the copy went.
   teleportOf?: string;
@@ -652,12 +653,10 @@ const NEW_SESSION_MODE = "orchestrator-new-form";
 // the host resolves on the dock's node ahead of the focused widget. Bound
 // here rather than through the window's editor mode, which is the buffer's.
 const DOCK_MODE = "orchestrator-dock";
-// The dock's two dropdown lists, by widget key: the project scope menu and
-// the transient "New Task…" / "Move to folder…" menu. Each is a `list`, so
-// ↑/↓ and Enter are the list's own and the plugin hears `select` and
-// `activate`; Esc is the dock mode's, and closes whichever is open.
+// The dock's project scope dropdown, by widget key. It is a `list`, so ↑/↓
+// and Enter are the list's own and the plugin hears `select` and `activate`;
+// Esc is the dock mode's, and closes it.
 const PROJECT_MENU_KEY = "project-pick";
-const DOCK_MENU_KEY = "menu-pick";
 
 // Every orchestrator keymap rides on the panel it belongs to (the `mount`
 // option `mode`), never on the window's editor mode: that is one slot per
@@ -848,10 +847,8 @@ interface OpenDialogState {
   // non-empty filter keeps the row on screen regardless — the row says
   // what the list is filtered by, so it cannot go while a filter applies.
   searchOpen: boolean;
-  // Dock-only: a transient toolbar dropdown (the header's Menu or a
-  // session's "Move to folder…" menu), or null when none is open. A
-  // `list` the keyboard drives itself; the plugin hears `select` and
-  // `activate` on `DOCK_MENU_KEY`, and the dock mode's Esc closes it.
+  // Dock-only: the header's Menu while it is open (a panel of its own,
+  // `mainMenuPanel`), or null. The dock mode's Esc closes it.
   dockMenu: DockDropdown | null;
   // Dock-only: the item key (`folder:<id>` / `session:<id>`) of the
   // currently-highlighted tree node. The tree is host-owned; this mirror
@@ -866,14 +863,10 @@ interface OpenDialogState {
   dockKeys: string[];
 }
 
-// A transient dock toolbar dropdown. `index` is the keyboard cursor into
-// the menu's option list. `move` also carries the session being filed.
-type DockDropdown =
-  // The Menu, a panel of its own (`mainMenuPanel`).
-  | { kind: "main" }
-  | { kind: "move"; sessionId: number; index: number }
-  // Filing an external session row: choosing a folder opens it as a workspace there.
-  | { kind: "move-live"; liveKey: string; index: number };
+// A transient dock toolbar dropdown: the Menu, a panel of its own
+// (`mainMenuPanel`). Moving a row to a folder is a pick in the tree itself
+// (`movePick`), not a dropdown.
+type DockDropdown = { kind: "main" };
 let openDialog: OpenDialogState | null = null;
 let openPanel: FloatingWidgetPanel | null = null;
 // The dock panel kept alive in its own host slot (PanelSlot::Dock) while
@@ -1686,9 +1679,10 @@ function assignSessionToFolder(id: number, folderId: string | null): void {
 // `setExternalSessions`. They are drawn as a group of their own at the foot
 // of the dock, not as workspaces: nothing here owns them, so none of the
 // workspace verbs (Stop, Archive, Delete, rename) apply. Opening one — Enter,
-// a click, or filing it into a folder — *materializes* it: a workspace is
+// a click, a menu's Take Over or Fork — *materializes* it: a workspace is
 // created that attaches to it, and from then on it is an ordinary workspace
-// (and drops out of the group, see `unrepresented`).
+// (and drops out of the group, see `unrepresented`). Filing one into a folder
+// does not: the row moves there as it is (`setExternalFolder`).
 //
 // Kept apart from `orchestratorSessions` on purpose: every loop over that map
 // would otherwise have to learn that some of its rows are not workspaces.
@@ -1910,8 +1904,8 @@ function teleportedWorkspace(s: LiveSession): AgentSession | undefined {
   return [...orchestratorSessions.values()].find((w) => w.id > 0 && w.stableId === stableId);
 }
 
-// The dim tail of a row: where the session is, or, for a cloud session
-// copied here, which workspace the copy is.
+// Where the session is — a card's second line, and search text — or, for a
+// cloud session copied here, which workspace the copy is.
 function liveTail(s: LiveSession): string {
   const w = teleportedWorkspace(s);
   return w ? editor.t("dock.live_teleported", { name: w.label }) : liveDetail(s);
@@ -1981,7 +1975,7 @@ function externalGroupEntry(group: ExternalGroup, live: LiveSession[]): TextProp
 // the New Workspace form opens with the command filled in, on a fresh
 // worktree (the teleport checks the session's branch out), pointed at a
 // workspace of the same repository when one is open.
-function teleportLiveSession(key: string, folderId?: string | null): void {
+function teleportLiveSession(key: string): void {
   const s = liveByKey(key);
   if (!s) return;
   const repoName = s.repo ? liveBaseName(s.repo) : undefined;
@@ -1996,7 +1990,6 @@ function teleportLiveSession(key: string, folderId?: string | null): void {
     label: s.title,
     teleportOf: s.id,
     createWorktree: true,
-    folderId,
   });
 }
 
@@ -2012,13 +2005,16 @@ function openInBrowser(url: string): void {
 }
 
 // What opening `s` does, with this editor's settings.
-function externalPlan(s: LiveSession, materialize: boolean): LivePlan {
+// Opening is the only way a row becomes a workspace — filing one into a
+// folder moves the row, and forks nothing — so a row with a page of its own
+// (a Codex Cloud task) opens that page rather than a workspace.
+function externalPlan(s: LiveSession): LivePlan {
   return livePlan(s, {
     dataDir: editor.getDataDir(),
     claude: externalCommands.claude,
     codex: externalCommands.codex,
     windows: editor.getEnv("OS") === "Windows_NT",
-  }, materialize);
+  }, false);
 }
 
 // Enter or a click on an external session row. What takes the session over or
@@ -2030,14 +2026,14 @@ function externalPlan(s: LiveSession, materialize: boolean): LivePlan {
 function activateLiveRow(key: string, at?: { index: number; col: number; row: number }): void {
   const s = liveByKey(key);
   if (!s) return;
-  const plan = externalPlan(s, false);
+  const plan = externalPlan(s);
   if (plan.kind === "browser" || plan.kind === "teleport") {
     // One row below the click, so the row stays in sight above its menu.
     if (at) openDockContextMenu(at.index, at.col, at.row + 1);
     else openDockContextMenuFromKeyboard();
     return;
   }
-  void openLiveSession(key, { materialize: false, dive: true });
+  void openLiveSession(key, { dive: true });
 }
 
 // The link Claude Desktop opens a session of its own with.
@@ -2062,7 +2058,7 @@ function openLiveOutside(s: LiveSession, url: string): void {
 async function takeOverOnHost(
   s: LiveSession,
   plan: Extract<LivePlan, { kind: "ssh" }>,
-  opts: { dive: boolean; folderId?: string | null },
+  opts: { dive: boolean },
 ): Promise<void> {
   const built = buildSshSpec({
     auto: false,
@@ -2081,23 +2077,15 @@ async function takeOverOnHost(
   }
   if (built.spec.backend === "ssh") built.spec.spec.command = plan.command;
   editor.setStatus(editor.t("status.external_taking_over", { name: s.title, host: plan.target }));
-  const pendingId = await startPendingWorkspace(built.spec, { visit: opts.dive });
-  if (opts.folderId === undefined) return;
-  // A remote workspace has no window to file until its connect lands.
-  const outcome = await awaitCreateOutcome(pendingId);
-  if (outcome.ok && outcome.windowId) assignSessionToFolder(outcome.windowId, opts.folderId);
+  await startPendingWorkspace(built.spec, { visit: opts.dive });
 }
 
-// Open an external session row. Enter and a click `materialize: false` (a Codex
-// Cloud task then opens its page); filing it into a folder always makes a
-// workspace, and files that workspace. `dive` hands the keyboard to it.
-async function openLiveSession(
-  key: string,
-  opts: { materialize: boolean; dive: boolean; folderId?: string | null },
-): Promise<void> {
+// Open an external session row as a workspace here, or its page where it has
+// no other way in (a Codex Cloud task). `dive` hands the keyboard to it.
+async function openLiveSession(key: string, opts: { dive: boolean }): Promise<void> {
   const s = liveByKey(key);
   if (!s) return;
-  const plan: LivePlan = externalPlan(s, opts.materialize);
+  const plan: LivePlan = externalPlan(s);
   if (plan.kind === "none") {
     editor.setStatus(editor.t("status.external_cannot_open", { name: s.title, why: plan.why }));
     return;
@@ -2107,8 +2095,8 @@ async function openLiveSession(
     return;
   }
   if (plan.kind === "teleport") {
-    // The checkout is the user's to choose; the form files the result.
-    teleportLiveSession(key, opts.folderId);
+    // The checkout is the user's to choose.
+    teleportLiveSession(key);
     return;
   }
   if (plan.kind === "ssh") {
@@ -2161,7 +2149,6 @@ async function openLiveSession(
       return;
     }
   }
-  if (opts.folderId !== undefined) assignSessionToFolder(id, opts.folderId);
   if (plan.note) editor.setStatus(editor.t("status.external_in_place", { name: s.title }));
   if (opts.dive && dockMode && openPanel) {
     dockDiveBlur = true;
@@ -2229,6 +2216,21 @@ function buildDockTree(filtered: number[]): DockTree {
     for (const c of childFoldersOf(fid)) out.push(...membersRec(c.id));
     return out;
   };
+  // …and the external sessions filed under it, counted by their own state,
+  // so a collapsed folder can't hide one of those that needs you either.
+  const liveRec = (fid: string): LiveSession[] => {
+    const out = [...(liveByFolder.get(fid) ?? [])];
+    for (const c of childFoldersOf(fid)) out.push(...liveRec(c.id));
+    return out;
+  };
+  const rollupRec = (fid: string): { blocked: number; done: number } => {
+    const r = attentionCounts(membersRec(fid));
+    for (const s of liveRec(fid)) {
+      if (s.state === "blocked") r.blocked++;
+      else if (s.state === "done") r.done++;
+    }
+    return r;
+  };
   const searching = (openDialog?.filter.value ?? "") !== "";
   // A drag in progress: the row lifted, and the row a drop now would land in.
   const lifted = dockDrag?.key ?? null;
@@ -2238,7 +2240,7 @@ function buildDockTree(filtered: number[]): DockTree {
     : null;
 
   const emitFolder = (f: DockFolder, depth: number): void => {
-    const entry = folderNodeEntry(f, countRec(f.id), attentionCounts(membersRec(f.id)));
+    const entry = folderNodeEntry(f, countRec(f.id), rollupRec(f.id));
     nodes.push(
       treeNode(folderNodeKey(f.id) === dropKey ? dropTargetEntry(entry) : entry, {
         depth,
@@ -5738,6 +5740,11 @@ function restoreDockBehindPicker(): boolean {
 
 function closeOpenDialog(): void {
   noteLayoutChange();
+  // A pick waiting for a folder, and a drag the dock was drawing, belong to
+  // the panel going away: neither may come back with the next one. (A drag's
+  // `dragend` cannot reach a panel that is gone.)
+  movePick = null;
+  dockDrag = null;
   if (openPanel) {
     openPanel.unmount();
     openPanel = null;
@@ -6121,11 +6128,6 @@ function buildDockSpec(): WidgetSpec {
     ...searchRow,
     ...attentionRow,
     ...pickRows,
-    // The "Move to folder…" dropdown floats over the tree without
-    // reflowing it.
-    ...(openDialog.dockMenu?.kind === "move" || openDialog.dockMenu?.kind === "move-live"
-      ? [dockMoveMenu()]
-      : []),
     // Host-rendered full-width rule: it spans whatever width the dock is
     // actually drawn at (incl. a user drag), so it can't drift from the
     // chrome the way a plugin-computed `"─".repeat(width)` did.
@@ -6193,13 +6195,11 @@ function dockTreeExpandedKeys(t: DockTree): string[] {
   return dockExpandedKeys();
 }
 
-// Dock toolbar dropdowns — the header's Menu and a session's "Move to
-// folder…" menu — reuse the project dropdown's mechanics: an overlaid `list`
-// keyed `DOCK_MENU_KEY` whose ↑/↓ and Enter are the list's own. The `●` marks
-// the applied choice; the list's selection is the cursor.
+// The header's Menu offers its options as `MenuOption`s, grouped below. The
+// `●` / `[✓]` marks the applied choice.
 
 interface MenuOption {
-  key: string; // action key, e.g. "main:folder" / "move:df3"
+  key: string; // action key, e.g. "main:folder"
   label: string;
   marked?: boolean;
 }
@@ -6262,40 +6262,6 @@ function dockMainGroups(): DockMenuGroup[] {
   ];
 }
 
-// Options for a session's "Move to folder…" dropdown: every folder
-// (indented by depth), plus "top level" and "New folder…".
-function dockMoveOptions(sessionId: number): MenuOption[] {
-  return folderMoveOptions(folderOfSession(sessionId));
-}
-
-// The same list for a row with no folder yet (`cur` undefined marks none):
-// an external session row, which only becomes a workspace by being filed.
-function folderMoveOptions(cur: string | null | undefined): MenuOption[] {
-  const opts: MenuOption[] = [
-    { key: "move:root", label: editor.t("dock.move_root"), marked: cur === null },
-  ];
-  const walk = (parent: string | null, depth: number): void => {
-    for (const f of childFoldersOf(parent)) {
-      opts.push({
-        key: `move:${f.id}`,
-        label: "  ".repeat(depth) + f.name,
-        marked: f.id === cur,
-      });
-      walk(f.id, depth + 1);
-    }
-  };
-  walk(null, 0);
-  opts.push({ key: "move:new", label: editor.t("dock.new_menu_folder") });
-  return opts;
-}
-
-function dockMenuOptions(): MenuOption[] {
-  const m = openDialog?.dockMenu;
-  if (m?.kind === "move") return dockMoveOptions(m.sessionId);
-  if (m?.kind === "move-live") return folderMoveOptions(undefined);
-  return [];
-}
-
 // A dropdown/context-menu row. Menu entries are *rows in a list*, not
 // framed actions: a `[ ]` frame around every line turns the popup into a
 // column of ragged brackets and leaves the highlight hugging the label
@@ -6337,48 +6303,11 @@ function menuRows(
   );
 }
 
-// The dock's menus float over its rows as keyed overlays: the host reports a
-// press outside one as a `dismiss` on its key, which closes it (the press
-// still lands where it was aimed — a row click both closes the menu and
-// selects the row). The `Menu ▾` button's own press arrives right after that
-// dismissal, so it is held off from reopening what it just closed.
-const DOCK_MENU_OVERLAY_KEY = "dock-menu-overlay";
+// The project dropdown floats over the dock's rows as a keyed overlay: the
+// host reports a press outside it as a `dismiss` on its key, which closes it
+// (the press still lands where it was aimed — a row click both closes the
+// menu and selects the row).
 const DOCK_PROJECT_OVERLAY_KEY = "dock-project-overlay";
-// The press that dismissed a menu goes on to its target, so a press on `Menu ▾`
-// with the menu up arrives here as a dismiss and then an activate. The stamp
-// keys on which menu was dismissed: closing the project menu must not leave
-// `Menu ▾` dead.
-let lastMenuDismissed = { key: "", at: 0 };
-
-/** The width a menu box needs: its widest row plus the two border columns,
- *  and never narrower than its title. */
-function dockMenuBoxWidth(label: string, rows: string[]): number {
-  const widest = rows.reduce((w, t) => Math.max(w, editor.stringWidth(t)), 0);
-  // `╭─ label ─╮`: the title rides in the top border.
-  return Math.max(widest, editor.stringWidth(label) + 4) + 2;
-}
-
-/** A dock dropdown (the Move menu): an overlaid `list` keyed
- *  `DOCK_MENU_KEY`, titled by `label`. Rows are padded to the widest because
- *  a `list` does not widen its box and clips longer rows. */
-function dockDropdownOverlay(label: string, opts: MenuOption[], cursor: number): WidgetSpec {
-  const rows = opts.map((o) => (o.marked ? "● " : "  ") + o.label);
-  const box = dockMenuBoxWidth(label, rows);
-  const inner = box - 2;
-  const padded = rows.map((t) => t + " ".repeat(Math.max(0, inner - editor.stringWidth(t))));
-  const menu = labeledSection({
-    label,
-    widthCols: box,
-    child: list({
-      items: padded.map((text) => ({ text })),
-      itemKeys: opts.map((o) => `${DOCK_MENU_KEY}:${o.key}`),
-      selectedIndex: cursor,
-      visibleRows: Math.max(1, opts.length),
-      key: DOCK_MENU_KEY,
-    }),
-  });
-  return overlay(menu, { key: DOCK_MENU_OVERLAY_KEY });
-}
 
 // The Menu: a small panel of its own, anchored under the dock's header and
 // wider than the dock, so it hangs over the editor. Two columns of groups —
@@ -6462,25 +6391,6 @@ function closeMainMenu(): void {
   if (openPanel && dockMode) refreshOpenDialog();
 }
 
-function dockMoveMenu(): WidgetSpec {
-  const menu = openDialog?.dockMenu;
-  if (menu?.kind !== "move" && menu?.kind !== "move-live") return col();
-  const opts = dockMenuOptions();
-  const cursor = clampMenuIndex(menu.index, opts.length);
-  return dockDropdownOverlay(editor.t("dock.menu_move_label"), opts, cursor);
-}
-
-// Open a dock dropdown and hand it the keyboard (focus onto the cursor's
-// `menu-pick:` button — the signal the host uses to route nav keys here
-// instead of the session tree).
-function openDockMenu(menu: DockDropdown): void {
-  if (!openDialog || !openPanel) return;
-  if (openDialog.projectMenuOpen) closeProjectMenu();
-  openDialog.dockMenu = menu;
-  openPanel.update(buildDockSpec());
-  focusDockControl(DOCK_MENU_KEY);
-}
-
 function closeDockMenu(): void {
   if (openDialog?.dockMenu?.kind === "main") return closeMainMenu();
   if (!openDialog || !openPanel) return;
@@ -6489,28 +6399,9 @@ function closeDockMenu(): void {
   focusDockControl("sessions");
 }
 
-// The list's cursor moved (↑/↓, or a click on a row): mirror it, and a
-// click runs the row outright, the way a menu row answers a click.
-function dockMenuSelected(index: number, click: boolean): void {
-  if (openDialog?.dockMenu?.kind !== "move" && openDialog?.dockMenu?.kind !== "move-live") return;
-  const opts = dockMenuOptions();
-  const at = clampMenuIndex(index, opts.length);
-  openDialog.dockMenu = { ...openDialog.dockMenu, index: at };
-  if (click && opts[at]) runDockMenuOption(opts[at].key);
-}
-
-function acceptDockMenu(index?: number): void {
-  if (openDialog?.dockMenu?.kind !== "move" && openDialog?.dockMenu?.kind !== "move-live") return;
-  const opts = dockMenuOptions();
-  const opt = opts[clampMenuIndex(index ?? openDialog.dockMenu.index, opts.length)];
-  if (opt) runDockMenuOption(opt.key);
-}
-
-// Apply a dropdown choice (shared by mouse click on an option button and
-// keyboard Enter on the cursor).
+// Apply a Menu choice.
 function runDockMenuOption(optKey: string): void {
   if (!openDialog) return;
-  const menu = openDialog.dockMenu;
   if (optKey === "main:folder") {
     closeDockMenu();
     openCreateFolderDialog(null);
@@ -6550,34 +6441,6 @@ function runDockMenuOption(optKey: string): void {
   if (optKey === "main:worktrees") {
     toggleShowWorktrees();
     renderMainMenu();
-    return;
-  }
-  // Filing an external session row moves the row into the folder (or, for
-  // "Top level", back into its product's group). Nothing is forked or
-  // attached: the row is the same session, only kept where the user wants.
-  if (optKey.startsWith("move:") && menu?.kind === "move-live") {
-    const target = optKey.slice("move:".length);
-    closeDockMenu();
-    if (target === "new") {
-      // The folder's name first; the row is filed into it on Create.
-      openCreateFolderDialog(null, undefined, menu.liveKey);
-      return;
-    }
-    setExternalFolder(menu.liveKey, target === "root" ? null : target);
-    return;
-  }
-  if (optKey.startsWith("move:") && menu?.kind === "move") {
-    const sessionId = menu.sessionId;
-    const target = optKey.slice("move:".length);
-    if (target === "new") {
-      closeDockMenu();
-      openCreateFolderDialog(null, sessionId);
-      return;
-    }
-    // Through the published verb, so the menu and a script file a workspace
-    // the same way (and both refuse a placeholder that is still being created).
-    apiMoveWorkspace(sessionId, target === "root" ? null : target);
-    closeDockMenu();
     return;
   }
   closeDockMenu();
@@ -6924,15 +6787,15 @@ function buildDockMenuSpec(state: DockMenuState): WidgetSpec {
       externalGroupProblems(group),
     );
   }
-  // An external session row: open it (attach, or its folder), file it into a folder
-  // (which opens it as a workspace there), or open its page on the web.
+  // An external session row: open it (attach, or its folder), file it into a
+  // folder (the row moves there; nothing opens), or open its page on the web.
   if (state.target.kind === "live") {
     const s = liveByKey(state.target.key);
     // What opening it here does comes first (none when it only opens
     // outside the editor); then the places outside it, each named: this
     // menu is also what a click on such a row opens.
     const items: { label: string; key: string; intent?: "primary" | "danger" }[] = [];
-    const plan = s ? externalPlan(s, false) : null;
+    const plan = s ? externalPlan(s) : null;
     // Already copied here: going to that copy comes first; another teleport
     // (a second copy) is still there, below it.
     const copy = s ? teleportedWorkspace(s) : undefined;
@@ -7138,12 +7001,6 @@ function openDockContextMenuFromKeyboard(): void {
   openDockContextMenu(idx, col, row);
 }
 
-// Open the "Move to Folder…" dropdown for the current workspace — the
-// same flow the row context menu's Move option runs. Targets the dock's
-// highlighted node when it is a session, else the active window's
-// session. Shared by the palette command (which first opens the dock
-// when it isn't showing — the dropdown lives in its toolbar) and the
-// Filters panel's Move button.
 // Moving something to a folder, the dock's own way: the dock asks for the
 // target and the user clicks it. Rows that are not a target (workspaces,
 // external sessions, the product groups) go dim; a folder row is the target;
@@ -7244,9 +7101,7 @@ function dockDropTargetKey(): string | null {
  *  dimmed: a dim colour on the selection band (the row dragged is often the
  *  selected one) is lifted back to a legible one, and would not show. */
 function liftedEntry(e: TextPropertyEntry): TextPropertyEntry {
-  const lift = { italic: true, reversed: true };
-  const segs = (e.segments ?? []).map((s) => ({ text: s.text, style: lift }));
-  return styledRow(segs.length ? segs : [{ text: e.text, style: lift }]);
+  return restyleEntry(e, { italic: true, reversed: true });
 }
 
 /** The folder a drop would land in: the list drop-target colour across the
@@ -7302,10 +7157,29 @@ function dockPickRows(): WidgetSpec[] {
 
 // A row that is not a move target, drawn dim while a pick is on.
 function dimEntry(e: TextPropertyEntry): TextPropertyEntry {
-  const segs = (e.segments ?? []).map((s) => ({ text: s.text, style: { fg: "ui.menu_disabled_fg" } }));
-  return styledRow(segs.length ? segs : [{ text: e.text, style: { fg: "ui.menu_disabled_fg" } }]);
+  return restyleEntry(e, { fg: "ui.menu_disabled_fg" });
 }
 
+/** `e` with all its text in one `style`, and everything else it carries kept
+ *  — a card row's `properties` (the split that holds its agent name against
+ *  the right edge) above all. Rebuilding the entry from its text alone lost
+ *  them, and a dimmed or lifted card ran its columns together. Its own
+ *  overlays go: they colour the text the style now colours whole. */
+function restyleEntry(e: TextPropertyEntry, style: Partial<OverlayOptions>): TextPropertyEntry {
+  const segments = (e.segments ?? []).map((s) => ({ text: s.text, style }));
+  // Keys left out rather than set to `undefined`: the bridge sends that as
+  // `null`, which the host's optional fields do not take.
+  const { inlineOverlays: _dropped, ...rest } = e;
+  return segments.length
+    ? { ...rest, segments }
+    : { ...rest, text: "", segments: [{ text: e.text, style }] };
+}
+
+// "Move to Folder…" for the current row — the same pick the row context
+// menu's Move option starts. Targets the dock's highlighted node when it is a
+// workspace or an external session, else the active window's workspace. The
+// palette command's, which first opens the dock when it isn't showing: the
+// pick is made in its tree.
 function openMoveToFolderForCurrent(): void {
   if (!openPanel || !dockMode) {
     if (openPanel) return; // a centered modal is up — leave it alone
@@ -7314,7 +7188,7 @@ function openMoveToFolderForCurrent(): void {
   if (!openPanel || !openDialog || !dockMode) return;
   let id: number | null = null;
   const selKey = openDialog.dockSelKey;
-  // An external session row is filed by materializing it into the chosen folder.
+  // An external session row is filed as it is: the row moves, nothing opens.
   if (selKey?.startsWith(LIVE_NODE_PREFIX)) {
     const key = selKey.slice(LIVE_NODE_PREFIX.length);
     startMovePick({ kind: "live", key, name: liveByKey(key)?.title ?? key });
@@ -7329,8 +7203,8 @@ function openMoveToFolderForCurrent(): void {
     if (orchestratorSessions.has(active)) id = active;
   }
   if (id === null) return;
-  // Highlight the targeted session and give the dock the keyboard so
-  // the dropdown's ↑↓/Enter path works immediately.
+  // Highlight the targeted workspace; the pick gives the dock the keyboard,
+  // so ↑↓ and Enter on a folder work at once.
   openDialog.dockSelKey = sessionNodeKey(id);
   startMovePick({ kind: "session", id, name: orchestratorSessions.get(id)?.label ?? String(id) });
 }
@@ -12407,7 +12281,6 @@ let pendingFormPrefill:
     projectPath: string;
     cmd: string;
     createWorktree?: boolean;
-    folderId?: string | null;
     /** The session's own name, for the workspace it becomes. */
     label?: string;
     /** The Claude cloud session this workspace is a teleported copy of. */
@@ -13150,7 +13023,6 @@ function openWorkspaceForm(
     projectPath: string;
     cmd: string;
     createWorktree?: boolean;
-    folderId?: string | null;
     /** The session's own name, for the workspace it becomes. */
     label?: string;
     /** The Claude cloud session this workspace is a teleported copy of. */
@@ -14287,7 +14159,6 @@ function openForm(options?: { fromPicker?: boolean; target?: RunAgentTarget }): 
     // the prefilled one is hidden behind it.
     form.agentUnset = false;
     form.createWorktree = prefill.createWorktree ?? false;
-    form.intoFolder = prefill.folderId;
     form.teleportOf = prefill.teleportOf;
     // An imported session keeps its name. With a worktree the name field
     // also names the worktree and its branch, so it gets a branch-safe
@@ -14295,6 +14166,7 @@ function openForm(options?: { fromPicker?: boolean; target?: RunAgentTarget }): 
     if (prefill.label) {
       const name = form.createWorktree ? liveBranchName(prefill.label) : prefill.label;
       form.name = { value: name, cursor: utf8Len(name) };
+      form.prefillName = name;
       if (name !== prefill.label) form.displayName = prefill.label;
     }
     form.agentCustom = !agentPresets().some((pr) => !pr.custom && pr.cmd === prefill.cmd.trim());
@@ -15444,6 +15316,30 @@ async function discardCreatedWorktree(repoRoot: string, root: string): Promise<v
   );
 }
 
+/** `name`, or the first of `name-2`, `name-3`, … that no worktree folder or
+ *  branch of this project's repository already has. `runLocalCreate` reuses
+ *  a worktree it finds on disk — that is how an interrupted create resumes —
+ *  so a new workspace given a name already in use would open inside the
+ *  existing worktree rather than get its own. */
+async function freeWorktreeName(projectPath: string, name: string): Promise<string> {
+  const repoRoot = (await resolveCanonicalRepoRoot(projectPath)) ?? projectPath;
+  const taken = async (n: string): Promise<boolean> => {
+    const root = editor.pathJoin(editor.getDataDir(), "orchestrator", slugify(repoRoot), n);
+    if (editor.fileExists(editor.localPath(root))) return true;
+    const ref = await spawnCollect(
+      "git",
+      ["-C", repoRoot, "rev-parse", "--verify", "--quiet", `refs/heads/${n}`],
+      repoRoot,
+    );
+    return ref.exit_code === 0;
+  };
+  for (let i = 1; i < 100; i++) {
+    const n = i === 1 ? name : `${name}-${i}`;
+    if (!(await taken(n))) return n;
+  }
+  return name;
+}
+
 // Background worker: create a local worktree (when requested) and spawn the
 // session window, swapping the placeholder for the real row. Idempotent on a
 // resume — if the target worktree already exists (a prior run made it before
@@ -16071,23 +15967,25 @@ async function submitForm(visit: boolean): Promise<void> {
   const picked = machineOptions()[form.machinePick];
   editor.setGlobalState("orchestrator.last_machine", picked ? picked.key : "");
   // Read before the create closes the form.
-  const intoFolder = form.intoFolder;
-  const displayName = form.displayName;
+  const proposed = form.prefillName !== undefined && form.name.value.trim() === form.prefillName;
+  const displayName = proposed ? form.displayName : undefined;
   const teleportOf = form.teleportOf;
+  // A name the form proposed (an imported session's) must not land on a
+  // worktree already made: a second copy of the same session, or another
+  // session of the same title, would open inside the first one's.
+  if (
+    proposed && captured.spec.backend === "local" && captured.spec.createWorktree &&
+    captured.spec.name
+  ) {
+    captured.spec.name = await freeWorktreeName(captured.spec.projectPath, captured.spec.name);
+  }
   const id = await startPendingWorkspace(captured.spec, { visit });
   const bornWs = teleportOf ? orchestratorSessions.get(id) : undefined;
   if (teleportOf && bornWs?.stableId) rememberTeleport(teleportOf, bornWs.stableId);
-  // Named from birth, like the folder below: a local workspace has its
-  // durable id already.
+  // Named from birth: a local workspace has its durable id already.
   const born = displayName ? orchestratorSessions.get(id) : undefined;
   if (born?.stableId && displayName) {
     renameWorkspace(born, displayName);
-    if (intoFolder === undefined) refreshDockTree();
-  }
-  // Filed by its durable id, which a workspace has from birth, so the row
-  // lands in the folder while it is still being built.
-  if (intoFolder !== undefined) {
-    assignSessionToFolder(id, intoFolder);
     refreshDockTree();
   }
 }
@@ -17764,7 +17662,7 @@ editor.on("widget_event", (e) => {
       if (target.kind === "live") {
         if (e.widget_key === "ctx-live-open") {
           closeDockContextMenu();
-          void openLiveSession(target.key, { materialize: false, dive: true });
+          void openLiveSession(target.key, { dive: true });
         } else if (e.widget_key === "ctx-live-move") {
           closeDockContextMenu();
           startMovePick({ kind: "live", key: target.key, name: liveByKey(target.key)?.title ?? target.key });
@@ -18228,20 +18126,12 @@ editor.on("widget_event", (e) => {
         // elsewhere) dismisses it, the way any menu goes away when you
         // act elsewhere. The host's re-focus — the dock getting the
         // keyboard back as a dialog over it closes — is not focus leaving
-        // anything: a menu opened in the same breath (the context menu's
-        // Move… replacing itself with the Move dropdown) stays open.
+        // anything, and leaves it open.
         const refocus = (e.payload as { previous?: string } | undefined)?.previous === "(re-focus)";
         if (
           openDialog.projectMenuOpen && e.widget_key !== PROJECT_MENU_KEY && !refocus
         ) {
           openDialog.projectMenuOpen = false;
-          openPanel?.update(buildDockSpec());
-        }
-        if (
-          (openDialog.dockMenu?.kind === "move" || openDialog.dockMenu?.kind === "move-live") &&
-          e.widget_key !== DOCK_MENU_KEY && !refocus
-        ) {
-          openDialog.dockMenu = null;
           openPanel?.update(buildDockSpec());
         }
         // A dive that never produced a `blur` (already blurred, say)
@@ -18508,11 +18398,7 @@ editor.on("widget_event", (e) => {
     // A press outside an open dock menu: close it (the press itself goes
     // on to whatever it was aimed at).
     if (e.event_type === "dismiss") {
-      if (e.widget_key === DOCK_MENU_OVERLAY_KEY && openDialog.dockMenu !== null) {
-        lastMenuDismissed = { key: e.widget_key, at: Date.now() };
-        closeDockMenu();
-      } else if (e.widget_key === DOCK_PROJECT_OVERLAY_KEY && openDialog.projectMenuOpen) {
-        lastMenuDismissed = { key: e.widget_key, at: Date.now() };
+      if (e.widget_key === DOCK_PROJECT_OVERLAY_KEY && openDialog.projectMenuOpen) {
         closeProjectMenu();
       }
       return;
@@ -18520,18 +18406,6 @@ editor.on("widget_event", (e) => {
     if (e.event_type === "activate" && e.widget_key === "dock-menu") {
       if (openDialog.dockMenu?.kind === "main") closeDockMenu();
       else openMainMenu();
-      return;
-    }
-    // The `Menu ▾` / "Move to folder…" dropdown list: ↑/↓ move its
-    // cursor, Enter runs the cursor's option, a click runs the clicked one.
-    if (isListEvent(e, DOCK_MENU_KEY)) {
-      const payload = (e.payload ?? {}) as Record<string, unknown>;
-      const idx = typeof payload.index === "number" ? payload.index : -1;
-      if (e.event_type === "select" && idx >= 0) {
-        dockMenuSelected(idx, payload.via === "click");
-      } else if (e.event_type === "activate") {
-        acceptDockMenu(idx >= 0 ? idx : undefined);
-      }
       return;
     }
     // Host-owned tree expansion changed (a disclosure click or →/← on a

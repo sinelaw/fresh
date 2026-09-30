@@ -1866,56 +1866,160 @@ fn drag_move(ui: &mut Ui<u32>, y: i32) -> Vec<u32> {
     .msgs
 }
 
-/// **A drag on the edge row of its window, or past it, scrolls the window
-/// toward it**, a step per move, bigger the farther out; inside the window it
-/// scrolls nothing, and the tree says while a drag rests where a repeat
-/// would scroll. At the end of the content the edge row is just a row.
+/// **A drag past the edge of its window scrolls the window toward it**, a
+/// step per move, bigger the farther out; on the edge row and inside the
+/// window it scrolls nothing — a drop on the first or last row in sight must
+/// not have it scrolled away. The tree says while a repeat would still move
+/// something.
 #[test]
-fn a_drag_at_its_windows_edge_scrolls_the_window() {
+fn a_drag_past_its_windows_edge_scrolls_the_window() {
     let mut ui: Ui<u32> = Ui::new();
     ui.frame(drag_window(), FRAME);
-    // The window is rows 1..6 of the frame: 1 and 5 are its edge rows.
+    // The window is rows 1..6 of the frame, with a line above and below it.
     ui.dispatch(Input::press(
         Point::new(1, 3),
         MouseButton::Left,
         Mods::NONE,
     ));
     assert!(drag_move(&mut ui, 4).is_empty(), "inside: no scroll");
-    assert_eq!(ui.drag_autoscroll(), None);
     assert!(
-        drag_move(&mut ui, 1).is_empty(),
-        "the top row, at the top: a row"
+        drag_move(&mut ui, 5).is_empty(),
+        "on the edge row: no scroll"
     );
     assert_eq!(ui.drag_autoscroll(), None);
 
-    assert_eq!(drag_move(&mut ui, 5), vec![1], "on the edge row: one row");
-    assert_eq!(ui.drag_autoscroll(), Some(Point::new(1, 5)));
-    assert_eq!(drag_move(&mut ui, 7), vec![4], "two past: three rows");
+    assert_eq!(drag_move(&mut ui, 6), vec![1], "one past: one row");
+    assert_eq!(ui.drag_autoscroll(), Some(Point::new(1, 6)));
+    assert_eq!(drag_move(&mut ui, 8), vec![4], "three past: three rows");
     assert_eq!(drag_move(&mut ui, 9), vec![8], "capped at the fastest step");
 
     // Held there, the repeats run the window to its end, and then there is
-    // nothing more to ask for — not even on the edge row.
+    // nothing more to ask for.
     let mut last = 8;
     while ui.drag_autoscroll().is_some() {
-        last = *drag_move(&mut ui, 9).last().expect("a step");
+        ui.tick();
+        if let Some(&o) = drag_move(&mut ui, 9).last() {
+            last = o;
+        }
     }
     assert_eq!(last, 15, "twenty rows in a five-row window end at fifteen");
-    assert!(
-        drag_move(&mut ui, 5).is_empty(),
-        "the last row, at the end: a row"
-    );
 
-    // On the top row, back up.
-    assert_eq!(drag_move(&mut ui, 1), vec![14]);
+    // One past the top, back up.
+    assert_eq!(drag_move(&mut ui, 0), vec![14]);
 
-    // Released, a move to the edge is only a move.
+    // Released, a move past the edge is only a move.
     ui.dispatch(Input::release(
-        Point::new(1, 1),
+        Point::new(1, 0),
         MouseButton::Left,
         Mods::NONE,
     ));
     assert!(drag_move(&mut ui, 0).is_empty());
     assert_eq!(ui.drag_autoscroll(), None);
+}
+
+/// **A window flush with the frame's edge scrolls from its edge row**: there
+/// is no cell past it to point at. At the end of the content that row is an
+/// ordinary row again.
+#[test]
+fn a_window_flush_with_the_frames_edge_scrolls_from_its_edge_row() {
+    let rows: Vec<Node<u32>> = (0..20)
+        .map(|i| {
+            gesture(text(format!("row {i}"))).on(
+                GestureKind::Press,
+                Rc::new(|e: &Event| {
+                    e.start_drag();
+                    None
+                }),
+            )
+        })
+        .collect();
+    let mut ui: Ui<u32> = Ui::new();
+    // Rows 1..10: the window runs to the frame's last row.
+    ui.frame(
+        col().children([
+            text("above"),
+            viewport(col().children(rows))
+                .h(Sizing::Cells(9))
+                .on_scroll(|y| y),
+        ]),
+        FRAME,
+    );
+    ui.dispatch(Input::press(
+        Point::new(1, 3),
+        MouseButton::Left,
+        Mods::NONE,
+    ));
+    assert_eq!(
+        drag_move(&mut ui, 9),
+        vec![1],
+        "the last row, flush: a step"
+    );
+    while ui.drag_autoscroll().is_some() {
+        ui.tick();
+        drag_move(&mut ui, 9);
+    }
+    ui.tick();
+    assert!(
+        drag_move(&mut ui, 9).is_empty(),
+        "at the end: an ordinary row"
+    );
+}
+
+/// **After the last step, the drag's hover names the row really under the
+/// pointer.** A scroll moves rows under a resting pointer without laying them
+/// out; the tree asks for one more move after the frame that does, so the
+/// row the drag is shown over is the row a release there drops on.
+#[test]
+fn after_scrolling_the_drag_is_over_the_row_under_the_pointer() {
+    let entered: Rc<RefCell<Vec<String>>> = Rc::default();
+    let rows: Vec<Node<u32>> = (0..20)
+        .map(|i| {
+            let e = entered.clone();
+            gesture(text(format!("row {i}")))
+                .on(
+                    GestureKind::Press,
+                    Rc::new(|e: &Event| {
+                        e.start_drag();
+                        None
+                    }),
+                )
+                .on(
+                    GestureKind::DragEnter,
+                    Rc::new(move |_: &Event| {
+                        e.borrow_mut().push(format!("row {i}"));
+                        None
+                    }),
+                )
+        })
+        .collect();
+    let mut ui: Ui<u32> = Ui::new();
+    ui.frame(
+        col().children([
+            text("above"),
+            viewport(col().children(rows))
+                .h(Sizing::Cells(9))
+                .on_scroll(|y| y),
+        ]),
+        FRAME,
+    );
+    ui.dispatch(Input::press(
+        Point::new(1, 3),
+        MouseButton::Left,
+        Mods::NONE,
+    ));
+    // Held on the last row, as the host holds it: a move per frame for as
+    // long as the tree asks for one.
+    drag_move(&mut ui, 9);
+    while ui.drag_autoscroll().is_some() {
+        ui.tick();
+        drag_move(&mut ui, 9);
+    }
+    assert_eq!(
+        entered.borrow().last().map(String::as_str),
+        Some("row 19"),
+        "the window ends on row 19 under the pointer: {:?}",
+        entered.borrow()
+    );
 }
 
 /// **Only a drag scrolls.** A plain capture — a grip, a text selection — past
@@ -2018,4 +2122,35 @@ fn a_drags_hover_reaches_what_is_around_the_target() {
         vec!["enter row", "enter b", "leave b", "leave row"],
         "outermost enters first and leaves last, as hover does"
     );
+}
+
+/// **A press ends a drag whose release never came, and tells what it was
+/// over.** Otherwise a row the drag lit stays lit: nothing else would tell it
+/// the drag has gone.
+#[test]
+fn a_press_ends_a_lost_drag_and_leaves_what_it_was_over() {
+    let log: Log = Rc::default();
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(
+        col().children([
+            drag_row("a", &log, true, true),
+            drag_row("b", &log, false, false),
+            text("plain"),
+        ]),
+        FRAME,
+    );
+    ui.dispatch(Input::press(
+        Point::new(0, 0),
+        MouseButton::Left,
+        Mods::NONE,
+    ));
+    move_to(&mut ui, 0, 1);
+    // The release is lost; the next press lands elsewhere.
+    ui.dispatch(Input::press(
+        Point::new(0, 2),
+        MouseButton::Left,
+        Mods::NONE,
+    ));
+    assert_eq!(*log.borrow(), vec!["enter b", "leave b"]);
+    assert!(!ui.dragging(), "the press ended the drag");
 }

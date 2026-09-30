@@ -293,6 +293,11 @@ eq(
   ["fix-the-auth-bug-login.ts", "deja-vu-unicode", "hidden-x", "session", "a".repeat(48)],
   "branch name: a session title as a git branch and folder name",
 );
+eq(
+  ["Bump deps.lock", "x.lock.lock", "CON", "nul.txt", "com1", "console"].map(liveBranchName),
+  ["bump-deps", "x", "con-session", "nul.txt-session", "com1-session", "console"],
+  "branch name: never a ref git refuses (`.lock`) nor a Windows device name",
+);
 
 // What a row is, for its menu: where it is listed from and runs.
 eq(
