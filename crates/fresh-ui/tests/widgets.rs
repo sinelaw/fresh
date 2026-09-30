@@ -532,6 +532,67 @@ fn a_row_under_the_pointer_reads_as_hovered() {
     assert_eq!(themes_of(&ui, "item 4"), vec!["mine.hover"]);
 }
 
+/// **Under a drag, the row the pointer is over reads as hovered** — not the
+/// row being dragged, which the capture holds the pointer's own hover on. A
+/// drop target is the one thing a drag must show, and the list tints it the
+/// way it tints any row under the pointer. The release hands hover back to
+/// the pointer, which is still over the same row.
+#[test]
+fn a_row_under_a_drag_reads_as_hovered() {
+    let items: Vec<usize> = (0..6).collect();
+    let list = || {
+        List::keyed(
+            &items,
+            |i| fresh_ui::Key::from(*i),
+            |i| {
+                fresh_ui::gesture(fresh_ui::text(format!("item {i}"))).on(
+                    fresh_ui::GestureKind::Press,
+                    std::rc::Rc::new(|e: &fresh_ui::Event| {
+                        e.start_drag();
+                        None
+                    }),
+                )
+            },
+        )
+        .selected(0)
+        .row_theme(|i, st| match st {
+            fresh_ui::widgets::RowState::Hover => "mine.hover".into(),
+            _ => format!("mine.plain.{i}"),
+        })
+        .node()
+    };
+    let mut ui: Ui<Msg> = Ui::new();
+    ui.frame(list(), FRAME);
+    let row = |ui: &Ui<Msg>, i: u64| ui.rect_of(ui.find_by_key(&fresh_ui::Key::from(i)).unwrap());
+    let (one, three) = (row(&ui, 1), row(&ui, 3));
+
+    ui.dispatch(Input::Move {
+        pos: Point::new(one.x, one.y),
+        mods: Mods::NONE,
+    });
+    ui.dispatch(Input::press(
+        Point::new(one.x, one.y),
+        MouseButton::Left,
+        Mods::NONE,
+    ));
+    ui.dispatch(Input::Move {
+        pos: Point::new(three.x, three.y),
+        mods: Mods::NONE,
+    });
+    ui.frame(list(), FRAME);
+    assert_eq!(themes_of(&ui, "item 3"), vec!["mine.hover"]);
+    assert_eq!(themes_of(&ui, "item 1"), vec!["mine.plain.1"]);
+
+    ui.dispatch(Input::release(
+        Point::new(three.x, three.y),
+        MouseButton::Left,
+        Mods::NONE,
+    ));
+    ui.frame(list(), FRAME);
+    assert_eq!(themes_of(&ui, "item 3"), vec!["mine.hover"]);
+    assert_eq!(themes_of(&ui, "item 1"), vec!["mine.plain.1"]);
+}
+
 /// **A row inserted above keeps every other row's element and state.**
 ///
 /// Rows are matched by key, so an insertion moves the rows below it rather

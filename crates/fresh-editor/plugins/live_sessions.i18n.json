@@ -1,92 +1,92 @@
 {
   "bg": {
-    "cmd.refresh": "Orchestrator: Опресняване на „Другаде“",
-    "cmd.refresh_desc": "Повторно изброяване на сесиите на Claude и Codex, отворени извън този редактор (други терминали, фонови задачи, облака), за групата „Другаде“ в панела",
-    "status.refreshed": "Другаде: %{n} отворени сесии",
-    "status.refreshed_problems": "Другаде: %{n} отворени сесии (%{problem})"
+    "cmd.refresh": "Orchestrator: Опресняване на външните сесии",
+    "cmd.refresh_desc": "Преизброяване на сесиите на Claude и Codex, отворени извън този редактор (други терминали, фонови задачи, облака), за групите Claude и Codex в Dock",
+    "status.refreshed": "Външни сесии: %{n} отворени",
+    "status.refreshed_problems": "Външни сесии: %{n} отворени (%{problem})"
   },
   "cs": {
-    "cmd.refresh": "Orchestrator: Obnovit Jinde",
-    "cmd.refresh_desc": "Znovu načíst relace Claude a Codex otevřené mimo tento editor (jiné terminály, úlohy na pozadí, cloud) pro skupinu Jinde v doku",
-    "status.refreshed": "Jinde: %{n} otevřených relací",
-    "status.refreshed_problems": "Jinde: %{n} otevřených relací (%{problem})"
+    "cmd.refresh": "Orchestrator: Obnovit externí relace",
+    "cmd.refresh_desc": "Znovu vypsat relace Claude a Codex otevřené mimo tento editor (jiné terminály, úlohy na pozadí, cloud) pro skupiny Claude a Codex v doku",
+    "status.refreshed": "Externí relace: %{n} otevřených",
+    "status.refreshed_problems": "Externí relace: %{n} otevřených (%{problem})"
   },
   "de": {
-    "cmd.refresh": "Orchestrator: Anderswo aktualisieren",
-    "cmd.refresh_desc": "Claude- und Codex-Sitzungen, die außerhalb dieses Editors offen sind (andere Terminals, Hintergrundjobs, die Cloud), für die Gruppe „Anderswo“ im Dock neu auflisten",
-    "status.refreshed": "Anderswo: %{n} offene Sitzungen",
-    "status.refreshed_problems": "Anderswo: %{n} offene Sitzungen (%{problem})"
+    "cmd.refresh": "Orchestrator: Externe Sitzungen aktualisieren",
+    "cmd.refresh_desc": "Claude- und Codex-Sitzungen außerhalb dieses Editors (andere Terminals, Hintergrundjobs, die Cloud) für die Claude- und Codex-Gruppen im Dock neu auflisten",
+    "status.refreshed": "Externe Sitzungen: %{n} offen",
+    "status.refreshed_problems": "Externe Sitzungen: %{n} offen (%{problem})"
   },
   "en": {
-    "cmd.refresh": "Orchestrator: Refresh Elsewhere",
-    "cmd.refresh_desc": "Re-list Claude and Codex sessions open outside this editor (other terminals, background jobs, the cloud) for the dock's Elsewhere group",
-    "status.refreshed": "Elsewhere: %{n} open sessions",
-    "status.refreshed_problems": "Elsewhere: %{n} open sessions (%{problem})"
+    "cmd.refresh": "Orchestrator: Refresh External Sessions",
+    "cmd.refresh_desc": "Re-list Claude and Codex sessions open outside this editor (other terminals, background jobs, the cloud) for the dock's Claude and Codex groups",
+    "status.refreshed": "External sessions: %{n} open",
+    "status.refreshed_problems": "External sessions: %{n} open (%{problem})"
   },
   "es": {
-    "cmd.refresh": "Orchestrator: Actualizar En otro lugar",
-    "cmd.refresh_desc": "Volver a listar las sesiones de Claude y Codex abiertas fuera de este editor (otros terminales, trabajos en segundo plano, la nube) para el grupo En otro lugar del panel",
-    "status.refreshed": "En otro lugar: %{n} sesiones abiertas",
-    "status.refreshed_problems": "En otro lugar: %{n} sesiones abiertas (%{problem})"
+    "cmd.refresh": "Orchestrator: Actualizar sesiones externas",
+    "cmd.refresh_desc": "Volver a listar las sesiones de Claude y Codex abiertas fuera de este editor (otras terminales, trabajos en segundo plano, la nube) para los grupos Claude y Codex del dock",
+    "status.refreshed": "Sesiones externas: %{n} abiertas",
+    "status.refreshed_problems": "Sesiones externas: %{n} abiertas (%{problem})"
   },
   "fr": {
-    "cmd.refresh": "Orchestrator : Actualiser Ailleurs",
-    "cmd.refresh_desc": "Relister les sessions Claude et Codex ouvertes hors de cet éditeur (autres terminaux, tâches en arrière-plan, le cloud) pour le groupe Ailleurs du dock",
-    "status.refreshed": "Ailleurs : %{n} sessions ouvertes",
-    "status.refreshed_problems": "Ailleurs : %{n} sessions ouvertes (%{problem})"
+    "cmd.refresh": "Orchestrator : Actualiser les sessions externes",
+    "cmd.refresh_desc": "Relister les sessions Claude et Codex ouvertes hors de cet éditeur (autres terminaux, tâches en arrière-plan, le cloud) pour les groupes Claude et Codex du dock",
+    "status.refreshed": "Sessions externes : %{n} ouvertes",
+    "status.refreshed_problems": "Sessions externes : %{n} ouvertes (%{problem})"
   },
   "it": {
-    "cmd.refresh": "Orchestrator: Aggiorna Altrove",
-    "cmd.refresh_desc": "Rielenca le sessioni Claude e Codex aperte fuori da questo editor (altri terminali, processi in background, il cloud) per il gruppo Altrove del pannello",
-    "status.refreshed": "Altrove: %{n} sessioni aperte",
-    "status.refreshed_problems": "Altrove: %{n} sessioni aperte (%{problem})"
+    "cmd.refresh": "Orchestrator: Aggiorna sessioni esterne",
+    "cmd.refresh_desc": "Rielenca le sessioni Claude e Codex aperte fuori da questo editor (altri terminali, job in background, il cloud) per i gruppi Claude e Codex del dock",
+    "status.refreshed": "Sessioni esterne: %{n} aperte",
+    "status.refreshed_problems": "Sessioni esterne: %{n} aperte (%{problem})"
   },
   "ja": {
-    "cmd.refresh": "Orchestrator: 他の場所を更新",
-    "cmd.refresh_desc": "このエディターの外で開いている Claude と Codex のセッション（他のターミナル、バックグラウンドジョブ、クラウド）をドックの「他の場所」グループ用に再取得します",
-    "status.refreshed": "他の場所: 開いているセッション %{n} 件",
-    "status.refreshed_problems": "他の場所: 開いているセッション %{n} 件 (%{problem})"
+    "cmd.refresh": "Orchestrator: 外部セッションを更新",
+    "cmd.refresh_desc": "このエディター外で開いている Claude と Codex のセッション（他のターミナル、バックグラウンドジョブ、クラウド）を Dock の Claude / Codex グループ用に再取得",
+    "status.refreshed": "外部セッション: 開いているもの %{n} 件",
+    "status.refreshed_problems": "外部セッション: 開いているもの %{n} 件 (%{problem})"
   },
   "ko": {
-    "cmd.refresh": "Orchestrator: 다른 곳 새로 고침",
-    "cmd.refresh_desc": "이 편집기 밖에서 열려 있는 Claude 및 Codex 세션(다른 터미널, 백그라운드 작업, 클라우드)을 도크의 '다른 곳' 그룹에 다시 나열합니다",
-    "status.refreshed": "다른 곳: 열린 세션 %{n}개",
-    "status.refreshed_problems": "다른 곳: 열린 세션 %{n}개 (%{problem})"
+    "cmd.refresh": "Orchestrator: 외부 세션 새로 고침",
+    "cmd.refresh_desc": "이 편집기 밖에서 열린 Claude 및 Codex 세션(다른 터미널, 백그라운드 작업, 클라우드)을 Dock의 Claude·Codex 그룹용으로 다시 나열",
+    "status.refreshed": "외부 세션: 열린 세션 %{n}개",
+    "status.refreshed_problems": "외부 세션: 열린 세션 %{n}개 (%{problem})"
   },
   "pt-BR": {
-    "cmd.refresh": "Orchestrator: Atualizar Em outro lugar",
-    "cmd.refresh_desc": "Listar novamente as sessões do Claude e do Codex abertas fora deste editor (outros terminais, tarefas em segundo plano, a nuvem) para o grupo Em outro lugar do painel",
-    "status.refreshed": "Em outro lugar: %{n} sessões abertas",
-    "status.refreshed_problems": "Em outro lugar: %{n} sessões abertas (%{problem})"
+    "cmd.refresh": "Orchestrator: Atualizar sessões externas",
+    "cmd.refresh_desc": "Listar novamente as sessões do Claude e do Codex abertas fora deste editor (outros terminais, tarefas em segundo plano, a nuvem) para os grupos Claude e Codex do dock",
+    "status.refreshed": "Sessões externas: %{n} abertas",
+    "status.refreshed_problems": "Sessões externas: %{n} abertas (%{problem})"
   },
   "ru": {
-    "cmd.refresh": "Orchestrator: Обновить «В другом месте»",
-    "cmd.refresh_desc": "Заново получить сеансы Claude и Codex, открытые вне этого редактора (другие терминалы, фоновые задачи, облако), для группы «В другом месте» в панели",
-    "status.refreshed": "В другом месте: открытых сеансов — %{n}",
-    "status.refreshed_problems": "В другом месте: открытых сеансов — %{n} (%{problem})"
+    "cmd.refresh": "Orchestrator: Обновить внешние сеансы",
+    "cmd.refresh_desc": "Заново получить сеансы Claude и Codex, открытые вне этого редактора (другие терминалы, фоновые задачи, облако), для групп Claude и Codex в Dock",
+    "status.refreshed": "Внешние сеансы: открыто %{n}",
+    "status.refreshed_problems": "Внешние сеансы: открыто %{n} (%{problem})"
   },
   "th": {
-    "cmd.refresh": "Orchestrator: รีเฟรชที่อื่น",
-    "cmd.refresh_desc": "แสดงรายการเซสชัน Claude และ Codex ที่เปิดอยู่นอกเอดิเตอร์นี้อีกครั้ง (เทอร์มินัลอื่น งานเบื้องหลัง คลาวด์) สำหรับกลุ่มที่อื่นในแผง",
-    "status.refreshed": "ที่อื่น: เซสชันที่เปิดอยู่ %{n} รายการ",
-    "status.refreshed_problems": "ที่อื่น: เซสชันที่เปิดอยู่ %{n} รายการ (%{problem})"
+    "cmd.refresh": "Orchestrator: รีเฟรชเซสชันภายนอก",
+    "cmd.refresh_desc": "แสดงรายการเซสชัน Claude และ Codex ที่เปิดอยู่นอกตัวแก้ไขนี้ใหม่ (เทอร์มินัลอื่น งานเบื้องหลัง คลาวด์) สำหรับกลุ่ม Claude และ Codex ใน Dock",
+    "status.refreshed": "เซสชันภายนอก: เปิดอยู่ %{n} รายการ",
+    "status.refreshed_problems": "เซสชันภายนอก: เปิดอยู่ %{n} รายการ (%{problem})"
   },
   "uk": {
-    "cmd.refresh": "Orchestrator: Оновити «Деінде»",
-    "cmd.refresh_desc": "Повторно отримати сеанси Claude і Codex, відкриті поза цим редактором (інші термінали, фонові завдання, хмара), для групи «Деінде» на панелі",
-    "status.refreshed": "Деінде: відкритих сеансів — %{n}",
-    "status.refreshed_problems": "Деінде: відкритих сеансів — %{n} (%{problem})"
+    "cmd.refresh": "Orchestrator: Оновити зовнішні сеанси",
+    "cmd.refresh_desc": "Повторно отримати сеанси Claude і Codex, відкриті поза цим редактором (інші термінали, фонові завдання, хмара), для груп Claude і Codex у Dock",
+    "status.refreshed": "Зовнішні сеанси: відкрито %{n}",
+    "status.refreshed_problems": "Зовнішні сеанси: відкрито %{n} (%{problem})"
   },
   "vi": {
-    "cmd.refresh": "Orchestrator: Làm mới Nơi khác",
-    "cmd.refresh_desc": "Liệt kê lại các phiên Claude và Codex đang mở bên ngoài trình soạn thảo này (terminal khác, tác vụ nền, đám mây) cho nhóm Nơi khác của thanh bên",
-    "status.refreshed": "Nơi khác: %{n} phiên đang mở",
-    "status.refreshed_problems": "Nơi khác: %{n} phiên đang mở (%{problem})"
+    "cmd.refresh": "Orchestrator: Làm mới phiên bên ngoài",
+    "cmd.refresh_desc": "Liệt kê lại các phiên Claude và Codex đang mở bên ngoài trình soạn thảo này (terminal khác, tác vụ nền, đám mây) cho nhóm Claude và Codex trong Dock",
+    "status.refreshed": "Phiên bên ngoài: %{n} đang mở",
+    "status.refreshed_problems": "Phiên bên ngoài: %{n} đang mở (%{problem})"
   },
   "zh-CN": {
-    "cmd.refresh": "Orchestrator: 刷新“其他位置”",
-    "cmd.refresh_desc": "重新列出在此编辑器之外打开的 Claude 和 Codex 会话（其他终端、后台任务、云端），用于停靠栏的“其他位置”分组",
-    "status.refreshed": "其他位置：%{n} 个打开的会话",
-    "status.refreshed_problems": "其他位置：%{n} 个打开的会话（%{problem}）"
+    "cmd.refresh": "Orchestrator: 刷新外部会话",
+    "cmd.refresh_desc": "重新列出在此编辑器之外打开的 Claude 和 Codex 会话（其他终端、后台任务、云端），用于 Dock 中的 Claude 和 Codex 分组",
+    "status.refreshed": "外部会话：%{n} 个打开",
+    "status.refreshed_problems": "外部会话：%{n} 个打开（%{problem}）"
   }
 }

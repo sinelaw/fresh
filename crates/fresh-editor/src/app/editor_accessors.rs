@@ -307,6 +307,9 @@ impl Editor {
         // A wheel gesture walking its remaining lines needs a frame per
         // line; without this the walk would stall on an idle loop.
         let wheel_deadline = self.pending_wheel_scroll_deadline();
+        // A drag held past a list's edge scrolls it a step at a time, and
+        // held still it produces no input to wake the loop.
+        let drag_deadline = self.drag_autoscroll_deadline();
         // The occurrence highlight's debounce. It is applied inside a render
         // and only once its delay has elapsed, so like the spinner above it
         // needs the loop to come back for it: with the editor idle after a
@@ -325,6 +328,7 @@ impl Editor {
             anim_deadline,
             paste_deadline,
             wheel_deadline,
+            drag_deadline,
             highlight_deadline,
         ]
         .into_iter()

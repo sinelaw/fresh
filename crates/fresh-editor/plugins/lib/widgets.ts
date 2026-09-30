@@ -591,6 +591,21 @@ export function treeNode(
   options?: {
     depth?: number;
     hasChildren?: boolean;
+    /** A leaf drawn with no disclosure gutter, flush with its indent (a
+     * top-level row beside folders that should start at the panel's
+     * edge). Ignored when `hasChildren`. */
+    flush?: boolean;
+    /** The row can be dragged with the mouse onto another row of the same
+     * tree. The plugin hears `widget_event`s on the tree:
+     * - `drag`, `payload: { key, target }` — the row lifted and the row under
+     *   the pointer (`null` off every row), each time that changes, from the
+     *   first row the drag leaves its own for. Draw what a drop there would
+     *   do from it.
+     * - `drop`, `payload: { key, target, index }` — released on another row.
+     * - `dragend`, `payload: { key }` — the drag is over, dropped or not.
+     * A plain click hears none of them. A click on a draggable row selects
+     * it on the release rather than the press. */
+    draggable?: boolean;
     checked?: boolean;
     /** Continuation lines rendered below `text` when the parent
      * `tree` has `itemHeight > 1`. Each entry is one screen row,
@@ -641,6 +656,8 @@ export function treeNode(
     text,
     depth: options?.depth ?? 0,
     hasChildren: options?.hasChildren ?? false,
+    ...(options?.flush ? { flush: true } : {}),
+    ...(options?.draggable ? { draggable: true } : {}),
   };
   if (options?.checked !== undefined) {
     node.checked = options.checked;

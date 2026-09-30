@@ -1,11 +1,11 @@
 /// <reference path="./lib/fresh.d.ts" />
 
 /**
- * Keeps the orchestrator dock's "Elsewhere" group current: Claude and Codex
+ * Keeps the orchestrator dock's "External sessions" group current: Claude and Codex
  * sessions open outside this editor's workspaces — another terminal, a
  * background job, the vendor's cloud. Polls each tool's own listing while the
  * dock is open and hands the result to the orchestrator
- * (`setElsewhereSessions`), which draws the rows and opens them.
+ * (`setExternalSessions`), which draws the rows and opens them.
  *
  * A separate plugin rather than part of the orchestrator so the sources can be
  * turned off by not loading it, and so the orchestrator's own tests, which load
@@ -42,7 +42,7 @@ const editor = getEditor();
 editor.defineConfigBoolean("enabled", {
   default: true,
   description:
-    "Show Claude and Codex sessions that are open outside this editor (another terminal, a background job, the cloud) in the orchestrator dock's Elsewhere group.",
+    "Show Claude and Codex sessions that are open outside this editor (another terminal, a background job, the cloud) in the orchestrator dock, grouped as Claude and Codex.",
 });
 editor.defineConfigBoolean("claudeLocal", {
   default: true,
@@ -77,11 +77,11 @@ editor.defineConfigInteger("cloudMaxAgeDays", {
     "Hide cloud sessions with no activity for this many days. 0 (the default) shows every session still active; archived ones are never shown.",
 });
 editor.defineConfigInteger("pollSeconds", {
-  default: 15,
+  default: 60,
   minimum: 5,
   maximum: 3600,
   description:
-    "How often sessions on this machine are re-listed while the dock is open. Cloud lists are fetched at most once a minute.",
+    "How often sessions are re-listed while the dock is open (and once when it opens; the group's Refresh re-lists at once). Cloud lists are fetched at most once a minute.",
 });
 
 interface Settings {
@@ -108,13 +108,13 @@ function settings(): Required<Settings> {
     claudeCommand: s.claudeCommand?.trim() || "claude",
     codexCommand: s.codexCommand?.trim() || "codex",
     cloudMaxAgeDays: s.cloudMaxAgeDays ?? 0,
-    pollSeconds: s.pollSeconds ?? 15,
+    pollSeconds: s.pollSeconds ?? 60,
   };
 }
 
 /** The orchestrator's side. Looked up per push, so load order does not matter. */
-interface ElsewhereHost {
-  setElsewhereSessions(update: {
+interface ExternalHost {
+  setExternalSessions(update: {
     sessions: LiveSession[];
     problems: string[];
     commands: { claude: string; codex: string };
@@ -125,7 +125,13 @@ export interface LiveSessionsApi {
   /** Re-list now, cloud included. Resolves once the dock has the answer. */
   refresh(): Promise<void>;
   /** The last answer, for a dock opened after it was pushed. */
-  snapshot(): { sessions: LiveSession[]; problems: string[]; commands: { claude: string; codex: string } };
+  snapshot(): {
+    sessions: LiveSession[];
+    problems: string[];
+    /** The same problems, by the source that had them. */
+    problemsBySource: Partial<Record<LiveSource, string>>;
+    commands: { claude: string; codex: string };
+  };
   /** Whether the Claude cloud source is on. */
   claudeCloudEnabled(): boolean;
   /** Turn it on or off: saved to the user's config (as the Settings UI
@@ -163,13 +169,14 @@ function snapshot(): ReturnType<LiveSessionsApi["snapshot"]> {
   return {
     sessions,
     problems: [...problemBySource.values()],
+    problemsBySource: Object.fromEntries(problemBySource),
     commands: { claude: s.claudeCommand, codex: s.codexCommand },
   };
 }
 
 function push(): void {
-  const host = editor.getPluginApi("orchestrator") as ElsewhereHost | null;
-  host?.setElsewhereSessions?.(snapshot());
+  const host = editor.getPluginApi("orchestrator") as ExternalHost | null;
+  host?.setExternalSessions?.(snapshot());
 }
 
 /** A spawn that could not start (the tool is not installed) is an empty
@@ -182,7 +189,7 @@ function missingTool(r: SpawnResult): boolean {
  *  is the user's project, and `codex cloud` writes an `error.log` into
  *  whatever directory it runs in. */
 function probeDir(): string {
-  const dir = editor.pathJoin(editor.getDataDir(), "orchestrator", "elsewhere", "probe");
+  const dir = editor.pathJoin(editor.getDataDir(), "orchestrator", "external-sessions", "probe");
   editor.createDir(editor.localPath(dir));
   return dir;
 }

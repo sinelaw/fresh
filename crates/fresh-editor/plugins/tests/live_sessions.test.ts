@@ -1,4 +1,4 @@
-/** The dock's "Elsewhere" rows: each source's listing in, open sessions out. */
+/** The dock's "External sessions" rows: each source's listing in, open sessions out. */
 import {
   claudeAccessToken,
   claudeCloudPageInfo,
@@ -13,9 +13,12 @@ import {
   registryTmuxPanes,
   tmuxAttachArgv,
   codexLocalSessions,
-  elsewhereRoot,
+  externalRoot,
   isCodexSessionArgv,
   liveDetail,
+  liveBranchName,
+  liveSource,
+  liveWhere,
   livePlan,
   parseClaudeAgents,
   parseClaudeCloud,
@@ -171,7 +174,7 @@ eq(codexLocal.map((s) => [s.key, s.title]), [["codex-local/100", "proj"], ["code
 // ── Filtering and plans ───────────────────────────────────────────
 
 const DATA = "/data/fresh";
-const shown = unrepresented([...agents, ...cloud], ["/home/u/fresh/", elsewhereRoot(DATA, cloud[1])], DATA);
+const shown = unrepresented([...agents, ...cloud], ["/home/u/fresh/", externalRoot(DATA, cloud[1])], DATA);
 eq(shown.map((s) => s.key), ["claude-local/5e55", "claude-cloud/session_01"], "unrepresented: sessions already open as a workspace are hidden");
 
 const env: LivePlanEnv = { dataDir: DATA, claude: "claude", codex: "codex", windows: false };
@@ -283,6 +286,32 @@ eq(
   "unrepresented: an SSH session taken over on its host drops out",
 );
 
+
+// An imported session's name, as the worktree and branch it gets.
+eq(
+  ["Fix the auth bug (login.ts)", "  Déjà vu: ünïcode!  ", "..hidden//../x", "", "a".repeat(80)].map(liveBranchName),
+  ["fix-the-auth-bug-login.ts", "deja-vu-unicode", "hidden-x", "session", "a".repeat(48)],
+  "branch name: a session title as a git branch and folder name",
+);
+eq(
+  ["Bump deps.lock", "x.lock.lock", "CON", "nul.txt", "com1", "console"].map(liveBranchName),
+  ["bump-deps", "x", "con-session", "nul.txt-session", "com1-session", "console"],
+  "branch name: never a ref git refuses (`.lock`) nor a Windows device name",
+);
+
+// What a row is, for its menu: where it is listed from and runs.
+eq(
+  [registry[0], desktop[1], desktop[2], agents.find((a) => a.jobId)!, cloud[0]].map(liveSource),
+  [
+    "Claude Desktop",
+    "Claude Desktop, not running",
+    "Claude Desktop over SSH (me@box), not running",
+    "Claude background job (claude --bg)",
+    "Claude on claude.ai",
+  ],
+  "source: each kind of row says where it comes from",
+);
+eq([liveWhere(desktop[1]), liveWhere(cloud[0])], ["/home/u/blog", cloud[0].repo], "where: the folder, or the cloud session's repository");
 
 if (failures > 0) {
   console.log(`${failures} failure(s)`);

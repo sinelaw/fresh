@@ -1683,3 +1683,474 @@ fn an_owned_window_reports_and_keeps_its_moves() {
     ui.tick();
     assert_eq!(ui.scroll(vp).0.y, 4, "framework-owned: the move stands");
 }
+
+/// A row that logs what a drag does to it. `source` rows start a drag on a
+/// press (or only capture, when `drag` is false); every row is a drop target.
+fn drag_row(name: &'static str, log: &Log, source: bool, drag: bool) -> Node<()> {
+    let l = |kind: &'static str| {
+        let log = log.clone();
+        Rc::new(move |_: &Event| note(&log, format!("{kind} {name}"))) as fresh_ui::Handler<()>
+    };
+    let g = gesture(text(name))
+        .on(GestureKind::DragEnter, l("enter"))
+        .on(GestureKind::DragLeave, l("leave"))
+        .on(GestureKind::Drop, l("drop"));
+    match source {
+        false => g,
+        true => g
+            .on(
+                GestureKind::Press,
+                Rc::new(move |e: &Event| {
+                    match drag {
+                        true => e.start_drag(),
+                        false => e.capture_pointer(),
+                    }
+                    None
+                }),
+            )
+            .on(GestureKind::Release, l("release")),
+    }
+}
+
+fn move_to(ui: &mut Ui<()>, x: i32, y: i32) {
+    ui.dispatch(Input::Move {
+        pos: Point::new(x, y),
+        mods: Mods::NONE,
+    });
+}
+
+/// **A drag sees what is under the pointer; a capture alone does not.** While
+/// a drag holds the pointer, the drop target under it hears `DragEnter` and
+/// `DragLeave` as the pointer crosses it — ground that is no target ends the
+/// last one — and the release is that target's `Drop`, heard before the
+/// captor's own `Release` ends the drag.
+#[test]
+fn a_drag_tells_the_targets_it_crosses_and_drops_on_the_one_under_the_release() {
+    let log: Log = Rc::default();
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(
+        col().children([
+            drag_row("a", &log, true, true),
+            drag_row("b", &log, false, false),
+            text("plain"),
+        ]),
+        FRAME,
+    );
+    ui.dispatch(Input::press(
+        Point::new(0, 0),
+        MouseButton::Left,
+        Mods::NONE,
+    ));
+    move_to(&mut ui, 0, 1);
+    move_to(&mut ui, 0, 2);
+    move_to(&mut ui, 0, 1);
+    ui.dispatch(Input::release(
+        Point::new(0, 1),
+        MouseButton::Left,
+        Mods::NONE,
+    ));
+    assert_eq!(
+        *log.borrow(),
+        vec!["enter b", "leave b", "enter b", "drop b", "release a"]
+    );
+    assert!(ui.captured().is_none(), "the release ends the drag");
+
+    // Over, the drag offers nothing: a bare move is not one.
+    log.borrow_mut().clear();
+    move_to(&mut ui, 0, 0);
+    move_to(&mut ui, 0, 1);
+    assert!(log.borrow().is_empty(), "{:?}", log.borrow());
+}
+
+/// **Released where it was pressed is a drop on the source**, when the source
+/// is a target too; the owner of the drag decides that it was a click.
+#[test]
+fn a_drag_released_on_its_own_row_drops_there() {
+    let log: Log = Rc::default();
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(
+        col().children([
+            drag_row("a", &log, true, true),
+            drag_row("b", &log, false, false),
+        ]),
+        FRAME,
+    );
+    click(&mut ui, 0, 0);
+    assert_eq!(*log.borrow(), vec!["drop a", "release a"]);
+}
+
+/// **A release off every target drops nothing**, and the target the drag
+/// was last over is told it has gone.
+#[test]
+fn a_drag_released_off_every_target_only_leaves() {
+    let log: Log = Rc::default();
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(
+        col().children([
+            drag_row("a", &log, true, true),
+            drag_row("b", &log, false, false),
+            text("plain"),
+        ]),
+        FRAME,
+    );
+    ui.dispatch(Input::press(
+        Point::new(0, 0),
+        MouseButton::Left,
+        Mods::NONE,
+    ));
+    move_to(&mut ui, 0, 1);
+    ui.dispatch(Input::release(
+        Point::new(0, 2),
+        MouseButton::Left,
+        Mods::NONE,
+    ));
+    assert_eq!(*log.borrow(), vec!["enter b", "leave b", "release a"]);
+}
+
+/// **A capture that is not a drag is exactly what it was.** The scrollbars,
+/// the grips and a text selection capture the pointer too; a drop target
+/// under one of those drags hears nothing.
+#[test]
+fn a_plain_capture_offers_nothing_to_drop_targets() {
+    let log: Log = Rc::default();
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(
+        col().children([
+            drag_row("a", &log, true, false),
+            drag_row("b", &log, false, false),
+        ]),
+        FRAME,
+    );
+    ui.dispatch(Input::press(
+        Point::new(0, 0),
+        MouseButton::Left,
+        Mods::NONE,
+    ));
+    move_to(&mut ui, 0, 1);
+    ui.dispatch(Input::release(
+        Point::new(0, 1),
+        MouseButton::Left,
+        Mods::NONE,
+    ));
+    assert_eq!(*log.borrow(), vec!["release a"]);
+}
+
+/// A five-row window over twenty draggable rows, between a line above it and
+/// a line below it, reporting every move of the window as its offset.
+fn drag_window() -> Node<u32> {
+    let rows: Vec<Node<u32>> = (0..20)
+        .map(|i| {
+            gesture(text(format!("row {i}"))).on(
+                GestureKind::Press,
+                Rc::new(|e: &Event| {
+                    e.start_drag();
+                    None
+                }),
+            )
+        })
+        .collect();
+    col().children([
+        text("above"),
+        viewport(col().children(rows))
+            .h(Sizing::Cells(5))
+            .on_scroll(|y| y),
+        text("below"),
+    ])
+}
+
+fn drag_move(ui: &mut Ui<u32>, y: i32) -> Vec<u32> {
+    ui.dispatch(Input::Move {
+        pos: Point::new(1, y),
+        mods: Mods::NONE,
+    })
+    .msgs
+}
+
+/// **A drag past the edge of its window scrolls the window toward it**, a
+/// step per move, bigger the farther out; on the edge row and inside the
+/// window it scrolls nothing — a drop on the first or last row in sight must
+/// not have it scrolled away. The tree says while a repeat would still move
+/// something.
+#[test]
+fn a_drag_past_its_windows_edge_scrolls_the_window() {
+    let mut ui: Ui<u32> = Ui::new();
+    ui.frame(drag_window(), FRAME);
+    // The window is rows 1..6 of the frame, with a line above and below it.
+    ui.dispatch(Input::press(
+        Point::new(1, 3),
+        MouseButton::Left,
+        Mods::NONE,
+    ));
+    assert!(drag_move(&mut ui, 4).is_empty(), "inside: no scroll");
+    assert!(
+        drag_move(&mut ui, 5).is_empty(),
+        "on the edge row: no scroll"
+    );
+    assert_eq!(ui.drag_autoscroll(), None);
+
+    assert_eq!(drag_move(&mut ui, 6), vec![1], "one past: one row");
+    assert_eq!(ui.drag_autoscroll(), Some(Point::new(1, 6)));
+    assert_eq!(drag_move(&mut ui, 8), vec![4], "three past: three rows");
+    assert_eq!(drag_move(&mut ui, 9), vec![8], "capped at the fastest step");
+
+    // Held there, the repeats run the window to its end, and then there is
+    // nothing more to ask for.
+    let mut last = 8;
+    while ui.drag_autoscroll().is_some() {
+        ui.tick();
+        if let Some(&o) = drag_move(&mut ui, 9).last() {
+            last = o;
+        }
+    }
+    assert_eq!(last, 15, "twenty rows in a five-row window end at fifteen");
+
+    // One past the top, back up.
+    assert_eq!(drag_move(&mut ui, 0), vec![14]);
+
+    // Released, a move past the edge is only a move.
+    ui.dispatch(Input::release(
+        Point::new(1, 0),
+        MouseButton::Left,
+        Mods::NONE,
+    ));
+    assert!(drag_move(&mut ui, 0).is_empty());
+    assert_eq!(ui.drag_autoscroll(), None);
+}
+
+/// **A window flush with the frame's edge scrolls from its edge row**: there
+/// is no cell past it to point at. At the end of the content that row is an
+/// ordinary row again.
+#[test]
+fn a_window_flush_with_the_frames_edge_scrolls_from_its_edge_row() {
+    let rows: Vec<Node<u32>> = (0..20)
+        .map(|i| {
+            gesture(text(format!("row {i}"))).on(
+                GestureKind::Press,
+                Rc::new(|e: &Event| {
+                    e.start_drag();
+                    None
+                }),
+            )
+        })
+        .collect();
+    let mut ui: Ui<u32> = Ui::new();
+    // Rows 1..10: the window runs to the frame's last row.
+    ui.frame(
+        col().children([
+            text("above"),
+            viewport(col().children(rows))
+                .h(Sizing::Cells(9))
+                .on_scroll(|y| y),
+        ]),
+        FRAME,
+    );
+    ui.dispatch(Input::press(
+        Point::new(1, 3),
+        MouseButton::Left,
+        Mods::NONE,
+    ));
+    assert_eq!(
+        drag_move(&mut ui, 9),
+        vec![1],
+        "the last row, flush: a step"
+    );
+    while ui.drag_autoscroll().is_some() {
+        ui.tick();
+        drag_move(&mut ui, 9);
+    }
+    ui.tick();
+    assert!(
+        drag_move(&mut ui, 9).is_empty(),
+        "at the end: an ordinary row"
+    );
+}
+
+/// **After the last step, the drag's hover names the row really under the
+/// pointer.** A scroll moves rows under a resting pointer without laying them
+/// out; the tree asks for one more move after the frame that does, so the
+/// row the drag is shown over is the row a release there drops on.
+#[test]
+fn after_scrolling_the_drag_is_over_the_row_under_the_pointer() {
+    let entered: Rc<RefCell<Vec<String>>> = Rc::default();
+    let rows: Vec<Node<u32>> = (0..20)
+        .map(|i| {
+            let e = entered.clone();
+            gesture(text(format!("row {i}")))
+                .on(
+                    GestureKind::Press,
+                    Rc::new(|e: &Event| {
+                        e.start_drag();
+                        None
+                    }),
+                )
+                .on(
+                    GestureKind::DragEnter,
+                    Rc::new(move |_: &Event| {
+                        e.borrow_mut().push(format!("row {i}"));
+                        None
+                    }),
+                )
+        })
+        .collect();
+    let mut ui: Ui<u32> = Ui::new();
+    ui.frame(
+        col().children([
+            text("above"),
+            viewport(col().children(rows))
+                .h(Sizing::Cells(9))
+                .on_scroll(|y| y),
+        ]),
+        FRAME,
+    );
+    ui.dispatch(Input::press(
+        Point::new(1, 3),
+        MouseButton::Left,
+        Mods::NONE,
+    ));
+    // Held on the last row, as the host holds it: a move per frame for as
+    // long as the tree asks for one.
+    drag_move(&mut ui, 9);
+    while ui.drag_autoscroll().is_some() {
+        ui.tick();
+        drag_move(&mut ui, 9);
+    }
+    assert_eq!(
+        entered.borrow().last().map(String::as_str),
+        Some("row 19"),
+        "the window ends on row 19 under the pointer: {:?}",
+        entered.borrow()
+    );
+}
+
+/// **Only a drag scrolls.** A plain capture — a grip, a text selection — past
+/// the same edge leaves the window where it is.
+#[test]
+fn a_plain_capture_past_the_edge_scrolls_nothing() {
+    let rows: Vec<Node<u32>> = (0..20)
+        .map(|i| {
+            gesture(text(format!("row {i}"))).on(
+                GestureKind::Press,
+                Rc::new(|e: &Event| {
+                    e.capture_pointer();
+                    None
+                }),
+            )
+        })
+        .collect();
+    let mut ui: Ui<u32> = Ui::new();
+    ui.frame(
+        col().children([
+            text("above"),
+            viewport(col().children(rows))
+                .h(Sizing::Cells(5))
+                .on_scroll(|y| y),
+            text("below"),
+        ]),
+        FRAME,
+    );
+    ui.dispatch(Input::press(
+        Point::new(1, 2),
+        MouseButton::Left,
+        Mods::NONE,
+    ));
+    assert!(drag_move(&mut ui, 9).is_empty());
+    assert_eq!(ui.drag_autoscroll(), None);
+}
+
+/// **A drag outlives the row it lifted.** Dragged out of a virtual list's
+/// window, the row's element goes away, and the capture with it — an id is
+/// recycled — but the drag is still in hand: the target under the pointer
+/// still hears it, and the release still drops there.
+#[test]
+fn a_drag_survives_its_source_going_away() {
+    let log: Log = Rc::default();
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(
+        col().children([
+            drag_row("a", &log, true, true).key("a"),
+            drag_row("b", &log, false, false).key("b"),
+        ]),
+        FRAME,
+    );
+    ui.dispatch(Input::press(
+        Point::new(0, 0),
+        MouseButton::Left,
+        Mods::NONE,
+    ));
+    // The source scrolls out of the window: only "b" is described now.
+    ui.frame(
+        col().children([drag_row("b", &log, false, false).key("b")]),
+        FRAME,
+    );
+    assert!(ui.captured().is_none(), "the capture went with its element");
+    move_to(&mut ui, 0, 0);
+    ui.dispatch(Input::release(
+        Point::new(0, 0),
+        MouseButton::Left,
+        Mods::NONE,
+    ));
+    assert_eq!(*log.borrow(), vec!["enter b", "drop b"]);
+}
+
+/// **A drag's hover is every node under the pointer**, as the pointer's hover
+/// is — not only the drop target — so a container around a target (a list's
+/// row, around the piece that takes the drop) can show where the drag is.
+#[test]
+fn a_drags_hover_reaches_what_is_around_the_target() {
+    let log: Log = Rc::default();
+    let l = |kind: &'static str, name: &'static str| {
+        let log = log.clone();
+        Rc::new(move |_: &Event| note(&log, format!("{kind} {name}"))) as fresh_ui::Handler<()>
+    };
+    let row_b = gesture(drag_row("b", &log, false, false))
+        .on(GestureKind::DragEnter, l("enter", "row"))
+        .on(GestureKind::DragLeave, l("leave", "row"));
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(
+        col().children([drag_row("a", &log, true, true), row_b, text("plain")]),
+        FRAME,
+    );
+    ui.dispatch(Input::press(
+        Point::new(0, 0),
+        MouseButton::Left,
+        Mods::NONE,
+    ));
+    move_to(&mut ui, 0, 1);
+    move_to(&mut ui, 0, 2);
+    assert_eq!(
+        *log.borrow(),
+        vec!["enter row", "enter b", "leave b", "leave row"],
+        "outermost enters first and leaves last, as hover does"
+    );
+}
+
+/// **A press ends a drag whose release never came, and tells what it was
+/// over.** Otherwise a row the drag lit stays lit: nothing else would tell it
+/// the drag has gone.
+#[test]
+fn a_press_ends_a_lost_drag_and_leaves_what_it_was_over() {
+    let log: Log = Rc::default();
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(
+        col().children([
+            drag_row("a", &log, true, true),
+            drag_row("b", &log, false, false),
+            text("plain"),
+        ]),
+        FRAME,
+    );
+    ui.dispatch(Input::press(
+        Point::new(0, 0),
+        MouseButton::Left,
+        Mods::NONE,
+    ));
+    move_to(&mut ui, 0, 1);
+    // The release is lost; the next press lands elsewhere.
+    ui.dispatch(Input::press(
+        Point::new(0, 2),
+        MouseButton::Left,
+        Mods::NONE,
+    ));
+    assert_eq!(*log.borrow(), vec!["enter b", "leave b"]);
+    assert!(!ui.dragging(), "the press ended the drag");
+}

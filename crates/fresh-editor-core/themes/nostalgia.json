@@ -63,6 +63,7 @@
     "popup_border_fg": [255, 255, 255],
     "popup_bg": [0, 0, 170],
     "popup_selection_bg": [0, 170, 0],
+    "list_drop_target_bg": [0, 170, 170],
     "popup_text_fg": [255, 255, 85],
     "text_input_selection_bg": [0, 170, 0],
     "settings_selected_bg": [170, 0, 170],

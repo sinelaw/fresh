@@ -776,6 +776,7 @@ impl Editor {
             previous_cursor_screen_pos: None,
             cursor_jump_animation: None,
             pending_wheel_scroll: None,
+            drag_autoscroll: None,
             pending_vb_animations: Vec::new(),
             widget_registry: crate::widgets::WidgetRegistry::new(),
             floating_widget_panel: None,
@@ -791,6 +792,7 @@ impl Editor {
             sidebar_layout_hints: std::collections::HashMap::new(),
             sidebar_drag: None,
             prose_drag: None,
+            widget_drag: None,
             prose_reveal: std::cell::RefCell::new(HashMap::new()),
             tree_projections: std::cell::RefCell::new(HashMap::new()),
         };

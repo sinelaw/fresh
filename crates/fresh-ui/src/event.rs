@@ -128,6 +128,16 @@ pub enum GestureKind {
     Key,
     FocusGained,
     FocusLost,
+    /// A drag ([`Event::start_drag`]) brought the pointer onto this node.
+    /// Fired on the node itself, not propagated, like `Enter` — and on every
+    /// node the pointer comes onto, as `Enter` is, not only drop targets: it
+    /// is the drag's hover, which the capture keeps from `Enter`.
+    DragEnter,
+    /// A drag took the pointer off this node, or ended elsewhere.
+    DragLeave,
+    /// A drag was released over this node. Listening for it is what makes a
+    /// node a **drop target**; see [`Event::start_drag`].
+    Drop,
 }
 
 /// Where in the walk this delivery is.
@@ -238,6 +248,8 @@ pub(crate) struct Ctl {
     pub flow: Cell<Flow>,
     pub default_prevented: Cell<bool>,
     pub capture_request: Cell<Option<ElementId>>,
+    /// The capture is a drag: see [`Event::start_drag`].
+    pub drag_request: Cell<bool>,
     pub focus_request: Cell<Option<(ElementId, SelectionOnFocus)>>,
 }
 
@@ -364,6 +376,25 @@ impl Event {
     /// whole drag mechanism.
     pub fn capture_pointer(&self) {
         self.ctl.capture_request.set(Some(self.current));
+    }
+
+    /// Capture the pointer for a **drag and drop**: everything
+    /// [`capture_pointer`](Self::capture_pointer) does, and while the press is
+    /// held the tree also watches what is *under* the pointer, which a
+    /// capture otherwise hides: every node the pointer comes onto hears
+    /// `DragEnter`, and `DragLeave` when it goes off — the drag's hover. The
+    /// release is offered as `Drop` to the drop target under the pointer, the
+    /// innermost node on the topmost path that listens for
+    /// [`GestureKind::Drop`], before this element hears its own `Release`;
+    /// then the pointer's hover is resynced to what is under it.
+    ///
+    /// What is being dragged is not the tree's to carry. The handler that
+    /// starts the drag says so in the message it returns, and the owner of
+    /// that state reads it back when a target reports the drop — the same
+    /// rule every other gesture's state follows.
+    pub fn start_drag(&self) {
+        self.capture_pointer();
+        self.ctl.drag_request.set(true);
     }
 
     /// Ask for focus to move to this element.

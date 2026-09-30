@@ -1,7 +1,7 @@
 /// <reference path="./fresh.d.ts" />
 
 /**
- * The dock's "Elsewhere" group: Claude and Codex sessions that are open right
+ * The dock's "External sessions" group: Claude and Codex sessions that are open right
  * now but not in a workspace here — running in another terminal, as a
  * background job, or in the vendor's cloud.
  *
@@ -114,6 +114,28 @@ function parseJson(text: string): unknown {
   } catch {
     return null;
   }
+}
+
+/** A session title as a git branch and folder name: lower case, words
+ *  joined by `-`, nothing git or a file system would refuse; `session` when
+ *  nothing is left. "Fix the auth bug (login.ts)" → `fix-the-auth-bug-login.ts`.
+ *
+ *  Beyond the character set: git refuses a ref ending in `.lock`, and Windows
+ *  a folder named for a device (`con`, `nul`, `com1`, … with or without an
+ *  extension), so neither comes out. */
+export function liveBranchName(title: string): string {
+  let slug = title
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/[-.]{2,}/g, "-")
+    .replace(/^[-.]+|[-.]+$/g, "")
+    .slice(0, 48)
+    .replace(/[-.]+$/g, "");
+  while (slug.endsWith(".lock")) slug = slug.slice(0, -".lock".length).replace(/[-.]+$/g, "");
+  if (/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\.|$)/.test(slug)) slug = `${slug}-session`;
+  return slug || "session";
 }
 
 /** Last path segment, either separator. */
@@ -691,9 +713,9 @@ export function codexLocalSessions(
  *  in as a workspace. One per session, because a workspace is one per
  *  directory: sharing one would fold every cloud session into a single
  *  workspace. Under the editor's data dir, never the user's tree. */
-export function elsewhereRoot(dataDir: string, s: LiveSession): string {
+export function externalRoot(dataDir: string, s: LiveSession): string {
   const safe = s.id.replace(/[^A-Za-z0-9_.-]/g, "_");
-  return `${dataDir.replace(/[\\/]+$/, "")}/orchestrator/elsewhere/${s.source}-${safe}`;
+  return `${dataDir.replace(/[\\/]+$/, "")}/orchestrator/external-sessions/${s.source}-${safe}`;
 }
 
 /** What opening a row means. */
@@ -753,7 +775,7 @@ export function livePlan(s: LiveSession, env: LivePlanEnv, materialize: boolean)
       const status = [env.codex, "cloud", "status", s.id];
       return {
         kind: "workspace",
-        root: elsewhereRoot(env.dataDir, s),
+        root: externalRoot(env.dataDir, s),
         label: s.title,
         command: env.windows
           ? status
@@ -766,7 +788,7 @@ export function livePlan(s: LiveSession, env: LivePlanEnv, materialize: boolean)
       if (s.tmux && !s.stopped) {
         return {
           kind: "workspace",
-          root: s.cwd && !isFilesystemRoot(s.cwd) ? s.cwd : elsewhereRoot(env.dataDir, s),
+          root: s.cwd && !isFilesystemRoot(s.cwd) ? s.cwd : externalRoot(env.dataDir, s),
           label: s.title,
           command: tmuxAttachArgv(s.tmux),
         };
@@ -860,7 +882,7 @@ function inPlace(s: LiveSession): LivePlan {
 
 /** Sessions not already on screen as a workspace. A local session running in
  *  a workspace's directory is that workspace's (the agent in its terminal, or
- *  one beside it); a cloud session opened here lives at its `elsewhereRoot`;
+ *  one beside it); a cloud session opened here lives at its `externalRoot`;
  *  a session on an SSH host is a workspace on that host, in its folder
  *  (`remoteRoots`: `[user@]host` without the port, and the remote root). */
 export function unrepresented(
@@ -874,7 +896,7 @@ export function unrepresented(
   const remote = new Set<string>();
   for (const r of remoteRoots) remote.add(`${r.host}\n${liveNormPath(r.root)}`);
   return sessions.filter((s) => {
-    if (s.where === "cloud") return !roots.has(liveNormPath(elsewhereRoot(dataDir, s)));
+    if (s.where === "cloud") return !roots.has(liveNormPath(externalRoot(dataDir, s)));
     // A local session with no directory cannot be matched: keep it.
     if (!s.cwd) return true;
     if (s.sshHost) return !remote.has(`${s.sshHost}\n${liveNormPath(s.cwd)}`);
@@ -882,7 +904,36 @@ export function unrepresented(
   });
 }
 
-/** The short dim tail a row carries: where the session is. */
+/** Where a session is listed from and runs, for its menu: "Claude on
+ *  claude.ai", "Claude Desktop over SSH (me@box)", "Codex Cloud", … */
+export function liveSource(s: LiveSession): string {
+  switch (s.source) {
+    case "claude-cloud":
+      return s.remoteControl
+        ? `Claude Remote Control${s.offline ? " (machine offline)" : ""}`
+        : "Claude on claude.ai";
+    case "codex-cloud":
+      return "Codex Cloud";
+    case "codex-local":
+      return "Codex in a terminal";
+    case "claude-local": {
+      if (s.jobId) return "Claude background job (claude --bg)";
+      if (s.host) {
+        const where = s.sshHost ? `${s.host} over SSH (${s.sshHost})` : s.host;
+        return s.stopped ? `${where}, not running` : where;
+      }
+      return s.tmux ? "Claude in a terminal (tmux)" : "Claude in a terminal";
+    }
+  }
+}
+
+/** The folder a session runs in, or the repository a cloud one works on. */
+export function liveWhere(s: LiveSession): string | undefined {
+  return s.cwd ?? s.repo;
+}
+
+/** Where the session is, in a few words — a card's second line, and what the
+ *  dock's search matches besides the title. */
 export function liveDetail(s: LiveSession): string {
   const place = s.remoteControl
     ? s.offline ? "remote control · offline" : "remote control"

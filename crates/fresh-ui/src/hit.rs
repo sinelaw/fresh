@@ -69,6 +69,36 @@ impl<M: std::fmt::Debug> std::fmt::Debug for Dispatch<M> {
     }
 }
 
+/// The most a drag past a window's edge scrolls it per step, in the window's
+/// own unit. A pointer this far out or farther moves it at the fastest rate.
+pub const AUTOSCROLL_MAX_STEP: i32 = 4;
+
+/// A drag in progress: a capture taken with [`Event::start_drag`].
+///
+/// What is being dragged belongs to whoever started it; the tree keeps only
+/// where the drag is.
+///
+/// **A drag outlives its captor.** The thing dragged can scroll out of a
+/// virtual list's window — which is what dragging past the edge does — and
+/// its element goes with it. The capture must go too (an id is recycled, and
+/// the next element in the slot would inherit it), but the drag is still in
+/// the user's hand: the moves still find targets and the release still drops.
+/// So the drag does not read the captor. It keeps the path it was lifted
+/// from, for [`Ui::drag_autoscroll`], and an element that goes away is taken
+/// out of it.
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
+pub(crate) struct Drag {
+    /// What the drag is over: every element under the pointer, as hover
+    /// would have it if the capture did not hold the pointer's own hover on
+    /// the thing dragged.
+    pub under: Vec<ElementId>,
+    /// The captor's ancestors when the drag began, outermost first.
+    pub lifted_from: Vec<ElementId>,
+    /// A move scrolled a window under the pointer after `under` was taken,
+    /// so `under` names rows from before the scroll until the next move.
+    pub unsettled: bool,
+}
+
 /// What one stacked path did with a wheel notch.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Chain {
@@ -132,6 +162,16 @@ impl<M: 'static> Ui<M> {
                     1,
                     out,
                 );
+                // **What the drag is over, then the scroll.** Hit-testing reads
+                // the geometry the last layout left, and a scroll moves the
+                // rows under the pointer without laying them out again — this
+                // dispatch rebuilds nothing. So the drag's hover is taken
+                // first, on rows a frame has settled, and a move that then
+                // scrolls leaves the drag unsettled: `drag_autoscroll` asks for
+                // one more move, after the next frame, to take the hover again
+                // over the rows that scrolled in.
+                self.update_drag_hover(pos, mods, out);
+                self.autoscroll_drag(pos, out);
                 claimed || self.pointer_owned()
             }
             Input::Press {
@@ -147,6 +187,14 @@ impl<M: 'static> Ui<M> {
                 // press. Routing it to that element would send a click on
                 // one pane to the pane pressed before it, forever.
                 self.captured = None;
+                // A drag whose release never came ends here too, and what it
+                // was over is told it has gone, as a release would have told
+                // it — or a row it lit stays lit.
+                if let Some(d) = self.drag.take() {
+                    for n in d.under.into_iter().rev() {
+                        self.fire_at(n, GestureKind::DragLeave, pos, mods, out);
+                    }
+                }
                 // Dismissal happens for any button; it *claims* only for the
                 // primary one.
                 //
@@ -216,6 +264,10 @@ impl<M: 'static> Ui<M> {
                 if self.scrollbar_drag.take().is_some() {
                     return true;
                 }
+                // **The drop comes first.** The captor's release ends the
+                // drag it started, so by the time it runs, the target must
+                // already have said where the drag landed.
+                let dragged = self.drop_at(pos, mods, out);
                 let paths = self.route(pos);
                 let (mut claimed, _) = self.propagate_all(
                     &paths,
@@ -254,6 +306,15 @@ impl<M: 'static> Ui<M> {
                     }
                 }
                 self.captured = None;
+                self.drag = None;
+                // **The pointer's hover comes back from the drag.** The capture
+                // held it on the thing dragged while the drag's own hover
+                // followed the pointer; with both gone, hover is what is under
+                // the pointer now, not what was under it at the press.
+                if dragged {
+                    let paths = self.hit_paths(pos);
+                    self.update_hover(&paths, pos, mods, out);
+                }
                 claimed || self.pointer_owned()
             }
             Input::Wheel {
@@ -628,6 +689,11 @@ impl<M: 'static> Ui<M> {
     fn apply_controls(&mut self, ctl: &Ctl, out: &mut Vec<M>) {
         if let Some(c) = ctl.capture_request.take() {
             self.captured = Some(c);
+            self.drag = ctl.drag_request.take().then(|| Drag {
+                under: Vec::new(),
+                lifted_from: self.ancestors_of(c),
+                unsettled: false,
+            });
         }
         if let Some((id, sel)) = ctl.focus_request.take() {
             self.focus_element(id, sel, out);
@@ -680,6 +746,207 @@ impl<M: 'static> Ui<M> {
                 .any(|l| l.kind == GestureKind::Press && !l.capture),
             _ => false,
         }
+    }
+
+    // -- drag and drop -------------------------------------------------------
+
+    /// The drop target under a point: the innermost node on the topmost path
+    /// that listens for [`GestureKind::Drop`]. Found by what is under the
+    /// pointer, not by the capture — the capture is the thing being dragged.
+    fn drop_target_at(&self, p: Point) -> Option<ElementId> {
+        self.hit_paths(p).into_iter().find_map(|path| {
+            path.into_iter()
+                .rev()
+                .find(|&n| !self.listeners(n, GestureKind::Drop, false).is_empty())
+        })
+    }
+
+    /// Every element under a point, across the stacked paths — the set hover
+    /// is computed over.
+    fn under(&self, p: Point) -> Vec<ElementId> {
+        let mut now: Vec<ElementId> = Vec::new();
+        for path in self.hit_paths(p) {
+            for e in path {
+                if !now.contains(&e) {
+                    now.push(e);
+                }
+            }
+        }
+        now
+    }
+
+    /// **A drag's hover.** What a drag is over is told the way hover is:
+    /// every element the pointer comes onto hears `DragEnter`, every one it
+    /// goes off hears `DragLeave`, one node at a time and not propagated — so
+    /// a list row can tint itself under a drag exactly as it does under the
+    /// pointer, which the capture holds on the row being dragged. Nothing
+    /// while no drag is held: a bare hover, or a capture that is not a drag.
+    fn update_drag_hover(&mut self, pos: Point, mods: Mods, out: &mut Vec<M>) {
+        let Some(was) = self.drag.as_ref().map(|d| d.under.clone()) else {
+            return;
+        };
+        let now = self.under(pos);
+        if let Some(d) = self.drag.as_mut() {
+            d.unsettled = false;
+        }
+        if now == was {
+            return;
+        }
+        if let Some(d) = self.drag.as_mut() {
+            d.under = now.clone();
+        }
+        let left: Vec<ElementId> = was.iter().copied().filter(|e| !now.contains(e)).collect();
+        for n in left.into_iter().rev() {
+            self.fire_at(n, GestureKind::DragLeave, pos, mods, out);
+        }
+        for n in now.into_iter().filter(|e| !was.contains(e)) {
+            self.fire_at(n, GestureKind::DragEnter, pos, mods, out);
+        }
+    }
+
+    /// **A drag past the edge of the window it was lifted from scrolls that
+    /// window toward the pointer**, so a target out of sight can be reached.
+    ///
+    /// The window is the nearest one around the dragged row that can move that
+    /// way — the wheel's rule, walked from the thing being dragged rather than
+    /// from the pointer, which is outside it — and the chain stops at a layer
+    /// as the wheel's does. **Past the edge**, not on the edge row: a drop on
+    /// the first or last row in sight must not have that row scrolled out
+    /// from under it. Only a window flush with the frame's own edge, which
+    /// has no cell past it to point at, takes its edge row as the band — and
+    /// only while there is more that way, so at either end of the content
+    /// it is an ordinary row to drop on. One step at the band's inner edge
+    /// and one more per row farther out, up to [`AUTOSCROLL_MAX_STEP`], in
+    /// the window's own unit (a row, or an item for a window that scrolls by
+    /// items).
+    ///
+    /// One step per move. A drag held still past the edge produces no moves,
+    /// and the tree has no clock to make its own: the host, which does, asks
+    /// [`Ui::drag_autoscroll`] and repeats the pointer at its own cadence.
+    fn autoscroll_target(&self, pos: Point) -> Option<(RenderId, i32)> {
+        let drag = self.drag.as_ref()?;
+        for &n in drag.lifted_from.iter().rev() {
+            let Some(r) = self.render_for(n) else {
+                continue;
+            };
+            let node = self.render.get(r)?;
+            if node.out_of_flow {
+                return None;
+            }
+            if !node.clips {
+                continue;
+            }
+            let rect = node.data.rect;
+            let (p, lo, hi, at, max) = match node.data.scroll_axis {
+                Axis::Vertical => (
+                    pos.y,
+                    rect.y,
+                    rect.bottom(),
+                    node.data.scroll.y,
+                    node.data.scroll_max.y,
+                ),
+                Axis::Horizontal => (
+                    pos.x,
+                    rect.x,
+                    rect.right(),
+                    node.data.scroll.x,
+                    node.data.scroll_max.x,
+                ),
+            };
+            // The band starts past the edge — a drop on the first or last
+            // row in sight must not have that row scrolled out from under
+            // it — except at the frame's own edge, where there is no cell
+            // past the window to point at and the edge row is the band.
+            let end = match node.data.scroll_axis {
+                Axis::Vertical => self.frame_size.h as i32,
+                Axis::Horizontal => self.frame_size.w as i32,
+            };
+            let top = if lo <= 0 { lo } else { lo - 1 };
+            let bottom = if hi >= end { hi - 1 } else { hi };
+            let step = if p <= top {
+                -(top - p + 1).min(AUTOSCROLL_MAX_STEP)
+            } else if p >= bottom {
+                (p - bottom + 1).min(AUTOSCROLL_MAX_STEP)
+            } else {
+                0
+            };
+            if step != 0 && (at + step).clamp(0, max.max(0)) != at {
+                return Some((r, step));
+            }
+        }
+        None
+    }
+
+    fn autoscroll_drag(&mut self, pos: Point, out: &mut Vec<M>) {
+        let Some((r, step)) = self.autoscroll_target(pos) else {
+            return;
+        };
+        let Some(node) = self.render.get_mut(r) else {
+            return;
+        };
+        let (max, axis) = (node.data.scroll_max, node.data.scroll_axis);
+        let next = match axis {
+            Axis::Vertical => {
+                node.data.scroll.y = (node.data.scroll.y + step).clamp(0, max.y.max(0));
+                node.data.scroll.y
+            }
+            Axis::Horizontal => {
+                node.data.scroll.x = (node.data.scroll.x + step).clamp(0, max.x.max(0));
+                node.data.scroll.x
+            }
+        };
+        self.release_follow(r);
+        self.mark_render_dirty(r);
+        self.report_scroll(r, next, out);
+        if let Some(d) = self.drag.as_mut() {
+            d.unsettled = true;
+        }
+    }
+
+    /// Where a drag is resting that a repeated move would still change — the
+    /// pointer, for the host to repeat as a move, after a frame, until this is
+    /// `None`. That is a drag at the edge of a window it can still scroll, and
+    /// a drag whose last move scrolled: its hover was taken before the rows
+    /// moved, and the repeat takes it again over the ones that scrolled in.
+    /// See `autoscroll_target`: the tree takes one step per move and has no
+    /// clock of its own, so a drag held still keeps scrolling only because
+    /// the host keeps asking.
+    pub fn drag_autoscroll(&self) -> Option<Point> {
+        let p = self.pointer?;
+        let unsettled = self.drag.as_ref().is_some_and(|d| d.unsettled);
+        (unsettled || self.autoscroll_target(p).is_some()).then_some(p)
+    }
+
+    /// Whether a drag ([`Event::start_drag`]) is held. The tree is the one
+    /// authority on it: a host that keeps state for a drag ends it when this
+    /// goes false, whichever way the drag ended — dropped, released off every
+    /// target, or its captor gone before the release.
+    pub fn dragging(&self) -> bool {
+        self.drag.is_some()
+    }
+
+    /// A drag's release: the target under the pointer hears `Drop`, and what
+    /// the drag was over that is no longer under the pointer hears
+    /// `DragLeave`. What is still under it is handed back to hover by the
+    /// caller, once the capture is gone. Reports whether a drag was held.
+    fn drop_at(&mut self, pos: Point, mods: Mods, out: &mut Vec<M>) -> bool {
+        let Some(drag) = self.drag.take() else {
+            return false;
+        };
+        let now = self.under(pos);
+        let left: Vec<ElementId> = drag
+            .under
+            .iter()
+            .copied()
+            .filter(|e| !now.contains(e))
+            .collect();
+        for n in left.into_iter().rev() {
+            self.fire_at(n, GestureKind::DragLeave, pos, mods, out);
+        }
+        if let Some(t) = self.drop_target_at(pos) {
+            self.fire_at(t, GestureKind::Drop, pos, mods, out);
+        }
+        true
     }
 
     // -- hover ---------------------------------------------------------------

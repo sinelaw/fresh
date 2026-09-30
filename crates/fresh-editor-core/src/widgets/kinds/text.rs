@@ -1040,6 +1040,7 @@ pub fn single_line(
         .map(|k| crate::widgets::WidgetEvent {
             row_target: false,
             context_click: false,
+            drag_source: false,
             widget_key: k.to_string(),
             widget_kind: "text",
             payload: json!({

@@ -1,5 +1,6 @@
 //! The Orchestrator dock's dropdowns — the header's Menu and the row context
-//! menu's "Move to Folder…" — must be usable with the mouse: clicking an
+//! menu — its "Move to Folder…" pick, and dragging rows onto folders must be
+//! usable with the mouse: clicking an
 //! option picks it, and clicking away dismisses the menu.
 //!
 //! Regression: both dropdowns render as an `Overlay`, a popup the widget
@@ -115,38 +116,300 @@ fn create_empty_folder(h: &mut EditorTestHarness, name: &str) {
     .unwrap();
 }
 
-/// Right-click the session row and pick "Move to Folder…" so the move
-/// dropdown is showing over the dock.
-fn open_move_dropdown(h: &mut EditorTestHarness, session: &str) {
+/// "Move to Folder…" from a row's menu: the dock asks for the target — a
+/// banner names what is moving — and waits for a folder to be clicked.
+fn start_move_pick(h: &mut EditorTestHarness, session: &str) {
     let session_row = row_of(h, session);
     h.mouse_right_click(4, session_row).unwrap();
     h.wait_until(|h| h.screen_to_string().contains("Move to Folder"))
         .unwrap();
     let (mcol, mrow) = pos_of(h, "Move to Folder");
     h.mouse_click(mcol, mrow).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("Top level"))
+    h.wait_until(|h| h.screen_to_string().contains("click a folder"))
         .unwrap();
 }
 
-/// Clicking a folder in the "Move to Folder…" dropdown files the session
-/// into it — the same outcome ↓/Enter produces.
+/// Clicking a folder in the tree while the dock asks for a target files the
+/// session into it — the same outcome Enter on the folder produces.
 #[test]
-fn move_to_folder_dropdown_option_is_clickable() {
+fn move_to_folder_pick_files_into_the_clicked_folder() {
     let (_tmp, root) = setup_project("alphaproj");
     let mut h = launch(root);
     create_empty_folder(&mut h, "Docs");
-    open_move_dropdown(&mut h, "alphaproj");
+    start_move_pick(&mut h, "alphaproj");
 
     let (dcol, drow) = pos_of(&h, "Docs");
     h.mouse_click(dcol, drow).unwrap();
 
     // The folder now reports one member: the session was filed into it,
-    // and the dropdown closed behind the pick.
+    // and the banner is gone behind the pick.
     h.wait_until(|h| {
         let s = h.screen_to_string();
-        s.contains("Docs") && s.contains("(1)") && !s.contains("Top level")
+        s.contains("Docs") && s.contains("(1)") && !s.contains("click a folder")
     })
     .unwrap();
+}
+
+/// While the dock asks for a folder, a workspace row is not a target: a
+/// click on it files nothing and the pick stays up. Esc then cancels it,
+/// leaving everything where it was.
+#[test]
+fn move_to_folder_pick_ignores_workspaces_and_esc_cancels() {
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h = launch(root);
+    create_empty_folder(&mut h, "Docs");
+    start_move_pick(&mut h, "alphaproj");
+
+    let (scol, srow) = pos_of(&h, "alphaproj");
+    h.mouse_click(scol, srow).unwrap();
+    for _ in 0..5 {
+        h.render().unwrap();
+    }
+    let screen = h.screen_to_string();
+    assert!(
+        screen.contains("click a folder") && !screen.contains("(1)"),
+        "a click on a workspace is not a target:\n{screen}"
+    );
+
+    h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| !h.screen_to_string().contains("click a folder"))
+        .unwrap();
+    let screen = h.screen_to_string();
+    assert!(!screen.contains("(1)"), "Esc files nothing:\n{screen}");
+}
+
+/// **A workspace row dragged onto a folder is filed into it** — the mouse's
+/// way to do what Move to Folder does.
+#[test]
+fn dragging_a_workspace_onto_a_folder_files_it() {
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h = launch(root);
+    create_empty_folder(&mut h, "Docs");
+
+    let (scol, srow) = pos_of(&h, "alphaproj");
+    let (_, drow) = pos_of(&h, "Docs");
+    h.mouse_drag(scol, srow, scol, drow).unwrap();
+
+    h.wait_until(|h| {
+        let s = h.screen_to_string();
+        s.contains("Docs") && s.contains("(1)")
+    })
+    .unwrap();
+    let (_, drow) = pos_of(&h, "Docs");
+    assert_eq!(
+        pos_of(&h, "alphaproj").1,
+        drow + 1,
+        "the workspace sits under Docs:\n{}",
+        h.screen_to_string()
+    );
+}
+
+/// **A drag that ends off every row files nothing**: released in the editor,
+/// the workspace stays where it was.
+#[test]
+fn a_workspace_dragged_off_the_tree_stays_put() {
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h = launch(root);
+    create_empty_folder(&mut h, "Docs");
+
+    let (scol, srow) = pos_of(&h, "alphaproj");
+    h.mouse_drag(scol, srow, 90, srow).unwrap();
+    for _ in 0..5 {
+        h.render().unwrap();
+    }
+    let screen = h.screen_to_string();
+    assert!(!screen.contains("(1)"), "nothing was filed:\n{screen}");
+    assert!(
+        pos_of(&h, "alphaproj").1 < pos_of(&h, "Docs").1,
+        "the workspace is still at the top level:\n{screen}"
+    );
+}
+
+/// [`create_empty_folder`] for a folder that may land below the tree's
+/// window: nothing on screen to wait for but the dialog closing and the
+/// dock's key hints coming back under the tree.
+fn create_empty_folder_below(h: &mut EditorTestHarness, name: &str) {
+    open_dock_menu(h);
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Folder name"))
+        .unwrap();
+    h.type_text(name).unwrap();
+    h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    h.send_key(KeyCode::Char(' '), KeyModifiers::NONE).unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::CONTROL).unwrap();
+    h.wait_until(|h| {
+        let s = h.screen_to_string();
+        !s.contains("Folder name") && s.contains("switch")
+    })
+    .unwrap();
+}
+
+/// **A drag held past the end of the list scrolls it**, so a folder out of
+/// sight can be reached: the workspace is picked up at the top, held on the
+/// hint line below the tree until the last folder scrolls into view, and
+/// dropped on it.
+#[test]
+fn a_drag_held_past_the_lists_edge_scrolls_it_to_a_folder_out_of_sight() {
+    use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 18, Default::default(), root).unwrap();
+    h.render().unwrap();
+    open_dock(&mut h);
+    // More folders than the tree has rows for, so the last one is several
+    // steps out of sight: one move past the edge scrolls a single row, and
+    // only the held drag's repeats reach the rest.
+    for i in 0..16 {
+        create_empty_folder_below(&mut h, &format!("f{i:02}"));
+    }
+    create_empty_folder_below(&mut h, "zlast");
+    let screen = h.screen_to_string();
+    assert!(
+        screen.contains("alphaproj") && !screen.contains("zlast"),
+        "the last folder starts out of sight:\n{screen}"
+    );
+
+    let at = |kind, col, row| MouseEvent {
+        kind,
+        column: col,
+        row,
+        modifiers: crossterm::event::KeyModifiers::empty(),
+    };
+    let (acol, arow) = pos_of(&h, "alphaproj");
+    // The first line of the dock's key hints, just below the tree.
+    let (_, hint) = pos_of(&h, "switch");
+    h.send_mouse(at(MouseEventKind::Down(MouseButton::Left), acol, arow))
+        .unwrap();
+    h.send_mouse(at(MouseEventKind::Drag(MouseButton::Left), acol, arow + 1))
+        .unwrap();
+    h.send_mouse(at(MouseEventKind::Drag(MouseButton::Left), acol, hint))
+        .unwrap();
+    // Held still there: the list keeps scrolling until the last folder shows.
+    h.wait_until(|h| h.screen_to_string().contains("zlast"))
+        .unwrap();
+
+    let (_, zrow) = pos_of(&h, "zlast");
+    h.send_mouse(at(MouseEventKind::Drag(MouseButton::Left), acol, zrow))
+        .unwrap();
+    h.send_mouse(at(MouseEventKind::Up(MouseButton::Left), acol, zrow))
+        .unwrap();
+    h.wait_until(|h| {
+        let s = h.screen_to_string();
+        s.lines().any(|l| l.contains("zlast") && l.contains("(1)"))
+    })
+    .unwrap();
+}
+
+/// **A right-click's menu opens one row below the pointer**, as a click's
+/// does, so the row it is for stays in sight above it rather than under the
+/// menu's top edge.
+#[test]
+fn a_rows_right_click_menu_opens_below_the_pointer() {
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h = launch(root);
+    let (scol, srow) = pos_of(&h, "alphaproj");
+    let click = (scol + 3, srow);
+    h.mouse_right_click(click.0, click.1).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Move to Folder"))
+        .unwrap();
+    let screen = h.screen_to_string();
+    let corner = pos_of(&h, "┌");
+    assert_eq!(
+        corner,
+        (click.0, click.1 + 1),
+        "the menu's corner is one row below the pointer, at its column:\n{screen}"
+    );
+    assert!(
+        screen
+            .lines()
+            .nth(srow as usize)
+            .unwrap()
+            .contains("alphaproj"),
+        "the row stays in sight:\n{screen}"
+    );
+}
+
+/// **While a row is dragged, the dock shows what is in hand and where it
+/// would land**: the dragged row is drawn lifted (its text inverted and
+/// slanted), and the folder a drop there would file it into wears the list
+/// drop-target band across the whole row — a colour of its own, not the
+/// selection's. Released, both go.
+#[test]
+fn a_drag_shows_the_lifted_row_and_the_folder_it_would_land_in() {
+    use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+    use ratatui::style::Modifier;
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h = launch(root);
+    create_empty_folder(&mut h, "Docs");
+    create_empty_folder(&mut h, "Else");
+
+    let at = |kind, col, row| MouseEvent {
+        kind,
+        column: col,
+        row,
+        modifiers: crossterm::event::KeyModifiers::empty(),
+    };
+    let (acol, arow) = pos_of(&h, "alphaproj");
+    let (_, drow) = pos_of(&h, "Docs");
+    let (_, erow) = pos_of(&h, "Else");
+    // A cell well past every row's text, still inside the dock.
+    let far = 25;
+    let plain_ground = h.get_cell_style(far, erow).unwrap().bg;
+
+    h.send_mouse(at(MouseEventKind::Down(MouseButton::Left), acol, arow))
+        .unwrap();
+    for r in (arow + 1)..=drow {
+        h.send_mouse(at(MouseEventKind::Drag(MouseButton::Left), acol, r))
+            .unwrap();
+    }
+    let lifted = |h: &EditorTestHarness| {
+        let m = h.get_cell_style(acol, arow).unwrap().add_modifier;
+        m.contains(Modifier::REVERSED) && m.contains(Modifier::ITALIC)
+    };
+    h.wait_until(|h| lifted(h) && h.get_cell_style(far, drow).unwrap().bg != plain_ground)
+        .unwrap();
+    let screen = h.screen_to_string();
+    let band = h.get_cell_style(far, drow).unwrap().bg;
+    assert_eq!(
+        h.get_cell_style(0, drow).unwrap().bg,
+        band,
+        "the band runs the whole row, from its first cell:\n{screen}"
+    );
+    assert_eq!(
+        h.get_cell_style(far, erow).unwrap().bg,
+        plain_ground,
+        "only the folder the drop would land in is lit:\n{screen}"
+    );
+    assert_ne!(
+        band,
+        h.get_cell_style(far, arow).unwrap().bg,
+        "the drop target's band is not the selection's:\n{screen}"
+    );
+
+    h.send_mouse(at(MouseEventKind::Up(MouseButton::Left), acol, drow))
+        .unwrap();
+    h.wait_until(|h| {
+        let s = h.screen_to_string();
+        s.lines().any(|l| l.contains("Docs") && l.contains("(1)"))
+    })
+    .unwrap();
+    let screen = h.screen_to_string();
+    let (_, drow) = pos_of(&h, "Docs");
+    let (acol, arow) = pos_of(&h, "alphaproj");
+    assert!(
+        !h.get_cell_style(acol, arow)
+            .unwrap()
+            .add_modifier
+            .contains(Modifier::REVERSED),
+        "dropped, the row is no longer drawn lifted:\n{screen}"
+    );
+    // The pointer is still over the folder, so it may wear the hover band;
+    // what must be gone is the drop target's.
+    assert_ne!(
+        h.get_cell_style(far, drow).unwrap().bg,
+        band,
+        "dropped, the folder's drop-target band is gone:\n{screen}"
+    );
 }
 
 /// Clicking an option in the Menu activates it.
@@ -169,23 +432,29 @@ fn dock_menu_option_is_clickable() {
         .unwrap();
 }
 
-/// Clicking away from an open dropdown dismisses it, the way any menu
-/// behaves — here, a click out in the editor area.
+/// Clicking away from the dock while it asks for a folder cancels the pick,
+/// the way clicking away dismisses any menu — here, a click out in the
+/// editor area.
 #[test]
-fn dock_dropdown_dismisses_on_click_outside() {
+fn move_to_folder_pick_ends_on_click_outside() {
     let (_tmp, root) = setup_project("alphaproj");
     let mut h = launch(root);
     create_empty_folder(&mut h, "Docs");
-    open_move_dropdown(&mut h, "alphaproj");
+    start_move_pick(&mut h, "alphaproj");
 
     h.mouse_click(90, 20).unwrap();
 
-    // The menu is gone and the dock is still there behind it.
+    // The banner is gone, nothing was filed, and the dock is still there.
     h.wait_until(|h| {
         let s = h.screen_to_string();
-        !s.contains("Top level") && s.contains("+ New")
+        !s.contains("click a folder") && s.contains("+ New")
     })
     .unwrap();
+    let screen = h.screen_to_string();
+    assert!(
+        !screen.contains("(1)"),
+        "a click away files nothing:\n{screen}"
+    );
 }
 
 /// A dropdown is opaque: a click on its frame — inside the popup but on no
@@ -196,26 +465,40 @@ fn dock_dropdown_dismisses_on_click_outside() {
 fn dock_dropdown_swallows_clicks_on_its_own_frame() {
     let (_tmp, root) = setup_project("alphaproj");
     let mut h = launch(root);
-    create_empty_folder(&mut h, "Docs");
-    open_move_dropdown(&mut h, "alphaproj");
+    open_dock_menu(&mut h);
+    let focused_before = h.editor().is_dock_focused();
 
-    // Column 0 of an option's row is the popup's left border.
-    let (_, drow) = pos_of(&h, "Docs");
-    h.mouse_click(0, drow).unwrap();
+    // The popup's left border on the row of its first option.
+    let (fcol, frow) = pos_of(&h, "New folder…");
+    let line = h
+        .screen_to_string()
+        .lines()
+        .nth(frow as usize)
+        .unwrap()
+        .to_string();
+    let border = line
+        .chars()
+        .take(fcol as usize)
+        .collect::<Vec<_>>()
+        .iter()
+        .rposition(|&c| c == '│')
+        .unwrap_or_else(|| panic!("no popup border left of the option:\n{line}"))
+        as u16;
+    h.mouse_click(border, frow).unwrap();
+    for _ in 0..5 {
+        h.render().unwrap();
+    }
 
-    // Nothing happened: the menu is still up, still unpicked (the folder
-    // has no members), and the dock did not dive into a session.
+    // Nothing happened: the menu is still up, no option was picked, and
+    // the dock did not dive into a session.
     let screen = h.screen_to_string();
     assert!(
-        screen.contains("Top level") && screen.contains("Docs"),
-        "a click on the popup frame must leave the menu open; screen:\n{screen}"
+        screen.contains("New folder…") && !screen.contains("Folder name"),
+        "a click on the popup frame must leave the menu open, unpicked; screen:\n{screen}"
     );
-    assert!(
-        !screen.contains("(1)"),
-        "a click on the popup frame must not pick an option; screen:\n{screen}"
-    );
-    assert!(
+    assert_eq!(
         h.editor().is_dock_focused(),
+        focused_before,
         "a click on the popup frame must not reach the tree behind it and \
          dive out of the dock; screen:\n{screen}"
     );

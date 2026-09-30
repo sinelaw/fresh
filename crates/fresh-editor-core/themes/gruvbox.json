@@ -75,6 +75,7 @@
     "popup_border_fg": [124, 111, 100],
     "popup_bg": [60, 56, 54],
     "popup_selection_bg": [102, 92, 84],
+    "list_drop_target_bg": [69, 133, 136],
     "popup_selection_fg": [251, 241, 199],
     "popup_text_fg": [235, 219, 178],
     "text_input_selection_bg": [102, 92, 84],

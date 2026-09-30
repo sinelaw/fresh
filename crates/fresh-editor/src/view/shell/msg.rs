@@ -137,6 +137,35 @@ pub enum UiFact {
         slot: super::widgets::Slot,
         widget: String,
     },
+    /// A press picked up a `draggable` tree row (`WidgetEvent::drag_source`).
+    /// The row took the pointer as a drag (`fresh_ui::Event::start_drag`);
+    /// `event`, `byte` and `clicks` are the press whole — what a release
+    /// back on the row delivers as its click.
+    WidgetDragStart {
+        slot: super::widgets::Slot,
+        event: crate::widgets::WidgetEvent,
+        byte: Option<usize>,
+        clicks: u8,
+    },
+    /// A drag came onto a row that takes drops: the row's hover, and the
+    /// drag has now been somewhere other than where it started if `event`
+    /// names another row — from then on the plugin hears where it is.
+    WidgetDragOver {
+        slot: super::widgets::Slot,
+        event: crate::widgets::WidgetEvent,
+    },
+    /// A drag went off a row that takes drops.
+    WidgetDragLeave {
+        slot: super::widgets::Slot,
+        event: crate::widgets::WidgetEvent,
+    },
+    /// A drag was released on a row that takes drops; `event` is that row's
+    /// `select`. The drag itself ends when the tree's does
+    /// (`fresh_ui::Ui::dragging`), after this is applied.
+    WidgetDrop {
+        slot: super::widgets::Slot,
+        event: crate::widgets::WidgetEvent,
+    },
     /// A press landed on a plugin widget, carrying what that press means.
     ///
     /// **What replaces the byte-range scan.** The runtime recorded a

@@ -1478,6 +1478,26 @@ type TreeNode = {
 	*/
 	hasChildren: boolean;
 	/**
+	* A leaf drawn with no disclosure gutter: its text starts at its
+	* indent, not two columns in. For rows that stand at a tree's top level
+	* beside folders and should read as flush with the panel's edge (the
+	* orchestrator dock's unfiled workspaces). Ignored on a node with
+	* children, whose ▶/▼ is the gutter.
+	*/
+	flush?: boolean;
+	/**
+	* The row can be picked up with the pointer and dropped on another row
+	* of the same tree. The plugin hears, as `widget_event`s on the tree:
+	* `drag` (`{ key, target }`: the row lifted and the row under the
+	* pointer, `null` off every row) each time that changes, from the first
+	* row the drag leaves its own for; `drop` (`{ key, target, index }`)
+	* when it is released on another row; and `dragend` (`{ key }`) when
+	* the drag is over, dropped or not. A plain click hears none of them. A
+	* press on the row activates on release, not on the press, so a drag
+	* does not first act on the row it lifts.
+	*/
+	draggable?: boolean;
+	/**
 	* Per-node checkbox state. Only rendered when the parent
 	* `Tree` has `checkable: true`. `None` = no checkbox glyph;
 	* `Some(true)` = `[v]`; `Some(false)` = `[ ]`. The plugin

@@ -2403,7 +2403,17 @@ fn tree_row_gutter_cols(node: &TreeNode, checkable: bool, indent_cols: usize) ->
     // (glyph + separator space, or two literal spaces), and a checkbox adds
     // `[v]` and a space. The indent is per level of depth.
     let checkbox = usize::from(checkable && node.checked.is_some()) * 4;
-    (node.depth as usize) * indent_cols + 2 + checkbox
+    (node.depth as usize) * indent_cols + leaf_gutter_cols(node) + checkbox
+}
+
+/// The disclosure column's width: two (glyph and space, or two spaces), or
+/// none for a `flush` leaf.
+fn leaf_gutter_cols(node: &TreeNode) -> usize {
+    if node.flush && !node.has_children {
+        0
+    } else {
+        2
+    }
 }
 
 /// A tree row's text as the paint will see it.
@@ -2588,6 +2598,9 @@ pub fn render_tree_row(
         } else {
             "▶"
         }
+    } else if node.flush {
+        // A flush leaf has no gutter: its text starts at its indent.
+        ""
     } else {
         // Two spaces — same display width as the glyph plus space,
         // keeping leaf rows aligned with their internal siblings.
@@ -2805,7 +2818,7 @@ pub fn render_tree_row(
         // + separator space, or two literal spaces). The checkbox, when
         // rendered, adds `[v]` (3 cols) + a trailing space.
         let checkbox_cols = if checkbox_glyph.is_some() { 4 } else { 0 };
-        let cont_indent_cols = indent_cols + 2 + checkbox_cols;
+        let cont_indent_cols = indent_cols + leaf_gutter_cols(node) + checkbox_cols;
         let indent_str = " ".repeat(cont_indent_cols);
         let shift = indent_str.len();
         for i in 0..extra_rows {
@@ -4656,6 +4669,8 @@ pub mod tests {
             text: TextPropertyEntry::text(text),
             depth,
             has_children,
+            flush: false,
+            draggable: false,
             checked: None,
             extra_lines: Vec::new(),
             window_anchor: None,

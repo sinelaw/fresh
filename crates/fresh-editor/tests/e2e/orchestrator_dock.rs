@@ -2574,12 +2574,11 @@ fn dock_new_folder_and_move_session_into_it() {
     let (mcol, mrow) = pos_of(&h, "Move to Folder");
     h.mouse_click(mcol, mrow).unwrap();
 
-    // The move dropdown lists "Top level", then "Docs", then "New
-    // folder…". Move the cursor onto "Docs" and accept.
-    h.wait_until(|h| h.screen_to_string().contains("Top level"))
+    // The dock asks for the target; a click on the "Docs" folder files it.
+    h.wait_until(|h| h.screen_to_string().contains("click a folder"))
         .unwrap();
-    h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    let (dcol, drow) = pos_of(&h, "Docs");
+    h.mouse_click(dcol, drow).unwrap();
 
     // The folder now reports one member — the session was filed into it.
     h.wait_until(|h| {
@@ -2587,6 +2586,69 @@ fn dock_new_folder_and_move_session_into_it() {
         s.contains("Docs") && s.contains("(1)")
     })
     .unwrap();
+}
+
+/// A session filed directly in a folder lines up with that folder's nested
+/// subfolders: the session's name starts in the column of the subfolder's
+/// disclosure triangle, not two columns further in. A session outside every
+/// folder sits flush at the left edge, above the folders.
+#[test]
+fn dock_folder_members_align_with_sibling_subfolder_triangles() {
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+            .unwrap();
+    h.render().unwrap();
+    open_dock(&mut h);
+
+    // "fresh", with the current session organized under it (the default).
+    open_dock_menu(&mut h);
+    let (fcol, frow) = pos_of(&h, "New folder…");
+    h.mouse_click(fcol, frow).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Folder name"))
+        .unwrap();
+    h.type_text("fresh").unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::CONTROL).unwrap();
+    h.wait_until(|h| {
+        let s = h.screen_to_string();
+        !s.contains("Folder name") && s.contains("fresh") && s.contains("(1)")
+    })
+    .unwrap();
+
+    // An empty "scratch" nested inside it.
+    let fresh_row = row_of(&h, "fresh") as u16;
+    h.mouse_right_click(4, fresh_row).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("New Subfolder"))
+        .unwrap();
+    let (ncol, nrow) = pos_of(&h, "New Subfolder");
+    h.mouse_click(ncol, nrow).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Folder name"))
+        .unwrap();
+    h.type_text("scratch").unwrap();
+    h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    h.send_key(KeyCode::Char(' '), KeyModifiers::NONE).unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::CONTROL).unwrap();
+    h.wait_until(|h| {
+        let s = h.screen_to_string();
+        !s.contains("Folder name") && s.contains("scratch")
+    })
+    .unwrap();
+
+    let screen = h.screen_to_string();
+    let (_, srow) = pos_of(&h, "scratch");
+    let line = screen.lines().nth(srow as usize).unwrap();
+    let triangle = line
+        .chars()
+        .position(|c| c == '▼' || c == '▶')
+        .unwrap_or_else(|| panic!("no disclosure triangle on scratch's row:\n{screen}"));
+    // The session row's first glyph (its status dot) is where it starts.
+    let (_, arow) = pos_of(&h, "alphaproj");
+    let aline = screen.lines().nth(arow as usize).unwrap();
+    let acol = aline.chars().position(|c| c != ' ').unwrap();
+    assert_eq!(
+        acol, triangle,
+        "the session in \"fresh\" must start where \"scratch\"'s triangle is:\n{screen}"
+    );
 }
 
 /// Enter on the New Folder dialog's focused `[ Cancel ]` button cancels —
@@ -2798,11 +2860,11 @@ fn dock_hint_bar_advertises_context_menu_key_and_f2_opens_it() {
     h.assert_screen_contains("Visit");
 }
 
-/// The palette command "Orchestrator: Move to Folder…" opens the same
-/// Move-to-Folder dropdown the row context menu offers, targeting the
-/// current workspace — no mouse or dock focus required.
+/// The palette command "Orchestrator: Move to Folder…" starts the same
+/// folder pick the row context menu does, targeting the current workspace —
+/// no mouse or dock focus required.
 #[test]
-fn palette_move_command_opens_move_dropdown() {
+fn palette_move_command_starts_the_folder_pick() {
     let (_tmp, root) = setup_project("alphaproj");
     let mut h =
         EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
@@ -2815,10 +2877,11 @@ fn palette_move_command_opens_move_dropdown() {
     h.send_key(KeyCode::Char('o'), KeyModifiers::ALT).unwrap();
 
     run_palette_command(&mut h, "Orchestrator: Move to Folder");
-    // The dropdown lists the top-level target plus "New Folder…".
+    // The banner names what is moving and offers the top level and a new
+    // folder beside the folders in the tree.
     h.wait_until(|h| {
         let s = h.screen_to_string();
-        s.contains("Top level") && s.contains("New folder…")
+        s.contains("Move alphaproj") && s.contains("Top level") && s.contains("New folder…")
     })
     .unwrap();
 }

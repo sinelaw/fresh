@@ -28,7 +28,7 @@ export interface DiscoveryHost {
    *  an agent the registry does not know. */
   resumeArgv(agent: string, id: string): { argv: string[]; exact: boolean } | null;
   /** Open the New Workspace form on `seed`, with these fields filled. */
-  openWorkspaceForm(seed: FormSeed, prefill: { projectPath: string; cmd: string }): void;
+  openWorkspaceForm(seed: FormSeed, prefill: { projectPath: string; cmd: string; label?: string }): void;
   /** Open Add Machine; `done` gets the saved machine's id, or null after a
    *  cancel. */
   addMachine(done: (savedKey: string | null) => void): void;

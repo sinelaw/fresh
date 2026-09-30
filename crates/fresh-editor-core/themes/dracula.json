@@ -50,6 +50,7 @@
     "popup_border_fg": [189, 147, 249],
     "popup_bg": [40, 42, 54],
     "popup_selection_bg": [189, 147, 249],
+    "list_drop_target_bg": [50, 140, 90],
     "popup_text_fg": [248, 248, 242],
     "text_input_selection_bg": [189, 147, 249],
     "suggestion_bg": [40, 42, 54],
