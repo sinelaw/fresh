@@ -18177,6 +18177,10 @@ editor.on("widget_event", (e) => {
     // A row dragged onto another with the mouse (`draggable` rows): filed
     // where the row it landed on is.
     if (e.event_type === "drop" && e.widget_key === "sessions") {
+      // The drop is the drag's end as far as drawing goes: the frame that
+      // shows the row filed must not show it lifted, and `dragend` is a
+      // separate event a frame can be painted before.
+      dockDrag = null;
       const payload = (e.payload ?? {}) as Record<string, unknown>;
       if (typeof payload.key === "string" && typeof payload.target === "string") {
         dropOnDockRow(payload.key, payload.target);
