@@ -2,7 +2,10 @@
 //! (`plugins.orchestrator.settings.*`, rendered by the Settings UI under
 //! "orchestrator" under "Plugins"):
 //!
-//! * `autoOpenDock` — open the dock on the `ready` hook, unfocused;
+//! * `autoOpenDock` — whether the dock opens on the `ready` hook,
+//!   unfocused: `auto` (as you left it, else the launch mode), `always` or
+//!   `never`. The booleans it replaced are still read, `false` as `never`
+//!   and `true` as `auto`, which is what the boolean cases below cover;
 //! * `defaultView` — the density (`card` / `compact`) the dock opens at;
 //! * `showAllWorktrees` / `showEmptyWorkspaces` — the initial state of the
 //!   two Filters checkboxes.
@@ -63,6 +66,22 @@ fn launch(config: Config, root: PathBuf) -> EditorTestHarness {
             .with_working_dir(root)
             .without_empty_plugins_dir()
             .with_startup_chrome(),
+    )
+    .unwrap()
+}
+
+/// The same, as a bare `fresh` (Orchestrator mode) — the launch mode that is
+/// the default since 0.5.2, and the one issue #3442 was reported against.
+fn launch_orchestrator_mode(config: Config, root: PathBuf) -> EditorTestHarness {
+    EditorTestHarness::create(
+        120,
+        32,
+        HarnessOptions::new()
+            .with_config(config)
+            .with_working_dir(root)
+            .without_empty_plugins_dir()
+            .with_startup_chrome()
+            .with_orchestrator_mode(),
     )
     .unwrap()
 }
@@ -227,4 +246,44 @@ fn auto_open_can_be_switched_off() {
     // toggle; with auto-open off there is nothing left on screen.
     h.wait_until(|h| !h.screen_to_string().contains("+ New"))
         .unwrap();
+}
+
+/// Issue #3442: the dock stays closed for a bare `fresh` too. Orchestrator
+/// mode used to OR itself over the setting, so the one launch mode most users
+/// are in ignored it outright — the dock came up however the setting and the
+/// `View` menu's checkmark read.
+///
+/// Driven with both spellings: the `never` mode, and the legacy `false` an
+/// upgrading user still has on disk.
+fn dock_stays_closed_in_orchestrator_mode(setting: serde_json::Value) {
+    let (_tmp, root, config) = setup(serde_json::json!({ "autoOpenDock": setting }));
+    let mut h = launch_orchestrator_mode(config, root);
+    h.render().unwrap();
+    h.editor_mut().fire_ready_hook();
+    // Round-trip the hook through the plugin thread with a command that does
+    // not touch the dock, so a dock that wrongly auto-opened is on screen by
+    // the time we look (as in `auto_open_can_be_switched_off`).
+    h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    h.wait_for_prompt().unwrap();
+    h.type_text("Orchestrator: Machines").unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Orchestrator: Machines"))
+        .unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Add machine"))
+        .unwrap();
+    h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| !h.screen_to_string().contains("Add machine"))
+        .unwrap();
+    h.assert_screen_not_contains("+ New");
+}
+
+#[test]
+fn never_keeps_the_dock_closed_in_orchestrator_mode() {
+    dock_stays_closed_in_orchestrator_mode(serde_json::json!("never"));
+}
+
+#[test]
+fn a_legacy_false_keeps_the_dock_closed_in_orchestrator_mode() {
+    dock_stays_closed_in_orchestrator_mode(serde_json::json!(false));
 }

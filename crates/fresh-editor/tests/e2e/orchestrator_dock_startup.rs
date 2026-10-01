@@ -118,8 +118,10 @@ fn an_ordinary_launch_lands_the_dock_in_the_column_carved_for_it() {
 /// Closed with Toggle Dock, quit, relaunched: no column and `ready` mounts
 /// nothing. Opened again, quit, relaunched: the column is back on the first
 /// frame. The quit records it (`Editor::save_dock_chrome`).
-#[test]
-fn the_dock_is_remembered_across_launches() {
+///
+/// Driven in both launch modes: a bare `fresh` used to force the column open
+/// regardless, so a dock the user had closed came back every time (#3442).
+fn the_dock_is_remembered_across_launches(orchestrator_mode: bool) {
     use crossterm::event::{KeyCode, KeyModifiers};
     use fresh::config_io::DirectoryContext;
 
@@ -127,17 +129,16 @@ fn the_dock_is_remembered_across_launches() {
     let home = tempfile::TempDir::new().unwrap();
     let dir_context = DirectoryContext::for_testing(home.path());
     let launch = |dir_context: DirectoryContext| {
-        EditorTestHarness::create(
-            COLS,
-            ROWS,
-            HarnessOptions::new()
-                .with_config(Config::default())
-                .with_working_dir(root.clone())
-                .with_shared_dir_context(dir_context)
-                .without_empty_plugins_dir()
-                .with_startup_chrome(),
-        )
-        .unwrap()
+        let mut options = HarnessOptions::new()
+            .with_config(Config::default())
+            .with_working_dir(root.clone())
+            .with_shared_dir_context(dir_context)
+            .without_empty_plugins_dir()
+            .with_startup_chrome();
+        if orchestrator_mode {
+            options = options.with_orchestrator_mode();
+        }
+        EditorTestHarness::create(COLS, ROWS, options).unwrap()
     };
     let toggle_dock = |h: &mut EditorTestHarness| {
         h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
@@ -198,4 +199,16 @@ fn the_dock_is_remembered_across_launches() {
         "a dock the user left open comes back on the first frame:\n{}",
         h.screen_to_string()
     );
+}
+
+/// An ordinary `fresh .`.
+#[test]
+fn an_ordinary_launch_remembers_the_dock_across_launches() {
+    the_dock_is_remembered_across_launches(false);
+}
+
+/// A bare `fresh` (Orchestrator mode) — issue #3442.
+#[test]
+fn orchestrator_mode_remembers_the_dock_across_launches() {
+    the_dock_is_remembered_across_launches(true);
 }

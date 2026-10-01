@@ -6,6 +6,11 @@
 
 * **Find Next selects the whole match and marks it as the current match** - F3 / Shift+F3 (and Enter in the search bar) select the entire match, so a regex shows exactly how far it reaches and Delete removes the whole match; F3 after a Delete lands on a match that slid into its place. The current match, in Find Next and in Query Replace alike, is drawn bold in its own color, set by the new theme keys `search.current_match_bg` / `search.current_match_fg`. Reopening Ctrl+F on it brings back the query (e.g. the regex), not the matched text
 
+### Bug Fixes
+
+* **`AutoOpenDock` works, and a workspace dock you closed stays closed** - a bare `fresh` (Orchestrator mode, the default since 0.5.2) opened the dock whatever you had asked for, so turning the setting off did nothing and a dock closed from `View ▸ Orchestrator Dock` was back on the next start. The launch mode is now only the default for a first launch, under both the setting and what you left behind (#3442)
+* **`AutoOpenDock` is now `auto` / `always` / `never`** - the old on/off couldn't say "dock in the orchestrator, never in a plain `fresh .`", and its "on" meant *allow* rather than *open*, so ticking it on while you had left the dock closed appeared to do nothing. `auto` (the default) keeps today's behaviour - the dock comes back as you left it, and a bare `fresh` opens it on a first run - while `always` and `never` settle it outright. Your existing setting is carried over: `false` becomes `never`, `true` becomes `auto` (#3442)
+
 ### Themes
 
 * **Theme colors come from other colors, never from values built into Fresh** - the 49 colors of the first theme format are required; every other color names a fallback color, and a theme that sets all 49 takes each color it leaves out from its fallback chain. The built-in themes look the same, except that Dracula, Nord, Solarized Dark, Nostalgia, Light and Terminal now derive colors they never set (menus, diff and indicator backgrounds, bracket colors…) from their own palette instead of generic dark-theme grays. See [Themes → Fallbacks](https://getfresh.dev/docs/features/themes#fallbacks)

@@ -372,12 +372,16 @@ What the mode is, end to end:
   path already synthesizes for the blank-workspace settings. An untitled buffer
   answers "you have nothing open, here is somewhere to type", which is the
   wrong question when the dock is showing your workspaces.
-- **The dock opens** — regardless of the plugin's own `autoOpenDock` setting
-  and of whether the user last closed it: the mode overrides both, since a
-  bare `fresh` is a request for the switcher. The host makes that call at
-  construction (`Editor::apply_startup_dock_chrome`, from the launch mode it
-  was built with), and the plugin mounts at `ready` because
-  `editor.dockOpen()` says so.
+- **The dock opens by default** — a bare `fresh` is a request for the
+  switcher, so the mode is what decides on a first launch, where the manifest
+  alone would. It is a default, not an override: it applies under
+  `autoOpenDock: "auto"` only, and a dock the user last closed still wins.
+  `never` and `always` settle it outright. The mode used to OR itself over
+  the two, which left the setting with no effect at all and reopened a closed
+  dock in the launch mode that is the default since 0.5.2 (#3442). The host
+  makes the call at construction (`Editor::apply_startup_dock_chrome`, from
+  the launch mode it was built with), and the plugin mounts at `ready`
+  because `editor.dockOpen()` says so.
 - **The column is carved before the dock exists.** The dock's content is
   this plugin's, mounted from `ready` after every plugin has loaded; the
   column is the host's. The plugin declares it in
@@ -434,7 +438,7 @@ the generated settings widgets.
 
 | Setting               | Default  | Effect                                              |
 | --------------------- | -------- | --------------------------------------------------- |
-| `autoOpenDock`        | `true`   | Open the dock (unfocused) on the `ready` event.      |
+| `autoOpenDock`        | `"auto"` | Whether the dock opens (unfocused) on the `ready` event: `never`, `always`, or `auto` — as the user left it, else the launch mode. The pre-#3442 booleans are read as `never` / `auto` and rewritten. |
 | `defaultView`         | `"card"` | Density the dock opens at: `card` or `compact`.      |
 | `showAllWorktrees`    | `false`  | Initial state of the "all worktrees" checkbox.       |
 | `showEmptyWorkspaces` | `true`   | Initial state of the "show empty" checkbox (i.e. `hideTrivial = !showEmptyWorkspaces`). |

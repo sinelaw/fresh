@@ -55,13 +55,75 @@ pub(crate) fn read_dock_chrome_state(fs: &dyn FileSystem, data_dir: &Path) -> Do
     }
 }
 
+/// What the boolean-or-mode the manifest names (`open_setting`) asks for.
+/// Each name means exactly what it says, which is the point: the boolean it
+/// replaced had a `true` that read as "always" but behaved as "allow", so
+/// ticking it on and seeing no dock was a fair thing to be confused by.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DockOpenPolicy {
+    /// Closed at startup, whatever is remembered.
+    Never,
+    /// Open at startup, whatever is remembered.
+    Always,
+    /// The way the user left it; on a first launch, the launch mode decides
+    /// (then the manifest's `open`). The default, and exactly what the
+    /// boolean `true` used to mean.
+    Auto,
+}
+
+impl DockOpenPolicy {
+    /// The wire name, for the migration's write.
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Never => "never",
+            Self::Always => "always",
+            Self::Auto => "auto",
+        }
+    }
+
+    /// Read the stored value. The pre-#3442 booleans still work and always
+    /// will, so behaviour never depends on the migration below having run:
+    /// `false` meant "do not auto-open" (`never`), `true` meant "allow it,
+    /// and come back the way you left it" (`auto`).
+    ///
+    /// Anything else — a stale string from a hand-edit, a number, `null` —
+    /// is `Auto`, which is both the declared default and what
+    /// `defineConfigEnum` falls back to for an unrecognised value, so the
+    /// host and the Settings UI agree on the nonsense case too.
+    fn read(value: Option<&serde_json::Value>) -> Self {
+        match value {
+            Some(serde_json::Value::String(s)) => match s.as_str() {
+                "never" => Self::Never,
+                "always" => Self::Always,
+                _ => Self::Auto,
+            },
+            Some(serde_json::Value::Bool(false)) => Self::Never,
+            Some(serde_json::Value::Bool(true)) => Self::Auto,
+            _ => Self::Auto,
+        }
+    }
+
+    /// Whether the value on disk is the pre-#3442 boolean, and so wants
+    /// rewriting as the mode it meant.
+    fn is_legacy(value: Option<&serde_json::Value>) -> bool {
+        matches!(value, Some(serde_json::Value::Bool(_)))
+    }
+}
+
 impl Editor {
-    /// Decide the dock's startup chrome, before the first frame. In order of
-    /// authority: Orchestrator mode always opens it; the plugin's own switch
-    /// (`open_setting`, set to `false`) keeps it closed; otherwise it comes
-    /// back the way the user left it, or as the manifest says on a first
-    /// launch. No declaration, no dock. The width rule and a remembered
-    /// width are adopted regardless, so a dock toggled open later is right.
+    /// Decide the dock's startup chrome, before the first frame. The mode the
+    /// plugin's `open_setting` names decides: `never` keeps the slot closed
+    /// and `always` opens it, both outright; `auto` — the default — brings it
+    /// back the way the user left it, and on a first launch lets Orchestrator
+    /// mode open it (a bare `fresh` is a request for the switcher), else the
+    /// manifest's `open`. No declaration, no dock. The width rule and a
+    /// remembered width are adopted regardless, so a dock toggled open later
+    /// is right.
+    ///
+    /// Orchestrator mode used to *override* the setting and the remembered
+    /// state rather than being the default under them, so in the launch mode
+    /// that is the default since 0.5.2 an `autoOpenDock: false` had no effect
+    /// at all and a dock the user had closed came back open (issue #3442).
     pub(crate) fn apply_startup_dock_chrome(
         &mut self,
         manifests: &HashMap<String, PluginManifest>,
@@ -86,22 +148,70 @@ impl Editor {
         }
         self.dock_width_rule = decl.width;
 
-        let switched_off = decl.open_setting.as_deref().is_some_and(|setting| {
+        let setting = decl.open_setting.clone();
+        let stored = setting.as_deref().and_then(|key| {
             self.config
                 .plugins
                 .get(name.as_str())
-                .and_then(|c| c.settings.get(setting))
-                .and_then(|v| v.as_bool())
-                == Some(false)
+                .and_then(|c| c.settings.get(key))
         });
-        self.dock_reserved =
-            orchestrator_mode || (!switched_off && remembered.open.unwrap_or(decl.open));
+        let policy = DockOpenPolicy::read(stored);
+        let legacy = DockOpenPolicy::is_legacy(stored);
+        self.dock_reserved = match policy {
+            DockOpenPolicy::Never => false,
+            DockOpenPolicy::Always => true,
+            DockOpenPolicy::Auto => remembered.open.unwrap_or(orchestrator_mode || decl.open),
+        };
         tracing::debug!(
             plugin = %name,
             reserved = self.dock_reserved,
             width = ?self.dock_width,
+            ?policy,
             "startup dock chrome"
         );
+
+        if legacy {
+            let plugin = name.clone();
+            if let Some(key) = setting {
+                self.rewrite_legacy_dock_open_setting(&plugin, &key, policy);
+            }
+        }
+    }
+
+    /// Rewrite a pre-#3442 boolean `open_setting` as the mode it meant, in
+    /// memory and on disk.
+    ///
+    /// Without this the value would keep its old shape while the plugin
+    /// declares an enum, and the two disagree in a way the user can see: the
+    /// plugin's field registration only fills a value in when one is *absent*
+    /// (`Editor::handle_add_plugin_config_field` uses `or_insert`), so the
+    /// boolean survives, and the Settings UI would render the enum's default
+    /// next to a startup that had honoured the boolean. That is the same
+    /// "two sources, one question" shape as #3442 itself.
+    ///
+    /// Best-effort by design: `DockOpenPolicy::read` understands the booleans
+    /// regardless, so a write that fails costs nothing but another attempt on
+    /// the next launch.
+    fn rewrite_legacy_dock_open_setting(
+        &mut self,
+        plugin: &str,
+        setting: &str,
+        policy: DockOpenPolicy,
+    ) {
+        let value = serde_json::Value::String(policy.as_str().to_string());
+        let cfg = std::sync::Arc::make_mut(&mut self.config);
+        if let Some(entry) = cfg.plugins.get_mut(plugin) {
+            if let serde_json::Value::Object(map) = &mut entry.settings {
+                map.insert(setting.to_string(), value.clone());
+            }
+        }
+        tracing::info!(
+            plugin,
+            setting,
+            mode = policy.as_str(),
+            "migrating a boolean dock open_setting to its mode"
+        );
+        self.persist_config_pointer(&format!("/plugins/{plugin}/settings/{setting}"), value);
     }
 
     /// Hand back a column held open at startup that nothing mounted into;
