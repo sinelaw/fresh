@@ -812,16 +812,13 @@ impl OverlayManager {
             if o.namespace.as_ref() != Some(namespace) {
                 continue;
             }
-            let (Some(start), Some(end)) = (
-                marker_list.get_position(o.start_marker),
-                marker_list.get_position(o.end_marker),
-            ) else {
-                continue;
-            };
-            // Mirror the healthy-overlay arm of `replace_range_in_namespace`.
-            if start < end && start < range.end && range.start < end {
-                lo = lo.min(start);
-                hi = hi.max(end);
+            // `start < end` is the healthy-overlay arm of
+            // `replace_range_in_namespace`; a collapsed one is a point and
+            // widens nothing.
+            let r = o.range(marker_list);
+            if r.start < r.end && o.overlaps(&range, marker_list) {
+                lo = lo.min(r.start);
+                hi = hi.max(r.end);
             }
         }
         lo..hi
