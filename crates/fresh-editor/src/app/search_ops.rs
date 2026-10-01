@@ -191,6 +191,8 @@ impl Editor {
         let matches: Vec<usize> = match_ranges.iter().map(|(pos, _)| *pos).collect();
         let match_lengths: Vec<usize> = match_ranges.iter().map(|(_, len)| *len).collect();
         let is_large = self.active_state().buffer.is_large_file();
+        // Taken before the `&mut search_state` borrow below.
+        let active_buffer = self.active_buffer();
 
         // Find the first match at or after the current cursor position
         let cursor_pos = self.active_cursors().primary().position;
@@ -216,7 +218,7 @@ impl Editor {
             search_range,
             capped,
             // Only the small-file branch below builds an overlay per match.
-            overlays_track_matches: !is_large,
+            overlays_track_matches: (!is_large).then_some(active_buffer),
         });
 
         if is_large {
@@ -446,11 +448,12 @@ impl Editor {
         let ns = &self.active_window().search_namespace;
         let state = self.active_state();
 
+        // From the namespace index, not a walk of every overlay on the
+        // buffer: syntax and semantic highlighting dwarf the search set, and
+        // this runs on each Find Next.
         let mut ranges: Vec<(usize, usize)> = state
             .overlays
-            .all()
-            .iter()
-            .filter(|o| o.namespace.as_ref() == Some(ns))
+            .in_namespace(ns)
             .filter_map(|o| {
                 let start = state.marker_list.get_position(o.start_marker)?;
                 let end = state.marker_list.get_position(o.end_marker)?;
@@ -568,6 +571,10 @@ impl Editor {
         // prompt owns the keyboard, so no edit can shift the stored offsets.
         let search_bar_open = self.active_search_prompt_query().is_some();
 
+        // The overlays live on the buffer, the search state on the window, so
+        // the match set only stands for the buffer it was collected from.
+        let active_buffer = self.active_buffer();
+
         // Snapshot cursor_pos up front so the `&mut search_state` borrow
         // below doesn't conflict with the read of self.windows.
         let cursor_pos = {
@@ -603,7 +610,7 @@ impl Editor {
             // deleting the whole buffer (issue #3444).
             let use_overlays = !is_large
                 && !search_bar_open
-                && search_state.overlays_track_matches
+                && search_state.overlays_track_matches == Some(active_buffer)
                 && search_state.search_range.is_none();
             let (match_positions, match_lengths): (&[usize], &[usize]) = if use_overlays {
                 (&overlay_positions, &overlay_lengths)
