@@ -473,6 +473,13 @@ impl Editor {
         true
     }
 
+    /// Toggle temporary, window-local zen mode without changing saved settings.
+    pub fn toggle_zen_mode(&mut self) {
+        self.menu_state.close_menu();
+        self.active_window_mut().toggle_zen_mode();
+        self.relayout();
+    }
+
     /// Toggle menu bar visibility.
     ///
     /// `editor.show_menu_bar` is a global preference, so the toggle updates the
