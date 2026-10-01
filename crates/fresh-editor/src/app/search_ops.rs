@@ -193,6 +193,7 @@ impl Editor {
         let is_large = self.active_state().buffer.is_large_file();
         // Taken before the `&mut search_state` borrow below.
         let active_buffer = self.active_buffer();
+        let buffer_version = self.active_state().buffer.version();
 
         // Find the first match at or after the current cursor position
         let cursor_pos = self.active_cursors().primary().position;
@@ -217,8 +218,9 @@ impl Editor {
             wrap_search: search_range.is_none(),
             search_range,
             capped,
+            collected_from: (active_buffer, buffer_version),
             // Only the small-file branch below builds an overlay per match.
-            overlays_track_matches: (!is_large).then_some(active_buffer),
+            overlays_track_matches: !is_large,
         });
 
         if is_large {
@@ -571,8 +573,57 @@ impl Editor {
         let search_bar_open = self.active_search_prompt_query().is_some();
 
         // The overlays live on the buffer, the search state on the window, so
-        // the match set only stands for the buffer it was collected from.
+        // the match set only stands for the buffer it was collected from, as
+        // it was then.
         let active_buffer = self.active_buffer();
+        let buffer_version = self.active_state().buffer.version();
+
+        // Re-run the search when the stored match set no longer describes
+        // what is on screen, rather than navigating offsets that mean
+        // nothing here: a different buffer (the search ran in another tab),
+        // or the same buffer at a newer version (a query-replace rewrote the
+        // text after the overlays were dropped). Both used to send F3 to
+        // stale offsets — into a 5-byte file, or onto text that had just
+        // been replaced.
+        //
+        // Only where the overlays would otherwise have been the authority.
+        // A large file keeps its snapshot by design: re-scanning one to
+        // answer a keypress is the cost that design exists to avoid. An open
+        // search bar owns the keyboard, so nothing can have edited under it.
+        // A search within a selection cannot be re-run from here without
+        // losing its range.
+        if let Some(ss) = self.active_window().search_state.as_ref() {
+            let overlays_are_authority = !is_large
+                && !search_bar_open
+                && ss.overlays_track_matches
+                && ss.collected_from.0 == active_buffer;
+            let describes_now = ss.collected_from == (active_buffer, buffer_version);
+            if !overlays_are_authority
+                && !describes_now
+                && !is_large
+                && !search_bar_open
+                && ss.search_range.is_none()
+            {
+                let query = ss.query.clone();
+                let previous = self.active_window().search_state.clone();
+                self.perform_search(&query);
+                if self.active_window().search_state.is_none() {
+                    // Nothing here under that query. `perform_search` has
+                    // said so and dropped the search; put it back, so the
+                    // buffer it was collected from is still navigable when
+                    // the user returns to it.
+                    self.active_window_mut().search_state = previous;
+                    return;
+                }
+                // `perform_search` lands on the first match at/after the
+                // cursor, which is where a forward step should be. A
+                // backward one wants the match before it.
+                if matches!(direction, SearchDirection::Backward) {
+                    self.find_match_in_direction(SearchDirection::Backward);
+                }
+                return;
+            }
+        }
 
         // Snapshot cursor_pos up front so the `&mut search_state` borrow
         // below doesn't conflict with the read of self.windows.
@@ -609,7 +660,8 @@ impl Editor {
             // deleting the whole buffer (issue #3444).
             let use_overlays = !is_large
                 && !search_bar_open
-                && search_state.overlays_track_matches == Some(active_buffer)
+                && search_state.overlays_track_matches
+                && search_state.collected_from.0 == active_buffer
                 && search_state.search_range.is_none();
             let (match_positions, match_lengths): (&[usize], &[usize]) = if use_overlays {
                 (&overlay_positions, &overlay_lengths)
