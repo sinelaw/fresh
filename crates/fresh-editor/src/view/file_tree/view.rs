@@ -466,15 +466,25 @@ impl FileTreeView {
 
     /// The directory one segment of a compact row's label names.
     ///
-    /// `segment` counts the absorbed ancestors drawn before the anchor's own
-    /// name, outermost first — the `dir1` and `dir2` of a `dir1/dir2/dir3`
-    /// row — in the order [`compact_chain_for_anchor`](Self::compact_chain_for_anchor)
-    /// returns them, which is the order [`VisibleRow::chain`] renders. `None`
-    /// when the row has no such segment, so a caller whose column resolved
-    /// against a label the tree has since changed falls back to the anchor
-    /// rather than to some other entry.
-    pub fn chain_segment_node(&self, anchor: NodeId, segment: usize) -> Option<NodeId> {
-        self.compact_chain_for_anchor(anchor).get(segment).copied()
+    /// `steps` counts **up from the anchor**: `1` is the segment next to the
+    /// anchor's own name, `2` the one before it, and `chain.len()` the
+    /// outermost — so on a `dir1/dir2/dir3` row `1` is `dir2` and `2` is
+    /// `dir1`. `0`, and anything past the outermost, is no segment.
+    ///
+    /// **Counted from the anchor rather than from the front of the label**
+    /// because the anchor is the one end of the chain a press names outright
+    /// (it is the row's own id), while the front moves: the label was rendered
+    /// one frame earlier, and a directory that became absorbed since would
+    /// shift every index counted from there, naming the reader's `dir1` as
+    /// whatever is now outside it. The parent chain is structural; absorption
+    /// only decides how much of it one row draws. A chain that lost segments
+    /// answers `None`, and the caller falls back to the anchor rather than to
+    /// some other entry.
+    pub fn chain_segment_node(&self, anchor: NodeId, steps: usize) -> Option<NodeId> {
+        let chain = self.compact_chain_for_anchor(anchor);
+        let back = steps.checked_sub(1)?;
+        let index = chain.len().checked_sub(1 + back)?;
+        chain.get(index).copied()
     }
 
     /// The row `id` is drawn on, by index in the visible order: its own, or —
@@ -491,6 +501,20 @@ impl FileTreeView {
         projection
             .index_of(id)
             .or_else(|| projection.index_of(self.promote_to_anchor(id)))
+    }
+
+    /// The id of the row the cursor is *drawn* on: its own, or — for a cursor
+    /// on a compact-chain segment — the anchor whose row carries it.
+    ///
+    /// **The multi-selection is a set of rows.** It is shown by highlighting
+    /// them, and [`effective_selection`](Self::effective_selection) filters it
+    /// through the visible order to drop ids that have none — so an absorbed
+    /// id put in that set would be invisible *and* act on nothing. The keys
+    /// that seed the set from the cursor go through this, so the set keeps
+    /// only ids that can be drawn and acted on.
+    fn cursor_row_id(&self) -> Option<NodeId> {
+        let row = self.row_of(self.selected_node?)?;
+        self.projection().rows.get(row).map(|r| r.id)
     }
 
     /// Walk down a chain of absorbed directories until reaching the
@@ -582,8 +606,12 @@ impl FileTreeView {
     }
 
     /// Toggle the cursor item in/out of the multi-selection and set the anchor.
+    ///
+    /// The cursor's *row* — see [`cursor_row_id`](Self::cursor_row_id), which
+    /// is why a cursor on a chain segment adds the row it is drawn on rather
+    /// than a directory the set could neither show nor act on.
     pub fn toggle_select(&mut self) {
-        if let Some(cursor) = self.selected_node {
+        if let Some(cursor) = self.cursor_row_id() {
             if self.multi_selection.contains(&cursor) {
                 self.multi_selection.remove(&cursor);
             } else {
@@ -600,7 +628,9 @@ impl FileTreeView {
         if visible.is_empty() {
             return;
         }
-        let Some(current) = self.selected_node else {
+        // The cursor's row, so the seeded selection and the anchor are ids the
+        // set can show and act on: see `cursor_row_id`.
+        let Some(current) = self.cursor_row_id() else {
             return;
         };
         let Some(pos) = self.row_of(current) else {
@@ -634,7 +664,9 @@ impl FileTreeView {
         if visible.is_empty() {
             return;
         }
-        let Some(current) = self.selected_node else {
+        // The cursor's row, so the seeded selection and the anchor are ids the
+        // set can show and act on: see `cursor_row_id`.
+        let Some(current) = self.cursor_row_id() else {
             return;
         };
         let Some(pos) = self.row_of(current) else {
@@ -665,7 +697,9 @@ impl FileTreeView {
     pub fn select_all(&mut self) {
         let visible = self.filtered_visible_nodes();
         self.multi_selection = visible.iter().copied().collect();
-        self.selection_anchor = self.selected_node;
+        // The cursor's row: an anchor the range extension can find in the
+        // visible order. See `cursor_row_id`.
+        self.selection_anchor = self.cursor_row_id();
     }
 
     /// Clear multi-selection (return to single-cursor mode).
@@ -1676,11 +1710,10 @@ mod tests {
     }
 
     /// **Each segment of a compact row names its own directory.** One row
-    /// draws `chain/a/b/c`, and `chain_segment_node` is what turns the
-    /// segment the pointer was on into the entry a menu is about — in the
-    /// same outermost-first order `compact_chain_for_anchor` reports and a
-    /// row renders. Past the last folded one it answers nothing, so a caller
-    /// falls back to the anchor rather than to another entry (issue #3427).
+    /// draws `chain/a/b/c`, and `chain_segment_node` is what turns the segment
+    /// the pointer was on into the entry a menu is about. The count is up from
+    /// the anchor, so `1` is the name beside `c` and the outermost is last
+    /// (issue #3427).
     #[tokio::test]
     async fn each_segment_of_a_compact_row_names_its_own_directory() {
         let (_t, mut view) = create_chain_view().await;
@@ -1691,16 +1724,108 @@ mod tests {
             .unwrap();
 
         let c_id = id_for(&view, "chain/a/b/c");
-        let named = |segment| {
-            view.chain_segment_node(c_id, segment)
+        let named = |steps| {
+            view.chain_segment_node(c_id, steps)
                 .map(|id| name_of(&view, id))
         };
-        assert_eq!(named(0).as_deref(), Some("chain"));
-        assert_eq!(named(1).as_deref(), Some("a"));
-        assert_eq!(named(2).as_deref(), Some("b"));
+        assert_eq!(named(1).as_deref(), Some("b"));
+        assert_eq!(named(2).as_deref(), Some("a"));
+        assert_eq!(named(3).as_deref(), Some("chain"));
         // `c` is the anchor, not a folded segment: its own name is no
         // segment's, and the caller uses the row's id for it.
-        assert_eq!(named(3), None);
+        assert_eq!(named(0), None);
+        // And past the outermost — a chain shorter than the label the press was
+        // resolved against — nothing, so the caller falls back to the anchor
+        // rather than to another entry.
+        assert_eq!(named(4), None);
+    }
+
+    /// **Counting up from the anchor survives a chain that grew.** The label a
+    /// press resolved against was rendered a frame earlier, and a directory
+    /// that has become absorbed since adds a segment at the *front* — an index
+    /// counted from there would slide onto the wrong name. The anchor end does
+    /// not move: it is the row's own id.
+    ///
+    /// The growth is staged with a hidden second child of `chain`, so whether
+    /// `chain` is folded into the row depends on a setting rather than on the
+    /// filesystem — `is_absorbed` asks how many children are *visible*.
+    #[tokio::test]
+    async fn a_segment_counted_from_the_anchor_survives_a_longer_chain() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path();
+        std_fs::create_dir_all(root.join("chain/a/b/c")).unwrap();
+        std_fs::write(root.join("chain/a/b/c/leaf.txt"), "leaf").unwrap();
+        std_fs::create_dir(root.join("chain/.other")).unwrap();
+        let manager = Arc::new(FsManager::new(Arc::new(StdFileSystem)));
+        let tree = FileTree::new(root.to_path_buf(), manager).await.unwrap();
+        let mut view = FileTreeView::new(tree);
+
+        // `.other` counts as a child, so `chain` has two and is not folded in:
+        // the row draws `a/b/c`, anchored at `c`.
+        view.toggle_show_hidden();
+        let root_id = view.tree().root_id();
+        view.tree_mut().expand_node(root_id).await.unwrap();
+        let chain_id = id_for(&view, "chain");
+        view.tree_mut().expand_node(chain_id).await.unwrap();
+        view.expand_with_chain(id_for(&view, "chain/a"))
+            .await
+            .unwrap();
+        let c_id = id_for(&view, "chain/a/b/c");
+        assert_eq!(view.compact_chain_for_anchor(c_id).len(), 2);
+        let two_up = |view: &FileTreeView| {
+            view.chain_segment_node(c_id, 2)
+                .map(|id| name_of(view, id))
+                .unwrap_or_default()
+        };
+        assert_eq!(two_up(&view), "a");
+
+        // Hiding `.other` leaves `chain` with one visible child, so it folds
+        // into the same row: the chain has gained an outermost segment and the
+        // label is now `chain/a/b/c`. A press that said "two above the anchor"
+        // still means `a`.
+        view.toggle_show_hidden();
+        assert_eq!(
+            view.compact_chain_for_anchor(c_id).len(),
+            3,
+            "the chain grew at the front"
+        );
+        assert_eq!(two_up(&view), "a");
+    }
+
+    /// **A cursor on a segment joins the multi-selection as the row it is drawn
+    /// on.** The set is shown by highlighting rows, and `effective_selection`
+    /// filters it to rows — so an absorbed id in it would highlight nothing and
+    /// act on nothing: Space then Delete would report "cannot delete the
+    /// project root" and do nothing at all.
+    #[tokio::test]
+    async fn a_segment_cursor_joins_the_multi_selection_as_its_row() {
+        let (_t, mut view) = create_chain_view().await;
+        let root_id = view.tree().root_id();
+        view.tree_mut().expand_node(root_id).await.unwrap();
+        view.expand_with_chain(id_for(&view, "chain"))
+            .await
+            .unwrap();
+
+        let chain_id = id_for(&view, "chain");
+        let c_id = id_for(&view, "chain/a/b/c");
+        let leaf_id = id_for(&view, "chain/a/b/c/leaf.txt");
+
+        view.set_selected_exact(Some(chain_id));
+        view.toggle_select();
+        assert!(view.has_multi_selection());
+        assert_eq!(
+            view.effective_selection(),
+            vec![c_id],
+            "the row the cursor is drawn on, not an id no row carries"
+        );
+
+        // And a range extended from such a cursor keeps the row it started on:
+        // the anchor has to be findable in the visible order for the range to
+        // span anything.
+        view.clear_multi_selection();
+        view.set_selected_exact(Some(chain_id));
+        view.extend_selection_down();
+        assert_eq!(view.effective_selection(), vec![c_id, leaf_id]);
     }
 
     /// **A cursor on a segment stays on that segment, and the row it is drawn

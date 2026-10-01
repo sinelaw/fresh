@@ -483,9 +483,12 @@ pub enum UiFact {
     /// pointer.
     ///
     /// `segment` is which of the row's compact-chain segments the press landed
-    /// on, outermost first — the `dir1` or the `dir2` of a `dir1/dir2/dir3`
-    /// row — and `None` for a press on the row's own name, its indent or its
-    /// indicator. One row draws the whole chain, so the index alone cannot say
+    /// on, counted up from the row's own name: on a `dir1/dir2/dir3` row `1` is
+    /// `dir2` and `2` is `dir1`. `None` is a press on the row's own name, its
+    /// indent or its indicator. Counting from the anchor rather than from the
+    /// front of the label is what keeps the answer right when the chain gained
+    /// an outermost directory between this frame and the lookup — see
+    /// [`FileTreeView::chain_segment_node`](crate::view::file_tree::FileTreeView::chain_segment_node). One row draws the whole chain, so the index alone cannot say
     /// which directory the reader pointed at, and the menu that opened was
     /// always about the deepest one (issue #3427). The description resolves it
     /// from the label it rendered: see [`Row::chain`](super::file_explorer::Row::chain).

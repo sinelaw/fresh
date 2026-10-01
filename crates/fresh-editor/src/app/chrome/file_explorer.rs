@@ -152,22 +152,26 @@ impl Editor {
 
     /// The menu, for whatever the press named.
     ///
-    /// **The selection moves first, every time.** Every item in this menu acts
-    /// on the explorer's selection, so a menu opened without moving it is a
-    /// menu about some other entry — which is what the empty space under the
-    /// last row used to give (issue #3427).
+    /// **The selection moves first, every time, and the menu's form follows
+    /// it.** Every item in this menu acts on the explorer's selection, so a
+    /// menu opened without moving it is a menu about some other entry — which
+    /// is what the empty space under the last row used to give (issue #3427).
+    /// There is no path out of here that leaves the selection where it was: a
+    /// press that named no row of the current tree lands on the root with the
+    /// root's menu, which carries nothing destructive, rather than on an entry
+    /// menu about whatever came before.
+    ///
+    /// The multi-selection is left alone, as a press on a row leaves it alone:
+    /// it is a set the reader built, and this handler answers every press
+    /// inside the panel that no row claimed — the scrollbar's lane and the
+    /// panel's walls included — so clearing it here would lose it to a
+    /// one-column miss.
     fn explorer_context_for(&mut self, target: ExplorerContextTarget, x: u16, y: u16) {
         let (is_multi, is_root_selected) = if let Some(explorer) = self.file_explorer_mut().as_mut()
         {
             let root_id = explorer.tree().root_id();
-            let picked = match target {
-                // The blank area is the root's, so a menu opened there is the
-                // root's menu — and a multi-selection the reader made on the
-                // rows is not what it is about, so it goes.
-                ExplorerContextTarget::Body => {
-                    explorer.clear_multi_selection();
-                    Some(root_id)
-                }
+            let named = match target {
+                ExplorerContextTarget::Body => None,
                 ExplorerContextTarget::Row { index, segment } => {
                     explorer.get_node_at_index(index).map(|anchor| {
                         segment
@@ -176,15 +180,20 @@ impl Editor {
                     })
                 }
             };
+            // Nothing named: the blank area under the last row, or a row index
+            // the tree no longer has — a press carries the index the frame it
+            // was drawn in gave it, and a background expand or a reload can
+            // shorten the tree in between. Both are the project root's, which
+            // is what the blank area means and the safe answer to a press whose
+            // row is gone.
+            let picked = named.unwrap_or(root_id);
             // `set_selected_exact`, not `set_selected`: a segment of a compact
             // row is a directory whose row is folded into a deeper one, and
-            // promoting it to that anchor is exactly the bug. Nothing else
-            // here can be promoted — a row's own id and the root are never
-            // absorbed — so one call covers all three targets.
-            if let Some(node_id) = picked {
-                explorer.set_selected_exact(Some(node_id));
-            }
-            (explorer.has_multi_selection(), picked == Some(root_id))
+            // promoting it to that anchor is exactly the bug. Nothing else here
+            // can be promoted — a row's own id and the root are never absorbed
+            // — so one call covers every target.
+            explorer.set_selected_exact(Some(picked));
+            (explorer.has_multi_selection(), picked == root_id)
         } else {
             (false, false)
         };
@@ -205,6 +214,12 @@ impl Editor {
     /// and the *entry* menu opened against whatever row was selected before,
     /// so Rename, Delete and the copy-path items all acted on that stale
     /// entry (issue #3427).
+    ///
+    /// "The empty space" is every press inside the panel that no row claimed,
+    /// which is also the scrollbar's lane and the panel's own walls — a row is
+    /// clipped to its lane, and the bar routes only the left button. A reader's
+    /// multi-selection therefore survives this (see `explorer_context_for`);
+    /// only the cursor moves.
     ///
     /// The title row declines rather than opening anything, as the component
     /// excluded it with `ev.row <= explorer_area.y`. It used to re-derive a

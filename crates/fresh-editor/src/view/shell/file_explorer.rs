@@ -87,7 +87,8 @@ pub struct Row {
     /// Where each compact-chain segment sits in the concatenation of `left`,
     /// outermost first: the bytes of `dir1/` and of `dir2/` in a
     /// `dir1/dir2/dir3` row, each segment carrying its own separator. Empty
-    /// for a row that is not a chain.
+    /// for a row that is not a chain. (The *fact* a press reports counts the
+    /// other way, up from the anchor — see `UiFact::ExplorerRowContext`.)
     ///
     /// **Byte ranges of the label the row renders**, which is what lets a
     /// press name the segment it landed on: the library answers which byte of
@@ -584,9 +585,16 @@ fn node_row(caret: bool, r: &Row) -> Node<UiMsg> {
                 e.stop();
                 Some(UiMsg::Ui(UiFact::ExplorerRowContext {
                     index,
-                    segment: e
-                        .text_byte
-                        .and_then(|b| chain.iter().position(|seg| seg.contains(&b))),
+                    // Counted up from the anchor — `1` is the segment next to
+                    // the row's own name — because that end of the chain is
+                    // the row's own id, which cannot drift between this frame
+                    // and the lookup. See `FileTreeView::chain_segment_node`.
+                    segment: e.text_byte.and_then(|b| {
+                        chain
+                            .iter()
+                            .position(|seg| seg.contains(&b))
+                            .map(|i| chain.len() - i)
+                    }),
                     x: e.pos.x.max(0) as u16,
                     y: e.pos.y.max(0) as u16,
                 }))
@@ -939,9 +947,10 @@ mod tests {
         };
 
         // `dir1` is cells 4..8, its separator is cell 8, `dir2` is 9..13 and
-        // its separator 13; `dir3`, the row's own name, starts at 14.
-        assert_eq!(segment_at(&mut ui, 5), (1, Some(0)), "on dir1");
-        assert_eq!(segment_at(&mut ui, 8), (1, Some(0)), "dir1's separator");
+        // its separator 13; `dir3`, the row's own name, starts at 14. The
+        // segment is counted up from the anchor, so `dir2` is 1 and `dir1` 2.
+        assert_eq!(segment_at(&mut ui, 5), (1, Some(2)), "on dir1");
+        assert_eq!(segment_at(&mut ui, 8), (1, Some(2)), "dir1's separator");
         assert_eq!(segment_at(&mut ui, 10), (1, Some(1)), "on dir2");
         assert_eq!(
             segment_at(&mut ui, 15),
@@ -1000,7 +1009,7 @@ mod tests {
                 m,
                 UiMsg::Ui(UiFact::ExplorerRowContext {
                     index: 1,
-                    segment: Some(0),
+                    segment: Some(2),
                     ..
                 })
             )),
