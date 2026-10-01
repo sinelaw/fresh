@@ -522,6 +522,381 @@ fn test_indentation_style_current_buffer_persists_across_restart() {
     }
 }
 
+/// Open the View menu and return the screen, so a menu item's checkbox can be
+/// read. The checkbox glyph (`☑` / `☐`) is the only on-screen statement of what
+/// the editor believes a toggle's current state to be.
+fn view_menu_screen(harness: &mut EditorTestHarness) -> String {
+    harness
+        .send_key(KeyCode::Char('v'), KeyModifiers::ALT)
+        .unwrap();
+    harness.render().unwrap();
+    let screen = harness.screen_to_string();
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    screen
+}
+
+/// Reproducer for issue #3449, line-numbers half.
+///
+/// `editor.line_numbers` is an editor-wide preference, so the unsuffixed
+/// toggle owes it to *every* open document — not just the tab that happened to
+/// be in front when it ran. The rendered flag is a per-(split, buffer) cache of
+/// the resolved setting, and the toggle used to refresh only the focused view's,
+/// so the pane's other tabs kept the old gutter and the View menu's checkmark
+/// reported that stale cache once they became current.
+#[test]
+fn test_global_line_numbers_toggle_reaches_every_open_document() {
+    let mut harness = EditorTestHarness::with_temp_project(120, 24).unwrap();
+    let dir = harness.project_dir().unwrap().to_path_buf();
+    std::fs::write(dir.join("a.txt"), "alpha\nbeta\n").unwrap();
+    std::fs::write(dir.join("b.txt"), "delta\nepsilon\n").unwrap();
+
+    harness.open_file(&dir.join("a.txt")).unwrap();
+    harness.open_file(&dir.join("b.txt")).unwrap();
+    harness.render().unwrap();
+
+    // Control: on a fresh start both documents and the menu agree with config.
+    harness.assert_screen_contains("│ delta");
+    assert!(
+        view_menu_screen(&mut harness).contains("☑ Line Numbers"),
+        "the View menu should start out agreeing with `editor.line_numbers`"
+    );
+
+    run_command(&mut harness, "Toggle Line Numbers");
+
+    // b.txt, the document that was current, loses its gutter.
+    harness.assert_screen_not_contains("│ delta");
+    harness.assert_screen_contains("delta");
+
+    // a.txt is the regression: it must follow the editor-wide default too.
+    harness.open_file(&dir.join("a.txt")).unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("alpha");
+    harness.assert_screen_not_contains("│ alpha");
+
+    // …and the View menu must say so while a.txt is the current document.
+    let screen = view_menu_screen(&mut harness);
+    assert!(
+        screen.contains("☐ Line Numbers"),
+        "the View menu must reflect the resolved setting whichever document is \
+         current; got:\n{screen}"
+    );
+}
+
+/// Reproducer for issue #3449, line-wrap half.
+///
+/// Same bug through the other toggle: `Action::ToggleLineWrap` swept one view
+/// state per pane (the tab it was showing), so a pane's other tabs kept their
+/// pre-toggle wrapping. With wrap on, a long line's tail reaches a wrapped row;
+/// with wrap off it is truncated off-screen.
+#[test]
+fn test_global_line_wrap_toggle_reaches_every_open_document() {
+    let mut config = Config::default();
+    config.editor.line_wrap = true;
+    let mut harness = EditorTestHarness::with_temp_project_and_config(60, 24, config).unwrap();
+    let dir = harness.project_dir().unwrap().to_path_buf();
+    std::fs::write(dir.join("a.txt"), format!("{}TAILAAA\n", "A".repeat(80))).unwrap();
+    std::fs::write(dir.join("b.txt"), format!("{}TAILBBB\n", "B".repeat(80))).unwrap();
+
+    harness.open_file(&dir.join("a.txt")).unwrap();
+    harness.open_file(&dir.join("b.txt")).unwrap();
+    harness.render().unwrap();
+
+    // Control: both documents wrap, and the menu agrees.
+    harness.assert_screen_contains("TAILBBB");
+    assert!(
+        view_menu_screen(&mut harness).contains("☑ Line Wrap"),
+        "the View menu should start out agreeing with `editor.line_wrap`"
+    );
+
+    run_command(&mut harness, "Toggle Line Wrap");
+
+    // b.txt, the current document, stops wrapping.
+    harness.assert_screen_not_contains("TAILBBB");
+
+    // a.txt is the regression: it must stop wrapping too.
+    harness.open_file(&dir.join("a.txt")).unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_not_contains("TAILAAA");
+
+    let screen = view_menu_screen(&mut harness);
+    assert!(
+        screen.contains("☐ Line Wrap"),
+        "the View menu must reflect the resolved setting whichever document is \
+         current; got:\n{screen}"
+    );
+}
+
+/// The sweep re-*resolves*; it does not assign. An explicit per-buffer pin on
+/// another document has to survive a global toggle, or fixing #3449 would have
+/// broken the per-buffer half of the convention this file is about: a global
+/// default must not silently undo work the user did elsewhere.
+#[test]
+fn test_global_line_numbers_toggle_keeps_another_documents_pin() {
+    let mut harness = EditorTestHarness::with_temp_project(120, 24).unwrap();
+    let dir = harness.project_dir().unwrap().to_path_buf();
+    std::fs::write(dir.join("a.txt"), "alpha\nbeta\n").unwrap();
+    std::fs::write(dir.join("b.txt"), "delta\nepsilon\n").unwrap();
+
+    harness.open_file(&dir.join("a.txt")).unwrap();
+    harness.render().unwrap();
+
+    // Pin a.txt's gutter *off*, against a global default of on.
+    run_command(&mut harness, "Toggle Line Numbers (Current Buffer)");
+    harness.assert_screen_not_contains("│ alpha");
+
+    // From b.txt, turn the editor-wide default off and back on. a.txt is pinned,
+    // so neither pass may write its rendered flag.
+    harness.open_file(&dir.join("b.txt")).unwrap();
+    harness.render().unwrap();
+    run_command(&mut harness, "Toggle Line Numbers");
+    run_command(&mut harness, "Toggle Line Numbers");
+
+    // b.txt follows the global default, which is back on.
+    harness.assert_screen_contains("│ delta");
+
+    // a.txt keeps its pin.
+    harness.open_file(&dir.join("a.txt")).unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("alpha");
+    harness.assert_screen_not_contains("│ alpha");
+}
+
+/// Reproducer for issue #3449, point 2: a Settings save owes the open documents
+/// the same propagation a menu toggle does.
+///
+/// `Edit | Settings` writes the very same editor-wide keys the unsuffixed View
+/// toggles do, so the reporter rightly expected the same outcome. It used to
+/// assign `show_line_numbers` on each pane's *shown* tab only, so the pane's
+/// other tabs kept the old gutter and the View menu reported it once they became
+/// current. Driven through the dialog rather than by calling `save_settings`
+/// directly, because the pending-change plumbing is what routes a saved value
+/// into the live views.
+#[test]
+fn test_settings_save_reaches_every_open_document() {
+    let temp_dir = TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    std::fs::create_dir(&project_dir).unwrap();
+    std::fs::write(project_dir.join("a.txt"), "alpha\nbeta\n").unwrap();
+    std::fs::write(project_dir.join("b.txt"), "delta\nepsilon\n").unwrap();
+
+    // A dedicated directory context keeps the save off the developer's own
+    // config, the way `test_global_view_toggles_save_to_the_user_config_layer`
+    // does.
+    let dir_context = DirectoryContext::for_testing(temp_dir.path());
+    let mut harness = EditorTestHarness::create(
+        120,
+        24,
+        HarnessOptions::new()
+            .with_config(Config::default())
+            .with_working_dir(project_dir.clone())
+            .with_shared_dir_context(dir_context)
+            .without_empty_plugins_dir(),
+    )
+    .unwrap();
+    harness.open_file(&project_dir.join("a.txt")).unwrap();
+    harness.open_file(&project_dir.join("b.txt")).unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("│ delta");
+
+    // Open Settings, find the Line Numbers field by search, uncheck it, save.
+    harness.editor_mut().open_settings();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Char('/'), KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text("line numbers").unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("Line Numbers");
+
+    // Enter on the focused bool field flips it; the row then shows `[ ]`.
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    let staged = harness.screen_to_string();
+    assert!(
+        staged
+            .lines()
+            .any(|l| l.contains("Line Numbers") && l.contains("[ ]")),
+        "expected the Line Numbers field to read unchecked before saving; got:\n{staged}"
+    );
+
+    harness
+        .send_key(KeyCode::Char('s'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    assert!(
+        !harness.editor().config().editor.line_numbers,
+        "the save should have put `editor.line_numbers` false in the live config"
+    );
+
+    // b.txt, the current document, loses its gutter.
+    harness.assert_screen_not_contains("│ delta");
+    harness.assert_screen_contains("delta");
+
+    // a.txt is the regression: the saved setting must reach it too, and the
+    // View menu must agree while it is current.
+    harness.open_file(&project_dir.join("a.txt")).unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("alpha");
+    harness.assert_screen_not_contains("│ alpha");
+
+    let screen = view_menu_screen(&mut harness);
+    assert!(
+        screen.contains("☐ Line Numbers"),
+        "the View menu must reflect a setting changed through Settings, whichever \
+         document is current; got:\n{screen}"
+    );
+}
+
+/// A global toggle must not reach a plugin's virtual-buffer view.
+///
+/// The Welcome and Dashboard pages, utility-dock panels, grep/diagnostics lists
+/// and every `createVirtualBuffer` view are laid out by their plugin at a width
+/// it already knows, and the plugin passes its `showLineNumbers` choice
+/// *straight onto the rendered flag* with no override recorded
+/// (`plugin_dispatch.rs`'s `handle_create_virtual_buffer*`, `handle_open_in_dock`).
+/// So the editor-wide sweep has to leave those views alone, or a toggle hands a
+/// panel a gutter that also steals the columns its widgets were laid out for —
+/// the damage `plugin_dispatch.rs` and `buffer_groups.rs` both carry comments
+/// about.
+///
+/// Asserted on the view-state flag rather than on screen: a virtual panel's
+/// content comes from its plugin, so there is nothing to render in a
+/// plugin-less harness. `show_line_numbers` is what the renderer reads for the
+/// gutter (`render.rs`), and the document's own flag is asserted alongside as a
+/// positive control, so the test cannot pass by the sweep simply not running.
+#[test]
+fn test_global_line_numbers_toggle_skips_a_virtual_buffer_view() {
+    let mut config = Config::default();
+    // Start with the gutter off so the toggle below turns it *on* — the
+    // direction that would add a gutter to a panel built without one.
+    config.editor.line_numbers = false;
+    let mut harness = EditorTestHarness::with_temp_project_and_config(120, 24, config).unwrap();
+    let dir = harness.project_dir().unwrap().to_path_buf();
+    std::fs::write(dir.join("a.txt"), "alpha\nbeta\n").unwrap();
+
+    harness.open_file(&dir.join("a.txt")).unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_not_contains("│ alpha");
+    let doc = harness.editor().active_buffer();
+
+    // A plugin panel: a virtual buffer whose view keeps the gutter off by
+    // assignment, with no override recorded — exactly what the plugin paths do.
+    let panel = harness
+        .editor_mut()
+        .active_window_mut()
+        .create_virtual_buffer("*Test Panel*".to_string(), "test-panel".to_string(), true);
+    {
+        let window = harness.editor_mut().active_window_mut();
+        let split = window.split_manager().active_split();
+        if let Some(view_state) = window.split_view_states_mut().get_mut(&split) {
+            view_state.ensure_buffer_state(panel).show_line_numbers = false;
+        }
+    }
+
+    run_command(&mut harness, "Toggle Line Numbers");
+    harness.render().unwrap();
+
+    let window = harness.editor().active_window();
+    let split = window.split_manager().active_split();
+    let view_state = window
+        .split_view_states()
+        .get(&split)
+        .expect("the active split has a view state");
+
+    // Positive control: the document followed the new editor-wide default, so
+    // the sweep definitely ran.
+    assert!(
+        view_state
+            .buffer_state(doc)
+            .expect("the document has a view state in this split")
+            .show_line_numbers,
+        "the document should have picked up the editor-wide line-number default"
+    );
+    // The panel did not.
+    assert!(
+        !view_state
+            .buffer_state(panel)
+            .expect("the panel has a view state in this split")
+            .show_line_numbers,
+        "a global toggle must not add a gutter to a plugin's virtual-buffer view \
+         — it holds the flag off by assignment, with no override to protect it"
+    );
+}
+
+/// Reload Configuration is a fourth way to change these editor-wide settings,
+/// and owes the open documents the same propagation (#3449).
+///
+/// `editor.line_numbers` lives in `config.json`, so editing it there and running
+/// **Reload Configuration** is a normal way to change it. `reload_config`
+/// replaced the whole config and re-applied theme, keybindings, clipboard, bars
+/// and LSP, but never re-resolved the open views — so every already-open
+/// document kept its old gutter and the View menu reported that stale state,
+/// the same symptom the menu toggles had.
+#[test]
+fn test_reload_config_reaches_every_open_document() {
+    let temp_dir = TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    std::fs::create_dir(&project_dir).unwrap();
+    std::fs::write(project_dir.join("a.txt"), "alpha\nbeta\n").unwrap();
+    std::fs::write(project_dir.join("b.txt"), "delta\nepsilon\n").unwrap();
+
+    let mut harness = EditorTestHarness::create(
+        120,
+        24,
+        HarnessOptions::new()
+            .with_working_dir(project_dir.clone())
+            .without_empty_plugins_dir(),
+    )
+    .unwrap();
+    harness.open_file(&project_dir.join("a.txt")).unwrap();
+    harness.open_file(&project_dir.join("b.txt")).unwrap();
+    harness.render().unwrap();
+
+    // Both documents start with the gutter the default config asks for.
+    harness.assert_screen_contains("│ delta");
+
+    // Turn it off in the project config layer on disk, then reload.
+    let config_dir = project_dir.join(".fresh");
+    std::fs::create_dir_all(&config_dir).unwrap();
+    std::fs::write(
+        config_dir.join("config.json"),
+        serde_json::json!({ "editor": { "line_numbers": false } }).to_string(),
+    )
+    .unwrap();
+    harness.editor_mut().reload_config();
+    harness.render().unwrap();
+
+    assert!(
+        !harness.editor().config().editor.line_numbers,
+        "the reload should have picked `editor.line_numbers` up from disk"
+    );
+
+    // b.txt, the current document, drops its gutter.
+    harness.assert_screen_not_contains("│ delta");
+    harness.assert_screen_contains("delta");
+
+    // a.txt must follow too, and the View menu must agree while it is current.
+    harness.open_file(&project_dir.join("a.txt")).unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("alpha");
+    harness.assert_screen_not_contains("│ alpha");
+
+    let screen = view_menu_screen(&mut harness);
+    assert!(
+        screen.contains("☐ Line Numbers"),
+        "the View menu must reflect a setting changed by a config reload, \
+         whichever document is current; got:\n{screen}"
+    );
+}
+
 /// The other half of the naming convention: an *unsuffixed* toggle changes the
 /// editor-wide default and saves it, so the choice is still there next launch.
 ///

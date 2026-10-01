@@ -184,17 +184,31 @@ impl Editor {
             lsp.set_universal_configs(universal_servers);
         }
 
-        // Propagate editor config to all split and buffer view states
-        for view_state in self
-            .windows
-            .get_mut(&self.active_window)
-            .and_then(|w| w.buffers.split_view_states_mut())
-            .expect("active window must have a populated split layout")
-            .values_mut()
-        {
-            view_state.buffer_tab_state_mut().show_line_numbers = self.config.editor.line_numbers;
-            for (_, buf_state) in view_state.buffer_states_mut() {
-                buf_state.rulers = self.config.editor.rulers.clone();
+        // Propagate the editor display defaults to every split and buffer view
+        // state. A Settings save changes the same editor-wide preferences the
+        // unsuffixed View toggles do, so it owes the open views the same
+        // re-resolution: this used to assign `show_line_numbers` on each pane's
+        // *shown* tab only, which left the pane's other tabs rendering the old
+        // gutter (with the View menu reporting it once they became current),
+        // never propagated `line_wrap` at all, and — by assigning rather than
+        // resolving — overwrote an explicit per-buffer pin and a compose
+        // plugin's hidden gutter (issue #3449).
+        for window in self.windows.values_mut() {
+            window.resync_global_display_defaults();
+        }
+        // `rulers` is not part of that resolution: it has no override and no
+        // by-construction exception, so it reaches *every* view state, as it
+        // did before the sweep existed. Without this a ruler change would miss
+        // a buffer in page view, a terminal tab or a grouped panel until it was
+        // reopened.
+        let rulers = self.config.editor.rulers.clone();
+        for window in self.windows.values_mut() {
+            if let Some(view_states) = window.buffers.split_view_states_mut() {
+                for view_state in view_states.values_mut() {
+                    for (_, buf_state) in view_state.buffer_states_mut() {
+                        buf_state.rulers = rulers.clone();
+                    }
+                }
             }
         }
 
@@ -266,6 +280,14 @@ impl Editor {
                 if let Ok(resolved_config) = resolver.resolve() {
                     self.set_config(resolved_config);
                     self.refresh_open_buffer_settings_from_config();
+                    // Re-run the view sweep against the *normalized* config:
+                    // the pass above the `match` ran on the pre-normalization
+                    // tree, so a key the resolver rewrites (`wrap_column`'s
+                    // zero sentinel, say) would otherwise leave every open
+                    // view holding a value the user never saved.
+                    for window in self.windows.values_mut() {
+                        window.resync_global_display_defaults();
+                    }
                     self.invalidate_live_editor_layout_after_settings_save();
                 }
                 // Tell plugins the config moved under them. Fired once,

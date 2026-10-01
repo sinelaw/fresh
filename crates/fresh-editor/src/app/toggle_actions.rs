@@ -44,13 +44,18 @@ impl Editor {
     ///     setting takes effect on source buffers and on leaving the mode. The
     ///     status message says so, so an apparently inert command is explained.
     ///
-    /// Scope is the active split's view state, matching
+    /// The active split's view state is where the *pin* is dropped, matching
     /// [`toggle_line_numbers_current_buffer`](Self::toggle_line_numbers_current_buffer).
-    /// It is deliberately not swept across every split: terminal splits, grouped
-    /// panels and plugin docks hold `show_line_numbers = false` directly, with no
-    /// override recorded, so re-resolving them would hand those panes a gutter
-    /// they are built never to have. Other views pick the new default up from
-    /// `apply_config_defaults`, the path that owns that stamping.
+    /// The new default is then re-resolved across every already-open view by
+    /// `Window::resync_global_display_defaults` (not an intra-doc link: this
+    /// method is public and that one is `pub(crate)`), because this is an
+    /// editor-wide preference: before that, only the focused
+    /// view and files opened *later* followed it, so the other tabs kept their
+    /// old rendering and the View menu's checkmark went stale on them (issue
+    /// #3449). That sweep skips the panes which hold the gutter off by
+    /// construction — terminal splits, grouped panels and plugin docks record
+    /// no override, so re-resolving them would hand those panes a gutter they
+    /// are built never to have.
     pub fn toggle_line_numbers(&mut self) {
         let new_value = !self.config.editor.line_numbers;
         let resolved = {
@@ -78,6 +83,13 @@ impl Editor {
         // reached only the editor-level config, so the very next file opened
         // still came up with the old setting.
         self.sync_windows_config();
+        // Re-resolve the new default onto every already-open view, in every
+        // window: the fanout above only reaches the config each window reads
+        // *new* buffers through. Without this the other tabs in this very pane
+        // keep their pre-toggle gutter and the View menu reports it (#3449).
+        for window in self.windows.values_mut() {
+            window.resync_global_display_defaults();
+        }
         self.persist_config_change(config_keys::EDITOR_LINE_NUMBERS, new_value);
 
         // When a mode outvotes the new setting the command looks inert, so say
@@ -914,6 +926,18 @@ impl Editor {
                 .filter(|c| c.enabled)
                 .collect();
             lsp.set_universal_configs(universal_servers);
+        }
+
+        // The reloaded config replaced `editor.line_numbers` / `editor.line_wrap`
+        // wholesale, so the open views owe the same re-resolution a menu toggle
+        // or a Settings save gets. Without this, editing those keys in
+        // `config.json` and running "Reload Configuration" left every already-open
+        // document rendering the old setting and the View menu reporting it —
+        // issue #3449's symptom through this path instead of the toggles'.
+        // `set_config` above has already fanned the new config out to each
+        // window, which is what the resolve below reads.
+        for window in self.windows.values_mut() {
+            window.resync_global_display_defaults();
         }
 
         // Control-event bus: in-process observers (the test harness's
