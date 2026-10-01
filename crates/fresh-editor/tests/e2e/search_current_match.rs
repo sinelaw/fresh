@@ -635,3 +635,151 @@ fn test_find_next_still_works_after_query_replace_drops_the_overlays() {
         harness.get_status_bar()
     );
 }
+
+// ---------------------------------------------------------------------------
+// The stored match set only speaks for one buffer at one moment (issue #3444)
+// ---------------------------------------------------------------------------
+
+/// `SearchState` is per-window but the highlights are per-buffer, so switching
+/// files leaves the match set behind. Its byte offsets mean nothing in the
+/// file now on screen — they used to be navigated anyway, reporting a match in
+/// a file that has none and parking the caret past the end of it.
+#[test]
+fn test_find_next_in_another_buffer_does_not_use_the_first_buffer_offsets() {
+    let temp_dir = TempDir::new().unwrap();
+    let small = temp_dir.path().join("small.txt");
+    let wide = temp_dir.path().join("wide.txt");
+    std::fs::write(&small, "tiny\n").unwrap();
+    std::fs::write(&wide, format!("{}\nzz NEEDLE zz\n", "x".repeat(80))).unwrap();
+
+    let mut harness = EditorTestHarness::new(100, 24).unwrap();
+    harness.open_file(&small).unwrap();
+    harness.open_file(&wide).unwrap();
+    harness.render().unwrap();
+
+    search(&mut harness, "NEEDLE", false);
+    assert_eq!(harness.get_selected_text(), "NEEDLE");
+
+    // Back to the 5-byte file, which has no match at all.
+    harness
+        .send_key(KeyCode::PageUp, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.process_async_and_render().unwrap();
+    assert_eq!(harness.get_buffer_content().unwrap(), "tiny\n");
+
+    find_next(&mut harness);
+    let status = harness.get_status_bar();
+    assert!(
+        !status.contains("Match "),
+        "there is no match in this file, got: {status}"
+    );
+    assert!(
+        harness.cursor_position() <= "tiny\n".len(),
+        "the caret must stay inside the buffer, got {}",
+        harness.cursor_position()
+    );
+
+    // The search is still there for the file it was collected from.
+    harness
+        .send_key(KeyCode::PageDown, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.process_async_and_render().unwrap();
+    find_next(&mut harness);
+    assert_eq!(
+        harness.get_selected_text(),
+        "NEEDLE",
+        "returning to the searched file resumes it: {}",
+        harness.get_status_bar()
+    );
+}
+
+/// Switching to a file that *does* contain the pattern runs the search there,
+/// rather than stepping through offsets collected somewhere else.
+#[test]
+fn test_find_next_in_another_buffer_searches_that_buffer() {
+    let temp_dir = TempDir::new().unwrap();
+    let one = temp_dir.path().join("one.txt");
+    let two = temp_dir.path().join("two.txt");
+    std::fs::write(&one, "aa NEEDLE\nbb NEEDLE\ncc NEEDLE\n").unwrap();
+    std::fs::write(&two, "xx NEEDLE yy\n").unwrap();
+
+    let mut harness = EditorTestHarness::new(100, 24).unwrap();
+    harness.open_file(&one).unwrap();
+    harness.open_file(&two).unwrap();
+    harness.render().unwrap();
+
+    search(&mut harness, "NEEDLE", false);
+    assert!(harness.get_status_bar().contains("Found 1 match"));
+
+    harness
+        .send_key(KeyCode::PageUp, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.process_async_and_render().unwrap();
+
+    find_next(&mut harness);
+    assert_eq!(harness.get_selected_text(), "NEEDLE");
+    find_next(&mut harness);
+    assert!(
+        harness.get_status_bar().contains("of 3"),
+        "the three matches of the file now on screen: {}",
+        harness.get_status_bar()
+    );
+}
+
+/// A query-replace that actually replaces something leaves the stored match
+/// set describing text that is no longer there. Find Next used to walk it and
+/// land on the replacement.
+#[test]
+fn test_find_next_after_a_query_replace_that_replaced_skips_the_replacement() {
+    let (_dir, mut harness) = open_with("one TARGET two\nTARGET three\nfour TARGET\n");
+
+    search(&mut harness, "TARGET", false);
+    assert!(harness.get_status_bar().contains("Found 3 matches"));
+
+    harness
+        .send_key(
+            KeyCode::Char('r'),
+            KeyModifiers::CONTROL | KeyModifiers::ALT,
+        )
+        .unwrap();
+    harness.type_text("TARGET").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.type_text("X").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("Replace?");
+
+    // Replace the first, skip the second, then quit.
+    harness.type_text("y").unwrap();
+    harness.process_async_and_render().unwrap();
+    harness.type_text("n").unwrap();
+    harness.process_async_and_render().unwrap();
+    harness.type_text("q").unwrap();
+    harness.process_async_and_render().unwrap();
+    assert_eq!(
+        harness.get_buffer_content().unwrap(),
+        "one X two\nTARGET three\nfour TARGET\n"
+    );
+
+    // Two are left, and both are real. The first press re-runs the search,
+    // because the replacement left the stored match set describing text that
+    // is gone, so it reports the fresh total rather than a step.
+    find_next(&mut harness);
+    assert_eq!(harness.get_selected_text(), "TARGET");
+    assert!(
+        harness.get_status_bar().contains("Found 2 matches"),
+        "the replaced one must drop out of the total: {}",
+        harness.get_status_bar()
+    );
+    find_next(&mut harness);
+    assert_eq!(harness.get_selected_text(), "TARGET");
+    assert!(
+        harness.get_status_bar().contains("of 2"),
+        "stepping the refreshed set: {}",
+        harness.get_status_bar()
+    );
+}

@@ -3585,7 +3585,7 @@ impl Window {
         // The overlays are gone, so they no longer stand in for the match
         // set: F3 falls back to the stored snapshot from here on.
         if let Some(ss) = self.search_state.as_mut() {
-            ss.overlays_track_matches = None;
+            ss.overlays_track_matches = false;
         }
     }
 
