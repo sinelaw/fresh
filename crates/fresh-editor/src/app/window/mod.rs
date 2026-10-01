@@ -3585,7 +3585,7 @@ impl Window {
         // The overlays are gone, so they no longer stand in for the match
         // set: F3 falls back to the stored snapshot from here on.
         if let Some(ss) = self.search_state.as_mut() {
-            ss.overlays_track_matches = false;
+            ss.overlays_track_matches = None;
         }
     }
 
@@ -4332,6 +4332,23 @@ impl Window {
         // word-boundary context on either side of the edit is included.
         let start_line = state.buffer.get_line_number(edit_start.min(buf_len));
         let end_line = state.buffer.get_line_number(edit_end);
+        let win_start = state.buffer.line_start_offset(start_line).unwrap_or(0);
+        let win_end = state
+            .buffer
+            .line_start_offset(end_line + 1)
+            .unwrap_or(buf_len)
+            .min(buf_len);
+
+        // Then out again over any match that reaches past those lines — a
+        // match spanning a line break. The swap below drops every overlay
+        // touching the window, so one the rescan cannot see in full would be
+        // removed and never re-added, silently leaving the live match set.
+        let span =
+            state
+                .overlays
+                .namespace_replacement_span(&ns, win_start..win_end, &state.marker_list);
+        let start_line = state.buffer.get_line_number(span.start.min(buf_len));
+        let end_line = state.buffer.get_line_number(span.end.min(buf_len));
         let win_start = state.buffer.line_start_offset(start_line).unwrap_or(0);
         let win_end = state
             .buffer

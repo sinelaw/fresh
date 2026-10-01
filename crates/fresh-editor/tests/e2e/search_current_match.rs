@@ -469,11 +469,7 @@ fn test_find_next_reports_no_matches_after_deleting_the_whole_buffer() {
         !status.contains("Match "),
         "an empty buffer has no match to report, got: {status}"
     );
-    assert_eq!(
-        harness.cursor_position(),
-        0,
-        "nothing to navigate to in an empty buffer"
-    );
+    assert_eq!(harness.get_selected_text(), "", "nothing got selected");
 }
 
 /// Deleting some of the matched lines leaves the rest navigable, and the
@@ -542,5 +538,100 @@ fn test_find_next_after_deleting_every_match_reports_no_matches() {
     assert!(
         !status.contains("Match "),
         "every match is gone, got: {status}"
+    );
+
+    // Shift+F3 shares the path and must agree.
+    harness
+        .send_key(KeyCode::F(3), KeyModifiers::SHIFT)
+        .unwrap();
+    harness.process_async_and_render().unwrap();
+    let status = harness.get_status_bar();
+    assert!(
+        !status.contains("Match "),
+        "Find Previous must agree there is nothing left, got: {status}"
+    );
+}
+
+/// A match that spans a line break reaches outside the line(s) an edit
+/// touches. Re-evaluating only those lines removes its overlay and cannot
+/// re-find it, which used to drop it from the live match set — and, once
+/// the overlays became the authority for "no matches left", killed the
+/// search outright while the match was still sitting in the buffer.
+#[test]
+fn test_find_next_keeps_a_multiline_match_after_an_edit_on_its_last_line() {
+    let (_dir, mut harness) = open_with("aaa\nfoo\nbarZ\nzzz\n");
+
+    search(&mut harness, "foo\\nbar", true);
+    assert_eq!(harness.get_selected_text(), "foo\nbar");
+
+    // Edit the match's last line, past the match itself.
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    harness.type_text("Q").unwrap();
+    harness.render().unwrap();
+    assert_eq!(
+        harness.get_buffer_content().unwrap(),
+        "aaa\nfoo\nbarZQ\nzzz\n"
+    );
+
+    find_next(&mut harness);
+    assert_eq!(
+        harness.get_selected_text(),
+        "foo\nbar",
+        "the match is still there, so Find Next must still reach it"
+    );
+    assert!(
+        harness.get_status_bar().contains("Match 1 of 1"),
+        "status bar: {}",
+        harness.get_status_bar()
+    );
+}
+
+/// Dropping the overlays while leaving the search navigable - what
+/// `finish_interactive_replace` does when a query-replace is quit - must
+/// hand Find Next back to the stored match set rather than read the empty
+/// namespace as "every match is gone".
+#[test]
+fn test_find_next_still_works_after_query_replace_drops_the_overlays() {
+    let (_dir, mut harness) = open_with("one TARGET two TARGET three TARGET\n");
+
+    harness
+        .send_key(
+            KeyCode::Char('r'),
+            KeyModifiers::CONTROL | KeyModifiers::ALT,
+        )
+        .unwrap();
+    harness.type_text("TARGET").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.type_text("X").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("Replace?");
+
+    // Quit without replacing: the overlays go, the search stays navigable.
+    harness.type_text("q").unwrap();
+    harness.process_async_and_render().unwrap();
+    assert_eq!(
+        harness.get_buffer_content().unwrap(),
+        "one TARGET two TARGET three TARGET\n",
+        "quitting replaces nothing"
+    );
+    assert_eq!(
+        harness.count_search_highlights(),
+        0,
+        "finishing the replace drops the search overlays"
+    );
+
+    find_next(&mut harness);
+    assert_eq!(
+        harness.get_selected_text(),
+        "TARGET",
+        "the matches are still in the buffer, so Find Next must reach them: {}",
+        harness.get_status_bar()
     );
 }

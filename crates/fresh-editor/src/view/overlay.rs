@@ -568,10 +568,10 @@ impl OverlayManager {
         // the span being re-evaluated — deleting the whole buffer, say —
         // every overlay inside it collapses onto that one point and the
         // caller hands us `p..p`. Skipping the pass stranded those dead
-        // overlays, and each one then surfaced as a phantom search match
-        // (issue #3444). Healthy overlays are left alone for an empty range:
-        // no span is being replaced, so there is nothing to put back in
-        // their place.
+        // overlays in whatever namespace they belonged to; for search, each
+        // one then surfaced as a phantom match (issue #3444). Healthy
+        // overlays are left alone for an empty range: no span is being
+        // replaced, so there is nothing to put back in their place.
         let replaces_span = range.start < range.end;
         let hits = marker_list.query_range(range.start, range.end);
         let mut candidates: Vec<usize> = hits
@@ -784,6 +784,47 @@ impl OverlayManager {
         idxs.dedup();
         idxs.into_iter()
             .filter_map(move |idx| self.overlays.get(idx))
+    }
+
+    /// Grow `range` to cover every overlay in `namespace` that a
+    /// [`replace_range_in_namespace`] over it would remove.
+    ///
+    /// A caller that rebuilds a namespace's overlays by rescanning `range`
+    /// can only re-find what lies inside it, so an overlay reaching past
+    /// either end would be removed and never put back. Rescanning the range
+    /// this returns instead keeps those overlays recoverable. Only live
+    /// overlays widen it: collapsed ones are points, and an empty `range`
+    /// removes nothing else, so it is returned unchanged.
+    ///
+    /// [`replace_range_in_namespace`]: Self::replace_range_in_namespace
+    pub fn namespace_replacement_span(
+        &self,
+        namespace: &OverlayNamespace,
+        range: Range<usize>,
+        marker_list: &MarkerList,
+    ) -> Range<usize> {
+        if range.start >= range.end {
+            return range;
+        }
+        let mut lo = range.start;
+        let mut hi = range.end;
+        for o in self.candidates_in(range.clone(), marker_list) {
+            if o.namespace.as_ref() != Some(namespace) {
+                continue;
+            }
+            let (Some(start), Some(end)) = (
+                marker_list.get_position(o.start_marker),
+                marker_list.get_position(o.end_marker),
+            ) else {
+                continue;
+            };
+            // Mirror the healthy-overlay arm of `replace_range_in_namespace`.
+            if start < end && start < range.end && range.start < end {
+                lo = lo.min(start);
+                hi = hi.max(end);
+            }
+        }
+        lo..hi
     }
 
     /// The overlays in one namespace. O(k), for callers that would otherwise
