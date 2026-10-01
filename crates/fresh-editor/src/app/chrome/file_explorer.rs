@@ -19,6 +19,20 @@ use super::Editor;
 /// The two runtimes cannot share a constant; keep them in sync.
 const BIG_FILE_ARGS: [&str; 2] = ["-c", "core.bigFileThreshold=1m"];
 
+/// What a right-press on the explorer named: a row, with the segment of a
+/// compact row's `dir1/dir2/dir3` label the pointer was on, or the panel's
+/// empty space — which is the project root's.
+enum ExplorerContextTarget {
+    Row {
+        /// By index in the tree's display order.
+        index: usize,
+        /// Which folded directory of the row's label, outermost first; `None`
+        /// for the row's own name.
+        segment: Option<usize>,
+    },
+    Body,
+}
+
 /// Behavior owned by this surface (moved from mouse_input.rs —
 /// the handlers its arms dispatch to).
 impl Editor {
@@ -121,24 +135,56 @@ impl Editor {
         }
     }
 
-    /// A right press on a tree row: select it, then open its context menu just
-    /// below the pointer.
-    pub(crate) fn explorer_row_context(&mut self, index: usize, x: u16, y: u16) {
-        self.explorer_context_for(Some(index), x, y);
+    /// A right press on a tree row: select what the press named, then open its
+    /// context menu just below the pointer.
+    ///
+    /// `segment` is which of a compact row's folded directories the pointer
+    /// was on, if any — see [`UiFact::ExplorerRowContext`](crate::view::shell::msg::UiFact::ExplorerRowContext).
+    pub(crate) fn explorer_row_context(
+        &mut self,
+        index: usize,
+        segment: Option<usize>,
+        x: u16,
+        y: u16,
+    ) {
+        self.explorer_context_for(ExplorerContextTarget::Row { index, segment }, x, y);
     }
 
-    /// The menu, for a row (`Some`, by display index) or for the panel's
-    /// empty space (`None`: no selection moves, and the menu opens in its
-    /// root form).
-    fn explorer_context_for(&mut self, index: Option<usize>, x: u16, y: u16) {
+    /// The menu, for whatever the press named.
+    ///
+    /// **The selection moves first, every time.** Every item in this menu acts
+    /// on the explorer's selection, so a menu opened without moving it is a
+    /// menu about some other entry — which is what the empty space under the
+    /// last row used to give (issue #3427).
+    fn explorer_context_for(&mut self, target: ExplorerContextTarget, x: u16, y: u16) {
         let (is_multi, is_root_selected) = if let Some(explorer) = self.file_explorer_mut().as_mut()
         {
-            let mut clicked_is_root = false;
-            if let Some(node_id) = index.and_then(|i| explorer.get_node_at_index(i)) {
-                explorer.set_selected(Some(node_id));
-                clicked_is_root = node_id == explorer.tree().root_id();
+            let root_id = explorer.tree().root_id();
+            let picked = match target {
+                // The blank area is the root's, so a menu opened there is the
+                // root's menu — and a multi-selection the reader made on the
+                // rows is not what it is about, so it goes.
+                ExplorerContextTarget::Body => {
+                    explorer.clear_multi_selection();
+                    Some(root_id)
+                }
+                ExplorerContextTarget::Row { index, segment } => {
+                    explorer.get_node_at_index(index).map(|anchor| {
+                        segment
+                            .and_then(|s| explorer.chain_segment_node(anchor, s))
+                            .unwrap_or(anchor)
+                    })
+                }
+            };
+            // `set_selected_exact`, not `set_selected`: a segment of a compact
+            // row is a directory whose row is folded into a deeper one, and
+            // promoting it to that anchor is exactly the bug. Nothing else
+            // here can be promoted — a row's own id and the root are never
+            // absorbed — so one call covers all three targets.
+            if let Some(node_id) = picked {
+                explorer.set_selected_exact(Some(node_id));
             }
-            (explorer.has_multi_selection(), clicked_is_root)
+            (explorer.has_multi_selection(), picked == Some(root_id))
         } else {
             (false, false)
         };
@@ -152,20 +198,26 @@ impl Editor {
     /// A right-press on the panel that no row claimed.
     ///
     /// Every row answers its own right-press, so this is the empty space
-    /// under the last one: no selection moves, and the menu opens in its
-    /// root form. That is the component's behaviour — `relative_row =
-    /// ev.row - (area.y + 1)` past the last entry resolved to no node — with
-    /// the title row declining rather than opening anything. It used to
-    /// re-derive a viewport row from the panel's rectangle and look it up;
-    /// with rows named by their index in the tree rather than on screen,
-    /// that arithmetic would name a real node that is simply not on screen.
+    /// under the last one, and it **selects the project root** and opens the
+    /// root-form menu — VS Code's behaviour, and what the narrow menu on the
+    /// root row already gave. Saying only "the menu opens in its root form"
+    /// was not enough: with no selection moved, `is_root_selected` was false
+    /// and the *entry* menu opened against whatever row was selected before,
+    /// so Rename, Delete and the copy-path items all acted on that stale
+    /// entry (issue #3427).
+    ///
+    /// The title row declines rather than opening anything, as the component
+    /// excluded it with `ev.row <= explorer_area.y`. It used to re-derive a
+    /// viewport row from the panel's rectangle and look it up; with rows named
+    /// by their index in the tree rather than on screen, that arithmetic would
+    /// name a real node that is simply not on screen.
     pub(crate) fn explorer_body_context(&mut self, x: u16, y: u16) {
         let area = self.shell_region_now(crate::view::shell::frame::HostRegion::Explorer);
         // The title row is not a right-click target.
         if area.height == 0 || y <= area.y {
             return;
         }
-        self.explorer_context_for(None, x, y);
+        self.explorer_context_for(ExplorerContextTarget::Body, x, y);
     }
 
     /// Show a tooltip for a file explorer status indicator

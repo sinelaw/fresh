@@ -84,6 +84,19 @@ pub struct Row {
     pub theme: String,
     /// Indicator, leading slot, compact chain and name, in order.
     pub left: Runs,
+    /// Where each compact-chain segment sits in the concatenation of `left`,
+    /// outermost first: the bytes of `dir1/` and of `dir2/` in a
+    /// `dir1/dir2/dir3` row, each segment carrying its own separator. Empty
+    /// for a row that is not a chain.
+    ///
+    /// **Byte ranges of the label the row renders**, which is what lets a
+    /// press name the segment it landed on: the library answers which byte of
+    /// a text node is under the pointer ([`fresh_ui::Event::text_byte`]) and
+    /// these say which segment that byte is in. A column derived from the
+    /// path instead would have to re-guess the indent, the indicator's width
+    /// and any leading decoration — the three things that shift where the
+    /// names start — and would be wrong on a wide glyph besides.
+    pub chain: Vec<std::ops::Range<usize>>,
     /// The status slot pushed to the right edge, if the providers gave one.
     pub trailing: Option<Slot>,
     /// `" [Error]"` for a node that failed to load.
@@ -488,6 +501,7 @@ fn node_row(caret: bool, r: &Row) -> Node<UiMsg> {
         children.push(text(t.clone()).theme(theme.clone()));
     }
     let index = r.index;
+    let chain = r.chain.clone();
     let body = row()
         .theme(r.theme.clone())
         .h(Sizing::Cells(1))
@@ -498,17 +512,26 @@ fn node_row(caret: bool, r: &Row) -> Node<UiMsg> {
     // hardware cursor on that cell (`cursor_byte`), so the row the keyboard
     // is on is the display list's caret, not arithmetic over the region's
     // origin and the box's border.
+    //
+    // **`Ignore`, not `Transparent`.** The caret is ink; it has no handlers of
+    // its own, and a transparent node is still *hit* — it ends a path, and the
+    // hit then continues behind it. So on the selected row the topmost path
+    // ended at this overlay, and the row's listeners (its ancestors) ran
+    // against a target that holds no text: `Event::text_byte` came back empty
+    // and a press on `dir2` of a compact row could not say which segment it
+    // was on. `Ignore` takes the overlay out of the hit entirely, so the press
+    // lands on the label underneath it, as it does on every unselected row.
     let body = if caret {
         stack().h(Sizing::Cells(1)).children([
             body,
             row()
                 .h(Sizing::Cells(1))
-                .pointer_mode(PointerMode::Transparent)
+                .pointer_mode(PointerMode::Ignore)
                 .children([text("▌")
                     .theme(caret_ink(&r.theme))
                     .w(Sizing::Cells(1))
                     .cursor_byte(0)
-                    .pointer_mode(PointerMode::Transparent)]),
+                    .pointer_mode(PointerMode::Ignore)]),
         ])
     } else {
         body
@@ -541,6 +564,17 @@ fn node_row(caret: bool, r: &Row) -> Node<UiMsg> {
         // runs *before* those bands, so "above everything" has to be said here,
         // by declining, instead of by rank. Declining is also not claiming, so
         // the press travels on untouched.
+        //
+        // **Which segment of a compact row it landed on travels with it.**
+        // One row carries `dir1/dir2/dir3`, and the menu is about the name
+        // under the pointer, not about the row's deepest directory (issue
+        // #3427). `text_byte` is the byte of the label under the pointer,
+        // answered by the library from the shaping it drew — the dispatcher
+        // asks the event's *target*, so this listener up the chain reads it
+        // without the segments needing listeners of their own — and
+        // `Row::chain` says which segment that byte is in. A press on the
+        // indent, the indicator or the name itself is in no segment's range
+        // and names the row, as every press on a plain row does.
         .on(
             GestureKind::Press,
             Rc::new(move |e: &Event| {
@@ -550,6 +584,9 @@ fn node_row(caret: bool, r: &Row) -> Node<UiMsg> {
                 e.stop();
                 Some(UiMsg::Ui(UiFact::ExplorerRowContext {
                     index,
+                    segment: e
+                        .text_byte
+                        .and_then(|b| chain.iter().position(|seg| seg.contains(&b))),
                     x: e.pos.x.max(0) as u16,
                     y: e.pos.y.max(0) as u16,
                 }))
@@ -731,11 +768,40 @@ mod tests {
                 ("  ".to_string(), Explorer::panel()),
                 (name.to_string(), Explorer::panel()),
             ],
+            chain: Vec::new(),
             trailing: trailing.map(|t| Slot {
                 text: t.to_string(),
                 theme: pair("diagnostic.warning_fg", "editor.bg"),
                 path: std::path::PathBuf::from(name),
             }),
+            error: None,
+        }
+    }
+
+    /// A compact-chain row: the indent, the expand indicator, then
+    /// `<segments>/<name>` — `left` and `chain` built as `describe_row` builds
+    /// them, with each range counted off the runs it pushed.
+    fn chain_row_of(index: usize, segments: &[&str], name: &str) -> Row {
+        let mut left: Runs = vec![
+            ("  ".to_string(), Explorer::panel()),
+            ("▼ ".to_string(), Explorer::panel()),
+        ];
+        let mut chain = Vec::new();
+        let mut at: usize = left.iter().map(|(t, _)| t.len()).sum();
+        for seg in segments {
+            let start = at;
+            at += seg.len() + "/".len();
+            chain.push(start..at);
+            left.push((seg.to_string(), Explorer::panel()));
+            left.push(("/".to_string(), Explorer::panel()));
+        }
+        left.push((name.to_string(), Explorer::panel()));
+        Row {
+            index,
+            theme: Explorer::panel(),
+            left,
+            chain,
+            trailing: None,
             error: None,
         }
     }
@@ -829,6 +895,117 @@ mod tests {
                 .iter()
                 .any(|f| matches!(f, UiFact::ExplorerBodyContext { .. })),
             "the row claimed it; the panel must not answer too: {facts:?}"
+        );
+    }
+
+    /// **A right-press on one segment of a compact row names that segment.**
+    ///
+    /// One row draws `dir1/dir2/dir3`, and the menu it opens is about the name
+    /// under the pointer — the deepest directory only when that is the name
+    /// pressed (issue #3427). The description does not re-derive a column: the
+    /// library says which byte of the label the pointer is on and `Row::chain`
+    /// says which segment holds that byte, so the indent and the multi-byte
+    /// indicator in front of the names cost nothing to get right.
+    #[test]
+    fn a_right_press_on_a_chain_segment_names_that_segment() {
+        let e = panel_of(
+            vec![
+                row_of(0, "proj", None),
+                chain_row_of(1, &["dir1", "dir2"], "dir3"),
+            ],
+            30,
+        );
+        let mut ui = laid_out(e, 30, 8);
+        // The chain row is the one below `proj`, and its label starts at the
+        // lane's left edge: two cells of indent, two of indicator, then
+        // `dir1/dir2/dir3`.
+        let lane = ui.rect_of(ui.find_by_key(&key_of("proj")).expect("row 0"));
+        let (x, y) = (lane.x, lane.y + 1);
+        let segment_at = |ui: &mut Ui<UiMsg>, col: i32| {
+            let got = ui.dispatch(Input::press(
+                Point::new(x + col, y),
+                MouseButton::Right,
+                Mods::NONE,
+            ));
+            got.msgs
+                .iter()
+                .find_map(|m| match m {
+                    UiMsg::Ui(UiFact::ExplorerRowContext { index, segment, .. }) => {
+                        Some((*index, *segment))
+                    }
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("no menu for column {col}: {:?}", got.msgs))
+        };
+
+        // `dir1` is cells 4..8, its separator is cell 8, `dir2` is 9..13 and
+        // its separator 13; `dir3`, the row's own name, starts at 14.
+        assert_eq!(segment_at(&mut ui, 5), (1, Some(0)), "on dir1");
+        assert_eq!(segment_at(&mut ui, 8), (1, Some(0)), "dir1's separator");
+        assert_eq!(segment_at(&mut ui, 10), (1, Some(1)), "on dir2");
+        assert_eq!(
+            segment_at(&mut ui, 15),
+            (1, None),
+            "on dir3, the row itself"
+        );
+        // The indent and the indicator are no segment's: they are the row's.
+        assert_eq!(segment_at(&mut ui, 0), (1, None), "the indent");
+        assert_eq!(segment_at(&mut ui, 2), (1, None), "the indicator");
+        // And a plain row has no segments to name at all.
+        let got = ui.dispatch(Input::press(
+            Point::new(lane.x + 3, lane.y),
+            MouseButton::Right,
+            Mods::NONE,
+        ));
+        assert!(
+            got.msgs.iter().any(|m| matches!(
+                m,
+                UiMsg::Ui(UiFact::ExplorerRowContext {
+                    index: 0,
+                    segment: None,
+                    ..
+                })
+            )),
+            "got {:?}",
+            got.msgs
+        );
+    }
+
+    /// **And on the row the caret is on**, which is every row the reader is
+    /// about to right-click a second time.
+    ///
+    /// The caret is an overlay over the row's cells, and a *transparent* node
+    /// is still hit: the topmost path ended at the overlay, so the row's
+    /// listeners ran against a target holding no text and the segment came back
+    /// `None` — the chain's deepest directory again, for every name on the row.
+    /// It takes a fixture with the caret drawn to see it (issue #3427).
+    #[test]
+    fn the_caret_does_not_hide_the_segment_under_it() {
+        let rows = vec![
+            row_of(0, "proj", None),
+            chain_row_of(1, &["dir1", "dir2"], "dir3"),
+        ];
+        let mut tree = tree_of(rows, |_| None, 0);
+        tree.selected = Some(1);
+        tree.caret = true;
+        let mut ui = laid_out(panel_with(tree, 30), 30, 8);
+        let lane = ui.rect_of(ui.find_by_key(&key_of("proj")).expect("row 0"));
+        let got = ui.dispatch(Input::press(
+            Point::new(lane.x + 5, lane.y + 1),
+            MouseButton::Right,
+            Mods::NONE,
+        ));
+        assert!(
+            got.msgs.iter().any(|m| matches!(
+                m,
+                UiMsg::Ui(UiFact::ExplorerRowContext {
+                    index: 1,
+                    segment: Some(0),
+                    ..
+                })
+            )),
+            "the caret's row must still name dir1: {:?}",
+            got.msgs
         );
     }
 

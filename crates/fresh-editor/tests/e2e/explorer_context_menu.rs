@@ -16,7 +16,13 @@ use std::fs;
 //
 // A safe right-click inside the explorer content area:
 const EXPLORER_COL: u16 = 10;
-const EXPLORER_ROW: u16 = 5; // well inside content rows
+// ...well inside the content rows, and past the last entry of a small fixture,
+// which makes it the *blank area*: the project root's, with the root's narrow
+// menu (issue #3427).
+const EXPLORER_ROW: u16 = 5;
+// A test about an entry's menu right-clicks an entry. Row 2 is the project root
+// and row 3 the first child under it — see `harness_with_entry`.
+const ENTRY_ROW: u16 = 3;
 
 // The "Paste" item is present in every mode of the context menu (single,
 // multi-selection, root).  Matching on " Paste " — with surrounding
@@ -33,6 +39,20 @@ fn harness_with_explorer() -> EditorTestHarness {
     h.editor_mut().focus_file_explorer();
     h.wait_for_file_explorer().unwrap();
     h.render().unwrap(); // populate cached_layout.file_explorer_area
+    h
+}
+
+/// The same, with one file in it — so [`ENTRY_ROW`] is an entry. The bare
+/// project has only the root row, and every row below it is the blank area,
+/// which is the root's (issue #3427).
+fn harness_with_entry() -> EditorTestHarness {
+    let mut h = EditorTestHarness::with_temp_project(100, 30).unwrap();
+    let root = h.project_dir().unwrap();
+    fs::write(root.join("entry.txt"), "data").unwrap();
+    h.editor_mut().focus_file_explorer();
+    h.wait_for_file_explorer().unwrap();
+    h.wait_for_file_explorer_item("entry.txt").unwrap();
+    h.render().unwrap();
     h
 }
 
@@ -56,8 +76,8 @@ fn test_right_click_opens_context_menu() {
 /// The context menu shows all expected items.
 #[test]
 fn test_context_menu_shows_all_items() {
-    let mut h = harness_with_explorer();
-    h.mouse_right_click(EXPLORER_COL, EXPLORER_ROW).unwrap();
+    let mut h = harness_with_entry();
+    h.mouse_right_click(EXPLORER_COL, ENTRY_ROW).unwrap();
 
     h.assert_screen_contains("New File");
     h.assert_screen_contains("New Directory");
@@ -349,13 +369,13 @@ fn test_context_menu_rename_action() {
 /// Clicking "Paste" with an empty clipboard shows the "nothing to paste" message.
 #[test]
 fn test_context_menu_paste_empty_clipboard() {
-    let mut h = harness_with_explorer();
+    let mut h = harness_with_entry();
 
-    // Paste is item index 5: menu_y + 1 + 5 = menu_y + 6.
-    let menu_y = EXPLORER_ROW + 1;
+    // Paste is item index 5 of an entry's menu: menu_y + 1 + 5 = menu_y + 6.
+    let menu_y = ENTRY_ROW + 1;
     let paste_row = menu_y + 1 + 5;
 
-    h.mouse_right_click(EXPLORER_COL, EXPLORER_ROW).unwrap();
+    h.mouse_right_click(EXPLORER_COL, ENTRY_ROW).unwrap();
     h.mouse_click(EXPLORER_COL + 2, paste_row).unwrap();
 
     let screen = h.screen_to_string();
@@ -619,7 +639,8 @@ fn test_select_all_triggers_multi_selection_menu() {
         .unwrap();
     h.render().unwrap();
 
-    h.mouse_right_click(EXPLORER_COL, EXPLORER_ROW).unwrap();
+    // On an entry: the blank area is the root's, and its menu is the root's.
+    h.mouse_right_click(EXPLORER_COL, ENTRY_ROW).unwrap();
 
     let screen = h.screen_to_string();
     assert!(
@@ -798,4 +819,114 @@ fn test_root_menu_new_directory_works() {
         final_dirs > initial_dirs,
         "A new directory should have been created via root menu"
     );
+}
+
+// ── the blank area below the last entry ──────────────────────────────────────
+
+/// The path the explorer's cursor is on, relative to the project root.
+fn selected_relative_path(h: &EditorTestHarness) -> String {
+    let explorer = h.editor().file_explorer().expect("an explorer");
+    let entry = explorer.get_selected_entry().expect("a selection");
+    let root = explorer.tree().root_path();
+    entry
+        .path
+        .strip_prefix(root)
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| entry.path.to_string_lossy().into_owned())
+}
+
+/// **Right-clicking the blank area selects the project root** and opens the
+/// root's narrow menu — the same menu the root row gives.
+///
+/// It used to move no selection at all, so the *entry* menu opened against
+/// whichever entry was selected before and every action in it — Rename, Delete,
+/// the copy-path items — acted on that entry (issue #3427).
+#[test]
+fn test_right_click_blank_area_selects_project_root() {
+    let mut h = EditorTestHarness::with_temp_project(100, 30).unwrap();
+    let root = h.project_dir().unwrap();
+    fs::write(root.join("target.txt"), "data").unwrap();
+
+    h.editor_mut().focus_file_explorer();
+    h.wait_for_file_explorer().unwrap();
+    h.wait_for_file_explorer_item("target.txt").unwrap();
+
+    // Select an entry first: it is what the stale menu used to be about.
+    h.mouse_click(EXPLORER_COL, ENTRY_ROW).unwrap();
+    assert_eq!(selected_relative_path(&h), "target.txt");
+
+    // Then right-click well below the last entry.
+    h.mouse_right_click(EXPLORER_COL, EXPLORER_ROW + 10)
+        .unwrap();
+
+    assert_eq!(
+        selected_relative_path(&h),
+        "",
+        "the blank area is the project root's"
+    );
+    let screen = h.screen_to_string();
+    assert!(
+        screen.contains("New File") && screen.contains("New Directory"),
+        "the root menu must offer the create actions. Screen:\n{}",
+        screen
+    );
+    assert!(
+        !screen.contains("Rename") && !screen.contains("Delete"),
+        "the root menu must not offer an entry's actions. Screen:\n{}",
+        screen
+    );
+}
+
+// ── compact directory chains ─────────────────────────────────────────────────
+
+/// **Right-clicking one name of a compact `dir1/dir2/dir3` row selects that
+/// directory**, not the deepest one (issue #3427). Which segment the pointer
+/// was on is resolved from the label the row rendered, so the indent and the
+/// expand indicator in front of the names do not shift it.
+#[test]
+fn test_right_click_compact_chain_segment_selects_that_directory() {
+    let mut h = EditorTestHarness::with_temp_project(100, 30).unwrap();
+    let root = h.project_dir().unwrap();
+    fs::create_dir_all(root.join("dir1/dir2/dir3")).unwrap();
+    fs::write(root.join("dir1/dir2/dir3/deep.txt"), "deep").unwrap();
+
+    h.editor_mut().focus_file_explorer();
+    h.wait_for_file_explorer().unwrap();
+    h.wait_for_file_explorer_item("dir1").unwrap();
+
+    // Clicking `dir1` expands the whole single-child chain onto one row.
+    h.mouse_click(EXPLORER_COL, ENTRY_ROW).unwrap();
+    h.wait_for_file_explorer_item("deep.txt").unwrap();
+    h.render().unwrap();
+
+    // Where each name sits on screen, read off the row that was drawn — the
+    // same label the press resolves against.
+    let screen = h.screen_to_string();
+    let (row, line) = screen
+        .lines()
+        .enumerate()
+        .find(|(_, l)| l.contains("dir1/dir2/dir3"))
+        .map(|(i, l)| (i as u16, l.to_string()))
+        .expect("the compact row");
+    let column_of = |name: &str, nth: usize| {
+        line.char_indices()
+            .filter(|(i, _)| line[*i..].starts_with(name))
+            .map(|(i, _)| line[..i].chars().count() as u16)
+            .nth(nth)
+            .unwrap_or_else(|| panic!("{name} not on the row: {line:?}"))
+    };
+    // `dir1` and `dir2` each appear once; `dir3` appears once as a name.
+    for (name, expected) in [
+        ("dir1", "dir1"),
+        ("dir2", "dir1/dir2"),
+        ("dir3", "dir1/dir2/dir3"),
+    ] {
+        h.mouse_right_click(column_of(name, 0) + 1, row).unwrap();
+        assert_eq!(
+            selected_relative_path(&h),
+            expected,
+            "right-clicking {name} must select {expected}"
+        );
+        h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    }
 }

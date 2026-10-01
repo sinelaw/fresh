@@ -481,12 +481,23 @@ pub enum UiFact {
     },
     /// A right click on a tree row: select it and open its context menu at the
     /// pointer.
+    ///
+    /// `segment` is which of the row's compact-chain segments the press landed
+    /// on, outermost first — the `dir1` or the `dir2` of a `dir1/dir2/dir3`
+    /// row — and `None` for a press on the row's own name, its indent or its
+    /// indicator. One row draws the whole chain, so the index alone cannot say
+    /// which directory the reader pointed at, and the menu that opened was
+    /// always about the deepest one (issue #3427). The description resolves it
+    /// from the label it rendered: see [`Row::chain`](super::file_explorer::Row::chain).
     ExplorerRowContext {
         index: usize,
+        segment: Option<usize>,
         x: u16,
         y: u16,
     },
-    /// A right-press on the panel that did not land on a row.
+    /// A right-press on the panel that did not land on a row — the empty
+    /// space under the last entry, which is the project root's: see
+    /// [`Editor::explorer_body_context`](crate::app::Editor::explorer_body_context).
     ///
     /// The old component bound its right-press to the *whole* explorer — its
     /// comment said "the union box spans the whole explorer" — so a click

@@ -664,6 +664,7 @@ mod tests {
                 ("  ".to_string(), Explorer::panel()),
                 (name.to_string(), Explorer::panel()),
             ],
+            chain: Vec::new(),
             trailing: None,
             error: None,
         }

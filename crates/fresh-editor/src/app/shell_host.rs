@@ -2988,7 +2988,12 @@ impl Editor {
             }
             // -- file explorer ---------------------------------------------
             UiFact::ExplorerRowPress { index, clicks } => self.explorer_row_pressed(index, clicks),
-            UiFact::ExplorerRowContext { index, x, y } => self.explorer_row_context(index, x, y),
+            UiFact::ExplorerRowContext {
+                index,
+                segment,
+                x,
+                y,
+            } => self.explorer_row_context(index, segment, x, y),
             UiFact::ExplorerBodyContext { x, y } => self.explorer_body_context(x, y),
             // Focus, and nothing else: a press that reached the panel's own
             // box hit no row, so there is nothing to select or open. This is

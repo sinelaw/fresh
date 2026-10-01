@@ -155,8 +155,20 @@ pub fn describe_row(d: RowDesc<'_>) -> crate::view::shell::file_explorer::Row {
         left.push((" ".repeat(pad), pair(neutral, ground)));
     }
 
-    // Ancestors that compact mode folded into this row, outermost first.
+    // Ancestors that compact mode folded into this row, outermost first —
+    // and where each one landed in the label, so a press on `dir1` of a
+    // `dir1/dir2/dir3` row can name `dir1`. The offsets are counted off the
+    // runs this loop pushes, over whatever the indent, the indicator and a
+    // leading slot already put in front of them: a second derivation from the
+    // path would have to guess all three. A segment owns its separator, so
+    // the chain's part of the label partitions with no dead cell between two
+    // names. See [`fe::Row::chain`].
+    let mut chain: Vec<std::ops::Range<usize>> = Vec::new();
+    let mut at: usize = left.iter().map(|(t, _)| t.len()).sum();
     for name in &node.chain {
+        let start = at;
+        at += name.len() + "/".len();
+        chain.push(start..at);
         left.push((name.clone(), pair("syntax.keyword", ground)));
         left.push(("/".to_string(), pair("editor.line_number_fg", ground)));
     }
@@ -193,6 +205,7 @@ pub fn describe_row(d: RowDesc<'_>) -> crate::view::shell::file_explorer::Row {
         index: d.row,
         theme: pair("editor.fg", ground),
         left,
+        chain,
         trailing: slots.trailing.as_ref().map(|slot| fe::Slot {
             text: slot.text.clone(),
             theme: pair(&literal(slot.fg), ground),
@@ -450,5 +463,80 @@ mod tests {
         assert!(line
             .iter()
             .any(|(text, style)| text == "M" && style.fg == Some(theme.file_status_modified_fg)));
+    }
+
+    /// **The chain's byte ranges index the label the row renders.** A press on
+    /// one name of a compact `chain/a/b/c` row is resolved by asking the
+    /// library which byte of the label is under the pointer and then asking
+    /// `Row::chain` which segment that byte is in (issue #3427) — so each
+    /// range must cover exactly its own segment and separator, counted over
+    /// whatever the indent, the indicator and any leading slot put in front of
+    /// them — which is why they are counted off the runs rather than derived
+    /// from the path a second time.
+    #[tokio::test]
+    async fn a_compact_rows_chain_ranges_index_its_rendered_label() {
+        let (_temp_dir, view) = create_chain_renderer_view().await;
+        let theme = Theme::load_builtin("dark").unwrap();
+        let anchor_path = view.tree().root_path().join("chain/a/b/c");
+        let anchor_id = view.tree().get_node_by_path(&anchor_path).unwrap().id;
+
+        let resolver = crate::view::file_tree::default_slot_providers().resolver();
+        let projection = view.projection();
+        let mut node =
+            projection.rows[projection.index_of(anchor_id).expect("a visible node")].clone();
+        node.indent = 2;
+        assert_eq!(node.chain, vec!["chain", "a", "b"], "the folded ancestors");
+        let row = describe_row(RowDesc {
+            node: &node,
+            row: 0,
+            is_cursor: false,
+            is_multi: false,
+            focused: false,
+            unsaved: &HashSet::new(),
+            cut: &[],
+            fuzzy: None,
+            decorations: &FileExplorerDecorationCache::default(),
+            slot_overrides: &FileExplorerSlotOverrideCache::default(),
+            slot_resolver: &resolver,
+            theme: &theme,
+            collapsed: ">",
+            expanded: "▼",
+        });
+
+        // The label as the pointer sees it: the runs, concatenated, which is
+        // the string `Event::text_byte` counts bytes of.
+        let label: String = row.left.iter().map(|(t, _)| t.as_str()).collect();
+        let segments: Vec<&str> = row.chain.iter().map(|r| &label[r.clone()]).collect();
+        assert_eq!(segments, vec!["chain/", "a/", "b/"]);
+        // Bytes, not columns, because that is what the library answers with:
+        // the indent and the `▼ ` indicator are six cells and eight bytes.
+        assert_eq!(label, "    ▼ chain/a/b/c");
+        assert_eq!(row.chain[0].start, 8);
+        // And the anchor's own name is in no range, so a press on it names the
+        // row rather than one of the folded directories.
+        let after = row.chain.last().expect("a chain").end;
+        assert_eq!(&label[after..], "c");
+    }
+
+    async fn create_chain_renderer_view() -> (TempDir, FileTreeView) {
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path();
+        std_fs::create_dir_all(root.join("chain/a/b/c")).unwrap();
+        std_fs::write(root.join("chain/a/b/c/leaf.txt"), "leaf").unwrap();
+
+        let manager = Arc::new(FsManager::new(Arc::new(StdFileSystem)));
+        let tree = crate::view::file_tree::FileTree::new(root.to_path_buf(), manager)
+            .await
+            .unwrap();
+        let mut view = FileTreeView::new(tree);
+        let root_id = view.tree().root_id();
+        view.tree_mut().expand_node(root_id).await.unwrap();
+        let chain_id = view
+            .tree()
+            .get_node_by_path(&root.join("chain"))
+            .unwrap()
+            .id;
+        view.expand_with_chain(chain_id).await.unwrap();
+        (temp_dir, view)
     }
 }
