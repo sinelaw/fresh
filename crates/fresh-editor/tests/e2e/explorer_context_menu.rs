@@ -440,15 +440,37 @@ fn test_keyboard_down_enter_executes_item() {
     );
 }
 
+/// Which item the open menu highlights, and how many it has.
+///
+/// Asserting on the highlight rather than on "a menu is still on screen" is
+/// what makes the two wrap tests below about wrapping: with the count read off
+/// the menu itself, neither depends on how many items the entry menu has today
+/// (`FileExplorerContextMenuItem::all()` is append-only, and both tests used to
+/// name a stale count in a comment).
+fn menu_highlight(h: &EditorTestHarness) -> (usize, usize) {
+    let menu = h
+        .editor()
+        .active_window()
+        .file_explorer_context_menu
+        .as_ref()
+        .expect("an open file-explorer context menu");
+    (menu.menu.highlighted, menu.menu.item_count)
+}
+
 /// Up key wraps from the first item to the last.
 #[test]
 fn test_keyboard_up_wraps() {
-    let mut h = harness_with_explorer();
-    h.mouse_right_click(EXPLORER_COL, EXPLORER_ROW).unwrap();
-    assert!(context_menu_visible(&h));
+    // An entry, for the full menu: `EXPLORER_ROW` is the blank area in this
+    // fixture, whose menu is the root's three items.
+    let mut h = harness_with_entry();
+    h.mouse_right_click(EXPLORER_COL, ENTRY_ROW).unwrap();
+    let (highlighted, items) = menu_highlight(&h);
+    assert_eq!(highlighted, 0, "a fresh menu highlights its first item");
+    assert!(items > 3, "the entry menu, not the root's: {items} items");
 
-    // Up from index 0 should wrap to the last item (Delete) and keep menu open.
+    // Up from index 0 wraps to the last item.
     h.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
+    assert_eq!(menu_highlight(&h), (items - 1, items));
     assert!(
         context_menu_visible(&h),
         "Menu should remain open after Up key"
@@ -458,15 +480,19 @@ fn test_keyboard_up_wraps() {
 /// Down key wraps from the last item back to the first.
 #[test]
 fn test_keyboard_down_wraps() {
-    let mut h = harness_with_explorer();
-    h.mouse_right_click(EXPLORER_COL, EXPLORER_ROW).unwrap();
+    let mut h = harness_with_entry();
+    h.mouse_right_click(EXPLORER_COL, ENTRY_ROW).unwrap();
+    let (_, items) = menu_highlight(&h);
 
-    // Navigate to the last item (7 items, so 6 presses).
-    for _ in 0..6 {
+    // Down to the last item, however many the menu has.
+    for _ in 0..items - 1 {
         h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     }
-    // One more Down should wrap to index 0 — menu stays open.
+    assert_eq!(menu_highlight(&h), (items - 1, items));
+
+    // One more Down wraps to index 0 — menu stays open.
     h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    assert_eq!(menu_highlight(&h), (0, items));
     assert!(
         context_menu_visible(&h),
         "Menu should remain open after Down wraps around"
@@ -639,7 +665,8 @@ fn test_select_all_triggers_multi_selection_menu() {
         .unwrap();
     h.render().unwrap();
 
-    // On an entry: the blank area is the root's, and its menu is the root's.
+    // On an entry. (The blank area would give the same menu — `is_multi` is
+    // read first — but an entry is what this test is about.)
     h.mouse_right_click(EXPLORER_COL, ENTRY_ROW).unwrap();
 
     let screen = h.screen_to_string();
@@ -877,6 +904,51 @@ fn test_right_click_blank_area_selects_project_root() {
     );
 }
 
+/// **A reader's multi-selection survives a right-press on the blank area.**
+///
+/// "The blank area" is every press inside the panel that no row claimed, which
+/// is also the scrollbar's lane and the panel's walls — so clearing the set here
+/// would lose it to a one-column miss. Only the cursor moves; a press on a row
+/// leaves the set alone too.
+#[test]
+fn test_right_click_blank_area_keeps_a_multi_selection() {
+    let mut h = EditorTestHarness::with_temp_project(100, 30).unwrap();
+    let root = h.project_dir().unwrap();
+    fs::write(root.join("one.txt"), "1").unwrap();
+    fs::write(root.join("two.txt"), "2").unwrap();
+
+    h.editor_mut().focus_file_explorer();
+    h.wait_for_file_explorer().unwrap();
+    h.wait_for_file_explorer_item("one.txt").unwrap();
+
+    h.send_key(KeyCode::Char('a'), KeyModifiers::CONTROL)
+        .unwrap();
+    h.render().unwrap();
+    let selected = |h: &EditorTestHarness| {
+        h.editor()
+            .file_explorer()
+            .expect("an explorer")
+            .multi_selection()
+            .len()
+    };
+    let before = selected(&h);
+    assert!(before > 1, "Ctrl+A selects the tree: {before}");
+
+    h.mouse_right_click(EXPLORER_COL, EXPLORER_ROW + 10)
+        .unwrap();
+
+    assert_eq!(
+        selected(&h),
+        before,
+        "the set is the reader's, not the menu's"
+    );
+    assert_eq!(
+        selected_relative_path(&h),
+        "",
+        "the cursor still moves to the project root"
+    );
+}
+
 // ── compact directory chains ─────────────────────────────────────────────────
 
 /// **Right-clicking one name of a compact `dir1/dir2/dir3` row selects that
@@ -908,20 +980,21 @@ fn test_right_click_compact_chain_segment_selects_that_directory() {
         .find(|(_, l)| l.contains("dir1/dir2/dir3"))
         .map(|(i, l)| (i as u16, l.to_string()))
         .expect("the compact row");
-    let column_of = |name: &str, nth: usize| {
+    // Each of `dir1`, `dir2` and `dir3` appears once on the row, so the first
+    // match is the segment.
+    let column_of = |name: &str| {
         line.char_indices()
             .filter(|(i, _)| line[*i..].starts_with(name))
             .map(|(i, _)| line[..i].chars().count() as u16)
-            .nth(nth)
+            .next()
             .unwrap_or_else(|| panic!("{name} not on the row: {line:?}"))
     };
-    // `dir1` and `dir2` each appear once; `dir3` appears once as a name.
     for (name, expected) in [
         ("dir1", "dir1"),
         ("dir2", "dir1/dir2"),
         ("dir3", "dir1/dir2/dir3"),
     ] {
-        h.mouse_right_click(column_of(name, 0) + 1, row).unwrap();
+        h.mouse_right_click(column_of(name) + 1, row).unwrap();
         assert_eq!(
             selected_relative_path(&h),
             expected,

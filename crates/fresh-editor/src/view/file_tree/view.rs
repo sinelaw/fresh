@@ -330,11 +330,15 @@ impl FileTreeView {
         if !was_expanded {
             self.expand_with_chain(node_id).await?;
         }
-        // The expansion may have folded the cursor's row into a deeper
-        // chain anchor; re-promote so the cursor stays on a rendered row.
-        // Why: select_next/prev locate the cursor by id within
-        // filtered_visible_nodes(); an absorbed cursor is missing from
-        // that list and arrow keys silently no-op.
+        // The expansion may have folded the cursor's row into a deeper chain
+        // anchor; re-promote so the cursor is the row the reader is left
+        // looking at.
+        // Why: after a keyboard expand the cursor should name what that row
+        // shows, so Rename and Delete act on the row's own entry rather than
+        // on a directory now folded into it. (The arrow keys no longer need
+        // this — `row_of` finds the row an absorbed cursor is drawn on — but a
+        // cursor the reader cannot see is still the wrong thing to leave
+        // behind.)
         if let Some(sel) = self.selected_node {
             self.selected_node = Some(self.promote_to_anchor(sel));
         }
@@ -481,10 +485,14 @@ impl FileTreeView {
     /// answers `None`, and the caller falls back to the anchor rather than to
     /// some other entry.
     pub fn chain_segment_node(&self, anchor: NodeId, steps: usize) -> Option<NodeId> {
-        let chain = self.compact_chain_for_anchor(anchor);
+        // Walked from the anchor end, which is what `steps` counts from: `0` is
+        // the anchor's own name and no segment, and a chain with fewer than
+        // `steps` of them answers nothing.
         let back = steps.checked_sub(1)?;
-        let index = chain.len().checked_sub(1 + back)?;
-        chain.get(index).copied()
+        self.compact_chain_for_anchor(anchor)
+            .into_iter()
+            .rev()
+            .nth(back)
     }
 
     /// The row `id` is drawn on, by index in the visible order: its own, or —
@@ -497,10 +505,11 @@ impl FileTreeView {
     /// cursor still highlights the row the reader clicked and the keys still
     /// step off that row instead of finding nothing and freezing.
     fn row_of(&self, id: NodeId) -> Option<usize> {
-        let projection = self.projection();
-        projection
-            .index_of(id)
-            .or_else(|| projection.index_of(self.promote_to_anchor(id)))
+        // Promoting first answers both cases in one lookup: an id that has a
+        // row of its own is never absorbed (the projection pushes only
+        // non-absorbed ids, and the root is never absorbed), so promotion
+        // leaves it alone.
+        self.projection().index_of(self.promote_to_anchor(id))
     }
 
     /// The id of the row the cursor is *drawn* on: its own, or — for a cursor
@@ -513,8 +522,10 @@ impl FileTreeView {
     /// that seed the set from the cursor go through this, so the set keeps
     /// only ids that can be drawn and acted on.
     fn cursor_row_id(&self) -> Option<NodeId> {
-        let row = self.row_of(self.selected_node?)?;
-        self.projection().rows.get(row).map(|r| r.id)
+        let id = self.promote_to_anchor(self.selected_node?);
+        // The lookup is the "and it really is a row" test; its index is not
+        // wanted here.
+        self.projection().index_of(id).map(|_| id)
     }
 
     /// Walk down a chain of absorbed directories until reaching the
@@ -628,14 +639,13 @@ impl FileTreeView {
         if visible.is_empty() {
             return;
         }
-        // The cursor's row, so the seeded selection and the anchor are ids the
-        // set can show and act on: see `cursor_row_id`.
-        let Some(current) = self.cursor_row_id() else {
+        // The cursor's *row*, so the seeded selection and the anchor are ids
+        // the set can show and act on: see `cursor_row_id`, of which this is
+        // the index and `visible[pos]` the id.
+        let Some(pos) = self.selected_node.and_then(|id| self.row_of(id)) else {
             return;
         };
-        let Some(pos) = self.row_of(current) else {
-            return;
-        };
+        let current = visible[pos];
         // Always seed the selection with the cursor row first — even at the
         // top boundary, so Escape / a subsequent Shift+Down sees a live
         // selection anchored on wherever the user started the range.
@@ -664,14 +674,13 @@ impl FileTreeView {
         if visible.is_empty() {
             return;
         }
-        // The cursor's row, so the seeded selection and the anchor are ids the
-        // set can show and act on: see `cursor_row_id`.
-        let Some(current) = self.cursor_row_id() else {
+        // The cursor's *row*, so the seeded selection and the anchor are ids
+        // the set can show and act on: see `cursor_row_id`, of which this is
+        // the index and `visible[pos]` the id.
+        let Some(pos) = self.selected_node.and_then(|id| self.row_of(id)) else {
             return;
         };
-        let Some(pos) = self.row_of(current) else {
-            return;
-        };
+        let current = visible[pos];
         // Always seed the selection with the cursor row first — even at the
         // bottom boundary, so Escape / a subsequent Shift+Up sees a live
         // selection anchored on wherever the user started the range.
@@ -1882,7 +1891,6 @@ mod tests {
         view.set_selected_exact(Some(chain_id));
         view.select_prev();
         assert_eq!(view.get_selected(), Some(root_id), "the row above it");
-        assert_ne!(view.get_selected(), Some(c_id));
     }
 
     #[cfg(unix)]

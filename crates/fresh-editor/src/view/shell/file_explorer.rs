@@ -87,8 +87,8 @@ pub struct Row {
     /// Where each compact-chain segment sits in the concatenation of `left`,
     /// outermost first: the bytes of `dir1/` and of `dir2/` in a
     /// `dir1/dir2/dir3` row, each segment carrying its own separator. Empty
-    /// for a row that is not a chain. (The *fact* a press reports counts the
-    /// other way, up from the anchor — see `UiFact::ExplorerRowContext`.)
+    /// for a row that is not a chain. (A press reports which of them it hit
+    /// counted from the *other* end: see `UiFact::ExplorerRowContext`.)
     ///
     /// **Byte ranges of the label the row renders**, which is what lets a
     /// press name the segment it landed on: the library answers which byte of
@@ -520,8 +520,9 @@ fn node_row(caret: bool, r: &Row) -> Node<UiMsg> {
     // ended at this overlay, and the row's listeners (its ancestors) ran
     // against a target that holds no text: `Event::text_byte` came back empty
     // and a press on `dir2` of a compact row could not say which segment it
-    // was on. `Ignore` takes the overlay out of the hit entirely, so the press
-    // lands on the label underneath it, as it does on every unselected row.
+    // was on. `Ignore` takes the overlay out of the hit entirely — the whole
+    // subtree, so the glyph needs no mode of its own — and the press lands on
+    // the label underneath it, as it does on every unselected row.
     let body = if caret {
         stack().h(Sizing::Cells(1)).children([
             body,
@@ -531,8 +532,7 @@ fn node_row(caret: bool, r: &Row) -> Node<UiMsg> {
                 .children([text("▌")
                     .theme(caret_ink(&r.theme))
                     .w(Sizing::Cells(1))
-                    .cursor_byte(0)
-                    .pointer_mode(PointerMode::Ignore)]),
+                    .cursor_byte(0)]),
         ])
     } else {
         body
@@ -585,15 +585,17 @@ fn node_row(caret: bool, r: &Row) -> Node<UiMsg> {
                 e.stop();
                 Some(UiMsg::Ui(UiFact::ExplorerRowContext {
                     index,
-                    // Counted up from the anchor — `1` is the segment next to
-                    // the row's own name — because that end of the chain is
-                    // the row's own id, which cannot drift between this frame
-                    // and the lookup. See `FileTreeView::chain_segment_node`.
+                    // Counted from the anchor end — walking the ranges
+                    // backwards, so `1` is the segment next to the row's own
+                    // name — because that end of the chain is the row's own id
+                    // and cannot drift between this frame and the lookup. See
+                    // `FileTreeView::chain_segment_node`.
                     segment: e.text_byte.and_then(|b| {
                         chain
                             .iter()
+                            .rev()
                             .position(|seg| seg.contains(&b))
-                            .map(|i| chain.len() - i)
+                            .map(|back| back + 1)
                     }),
                     x: e.pos.x.max(0) as u16,
                     y: e.pos.y.max(0) as u16,
@@ -789,6 +791,11 @@ mod tests {
     /// A compact-chain row: the indent, the expand indicator, then
     /// `<segments>/<name>` — `left` and `chain` built as `describe_row` builds
     /// them, with each range counted off the runs it pushed.
+    ///
+    /// Two sites spelling one convention, so what keeps them from drifting is
+    /// `view::ui::file_explorer`'s `a_compact_rows_chain_ranges_index_its_rendered_label`,
+    /// which pins `describe_row`'s own output. If that fails and these pass,
+    /// this fixture is the stale copy.
     fn chain_row_of(index: usize, segments: &[&str], name: &str) -> Row {
         let mut left: Runs = vec![
             ("  ".to_string(), Explorer::panel()),

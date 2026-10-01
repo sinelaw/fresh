@@ -26,8 +26,11 @@ enum ExplorerContextTarget {
     Row {
         /// By index in the tree's display order.
         index: usize,
-        /// Which folded directory of the row's label, outermost first; `None`
-        /// for the row's own name.
+        /// Which folded directory of the row's label, counted up from the
+        /// row's own name — see
+        /// [`FileTreeView::chain_segment_node`](crate::view::file_tree::FileTreeView::chain_segment_node),
+        /// which states that count once for everything that carries it.
+        /// `None` is the row's own name.
         segment: Option<usize>,
     },
     Body,

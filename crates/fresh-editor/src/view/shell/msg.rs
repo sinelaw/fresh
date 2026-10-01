@@ -483,11 +483,8 @@ pub enum UiFact {
     /// pointer.
     ///
     /// `segment` is which of the row's compact-chain segments the press landed
-    /// on, counted up from the row's own name: on a `dir1/dir2/dir3` row `1` is
-    /// `dir2` and `2` is `dir1`. `None` is a press on the row's own name, its
-    /// indent or its indicator. Counting from the anchor rather than from the
-    /// front of the label is what keeps the answer right when the chain gained
-    /// an outermost directory between this frame and the lookup — see
+    /// on, and `None` a press on the row's own name, its indent or its
+    /// indicator. The count is stated once, by what reads it back:
     /// [`FileTreeView::chain_segment_node`](crate::view::file_tree::FileTreeView::chain_segment_node). One row draws the whole chain, so the index alone cannot say
     /// which directory the reader pointed at, and the menu that opened was
     /// always about the deepest one (issue #3427). The description resolves it
@@ -506,9 +503,7 @@ pub enum UiFact {
     /// comment said "the union box spans the whole explorer" — so a click
     /// past the last entry still opened the menu, in its root mode. Binding
     /// only to rows dropped that: empty space below the files answered
-    /// nothing. The row index is resolved app-side from the panel's own
-    /// rectangle, as the component resolved `relative_row`, because the
-    /// description cannot read geometry.
+    /// nothing.
     ExplorerBodyContext {
         x: u16,
         y: u16,
