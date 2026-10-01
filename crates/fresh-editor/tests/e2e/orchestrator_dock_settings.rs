@@ -2,7 +2,10 @@
 //! (`plugins.orchestrator.settings.*`, rendered by the Settings UI under
 //! "orchestrator" under "Plugins"):
 //!
-//! * `autoOpenDock` — open the dock on the `ready` hook, unfocused;
+//! * `autoOpenDock` — whether the dock opens on the `ready` hook,
+//!   unfocused: `auto` (as you left it, else the launch mode), `always` or
+//!   `never`. The booleans it replaced are still read, `false` as `never`
+//!   and `true` as `auto`, which is what the boolean cases below cover;
 //! * `defaultView` — the density (`card` / `compact`) the dock opens at;
 //! * `showAllWorktrees` / `showEmptyWorkspaces` — the initial state of the
 //!   two Filters checkboxes.
@@ -245,13 +248,15 @@ fn auto_open_can_be_switched_off() {
         .unwrap();
 }
 
-/// Issue #3442: `autoOpenDock: false` is honoured by a bare `fresh` too.
-/// Orchestrator mode used to OR itself over the setting, so the one launch
-/// mode most users are in ignored it outright — the dock came up however the
-/// setting and the `View` menu's checkmark read.
-#[test]
-fn auto_open_off_is_honoured_in_orchestrator_mode() {
-    let (_tmp, root, config) = setup(serde_json::json!({ "autoOpenDock": false }));
+/// Issue #3442: the dock stays closed for a bare `fresh` too. Orchestrator
+/// mode used to OR itself over the setting, so the one launch mode most users
+/// are in ignored it outright — the dock came up however the setting and the
+/// `View` menu's checkmark read.
+///
+/// Driven with both spellings: the `never` mode, and the legacy `false` an
+/// upgrading user still has on disk.
+fn dock_stays_closed_in_orchestrator_mode(setting: serde_json::Value) {
+    let (_tmp, root, config) = setup(serde_json::json!({ "autoOpenDock": setting }));
     let mut h = launch_orchestrator_mode(config, root);
     h.render().unwrap();
     h.editor_mut().fire_ready_hook();
@@ -271,4 +276,14 @@ fn auto_open_off_is_honoured_in_orchestrator_mode() {
     h.wait_until(|h| !h.screen_to_string().contains("Add machine"))
         .unwrap();
     h.assert_screen_not_contains("+ New");
+}
+
+#[test]
+fn never_keeps_the_dock_closed_in_orchestrator_mode() {
+    dock_stays_closed_in_orchestrator_mode(serde_json::json!("never"));
+}
+
+#[test]
+fn a_legacy_false_keeps_the_dock_closed_in_orchestrator_mode() {
+    dock_stays_closed_in_orchestrator_mode(serde_json::json!(false));
 }

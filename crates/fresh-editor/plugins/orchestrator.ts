@@ -1007,10 +1007,11 @@ let lastDockProjectFilter: string | null = null;
 // they just no longer decide where the dock starts.
 // On by default: a switcher nobody knows to open is not one. It opens
 // unfocused, so the keyboard stays with the editor.
-editor.defineConfigBoolean("autoOpenDock", {
-  default: true,
+editor.defineConfigEnum("autoOpenDock", {
+  values: ["auto", "always", "never"] as const,
+  default: "auto",
   description:
-    "Let the workspace dock open when Fresh starts: it comes back the way you left it, open or closed. Off, it stays closed until you open it.",
+    "Whether the workspace dock opens when Fresh starts. 'auto' brings it back the way you left it, open or closed, and on a first run opens it for a bare `fresh` (Orchestrator mode) — the default. 'always' opens it every time; 'never' leaves it closed until you open it. Replaces the old true/false, which are still read as 'auto' and 'never'.",
 });
 editor.defineConfigEnum("defaultView", {
   values: ["compact", "card"] as const,
@@ -1046,7 +1047,7 @@ editor.defineConfigString("detectionRulesUrl", {
 });
 
 interface DockSettings {
-  autoOpenDock?: boolean;
+  autoOpenDock?: "auto" | "always" | "never";
   notifications?: "all" | "needs-you" | "off";
   notifySound?: boolean;
   detectionRulesUrl?: string;

@@ -6265,7 +6265,9 @@ mod dock_reservation_tests {
     #[test]
     fn what_the_first_frame_carves() {
         let rule = DockWidthRule::default().width(COLS);
-        let switched_off = orchestrator_config(true, serde_json::json!({ "autoOpenDock": false }));
+        let mode = |m: &str| orchestrator_config(true, serde_json::json!({ "autoOpenDock": m }));
+        let legacy =
+            |on: bool| orchestrator_config(true, serde_json::json!({ "autoOpenDock": on }));
         let disabled = orchestrator_config(false, serde_json::Value::Null);
         const DECLARES_CLOSED_DOCK: &str =
             r#"{"chrome":{"dock":{"open":false,"open_setting":"autoOpenDock"}}}"#;
@@ -6273,19 +6275,26 @@ mod dock_reservation_tests {
         // runs in orchestrator mode (a bare `fresh`), and the width expected.
         type Case<'a> = (&'a str, Option<&'a str>, Config, bool, Option<u16>);
         #[rustfmt::skip]
-        let cases: [Case; 9] = [
+        let cases: [Case; 14] = [
             ("a declared dock, at the rule's width", Some(DECLARES_DOCK), Config::default(), false, Some(rule)),
             ("no manifest", None, Config::default(), false, None),
             ("a manifest with no dock", Some(r#"{"chrome":{}}"#), Config::default(), false, None),
             ("a declared width rule", Some(r#"{"chrome":{"dock":{"width":{"min":30,"max":30}}}}"#), Config::default(), false, Some(30)),
-            ("the named setting off", Some(DECLARES_DOCK), switched_off.clone(), false, None),
+            ("`never`", Some(DECLARES_DOCK), mode("never"), false, None),
             // Issue #3442: the launch mode used to override the setting, so a
             // bare `fresh` — the default since 0.5.2 — ignored it outright.
-            ("...for a bare `fresh` too", Some(DECLARES_DOCK), switched_off, true, None),
-            // It is still the default *under* the setting: nothing set, and a
-            // bare `fresh` opens the dock even where the manifest would not.
-            ("a bare `fresh` opens a manifest-closed dock", Some(DECLARES_CLOSED_DOCK), Config::default(), true, Some(rule)),
-            ("...which stays closed otherwise", Some(DECLARES_CLOSED_DOCK), Config::default(), false, None),
+            ("`never`, for a bare `fresh` too", Some(DECLARES_DOCK), mode("never"), true, None),
+            ("`always`", Some(DECLARES_DOCK), mode("always"), false, Some(rule)),
+            ("`always` beats a manifest that says closed", Some(DECLARES_CLOSED_DOCK), mode("always"), false, Some(rule)),
+            ("`auto` takes the manifest's `open`", Some(DECLARES_CLOSED_DOCK), mode("auto"), false, None),
+            // `auto` lets the launch mode decide on a first launch: it is the
+            // default *under* the setting, not an override over it.
+            ("...and a bare `fresh` under `auto` opens it", Some(DECLARES_CLOSED_DOCK), mode("auto"), true, Some(rule)),
+            // The pre-#3442 booleans keep working: `false` was `never`, and
+            // `true` was "allow, as you left it" — today's `auto`.
+            ("legacy `false` reads as `never`", Some(DECLARES_DOCK), legacy(false), true, None),
+            ("legacy `true` reads as `auto`", Some(DECLARES_CLOSED_DOCK), legacy(true), false, None),
+            ("an unrecognised value falls back to `auto`", Some(DECLARES_CLOSED_DOCK), mode("ALWAYS"), false, None),
             ("a disabled plugin declares nothing", Some(DECLARES_DOCK), disabled, false, None),
         ];
         for (case, manifest, config, orchestrator_mode, want) in cases {
@@ -6302,6 +6311,71 @@ mod dock_reservation_tests {
                 );
             }
         }
+    }
+
+    /// The pre-#3442 boolean is rewritten as the mode it meant — in memory
+    /// *and* on disk — so the Settings UI, which renders an enum now, shows
+    /// the same thing the startup decision used.
+    ///
+    /// Without the rewrite the two disagree visibly: the plugin's field
+    /// registration only fills a value in when one is absent
+    /// (`handle_add_plugin_config_field`'s `or_insert`), so the boolean would
+    /// survive and Settings would draw the enum's default beside a startup
+    /// that had honoured the boolean.
+    #[test]
+    fn a_legacy_boolean_open_setting_is_rewritten_as_its_mode() {
+        let pointer = "/plugins/orchestrator/settings/autoOpenDock";
+        // `false` meant "never": the dock stays closed, and the value is
+        // normalised so nothing reads a boolean again.
+        for (legacy, want_mode, want_open) in [(false, "never", false), (true, "auto", true)] {
+            let dir_context = home(Some(DECLARES_DOCK));
+            let config = orchestrator_config(true, serde_json::json!({ "autoOpenDock": legacy }));
+            let e = editor(dir_context.clone(), config, false);
+
+            assert_eq!(
+                e.dock_reserved, want_open,
+                "legacy {legacy} must decide as {want_mode}"
+            );
+            assert_eq!(
+                e.config
+                    .plugins
+                    .get("orchestrator")
+                    .and_then(|c| c.settings.get("autoOpenDock")),
+                Some(&serde_json::Value::String(want_mode.into())),
+                "legacy {legacy} must be rewritten in memory as {want_mode}"
+            );
+
+            let written = std::fs::read_to_string(dir_context.config_dir.join("config.json"))
+                .unwrap_or_else(|e| panic!("legacy {legacy}: no config written: {e}"));
+            let json: serde_json::Value = serde_json::from_str(&written).unwrap();
+            assert_eq!(
+                json.pointer(pointer),
+                Some(&serde_json::Value::String(want_mode.into())),
+                "legacy {legacy} must be rewritten on disk as {want_mode}; file was:\n{written}"
+            );
+        }
+    }
+
+    /// A value already in mode form is left exactly as it is — the migration
+    /// must not rewrite, or re-persist, what it did not change.
+    #[test]
+    fn a_mode_open_setting_is_left_alone() {
+        let dir_context = home(Some(DECLARES_DOCK));
+        let config = orchestrator_config(true, serde_json::json!({ "autoOpenDock": "never" }));
+        let e = editor(dir_context.clone(), config, true);
+
+        assert!(!e.dock_reserved, "`never` holds for a bare `fresh`");
+        assert_eq!(
+            e.config
+                .plugins
+                .get("orchestrator")
+                .and_then(|c| c.settings.get("autoOpenDock")),
+            Some(&serde_json::Value::String("never".into()))
+        );
+        assert!(
+            !dir_context.config_dir.join("config.json").exists(),
+            "nothing to migrate must mean nothing written"
+        );
     }
 
     /// What is remembered is the slot at quit: mounted comes back, closed

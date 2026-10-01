@@ -335,13 +335,23 @@ Today a manifest declares one thing, chrome:
 
 `chrome.dock` says the plugin fills the editor-global left dock. From it the
 host decides at construction whether the slot is open and how wide
-(`Editor::apply_startup_dock_chrome`): `open_setting` (a boolean in
-`plugins.<name>.settings`) set to `false` keeps it closed; otherwise it comes
-back as the user left it (`<data>/chrome.json`: open or closed, and the
-dragged width); on a first launch, where neither says anything, a bare `fresh`
-in Orchestrator mode opens it, else `open` decides. The launch mode is the
-default under those two, not an override over them (#3442). The width rule is
-the host's from then on; the plugin reads it back with `editor.dockCols()`.
+(`Editor::apply_startup_dock_chrome`). `open_setting` names a key in
+`plugins.<name>.settings` holding one of three modes, and each means what it
+says: `never` keeps the slot closed and `always` opens it, both outright;
+`auto` (the default) brings it back as the user left it
+(`<data>/chrome.json`), and on a first launch lets a bare `fresh` in
+Orchestrator mode open it, else `open` decides. So the launch mode is the
+default *under* the setting, not an override over it (#3442). The width rule
+is the host's from then on; the plugin reads it back with
+`editor.dockCols()`.
+
+`open_setting` used to be a plain boolean. Both spellings are read — `false`
+as `never`, `true` as `auto` — so behaviour never depends on the migration
+having run; and a boolean found at startup is rewritten as its mode, in memory
+and on disk. That rewrite is not cosmetic: `handle_add_plugin_config_field`
+only fills a value in when one is *absent*, so a surviving boolean would sit
+under an enum schema and the Settings UI would draw the enum's default beside
+a startup that had honoured the boolean.
 
 A manifest is a declaration, not a command. The plugin still mounts its dock
 from `ready`, gated on `editor.dockOpen()`, into a column that is already
