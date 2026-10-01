@@ -930,10 +930,12 @@ impl Editor {
 
         // The reloaded config replaced `editor.line_numbers` / `editor.line_wrap`
         // wholesale, so the open views owe the same re-resolution a menu toggle
-        // or a Settings save gets. Without this, editing those keys in
-        // `config.json` and running "Reload Configuration" left every already-open
-        // document rendering the old setting and the View menu reporting it —
-        // issue #3449's symptom through this path instead of the toggles'.
+        // or a Settings save gets. Without this, a reload left every
+        // already-open document rendering the old setting and the View menu
+        // reporting it — issue #3449's symptom through this path instead of the
+        // toggles'. Reached from the plugin API's `editor.reloadConfig()`
+        // (`PluginCommand::ReloadConfig`); there is no command-palette entry or
+        // menu item for it, so a plugin is the only caller today.
         // `set_config` above has already fanned the new config out to each
         // window, which is what the resolve below reads.
         for window in self.windows.values_mut() {

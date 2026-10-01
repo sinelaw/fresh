@@ -831,15 +831,17 @@ fn test_global_line_numbers_toggle_skips_a_virtual_buffer_view() {
     );
 }
 
-/// Reload Configuration is a fourth way to change these editor-wide settings,
-/// and owes the open documents the same propagation (#3449).
+/// A config reload is a fourth way to change these editor-wide settings, and
+/// owes the open documents the same propagation (#3449).
 ///
-/// `editor.line_numbers` lives in `config.json`, so editing it there and running
-/// **Reload Configuration** is a normal way to change it. `reload_config`
-/// replaced the whole config and re-applied theme, keybindings, clipboard, bars
-/// and LSP, but never re-resolved the open views — so every already-open
-/// document kept its old gutter and the View menu reported that stale state,
-/// the same symptom the menu toggles had.
+/// `Editor::reload_config` replaced the whole config and re-applied theme,
+/// keybindings, clipboard, bars and LSP, but never re-resolved the open views —
+/// so every already-open document kept its old gutter and the View menu
+/// reported that stale state, the same symptom the menu toggles had. The path
+/// is reached from the plugin API's `editor.reloadConfig()`
+/// (`PluginCommand::ReloadConfig`); there is no palette command or menu item
+/// for it, so this test drives `reload_config` directly, as a plugin's call
+/// does.
 #[test]
 fn test_reload_config_reaches_every_open_document() {
     let temp_dir = TempDir::new().unwrap();
