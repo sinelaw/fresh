@@ -899,6 +899,47 @@ fn test_reload_config_reaches_every_open_document() {
     );
 }
 
+/// The current-line highlight is editor-wide too, and had the same staleness
+/// (#3449's sibling): `Action::ToggleCurrentLineHighlight` wrote one view state
+/// per pane — the tab it was *showing* — in the active window only, so a pane's
+/// other tabs kept the pre-toggle highlight and reported it once they became
+/// current.
+#[test]
+fn test_global_current_line_highlight_toggle_reaches_every_open_document() {
+    let mut config = Config::default();
+    config.editor.highlight_current_line = true;
+    let mut harness = EditorTestHarness::with_temp_project_and_config(120, 24, config).unwrap();
+    let dir = harness.project_dir().unwrap().to_path_buf();
+    std::fs::write(dir.join("a.txt"), "alpha\nbeta\n").unwrap();
+    std::fs::write(dir.join("b.txt"), "delta\nepsilon\n").unwrap();
+
+    harness.open_file(&dir.join("a.txt")).unwrap();
+    harness.open_file(&dir.join("b.txt")).unwrap();
+    harness.render().unwrap();
+
+    // Control: both documents start highlighted, as the config asks.
+    assert!(
+        cursor_line_is_highlighted(&harness, "delta"),
+        "b.txt should start with its cursor row highlighted"
+    );
+
+    run_command(&mut harness, "Toggle Current Line Highlight");
+    harness.render().unwrap();
+    assert!(
+        !cursor_line_is_highlighted(&harness, "delta"),
+        "b.txt, the document that was current, should have lost the highlight"
+    );
+
+    // a.txt is the regression: it must follow the editor-wide default too.
+    harness.open_file(&dir.join("a.txt")).unwrap();
+    harness.render().unwrap();
+    assert!(
+        !cursor_line_is_highlighted(&harness, "alpha"),
+        "the other open document must follow the editor-wide current-line \
+         highlight default, not keep its pre-toggle value"
+    );
+}
+
 /// The other half of the naming convention: an *unsuffixed* toggle changes the
 /// editor-wide default and saves it, so the choice is still there next launch.
 ///
