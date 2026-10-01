@@ -3582,6 +3582,11 @@ impl Window {
         let state = self.active_state_mut();
         state.overlays.clear_namespace(&ns, &mut state.marker_list);
         self.clear_current_search_match();
+        // The overlays are gone, so they no longer stand in for the match
+        // set: F3 falls back to the stored snapshot from here on.
+        if let Some(ss) = self.search_state.as_mut() {
+            ss.overlays_track_matches = false;
+        }
     }
 
     /// Mark `range` as the current search match, replacing any previous one.

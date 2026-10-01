@@ -433,3 +433,114 @@ fn test_typing_over_the_current_match_drops_the_mark() {
     // The remaining match is still an ordinary highlighted match.
     assert_eq!(bg_at(&harness, "aa X bb", 9), Some(match_bg(&harness)));
 }
+
+// ---------------------------------------------------------------------------
+// Edits invalidate the captured match set (issue #3444)
+// ---------------------------------------------------------------------------
+
+/// Select all and delete: the buffer holds nothing, so Find Next has nowhere
+/// to go. The match set captured when the search ran used to survive the
+/// delete and send F3 to byte offsets that no longer existed, reporting a
+/// match in a completely empty buffer.
+#[test]
+fn test_find_next_reports_no_matches_after_deleting_the_whole_buffer() {
+    let (_dir, mut harness) = open_with("<p>one</p>\n<p>two</p>\n<p>three</p>\n");
+
+    search(&mut harness, "<p>", false);
+    find_next(&mut harness);
+    assert!(
+        harness.get_status_bar().contains("Match 2 of 3"),
+        "status bar before the edit: {}",
+        harness.get_status_bar()
+    );
+
+    harness
+        .send_key(KeyCode::Char('a'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Delete, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    assert_eq!(harness.get_buffer_content().unwrap(), "");
+
+    find_next(&mut harness);
+    let status = harness.get_status_bar();
+    assert!(
+        !status.contains("Match "),
+        "an empty buffer has no match to report, got: {status}"
+    );
+    assert_eq!(
+        harness.cursor_position(),
+        0,
+        "nothing to navigate to in an empty buffer"
+    );
+}
+
+/// Deleting some of the matched lines leaves the rest navigable, and the
+/// reported total counts only what is still in the buffer.
+#[test]
+fn test_find_next_count_tracks_partially_deleted_matches() {
+    let (_dir, mut harness) = open_with("<p>a</p>\nfill\n<p>b</p>\nfill\n<p>c</p>\nfill\n");
+
+    search(&mut harness, "<p>", false);
+    assert!(
+        harness.get_status_bar().contains("Found 3 matches"),
+        "status bar after the search: {}",
+        harness.get_status_bar()
+    );
+
+    // Delete the first matched line, leaving two matches behind.
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Down, KeyModifiers::SHIFT)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Delete, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    assert_eq!(
+        harness.get_buffer_content().unwrap(),
+        "fill\n<p>b</p>\nfill\n<p>c</p>\nfill\n"
+    );
+
+    find_next(&mut harness);
+    let status = harness.get_status_bar();
+    assert!(
+        status.contains("of 2"),
+        "the deleted match must drop out of the total, got: {status}"
+    );
+
+    // Both survivors are still reachable, and neither is a stale offset.
+    assert_eq!(harness.get_selected_text(), "<p>");
+    find_next(&mut harness);
+    assert_eq!(harness.get_selected_text(), "<p>");
+    assert!(
+        harness.get_status_bar().contains("of 2"),
+        "status bar on the second survivor: {}",
+        harness.get_status_bar()
+    );
+}
+
+/// Deleting every match one at a time ends with nothing to find — the case
+/// from the issue report, where F3 kept "finding" elements already removed.
+#[test]
+fn test_find_next_after_deleting_every_match_reports_no_matches() {
+    let (_dir, mut harness) = open_with("a <br/> b <br/> c <br/> d\n");
+
+    search(&mut harness, "<br/>", false);
+    for _ in 0..3 {
+        assert_eq!(harness.get_selected_text(), "<br/>");
+        harness
+            .send_key(KeyCode::Delete, KeyModifiers::NONE)
+            .unwrap();
+        find_next(&mut harness);
+    }
+    harness.render().unwrap();
+    assert_eq!(harness.get_buffer_content().unwrap(), "a  b  c  d\n");
+
+    let status = harness.get_status_bar();
+    assert!(
+        !status.contains("Match "),
+        "every match is gone, got: {status}"
+    );
+}
