@@ -535,15 +535,14 @@ impl EditorServer {
                 }
             }
 
-            // Process async messages from editor
-            if let Some(ref mut editor) = self.editor {
-                if editor.process_async_messages_budgeted() {
-                    needs_render = true;
-                }
-                if editor.process_pending_file_opens() {
-                    needs_render = true;
-                }
+            // Shared per-iteration housekeeping (async messages, timers,
+            // plugin timers, auto-save, recovery save) — see
+            // `run_editor_tick`.
+            if self.run_editor_tick() {
+                needs_render = true;
+            }
 
+            if let Some(ref mut editor) = self.editor {
                 // Answer script callers whose script has now settled: what
                 // the script returned becomes the reply's `output` (what
                 // `fresh --cmd script run` prints).
@@ -593,10 +592,6 @@ impl EditorServer {
                         #[allow(clippy::let_underscore_must_use)]
                         let _ = client.conn.write_control(&msg);
                     }
-                }
-
-                if editor.check_mouse_hover_timer() {
-                    needs_render = true;
                 }
 
                 // Active animations force a render every FRAME_DURATION so
@@ -1464,6 +1459,54 @@ impl EditorServer {
         }
     }
 
+    /// One iteration of shared per-tick housekeeping, from the one place that
+    /// has it: [`crate::app::editor_tick`] — the same function the TUI
+    /// (`main.rs`), the GUI and the web loop call. Returns true if a render is
+    /// owed.
+    ///
+    /// The daemon loop used to run a hand-copied subset of `editor_tick`
+    /// (async messages, pending file opens, the mouse hover timer), so every
+    /// check the subset missed simply never ran in a daemon session: plugin
+    /// `setTimeout` / `setInterval` never fired, and — worse —
+    /// `auto_recovery_save_dirty_buffers` never ran, so a daemon wrote
+    /// `session.lock` at startup and then not one recovery chunk, losing every
+    /// unsaved buffer on a crash (issue #3440). Calling the shared function
+    /// means a check added for the direct loop cannot go missing here again.
+    ///
+    /// The only part that can't be shared is the full-redraw request: the
+    /// daemon owns no terminal of its own, so rather than clearing one it
+    /// marks every attached client with the same `needs_full_render` a freshly
+    /// connected client gets, and `render_and_broadcast` resets style state
+    /// and clears on their behalf.
+    fn run_editor_tick(&mut self) -> bool {
+        let mut needs_render = false;
+        let mut full_redraw_requested = false;
+
+        if let Some(ref mut editor) = self.editor {
+            match crate::app::editor_tick(editor, || {
+                full_redraw_requested = true;
+                Ok(())
+            }) {
+                Ok(true) => needs_render = true,
+                Ok(false) => {}
+                // Can't currently happen — the only `?` inside `editor_tick`
+                // is the callback above, which never fails — but a tick hiccup
+                // must not tear down a daemon with clients attached, so log it
+                // and carry on, as the web loop does.
+                Err(e) => tracing::warn!("editor_tick error: {e}"),
+            }
+        }
+
+        if full_redraw_requested {
+            for client in &mut self.clients {
+                client.needs_full_render = true;
+            }
+            needs_render = true;
+        }
+
+        needs_render
+    }
+
     /// Render the editor and broadcast output to all clients
     fn render_and_broadcast(&mut self) -> io::Result<()> {
         let Some(ref mut editor) = self.editor else {
@@ -1602,13 +1645,18 @@ mod wave_dismiss_tests {
 
     /// Build a server with an initialized editor, ready to receive input.
     fn server_with_editor(prefix: &str) -> EditorServer {
+        server_with_editor_config(prefix, Config::default())
+    }
+
+    /// Same, with a caller-supplied editor config.
+    pub(super) fn server_with_editor_config(prefix: &str, editor_config: Config) -> EditorServer {
         let temp_dir = std::env::temp_dir().join(unique_session_name(prefix));
         std::fs::create_dir_all(&temp_dir).unwrap();
         let config = EditorServerConfig {
             working_dir: temp_dir.clone(),
             session_name: Some(unique_session_name(prefix)),
             idle_timeout: Some(Duration::from_secs(30)),
-            editor_config: Config::default(),
+            editor_config,
             dir_context: DirectoryContext::for_testing(&temp_dir),
             plugins_enabled: false,
             init_enabled: false,
@@ -1790,6 +1838,126 @@ mod wave_dismiss_tests {
                 .expect("editor present")
                 .wave_animation_active(),
             "the wave must be dismissable by mouse activity in daemon mode (issue #2530)"
+        );
+    }
+}
+
+#[cfg(test)]
+mod editor_tick_tests {
+    //! Regression tests for issue #3440: a daemon (server) session must run the
+    //! same shared per-iteration housekeeping a directly-launched one does.
+    //! The bug was that the daemon loop ran a hand-copied subset of
+    //! `app::editor_tick` — async messages, pending file opens, the mouse hover
+    //! timer — so every other check in it never ran in a daemon session. Plugin
+    //! `setTimeout` / `setInterval` never fired, and
+    //! `auto_recovery_save_dirty_buffers` never ran at all: the daemon wrote
+    //! `session.lock` at startup and then not one recovery chunk, so a `kill
+    //! -9` lost every unsaved buffer. These tests drive the real
+    //! `run_editor_tick` the loop calls.
+
+    use super::wave_dismiss_tests::server_with_editor_config;
+    use crate::config::Config;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use fresh_input_parser::Event;
+
+    /// Recovery chunk files written anywhere under the session's recovery dir.
+    fn recovery_chunks(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+        let mut found = Vec::new();
+        let mut stack = vec![dir.to_path_buf()];
+        while let Some(next) = stack.pop() {
+            let Ok(entries) = std::fs::read_dir(&next) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    stack.push(path);
+                } else if path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|n| n.contains(".chunk."))
+                {
+                    found.push(path);
+                }
+            }
+        }
+        found
+    }
+
+    /// Typing into an unsaved buffer in daemon mode must leave a recovery chunk
+    /// on disk, exactly as it does in a directly-launched session. Before the
+    /// fix the daemon never called `auto_recovery_save_dirty_buffers`, so the
+    /// buffer existed only in the daemon's memory and a crash took it with it
+    /// (issue #3440).
+    #[test]
+    fn recovery_save_runs_for_a_dirty_buffer_in_daemon_mode() {
+        // The interval is a rate limit on a check that runs every tick; zero
+        // means the first tick after the edit is allowed to write, so the test
+        // doesn't have to wait out the 2s default.
+        let mut editor_config = Config::default();
+        editor_config.editor.auto_recovery_save_interval_secs = 0;
+
+        let mut server = server_with_editor_config("recovery-tick", editor_config);
+        let recovery_dir = server.config.dir_context.recovery_dir();
+
+        // Type into the unnamed startup buffer — the `[No Name]*` case from the
+        // report — through the daemon's real input path.
+        for ch in "abc".chars() {
+            server
+                .handle_event(Event::key(KeyEvent::new(
+                    KeyCode::Char(ch),
+                    KeyModifiers::empty(),
+                )))
+                .expect("handle_event");
+        }
+        assert!(
+            server
+                .editor()
+                .expect("editor present")
+                .active_state()
+                .buffer
+                .is_modified(),
+            "precondition: typing must leave the buffer dirty"
+        );
+        assert!(
+            recovery_chunks(&recovery_dir).is_empty(),
+            "precondition: nothing is saved before the first tick"
+        );
+
+        // One iteration of the daemon loop's shared housekeeping.
+        server.run_editor_tick();
+
+        let chunks = recovery_chunks(&recovery_dir);
+        assert!(
+            !chunks.is_empty(),
+            "the daemon loop must run the shared editor_tick, so an unsaved \
+             buffer gets a recovery chunk (issue #3440); recovery dir {:?} \
+             holds no *.chunk.* file",
+            recovery_dir
+        );
+    }
+
+    /// The daemon has no terminal of its own, so a full-redraw request from the
+    /// tick has to reach the attached clients instead of clearing one. With no
+    /// clients attached it must simply not panic and must still ask for a frame.
+    #[test]
+    fn full_redraw_request_from_the_tick_is_absorbed_in_daemon_mode() {
+        let mut server = server_with_editor_config("redraw-tick", Config::default());
+        server
+            .editor_mut()
+            .expect("editor present")
+            .request_full_redraw();
+
+        assert!(
+            server.run_editor_tick(),
+            "a full-redraw request must leave the daemon owing a frame"
+        );
+        assert!(
+            !server
+                .editor_mut()
+                .expect("editor present")
+                .take_full_redraw_request(),
+            "the tick must have consumed the request"
         );
     }
 }
