@@ -563,46 +563,54 @@ impl OverlayManager {
         // Find overlays in this namespace that overlap the range. Use the
         // marker-tree to narrow candidates; verify each candidate's true
         // range and namespace before removing.
-        if range.start < range.end {
-            let hits = marker_list.query_range(range.start, range.end);
-            let mut candidates: Vec<usize> = hits
-                .iter()
-                .filter_map(|(mid, _, _)| self.marker_to_idx.get(mid).copied())
-                .collect();
-            candidates.sort_unstable();
-            candidates.dedup();
-            let mut to_remove: Vec<usize> = candidates
-                .into_iter()
-                .filter(|&idx| {
-                    let o = &self.overlays[idx];
-                    if o.namespace.as_ref() != Some(namespace) {
-                        return false;
-                    }
-                    let start = marker_list.get_position(o.start_marker).unwrap_or(0);
-                    let end = marker_list.get_position(o.end_marker).unwrap_or(0);
-                    if start < end {
-                        // Healthy overlay: remove on genuine half-open overlap.
-                        start < range.end && range.start < end
-                    } else {
-                        // Collapsed (start == end) or inverted (start > end)
-                        // overlay. These arise when an edit erases the overlay's
-                        // anchored text — the markers clamp to the edit point and
-                        // a later insert can even push them past each other
-                        // (issue #2414). A strict overlap test never matches a
-                        // zero-length span, so the dead overlay would linger and
-                        // surface as a phantom search match. Treat it as a point
-                        // and remove it whenever it lands inside the replaced
-                        // range, so it is dropped rather than recreated.
-                        let lo = start.min(end);
-                        let hi = start.max(end);
-                        lo <= range.end && range.start <= hi
-                    }
-                })
-                .collect();
-            to_remove.sort_unstable_by(|a, b| b.cmp(a));
-            for idx in to_remove {
-                self.swap_remove_at(idx, marker_list);
-            }
+        //
+        // An empty `range` still has to run this pass. When an edit empties
+        // the span being re-evaluated — deleting the whole buffer, say —
+        // every overlay inside it collapses onto that one point and the
+        // caller hands us `p..p`. Skipping the pass stranded those dead
+        // overlays, and each one then surfaced as a phantom search match
+        // (issue #3444). Healthy overlays are left alone for an empty range:
+        // no span is being replaced, so there is nothing to put back in
+        // their place.
+        let replaces_span = range.start < range.end;
+        let hits = marker_list.query_range(range.start, range.end);
+        let mut candidates: Vec<usize> = hits
+            .iter()
+            .filter_map(|(mid, _, _)| self.marker_to_idx.get(mid).copied())
+            .collect();
+        candidates.sort_unstable();
+        candidates.dedup();
+        let mut to_remove: Vec<usize> = candidates
+            .into_iter()
+            .filter(|&idx| {
+                let o = &self.overlays[idx];
+                if o.namespace.as_ref() != Some(namespace) {
+                    return false;
+                }
+                let start = marker_list.get_position(o.start_marker).unwrap_or(0);
+                let end = marker_list.get_position(o.end_marker).unwrap_or(0);
+                if start < end {
+                    // Healthy overlay: remove on genuine half-open overlap.
+                    replaces_span && start < range.end && range.start < end
+                } else {
+                    // Collapsed (start == end) or inverted (start > end)
+                    // overlay. These arise when an edit erases the overlay's
+                    // anchored text — the markers clamp to the edit point and
+                    // a later insert can even push them past each other
+                    // (issue #2414). A strict overlap test never matches a
+                    // zero-length span, so the dead overlay would linger and
+                    // surface as a phantom search match. Treat it as a point
+                    // and remove it whenever it lands inside the replaced
+                    // range, so it is dropped rather than recreated.
+                    let lo = start.min(end);
+                    let hi = start.max(end);
+                    lo <= range.end && range.start <= hi
+                }
+            })
+            .collect();
+        to_remove.sort_unstable_by(|a, b| b.cmp(a));
+        for idx in to_remove {
+            self.swap_remove_at(idx, marker_list);
         }
 
         if !new_overlays.is_empty() {
@@ -1381,6 +1389,69 @@ mod tests {
         assert!(overlay.overlaps(&(5..15), &marker_list));
         assert!(overlay.overlaps(&(15..25), &marker_list));
         assert!(!overlay.overlaps(&(20..30), &marker_list));
+    }
+
+    /// Deleting every byte the overlays covered collapses them all onto one
+    /// point, and the span the caller re-evaluates is then empty too. The
+    /// zero-length leftovers still have to go: search reads surviving
+    /// overlays as its live match set, so each one stranded here came back
+    /// as a phantom match in an empty buffer (issue #3444).
+    #[test]
+    fn test_replace_empty_range_evicts_collapsed_overlays() {
+        let mut marker_list = MarkerList::new();
+        marker_list.set_buffer_size(30);
+        let mut manager = OverlayManager::new();
+
+        let ns = OverlayNamespace::from_string("search".to_string());
+        for start in [0usize, 10, 20] {
+            manager.add(Overlay::with_namespace(
+                &mut marker_list,
+                start..(start + 5),
+                OverlayFace::Background { color: Color::Red },
+                ns.clone(),
+            ));
+        }
+        assert_eq!(manager.len(), 3);
+
+        // Delete the whole buffer: every overlay collapses onto offset 0.
+        marker_list.adjust_for_delete(0, 30);
+        marker_list.set_buffer_size(0);
+
+        // The re-evaluated span is empty as well — there is no text left.
+        manager.replace_range_in_namespace(&ns, &(0..0), Vec::new(), &mut marker_list);
+
+        assert_eq!(
+            manager.len(),
+            0,
+            "collapsed overlays must not survive an empty replacement range"
+        );
+        manager.check_invariants();
+    }
+
+    /// The flip side: an empty replacement range puts nothing back, so it
+    /// must not take a live overlay with it just because it spans the point.
+    #[test]
+    fn test_replace_empty_range_keeps_healthy_overlays() {
+        let mut marker_list = MarkerList::new();
+        marker_list.set_buffer_size(100);
+        let mut manager = OverlayManager::new();
+
+        let ns = OverlayNamespace::from_string("search".to_string());
+        manager.add(Overlay::with_namespace(
+            &mut marker_list,
+            10..20,
+            OverlayFace::Background { color: Color::Red },
+            ns.clone(),
+        ));
+
+        manager.replace_range_in_namespace(&ns, &(15..15), Vec::new(), &mut marker_list);
+
+        assert_eq!(
+            manager.len(),
+            1,
+            "a live overlay spanning the point must survive an empty replacement range"
+        );
+        manager.check_invariants();
     }
 
     #[test]
