@@ -969,10 +969,19 @@ impl crate::app::Editor {
         let manager = SplitManager::new(buf);
         let active_leaf = manager.active_split();
         let mut view_states = HashMap::new();
-        view_states.insert(
-            active_leaf,
-            SplitViewState::with_buffer(self.terminal_width, self.terminal_height, buf),
+        let mut view_state =
+            SplitViewState::with_buffer(self.terminal_width, self.terminal_height, buf);
+        // `with_buffer` goes through `BufferViewState::new`, whose display
+        // flags are hard-coded rather than read from `editor.*`, so the scratch
+        // buffer ignores the user's settings until something stamps them —
+        // the same miss as the restore path in #3426. The boot-time seed in
+        // `Editor::new` stamps here too; this is its per-window counterpart,
+        // and the buffer is empty and unnamed, so the global wrap values are
+        // the resolved ones.
+        view_state.buffer_tab_state_mut().apply_config_defaults(
+            crate::view::split::ViewConfigDefaults::from_editor_config(&self.config.editor),
         );
+        view_states.insert(active_leaf, view_state);
         Some((buf, state, metadata, event_log, manager, view_states))
     }
 
