@@ -448,12 +448,11 @@ impl Editor {
         let ns = &self.active_window().search_namespace;
         let state = self.active_state();
 
-        // From the namespace index, not a walk of every overlay on the
-        // buffer: syntax and semantic highlighting dwarf the search set, and
-        // this runs on each Find Next.
         let mut ranges: Vec<(usize, usize)> = state
             .overlays
-            .in_namespace(ns)
+            .all()
+            .iter()
+            .filter(|o| o.namespace.as_ref() == Some(ns))
             .filter_map(|o| {
                 let start = state.marker_list.get_position(o.start_marker)?;
                 let end = state.marker_list.get_position(o.end_marker)?;
