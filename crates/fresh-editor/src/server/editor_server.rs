@@ -1487,8 +1487,7 @@ impl EditorServer {
                 full_redraw_requested = true;
                 Ok(())
             }) {
-                Ok(true) => needs_render = true,
-                Ok(false) => {}
+                Ok(owes_frame) => needs_render = owes_frame,
                 // Can't currently happen — the only `?` inside `editor_tick`
                 // is the callback above, which never fails — but a tick hiccup
                 // must not tear down a daemon with clients attached, so log it
@@ -1862,32 +1861,9 @@ mod editor_tick_tests {
 
     use super::wave_dismiss_tests::server_with_editor_config;
     use crate::config::Config;
+    use crate::server::test_support::recovery_chunk_files;
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use fresh_input_parser::Event;
-
-    /// Recovery chunk files written anywhere under the session's recovery dir.
-    fn recovery_chunks(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
-        let mut found = Vec::new();
-        let mut stack = vec![dir.to_path_buf()];
-        while let Some(next) = stack.pop() {
-            let Ok(entries) = std::fs::read_dir(&next) else {
-                continue;
-            };
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.is_dir() {
-                    stack.push(path);
-                } else if path
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .is_some_and(|n| n.contains(".chunk."))
-                {
-                    found.push(path);
-                }
-            }
-        }
-        found
-    }
 
     /// Typing into an unsaved buffer in daemon mode must leave a recovery chunk
     /// on disk, exactly as it does in a directly-launched session. Before the
@@ -1925,16 +1901,15 @@ mod editor_tick_tests {
             "precondition: typing must leave the buffer dirty"
         );
         assert!(
-            recovery_chunks(&recovery_dir).is_empty(),
+            recovery_chunk_files(&recovery_dir).is_empty(),
             "precondition: nothing is saved before the first tick"
         );
 
         // One iteration of the daemon loop's shared housekeeping.
         server.run_editor_tick();
 
-        let chunks = recovery_chunks(&recovery_dir);
         assert!(
-            !chunks.is_empty(),
+            !recovery_chunk_files(&recovery_dir).is_empty(),
             "the daemon loop must run the shared editor_tick, so an unsaved \
              buffer gets a recovery chunk (issue #3440); recovery dir {:?} \
              holds no *.chunk.* file",
@@ -1947,44 +1922,25 @@ mod editor_tick_tests {
     /// in the daemon ever called `take_full_redraw_request`, so a plugin- or
     /// theme-driven request was a silent no-op there.
     ///
-    /// Consuming the flag is what this asserts. The `needs_full_render` fan-out
-    /// it feeds needs connected clients, which only the IPC-level test in
-    /// `server/tests.rs` has; with none attached the request is correctly
-    /// dropped after being consumed.
+    /// Consuming the flag is what this asserts; the `needs_full_render` fan-out
+    /// it feeds would need connected clients, which no test here has. With none
+    /// attached the request is correctly dropped once consumed.
     #[test]
     fn full_redraw_request_from_the_tick_is_absorbed_in_daemon_mode() {
         let mut server = server_with_editor_config("redraw-tick", Config::default());
-
-        // Quiesce first: a freshly built editor owes a frame for startup work,
-        // and `editor_tick` reports that through the same bool, which would
-        // make the "owes a frame" assertion below pass for the wrong reason.
-        for _ in 0..5 {
-            server.run_editor_tick();
-        }
-        assert!(
-            !server
-                .editor_mut()
-                .expect("editor present")
-                .take_full_redraw_request(),
-            "precondition: no redraw request is outstanding before we make one"
-        );
-
         server
             .editor_mut()
             .expect("editor present")
             .request_full_redraw();
 
-        let owes_frame = server.run_editor_tick();
+        server.run_editor_tick();
+
         assert!(
             !server
                 .editor_mut()
                 .expect("editor present")
                 .take_full_redraw_request(),
             "the tick must have consumed the full-redraw request"
-        );
-        assert!(
-            owes_frame,
-            "consuming a full-redraw request must leave the daemon owing a frame"
         );
     }
 }

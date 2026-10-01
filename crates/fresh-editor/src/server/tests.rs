@@ -11,6 +11,7 @@ mod integration_tests {
     use crate::server::protocol::{
         ClientControl, ClientHello, ServerControl, ServerHello, TermSize, PROTOCOL_VERSION,
     };
+    use crate::server::test_support::recovery_chunk_files;
 
     /// Read from the client data pipe until the accumulated output contains `needle`.
     /// Appends to `output` so callers can accumulate across multiple calls.
@@ -591,13 +592,12 @@ mod integration_tests {
         // The loop writes the chunk on one of its next iterations; poll rather
         // than assume a single iteration has elapsed.
         let deadline = std::time::Instant::now() + Duration::from_secs(10);
-        let mut chunks = Vec::new();
-        while std::time::Instant::now() < deadline {
-            chunks = recovery_chunk_files(&recovery_dir);
-            if !chunks.is_empty() {
-                break;
+        let mut wrote_chunk = false;
+        while !wrote_chunk && std::time::Instant::now() < deadline {
+            wrote_chunk = !recovery_chunk_files(&recovery_dir).is_empty();
+            if !wrote_chunk {
+                thread::sleep(Duration::from_millis(25));
             }
-            thread::sleep(Duration::from_millis(25));
         }
 
         conn.write_control(&serde_json::to_string(&ClientControl::Quit).unwrap())
@@ -606,7 +606,7 @@ mod integration_tests {
         let result = server_handle.join().unwrap();
 
         assert!(
-            !chunks.is_empty(),
+            wrote_chunk,
             "the daemon loop must run the shared editor_tick, so an unsaved \
              buffer gets a recovery chunk (issue #3440); recovery dir {:?} \
              holds no *.chunk.* file",
@@ -616,30 +616,6 @@ mod integration_tests {
 
         drop(socket_paths.cleanup());
         std::fs::remove_dir_all(&temp_dir).ok();
-    }
-
-    /// Recovery chunk files anywhere under `dir`.
-    fn recovery_chunk_files(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
-        let mut found = Vec::new();
-        let mut stack = vec![dir.to_path_buf()];
-        while let Some(next) = stack.pop() {
-            let Ok(entries) = std::fs::read_dir(&next) else {
-                continue;
-            };
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.is_dir() {
-                    stack.push(path);
-                } else if path
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .is_some_and(|n| n.contains(".chunk."))
-                {
-                    found.push(path);
-                }
-            }
-        }
-        found
     }
 
     /// E2E test using real EditorServer with full editor initialization
