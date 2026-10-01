@@ -1,8 +1,11 @@
 //! What a launch shows *before* the dock's content exists. The plugin
 //! mounts the dock from `ready`, after every plugin has loaded; the host
-//! carves the column from the first frame (`orchestrator.manifest.json`,
-//! `chrome.json`) and the mount fills it in place. These drive only the
-//! rendered screen (CONTRIBUTING.md §2).
+//! carves the column from the first frame (`orchestrator.manifest.json`, the
+//! plugin's `autoOpenDock`, and the launch mode) and the mount fills it in
+//! place. These drive only the rendered screen (CONTRIBUTING.md §2); the one
+//! exception is the across-launches test, which reads and replays the user
+//! config file between launches because that is how a real relaunch resolves
+//! it — never to assert an in-session invariant.
 
 use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness, HarnessOptions};
 use crate::common::tracing::init_tracing_from_env;

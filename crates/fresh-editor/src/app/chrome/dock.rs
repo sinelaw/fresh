@@ -8,9 +8,15 @@
 //! Openness is remembered in one place only: the boolean the manifest names
 //! (`plugins.<name>.settings.<key>` — the orchestrator's `autoOpenDock`),
 //! which is also what the Settings UI edits. The plugin writes it when the
-//! user opens or closes the dock, so the column, the `View` menu's checkmark
-//! and the Settings value cannot drift apart (issue #3442). `chrome.json`
-//! remembers the dragged width, and nothing else.
+//! user opens or closes the dock, so a dock the user closed is still closed
+//! on the next launch and the Settings value says so (issue #3442).
+//!
+//! The setting holds the user's own decisions, not a mirror of the slot: a
+//! plugin may open or close its dock for an event of its own (the
+//! orchestrator attaching to a discovered worktree, or surfacing a recovered
+//! workspace) without touching the preference, so within a session the column
+//! can differ from the setting. `chrome.json` remembers the dragged width and
+//! nothing else, plus the pre-#3442 `open` it still reads once on upgrade.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -25,9 +31,15 @@ use crate::services::plugins::manifest::PluginManifest;
 /// may be unknown. Whether the dock is open is the plugin's `open_setting`,
 /// not this file — see the module docs.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct DockChromeState {
+struct DockChromeState {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) width: Option<u16>,
+    width: Option<u16>,
+    /// Where openness lived before #3442. Read as a one-time fallback so an
+    /// upgrading user who had closed the dock does not get it back, and never
+    /// written: the first width write drops it and `open_setting` carries it
+    /// from then on.
+    #[serde(default, rename = "open", skip_serializing_if = "Option::is_none")]
+    legacy_open: Option<bool>,
 }
 
 /// The file: editor-global, shared by every editor this data directory serves.
@@ -47,7 +59,7 @@ fn chrome_state_path(data_dir: &Path) -> PathBuf {
 }
 
 /// Read the remembered chrome. A missing or unreadable file is a first launch.
-pub(crate) fn read_dock_chrome_state(fs: &dyn FileSystem, data_dir: &Path) -> DockChromeState {
+fn read_dock_chrome_state(fs: &dyn FileSystem, data_dir: &Path) -> DockChromeState {
     let path = chrome_state_path(data_dir);
     match fs.read_file(&path) {
         Ok(bytes) => match serde_json::from_slice::<ChromeState>(&bytes) {
@@ -74,6 +86,9 @@ impl Editor {
     /// Orchestrator mode used to *override* the setting rather than default
     /// it, which left an `autoOpenDock: false` with no effect at all in the
     /// mode that is the default since 0.5.2 (issue #3442).
+    ///
+    /// Between the two sits `chrome.json`'s pre-#3442 `open`, read once so an
+    /// upgrading user who had closed the dock is not handed it back.
     pub(crate) fn apply_startup_dock_chrome(
         &mut self,
         manifests: &HashMap<String, PluginManifest>,
@@ -105,7 +120,9 @@ impl Editor {
                 .and_then(|c| c.settings.get(setting))
                 .and_then(|v| v.as_bool())
         });
-        self.dock_reserved = configured.unwrap_or(orchestrator_mode || decl.open);
+        self.dock_reserved = configured
+            .or(remembered.legacy_open)
+            .unwrap_or(orchestrator_mode || decl.open);
         tracing::debug!(
             plugin = %name,
             reserved = self.dock_reserved,
@@ -169,6 +186,7 @@ impl Editor {
         let path = chrome_state_path(&self.dir_context.data_dir);
         let dock = DockChromeState {
             width: self.dock_width,
+            legacy_open: None,
         };
         let bytes = match serde_json::to_vec_pretty(&ChromeState { dock }) {
             Ok(b) => b,

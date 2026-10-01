@@ -7398,31 +7398,39 @@ function toggleDock(): void {
   }
   // A centered modal picker is open — leave it alone.
   if (openPanel) return;
+  // Both branches above returned, so `openPanel` is null here and
+  // `openControlRoom` mounts the dock: the decision is "open".
   openControlRoom({ dock: true });
-  rememberDockOpen(dockIsShowing());
+  rememberDockOpen(true);
 }
 
 registerHandler("orchestrator_dock_toggle", toggleDock);
 
-// Whether the dock itself is up (as opposed to the centered modal picker,
-// which reuses the same panel state).
-function dockIsShowing(): boolean {
-  return !!openPanel && dockMode;
-}
-
 // Write the user's open/close decision to `autoOpenDock`, the one place the
 // dock's openness is remembered: the host reads it before the first frame
 // (`Editor::apply_startup_dock_chrome`) and the Settings UI shows and edits
-// the same value, so the column, the View menu's checkmark and Settings
-// cannot drift apart (issue #3442).
+// the same value (issue #3442).
 //
 // Called only from the routes that *are* the user saying so — the toggle
 // command (View ▸ Orchestrator Dock, the palette, the `toggle_dock_focus`
-// accelerator) and the dock's `×`. Never from the opens and closes the
-// plugin does for itself (a dive into a worktree, the picker floating over
-// the dock), which are transients, not decisions.
+// accelerator) and the dock's `×`.
+//
+// Deliberately not from the opens and closes the plugin does for itself:
+// attaching to a discovered worktree closes the dock, and a new workspace or
+// a recovered pending one reopens it (`showDockUnfocused`). Those are events,
+// not preferences, and recording them would overwrite a deliberate setting —
+// a recovery at startup would flip an `autoOpenDock: false` the user had just
+// chosen. The cost is that within a session the column can differ from the
+// setting while one of those is in effect; what the setting always holds is
+// the user's last explicit decision, which is what the next launch obeys.
 function rememberDockOpen(open: boolean): void {
-  if (configuredDockOpen() === open) return;
+  // Deduped against `lastDockOpenSetting`, never against `configuredDockOpen()`:
+  // `saveSetting` only queues the write, so the config snapshot still reads the
+  // old value for a tick or two (see `welcome_screen.ts`'s note on the same
+  // hazard). Reading the snapshot here made a second toggle inside that window
+  // compare against a value already superseded and skip its write, leaving the
+  // setting contradicting the dock — the very thing #3442 is about.
+  if (lastDockOpenSetting === open) return;
   lastDockOpenSetting = open;
   editor.saveSetting("plugins.orchestrator.settings.autoOpenDock", open);
 }
@@ -18683,13 +18691,24 @@ editor.on("ready", () => {
 editor.on("config_changed", () => {
   const open = configuredDockOpen();
   if (open === lastDockOpenSetting) return;
-  lastDockOpenSetting = open;
-  if (open === dockIsShowing()) return;
-  if (open) {
-    if (!openPanel) showDockUnfocused();
-    return;
+  // `editor.dockOpen()` — the host's "a dock is mounted" — not the plugin's
+  // `openPanel`/`dockMode`: with the modal picker floating over a live dock
+  // those two read "no dock" while the column is still mounted and on screen,
+  // so the plugin's own view would call an already-open dock closed.
+  if (open !== editor.dockOpen()) {
+    // A picker owns the screen: leave it alone, and leave `lastDockOpenSetting`
+    // behind too so the next save reconsiders. Consuming it here would strand
+    // the edit for the rest of the session (it is already on disk either way,
+    // so a relaunch honours it regardless).
+    if (open) {
+      if (openPanel) return;
+      showDockUnfocused();
+    } else {
+      if (!dockMode) return;
+      closeOpenDialog();
+    }
   }
-  if (dockMode) closeOpenDialog();
+  lastDockOpenSetting = open;
 });
 
 // Grace window after a session becomes active during which terminal

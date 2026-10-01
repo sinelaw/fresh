@@ -8,7 +8,7 @@
 
 ### Bug Fixes
 
-* **The workspace dock, `View ▸ Orchestrator Dock` and the `autoOpenDock` setting agree** - a bare `fresh` used to open the dock whatever the setting said, so `autoOpenDock: false` did nothing in the launch mode that is the default since 0.5.2, and a dock you had closed came back on the next start. Closing or opening the dock now writes `autoOpenDock`, changing it in the Settings UI opens or closes the dock, and it is what Fresh starts with - the dock, the menu's checkmark and the setting can no longer disagree (#3442)
+* **The workspace dock, `View ▸ Orchestrator Dock` and the `autoOpenDock` setting agree** - a bare `fresh` used to open the dock whatever the setting said, so `autoOpenDock: false` did nothing in the launch mode that is the default since 0.5.2, and a dock you had closed came back on the next start. Closing or opening the dock now writes `autoOpenDock`, changing it in the Settings UI opens or closes the dock, and it is what Fresh starts with, in every launch mode. A dock you closed before upgrading stays closed (#3442)
 
 ### Themes
 

@@ -342,13 +342,20 @@ the user left behind and what the Settings UI edits; with nothing set, a bare
 width comes back from `<data>/chrome.json`. The width rule is the host's from
 then on; the plugin reads it back with `editor.dockCols()`.
 
-Openness is deliberately *not* inferred from the slot at quit: the plugin
-closes and reopens its own dock (a dive into a worktree), so the final state
-cannot be told apart from the user's decision, and writing it would overwrite
-a value the user had just set in the Settings UI. The plugin writes
-`open_setting` at the moment the user opens or closes the dock instead, which
-is what keeps the column, the `View` menu's checkmark and the Settings value
-in agreement (#3442).
+Openness is deliberately *not* inferred from the slot at quit: a plugin opens
+and closes its own dock for its own reasons (the orchestrator closes it to
+attach to a discovered worktree, and reopens it for a new or recovered
+workspace), so the final state cannot be told apart from the user's decision,
+and writing it would overwrite a value the user had just set in the Settings
+UI. The plugin writes `open_setting` at the moment the user opens or closes
+the dock instead, so the setting holds the user's last explicit decision and
+that is what the next launch obeys (#3442). It is not a mirror of the slot:
+while one of those plugin-initiated states is in effect the column can differ
+from the setting, by design.
+
+`open_setting` is read through the normal config layering, so a project that
+pins it in `.fresh/config.json` is where the write lands (`persist_config_pointer`
+targets the layer that already defines the key).
 
 A manifest is a declaration, not a command. The plugin still mounts its dock
 from `ready`, gated on `editor.dockOpen()`, into a column that is already

@@ -6303,55 +6303,68 @@ mod dock_reservation_tests {
         }
     }
 
-    /// What is remembered is what the user set: the plugin's `open_setting`
-    /// says whether the column comes back, in every launch mode, and a
-    /// dragged width comes back with it. A plugin's own close-and-reopen
-    /// writes nothing, so it cannot be mistaken for a decision.
+    /// The slot follows the mount while the editor runs, and the width a drag
+    /// left comes back on the next launch.
+    ///
+    /// Openness is not in this file and not written host-side at all any more
+    /// — `open_setting` carries it, and the plugin writes that when the user
+    /// acts. So a mount/unmount cycle records nothing by construction, which
+    /// is what keeps the plugin's own close-and-reopen (attaching to a
+    /// discovered worktree, a recovered workspace) from being mistaken for a
+    /// decision; there is no host-side state left here to assert that against.
     #[test]
-    fn what_the_user_leaves_is_what_comes_back() {
+    fn the_slot_follows_the_mount_and_the_dragged_width_comes_back() {
         let home = home(Some(DECLARES_DOCK));
-        let auto_open =
-            |open| orchestrator_config(true, serde_json::json!({ "autoOpenDock": open }));
-        let launch =
-            |config: Config, orchestrator_mode| editor(home.clone(), config, orchestrator_mode);
+        let launch = || editor(home.clone(), Config::default(), false);
 
-        let mut e = launch(Config::default(), false);
+        let mut e = launch();
         assert!(e.dock_reserved, "held open on a first launch");
         mount(&mut e);
         assert!(!e.dock_reserved, "the mount fills the column");
         assert!(dock_width_of(&e).is_some(), "...and the column stays");
-
-        // A transient — closed and reopened — leaves `chrome.json` saying
-        // nothing about openness, so the next launch is the setting's call.
         unmount(&mut e);
-        assert_eq!(dock_width_of(&e), None);
-        mount(&mut e);
-        assert!(
-            launch(Config::default(), false).dock_reserved,
-            "a close the plugin undid is not a decision"
-        );
+        assert_eq!(dock_width_of(&e), None, "the unmount gives the column back");
 
-        // Closed: the setting the plugin wrote when the user closed it.
-        for orchestrator_mode in [false, true] {
-            let e = launch(auto_open(false), orchestrator_mode);
-            assert!(
-                !e.dock_reserved,
-                "the user closed it (orchestrator_mode = {orchestrator_mode})"
-            );
-            assert_eq!(dock_width_of(&e), None);
-        }
-
-        // Open and dragged: the width is written as the drag ends, and comes
-        // back with a dock the setting reopens.
-        let mut e = launch(auto_open(true), false);
+        // Open and dragged: the width is written as the drag ends.
         mount(&mut e);
         e.handle_dock_resize_drag(37); // the wall lands on column 37: width 38
         e.persist_dock_width();
         assert_eq!(
-            dock_width_of(&launch(auto_open(true), false)),
+            dock_width_of(&launch()),
             Some(38),
-            "open, at the dragged width"
+            "the dragged width comes back"
         );
+    }
+
+    /// Issue #3442 upgrade path: openness used to live in `chrome.json`'s
+    /// `open`, and a user who had closed the dock has that on disk with no
+    /// `autoOpenDock` to replace it (the declared default is only ever
+    /// in-memory). It is read once, so the dock they closed stays closed —
+    /// and the setting wins over it the moment it exists.
+    #[test]
+    fn a_dock_closed_before_the_setting_existed_stays_closed() {
+        let home = home(Some(DECLARES_DOCK));
+        std::fs::create_dir_all(&home.data_dir).unwrap();
+        std::fs::write(
+            home.data_dir.join("chrome.json"),
+            r#"{"dock":{"open":false,"width":31}}"#,
+        )
+        .unwrap();
+
+        for orchestrator_mode in [false, true] {
+            let e = editor(home.clone(), Config::default(), orchestrator_mode);
+            assert!(
+                !e.dock_reserved,
+                "a dock closed under the old scheme must stay closed \
+                 (orchestrator_mode = {orchestrator_mode})"
+            );
+        }
+
+        // The setting is the authority once set, legacy value or not.
+        let on = orchestrator_config(true, serde_json::json!({ "autoOpenDock": true }));
+        let e = editor(home.clone(), on, false);
+        assert!(e.dock_reserved, "the setting outranks the legacy key");
+        assert_eq!(dock_width_of(&e), Some(31), "the width is still read");
     }
 
     /// The `ready` hook's own sentinel releases a column nothing mounted
