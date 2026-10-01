@@ -1309,3 +1309,88 @@ fn test_hot_exit_restore_without_session_reuses_the_scratch_buffer() {
         );
     }
 }
+
+/// **A restored unnamed buffer follows the `editor.*` display settings**
+/// (issue #3426). A file buffer is stamped with them as `open_file_internal`
+/// opens it, but an unnamed (hot-exit) buffer never passes that way: the
+/// workspace restore seeds its view state itself, and used to leave it on
+/// `BufferViewState::new`'s hard-coded defaults — so a restored `[No Name]`
+/// buffer highlighted the current line and drew a line-number gutter whatever
+/// the config said.
+#[test]
+fn test_restored_unnamed_buffer_follows_display_config() {
+    let temp_dir = TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    std::fs::create_dir(&project_dir).unwrap();
+    let dir_context = DirectoryContext::for_testing(temp_dir.path());
+
+    // Every display default flipped away from the value
+    // `BufferViewState::new` hard-codes, so a view state that missed the
+    // stamp is unmistakable rather than accidentally right.
+    let config = || {
+        let mut config = Config::default();
+        config.editor.hot_exit = true;
+        config.editor.highlight_current_line = false;
+        config.editor.line_numbers = false;
+        config.editor.rulers = vec![80];
+        config
+    };
+    let harness_for = |config: Config| {
+        EditorTestHarness::create(
+            100,
+            24,
+            HarnessOptions::new()
+                .with_config(config)
+                .with_working_dir(project_dir.clone())
+                .with_shared_dir_context(dir_context.clone())
+                .without_empty_plugins_dir(),
+        )
+        .unwrap()
+    };
+
+    // Session 1: an unnamed buffer with content, kept for hot exit.
+    {
+        let mut harness = harness_for(config());
+        harness.editor_mut().set_session_mode(true);
+        harness.new_buffer().unwrap();
+        harness.type_text("scratch notes").unwrap();
+        harness.render().unwrap();
+        harness.shutdown(true).unwrap();
+    }
+
+    // Session 2: the restored buffer's view state carries the config.
+    {
+        let mut harness = harness_for(config());
+        assert!(
+            harness.startup(true, &[]).unwrap(),
+            "the saved workspace should restore"
+        );
+        harness.render().unwrap();
+
+        let tab_bar = harness.screen_row_text(layout::TAB_BAR_ROW as u16);
+        assert!(
+            tab_bar.contains("[No Name]*"),
+            "the restored, modified unnamed buffer is the tab.\nTab bar: {tab_bar}"
+        );
+
+        let window = harness.editor().active_window();
+        let (mgr, view_states) = window.buffers.splits().unwrap();
+        let view = view_states
+            .get(&mgr.active_split())
+            .unwrap()
+            .buffer_tab_state();
+        assert!(
+            !view.highlight_current_line,
+            "highlight_current_line: false must survive the restore"
+        );
+        assert!(
+            !view.show_line_numbers,
+            "line_numbers: false must survive the restore"
+        );
+        assert_eq!(
+            view.rulers,
+            vec![80],
+            "the configured rulers must survive the restore"
+        );
+    }
+}

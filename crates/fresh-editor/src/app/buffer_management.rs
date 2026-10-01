@@ -76,6 +76,46 @@ impl crate::app::window::Window {
         }
     }
 
+    /// The display settings a freshly seeded view of `buffer_id` should start
+    /// from: the global `editor.*` defaults, with this buffer's language-level
+    /// wrap overrides folded in.
+    ///
+    /// The open paths stamp these onto every view state they create (see
+    /// `BufferViewState::apply_config_defaults`); this is the one place that
+    /// names them, so a path that seeds a view state outside `open_file` —
+    /// workspace restore, notably — can do the same without re-listing the
+    /// config keys and forgetting one.
+    pub(crate) fn view_config_defaults_for_buffer(
+        &self,
+        buffer_id: BufferId,
+    ) -> crate::view::split::ViewConfigDefaults {
+        let editor = &self.config().editor;
+        crate::view::split::ViewConfigDefaults {
+            line_numbers: editor.line_numbers,
+            highlight_current_line: editor.highlight_current_line,
+            line_wrap: self.resolve_line_wrap_for_buffer(buffer_id),
+            wrap_indent: editor.wrap_indent,
+            wrap_column: self.resolve_wrap_column_for_buffer(buffer_id),
+            rulers: editor.rulers.clone(),
+            scroll_offset: editor.scroll_offset,
+        }
+    }
+
+    /// Stamp the config defaults onto `buffer_id`'s view state in `leaf`,
+    /// creating that state if the pane has none for it yet.
+    ///
+    /// Explicit per-buffer pins survive (`apply_config_defaults` keeps every
+    /// field whose override is set), so this is safe to call on a pane that
+    /// already shows the buffer.
+    pub(crate) fn seed_view_config_defaults(&mut self, leaf: LeafId, buffer_id: BufferId) {
+        let defaults = self.view_config_defaults_for_buffer(buffer_id);
+        if let Some(view_state) = self.split_view_states_mut().get_mut(&leaf) {
+            view_state
+                .ensure_buffer_state(buffer_id)
+                .apply_config_defaults(defaults);
+        }
+    }
+
     /// Get the preferred split for opening a file.
     /// If the active split has no label, use it (normal case).
     /// Otherwise find an unlabeled leaf so files don't open in labeled splits (e.g., sidebars).

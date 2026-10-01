@@ -1489,16 +1489,65 @@ impl crate::app::window::Window {
         terminal_buffers: &HashMap<usize, BufferId>,
         unnamed_buffers: &HashMap<String, BufferId>,
     ) {
+        // Resolve the split-manager-assigned buffer before taking the
+        // &mut borrow on windows so the borrow stays disjoint from
+        // any subsequent reads.
+        let split_buf_for_current = self.split_manager().buffer_for_split(current_split_id);
+
+        // Every view state the restore seeds starts life as a
+        // `BufferViewState::new`, whose display flags are hard-coded
+        // (`highlight_current_line: true`, `show_line_numbers: true`, no
+        // rulers, …) rather than the user's `editor.*` settings. A restored
+        // *file* buffer is stamped on the way in, because it comes back
+        // through `open_file_internal`; unnamed (hot-exit) and terminal
+        // buffers never pass that way, so the stamp has to happen here or the
+        // restored pane renders against the built-in defaults — the
+        // current-line highlight coming back for a restored `[No Name]`
+        // buffer even with `highlight_current_line: false` (#3426).
+        //
+        // The pane's own buffer first: `restore_split_node` has already
+        // pointed the pane at it via `set_pane_buffer`, which creates the
+        // view state, and that happens whether or not a saved view state for
+        // this split survives the `split_states` lookup below.
+        if let Some(buffer_id) = split_buf_for_current {
+            self.seed_view_config_defaults(current_split_id, buffer_id);
+        }
+
         // Try to find the saved state for this split
         let Some(split_state) = split_states.get(&saved_split_id) else {
             return;
         };
         let ephemeral_patterns = self.config().editor.ephemeral_file_patterns.clone();
 
-        // Resolve the split-manager-assigned buffer before taking the
-        // &mut borrow on windows so the borrow stays disjoint from
-        // any subsequent reads.
-        let split_buf_for_current = self.split_manager().buffer_for_split(current_split_id);
+        // …then the defaults for every buffer this split may open a tab for,
+        // resolved up front: the wrap resolvers need `&self`, which the
+        // view-state borrow below rules out.
+        let mut view_defaults: HashMap<BufferId, crate::view::split::ViewConfigDefaults> =
+            HashMap::new();
+        for buffer_id in path_to_buffer
+            .values()
+            .chain(terminal_buffers.values())
+            .chain(unnamed_buffers.values())
+            .copied()
+        {
+            view_defaults
+                .entry(buffer_id)
+                .or_insert_with(|| self.view_config_defaults_for_buffer(buffer_id));
+        }
+        // Seed a tab's view state from those defaults, creating it if this is
+        // the first the pane has seen of the buffer. Pins restored further
+        // down from `file_states` are applied after this, and
+        // `apply_config_defaults` keeps any already set, so a pinned buffer
+        // keeps its pin either way.
+        let seed_tab_state = |view_state: &mut SplitViewState, buffer_id: BufferId| {
+            if let Some(defaults) = view_defaults.get(&buffer_id) {
+                view_state
+                    .ensure_buffer_state(buffer_id)
+                    .apply_config_defaults(defaults.clone());
+            } else {
+                view_state.ensure_buffer_state(buffer_id);
+            }
+        };
         let active_buffer_id = self
             .buffers
             .with_all_mut(|__buffers_mut, _mgr, vs_map| {
@@ -1517,7 +1566,7 @@ impl crate::app::window::Window {
                                         view_state.add_buffer(buffer_id);
                                     }
                                     // Ensure keyed state exists for this buffer
-                                    view_state.ensure_buffer_state(buffer_id);
+                                    seed_tab_state(view_state, buffer_id);
                                     if terminal_buffers.values().any(|&tid| tid == buffer_id) {
                                         let buf_state =
                                             view_state.buffer_state_mut(buffer_id).unwrap();
@@ -1535,7 +1584,8 @@ impl crate::app::window::Window {
                                     if !view_state.has_buffer(buffer_id) {
                                         view_state.add_buffer(buffer_id);
                                     }
-                                    let buf_state = view_state.ensure_buffer_state(buffer_id);
+                                    seed_tab_state(view_state, buffer_id);
+                                    let buf_state = view_state.buffer_state_mut(buffer_id).unwrap();
                                     buf_state.viewport.line_wrap_enabled = false;
                                     // Match the freshly-spawned terminal path: no
                                     // gutter / current-line highlight when this
@@ -1549,7 +1599,7 @@ impl crate::app::window::Window {
                                     if !view_state.has_buffer(buffer_id) {
                                         view_state.add_buffer(buffer_id);
                                     }
-                                    view_state.ensure_buffer_state(buffer_id);
+                                    seed_tab_state(view_state, buffer_id);
                                 }
                             }
                         }
@@ -1562,7 +1612,7 @@ impl crate::app::window::Window {
                     if view_state.open_buffers.is_empty() {
                         if let Some(buf) = split_buf_for_current {
                             view_state.add_buffer(buf);
-                            view_state.ensure_buffer_state(buf);
+                            seed_tab_state(view_state, buf);
                         }
                     }
 
@@ -1584,7 +1634,7 @@ impl crate::app::window::Window {
                             if !view_state.has_buffer(buffer_id) {
                                 view_state.add_buffer(buffer_id);
                             }
-                            view_state.ensure_buffer_state(buffer_id);
+                            seed_tab_state(view_state, buffer_id);
                         }
                     }
 
@@ -1621,7 +1671,8 @@ impl crate::app::window::Window {
                         .unwrap_or(0);
 
                     // Ensure keyed state exists for this buffer
-                    let buf_state = view_state.ensure_buffer_state(buffer_id);
+                    seed_tab_state(view_state, buffer_id);
+                    let buf_state = view_state.buffer_state_mut(buffer_id).unwrap();
 
                     let cursor_pos = file_state.cursor.position.min(max_pos);
                     buf_state.cursors.primary_mut().position = cursor_pos;
