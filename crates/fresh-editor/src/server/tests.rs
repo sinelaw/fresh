@@ -526,6 +526,122 @@ mod integration_tests {
         std::fs::remove_dir_all(&temp_dir).ok();
     }
 
+    /// E2E regression test for issue #3440: the daemon's main loop must run the
+    /// shared per-iteration housekeeping (`app::editor_tick`), not a hand-copied
+    /// subset of it.
+    ///
+    /// This drives `EditorServer::run()` itself over real IPC rather than calling
+    /// the housekeeping directly, so it pins the *wiring*: delete the
+    /// `run_editor_tick()` call from the loop and this fails, where a test that
+    /// calls `run_editor_tick()` itself would still pass.
+    ///
+    /// A recovery chunk is the observable: `auto_recovery_save_dirty_buffers` is
+    /// only ever called from `editor_tick`, so before the fix a daemon session
+    /// wrote `session.lock` at startup and then never a chunk, losing every
+    /// unsaved buffer on a crash.
+    #[test]
+    fn daemon_loop_runs_editor_tick_so_a_dirty_buffer_gets_a_recovery_chunk() {
+        use crate::server::editor_server::EditorServer;
+        use std::sync::mpsc;
+
+        let temp_dir = std::env::temp_dir().join(unique_session_name("fresh-e2e-3440"));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        let session_name = unique_session_name("e2e-3440");
+
+        let mut config =
+            editor_server_config(&temp_dir, &session_name, Some(Duration::from_secs(30)));
+        // The interval is a rate limit on a check that runs every iteration;
+        // zero lets the first iteration after the edit write, so the test does
+        // not have to wait out the 2s default.
+        config.editor_config.editor.auto_recovery_save_interval_secs = 0;
+        let recovery_dir = config.dir_context.recovery_dir();
+
+        let (paths_tx, paths_rx) = mpsc::channel();
+        let (shutdown_tx, shutdown_rx) = mpsc::channel();
+
+        // EditorServer must be created in the thread: Editor is not Send.
+        let server_handle = thread::spawn(move || {
+            let mut server = EditorServer::new(config).unwrap();
+            paths_tx.send(server.socket_paths().clone()).unwrap();
+            shutdown_tx.send(server.shutdown_handle()).unwrap();
+            server.run()
+        });
+
+        let socket_paths = paths_rx.recv().unwrap();
+        let shutdown_handle = shutdown_rx.recv().unwrap();
+        while !socket_paths.pid.exists() || socket_paths.read_pid().ok().flatten().is_none() {
+            thread::yield_now();
+        }
+
+        let conn = ClientConnection::connect(&socket_paths).expect("connect to server");
+        let hello = ClientHello::new(TermSize::new(80, 24));
+        conn.write_control(&serde_json::to_string(&ClientControl::Hello(hello)).unwrap())
+            .unwrap();
+        let _ = conn.read_control().unwrap().unwrap();
+
+        let mut output = Vec::new();
+        read_until_contains(&conn, &mut output, "\x1b[");
+
+        // Type into the unnamed startup buffer — the `[No Name]*` case from the
+        // report — and wait until the server has rendered it, so the edit is
+        // known to have landed before we look for its recovery chunk.
+        conn.write_data(b"abc").unwrap();
+        read_until_contains(&conn, &mut output, "abc");
+
+        // The loop writes the chunk on one of its next iterations; poll rather
+        // than assume a single iteration has elapsed.
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        let mut chunks = Vec::new();
+        while std::time::Instant::now() < deadline {
+            chunks = recovery_chunk_files(&recovery_dir);
+            if !chunks.is_empty() {
+                break;
+            }
+            thread::sleep(Duration::from_millis(25));
+        }
+
+        conn.write_control(&serde_json::to_string(&ClientControl::Quit).unwrap())
+            .unwrap();
+        shutdown_handle.store(true, Ordering::SeqCst);
+        let result = server_handle.join().unwrap();
+
+        assert!(
+            !chunks.is_empty(),
+            "the daemon loop must run the shared editor_tick, so an unsaved \
+             buffer gets a recovery chunk (issue #3440); recovery dir {:?} \
+             holds no *.chunk.* file",
+            recovery_dir
+        );
+        assert!(result.is_ok(), "server should exit cleanly: {:?}", result);
+
+        drop(socket_paths.cleanup());
+        std::fs::remove_dir_all(&temp_dir).ok();
+    }
+
+    /// Recovery chunk files anywhere under `dir`.
+    fn recovery_chunk_files(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+        let mut found = Vec::new();
+        let mut stack = vec![dir.to_path_buf()];
+        while let Some(next) = stack.pop() {
+            let Ok(entries) = std::fs::read_dir(&next) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    stack.push(path);
+                } else if path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|n| n.contains(".chunk."))
+                {
+                    found.push(path);
+                }
+            }
+        }
+        found
+    }
+
     /// E2E test using real EditorServer with full editor initialization
     ///
     /// This test exercises the complete client-server flow:

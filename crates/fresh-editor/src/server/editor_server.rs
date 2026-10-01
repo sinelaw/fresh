@@ -1474,10 +1474,10 @@ impl EditorServer {
     /// means a check added for the direct loop cannot go missing here again.
     ///
     /// The only part that can't be shared is the full-redraw request: the
-    /// daemon owns no terminal of its own, so rather than clearing one it
-    /// marks every attached client with the same `needs_full_render` a freshly
-    /// connected client gets, and `render_and_broadcast` resets style state
-    /// and clears on their behalf.
+    /// daemon's own `Terminal` draws into a capture buffer, with no tty of its
+    /// own to clear, so rather than clearing one it marks every attached client
+    /// with the same `needs_full_render` a freshly connected client gets, and
+    /// `render_and_broadcast` resets style state and clears on their behalf.
     fn run_editor_tick(&mut self) -> bool {
         let mut needs_render = false;
         let mut full_redraw_requested = false;
@@ -1492,7 +1492,8 @@ impl EditorServer {
                 // Can't currently happen — the only `?` inside `editor_tick`
                 // is the callback above, which never fails — but a tick hiccup
                 // must not tear down a daemon with clients attached, so log it
-                // and carry on, as the web loop does.
+                // and carry on rather than propagating, the way the web loop
+                // does.
                 Err(e) => tracing::warn!("editor_tick error: {e}"),
             }
         }
@@ -1852,8 +1853,12 @@ mod editor_tick_tests {
     //! `setTimeout` / `setInterval` never fired, and
     //! `auto_recovery_save_dirty_buffers` never ran at all: the daemon wrote
     //! `session.lock` at startup and then not one recovery chunk, so a `kill
-    //! -9` lost every unsaved buffer. These tests drive the real
-    //! `run_editor_tick` the loop calls.
+    //! -9` lost every unsaved buffer.
+    //!
+    //! These tests call `run_editor_tick` directly, so they cover what it does,
+    //! not that the loop calls it — that wiring is what
+    //! `daemon_loop_runs_editor_tick_so_a_dirty_buffer_gets_a_recovery_chunk`
+    //! in `server/tests.rs` pins, by driving `run()` itself over real IPC.
 
     use super::wave_dismiss_tests::server_with_editor_config;
     use crate::config::Config;
@@ -1937,27 +1942,49 @@ mod editor_tick_tests {
         );
     }
 
-    /// The daemon has no terminal of its own, so a full-redraw request from the
-    /// tick has to reach the attached clients instead of clearing one. With no
-    /// clients attached it must simply not panic and must still ask for a frame.
+    /// A full-redraw request has to be picked up and turned into client state,
+    /// since the daemon has no tty of its own to clear. Before the fix nothing
+    /// in the daemon ever called `take_full_redraw_request`, so a plugin- or
+    /// theme-driven request was a silent no-op there.
+    ///
+    /// Consuming the flag is what this asserts. The `needs_full_render` fan-out
+    /// it feeds needs connected clients, which only the IPC-level test in
+    /// `server/tests.rs` has; with none attached the request is correctly
+    /// dropped after being consumed.
     #[test]
     fn full_redraw_request_from_the_tick_is_absorbed_in_daemon_mode() {
         let mut server = server_with_editor_config("redraw-tick", Config::default());
-        server
-            .editor_mut()
-            .expect("editor present")
-            .request_full_redraw();
 
-        assert!(
-            server.run_editor_tick(),
-            "a full-redraw request must leave the daemon owing a frame"
-        );
+        // Quiesce first: a freshly built editor owes a frame for startup work,
+        // and `editor_tick` reports that through the same bool, which would
+        // make the "owes a frame" assertion below pass for the wrong reason.
+        for _ in 0..5 {
+            server.run_editor_tick();
+        }
         assert!(
             !server
                 .editor_mut()
                 .expect("editor present")
                 .take_full_redraw_request(),
-            "the tick must have consumed the request"
+            "precondition: no redraw request is outstanding before we make one"
+        );
+
+        server
+            .editor_mut()
+            .expect("editor present")
+            .request_full_redraw();
+
+        let owes_frame = server.run_editor_tick();
+        assert!(
+            !server
+                .editor_mut()
+                .expect("editor present")
+                .take_full_redraw_request(),
+            "the tick must have consumed the full-redraw request"
+        );
+        assert!(
+            owes_frame,
+            "consuming a full-redraw request must leave the daemon owing a frame"
         );
     }
 }
