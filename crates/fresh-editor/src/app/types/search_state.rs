@@ -30,6 +30,18 @@ pub struct SearchState {
     /// True if the match count was capped at MAX_MATCHES
     #[allow(dead_code)]
     pub capped: bool,
+    /// True while the search namespace holds one overlay per match, so the
+    /// overlays — whose markers track buffer edits — are the live match set
+    /// and `matches` is only the snapshot taken when the search ran.
+    ///
+    /// Set for small files, where `finalize_search` builds overlays for every
+    /// match. Cleared for large files (viewport-only overlays) and whenever
+    /// the overlays are dropped while the search stays navigable, as
+    /// `clear_search_overlays` does. While it is set, an empty overlay set
+    /// means the edits removed every match — not that the overlays are
+    /// missing — so navigation must not fall back to the stale snapshot
+    /// (issue #3444).
+    pub overlays_track_matches: bool,
 }
 
 impl SearchState {

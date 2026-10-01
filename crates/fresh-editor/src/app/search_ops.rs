@@ -215,6 +215,8 @@ impl Editor {
             wrap_search: search_range.is_none(),
             search_range,
             capped,
+            // Only the small-file branch below builds an overlay per match.
+            overlays_track_matches: !is_large,
         });
 
         if is_large {
@@ -592,9 +594,16 @@ impl Editor {
         if let Some(ref mut search_state) = self.active_window_mut().search_state {
             // Use overlay positions for small files (they auto-track edits),
             // otherwise reference search_state.matches directly to avoid cloning.
+            //
+            // An empty overlay set is not a reason to fall back here: while
+            // `overlays_track_matches` holds, the overlays *are* the match
+            // set, so empty means the edits removed every match. Falling back
+            // to the stored snapshot then sent F3 to byte offsets that no
+            // longer held the needle — or no longer existed at all, as after
+            // deleting the whole buffer (issue #3444).
             let use_overlays = !is_large
                 && !search_bar_open
-                && !overlay_positions.is_empty()
+                && search_state.overlays_track_matches
                 && search_state.search_range.is_none();
             let (match_positions, match_lengths): (&[usize], &[usize]) = if use_overlays {
                 (&overlay_positions, &overlay_lengths)
@@ -603,6 +612,7 @@ impl Editor {
             };
 
             if match_positions.is_empty() {
+                self.set_status_message(t!("search.no_matches").to_string());
                 return;
             }
 
