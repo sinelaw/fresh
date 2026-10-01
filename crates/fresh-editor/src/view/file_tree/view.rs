@@ -1878,7 +1878,6 @@ mod tests {
             .unwrap();
 
         let chain_id = id_for(&view, "chain");
-        let c_id = id_for(&view, "chain/a/b/c");
         let leaf_id = id_for(&view, "chain/a/b/c/leaf.txt");
         view.set_selected_exact(Some(chain_id));
         view.select_next();

@@ -201,6 +201,16 @@ pub fn describe_row(d: RowDesc<'_>) -> crate::view::shell::file_explorer::Row {
         None => left.push((node.entry.name.clone(), pair(&name_fg, ground))),
     }
 
+    // **The cell that holds the name off the status slot is the label's own.**
+    // It used to be a one-cell floor under the row's flex gap, which is a cell
+    // of the lane that the label may not have — and a label too long for the
+    // lane paints over it anyway, so the one cell a reader could see a name in
+    // answered as the row instead of as that name (issue #3427). Spelled here
+    // it is the first thing a too-long label loses, which is what should give.
+    if slots.trailing.is_some() {
+        left.push((" ".to_string(), pair(neutral, ground)));
+    }
+
     fe::Row {
         index: d.row,
         theme: pair("editor.fg", ground),

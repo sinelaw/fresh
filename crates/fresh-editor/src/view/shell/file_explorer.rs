@@ -471,16 +471,19 @@ fn caret_ink(row: &str) -> String {
 }
 
 fn node_row(caret: bool, r: &Row) -> Node<UiMsg> {
-    let mut children: Vec<Node<UiMsg>> = vec![
-        text_runs(runs_of(&r.left)),
-        // **The padding rule, as layout.** The old walk computed
-        // `content_width - left_side_width - total_right_width` and a second
-        // function computed it again to find the slot; a flex spacer states it
-        // once and both the cells and the rectangle come out of it — including
-        // the `min_gap = 1` floor, which is `min_w` rather than a `max()` in
-        // two places.
-        row().flex(1).min_w(1),
-    ];
+    // **The padding rule, as layout.** The old walk computed `content_width -
+    // left_side_width - total_right_width` and a second function computed it
+    // again to find the slot; a flex spacer states it once and both the cells
+    // and the rectangle come out of it.
+    //
+    // **With no floor under it.** The `min_gap = 1` floor the spacer used to
+    // carry reserved the lane's last cell, and a label too long for the lane
+    // paints over that cell while the hit goes to its owner — so the one cell a
+    // reader could see a name in answered as the row rather than as that name
+    // (issue #3427). The cell that holds a name off the status slot is the
+    // label's own last run now (`describe_row`), which a label with no room
+    // loses first.
+    let mut children: Vec<Node<UiMsg>> = vec![text_runs(runs_of(&r.left)), row().flex(1)];
     if let Some(slot) = &r.trailing {
         let path = slot.path.clone();
         children.push(
@@ -771,7 +774,7 @@ mod tests {
     use ratatui::layout::Rect;
 
     fn row_of(index: usize, name: &str, trailing: Option<&str>) -> Row {
-        Row {
+        let row = Row {
             index,
             theme: Explorer::panel(),
             left: vec![
@@ -779,13 +782,26 @@ mod tests {
                 (name.to_string(), Explorer::panel()),
             ],
             chain: Vec::new(),
-            trailing: trailing.map(|t| Slot {
-                text: t.to_string(),
-                theme: pair("diagnostic.warning_fg", "editor.bg"),
-                path: std::path::PathBuf::from(name),
-            }),
+            trailing: None,
             error: None,
+        };
+        match trailing {
+            Some(t) => with_marker(row, t),
+            None => row,
         }
+    }
+
+    /// Give a row a status marker the way `describe_row` does: the slot, and
+    /// the space that holds the name off it as the label's own last run.
+    fn with_marker(mut r: Row, text: &str) -> Row {
+        let path = std::path::PathBuf::from(&r.left.last().expect("a label").0);
+        r.left.push((" ".to_string(), Explorer::panel()));
+        r.trailing = Some(Slot {
+            text: text.to_string(),
+            theme: pair("diagnostic.warning_fg", "editor.bg"),
+            path,
+        });
+        r
     }
 
     /// A compact-chain row: the indent, the expand indicator, then
@@ -985,6 +1001,88 @@ mod tests {
             "got {:?}",
             got.msgs
         );
+    }
+
+    /// **A label too long for the lane still names the segment drawn in its
+    /// last cell.**
+    ///
+    /// The row's gap has a one-cell floor so a name never touches the status
+    /// slot. When the label overflows the lane, that floor took the lane's last
+    /// cell while paint went on drawing label text into it — so the one cell a
+    /// reader could see `another` in answered as the row's own deepest
+    /// directory instead of as `another`.
+    #[test]
+    fn a_label_wider_than_the_lane_still_names_its_last_visible_segment() {
+        // `  ` + `▼ ` + `averylongone/` puts `another` at cells 17..23 of the
+        // row, and `third` — the anchor's own name — at 25. A 24-cell panel
+        // leaves a 22-cell lane, so the last cell it has, 21, draws a character
+        // of `another`.
+        let rows = vec![
+            row_of(0, "proj", None),
+            chain_row_of(1, &["averylongone", "another"], "third"),
+        ];
+        let mut ui = laid_out(panel_with(tree_of(rows, |_| None, 0), 24), 24, 8);
+        let lane = ui.rect_of(ui.find_by_key(&key_of("proj")).expect("row 0"));
+        let seg = |ui: &mut Ui<UiMsg>, col: i32| {
+            let got = ui.dispatch(Input::press(
+                Point::new(lane.x + col, lane.y + 1),
+                MouseButton::Right,
+                Mods::NONE,
+            ));
+            got.msgs
+                .iter()
+                .find_map(|m| match m {
+                    UiMsg::Ui(UiFact::ExplorerRowContext { segment, .. }) => Some(*segment),
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("no menu for column {col}: {:?}", got.msgs))
+        };
+        assert_eq!(seg(&mut ui, 5), Some(2), "on averylongone");
+        assert_eq!(seg(&mut ui, 18), Some(1), "on another");
+        assert_eq!(
+            seg(&mut ui, 21),
+            Some(1),
+            "the lane's last cell, still `another`"
+        );
+    }
+
+    /// And the same row carrying a status marker answers the same way.
+    ///
+    /// A directory bubbles up the status of what is under it, so a compact row
+    /// in a working tree with changes often has a marker — and when its label
+    /// overflows the lane, layout has nothing left to give the marker (it ends
+    /// up a zero-width cell, undrawn, which is its own pre-existing story). The
+    /// cells a reader *can* see a name in must still answer as that name.
+    #[test]
+    fn an_overflowing_label_with_a_status_marker_answers_the_same() {
+        let long = with_marker(chain_row_of(1, &["averylongone", "another"], "third"), "M");
+        let mut ui = laid_out(
+            panel_with(
+                tree_of(vec![row_of(0, "proj", None), long], |_| None, 0),
+                24,
+            ),
+            24,
+            8,
+        );
+        let lane = ui.rect_of(ui.find_by_key(&key_of("proj")).expect("row 0"));
+        let drawn = lines_of(&ui, 24, 8)[lane.y as usize + 1].clone();
+        let seg = |ui: &mut Ui<UiMsg>, col: i32| {
+            let got = ui.dispatch(Input::press(
+                Point::new(lane.x + col, lane.y + 1),
+                MouseButton::Right,
+                Mods::NONE,
+            ));
+            got.msgs
+                .iter()
+                .find_map(|m| match m {
+                    UiMsg::Ui(UiFact::ExplorerRowContext { segment, .. }) => Some(*segment),
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("no menu for column {col}: {:?}", got.msgs))
+        };
+        assert_eq!(seg(&mut ui, 5), Some(2), "on averylongone: {drawn:?}");
+        assert_eq!(seg(&mut ui, 18), Some(1), "on another: {drawn:?}");
+        assert_eq!(seg(&mut ui, 21), Some(1), "the lane's last cell: {drawn:?}");
     }
 
     /// **And on the row the caret is on**, which is every row the reader is
@@ -1211,6 +1309,46 @@ mod tests {
                 [UiMsg::Ui(UiFact::ExplorerScrollTo(o))] if *o > 0
             ),
             "one report, toward the end: {:?}",
+            got.msgs
+        );
+    }
+
+    /// **And a right-press on the bar is the bar's too: it opens no menu.**
+    ///
+    /// Only the left button drives the bar, but the gutter is still the bar's
+    /// cells — and the panel's union box is behind them. A right-press one
+    /// column off a row used to fall through to it, so the lane answered with
+    /// the *panel's* menu and moved the cursor to the project root: a
+    /// one-column miss retargeted the menu (issue #3427).
+    #[test]
+    fn a_right_press_on_the_bar_opens_nothing() {
+        let mut ui = laid_out(scrolled_panel(40, 0, 20), 20, 10);
+        let got = ui.dispatch(Input::press(
+            Point::new(18, 8),
+            MouseButton::Right,
+            Mods::NONE,
+        ));
+        assert!(got.claimed, "the bar spends the press");
+        assert!(
+            !got.msgs.iter().any(|m| matches!(
+                m,
+                UiMsg::Ui(UiFact::ExplorerBodyContext { .. })
+                    | UiMsg::Ui(UiFact::ExplorerRowContext { .. })
+            )),
+            "and asks for no menu: {:?}",
+            got.msgs
+        );
+        // The row beside it still answers, one column to the left.
+        let got = ui.dispatch(Input::press(
+            Point::new(17, 8),
+            MouseButton::Right,
+            Mods::NONE,
+        ));
+        assert!(
+            got.msgs
+                .iter()
+                .any(|m| matches!(m, UiMsg::Ui(UiFact::ExplorerRowContext { .. }))),
+            "the lane's last row column is still the row's: {:?}",
             got.msgs
         );
     }
