@@ -33,6 +33,7 @@ specific to filming *this* program.
 | `fresh-review-syntax.json` | comparison | source highlighted inside a Review Diff stream |
 | `fresh-ui-anatomy.json` | explode | the retained UI tree, one element at a time |
 | `fresh-welcome-scroll.json` | solo, stepped | the Welcome screen, scrolled from the wordmark to the theme card, then restyled live |
+| `fresh-orchestrator-dock.json` | solo, filmed | four worktrees, four agents, one editor — switched from the dock, wipe and all, ending on one agent at full size |
 
 `assets/<clip>/fresh/config.json` is a config directory a spec copies in, so a
 capture gets a deliberate theme and a known set of enabled plugins instead of
@@ -43,7 +44,10 @@ the diff on screen has to come from a real one — and
 straight out of git, checking that the lines it films are still the ones it
 means to. `assets/fresh-welcome-scroll/make-repo.sh` builds a small repo with no
 project manifest in it, which is the only way the Welcome screen's live cards
-film as live — see below.
+film as live — see below. `assets/fresh-orchestrator-dock/` carries three
+things of its own: the repo the clip cuts worktrees off, a `bin/` of shims that
+put `claude`, `codex`, `opencode` and `aider` on `PATH`, and a
+`fresh/plugins/clip_setup.ts` that builds the four workspaces at startup.
 
 ## Filming fresh specifically
 
@@ -135,6 +139,170 @@ never set), so `shift+Tab` back onto the row you want and check with a still
 before filming 200 shots against the guess; and a `Tab` that leaves a card
 scrolls the page to the next one, which ends the shot you were composing.
 
+**The window only repaints when a client asks the server for its pixels.**
+Filming an agent working — a program that animates on its own clock, with
+nobody typing — an eight-second `--record` at 30fps produced 240 frames
+containing *three* distinct images, and all three landed at the moment an
+`import` happened to be taken. Stills four seconds apart differ by 160,000
+pixels. It is not the emulator (xterm behaves the same), not the window manager
+(openbox does not help), and not CPU (the box is idle): on this stack a
+recording films what the keyboard causes and little else, while a screenshot
+makes a frame exist.
+
+**Which is what `xwd-capture.py` is for.** `xwd` is the same forced repaint at a
+fraction of the cost — about 20ms for a pane-sized window against ImageMagick's
+150-300ms, because it writes the server's bytes instead of encoding a PNG. Fast
+enough to *sample* motion rather than step past it. `scripts/clips/xwd-capture.py`
+drives the session itself, so it can also press a key and keep grabbing instead
+of sleeping 1.2s afterwards, and it writes exactly what `tui-clip --skip-capture`
+expects to find:
+
+```sh
+scripts/clips/xwd-capture.py scripts/clips/fresh-orchestrator-dock.json \
+    --out ~/repos/tui-clips/out/fresh-orchestrator-dock
+~/repos/tui-clips/bin/tui-clip scripts/clips/fresh-orchestrator-dock.json --skip-capture
+```
+
+A `{"record": …}` step becomes a burst at its `fps`, running alongside the
+steps after it — which is how a keystroke and the animation it causes end up
+inside one run. The spec stays an ordinary tui-clips spec, and upstream capture
+still works on it, just less well.
+
+**The terminal replays a backlog, so stop grabbing and you fall behind.** What
+a repaint paints is not "now": it is the next chunk of the program's queued
+output. Grab only during the runs and the gaps between them pile up, so a run
+opens on a screen from a second ago — which is what made the dock's highlight
+appear to change a beat late and then bounce. `xwd-capture.py` therefore grabs
+*continuously* for the whole session; between runs the frames go to one path
+that is overwritten every time, wanted not as pictures but as the asking that
+keeps the queue empty. A run then only decides which frames are kept.
+
+**Let the camera find the event instead of telling it when.** Even drained,
+the exact moment a keystroke lands on screen moves by a few hundred
+milliseconds between takes, and a 1.6s window aimed by `sleep` misses it often
+enough to matter. `{"record": "b", "seconds": 6, "keep": 40}` grabs a long
+window across the keystroke and afterwards keeps the 40 frames around the
+biggest frame-to-frame change in it — which, in a window whose only event is
+the switch, is the switch. A third of the kept frames sit before it and two
+thirds after: enough of the old screen to see that it *was* the old screen, and
+rather longer of the new one to read it. Check a take by asking which dock row
+is brightest in each frame of each run; the sequence should step once per
+switch beat and never step back.
+
+**Where you are stuck with `--shot`, slow the program down instead.** An
+ImageMagick screenshot samples about three times a second, and playing those
+frames at thirty is a ten-times fast-forward — for a coding agent, a parody of
+one. `coding_agent.py --dilate 8` stretches its spinner and its pauses by eight
+so that three samples a second of dilated time play back as natural motion, and
+`--warm N` prints the backlog a pane at one-eighth speed has not reached yet.
+Filming with `xwd-capture.py` needs neither: it samples at thirty a second, so
+the agents run at their own pace and `--warm` alone is enough.
+
+**The switch wipes, and it is filmable.** Arrow-navigating the dock calls
+`setActiveWindowAnimated`, and the host slides everything right of the dock in
+from the edge you came from — `AnimationKind::SlideIn`, 180ms. `--record` gets
+one frame of it (see above) and `--shot` cannot reach it at all, because
+`tui-capture` sleeps 1.2s after a key before the next action — seven times the
+length of the thing being filmed. An `xwd` burst across the keystroke gets five
+or six: the old workspace squeezed to a sliver at the top, the new one arriving
+underneath. That is what the clip's switch beats are, and why they carry no
+`transition` of their own: the motion in them is the editor's, not the
+renderer's.
+
+**Say it in the frame, not in a bar under it.** A beat with `head`/`sub` puts a
+caption bar across the foot of the video, and a bar under a screen is read last
+or not at all. A beat with `note` instead points *at* something: the rect it
+names is framed, everything else dims, and a few words sit on a plate with a
+leader running back to the frame. Three or four words — "agent is running",
+"switch between sessions" — beat a sentence, because the picture is doing the
+explaining. A clip whose beats all carry notes has no caption bar at all (the
+renderer only builds one for `head`/`sub`), so its `size` is `header_height`
+plus the capture, with nothing reserved at the bottom.
+
+Notes need the band, though: they are drawn with it, so `band: false` hides
+them. A beat whose point is *motion* — the wipe across a workspace switch —
+therefore carries no note, and the note goes on the beat either side of it.
+
+The same goes for the opening. A title card and an intro caption are the bottom
+bar again, in a hat: fifteen seconds is not long enough to spend two of them on
+words, and the first thing worth showing is the editor. The clip carries neither
+— `title_card` absent, `timing.title` at 0, `intro_caption` empty — and opens on
+the establishing shot.
+
+And a note that names a thing has to arrive *before* the thing happens. "Switch
+between sessions" pointing at the dock read as a caption on a switch that had
+already been and gone, so the clip now holds a beat on the untouched dock and
+says it there, and the wipe that follows is the sentence being carried out. Its
+own beat is the cheapest way to get one: a second `record` run of the same
+screen, before the keystroke, rather than a second annotation on the run before
+it — replaying one run's frames twice rewinds whatever was moving in them.
+
+**The dock's width is a drag, not a setting.** It defaults to 28% of the
+terminal, clamped to 24-40 columns, and a user drag overrides it
+(`Editor::handle_dock_resize_drag` sets `dock_width`, which the plugin's
+responsive re-issue then loses to). There is no config key and no action, so the
+clip narrows it the way a person would — `{"drag": {"from_col": 38, "to_col":
+24, "row": 12}}` — which buys the agent fourteen columns.
+
+**A workspace whose only pane is a terminal eats your keys.** The clip opens on
+one — an agent with the workspace to itself — and every key the spec pressed to
+focus the dock went to the agent instead, so nothing switched and two beats
+filmed the same screen twice. `editor.executeAction("toggle_dock_focus")` from
+the setup plugin is not routed through the keymap, so it lands.
+
+**Render a draft before rendering the clip.** The capture is the slow half and
+it does not need repeating: copy the spec, halve `size`, drop `fps` to 30 and
+`encode` to `{"crf": 30, "preset": "ultrafast"}`, and render that against the
+same frames with `--skip-capture`. Forty seconds against several minutes, and
+every framing decision — what a note points at, whether a pane is wide enough —
+is legible at half size.
+
+**Put the agent on the left, and what checks it on the right.** Every session
+in this clip is arranged that way, and one of them has **Review Diff** in the
+right-hand pane rather than a file — the agent that is waiting for an answer,
+with the diff of what it already changed open beside it. Two things that needs:
+a file to open the split on (a split made with no file shows the pane it was cut
+from, so the agent ends up on screen twice), and a wait afterwards, because
+`runCommand` resolves when the command was *dispatched* and Review Diff shells
+out to git. Poll `listBuffers()` for the review buffer before moving on, or the
+review lands in whichever workspace the setup has reached by the time git
+answers.
+
+**A pane that gets split has to redraw its own transcript.** The host resizes an
+agent's PTY the moment a split appears beside it, and a bottom-anchored pane
+that answers `SIGWINCH` by clearing and redrawing only its header throws the
+session away — which is how a filmed agent ends up looking like one that has
+just started. The fixture keeps its committed lines and re-lays the last
+screenful of them, which is what a real agent does.
+
+**Stage a multi-window clip with a plugin, not with keystrokes.** Cutting three
+worktrees through the New Workspace dialogue is thirty keystrokes, thirty
+chances for a capture to desync, and none of them the thing being filmed. The
+scripting API does each in one call — `orch.newWorkspace({ newBranch, agent })`
+*is* what the dialogue submits — so the setup goes in a plugin in the clip's own
+config asset, on the `ready` hook, and the capture opens on a workspace that is
+already several tasks deep. Two details it taught: a split inherits the tab list
+of the pane it was cut from, so a code pane split off an agent's terminal opens
+carrying a tab for it (`closeBuffersToLeftInSplit` drops it without touching the
+terminal); and `git worktree` leaves its branches behind, so the repo script has
+to run before *every* capture or the second one fails with "Branch already
+exists".
+
+**The agents are `tests/fixtures/coding_agent.py`, aliased by a shim.** It is a
+scripted fake — a transcript, tool calls, diff hunks, a todo list and a spinner,
+none of it real — and `--as <name>` makes it rename its own process, so the tab
+and the dock card read the agent's name the way a real launch would. The names
+are invented (`quill`, `marlin`, `tern`, `scout`): a staged transcript filmed
+under a real agent's name is a picture of that agent saying things it never
+said. `--ask` stops one of them on a permission prompt and leaves it there,
+which is what the dock's "which session is waiting on you" is *for*: with it,
+three cards carry the working mark and the fourth does not.
+
+**Give the capture a UTF-8 locale.** `LANG=C.UTF-8`, or xfce4-terminal decodes
+the pane's box-drawing and bullet glyphs as latin-1 — three columns per
+character, every line wrapped, and a program that draws a bottom-anchored pane
+(any coding agent, real or fake) desynced from the first frame.
+
 **A workspace with a project manifest opens Restricted, and a restricted
 workspace has no live cards.** `Cargo.toml`, `package.json` and the rest are
 executable-content markers, so filming inside fresh's own tree starts the
@@ -142,3 +310,93 @@ session Restricted — which blocks the `spawnProcess` calls the welcome screen'
 finder and git cards are made of, and puts a red pill in the status bar besides.
 A demo repo of prose and a couple of scripts has no marker in it, opens Trusted,
 and films with its cards alive.
+
+## The dock, taken apart
+
+`fresh-dock-anatomy.json` is an explode clip: one still of the orchestrator
+dock, cut into the elements the layout actually built, opened up and walked
+through. Its rects are not read off the grid — **fresh reports them**. The
+`dump_ui_tree` action writes the active window's retained tree as JSON, one
+object per element with the rect the layout gave it, and `tui-tree` turns that
+plus a plan into `render.explode.pieces`. A font or geometry change costs one
+re-dump and no edits.
+
+Two rules make the dump usable:
+
+**Take it without an overlay over the screen.** The tree a command handler
+reads is the one the *last frame* built, so dumping through the command palette
+describes a screen with a palette across it. `clip_setup.ts` dispatches the
+action instead — `editor.executeAction("dump_ui_tree")` — reads the buffer it
+opens with `getBufferText`, writes it to `FRESH_CLIP_UI_TREE`, and closes it
+again. The buffer is a courier, not a thing to film, and by the time the
+capture takes its still the screen is back to what it was.
+
+**Dump from the run that is filmed.** The rects are in cells, so they depend on
+the geometry, the font, the dock's width and how many sessions exist. One run
+produces both the still and the dump, which is why the env var is the whole of
+the wiring: no var, no dump, and the orchestrator clip stages exactly as it did
+before.
+
+```sh
+~/repos/tui-clips/bin/tui-clip scripts/clips/fresh-dock-anatomy.json --stills
+~/repos/tui-clips/bin/tui-tree target/clips/dock-tree.json \
+    scripts/clips/assets/fresh-dock-anatomy/plan.json \
+    --into scripts/clips/fresh-dock-anatomy.json
+~/repos/tui-clips/bin/tui-clip scripts/clips/fresh-dock-anatomy.json --skip-capture --draft
+```
+
+The plan is the editorial half and the only file worth hand-editing: it names
+elements by key (`widget:new-session`, `sessions`, `session:*`), says what to
+call each one, and gives the offsets they fly to. One override earns its keep —
+`dock_column` is the full 39x29 column and the clip wants only the top of it,
+so the entry pins `"rows": [0, 10]`, which is the buttons, the filter and the
+list and none of the empty column below them. Anything a plan entry sets wins
+over the dump, which is how a piece can be a region rather than an element.
+
+`stagger` is what makes the session list worth diving into: five same-shaped
+rows pushed apart radially pile up along one axis, while dealing each one a
+little further along than the last opens them into a fan.
+
+## Smooth scrolling, and why this one is stepped stills
+
+`fresh-smooth-scroll.json` is five seconds: scroll down the top of a buffer,
+zoom in further, keep scrolling. Two features at once — the view moves a line
+at a time rather than recentring, and a pane with more document above it shades
+its top two rows (`editor.viewport_edge_fade`; `EDGE_FADE_ROWS = 2`, the row
+against the edge painted a third of the way up from the background, the next
+two thirds, the third in full).
+
+**Do not film this with a recorded run.** The first attempt drove it with the
+wheel and a continuous grab, and it taught the lesson the hard way: the wheel's
+walk hands over however many lines the clock has made due *this frame*, so a
+terminal too slow to animate gets the plain jump it always had, by design. On
+this stack the grab rate is that clock — at 1922x1082 an `xwd` costs ~61ms,
+which is 13 frames a second, and the scroll came out in clean three-line steps.
+The capture was filming the degraded path and would have shipped it as the
+feature.
+
+A **`{"key": "Down"}` and a `{"shot": …}`, over and over**, has none of that in
+it. One key is one line, the shot after it is that line, and the frame rate is
+whatever the beat plays them at rather than whatever the machine could manage.
+Ninety-six pairs measured ninety-five steps of exactly one line and nothing
+else. It also frees the capture to be as large as the zoom wants, since the
+grab is no longer on a clock: font 24 at 80x22, so a 2.3x zoom on the shaded
+rows still has real pixels under it.
+
+Measure the take rather than watching it: align each shot against the one
+before and print the distribution of row shifts. Every step should be a one.
+
+**Keep the motion running through the camera move.** Both beats are runs, cut
+consecutively out of the same sequence — the first half under the wide framing,
+the second half under the close one — so the zoom happens *over* a scroll that
+never stops, and the clip ends still moving. A still for the second beat would
+have parked the file the moment the camera arrived, which is the opposite of
+what the beat is about.
+
+**A `camera: "fit"` beat needs a canvas the renderer's constants fit inside.**
+`FIT_PAD` and the band a note stands in are absolute pixels, tuned for a
+1080-tall canvas; on a 560-tall one they ate 60% of the height and the capture
+rendered as a thumbnail in a sea of background. 1600x900 leaves the zoom to be
+decided by the rect, which is what asking to fit means. The same constants make
+`--draft` misleading for fit beats — a half-size draft reserves full-size room
+— so frame those at full size.
