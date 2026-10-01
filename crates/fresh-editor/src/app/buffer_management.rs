@@ -80,11 +80,12 @@ impl crate::app::window::Window {
     /// from: the global `editor.*` defaults, with this buffer's language-level
     /// wrap overrides folded in.
     ///
-    /// The open paths stamp these onto every view state they create (see
-    /// `BufferViewState::apply_config_defaults`); this is the one place that
-    /// names them, so a path that seeds a view state outside `open_file` —
-    /// workspace restore, notably — can do the same without re-listing the
-    /// config keys and forgetting one.
+    /// Every path that creates a `BufferViewState` has to stamp these onto it
+    /// (see `BufferViewState::apply_config_defaults`), because the struct's own
+    /// defaults are hard-coded rather than read from the config — and a path
+    /// that forgets re-introduces #3426. Most call sites still spell the struct
+    /// out field by field; prefer this where the window is to hand, so a key
+    /// added to `ViewConfigDefaults` reaches the seeding paths at once.
     pub(crate) fn view_config_defaults_for_buffer(
         &self,
         buffer_id: BufferId,
@@ -104,9 +105,11 @@ impl crate::app::window::Window {
     /// Stamp the config defaults onto `buffer_id`'s view state in `leaf`,
     /// creating that state if the pane has none for it yet.
     ///
-    /// Explicit per-buffer pins survive (`apply_config_defaults` keeps every
-    /// field whose override is set), so this is safe to call on a pane that
-    /// already shows the buffer.
+    /// Safe to call on a pane that already shows the buffer: the three pinnable
+    /// flags (line numbers, line wrap, current-line highlight) keep an override
+    /// the user set, and the rest — rulers, wrap indent, wrap column, scroll
+    /// offset — are re-stamped from the config, which nothing else sets per
+    /// pane.
     pub(crate) fn seed_view_config_defaults(&mut self, leaf: LeafId, buffer_id: BufferId) {
         let defaults = self.view_config_defaults_for_buffer(buffer_id);
         if let Some(view_state) = self.split_view_states_mut().get_mut(&leaf) {

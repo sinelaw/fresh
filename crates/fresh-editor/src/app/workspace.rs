@@ -1435,27 +1435,13 @@ impl crate::app::window::Window {
                 ) {
                     Ok(new_leaf_id) => {
                         // Create view state for the new split
-                        let mut view_state = SplitViewState::with_buffer(
+                        let view_state = SplitViewState::with_buffer(
                             self.terminal_width,
                             self.terminal_height,
                             second_buffer_id,
                         );
-                        view_state.buffer_tab_state_mut().apply_config_defaults(
-                            crate::view::split::ViewConfigDefaults {
-                                line_numbers: self.resources.config.editor.line_numbers,
-                                highlight_current_line: self
-                                    .resources
-                                    .config
-                                    .editor
-                                    .highlight_current_line,
-                                line_wrap: self.resolve_line_wrap_for_buffer(second_buffer_id),
-                                wrap_indent: self.resources.config.editor.wrap_indent,
-                                wrap_column: self.resolve_wrap_column_for_buffer(second_buffer_id),
-                                rulers: self.resources.config.editor.rulers.clone(),
-                                scroll_offset: self.resources.config.editor.scroll_offset,
-                            },
-                        );
                         self.split_view_states_mut().insert(new_leaf_id, view_state);
+                        self.seed_view_config_defaults(new_leaf_id, second_buffer_id);
 
                         // Map the container split ID (though we mainly care about leaves)
                         split_id_map.insert(*split_id, new_leaf_id.into());
@@ -1505,10 +1491,13 @@ impl crate::app::window::Window {
         // current-line highlight coming back for a restored `[No Name]`
         // buffer even with `highlight_current_line: false` (#3426).
         //
-        // The pane's own buffer first: `restore_split_node` has already
-        // pointed the pane at it via `set_pane_buffer`, which creates the
-        // view state, and that happens whether or not a saved view state for
-        // this split survives the `split_states` lookup below.
+        // The pane's own buffer first. `restore_split_node` has already pointed
+        // the pane at it — via `set_pane_buffer` for the leaf that reuses the
+        // active split, via `set_split_buffer` for a terminal leaf, and via
+        // `SplitViewState::with_buffer` for a leaf `split_active` created — so
+        // by here the pane keeps a `BufferViewState` for it, created by
+        // whichever of those ran. That is independent of the saved view state
+        // looked up below, which a partial workspace can be missing.
         if let Some(buffer_id) = split_buf_for_current {
             self.seed_view_config_defaults(current_split_id, buffer_id);
         }
@@ -1519,17 +1508,35 @@ impl crate::app::window::Window {
         };
         let ephemeral_patterns = self.config().editor.ephemeral_file_patterns.clone();
 
-        // …then the defaults for every buffer this split may open a tab for,
-        // resolved up front: the wrap resolvers need `&self`, which the
-        // view-state borrow below rules out.
+        // …then the defaults for every buffer this saved split names, resolved
+        // up front because the wrap resolvers need `&self`, which the
+        // view-state borrow below rules out. Each arm here mirrors a lookup one
+        // of the loops below makes, so every buffer they seed has an entry.
+        let referenced = split_state
+            .open_tabs
+            .iter()
+            .map(|tab| match tab {
+                SerializedTabRef::File(rel_path) => path_to_buffer.get(rel_path).copied(),
+                SerializedTabRef::Terminal(index) => terminal_buffers.get(index).copied(),
+                SerializedTabRef::Unnamed(recovery_id) => unnamed_buffers.get(recovery_id).copied(),
+            })
+            .chain(
+                split_state
+                    .open_files
+                    .iter()
+                    .map(|rel_path| path_to_buffer.get(rel_path).copied()),
+            )
+            .chain(split_state.file_states.keys().map(|rel_path| {
+                match rel_path.to_string_lossy().strip_prefix("__unnamed__") {
+                    Some(recovery_id) => unnamed_buffers.get(recovery_id).copied(),
+                    None => path_to_buffer.get(rel_path).copied(),
+                }
+            }))
+            .flatten()
+            .chain(split_buf_for_current);
         let mut view_defaults: HashMap<BufferId, crate::view::split::ViewConfigDefaults> =
             HashMap::new();
-        for buffer_id in path_to_buffer
-            .values()
-            .chain(terminal_buffers.values())
-            .chain(unnamed_buffers.values())
-            .copied()
-        {
+        for buffer_id in referenced {
             view_defaults
                 .entry(buffer_id)
                 .or_insert_with(|| self.view_config_defaults_for_buffer(buffer_id));
@@ -1538,14 +1545,12 @@ impl crate::app::window::Window {
         // the first the pane has seen of the buffer. Pins restored further
         // down from `file_states` are applied after this, and
         // `apply_config_defaults` keeps any already set, so a pinned buffer
-        // keeps its pin either way.
+        // keeps its pin either way. A buffer with no entry — nothing above
+        // resolved to it — at least gets the state the callers below expect.
         let seed_tab_state = |view_state: &mut SplitViewState, buffer_id: BufferId| {
+            let state = view_state.ensure_buffer_state(buffer_id);
             if let Some(defaults) = view_defaults.get(&buffer_id) {
-                view_state
-                    .ensure_buffer_state(buffer_id)
-                    .apply_config_defaults(defaults.clone());
-            } else {
-                view_state.ensure_buffer_state(buffer_id);
+                state.apply_config_defaults(defaults.clone());
             }
         };
         let active_buffer_id = self
@@ -2410,6 +2415,11 @@ impl crate::app::window::Window {
             .insert(buf, crate::app::types::BufferMetadata::new());
         self.event_logs
             .insert(buf, crate::model::event::EventLog::new());
+        // `SplitViewState::with_buffer` above leaves the view on
+        // `BufferViewState::new`'s hard-coded display flags, which ignore
+        // `editor.*` — the same miss as the restore path in #3426. Stamped
+        // after the buffer is in, so the wrap values resolve against it.
+        self.seed_view_config_defaults(active_leaf, buf);
     }
 
     /// Push a recovered buffer's full content to this window's LSP after
