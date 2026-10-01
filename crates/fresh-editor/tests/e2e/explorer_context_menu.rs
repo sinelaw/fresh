@@ -850,16 +850,23 @@ fn test_root_menu_new_directory_works() {
 
 // ── the blank area below the last entry ──────────────────────────────────────
 
-/// The path the explorer's cursor is on, relative to the project root.
+/// The path the explorer's cursor is on, relative to the project root, written
+/// with `/` whatever the platform's own separator is.
+///
+/// Spelled by components rather than by the string the OS would print: the tree
+/// builds its paths by joining, so the same selection reads `dir1/dir2` on unix
+/// and `dir1\dir2` on Windows. These tests are about *which entry* the menu
+/// named — the compact row's label is `/`-joined on every platform, since
+/// `describe_row` pushes a literal `/` between its segments.
 fn selected_relative_path(h: &EditorTestHarness) -> String {
     let explorer = h.editor().file_explorer().expect("an explorer");
     let entry = explorer.get_selected_entry().expect("a selection");
     let root = explorer.tree().root_path();
-    entry
-        .path
-        .strip_prefix(root)
-        .map(|p| p.to_string_lossy().into_owned())
-        .unwrap_or_else(|_| entry.path.to_string_lossy().into_owned())
+    let path = entry.path.strip_prefix(root).unwrap_or(&entry.path);
+    path.components()
+        .map(|c| c.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 /// **Right-clicking the blank area selects the project root** and opens the
@@ -979,7 +986,7 @@ fn test_right_click_compact_chain_segment_selects_that_directory() {
         .enumerate()
         .find(|(_, l)| l.contains("dir1/dir2/dir3"))
         .map(|(i, l)| (i as u16, l.to_string()))
-        .expect("the compact row");
+        .unwrap_or_else(|| panic!("no compact row on screen:\n{screen}"));
     // Each of `dir1`, `dir2` and `dir3` appears once on the row, so the first
     // match is the segment.
     let column_of = |name: &str| {
