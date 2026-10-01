@@ -1508,35 +1508,19 @@ impl crate::app::window::Window {
         };
         let ephemeral_patterns = self.config().editor.ephemeral_file_patterns.clone();
 
-        // …then the defaults for every buffer this saved split names, resolved
-        // up front because the wrap resolvers need `&self`, which the
-        // view-state borrow below rules out. Each arm here mirrors a lookup one
-        // of the loops below makes, so every buffer they seed has an entry.
-        let referenced = split_state
-            .open_tabs
-            .iter()
-            .map(|tab| match tab {
-                SerializedTabRef::File(rel_path) => path_to_buffer.get(rel_path).copied(),
-                SerializedTabRef::Terminal(index) => terminal_buffers.get(index).copied(),
-                SerializedTabRef::Unnamed(recovery_id) => unnamed_buffers.get(recovery_id).copied(),
-            })
-            .chain(
-                split_state
-                    .open_files
-                    .iter()
-                    .map(|rel_path| path_to_buffer.get(rel_path).copied()),
-            )
-            .chain(split_state.file_states.keys().map(|rel_path| {
-                match rel_path.to_string_lossy().strip_prefix("__unnamed__") {
-                    Some(recovery_id) => unnamed_buffers.get(recovery_id).copied(),
-                    None => path_to_buffer.get(rel_path).copied(),
-                }
-            }))
-            .flatten()
-            .chain(split_buf_for_current);
+        // …then the defaults for every buffer the restore could seed a view
+        // state for here, resolved up front because the wrap resolvers need
+        // `&self`, which the view-state borrow below rules out. Keyed by
+        // buffer, over every buffer the restore produced, so the loops below
+        // stay the only place that maps a saved tab to one.
         let mut view_defaults: HashMap<BufferId, crate::view::split::ViewConfigDefaults> =
             HashMap::new();
-        for buffer_id in referenced {
+        for buffer_id in path_to_buffer
+            .values()
+            .chain(terminal_buffers.values())
+            .chain(unnamed_buffers.values())
+            .copied()
+        {
             view_defaults
                 .entry(buffer_id)
                 .or_insert_with(|| self.view_config_defaults_for_buffer(buffer_id));
@@ -1545,8 +1529,9 @@ impl crate::app::window::Window {
         // the first the pane has seen of the buffer. Pins restored further
         // down from `file_states` are applied after this, and
         // `apply_config_defaults` keeps any already set, so a pinned buffer
-        // keeps its pin either way. A buffer with no entry — nothing above
-        // resolved to it — at least gets the state the callers below expect.
+        // keeps its pin either way. The pane's own buffer is the one that can
+        // be absent from all three maps (the #1278 fallback below) — seeded
+        // directly above, so it just gets its state here.
         let seed_tab_state = |view_state: &mut SplitViewState, buffer_id: BufferId| {
             let state = view_state.ensure_buffer_state(buffer_id);
             if let Some(defaults) = view_defaults.get(&buffer_id) {

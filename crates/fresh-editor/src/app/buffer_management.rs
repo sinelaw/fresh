@@ -90,15 +90,10 @@ impl crate::app::window::Window {
         &self,
         buffer_id: BufferId,
     ) -> crate::view::split::ViewConfigDefaults {
-        let editor = &self.config().editor;
         crate::view::split::ViewConfigDefaults {
-            line_numbers: editor.line_numbers,
-            highlight_current_line: editor.highlight_current_line,
             line_wrap: self.resolve_line_wrap_for_buffer(buffer_id),
-            wrap_indent: editor.wrap_indent,
             wrap_column: self.resolve_wrap_column_for_buffer(buffer_id),
-            rulers: editor.rulers.clone(),
-            scroll_offset: editor.scroll_offset,
+            ..crate::view::split::ViewConfigDefaults::from_editor_config(&self.config().editor)
         }
     }
 

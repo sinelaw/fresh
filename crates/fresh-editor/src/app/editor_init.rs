@@ -1256,15 +1256,9 @@ impl Editor {
         let mut initial_view_state = SplitViewState::with_buffer(width, height, buffer_id);
         initial_view_state
             .buffer_tab_state_mut()
-            .apply_config_defaults(crate::view::split::ViewConfigDefaults {
-                line_numbers: config.editor.line_numbers,
-                highlight_current_line: config.editor.highlight_current_line,
-                line_wrap: config.editor.line_wrap,
-                wrap_indent: config.editor.wrap_indent,
-                wrap_column: config.editor.wrap_column,
-                rulers: config.editor.rulers.clone(),
-                scroll_offset: config.editor.scroll_offset,
-            });
+            .apply_config_defaults(crate::view::split::ViewConfigDefaults::from_editor_config(
+                &config.editor,
+            ));
         split_view_states.insert(initial_split_id, initial_view_state);
 
         // Initialize filesystem manager for file explorer

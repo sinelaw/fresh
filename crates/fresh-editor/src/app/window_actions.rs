@@ -979,15 +979,7 @@ impl crate::app::Editor {
         // and the buffer is empty and unnamed, so the global wrap values are
         // the resolved ones.
         view_state.buffer_tab_state_mut().apply_config_defaults(
-            crate::view::split::ViewConfigDefaults {
-                line_numbers: self.config.editor.line_numbers,
-                highlight_current_line: self.config.editor.highlight_current_line,
-                line_wrap: self.config.editor.line_wrap,
-                wrap_indent: self.config.editor.wrap_indent,
-                wrap_column: self.config.editor.wrap_column,
-                rulers: self.config.editor.rulers.clone(),
-                scroll_offset: self.config.editor.scroll_offset,
-            },
+            crate::view::split::ViewConfigDefaults::from_editor_config(&self.config.editor),
         );
         view_states.insert(active_leaf, view_state);
         Some((buf, state, metadata, event_log, manager, view_states))

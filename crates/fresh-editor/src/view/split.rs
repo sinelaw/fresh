@@ -242,6 +242,24 @@ pub struct ViewConfigDefaults {
     pub scroll_offset: usize,
 }
 
+impl ViewConfigDefaults {
+    /// The global `editor.*` display settings, for a seeding path with no
+    /// buffer to hand: `line_wrap` and `wrap_column` come from the global keys.
+    /// A path that has the buffer resolves those two against its language
+    /// instead — see `Window::view_config_defaults_for_buffer`.
+    pub fn from_editor_config(editor: &crate::config::EditorConfig) -> Self {
+        Self {
+            line_numbers: editor.line_numbers,
+            highlight_current_line: editor.highlight_current_line,
+            line_wrap: editor.line_wrap,
+            wrap_indent: editor.wrap_indent,
+            wrap_column: editor.wrap_column,
+            rulers: editor.rulers.clone(),
+            scroll_offset: editor.scroll_offset,
+        }
+    }
+}
+
 impl BufferViewState {
     /// Resolve fold ranges and ensure the primary cursor is visible.
     ///
