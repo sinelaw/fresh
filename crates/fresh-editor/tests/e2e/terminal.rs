@@ -886,6 +886,179 @@ fn test_terminal_bold_attribute() {
     assert!(row[3].bold, "D should be bold");
 }
 
+fn terminal_size_harness(working_dir: Option<std::path::PathBuf>) -> Option<EditorTestHarness> {
+    if native_pty_system()
+        .openpty(PtySize {
+            rows: 1,
+            cols: 1,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .is_err()
+    {
+        eprintln!("Skipping terminal test: PTY not available");
+        return None;
+    }
+
+    let mut config = Config::default();
+    config.editor.show_horizontal_scrollbar = false;
+    #[cfg(windows)]
+    let shell = TerminalShellConfig {
+        command: "powershell.exe".into(),
+        args: vec![
+            "-NoLogo".into(),
+            "-NoProfile".into(),
+            "-Command".into(),
+            r#"$e=[char]27; [Console]::Write('READY'); while ($null -ne ($tag=[Console]::ReadLine())) { [Console]::Write($e+'[2J'+$e+'[1;1HSIZE_'+[Console]::WindowHeight+'_'+$tag+'_DONE') }"#.into(),
+        ],
+    };
+    #[cfg(not(windows))]
+    let shell = TerminalShellConfig {
+        command: "/bin/sh".into(),
+        args: vec![
+            "-c".into(),
+            r#"printf READY; while IFS= read -r tag; do set -- $(stty size); printf '\033[2J\033[1;1HSIZE_%s_%s_DONE' "$1" "$tag"; done"#.into(),
+        ],
+    };
+    config.terminal.shell = Some(shell);
+    let mut harness = match working_dir {
+        Some(dir) => EditorTestHarness::with_config_and_working_dir(100, 30, config, dir),
+        None => EditorTestHarness::with_config(100, 30, config),
+    }
+    .unwrap();
+    harness.run_palette_command("Open Terminal").unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("READY"))
+        .unwrap();
+    Some(harness)
+}
+
+fn assert_terminal_height(harness: &mut EditorTestHarness, height: u16, tag: &str) {
+    harness.type_text(tag).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    let marker = format!("_{tag}_DONE");
+    harness
+        .wait_until(|h| h.screen_to_string().contains(&marker))
+        .unwrap();
+    harness.assert_screen_contains(&format!("SIZE_{height}_{tag}_DONE"));
+}
+
+/// Terminal creation and chrome changes use the current content height.
+#[test]
+fn test_terminal_resize_when_chrome_is_toggled() {
+    let Some(mut harness) = terminal_size_harness(None) else {
+        return;
+    };
+    assert_terminal_height(&mut harness, 26, "initial");
+
+    for (step, (command, height)) in [
+        ("Toggle Menu Bar", 27),
+        ("Toggle Tab Bar", 28),
+        ("Toggle Status Bar", 29),
+        ("Toggle Prompt Line", 30),
+        ("Toggle Prompt Line", 29),
+        ("Toggle Horizontal Scrollbar", 28),
+        ("Toggle Horizontal Scrollbar", 29),
+        ("Toggle Status Bar", 28),
+        ("Toggle Tab Bar", 27),
+        ("Toggle Menu Bar", 26),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        harness.run_palette_command(command).unwrap();
+        assert_terminal_height(&mut harness, height, &step.to_string());
+    }
+}
+
+/// Settings changes and config reload resize a running terminal.
+#[cfg(feature = "plugins")]
+#[test]
+fn test_terminal_resize_when_settings_are_applied() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let plugins = temp.path().join("plugins");
+    std::fs::create_dir_all(&plugins).unwrap();
+    crate::common::harness::copy_plugin_lib(&plugins);
+    std::fs::write(
+        plugins.join("terminal_geometry.ts"),
+        r#"
+const editor = getEditor();
+for (const visible of [false, true]) {
+    const name = visible ? "geometry_show" : "geometry_hide";
+    registerHandler(name, () => {
+        for (const key of ["show_menu_bar", "show_tab_bar", "show_prompt_line"]) {
+            editor.setSetting("editor." + key, visible);
+        }
+        editor.setStatus(name + "_applied");
+    });
+    editor.registerCommand(name, name, name, null);
+}
+registerHandler("geometry_reload", () => {
+    editor.reloadConfig();
+    editor.setStatus("geometry_reload_applied");
+});
+editor.registerCommand("geometry_reload", "Reload terminal geometry", "geometry_reload", null);
+"#,
+    )
+    .unwrap();
+    let Some(mut harness) = terminal_size_harness(Some(temp.path().to_path_buf())) else {
+        return;
+    };
+    assert_terminal_height(&mut harness, 26, "initial");
+    for (command, height) in [("geometry_hide", 29), ("geometry_show", 26)] {
+        harness.run_palette_command(command).unwrap();
+        harness
+            .wait_for_screen_contains(&format!("{command}_applied"))
+            .unwrap();
+        assert_terminal_height(&mut harness, height, command);
+    }
+
+    let project_config = temp.path().join(".fresh");
+    std::fs::create_dir_all(&project_config).unwrap();
+    std::fs::write(
+        project_config.join("config.json"),
+        r#"{"editor":{"show_menu_bar":false,"show_tab_bar":false,"show_prompt_line":false,"show_horizontal_scrollbar":false}}"#,
+    )
+    .unwrap();
+    harness.run_palette_command("geometry_reload").unwrap();
+    harness
+        .wait_for_screen_contains("geometry_reload_applied")
+        .unwrap();
+    assert_terminal_height(&mut harness, 29, "reloaded");
+}
+
+/// Saving a bar visibility change in Settings updates the terminal immediately.
+#[test]
+fn test_terminal_resize_when_settings_are_saved() {
+    let Some(mut harness) = terminal_size_harness(None) else {
+        return;
+    };
+    assert_terminal_height(&mut harness, 26, "initial");
+    harness.open_settings().unwrap();
+    harness
+        .send_key(KeyCode::Char('/'), KeyModifiers::NONE)
+        .unwrap();
+    harness.type_text("show menu bar").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.assert_screen_contains("modified");
+    harness
+        .send_key(KeyCode::Char('s'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_screen_contains("Settings saved").unwrap();
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness
+        .wait_until(|h| !h.screen_to_string().contains("Settings ["))
+        .unwrap();
+    assert_terminal_height(&mut harness, 27, "saved");
+}
+
 /// Test terminal resize functionality
 #[test]
 fn test_terminal_resize() {

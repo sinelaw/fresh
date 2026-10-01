@@ -2095,6 +2095,7 @@ impl Editor {
                     win.status_bar_visible = cfg.show_status_bar;
                     win.prompt_line_visible = cfg.show_prompt_line;
                 }
+                self.push_layout_geometry();
                 #[cfg(feature = "plugins")]
                 self.update_plugin_state_snapshot();
             }
