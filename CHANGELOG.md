@@ -6,6 +6,10 @@
 
 * **Find Next selects the whole match and marks it as the current match** - F3 / Shift+F3 (and Enter in the search bar) select the entire match, so a regex shows exactly how far it reaches and Delete removes the whole match; F3 after a Delete lands on a match that slid into its place. The current match, in Find Next and in Query Replace alike, is drawn bold in its own color, set by the new theme keys `search.current_match_bg` / `search.current_match_fg`. Reopening Ctrl+F on it brings back the query (e.g. the regex), not the matched text
 
+### Bug Fixes
+
+* **The workspace dock, `View ▸ Orchestrator Dock` and the `autoOpenDock` setting agree** - a bare `fresh` used to open the dock whatever the setting said, so `autoOpenDock: false` did nothing in the launch mode that is the default since 0.5.2, and a dock you had closed came back on the next start. Closing or opening the dock now writes `autoOpenDock`, changing it in the Settings UI opens or closes the dock, and it is what Fresh starts with - the dock, the menu's checkmark and the setting can no longer disagree (#3442)
+
 ### Themes
 
 * **Theme colors come from other colors, never from values built into Fresh** - the 49 colors of the first theme format are required; every other color names a fallback color, and a theme that sets all 49 takes each color it leaves out from its fallback chain. The built-in themes look the same, except that Dracula, Nord, Solarized Dark, Nostalgia, Light and Terminal now derive colors they never set (menus, diff and indicator backgrounds, bracket colors…) from their own palette instead of generic dark-theme grays. See [Themes → Fallbacks](https://getfresh.dev/docs/features/themes#fallbacks)

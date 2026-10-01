@@ -67,6 +67,22 @@ fn launch(config: Config, root: PathBuf) -> EditorTestHarness {
     .unwrap()
 }
 
+/// The same, as a bare `fresh` (Orchestrator mode) — the launch mode that is
+/// the default since 0.5.2, and the one issue #3442 was reported against.
+fn launch_orchestrator_mode(config: Config, root: PathBuf) -> EditorTestHarness {
+    EditorTestHarness::create(
+        120,
+        32,
+        HarnessOptions::new()
+            .with_config(config)
+            .with_working_dir(root)
+            .without_empty_plugins_dir()
+            .with_startup_chrome()
+            .with_orchestrator_mode(),
+    )
+    .unwrap()
+}
+
 /// Toggle the dock open via the command palette and wait for it to render
 /// *and* take keyboard focus (mirrors `orchestrator_dock::open_dock`).
 fn open_dock(h: &mut EditorTestHarness) {
@@ -79,6 +95,29 @@ fn open_dock(h: &mut EditorTestHarness) {
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
     h.wait_until(|h| h.screen_to_string().contains("+ New") && h.editor().is_dock_focused())
         .unwrap();
+}
+
+/// Flip the dock with the same command the `View` menu row dispatches.
+fn toggle_dock(h: &mut EditorTestHarness) {
+    h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    h.wait_for_prompt().unwrap();
+    h.type_text("Orchestrator: Toggle Dock").unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Toggle Dock"))
+        .unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+}
+
+/// `autoOpenDock` as the editor holds it — the same value the Settings UI
+/// renders and `apply_startup_dock_chrome` reads on the next launch.
+fn auto_open_dock(h: &EditorTestHarness) -> Option<bool> {
+    h.editor()
+        .config()
+        .plugins
+        .get("orchestrator")?
+        .settings
+        .get("autoOpenDock")?
+        .as_bool()
 }
 
 /// Open the dock header's Menu, which holds the density rows and the
@@ -227,4 +266,88 @@ fn auto_open_can_be_switched_off() {
     // toggle; with auto-open off there is nothing left on screen.
     h.wait_until(|h| !h.screen_to_string().contains("+ New"))
         .unwrap();
+}
+
+/// Issue #3442: `autoOpenDock: false` is honoured by a bare `fresh` too.
+/// Orchestrator mode used to OR itself over the setting, so the one launch
+/// mode most users are in ignored it outright — the dock came up however the
+/// setting and the `View` menu's checkmark read.
+#[test]
+fn auto_open_off_is_honoured_in_orchestrator_mode() {
+    let (_tmp, root, config) = setup(serde_json::json!({ "autoOpenDock": false }));
+    let mut h = launch_orchestrator_mode(config, root);
+    h.render().unwrap();
+    h.editor_mut().fire_ready_hook();
+    // Round-trip the hook through the plugin thread with a command that does
+    // not touch the dock, so a dock that wrongly auto-opened is on screen by
+    // the time we look (as in `auto_open_can_be_switched_off`).
+    h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    h.wait_for_prompt().unwrap();
+    h.type_text("Orchestrator: Machines").unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Orchestrator: Machines"))
+        .unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Add machine"))
+        .unwrap();
+    h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| !h.screen_to_string().contains("Add machine"))
+        .unwrap();
+    h.assert_screen_not_contains("+ New");
+}
+
+/// Issue #3442: closing the dock writes `autoOpenDock`, so the dock, the
+/// `View` menu's checkmark (the host's "a dock is mounted") and the value the
+/// Settings UI shows cannot disagree. The toggle used to change nothing on
+/// disk, leaving Settings claiming the dock was open while it was not.
+#[test]
+fn toggling_the_dock_writes_the_setting() {
+    let (_tmp, root, config) = setup(serde_json::json!({ "autoOpenDock": true }));
+    let mut h = launch_orchestrator_mode(config, root);
+    h.render().unwrap();
+    h.editor_mut().fire_ready_hook();
+    h.wait_until(|h| h.screen_to_string().contains("+ New"))
+        .unwrap();
+    assert_eq!(auto_open_dock(&h), Some(true), "the dock is up");
+
+    toggle_dock(&mut h);
+    h.wait_until(|h| !h.screen_to_string().contains("+ New"))
+        .unwrap();
+    h.wait_until(|h| auto_open_dock(h) == Some(false))
+        .expect("closing the dock must record it in `autoOpenDock`");
+
+    // ...and opening it again says so too, rather than sticking at `false`.
+    toggle_dock(&mut h);
+    h.wait_until(|h| h.screen_to_string().contains("+ New"))
+        .unwrap();
+    h.wait_until(|h| auto_open_dock(h) == Some(true))
+        .expect("reopening the dock must record it in `autoOpenDock`");
+}
+
+/// Issue #3442: a Settings-UI edit lands on the dock without a restart. The
+/// setting *is* the dock's openness now, so leaving the column as it was
+/// would be the disagreement the setting exists to avoid — and the next close
+/// would write the user's edit straight back out.
+#[test]
+fn a_settings_edit_opens_and_closes_the_dock() {
+    let (_tmp, root, config) = setup(serde_json::json!({ "autoOpenDock": true }));
+    let mut h = launch_orchestrator_mode(config, root);
+    h.render().unwrap();
+    h.editor_mut().fire_ready_hook();
+    h.wait_until(|h| h.screen_to_string().contains("+ New"))
+        .unwrap();
+
+    h.editor_mut().handle_save_setting(
+        "plugins.orchestrator.settings.autoOpenDock".to_string(),
+        serde_json::Value::Bool(false),
+    );
+    h.wait_until(|h| !h.screen_to_string().contains("+ New"))
+        .expect("switching the setting off must close the dock");
+
+    h.editor_mut().handle_save_setting(
+        "plugins.orchestrator.settings.autoOpenDock".to_string(),
+        serde_json::Value::Bool(true),
+    );
+    h.wait_until(|h| h.screen_to_string().contains("+ New"))
+        .expect("switching the setting back on must reopen the dock");
 }

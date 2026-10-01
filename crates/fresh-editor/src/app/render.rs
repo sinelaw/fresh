@@ -6266,18 +6266,25 @@ mod dock_reservation_tests {
     fn what_the_first_frame_carves() {
         let rule = DockWidthRule::default().width(COLS);
         let switched_off = orchestrator_config(true, serde_json::json!({ "autoOpenDock": false }));
+        let switched_on = orchestrator_config(true, serde_json::json!({ "autoOpenDock": true }));
+        const DECLARES_CLOSED_DOCK: &str =
+            r#"{"chrome":{"dock":{"open":false,"open_setting":"autoOpenDock"}}}"#;
         let disabled = orchestrator_config(false, serde_json::Value::Null);
         // The case, the plugin's manifest, the config, whether the editor
         // runs in orchestrator mode (a bare `fresh`), and the width expected.
         type Case<'a> = (&'a str, Option<&'a str>, Config, bool, Option<u16>);
         #[rustfmt::skip]
-        let cases: [Case; 7] = [
+        let cases: [Case; 9] = [
             ("a declared dock, at the rule's width", Some(DECLARES_DOCK), Config::default(), false, Some(rule)),
             ("no manifest", None, Config::default(), false, None),
             ("a manifest with no dock", Some(r#"{"chrome":{}}"#), Config::default(), false, None),
             ("a declared width rule", Some(r#"{"chrome":{"dock":{"width":{"min":30,"max":30}}}}"#), Config::default(), false, Some(30)),
             ("the named setting off", Some(DECLARES_DOCK), switched_off.clone(), false, None),
-            ("...except for a bare `fresh`", Some(DECLARES_DOCK), switched_off, true, Some(rule)),
+            // Issue #3442: the launch mode used to override the setting, so a
+            // bare `fresh` — the default since 0.5.2 — ignored it outright.
+            ("...for a bare `fresh` too", Some(DECLARES_DOCK), switched_off, true, None),
+            ("the named setting on beats a manifest that says closed", Some(DECLARES_CLOSED_DOCK), switched_on, false, Some(rule)),
+            ("...and with nothing set, a bare `fresh` opens it anyway", Some(DECLARES_CLOSED_DOCK), Config::default(), true, Some(rule)),
             ("a disabled plugin declares nothing", Some(DECLARES_DOCK), disabled, false, None),
         ];
         for (case, manifest, config, orchestrator_mode, want) in cases {
@@ -6296,48 +6303,52 @@ mod dock_reservation_tests {
         }
     }
 
-    /// What is remembered is the slot at quit: mounted comes back, closed
-    /// stays away (except for a bare `fresh`), a dragged width comes back
-    /// with it, and a plugin's transient close-and-reopen is not a decision.
+    /// What is remembered is what the user set: the plugin's `open_setting`
+    /// says whether the column comes back, in every launch mode, and a
+    /// dragged width comes back with it. A plugin's own close-and-reopen
+    /// writes nothing, so it cannot be mistaken for a decision.
     #[test]
     fn what_the_user_leaves_is_what_comes_back() {
         let home = home(Some(DECLARES_DOCK));
-        let launch = |orchestrator_mode| editor(home.clone(), Config::default(), orchestrator_mode);
+        let auto_open =
+            |open| orchestrator_config(true, serde_json::json!({ "autoOpenDock": open }));
+        let launch =
+            |config: Config, orchestrator_mode| editor(home.clone(), config, orchestrator_mode);
 
-        let mut e = launch(false);
+        let mut e = launch(Config::default(), false);
         assert!(e.dock_reserved, "held open on a first launch");
         mount(&mut e);
         assert!(!e.dock_reserved, "the mount fills the column");
         assert!(dock_width_of(&e).is_some(), "...and the column stays");
 
-        // A transient: closed and reopened before the quit.
+        // A transient — closed and reopened — leaves `chrome.json` saying
+        // nothing about openness, so the next launch is the setting's call.
         unmount(&mut e);
         assert_eq!(dock_width_of(&e), None);
         mount(&mut e);
-        e.save_dock_chrome();
         assert!(
-            launch(false).dock_reserved,
+            launch(Config::default(), false).dock_reserved,
             "a close the plugin undid is not a decision"
         );
 
-        // Closed at quit.
-        let mut e = launch(false);
-        mount(&mut e);
-        unmount(&mut e);
-        e.save_dock_chrome();
-        let e = launch(false);
-        assert!(!e.dock_reserved, "the user closed it");
-        assert_eq!(dock_width_of(&e), None);
-        assert!(launch(true).dock_reserved, "...unless it is a bare `fresh`");
+        // Closed: the setting the plugin wrote when the user closed it.
+        for orchestrator_mode in [false, true] {
+            let e = launch(auto_open(false), orchestrator_mode);
+            assert!(
+                !e.dock_reserved,
+                "the user closed it (orchestrator_mode = {orchestrator_mode})"
+            );
+            assert_eq!(dock_width_of(&e), None);
+        }
 
-        // Open and dragged at quit: the width is written as the drag ends.
-        let mut e = launch(false);
+        // Open and dragged: the width is written as the drag ends, and comes
+        // back with a dock the setting reopens.
+        let mut e = launch(auto_open(true), false);
         mount(&mut e);
         e.handle_dock_resize_drag(37); // the wall lands on column 37: width 38
         e.persist_dock_width();
-        e.save_dock_chrome();
         assert_eq!(
-            dock_width_of(&launch(false)),
+            dock_width_of(&launch(auto_open(true), false)),
             Some(38),
             "open, at the dragged width"
         );

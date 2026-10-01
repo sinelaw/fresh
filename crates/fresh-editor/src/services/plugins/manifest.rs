@@ -40,12 +40,15 @@ pub struct ChromeManifest {
 #[derive(Clone, Debug, PartialEq, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DockDeclaration {
-    /// Whether the dock opens on a first launch, when nothing is remembered
-    /// about it (see `Editor::apply_startup_dock_chrome`).
+    /// Whether the dock opens on a first launch, when `open_setting` says
+    /// nothing (see `Editor::apply_startup_dock_chrome`).
     #[serde(default = "default_true")]
     pub open: bool,
     /// A boolean in this plugin's settings (`plugins.<name>.settings`) that
-    /// switches auto-opening off — the orchestrator's `autoOpenDock`.
+    /// says whether the dock is open — the orchestrator's `autoOpenDock`.
+    /// It is the one place the dock's openness is remembered: the host reads
+    /// it before the first frame, the Settings UI edits it, and the plugin
+    /// writes it as the user opens and closes the dock.
     #[serde(default)]
     pub open_setting: Option<String>,
     /// How wide the dock opens before the user drags it.

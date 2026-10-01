@@ -758,7 +758,6 @@ impl Editor {
         }
         self.save_histories();
         self.save_orchestrator_state();
-        self.save_dock_chrome();
 
         first_err.map_or(Ok(()), Err)
     }

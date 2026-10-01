@@ -335,12 +335,20 @@ Today a manifest declares one thing, chrome:
 
 `chrome.dock` says the plugin fills the editor-global left dock. From it the
 host decides at construction whether the slot is open and how wide
-(`Editor::apply_startup_dock_chrome`): a bare `fresh` in Orchestrator mode
-always opens it; `open_setting` (a boolean in `plugins.<name>.settings`) set
-to `false` keeps it closed; otherwise it comes back as the user left it
-(`<data>/chrome.json`: open or closed, and the dragged width), or as `open`
-says on a first launch. The width rule is the host's from then on; the plugin
-reads it back with `editor.dockCols()`.
+(`Editor::apply_startup_dock_chrome`): `open_setting` (a boolean in
+`plugins.<name>.settings`) decides once it has a value, since it is both what
+the user left behind and what the Settings UI edits; with nothing set, a bare
+`fresh` in Orchestrator mode opens the dock, else `open` says. The dragged
+width comes back from `<data>/chrome.json`. The width rule is the host's from
+then on; the plugin reads it back with `editor.dockCols()`.
+
+Openness is deliberately *not* inferred from the slot at quit: the plugin
+closes and reopens its own dock (a dive into a worktree), so the final state
+cannot be told apart from the user's decision, and writing it would overwrite
+a value the user had just set in the Settings UI. The plugin writes
+`open_setting` at the moment the user opens or closes the dock instead, which
+is what keeps the column, the `View` menu's checkmark and the Settings value
+in agreement (#3442).
 
 A manifest is a declaration, not a command. The plugin still mounts its dock
 from `ready`, gated on `editor.dockOpen()`, into a column that is already
