@@ -73,7 +73,7 @@ while true; do
 case "$method" in
     "initialize")
         # Send initialize response
-        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":{"capabilities":{"completionProvider":{"triggerCharacters":[".",":",":"]},"definitionProvider":true,"hoverProvider":true,"textDocumentSync":1,"semanticTokensProvider":{"legend":{"tokenTypes":["keyword","function","variable"],"tokenModifiers":["declaration","deprecated"]},"full":{"delta":true},"range":true}}}}'
+        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":{"capabilities":{"completionProvider":{"triggerCharacters":[".",":",":"]},"inlineCompletionProvider":{},"definitionProvider":true,"hoverProvider":true,"textDocumentSync":1,"semanticTokensProvider":{"legend":{"tokenTypes":["keyword","function","variable"],"tokenModifiers":["declaration","deprecated"]},"full":{"delta":true},"range":true}}}}'
         ;;
     "textDocument/hover")
         # Send hover response with range
@@ -87,6 +87,9 @@ case "$method" in
     "textDocument/completion")
         # Send completion response with sample items
         send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":{"items":[{"label":"test_function","kind":3,"detail":"fn test_function()","insertText":"test_function"},{"label":"test_variable","kind":6,"detail":"let test_variable","insertText":"test_variable"},{"label":"test_struct","kind":22,"detail":"struct TestStruct","insertText":"test_struct"}]}}'
+        ;;
+    "textDocument/inlineCompletion")
+        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":[{"insertText":"hello_world"}]}'
         ;;
     "textDocument/definition")
         # Send definition response (points to line 0, col 0)
@@ -1267,7 +1270,7 @@ while true; do
 case "$method" in
     "initialize")
         # Send initialize response
-        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":{"capabilities":{"completionProvider":{"triggerCharacters":[".",":",":"]},"definitionProvider":true,"hoverProvider":true,"textDocumentSync":1}}}'
+        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":{"capabilities":{"completionProvider":{"triggerCharacters":[".",":",":"]},"inlineCompletionProvider":{},"definitionProvider":true,"hoverProvider":true,"textDocumentSync":1}}}'
         ;;
     "textDocument/hover")
         # Send hover response with range
@@ -1278,6 +1281,9 @@ case "$method" in
         ;;
     "textDocument/completion")
         send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":{"items":[{"label":"test_function","kind":3,"detail":"fn test_function()","insertText":"test_function"}]}}'
+        ;;
+    "textDocument/inlineCompletion")
+        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":[{"insertText":"hello_world"}]}'
         ;;
     "textDocument/definition")
         uri=$(echo "$msg" | grep -o '"uri":"[^"]*"' | head -1 | cut -d'"' -f4)
