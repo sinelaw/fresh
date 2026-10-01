@@ -336,26 +336,12 @@ Today a manifest declares one thing, chrome:
 `chrome.dock` says the plugin fills the editor-global left dock. From it the
 host decides at construction whether the slot is open and how wide
 (`Editor::apply_startup_dock_chrome`): `open_setting` (a boolean in
-`plugins.<name>.settings`) decides once it has a value, since it is both what
-the user left behind and what the Settings UI edits; with nothing set, a bare
-`fresh` in Orchestrator mode opens the dock, else `open` says. The dragged
-width comes back from `<data>/chrome.json`. The width rule is the host's from
-then on; the plugin reads it back with `editor.dockCols()`.
-
-Openness is deliberately *not* inferred from the slot at quit: a plugin opens
-and closes its own dock for its own reasons (the orchestrator closes it to
-attach to a discovered worktree, and reopens it for a new or recovered
-workspace), so the final state cannot be told apart from the user's decision,
-and writing it would overwrite a value the user had just set in the Settings
-UI. The plugin writes `open_setting` at the moment the user opens or closes
-the dock instead, so the setting holds the user's last explicit decision and
-that is what the next launch obeys (#3442). It is not a mirror of the slot:
-while one of those plugin-initiated states is in effect the column can differ
-from the setting, by design.
-
-`open_setting` is read through the normal config layering, so a project that
-pins it in `.fresh/config.json` is where the write lands (`persist_config_pointer`
-targets the layer that already defines the key).
+`plugins.<name>.settings`) set to `false` keeps it closed; otherwise it comes
+back as the user left it (`<data>/chrome.json`: open or closed, and the
+dragged width); on a first launch, where neither says anything, a bare `fresh`
+in Orchestrator mode opens it, else `open` decides. The launch mode is the
+default under those two, not an override over them (#3442). The width rule is
+the host's from then on; the plugin reads it back with `editor.dockCols()`.
 
 A manifest is a declaration, not a command. The plugin still mounts its dock
 from `ready`, gated on `editor.dockOpen()`, into a column that is already

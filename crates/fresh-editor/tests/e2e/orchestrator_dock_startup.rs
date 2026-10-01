@@ -1,11 +1,8 @@
 //! What a launch shows *before* the dock's content exists. The plugin
 //! mounts the dock from `ready`, after every plugin has loaded; the host
-//! carves the column from the first frame (`orchestrator.manifest.json`, the
-//! plugin's `autoOpenDock`, and the launch mode) and the mount fills it in
-//! place. These drive only the rendered screen (CONTRIBUTING.md §2); the one
-//! exception is the across-launches test, which reads and replays the user
-//! config file between launches because that is how a real relaunch resolves
-//! it — never to assert an in-session invariant.
+//! carves the column from the first frame (`orchestrator.manifest.json`,
+//! `chrome.json`) and the mount fills it in place. These drive only the
+//! rendered screen (CONTRIBUTING.md §2).
 
 use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness, HarnessOptions};
 use crate::common::tracing::init_tracing_from_env;
@@ -120,12 +117,10 @@ fn an_ordinary_launch_lands_the_dock_in_the_column_carved_for_it() {
 
 /// Closed with Toggle Dock, quit, relaunched: no column and `ready` mounts
 /// nothing. Opened again, quit, relaunched: the column is back on the first
-/// frame. The toggle records it in the manifest's `open_setting`
-/// (`autoOpenDock`), which is what `apply_startup_dock_chrome` reads.
+/// frame. The quit records it (`Editor::save_dock_chrome`).
 ///
-/// Orchestrator mode is driven alongside the ordinary launch: a bare `fresh`
-/// used to force the column open regardless, so a dock the user had closed
-/// came back every time (issue #3442).
+/// Driven in both launch modes: a bare `fresh` used to force the column open
+/// regardless, so a dock the user had closed came back every time (#3442).
 fn the_dock_is_remembered_across_launches(orchestrator_mode: bool) {
     use crossterm::event::{KeyCode, KeyModifiers};
     use fresh::config_io::DirectoryContext;
@@ -133,14 +128,9 @@ fn the_dock_is_remembered_across_launches(orchestrator_mode: bool) {
     let (_tmp, root) = setup_project();
     let home = tempfile::TempDir::new().unwrap();
     let dir_context = DirectoryContext::for_testing(home.path());
-    // The harness injects the config rather than resolving layers from disk,
-    // so each relaunch is handed what the previous one persisted — the way a
-    // real launch would resolve it.
-    let user_config = dir_context.config_dir.join("config.json");
     let launch = |dir_context: DirectoryContext| {
-        let config = Config::load_from_file(&user_config).unwrap_or_default();
         let mut options = HarnessOptions::new()
-            .with_config(config)
+            .with_config(Config::default())
             .with_working_dir(root.clone())
             .with_shared_dir_context(dir_context)
             .without_empty_plugins_dir()
@@ -159,18 +149,6 @@ fn the_dock_is_remembered_across_launches(orchestrator_mode: bool) {
             .unwrap();
         h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
     };
-    // The toggle's write is queued behind the plugin thread, so each launch
-    // waits for it to land before handing the file to the next one.
-    let wait_for_setting = |h: &mut EditorTestHarness, want: bool| {
-        h.wait_until(|_| {
-            Config::load_from_file(&user_config)
-                .ok()
-                .and_then(|c| c.plugins.get("orchestrator").cloned())
-                .and_then(|p| p.settings.get("autoOpenDock").and_then(|v| v.as_bool()))
-                == Some(want)
-        })
-        .unwrap_or_else(|e| panic!("`autoOpenDock` never reached {want}: {e}"));
-    };
 
     // First launch: open by the manifest. Close it.
     let mut h = launch(dir_context.clone());
@@ -185,7 +163,6 @@ fn the_dock_is_remembered_across_launches(orchestrator_mode: bool) {
         wall_column(&h).iter().filter(|c| **c == '\u{2502}').count(),
         0
     );
-    wait_for_setting(&mut h, false);
     h.shutdown(false).unwrap();
     drop(h);
 
@@ -211,7 +188,6 @@ fn the_dock_is_remembered_across_launches(orchestrator_mode: bool) {
     toggle_dock(&mut h);
     h.wait_until(|h| h.screen_to_string().contains("+ New"))
         .unwrap();
-    wait_for_setting(&mut h, true);
     h.shutdown(false).unwrap();
     drop(h);
 

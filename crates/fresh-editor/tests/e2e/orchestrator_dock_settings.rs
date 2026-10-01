@@ -16,7 +16,6 @@ use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness, Ha
 use crate::common::tracing::init_tracing_from_env;
 use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::config::{Config, PluginConfig};
-use fresh::config_io::DirectoryContext;
 use std::fs;
 use std::path::PathBuf;
 
@@ -71,23 +70,12 @@ fn launch(config: Config, root: PathBuf) -> EditorTestHarness {
 /// The same, as a bare `fresh` (Orchestrator mode) — the launch mode that is
 /// the default since 0.5.2, and the one issue #3442 was reported against.
 fn launch_orchestrator_mode(config: Config, root: PathBuf) -> EditorTestHarness {
-    launch_orchestrator_mode_in(config, root, DirectoryContext::for_testing(&temp_home()))
-}
-
-/// ...with a `DirectoryContext` the caller keeps, for the one test that reads
-/// back the `config.json` the toggle writes.
-fn launch_orchestrator_mode_in(
-    config: Config,
-    root: PathBuf,
-    dir_context: DirectoryContext,
-) -> EditorTestHarness {
     EditorTestHarness::create(
         120,
         32,
         HarnessOptions::new()
             .with_config(config)
             .with_working_dir(root)
-            .with_shared_dir_context(dir_context)
             .without_empty_plugins_dir()
             .with_startup_chrome()
             .with_orchestrator_mode(),
@@ -95,25 +83,9 @@ fn launch_orchestrator_mode_in(
     .unwrap()
 }
 
-/// A leaked temp dir to hang a `DirectoryContext` off, as the neighbouring
-/// dock tests do for their throwaway homes.
-fn temp_home() -> PathBuf {
-    let temp = tempfile::TempDir::new().unwrap();
-    let path = temp.path().to_path_buf();
-    std::mem::forget(temp);
-    path
-}
-
-/// Toggle the dock open and wait for it to render *and* take keyboard focus
-/// (mirrors `orchestrator_dock::open_dock`).
+/// Toggle the dock open via the command palette and wait for it to render
+/// *and* take keyboard focus (mirrors `orchestrator_dock::open_dock`).
 fn open_dock(h: &mut EditorTestHarness) {
-    toggle_dock(h);
-    h.wait_until(|h| h.screen_to_string().contains("+ New") && h.editor().is_dock_focused())
-        .unwrap();
-}
-
-/// Flip the dock with the same command the `View` menu row dispatches.
-fn toggle_dock(h: &mut EditorTestHarness) {
     h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
     h.wait_for_prompt().unwrap();
@@ -121,38 +93,8 @@ fn toggle_dock(h: &mut EditorTestHarness) {
     h.wait_until(|h| h.screen_to_string().contains("Toggle Dock"))
         .unwrap();
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
-}
-
-/// `autoOpenDock` as it stands in the user config on disk — what the Settings
-/// UI edits and what `apply_startup_dock_chrome` reads on the next launch.
-/// A file, not a model accessor (CONTRIBUTING §2): it is the artifact #3442 is
-/// about, and the write is queued behind the plugin thread, so every caller
-/// waits on it rather than sampling it once.
-fn auto_open_dock_on_disk(dir_context: &DirectoryContext) -> Option<bool> {
-    let raw = std::fs::read_to_string(dir_context.config_dir.join("config.json")).ok()?;
-    serde_json::from_str::<serde_json::Value>(&raw)
-        .ok()?
-        .pointer("/plugins/orchestrator/settings/autoOpenDock")?
-        .as_bool()
-}
-
-/// Walk the Settings-UI category list until `name` is the selected row
-/// (mirrors `plugins/plugin_config_changed_hook.rs`).
-fn focus_category(h: &mut EditorTestHarness, name: &str) {
-    for _ in 0..40 {
-        if h.screen_to_string()
-            .lines()
-            .any(|line| line.contains('>') && line.contains(name))
-        {
-            return;
-        }
-        h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-        h.render().unwrap();
-    }
-    panic!(
-        "category {name:?} never became selected. Screen:\n{}",
-        h.screen_to_string()
-    );
+    h.wait_until(|h| h.screen_to_string().contains("+ New") && h.editor().is_dock_focused())
+        .unwrap();
 }
 
 /// Open the dock header's Menu, which holds the density rows and the
@@ -329,101 +271,4 @@ fn auto_open_off_is_honoured_in_orchestrator_mode() {
     h.wait_until(|h| !h.screen_to_string().contains("Add machine"))
         .unwrap();
     h.assert_screen_not_contains("+ New");
-}
-
-/// Issue #3442: closing the dock writes `autoOpenDock`, so the dock, the
-/// `View` menu's checkmark (the host's "a dock is mounted") and the value the
-/// Settings UI shows cannot disagree. The toggle used to change nothing on
-/// disk, leaving Settings claiming the dock was open while it was not.
-#[test]
-fn toggling_the_dock_writes_the_setting() {
-    let (_tmp, root, config) = setup(serde_json::json!({ "autoOpenDock": true }));
-    let dir_context = DirectoryContext::for_testing(&temp_home());
-    let mut h = launch_orchestrator_mode_in(config, root, dir_context.clone());
-    h.render().unwrap();
-    h.editor_mut().fire_ready_hook();
-    h.wait_until(|h| h.screen_to_string().contains("+ New"))
-        .unwrap();
-
-    toggle_dock(&mut h);
-    h.wait_until(|h| !h.screen_to_string().contains("+ New"))
-        .unwrap();
-    h.wait_until(|_| auto_open_dock_on_disk(&dir_context) == Some(false))
-        .expect("closing the dock must record it in `autoOpenDock`");
-
-    // ...and opening it again says so too, rather than sticking at `false`.
-    // Two toggles in a row is also the case that caught a dedup against the
-    // config snapshot, which `saveSetting` does not update synchronously.
-    toggle_dock(&mut h);
-    h.wait_until(|h| h.screen_to_string().contains("+ New"))
-        .unwrap();
-    h.wait_until(|_| auto_open_dock_on_disk(&dir_context) == Some(true))
-        .expect("reopening the dock must record it in `autoOpenDock`");
-
-    // The Settings UI reads the same value back, so what the user sees under
-    // Plugins ▸ orchestrator agrees with the dock on screen.
-    h.open_settings().unwrap();
-    focus_category(&mut h, "orchestrator");
-    h.wait_until(|h| {
-        h.screen_to_string()
-            .lines()
-            .any(|line| line.contains("AutoOpenDock") && line.contains("[v]"))
-    })
-    .expect("Settings must show AutoOpenDock on, matching the open dock");
-}
-
-/// Issue #3442: a Settings-UI edit lands on the dock without a restart. The
-/// setting *is* the dock's openness now, so leaving the column as it was
-/// would be the disagreement the setting exists to avoid — and the next close
-/// would write the user's edit straight back out.
-#[test]
-fn a_settings_edit_opens_and_closes_the_dock() {
-    let (_tmp, root, config) = setup(serde_json::json!({ "autoOpenDock": true }));
-    let mut h = launch_orchestrator_mode(config, root);
-    h.render().unwrap();
-    h.editor_mut().fire_ready_hook();
-    h.wait_until(|h| h.screen_to_string().contains("+ New"))
-        .unwrap();
-
-    // Off, through the Settings UI itself: only its save fires the
-    // `config_changed` the plugin listens for (`Editor::handle_save_setting`,
-    // the plugin-facing `saveSetting`, deliberately does not).
-    flip_auto_open_dock_in_settings(&mut h);
-    h.wait_until(|h| !h.screen_to_string().contains("+ New"))
-        .expect("switching the setting off must close the dock");
-
-    // ...and back on.
-    flip_auto_open_dock_in_settings(&mut h);
-    h.wait_until(|h| h.screen_to_string().contains("+ New"))
-        .expect("switching the setting back on must reopen the dock");
-}
-
-/// Open Settings, flip `AutoOpenDock` (the orchestrator category's first
-/// field), save with Ctrl+S and dismiss — keyboard only.
-fn flip_auto_open_dock_in_settings(h: &mut EditorTestHarness) {
-    h.open_settings().unwrap();
-    focus_category(h, "orchestrator");
-    h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
-    h.render().unwrap();
-    let was_on = h
-        .screen_to_string()
-        .lines()
-        .any(|line| line.contains("AutoOpenDock") && line.contains("[v]"));
-    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
-    let want = if was_on { "[ ]" } else { "[v]" };
-    h.wait_until(|h| {
-        h.screen_to_string()
-            .lines()
-            .any(|line| line.contains("AutoOpenDock") && line.contains(want))
-    })
-    .unwrap_or_else(|e| {
-        panic!(
-            "AutoOpenDock never flipped to {want}: {e}\n{}",
-            h.screen_to_string()
-        )
-    });
-    h.send_key(KeyCode::Char('s'), KeyModifiers::CONTROL)
-        .unwrap();
-    h.wait_until(|h| !h.screen_to_string().contains("Settings ["))
-        .unwrap();
 }

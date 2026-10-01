@@ -6266,10 +6266,9 @@ mod dock_reservation_tests {
     fn what_the_first_frame_carves() {
         let rule = DockWidthRule::default().width(COLS);
         let switched_off = orchestrator_config(true, serde_json::json!({ "autoOpenDock": false }));
-        let switched_on = orchestrator_config(true, serde_json::json!({ "autoOpenDock": true }));
+        let disabled = orchestrator_config(false, serde_json::Value::Null);
         const DECLARES_CLOSED_DOCK: &str =
             r#"{"chrome":{"dock":{"open":false,"open_setting":"autoOpenDock"}}}"#;
-        let disabled = orchestrator_config(false, serde_json::Value::Null);
         // The case, the plugin's manifest, the config, whether the editor
         // runs in orchestrator mode (a bare `fresh`), and the width expected.
         type Case<'a> = (&'a str, Option<&'a str>, Config, bool, Option<u16>);
@@ -6283,8 +6282,10 @@ mod dock_reservation_tests {
             // Issue #3442: the launch mode used to override the setting, so a
             // bare `fresh` — the default since 0.5.2 — ignored it outright.
             ("...for a bare `fresh` too", Some(DECLARES_DOCK), switched_off, true, None),
-            ("the named setting on beats a manifest that says closed", Some(DECLARES_CLOSED_DOCK), switched_on, false, Some(rule)),
-            ("...and with nothing set, a bare `fresh` opens it anyway", Some(DECLARES_CLOSED_DOCK), Config::default(), true, Some(rule)),
+            // It is still the default *under* the setting: nothing set, and a
+            // bare `fresh` opens the dock even where the manifest would not.
+            ("a bare `fresh` opens a manifest-closed dock", Some(DECLARES_CLOSED_DOCK), Config::default(), true, Some(rule)),
+            ("...which stays closed otherwise", Some(DECLARES_CLOSED_DOCK), Config::default(), false, None),
             ("a disabled plugin declares nothing", Some(DECLARES_DOCK), disabled, false, None),
         ];
         for (case, manifest, config, orchestrator_mode, want) in cases {
@@ -6303,68 +6304,55 @@ mod dock_reservation_tests {
         }
     }
 
-    /// The slot follows the mount while the editor runs, and the width a drag
-    /// left comes back on the next launch.
-    ///
-    /// Openness is not in this file and not written host-side at all any more
-    /// — `open_setting` carries it, and the plugin writes that when the user
-    /// acts. So a mount/unmount cycle records nothing by construction, which
-    /// is what keeps the plugin's own close-and-reopen (attaching to a
-    /// discovered worktree, a recovered workspace) from being mistaken for a
-    /// decision; there is no host-side state left here to assert that against.
+    /// What is remembered is the slot at quit: mounted comes back, closed
+    /// stays away — in every launch mode, a bare `fresh` included (issue
+    /// #3442) — a dragged width comes back with it, and a plugin's transient
+    /// close-and-reopen is not a decision.
     #[test]
-    fn the_slot_follows_the_mount_and_the_dragged_width_comes_back() {
+    fn what_the_user_leaves_is_what_comes_back() {
         let home = home(Some(DECLARES_DOCK));
-        let launch = || editor(home.clone(), Config::default(), false);
+        let launch = |orchestrator_mode| editor(home.clone(), Config::default(), orchestrator_mode);
 
-        let mut e = launch();
+        let mut e = launch(false);
         assert!(e.dock_reserved, "held open on a first launch");
         mount(&mut e);
         assert!(!e.dock_reserved, "the mount fills the column");
         assert!(dock_width_of(&e).is_some(), "...and the column stays");
-        unmount(&mut e);
-        assert_eq!(dock_width_of(&e), None, "the unmount gives the column back");
 
-        // Open and dragged: the width is written as the drag ends.
+        // A transient: closed and reopened before the quit.
+        unmount(&mut e);
+        assert_eq!(dock_width_of(&e), None);
+        mount(&mut e);
+        e.save_dock_chrome();
+        assert!(
+            launch(false).dock_reserved,
+            "a close the plugin undid is not a decision"
+        );
+
+        // Closed at quit.
+        let mut e = launch(false);
+        mount(&mut e);
+        unmount(&mut e);
+        e.save_dock_chrome();
+        let e = launch(false);
+        assert!(!e.dock_reserved, "the user closed it");
+        assert_eq!(dock_width_of(&e), None);
+        assert!(
+            !launch(true).dock_reserved,
+            "a bare `fresh` must not reopen it either (issue #3442)"
+        );
+
+        // Open and dragged at quit: the width is written as the drag ends.
+        let mut e = launch(false);
         mount(&mut e);
         e.handle_dock_resize_drag(37); // the wall lands on column 37: width 38
         e.persist_dock_width();
+        e.save_dock_chrome();
         assert_eq!(
-            dock_width_of(&launch()),
+            dock_width_of(&launch(false)),
             Some(38),
-            "the dragged width comes back"
+            "open, at the dragged width"
         );
-    }
-
-    /// Issue #3442 upgrade path: openness used to live in `chrome.json`'s
-    /// `open`, and a user who had closed the dock has that on disk with no
-    /// `autoOpenDock` to replace it (the declared default is only ever
-    /// in-memory). It is read once, so the dock they closed stays closed —
-    /// and the setting wins over it the moment it exists.
-    #[test]
-    fn a_dock_closed_before_the_setting_existed_stays_closed() {
-        let home = home(Some(DECLARES_DOCK));
-        std::fs::create_dir_all(&home.data_dir).unwrap();
-        std::fs::write(
-            home.data_dir.join("chrome.json"),
-            r#"{"dock":{"open":false,"width":31}}"#,
-        )
-        .unwrap();
-
-        for orchestrator_mode in [false, true] {
-            let e = editor(home.clone(), Config::default(), orchestrator_mode);
-            assert!(
-                !e.dock_reserved,
-                "a dock closed under the old scheme must stay closed \
-                 (orchestrator_mode = {orchestrator_mode})"
-            );
-        }
-
-        // The setting is the authority once set, legacy value or not.
-        let on = orchestrator_config(true, serde_json::json!({ "autoOpenDock": true }));
-        let e = editor(home.clone(), on, false);
-        assert!(e.dock_reserved, "the setting outranks the legacy key");
-        assert_eq!(dock_width_of(&e), Some(31), "the width is still read");
     }
 
     /// The `ready` hook's own sentinel releases a column nothing mounted
