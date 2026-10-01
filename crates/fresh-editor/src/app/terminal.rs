@@ -1531,6 +1531,7 @@ impl Editor {
             self.finish_self_update(None);
             return;
         };
+        self.resize_visible_terminals();
         self.begin_self_update(terminal_id, window, buffer_id);
 
         // Editor-wide: announce the focus change, matching `open_terminal`.
@@ -1570,6 +1571,7 @@ impl Editor {
         else {
             return;
         };
+        self.resize_visible_terminals();
 
         // Editor-wide: announce the focus change to plugins.
         self.announce_focus();
@@ -2376,9 +2378,11 @@ impl Window {
                 // same width. That shared value is what the scroll-back view
                 // must wrap at.
                 let grid_cols = split_area.width.saturating_sub(1);
-                // Tab bar takes 1 row; reserve 1 row for chrome and the
-                // scrollbar column (when shown) on the right.
-                let content_height = split_area.height.saturating_sub(2);
+                // Use the rendered content height so hidden bars return their rows.
+                let content_height = self
+                    .pane_rects()
+                    .content(split_id)
+                    .map_or(0, |content| content.height);
                 let content_width = grid_cols.saturating_sub(scrollbar_cols);
 
                 plan.push((

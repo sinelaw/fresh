@@ -2008,7 +2008,7 @@ impl Editor {
         match serde_json::from_value::<crate::config::Config>(json) {
             Ok(new_config) => {
                 let old_theme = self.config.theme.clone();
-                self.config = Arc::new(new_config);
+                self.set_config(new_config);
                 if old_theme != self.config.theme {
                     if let Some(theme) = self.theme_registry.get_cloned(&self.config.theme) {
                         *self.theme.write().unwrap() = theme;
@@ -2029,6 +2029,7 @@ impl Editor {
                     win.status_bar_visible = cfg.show_status_bar;
                     win.prompt_line_visible = cfg.show_prompt_line;
                 }
+                self.push_layout_geometry();
                 #[cfg(feature = "plugins")]
                 self.update_plugin_state_snapshot();
             }

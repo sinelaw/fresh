@@ -489,6 +489,7 @@ impl Editor {
             self.menu_state.close_menu();
         }
         self.persist_config_change(config_keys::EDITOR_SHOW_MENU_BAR, new_value);
+        self.relayout();
         let status = if self.active_window_mut().menu_bar_visible {
             t!("toggle.menu_bar_shown")
         } else {
@@ -510,6 +511,7 @@ impl Editor {
         let new_value = self.active_window().tab_bar_visible;
         self.config_mut().editor.show_tab_bar = new_value;
         self.persist_config_change(config_keys::EDITOR_SHOW_TAB_BAR, new_value);
+        self.relayout();
     }
 
     /// Toggle the status bar, saving the new editor-wide default.
@@ -518,6 +520,7 @@ impl Editor {
         let new_value = self.active_window().status_bar_visible;
         self.config_mut().editor.show_status_bar = new_value;
         self.persist_config_change(config_keys::EDITOR_SHOW_STATUS_BAR, new_value);
+        self.relayout();
     }
 
     /// Toggle the prompt line, saving the new editor-wide default.
@@ -526,6 +529,7 @@ impl Editor {
         let new_value = self.active_window().prompt_line_visible;
         self.config_mut().editor.show_prompt_line = new_value;
         self.persist_config_change(config_keys::EDITOR_SHOW_PROMPT_LINE, new_value);
+        self.relayout();
     }
 
     /// Toggle the file explorer side between left and right.
@@ -570,6 +574,8 @@ impl Editor {
         // Persist to the user config layer so the choice survives restart
         // (issue #474), matching the other global View-menu toggles.
         self.persist_config_change(config_keys::EDITOR_SHOW_HORIZONTAL_SCROLLBAR, new_value);
+        self.sync_windows_config();
+        self.relayout();
         let status = if new_value {
             t!("toggle.horizontal_scrollbar_shown")
         } else {
@@ -915,6 +921,8 @@ impl Editor {
                 .collect();
             lsp.set_universal_configs(universal_servers);
         }
+
+        self.push_layout_geometry();
 
         // Control-event bus: in-process observers (the test harness's
         // `EventBroadcaster`), NOT plugins. Plugins are notified by the
