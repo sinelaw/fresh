@@ -177,6 +177,65 @@ fn end_children_with_test_process() {
     });
 }
 
+/// While alive, has a watchdog name the wait it marks on stderr every
+/// [`StallReport::INTERVAL`] — for a harness wait that blocks inside the
+/// editor and so cannot report itself.
+///
+/// A test stuck there is killed by nextest's slow-timeout with nothing in its
+/// output to say where, and on Windows there is no stack dump either. One
+/// watchdog thread per process serves every live report; entries are keyed by
+/// thread, since plain `cargo test` runs tests side by side in one process.
+struct StallReport {
+    thread: std::thread::ThreadId,
+}
+
+type StallEntries = Vec<(std::thread::ThreadId, &'static str, std::time::Instant)>;
+
+impl StallReport {
+    const INTERVAL: std::time::Duration = std::time::Duration::from_secs(10);
+
+    fn entries() -> &'static std::sync::Mutex<StallEntries> {
+        static ENTRIES: std::sync::OnceLock<std::sync::Mutex<StallEntries>> =
+            std::sync::OnceLock::new();
+        ENTRIES.get_or_init(|| {
+            std::thread::Builder::new()
+                .name("harness-stall-watchdog".into())
+                .spawn(|| loop {
+                    std::thread::sleep(Self::INTERVAL);
+                    let entries = Self::entries().lock().unwrap_or_else(|e| e.into_inner());
+                    for (_, what, since) in entries.iter() {
+                        if since.elapsed() >= Self::INTERVAL {
+                            eprintln!(
+                                "{what}: still waiting after {:.1}s",
+                                since.elapsed().as_secs_f64()
+                            );
+                        }
+                    }
+                })
+                .expect("spawn the harness stall watchdog");
+            std::sync::Mutex::new(Vec::new())
+        })
+    }
+
+    fn start(what: &'static str) -> Self {
+        let thread = std::thread::current().id();
+        Self::entries()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push((thread, what, std::time::Instant::now()));
+        Self { thread }
+    }
+}
+
+impl Drop for StallReport {
+    fn drop(&mut self) {
+        let mut entries = Self::entries().lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(i) = entries.iter().rposition(|(t, ..)| *t == self.thread) {
+            entries.remove(i);
+        }
+    }
+}
+
 /// Recursively copy `<src>` into `<dst>`, creating `<dst>` if missing.
 /// Existing files at the destination are overwritten (for re-runs).
 fn mirror_plugins_dir(src: &Path, dst: &Path) -> std::io::Result<()> {
@@ -1402,7 +1461,12 @@ impl EditorTestHarness {
             //     right now means nothing. A handler parked on
             //     `editor.getNextKey()` counts as at rest, so this never
             //     waits for a key the test has not sent.
-            had_messages |= self.editor.sync_plugin_runtime();
+            had_messages |= {
+                // Spins inside the editor until the plugin thread answers,
+                // so it cannot report a stall the way (1) does.
+                let _stall = StallReport::start("drain_async_work: syncing the plugin runtime");
+                self.editor.sync_plugin_runtime()
+            };
 
             if had_messages {
                 // Messages are still flowing: keep draining at full

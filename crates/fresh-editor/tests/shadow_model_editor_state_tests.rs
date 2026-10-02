@@ -171,20 +171,37 @@ fn test_single_op_each() {
     }
 }
 
-proptest! {
-    #![proptest_config(ProptestConfig {
-        cases: 500,
-        max_shrink_iters: 5000,
-        ..ProptestConfig::default()
-    })]
-
-    /// Property test: 2-op sequences to test all pairwise interactions
-    #[test]
-    fn prop_shadow_model_2_ops(
-        op1 in op_strategy(),
-        op2 in op_strategy(),
-    ) {
-        run_and_verify(&[op1, op2])?;
+/// Every ordered pair of operations, each from a fresh editor.
+///
+/// Enumerated rather than sampled: this was a 500-case proptest, which drew
+/// pairs from the weighted strategy and so never promised to reach every
+/// pairwise interaction, while building 500 editors (~30s on a quiet Linux
+/// box) — near enough to nextest's 180s limit for a loaded Windows runner to
+/// cross it. The 144 pairs here cover every interaction with fewer than a
+/// third of the editors. Varied typed characters stay with the long-sequence
+/// proptest below.
+#[test]
+fn test_shadow_model_every_op_pair() {
+    let ops = [
+        Op::TypeChar('a'),
+        Op::Backspace,
+        Op::Delete,
+        Op::Enter,
+        Op::Left,
+        Op::Right,
+        Op::Home,
+        Op::End,
+        Op::MoveLineUp,
+        Op::MoveLineDown,
+        Op::Undo,
+        Op::Redo,
+    ];
+    for first in &ops {
+        for second in &ops {
+            if let Err(e) = run_and_verify(&[first.clone(), second.clone()]) {
+                panic!("{e}");
+            }
+        }
     }
 }
 
