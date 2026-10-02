@@ -295,6 +295,12 @@ impl LspCompletionCandidate {
     }
 }
 
+struct ZenModeChrome {
+    menu_bar_visible: bool,
+    tab_bar_visible: bool,
+    status_bar_visible: bool,
+}
+
 pub struct Window {
     /// Stable identifier. The base window is always `WindowId(1)`.
     pub id: WindowId,
@@ -1123,6 +1129,7 @@ pub struct Window {
     pub tab_bar_visible: bool,
     pub status_bar_visible: bool,
     pub prompt_line_visible: bool,
+    zen_mode_chrome: Option<ZenModeChrome>,
 
     /// Timing state for auto-recovery saves and persistent auto-saves
     /// in this window.
@@ -1551,6 +1558,25 @@ impl Window {
                 }
             }
         }
+    }
+
+    /// Hide chrome temporarily, or restore the visibility captured on entry.
+    pub fn toggle_zen_mode(&mut self) {
+        if let Some(chrome) = self.zen_mode_chrome.take() {
+            self.menu_bar_visible = chrome.menu_bar_visible;
+            self.tab_bar_visible = chrome.tab_bar_visible;
+            self.status_bar_visible = chrome.status_bar_visible;
+        } else {
+            self.zen_mode_chrome = Some(ZenModeChrome {
+                menu_bar_visible: self.menu_bar_visible && !self.menu_bar_auto_shown,
+                tab_bar_visible: self.tab_bar_visible,
+                status_bar_visible: self.status_bar_visible,
+            });
+            self.menu_bar_visible = false;
+            self.tab_bar_visible = false;
+            self.status_bar_visible = false;
+        }
+        self.menu_bar_auto_shown = false;
     }
 
     /// Toggle this window's tab-bar visibility and post a status message.
@@ -2555,6 +2581,7 @@ impl Window {
             tab_bar_visible: resources.config.editor.show_tab_bar,
             status_bar_visible: resources.config.editor.show_status_bar,
             prompt_line_visible: resources.config.editor.show_prompt_line,
+            zen_mode_chrome: None,
             last_auto_recovery_save: now,
             last_persistent_auto_save: now,
             auto_save_changed_on_disk: Vec::new(),

@@ -4,6 +4,49 @@ use fresh::config::Config;
 use fresh::config_io::DirectoryContext;
 use tempfile::TempDir;
 
+/// Zen mode hides chrome and restores bars that were already hidden correctly.
+#[test]
+fn test_zen_mode_restores_previous_chrome_visibility() {
+    for status_visible in [true, false] {
+        let mut config = Config::default();
+        config.editor.show_status_bar = status_visible;
+        let mut harness = EditorTestHarness::with_config(100, 24, config).unwrap();
+        harness.type_text("zen-content").unwrap();
+        harness.render().unwrap();
+        assert!(harness.get_row_text(0).contains("File"));
+        assert!(harness.get_row_text(1).contains("[No Name]"));
+        assert_eq!(harness.get_row_text(22).contains("Ln"), status_visible);
+
+        harness
+            .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+            .unwrap();
+        harness.wait_for_prompt().unwrap();
+        harness.type_text("Toggle Zen Mode").unwrap();
+        harness.render().unwrap();
+        assert!(
+            harness
+                .screen_to_string()
+                .matches("Toggle Zen Mode")
+                .count()
+                >= 2
+        );
+        harness
+            .send_key(KeyCode::Enter, KeyModifiers::NONE)
+            .unwrap();
+        harness.wait_for_prompt_closed().unwrap();
+        harness.render().unwrap();
+        harness.assert_screen_not_contains("[No Name]");
+        assert!(!harness.get_row_text(0).contains("File"));
+        assert!(!harness.get_row_text(22).contains("Ln"));
+        assert!(harness.get_row_text(0).contains("zen-content"));
+
+        harness.run_palette_command("Toggle Zen Mode").unwrap();
+        assert!(harness.get_row_text(0).contains("File"));
+        assert!(harness.get_row_text(1).contains("[No Name]"));
+        assert_eq!(harness.get_row_text(22).contains("Ln"), status_visible);
+    }
+}
+
 /// Test that the tab bar is visible by default
 #[test]
 fn test_tab_bar_visible_by_default() {

@@ -678,6 +678,8 @@ pub enum Action {
     ToggleFileExplorerSide,
     // Menu bar visibility
     ToggleMenuBar,
+    /// Temporarily hide editor chrome, restoring its previous visibility on exit.
+    ToggleZenMode,
     // Tab bar visibility
     ToggleTabBar,
     // Status bar visibility
@@ -1203,6 +1205,7 @@ impl Action {
             "toggle_file_explorer" => ToggleFileExplorer,
             "toggle_file_explorer_side" => ToggleFileExplorerSide,
             "toggle_menu_bar" => ToggleMenuBar,
+            "toggle_zen_mode" => ToggleZenMode,
             "toggle_tab_bar" => ToggleTabBar,
             "toggle_status_bar" => ToggleStatusBar,
             "toggle_prompt_line" => TogglePromptLine,
@@ -2225,6 +2228,7 @@ impl KeybindingResolver {
                 | Action::MenuActivate
                 | Action::MenuOpen(_)
                 | Action::ToggleMenuBar
+                | Action::ToggleZenMode
                 | Action::ShowHelp
                 | Action::ShowKeyboardShortcuts
                 | Action::Quit
@@ -3229,6 +3233,7 @@ impl KeybindingResolver {
             Action::ToggleFileExplorer => t!("action.toggle_file_explorer"),
             Action::ToggleFileExplorerSide => t!("action.toggle_file_explorer_side"),
             Action::ToggleMenuBar => t!("action.toggle_menu_bar"),
+            Action::ToggleZenMode => t!("action.toggle_zen_mode"),
             Action::ToggleTabBar => t!("action.toggle_tab_bar"),
             Action::ToggleStatusBar => t!("action.toggle_status_bar"),
             Action::TogglePromptLine => t!("action.toggle_prompt_line"),
