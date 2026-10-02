@@ -2762,8 +2762,7 @@ impl Window {
     /// The pane *boxes* are what is read off this. The content slots come
     /// out too, but without the plugin panel interiors the editor would mount
     /// (those are the editor's, not the window's), so they are the slots of
-    /// a pane showing a buffer; nothing reads a non-active window's content
-    /// slots.
+    /// a pane showing a buffer. Terminal sizing reads those content slots too.
     pub(crate) fn layout_panes_offscreen(&mut self) {
         use crate::view::shell::splits::{PaneChrome, PaneControls, Splits};
         let Some((mgr, _)) = self.buffers.splits() else {
