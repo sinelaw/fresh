@@ -123,6 +123,60 @@ pub fn copy_plugin_lib(plugins_dir: &Path) {
     }
 }
 
+/// Put this test process in a job that kills whatever is left in it when the
+/// process exits, so the editor's child processes end with the test.
+///
+/// The editor starts children for plugins and features (`git`, `dotnet`, an
+/// LSP server, …) that a short test can return before they finish, and
+/// Windows hands every child the test's inheritable stdout/stderr pipes. A
+/// child still running after the test keeps those pipes open, which nextest
+/// reports as a LEAK. As a member of a kill-on-close job, the whole tree goes
+/// when the test process does. The job handle is never closed and is not
+/// inheritable: the process exiting is what closes it.
+#[cfg(windows)]
+fn end_children_with_test_process() {
+    use std::sync::Once;
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::JobObjects::{
+        AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
+        SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    };
+    use windows_sys::Win32::System::Threading::GetCurrentProcess;
+
+    static JOIN: Once = Once::new();
+    JOIN.call_once(|| {
+        // SAFETY: plain Win32 calls on a handle this function owns; `info` is
+        // a zeroed plain-data struct whose size is passed alongside it.
+        unsafe {
+            let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
+            if job.is_null() {
+                eprintln!(
+                    "harness: could not create a kill-on-close job: {}",
+                    std::io::Error::last_os_error()
+                );
+                return;
+            }
+            let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
+            info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            let joined = SetInformationJobObject(
+                job,
+                JobObjectExtendedLimitInformation,
+                std::ptr::from_ref(&info).cast(),
+                std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+            ) != 0
+                && AssignProcessToJobObject(job, GetCurrentProcess()) != 0;
+            if !joined {
+                eprintln!(
+                    "harness: could not join a kill-on-close job: {}",
+                    std::io::Error::last_os_error()
+                );
+                CloseHandle(job);
+            }
+        }
+    });
+}
+
 /// Recursively copy `<src>` into `<dst>`, creating `<dst>` if missing.
 /// Existing files at the destination are overwritten (for re-runs).
 fn mirror_plugins_dir(src: &Path, dst: &Path) -> std::io::Result<()> {
@@ -572,6 +626,8 @@ impl EditorTestHarness {
         // timeouts (a wait that never resolves killed externally by the
         // nextest 180s slow-timeout) undebuggable from the logs alone.
         crate::common::tracing::init_tracing_from_env();
+        #[cfg(windows)]
+        end_children_with_test_process();
         let mut t = crate::common::timing::Timer::start("harness::create");
         // Create temp directory if we don't have a shared dir_context
         let temp_dir = if options.dir_context.is_none() || options.create_project_root {

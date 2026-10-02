@@ -7299,8 +7299,11 @@ mod tests {
             echo ""
             echo -n "$response"
 
-            # Keep running to avoid EOF
-            sleep 10
+            # Keep running to avoid EOF, until the editor closes stdin.
+            # A builtin rather than `sleep`: a `sleep` child outlives the
+            # test holding its inherited stdout/stderr, which nextest
+            # reports as a LEAK on Windows.
+            while read -r _; do :; done
         "#;
 
         // Spawn with bash to execute the fake LSP
@@ -7326,19 +7329,14 @@ mod tests {
             init_result.err()
         );
 
-        // Give the async task time to process
-        tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
-
-        // Check that we received status update messages
-        let messages = async_bridge.try_recv_all();
-        let has_status_update = messages
+        // Wait for the status update the initialization sends.
+        while !async_bridge
+            .try_recv_all()
             .iter()
-            .any(|msg| matches!(msg, AsyncMessage::LspStatusUpdate { .. }));
-
-        assert!(
-            has_status_update,
-            "Expected status update messages from LSP initialization"
-        );
+            .any(|msg| matches!(msg, AsyncMessage::LspStatusUpdate { .. }))
+        {
+            tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+        }
 
         // Cleanup - best-effort, test is ending
         #[allow(clippy::let_underscore_must_use)]
