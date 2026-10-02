@@ -1407,16 +1407,21 @@ impl Editor {
         // Use full document sync - broadcast to all handles
         let __active_id = self.active_window;
         if let Some(lsp) = self.windows.get_mut(&__active_id).map(|w| &mut w.lsp) {
+            // The reloaded content is what the server ends up holding, so its end
+            // position is the extent to carry forward (the LSP task rewrites this
+            // range-less change into a ranged one over the *previous* extent).
+            let end_position = crate::services::lsp::async_handler::lsp_text_end_position(&content);
             let content_change = TextDocumentContentChangeEvent {
                 range: None, // None means full document replacement
                 range_length: None,
                 text: content,
             };
             for sh in lsp.get_handles_mut(&language) {
-                if let Err(e) = sh
-                    .handle
-                    .did_change(lsp_uri.clone(), vec![content_change.clone()])
-                {
+                if let Err(e) = sh.handle.did_change(
+                    lsp_uri.clone(),
+                    vec![content_change.clone()],
+                    end_position,
+                ) {
                     tracing::warn!("Failed to notify LSP '{}' of file change: {}", sh.name, e);
                 }
             }
