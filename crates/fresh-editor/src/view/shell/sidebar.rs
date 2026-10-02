@@ -660,11 +660,9 @@ mod tests {
         Row {
             index,
             theme: Explorer::panel(),
-            left: vec![
-                ("  ".to_string(), Explorer::panel()),
-                (name.to_string(), Explorer::panel()),
-            ],
+            left: vec![("  ".to_string(), Explorer::panel())],
             chain: Vec::new(),
+            name: vec![(name.to_string(), Explorer::panel())],
             trailing: None,
             error: None,
         }

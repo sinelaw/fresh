@@ -70,7 +70,12 @@ impl Editor {
     /// this is, carried on the event from the editor's own multi-click
     /// detector — so one fact covers both routes, and they cannot disagree
     /// about which row they mean.
-    pub(crate) fn explorer_row_pressed(&mut self, index: usize, clicks: u8) {
+    pub(crate) fn explorer_row_pressed(
+        &mut self,
+        index: usize,
+        segment: Option<std::path::PathBuf>,
+        clicks: u8,
+    ) {
         // Focus first. `open_file_preview` below routes through
         // `set_active_buffer`, which detects "leaving a terminal buffer while
         // terminal_mode is on" and resets `key_context = Normal`
@@ -84,8 +89,8 @@ impl Editor {
         // Everything the branches below need, read out under one borrow of
         // the tree so the editor is free again by the time a file is opened.
         let picked = self.file_explorer_mut().and_then(|explorer| {
-            let node_id = explorer.get_node_at_index(index)?;
-            explorer.set_selected(Some(node_id));
+            let node_id = explorer.press_target(index, segment.as_deref())?;
+            explorer.set_selected_exact(Some(node_id));
             let node = explorer.tree().get_node(node_id)?;
             Some((
                 node.is_dir(),
@@ -158,20 +163,15 @@ impl Editor {
             let named = match target {
                 ExplorerContextTarget::Body => None,
                 ExplorerContextTarget::Row { index, segment } => {
-                    explorer.get_node_at_index(index).map(|anchor| {
-                        segment
-                            .and_then(|path| explorer.tree().get_node_by_path(&path))
-                            .map(|node| node.id)
-                            .unwrap_or(anchor)
-                    })
+                    explorer.press_target(index, segment.as_deref())
                 }
             };
             // Nothing named: the blank area, or a row index the tree no longer
             // has — the press carries the index of the frame it was drawn in,
             // and a reload can shorten the tree in between. Both are the root's.
             let picked = named.unwrap_or(root_id);
-            // Not `set_selected`: that promotes a segment to its chain anchor,
-            // which is the bug. Nothing else here can be promoted anyway.
+            // `set_selected_exact`, not `set_selected`: the latter promotes a
+            // segment to its chain anchor, which is the bug.
             explorer.set_selected_exact(Some(picked));
             (explorer.has_multi_selection(), picked == root_id)
         } else {

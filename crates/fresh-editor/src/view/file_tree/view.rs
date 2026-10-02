@@ -6,6 +6,7 @@ use super::tree::FileTree;
 use crate::input::fuzzy::FuzzyMatch;
 use crate::model::filesystem::DirEntry;
 use std::collections::{HashMap, HashSet};
+use std::path::Path;
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 
@@ -463,6 +464,22 @@ impl FileTreeView {
     /// the menu act on the deepest directory whichever name was clicked.
     pub fn set_selected_exact(&mut self, node_id: Option<NodeId>) {
         self.selected_node = node_id;
+    }
+
+    /// What a press on row `index` named: the folded directory `segment`, when
+    /// the press landed on one of a compact row's names, else the row itself.
+    ///
+    /// By path, not by id: the label the press was resolved against was drawn
+    /// a frame earlier, and a path still names the right directory if the
+    /// chain has grown or shrunk since, or if a reload has recycled ids.
+    pub fn press_target(&self, index: usize, segment: Option<&Path>) -> Option<NodeId> {
+        let anchor = self.get_node_at_index(index)?;
+        Some(
+            segment
+                .and_then(|path| self.tree.get_node_by_path(path))
+                .map(|node| node.id)
+                .unwrap_or(anchor),
+        )
     }
 
     /// The row `id` is drawn on, by index in the visible order. A directory

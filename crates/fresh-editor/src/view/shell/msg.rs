@@ -475,15 +475,17 @@ pub enum UiFact {
     /// `Event::clicks` — the editor counts the run, the library carries it,
     /// and the handler reads it, so the two routes cannot disagree about which
     /// row they mean.
+    ///
+    /// `segment` is the folded directory of a compact row's label the press
+    /// landed on, `None` for the row's own name. Either button names it: a
+    /// click on `dir1` of a `dir1/dir2/dir3` row is about `dir1`.
     ExplorerRowPress {
         index: usize,
+        segment: Option<std::path::PathBuf>,
         clicks: u8,
     },
     /// A right click on a tree row: select it and open its context menu at the
-    /// pointer.
-    ///
-    /// `segment` is the folded directory of a compact row's label the press
-    /// landed on, `None` for the row's own name.
+    /// pointer. `segment` as on `ExplorerRowPress`.
     ExplorerRowContext {
         index: usize,
         segment: Option<std::path::PathBuf>,

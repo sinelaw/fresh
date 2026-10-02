@@ -2987,7 +2987,11 @@ impl Editor {
                 }
             }
             // -- file explorer ---------------------------------------------
-            UiFact::ExplorerRowPress { index, clicks } => self.explorer_row_pressed(index, clicks),
+            UiFact::ExplorerRowPress {
+                index,
+                segment,
+                clicks,
+            } => self.explorer_row_pressed(index, segment, clicks),
             UiFact::ExplorerRowContext {
                 index,
                 segment,

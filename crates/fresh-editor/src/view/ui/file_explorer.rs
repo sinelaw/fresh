@@ -155,22 +155,22 @@ pub fn describe_row(d: RowDesc<'_>) -> crate::view::shell::file_explorer::Row {
         left.push((" ".repeat(pad), pair(neutral, ground)));
     }
 
-    // Ancestors that compact mode folded into this row, outermost first, with
-    // where each one landed in the label so a press can name it. The offsets
-    // are counted off the runs rather than derived from the path, which would
-    // have to guess the indent, the indicator and any leading slot. Each
-    // segment takes its own separator, so no cell between two names belongs to
-    // neither.
-    let mut chain: Vec<(std::ops::Range<usize>, PathBuf)> = Vec::new();
-    let mut at: usize = left.iter().map(|(t, _)| t.len()).sum();
-    for seg in &node.chain {
-        let start = at;
-        at += seg.name.len() + "/".len();
-        chain.push((start..at, seg.path.clone()));
-        left.push((seg.name.clone(), pair("syntax.keyword", ground)));
-        left.push(("/".to_string(), pair("editor.line_number_fg", ground)));
-    }
+    // Ancestors that compact mode folded into this row, outermost first. Each
+    // takes its own separator, so no cell between two names belongs to neither.
+    let chain: Vec<fe::ChainPart> = node
+        .chain
+        .iter()
+        .map(|seg| fe::ChainPart {
+            runs: vec![
+                (seg.name.clone(), pair("syntax.keyword", ground)),
+                ("/".to_string(), pair("editor.line_number_fg", ground)),
+            ],
+            path: seg.path.clone(),
+        })
+        .collect();
 
+    // The anchor's own name, which is no segment's: a press on it is the row's.
+    let mut name: fe::Runs = Vec::new();
     match d.fuzzy {
         Some(fm) => {
             let matched: std::collections::HashSet<usize> =
@@ -187,24 +187,25 @@ pub fn describe_row(d: RowDesc<'_>) -> crate::view::shell::file_explorer::Row {
                     } else {
                         base.clone()
                     };
-                    left.push((std::mem::take(&mut run), theme));
+                    name.push((std::mem::take(&mut run), theme));
                 }
                 run_is_match = is_match;
                 run.push(c);
             }
             if !run.is_empty() {
-                left.push((run, if run_is_match { hit } else { base }));
+                name.push((run, if run_is_match { hit } else { base }));
             }
         }
-        None => left.push((node.entry.name.clone(), pair(&name_fg, ground))),
+        None => name.push((node.entry.name.clone(), pair(&name_fg, ground))),
     }
 
-    // The cell that holds the name off the status slot. Here rather than as a
-    // floor under the row's flex gap, because a label too long for the lane
-    // paints over that cell while the hit goes to the gap: here the space is
-    // the first thing such a label loses, which is what should give.
+    // The cell that holds the name off the status slot. Part of the label
+    // rather than a floor under the row's flex gap, because a label too long
+    // for the lane paints over that cell while the hit goes to the gap: here
+    // the space is the first thing such a label loses, which is what should
+    // give.
     if slots.trailing.is_some() {
-        left.push((" ".to_string(), pair(neutral, ground)));
+        name.push((" ".to_string(), pair(neutral, ground)));
     }
 
     fe::Row {
@@ -212,6 +213,7 @@ pub fn describe_row(d: RowDesc<'_>) -> crate::view::shell::file_explorer::Row {
         theme: pair("editor.fg", ground),
         left,
         chain,
+        name,
         trailing: slots.trailing.as_ref().map(|slot| fe::Slot {
             text: slot.text.clone(),
             theme: pair(&literal(slot.fg), ground),
@@ -301,8 +303,13 @@ mod tests {
             expanded: "▼",
         });
         let resolve = |name: &str| crate::app::shell_host::shell_theme::resolve(name, theme);
-        row.left
+        // The label's parts in the order the row draws them.
+        let label = row
+            .left
             .into_iter()
+            .chain(row.chain.into_iter().flat_map(|part| part.runs))
+            .chain(row.name);
+        label
             .map(|(t, name)| (t, resolve(&name)))
             .chain(row.trailing.map(|s| (s.text, resolve(&s.theme))))
             .chain(row.error.map(|(t, name)| (t, resolve(&name))))
@@ -471,10 +478,11 @@ mod tests {
             .any(|(text, style)| text == "M" && style.fg == Some(theme.file_status_modified_fg)));
     }
 
-    /// Each chain range covers exactly its own segment and separator in the
-    /// label the row rendered — which is what a press resolves against.
+    /// A compact row's label comes apart the way presses need it to: the indent
+    /// and indicator are the row's, each folded directory is its own part with
+    /// its own path, and the anchor's name is the row's again.
     #[tokio::test]
-    async fn a_compact_rows_chain_ranges_index_its_rendered_label() {
+    async fn a_compact_rows_segments_are_its_own_parts() {
         let (_temp_dir, view) = create_chain_renderer_view().await;
         let theme = Theme::load_builtin("dark").unwrap();
         let anchor_path = view.tree().root_path().join("chain/a/b/c");
@@ -504,28 +512,25 @@ mod tests {
             expanded: "▼",
         });
 
-        // The runs concatenated: the string `Event::text_byte` counts bytes of.
-        let label: String = row.left.iter().map(|(t, _)| t.as_str()).collect();
+        let drawn =
+            |runs: &[(String, String)]| runs.iter().map(|(t, _)| t.as_str()).collect::<String>();
         let root = view.tree().root_path();
-        let segments: Vec<(&str, &std::path::Path)> = row
+        let segments: Vec<(String, &std::path::Path)> = row
             .chain
             .iter()
-            .map(|(bytes, path)| (&label[bytes.clone()], path.strip_prefix(root).unwrap()))
+            .map(|part| (drawn(&part.runs), part.path.strip_prefix(root).unwrap()))
             .collect();
         assert_eq!(
             segments,
             vec![
-                ("chain/", std::path::Path::new("chain")),
-                ("a/", std::path::Path::new("chain/a")),
-                ("b/", std::path::Path::new("chain/a/b")),
+                ("chain/".to_string(), std::path::Path::new("chain")),
+                ("a/".to_string(), std::path::Path::new("chain/a")),
+                ("b/".to_string(), std::path::Path::new("chain/a/b")),
             ]
         );
-        // Bytes, not columns: the indent and `▼ ` are six cells, eight bytes.
-        assert_eq!(label, "    ▼ chain/a/b/c");
-        assert_eq!(row.chain[0].0.start, 8);
-        // The anchor's own name is in no range, so a press on it names the row.
-        let after = row.chain.last().expect("a chain").0.end;
-        assert_eq!(&label[after..], "c");
+        assert_eq!(drawn(&row.left), "    ▼ ", "the indent and the indicator");
+        // The anchor's own name is no segment's, so a press on it is the row's.
+        assert_eq!(drawn(&row.name), "c");
     }
 
     async fn create_chain_renderer_view() -> (TempDir, FileTreeView) {
