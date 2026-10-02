@@ -399,7 +399,10 @@ fn test_flow_c_session_scoped_recovery_isolation() {
     std::fs::write(&file_a, "Session A content").unwrap();
     std::fs::write(&file_b, "Session B content").unwrap();
 
-    // Use separate dir contexts to simulate separate sessions
+    // Use separate dir contexts to simulate separate sessions. No plugins:
+    // this is about recovery storage, and the embedded set would start ~60
+    // plugins in each of the four editors below, each one more source of
+    // async work for every key press and every teardown to wait out.
     let dir_context_a = DirectoryContext::for_testing(&temp_dir.path().join("session_a"));
     let dir_context_b = DirectoryContext::for_testing(&temp_dir.path().join("session_b"));
 
@@ -415,7 +418,7 @@ fn test_flow_c_session_scoped_recovery_isolation() {
                 .with_config(config)
                 .with_working_dir(project_dir.clone())
                 .with_shared_dir_context(dir_context_a.clone())
-                .without_empty_plugins_dir(),
+                .with_empty_plugins_dir(),
         )
         .unwrap();
 
@@ -445,7 +448,7 @@ fn test_flow_c_session_scoped_recovery_isolation() {
                 .with_config(config)
                 .with_working_dir(project_dir.clone())
                 .with_shared_dir_context(dir_context_b.clone())
-                .without_empty_plugins_dir(),
+                .with_empty_plugins_dir(),
         )
         .unwrap();
 
@@ -475,7 +478,7 @@ fn test_flow_c_session_scoped_recovery_isolation() {
                 .with_config(config)
                 .with_working_dir(project_dir.clone())
                 .with_shared_dir_context(dir_context_a.clone())
-                .without_empty_plugins_dir(),
+                .with_empty_plugins_dir(),
         )
         .unwrap();
 
@@ -503,7 +506,7 @@ fn test_flow_c_session_scoped_recovery_isolation() {
                 .with_config(config)
                 .with_working_dir(project_dir.clone())
                 .with_shared_dir_context(dir_context_b.clone())
-                .without_empty_plugins_dir(),
+                .with_empty_plugins_dir(),
         )
         .unwrap();
 

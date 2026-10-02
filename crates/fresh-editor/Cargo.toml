@@ -328,6 +328,10 @@ windows-sys = { version = "0.61", features = [
     "Win32_System_LibraryLoader",
     "Win32_Storage_FileSystem",
     "Win32_Security",
+    # Test harness only (tests/common/harness.rs): a normal-dependency feature
+    # rather than a dev-dependency one, so `cargo test` does not fork the
+    # dependency graph from `cargo build`.
+    "Win32_System_JobObjects",
 ] }
 
 # No `[build-dependencies]`: the syntect packdump, the builtin-theme table and

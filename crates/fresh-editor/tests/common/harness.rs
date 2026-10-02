@@ -123,6 +123,119 @@ pub fn copy_plugin_lib(plugins_dir: &Path) {
     }
 }
 
+/// Put this test process in a job that kills whatever is left in it when the
+/// process exits, so the editor's child processes end with the test.
+///
+/// The editor starts children for plugins and features (`git`, `dotnet`, an
+/// LSP server, …) that a short test can return before they finish, and
+/// Windows hands every child the test's inheritable stdout/stderr pipes. A
+/// child still running after the test keeps those pipes open, which nextest
+/// reports as a LEAK. As a member of a kill-on-close job, the whole tree goes
+/// when the test process does. The job handle is never closed and is not
+/// inheritable: the process exiting is what closes it.
+#[cfg(windows)]
+fn end_children_with_test_process() {
+    use std::sync::Once;
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::JobObjects::{
+        AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
+        SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    };
+    use windows_sys::Win32::System::Threading::GetCurrentProcess;
+
+    static JOIN: Once = Once::new();
+    JOIN.call_once(|| {
+        // SAFETY: plain Win32 calls on a handle this function owns; `info` is
+        // a zeroed plain-data struct whose size is passed alongside it.
+        unsafe {
+            let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
+            if job.is_null() {
+                eprintln!(
+                    "harness: could not create a kill-on-close job: {}",
+                    std::io::Error::last_os_error()
+                );
+                return;
+            }
+            let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
+            info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            let joined = SetInformationJobObject(
+                job,
+                JobObjectExtendedLimitInformation,
+                std::ptr::from_ref(&info).cast(),
+                std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+            ) != 0
+                && AssignProcessToJobObject(job, GetCurrentProcess()) != 0;
+            if !joined {
+                eprintln!(
+                    "harness: could not join a kill-on-close job: {}",
+                    std::io::Error::last_os_error()
+                );
+                CloseHandle(job);
+            }
+        }
+    });
+}
+
+/// While alive, has a watchdog name the wait it marks on stderr every
+/// [`StallReport::INTERVAL`] — for a harness wait that blocks inside the
+/// editor and so cannot report itself.
+///
+/// A test stuck there is killed by nextest's slow-timeout with nothing in its
+/// output to say where, and on Windows there is no stack dump either. One
+/// watchdog thread per process serves every live report; entries are keyed by
+/// thread, since plain `cargo test` runs tests side by side in one process.
+struct StallReport {
+    thread: std::thread::ThreadId,
+}
+
+type StallEntries = Vec<(std::thread::ThreadId, &'static str, std::time::Instant)>;
+
+impl StallReport {
+    const INTERVAL: std::time::Duration = std::time::Duration::from_secs(10);
+
+    fn entries() -> &'static std::sync::Mutex<StallEntries> {
+        static ENTRIES: std::sync::OnceLock<std::sync::Mutex<StallEntries>> =
+            std::sync::OnceLock::new();
+        ENTRIES.get_or_init(|| {
+            std::thread::Builder::new()
+                .name("harness-stall-watchdog".into())
+                .spawn(|| loop {
+                    std::thread::sleep(Self::INTERVAL);
+                    let entries = Self::entries().lock().unwrap_or_else(|e| e.into_inner());
+                    for (_, what, since) in entries.iter() {
+                        if since.elapsed() >= Self::INTERVAL {
+                            eprintln!(
+                                "{what}: still waiting after {:.1}s",
+                                since.elapsed().as_secs_f64()
+                            );
+                        }
+                    }
+                })
+                .expect("spawn the harness stall watchdog");
+            std::sync::Mutex::new(Vec::new())
+        })
+    }
+
+    fn start(what: &'static str) -> Self {
+        let thread = std::thread::current().id();
+        Self::entries()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push((thread, what, std::time::Instant::now()));
+        Self { thread }
+    }
+}
+
+impl Drop for StallReport {
+    fn drop(&mut self) {
+        let mut entries = Self::entries().lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(i) = entries.iter().rposition(|(t, ..)| *t == self.thread) {
+            entries.remove(i);
+        }
+    }
+}
+
 /// Recursively copy `<src>` into `<dst>`, creating `<dst>` if missing.
 /// Existing files at the destination are overwritten (for re-runs).
 fn mirror_plugins_dir(src: &Path, dst: &Path) -> std::io::Result<()> {
@@ -572,6 +685,8 @@ impl EditorTestHarness {
         // timeouts (a wait that never resolves killed externally by the
         // nextest 180s slow-timeout) undebuggable from the logs alone.
         crate::common::tracing::init_tracing_from_env();
+        #[cfg(windows)]
+        end_children_with_test_process();
         let mut t = crate::common::timing::Timer::start("harness::create");
         // Create temp directory if we don't have a shared dir_context
         let temp_dir = if options.dir_context.is_none() || options.create_project_root {
@@ -1346,7 +1461,12 @@ impl EditorTestHarness {
             //     right now means nothing. A handler parked on
             //     `editor.getNextKey()` counts as at rest, so this never
             //     waits for a key the test has not sent.
-            had_messages |= self.editor.sync_plugin_runtime();
+            had_messages |= {
+                // Spins inside the editor until the plugin thread answers,
+                // so it cannot report a stall the way (1) does.
+                let _stall = StallReport::start("drain_async_work: syncing the plugin runtime");
+                self.editor.sync_plugin_runtime()
+            };
 
             if had_messages {
                 // Messages are still flowing: keep draining at full

@@ -1602,7 +1602,13 @@ fn test_live_grep_results_window_follows_selection_and_keeps_the_wheel() {
             })
             .unwrap();
     }
-    harness.render().unwrap();
+    // The config passed above keeps animations on, so each notch's lines
+    // are walked out by the wall clock across later frames. Let the walk
+    // finish before recording the window, or a slow runner's later frames
+    // still carry wheel lines and move it.
+    harness
+        .wait_until(|h| !h.editor().has_pending_wheel_scroll())
+        .unwrap();
     let wheeled = results_on_screen(&harness);
     assert!(
         !wheeled.contains(&rows),
