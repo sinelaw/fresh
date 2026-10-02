@@ -82,12 +82,29 @@ pub struct Row {
     pub index: usize,
     /// The row's own ground: selection, multi-selection or the panel's.
     pub theme: String,
-    /// Indicator, leading slot, compact chain and name, in order.
+    /// Indent, indicator and leading slot: the head of the label, which is the
+    /// row's own whatever a compact chain adds after it.
     pub left: Runs,
+    /// The ancestors compact mode folded into this row, outermost first.
+    pub chain: Vec<ChainPart>,
+    /// The anchor's own name, and the cell that holds it off the status slot.
+    pub name: Runs,
     /// The status slot pushed to the right edge, if the providers gave one.
     pub trailing: Option<Slot>,
     /// `" [Error]"` for a node that failed to load.
     pub error: Option<(String, String)>,
+}
+
+/// One folded ancestor of a compact `dir1/dir2/dir3` row: the runs that draw
+/// its name and separator, and the directory they stand for.
+///
+/// Its own node, so a press on it is answered by the library's hit test
+/// against the cells it actually drew. The row carried byte offsets into one
+/// label before, which had to agree with how those cells were laid out.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ChainPart {
+    pub runs: Runs,
+    pub path: std::path::PathBuf,
 }
 
 /// A row's trailing status slot: what it says, how it looks, and which path's
@@ -176,8 +193,8 @@ impl std::fmt::Debug for Tree {
 
 #[cfg(test)]
 impl Tree {
-    /// A tree over `rows` for a test, each keyed by its name (the second of
-    /// its left runs), with `parent` for the pins and the window starting at
+    /// A tree over `rows` for a test, each keyed by its name (the first of its
+    /// name runs), with `parent` for the pins and the window starting at
     /// `start`.
     pub(crate) fn fixture(
         rows: Vec<Row>,
@@ -188,7 +205,7 @@ impl Tree {
         let (keys, described) = (rows.clone(), rows.clone());
         Tree {
             count: rows.len(),
-            key: Rc::new(move |i| row_key(std::path::Path::new(&keys[i].left[1].0))),
+            key: Rc::new(move |i| row_key(std::path::Path::new(&keys[i].name[0].0))),
             row: Rc::new(move |i| described[i].clone()),
             parent: Rc::new(parent),
             node: Rc::new(|_| fresh_ui::widgets::TreeRow {
@@ -457,16 +474,25 @@ fn caret_ink(row: &str) -> String {
 }
 
 fn node_row(caret: bool, r: &Row) -> Node<UiMsg> {
-    let mut children: Vec<Node<UiMsg>> = vec![
-        text_runs(runs_of(&r.left)),
-        // **The padding rule, as layout.** The old walk computed
-        // `content_width - left_side_width - total_right_width` and a second
-        // function computed it again to find the slot; a flex spacer states it
-        // once and both the cells and the rectangle come out of it — including
-        // the `min_gap = 1` floor, which is `min_w` rather than a `max()` in
-        // two places.
-        row().flex(1).min_w(1),
-    ];
+    // The padding rule, as layout: a flex spacer, so the cells and the slot's
+    // rectangle both come out of it rather than being computed twice.
+    //
+    // No floor under it. A one-cell floor reserved the lane's last cell, which
+    // a label too long for the lane paints over while the hit goes to the
+    // spacer; the space that holds a name off the status slot is part of the
+    // label instead (`describe_row`).
+    let mut children: Vec<Node<UiMsg>> = vec![text_runs(runs_of(&r.left))];
+    // Each folded directory answers for itself, so the row's own listener
+    // never has to work out which name the pointer was over.
+    for part in &r.chain {
+        children.push(presses(
+            text_runs(runs_of(&part.runs)),
+            r.index,
+            Some(part.path.clone()),
+        ));
+    }
+    children.push(text_runs(runs_of(&r.name)));
+    children.push(row().flex(1));
     if let Some(slot) = &r.trailing {
         let path = slot.path.clone();
         children.push(
@@ -487,7 +513,6 @@ fn node_row(caret: bool, r: &Row) -> Node<UiMsg> {
     if let Some((t, theme)) = &r.error {
         children.push(text(t.clone()).theme(theme.clone()));
     }
-    let index = r.index;
     let body = row()
         .theme(r.theme.clone())
         .h(Sizing::Cells(1))
@@ -498,27 +523,42 @@ fn node_row(caret: bool, r: &Row) -> Node<UiMsg> {
     // hardware cursor on that cell (`cursor_byte`), so the row the keyboard
     // is on is the display list's caret, not arithmetic over the region's
     // origin and the box's border.
+    //
+    // `Ignore`, not `Transparent`: a transparent node is still hit — it ends
+    // the hit path — so on the selected row this overlay answered the press
+    // instead of the label underneath it. `Ignore` takes the whole subtree out
+    // of the hit.
     let body = if caret {
         stack().h(Sizing::Cells(1)).children([
             body,
             row()
                 .h(Sizing::Cells(1))
-                .pointer_mode(PointerMode::Transparent)
+                .pointer_mode(PointerMode::Ignore)
                 .children([text("▌")
                     .theme(caret_ink(&r.theme))
                     .w(Sizing::Cells(1))
-                    .cursor_byte(0)
-                    .pointer_mode(PointerMode::Transparent)]),
+                    .cursor_byte(0)]),
         ])
     } else {
         body
     };
     // The row's key is on the list's node around this one: see `rows`.
+    //
+    // The wheel is not the row's: it is the window's, declared in
+    // `build_rows`, and the library moves the window for it.
+    presses(body, r.index, None)
+}
+
+/// The presses every part of a row answers: left selects and opens, right opens
+/// the context menu. `segment` is the folded directory this part draws, `None`
+/// for the parts that are the row's own.
+///
+/// Both stop, which is what the chrome component reported `Consumed` for — and
+/// on a segment it is also what keeps the row's own listener from answering the
+/// same press as the row.
+fn presses(body: Node<UiMsg>, index: usize, segment: Option<std::path::PathBuf>) -> Node<UiMsg> {
+    let for_context = segment.clone();
     gesture(body)
-        // Left only, and it stops: the press selects and opens, which is what
-        // the chrome component reported `Consumed` for. A right press is the
-        // context menu's, and a modifier-less right press must still reach the
-        // theme inspector's pre-band, so it is answered separately below.
         .on(
             GestureKind::Press,
             Rc::new(move |e: &Event| {
@@ -528,6 +568,7 @@ fn node_row(caret: bool, r: &Row) -> Node<UiMsg> {
                 e.stop();
                 Some(UiMsg::Ui(UiFact::ExplorerRowPress {
                     index,
+                    segment: segment.clone(),
                     clicks: e.clicks,
                 }))
             }),
@@ -550,13 +591,12 @@ fn node_row(caret: bool, r: &Row) -> Node<UiMsg> {
                 e.stop();
                 Some(UiMsg::Ui(UiFact::ExplorerRowContext {
                     index,
+                    segment: for_context.clone(),
                     x: e.pos.x.max(0) as u16,
                     y: e.pos.y.max(0) as u16,
                 }))
             }),
         )
-    // The wheel is not the row's: it is the window's, declared in
-    // `build_rows`, and the library moves the window for it.
 }
 
 // -- the styles, as names ----------------------------------------------------
@@ -724,18 +764,58 @@ mod tests {
     use ratatui::layout::Rect;
 
     fn row_of(index: usize, name: &str, trailing: Option<&str>) -> Row {
+        let row = Row {
+            index,
+            theme: Explorer::panel(),
+            left: vec![("  ".to_string(), Explorer::panel())],
+            chain: Vec::new(),
+            name: vec![(name.to_string(), Explorer::panel())],
+            trailing: None,
+            error: None,
+        };
+        match trailing {
+            Some(t) => with_marker(row, t),
+            None => row,
+        }
+    }
+
+    /// Give a row a status marker the way `describe_row` does: the slot, plus
+    /// the space before it as the last run of the name.
+    fn with_marker(mut r: Row, text: &str) -> Row {
+        let path = std::path::PathBuf::from(&r.name.first().expect("a name").0);
+        r.name.push((" ".to_string(), Explorer::panel()));
+        r.trailing = Some(Slot {
+            text: text.to_string(),
+            theme: pair("diagnostic.warning_fg", "editor.bg"),
+            path,
+        });
+        r
+    }
+
+    /// A compact-chain row, built as `describe_row` builds one. What keeps the
+    /// two from drifting is `ui::file_explorer`'s
+    /// `a_compact_rows_segments_are_its_own_parts`, which pins `describe_row`'s
+    /// own output: if that fails and these pass, this fixture is the stale copy.
+    fn chain_row_of(index: usize, segments: &[&str], name: &str) -> Row {
         Row {
             index,
             theme: Explorer::panel(),
             left: vec![
                 ("  ".to_string(), Explorer::panel()),
-                (name.to_string(), Explorer::panel()),
+                ("▼ ".to_string(), Explorer::panel()),
             ],
-            trailing: trailing.map(|t| Slot {
-                text: t.to_string(),
-                theme: pair("diagnostic.warning_fg", "editor.bg"),
-                path: std::path::PathBuf::from(name),
-            }),
+            chain: segments
+                .iter()
+                .map(|seg| ChainPart {
+                    runs: vec![
+                        (seg.to_string(), Explorer::panel()),
+                        ("/".to_string(), Explorer::panel()),
+                    ],
+                    path: std::path::PathBuf::from(seg),
+                })
+                .collect(),
+            name: vec![(name.to_string(), Explorer::panel())],
+            trailing: None,
             error: None,
         }
     }
@@ -829,6 +909,224 @@ mod tests {
                 .iter()
                 .any(|f| matches!(f, UiFact::ExplorerBodyContext { .. })),
             "the row claimed it; the panel must not answer too: {facts:?}"
+        );
+    }
+
+    /// A right-press on one segment of a compact row names that segment, with
+    /// the multi-byte indicator in front of the names.
+    #[test]
+    fn a_right_press_on_a_chain_segment_names_that_segment() {
+        let e = panel_of(
+            vec![
+                row_of(0, "proj", None),
+                chain_row_of(1, &["dir1", "dir2"], "dir3"),
+            ],
+            30,
+        );
+        let mut ui = laid_out(e, 30, 8);
+        // The chain row is the one below `proj`, and its label starts at the
+        // lane's left edge: two cells of indent, two of indicator, then
+        // `dir1/dir2/dir3`.
+        let lane = ui.rect_of(ui.find_by_key(&key_of("proj")).expect("row 0"));
+        let (x, y) = (lane.x, lane.y + 1);
+        let segment_at = |ui: &mut Ui<UiMsg>, col: i32| {
+            let got = ui.dispatch(Input::press(
+                Point::new(x + col, y),
+                MouseButton::Right,
+                Mods::NONE,
+            ));
+            got.msgs
+                .iter()
+                .find_map(|m| match m {
+                    UiMsg::Ui(UiFact::ExplorerRowContext { index, segment, .. }) => {
+                        Some((*index, segment.clone()))
+                    }
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("no menu for column {col}: {:?}", got.msgs))
+        };
+
+        // `dir1` is cells 4..8, its separator is cell 8, `dir2` is 9..13 and
+        // its separator 13; `dir3`, the row's own name, starts at 14.
+        let dir = |name: &str| Some(std::path::PathBuf::from(name));
+        assert_eq!(segment_at(&mut ui, 5), (1, dir("dir1")), "on dir1");
+        assert_eq!(segment_at(&mut ui, 8), (1, dir("dir1")), "dir1's separator");
+        assert_eq!(segment_at(&mut ui, 10), (1, dir("dir2")), "on dir2");
+        assert_eq!(
+            segment_at(&mut ui, 15),
+            (1, None),
+            "on dir3, the row itself"
+        );
+        // The indent and the indicator are no segment's: they are the row's.
+        assert_eq!(segment_at(&mut ui, 0), (1, None), "the indent");
+        assert_eq!(segment_at(&mut ui, 2), (1, None), "the indicator");
+        // And a plain row has no segments to name at all.
+        let got = ui.dispatch(Input::press(
+            Point::new(lane.x + 3, lane.y),
+            MouseButton::Right,
+            Mods::NONE,
+        ));
+        assert!(
+            got.msgs.iter().any(|m| matches!(
+                m,
+                UiMsg::Ui(UiFact::ExplorerRowContext {
+                    index: 0,
+                    segment: None,
+                    ..
+                })
+            )),
+            "got {:?}",
+            got.msgs
+        );
+    }
+
+    /// A left-press names the segment too, so clicking `dir1` of a
+    /// `dir1/dir2/dir3` row selects and collapses `dir1`, not the deepest one.
+    #[test]
+    fn a_left_press_on_a_chain_segment_names_that_segment() {
+        let e = panel_of(
+            vec![
+                row_of(0, "proj", None),
+                chain_row_of(1, &["dir1", "dir2"], "dir3"),
+            ],
+            30,
+        );
+        let mut ui = laid_out(e, 30, 8);
+        let lane = ui.rect_of(ui.find_by_key(&key_of("proj")).expect("row 0"));
+        let (x, y) = (lane.x, lane.y + 1);
+        let segment_at = |ui: &mut Ui<UiMsg>, col: i32| {
+            let got = ui.dispatch(Input::press(
+                Point::new(x + col, y),
+                MouseButton::Left,
+                Mods::NONE,
+            ));
+            got.msgs
+                .iter()
+                .find_map(|m| match m {
+                    UiMsg::Ui(UiFact::ExplorerRowPress { index, segment, .. }) => {
+                        Some((*index, segment.clone()))
+                    }
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("no press for column {col}: {:?}", got.msgs))
+        };
+
+        let dir = |name: &str| Some(std::path::PathBuf::from(name));
+        assert_eq!(segment_at(&mut ui, 5), (1, dir("dir1")), "on dir1");
+        assert_eq!(segment_at(&mut ui, 10), (1, dir("dir2")), "on dir2");
+        assert_eq!(
+            segment_at(&mut ui, 15),
+            (1, None),
+            "on dir3, the row itself"
+        );
+        assert_eq!(segment_at(&mut ui, 2), (1, None), "the indicator");
+    }
+
+    /// A label too long for the lane still names the segment drawn in its last
+    /// cell, which the gap's old one-cell floor had taken while paint drew the
+    /// label over it.
+    #[test]
+    fn a_label_wider_than_the_lane_still_names_its_last_visible_segment() {
+        // `  ` + `▼ ` + `averylongone/` puts `another` at cells 17..23 of the
+        // row, and `third` — the anchor's own name — at 25. A 24-cell panel
+        // leaves a 22-cell lane, so the last cell it has, 21, draws a character
+        // of `another`.
+        let rows = vec![
+            row_of(0, "proj", None),
+            chain_row_of(1, &["averylongone", "another"], "third"),
+        ];
+        let mut ui = laid_out(panel_with(tree_of(rows, |_| None, 0), 24), 24, 8);
+        let lane = ui.rect_of(ui.find_by_key(&key_of("proj")).expect("row 0"));
+        let seg = |ui: &mut Ui<UiMsg>, col: i32| {
+            let got = ui.dispatch(Input::press(
+                Point::new(lane.x + col, lane.y + 1),
+                MouseButton::Right,
+                Mods::NONE,
+            ));
+            got.msgs
+                .iter()
+                .find_map(|m| match m {
+                    UiMsg::Ui(UiFact::ExplorerRowContext { segment, .. }) => Some(segment.clone()),
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("no menu for column {col}: {:?}", got.msgs))
+        };
+        let dir = |name: &str| Some(std::path::PathBuf::from(name));
+        assert_eq!(seg(&mut ui, 5), dir("averylongone"), "on averylongone");
+        assert_eq!(seg(&mut ui, 18), dir("another"), "on another");
+        assert_eq!(
+            seg(&mut ui, 21),
+            dir("another"),
+            "the lane's last cell, still `another`"
+        );
+    }
+
+    /// And the same row carrying a status marker, which a directory gets from
+    /// the files under it. (On an overflowing row the marker itself ends up
+    /// zero-width and undrawn — pre-existing, and not what this pins.)
+    #[test]
+    fn an_overflowing_label_with_a_status_marker_answers_the_same() {
+        let long = with_marker(chain_row_of(1, &["averylongone", "another"], "third"), "M");
+        let mut ui = laid_out(
+            panel_with(
+                tree_of(vec![row_of(0, "proj", None), long], |_| None, 0),
+                24,
+            ),
+            24,
+            8,
+        );
+        let lane = ui.rect_of(ui.find_by_key(&key_of("proj")).expect("row 0"));
+        let drawn = lines_of(&ui, 24, 8)[lane.y as usize + 1].clone();
+        let seg = |ui: &mut Ui<UiMsg>, col: i32| {
+            let got = ui.dispatch(Input::press(
+                Point::new(lane.x + col, lane.y + 1),
+                MouseButton::Right,
+                Mods::NONE,
+            ));
+            got.msgs
+                .iter()
+                .find_map(|m| match m {
+                    UiMsg::Ui(UiFact::ExplorerRowContext { segment, .. }) => Some(segment.clone()),
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("no menu for column {col}: {:?}", got.msgs))
+        };
+        let dir = |name: &str| Some(std::path::PathBuf::from(name));
+        assert_eq!(seg(&mut ui, 5), dir("averylongone"), "on it: {drawn:?}");
+        assert_eq!(seg(&mut ui, 18), dir("another"), "on another: {drawn:?}");
+        assert_eq!(seg(&mut ui, 21), dir("another"), "last cell: {drawn:?}");
+    }
+
+    /// And on the row the caret is on — the row a reader is most likely to
+    /// right-click twice. It takes a fixture with the caret drawn to catch it:
+    /// a transparent overlay is still hit, and the press resolved against it.
+    #[test]
+    fn the_caret_does_not_hide_the_segment_under_it() {
+        let rows = vec![
+            row_of(0, "proj", None),
+            chain_row_of(1, &["dir1", "dir2"], "dir3"),
+        ];
+        let mut tree = tree_of(rows, |_| None, 0);
+        tree.selected = Some(1);
+        tree.caret = true;
+        let mut ui = laid_out(panel_with(tree, 30), 30, 8);
+        let lane = ui.rect_of(ui.find_by_key(&key_of("proj")).expect("row 0"));
+        let got = ui.dispatch(Input::press(
+            Point::new(lane.x + 5, lane.y + 1),
+            MouseButton::Right,
+            Mods::NONE,
+        ));
+        assert!(
+            got.msgs.iter().any(|m| matches!(
+                m,
+                UiMsg::Ui(UiFact::ExplorerRowContext {
+                    index: 1,
+                    segment: Some(ref p),
+                    ..
+                }) if p == std::path::Path::new("dir1")
+            )),
+            "the caret's row must still name dir1: {:?}",
+            got.msgs
         );
     }
 
@@ -1018,6 +1316,42 @@ mod tests {
                 [UiMsg::Ui(UiFact::ExplorerScrollTo(o))] if *o > 0
             ),
             "one report, toward the end: {:?}",
+            got.msgs
+        );
+    }
+
+    /// And a right-press on the bar is the bar's too: it opens no menu. The
+    /// panel's catch-all is behind the gutter, so a one-column miss used to
+    /// answer with the panel's menu and move the cursor to the root.
+    #[test]
+    fn a_right_press_on_the_bar_opens_nothing() {
+        let mut ui = laid_out(scrolled_panel(40, 0, 20), 20, 10);
+        let got = ui.dispatch(Input::press(
+            Point::new(18, 8),
+            MouseButton::Right,
+            Mods::NONE,
+        ));
+        assert!(got.claimed, "the bar spends the press");
+        assert!(
+            !got.msgs.iter().any(|m| matches!(
+                m,
+                UiMsg::Ui(UiFact::ExplorerBodyContext { .. })
+                    | UiMsg::Ui(UiFact::ExplorerRowContext { .. })
+            )),
+            "and asks for no menu: {:?}",
+            got.msgs
+        );
+        // The row beside it still answers, one column to the left.
+        let got = ui.dispatch(Input::press(
+            Point::new(17, 8),
+            MouseButton::Right,
+            Mods::NONE,
+        ));
+        assert!(
+            got.msgs
+                .iter()
+                .any(|m| matches!(m, UiMsg::Ui(UiFact::ExplorerRowContext { .. }))),
+            "the lane's last row column is still the row's: {:?}",
             got.msgs
         );
     }
@@ -1391,6 +1725,7 @@ mod tests {
                 got.msgs.as_slice(),
                 [UiMsg::Ui(UiFact::ExplorerRowPress {
                     index: 1,
+                    segment: None,
                     clicks: 2
                 })]
             ),

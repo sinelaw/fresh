@@ -155,12 +155,22 @@ pub fn describe_row(d: RowDesc<'_>) -> crate::view::shell::file_explorer::Row {
         left.push((" ".repeat(pad), pair(neutral, ground)));
     }
 
-    // Ancestors that compact mode folded into this row, outermost first.
-    for name in &node.chain {
-        left.push((name.clone(), pair("syntax.keyword", ground)));
-        left.push(("/".to_string(), pair("editor.line_number_fg", ground)));
-    }
+    // Ancestors that compact mode folded into this row, outermost first. Each
+    // takes its own separator, so no cell between two names belongs to neither.
+    let chain: Vec<fe::ChainPart> = node
+        .chain
+        .iter()
+        .map(|seg| fe::ChainPart {
+            runs: vec![
+                (seg.name.clone(), pair("syntax.keyword", ground)),
+                ("/".to_string(), pair("editor.line_number_fg", ground)),
+            ],
+            path: seg.path.clone(),
+        })
+        .collect();
 
+    // The anchor's own name, which is no segment's: a press on it is the row's.
+    let mut name: fe::Runs = Vec::new();
     match d.fuzzy {
         Some(fm) => {
             let matched: std::collections::HashSet<usize> =
@@ -177,22 +187,33 @@ pub fn describe_row(d: RowDesc<'_>) -> crate::view::shell::file_explorer::Row {
                     } else {
                         base.clone()
                     };
-                    left.push((std::mem::take(&mut run), theme));
+                    name.push((std::mem::take(&mut run), theme));
                 }
                 run_is_match = is_match;
                 run.push(c);
             }
             if !run.is_empty() {
-                left.push((run, if run_is_match { hit } else { base }));
+                name.push((run, if run_is_match { hit } else { base }));
             }
         }
-        None => left.push((node.entry.name.clone(), pair(&name_fg, ground))),
+        None => name.push((node.entry.name.clone(), pair(&name_fg, ground))),
+    }
+
+    // The cell that holds the name off the status slot. Part of the label
+    // rather than a floor under the row's flex gap, because a label too long
+    // for the lane paints over that cell while the hit goes to the gap: here
+    // the space is the first thing such a label loses, which is what should
+    // give.
+    if slots.trailing.is_some() {
+        name.push((" ".to_string(), pair(neutral, ground)));
     }
 
     fe::Row {
         index: d.row,
         theme: pair("editor.fg", ground),
         left,
+        chain,
+        name,
         trailing: slots.trailing.as_ref().map(|slot| fe::Slot {
             text: slot.text.clone(),
             theme: pair(&literal(slot.fg), ground),
@@ -282,8 +303,13 @@ mod tests {
             expanded: "▼",
         });
         let resolve = |name: &str| crate::app::shell_host::shell_theme::resolve(name, theme);
-        row.left
+        // The label's parts in the order the row draws them.
+        let label = row
+            .left
             .into_iter()
+            .chain(row.chain.into_iter().flat_map(|part| part.runs))
+            .chain(row.name);
+        label
             .map(|(t, name)| (t, resolve(&name)))
             .chain(row.trailing.map(|s| (s.text, resolve(&s.theme))))
             .chain(row.error.map(|(t, name)| (t, resolve(&name))))
@@ -450,5 +476,82 @@ mod tests {
         assert!(line
             .iter()
             .any(|(text, style)| text == "M" && style.fg == Some(theme.file_status_modified_fg)));
+    }
+
+    /// A compact row's label comes apart the way presses need it to: the indent
+    /// and indicator are the row's, each folded directory is its own part with
+    /// its own path, and the anchor's name is the row's again.
+    #[tokio::test]
+    async fn a_compact_rows_segments_are_its_own_parts() {
+        let (_temp_dir, view) = create_chain_renderer_view().await;
+        let theme = Theme::load_builtin("dark").unwrap();
+        let anchor_path = view.tree().root_path().join("chain/a/b/c");
+        let anchor_id = view.tree().get_node_by_path(&anchor_path).unwrap().id;
+
+        let resolver = crate::view::file_tree::default_slot_providers().resolver();
+        let projection = view.projection();
+        let mut node =
+            projection.rows[projection.index_of(anchor_id).expect("a visible node")].clone();
+        node.indent = 2;
+        let folded: Vec<&str> = node.chain.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(folded, vec!["chain", "a", "b"], "the folded ancestors");
+        let row = describe_row(RowDesc {
+            node: &node,
+            row: 0,
+            is_cursor: false,
+            is_multi: false,
+            focused: false,
+            unsaved: &HashSet::new(),
+            cut: &[],
+            fuzzy: None,
+            decorations: &FileExplorerDecorationCache::default(),
+            slot_overrides: &FileExplorerSlotOverrideCache::default(),
+            slot_resolver: &resolver,
+            theme: &theme,
+            collapsed: ">",
+            expanded: "▼",
+        });
+
+        let drawn =
+            |runs: &[(String, String)]| runs.iter().map(|(t, _)| t.as_str()).collect::<String>();
+        let root = view.tree().root_path();
+        let segments: Vec<(String, &std::path::Path)> = row
+            .chain
+            .iter()
+            .map(|part| (drawn(&part.runs), part.path.strip_prefix(root).unwrap()))
+            .collect();
+        assert_eq!(
+            segments,
+            vec![
+                ("chain/".to_string(), std::path::Path::new("chain")),
+                ("a/".to_string(), std::path::Path::new("chain/a")),
+                ("b/".to_string(), std::path::Path::new("chain/a/b")),
+            ]
+        );
+        assert_eq!(drawn(&row.left), "    ▼ ", "the indent and the indicator");
+        // The anchor's own name is no segment's, so a press on it is the row's.
+        assert_eq!(drawn(&row.name), "c");
+    }
+
+    async fn create_chain_renderer_view() -> (TempDir, FileTreeView) {
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path();
+        std_fs::create_dir_all(root.join("chain/a/b/c")).unwrap();
+        std_fs::write(root.join("chain/a/b/c/leaf.txt"), "leaf").unwrap();
+
+        let manager = Arc::new(FsManager::new(Arc::new(StdFileSystem)));
+        let tree = crate::view::file_tree::FileTree::new(root.to_path_buf(), manager)
+            .await
+            .unwrap();
+        let mut view = FileTreeView::new(tree);
+        let root_id = view.tree().root_id();
+        view.tree_mut().expand_node(root_id).await.unwrap();
+        let chain_id = view
+            .tree()
+            .get_node_by_path(&root.join("chain"))
+            .unwrap()
+            .id;
+        view.expand_with_chain(chain_id).await.unwrap();
+        (temp_dir, view)
     }
 }
