@@ -83,6 +83,8 @@ Options: keep SVG but patch per row (keyed rows, only re-emit changed ones — t
 
 Recommended: **SVG with per-row keyed patching** as the next step (smallest delta, keeps every current fidelity property), canvas only if profiling of realistic large-viewport use demands it. Whatever the medium, the switch must not leak into the bridge contract — cells in, pixels out.
 
+The protocol side of this — keying pane rows on the wire so a scroll or a caret move ships a row order and a few rows instead of the whole pane, and replacing the chrome projections with the frame's display list — is designed in [frontend-protocol-design.md](frontend-protocol-design.md) (PLANNED), which also covers a native Windows client on the same protocol.
+
 ### 3.5 Selection and clipboard model
 
 Buffer selection is entirely editor-side (drag → real selection cells, rendered as background runs — verified). Two further selection surfaces are IMPLEMENTED on top of that:
