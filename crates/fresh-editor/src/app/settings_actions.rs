@@ -184,17 +184,19 @@ impl Editor {
             lsp.set_universal_configs(universal_servers);
         }
 
-        // Propagate editor config to all split and buffer view states
-        for view_state in self
-            .windows
-            .get_mut(&self.active_window)
-            .and_then(|w| w.buffers.split_view_states_mut())
-            .expect("active window must have a populated split layout")
-            .values_mut()
-        {
-            view_state.buffer_tab_state_mut().show_line_numbers = self.config.editor.line_numbers;
-            for (_, buf_state) in view_state.buffer_states_mut() {
-                buf_state.rulers = self.config.editor.rulers.clone();
+        for window in self.windows.values_mut() {
+            window.resync_global_display_defaults();
+        }
+        // `rulers` has no override and no view that opts out, so it goes to
+        // every view state — including the ones the sweep above skips.
+        let rulers = self.config.editor.rulers.clone();
+        for window in self.windows.values_mut() {
+            if let Some(view_states) = window.buffers.split_view_states_mut() {
+                for view_state in view_states.values_mut() {
+                    for (_, buf_state) in view_state.buffer_states_mut() {
+                        buf_state.rulers = rulers.clone();
+                    }
+                }
             }
         }
 
@@ -266,6 +268,12 @@ impl Editor {
                 if let Ok(resolved_config) = resolver.resolve() {
                     self.set_config(resolved_config);
                     self.refresh_open_buffer_settings_from_config();
+                    // Again, now the config is normalized: the earlier pass saw
+                    // the raw tree, so a key the resolver rewrites (`wrap_column`'s
+                    // zero sentinel) would leave views holding an unsaved value.
+                    for window in self.windows.values_mut() {
+                        window.resync_global_display_defaults();
+                    }
                     self.invalidate_live_editor_layout_after_settings_save();
                 }
                 // Tell plugins the config moved under them. Fired once,

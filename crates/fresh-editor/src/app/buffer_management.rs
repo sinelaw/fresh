@@ -114,6 +114,62 @@ impl crate::app::window::Window {
         }
     }
 
+    /// Re-resolve the editor-wide display defaults on every buffer view state
+    /// in this window, not just the tab each pane shows.
+    ///
+    /// `show_line_numbers`, `line_wrap_enabled` and `highlight_current_line`
+    /// are per-(split, buffer) caches of a resolved `editor.*` setting, so
+    /// changing one of those settings has to refresh all of them (#3449).
+    /// Per-buffer pins and plugin overrides survive, because
+    /// `apply_config_defaults` honours them. Single-view counterpart:
+    /// [`Self::seed_view_config_defaults`].
+    ///
+    /// The skipped views set these flags directly and record no override, so
+    /// resolving would hand them display they are built never to have: virtual
+    /// buffers (terminals, plugin pages, dock panels, grep lists), grid-wrapped
+    /// viewports, grouped panels, and anything outside `ViewMode::Source`. A
+    /// scratch buffer is `BufferKind::File`, so it still follows the setting.
+    /// `grid_wrap` is tested rather than `is_terminal_buffer`, which goes false
+    /// when a terminal's process exits while its scroll-back tab stays open.
+    ///
+    /// Call this once the new config has reached `Window::config()` — that is
+    /// the copy the resolution reads.
+    pub(crate) fn resync_global_display_defaults(&mut self) {
+        // Collected first: the stamping pass below needs the window mutably.
+        let mut targets: Vec<(LeafId, BufferId)> = Vec::new();
+        let Some(view_states) = self.buffers.split_view_states() else {
+            return;
+        };
+        for (leaf_id, view_state) in view_states {
+            if view_state.suppress_chrome {
+                continue;
+            }
+            for (buffer_id, buf_state) in view_state.buffer_states() {
+                if buf_state.view_mode != crate::state::ViewMode::Source
+                    || buf_state.viewport.grid_wrap
+                    || self
+                        .buffer_metadata
+                        .get(buffer_id)
+                        .is_some_and(crate::app::types::BufferMetadata::is_virtual)
+                {
+                    continue;
+                }
+                targets.push((*leaf_id, *buffer_id));
+            }
+        }
+
+        for (leaf_id, buffer_id) in targets {
+            let defaults = self.view_config_defaults_for_buffer(buffer_id);
+            if let Some(buf_state) = self
+                .split_view_states_mut()
+                .get_mut(&leaf_id)
+                .and_then(|vs| vs.buffer_state_mut(buffer_id))
+            {
+                buf_state.apply_config_defaults(defaults);
+            }
+        }
+    }
+
     /// Get the preferred split for opening a file.
     /// If the active split has no label, use it (normal case).
     /// Otherwise find an unlabeled leaf so files don't open in labeled splits (e.g., sidebars).

@@ -44,13 +44,10 @@ impl Editor {
     ///     setting takes effect on source buffers and on leaving the mode. The
     ///     status message says so, so an apparently inert command is explained.
     ///
-    /// Scope is the active split's view state, matching
-    /// [`toggle_line_numbers_current_buffer`](Self::toggle_line_numbers_current_buffer).
-    /// It is deliberately not swept across every split: terminal splits, grouped
-    /// panels and plugin docks hold `show_line_numbers = false` directly, with no
-    /// override recorded, so re-resolving them would hand those panes a gutter
-    /// they are built never to have. Other views pick the new default up from
-    /// `apply_config_defaults`, the path that owns that stamping.
+    /// The pin is dropped on the active split's view state, matching
+    /// [`toggle_line_numbers_current_buffer`](Self::toggle_line_numbers_current_buffer);
+    /// `Window::resync_global_display_defaults` then re-resolves the new
+    /// default on every other open view.
     pub fn toggle_line_numbers(&mut self) {
         let new_value = !self.config.editor.line_numbers;
         let resolved = {
@@ -78,6 +75,9 @@ impl Editor {
         // reached only the editor-level config, so the very next file opened
         // still came up with the old setting.
         self.sync_windows_config();
+        for window in self.windows.values_mut() {
+            window.resync_global_display_defaults();
+        }
         self.persist_config_change(config_keys::EDITOR_LINE_NUMBERS, new_value);
 
         // When a mode outvotes the new setting the command looks inert, so say
@@ -914,6 +914,13 @@ impl Editor {
                 .filter(|c| c.enabled)
                 .collect();
             lsp.set_universal_configs(universal_servers);
+        }
+
+        // A reload replaces the display settings too, so the open views owe the
+        // same re-resolution a toggle gives them (#3449). Only `editor.reloadConfig()`
+        // reaches here — there is no command or menu item for it.
+        for window in self.windows.values_mut() {
+            window.resync_global_display_defaults();
         }
 
         // Control-event bus: in-process observers (the test harness's
