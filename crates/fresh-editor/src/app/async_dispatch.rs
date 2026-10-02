@@ -749,6 +749,7 @@ impl Editor {
         // didn't advertise the capability are skipped.
         self.request_inlay_hints_for_language(&language);
         self.pull_diagnostics_for_language(&language);
+        self.replay_deferred_hover(&language);
     }
 
     /// Handle a request that expired without an answer.

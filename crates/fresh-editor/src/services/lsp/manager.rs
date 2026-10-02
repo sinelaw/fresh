@@ -1000,6 +1000,19 @@ impl LspManager {
             .collect()
     }
 
+    /// Whether a server that would take `feature` for `language` is still
+    /// starting: spawned, but its `initialize` answer not yet handled, so
+    /// [`Self::handles_for_feature_mut`] leaves it out for now. A request
+    /// that found no server because of this can be re-issued once
+    /// `LspInitialized` arrives.
+    pub fn has_initializing_handle(&self, language: &str, feature: LspFeature) -> bool {
+        self.handles.iter().any(|sh| {
+            sh.handle.scope().accepts(language)
+                && sh.feature_filter.allows(feature)
+                && !sh.capabilities.initialized
+        })
+    }
+
     /// Consult the spawn throttle for `language` and, on `Allow`, record
     /// the attempt.
     ///

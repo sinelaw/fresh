@@ -946,7 +946,45 @@ impl Editor {
             );
         }
 
+        // No server took it because the buffer's server has not finished
+        // starting: keep the request, and `replay_deferred_hover` asks again
+        // once it has, rather than the key press doing nothing.
+        let language = self.active_state().language.clone();
+        let waiting = results.is_empty()
+            && self
+                .lsp()
+                .is_some_and(|lsp| lsp.has_initializing_handle(&language, LspFeature::Hover));
+        self.active_window_mut()
+            .hover
+            .set_deferred(waiting.then_some((buffer_id, cursor_pos)));
+
         Ok(())
+    }
+
+    /// Re-issue a keyboard hover that was asked for before `language`'s
+    /// server finished initializing (see `request_hover`). Dropped instead
+    /// if the user has since moved the cursor or switched buffers: the
+    /// hover would answer a question no longer being asked.
+    pub(crate) fn replay_deferred_hover(&mut self, language: &str) {
+        let Some((buffer_id, byte)) = self.active_window().hover.deferred() else {
+            return;
+        };
+        match self.buffers().get(&buffer_id) {
+            // Waiting on another language's server.
+            Some(state) if state.language != language => return,
+            Some(_) => {}
+            None => {
+                self.active_window_mut().hover.set_deferred(None);
+                return;
+            }
+        }
+        self.active_window_mut().hover.set_deferred(None);
+        if self.active_buffer() != buffer_id || self.active_cursors().primary().position != byte {
+            return;
+        }
+        if let Err(e) = self.request_hover() {
+            tracing::debug!("Deferred hover request failed: {}", e);
+        }
     }
 
     /// Request LSP hover documentation at a specific byte position
