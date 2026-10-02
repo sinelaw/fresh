@@ -210,16 +210,15 @@ impl Editor {
         released
     }
 
-    /// Whether the slot is held open for a panel that has not arrived. The
-    /// flag's one reader: a slot with a panel in it is never reserved.
+    /// Whether the slot is held open for a panel that has not arrived.
     pub(crate) fn dock_slot_reserved(&self) -> bool {
         self.dock_reserved && self.dock.is_none()
     }
 
     /// The width the dock asks for on a frame `frame_width` wide: the
-    /// explicit width if there is one, else the rule. The one derivation,
-    /// read by the layout and by what the plugin is told. Whether a column
-    /// is carved at all is `frame::dock_width`'s call.
+    /// explicit width if there is one, else the rule. The one derivation —
+    /// do not recompute it elsewhere. Whether a column is carved at all is
+    /// `frame::dock_width`'s call.
     pub(crate) fn requested_dock_width(&self, frame_width: u16) -> u16 {
         self.dock_width
             .unwrap_or_else(|| self.dock_width_rule.width(frame_width))
