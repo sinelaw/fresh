@@ -3582,8 +3582,7 @@ impl Window {
         let state = self.active_state_mut();
         state.overlays.clear_namespace(&ns, &mut state.marker_list);
         self.clear_current_search_match();
-        // The overlays are gone, so they no longer stand in for the match
-        // set: F3 falls back to the stored snapshot from here on.
+        // Without the overlays, the stored snapshot is the match set again.
         if let Some(ss) = self.search_state.as_mut() {
             ss.overlays_track_matches = false;
         }
@@ -4339,10 +4338,9 @@ impl Window {
             .unwrap_or(buf_len)
             .min(buf_len);
 
-        // Then out again over any match that reaches past those lines — a
-        // match spanning a line break. The swap below drops every overlay
-        // touching the window, so one the rescan cannot see in full would be
-        // removed and never re-added, silently leaving the live match set.
+        // Widen again over any match reaching past those lines: the swap
+        // below drops every overlay it touches, and the rescan can only
+        // re-add what it sees whole.
         let span =
             state
                 .overlays

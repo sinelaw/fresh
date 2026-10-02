@@ -564,14 +564,10 @@ impl OverlayManager {
         // marker-tree to narrow candidates; verify each candidate's true
         // range and namespace before removing.
         //
-        // An empty `range` still has to run this pass. When an edit empties
-        // the span being re-evaluated — deleting the whole buffer, say —
-        // every overlay inside it collapses onto that one point and the
-        // caller hands us `p..p`. Skipping the pass stranded those dead
-        // overlays in whatever namespace they belonged to; for search, each
-        // one then surfaced as a phantom match (issue #3444). Healthy
-        // overlays are left alone for an empty range: no span is being
-        // replaced, so there is nothing to put back in their place.
+        // An empty `range` still runs this pass: an edit that empties the
+        // span collapses every overlay in it onto that one point, and
+        // skipping left them stranded as phantom matches (issue #3444).
+        // Healthy overlays are spared there, since nothing is replacing them.
         let replaces_span = range.start < range.end;
         let hits = marker_list.query_range(range.start, range.end);
         let mut candidates: Vec<usize> = hits
@@ -789,12 +785,9 @@ impl OverlayManager {
     /// Grow `range` to cover every overlay in `namespace` that a
     /// [`replace_range_in_namespace`] over it would remove.
     ///
-    /// A caller that rebuilds a namespace's overlays by rescanning `range`
-    /// can only re-find what lies inside it, so an overlay reaching past
-    /// either end would be removed and never put back. Rescanning the range
-    /// this returns instead keeps those overlays recoverable. Only live
-    /// overlays widen it: collapsed ones are points, and an empty `range`
-    /// removes nothing else, so it is returned unchanged.
+    /// A caller that rebuilds those overlays by rescanning `range` can only
+    /// re-find what lies inside it, so without this an overlay reaching past
+    /// either end is removed and never put back.
     ///
     /// [`replace_range_in_namespace`]: Self::replace_range_in_namespace
     pub fn namespace_replacement_span(
@@ -812,9 +805,8 @@ impl OverlayManager {
             if o.namespace.as_ref() != Some(namespace) {
                 continue;
             }
-            // `start < end` is the healthy-overlay arm of
-            // `replace_range_in_namespace`; a collapsed one is a point and
-            // widens nothing.
+            // Must agree with the healthy-overlay arm of
+            // `replace_range_in_namespace`: widen for exactly what it removes.
             let r = o.range(marker_list);
             if r.start < r.end && o.overlaps(&range, marker_list) {
                 lo = lo.min(r.start);
@@ -1429,11 +1421,10 @@ mod tests {
         assert!(!overlay.overlaps(&(20..30), &marker_list));
     }
 
-    /// Deleting every byte the overlays covered collapses them all onto one
+    /// Deleting every byte the overlays covered collapses them onto one
     /// point, and the span the caller re-evaluates is then empty too. The
-    /// zero-length leftovers still have to go: search reads surviving
-    /// overlays as its live match set, so each one stranded here came back
-    /// as a phantom match in an empty buffer (issue #3444).
+    /// leftovers still have to go: search reads surviving overlays as its
+    /// match set, so a stranded one is a phantom match (issue #3444).
     #[test]
     fn test_replace_empty_range_evicts_collapsed_overlays() {
         let mut marker_list = MarkerList::new();
@@ -1455,7 +1446,7 @@ mod tests {
         marker_list.adjust_for_delete(0, 30);
         marker_list.set_buffer_size(0);
 
-        // The re-evaluated span is empty as well — there is no text left.
+        // No text left, so the span the caller re-evaluates is empty too.
         manager.replace_range_in_namespace(&ns, &(0..0), Vec::new(), &mut marker_list);
 
         assert_eq!(
