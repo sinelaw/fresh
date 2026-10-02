@@ -438,10 +438,8 @@ fn test_typing_over_the_current_match_drops_the_mark() {
 // Edits invalidate the captured match set (issue #3444)
 // ---------------------------------------------------------------------------
 
-/// Select all and delete: the buffer holds nothing, so Find Next has nowhere
-/// to go. The match set captured when the search ran used to survive the
-/// delete and send F3 to byte offsets that no longer existed, reporting a
-/// match in a completely empty buffer.
+/// An empty buffer has nothing to find. The captured match set used to
+/// survive the delete and report a match anyway.
 #[test]
 fn test_find_next_reports_no_matches_after_deleting_the_whole_buffer() {
     let (_dir, mut harness) = open_with("<p>one</p>\n<p>two</p>\n<p>three</p>\n");
@@ -485,7 +483,7 @@ fn test_find_next_count_tracks_partially_deleted_matches() {
         harness.get_status_bar()
     );
 
-    // Delete the first matched line, leaving two matches behind.
+    // Delete the first matched line.
     harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
     harness
         .send_key(KeyCode::Down, KeyModifiers::SHIFT)
@@ -506,7 +504,6 @@ fn test_find_next_count_tracks_partially_deleted_matches() {
         "the deleted match must drop out of the total, got: {status}"
     );
 
-    // Both survivors are still reachable, and neither is a stale offset.
     assert_eq!(harness.get_selected_text(), "<p>");
     find_next(&mut harness);
     assert_eq!(harness.get_selected_text(), "<p>");
@@ -552,11 +549,8 @@ fn test_find_next_after_deleting_every_match_reports_no_matches() {
     );
 }
 
-/// A match that spans a line break reaches outside the line(s) an edit
-/// touches. Re-evaluating only those lines removes its overlay and cannot
-/// re-find it, which used to drop it from the live match set — and, once
-/// the overlays became the authority for "no matches left", killed the
-/// search outright while the match was still sitting in the buffer.
+/// A match spanning a line break reaches outside the lines an edit touches,
+/// so re-evaluating only those lines used to drop it from the live set.
 #[test]
 fn test_find_next_keeps_a_multiline_match_after_an_edit_on_its_last_line() {
     let (_dir, mut harness) = open_with("aaa\nfoo\nbarZ\nzzz\n");
@@ -588,10 +582,9 @@ fn test_find_next_keeps_a_multiline_match_after_an_edit_on_its_last_line() {
     );
 }
 
-/// Dropping the overlays while leaving the search navigable - what
-/// `finish_interactive_replace` does when a query-replace is quit - must
-/// hand Find Next back to the stored match set rather than read the empty
-/// namespace as "every match is gone".
+/// Quitting a query-replace drops the overlays but leaves the search
+/// navigable, so Find Next falls back to the stored set rather than reading
+/// the empty namespace as "no matches".
 #[test]
 fn test_find_next_still_works_after_query_replace_drops_the_overlays() {
     let (_dir, mut harness) = open_with("one TARGET two TARGET three TARGET\n");
@@ -640,10 +633,9 @@ fn test_find_next_still_works_after_query_replace_drops_the_overlays() {
 // The stored match set only speaks for one buffer at one moment (issue #3444)
 // ---------------------------------------------------------------------------
 
-/// `SearchState` is per-window but the highlights are per-buffer, so switching
-/// files leaves the match set behind. Its byte offsets mean nothing in the
-/// file now on screen — they used to be navigated anyway, reporting a match in
-/// a file that has none and parking the caret past the end of it.
+/// The match set stays with the file it came from, so its offsets mean
+/// nothing in another one. They used to be navigated anyway, reporting a
+/// match in a file that has none.
 #[test]
 fn test_find_next_in_another_buffer_does_not_use_the_first_buffer_offsets() {
     let temp_dir = TempDir::new().unwrap();
@@ -726,9 +718,8 @@ fn test_find_next_in_another_buffer_searches_that_buffer() {
     );
 }
 
-/// A query-replace that actually replaces something leaves the stored match
-/// set describing text that is no longer there. Find Next used to walk it and
-/// land on the replacement.
+/// A query-replace that replaced something leaves the stored match set
+/// describing text that is gone. Find Next used to land on the replacement.
 #[test]
 fn test_find_next_after_a_query_replace_that_replaced_skips_the_replacement() {
     let (_dir, mut harness) = open_with("one TARGET two\nTARGET three\nfour TARGET\n");
@@ -765,9 +756,8 @@ fn test_find_next_after_a_query_replace_that_replaced_skips_the_replacement() {
         "one X two\nTARGET three\nfour TARGET\n"
     );
 
-    // Two are left, and both are real. The first press re-runs the search,
-    // because the replacement left the stored match set describing text that
-    // is gone, so it reports the fresh total rather than a step.
+    // The first press re-runs the search, so it reports a fresh total
+    // rather than a step.
     find_next(&mut harness);
     assert_eq!(harness.get_selected_text(), "TARGET");
     assert!(
