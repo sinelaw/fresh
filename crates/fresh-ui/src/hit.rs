@@ -233,16 +233,9 @@ impl<M: 'static> Ui<M> {
                         return true;
                     }
                 }
-                // **The gutter is the bar's cells whatever button pressed
-                // them.** Only the left button *drives* the bar, but a press of
-                // any other is still a press on the bar, and letting it fall
-                // through delivers it to whatever the bar is drawn over — the
-                // window behind it, or the surface the window sits on. A
-                // right-press one column off a row in the file explorer landed
-                // on the panel's own union box that way, so a bar between the
-                // rows and the frame turned "menu for this row" into "menu for
-                // the panel" (fresh#3427). Claimed and spent, as a press on any
-                // other affordance is.
+                // Any button, not just the left one. Only Left drives the
+                // bar, but a press on the gutter is still a press on the bar:
+                // letting it through delivers it to whatever the bar covers.
                 if let Some(r) = self.scrollbar_hit(pos) {
                     if button == MouseButton::Left {
                         self.scrollbar_drag = Some(r);

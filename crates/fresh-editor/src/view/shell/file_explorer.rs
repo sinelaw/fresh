@@ -85,18 +85,12 @@ pub struct Row {
     /// Indicator, leading slot, compact chain and name, in order.
     pub left: Runs,
     /// Where each compact-chain segment sits in the concatenation of `left`,
-    /// outermost first: the bytes of `dir1/` and of `dir2/` in a
-    /// `dir1/dir2/dir3` row, each segment carrying its own separator. Empty
-    /// for a row that is not a chain. (A press reports which of them it hit
-    /// counted from the *other* end: see `UiFact::ExplorerRowContext`.)
+    /// outermost first, each taking its own separator.
     ///
-    /// **Byte ranges of the label the row renders**, which is what lets a
-    /// press name the segment it landed on: the library answers which byte of
-    /// a text node is under the pointer ([`fresh_ui::Event::text_byte`]) and
-    /// these say which segment that byte is in. A column derived from the
-    /// path instead would have to re-guess the indent, the indicator's width
-    /// and any leading decoration — the three things that shift where the
-    /// names start — and would be wrong on a wide glyph besides.
+    /// Byte ranges, because the library answers a press with the byte of the
+    /// label under the pointer ([`fresh_ui::Event::text_byte`]). Deriving a
+    /// column from the path instead would have to re-guess the indent, the
+    /// indicator and any decoration, and would be wrong on a wide glyph.
     pub chain: Vec<std::ops::Range<usize>>,
     /// The status slot pushed to the right edge, if the providers gave one.
     pub trailing: Option<Slot>,
@@ -471,18 +465,13 @@ fn caret_ink(row: &str) -> String {
 }
 
 fn node_row(caret: bool, r: &Row) -> Node<UiMsg> {
-    // **The padding rule, as layout.** The old walk computed `content_width -
-    // left_side_width - total_right_width` and a second function computed it
-    // again to find the slot; a flex spacer states it once and both the cells
-    // and the rectangle come out of it.
+    // The padding rule, as layout: a flex spacer, so the cells and the slot's
+    // rectangle both come out of it rather than being computed twice.
     //
-    // **With no floor under it.** The `min_gap = 1` floor the spacer used to
-    // carry reserved the lane's last cell, and a label too long for the lane
-    // paints over that cell while the hit goes to its owner — so the one cell a
-    // reader could see a name in answered as the row rather than as that name
-    // (issue #3427). The cell that holds a name off the status slot is the
-    // label's own last run now (`describe_row`), which a label with no room
-    // loses first.
+    // No floor under it. A one-cell floor reserved the lane's last cell, which
+    // a label too long for the lane paints over while the hit goes to the
+    // spacer; the space that holds a name off the status slot is part of the
+    // label instead (`describe_row`).
     let mut children: Vec<Node<UiMsg>> = vec![text_runs(runs_of(&r.left)), row().flex(1)];
     if let Some(slot) = &r.trailing {
         let path = slot.path.clone();
@@ -517,15 +506,10 @@ fn node_row(caret: bool, r: &Row) -> Node<UiMsg> {
     // is on is the display list's caret, not arithmetic over the region's
     // origin and the box's border.
     //
-    // **`Ignore`, not `Transparent`.** The caret is ink; it has no handlers of
-    // its own, and a transparent node is still *hit* — it ends a path, and the
-    // hit then continues behind it. So on the selected row the topmost path
-    // ended at this overlay, and the row's listeners (its ancestors) ran
-    // against a target that holds no text: `Event::text_byte` came back empty
-    // and a press on `dir2` of a compact row could not say which segment it
-    // was on. `Ignore` takes the overlay out of the hit entirely — the whole
-    // subtree, so the glyph needs no mode of its own — and the press lands on
-    // the label underneath it, as it does on every unselected row.
+    // `Ignore`, not `Transparent`: a transparent node is still hit — it ends
+    // the hit path — so on the selected row the press resolved against this
+    // overlay, which holds no text, and `Event::text_byte` came back empty.
+    // `Ignore` takes the whole subtree out of the hit.
     let body = if caret {
         stack().h(Sizing::Cells(1)).children([
             body,
@@ -569,16 +553,10 @@ fn node_row(caret: bool, r: &Row) -> Node<UiMsg> {
         // by declining, instead of by rank. Declining is also not claiming, so
         // the press travels on untouched.
         //
-        // **Which segment of a compact row it landed on travels with it.**
-        // One row carries `dir1/dir2/dir3`, and the menu is about the name
-        // under the pointer, not about the row's deepest directory (issue
-        // #3427). `text_byte` is the byte of the label under the pointer,
-        // answered by the library from the shaping it drew — the dispatcher
-        // asks the event's *target*, so this listener up the chain reads it
-        // without the segments needing listeners of their own — and
-        // `Row::chain` says which segment that byte is in. A press on the
-        // indent, the indicator or the name itself is in no segment's range
-        // and names the row, as every press on a plain row does.
+        // Which segment of a compact row it landed on travels with it. The
+        // dispatcher fills `text_byte` from the event's *target*, so this
+        // listener up the chain reads it without the segments needing
+        // listeners of their own.
         .on(
             GestureKind::Press,
             Rc::new(move |e: &Event| {
@@ -588,11 +566,8 @@ fn node_row(caret: bool, r: &Row) -> Node<UiMsg> {
                 e.stop();
                 Some(UiMsg::Ui(UiFact::ExplorerRowContext {
                     index,
-                    // Counted from the anchor end — walking the ranges
-                    // backwards, so `1` is the segment next to the row's own
-                    // name — because that end of the chain is the row's own id
-                    // and cannot drift between this frame and the lookup. See
-                    // `FileTreeView::chain_segment_node`.
+                    // From the anchor end, so `1` is the segment next to the
+                    // row's own name: see `FileTreeView::chain_segment_node`.
                     segment: e.text_byte.and_then(|b| {
                         chain
                             .iter()
@@ -791,8 +766,8 @@ mod tests {
         }
     }
 
-    /// Give a row a status marker the way `describe_row` does: the slot, and
-    /// the space that holds the name off it as the label's own last run.
+    /// Give a row a status marker the way `describe_row` does: the slot, plus
+    /// the space before it as the label's last run.
     fn with_marker(mut r: Row, text: &str) -> Row {
         let path = std::path::PathBuf::from(&r.left.last().expect("a label").0);
         r.left.push((" ".to_string(), Explorer::panel()));
@@ -804,14 +779,11 @@ mod tests {
         r
     }
 
-    /// A compact-chain row: the indent, the expand indicator, then
-    /// `<segments>/<name>` — `left` and `chain` built as `describe_row` builds
-    /// them, with each range counted off the runs it pushed.
-    ///
-    /// Two sites spelling one convention, so what keeps them from drifting is
-    /// `view::ui::file_explorer`'s `a_compact_rows_chain_ranges_index_its_rendered_label`,
-    /// which pins `describe_row`'s own output. If that fails and these pass,
-    /// this fixture is the stale copy.
+    /// A compact-chain row, built as `describe_row` builds one. What keeps the
+    /// two from drifting is `ui::file_explorer`'s
+    /// `a_compact_rows_chain_ranges_index_its_rendered_label`, which pins
+    /// `describe_row`'s own output: if that fails and these pass, this fixture
+    /// is the stale copy.
     fn chain_row_of(index: usize, segments: &[&str], name: &str) -> Row {
         let mut left: Runs = vec![
             ("  ".to_string(), Explorer::panel()),
@@ -929,14 +901,8 @@ mod tests {
         );
     }
 
-    /// **A right-press on one segment of a compact row names that segment.**
-    ///
-    /// One row draws `dir1/dir2/dir3`, and the menu it opens is about the name
-    /// under the pointer — the deepest directory only when that is the name
-    /// pressed (issue #3427). The description does not re-derive a column: the
-    /// library says which byte of the label the pointer is on and `Row::chain`
-    /// says which segment holds that byte, so the indent and the multi-byte
-    /// indicator in front of the names cost nothing to get right.
+    /// A right-press on one segment of a compact row names that segment, with
+    /// the multi-byte indicator in front of the names.
     #[test]
     fn a_right_press_on_a_chain_segment_names_that_segment() {
         let e = panel_of(
@@ -1003,14 +969,9 @@ mod tests {
         );
     }
 
-    /// **A label too long for the lane still names the segment drawn in its
-    /// last cell.**
-    ///
-    /// The row's gap has a one-cell floor so a name never touches the status
-    /// slot. When the label overflows the lane, that floor took the lane's last
-    /// cell while paint went on drawing label text into it — so the one cell a
-    /// reader could see `another` in answered as the row's own deepest
-    /// directory instead of as `another`.
+    /// A label too long for the lane still names the segment drawn in its last
+    /// cell, which the gap's old one-cell floor had taken while paint drew the
+    /// label over it.
     #[test]
     fn a_label_wider_than_the_lane_still_names_its_last_visible_segment() {
         // `  ` + `▼ ` + `averylongone/` puts `another` at cells 17..23 of the
@@ -1046,13 +1007,9 @@ mod tests {
         );
     }
 
-    /// And the same row carrying a status marker answers the same way.
-    ///
-    /// A directory bubbles up the status of what is under it, so a compact row
-    /// in a working tree with changes often has a marker — and when its label
-    /// overflows the lane, layout has nothing left to give the marker (it ends
-    /// up a zero-width cell, undrawn, which is its own pre-existing story). The
-    /// cells a reader *can* see a name in must still answer as that name.
+    /// And the same row carrying a status marker, which a directory gets from
+    /// the files under it. (On an overflowing row the marker itself ends up
+    /// zero-width and undrawn — pre-existing, and not what this pins.)
     #[test]
     fn an_overflowing_label_with_a_status_marker_answers_the_same() {
         let long = with_marker(chain_row_of(1, &["averylongone", "another"], "third"), "M");
@@ -1085,14 +1042,9 @@ mod tests {
         assert_eq!(seg(&mut ui, 21), Some(1), "the lane's last cell: {drawn:?}");
     }
 
-    /// **And on the row the caret is on**, which is every row the reader is
-    /// about to right-click a second time.
-    ///
-    /// The caret is an overlay over the row's cells, and a *transparent* node
-    /// is still hit: the topmost path ended at the overlay, so the row's
-    /// listeners ran against a target holding no text and the segment came back
-    /// `None` — the chain's deepest directory again, for every name on the row.
-    /// It takes a fixture with the caret drawn to see it (issue #3427).
+    /// And on the row the caret is on — the row a reader is most likely to
+    /// right-click twice. It takes a fixture with the caret drawn to catch it:
+    /// a transparent overlay is still hit, and the press resolved against it.
     #[test]
     fn the_caret_does_not_hide_the_segment_under_it() {
         let rows = vec![
@@ -1313,13 +1265,9 @@ mod tests {
         );
     }
 
-    /// **And a right-press on the bar is the bar's too: it opens no menu.**
-    ///
-    /// Only the left button drives the bar, but the gutter is still the bar's
-    /// cells — and the panel's union box is behind them. A right-press one
-    /// column off a row used to fall through to it, so the lane answered with
-    /// the *panel's* menu and moved the cursor to the project root: a
-    /// one-column miss retargeted the menu (issue #3427).
+    /// And a right-press on the bar is the bar's too: it opens no menu. The
+    /// panel's catch-all is behind the gutter, so a one-column miss used to
+    /// answer with the panel's menu and move the cursor to the root.
     #[test]
     fn a_right_press_on_the_bar_opens_nothing() {
         let mut ui = laid_out(scrolled_panel(40, 0, 20), 20, 10);

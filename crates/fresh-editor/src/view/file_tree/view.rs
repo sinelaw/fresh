@@ -330,15 +330,9 @@ impl FileTreeView {
         if !was_expanded {
             self.expand_with_chain(node_id).await?;
         }
-        // The expansion may have folded the cursor's row into a deeper chain
-        // anchor; re-promote so the cursor is the row the reader is left
-        // looking at.
-        // Why: after a keyboard expand the cursor should name what that row
-        // shows, so Rename and Delete act on the row's own entry rather than
-        // on a directory now folded into it. (The arrow keys no longer need
-        // this — `row_of` finds the row an absorbed cursor is drawn on — but a
-        // cursor the reader cannot see is still the wrong thing to leave
-        // behind.)
+        // The expansion may have folded the cursor's row into a deeper
+        // anchor; re-promote so the cursor is a row the reader can see, since
+        // Rename and Delete act on the cursor.
         if let Some(sel) = self.selected_node {
             self.selected_node = Some(self.promote_to_anchor(sel));
         }
@@ -452,42 +446,20 @@ impl FileTreeView {
         self.selected_node = node_id.map(|id| self.promote_to_anchor(id));
     }
 
-    /// Set the selected node *as given*, with no promotion to a chain anchor.
-    ///
-    /// What a press on one segment of a compact row's `dir1/dir2/dir3` label
-    /// means: the segment the reader hit is the entry the menu and its
-    /// actions are about, so [`set_selected`](Self::set_selected)'s promotion
-    /// would answer about a different directory — the deepest one, whichever
-    /// name was clicked (issue #3427).
-    ///
-    /// The *row* that draws the cursor is still the one the segment is on.
-    /// Everything that wants a row goes through [`row_of`](Self::row_of),
-    /// which maps an absorbed cursor to the row it shares, so the highlight,
-    /// the caret and the arrow keys all stay on rendered rows.
+    /// Set the selected node as given, with no promotion to a chain anchor: for
+    /// a press on one segment of a `dir1/dir2/dir3` row, promoting would make
+    /// the menu act on the deepest directory whichever name was clicked.
     pub fn set_selected_exact(&mut self, node_id: Option<NodeId>) {
         self.selected_node = node_id;
     }
 
     /// The directory one segment of a compact row's label names.
     ///
-    /// `steps` counts **up from the anchor**: `1` is the segment next to the
-    /// anchor's own name, `2` the one before it, and `chain.len()` the
-    /// outermost — so on a `dir1/dir2/dir3` row `1` is `dir2` and `2` is
-    /// `dir1`. `0`, and anything past the outermost, is no segment.
-    ///
-    /// **Counted from the anchor rather than from the front of the label**
-    /// because the anchor is the one end of the chain a press names outright
-    /// (it is the row's own id), while the front moves: the label was rendered
-    /// one frame earlier, and a directory that became absorbed since would
-    /// shift every index counted from there, naming the reader's `dir1` as
-    /// whatever is now outside it. The parent chain is structural; absorption
-    /// only decides how much of it one row draws. A chain that lost segments
-    /// answers `None`, and the caller falls back to the anchor rather than to
-    /// some other entry.
+    /// `steps` counts up from the anchor: on a `dir1/dir2/dir3` row `1` is
+    /// `dir2` and `2` is `dir1`. From that end because the anchor is the row's
+    /// own id and cannot move, while the label was drawn a frame earlier and a
+    /// directory absorbed since would shift an index counted from the front.
     pub fn chain_segment_node(&self, anchor: NodeId, steps: usize) -> Option<NodeId> {
-        // Walked from the anchor end, which is what `steps` counts from: `0` is
-        // the anchor's own name and no segment, and a chain with fewer than
-        // `steps` of them answers nothing.
         let back = steps.checked_sub(1)?;
         self.compact_chain_for_anchor(anchor)
             .into_iter()
@@ -495,36 +467,23 @@ impl FileTreeView {
             .nth(back)
     }
 
-    /// The row `id` is drawn on, by index in the visible order: its own, or —
-    /// for a directory compact mode folded into a deeper row — the row of the
-    /// anchor whose label carries it.
-    ///
-    /// A cursor set with [`set_selected_exact`](Self::set_selected_exact) can
-    /// be such a directory, and it has no row of its own in the projection.
-    /// This is the one place that knows where it is shown, so a segment
-    /// cursor still highlights the row the reader clicked and the keys still
-    /// step off that row instead of finding nothing and freezing.
+    /// The row `id` is drawn on, by index in the visible order. A directory
+    /// compact mode folded into a deeper row has no row of its own; the anchor
+    /// whose label carries it is where it shows.
     fn row_of(&self, id: NodeId) -> Option<usize> {
-        // Promoting first answers both cases in one lookup: an id that has a
-        // row of its own is never absorbed (the projection pushes only
-        // non-absorbed ids, and the root is never absorbed), so promotion
-        // leaves it alone.
+        // An id with a row of its own is never absorbed, so promoting first
+        // answers both cases.
         self.projection().index_of(self.promote_to_anchor(id))
     }
 
-    /// The id of the row the cursor is *drawn* on: its own, or — for a cursor
-    /// on a compact-chain segment — the anchor whose row carries it.
+    /// The id of the row the cursor is drawn on.
     ///
-    /// **The multi-selection is a set of rows.** It is shown by highlighting
-    /// them, and [`effective_selection`](Self::effective_selection) filters it
-    /// through the visible order to drop ids that have none — so an absorbed
-    /// id put in that set would be invisible *and* act on nothing. The keys
-    /// that seed the set from the cursor go through this, so the set keeps
-    /// only ids that can be drawn and acted on.
+    /// The multi-selection is a set of rows: it highlights them, and
+    /// [`effective_selection`](Self::effective_selection) drops ids with no
+    /// row. So the keys that seed it from the cursor use this, not the cursor.
     fn cursor_row_id(&self) -> Option<NodeId> {
         let id = self.promote_to_anchor(self.selected_node?);
-        // The lookup is the "and it really is a row" test; its index is not
-        // wanted here.
+        // The lookup only tests that it is a row.
         self.projection().index_of(id).map(|_| id)
     }
 
@@ -617,10 +576,7 @@ impl FileTreeView {
     }
 
     /// Toggle the cursor item in/out of the multi-selection and set the anchor.
-    ///
-    /// The cursor's *row* — see [`cursor_row_id`](Self::cursor_row_id), which
-    /// is why a cursor on a chain segment adds the row it is drawn on rather
-    /// than a directory the set could neither show nor act on.
+    /// The cursor's *row*: see [`cursor_row_id`](Self::cursor_row_id).
     pub fn toggle_select(&mut self) {
         if let Some(cursor) = self.cursor_row_id() {
             if self.multi_selection.contains(&cursor) {
@@ -639,9 +595,8 @@ impl FileTreeView {
         if visible.is_empty() {
             return;
         }
-        // The cursor's *row*, so the seeded selection and the anchor are ids
-        // the set can show and act on: see `cursor_row_id`, of which this is
-        // the index and `visible[pos]` the id.
+        // The cursor's row, so the seed and the anchor are ids the set can
+        // show: see `cursor_row_id`.
         let Some(pos) = self.selected_node.and_then(|id| self.row_of(id)) else {
             return;
         };
@@ -674,9 +629,8 @@ impl FileTreeView {
         if visible.is_empty() {
             return;
         }
-        // The cursor's *row*, so the seeded selection and the anchor are ids
-        // the set can show and act on: see `cursor_row_id`, of which this is
-        // the index and `visible[pos]` the id.
+        // The cursor's row, so the seed and the anchor are ids the set can
+        // show: see `cursor_row_id`.
         let Some(pos) = self.selected_node.and_then(|id| self.row_of(id)) else {
             return;
         };
@@ -706,8 +660,7 @@ impl FileTreeView {
     pub fn select_all(&mut self) {
         let visible = self.filtered_visible_nodes();
         self.multi_selection = visible.iter().copied().collect();
-        // The cursor's row: an anchor the range extension can find in the
-        // visible order. See `cursor_row_id`.
+        // The cursor's row, so the range extension can find the anchor.
         self.selection_anchor = self.cursor_row_id();
     }
 
@@ -820,8 +773,7 @@ impl FileTreeView {
     }
 
     /// Get the index of the selected node in the visible list. A cursor on a
-    /// compact-chain segment reports the row that draws it: see
-    /// [`row_of`](Self::row_of).
+    /// chain segment reports the row that draws it.
     pub fn get_selected_index(&self) -> Option<usize> {
         self.row_of(self.selected_node?)
     }
@@ -1718,11 +1670,8 @@ mod tests {
         assert_eq!(view.get_selected(), Some(c_id));
     }
 
-    /// **Each segment of a compact row names its own directory.** One row
-    /// draws `chain/a/b/c`, and `chain_segment_node` is what turns the segment
-    /// the pointer was on into the entry a menu is about. The count is up from
-    /// the anchor, so `1` is the name beside `c` and the outermost is last
-    /// (issue #3427).
+    /// Each segment of a compact `chain/a/b/c` row names its own directory,
+    /// counted up from the anchor.
     #[tokio::test]
     async fn each_segment_of_a_compact_row_names_its_own_directory() {
         let (_t, mut view) = create_chain_view().await;
@@ -1749,15 +1698,10 @@ mod tests {
         assert_eq!(named(4), None);
     }
 
-    /// **Counting up from the anchor survives a chain that grew.** The label a
-    /// press resolved against was rendered a frame earlier, and a directory
-    /// that has become absorbed since adds a segment at the *front* — an index
-    /// counted from there would slide onto the wrong name. The anchor end does
-    /// not move: it is the row's own id.
-    ///
-    /// The growth is staged with a hidden second child of `chain`, so whether
-    /// `chain` is folded into the row depends on a setting rather than on the
-    /// filesystem — `is_absorbed` asks how many children are *visible*.
+    /// Counting from the anchor survives a chain that grew at the front, where
+    /// an index counted from the label's left edge would slide onto the wrong
+    /// name. Staged with a hidden second child, since whether `chain` is folded
+    /// in depends on how many children are *visible*.
     #[tokio::test]
     async fn a_segment_counted_from_the_anchor_survives_a_longer_chain() {
         let temp_dir = TempDir::new().unwrap();
@@ -1801,11 +1745,9 @@ mod tests {
         assert_eq!(two_up(&view), "a");
     }
 
-    /// **A cursor on a segment joins the multi-selection as the row it is drawn
-    /// on.** The set is shown by highlighting rows, and `effective_selection`
-    /// filters it to rows — so an absorbed id in it would highlight nothing and
-    /// act on nothing: Space then Delete would report "cannot delete the
-    /// project root" and do nothing at all.
+    /// A cursor on a segment joins the multi-selection as the row it is drawn
+    /// on. An absorbed id in that set would highlight nothing and act on
+    /// nothing: Space then Delete reported "cannot delete the project root".
     #[tokio::test]
     async fn a_segment_cursor_joins_the_multi_selection_as_its_row() {
         let (_t, mut view) = create_chain_view().await;
@@ -1837,13 +1779,8 @@ mod tests {
         assert_eq!(view.effective_selection(), vec![c_id, leaf_id]);
     }
 
-    /// **A cursor on a segment stays on that segment, and the row it is drawn
-    /// on still carries the highlight.** `set_selected` promotes to the chain
-    /// anchor, which is right for a key or a reveal and wrong for a press on
-    /// one name of a compact row — the menu would act on the deepest
-    /// directory whichever name was clicked (issue #3427). What the panel
-    /// draws is still the anchor's row, because that is the row the segment is
-    /// on.
+    /// A cursor on a segment stays on that segment, while the row drawn with
+    /// the highlight is still the anchor's — the row the segment is on.
     #[tokio::test]
     async fn a_cursor_on_a_chain_segment_is_drawn_on_the_chains_row() {
         let (_t, mut view) = create_chain_view().await;
@@ -1864,10 +1801,8 @@ mod tests {
         );
     }
 
-    /// And the keys still step off that row. The cursor is a node with no row
-    /// of its own, so `select_next` cannot find it among the visible ids; it
-    /// asks which row draws it instead, and moves to the one below — rather
-    /// than finding nothing and leaving the cursor where it was.
+    /// And the keys still step off that row, rather than failing to find a
+    /// cursor with no row of its own and leaving it where it was.
     #[tokio::test]
     async fn the_keys_step_off_the_row_a_segment_cursor_is_drawn_on() {
         let (_t, mut view) = create_chain_view().await;

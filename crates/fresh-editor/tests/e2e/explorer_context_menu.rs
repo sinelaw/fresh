@@ -16,12 +16,9 @@ use std::fs;
 //
 // A safe right-click inside the explorer content area:
 const EXPLORER_COL: u16 = 10;
-// ...well inside the content rows, and past the last entry of a small fixture,
-// which makes it the *blank area*: the project root's, with the root's narrow
-// menu (issue #3427).
+// Past the last entry of a small fixture, so it is the blank area: the root's.
 const EXPLORER_ROW: u16 = 5;
-// A test about an entry's menu right-clicks an entry. Row 2 is the project root
-// and row 3 the first child under it — see `harness_with_entry`.
+// Row 2 is the project root, row 3 the first child under it.
 const ENTRY_ROW: u16 = 3;
 
 // The "Paste" item is present in every mode of the context menu (single,
@@ -42,9 +39,8 @@ fn harness_with_explorer() -> EditorTestHarness {
     h
 }
 
-/// The same, with one file in it — so [`ENTRY_ROW`] is an entry. The bare
-/// project has only the root row, and every row below it is the blank area,
-/// which is the root's (issue #3427).
+/// The same, with one file in it, so [`ENTRY_ROW`] is an entry: the bare project
+/// has only the root row and everything below it is the blank area.
 fn harness_with_entry() -> EditorTestHarness {
     let mut h = EditorTestHarness::with_temp_project(100, 30).unwrap();
     let root = h.project_dir().unwrap();
@@ -440,13 +436,9 @@ fn test_keyboard_down_enter_executes_item() {
     );
 }
 
-/// Which item the open menu highlights, and how many it has.
-///
-/// Asserting on the highlight rather than on "a menu is still on screen" is
-/// what makes the two wrap tests below about wrapping: with the count read off
-/// the menu itself, neither depends on how many items the entry menu has today
-/// (`FileExplorerContextMenuItem::all()` is append-only, and both tests used to
-/// name a stale count in a comment).
+/// Which item the open menu highlights, and how many it has. Reading both off
+/// the menu is what makes the wrap tests below about wrapping rather than about
+/// an item count that goes stale as items are appended.
 fn menu_highlight(h: &EditorTestHarness) -> (usize, usize) {
     let menu = h
         .editor()
@@ -460,15 +452,13 @@ fn menu_highlight(h: &EditorTestHarness) -> (usize, usize) {
 /// Up key wraps from the first item to the last.
 #[test]
 fn test_keyboard_up_wraps() {
-    // An entry, for the full menu: `EXPLORER_ROW` is the blank area in this
-    // fixture, whose menu is the root's three items.
+    // An entry, for the full menu: `EXPLORER_ROW` is the blank area here.
     let mut h = harness_with_entry();
     h.mouse_right_click(EXPLORER_COL, ENTRY_ROW).unwrap();
     let (highlighted, items) = menu_highlight(&h);
     assert_eq!(highlighted, 0, "a fresh menu highlights its first item");
     assert!(items > 3, "the entry menu, not the root's: {items} items");
 
-    // Up from index 0 wraps to the last item.
     h.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
     assert_eq!(menu_highlight(&h), (items - 1, items));
     assert!(
@@ -484,13 +474,11 @@ fn test_keyboard_down_wraps() {
     h.mouse_right_click(EXPLORER_COL, ENTRY_ROW).unwrap();
     let (_, items) = menu_highlight(&h);
 
-    // Down to the last item, however many the menu has.
     for _ in 0..items - 1 {
         h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     }
     assert_eq!(menu_highlight(&h), (items - 1, items));
 
-    // One more Down wraps to index 0 — menu stays open.
     h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     assert_eq!(menu_highlight(&h), (0, items));
     assert!(
@@ -665,8 +653,8 @@ fn test_select_all_triggers_multi_selection_menu() {
         .unwrap();
     h.render().unwrap();
 
-    // On an entry. (The blank area would give the same menu — `is_multi` is
-    // read first — but an entry is what this test is about.)
+    // On an entry, which is what this test is about (the blank area would give
+    // the same menu, since `is_multi` is read first).
     h.mouse_right_click(EXPLORER_COL, ENTRY_ROW).unwrap();
 
     let screen = h.screen_to_string();
@@ -850,14 +838,9 @@ fn test_root_menu_new_directory_works() {
 
 // ── the blank area below the last entry ──────────────────────────────────────
 
-/// The path the explorer's cursor is on, relative to the project root, written
-/// with `/` whatever the platform's own separator is.
-///
-/// Spelled by components rather than by the string the OS would print: the tree
-/// builds its paths by joining, so the same selection reads `dir1/dir2` on unix
-/// and `dir1\dir2` on Windows. These tests are about *which entry* the menu
-/// named — the compact row's label is `/`-joined on every platform, since
-/// `describe_row` pushes a literal `/` between its segments.
+/// The path the explorer's cursor is on, relative to the project root, with `/`
+/// separators whatever the platform uses. By components rather than the string
+/// the OS prints, so the same selection does not read `dir1\dir2` on Windows.
 fn selected_relative_path(h: &EditorTestHarness) -> String {
     let explorer = h.editor().file_explorer().expect("an explorer");
     let entry = explorer.get_selected_entry().expect("a selection");
@@ -869,12 +852,9 @@ fn selected_relative_path(h: &EditorTestHarness) -> String {
         .join("/")
 }
 
-/// **Right-clicking the blank area selects the project root** and opens the
-/// root's narrow menu — the same menu the root row gives.
-///
-/// It used to move no selection at all, so the *entry* menu opened against
-/// whichever entry was selected before and every action in it — Rename, Delete,
-/// the copy-path items — acted on that entry (issue #3427).
+/// Right-clicking the blank area selects the project root and opens the root's
+/// menu. It used to move no selection, so the entry menu opened against
+/// whichever entry was selected before and acted on it.
 #[test]
 fn test_right_click_blank_area_selects_project_root() {
     let mut h = EditorTestHarness::with_temp_project(100, 30).unwrap();
@@ -885,11 +865,10 @@ fn test_right_click_blank_area_selects_project_root() {
     h.wait_for_file_explorer().unwrap();
     h.wait_for_file_explorer_item("target.txt").unwrap();
 
-    // Select an entry first: it is what the stale menu used to be about.
+    // Select an entry first: what the stale menu used to be about.
     h.mouse_click(EXPLORER_COL, ENTRY_ROW).unwrap();
     assert_eq!(selected_relative_path(&h), "target.txt");
 
-    // Then right-click well below the last entry.
     h.mouse_right_click(EXPLORER_COL, EXPLORER_ROW + 10)
         .unwrap();
 
@@ -911,12 +890,9 @@ fn test_right_click_blank_area_selects_project_root() {
     );
 }
 
-/// **A reader's multi-selection survives a right-press on the blank area.**
-///
-/// "The blank area" is every press inside the panel that no row claimed, which
-/// is also the scrollbar's lane and the panel's walls — so clearing the set here
-/// would lose it to a one-column miss. Only the cursor moves; a press on a row
-/// leaves the set alone too.
+/// A reader's multi-selection survives a right-press on the blank area — which
+/// includes the panel's walls, so clearing it there would lose the set to a
+/// one-column miss. Only the cursor moves.
 #[test]
 fn test_right_click_blank_area_keeps_a_multi_selection() {
     let mut h = EditorTestHarness::with_temp_project(100, 30).unwrap();
@@ -958,10 +934,8 @@ fn test_right_click_blank_area_keeps_a_multi_selection() {
 
 // ── compact directory chains ─────────────────────────────────────────────────
 
-/// **Right-clicking one name of a compact `dir1/dir2/dir3` row selects that
-/// directory**, not the deepest one (issue #3427). Which segment the pointer
-/// was on is resolved from the label the row rendered, so the indent and the
-/// expand indicator in front of the names do not shift it.
+/// Right-clicking one name of a compact `dir1/dir2/dir3` row selects that
+/// directory, not the deepest one.
 #[test]
 fn test_right_click_compact_chain_segment_selects_that_directory() {
     let mut h = EditorTestHarness::with_temp_project(100, 30).unwrap();
@@ -978,8 +952,7 @@ fn test_right_click_compact_chain_segment_selects_that_directory() {
     h.wait_for_file_explorer_item("deep.txt").unwrap();
     h.render().unwrap();
 
-    // Where each name sits on screen, read off the row that was drawn — the
-    // same label the press resolves against.
+    // Where each name sits on screen, read off the row that was drawn.
     let screen = h.screen_to_string();
     let (row, line) = screen
         .lines()
@@ -987,8 +960,7 @@ fn test_right_click_compact_chain_segment_selects_that_directory() {
         .find(|(_, l)| l.contains("dir1/dir2/dir3"))
         .map(|(i, l)| (i as u16, l.to_string()))
         .unwrap_or_else(|| panic!("no compact row on screen:\n{screen}"));
-    // Each of `dir1`, `dir2` and `dir3` appears once on the row, so the first
-    // match is the segment.
+    // Each name appears once on the row, so the first match is the segment.
     let column_of = |name: &str| {
         line.char_indices()
             .filter(|(i, _)| line[*i..].starts_with(name))

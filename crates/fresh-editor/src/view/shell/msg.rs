@@ -482,21 +482,18 @@ pub enum UiFact {
     /// A right click on a tree row: select it and open its context menu at the
     /// pointer.
     ///
-    /// `segment` is which of the row's compact-chain segments the press landed
-    /// on, and `None` a press on the row's own name, its indent or its
-    /// indicator. The count is stated once, by what reads it back:
-    /// [`FileTreeView::chain_segment_node`](crate::view::file_tree::FileTreeView::chain_segment_node). One row draws the whole chain, so the index alone cannot say
-    /// which directory the reader pointed at, and the menu that opened was
-    /// always about the deepest one (issue #3427). The description resolves it
-    /// from the label it rendered: see [`Row::chain`](super::file_explorer::Row::chain).
+    /// `segment` is which folded directory of a compact row's label the press
+    /// landed on, `None` for the row's own name. What the number counts is
+    /// defined by
+    /// [`FileTreeView::chain_segment_node`](crate::view::file_tree::FileTreeView::chain_segment_node).
     ExplorerRowContext {
         index: usize,
         segment: Option<usize>,
         x: u16,
         y: u16,
     },
-    /// A right-press on the panel that did not land on a row — the empty
-    /// space under the last entry, which is the project root's: see
+    /// A right-press on the panel that did not land on a row. It names the
+    /// project root: see
     /// [`Editor::explorer_body_context`](crate::app::Editor::explorer_body_context).
     ///
     /// The old component bound its right-press to the *whole* explorer — its

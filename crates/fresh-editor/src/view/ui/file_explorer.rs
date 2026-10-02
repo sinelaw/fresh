@@ -155,14 +155,11 @@ pub fn describe_row(d: RowDesc<'_>) -> crate::view::shell::file_explorer::Row {
         left.push((" ".repeat(pad), pair(neutral, ground)));
     }
 
-    // Ancestors that compact mode folded into this row, outermost first —
-    // and where each one landed in the label, so a press on `dir1` of a
-    // `dir1/dir2/dir3` row can name `dir1`. The offsets are counted off the
-    // runs this loop pushes, over whatever the indent, the indicator and a
-    // leading slot already put in front of them: a second derivation from the
-    // path would have to guess all three. A segment owns its separator, so
-    // the chain's part of the label partitions with no dead cell between two
-    // names. See [`fe::Row::chain`].
+    // Ancestors that compact mode folded into this row, outermost first, and
+    // where each one landed in the label so a press can name it. Counted off
+    // the runs rather than derived from the path, which would have to guess the
+    // indent, the indicator and any leading slot. Each segment takes its own
+    // separator, so no cell between two names belongs to neither.
     let mut chain: Vec<std::ops::Range<usize>> = Vec::new();
     let mut at: usize = left.iter().map(|(t, _)| t.len()).sum();
     for name in &node.chain {
@@ -201,12 +198,10 @@ pub fn describe_row(d: RowDesc<'_>) -> crate::view::shell::file_explorer::Row {
         None => left.push((node.entry.name.clone(), pair(&name_fg, ground))),
     }
 
-    // **The cell that holds the name off the status slot is the label's own.**
-    // It used to be a one-cell floor under the row's flex gap, which is a cell
-    // of the lane that the label may not have — and a label too long for the
-    // lane paints over it anyway, so the one cell a reader could see a name in
-    // answered as the row instead of as that name (issue #3427). Spelled here
-    // it is the first thing a too-long label loses, which is what should give.
+    // The cell that holds the name off the status slot. Here rather than as a
+    // floor under the row's flex gap, because a label too long for the lane
+    // paints over that cell while the hit goes to the gap: here the space is
+    // the first thing such a label loses, which is what should give.
     if slots.trailing.is_some() {
         left.push((" ".to_string(), pair(neutral, ground)));
     }
@@ -475,14 +470,8 @@ mod tests {
             .any(|(text, style)| text == "M" && style.fg == Some(theme.file_status_modified_fg)));
     }
 
-    /// **The chain's byte ranges index the label the row renders.** A press on
-    /// one name of a compact `chain/a/b/c` row is resolved by asking the
-    /// library which byte of the label is under the pointer and then asking
-    /// `Row::chain` which segment that byte is in (issue #3427) — so each
-    /// range must cover exactly its own segment and separator, counted over
-    /// whatever the indent, the indicator and any leading slot put in front of
-    /// them — which is why they are counted off the runs rather than derived
-    /// from the path a second time.
+    /// Each chain range covers exactly its own segment and separator in the
+    /// label the row rendered — which is what a press resolves against.
     #[tokio::test]
     async fn a_compact_rows_chain_ranges_index_its_rendered_label() {
         let (_temp_dir, view) = create_chain_renderer_view().await;
@@ -513,17 +502,14 @@ mod tests {
             expanded: "▼",
         });
 
-        // The label as the pointer sees it: the runs, concatenated, which is
-        // the string `Event::text_byte` counts bytes of.
+        // The runs concatenated: the string `Event::text_byte` counts bytes of.
         let label: String = row.left.iter().map(|(t, _)| t.as_str()).collect();
         let segments: Vec<&str> = row.chain.iter().map(|r| &label[r.clone()]).collect();
         assert_eq!(segments, vec!["chain/", "a/", "b/"]);
-        // Bytes, not columns, because that is what the library answers with:
-        // the indent and the `▼ ` indicator are six cells and eight bytes.
+        // Bytes, not columns: the indent and `▼ ` are six cells, eight bytes.
         assert_eq!(label, "    ▼ chain/a/b/c");
         assert_eq!(row.chain[0].start, 8);
-        // And the anchor's own name is in no range, so a press on it names the
-        // row rather than one of the folded directories.
+        // The anchor's own name is in no range, so a press on it names the row.
         let after = row.chain.last().expect("a chain").end;
         assert_eq!(&label[after..], "c");
     }

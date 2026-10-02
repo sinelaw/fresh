@@ -19,18 +19,15 @@ use super::Editor;
 /// The two runtimes cannot share a constant; keep them in sync.
 const BIG_FILE_ARGS: [&str; 2] = ["-c", "core.bigFileThreshold=1m"];
 
-/// What a right-press on the explorer named: a row, with the segment of a
-/// compact row's `dir1/dir2/dir3` label the pointer was on, or the panel's
-/// empty space — which is the project root's.
+/// What a right-press on the explorer named: a row, or the panel's empty space.
 enum ExplorerContextTarget {
     Row {
-        /// By index in the tree's display order.
+        /// By index in the tree's display order, not on screen.
         index: usize,
-        /// Which folded directory of the row's label, counted up from the
-        /// row's own name — see
-        /// [`FileTreeView::chain_segment_node`](crate::view::file_tree::FileTreeView::chain_segment_node),
-        /// which states that count once for everything that carries it.
-        /// `None` is the row's own name.
+        /// Which folded directory of a compact row's label, `None` for the
+        /// row's own name. See
+        /// [`FileTreeView::chain_segment_node`](crate::view::file_tree::FileTreeView::chain_segment_node)
+        /// for what the number counts.
         segment: Option<usize>,
     },
     Body,
@@ -140,9 +137,6 @@ impl Editor {
 
     /// A right press on a tree row: select what the press named, then open its
     /// context menu just below the pointer.
-    ///
-    /// `segment` is which of a compact row's folded directories the pointer
-    /// was on, if any — see [`UiFact::ExplorerRowContext`](crate::view::shell::msg::UiFact::ExplorerRowContext).
     pub(crate) fn explorer_row_context(
         &mut self,
         index: usize,
@@ -155,20 +149,10 @@ impl Editor {
 
     /// The menu, for whatever the press named.
     ///
-    /// **The selection moves first, every time, and the menu's form follows
-    /// it.** Every item in this menu acts on the explorer's selection, so a
-    /// menu opened without moving it is a menu about some other entry — which
-    /// is what the empty space under the last row used to give (issue #3427).
-    /// There is no path out of here that leaves the selection where it was: a
-    /// press that named no row of the current tree lands on the root with the
-    /// root's menu, which carries nothing destructive, rather than on an entry
-    /// menu about whatever came before.
-    ///
-    /// The multi-selection is left alone, as a press on a row leaves it alone:
-    /// it is a set the reader built, and this handler answers every press
-    /// inside the panel that no row claimed — the scrollbar's lane and the
-    /// panel's walls included — so clearing it here would lose it to a
-    /// one-column miss.
+    /// The selection always moves first, because every item in this menu acts
+    /// on the selection: a menu opened without moving it is about some other
+    /// entry. The multi-selection is left alone, as a press on a row leaves it
+    /// alone — it is the reader's set, not this menu's.
     fn explorer_context_for(&mut self, target: ExplorerContextTarget, x: u16, y: u16) {
         let (is_multi, is_root_selected) = if let Some(explorer) = self.file_explorer_mut().as_mut()
         {
@@ -183,18 +167,12 @@ impl Editor {
                     })
                 }
             };
-            // Nothing named: the blank area under the last row, or a row index
-            // the tree no longer has — a press carries the index the frame it
-            // was drawn in gave it, and a background expand or a reload can
-            // shorten the tree in between. Both are the project root's, which
-            // is what the blank area means and the safe answer to a press whose
-            // row is gone.
+            // Nothing named: the blank area, or a row index the tree no longer
+            // has — the press carries the index of the frame it was drawn in,
+            // and a reload can shorten the tree in between. Both are the root's.
             let picked = named.unwrap_or(root_id);
-            // `set_selected_exact`, not `set_selected`: a segment of a compact
-            // row is a directory whose row is folded into a deeper one, and
-            // promoting it to that anchor is exactly the bug. Nothing else here
-            // can be promoted — a row's own id and the root are never absorbed
-            // — so one call covers every target.
+            // Not `set_selected`: that promotes a segment to its chain anchor,
+            // which is the bug. Nothing else here can be promoted anyway.
             explorer.set_selected_exact(Some(picked));
             (explorer.has_multi_selection(), picked == root_id)
         } else {
@@ -207,28 +185,11 @@ impl Editor {
         );
     }
 
-    /// A right-press on the panel that no row claimed.
+    /// A right-press on the panel that no row claimed — the empty space under
+    /// the last entry.
     ///
-    /// Every row answers its own right-press, so this is the empty space
-    /// under the last one, and it **selects the project root** and opens the
-    /// root-form menu — VS Code's behaviour, and what the narrow menu on the
-    /// root row already gave. Saying only "the menu opens in its root form"
-    /// was not enough: with no selection moved, `is_root_selected` was false
-    /// and the *entry* menu opened against whatever row was selected before,
-    /// so Rename, Delete and the copy-path items all acted on that stale
-    /// entry (issue #3427).
-    ///
-    /// "The empty space" is every press inside the panel that no row claimed,
-    /// which is also the scrollbar's lane and the panel's own walls — a row is
-    /// clipped to its lane, and the bar routes only the left button. A reader's
-    /// multi-selection therefore survives this (see `explorer_context_for`);
-    /// only the cursor moves.
-    ///
-    /// The title row declines rather than opening anything, as the component
-    /// excluded it with `ev.row <= explorer_area.y`. It used to re-derive a
-    /// viewport row from the panel's rectangle and look it up; with rows named
-    /// by their index in the tree rather than on screen, that arithmetic would
-    /// name a real node that is simply not on screen.
+    /// It selects the project root and opens the root's menu, which is what the
+    /// root row gives and what VS Code does. The title row opens nothing.
     pub(crate) fn explorer_body_context(&mut self, x: u16, y: u16) {
         let area = self.shell_region_now(crate::view::shell::frame::HostRegion::Explorer);
         // The title row is not a right-click target.
