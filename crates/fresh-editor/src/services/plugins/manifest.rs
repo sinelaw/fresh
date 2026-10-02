@@ -46,10 +46,9 @@ pub struct DockDeclaration {
     #[serde(default = "default_true")]
     pub open: bool,
     /// A key in this plugin's settings (`plugins.<name>.settings`) holding
-    /// how the dock opens — the orchestrator's `autoOpenDock`. One of
-    /// `"never"`, `"always"` or `"auto"` (the default: as the user left it,
-    /// else the launch mode). The booleans this used to be are still read,
-    /// `false` as `never` and `true` as `auto`, and rewritten in passing.
+    /// how the dock opens — the orchestrator's `autoOpenDock`. `"never"`,
+    /// `"always"` or `"auto"` (the default); see `DockOpenPolicy`. The
+    /// booleans this used to be are still read, and rewritten in passing.
     #[serde(default)]
     pub open_setting: Option<String>,
     /// How wide the dock opens before the user drags it.

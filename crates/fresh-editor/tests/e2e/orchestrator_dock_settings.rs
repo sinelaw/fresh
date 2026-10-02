@@ -3,9 +3,7 @@
 //! "orchestrator" under "Plugins"):
 //!
 //! * `autoOpenDock` — whether the dock opens on the `ready` hook,
-//!   unfocused: `auto` (as you left it, else the launch mode), `always` or
-//!   `never`. The booleans it replaced are still read, `false` as `never`
-//!   and `true` as `auto`, which is what the boolean cases below cover;
+//!   unfocused: `auto`, `always` or `never`, plus the booleans it replaced;
 //! * `defaultView` — the density (`card` / `compact`) the dock opens at;
 //! * `showAllWorktrees` / `showEmptyWorkspaces` — the initial state of the
 //!   two Filters checkboxes.
@@ -70,8 +68,7 @@ fn launch(config: Config, root: PathBuf) -> EditorTestHarness {
     .unwrap()
 }
 
-/// The same, as a bare `fresh` (Orchestrator mode) — the launch mode that is
-/// the default since 0.5.2, and the one issue #3442 was reported against.
+/// The same, as a bare `fresh` (Orchestrator mode).
 fn launch_orchestrator_mode(config: Config, root: PathBuf) -> EditorTestHarness {
     EditorTestHarness::create(
         120,
@@ -248,12 +245,8 @@ fn auto_open_can_be_switched_off() {
         .unwrap();
 }
 
-/// Issue #3442: the dock stays closed for a bare `fresh` too. Orchestrator
-/// mode used to OR itself over the setting, so the one launch mode most users
-/// are in ignored it outright — the dock came up however the setting and the
-/// `View` menu's checkmark read.
-///
-/// Driven with both spellings: the `never` mode, and the legacy `false` an
+/// #3442: a bare `fresh` used to open the dock whatever the setting said.
+/// Driven with both spellings — the `never` mode, and the legacy `false` an
 /// upgrading user still has on disk.
 fn dock_stays_closed_in_orchestrator_mode(setting: serde_json::Value) {
     let (_tmp, root, config) = setup(serde_json::json!({ "autoOpenDock": setting }));
@@ -261,8 +254,8 @@ fn dock_stays_closed_in_orchestrator_mode(setting: serde_json::Value) {
     h.render().unwrap();
     h.editor_mut().fire_ready_hook();
     // Round-trip the hook through the plugin thread with a command that does
-    // not touch the dock, so a dock that wrongly auto-opened is on screen by
-    // the time we look (as in `auto_open_can_be_switched_off`).
+    // not touch the dock, so a wrongly auto-opened dock is on screen before
+    // we assert it is absent.
     h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
     h.wait_for_prompt().unwrap();

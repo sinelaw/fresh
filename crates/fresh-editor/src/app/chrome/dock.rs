@@ -55,24 +55,20 @@ pub(crate) fn read_dock_chrome_state(fs: &dyn FileSystem, data_dir: &Path) -> Do
     }
 }
 
-/// What the boolean-or-mode the manifest names (`open_setting`) asks for.
-/// Each name means exactly what it says, which is the point: the boolean it
-/// replaced had a `true` that read as "always" but behaved as "allow", so
-/// ticking it on and seeing no dock was a fair thing to be confused by.
+/// What the plugin's `open_setting` asks for. It replaced a boolean whose
+/// `true` meant "allow", not "open".
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum DockOpenPolicy {
-    /// Closed at startup, whatever is remembered.
+    /// Closed, ignoring what was remembered.
     Never,
-    /// Open at startup, whatever is remembered.
+    /// Open, ignoring what was remembered.
     Always,
-    /// The way the user left it; on a first launch, the launch mode decides
-    /// (then the manifest's `open`). The default, and exactly what the
-    /// boolean `true` used to mean.
+    /// What was remembered; on a first launch, the launch mode, then the
+    /// manifest's `open`.
     Auto,
 }
 
 impl DockOpenPolicy {
-    /// The wire name, for the migration's write.
     fn as_str(self) -> &'static str {
         match self {
             Self::Never => "never",
@@ -81,15 +77,11 @@ impl DockOpenPolicy {
         }
     }
 
-    /// Read the stored value. The pre-#3442 booleans still work and always
-    /// will, so behaviour never depends on the migration below having run:
-    /// `false` meant "do not auto-open" (`never`), `true` meant "allow it,
-    /// and come back the way you left it" (`auto`).
+    /// Booleans are the pre-#3442 spelling and are always accepted, so
+    /// nothing depends on the rewrite below having run.
     ///
-    /// Anything else — a stale string from a hand-edit, a number, `null` —
-    /// is `Auto`, which is both the declared default and what
-    /// `defineConfigEnum` falls back to for an unrecognised value, so the
-    /// host and the Settings UI agree on the nonsense case too.
+    /// Anything unrecognised is `Auto`, which is also what the Settings UI
+    /// falls back to showing, so the two agree.
     fn read(value: Option<&serde_json::Value>) -> Self {
         match value {
             Some(serde_json::Value::String(s)) => match s.as_str() {
@@ -103,27 +95,21 @@ impl DockOpenPolicy {
         }
     }
 
-    /// Whether the value on disk is the pre-#3442 boolean, and so wants
-    /// rewriting as the mode it meant.
     fn is_legacy(value: Option<&serde_json::Value>) -> bool {
         matches!(value, Some(serde_json::Value::Bool(_)))
     }
 }
 
 impl Editor {
-    /// Decide the dock's startup chrome, before the first frame. The mode the
-    /// plugin's `open_setting` names decides: `never` keeps the slot closed
-    /// and `always` opens it, both outright; `auto` — the default — brings it
-    /// back the way the user left it, and on a first launch lets Orchestrator
-    /// mode open it (a bare `fresh` is a request for the switcher), else the
-    /// manifest's `open`. No declaration, no dock. The width rule and a
-    /// remembered width are adopted regardless, so a dock toggled open later
-    /// is right.
+    /// Decide the dock's startup chrome, before the first frame. No dock
+    /// declared, no column.
     ///
-    /// Orchestrator mode used to *override* the setting and the remembered
-    /// state rather than being the default under them, so in the launch mode
-    /// that is the default since 0.5.2 an `autoOpenDock: false` had no effect
-    /// at all and a dock the user had closed came back open (issue #3442).
+    /// The width rule and a remembered width are adopted even when the slot
+    /// stays closed, so a dock toggled open later comes up the right size.
+    ///
+    /// Orchestrator mode is the default *under* the policy, not an override
+    /// over it: overriding left `autoOpenDock: false` with no effect in the
+    /// launch mode that is the default since 0.5.2 (#3442).
     pub(crate) fn apply_startup_dock_chrome(
         &mut self,
         manifests: &HashMap<String, PluginManifest>,
@@ -178,20 +164,16 @@ impl Editor {
         }
     }
 
-    /// Rewrite a pre-#3442 boolean `open_setting` as the mode it meant, in
-    /// memory and on disk.
+    /// Rewrite a pre-#3442 boolean as the mode it meant, in memory and on
+    /// disk.
     ///
-    /// Without this the value would keep its old shape while the plugin
-    /// declares an enum, and the two disagree in a way the user can see: the
-    /// plugin's field registration only fills a value in when one is *absent*
-    /// (`Editor::handle_add_plugin_config_field` uses `or_insert`), so the
-    /// boolean survives, and the Settings UI would render the enum's default
-    /// next to a startup that had honoured the boolean. That is the same
-    /// "two sources, one question" shape as #3442 itself.
+    /// Needed because the plugin's field registration only fills in a value
+    /// that is *absent* (`handle_add_plugin_config_field` uses `or_insert`):
+    /// a boolean would survive under the enum's schema, and the Settings UI
+    /// would show the enum default while startup honoured the boolean.
     ///
-    /// Best-effort by design: `DockOpenPolicy::read` understands the booleans
-    /// regardless, so a write that fails costs nothing but another attempt on
-    /// the next launch.
+    /// Best-effort — `DockOpenPolicy::read` still accepts booleans, so a
+    /// failed write just retries next launch.
     fn rewrite_legacy_dock_open_setting(
         &mut self,
         plugin: &str,
@@ -228,16 +210,15 @@ impl Editor {
         released
     }
 
-    /// Whether the slot is held open for a panel that has not arrived. The
-    /// flag's one reader: a slot with a panel in it is never reserved.
+    /// Whether the slot is held open for a panel that has not arrived.
     pub(crate) fn dock_slot_reserved(&self) -> bool {
         self.dock_reserved && self.dock.is_none()
     }
 
     /// The width the dock asks for on a frame `frame_width` wide: the
-    /// explicit width if there is one, else the rule. The one derivation,
-    /// read by the layout and by what the plugin is told. Whether a column
-    /// is carved at all is `frame::dock_width`'s call.
+    /// explicit width if there is one, else the rule. The one derivation —
+    /// do not recompute it elsewhere. Whether a column is carved at all is
+    /// `frame::dock_width`'s call.
     pub(crate) fn requested_dock_width(&self, frame_width: u16) -> u16 {
         self.dock_width
             .unwrap_or_else(|| self.dock_width_rule.width(frame_width))

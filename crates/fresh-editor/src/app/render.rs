@@ -6281,17 +6281,12 @@ mod dock_reservation_tests {
             ("a manifest with no dock", Some(r#"{"chrome":{}}"#), Config::default(), false, None),
             ("a declared width rule", Some(r#"{"chrome":{"dock":{"width":{"min":30,"max":30}}}}"#), Config::default(), false, Some(30)),
             ("`never`", Some(DECLARES_DOCK), mode("never"), false, None),
-            // Issue #3442: the launch mode used to override the setting, so a
-            // bare `fresh` — the default since 0.5.2 — ignored it outright.
+            // #3442: the launch mode used to override the setting here.
             ("`never`, for a bare `fresh` too", Some(DECLARES_DOCK), mode("never"), true, None),
             ("`always`", Some(DECLARES_DOCK), mode("always"), false, Some(rule)),
             ("`always` beats a manifest that says closed", Some(DECLARES_CLOSED_DOCK), mode("always"), false, Some(rule)),
             ("`auto` takes the manifest's `open`", Some(DECLARES_CLOSED_DOCK), mode("auto"), false, None),
-            // `auto` lets the launch mode decide on a first launch: it is the
-            // default *under* the setting, not an override over it.
             ("...and a bare `fresh` under `auto` opens it", Some(DECLARES_CLOSED_DOCK), mode("auto"), true, Some(rule)),
-            // The pre-#3442 booleans keep working: `false` was `never`, and
-            // `true` was "allow, as you left it" — today's `auto`.
             ("legacy `false` reads as `never`", Some(DECLARES_DOCK), legacy(false), true, None),
             ("legacy `true` reads as `auto`", Some(DECLARES_CLOSED_DOCK), legacy(true), false, None),
             ("an unrecognised value falls back to `auto`", Some(DECLARES_CLOSED_DOCK), mode("ALWAYS"), false, None),
@@ -6313,20 +6308,12 @@ mod dock_reservation_tests {
         }
     }
 
-    /// The pre-#3442 boolean is rewritten as the mode it meant — in memory
-    /// *and* on disk — so the Settings UI, which renders an enum now, shows
-    /// the same thing the startup decision used.
-    ///
-    /// Without the rewrite the two disagree visibly: the plugin's field
-    /// registration only fills a value in when one is absent
-    /// (`handle_add_plugin_config_field`'s `or_insert`), so the boolean would
-    /// survive and Settings would draw the enum's default beside a startup
-    /// that had honoured the boolean.
+    /// The pre-#3442 boolean is rewritten as the mode it meant, in memory and
+    /// on disk, so the Settings UI shows what startup used. See
+    /// `Editor::rewrite_legacy_dock_open_setting` for why that matters.
     #[test]
     fn a_legacy_boolean_open_setting_is_rewritten_as_its_mode() {
         let pointer = "/plugins/orchestrator/settings/autoOpenDock";
-        // `false` meant "never": the dock stays closed, and the value is
-        // normalised so nothing reads a boolean again.
         for (legacy, want_mode, want_open) in [(false, "never", false), (true, "auto", true)] {
             let dir_context = home(Some(DECLARES_DOCK));
             let config = orchestrator_config(true, serde_json::json!({ "autoOpenDock": legacy }));
@@ -6356,8 +6343,8 @@ mod dock_reservation_tests {
         }
     }
 
-    /// A value already in mode form is left exactly as it is — the migration
-    /// must not rewrite, or re-persist, what it did not change.
+    /// A value already in mode form is not re-persisted, so the migration
+    /// does not touch config files it has nothing to change in.
     #[test]
     fn a_mode_open_setting_is_left_alone() {
         let dir_context = home(Some(DECLARES_DOCK));

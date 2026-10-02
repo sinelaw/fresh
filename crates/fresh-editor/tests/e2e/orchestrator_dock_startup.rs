@@ -120,7 +120,7 @@ fn an_ordinary_launch_lands_the_dock_in_the_column_carved_for_it() {
 /// frame. The quit records it (`Editor::save_dock_chrome`).
 ///
 /// Driven in both launch modes: a bare `fresh` used to force the column open
-/// regardless, so a dock the user had closed came back every time (#3442).
+/// regardless (#3442).
 fn the_dock_is_remembered_across_launches(orchestrator_mode: bool) {
     use crossterm::event::{KeyCode, KeyModifiers};
     use fresh::config_io::DirectoryContext;

@@ -1005,7 +1005,7 @@ let lastDockProjectFilter: string | null = null;
 // (the "view" button, the two Filters checkboxes) still win for the rest
 // of the session — they set the `*Override` / `last*` values above —
 // they just no longer decide where the dock starts.
-// On by default: a switcher nobody knows to open is not one. It opens
+// Defaults to opening: a switcher nobody knows to open is not one. It opens
 // unfocused, so the keyboard stays with the editor.
 editor.defineConfigEnum("autoOpenDock", {
   values: ["auto", "always", "never"] as const,
