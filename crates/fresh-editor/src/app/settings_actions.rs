@@ -184,23 +184,11 @@ impl Editor {
             lsp.set_universal_configs(universal_servers);
         }
 
-        // Propagate the editor display defaults to every split and buffer view
-        // state. A Settings save changes the same editor-wide preferences the
-        // unsuffixed View toggles do, so it owes the open views the same
-        // re-resolution: this used to assign `show_line_numbers` on each pane's
-        // *shown* tab only, which left the pane's other tabs rendering the old
-        // gutter (with the View menu reporting it once they became current),
-        // never propagated `line_wrap` at all, and — by assigning rather than
-        // resolving — overwrote an explicit per-buffer pin and a compose
-        // plugin's hidden gutter (issue #3449).
         for window in self.windows.values_mut() {
             window.resync_global_display_defaults();
         }
-        // `rulers` is not part of that resolution: it has no override and no
-        // by-construction exception, so it reaches *every* view state, as it
-        // did before the sweep existed. Without this a ruler change would miss
-        // a buffer in page view, a terminal tab or a grouped panel until it was
-        // reopened.
+        // `rulers` has no override and no view that opts out, so it goes to
+        // every view state — including the ones the sweep above skips.
         let rulers = self.config.editor.rulers.clone();
         for window in self.windows.values_mut() {
             if let Some(view_states) = window.buffers.split_view_states_mut() {
@@ -280,11 +268,9 @@ impl Editor {
                 if let Ok(resolved_config) = resolver.resolve() {
                     self.set_config(resolved_config);
                     self.refresh_open_buffer_settings_from_config();
-                    // Re-run the view sweep against the *normalized* config:
-                    // the pass above the `match` ran on the pre-normalization
-                    // tree, so a key the resolver rewrites (`wrap_column`'s
-                    // zero sentinel, say) would otherwise leave every open
-                    // view holding a value the user never saved.
+                    // Again, now the config is normalized: the earlier pass saw
+                    // the raw tree, so a key the resolver rewrites (`wrap_column`'s
+                    // zero sentinel) would leave views holding an unsaved value.
                     for window in self.windows.values_mut() {
                         window.resync_global_display_defaults();
                     }

@@ -114,69 +114,28 @@ impl crate::app::window::Window {
         }
     }
 
-    /// Re-stamp the global display defaults onto **every** buffer this window
-    /// keeps a view state for — not just the tab each pane happens to show.
+    /// Re-resolve the editor-wide display defaults on every buffer view state
+    /// in this window, not just the tab each pane shows.
     ///
-    /// `editor.line_numbers` and `editor.line_wrap` are editor-wide
-    /// preferences, but the rendered flags they feed
-    /// (`BufferViewState::show_line_numbers`, `Viewport::line_wrap_enabled`)
-    /// are per-(split, buffer) caches of the resolved value. The paths that
-    /// change such a preference — the unsuffixed `Toggle Line Numbers` /
-    /// `Toggle Line Wrap` commands, a Settings save, a config reload — used to
-    /// re-resolve only the view the user was looking at, or at most one view
-    /// state per pane (`buffer_tab_state_mut`). Every *other* tab in the same
-    /// pane kept its pre-toggle cache, so switching to it showed the old
-    /// rendering, and the View menu's checkmark — which reads the focused
-    /// view's cached flag through [`Self::is_line_numbers_visible`] /
-    /// [`Self::is_line_wrap_enabled`] — reported the old value with it (issue
-    /// #3449). Only a file opened *after* the change picked the new default up,
-    /// because the seeding paths stamp it. This is that same stamping run
-    /// across the views already open, and is the counterpart of
-    /// [`Self::seed_view_config_defaults`], which does one (pane, buffer).
+    /// `show_line_numbers`, `line_wrap_enabled` and `highlight_current_line`
+    /// are per-(split, buffer) caches of a resolved `editor.*` setting, so
+    /// changing one of those settings has to refresh all of them (#3449).
+    /// Per-buffer pins and plugin overrides survive, because
+    /// `apply_config_defaults` honours them. Single-view counterpart:
+    /// [`Self::seed_view_config_defaults`].
     ///
-    /// Resolution, not assignment, so the precedence the rest of the editor
-    /// relies on survives a global change:
+    /// The skipped views set these flags directly and record no override, so
+    /// resolving would hand them display they are built never to have: virtual
+    /// buffers (terminals, plugin pages, dock panels, grep lists), grid-wrapped
+    /// viewports, grouped panels, and anything outside `ViewMode::Source`. A
+    /// scratch buffer is `BufferKind::File`, so it still follows the setting.
+    /// `grid_wrap` is tested rather than `is_terminal_buffer`, which goes false
+    /// when a terminal's process exits while its scroll-back tab stays open.
     ///
-    ///   * an explicit per-buffer pin (`Toggle X (Current Buffer)`, vi's
-    ///     `:set number`) keeps winning — `apply_config_defaults` honours
-    ///     `line_numbers_override` / `line_wrap_override`, so a global toggle
-    ///     never silently drops work the user did on another buffer;
-    ///   * a plugin's opinion (`line_numbers_plugin_override`, markdown
-    ///     compose) keeps its say where the user has expressed none;
-    ///   * a per-language `line_wrap` / `wrap_column` is re-resolved per buffer
-    ///     through [`Self::view_config_defaults_for_buffer`] rather than
-    ///     flattened to the global value, so a language that pins wrapping on
-    ///     still wraps after the global default goes off.
-    ///
-    /// Only **ordinary documents** are swept. Everything else holds these flags
-    /// off *by construction* rather than by recording an override, so
-    /// re-resolving it would hand it display it is built never to have:
-    ///
-    ///   * **virtual buffers** (`BufferKind::Virtual`) — terminals, the Welcome
-    ///     and Dashboard pages, utility-dock panels, grep/diagnostics lists and
-    ///     every plugin `createVirtualBuffer` view. The plugin lays its widget
-    ///     rows out at a width it already knows and passes `showLineNumbers`
-    ///     straight onto the rendered flag with no override recorded, so a
-    ///     sweep would both add a gutter and re-wrap rows it had already laid
-    ///     out. A new or stdin buffer is `BufferKind::File` with an empty path,
-    ///     so scratch documents still follow the setting.
-    ///   * **grid-wrapped views** (`Viewport::grid_wrap`) — terminal
-    ///     scroll-back wraps at the captured PTY width, and the renderer and
-    ///     the scroll math read `grid_wrap` and `line_wrap_enabled` as a pair;
-    ///     re-resolving one of them alone desyncs their row counts. Checked on
-    ///     the flag rather than on `is_terminal_buffer`, which stops being true
-    ///     once the process exits while the scroll-back tab stays open.
-    ///   * **grouped panels** (`suppress_chrome`) — a plugin lays their rows
-    ///     out at the panel width, gutter-less and unwrapped.
-    ///   * **views not in `ViewMode::Source`** — Page View hides the gutter
-    ///     and leaves wrapping to the compose plugin.
-    ///
-    /// Call this after the new config has reached `Window::config()` (see
-    /// `Editor::sync_windows_config`); the per-buffer resolution below reads
-    /// the setting through *that* clone.
+    /// Call this once the new config has reached `Window::config()` — that is
+    /// the copy the resolution reads.
     pub(crate) fn resync_global_display_defaults(&mut self) {
-        // Which (pane, buffer) views the sweep is for. Collected before the
-        // stamping pass because that one needs the window mutably.
+        // Collected first: the stamping pass below needs the window mutably.
         let mut targets: Vec<(LeafId, BufferId)> = Vec::new();
         let Some(view_states) = self.buffers.split_view_states() else {
             return;
@@ -200,8 +159,6 @@ impl crate::app::window::Window {
         }
 
         for (leaf_id, buffer_id) in targets {
-            // Language-resolved, so a per-language `line_wrap` / `wrap_column`
-            // is not flattened to the global value.
             let defaults = self.view_config_defaults_for_buffer(buffer_id);
             if let Some(buf_state) = self
                 .split_view_states_mut()

@@ -638,12 +638,10 @@ impl Editor {
                 // message. See `Editor::config_mut` for the broader rule.
                 self.sync_windows_config();
 
-                // The active split's own pin is dropped — the user is
-                // expressing a global intent on the view in front of them.
-                // Every other pinned view keeps its choice: a global default
-                // must not silently un-pin work the user did elsewhere (same
-                // rule as the highlight toggles below). The pane the user is
-                // in is a shown group's focused panel, not the pane showing it.
+                // Only this view's pin is dropped: the user asked for a global
+                // default on the view in front of them, which is no reason to
+                // un-pin work they did elsewhere. `effective_active_split` is a
+                // shown group's focused panel, not the pane showing it.
                 let active_split = self.effective_active_split();
                 if let Some(view_state) = self
                     .windows
@@ -654,12 +652,6 @@ impl Editor {
                     view_state.buffer_tab_state_mut().line_wrap_override = None;
                 }
 
-                // Re-resolve the new default onto every already-open view, in
-                // every window, respecting per-language overrides and
-                // per-buffer pins. This used to write one view state per pane
-                // (its *shown* tab), so the pane's other tabs kept their
-                // pre-toggle wrapping and the View menu reported it once they
-                // became current (issue #3449).
                 for window in self.windows.values_mut() {
                     window.resync_global_display_defaults();
                 }
@@ -680,17 +672,12 @@ impl Editor {
             Action::ToggleCurrentLineHighlight => {
                 let new_value = !self.config.editor.highlight_current_line;
                 self.config_mut().editor.highlight_current_line = new_value;
-                // `resync_global_display_defaults` resolves against
-                // `Window::config()`, a *separate* `Arc<Config>` clone from the
-                // Editor's, so the new value has to be fanned out first or the
-                // sweep would write the pre-toggle state straight back.
+                // The sweep below resolves against `Window::config()`, a separate
+                // `Arc<Config>` clone, so fan the new value out first or it
+                // writes the pre-toggle state straight back.
                 self.sync_windows_config();
 
-                // The active split's own pin is dropped — the user is
-                // expressing a global intent on the view in front of them.
-                // Every other pinned view keeps its choice; a global default
-                // must not silently un-pin work the user did elsewhere. The
-                // pane the user is in is a shown group's focused panel.
+                // Only this view's pin is dropped, as in `ToggleLineWrap` above.
                 let active_split = self.effective_active_split();
                 if let Some(view_state) = self
                     .windows
@@ -703,12 +690,6 @@ impl Editor {
                         .highlight_current_line_override = None;
                 }
 
-                // Re-resolve onto every already-open view, in every window.
-                // This used to write one view state per pane (its *shown* tab)
-                // in the active window only, so the pane's other tabs kept the
-                // pre-toggle highlight and `focused_view().highlight_current_line`
-                // reported it once they became current — the same staleness as
-                // issue #3449's line-number and line-wrap toggles.
                 for window in self.windows.values_mut() {
                     window.resync_global_display_defaults();
                 }
