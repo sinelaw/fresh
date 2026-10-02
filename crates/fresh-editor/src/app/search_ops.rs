@@ -572,26 +572,16 @@ impl Editor {
         // prompt owns the keyboard, so no edit can shift the stored offsets.
         let search_bar_open = self.active_search_prompt_query().is_some();
 
-        // The overlays live on the buffer, the search state on the window, so
-        // the match set only stands for the buffer it was collected from, as
-        // it was then.
         let active_buffer = self.active_buffer();
         let buffer_version = self.active_state().buffer.version();
 
-        // Re-run the search when the stored match set no longer describes
-        // what is on screen, rather than navigating offsets that mean
-        // nothing here: a different buffer (the search ran in another tab),
-        // or the same buffer at a newer version (a query-replace rewrote the
-        // text after the overlays were dropped). Both used to send F3 to
-        // stale offsets — into a 5-byte file, or onto text that had just
-        // been replaced.
-        //
-        // Only where the overlays would otherwise have been the authority.
-        // A large file keeps its snapshot by design: re-scanning one to
-        // answer a keypress is the cost that design exists to avoid. An open
-        // search bar owns the keyboard, so nothing can have edited under it.
-        // A search within a selection cannot be re-run from here without
-        // losing its range.
+        // When the stored match set no longer describes what is on screen —
+        // another buffer, or this one after an edit the overlays did not
+        // track — its offsets mean nothing, so search again rather than
+        // navigate them. Skipped for a large file (re-scanning one per
+        // keypress is what the snapshot avoids), an open search bar (owns
+        // the keyboard, so nothing can have edited) and a search in a
+        // selection (re-running loses the range).
         if let Some(ss) = self.active_window().search_state.as_ref() {
             let overlays_are_authority = !is_large
                 && !search_bar_open
@@ -608,16 +598,15 @@ impl Editor {
                 let previous = self.active_window().search_state.clone();
                 self.perform_search(&query);
                 if self.active_window().search_state.is_none() {
-                    // Nothing here under that query. `perform_search` has
-                    // said so and dropped the search; put it back, so the
-                    // buffer it was collected from is still navigable when
-                    // the user returns to it.
+                    // `perform_search` drops the search when it finds
+                    // nothing. Put it back, so the buffer it came from is
+                    // still navigable on return.
                     self.active_window_mut().search_state = previous;
                     return;
                 }
                 // `perform_search` lands on the first match at/after the
-                // cursor, which is where a forward step should be. A
-                // backward one wants the match before it.
+                // cursor, where a forward step wants to be; a backward one
+                // needs one more.
                 if matches!(direction, SearchDirection::Backward) {
                     self.find_match_in_direction(SearchDirection::Backward);
                 }
@@ -652,12 +641,9 @@ impl Editor {
             // Use overlay positions for small files (they auto-track edits),
             // otherwise reference search_state.matches directly to avoid cloning.
             //
-            // An empty overlay set is not a reason to fall back here: while
-            // `overlays_track_matches` holds, the overlays *are* the match
-            // set, so empty means the edits removed every match. Falling back
-            // to the stored snapshot then sent F3 to byte offsets that no
-            // longer held the needle — or no longer existed at all, as after
-            // deleting the whole buffer (issue #3444).
+            // An empty overlay set is not a reason to fall back: while the
+            // overlays are the match set, empty means the edits removed
+            // every match (issue #3444).
             let use_overlays = !is_large
                 && !search_bar_open
                 && search_state.overlays_track_matches

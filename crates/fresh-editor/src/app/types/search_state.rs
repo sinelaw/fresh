@@ -34,30 +34,16 @@ pub struct SearchState {
     /// The buffer the match set was collected from, and that buffer's
     /// version at the time.
     ///
-    /// `matches` is a snapshot of byte offsets in one buffer at one moment.
-    /// It stays usable only while both still hold: a different buffer makes
-    /// the offsets meaningless (`SearchState` is per-window, so switching
-    /// tabs leaves the match set behind), and a newer version means the text
-    /// moved under them. Navigation checks this before it is willing to fall
-    /// back to the snapshot, and re-runs the search when it no longer
-    /// describes what is on screen (issue #3444).
+    /// `matches` is a snapshot of byte offsets, so it only means anything in
+    /// that buffer, unedited. Navigation searches again instead of using it
+    /// once either has changed.
     pub collected_from: (BufferId, u64),
     /// True while the search namespace holds one overlay per match, so the
-    /// overlays — whose markers track buffer edits — are the live match set
-    /// and `matches` is only the snapshot above.
+    /// overlays track edits and are the live match set.
     ///
-    /// Set for small files, where `finalize_search` builds overlays for
-    /// every match. False for large files (viewport-only overlays) and once
-    /// the overlays are dropped while the search stays navigable, as
-    /// `clear_search_overlays` does. While it holds for the active buffer,
-    /// an empty overlay set means the edits removed every match — not that
-    /// the overlays are missing — so navigation must not fall back to the
-    /// snapshot.
-    ///
-    /// Overlays wiped wholesale by something that does not know about the
-    /// search (a plugin's `ClearOverlays`, a virtual buffer refresh) are not
-    /// covered here; the staleness check on `collected_from` catches them
-    /// once the buffer has also changed.
+    /// Small files only; `clear_search_overlays` turns it off. While it
+    /// holds, an empty overlay set means the edits removed every match, not
+    /// that the overlays are missing.
     pub overlays_track_matches: bool,
 }
 
