@@ -155,18 +155,19 @@ pub fn describe_row(d: RowDesc<'_>) -> crate::view::shell::file_explorer::Row {
         left.push((" ".repeat(pad), pair(neutral, ground)));
     }
 
-    // Ancestors that compact mode folded into this row, outermost first, and
-    // where each one landed in the label so a press can name it. Counted off
-    // the runs rather than derived from the path, which would have to guess the
-    // indent, the indicator and any leading slot. Each segment takes its own
-    // separator, so no cell between two names belongs to neither.
-    let mut chain: Vec<std::ops::Range<usize>> = Vec::new();
+    // Ancestors that compact mode folded into this row, outermost first, with
+    // where each one landed in the label so a press can name it. The offsets
+    // are counted off the runs rather than derived from the path, which would
+    // have to guess the indent, the indicator and any leading slot. Each
+    // segment takes its own separator, so no cell between two names belongs to
+    // neither.
+    let mut chain: Vec<(std::ops::Range<usize>, PathBuf)> = Vec::new();
     let mut at: usize = left.iter().map(|(t, _)| t.len()).sum();
-    for name in &node.chain {
+    for seg in &node.chain {
         let start = at;
-        at += name.len() + "/".len();
-        chain.push(start..at);
-        left.push((name.clone(), pair("syntax.keyword", ground)));
+        at += seg.name.len() + "/".len();
+        chain.push((start..at, seg.path.clone()));
+        left.push((seg.name.clone(), pair("syntax.keyword", ground)));
         left.push(("/".to_string(), pair("editor.line_number_fg", ground)));
     }
 
@@ -484,7 +485,8 @@ mod tests {
         let mut node =
             projection.rows[projection.index_of(anchor_id).expect("a visible node")].clone();
         node.indent = 2;
-        assert_eq!(node.chain, vec!["chain", "a", "b"], "the folded ancestors");
+        let folded: Vec<&str> = node.chain.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(folded, vec!["chain", "a", "b"], "the folded ancestors");
         let row = describe_row(RowDesc {
             node: &node,
             row: 0,
@@ -504,13 +506,25 @@ mod tests {
 
         // The runs concatenated: the string `Event::text_byte` counts bytes of.
         let label: String = row.left.iter().map(|(t, _)| t.as_str()).collect();
-        let segments: Vec<&str> = row.chain.iter().map(|r| &label[r.clone()]).collect();
-        assert_eq!(segments, vec!["chain/", "a/", "b/"]);
+        let root = view.tree().root_path();
+        let segments: Vec<(&str, &std::path::Path)> = row
+            .chain
+            .iter()
+            .map(|(bytes, path)| (&label[bytes.clone()], path.strip_prefix(root).unwrap()))
+            .collect();
+        assert_eq!(
+            segments,
+            vec![
+                ("chain/", std::path::Path::new("chain")),
+                ("a/", std::path::Path::new("chain/a")),
+                ("b/", std::path::Path::new("chain/a/b")),
+            ]
+        );
         // Bytes, not columns: the indent and `▼ ` are six cells, eight bytes.
         assert_eq!(label, "    ▼ chain/a/b/c");
-        assert_eq!(row.chain[0].start, 8);
+        assert_eq!(row.chain[0].0.start, 8);
         // The anchor's own name is in no range, so a press on it names the row.
-        let after = row.chain.last().expect("a chain").end;
+        let after = row.chain.last().expect("a chain").0.end;
         assert_eq!(&label[after..], "c");
     }
 

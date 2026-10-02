@@ -25,7 +25,15 @@ pub struct VisibleRow {
     pub entry: DirEntry,
     pub state: NodeState,
     /// The ancestors compact mode folded into this row, outermost first.
-    pub chain: Vec<String>,
+    pub chain: Vec<ChainSegment>,
+}
+
+/// One ancestor compact mode folded into a row: the name the row draws for it,
+/// and the directory it names.
+#[derive(Debug, Clone)]
+pub struct ChainSegment {
+    pub name: String,
+    pub path: PathBuf,
 }
 
 impl VisibleRow {
@@ -196,7 +204,11 @@ impl FileTreeView {
                     chain: self
                         .compact_chain_for_anchor(id)
                         .into_iter()
-                        .filter_map(|a| self.tree.get_node(a).map(|n| n.entry.name.clone()))
+                        .filter_map(|a| self.tree.get_node(a))
+                        .map(|n| ChainSegment {
+                            name: n.entry.name.clone(),
+                            path: n.entry.path.clone(),
+                        })
                         .collect(),
                 })
             })
@@ -451,20 +463,6 @@ impl FileTreeView {
     /// the menu act on the deepest directory whichever name was clicked.
     pub fn set_selected_exact(&mut self, node_id: Option<NodeId>) {
         self.selected_node = node_id;
-    }
-
-    /// The directory one segment of a compact row's label names.
-    ///
-    /// `steps` counts up from the anchor: on a `dir1/dir2/dir3` row `1` is
-    /// `dir2` and `2` is `dir1`. From that end because the anchor is the row's
-    /// own id and cannot move, while the label was drawn a frame earlier and a
-    /// directory absorbed since would shift an index counted from the front.
-    pub fn chain_segment_node(&self, anchor: NodeId, steps: usize) -> Option<NodeId> {
-        let back = steps.checked_sub(1)?;
-        self.compact_chain_for_anchor(anchor)
-            .into_iter()
-            .rev()
-            .nth(back)
     }
 
     /// The row `id` is drawn on, by index in the visible order. A directory
@@ -1195,7 +1193,10 @@ mod tests {
         let names: Vec<(String, Vec<String>, Option<usize>)> = p
             .rows
             .iter()
-            .map(|r| (r.entry.name.clone(), r.chain.clone(), r.parent))
+            .map(|r| {
+                let chain = r.chain.iter().map(|seg| seg.name.clone()).collect();
+                (r.entry.name.clone(), chain, r.parent)
+            })
             .collect();
         assert_eq!(names[1].0, "c");
         assert_eq!(names[1].1, ["a", "b"], "a and b fold into c's row");
@@ -1670,10 +1671,10 @@ mod tests {
         assert_eq!(view.get_selected(), Some(c_id));
     }
 
-    /// Each segment of a compact `chain/a/b/c` row names its own directory,
-    /// counted up from the anchor.
+    /// Each segment of a compact `chain/a/b/c` row carries the directory it
+    /// names, so a press on one can be resolved by path.
     #[tokio::test]
-    async fn each_segment_of_a_compact_row_names_its_own_directory() {
+    async fn each_segment_of_a_compact_row_carries_its_own_directory() {
         let (_t, mut view) = create_chain_view().await;
         let root_id = view.tree().root_id();
         view.tree_mut().expand_node(root_id).await.unwrap();
@@ -1681,68 +1682,23 @@ mod tests {
             .await
             .unwrap();
 
+        let projection = view.projection();
         let c_id = id_for(&view, "chain/a/b/c");
-        let named = |steps| {
-            view.chain_segment_node(c_id, steps)
-                .map(|id| name_of(&view, id))
-        };
-        assert_eq!(named(1).as_deref(), Some("b"));
-        assert_eq!(named(2).as_deref(), Some("a"));
-        assert_eq!(named(3).as_deref(), Some("chain"));
-        // `c` is the anchor, not a folded segment: its own name is no
-        // segment's, and the caller uses the row's id for it.
-        assert_eq!(named(0), None);
-        // And past the outermost — a chain shorter than the label the press was
-        // resolved against — nothing, so the caller falls back to the anchor
-        // rather than to another entry.
-        assert_eq!(named(4), None);
-    }
-
-    /// Counting from the anchor survives a chain that grew at the front, where
-    /// an index counted from the label's left edge would slide onto the wrong
-    /// name. Staged with a hidden second child, since whether `chain` is folded
-    /// in depends on how many children are *visible*.
-    #[tokio::test]
-    async fn a_segment_counted_from_the_anchor_survives_a_longer_chain() {
-        let temp_dir = TempDir::new().unwrap();
-        let root = temp_dir.path();
-        std_fs::create_dir_all(root.join("chain/a/b/c")).unwrap();
-        std_fs::write(root.join("chain/a/b/c/leaf.txt"), "leaf").unwrap();
-        std_fs::create_dir(root.join("chain/.other")).unwrap();
-        let manager = Arc::new(FsManager::new(Arc::new(StdFileSystem)));
-        let tree = FileTree::new(root.to_path_buf(), manager).await.unwrap();
-        let mut view = FileTreeView::new(tree);
-
-        // `.other` counts as a child, so `chain` has two and is not folded in:
-        // the row draws `a/b/c`, anchored at `c`.
-        view.toggle_show_hidden();
-        let root_id = view.tree().root_id();
-        view.tree_mut().expand_node(root_id).await.unwrap();
-        let chain_id = id_for(&view, "chain");
-        view.tree_mut().expand_node(chain_id).await.unwrap();
-        view.expand_with_chain(id_for(&view, "chain/a"))
-            .await
-            .unwrap();
-        let c_id = id_for(&view, "chain/a/b/c");
-        assert_eq!(view.compact_chain_for_anchor(c_id).len(), 2);
-        let two_up = |view: &FileTreeView| {
-            view.chain_segment_node(c_id, 2)
-                .map(|id| name_of(view, id))
-                .unwrap_or_default()
-        };
-        assert_eq!(two_up(&view), "a");
-
-        // Hiding `.other` leaves `chain` with one visible child, so it folds
-        // into the same row: the chain has gained an outermost segment and the
-        // label is now `chain/a/b/c`. A press that said "two above the anchor"
-        // still means `a`.
-        view.toggle_show_hidden();
+        let row = &projection.rows[projection.index_of(c_id).expect("a row")];
+        let root = view.tree().root_path();
+        let got: Vec<(&str, &std::path::Path)> = row
+            .chain
+            .iter()
+            .map(|seg| (seg.name.as_str(), seg.path.strip_prefix(root).unwrap()))
+            .collect();
         assert_eq!(
-            view.compact_chain_for_anchor(c_id).len(),
-            3,
-            "the chain grew at the front"
+            got,
+            vec![
+                ("chain", std::path::Path::new("chain")),
+                ("a", std::path::Path::new("chain/a")),
+                ("b", std::path::Path::new("chain/a/b")),
+            ]
         );
-        assert_eq!(two_up(&view), "a");
     }
 
     /// A cursor on a segment joins the multi-selection as the row it is drawn

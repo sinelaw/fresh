@@ -482,13 +482,11 @@ pub enum UiFact {
     /// A right click on a tree row: select it and open its context menu at the
     /// pointer.
     ///
-    /// `segment` is which folded directory of a compact row's label the press
-    /// landed on, `None` for the row's own name. What the number counts is
-    /// defined by
-    /// [`FileTreeView::chain_segment_node`](crate::view::file_tree::FileTreeView::chain_segment_node).
+    /// `segment` is the folded directory of a compact row's label the press
+    /// landed on, `None` for the row's own name.
     ExplorerRowContext {
         index: usize,
-        segment: Option<usize>,
+        segment: Option<std::path::PathBuf>,
         x: u16,
         y: u16,
     },

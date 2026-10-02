@@ -84,14 +84,14 @@ pub struct Row {
     pub theme: String,
     /// Indicator, leading slot, compact chain and name, in order.
     pub left: Runs,
-    /// Where each compact-chain segment sits in the concatenation of `left`,
-    /// outermost first, each taking its own separator.
+    /// Each compact-chain segment of the label: where its name sits in the
+    /// concatenation of `left`, and the directory that name stands for.
     ///
     /// Byte ranges, because the library answers a press with the byte of the
     /// label under the pointer ([`fresh_ui::Event::text_byte`]). Deriving a
     /// column from the path instead would have to re-guess the indent, the
     /// indicator and any decoration, and would be wrong on a wide glyph.
-    pub chain: Vec<std::ops::Range<usize>>,
+    pub chain: Vec<(std::ops::Range<usize>, std::path::PathBuf)>,
     /// The status slot pushed to the right edge, if the providers gave one.
     pub trailing: Option<Slot>,
     /// `" [Error]"` for a node that failed to load.
@@ -566,14 +566,11 @@ fn node_row(caret: bool, r: &Row) -> Node<UiMsg> {
                 e.stop();
                 Some(UiMsg::Ui(UiFact::ExplorerRowContext {
                     index,
-                    // From the anchor end, so `1` is the segment next to the
-                    // row's own name: see `FileTreeView::chain_segment_node`.
                     segment: e.text_byte.and_then(|b| {
                         chain
                             .iter()
-                            .rev()
-                            .position(|seg| seg.contains(&b))
-                            .map(|back| back + 1)
+                            .find(|(bytes, _)| bytes.contains(&b))
+                            .map(|(_, path)| path.clone())
                     }),
                     x: e.pos.x.max(0) as u16,
                     y: e.pos.y.max(0) as u16,
@@ -794,7 +791,7 @@ mod tests {
         for seg in segments {
             let start = at;
             at += seg.len() + "/".len();
-            chain.push(start..at);
+            chain.push((start..at, std::path::PathBuf::from(seg)));
             left.push((seg.to_string(), Explorer::panel()));
             left.push(("/".to_string(), Explorer::panel()));
         }
@@ -928,7 +925,7 @@ mod tests {
                 .iter()
                 .find_map(|m| match m {
                     UiMsg::Ui(UiFact::ExplorerRowContext { index, segment, .. }) => {
-                        Some((*index, *segment))
+                        Some((*index, segment.clone()))
                     }
                     _ => None,
                 })
@@ -936,11 +933,11 @@ mod tests {
         };
 
         // `dir1` is cells 4..8, its separator is cell 8, `dir2` is 9..13 and
-        // its separator 13; `dir3`, the row's own name, starts at 14. The
-        // segment is counted up from the anchor, so `dir2` is 1 and `dir1` 2.
-        assert_eq!(segment_at(&mut ui, 5), (1, Some(2)), "on dir1");
-        assert_eq!(segment_at(&mut ui, 8), (1, Some(2)), "dir1's separator");
-        assert_eq!(segment_at(&mut ui, 10), (1, Some(1)), "on dir2");
+        // its separator 13; `dir3`, the row's own name, starts at 14.
+        let dir = |name: &str| Some(std::path::PathBuf::from(name));
+        assert_eq!(segment_at(&mut ui, 5), (1, dir("dir1")), "on dir1");
+        assert_eq!(segment_at(&mut ui, 8), (1, dir("dir1")), "dir1's separator");
+        assert_eq!(segment_at(&mut ui, 10), (1, dir("dir2")), "on dir2");
         assert_eq!(
             segment_at(&mut ui, 15),
             (1, None),
@@ -993,16 +990,17 @@ mod tests {
             got.msgs
                 .iter()
                 .find_map(|m| match m {
-                    UiMsg::Ui(UiFact::ExplorerRowContext { segment, .. }) => Some(*segment),
+                    UiMsg::Ui(UiFact::ExplorerRowContext { segment, .. }) => Some(segment.clone()),
                     _ => None,
                 })
                 .unwrap_or_else(|| panic!("no menu for column {col}: {:?}", got.msgs))
         };
-        assert_eq!(seg(&mut ui, 5), Some(2), "on averylongone");
-        assert_eq!(seg(&mut ui, 18), Some(1), "on another");
+        let dir = |name: &str| Some(std::path::PathBuf::from(name));
+        assert_eq!(seg(&mut ui, 5), dir("averylongone"), "on averylongone");
+        assert_eq!(seg(&mut ui, 18), dir("another"), "on another");
         assert_eq!(
             seg(&mut ui, 21),
-            Some(1),
+            dir("another"),
             "the lane's last cell, still `another`"
         );
     }
@@ -1032,14 +1030,15 @@ mod tests {
             got.msgs
                 .iter()
                 .find_map(|m| match m {
-                    UiMsg::Ui(UiFact::ExplorerRowContext { segment, .. }) => Some(*segment),
+                    UiMsg::Ui(UiFact::ExplorerRowContext { segment, .. }) => Some(segment.clone()),
                     _ => None,
                 })
                 .unwrap_or_else(|| panic!("no menu for column {col}: {:?}", got.msgs))
         };
-        assert_eq!(seg(&mut ui, 5), Some(2), "on averylongone: {drawn:?}");
-        assert_eq!(seg(&mut ui, 18), Some(1), "on another: {drawn:?}");
-        assert_eq!(seg(&mut ui, 21), Some(1), "the lane's last cell: {drawn:?}");
+        let dir = |name: &str| Some(std::path::PathBuf::from(name));
+        assert_eq!(seg(&mut ui, 5), dir("averylongone"), "on it: {drawn:?}");
+        assert_eq!(seg(&mut ui, 18), dir("another"), "on another: {drawn:?}");
+        assert_eq!(seg(&mut ui, 21), dir("another"), "last cell: {drawn:?}");
     }
 
     /// And on the row the caret is on — the row a reader is most likely to
@@ -1066,9 +1065,9 @@ mod tests {
                 m,
                 UiMsg::Ui(UiFact::ExplorerRowContext {
                     index: 1,
-                    segment: Some(2),
+                    segment: Some(ref p),
                     ..
-                })
+                }) if p == std::path::Path::new("dir1")
             )),
             "the caret's row must still name dir1: {:?}",
             got.msgs

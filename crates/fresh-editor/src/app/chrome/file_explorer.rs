@@ -24,11 +24,9 @@ enum ExplorerContextTarget {
     Row {
         /// By index in the tree's display order, not on screen.
         index: usize,
-        /// Which folded directory of a compact row's label, `None` for the
-        /// row's own name. See
-        /// [`FileTreeView::chain_segment_node`](crate::view::file_tree::FileTreeView::chain_segment_node)
-        /// for what the number counts.
-        segment: Option<usize>,
+        /// The folded directory of a compact row's label the press landed
+        /// on, `None` for the row's own name.
+        segment: Option<std::path::PathBuf>,
     },
     Body,
 }
@@ -140,7 +138,7 @@ impl Editor {
     pub(crate) fn explorer_row_context(
         &mut self,
         index: usize,
-        segment: Option<usize>,
+        segment: Option<std::path::PathBuf>,
         x: u16,
         y: u16,
     ) {
@@ -162,7 +160,8 @@ impl Editor {
                 ExplorerContextTarget::Row { index, segment } => {
                     explorer.get_node_at_index(index).map(|anchor| {
                         segment
-                            .and_then(|s| explorer.chain_segment_node(anchor, s))
+                            .and_then(|path| explorer.tree().get_node_by_path(&path))
+                            .map(|node| node.id)
                             .unwrap_or(anchor)
                     })
                 }
