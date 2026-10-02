@@ -1,0 +1,123 @@
+{
+  "name": "fresh-0.5.2-orchestrator",
+  "capture": {
+    "geometry": "150x34",
+    "font": "JetBrains Mono 24",
+    "screen": "3200x1700x24",
+    "display": ":98",
+    "term": "xterm",
+    "workdir": "~/repos/fresh/target/clips/fresh-0.5.2-repo",
+    "settle": 10,
+    "copy_dirs": {
+      "~/repos/fresh/scripts/clips/assets/fresh-0.5.2/fresh": "{scratch}/config/fresh"
+    },
+    "env": {
+      "XDG_CONFIG_HOME": "{scratch}/config",
+      "XDG_DATA_HOME": "{scratch}/data-{pane}",
+      "XDG_STATE_HOME": "{scratch}/state-{pane}",
+      "XDG_RUNTIME_DIR": "{scratch}/run-{pane}"
+    },
+    "keys": [
+      {
+        "sleep": 1
+      },
+      {
+        "key": "ctrl+p"
+      },
+      {
+        "key": "BackSpace"
+      },
+      {
+        "type": "tides"
+      },
+      {
+        "key": "Return",
+        "settle": 1.0
+      },
+      {
+        "shot": "dock"
+      },
+      {
+        "key": "ctrl+q",
+        "settle": 0.8
+      },
+      {
+        "shot": "detach"
+      }
+    ],
+    "panes": {
+      "orchestrator": {
+        "argv": [
+          "~/repos/fresh/target/debug/fresh"
+        ]
+      }
+    }
+  },
+  "render": {
+    "rows": 34,
+    "cols": 150,
+    "annotations": [
+      {
+        "rows": [
+          0,
+          4
+        ],
+        "view": "all",
+        "band": false,
+        "shot": "dock",
+        "cols": [
+          0,
+          40
+        ],
+        "tag": {
+          "text": "Orchestrator opens by default\nand stays running as a daemon",
+          "at": "center",
+          "size": 72,
+          "width": 0.8
+        }
+      },
+      {
+        "rows": [
+          20,
+          23
+        ],
+        "view": "card",
+        "band": false,
+        "shot": "detach",
+        "cols": [
+          60,
+          106
+        ],
+        "tag": {
+          "text": "Ctrl+Q detaches",
+          "at": "center",
+          "size": 76,
+          "width": 0.7,
+          "y": 0.17
+        }
+      }
+    ],
+    "views": {
+      "all": {
+        "rows": [
+          0,
+          34
+        ],
+        "cols": [
+          0,
+          150
+        ]
+      },
+      "card": {
+        "rows": [
+          6,
+          26
+        ],
+        "cols": [
+          36,
+          114
+        ]
+      }
+    }
+  }
+}
