@@ -106,6 +106,33 @@ fn wait_for_search_finished(harness: &mut EditorTestHarness) {
         .unwrap();
 }
 
+/// Wait until the "hello" search over `create_test_files` shows its rows
+/// where they will stay: alpha.txt's group first, beta.txt's below it.
+///
+/// Results stream in file-arrival order and are re-sorted into path order
+/// once the search finishes (#2435), which re-numbers the rows. A test that
+/// reads a row off a frame drawn before that — two identical frames are easy
+/// to get while the producer is still walking the project — clicks or
+/// navigates a row that means something else to the plugin by the time the
+/// input lands, and the wait that follows never resolves. The only other
+/// match in the project is the copied `plugins/lib/fresh.d.ts`, which sorts
+/// after both, and late arrivals are appended below; so once alpha.txt leads
+/// with beta.txt under it, no later frame moves their rows.
+fn wait_for_sorted_hello_results(harness: &mut EditorTestHarness) {
+    harness
+        .wait_until_stable(|h| {
+            let s = h.screen_to_string();
+            let first = |needle: &str| s.lines().position(|l| l.contains(needle));
+            match (first("alpha.txt:1"), first("beta.txt"), first("fresh.d.ts")) {
+                (Some(alpha), Some(beta), other) => {
+                    alpha < beta && other.is_none_or(|other| other > alpha)
+                }
+                _ => false,
+            }
+        })
+        .unwrap();
+}
+
 /// Text only the Replace confirmation dialog shows (its undo caveat).
 const CONFIRM_DIALOG_TEXT: &str = "Undo only covers";
 
@@ -2708,12 +2735,7 @@ fn test_search_replace_click_opens_match() {
         .wait_until(|h| h.screen_to_string().contains("Search:"))
         .unwrap();
     harness.type_text("hello").unwrap();
-    harness
-        .wait_until_stable(|h| {
-            let s = h.screen_to_string();
-            s.contains("alpha.txt:1") && s.contains("beta.txt")
-        })
-        .unwrap();
+    wait_for_sorted_hello_results(&mut harness);
 
     // Sanity: the source pane (top rows) shows gamma.txt, not any match.
     let before = harness.screen_to_string();
@@ -2763,12 +2785,7 @@ fn test_search_replace_nav_highlights_selection() {
         .wait_until(|h| h.screen_to_string().contains("Search:"))
         .unwrap();
     harness.type_text("hello").unwrap();
-    harness
-        .wait_until_stable(|h| {
-            let s = h.screen_to_string();
-            s.contains("alpha.txt:1") && s.contains("beta.txt")
-        })
-        .unwrap();
+    wait_for_sorted_hello_results(&mut harness);
 
     // Screen rows of the match leaf rows (they render "…:<line> - hello…").
     let screen = harness.screen_to_string();
