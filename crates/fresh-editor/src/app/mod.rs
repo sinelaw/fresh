@@ -1605,6 +1605,8 @@ pub struct Editor {
     /// A draggable tree row held by the pointer, from its press to its
     /// release. See [`shell_host::WidgetDrag`].
     pub(crate) widget_drag: Option<shell_host::WidgetDrag>,
+    /// The explorer row the pointer is holding, if any.
+    pub(crate) explorer_drag: Option<shell_host::ExplorerDrag>,
     /// Each mounted panel's memoised tree projections, kept across frames so
     /// the description of an unchanged tree is not an O(nodes) walk. Keyed
     /// the way `prose_reveal` is, and dropped with the panel.

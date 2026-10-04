@@ -1139,27 +1139,37 @@ impl Editor {
             if conflicts.is_empty() {
                 self.execute_resolved_multi_paste(safe, vec![], is_cut);
             } else {
-                let name = truncate_name_for_prompt(
-                    &conflicts[0]
-                        .1
-                        .file_name()
-                        .unwrap_or_default()
-                        .to_string_lossy(),
-                    40,
-                );
-                let confirm = crate::app::confirm_dialog::multi_paste_conflict(&name);
-                self.start_confirm_prompt(
-                    confirm.body.clone(),
-                    crate::view::prompt::PromptType::ConfirmMultiPasteConflict {
-                        safe,
-                        confirmed: Vec::new(),
-                        pending: conflicts,
-                        is_cut,
-                    },
-                    confirm,
-                );
+                self.confirm_multi_paste_conflicts(safe, conflicts, is_cut);
             }
         }
+    }
+
+    /// Ask about the destinations that are already taken, carrying the rest to
+    /// be done either way. A drop asks it the same way a paste does.
+    fn confirm_multi_paste_conflicts(
+        &mut self,
+        safe: Vec<(PathBuf, PathBuf)>,
+        conflicts: Vec<(PathBuf, PathBuf)>,
+        is_cut: bool,
+    ) {
+        let Some(first) = conflicts.first() else {
+            return;
+        };
+        let name = truncate_name_for_prompt(
+            &first.1.file_name().unwrap_or_default().to_string_lossy(),
+            40,
+        );
+        let confirm = crate::app::confirm_dialog::multi_paste_conflict(&name);
+        self.start_confirm_prompt(
+            confirm.body.clone(),
+            crate::view::prompt::PromptType::ConfirmMultiPasteConflict {
+                safe,
+                confirmed: Vec::new(),
+                pending: conflicts,
+                is_cut,
+            },
+            confirm,
+        );
     }
 
     /// Paste all resolved items (safe + confirmed-overwrite) from a multi-conflict flow.
@@ -1175,9 +1185,25 @@ impl Editor {
         to_overwrite: Vec<(PathBuf, PathBuf)>,
         is_cut: bool,
     ) {
+        if self.relocate_entries(safe, to_overwrite, is_cut) && is_cut {
+            self.active_window_mut().file_explorer_clipboard = None;
+        }
+    }
+
+    /// Move or copy several entries, with one tree refresh for the lot.
+    /// Reports whether every one of them arrived whole.
+    ///
+    /// The clipboard is the caller's business, as in [`Self::relocate_entry`]:
+    /// a paste empties it, a drag never filled it.
+    fn relocate_entries(
+        &mut self,
+        safe: Vec<(PathBuf, PathBuf)>,
+        to_overwrite: Vec<(PathBuf, PathBuf)>,
+        is_cut: bool,
+    ) -> bool {
         let total = safe.len() + to_overwrite.len();
         if total == 0 {
-            return;
+            return false;
         }
 
         let mut succeeded: Vec<(PathBuf, PathBuf)> = Vec::with_capacity(total);
@@ -1281,13 +1307,11 @@ impl Editor {
             self.set_status_message(msg);
         }
 
-        // Clear the clipboard only when the move was fully clean — if a
-        // source is still sitting at its original location the user may
-        // want to retry, and the clipboard still contains the right path.
-        if is_cut && first_error.is_none() && partial_moves.is_empty() {
-            self.active_window_mut().file_explorer_clipboard = None;
-        }
         self.active_window_mut().key_context = KeyContext::FileExplorer;
+        // Fully clean: nothing failed and no source is still sitting where it
+        // was. A caller that owns a clipboard keeps it in any other case, so
+        // the reader can retry with the right paths still in it.
+        first_error.is_none() && partial_moves.is_empty()
     }
 
     /// Move or copy a single item at the filesystem level. No tree or UI
@@ -1450,6 +1474,25 @@ impl Editor {
     }
 
     pub fn perform_file_explorer_paste(&mut self, src: PathBuf, dst: PathBuf, is_cut: bool) {
+        // A completed move empties the clipboard; anything else leaves it, so
+        // the reader can try again. That is the *paste's* business — a drag
+        // never touched the clipboard — which is why it lives out here and
+        // `relocate_entry` is free of it.
+        if self.relocate_entry(&src, &dst, is_cut) && is_cut {
+            self.active_window_mut().file_explorer_clipboard = None;
+        }
+    }
+
+    /// Move or copy one entry to `dst`, a full destination path including the
+    /// name it lands under. Reports whether it arrived whole.
+    ///
+    /// Everything a reader sees afterwards is here: open buffers follow a
+    /// move, both directories are reloaded, the cursor lands on the entry at
+    /// its new path, and the status line says which of the three things
+    /// happened.
+    fn relocate_entry(&mut self, src: &Path, dst: &Path, is_cut: bool) -> bool {
+        let src = src.to_path_buf();
+        let dst = dst.to_path_buf();
         let name = dst
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
@@ -1467,13 +1510,13 @@ impl Editor {
                     self.relocate_buffers_for_rename(&src, &dst);
                 }
                 self.refresh_tree_after_paste(&src, &dst, is_cut);
-                if is_cut {
-                    self.active_window_mut().file_explorer_clipboard = None;
-                    self.set_status_message(t!("explorer.pasted_moved", name = &name).to_string());
-                } else {
-                    self.set_status_message(t!("explorer.pasted", name = &name).to_string());
-                }
+                let key = match is_cut {
+                    true => "explorer.pasted_moved",
+                    false => "explorer.pasted",
+                };
+                self.set_status_message(t!(key, name = &name).to_string());
                 self.active_window_mut().key_context = KeyContext::FileExplorer;
+                true
             }
             PasteOpOutcome::SourceRemovalFailed {
                 dst: landed_dst,
@@ -1492,9 +1535,8 @@ impl Editor {
                     )
                     .to_string(),
                 );
-                // NB: don't clear the clipboard — source is still at its
-                // original location and the user may want to retry.
                 self.active_window_mut().key_context = KeyContext::FileExplorer;
+                false
             }
             PasteOpOutcome::Failed(e) => {
                 let msg = if is_cut {
@@ -1503,7 +1545,94 @@ impl Editor {
                     t!("explorer.error_copying", error = e.to_string()).to_string()
                 };
                 self.set_status_message(msg);
+                false
             }
+        }
+    }
+
+    /// The entry a row (and optionally one of its folded directories) names.
+    pub(crate) fn explorer_entry_path(
+        &self,
+        index: usize,
+        segment: Option<&Path>,
+    ) -> Option<PathBuf> {
+        let explorer = self.file_explorer()?;
+        let id = explorer.press_target(index, segment)?;
+        Some(explorer.tree().get_node(id)?.entry.path.clone())
+    }
+
+    /// The directory a drop on that row would land in: the entry itself when it
+    /// is a directory, otherwise the directory holding it — the same rule paste
+    /// uses for the selected entry.
+    pub(crate) fn explorer_drop_dir(
+        &self,
+        index: usize,
+        segment: Option<&Path>,
+    ) -> Option<PathBuf> {
+        let explorer = self.file_explorer()?;
+        let id = explorer.press_target(index, segment)?;
+        Some(get_parent_dir_path(explorer.tree().get_node(id)?))
+    }
+
+    /// Move what the held drag lifted into `dest`.
+    ///
+    /// The whole multi-selection when the lifted entry is part of one, which is
+    /// what dragging one of several highlighted rows means; otherwise the one
+    /// entry. Either way this is the clipboard's move path with the clipboard
+    /// left out of it, so a drag gets the cross-device fallback, the buffer
+    /// relocation and the reload of both directories for free.
+    pub(crate) fn explorer_drop_into(&mut self, dest: &Path) {
+        let Some(drag) = self.explorer_drag.as_ref() else {
+            return;
+        };
+        let Some(lifted) = self.explorer_entry_path(drag.index, drag.segment.as_deref()) else {
+            return;
+        };
+        let mut sources = self
+            .file_explorer()
+            .map(|e| e.effective_selection())
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|id| {
+                self.file_explorer()
+                    .and_then(|e| e.tree().get_node(id))
+                    .map(|n| n.entry.path.clone())
+            })
+            .collect::<Vec<_>>();
+        if !sources.contains(&lifted) {
+            sources = vec![lifted];
+        }
+
+        // A directory dropped into itself or into its own descendant is
+        // refused by `paste_one_fs_op`, which is the one place that states the
+        // rule; it reports as a failed move, which is what it is.
+        let fs = std::sync::Arc::clone(&self.authority().filesystem);
+        let pairs: Vec<(PathBuf, PathBuf)> = sources
+            .into_iter()
+            .filter_map(|src| {
+                let name = src.file_name()?;
+                let dst = dest.join(name);
+                // Already where it is going.
+                (dst != src).then_some((src, dst))
+            })
+            .collect();
+        if pairs.is_empty() {
+            return;
+        }
+
+        // The same split paste makes: what can land untouched goes now, and a
+        // collision asks, through the prompt paste already uses for it.
+        let (clashing, safe): (Vec<_>, Vec<_>) =
+            pairs.into_iter().partition(|(_, dst)| fs.exists(dst));
+        match (safe.len(), clashing.len()) {
+            (1, 0) => {
+                let (src, dst) = safe.into_iter().next().expect("one");
+                self.relocate_entry(&src, &dst, true);
+            }
+            (_, 0) => {
+                self.relocate_entries(safe, Vec::new(), true);
+            }
+            _ => self.confirm_multi_paste_conflicts(safe, clashing, true),
         }
     }
 

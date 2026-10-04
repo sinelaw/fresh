@@ -25,6 +25,7 @@ struct ExplorerRows {
     focused: bool,
     unsaved: std::collections::HashSet<std::path::PathBuf>,
     cut: Vec<std::path::PathBuf>,
+    drop_target: Option<std::path::PathBuf>,
     search: Option<crate::view::file_tree::FileExplorerSearch>,
     decorations: std::rc::Rc<crate::view::file_tree::FileExplorerDecorationCache>,
     slot_overrides: std::rc::Rc<crate::view::file_tree::FileExplorerSlotOverrideCache>,
@@ -51,6 +52,7 @@ impl ExplorerRows {
             focused: self.focused,
             unsaved: &self.unsaved,
             cut: &self.cut,
+            drop_target: self.drop_target.as_deref(),
             fuzzy: fuzzy.as_ref(),
             decorations: &self.decorations,
             slot_overrides: &self.slot_overrides,
@@ -3211,8 +3213,10 @@ impl Editor {
             .filter(|cb| cb.is_cut)
             .map(|cb| cb.paths.clone())
             .unwrap_or_default();
+        let drop_target = self.explorer_drag.as_ref().and_then(|d| d.target.clone());
         let rows = std::rc::Rc::new(ExplorerRows {
             projection: projection.clone(),
+            drop_target,
             selected,
             multi: view.multi_selection().clone(),
             focused,

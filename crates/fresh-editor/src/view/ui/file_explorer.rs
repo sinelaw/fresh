@@ -39,6 +39,8 @@ pub struct RowDesc<'a> {
     pub focused: bool,
     pub unsaved: &'a HashSet<PathBuf>,
     pub cut: &'a [PathBuf],
+    /// The directory a held drag would drop into, if the pointer is over one.
+    pub drop_target: Option<&'a std::path::Path>,
     pub fuzzy: Option<&'a FuzzyMatch>,
     pub decorations: &'a crate::view::file_tree::FileExplorerDecorationCache,
     pub slot_overrides: &'a crate::view::file_tree::FileExplorerSlotOverrideCache,
@@ -75,7 +77,12 @@ pub fn describe_row(d: RowDesc<'_>) -> crate::view::shell::file_explorer::Row {
         .map(|m| m.is_hidden)
         .unwrap_or(false);
     let neutral = fe::neutral_key(is_hidden, node.entry.is_symlink(), node.is_dir());
-    let ground = if d.is_cursor && d.focused {
+    // The drop target outranks the cursor: while a drag is held, where it
+    // would land is the thing the reader needs to see, and it is the only one
+    // of these that is about the pointer rather than the keyboard.
+    let ground = if d.drop_target == Some(node.entry.path.as_path()) {
+        "editor.selection_bg"
+    } else if d.is_cursor && d.focused {
         "editor.selection_bg"
     } else if d.is_cursor {
         "editor.current_line_bg"
@@ -294,6 +301,7 @@ mod tests {
             focused: false,
             unsaved: &HashSet::new(),
             cut: &[],
+            drop_target: None,
             fuzzy: None,
             decorations,
             slot_overrides,
@@ -478,6 +486,52 @@ mod tests {
             .any(|(text, style)| text == "M" && style.fg == Some(theme.file_status_modified_fg)));
     }
 
+    /// A directory a held drag is over wears the selection ground, so a reader
+    /// can see where a drop would land — and it outranks the keyboard cursor,
+    /// which is on some other row entirely while the pointer is dragging.
+    #[tokio::test]
+    async fn the_drop_target_shows_where_a_drag_would_land() {
+        let (_temp_dir, view) = create_renderer_view().await;
+        let theme = Theme::load_builtin("dark").unwrap();
+        let src_path = view.tree().root_path().join("src");
+        let src_id = view.tree().get_node_by_path(&src_path).unwrap().id;
+
+        let resolver = crate::view::file_tree::default_slot_providers().resolver();
+        let projection = view.projection();
+        let node = &projection.rows[projection.index_of(src_id).expect("a row")];
+        let describe = |drop_target: Option<&std::path::Path>| {
+            describe_row(RowDesc {
+                node,
+                row: 0,
+                is_cursor: false,
+                is_multi: false,
+                focused: false,
+                unsaved: &HashSet::new(),
+                cut: &[],
+                drop_target,
+                fuzzy: None,
+                decorations: &FileExplorerDecorationCache::default(),
+                slot_overrides: &FileExplorerSlotOverrideCache::default(),
+                slot_resolver: &resolver,
+                theme: &theme,
+                collapsed: ">",
+                expanded: "▼",
+            })
+        };
+
+        let plain = describe(None);
+        let under_drag = describe(Some(&src_path));
+        assert_ne!(
+            plain.theme, under_drag.theme,
+            "the row a drop would land in should not look like an idle one"
+        );
+        assert_eq!(
+            describe(Some(&view.tree().root_path().join("README.md"))).theme,
+            plain.theme,
+            "and only that row should change"
+        );
+    }
+
     /// A compact row's label comes apart the way presses need it to: the indent
     /// and indicator are the row's, each folded directory is its own part with
     /// its own path, and the anchor's name is the row's again.
@@ -503,6 +557,7 @@ mod tests {
             focused: false,
             unsaved: &HashSet::new(),
             cut: &[],
+            drop_target: None,
             fuzzy: None,
             decorations: &FileExplorerDecorationCache::default(),
             slot_overrides: &FileExplorerSlotOverrideCache::default(),

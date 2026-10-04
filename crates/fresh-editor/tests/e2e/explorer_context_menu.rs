@@ -1008,3 +1008,114 @@ fn test_right_click_compact_chain_segment_selects_that_directory() {
         h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
     }
 }
+
+// ── drag to move ─────────────────────────────────────────────────────────────
+
+/// Dragging an entry onto a directory moves it there.
+///
+/// The first of #3427's unimplemented items: before this, the press selected
+/// and previewed the entry and the release did nothing, so the only way to
+/// move anything was cut and paste.
+#[test]
+fn test_dragging_an_entry_onto_a_directory_moves_it() {
+    let mut h = EditorTestHarness::with_temp_project(100, 30).unwrap();
+    let root = h.project_dir().unwrap();
+    fs::create_dir_all(root.join("dest")).unwrap();
+    fs::write(root.join("moved.txt"), "payload").unwrap();
+
+    h.editor_mut().focus_file_explorer();
+    h.wait_for_file_explorer().unwrap();
+    h.wait_for_file_explorer_item("moved.txt").unwrap();
+    h.render().unwrap();
+
+    let (from, to) = (
+        explorer_row_of(&h, "moved.txt").expect("the file's row"),
+        explorer_row_of(&h, "dest").expect("the directory's row"),
+    );
+    h.mouse_drag(EXPLORER_COL, from, EXPLORER_COL, to).unwrap();
+    h.render().unwrap();
+
+    assert!(
+        root.join("dest/moved.txt").is_file(),
+        "the entry should have moved into the directory it was dropped on.\n{}",
+        h.screen_to_string()
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("dest/moved.txt")).unwrap(),
+        "payload",
+        "it should be the same file"
+    );
+    assert!(
+        !root.join("moved.txt").exists(),
+        "and it should be gone from the root"
+    );
+}
+
+/// A press and release on one row is a click, not a move.
+///
+/// The press takes the pointer so a drag *can* start, so the thing to prove is
+/// that an ordinary click still reads as one and nothing is moved.
+#[test]
+fn test_a_click_on_a_row_moves_nothing() {
+    let mut h = EditorTestHarness::with_temp_project(100, 30).unwrap();
+    let root = h.project_dir().unwrap();
+    fs::create_dir_all(root.join("dest")).unwrap();
+    fs::write(root.join("stay.txt"), "payload").unwrap();
+
+    h.editor_mut().focus_file_explorer();
+    h.wait_for_file_explorer().unwrap();
+    h.wait_for_file_explorer_item("stay.txt").unwrap();
+    h.render().unwrap();
+
+    let row = explorer_row_of(&h, "stay.txt").expect("the file's row");
+    h.mouse_click(EXPLORER_COL, row).unwrap();
+    h.render().unwrap();
+
+    assert!(
+        root.join("stay.txt").is_file(),
+        "a click must leave the entry where it is.\n{}",
+        h.screen_to_string()
+    );
+    assert!(!root.join("dest/stay.txt").exists());
+}
+
+/// Dropping an entry back into the directory it already lives in does nothing,
+/// and says nothing: it is not a move and not an error.
+#[test]
+fn test_dropping_an_entry_where_it_already_is_does_nothing() {
+    let mut h = EditorTestHarness::with_temp_project(100, 30).unwrap();
+    let root = h.project_dir().unwrap();
+    fs::write(root.join("a.txt"), "a").unwrap();
+    fs::write(root.join("b.txt"), "b").unwrap();
+
+    h.editor_mut().focus_file_explorer();
+    h.wait_for_file_explorer().unwrap();
+    h.wait_for_file_explorer_item("b.txt").unwrap();
+    h.render().unwrap();
+
+    let (from, to) = (
+        explorer_row_of(&h, "a.txt").expect("a's row"),
+        explorer_row_of(&h, "b.txt").expect("b's row"),
+    );
+    h.mouse_drag(EXPLORER_COL, from, EXPLORER_COL, to).unwrap();
+    h.render().unwrap();
+
+    assert!(root.join("a.txt").is_file(), "a.txt should still be there");
+    assert_eq!(
+        fs::read_to_string(root.join("b.txt")).unwrap(),
+        "b",
+        "and b.txt must not have been replaced by it"
+    );
+}
+
+/// The screen row an entry is drawn on, by its name.
+fn explorer_row_of(h: &EditorTestHarness, name: &str) -> Option<u16> {
+    h.screen_to_string()
+        .lines()
+        .enumerate()
+        .find(|(_, line)| {
+            let lane: String = line.chars().take(30).collect();
+            lane.contains(name)
+        })
+        .map(|(i, _)| i as u16)
+}

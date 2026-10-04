@@ -549,15 +549,23 @@ fn node_row(caret: bool, r: &Row) -> Node<UiMsg> {
     presses(body, r.index, None)
 }
 
-/// The presses every part of a row answers: left selects and opens, right opens
-/// the context menu. `segment` is the folded directory this part draws, `None`
-/// for the parts that are the row's own.
+/// The gestures every part of a row answers: left lifts it, right opens the
+/// context menu, and a held drag can be dropped on it. `segment` is the folded
+/// directory this part draws, `None` for the parts that are the row's own.
 ///
-/// Both stop, which is what the chrome component reported `Consumed` for — and
-/// on a segment it is also what keeps the row's own listener from answering the
-/// same press as the row.
+/// The presses stop, which is what the chrome component reported `Consumed`
+/// for — and on a segment it is also what keeps the row's own listener from
+/// answering the same press as the row. The drag gestures do not: they are not
+/// propagated in the first place.
+///
+/// **The left press takes the pointer as a drag and still reports itself.** A
+/// press selects and opens as it always has; the drag only matters once it
+/// reaches another directory, and a release that never did is already spent.
+/// The widget trees defer their click to the drop instead, because a row there
+/// has nothing to do until it knows which gesture it was — an explorer row
+/// does.
 fn presses(body: Node<UiMsg>, index: usize, segment: Option<std::path::PathBuf>) -> Node<UiMsg> {
-    let for_context = segment.clone();
+    let (for_context, for_over, for_drop) = (segment.clone(), segment.clone(), segment.clone());
     gesture(body)
         .on(
             GestureKind::Press,
@@ -566,10 +574,33 @@ fn presses(body: Node<UiMsg>, index: usize, segment: Option<std::path::PathBuf>)
                     return None;
                 }
                 e.stop();
+                e.start_drag();
                 Some(UiMsg::Ui(UiFact::ExplorerRowPress {
                     index,
                     segment: segment.clone(),
                     clicks: e.clicks,
+                }))
+            }),
+        )
+        .on(
+            GestureKind::DragEnter,
+            Rc::new(move |_: &Event| {
+                Some(UiMsg::Ui(UiFact::ExplorerRowDragOver {
+                    index,
+                    segment: for_over.clone(),
+                }))
+            }),
+        )
+        .on(
+            GestureKind::DragLeave,
+            Rc::new(|_: &Event| Some(UiMsg::Ui(UiFact::ExplorerRowDragLeave))),
+        )
+        .on(
+            GestureKind::Drop,
+            Rc::new(move |_: &Event| {
+                Some(UiMsg::Ui(UiFact::ExplorerRowDrop {
+                    index,
+                    segment: for_drop.clone(),
                 }))
             }),
         )
@@ -1020,6 +1051,55 @@ mod tests {
             "on dir3, the row itself"
         );
         assert_eq!(segment_at(&mut ui, 2), (1, None), "the indicator");
+    }
+
+    /// A row says when a held drag crosses it and when one is dropped on it,
+    /// naming itself so the host knows where the drop landed.
+    ///
+    /// The press that lifts the drag still reports itself — selecting on press
+    /// is unchanged — which is why there is no separate "drag started" fact.
+    #[test]
+    fn a_row_answers_a_drag_crossing_it_and_a_drop_on_it() {
+        let e = panel_of(vec![row_of(0, "proj", None), row_of(1, "dir", None)], 30);
+        let mut ui = laid_out(e, 30, 8);
+        let lane = ui.rect_of(ui.find_by_key(&key_of("proj")).expect("row 0"));
+        let (from, to) = (
+            Point::new(lane.x + 3, lane.y),
+            Point::new(lane.x + 3, lane.y + 1),
+        );
+
+        let press = ui.dispatch(Input::press(from, MouseButton::Left, Mods::NONE));
+        assert!(
+            press
+                .msgs
+                .iter()
+                .any(|m| matches!(m, UiMsg::Ui(UiFact::ExplorerRowPress { index: 0, .. }))),
+            "the press still reports itself: {:?}",
+            press.msgs
+        );
+
+        let moved = ui.dispatch(Input::Move {
+            pos: to,
+            mods: Mods::NONE,
+        });
+        assert!(
+            moved
+                .msgs
+                .iter()
+                .any(|m| matches!(m, UiMsg::Ui(UiFact::ExplorerRowDragOver { index: 1, .. }))),
+            "the row under the drag should say so: {:?}",
+            moved.msgs
+        );
+
+        let released = ui.dispatch(Input::release(to, MouseButton::Left, Mods::NONE));
+        assert!(
+            released
+                .msgs
+                .iter()
+                .any(|m| matches!(m, UiMsg::Ui(UiFact::ExplorerRowDrop { index: 1, .. }))),
+            "the row under the release should take the drop: {:?}",
+            released.msgs
+        );
     }
 
     /// A label too long for the lane still names the segment drawn in its last
