@@ -552,22 +552,48 @@ fn test_context_menu_hover_stays_open() {
     );
 }
 
-// ── second right-click replaces menu ─────────────────────────────────────────
+// ── a second right-click ─────────────────────────────────────────────────────
 
-/// A second right-click at a different position replaces the existing menu
-/// (the menu closes then reopens at the new position).
+/// A press inside the open menu is the menu's, so the menu stays up.
+///
+/// This test used to claim it proved the opposite — that a second right-click
+/// "closes then reopens at the new position" — while clicking two rows down,
+/// which is *inside* the box the first click opened. It passed either way and
+/// so said nothing. What the second press actually does is covered below.
 #[test]
-fn test_second_right_click_replaces_menu() {
+fn test_a_right_click_inside_the_menu_leaves_it_open() {
     let mut h = harness_with_explorer();
 
     h.mouse_right_click(EXPLORER_COL, EXPLORER_ROW).unwrap();
     assert!(context_menu_visible(&h));
 
-    // Right-click at a different row — should reopen at the new position.
+    // The menu is anchored just below the press, so two rows down is in it.
     h.mouse_right_click(EXPLORER_COL, EXPLORER_ROW + 2).unwrap();
     assert!(
         context_menu_visible(&h),
-        "Context menu should be open after second right-click"
+        "a press inside the menu should not dismiss it"
+    );
+}
+
+/// A press outside the menu dismisses it, and is spent doing so.
+///
+/// Deliberate, and the library says why: "A click outside a menu is spent
+/// closing the menu: that *is* the gesture, and the menu was in the way of
+/// it" (`fresh_ui::Dismiss::pass_through`). So the press does not also open a
+/// menu where it landed, the way a desktop file manager would — noted here
+/// because it reads as a missing feature until you find that sentence.
+#[test]
+fn test_a_right_click_outside_the_menu_only_dismisses_it() {
+    let mut h = harness_with_explorer();
+
+    h.mouse_right_click(EXPLORER_COL, EXPLORER_ROW + 1).unwrap();
+    assert!(context_menu_visible(&h));
+
+    // The menu hangs below its anchor, so the row above the anchor is outside.
+    h.mouse_right_click(EXPLORER_COL, EXPLORER_ROW).unwrap();
+    assert!(
+        !context_menu_visible(&h),
+        "a press outside the menu should dismiss it"
     );
 }
 

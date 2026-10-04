@@ -952,6 +952,7 @@
   "explorer.paste_conflict_multi": "'%{name}' は既に存在します。",
   "explorer.pasted_n": "%{count} 件を貼り付けました",
   "explorer.pasted_moved_n": "%{count} 件を移動しました",
+  "explorer.create_cancelled": "作成をキャンセル",
   "explorer.created_dir": "フォルダを作成: %{name}",
   "explorer.created_file": "ファイルを作成: %{name}",
   "explorer.cut": "切り取り対象: %{name}",

@@ -447,29 +447,114 @@ impl Editor {
         Ok(())
     }
 
+    /// Re-read the tree from disk.
+    ///
+    /// The whole tree, not the selected node: a reader reaching for refresh
+    /// wants what changed outside the editor, and the explorer only notices
+    /// that on a three-second directory-mtime poll of the directories it has
+    /// open (`poll_file_tree_changes`), which sees nothing in a collapsed
+    /// subtree and nothing on a filesystem with coarse directory mtimes.
+    ///
+    /// It also used to need a selection — it returned in silence without one,
+    /// and reported an error when the selection was a file, since a file
+    /// cannot be expanded. The panel's refresh button has no selection to
+    /// offer, and neither has a reader who has not clicked anything yet.
     pub fn file_explorer_refresh(&mut self) {
-        let (selected_id, node_name) = if let Some(explorer) = self.file_explorer() {
-            if let Some(selected_id) = explorer.get_selected() {
-                let node_name = explorer
-                    .tree()
-                    .get_node(selected_id)
-                    .map(|n| n.entry.name.clone());
-                (Some(selected_id), node_name)
-            } else {
-                (None, None)
-            }
-        } else {
+        let Some(root) = self
+            .file_explorer()
+            .map(|explorer| explorer.tree().root_path().to_path_buf())
+        else {
+            return;
+        };
+        self.set_status_message(t!("explorer.refreshing", name = root.display()).to_string());
+        // `refresh_file_tree_dirs` reloads each directory's expanded subtree in
+        // place and then re-resolves the cursor by path, which is what keeps a
+        // refresh from dropping the reader where they were standing.
+        self.refresh_file_tree_dirs(&[root]);
+        self.set_status_message(t!("explorer.refreshed_default").to_string());
+    }
+
+    /// Ask for the new entry's name. Nothing is written until the prompt is
+    /// confirmed, and `perform_file_explorer_create` does the writing.
+    ///
+    /// The entry used to be created immediately under a generated name and
+    /// renamed afterwards, which left that placeholder behind whenever the
+    /// naming did not complete — on Escape, and on Enter with the name
+    /// unchanged, both of which took the "rename cancelled" exit.
+    fn file_explorer_new_entry(&mut self, is_dir: bool) {
+        let Some(parent) = self.file_explorer().and_then(|explorer| {
+            let node = explorer.tree().get_node(explorer.get_selected()?)?;
+            Some(get_parent_dir_path(node))
+        }) else {
+            return;
+        };
+        let message = match is_dir {
+            true => t!("explorer.new_directory_prompt"),
+            false => t!("explorer.new_file_prompt"),
+        };
+        self.set_prompt(crate::view::prompt::Prompt::new(
+            message.to_string(),
+            crate::view::prompt::PromptType::FileExplorerCreate { parent, is_dir },
+        ));
+    }
+
+    pub fn file_explorer_new_file(&mut self) {
+        self.file_explorer_new_entry(false);
+    }
+
+    /// Create the entry a `FileExplorerCreate` prompt named, under `parent`.
+    ///
+    /// The name may be a relative path; `entry_path_for_name` decides what it
+    /// points at and refuses what it may not.
+    pub fn perform_file_explorer_create(&mut self, parent: PathBuf, is_dir: bool, name: String) {
+        let name = name.trim().to_string();
+        if name.is_empty() {
+            self.set_status_message(t!("explorer.create_cancelled").to_string());
+            return;
+        }
+        let Some(path) = self.entry_path_for_name(&parent, &name) else {
             return;
         };
 
-        let Some(selected_id) = selected_id else {
-            return;
+        let fs = std::sync::Arc::clone(&self.authority().filesystem);
+        // `create_dir_all` covers the directories a relative name asked for,
+        // and is also what makes the directory case a one-liner.
+        let result = match is_dir {
+            true => fs.create_dir_all(&path),
+            false => path
+                .parent()
+                .map_or(Ok(()), |p| fs.create_dir_all(p))
+                .and_then(|()| fs.create_file(&path).map(|_| ())),
         };
-
-        if let Some(name) = &node_name {
-            self.set_status_message(t!("explorer.refreshing", name = name).to_string());
+        if let Err(e) = result {
+            let key = match is_dir {
+                true => "explorer.error_creating_dir",
+                false => "explorer.error_creating_file",
+            };
+            self.set_status_message(t!(key, error = e.to_string()).to_string());
+            return;
         }
 
+        let shown = path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| name.clone());
+        self.reveal_created_entry(&path);
+        let key = match is_dir {
+            true => "explorer.created_dir",
+            false => "explorer.created_file",
+        };
+        self.set_status_message(t!(key, name = &shown).to_string());
+        if !is_dir {
+            if let Err(e) = self.open_file(&path) {
+                tracing::warn!("Failed to open new file: {}", e);
+            }
+        }
+    }
+
+    /// Show a just-created entry: reload the directory it landed in and put the
+    /// cursor on it.
+    fn reveal_created_entry(&mut self, path: &Path) {
         let active_id = self.active_window;
         if let (Some(runtime), Some(explorer)) = (
             self.tokio_runtime.as_ref(),
@@ -477,153 +562,24 @@ impl Editor {
                 .get_mut(&active_id)
                 .and_then(|w| w.file_explorer.as_mut()),
         ) {
-            let tree = explorer.tree_mut();
-            let result = runtime.block_on(tree.refresh_node(selected_id));
-            match result {
-                Ok(()) => {
-                    if let Some(name) = node_name {
-                        self.set_status_message(t!("explorer.refreshed", name = &name).to_string());
-                    } else {
-                        self.set_status_message(t!("explorer.refreshed_default").to_string());
-                    }
-                }
-                Err(e) => {
-                    self.set_status_message(
-                        t!("explorer.error_refreshing", error = e.to_string()).to_string(),
-                    );
+            if let Some(parent_id) = path
+                .parent()
+                .and_then(|p| explorer.tree().get_node_by_path(p))
+                .map(|n| n.id)
+            {
+                if let Err(e) =
+                    runtime.block_on(explorer.tree_mut().reload_expanded_node(parent_id))
+                {
+                    tracing::warn!("Failed to refresh file tree: {}", e);
                 }
             }
+            explorer.navigate_to_path(path);
         }
-    }
-
-    pub fn file_explorer_new_file(&mut self) {
-        let active_id = self.active_window;
-        // Capture the active backend's filesystem before the mutable explorer
-        // borrow below (`self.authority()` reads the active window, so it
-        // can't be called while `self.windows` is borrowed mutably).
-        let fs = std::sync::Arc::clone(&self.authority().filesystem);
-        if let Some(explorer) = self
-            .windows
-            .get_mut(&active_id)
-            .and_then(|w| w.file_explorer.as_mut())
-        {
-            if let Some(selected_id) = explorer.get_selected() {
-                let node = explorer.tree().get_node(selected_id);
-                if let Some(node) = node {
-                    let parent_path = get_parent_dir_path(node);
-                    let filename = format!("untitled_{}.txt", timestamp_suffix());
-                    let file_path = parent_path.join(&filename);
-
-                    if let Some(runtime) = &self.tokio_runtime {
-                        let path_clone = file_path.clone();
-                        let result = fs.create_file(&path_clone).map(|_| ());
-
-                        match result {
-                            Ok(_) => {
-                                let parent_id =
-                                    get_parent_node_id(explorer.tree(), selected_id, node.is_dir());
-                                let tree = explorer.tree_mut();
-                                if let Err(e) =
-                                    runtime.block_on(tree.reload_expanded_node(parent_id))
-                                {
-                                    tracing::warn!("Failed to refresh file tree: {}", e);
-                                }
-                                if let Some(explorer) = self.file_explorer_mut().as_mut() {
-                                    explorer.navigate_to_path(&path_clone);
-                                }
-                                self.set_status_message(
-                                    t!("explorer.created_file", name = &filename).to_string(),
-                                );
-                                self.notify_file_explorer_change(&path_clone);
-
-                                // Open the file in the buffer
-                                if let Err(e) = self.open_file(&path_clone) {
-                                    tracing::warn!("Failed to open new file: {}", e);
-                                }
-
-                                let prompt = crate::view::prompt::Prompt::new(
-                                    t!("explorer.new_file_prompt").to_string(),
-                                    crate::view::prompt::PromptType::FileExplorerRename {
-                                        original_path: path_clone,
-                                        original_name: filename.clone(),
-                                        is_new_file: true,
-                                    },
-                                );
-                                self.set_prompt(prompt);
-                            }
-                            Err(e) => {
-                                self.set_status_message(
-                                    t!("explorer.error_creating_file", error = e.to_string())
-                                        .to_string(),
-                                );
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        self.notify_file_explorer_change(path);
     }
 
     pub fn file_explorer_new_directory(&mut self) {
-        let active_id = self.active_window;
-        let fs = std::sync::Arc::clone(&self.authority().filesystem);
-        if let Some(explorer) = self
-            .windows
-            .get_mut(&active_id)
-            .and_then(|w| w.file_explorer.as_mut())
-        {
-            if let Some(selected_id) = explorer.get_selected() {
-                let node = explorer.tree().get_node(selected_id);
-                if let Some(node) = node {
-                    let parent_path = get_parent_dir_path(node);
-                    let dirname = format!("New Folder {}", timestamp_suffix());
-                    let dir_path = parent_path.join(&dirname);
-
-                    if let Some(runtime) = &self.tokio_runtime {
-                        let path_clone = dir_path.clone();
-                        let dirname_clone = dirname.clone();
-                        let result = fs.create_dir(&path_clone);
-
-                        match result {
-                            Ok(_) => {
-                                let parent_id =
-                                    get_parent_node_id(explorer.tree(), selected_id, node.is_dir());
-                                let tree = explorer.tree_mut();
-                                if let Err(e) =
-                                    runtime.block_on(tree.reload_expanded_node(parent_id))
-                                {
-                                    tracing::warn!("Failed to refresh file tree: {}", e);
-                                }
-                                if let Some(explorer) = self.file_explorer_mut().as_mut() {
-                                    explorer.navigate_to_path(&path_clone);
-                                }
-                                self.set_status_message(
-                                    t!("explorer.created_dir", name = &dirname_clone).to_string(),
-                                );
-                                self.notify_file_explorer_change(&path_clone);
-
-                                let prompt = crate::view::prompt::Prompt::with_initial_text(
-                                    t!("explorer.new_directory_prompt").to_string(),
-                                    crate::view::prompt::PromptType::FileExplorerRename {
-                                        original_path: path_clone,
-                                        original_name: dirname_clone,
-                                        is_new_file: true,
-                                    },
-                                    dirname,
-                                );
-                                self.set_prompt(prompt);
-                            }
-                            Err(e) => {
-                                self.set_status_message(
-                                    t!("explorer.error_creating_dir", error = e.to_string())
-                                        .to_string(),
-                                );
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        self.file_explorer_new_entry(true);
     }
 
     pub fn file_explorer_delete(&mut self) {
@@ -902,7 +858,6 @@ impl Editor {
                         crate::view::prompt::PromptType::FileExplorerRename {
                             original_path: old_path,
                             original_name: old_name.clone(),
-                            is_new_file: false,
                         },
                         old_name,
                     );
@@ -912,154 +867,96 @@ impl Editor {
         }
     }
 
-    /// Perform the actual file explorer rename operation (called after prompt confirmation)
+    /// Where a typed name points, under `base` — or `None` once the reason it
+    /// does not has been reported to the reader.
+    ///
+    /// Creating and renaming ask the same question, so they ask it here. A name
+    /// may be a relative path, `..` included, which is what lets a rename move
+    /// an entry; the result is normalised, has to stay inside the project, and
+    /// must not already exist, because `rename` would replace it in silence.
+    fn entry_path_for_name(&mut self, base: &Path, name: &str) -> Option<PathBuf> {
+        if name == "." || name == ".." {
+            self.set_status_message(t!("explorer.rename_invalid_dot").to_string());
+            return None;
+        }
+        // Joining an absolute/rooted path would discard `base` entirely. Prefix
+        // components cover Windows drive and UNC paths; RootDir covers `/foo`
+        // and `\foo`. Tilde and environment variable syntax remain ordinary,
+        // literal relative components.
+        if !is_relative_creation_path(Path::new(name)) {
+            self.set_status_message(t!("explorer.new_item_path_must_be_relative").to_string());
+            return None;
+        }
+
+        let path = crate::app::normalize_path(&base.join(name));
+        let fs = std::sync::Arc::clone(&self.authority().filesystem);
+        match creation_path_is_within_project(fs.as_ref(), self.working_dir(), &path) {
+            Ok(true) => {}
+            Ok(false) => {
+                self.set_status_message(t!("explorer.new_item_path_outside_project").to_string());
+                return None;
+            }
+            Err(e) => {
+                self.set_status_message(
+                    t!("explorer.error_renaming", error = e.to_string()).to_string(),
+                );
+                return None;
+            }
+        }
+        if fs.exists(&path) {
+            let shown = truncate_name_for_prompt(name, 40);
+            self.set_status_message(t!("explorer.new_item_path_exists", name = &shown).to_string());
+            return None;
+        }
+        Some(path)
+    }
+
+    /// Rename the entry, or move it: the name may be a relative path, so
+    /// `../elsewhere.txt` takes the entry up a directory.
     pub fn perform_file_explorer_rename(
         &mut self,
         original_path: std::path::PathBuf,
         original_name: String,
         new_name: String,
-        is_new_file: bool,
     ) {
+        let new_name = new_name.trim().to_string();
         if new_name.is_empty() || new_name == original_name {
             self.set_status_message(t!("explorer.rename_cancelled").to_string());
             return;
         }
-
-        let requested_path = Path::new(&new_name);
-        let has_separator = new_name.chars().any(std::path::is_separator);
-
-        // Existing items are renamed in place, so their names must remain a
-        // single path component. Newly-created items may include separators:
-        // their missing parent directories are created below before the
-        // temporary item is moved into place.
-        if !is_new_file && has_separator {
-            self.set_status_message(t!("explorer.rename_invalid_separator").to_string());
+        let Some(parent) = original_path.parent().map(|p| p.to_path_buf()) else {
             return;
-        }
-        // Joining an absolute/rooted path would discard the directory in
-        // which creation started. Prefix components cover Windows drive and
-        // UNC paths; RootDir covers `/foo` and `\foo`. Tilde and environment
-        // variable syntax remain ordinary, literal relative components.
-        if is_new_file && !is_relative_creation_path(requested_path) {
-            self.set_status_message(t!("explorer.new_item_path_must_be_relative").to_string());
+        };
+        let Some(new_path) = self.entry_path_for_name(&parent, &new_name) else {
             return;
-        }
-        if new_name == "." || new_name == ".." {
-            self.set_status_message(t!("explorer.rename_invalid_dot").to_string());
-            return;
-        }
+        };
 
-        let new_path = original_path
+        let fs = std::sync::Arc::clone(&self.authority().filesystem);
+        // `create_dir_all` covers the directories a relative name asked for and
+        // is safe when they already exist. Both operations stay on the active
+        // filesystem so local, virtual and remote workspaces behave alike.
+        let result = new_path
             .parent()
-            .map(|p| p.join(&new_name))
-            .unwrap_or_else(|| original_path.clone());
-
-        if self.tokio_runtime.is_some() {
-            let fs = std::sync::Arc::clone(&self.authority().filesystem);
-            if is_new_file {
-                // Only a name with separators can redirect the item out of
-                // the directory Ctrl+N already created it in unchecked.
-                if has_separator {
-                    match creation_path_is_within_project(
-                        fs.as_ref(),
-                        self.working_dir(),
-                        &new_path,
-                    ) {
-                        Ok(true) => {}
-                        Ok(false) => {
-                            self.set_status_message(
-                                t!("explorer.new_item_path_outside_project").to_string(),
-                            );
-                            return;
-                        }
-                        Err(e) => {
-                            self.set_status_message(
-                                t!("explorer.error_renaming", error = e.to_string()).to_string(),
-                            );
-                            return;
-                        }
-                    }
-                }
-
-                // `rename` replaces an existing destination without warning,
-                // so a name that collides with a real file would destroy it.
-                // Refuse: the temporary item stays where it is and can be
-                // renamed again with F2.
-                if fs.exists(&new_path) {
-                    let name = truncate_name_for_prompt(&new_name, 40);
-                    self.set_status_message(
-                        t!("explorer.new_item_path_exists", name = &name).to_string(),
-                    );
-                    return;
-                }
-            }
-            let result = if is_new_file {
-                // `create_dir_all` is also safe when the parent already
-                // exists. Keep both operations on the active filesystem so
-                // local, virtual, and remote workspaces behave alike.
-                new_path
-                    .parent()
-                    .map_or(Ok(()), |parent| fs.create_dir_all(parent))
-                    .and_then(|()| fs.rename(&original_path, &new_path))
-            } else {
-                fs.rename(&original_path, &new_path)
-            };
-
-            match result {
-                Ok(_) => {
-                    // Refresh the parent directory and select the renamed item.
-                    // Direct `self.windows.get_mut(...)` keeps the explorer
-                    // borrow disjoint from `self.tokio_runtime`.
-                    let active_id = self.active_window;
-                    if let (Some(runtime), Some(explorer)) = (
-                        self.tokio_runtime.as_ref(),
-                        self.windows
-                            .get_mut(&active_id)
-                            .and_then(|w| w.file_explorer.as_mut()),
-                    ) {
-                        if let Some(selected_id) = explorer.get_selected() {
-                            let parent_id = get_parent_node_id(explorer.tree(), selected_id, false);
-                            let tree = explorer.tree_mut();
-                            if let Err(e) = runtime.block_on(tree.reload_expanded_node(parent_id)) {
-                                tracing::warn!("Failed to refresh file tree after rename: {}", e);
-                            }
-                        }
-                        // The renamed node has a new NodeId under the parent;
-                        // drop stale selections before navigating to the new
-                        // path so subsequent ops target the renamed item.
-                        explorer.clear_multi_selection();
-                        // Navigate to the renamed file to restore selection
-                        explorer.navigate_to_path(&new_path);
-                    }
-
-                    // Update every buffer whose path lives at or under the
-                    // renamed root — for a plain file this is the buffer for
-                    // that file itself; for a directory rename it's every
-                    // buffer backed by a file inside the renamed directory.
-                    // Without this, saving such a buffer would recreate the
-                    // old-name path, leaving behind a ghost alongside the
-                    // renamed file.
-                    let relocated = self.relocate_buffers_for_rename(&original_path, &new_path);
-
-                    // Only switch focus to the buffer if this is a new file
-                    // being created. For renames from the explorer, keep
-                    // focus in the explorer.
-                    if is_new_file && !relocated.is_empty() {
-                        self.active_window_mut().key_context = KeyContext::Normal;
-                    }
-
-                    self.set_status_message(
-                        t!("explorer.renamed", old = &original_name, new = &new_name).to_string(),
-                    );
-                    self.notify_file_explorer_change(&new_path);
-                }
-                Err(e) => {
-                    self.set_status_message(
-                        t!("explorer.error_renaming", error = e.to_string()).to_string(),
-                    );
-                }
-            }
+            .map_or(Ok(()), |p| fs.create_dir_all(p))
+            .and_then(|()| fs.rename(&original_path, &new_path));
+        if let Err(e) = result {
+            self.set_status_message(
+                t!("explorer.error_renaming", error = e.to_string()).to_string(),
+            );
+            return;
         }
+
+        // Every buffer at or under the old path follows it: for a file that is
+        // its own buffer, for a directory every buffer inside it. Without this,
+        // saving one would recreate the old path beside the renamed entry.
+        self.relocate_buffers_for_rename(&original_path, &new_path);
+        // A name that moved the entry leaves two directories to reload, which
+        // is what the paste path already does for a cut.
+        let moved = new_path.parent() != Some(parent.as_path());
+        self.refresh_tree_after_paste(&original_path, &new_path, moved);
+        self.set_status_message(
+            t!("explorer.renamed", old = &original_name, new = &new_name).to_string(),
+        );
     }
 
     pub fn file_explorer_toggle_hidden(&mut self) {

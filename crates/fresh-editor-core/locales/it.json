@@ -952,6 +952,7 @@
   "explorer.paste_conflict_multi": "'%{name}' esiste già.",
   "explorer.pasted_n": "Incollati %{count} elementi",
   "explorer.pasted_moved_n": "Spostati %{count} elementi",
+  "explorer.create_cancelled": "Creazione annullata",
   "explorer.created_dir": "Creato %{name}",
   "explorer.created_file": "Creato %{name}",
   "explorer.cut": "Contrassegnato per il taglio: %{name}",

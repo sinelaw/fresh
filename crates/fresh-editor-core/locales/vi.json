@@ -952,6 +952,7 @@
   "explorer.paste_conflict_multi": "'%{name}' đã tồn tại.",
   "explorer.pasted_n": "Đã dán %{count} mục",
   "explorer.pasted_moved_n": "Đã di chuyển %{count} mục",
+  "explorer.create_cancelled": "Đã hủy tạo",
   "explorer.created_dir": "Đã tạo %{name}",
   "explorer.created_file": "Đã tạo %{name}",
   "explorer.cut": "Đã đánh dấu để cắt: %{name}",

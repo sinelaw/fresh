@@ -952,6 +952,7 @@
   "explorer.paste_conflict_multi": "'%{name}' มีอยู่แล้ว",
   "explorer.pasted_n": "วาง %{count} รายการแล้ว",
   "explorer.pasted_moved_n": "ย้าย %{count} รายการแล้ว",
+  "explorer.create_cancelled": "ยกเลิกการสร้าง",
   "explorer.created_dir": "สร้างไดเรกทอรีแล้ว: %{name}",
   "explorer.created_file": "สร้างไฟล์แล้ว: %{name}",
   "explorer.cut": "เลือกเพื่อตัด: %{name}",

@@ -952,6 +952,7 @@
   "explorer.paste_conflict_multi": "'%{name}' уже существует.",
   "explorer.pasted_n": "Вставлено элементов: %{count}",
   "explorer.pasted_moved_n": "Перемещено элементов: %{count}",
+  "explorer.create_cancelled": "Создание отменено",
   "explorer.created_dir": "Папка создана: %{name}",
   "explorer.created_file": "Файл создан: %{name}",
   "explorer.cut": "Помечено для вырезания: %{name}",

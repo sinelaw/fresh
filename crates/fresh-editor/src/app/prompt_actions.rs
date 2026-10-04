@@ -469,9 +469,11 @@ impl Editor {
             PromptType::FileExplorerRename {
                 original_path,
                 original_name,
-                is_new_file,
             } => {
-                self.perform_file_explorer_rename(original_path, original_name, input, is_new_file);
+                self.perform_file_explorer_rename(original_path, original_name, input);
+            }
+            PromptType::FileExplorerCreate { parent, is_dir } => {
+                self.perform_file_explorer_create(parent, is_dir, input);
             }
             PromptType::ConfirmDeleteFile { path, is_dir } => {
                 let input_lower = input.trim().to_lowercase();

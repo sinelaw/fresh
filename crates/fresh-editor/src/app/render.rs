@@ -68,6 +68,7 @@ struct ExplorerSection {
     title_theme: String,
     border_theme: String,
     close_theme: String,
+    refresh_theme: String,
     focused: bool,
 }
 
@@ -3072,6 +3073,7 @@ impl Editor {
                         title_theme: e.title_theme,
                         border_theme: e.border_theme,
                         close_theme: e.close_theme,
+                        refresh_theme: Some(e.refresh_theme),
                         rows,
                         collapsed,
                         focused: e.focused,
@@ -3103,6 +3105,7 @@ impl Editor {
                         title_theme,
                         border_theme,
                         close_theme: crate::view::shell::file_explorer::close_theme(close_hovered),
+                        refresh_theme: None,
                         rows,
                         collapsed,
                         focused,
@@ -3136,6 +3139,10 @@ impl Editor {
             .unwrap_or(false);
         let (title_theme, border_theme) = fe::chrome_themes(disconnected, focused);
         let close_hovered = matches!(self.shell_hover, Some(HoverTarget::FileExplorerCloseButton));
+        let refresh_hovered = matches!(
+            self.shell_hover,
+            Some(HoverTarget::FileExplorerRefreshButton)
+        );
         let title = self.explorer_title(remote.as_deref());
         ExplorerSection {
             kind: fe::Explorer {
@@ -3145,6 +3152,7 @@ impl Editor {
             title_theme,
             border_theme,
             close_theme: fe::close_theme(close_hovered),
+            refresh_theme: fe::close_theme(refresh_hovered),
             focused,
         }
     }

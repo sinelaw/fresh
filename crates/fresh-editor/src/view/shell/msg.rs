@@ -562,6 +562,8 @@ pub enum UiFact {
     SuggestionConfirm(usize),
     /// The `×` on the panel's title line.
     ExplorerClose,
+    /// The `⟳` on the panel's title line: re-read the tree from disk.
+    ExplorerRefresh,
     /// A press on the panel's right-edge grip: start a width drag from here.
     ExplorerResizeBegin {
         x: u16,

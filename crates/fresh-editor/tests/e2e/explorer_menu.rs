@@ -507,58 +507,129 @@ fn test_explorer_menu_items_disabled_when_not_focused() {
     );
 }
 
-/// Test that New Folder action creates a folder and enters rename mode
+/// New Folder asks for a name and writes nothing until it gets one.
+///
+/// It used to create `New Folder <timestamp>` on disk first and then offer a
+/// rename, which is two of the things #3427 reported: the placeholder was
+/// briefly the entry's real name, and cancelling left it behind for good.
 #[test]
-fn test_new_folder_enters_rename_mode() {
+fn test_new_folder_asks_before_it_writes() {
     let mut harness = EditorTestHarness::with_temp_project(100, 30).unwrap();
     let project_root = harness.project_dir().unwrap();
 
-    // Open and focus file explorer
     harness.editor_mut().focus_file_explorer();
     harness.wait_for_file_explorer().unwrap();
 
-    // Create new folder directly using the method
+    let before = dir_names(&project_root);
     harness.editor_mut().file_explorer_new_directory();
     harness.wait_for_prompt().unwrap();
 
-    // Should be in rename mode - prompt should appear
     assert!(
         harness.editor().is_prompting(),
-        "Should be in rename mode (prompting) after creating new folder"
+        "the name prompt should be open"
+    );
+    assert_eq!(
+        dir_names(&project_root),
+        before,
+        "nothing should be on disk before the name is given"
     );
 
-    // Verify a folder was created on the filesystem
-    let dirs: Vec<_> = fs::read_dir(&project_root)
-        .unwrap()
-        .filter_map(|e| e.ok())
-        .filter(|e| e.path().is_dir())
-        .collect();
-
-    assert!(
-        !dirs.is_empty(),
-        "A new folder should have been created on the filesystem"
-    );
-
-    // Cancel the rename (ESC) and verify folder still exists with default name
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
     assert!(
         !harness.editor().is_prompting(),
-        "Should not be prompting after ESC"
+        "Escape should close the prompt"
+    );
+    assert_eq!(
+        dir_names(&project_root),
+        before,
+        "cancelling should leave nothing behind"
+    );
+}
+
+/// The name typed into the prompt is the name the entry gets — no placeholder
+/// and no second rename step.
+#[test]
+fn test_new_folder_uses_the_name_it_was_given() {
+    let mut harness = EditorTestHarness::with_temp_project(100, 30).unwrap();
+    let project_root = harness.project_dir().unwrap();
+
+    harness.editor_mut().focus_file_explorer();
+    harness.wait_for_file_explorer().unwrap();
+
+    harness.editor_mut().file_explorer_new_directory();
+    harness.wait_for_prompt().unwrap();
+    if let Some(prompt) = harness.editor_mut().prompt_mut() {
+        prompt.clear();
+        prompt.insert_str("chosen");
+    }
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    assert!(
+        project_root.join("chosen").is_dir(),
+        "the directory should carry the typed name"
+    );
+    assert!(
+        !dir_names(&project_root)
+            .iter()
+            .any(|n| n.starts_with("New Folder")),
+        "and no placeholder should have been left: {:?}",
+        dir_names(&project_root)
+    );
+}
+
+/// The same for a file, including the relative path a name may be.
+#[test]
+fn test_new_file_writes_only_on_confirm() {
+    let mut harness = EditorTestHarness::with_temp_project(100, 30).unwrap();
+    let project_root = harness.project_dir().unwrap();
+
+    harness.editor_mut().focus_file_explorer();
+    harness.wait_for_file_explorer().unwrap();
+
+    harness.editor_mut().file_explorer_new_file();
+    harness.wait_for_prompt().unwrap();
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    assert!(
+        !fs::read_dir(&project_root)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .any(|e| e.file_name().to_string_lossy().starts_with("untitled_")),
+        "a cancelled New File should leave no untitled_* entry"
     );
 
-    // Folder should still exist
-    let dirs_after: Vec<_> = fs::read_dir(&project_root)
+    harness.editor_mut().file_explorer_new_file();
+    harness.wait_for_prompt().unwrap();
+    if let Some(prompt) = harness.editor_mut().prompt_mut() {
+        prompt.clear();
+        prompt.insert_str("deep/named.txt");
+    }
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    assert!(
+        project_root.join("deep/named.txt").is_file(),
+        "a relative name should create the directories it asked for"
+    );
+}
+
+/// The directory names directly under `root`, sorted.
+fn dir_names(root: &std::path::Path) -> Vec<String> {
+    let mut names: Vec<String> = fs::read_dir(root)
         .unwrap()
         .filter_map(|e| e.ok())
         .filter(|e| e.path().is_dir())
+        .map(|e| e.file_name().to_string_lossy().to_string())
         .collect();
-
-    assert!(
-        !dirs_after.is_empty(),
-        "Folder should still exist after cancelling rename"
-    );
+    names.sort();
+    names
 }
 
 /// Test that rename prompt appears and ESC aborts the rename
@@ -1302,9 +1373,13 @@ fn test_edit_menu_shows_file_copy_cut_paste_when_explorer_focused() {
     harness.assert_screen_contains("Paste");
 }
 
-/// Test that rename rejects names containing '/'
+/// A rename to a path moves the entry, creating the directories on the way.
+///
+/// This used to be refused — "Name cannot contain '/'" — which is what #3427
+/// reported: with no drag and no move command, a rename was the only way to
+/// move an entry, and the one character that would have done it was rejected.
 #[test]
-fn test_rename_rejects_slash_in_name() {
+fn test_rename_to_a_subpath_moves_the_entry() {
     let mut harness = EditorTestHarness::with_temp_project(100, 30).unwrap();
     let project_root = harness.project_dir().unwrap();
 
@@ -1320,21 +1395,111 @@ fn test_rename_rejects_slash_in_name() {
 
     if let Some(prompt) = harness.editor_mut().prompt_mut() {
         prompt.clear();
-        prompt.insert_str("bad/name.txt");
+        prompt.insert_str("sub/moved.txt");
     }
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
     harness.render().unwrap();
 
-    // Should show an error and NOT rename the file
     assert!(
-        !project_root.join("bad/name.txt").exists(),
-        "File with '/' in name should not be created"
+        project_root.join("sub/moved.txt").exists(),
+        "the entry should have moved into the directory the name named"
+    );
+    assert_eq!(
+        fs::read_to_string(project_root.join("sub/moved.txt")).unwrap(),
+        "content",
+        "it should be the same file, not a new empty one"
     );
     assert!(
-        project_root.join("valid.txt").exists(),
-        "Original file should still exist after rejected rename"
+        !project_root.join("valid.txt").exists(),
+        "the entry should no longer be where it was"
+    );
+}
+
+/// `..` in a rename takes the entry up a directory — the half of the move the
+/// report called out by name.
+#[test]
+fn test_rename_with_dot_dot_moves_the_entry_up() {
+    let mut harness = EditorTestHarness::with_temp_project(100, 30).unwrap();
+    let project_root = harness.project_dir().unwrap();
+
+    fs::create_dir_all(project_root.join("nest")).unwrap();
+    fs::write(project_root.join("nest/inner.txt"), "content").unwrap();
+
+    harness.editor_mut().focus_file_explorer();
+    harness.wait_for_file_explorer().unwrap();
+    harness.wait_for_file_explorer_item("nest").unwrap();
+    harness
+        .editor_mut()
+        .file_explorer_mut()
+        .unwrap()
+        .navigate_to_path(&project_root.join("nest/inner.txt"));
+    harness.render().unwrap();
+
+    harness.send_key(KeyCode::F(2), KeyModifiers::NONE).unwrap();
+    harness.wait_for_prompt().unwrap();
+    if let Some(prompt) = harness.editor_mut().prompt_mut() {
+        prompt.clear();
+        prompt.insert_str("../inner.txt");
+    }
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    assert!(
+        project_root.join("inner.txt").exists(),
+        "`..` should have moved the entry to the parent directory"
+    );
+    assert!(
+        !project_root.join("nest/inner.txt").exists(),
+        "and it should be gone from where it was"
+    );
+}
+
+/// A rename onto a name that already exists is refused.
+///
+/// `fs::rename` replaces its destination without a word, and the guard against
+/// that only covered newly-created entries — so renaming `a.txt` to `b.txt`
+/// destroyed `b.txt`.
+#[test]
+fn test_rename_onto_an_existing_entry_is_refused() {
+    let mut harness = EditorTestHarness::with_temp_project(100, 30).unwrap();
+    let project_root = harness.project_dir().unwrap();
+
+    fs::write(project_root.join("source.txt"), "source").unwrap();
+    fs::write(project_root.join("victim.txt"), "victim").unwrap();
+
+    harness.editor_mut().focus_file_explorer();
+    harness.wait_for_file_explorer().unwrap();
+    harness.wait_for_file_explorer_item("source").unwrap();
+    harness
+        .editor_mut()
+        .file_explorer_mut()
+        .unwrap()
+        .navigate_to_path(&project_root.join("source.txt"));
+    harness.render().unwrap();
+
+    harness.send_key(KeyCode::F(2), KeyModifiers::NONE).unwrap();
+    harness.wait_for_prompt().unwrap();
+    if let Some(prompt) = harness.editor_mut().prompt_mut() {
+        prompt.clear();
+        prompt.insert_str("victim.txt");
+    }
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    assert_eq!(
+        fs::read_to_string(project_root.join("victim.txt")).unwrap(),
+        "victim",
+        "the entry that was already there must survive"
+    );
+    assert!(
+        project_root.join("source.txt").exists(),
+        "and the rename must not have happened"
     );
 }
 

@@ -952,6 +952,7 @@
   "explorer.paste_conflict_multi": "'%{name}' 이(가) 이미 있습니다.",
   "explorer.pasted_n": "%{count}개 항목 붙여넣음",
   "explorer.pasted_moved_n": "%{count}개 항목 이동됨",
+  "explorer.create_cancelled": "만들기 취소됨",
   "explorer.created_dir": "폴더 생성됨: %{name}",
   "explorer.created_file": "파일 생성됨: %{name}",
   "explorer.cut": "잘라내기 대상: %{name}",

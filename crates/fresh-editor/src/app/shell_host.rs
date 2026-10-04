@@ -3060,6 +3060,7 @@ impl Editor {
                 }
             }
             UiFact::ExplorerClose => self.toggle_file_explorer(),
+            UiFact::ExplorerRefresh => self.file_explorer_refresh(),
             // A section header's press, move and release, and the two things
             // the header does besides dividing. See `app::sidebar`.
             UiFact::SectionResizeBegin { index, y } => {

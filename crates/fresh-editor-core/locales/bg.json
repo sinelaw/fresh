@@ -989,6 +989,7 @@
   "explorer.context.rename": "Преименуване",
   "explorer.copied": "Копиран: %{name}",
   "explorer.copied_n": "Копирани %{count} елемента",
+  "explorer.create_cancelled": "Създаването е отменено",
   "explorer.created_dir": "Създадена е директория %{name}",
   "explorer.created_file": "Създаден е файл %{name}",
   "explorer.cut": "Маркиран за отрязване: %{name}",

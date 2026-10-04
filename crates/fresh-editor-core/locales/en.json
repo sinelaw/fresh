@@ -972,6 +972,7 @@
   "explorer.closed": "File explorer closed",
   "explorer.collapsed": "Collapsed: %{name}",
   "explorer.collapsing": "Collapsing...",
+  "explorer.create_cancelled": "Create cancelled",
   "explorer.created_dir": "Created %{name}",
   "explorer.created_file": "Created %{name}",
   "explorer.delete_cancelled": "Delete cancelled",

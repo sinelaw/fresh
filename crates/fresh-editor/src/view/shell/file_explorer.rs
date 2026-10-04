@@ -629,7 +629,7 @@ pub fn chrome_themes(remote_disconnected: bool, focused: bool) -> (String, Strin
     }
 }
 
-/// The close button's own colour.
+/// A header button's own colour — the `×` and the `⟳` alike.
 pub fn close_theme(hovered: bool) -> String {
     if hovered {
         pair("ui.tab_close_hover_fg", "editor.bg")
@@ -1603,7 +1603,7 @@ mod tests {
     #[test]
     fn the_panel_draws_its_border_title_and_close_button() {
         let got = lines(panel_of(vec![row_of(0, "src", None)], 20), 20, 5);
-        assert_eq!(got[0], "┌ Files ─────────×─┐", "title line");
+        assert_eq!(got[0], "┌ Files ───────⟳─×─┐", "title line");
         assert_eq!(got[1], "│  src             │", "first row");
         assert_eq!(got[4], "└──────────────────┘", "bottom border");
     }

@@ -146,9 +146,14 @@ pub enum PromptType {
     FileExplorerRename {
         original_path: std::path::PathBuf,
         original_name: String,
-        /// True if this rename is for a newly created file (should switch focus to editor after)
-        /// False if renaming an existing file (should keep focus in file explorer)
-        is_new_file: bool,
+    },
+    /// Name a new file or directory in the file explorer.
+    ///
+    /// Nothing exists yet: the entry is created when this is confirmed, so
+    /// cancelling leaves no trace. `parent` is the directory it will land in.
+    FileExplorerCreate {
+        parent: std::path::PathBuf,
+        is_dir: bool,
     },
     /// Confirm deleting a file or directory in the file explorer
     ConfirmDeleteFile {

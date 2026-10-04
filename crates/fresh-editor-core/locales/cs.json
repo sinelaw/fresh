@@ -952,6 +952,7 @@
   "explorer.paste_conflict_multi": "'%{name}' již existuje.",
   "explorer.pasted_n": "Vloženo %{count} položek",
   "explorer.pasted_moved_n": "Přesunuto %{count} položek",
+  "explorer.create_cancelled": "Vytvoření zrušeno",
   "explorer.created_dir": "Složka vytvořena: %{name}",
   "explorer.created_file": "Soubor vytvořen: %{name}",
   "explorer.cut": "Označeno k vyjmutí: %{name}",

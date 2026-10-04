@@ -952,6 +952,7 @@
   "explorer.paste_conflict_multi": "'%{name}' уже існує.",
   "explorer.pasted_n": "Вставлено елементів: %{count}",
   "explorer.pasted_moved_n": "Переміщено елементів: %{count}",
+  "explorer.create_cancelled": "Створення скасовано",
   "explorer.created_dir": "Теку створено: %{name}",
   "explorer.created_file": "Файл створено: %{name}",
   "explorer.cut": "Позначено для вирізання: %{name}",

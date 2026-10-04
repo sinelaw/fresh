@@ -952,6 +952,7 @@
   "explorer.paste_conflict_multi": "'%{name}' ya existe.",
   "explorer.pasted_n": "%{count} elementos pegados",
   "explorer.pasted_moved_n": "%{count} elementos movidos",
+  "explorer.create_cancelled": "Creación cancelada",
   "explorer.created_dir": "Creado %{name}",
   "explorer.created_file": "Creado %{name}",
   "explorer.cut": "Marcado para cortar: %{name}",

@@ -553,6 +553,21 @@ fn put_symbol(buf: &mut Buffer, x: u16, y: u16, sym: &str, w: u16, style: Style,
     if !contains(clip, x, y) || !contains(buf.area, x, y) {
         return;
     }
+    // **And the other direction.** A wide cluster in the cell *before* this one
+    // spills into this one, and the terminal draws it across both — so writing
+    // here would be painted over by a glyph that no longer owns the cell. That
+    // is what cost a context menu anchored over CJK text its corner character.
+    // The lead cell is blanked in its own style, keeping its ground; this is a
+    // repair of an overlap rather than a paint, so it looks past `clip`, which
+    // the glyph it is undoing already reaches across.
+    if let Some(prev) = x.checked_sub(1) {
+        if contains(buf.area, prev, y) {
+            let cell = &mut buf[(prev, y)];
+            if unicode_width::UnicodeWidthStr::width(cell.symbol()) > 1 {
+                cell.set_symbol(" ");
+            }
+        }
+    }
     let cell = &mut buf[(x, y)];
     cell.set_symbol(sym);
     cell.set_style(style);
@@ -906,6 +921,21 @@ mod width_tests {
     fn a_wide_glyph_takes_two_cells_and_blanks_its_continuation() {
         let buf = fold_into(row().children([text("你好"), text("!")]), 6);
         assert_eq!(symbols(&buf), ["你", " ", "好", " ", "!", "~"]);
+    }
+
+    /// Painting into a wide glyph's second cell takes the glyph with it.
+    ///
+    /// The terminal draws a wide cluster across both its cells, so a narrow
+    /// write into the second one is invisible until the first is cleared —
+    /// which is how a context menu anchored half-way through a CJK name lost
+    /// its `┌`. Without the repair this reads `["你", "│", …]`, and the `│`
+    /// does not appear on screen.
+    #[test]
+    fn a_write_into_a_wide_glyphs_second_cell_clears_the_glyph() {
+        let mut buf = fold_into(text("你好"), 4);
+        let clip = buf.area;
+        super::put_symbol(&mut buf, 1, 0, "│", 1, Style::default(), clip);
+        assert_eq!(symbols(&buf), [" ", "│", "好", " "]);
     }
 
     /// The next run starts where the last one's glyphs end: a CJK identifier

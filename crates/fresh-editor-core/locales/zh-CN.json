@@ -952,6 +952,7 @@
   "explorer.paste_conflict_multi": "'%{name}' 已存在。",
   "explorer.pasted_n": "已粘贴 %{count} 项",
   "explorer.pasted_moved_n": "已移动 %{count} 项",
+  "explorer.create_cancelled": "已取消创建",
   "explorer.created_dir": "已创建文件夹：%{name}",
   "explorer.created_file": "已创建文件：%{name}",
   "explorer.cut": "已标记剪切: %{name}",
