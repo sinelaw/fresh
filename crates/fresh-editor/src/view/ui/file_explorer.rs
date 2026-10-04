@@ -77,17 +77,16 @@ pub fn describe_row(d: RowDesc<'_>) -> crate::view::shell::file_explorer::Row {
         .map(|m| m.is_hidden)
         .unwrap_or(false);
     let neutral = fe::neutral_key(is_hidden, node.entry.is_symlink(), node.is_dir());
-    // The drop target outranks the cursor: while a drag is held, where it
-    // would land is the thing the reader needs to see, and it is the only one
-    // of these that is about the pointer rather than the keyboard.
-    let ground = if d.drop_target == Some(node.entry.path.as_path()) {
-        "editor.selection_bg"
-    } else if d.is_cursor && d.focused {
+    // Three ways to wear the selected ground: the keyboard is on this row, the
+    // row is in the reader's set, or a held drag would land here. The drop
+    // target comes first because it outranks a cursor sitting elsewhere — it
+    // is the only one of the three that is about the pointer.
+    let selected = d.drop_target == Some(node.entry.path.as_path())
+        || (d.focused && (d.is_cursor || d.is_multi));
+    let ground = if selected {
         "editor.selection_bg"
     } else if d.is_cursor {
         "editor.current_line_bg"
-    } else if d.is_multi && d.focused {
-        "editor.selection_bg"
     } else {
         "editor.bg"
     };
