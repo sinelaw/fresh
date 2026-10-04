@@ -638,62 +638,22 @@ impl Editor {
                 // message. See `Editor::config_mut` for the broader rule.
                 self.sync_windows_config();
 
-                // Update all viewports to reflect the new line wrap setting,
-                // respecting per-language overrides. The pane the user is in
-                // is a shown group's focused panel, not the pane showing it.
+                // Only this view's pin is dropped: the user asked for a global
+                // default on the view in front of them, which is no reason to
+                // un-pin work they did elsewhere. `effective_active_split` is a
+                // shown group's focused panel, not the pane showing it.
                 let active_split = self.effective_active_split();
-                let leaf_ids: Vec<_> = self
-                    .active_window()
-                    .split_view_states()
-                    .keys()
-                    .copied()
-                    .collect();
-                for leaf_id in leaf_ids {
-                    // The buffer whose view state is written below: the
-                    // pane's buffer tab. The split tree has no entry for a
-                    // group's panels, so asking it answered "buffer 0" for
-                    // them and resolved that buffer's settings instead.
-                    let Some(buffer_id) = self
-                        .active_window()
-                        .split_view_states()
-                        .get(&leaf_id)
-                        .map(|vs| vs.buffer_tab())
-                    else {
-                        continue;
-                    };
-                    let effective_wrap =
-                        self.active_window().resolve_line_wrap_for_buffer(buffer_id);
-                    let wrap_column = self
-                        .active_window()
-                        .resolve_wrap_column_for_buffer(buffer_id);
-                    if let Some(view_state) = self
-                        .windows
-                        .get_mut(&self.active_window)
-                        .and_then(|w| w.buffers.split_view_states_mut())
-                        .expect("active window must have a populated split layout")
-                        .get_mut(&leaf_id)
-                    {
-                        // The active split's own pin is dropped — the user is
-                        // expressing a global intent on the view in front of
-                        // them. Every other pinned split keeps its choice: a
-                        // global default must not silently un-pin work the
-                        // user did elsewhere (same rule as the highlight
-                        // toggles below).
-                        if leaf_id == active_split {
-                            view_state.buffer_tab_state_mut().line_wrap_override = None;
-                        }
-                        if view_state
-                            .buffer_tab_state_mut()
-                            .line_wrap_override
-                            .is_none()
-                        {
-                            view_state.buffer_tab_state_mut().viewport.line_wrap_enabled =
-                                effective_wrap;
-                            view_state.buffer_tab_state_mut().viewport.wrap_indent =
-                                self.config.editor.wrap_indent;
-                            view_state.buffer_tab_state_mut().viewport.wrap_column = wrap_column;
-                        }
-                    }
+                if let Some(view_state) = self
+                    .windows
+                    .get_mut(&self.active_window)
+                    .and_then(|w| w.buffers.split_view_states_mut())
+                    .and_then(|states| states.get_mut(&active_split))
+                {
+                    view_state.buffer_tab_state_mut().line_wrap_override = None;
+                }
+
+                for window in self.windows.values_mut() {
+                    window.resync_global_display_defaults();
                 }
 
                 // `editor.line_wrap` is an editor-wide default, so an
@@ -712,43 +672,26 @@ impl Editor {
             Action::ToggleCurrentLineHighlight => {
                 let new_value = !self.config.editor.highlight_current_line;
                 self.config_mut().editor.highlight_current_line = new_value;
-                // The pane the user is in: a shown group's focused panel.
-                let active_split = self.effective_active_split();
+                // The sweep below resolves against `Window::config()`, a separate
+                // `Arc<Config>` clone, so fan the new value out first or it
+                // writes the pre-toggle state straight back.
+                self.sync_windows_config();
 
-                // Update all splits
-                let leaf_ids: Vec<_> = self
-                    .active_window()
-                    .split_view_states()
-                    .keys()
-                    .copied()
-                    .collect();
-                for leaf_id in leaf_ids {
-                    if let Some(view_state) = self
-                        .windows
-                        .get_mut(&self.active_window)
-                        .and_then(|w| w.buffers.split_view_states_mut())
-                        .expect("active window must have a populated split layout")
-                        .get_mut(&leaf_id)
-                    {
-                        // The active split's own pin is dropped just below —
-                        // the user is expressing a global intent on the view in
-                        // front of them. Every other pinned buffer keeps its
-                        // choice; a global default must not silently un-pin
-                        // work the user did elsewhere.
-                        if leaf_id == active_split {
-                            view_state
-                                .buffer_tab_state_mut()
-                                .highlight_current_line_override = None;
-                        }
-                        if view_state
-                            .buffer_tab_state_mut()
-                            .highlight_current_line_override
-                            .is_none()
-                        {
-                            view_state.buffer_tab_state_mut().highlight_current_line =
-                                self.config.editor.highlight_current_line;
-                        }
-                    }
+                // Only this view's pin is dropped, as in `ToggleLineWrap` above.
+                let active_split = self.effective_active_split();
+                if let Some(view_state) = self
+                    .windows
+                    .get_mut(&self.active_window)
+                    .and_then(|w| w.buffers.split_view_states_mut())
+                    .and_then(|states| states.get_mut(&active_split))
+                {
+                    view_state
+                        .buffer_tab_state_mut()
+                        .highlight_current_line_override = None;
+                }
+
+                for window in self.windows.values_mut() {
+                    window.resync_global_display_defaults();
                 }
 
                 self.persist_config_change(
