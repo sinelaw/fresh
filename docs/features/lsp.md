@@ -80,12 +80,19 @@ Fresh includes built-in LSP configurations for many languages. Install the serve
 | LaTeX | texlab | `brew install texlab` |
 | Markdown | marksman | `brew install marksman` |
 | C/C++ | clangd | `brew install llvm` |
+| Kotlin | kotlin-lsp | `brew install JetBrains/utils/kotlin-lsp`, AUR `kotlin-lsp-bin`, or the [standalone archive](https://github.com/Kotlin/kotlin-lsp/releases) |
 | Odin | ols | build from source: <https://github.com/DanielGavin/ols> |
 
 `ols` ships no binaries for most platforms, so Fresh does not start it on
 its own — otherwise every Odin file would report a server that isn't there.
 Once you have built it, set `lsp.odin.auto_start` to `true` (or start it
 from the palette) and it behaves like any other server.
+
+`kotlin-lsp` is JetBrains' official Kotlin server (Alpha). It imports the
+Gradle or Maven project on first start, which can take a while on large
+builds, and it does not analyse `.kts` files yet. To keep using fwcd's
+`kotlin-language-server`, set `lsp.kotlin.command` to `kotlin-language-server`
+and `args` to `[]`.
 
 ## Python LSP Configuration
 
