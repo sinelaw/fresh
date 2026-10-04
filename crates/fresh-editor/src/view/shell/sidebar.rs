@@ -905,6 +905,23 @@ mod tests {
             }]
         );
 
+        // The explorer's `⟳` answers its own cells, and it has to sit clear of
+        // the section handle above it — which is sized around the header's
+        // controls, so a button added without widening that sizing would be
+        // covered by the handle rather than pressed.
+        let refresh = ui.rect_of(ui.find_by_key(&refresh_key(0)).expect("refresh"));
+        let got = ui.dispatch(Input::press(
+            Point::new(refresh.x, refresh.y),
+            MouseButton::Left,
+            Mods::NONE,
+        ));
+        assert_eq!(facts(got), vec![UiFact::ExplorerRefresh]);
+        ui.dispatch(Input::release(
+            Point::new(refresh.x, refresh.y),
+            MouseButton::Left,
+            Mods::NONE,
+        ));
+
         let close = ui.rect_of(ui.find_by_key(&close_key(1)).expect("close"));
         let got = ui.dispatch(Input::press(
             Point::new(close.x, close.y),

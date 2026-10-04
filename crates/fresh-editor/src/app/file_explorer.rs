@@ -546,8 +546,12 @@ impl Editor {
         };
         self.set_status_message(t!(key, name = &shown).to_string());
         if !is_dir {
-            if let Err(e) = self.open_file(&path) {
-                tracing::warn!("Failed to open new file: {}", e);
+            match self.open_file(&path) {
+                // A file is created to be written in, so the keyboard follows
+                // it — which is what the create-then-rename flow did when the
+                // rename landed, and what a reader pressing Ctrl+N expects.
+                Ok(_) => self.active_window_mut().key_context = KeyContext::Normal,
+                Err(e) => tracing::warn!("Failed to open new file: {}", e),
             }
         }
     }
@@ -890,17 +894,26 @@ impl Editor {
 
         let path = crate::app::normalize_path(&base.join(name));
         let fs = std::sync::Arc::clone(&self.authority().filesystem);
-        match creation_path_is_within_project(fs.as_ref(), self.working_dir(), &path) {
-            Ok(true) => {}
-            Ok(false) => {
-                self.set_status_message(t!("explorer.new_item_path_outside_project").to_string());
-                return None;
-            }
-            Err(e) => {
-                self.set_status_message(
-                    t!("explorer.error_renaming", error = e.to_string()).to_string(),
-                );
-                return None;
+        // **Only a name that traverses is checked against the project.** A
+        // plain one stays in the directory the reader was already looking at,
+        // and that directory is theirs even when the explorer lists it through
+        // a symlink leading out of the project — refusing it there would say
+        // no to a tree the explorer itself showed them.
+        if name.chars().any(std::path::is_separator) {
+            match creation_path_is_within_project(fs.as_ref(), self.working_dir(), &path) {
+                Ok(true) => {}
+                Ok(false) => {
+                    self.set_status_message(
+                        t!("explorer.new_item_path_outside_project").to_string(),
+                    );
+                    return None;
+                }
+                Err(e) => {
+                    self.set_status_message(
+                        t!("explorer.error_renaming", error = e.to_string()).to_string(),
+                    );
+                    return None;
+                }
             }
         }
         if fs.exists(&path) {
