@@ -254,11 +254,14 @@ const SERVERS: ServerHelp[] = [
     id: "kotlin",
     name: "Kotlin",
     languages: ["kotlin"],
-    message: `"{server}" provides code completion, diagnostics, and navigation for Kotlin files. Requires a JDK (Java 11+). Copy a command below to install it, or visit https://github.com/fwcd/kotlin-language-server for build instructions and releases. For full Kotlin IDE support, consider IntelliJ IDEA or Android Studio.`,
+    message: `"{server}" is JetBrains' official Kotlin language server: completion, diagnostics, navigation, rename, and formatting for Gradle and Maven JVM projects. It bundles its own Java runtime. Kotlin script files (.kts) are not supported yet.\n\nInstall it with Homebrew (macOS) or the AUR package kotlin-lsp-bin (Arch), or download the standalone archive from the releases page and put its bin/intellij-server on your PATH as "kotlin-lsp".\nSee: https://github.com/Kotlin/kotlin-lsp`,
     copies: [
-      { id: "copy_brew", value: "brew install kotlin-language-server" },
-      { id: "copy_snap", value: "sudo snap install kotlin-language-server --classic" },
-      { id: "copy_nix", value: "nix-env -i kotlin-language-server" },
+      { id: "copy_brew", value: "brew install JetBrains/utils/kotlin-lsp" },
+      {
+        id: "copy_url",
+        value: "https://github.com/Kotlin/kotlin-lsp/releases",
+        label: "Copy releases URL",
+      },
     ],
   },
   {

@@ -7921,13 +7921,19 @@ impl Config {
             }]),
         );
 
-        // kotlin-language-server (https://github.com/fwcd/kotlin-language-server)
-        // Install via package manager or build from source
+        // kotlin-lsp - JetBrains' official Kotlin language server (https://github.com/Kotlin/kotlin-lsp).
+        // Replaces fwcd/kotlin-language-server, which its README now calls deprecated.
+        // Homebrew (`JetBrains/utils/kotlin-lsp`) and the AUR (`kotlin-lsp-bin`) put it on PATH as
+        // `kotlin-lsp`; the standalone archive's launcher is `bin/intellij-server`.
+        //
+        // Root markers name only files that sit at a build's root: workspace detection takes the
+        // nearest directory holding *any* marker, so `build.gradle(.kts)` would make a subproject
+        // of a multi-module build the workspace and kotlin-lsp would import only that subproject.
         lsp.insert(
             "kotlin".to_string(),
             LspLanguageConfig::Multi(vec![LspServerConfig {
-                command: "kotlin-language-server".to_string(),
-                args: Some(vec![]),
+                command: "kotlin-lsp".to_string(),
+                args: Some(vec!["--stdio".to_string()]),
                 enabled: true,
                 auto_start: false,
                 process_limits: ProcessLimits::default(),
@@ -7937,7 +7943,12 @@ impl Config {
                 name: None,
                 only_features: None,
                 except_features: None,
-                root_markers: Default::default(),
+                root_markers: vec![
+                    "settings.gradle.kts".to_string(),
+                    "settings.gradle".to_string(),
+                    "pom.xml".to_string(),
+                    "workspace.json".to_string(),
+                ],
             }]),
         );
 
