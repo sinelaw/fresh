@@ -218,24 +218,30 @@ fn test_explorer_n_keybinding_creates_file() {
     harness.editor_mut().focus_file_explorer();
     harness.wait_for_file_explorer().unwrap();
 
-    // Press Ctrl+n to create new file (opens rename prompt for naming)
+    // Ctrl+N asks for a name and writes nothing yet.
     harness
         .send_key(KeyCode::Char('n'), KeyModifiers::CONTROL)
         .unwrap();
-    // Wait for the rename prompt to appear (file is created and opened)
     harness.wait_for_screen_contains("New file name:").unwrap();
-
-    // Check status bar for confirmation
-    let screen = harness.screen_to_string();
-    println!("Screen after creating file:\n{}", screen);
-
-    // Verify a new file was created
-    let final_count = fs::read_dir(&project_root).unwrap().count();
-    assert!(
-        final_count > initial_count,
-        "A new file should have been created. Initial: {}, Final: {}",
+    assert_eq!(
+        fs::read_dir(&project_root).unwrap().count(),
         initial_count,
-        final_count
+        "nothing should exist until the name is given"
+    );
+
+    if let Some(prompt) = harness.editor_mut().prompt_mut() {
+        prompt.clear();
+        prompt.insert_str("from_ctrl_n.txt");
+    }
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+
+    assert!(
+        project_root.join("from_ctrl_n.txt").is_file(),
+        "the file should carry the typed name.\n{}",
+        harness.screen_to_string()
     );
 }
 
@@ -351,9 +357,13 @@ fn test_explorer_menu_new_folder_action() {
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
-    // Wait for prompt (new folder enters rename mode)
     harness.wait_for_prompt().unwrap();
-    // Accept default name
+    // The prompt opens empty — nothing is created until it is named — so the
+    // name has to be typed where this used to accept a generated one.
+    if let Some(prompt) = harness.editor_mut().prompt_mut() {
+        prompt.clear();
+        prompt.insert_str("from_explorer_menu");
+    }
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
@@ -795,7 +805,12 @@ fn test_new_folder_via_menu_affects_filesystem() {
         .unwrap();
     harness.wait_for_prompt().unwrap();
 
-    // Accept default name
+    // The prompt opens empty — nothing is created until it is named — so the
+    // name has to be typed where this used to accept a generated one.
+    if let Some(prompt) = harness.editor_mut().prompt_mut() {
+        prompt.clear();
+        prompt.insert_str("from_menu_fs");
+    }
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
@@ -1430,6 +1445,15 @@ fn test_rename_with_dot_dot_moves_the_entry_up() {
     harness.editor_mut().focus_file_explorer();
     harness.wait_for_file_explorer().unwrap();
     harness.wait_for_file_explorer_item("nest").unwrap();
+
+    // Open `nest` first: `navigate_to_path` cannot reach a node the tree has
+    // not loaded, and a selection left on the root would make F2 refuse
+    // ("cannot rename project root") with nothing to type into.
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_file_explorer_item("inner.txt").unwrap();
     harness
         .editor_mut()
         .file_explorer_mut()
@@ -1438,7 +1462,13 @@ fn test_rename_with_dot_dot_moves_the_entry_up() {
     harness.render().unwrap();
 
     harness.send_key(KeyCode::F(2), KeyModifiers::NONE).unwrap();
-    harness.wait_for_prompt().unwrap();
+    harness.render().unwrap();
+    assert!(
+        harness.editor().is_prompting(),
+        "F2 should have opened the rename prompt; the selection is probably \
+         not on inner.txt.\n{}",
+        harness.screen_to_string()
+    );
     if let Some(prompt) = harness.editor_mut().prompt_mut() {
         prompt.clear();
         prompt.insert_str("../inner.txt");

@@ -267,8 +267,13 @@ fn test_context_menu_new_directory_action() {
     h.mouse_right_click(EXPLORER_COL, EXPLORER_ROW).unwrap();
     h.mouse_click(EXPLORER_COL + 2, new_dir_row).unwrap();
 
-    // Wait for prompt (rename mode) then accept default name.
     h.wait_for_prompt().unwrap();
+    // The prompt opens empty — nothing is created until it is named — so the
+    // name has to be typed where this used to accept a generated one.
+    if let Some(prompt) = h.editor_mut().prompt_mut() {
+        prompt.clear();
+        prompt.insert_str("from_context_menu");
+    }
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
     h.wait_for_prompt_closed().unwrap();
 
@@ -420,8 +425,13 @@ fn test_keyboard_down_enter_executes_item() {
 
     assert!(!context_menu_visible(&h), "Menu should close after Enter");
 
-    // Accept the default folder name.
     h.wait_for_prompt().unwrap();
+    // The prompt opens empty — nothing is created until it is named — so the
+    // name has to be typed where this used to accept a generated one.
+    if let Some(prompt) = h.editor_mut().prompt_mut() {
+        prompt.clear();
+        prompt.insert_str("from_keyboard");
+    }
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
     h.wait_for_prompt_closed().unwrap();
 
@@ -848,6 +858,12 @@ fn test_root_menu_new_directory_works() {
     h.mouse_click(EXPLORER_COL + 2, new_dir_row).unwrap();
 
     h.wait_for_prompt().unwrap();
+    // The prompt opens empty — nothing is created until it is named — so the
+    // name has to be typed where this used to accept a generated one.
+    if let Some(prompt) = h.editor_mut().prompt_mut() {
+        prompt.clear();
+        prompt.insert_str("from_root_menu");
+    }
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
     h.wait_for_prompt_closed().unwrap();
 
