@@ -16,7 +16,10 @@ use std::fs;
 //
 // A safe right-click inside the explorer content area:
 const EXPLORER_COL: u16 = 10;
-const EXPLORER_ROW: u16 = 5; // well inside content rows
+// Past the last entry of a small fixture, so it is the blank area: the root's.
+const EXPLORER_ROW: u16 = 5;
+// Row 2 is the project root, row 3 the first child under it.
+const ENTRY_ROW: u16 = 3;
 
 // The "Paste" item is present in every mode of the context menu (single,
 // multi-selection, root).  Matching on " Paste " — with surrounding
@@ -33,6 +36,19 @@ fn harness_with_explorer() -> EditorTestHarness {
     h.editor_mut().focus_file_explorer();
     h.wait_for_file_explorer().unwrap();
     h.render().unwrap(); // populate cached_layout.file_explorer_area
+    h
+}
+
+/// The same, with one file in it, so [`ENTRY_ROW`] is an entry: the bare project
+/// has only the root row and everything below it is the blank area.
+fn harness_with_entry() -> EditorTestHarness {
+    let mut h = EditorTestHarness::with_temp_project(100, 30).unwrap();
+    let root = h.project_dir().unwrap();
+    fs::write(root.join("entry.txt"), "data").unwrap();
+    h.editor_mut().focus_file_explorer();
+    h.wait_for_file_explorer().unwrap();
+    h.wait_for_file_explorer_item("entry.txt").unwrap();
+    h.render().unwrap();
     h
 }
 
@@ -56,8 +72,8 @@ fn test_right_click_opens_context_menu() {
 /// The context menu shows all expected items.
 #[test]
 fn test_context_menu_shows_all_items() {
-    let mut h = harness_with_explorer();
-    h.mouse_right_click(EXPLORER_COL, EXPLORER_ROW).unwrap();
+    let mut h = harness_with_entry();
+    h.mouse_right_click(EXPLORER_COL, ENTRY_ROW).unwrap();
 
     h.assert_screen_contains("New File");
     h.assert_screen_contains("New Directory");
@@ -349,13 +365,13 @@ fn test_context_menu_rename_action() {
 /// Clicking "Paste" with an empty clipboard shows the "nothing to paste" message.
 #[test]
 fn test_context_menu_paste_empty_clipboard() {
-    let mut h = harness_with_explorer();
+    let mut h = harness_with_entry();
 
-    // Paste is item index 5: menu_y + 1 + 5 = menu_y + 6.
-    let menu_y = EXPLORER_ROW + 1;
+    // Paste is item index 5 of an entry's menu: menu_y + 1 + 5 = menu_y + 6.
+    let menu_y = ENTRY_ROW + 1;
     let paste_row = menu_y + 1 + 5;
 
-    h.mouse_right_click(EXPLORER_COL, EXPLORER_ROW).unwrap();
+    h.mouse_right_click(EXPLORER_COL, ENTRY_ROW).unwrap();
     h.mouse_click(EXPLORER_COL + 2, paste_row).unwrap();
 
     let screen = h.screen_to_string();
@@ -420,15 +436,31 @@ fn test_keyboard_down_enter_executes_item() {
     );
 }
 
+/// Which item the open menu highlights, and how many it has. Reading both off
+/// the menu is what makes the wrap tests below about wrapping rather than about
+/// an item count that goes stale as items are appended.
+fn menu_highlight(h: &EditorTestHarness) -> (usize, usize) {
+    let menu = h
+        .editor()
+        .active_window()
+        .file_explorer_context_menu
+        .as_ref()
+        .expect("an open file-explorer context menu");
+    (menu.menu.highlighted, menu.menu.item_count)
+}
+
 /// Up key wraps from the first item to the last.
 #[test]
 fn test_keyboard_up_wraps() {
-    let mut h = harness_with_explorer();
-    h.mouse_right_click(EXPLORER_COL, EXPLORER_ROW).unwrap();
-    assert!(context_menu_visible(&h));
+    // An entry, for the full menu: `EXPLORER_ROW` is the blank area here.
+    let mut h = harness_with_entry();
+    h.mouse_right_click(EXPLORER_COL, ENTRY_ROW).unwrap();
+    let (highlighted, items) = menu_highlight(&h);
+    assert_eq!(highlighted, 0, "a fresh menu highlights its first item");
+    assert!(items > 3, "the entry menu, not the root's: {items} items");
 
-    // Up from index 0 should wrap to the last item (Delete) and keep menu open.
     h.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
+    assert_eq!(menu_highlight(&h), (items - 1, items));
     assert!(
         context_menu_visible(&h),
         "Menu should remain open after Up key"
@@ -438,15 +470,17 @@ fn test_keyboard_up_wraps() {
 /// Down key wraps from the last item back to the first.
 #[test]
 fn test_keyboard_down_wraps() {
-    let mut h = harness_with_explorer();
-    h.mouse_right_click(EXPLORER_COL, EXPLORER_ROW).unwrap();
+    let mut h = harness_with_entry();
+    h.mouse_right_click(EXPLORER_COL, ENTRY_ROW).unwrap();
+    let (_, items) = menu_highlight(&h);
 
-    // Navigate to the last item (7 items, so 6 presses).
-    for _ in 0..6 {
+    for _ in 0..items - 1 {
         h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     }
-    // One more Down should wrap to index 0 — menu stays open.
+    assert_eq!(menu_highlight(&h), (items - 1, items));
+
     h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    assert_eq!(menu_highlight(&h), (0, items));
     assert!(
         context_menu_visible(&h),
         "Menu should remain open after Down wraps around"
@@ -619,7 +653,9 @@ fn test_select_all_triggers_multi_selection_menu() {
         .unwrap();
     h.render().unwrap();
 
-    h.mouse_right_click(EXPLORER_COL, EXPLORER_ROW).unwrap();
+    // On an entry, which is what this test is about (the blank area would give
+    // the same menu, since `is_multi` is read first).
+    h.mouse_right_click(EXPLORER_COL, ENTRY_ROW).unwrap();
 
     let screen = h.screen_to_string();
     assert!(
@@ -798,4 +834,151 @@ fn test_root_menu_new_directory_works() {
         final_dirs > initial_dirs,
         "A new directory should have been created via root menu"
     );
+}
+
+// ── the blank area below the last entry ──────────────────────────────────────
+
+/// The path the explorer's cursor is on, relative to the project root, with `/`
+/// separators whatever the platform uses. By components rather than the string
+/// the OS prints, so the same selection does not read `dir1\dir2` on Windows.
+fn selected_relative_path(h: &EditorTestHarness) -> String {
+    let explorer = h.editor().file_explorer().expect("an explorer");
+    let entry = explorer.get_selected_entry().expect("a selection");
+    let root = explorer.tree().root_path();
+    let path = entry.path.strip_prefix(root).unwrap_or(&entry.path);
+    path.components()
+        .map(|c| c.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+/// Right-clicking the blank area selects the project root and opens the root's
+/// menu. It used to move no selection, so the entry menu opened against
+/// whichever entry was selected before and acted on it.
+#[test]
+fn test_right_click_blank_area_selects_project_root() {
+    let mut h = EditorTestHarness::with_temp_project(100, 30).unwrap();
+    let root = h.project_dir().unwrap();
+    fs::write(root.join("target.txt"), "data").unwrap();
+
+    h.editor_mut().focus_file_explorer();
+    h.wait_for_file_explorer().unwrap();
+    h.wait_for_file_explorer_item("target.txt").unwrap();
+
+    // Select an entry first: what the stale menu used to be about.
+    h.mouse_click(EXPLORER_COL, ENTRY_ROW).unwrap();
+    assert_eq!(selected_relative_path(&h), "target.txt");
+
+    h.mouse_right_click(EXPLORER_COL, EXPLORER_ROW + 10)
+        .unwrap();
+
+    assert_eq!(
+        selected_relative_path(&h),
+        "",
+        "the blank area is the project root's"
+    );
+    let screen = h.screen_to_string();
+    assert!(
+        screen.contains("New File") && screen.contains("New Directory"),
+        "the root menu must offer the create actions. Screen:\n{}",
+        screen
+    );
+    assert!(
+        !screen.contains("Rename") && !screen.contains("Delete"),
+        "the root menu must not offer an entry's actions. Screen:\n{}",
+        screen
+    );
+}
+
+/// A reader's multi-selection survives a right-press on the blank area — which
+/// includes the panel's walls, so clearing it there would lose the set to a
+/// one-column miss. Only the cursor moves.
+#[test]
+fn test_right_click_blank_area_keeps_a_multi_selection() {
+    let mut h = EditorTestHarness::with_temp_project(100, 30).unwrap();
+    let root = h.project_dir().unwrap();
+    fs::write(root.join("one.txt"), "1").unwrap();
+    fs::write(root.join("two.txt"), "2").unwrap();
+
+    h.editor_mut().focus_file_explorer();
+    h.wait_for_file_explorer().unwrap();
+    h.wait_for_file_explorer_item("one.txt").unwrap();
+
+    h.send_key(KeyCode::Char('a'), KeyModifiers::CONTROL)
+        .unwrap();
+    h.render().unwrap();
+    let selected = |h: &EditorTestHarness| {
+        h.editor()
+            .file_explorer()
+            .expect("an explorer")
+            .multi_selection()
+            .len()
+    };
+    let before = selected(&h);
+    assert!(before > 1, "Ctrl+A selects the tree: {before}");
+
+    h.mouse_right_click(EXPLORER_COL, EXPLORER_ROW + 10)
+        .unwrap();
+
+    assert_eq!(
+        selected(&h),
+        before,
+        "the set is the reader's, not the menu's"
+    );
+    assert_eq!(
+        selected_relative_path(&h),
+        "",
+        "the cursor still moves to the project root"
+    );
+}
+
+// ── compact directory chains ─────────────────────────────────────────────────
+
+/// Right-clicking one name of a compact `dir1/dir2/dir3` row selects that
+/// directory, not the deepest one.
+#[test]
+fn test_right_click_compact_chain_segment_selects_that_directory() {
+    let mut h = EditorTestHarness::with_temp_project(100, 30).unwrap();
+    let root = h.project_dir().unwrap();
+    fs::create_dir_all(root.join("dir1/dir2/dir3")).unwrap();
+    fs::write(root.join("dir1/dir2/dir3/deep.txt"), "deep").unwrap();
+
+    h.editor_mut().focus_file_explorer();
+    h.wait_for_file_explorer().unwrap();
+    h.wait_for_file_explorer_item("dir1").unwrap();
+
+    // Clicking `dir1` expands the whole single-child chain onto one row.
+    h.mouse_click(EXPLORER_COL, ENTRY_ROW).unwrap();
+    h.wait_for_file_explorer_item("deep.txt").unwrap();
+    h.render().unwrap();
+
+    // Where each name sits on screen, read off the row that was drawn.
+    let screen = h.screen_to_string();
+    let (row, line) = screen
+        .lines()
+        .enumerate()
+        .find(|(_, l)| l.contains("dir1/dir2/dir3"))
+        .map(|(i, l)| (i as u16, l.to_string()))
+        .unwrap_or_else(|| panic!("no compact row on screen:\n{screen}"));
+    // Each name appears once on the row, so the first match is the segment.
+    let column_of = |name: &str| {
+        line.char_indices()
+            .filter(|(i, _)| line[*i..].starts_with(name))
+            .map(|(i, _)| line[..i].chars().count() as u16)
+            .next()
+            .unwrap_or_else(|| panic!("{name} not on the row: {line:?}"))
+    };
+    for (name, expected) in [
+        ("dir1", "dir1"),
+        ("dir2", "dir1/dir2"),
+        ("dir3", "dir1/dir2/dir3"),
+    ] {
+        h.mouse_right_click(column_of(name) + 1, row).unwrap();
+        assert_eq!(
+            selected_relative_path(&h),
+            expected,
+            "right-clicking {name} must select {expected}"
+        );
+        h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    }
 }

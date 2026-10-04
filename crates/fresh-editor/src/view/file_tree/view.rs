@@ -6,6 +6,7 @@ use super::tree::FileTree;
 use crate::input::fuzzy::FuzzyMatch;
 use crate::model::filesystem::DirEntry;
 use std::collections::{HashMap, HashSet};
+use std::path::Path;
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 
@@ -25,7 +26,15 @@ pub struct VisibleRow {
     pub entry: DirEntry,
     pub state: NodeState,
     /// The ancestors compact mode folded into this row, outermost first.
-    pub chain: Vec<String>,
+    pub chain: Vec<ChainSegment>,
+}
+
+/// One ancestor compact mode folded into a row: the name the row draws for it,
+/// and the directory it names.
+#[derive(Debug, Clone)]
+pub struct ChainSegment {
+    pub name: String,
+    pub path: PathBuf,
 }
 
 impl VisibleRow {
@@ -196,7 +205,11 @@ impl FileTreeView {
                     chain: self
                         .compact_chain_for_anchor(id)
                         .into_iter()
-                        .filter_map(|a| self.tree.get_node(a).map(|n| n.entry.name.clone()))
+                        .filter_map(|a| self.tree.get_node(a))
+                        .map(|n| ChainSegment {
+                            name: n.entry.name.clone(),
+                            path: n.entry.path.clone(),
+                        })
                         .collect(),
                 })
             })
@@ -331,10 +344,8 @@ impl FileTreeView {
             self.expand_with_chain(node_id).await?;
         }
         // The expansion may have folded the cursor's row into a deeper
-        // chain anchor; re-promote so the cursor stays on a rendered row.
-        // Why: select_next/prev locate the cursor by id within
-        // filtered_visible_nodes(); an absorbed cursor is missing from
-        // that list and arrow keys silently no-op.
+        // anchor; re-promote so the cursor is a row the reader can see, since
+        // Rename and Delete act on the cursor.
         if let Some(sel) = self.selected_node {
             self.selected_node = Some(self.promote_to_anchor(sel));
         }
@@ -448,6 +459,49 @@ impl FileTreeView {
         self.selected_node = node_id.map(|id| self.promote_to_anchor(id));
     }
 
+    /// Set the selected node as given, with no promotion to a chain anchor: for
+    /// a press on one segment of a `dir1/dir2/dir3` row, promoting would make
+    /// the menu act on the deepest directory whichever name was clicked.
+    pub fn set_selected_exact(&mut self, node_id: Option<NodeId>) {
+        self.selected_node = node_id;
+    }
+
+    /// What a press on row `index` named: the folded directory `segment`, when
+    /// the press landed on one of a compact row's names, else the row itself.
+    ///
+    /// By path, not by id: the label the press was resolved against was drawn
+    /// a frame earlier, and a path still names the right directory if the
+    /// chain has grown or shrunk since, or if a reload has recycled ids.
+    pub fn press_target(&self, index: usize, segment: Option<&Path>) -> Option<NodeId> {
+        let anchor = self.get_node_at_index(index)?;
+        Some(
+            segment
+                .and_then(|path| self.tree.get_node_by_path(path))
+                .map(|node| node.id)
+                .unwrap_or(anchor),
+        )
+    }
+
+    /// The row `id` is drawn on, by index in the visible order. A directory
+    /// compact mode folded into a deeper row has no row of its own; the anchor
+    /// whose label carries it is where it shows.
+    fn row_of(&self, id: NodeId) -> Option<usize> {
+        // An id with a row of its own is never absorbed, so promoting first
+        // answers both cases.
+        self.projection().index_of(self.promote_to_anchor(id))
+    }
+
+    /// The id of the row the cursor is drawn on.
+    ///
+    /// The multi-selection is a set of rows: it highlights them, and
+    /// [`effective_selection`](Self::effective_selection) drops ids with no
+    /// row. So the keys that seed it from the cursor use this, not the cursor.
+    fn cursor_row_id(&self) -> Option<NodeId> {
+        let id = self.promote_to_anchor(self.selected_node?);
+        // The lookup only tests that it is a row.
+        self.projection().index_of(id).map(|_| id)
+    }
+
     /// Walk down a chain of absorbed directories until reaching the
     /// non-absorbed anchor. For non-absorbed nodes returns the input.
     fn promote_to_anchor(&self, node_id: NodeId) -> NodeId {
@@ -477,7 +531,7 @@ impl FileTreeView {
         }
 
         if let Some(current) = self.selected_node {
-            if let Some(pos) = visible.iter().position(|&id| id == current) {
+            if let Some(pos) = self.row_of(current) {
                 if pos + 1 < visible.len() {
                     self.selected_node = Some(visible[pos + 1]);
                 }
@@ -497,7 +551,7 @@ impl FileTreeView {
         }
 
         if let Some(current) = self.selected_node {
-            if let Some(pos) = visible.iter().position(|&id| id == current) {
+            if let Some(pos) = self.row_of(current) {
                 if pos > 0 {
                     self.selected_node = Some(visible[pos - 1]);
                 }
@@ -537,8 +591,9 @@ impl FileTreeView {
     }
 
     /// Toggle the cursor item in/out of the multi-selection and set the anchor.
+    /// The cursor's *row*: see [`cursor_row_id`](Self::cursor_row_id).
     pub fn toggle_select(&mut self) {
-        if let Some(cursor) = self.selected_node {
+        if let Some(cursor) = self.cursor_row_id() {
             if self.multi_selection.contains(&cursor) {
                 self.multi_selection.remove(&cursor);
             } else {
@@ -555,12 +610,12 @@ impl FileTreeView {
         if visible.is_empty() {
             return;
         }
-        let Some(current) = self.selected_node else {
+        // The cursor's row, so the seed and the anchor are ids the set can
+        // show: see `cursor_row_id`.
+        let Some(pos) = self.selected_node.and_then(|id| self.row_of(id)) else {
             return;
         };
-        let Some(pos) = visible.iter().position(|&id| id == current) else {
-            return;
-        };
+        let current = visible[pos];
         // Always seed the selection with the cursor row first — even at the
         // top boundary, so Escape / a subsequent Shift+Down sees a live
         // selection anchored on wherever the user started the range.
@@ -589,12 +644,12 @@ impl FileTreeView {
         if visible.is_empty() {
             return;
         }
-        let Some(current) = self.selected_node else {
+        // The cursor's row, so the seed and the anchor are ids the set can
+        // show: see `cursor_row_id`.
+        let Some(pos) = self.selected_node.and_then(|id| self.row_of(id)) else {
             return;
         };
-        let Some(pos) = visible.iter().position(|&id| id == current) else {
-            return;
-        };
+        let current = visible[pos];
         // Always seed the selection with the cursor row first — even at the
         // bottom boundary, so Escape / a subsequent Shift+Up sees a live
         // selection anchored on wherever the user started the range.
@@ -620,7 +675,8 @@ impl FileTreeView {
     pub fn select_all(&mut self) {
         let visible = self.filtered_visible_nodes();
         self.multi_selection = visible.iter().copied().collect();
-        self.selection_anchor = self.selected_node;
+        // The cursor's row, so the range extension can find the anchor.
+        self.selection_anchor = self.cursor_row_id();
     }
 
     /// Clear multi-selection (return to single-cursor mode).
@@ -731,9 +787,10 @@ impl FileTreeView {
         }
     }
 
-    /// Get the index of the selected node in the visible list
+    /// Get the index of the selected node in the visible list. A cursor on a
+    /// chain segment reports the row that draws it.
     pub fn get_selected_index(&self) -> Option<usize> {
-        self.projection().index_of(self.selected_node?)
+        self.row_of(self.selected_node?)
     }
 
     /// The visible node at `index`, in the tree's display order.
@@ -1153,7 +1210,10 @@ mod tests {
         let names: Vec<(String, Vec<String>, Option<usize>)> = p
             .rows
             .iter()
-            .map(|r| (r.entry.name.clone(), r.chain.clone(), r.parent))
+            .map(|r| {
+                let chain = r.chain.iter().map(|seg| seg.name.clone()).collect();
+                (r.entry.name.clone(), chain, r.parent)
+            })
             .collect();
         assert_eq!(names[1].0, "c");
         assert_eq!(names[1].1, ["a", "b"], "a and b fold into c's row");
@@ -1626,6 +1686,118 @@ mod tests {
         let c_id = id_for(&view, "chain/a/b/c");
         view.set_selected(Some(chain_id));
         assert_eq!(view.get_selected(), Some(c_id));
+    }
+
+    /// Each segment of a compact `chain/a/b/c` row carries the directory it
+    /// names, so a press on one can be resolved by path.
+    #[tokio::test]
+    async fn each_segment_of_a_compact_row_carries_its_own_directory() {
+        let (_t, mut view) = create_chain_view().await;
+        let root_id = view.tree().root_id();
+        view.tree_mut().expand_node(root_id).await.unwrap();
+        view.expand_with_chain(id_for(&view, "chain"))
+            .await
+            .unwrap();
+
+        let projection = view.projection();
+        let c_id = id_for(&view, "chain/a/b/c");
+        let row = &projection.rows[projection.index_of(c_id).expect("a row")];
+        let root = view.tree().root_path();
+        let got: Vec<(&str, &std::path::Path)> = row
+            .chain
+            .iter()
+            .map(|seg| (seg.name.as_str(), seg.path.strip_prefix(root).unwrap()))
+            .collect();
+        assert_eq!(
+            got,
+            vec![
+                ("chain", std::path::Path::new("chain")),
+                ("a", std::path::Path::new("chain/a")),
+                ("b", std::path::Path::new("chain/a/b")),
+            ]
+        );
+    }
+
+    /// A cursor on a segment joins the multi-selection as the row it is drawn
+    /// on. An absorbed id in that set would highlight nothing and act on
+    /// nothing: Space then Delete reported "cannot delete the project root".
+    #[tokio::test]
+    async fn a_segment_cursor_joins_the_multi_selection_as_its_row() {
+        let (_t, mut view) = create_chain_view().await;
+        let root_id = view.tree().root_id();
+        view.tree_mut().expand_node(root_id).await.unwrap();
+        view.expand_with_chain(id_for(&view, "chain"))
+            .await
+            .unwrap();
+
+        let chain_id = id_for(&view, "chain");
+        let c_id = id_for(&view, "chain/a/b/c");
+        let leaf_id = id_for(&view, "chain/a/b/c/leaf.txt");
+
+        view.set_selected_exact(Some(chain_id));
+        view.toggle_select();
+        assert!(view.has_multi_selection());
+        assert_eq!(
+            view.effective_selection(),
+            vec![c_id],
+            "the row the cursor is drawn on, not an id no row carries"
+        );
+
+        // And a range extended from such a cursor keeps the row it started on:
+        // the anchor has to be findable in the visible order for the range to
+        // span anything.
+        view.clear_multi_selection();
+        view.set_selected_exact(Some(chain_id));
+        view.extend_selection_down();
+        assert_eq!(view.effective_selection(), vec![c_id, leaf_id]);
+    }
+
+    /// A cursor on a segment stays on that segment, while the row drawn with
+    /// the highlight is still the anchor's — the row the segment is on.
+    #[tokio::test]
+    async fn a_cursor_on_a_chain_segment_is_drawn_on_the_chains_row() {
+        let (_t, mut view) = create_chain_view().await;
+        let root_id = view.tree().root_id();
+        view.tree_mut().expand_node(root_id).await.unwrap();
+        view.expand_with_chain(id_for(&view, "chain"))
+            .await
+            .unwrap();
+
+        let chain_id = id_for(&view, "chain");
+        let c_id = id_for(&view, "chain/a/b/c");
+        view.set_selected_exact(Some(chain_id));
+        assert_eq!(view.get_selected(), Some(chain_id), "the segment itself");
+        assert_eq!(
+            view.get_selected_index(),
+            view.projection().index_of(c_id),
+            "drawn on the row that renders the chain"
+        );
+    }
+
+    /// And the keys still step off that row, rather than failing to find a
+    /// cursor with no row of its own and leaving it where it was.
+    #[tokio::test]
+    async fn the_keys_step_off_the_row_a_segment_cursor_is_drawn_on() {
+        let (_t, mut view) = create_chain_view().await;
+        let root_id = view.tree().root_id();
+        view.tree_mut().expand_node(root_id).await.unwrap();
+        view.expand_with_chain(id_for(&view, "chain"))
+            .await
+            .unwrap();
+
+        let chain_id = id_for(&view, "chain");
+        let leaf_id = id_for(&view, "chain/a/b/c/leaf.txt");
+        view.set_selected_exact(Some(chain_id));
+        view.select_next();
+        assert_eq!(
+            view.get_selected(),
+            Some(leaf_id),
+            "the row below the chain"
+        );
+
+        view.set_selected_exact(Some(chain_id));
+        view.select_prev();
+        assert_eq!(view.get_selected(), Some(root_id), "the row above it");
     }
 
     #[cfg(unix)]

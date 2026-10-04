@@ -232,12 +232,17 @@ impl<M: 'static> Ui<M> {
                         self.step_window(r, dir, out);
                         return true;
                     }
-                    if let Some(r) = self.scrollbar_hit(pos) {
+                }
+                // Any button, not just the left one. Only Left drives the
+                // bar, but a press on the gutter is still a press on the bar:
+                // letting it through delivers it to whatever the bar covers.
+                if let Some(r) = self.scrollbar_hit(pos) {
+                    if button == MouseButton::Left {
                         self.scrollbar_drag = Some(r);
                         self.scrollbar_grab = self.grab_within_thumb(r, pos.y);
                         self.scroll_to_pointer(r, pos.y, out);
-                        return true;
                     }
+                    return true;
                 }
                 let paths = self.route(pos);
                 // Every stacked path's target, so a click is derived per path:

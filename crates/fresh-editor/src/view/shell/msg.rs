@@ -475,26 +475,32 @@ pub enum UiFact {
     /// `Event::clicks` — the editor counts the run, the library carries it,
     /// and the handler reads it, so the two routes cannot disagree about which
     /// row they mean.
+    ///
+    /// `segment` is the folded directory of a compact row's label the press
+    /// landed on, `None` for the row's own name. Either button names it: a
+    /// click on `dir1` of a `dir1/dir2/dir3` row is about `dir1`.
     ExplorerRowPress {
         index: usize,
+        segment: Option<std::path::PathBuf>,
         clicks: u8,
     },
     /// A right click on a tree row: select it and open its context menu at the
-    /// pointer.
+    /// pointer. `segment` as on `ExplorerRowPress`.
     ExplorerRowContext {
         index: usize,
+        segment: Option<std::path::PathBuf>,
         x: u16,
         y: u16,
     },
-    /// A right-press on the panel that did not land on a row.
+    /// A right-press on the panel that did not land on a row. It names the
+    /// project root: see
+    /// [`Editor::explorer_body_context`](crate::app::Editor::explorer_body_context).
     ///
     /// The old component bound its right-press to the *whole* explorer — its
     /// comment said "the union box spans the whole explorer" — so a click
     /// past the last entry still opened the menu, in its root mode. Binding
     /// only to rows dropped that: empty space below the files answered
-    /// nothing. The row index is resolved app-side from the panel's own
-    /// rectangle, as the component resolved `relative_row`, because the
-    /// description cannot read geometry.
+    /// nothing.
     ExplorerBodyContext {
         x: u16,
         y: u16,
