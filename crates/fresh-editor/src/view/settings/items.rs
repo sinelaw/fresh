@@ -805,7 +805,8 @@ fn build_page(category: &SettingCategory, ctx: &BuildContext) -> SettingsPage {
 /// settings with proper DualList / toggle / etc. controls, while objects whose
 /// children would all fall through to JSON editors stay collapsed.
 /// The item(s) a setting shows as on its page, each paired with the
-/// `x-order` it sorts by (an expanded child's own, else the setting's).
+/// `x-order` it sorts by (an expanded child's own, else the setting's). An
+/// expanded child is in the setting's section unless it names its own.
 fn expand_or_build(schema: &SettingSchema, ctx: &BuildContext) -> Vec<(Option<i32>, SettingItem)> {
     if let SettingType::Object { properties } = &schema.setting_type {
         let all_native = !properties.is_empty()
@@ -826,6 +827,11 @@ fn expand_or_build(schema: &SettingSchema, ctx: &BuildContext) -> Vec<(Option<i3
                     if !child.path.starts_with(&schema.path) {
                         child.path = format!("{}{}", schema.path, child.path);
                     }
+                    // The setting's section, like its `x-order`, is its
+                    // children's unless they name their own: `editor.search`
+                    // is in "Search", and its toggles are what that section
+                    // shows.
+                    child.section = child.section.or_else(|| schema.section.clone());
                     if let Some(ref mut sib) = child.dual_list_sibling {
                         if !sib.starts_with(&schema.path) {
                             *sib = format!("{}{}", schema.path, sib);
@@ -1784,5 +1790,58 @@ mod tests {
             control_to_value(&text),
             serde_json::Value::String("hello".to_string())
         );
+    }
+
+    /// An object split into its own controls keeps its `x-section` for the
+    /// children that name none: `editor.search` is in "Search", and so are
+    /// its toggles, which used to land after every section with no heading.
+    #[test]
+    fn expanded_children_are_in_their_settings_section() {
+        let schema = r##"{
+          "type": "object",
+          "properties": {
+            "editor": {
+              "type": "object",
+              "properties": {
+                "line_numbers": { "type": "boolean", "x-section": "Display" },
+                "search": { "$ref": "#/$defs/Search", "x-section": "Search" }
+              }
+            }
+          },
+          "$defs": {
+            "Search": {
+              "type": "object",
+              "properties": {
+                "regex": { "type": "boolean" },
+                "whole_word": { "type": "boolean", "x-section": "Display" }
+              }
+            }
+          }
+        }"##;
+        let categories = super::super::schema::parse_schema(schema).unwrap();
+        let config = serde_json::json!({});
+        let pages = build_pages(
+            &categories,
+            &config,
+            &HashMap::new(),
+            ConfigLayer::User,
+            &HashMap::new(),
+            &[],
+        );
+        let page = pages.iter().find(|p| p.name == "Editor").unwrap();
+        let section_of = |path: &str| {
+            page.items
+                .iter()
+                .find(|i| i.path == path)
+                .and_then(|i| i.section.as_deref())
+        };
+        assert_eq!(section_of("/editor/search/regex"), Some("Search"));
+        assert_eq!(
+            section_of("/editor/search/whole_word"),
+            Some("Display"),
+            "a child's own section wins"
+        );
+        let sections: Vec<&str> = page.sections.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(sections, ["Display", "Search"]);
     }
 }
