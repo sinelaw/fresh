@@ -658,6 +658,22 @@ pub struct EditorTestHarness {
     /// Terminal dimensions for vt100
     term_width: u16,
     term_height: u16,
+
+    /// Reports a teardown that stalls. Armed by `Drop`, and declared after
+    /// `editor` and `_temp_dir` so it is still registered while they drop
+    /// (plugin-thread join, runtime shutdown, temp-dir removal).
+    _teardown_stall: Option<StallReport>,
+
+    /// This harness's share of the config-globals read side, so a locale
+    /// pin cannot change what this editor renders. Declared last: it is
+    /// released only once the editor is gone.
+    _globals_lease: Option<crate::common::global_state::HarnessLease>,
+}
+
+impl Drop for EditorTestHarness {
+    fn drop(&mut self) {
+        self._teardown_stall = Some(StallReport::start("EditorTestHarness teardown"));
+    }
 }
 
 impl EditorTestHarness {
@@ -687,6 +703,10 @@ impl EditorTestHarness {
         crate::common::tracing::init_tracing_from_env();
         #[cfg(windows)]
         end_children_with_test_process();
+        // Construction waits inside the editor (the plugin thread's first
+        // round trip, the project root's file watch) and cannot report a
+        // stall itself; Windows CI has hung here until the 180s kill.
+        let _stall = StallReport::start("EditorTestHarness::create");
         let mut t = crate::common::timing::Timer::start("harness::create");
         // Create temp directory if we don't have a shared dir_context
         let temp_dir = if options.dir_context.is_none() || options.create_project_root {
@@ -816,12 +836,15 @@ impl EditorTestHarness {
         // registered — both intermittent, both depending only on when some
         // unrelated test happens to build its editor.
         //
-        // The read side is what every construction takes; tests that need
-        // one of those globals to hold still take the write side for their
-        // whole body (`common::global_state::pin_config_globals`). Readers
-        // do not exclude each other, so ordinary tests still build editors
-        // in parallel; the guard drops the moment the editor exists.
-        let globals_guard = crate::common::global_state::guard_harness_construction();
+        // The read side is what every harness takes, and it keeps it for as
+        // long as it lives: the locale is read on every frame, so a pin
+        // taken after construction would still change what this editor
+        // renders. Tests that need one of those globals to hold still take
+        // the write side for their whole body
+        // (`common::global_state::pin_config_globals`). Readers do not
+        // exclude each other, so ordinary tests still build editors in
+        // parallel.
+        let globals_lease = crate::common::global_state::lease_config_globals();
 
         // Initialize i18n with the config's locale before creating the editor
         // This ensures menu defaults are created with the correct translations.
@@ -906,10 +929,6 @@ impl EditorTestHarness {
             editor.release_startup_dock_reservation();
         }
 
-        // Both config-derived globals are now written; let a waiting
-        // `pin_config_globals` through.
-        drop(globals_guard);
-
         // Process any pending plugin commands
         editor.process_async_messages();
         t.phase("process_async_messages");
@@ -941,6 +960,8 @@ impl EditorTestHarness {
             vt100_parser: vt100::Parser::new(height, width, 0),
             term_width: width,
             term_height: height,
+            _teardown_stall: None,
+            _globals_lease: globals_lease,
         };
         t.finish();
         Ok(h)
