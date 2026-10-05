@@ -128,7 +128,11 @@ pub struct Row {
 /// that skips empties has silently normalised `"    sep  a string"` to
 /// `"sep a string"` — which is how the migrated popups lost the indent on
 /// their *first* row as well as their continuations.
+///
+/// A word also ends at a [`wide_breaks`] point, where it has no space to
+/// carry.
 fn chunks(para: &str) -> Vec<&str> {
+    let breaks = wide_breaks(para);
     let mut out: Vec<&str> = Vec::new();
     let mut start = 0usize;
     let mut seen_word = false;
@@ -140,6 +144,10 @@ fn chunks(para: &str) -> Vec<&str> {
                 seen_word = false;
             }
         } else {
+            if seen_word && breaks.binary_search(&i).is_ok() {
+                out.push(&para[start..i]);
+                start = i;
+            }
             seen_word = true;
         }
     }
@@ -147,6 +155,36 @@ fn chunks(para: &str) -> Vec<&str> {
         out.push(&para[start..]);
     }
     out
+}
+
+/// Where a line may break between two glyphs with no space between them: the
+/// Unicode line-breaking algorithm's (UAX #14) opportunities next to a wide
+/// glyph, in byte order.
+///
+/// Chinese and Japanese put no spaces between words, so without these a
+/// sentence is a single word: moved whole to the next row, stranding what
+/// came before it, or cut wherever the row ends. The algorithm also knows
+/// which of those breaks to refuse: none before `。`, `）` or `ー`, none
+/// after `（`. Narrow text still breaks only at spaces, as it did: the
+/// algorithm's other opportunities would also break it after a hyphen or a
+/// slash.
+fn wide_breaks(para: &str) -> Vec<usize> {
+    use unicode_width::UnicodeWidthChar;
+    let wide = |c: char| c.width() == Some(2);
+    if !para.chars().any(wide) {
+        return Vec::new();
+    }
+    unicode_linebreak::linebreaks(para)
+        .map(|(i, _)| i)
+        .filter(|&i| {
+            let before = para[..i].chars().next_back();
+            let after = para[i..].chars().next();
+            match (before, after) {
+                (Some(b), Some(a)) => b != ' ' && a != ' ' && (wide(b) || wide(a)),
+                _ => false,
+            }
+        })
+        .collect()
 }
 
 /// Greedy word wrap, breaking a word too long for a line of its own.
@@ -2469,8 +2507,7 @@ mod byte_mapping_tests {
 
     #[test]
     fn an_over_long_run_of_wide_glyphs_is_cut_by_cells() {
-        // No spaces to break at, so the run is cut — two wide glyphs per
-        // four-cell row, not four glyphs overflowing it.
+        // Two wide glyphs per four-cell row, not four glyphs overflowing it.
         let text = "日本語の文章";
         let rows = rows_of(text, 4, Wrap::Word);
         assert_eq!(
@@ -2487,6 +2524,49 @@ mod byte_mapping_tests {
             shape(&rows),
             vec![("e\u{301}e\u{301}", 0, 0..6), ("e\u{301}", 0, 6..9)]
         );
+    }
+
+    #[test]
+    fn a_sentence_with_no_spaces_breaks_between_its_glyphs() {
+        // The run after the space fits the row's remainder glyph by glyph, so
+        // it fills the row instead of moving whole to the next one and
+        // leaving `1` alone above it.
+        let text = "持つ 1 つのエディタに再接続";
+        let rows = rows_of(text, 14, Wrap::Word);
+        assert_eq!(
+            shape(&rows),
+            vec![("持つ 1 つのエ", 0, 0..18), ("ディタに再接続", 0, 18..39),]
+        );
+    }
+
+    #[test]
+    fn a_wide_break_keeps_punctuation_with_its_text() {
+        // `。` and `）` never open a row and `（` never ends one: the row ends
+        // before the glyph the punctuation belongs to instead.
+        let rows = rows_of("ああ。いい", 6, Wrap::Word);
+        assert_eq!(shape(&rows), vec![("ああ。", 0, 0..9), ("いい", 0, 9..15)]);
+        let rows = rows_of("ああああ。", 8, Wrap::Word);
+        assert_eq!(shape(&rows), vec![("あああ", 0, 0..9), ("あ。", 0, 9..15)]);
+        let rows = rows_of("ああ（いい）", 6, Wrap::Word);
+        assert_eq!(
+            shape(&rows),
+            vec![("ああ", 0, 0..6), ("（い", 0, 6..12), ("い）", 0, 12..18)]
+        );
+    }
+
+    #[test]
+    fn narrow_text_still_breaks_only_at_spaces() {
+        // The line-breaking algorithm would break after the hyphen; a word of
+        // narrow glyphs is kept whole, as before.
+        let rows = rows_of("ab well-known", 8, Wrap::Word);
+        assert_eq!(
+            shape(&rows),
+            vec![("ab", 0, 0..2), ("well-kno", 0, 3..11), ("wn", 0, 11..13)]
+        );
+        // Next to a wide glyph a narrow one may break: `UI` and `の` share no
+        // space, but the row can end between them.
+        let rows = rows_of("ab UIの言語", 6, Wrap::Word);
+        assert_eq!(shape(&rows), vec![("ab UI", 0, 0..5), ("の言語", 0, 5..14)]);
     }
 
     #[test]
