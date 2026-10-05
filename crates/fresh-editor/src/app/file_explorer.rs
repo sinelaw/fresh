@@ -466,12 +466,16 @@ impl Editor {
         else {
             return;
         };
-        self.set_status_message(t!("explorer.refreshing", name = root.display()).to_string());
         // `refresh_file_tree_dirs` reloads each directory's expanded subtree in
         // place and then re-resolves the cursor by path, which is what keeps a
-        // refresh from dropping the reader where they were standing.
-        self.refresh_file_tree_dirs(&[root]);
-        self.set_status_message(t!("explorer.refreshed_default").to_string());
+        // refresh from dropping the reader where they were standing. It also
+        // says whether it managed it: a directory that has become unreadable
+        // must not report as refreshed.
+        let message = match self.refresh_file_tree_dirs(&[root]) {
+            None => t!("explorer.refreshed_default").to_string(),
+            Some(e) => t!("explorer.error_refreshing", error = e).to_string(),
+        };
+        self.set_status_message(message);
     }
 
     /// Ask for the new entry's name. Nothing is written until the prompt is
@@ -512,7 +516,7 @@ impl Editor {
             self.set_status_message(t!("explorer.create_cancelled").to_string());
             return;
         }
-        let Some(path) = self.entry_path_for_name(&parent, &name) else {
+        let Some(path) = self.entry_path_for_name(&parent, &name, None) else {
             return;
         };
 
@@ -556,8 +560,15 @@ impl Editor {
         }
     }
 
-    /// Show a just-created entry: reload the directory it landed in and put the
-    /// cursor on it.
+    /// Show a just-created entry: re-read the directory it landed in, open the
+    /// way down to it, and put the cursor on it.
+    ///
+    /// Two steps because the name may be a relative path. Reloading alone
+    /// cannot show `deep/named.txt`: the tree has no node for `deep`, so there
+    /// is nothing to reload and nothing for `navigate_to_path` to find. So the
+    /// deepest directory the tree *does* know is reloaded — which is what
+    /// makes the new entry visible to a walk at all — and then
+    /// `expand_and_select_file` walks down to it, loading as it goes.
     fn reveal_created_entry(&mut self, path: &Path) {
         let active_id = self.active_window;
         if let (Some(runtime), Some(explorer)) = (
@@ -566,18 +577,20 @@ impl Editor {
                 .get_mut(&active_id)
                 .and_then(|w| w.file_explorer.as_mut()),
         ) {
-            if let Some(parent_id) = path
-                .parent()
-                .and_then(|p| explorer.tree().get_node_by_path(p))
-                .map(|n| n.id)
-            {
+            let known = path
+                .ancestors()
+                .skip(1)
+                .find_map(|p| explorer.tree().get_node_by_path(p).map(|n| n.id));
+            if let Some(parent_id) = known {
                 if let Err(e) =
                     runtime.block_on(explorer.tree_mut().reload_expanded_node(parent_id))
                 {
                     tracing::warn!("Failed to refresh file tree: {}", e);
                 }
             }
-            explorer.navigate_to_path(path);
+            if !runtime.block_on(explorer.expand_and_select_file(path)) {
+                tracing::warn!("Created entry is not in the tree: {:?}", path);
+            }
         }
         self.notify_file_explorer_change(path);
     }
@@ -878,7 +891,18 @@ impl Editor {
     /// may be a relative path, `..` included, which is what lets a rename move
     /// an entry; the result is normalised, has to stay inside the project, and
     /// must not already exist, because `rename` would replace it in silence.
-    fn entry_path_for_name(&mut self, base: &Path, name: &str) -> Option<PathBuf> {
+    ///
+    /// `moving` is the entry a rename is moving, and `None` when the name is
+    /// for something that does not exist yet. It is what tells a rename onto
+    /// its own path apart from a rename onto somebody else's: on a
+    /// case-insensitive filesystem `README.md` and `readme.md` are the same
+    /// path, so `exists` is true for a rename that only changes case.
+    fn entry_path_for_name(
+        &mut self,
+        base: &Path,
+        name: &str,
+        moving: Option<&Path>,
+    ) -> Option<PathBuf> {
         if name == "." || name == ".." {
             self.set_status_message(t!("explorer.rename_invalid_dot").to_string());
             return None;
@@ -909,14 +933,20 @@ impl Editor {
                     return None;
                 }
                 Err(e) => {
-                    self.set_status_message(
-                        t!("explorer.error_renaming", error = e.to_string()).to_string(),
-                    );
+                    let key = match moving {
+                        Some(_) => "explorer.error_renaming",
+                        None => "explorer.error_creating_file",
+                    };
+                    self.set_status_message(t!(key, error = e.to_string()).to_string());
                     return None;
                 }
             }
         }
-        if fs.exists(&path) {
+        // `rename` replaces its destination without a word, so a name that
+        // lands on something else is refused. The entry being renamed is not
+        // something else — which is the only way to change a name's case on a
+        // filesystem that does not distinguish them.
+        if fs.exists(&path) && !moving.is_some_and(|src| same_entry(fs.as_ref(), src, &path)) {
             let shown = truncate_name_for_prompt(name, 40);
             self.set_status_message(t!("explorer.new_item_path_exists", name = &shown).to_string());
             return None;
@@ -940,7 +970,8 @@ impl Editor {
         let Some(parent) = original_path.parent().map(|p| p.to_path_buf()) else {
             return;
         };
-        let Some(new_path) = self.entry_path_for_name(&parent, &new_name) else {
+        let Some(new_path) = self.entry_path_for_name(&parent, &new_name, Some(&original_path))
+        else {
             return;
         };
 
@@ -1091,17 +1122,7 @@ impl Editor {
             }
 
             if self.authority().filesystem.exists(&dst_path) {
-                let name = truncate_name_for_prompt(&file_name.to_string_lossy(), 40);
-                let confirm = crate::app::confirm_dialog::paste_conflict(&name);
-                self.start_confirm_prompt(
-                    confirm.body.clone(),
-                    crate::view::prompt::PromptType::ConfirmPasteConflict {
-                        src,
-                        dst: dst_path,
-                        is_cut,
-                    },
-                    confirm,
-                );
+                self.confirm_paste_conflict(src, dst_path, is_cut, true);
             } else {
                 self.perform_file_explorer_paste(src, dst_path, is_cut);
             }
@@ -1152,9 +1173,34 @@ impl Editor {
             if conflicts.is_empty() {
                 self.execute_resolved_multi_paste(safe, vec![], is_cut);
             } else {
-                self.confirm_multi_paste_conflicts(safe, conflicts, is_cut);
+                self.confirm_multi_paste_conflicts(safe, conflicts, is_cut, true);
             }
         }
+    }
+
+    /// Ask about one taken destination: overwrite it, keep both under another
+    /// name, or stop. A drop of one entry asks it the same way a paste of one
+    /// does, down to `from_clipboard` deciding who may empty the clipboard.
+    pub(super) fn confirm_paste_conflict(
+        &mut self,
+        src: PathBuf,
+        dst: PathBuf,
+        is_cut: bool,
+        from_clipboard: bool,
+    ) {
+        let name =
+            truncate_name_for_prompt(&dst.file_name().unwrap_or_default().to_string_lossy(), 40);
+        let confirm = crate::app::confirm_dialog::paste_conflict(&name);
+        self.start_confirm_prompt(
+            confirm.body.clone(),
+            crate::view::prompt::PromptType::ConfirmPasteConflict {
+                src,
+                dst,
+                is_cut,
+                from_clipboard,
+            },
+            confirm,
+        );
     }
 
     /// Ask about the destinations that are already taken, carrying the rest to
@@ -1164,6 +1210,7 @@ impl Editor {
         safe: Vec<(PathBuf, PathBuf)>,
         conflicts: Vec<(PathBuf, PathBuf)>,
         is_cut: bool,
+        from_clipboard: bool,
     ) {
         let Some(first) = conflicts.first() else {
             return;
@@ -1180,9 +1227,29 @@ impl Editor {
                 confirmed: Vec::new(),
                 pending: conflicts,
                 is_cut,
+                from_clipboard,
             },
             confirm,
         );
+    }
+
+    /// Finish a resolved batch, emptying the clipboard only if that is where
+    /// the batch came from.
+    ///
+    /// `is_cut` says the entries are being moved; `from_clipboard` says a cut
+    /// is what is holding them. A drag moves without either filling the
+    /// clipboard or being entitled to empty it.
+    pub(super) fn finish_resolved_paste(
+        &mut self,
+        safe: Vec<(PathBuf, PathBuf)>,
+        to_overwrite: Vec<(PathBuf, PathBuf)>,
+        is_cut: bool,
+        from_clipboard: bool,
+    ) {
+        let clean = self.relocate_entries(safe, to_overwrite, is_cut);
+        if clean && is_cut && from_clipboard {
+            self.active_window_mut().file_explorer_clipboard = None;
+        }
     }
 
     /// Paste all resolved items (safe + confirmed-overwrite) from a multi-conflict flow.
@@ -1198,9 +1265,7 @@ impl Editor {
         to_overwrite: Vec<(PathBuf, PathBuf)>,
         is_cut: bool,
     ) {
-        if self.relocate_entries(safe, to_overwrite, is_cut) && is_cut {
-            self.active_window_mut().file_explorer_clipboard = None;
-        }
+        self.finish_resolved_paste(safe, to_overwrite, is_cut, true);
     }
 
     /// Move or copy several entries, with one tree refresh for the lot.
@@ -1616,17 +1681,19 @@ impl Editor {
             sources = vec![lifted];
         }
 
-        // A directory dropped into itself or into its own descendant is
-        // refused by `paste_one_fs_op`, which is the one place that states the
-        // rule; it reports as a failed move, which is what it is.
         let fs = std::sync::Arc::clone(&self.authority().filesystem);
         let pairs: Vec<(PathBuf, PathBuf)> = sources
             .into_iter()
             .filter_map(|src| {
                 let name = src.file_name()?;
                 let dst = dest.join(name);
-                // Already where it is going.
-                (dst != src).then_some((src, dst))
+                // Nothing to do, and not an error either: the entry is already
+                // in `dest`, or `dest` is the entry itself or something inside
+                // it — which a directory dragged onto its own row or one of
+                // its own children means, and which `paste_one_fs_op` would
+                // otherwise report as a failed move.
+                let pointless = dst == src || dest.starts_with(&src);
+                (!pointless).then_some((src, dst))
             })
             .collect();
         if pairs.is_empty() {
@@ -1634,19 +1701,22 @@ impl Editor {
         }
 
         // The same split paste makes: what can land untouched goes now, and a
-        // collision asks, through the prompt paste already uses for it.
+        // collision asks, through the prompt paste already uses for it — the
+        // one-entry question for one entry, so a drag is offered the same
+        // "keep both" a paste is. The clipboard is not where any of this came
+        // from and must come out of none of it.
         let (clashing, safe): (Vec<_>, Vec<_>) =
             pairs.into_iter().partition(|(_, dst)| fs.exists(dst));
-        match (safe.len(), clashing.len()) {
-            (1, 0) => {
-                let (src, dst) = safe.into_iter().next().expect("one");
-                self.relocate_entry(&src, &dst, true);
-            }
-            (_, 0) => {
-                self.relocate_entries(safe, Vec::new(), true);
-            }
-            _ => self.confirm_multi_paste_conflicts(safe, clashing, true),
+        if clashing.is_empty() {
+            self.relocate_entries(safe, Vec::new(), true);
+            return;
         }
+        if let ([(src, dst)], true) = (clashing.as_slice(), safe.is_empty()) {
+            let (src, dst) = (src.clone(), dst.clone());
+            self.confirm_paste_conflict(src, dst, true, false);
+            return;
+        }
+        self.confirm_multi_paste_conflicts(safe, clashing, true, false);
     }
 
     /// Duplicate the selected file/directory in-place, naming the new copy
@@ -2465,6 +2535,22 @@ fn split_stem_ext(name: &str) -> (&str, &str) {
         }
     }
     (name, "")
+}
+
+/// Whether two paths name the same entry on the filesystem in front of us.
+///
+/// By what the filesystem says, not by comparing the strings: a
+/// case-insensitive or otherwise normalising filesystem answers `README.md`
+/// and `readme.md` with one entry, and a rename between the two has to be
+/// allowed through rather than read as a collision.
+fn same_entry(fs: &dyn crate::model::filesystem::FileSystem, a: &Path, b: &Path) -> bool {
+    match (fs.canonicalize(a), fs.canonicalize(b)) {
+        (Ok(a), Ok(b)) => a == b,
+        // One of them does not resolve, so they are not the same thing. The
+        // caller has already established that `b` exists, so this is a path
+        // the filesystem will not answer for — treat it as somebody else's.
+        _ => false,
+    }
 }
 
 /// Whether a user-entered creation path stays relative to the selected

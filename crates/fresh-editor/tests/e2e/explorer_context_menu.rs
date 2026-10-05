@@ -241,8 +241,13 @@ fn test_context_menu_new_file_action() {
     h.mouse_right_click(EXPLORER_COL, EXPLORER_ROW).unwrap();
     h.mouse_click(EXPLORER_COL + 2, new_file_row).unwrap();
 
-    // A file should have been created (the explorer creates it immediately
-    // then enters rename mode).
+    h.wait_for_prompt().unwrap();
+    // The prompt opens empty — nothing is created until it is named — so the
+    // name has to be typed where this used to accept a generated one.
+    h.type_text("from_context_menu.txt").unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.wait_for_prompt_closed().unwrap();
+
     h.wait_until(|_| fs::read_dir(&root).unwrap().count() > initial_count)
         .unwrap();
 }
@@ -270,10 +275,7 @@ fn test_context_menu_new_directory_action() {
     h.wait_for_prompt().unwrap();
     // The prompt opens empty — nothing is created until it is named — so the
     // name has to be typed where this used to accept a generated one.
-    if let Some(prompt) = h.editor_mut().prompt_mut() {
-        prompt.clear();
-        prompt.insert_str("from_context_menu");
-    }
+    h.type_text("from_context_menu").unwrap();
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
     h.wait_for_prompt_closed().unwrap();
 
@@ -428,10 +430,7 @@ fn test_keyboard_down_enter_executes_item() {
     h.wait_for_prompt().unwrap();
     // The prompt opens empty — nothing is created until it is named — so the
     // name has to be typed where this used to accept a generated one.
-    if let Some(prompt) = h.editor_mut().prompt_mut() {
-        prompt.clear();
-        prompt.insert_str("from_keyboard");
-    }
+    h.type_text("from_keyboard").unwrap();
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
     h.wait_for_prompt_closed().unwrap();
 
@@ -835,6 +834,13 @@ fn test_root_menu_new_file_works() {
     h.mouse_right_click(EXPLORER_COL, ROOT_ROW).unwrap();
     h.mouse_click(EXPLORER_COL + 2, new_file_row).unwrap();
 
+    h.wait_for_prompt().unwrap();
+    // The prompt opens empty — nothing is created until it is named — so the
+    // name has to be typed where this used to accept a generated one.
+    h.type_text("from_root_menu.txt").unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.wait_for_prompt_closed().unwrap();
+
     h.wait_until(|_| fs::read_dir(&root).unwrap().count() > initial_count)
         .unwrap();
 }
@@ -860,10 +866,7 @@ fn test_root_menu_new_directory_works() {
     h.wait_for_prompt().unwrap();
     // The prompt opens empty — nothing is created until it is named — so the
     // name has to be typed where this used to accept a generated one.
-    if let Some(prompt) = h.editor_mut().prompt_mut() {
-        prompt.clear();
-        prompt.insert_str("from_root_menu");
-    }
+    h.type_text("from_root_menu").unwrap();
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
     h.wait_for_prompt_closed().unwrap();
 
@@ -1121,6 +1124,94 @@ fn test_dropping_an_entry_where_it_already_is_does_nothing() {
         fs::read_to_string(root.join("b.txt")).unwrap(),
         "b",
         "and b.txt must not have been replaced by it"
+    );
+}
+
+/// A drop onto a name that is taken asks the one-entry question — the same one
+/// a paste of a single file asks, "keep both" included — and leaves a cut the
+/// reader is still holding alone.
+///
+/// The drag reuses paste's machinery; the one thing it must not reuse is
+/// paste's ownership of the clipboard.
+#[test]
+fn test_dropping_onto_a_taken_name_asks_and_spares_the_clipboard() {
+    let mut h = EditorTestHarness::with_temp_project(100, 30).unwrap();
+    let root = h.project_dir().unwrap();
+    fs::create_dir_all(root.join("dest")).unwrap();
+    fs::write(root.join("dest/same.txt"), "theirs").unwrap();
+    fs::write(root.join("same.txt"), "mine").unwrap();
+    fs::write(root.join("held.txt"), "held").unwrap();
+
+    h.editor_mut().focus_file_explorer();
+    h.wait_for_file_explorer().unwrap();
+    h.wait_for_file_explorer_item("same.txt").unwrap();
+    h.render().unwrap();
+
+    // Something cut and waiting, which the drag has no business touching.
+    let held = explorer_row_of(&h, "held.txt").expect("the held file's row");
+    h.mouse_click(EXPLORER_COL, held).unwrap();
+    h.send_key(KeyCode::Char('x'), KeyModifiers::CONTROL)
+        .unwrap();
+    h.render().unwrap();
+
+    let (from, to) = (
+        explorer_row_of(&h, "same.txt").expect("the file's row"),
+        explorer_row_of(&h, "dest").expect("the directory's row"),
+    );
+    h.mouse_drag(EXPLORER_COL, from, EXPLORER_COL, to).unwrap();
+    h.wait_for_prompt().unwrap();
+
+    let asked = h.screen_to_string();
+    assert!(
+        asked.contains("Rename"),
+        "one colliding entry should be asked about one at a time, so that \
+         keeping both is on offer.\n{asked}"
+    );
+
+    // Keep both. The name the prompt starts with is the one that collided, so
+    // adding to it is enough whichever end the cursor sits at.
+    h.send_key(KeyCode::Char('r'), KeyModifiers::NONE).unwrap();
+    h.type_text("kept-").unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.wait_for_prompt_closed().unwrap();
+    h.render().unwrap();
+
+    let mut landed: Vec<(String, String)> = fs::read_dir(root.join("dest"))
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| {
+            (
+                e.file_name().to_string_lossy().to_string(),
+                fs::read_to_string(e.path()).unwrap_or_default(),
+            )
+        })
+        .collect();
+    landed.sort();
+    let contents: Vec<&str> = landed.iter().map(|(_, c)| c.as_str()).collect();
+    assert_eq!(
+        contents.len(),
+        2,
+        "both files should be in the directory now: {landed:?}"
+    );
+    assert!(
+        contents.contains(&"theirs") && contents.contains(&"mine"),
+        "neither of them overwritten: {landed:?}"
+    );
+    assert!(
+        !root.join("same.txt").exists(),
+        "and the dragged entry is gone from where it was"
+    );
+
+    // The cut is still the reader's to paste.
+    let dest = explorer_row_of(&h, "dest").expect("the directory's row");
+    h.mouse_click(EXPLORER_COL, dest).unwrap();
+    h.send_key(KeyCode::Char('v'), KeyModifiers::CONTROL)
+        .unwrap();
+    h.render().unwrap();
+    assert!(
+        root.join("dest/held.txt").is_file(),
+        "the drag must not have emptied the clipboard.\n{}",
+        h.screen_to_string()
     );
 }
 

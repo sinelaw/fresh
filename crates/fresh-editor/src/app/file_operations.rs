@@ -1225,7 +1225,13 @@ impl Editor {
     /// Exposed as `pub` so tests can drive the refresh path directly
     /// without relying on filesystem mtime detection, which is too
     /// environment-sensitive (especially across CI filesystems).
-    pub fn refresh_file_tree_dirs(&mut self, paths: &[PathBuf]) {
+    ///
+    /// Reports the first directory that could not be re-read, so a caller that
+    /// tells the reader it refreshed does not say so when it did not. `None`
+    /// means every directory asked for was reloaded — including the headless
+    /// case with no runtime to reload on, where there is no status line to
+    /// mislead.
+    pub fn refresh_file_tree_dirs(&mut self, paths: &[PathBuf]) -> Option<String> {
         let active_id = self.active_window;
         let (Some(runtime), Some(explorer)) = (
             self.tokio_runtime.as_ref(),
@@ -1233,20 +1239,24 @@ impl Editor {
                 .get_mut(&active_id)
                 .and_then(|w| w.file_explorer.as_mut()),
         ) else {
-            return;
+            return None;
         };
+        let mut failure: Option<String> = None;
         let cursor_path: Option<PathBuf> = explorer.get_selected_entry().map(|e| e.path.clone());
         // Re-resolve node ids by path at each step: an earlier
         // reload_expanded_node in this loop may have recycled ids under
         // its subtree, so any ids captured before this call can be
         // stale.
         for path in paths {
+            // Not in the tree: nothing was loaded from it, so there is
+            // nothing to re-read and nothing to report.
             let Some(id_now) = explorer.tree().get_node_by_path(path).map(|n| n.id) else {
                 continue;
             };
             let tree = explorer.tree_mut();
             if let Err(e) = runtime.block_on(tree.reload_expanded_node(id_now)) {
                 tracing::warn!("Failed to refresh directory {:?}: {}", path, e);
+                failure = failure.or_else(|| Some(e.to_string()));
             }
         }
         if let Some(path) = cursor_path {
@@ -1258,6 +1268,7 @@ impl Editor {
                 explorer.show_selection();
             }
         }
+        failure
     }
 
     /// Re-stat every loaded .gitignore via the filesystem authority and

@@ -3094,18 +3094,23 @@ impl Editor {
                 let Some(dest) = self.explorer_drop_dir(index, segment.as_deref()) else {
                     return;
                 };
-                let Some(drag) = self.explorer_drag.as_ref() else {
+                let Some((lifted, lifted_segment)) = self
+                    .explorer_drag
+                    .as_ref()
+                    .map(|d| (d.index, d.segment.clone()))
+                else {
                     return;
                 };
                 // Where the entry already lives is not a move, so hovering it
                 // does not make the gesture a drag.
                 let home = self
-                    .explorer_entry_path(drag.index, drag.segment.as_deref())
+                    .explorer_entry_path(lifted, lifted_segment.as_deref())
                     .and_then(|p| p.parent().map(|p| p.to_path_buf()));
                 let strayed = Some(&dest) != home.as_ref();
-                let drag = self.explorer_drag.as_mut().expect("checked above");
-                drag.strayed |= strayed;
-                drag.target = strayed.then_some(dest);
+                if let Some(drag) = self.explorer_drag.as_mut() {
+                    drag.strayed |= strayed;
+                    drag.target = strayed.then_some(dest);
+                }
             }
             UiFact::ExplorerRowDragLeave => {
                 if let Some(drag) = self.explorer_drag.as_mut() {

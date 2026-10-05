@@ -166,12 +166,22 @@ pub fn describe_row(d: RowDesc<'_>) -> crate::view::shell::file_explorer::Row {
     let chain: Vec<fe::ChainPart> = node
         .chain
         .iter()
-        .map(|seg| fe::ChainPart {
-            runs: vec![
-                (seg.name.clone(), pair("syntax.keyword", ground)),
-                ("/".to_string(), pair("editor.line_number_fg", ground)),
-            ],
-            path: seg.path.clone(),
+        .map(|seg| {
+            // A drag over one of the folded names would land in *that*
+            // directory, so that is the part that lights up. The row's own
+            // ground cannot say it: the anchor is a directory further down,
+            // and the row would otherwise show nothing at all.
+            let ground = match d.drop_target == Some(seg.path.as_path()) {
+                true => "editor.selection_bg",
+                false => ground,
+            };
+            fe::ChainPart {
+                runs: vec![
+                    (seg.name.clone(), pair("syntax.keyword", ground)),
+                    ("/".to_string(), pair("editor.line_number_fg", ground)),
+                ],
+                path: seg.path.clone(),
+            }
         })
         .collect();
 
@@ -585,6 +595,69 @@ mod tests {
         assert_eq!(drawn(&row.left), "    ▼ ", "the indent and the indicator");
         // The anchor's own name is no segment's, so a press on it is the row's.
         assert_eq!(drawn(&row.name), "c");
+    }
+
+    /// A drag held over one of a compact row's folded names shows on *that*
+    /// name. The row's ground cannot say it — the row is anchored at `c`,
+    /// several directories below where the entry would land — so without this
+    /// a drop into a folded directory is drawn exactly like no drop at all.
+    #[tokio::test]
+    async fn a_drag_over_a_folded_name_shows_on_that_name() {
+        let (_temp_dir, view) = create_chain_renderer_view().await;
+        let theme = Theme::load_builtin("dark").unwrap();
+        let root = view.tree().root_path().to_path_buf();
+        let anchor_id = view
+            .tree()
+            .get_node_by_path(&root.join("chain/a/b/c"))
+            .unwrap()
+            .id;
+
+        let resolver = crate::view::file_tree::default_slot_providers().resolver();
+        let projection = view.projection();
+        let node = &projection.rows[projection.index_of(anchor_id).expect("a visible node")];
+        let describe = |drop_target: Option<&std::path::Path>| {
+            describe_row(RowDesc {
+                node,
+                row: 0,
+                is_cursor: false,
+                is_multi: false,
+                focused: false,
+                unsaved: &HashSet::new(),
+                cut: &[],
+                drop_target,
+                fuzzy: None,
+                decorations: &FileExplorerDecorationCache::default(),
+                slot_overrides: &FileExplorerSlotOverrideCache::default(),
+                slot_resolver: &resolver,
+                theme: &theme,
+                collapsed: ">",
+                expanded: "▼",
+            })
+        };
+        let themes = |row: &crate::view::shell::file_explorer::Row| {
+            row.chain
+                .iter()
+                .map(|part| part.runs.iter().map(|(_, t)| t.clone()).collect::<Vec<_>>())
+                .collect::<Vec<_>>()
+        };
+
+        let idle = describe(None);
+        let over_a = describe(Some(&root.join("chain/a")));
+        assert_eq!(
+            themes(&idle)[0],
+            themes(&over_a)[0],
+            "`chain/` is not where the drop would land, so it is untouched"
+        );
+        assert_ne!(
+            themes(&idle)[1],
+            themes(&over_a)[1],
+            "`a/` is, so it has to look different"
+        );
+        assert_eq!(themes(&idle)[2], themes(&over_a)[2], "and `b/` is not");
+        assert_eq!(
+            idle.theme, over_a.theme,
+            "the row itself is not the drop target"
+        );
     }
 
     async fn create_chain_renderer_view() -> (TempDir, FileTreeView) {

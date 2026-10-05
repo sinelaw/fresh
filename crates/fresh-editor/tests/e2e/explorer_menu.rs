@@ -229,10 +229,7 @@ fn test_explorer_n_keybinding_creates_file() {
         "nothing should exist until the name is given"
     );
 
-    if let Some(prompt) = harness.editor_mut().prompt_mut() {
-        prompt.clear();
-        prompt.insert_str("from_ctrl_n.txt");
-    }
+    harness.type_text("from_ctrl_n.txt").unwrap();
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
@@ -320,6 +317,14 @@ fn test_explorer_menu_new_file_action() {
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
+    harness.wait_for_prompt().unwrap();
+    // The prompt opens empty — nothing is written until it is named — so the
+    // name has to be typed where this used to accept a generated one.
+    harness.type_text("from_explorer_menu.txt").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt_closed().unwrap();
     // Wait for a new file to actually be created on the filesystem
     harness
         .wait_until(|_| fs::read_dir(&project_root).unwrap().count() > initial_count)
@@ -360,10 +365,7 @@ fn test_explorer_menu_new_folder_action() {
     harness.wait_for_prompt().unwrap();
     // The prompt opens empty — nothing is created until it is named — so the
     // name has to be typed where this used to accept a generated one.
-    if let Some(prompt) = harness.editor_mut().prompt_mut() {
-        prompt.clear();
-        prompt.insert_str("from_explorer_menu");
-    }
+    harness.type_text("from_explorer_menu").unwrap();
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
@@ -482,6 +484,112 @@ fn test_explorer_ctrl_r_refresh() {
     println!("Screen after refresh:\n{}", screen);
 }
 
+/// Refresh reloads the whole tree, whatever the selection happens to be.
+///
+/// It used to work on the selected node: with nothing selected it returned in
+/// silence, with a *file* selected it refused, and `refresh_node` recycled
+/// every descendant id, which collapsed expanded directories. The header's
+/// `⟳` carries no selection at all, so the action could not keep asking for
+/// one.
+#[test]
+fn test_refresh_reloads_the_tree_from_a_file_selection() {
+    let mut harness = EditorTestHarness::with_temp_project(100, 30).unwrap();
+    let project_root = harness.project_dir().unwrap();
+
+    fs::create_dir_all(project_root.join("nest")).unwrap();
+    fs::write(project_root.join("nest/inner.txt"), "inner").unwrap();
+    fs::write(project_root.join("top.txt"), "top").unwrap();
+
+    harness.editor_mut().focus_file_explorer();
+    harness.wait_for_file_explorer().unwrap();
+    harness.wait_for_file_explorer_item("nest").unwrap();
+
+    // Open `nest`, then put the selection on a file — the case that used to be
+    // refused outright.
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_file_explorer_item("inner.txt").unwrap();
+    harness
+        .editor_mut()
+        .file_explorer_mut()
+        .unwrap()
+        .navigate_to_path(&project_root.join("top.txt"));
+    harness.render().unwrap();
+
+    fs::write(project_root.join("nest/added.txt"), "added").unwrap();
+    fs::write(project_root.join("later.txt"), "later").unwrap();
+
+    harness
+        .send_key(KeyCode::Char('r'), KeyModifiers::CONTROL)
+        .unwrap();
+
+    harness
+        .wait_for_file_explorer_item("later.txt")
+        .unwrap_or_else(|e| {
+            panic!(
+                "refresh should pick up a new entry at the root: {e}\n{}",
+                harness.screen_to_string()
+            )
+        });
+    harness
+        .wait_for_file_explorer_item("added.txt")
+        .unwrap_or_else(|e| {
+            panic!(
+                "an expanded directory should stay open and be reloaded too: {e}\n{}",
+                harness.screen_to_string()
+            )
+        });
+    let status = harness.get_status_bar();
+    assert!(
+        status.contains("Refreshed"),
+        "the status line should report the refresh, not an error: {status:?}"
+    );
+}
+
+/// Escaping out of an explorer prompt says what was cancelled.
+///
+/// Both prompts used to fall through to the prompt layer's default message,
+/// "Search cancelled." — naming a feature the user never opened.
+#[test]
+fn test_cancelling_an_explorer_prompt_names_what_was_cancelled() {
+    let mut harness = EditorTestHarness::with_temp_project(100, 30).unwrap();
+    let project_root = harness.project_dir().unwrap();
+
+    fs::write(project_root.join("existing.txt"), "content").unwrap();
+
+    harness.editor_mut().focus_file_explorer();
+    harness.wait_for_file_explorer().unwrap();
+    harness.wait_for_file_explorer_item("existing").unwrap();
+
+    harness.editor_mut().file_explorer_new_file();
+    harness.wait_for_prompt().unwrap();
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    let status = harness.get_status_bar();
+    assert!(
+        status.contains("Create cancelled"),
+        "escaping the create prompt should say the create was cancelled: {status:?}"
+    );
+
+    harness
+        .editor_mut()
+        .file_explorer_mut()
+        .unwrap()
+        .navigate_to_path(&project_root.join("existing.txt"));
+    harness.render().unwrap();
+    harness.send_key(KeyCode::F(2), KeyModifiers::NONE).unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    let status = harness.get_status_bar();
+    assert!(
+        status.contains("Rename cancelled"),
+        "and escaping the rename prompt should say the rename was: {status:?}"
+    );
+}
+
 /// Test that Explorer menu items are disabled (grayed out) when explorer is not focused
 #[test]
 fn test_explorer_menu_items_disabled_when_not_focused() {
@@ -570,10 +678,7 @@ fn test_new_folder_uses_the_name_it_was_given() {
 
     harness.editor_mut().file_explorer_new_directory();
     harness.wait_for_prompt().unwrap();
-    if let Some(prompt) = harness.editor_mut().prompt_mut() {
-        prompt.clear();
-        prompt.insert_str("chosen");
-    }
+    harness.type_text("chosen").unwrap();
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
@@ -601,24 +706,24 @@ fn test_new_file_writes_only_on_confirm() {
     harness.editor_mut().focus_file_explorer();
     harness.wait_for_file_explorer().unwrap();
 
+    // Listed before and after, not matched against a name pattern: the old
+    // placeholder prefix is a name this code can no longer produce, so looking
+    // for it could not fail however much a cancel wrote.
+    let before = entry_names(&project_root);
     harness.editor_mut().file_explorer_new_file();
     harness.wait_for_prompt().unwrap();
+    harness.type_text("typed_then_cancelled.txt").unwrap();
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
-    assert!(
-        !fs::read_dir(&project_root)
-            .unwrap()
-            .filter_map(|e| e.ok())
-            .any(|e| e.file_name().to_string_lossy().starts_with("untitled_")),
-        "a cancelled New File should leave no untitled_* entry"
+    assert_eq!(
+        entry_names(&project_root),
+        before,
+        "a cancelled New File should leave nothing behind, named or not"
     );
 
     harness.editor_mut().file_explorer_new_file();
     harness.wait_for_prompt().unwrap();
-    if let Some(prompt) = harness.editor_mut().prompt_mut() {
-        prompt.clear();
-        prompt.insert_str("deep/named.txt");
-    }
+    harness.type_text("deep/named.txt").unwrap();
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
@@ -628,6 +733,81 @@ fn test_new_file_writes_only_on_confirm() {
         project_root.join("deep/named.txt").is_file(),
         "a relative name should create the directories it asked for"
     );
+}
+
+/// A name with directories in it shows up in the tree, not just on disk.
+///
+/// The directories a relative name creates are not loaded, so there is no
+/// node to reload and nothing to put the cursor on unless the tree is walked
+/// down to the new entry.
+#[test]
+fn test_new_file_with_a_path_appears_in_the_tree() {
+    let mut harness = EditorTestHarness::with_temp_project(100, 30).unwrap();
+    let project_root = harness.project_dir().unwrap();
+
+    harness.editor_mut().focus_file_explorer();
+    harness.wait_for_file_explorer().unwrap();
+
+    harness.editor_mut().file_explorer_new_file();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("deep/named.txt").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+    harness.render().unwrap();
+
+    assert!(
+        project_root.join("deep/named.txt").is_file(),
+        "the file should be on disk"
+    );
+    harness
+        .wait_for_file_explorer_item("deep")
+        .unwrap_or_else(|e| {
+            panic!(
+                "the directory the name created should be in the tree: {e}\n{}",
+                harness.screen_to_string()
+            )
+        });
+    harness
+        .wait_for_file_explorer_item("named.txt")
+        .unwrap_or_else(|e| {
+            panic!(
+                "and so should the file: {e}\n{}",
+                harness.screen_to_string()
+            )
+        });
+}
+
+/// Clear a prompt that opened with text already in it, the way a reader does:
+/// Ctrl+U, the readline kill-to-start the prompt line answers.
+///
+/// The rename prompt starts with the entry's current name in it, so a test
+/// that only types would be naming `old.txtnew.txt`.
+fn clear_prompt_line(harness: &mut EditorTestHarness) {
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Char('u'), KeyModifiers::CONTROL)
+        .unwrap();
+    assert_eq!(
+        harness
+            .editor_mut()
+            .prompt_mut()
+            .map(|p| p.input_str().to_string()),
+        Some(String::new()),
+        "the prompt line should be empty before the new name is typed"
+    );
+}
+
+/// Every entry name directly under `root`, sorted.
+fn entry_names(root: &std::path::Path) -> Vec<String> {
+    let mut names: Vec<String> = fs::read_dir(root)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .collect();
+    names.sort();
+    names
 }
 
 /// The directory names directly under `root`, sorted.
@@ -807,10 +987,7 @@ fn test_new_folder_via_menu_affects_filesystem() {
 
     // The prompt opens empty — nothing is created until it is named — so the
     // name has to be typed where this used to accept a generated one.
-    if let Some(prompt) = harness.editor_mut().prompt_mut() {
-        prompt.clear();
-        prompt.insert_str("from_menu_fs");
-    }
+    harness.type_text("from_menu_fs").unwrap();
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
@@ -1408,10 +1585,8 @@ fn test_rename_to_a_subpath_moves_the_entry() {
     harness.send_key(KeyCode::F(2), KeyModifiers::NONE).unwrap();
     harness.wait_for_prompt().unwrap();
 
-    if let Some(prompt) = harness.editor_mut().prompt_mut() {
-        prompt.clear();
-        prompt.insert_str("sub/moved.txt");
-    }
+    clear_prompt_line(&mut harness);
+    harness.type_text("sub/moved.txt").unwrap();
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
@@ -1469,10 +1644,8 @@ fn test_rename_with_dot_dot_moves_the_entry_up() {
          not on inner.txt.\n{}",
         harness.screen_to_string()
     );
-    if let Some(prompt) = harness.editor_mut().prompt_mut() {
-        prompt.clear();
-        prompt.insert_str("../inner.txt");
-    }
+    clear_prompt_line(&mut harness);
+    harness.type_text("../inner.txt").unwrap();
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
@@ -1513,10 +1686,8 @@ fn test_rename_onto_an_existing_entry_is_refused() {
 
     harness.send_key(KeyCode::F(2), KeyModifiers::NONE).unwrap();
     harness.wait_for_prompt().unwrap();
-    if let Some(prompt) = harness.editor_mut().prompt_mut() {
-        prompt.clear();
-        prompt.insert_str("victim.txt");
-    }
+    clear_prompt_line(&mut harness);
+    harness.type_text("victim.txt").unwrap();
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();

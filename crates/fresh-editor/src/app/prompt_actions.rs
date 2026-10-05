@@ -483,10 +483,20 @@ impl Editor {
                     self.set_status_message(t!("explorer.delete_cancelled").to_string());
                 }
             }
-            PromptType::ConfirmPasteConflict { src, dst, is_cut } => {
+            PromptType::ConfirmPasteConflict {
+                src,
+                dst,
+                is_cut,
+                from_clipboard,
+            } => {
                 match input.trim().to_lowercase().as_str() {
                     "o" | "overwrite" => {
-                        self.perform_file_explorer_paste(src, dst, is_cut);
+                        self.finish_resolved_paste(
+                            Vec::new(),
+                            vec![(src, dst)],
+                            is_cut,
+                            from_clipboard,
+                        );
                     }
                     "r" | "rename" => {
                         let initial = dst
@@ -503,6 +513,7 @@ impl Editor {
                                 src,
                                 dst_dir,
                                 is_cut,
+                                from_clipboard,
                             },
                             initial,
                         );
@@ -515,16 +526,7 @@ impl Editor {
                         // cancel. Losing the clipboard on a typo is
                         // frustrating; make the user explicitly pick a
                         // valid choice.
-                        let name = crate::app::file_explorer::truncate_name_for_prompt(
-                            &dst.file_name().unwrap_or_default().to_string_lossy(),
-                            40,
-                        );
-                        let confirm = crate::app::confirm_dialog::paste_conflict(&name);
-                        self.start_confirm_prompt(
-                            confirm.body.clone(),
-                            PromptType::ConfirmPasteConflict { src, dst, is_cut },
-                            confirm,
-                        );
+                        self.confirm_paste_conflict(src, dst, is_cut, from_clipboard);
                     }
                 }
             }
@@ -532,6 +534,7 @@ impl Editor {
                 src,
                 dst_dir,
                 is_cut,
+                from_clipboard,
             } => {
                 if input.trim().is_empty() {
                     self.set_status_message(t!("explorer.paste_cancelled").to_string());
@@ -539,18 +542,14 @@ impl Editor {
                 }
                 let new_dst = dst_dir.join(input.trim());
                 if self.authority().filesystem.exists(&new_dst) {
-                    let confirm = crate::app::confirm_dialog::paste_conflict(input.trim());
-                    self.start_confirm_prompt(
-                        confirm.body.clone(),
-                        PromptType::ConfirmPasteConflict {
-                            src,
-                            dst: new_dst,
-                            is_cut,
-                        },
-                        confirm,
-                    );
+                    self.confirm_paste_conflict(src, new_dst, is_cut, from_clipboard);
                 } else {
-                    self.perform_file_explorer_paste(src, new_dst, is_cut);
+                    self.finish_resolved_paste(
+                        vec![(src, new_dst)],
+                        Vec::new(),
+                        is_cut,
+                        from_clipboard,
+                    );
                 }
             }
             PromptType::ConfirmMultiDelete { paths } => {
@@ -569,6 +568,7 @@ impl Editor {
                 confirmed,
                 mut pending,
                 is_cut,
+                from_clipboard,
             } => {
                 let (cur_src, cur_dst) = pending.remove(0);
                 // Case matters here: `o` / `s` act on the current conflict
@@ -581,26 +581,38 @@ impl Editor {
                         let mut new_confirmed = confirmed;
                         new_confirmed.push((cur_src, cur_dst));
                         if pending.is_empty() {
-                            self.execute_resolved_multi_paste(safe, new_confirmed, is_cut);
+                            self.finish_resolved_paste(safe, new_confirmed, is_cut, from_clipboard);
                         } else {
-                            self.prompt_next_paste_conflict(safe, new_confirmed, pending, is_cut);
+                            self.prompt_next_paste_conflict(
+                                safe,
+                                new_confirmed,
+                                pending,
+                                is_cut,
+                                from_clipboard,
+                            );
                         }
                     }
                     "O" => {
                         let mut new_confirmed = confirmed;
                         new_confirmed.push((cur_src, cur_dst));
                         new_confirmed.extend(pending);
-                        self.execute_resolved_multi_paste(safe, new_confirmed, is_cut);
+                        self.finish_resolved_paste(safe, new_confirmed, is_cut, from_clipboard);
                     }
                     "s" | "skip" => {
                         if pending.is_empty() {
-                            self.execute_resolved_multi_paste(safe, confirmed, is_cut);
+                            self.finish_resolved_paste(safe, confirmed, is_cut, from_clipboard);
                         } else {
-                            self.prompt_next_paste_conflict(safe, confirmed, pending, is_cut);
+                            self.prompt_next_paste_conflict(
+                                safe,
+                                confirmed,
+                                pending,
+                                is_cut,
+                                from_clipboard,
+                            );
                         }
                     }
                     "S" => {
-                        self.execute_resolved_multi_paste(safe, confirmed, is_cut);
+                        self.finish_resolved_paste(safe, confirmed, is_cut, from_clipboard);
                     }
                     "" | "c" | "cancel" => {
                         self.set_status_message(t!("explorer.paste_cancelled").to_string());
@@ -615,6 +627,7 @@ impl Editor {
                             confirmed,
                             pending_with_current,
                             is_cut,
+                            from_clipboard,
                         );
                     }
                 }
@@ -1917,6 +1930,7 @@ impl Editor {
         confirmed: Vec<(std::path::PathBuf, std::path::PathBuf)>,
         pending: Vec<(std::path::PathBuf, std::path::PathBuf)>,
         is_cut: bool,
+        from_clipboard: bool,
     ) {
         let name = crate::app::file_explorer::truncate_name_for_prompt(
             &pending[0]
@@ -1934,6 +1948,7 @@ impl Editor {
                 confirmed,
                 pending,
                 is_cut,
+                from_clipboard,
             },
             confirm,
         );
