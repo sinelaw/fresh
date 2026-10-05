@@ -130,7 +130,6 @@ fn generate_plugins_hash() -> Result<(), Box<dyn std::error::Error>> {
     let dest_path = Path::new(&out_dir).join("plugins_hash.txt");
     fs::write(&dest_path, &hash)?;
 
-    println!("cargo::warning=Generated plugins hash: {}", hash);
     Ok(())
 }
 

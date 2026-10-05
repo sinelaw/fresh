@@ -74,8 +74,6 @@ pub const BUILTIN_THEMES: &[BuiltinTheme] = &[
 
     fs::write(&dest_path, content)?;
 
-    println!("cargo::warning=Generated {} builtin themes", themes.len());
-
     Ok(())
 }
 
@@ -166,11 +164,6 @@ pub const GENERATED_LOCALE_OPTIONS: &[Option<&str>] = &[
     // Note: OUT_DIR files don't need write_if_changed since cargo handles them specially,
     // but it doesn't hurt to use it for consistency
     fs::write(&dest_path, content)?;
-
-    println!(
-        "cargo::warning=Generated locale options with {} locales",
-        locales.len()
-    );
 
     Ok(())
 }
@@ -342,29 +335,17 @@ fn generate_syntax_packdump(
         ("src/grammars/llvm-ir.sublime-syntax", "LLVM IR"),
     ];
 
-    let mut loaded = 0;
     for (path, name) in grammar_files {
         let content = fs::read_to_string(path)
             .unwrap_or_else(|e| panic!("Failed to read grammar {}: {}", path, e));
         match SyntaxDefinition::load_from_str(&content, true, Some(name)) {
-            Ok(syntax) => {
-                builder.add(syntax);
-                loaded += 1;
-            }
-            Err(e) => {
-                eprintln!("Warning: Failed to parse grammar {}: {}", name, e);
-            }
+            Ok(syntax) => builder.add(syntax),
+            Err(e) => eprintln!("Warning: Failed to parse grammar {}: {}", name, e),
         }
     }
 
     let syntax_set = builder.build();
     dump_to_uncompressed_file(&syntax_set, &dest_path)?;
-
-    println!(
-        "cargo::warning=Generated syntax packdump: {} syntaxes ({} embedded)",
-        syntax_set.syntaxes().len(),
-        loaded
-    );
 
     Ok(())
 }

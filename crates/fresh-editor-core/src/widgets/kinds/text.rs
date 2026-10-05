@@ -440,6 +440,7 @@ pub struct CompletionPopup {
 /// and a second copy of the windowing would be a second place for it to drift
 /// from the scroll offset the collector persists. Pure — no `out`, no
 /// `next_state` — which is what lets a description call it.
+#[allow(clippy::too_many_arguments)]
 pub fn completion_popup(
     completions: &[fresh_core::api::CompletionItem],
     completions_visible_rows: u32,
