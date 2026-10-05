@@ -800,7 +800,7 @@ fn card(c: &Card) -> Node<UiMsg> {
         // is what the painter's two-row `section_header_rows` band was.
         rows.push(row().h(Sizing::Cells(1)));
         rows.push(line(
-            crate::view::settings::schema::section_display_name(name),
+            name.clone(),
             attrs("editor.fg", "ui.popup_bg", &["bold"]),
         ));
     }

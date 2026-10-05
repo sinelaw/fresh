@@ -389,7 +389,7 @@ pub fn parse_schema(schema_json: &str) -> Result<Vec<SettingCategory>, serde_jso
     // Each group of top-level settings becomes a category of its own. Their
     // paths are absolute, so the category itself has no path prefix.
     for (group, mut settings) in top_level_groups {
-        sort_settings(&mut settings);
+        sort_settings(&mut settings, "");
         let description = (group == GENERAL).then(|| "General settings".to_string());
         categories.push(SettingCategory {
             display_name: i18n_category_name(&group),
@@ -528,20 +528,29 @@ fn parse_properties(
         settings.push(setting);
     }
 
-    sort_settings(&mut settings);
+    sort_settings(&mut settings, parent_key_path);
     settings
 }
 
-/// Sort settings: by x-order (if set) first, then alphabetically by path.
-/// Settings with x-order come before those without. The path, unlike the
-/// translated name, is the same in every locale.
-fn sort_settings(settings: &mut [SettingSchema]) {
-    settings.sort_by(|a, b| match (a.order, b.order) {
-        (Some(a_ord), Some(b_ord)) => a_ord.cmp(&b_ord).then_with(|| a.path.cmp(&b.path)),
-        (Some(_), None) => std::cmp::Ordering::Less,
-        (None, Some(_)) => std::cmp::Ordering::Greater,
-        (None, None) => a.path.cmp(&b.path),
+/// Sort settings: by x-order (if set) first, then alphabetically by
+/// [`english_name`]. Settings with x-order come before those without.
+/// `parent_key_path` is the key path of the object the settings belong to.
+fn sort_settings(settings: &mut [SettingSchema], parent_key_path: &str) {
+    settings.sort_by_cached_key(|s| {
+        let name = s.path.rsplit('/').next().unwrap_or_default();
+        let key_path = format!("{}/{}", parent_key_path, name);
+        (s.order.is_none(), s.order, english_name(&key_path))
     });
+}
+
+/// A field's name as it reads in English, whatever the locale: what a page
+/// is ordered by, so the order is the same in every language and is the one
+/// English has always had.
+pub(crate) fn english_name(key_path: &str) -> String {
+    let name = key_path.rsplit('/').next().unwrap_or_default();
+    fresh_i18n::translate_in("en", &field_key(key_path))
+        .map(str::to_string)
+        .unwrap_or_else(|| humanize_name(name))
 }
 
 /// Parse a single setting from its schema.

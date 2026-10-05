@@ -2,7 +2,9 @@
 //!
 //! Converts schema information into renderable setting items.
 
-use super::schema::{SettingCategory, SettingSchema, SettingType};
+use super::schema::{
+    english_name, section_display_name, SettingCategory, SettingSchema, SettingType,
+};
 use crate::config_io::ConfigLayer;
 use std::collections::{HashMap, HashSet};
 
@@ -118,8 +120,11 @@ pub struct SettingItem {
     pub nullable: bool,
     /// Whether this setting's current value is null (inherited/unset)
     pub is_null: bool,
-    /// Section/group within the category (from x-section)
+    /// Section/group within the category (from x-section). Stable across
+    /// locales: items are grouped and ordered by it.
     pub section: Option<String>,
+    /// The section as shown: `section` in the configured locale.
+    pub section_label: Option<String>,
     /// Whether this item is the first in its section (for rendering section headers)
     pub is_section_start: bool,
     /// Visual style (card border thickness, padding, etc.) for this item.
@@ -655,6 +660,7 @@ pub struct SettingsPage {
 #[derive(Debug, Clone)]
 pub struct SectionInfo {
     pub name: String,
+    pub display_name: String,
     pub first_item_index: usize,
 }
 
@@ -729,28 +735,22 @@ fn build_page(category: &SettingCategory, ctx: &BuildContext) -> SettingsPage {
             };
         }
     }
-    let by_order = |a: Option<i32>, b: Option<i32>| match (a, b) {
-        (Some(a), Some(b)) => a.cmp(&b),
-        (Some(_), None) => std::cmp::Ordering::Less,
-        (None, Some(_)) => std::cmp::Ordering::Greater,
-        (None, None) => std::cmp::Ordering::Equal,
-    };
 
     // Sort items: by section first (None comes last), then by x-order
-    // (items without one last), then alphabetically by path, which unlike
-    // the name does not change with the locale.
-    ordered.sort_by(|(ord_a, a), (ord_b, b)| {
-        let sections = match (&a.section, &b.section) {
-            (Some(sec_a), Some(sec_b)) => {
-                by_order(section_rank[sec_a], section_rank[sec_b]).then_with(|| sec_a.cmp(sec_b))
-            }
-            (Some(_), None) => std::cmp::Ordering::Less,
-            (None, Some(_)) => std::cmp::Ordering::Greater,
-            (None, None) => std::cmp::Ordering::Equal,
-        };
-        sections
-            .then_with(|| by_order(*ord_a, *ord_b))
-            .then_with(|| a.path.cmp(&b.path))
+    // (items without one last), then alphabetically by English name, which
+    // unlike the shown name does not change with the locale.
+    ordered.sort_by_cached_key(|(order, item)| {
+        let section = item.section.as_ref().map(|sec| {
+            let rank = section_rank[sec];
+            (rank.is_none(), rank, sec.clone())
+        });
+        (
+            section.is_none(),
+            section,
+            order.is_none(),
+            *order,
+            english_name(&item.path),
+        )
     });
     let mut items: Vec<SettingItem> = ordered.into_iter().map(|(_, item)| item).collect();
 
@@ -767,9 +767,12 @@ fn build_page(category: &SettingCategory, ctx: &BuildContext) -> SettingsPage {
         };
         item.is_section_start = is_new_section;
         if is_new_section {
-            if let Some(name) = item.section.clone() {
+            if let (Some(name), Some(display_name)) =
+                (item.section.clone(), item.section_label.clone())
+            {
                 sections.push(SectionInfo {
                     name,
+                    display_name,
                     first_item_index: idx,
                 });
             }
@@ -1131,6 +1134,7 @@ pub fn build_item(schema: &SettingSchema, ctx: &BuildContext) -> SettingItem {
         nullable: schema.nullable,
         is_null,
         section: schema.section.clone(),
+        section_label: schema.section.as_deref().map(section_display_name),
         is_section_start: false, // Set later in build_page after sorting
         style: ItemBoxStyle::default(),
         dual_list_sibling: schema.dual_list_sibling.clone(),
@@ -1379,6 +1383,7 @@ pub fn build_item_from_value(
         nullable: schema.nullable,
         is_null,
         section: schema.section.clone(),
+        section_label: schema.section.as_deref().map(section_display_name),
         is_section_start: false, // Not used in dialogs
         style: ItemBoxStyle::default(),
         dual_list_sibling: schema.dual_list_sibling.clone(),

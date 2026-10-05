@@ -2381,10 +2381,7 @@ fn setting_item_view(
         path: item.path.clone(),
         name: item.name.clone(),
         description: item.description.clone(),
-        section: item
-            .section
-            .as_deref()
-            .map(crate::view::settings::schema::section_display_name),
+        section: item.section_label.clone(),
         section_start: item.is_section_start,
         modified: item.modified,
         read_only: item.read_only,
@@ -2428,13 +2425,7 @@ impl Editor {
                         expandable,
                         expanded,
                         sections: match p.sections.len() > 1 {
-                            true => p
-                                .sections
-                                .iter()
-                                .map(|s| {
-                                    crate::view::settings::schema::section_display_name(&s.name)
-                                })
-                                .collect(),
+                            true => p.sections.iter().map(|s| s.display_name.clone()).collect(),
                             false => Vec::new(),
                         },
                         nested,

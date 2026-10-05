@@ -57,12 +57,23 @@ const SCHEMA: &str = r##"{
   }
 }"##;
 
+/// The test catalog stays registered while this lives. The tests share a
+/// process, and the locale would otherwise outlast its test and be listed
+/// by `available_locales()` for every test after it.
+struct Catalog;
+
+impl Drop for Catalog {
+    fn drop(&mut self) {
+        fresh_i18n::unregister_locales(&[LOCALE]);
+    }
+}
+
 /// The schema parsed in the test locale. Returns with the locale still set,
 /// for [`section_display_name`]; the pin keeps other tests from changing it.
-fn parse() -> Vec<SettingCategory> {
+fn parse() -> (Catalog, Vec<SettingCategory>) {
     fresh_i18n::register_locales(&[(LOCALE, CATALOG)]);
     fresh_i18n::set_locale(LOCALE);
-    parse_schema(SCHEMA).unwrap()
+    (Catalog, parse_schema(SCHEMA).unwrap())
 }
 
 fn category<'a>(categories: &'a [SettingCategory], name: &str) -> &'a SettingCategory {
@@ -90,7 +101,7 @@ fn entry_field(entry: &SettingSchema) -> &SettingSchema {
 #[test]
 fn test_settings_schema_labels_follow_the_locale() {
     let _pin = crate::common::global_state::pin_config_globals();
-    let categories = parse();
+    let (_catalog, categories) = parse();
 
     let general = category(&categories, "General");
     let alpha = setting(&general.settings, "/alpha");
@@ -135,7 +146,7 @@ fn test_settings_schema_labels_follow_the_locale() {
 #[test]
 fn test_settings_schema_labels_fall_back_to_the_schema() {
     let _pin = crate::common::global_state::pin_config_globals();
-    let categories = parse();
+    let (_catalog, categories) = parse();
 
     let general = category(&categories, "General");
     assert_eq!(general.display_name, "General");
@@ -147,12 +158,12 @@ fn test_settings_schema_labels_fall_back_to_the_schema() {
     assert_eq!(section_display_name("Plain"), "Plain");
 }
 
-/// Settings are ordered by path, not by their translated names, so a page
-/// lists them in the same order in every locale.
+/// Settings are ordered by their English names, not their translated ones,
+/// so a page lists them in the same order in every locale.
 #[test]
 fn test_settings_schema_order_ignores_translated_names() {
     let _pin = crate::common::global_state::pin_config_globals();
-    let categories = parse();
+    let (_catalog, categories) = parse();
 
     // "Zulu alpha" sorts after "Beta" by name.
     let paths: Vec<&str> = category(&categories, "General")
@@ -161,4 +172,36 @@ fn test_settings_schema_order_ignores_translated_names() {
         .map(|s| s.path.as_str())
         .collect();
     assert_eq!(paths, ["/alpha", "/beta"]);
+}
+
+/// The English names come from the English catalog where it has one, so the
+/// order is the one English has always shown, not the paths': `en.json` calls
+/// `whitespace_spaces_inner` "Inner Spaces", which sorts ahead of
+/// `whitespace_show`, "Show Whitespace".
+#[test]
+fn test_settings_schema_order_follows_the_english_catalog() {
+    let _pin = crate::common::global_state::pin_config_globals();
+    fresh::i18n::set_locale("ja");
+    let categories = parse_schema(include_str!("../plugins/config-schema.json")).unwrap();
+
+    let whitespace: Vec<&str> = category(&categories, "Editor")
+        .settings
+        .iter()
+        .filter_map(|s| s.path.strip_prefix("/editor/whitespace_"))
+        .collect();
+    assert_eq!(
+        whitespace,
+        [
+            "spaces_inner",     // Inner Spaces
+            "tabs_inner",       // Inner Tabs
+            "spaces_leading",   // Leading Spaces
+            "tabs_leading",     // Leading Tabs
+            "show",             // Show Whitespace
+            "spaces_trailing",  // Trailing Spaces
+            "tabs_trailing",    // Trailing Tabs
+            "carriage_returns", // Whitespace Carriage Returns
+            "in_selection",     // Whitespace In Selection
+            "newlines",         // Whitespace Newlines
+        ]
+    );
 }

@@ -1,7 +1,6 @@
 use super::lsp_status::compose_lsp_status;
 use super::*;
 use crate::config::FileExplorerSide;
-use crate::view::settings::schema::section_display_name;
 use crate::view::settings::surface::SettingsSurface as _;
 
 /// The bottom-row visibility facts (see [`Editor::bottom_row_flags`]):
@@ -1937,7 +1936,7 @@ impl Editor {
                             index,
                             divider_above: divider_at == Some(index),
                             section: item
-                                .section
+                                .section_label
                                 .clone()
                                 .filter(|_| item.is_section_start),
                             spec: crate::view::settings::widget_map::setting_control_to_widget_aligned(
@@ -2052,7 +2051,7 @@ impl Editor {
                     );
                     st::Card {
                         index,
-                        section: item.section.clone().filter(|_| {
+                        section: item.section_label.clone().filter(|_| {
                             item.is_section_start && item.style.section_header_rows > 0
                         }),
                         spec: crate::view::settings::widget_map::setting_control_to_widget_aligned(
@@ -2275,7 +2274,7 @@ impl Editor {
                             ),
                             cat: cat_idx,
                             section: section_idx,
-                            label: section_display_name(&section.name),
+                            label: section.display_name.clone(),
                         }
                     }
                 })
