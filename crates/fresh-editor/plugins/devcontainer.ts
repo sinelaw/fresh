@@ -2423,6 +2423,7 @@ function settleAttachAttempt(): boolean {
   }
   if (editor.getAuthorityLabel().length > 0) {
     // A container authority came up.
+    editor.clearRemoteIndicatorState();
     clearAttachAttempt();
     return false;
   }
