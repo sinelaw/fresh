@@ -70,12 +70,21 @@ impl Editor {
     /// this is, carried on the event from the editor's own multi-click
     /// detector — so one fact covers both routes, and they cannot disagree
     /// about which row they mean.
+    ///
+    /// Reports whether a directory is waiting to be opened or closed by the
+    /// release. Expanding one re-lays out every row below it, so doing it
+    /// under a pointer that is still down would slide a different row beneath
+    /// the drag the press just lifted — press `chain/one`, drag one row down,
+    /// and the entry lands wherever the rows happened to shift to. So the
+    /// press selects and the release toggles, which is what a *click* on a
+    /// directory has always meant anyway.
+    #[must_use]
     pub(crate) fn explorer_row_pressed(
         &mut self,
         index: usize,
         segment: Option<std::path::PathBuf>,
         clicks: u8,
-    ) {
+    ) -> bool {
         // Focus first. `open_file_preview` below routes through
         // `set_active_buffer`, which detects "leaving a terminal buffer while
         // terminal_mode is on" and resets `key_context = Normal`
@@ -100,18 +109,20 @@ impl Editor {
             ))
         });
         let Some((is_dir, is_file, path, name)) = picked else {
-            return;
+            return false;
         };
         if double {
             // Open AND focus the editor — the old double-click arm.
             if let Err(e) = self.file_explorer_open_file() {
                 tracing::warn!("file explorer open failed: {e}");
             }
-            return;
+            return false;
         }
         if is_dir {
-            self.file_explorer_toggle_expand();
-        } else if is_file {
+            // The release does this. See the note on this function.
+            return true;
+        }
+        if is_file {
             // Single click opens in *preview* mode and keeps focus on the
             // panel, so a string of exploratory clicks doesn't accumulate
             // tabs; the double above promotes it to a permanent one.
@@ -136,6 +147,7 @@ impl Editor {
             self.active_window_mut().key_context =
                 crate::input::keybindings::KeyContext::FileExplorer;
         }
+        false
     }
 
     /// A right press on a tree row: select what the press named, then open its

@@ -1127,6 +1127,110 @@ fn test_dropping_an_entry_where_it_already_is_does_nothing() {
     );
 }
 
+/// A drag that starts on a directory lands where the reader aimed it.
+///
+/// The press used to expand the directory there and then, which re-lays out
+/// every row below it — so by the time the pointer had moved one row down,
+/// the row under it was not the one the reader had been looking at. Dragging
+/// `outer` onto the directory below it put `outer` inside whatever had slid
+/// into that row. Found by driving the real editor, not by a test.
+#[test]
+fn test_a_drag_from_a_directory_lands_where_it_was_aimed() {
+    let mut h = EditorTestHarness::with_temp_project(100, 30).unwrap();
+    let root = h.project_dir().unwrap();
+    // `outer` holds enough that expanding it would push `target` off its row.
+    fs::create_dir_all(root.join("outer/inner")).unwrap();
+    fs::write(root.join("outer/one.txt"), "one").unwrap();
+    fs::write(root.join("outer/two.txt"), "two").unwrap();
+    fs::create_dir_all(root.join("target")).unwrap();
+
+    h.editor_mut().focus_file_explorer();
+    h.wait_for_file_explorer().unwrap();
+    h.wait_for_file_explorer_item("target").unwrap();
+    h.render().unwrap();
+
+    let (from, to) = (
+        explorer_row_of(&h, "outer").expect("the directory's row"),
+        explorer_row_of(&h, "target").expect("the destination's row"),
+    );
+    h.mouse_drag(EXPLORER_COL, from, EXPLORER_COL, to).unwrap();
+    h.render().unwrap();
+
+    assert!(
+        root.join("target/outer").is_dir(),
+        "the directory should have landed in the row it was dragged onto.\n{}",
+        h.screen_to_string()
+    );
+    assert!(
+        root.join("target/outer/one.txt").is_file(),
+        "with what was inside it"
+    );
+    assert!(
+        !root.join("outer").exists(),
+        "and it should be gone from where it was"
+    );
+}
+
+/// A click on a directory still opens it — the toggle the press holds back for
+/// the drag above is spent by a release in the same place.
+#[test]
+fn test_a_click_on_a_directory_still_opens_it() {
+    let mut h = EditorTestHarness::with_temp_project(100, 30).unwrap();
+    let root = h.project_dir().unwrap();
+    fs::create_dir_all(root.join("folder")).unwrap();
+    fs::write(root.join("folder/inside.txt"), "inside").unwrap();
+
+    h.editor_mut().focus_file_explorer();
+    h.wait_for_file_explorer().unwrap();
+    h.wait_for_file_explorer_item("folder").unwrap();
+    h.render().unwrap();
+
+    let row = explorer_row_of(&h, "folder").expect("the directory's row");
+    h.mouse_click(EXPLORER_COL, row).unwrap();
+    h.wait_for_file_explorer_item("inside.txt")
+        .unwrap_or_else(|e| {
+            panic!(
+                "a click should have opened the directory: {e}\n{}",
+                h.screen_to_string()
+            )
+        });
+}
+
+/// A click that wobbles without leaving the row is still a click.
+///
+/// The pointer moving is what tells a drag from a click, but a *directory's*
+/// own drop target is the directory itself, so hovering the row the press came
+/// from read as "gone somewhere else" and ate the click: the folder neither
+/// opened nor moved. A hover that would move nothing is not a drag.
+#[test]
+fn test_a_click_that_wobbles_still_opens_a_directory() {
+    let mut h = EditorTestHarness::with_temp_project(100, 30).unwrap();
+    let root = h.project_dir().unwrap();
+    fs::create_dir_all(root.join("folder")).unwrap();
+    fs::write(root.join("folder/inside.txt"), "inside").unwrap();
+
+    h.editor_mut().focus_file_explorer();
+    h.wait_for_file_explorer().unwrap();
+    h.wait_for_file_explorer_item("folder").unwrap();
+    h.render().unwrap();
+
+    let row = explorer_row_of(&h, "folder").expect("the directory's row");
+    // Press, move with the button down but not off the row, release.
+    h.mouse_drag(EXPLORER_COL, row, EXPLORER_COL, row).unwrap();
+    h.wait_for_file_explorer_item("inside.txt")
+        .unwrap_or_else(|e| {
+            panic!(
+                "a click that did not leave the row should still have opened \
+                 the directory: {e}\n{}",
+                h.screen_to_string()
+            )
+        });
+    assert!(
+        root.join("folder/inside.txt").is_file(),
+        "and nothing should have been moved"
+    );
+}
+
 /// A drop onto a name that is taken asks the one-entry question — the same one
 /// a paste of a single file asks, "keep both" included — and leaves a cut the
 /// reader is still holding alone.
