@@ -8,6 +8,18 @@ use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::config::Config;
 use unicode_width::UnicodeWidthStr;
 
+/// A string from the Japanese catalog, with `%{name}`-style placeholders
+/// filled from `args`.
+fn ja(key: &str, args: &[(&str, &str)]) -> String {
+    let mut s = fresh_i18n::translate_in("ja", key)
+        .unwrap_or_else(|| panic!("ja has no {key:?}"))
+        .to_string();
+    for (name, value) in args {
+        s = s.replace(&format!("%{{{name}}}"), value);
+    }
+    s
+}
+
 /// Settings opened in Japanese.
 ///
 /// Through the palette by the command's Japanese name: the harness's own
@@ -27,7 +39,11 @@ fn japanese_settings() -> EditorTestHarness {
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
-    harness.wait_for_screen_contains("Settings [").unwrap();
+    let title = ja(
+        "settings.title",
+        &[("layer", &ja("settings.layer.user", &[]))],
+    );
+    harness.wait_until(|h| read(h).contains(&title)).unwrap();
     harness
 }
 
@@ -180,7 +196,7 @@ fn entry_dialog_sections_follow_the_locale() {
     let focused = |h: &EditorTestHarness| {
         read(h)
             .lines()
-            .any(|l| l.contains("python") && l.contains("[Enter to edit]"))
+            .any(|l| l.contains("python") && l.contains(&ja("settings.enter_to_edit", &[])))
     };
     for _ in 0..80 {
         if focused(&harness) {
@@ -195,14 +211,15 @@ fn entry_dialog_sections_follow_the_locale() {
         read(&harness)
     );
 
-    // Edit Value for python, then Edit Item for its first server. Their
-    // titles carry the translated field name, so each is recognised by
-    // something the locale does not touch: the first by its frame, the
-    // second by the server's command shown as an editable value.
+    // Edit Value for python, then Edit Item for its first server.
+    let edit = |what: &str| ja("settings.entry_edit_title", &[("name", &ja(what, &[]))]);
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
-    harness.wait_until(|h| read(h).contains("╭ Edit")).unwrap();
+    let edit_value = edit("settings.entry_value");
+    harness
+        .wait_until(|h| read(h).contains(&edit_value))
+        .unwrap();
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
@@ -213,5 +230,76 @@ fn entry_dialog_sections_follow_the_locale() {
     assert!(!screen.contains("── Advanced ──"), "{screen}");
     // A list item's name is its own, not its key path's `*`: a catalog
     // entry for `settings.field.lsp.*.*` once titled this "Edit *".
-    assert!(screen.contains("Edit Item"), "{screen}");
+    assert!(screen.contains(&edit("settings.entry_item")), "{screen}");
+    // The dialog's own chrome follows the locale too.
+    for english in ["Edit Item", "[ Save ]", "[+] Add new", "↑↓:Navigate"] {
+        assert!(
+            !screen.contains(english),
+            "{english:?} is still English:\n{screen}"
+        );
+    }
+    let save = format!("[ {} ]", ja("settings.btn_save", &[]));
+    assert!(screen.contains(&save), "{screen}");
+    assert!(screen.contains(&ja("settings.add_new", &[])), "{screen}");
+}
+
+/// The screen's own chrome — the search hint, the footer's layer button —
+/// is translated, not only what the schema says.
+#[test]
+fn settings_chrome_follows_the_locale() {
+    let _pin = pin_config_globals();
+    let harness = japanese_settings();
+    let screen = read(&harness);
+
+    assert!(!screen.contains("to search settings"), "{screen}");
+    let hint = ja("settings.search_hint", &[]);
+    let after_key = hint.split("%{key}").last().unwrap().trim();
+    assert!(
+        screen.contains(after_key),
+        "{after_key:?} missing:\n{screen}"
+    );
+    let layer = format!("[ {} ]", ja("settings.layer.user", &[]));
+    assert!(screen.contains(&layer), "{layer:?} missing:\n{screen}");
+}
+
+/// A map's column header is the entry field's translated name, and a
+/// changed entry dialog says so in the locale.
+#[test]
+fn map_header_and_dirty_dialog_follow_the_locale() {
+    let _pin = pin_config_globals();
+    let mut harness = japanese_settings();
+
+    harness
+        .send_key(KeyCode::Char('/'), KeyModifiers::NONE)
+        .unwrap();
+    harness.type_text("/languages").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    let grammar = ja("settings.field.languages.*.grammar", &[]);
+    let header = |h: &EditorTestHarness| {
+        read(h)
+            .lines()
+            .any(|l| l.contains(&ja("settings.map_name_column", &[])) && l.contains(&grammar))
+    };
+    harness.wait_until(header).unwrap();
+    assert!(!read(&harness).contains("Grammar"), "{}", read(&harness));
+
+    // Open the first language, then flip a checkbox.
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    let title = ja(
+        "settings.entry_edit_title",
+        &[("name", &ja("settings.entry_value", &[]))],
+    );
+    harness.wait_until(|h| read(h).contains(&title)).unwrap();
+    let modified = format!("• {}", ja("settings.modified", &[]));
+    assert!(!read(&harness).contains(&modified), "{}", read(&harness));
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_until(|h| read(h).contains(&modified)).unwrap();
+    assert!(!read(&harness).contains("• modified"), "{}", read(&harness));
 }

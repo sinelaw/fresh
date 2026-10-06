@@ -12,6 +12,7 @@ use super::search::{search_settings, DeepMatch, SearchResult};
 use super::surface::SettingsSurface;
 use crate::config::Config;
 use crate::config_io::ConfigLayer;
+use fresh_i18n::t;
 use std::collections::HashMap;
 
 /// Set a value at a JSON pointer path, creating intermediate objects as
@@ -1221,13 +1222,14 @@ impl SettingsState {
     }
 
     /// Get a display name for the current target layer.
-    pub fn target_layer_name(&self) -> &'static str {
+    pub fn target_layer_name(&self) -> String {
         match self.target_layer {
-            ConfigLayer::System => "System (read-only)",
-            ConfigLayer::User => "User",
-            ConfigLayer::Project => "Project",
-            ConfigLayer::Session => "Session",
+            ConfigLayer::System => t!("settings.layer.system"),
+            ConfigLayer::User => t!("settings.layer.user"),
+            ConfigLayer::Project => t!("settings.layer.project"),
+            ConfigLayer::Session => t!("settings.layer.session"),
         }
+        .to_string()
     }
 
     /// Set the layer sources map (called by Editor when opening settings).
@@ -2761,7 +2763,11 @@ impl SettingsState {
             .collect();
         // Also include pending deletions (resets)
         for path in &self.pending_deletions {
-            descriptions.push(format!("{}: (reset to default)", path));
+            descriptions.push(format!(
+                "{}: {}",
+                path,
+                t!("settings.change_reset_to_default")
+            ));
         }
         descriptions.sort();
         descriptions

@@ -1962,13 +1962,13 @@ impl Editor {
                     .collect();
                 let mut buttons = vec![
                     e::Button {
-                        label: "[ Save ]".into(),
+                        label: format!("[ {} ]", t!("settings.btn_save")),
                         focused: d.focus_on_buttons && d.focused_button == 0,
                         hovered: d.hover_button == Some(0),
                         destructive: false,
                     },
                     e::Button {
-                        label: "[ Cancel ]".into(),
+                        label: format!("[ {} ]", t!("settings.btn_cancel")),
                         focused: d.focus_on_buttons && d.focused_button == 1,
                         hovered: d.hover_button == Some(1),
                         destructive: false,
@@ -1986,13 +1986,7 @@ impl Editor {
                 e::Dialog {
                     level,
                     title: match d.is_dirty() {
-                        // The painter's own words, not a message key: there is
-                        // no `settings.modified_suffix` in the catalogue, so
-                        // `t!` handed the title the key itself and the dialog
-                        // read "Add Value • settings.modified_suffix". The
-                        // settings box beside it spells its own suffix out the
-                        // same way.
-                        true => format!(" {} • modified ", d.title),
+                        true => format!(" {} • {} ", d.title, fresh_i18n::t!("settings.modified")),
                         false => format!(" {} ", d.title),
                     },
                     dirty: d.is_dirty(),
@@ -2073,9 +2067,15 @@ impl Editor {
                         description: item.description.clone().filter(|d| !d.is_empty()),
                         layer: match item.layer_source {
                             crate::config_io::ConfigLayer::System => None,
-                            crate::config_io::ConfigLayer::User => Some("user"),
-                            crate::config_io::ConfigLayer::Project => Some("project"),
-                            crate::config_io::ConfigLayer::Session => Some("session"),
+                            crate::config_io::ConfigLayer::User => {
+                                Some(t!("settings.source.user").to_string())
+                            }
+                            crate::config_io::ConfigLayer::Project => {
+                                Some(t!("settings.source.project").to_string())
+                            }
+                            crate::config_io::ConfigLayer::Session => {
+                                Some(t!("settings.source.session").to_string())
+                            }
                         },
                         selected: focused && index == s.selected_item,
                         hovered,
@@ -2110,14 +2110,21 @@ impl Editor {
         use crate::app::shell_host::shell_theme::{attrs, pair};
         use crate::view::shell::settings as st;
 
+        use fresh_i18n::{t, tn};
         let s = self.settings_state.as_ref().filter(|s| s.visible)?;
         let dim = pair("editor.line_number_fg", "ui.popup_bg");
         let search = match s.search_active {
-            false => st::Search::Hint(vec![
-                st::Span::new("Press ", dim.clone()),
-                st::Span::new(" / ", pair("ui.popup_text_fg", "ui.split_separator_fg")),
-                st::Span::new(" to search settings...", dim.clone()),
-            ]),
+            false => {
+                // The hint's `%{key}` is where the styled `/` goes, wherever
+                // the language puts it.
+                let hint = t!("settings.search_hint");
+                let (before, after) = hint.split_once("%{key}").unwrap_or((&hint, ""));
+                st::Search::Hint(vec![
+                    st::Span::new(before, dim.clone()),
+                    st::Span::new(" / ", pair("ui.popup_text_fg", "ui.split_separator_fg")),
+                    st::Span::new(after, dim.clone()),
+                ])
+            }
             true => {
                 let query = s.search_query();
                 let cursor = s.search_cursor().min(query.len()) as i32;
@@ -2131,13 +2138,18 @@ impl Editor {
                 // rather than the field.
                 let count = match (query.is_empty(), n) {
                     (true, _) => String::new(),
-                    (false, 0) => " (no results)".into(),
-                    (false, 1) => " (1 result)".into(),
-                    (false, _) if s.search_max_visible >= n => format!(" ({n} results)"),
+                    (false, 0) => format!(" ({})", t!("settings.search_no_results")),
+                    (false, _) if s.search_max_visible >= n => {
+                        format!(" ({})", tn!("settings.search_results", n, count = n))
+                    }
                     (false, _) => format!(
-                        " ({}-{} of {n})",
-                        s.search_scroll_offset + 1,
-                        (s.search_scroll_offset + s.search_max_visible).min(n)
+                        " ({})",
+                        t!(
+                            "settings.search_results_range",
+                            from = s.search_scroll_offset + 1,
+                            to = (s.search_scroll_offset + s.search_max_visible).min(n),
+                            count = n
+                        )
                     ),
                 };
                 let arrows = match (
@@ -2325,7 +2337,7 @@ impl Editor {
         // same choice the tree above is.
         let strip = (!s.search_active).then(|| st::Strip {
             focused: s.focus_panel() == crate::view::settings::state::FocusPanel::Categories,
-            hint: "←→: Switch category".into(),
+            hint: t!("settings.switch_category_hint").to_string(),
             // In the tree's order (a plugin's page right after "Plugins"),
             // which is the order Up/Down walk.
             cats: s
@@ -2359,8 +2371,11 @@ impl Editor {
             page,
             items,
             title: match s.has_changes() {
-                true => format!(" Settings [{}] • (modified) ", s.target_layer_name()),
-                false => format!(" Settings [{}] ", s.target_layer_name()),
+                true => format!(
+                    " {} ",
+                    t!("settings.title_modified", layer = s.target_layer_name())
+                ),
+                false => format!(" {} ", t!("settings.title", layer = s.target_layer_name())),
             },
             search,
         })
@@ -2385,34 +2400,45 @@ impl Editor {
             let named = !s.entry_delete_target_name.is_empty();
             return Some(st::Dialog::EntryDelete(st::Destructive {
                 title: match (named, s.entry_delete_target_is_array_item) {
-                    (true, _) => format!("Delete \"{}\"?", s.entry_delete_target_name),
-                    (false, true) => "Delete item?".into(),
-                    (false, false) => "Delete entry?".into(),
+                    (true, _) => t!(
+                        "settings.delete_named_title",
+                        name = s.entry_delete_target_name
+                    )
+                    .to_string(),
+                    (false, true) => t!("settings.delete_item_title").to_string(),
+                    (false, false) => t!("settings.delete_entry_title").to_string(),
                 },
                 message: match (named, s.entry_delete_target_is_array_item) {
-                    (true, _) => format!(
-                        "This will permanently remove \"{}\".",
-                        s.entry_delete_target_name
-                    ),
-                    (false, true) => "This will permanently remove this item.".into(),
-                    (false, false) => "This will permanently remove the entry.".into(),
+                    (true, _) => t!(
+                        "settings.delete_named_message",
+                        name = s.entry_delete_target_name
+                    )
+                    .to_string(),
+                    (false, true) => t!("settings.delete_item_message").to_string(),
+                    (false, false) => t!("settings.delete_entry_message").to_string(),
                 },
-                buttons: vec!["Cancel".into(), "Delete".into()],
+                buttons: vec![
+                    t!("settings.btn_cancel").to_string(),
+                    t!("settings.btn_delete").to_string(),
+                ],
                 selected: s.entry_delete_confirm_selection,
                 destructive: 1,
-                help: "Tab/←→: Select   Enter: Confirm   Esc: Cancel".into(),
+                help: t!("settings.confirm_help_cancel").to_string(),
                 grave: true,
                 width: 60,
             }));
         }
         if s.showing_entry_discard_confirm {
             return Some(st::Dialog::EntryDiscard(st::Destructive {
-                title: "Discard changes?".into(),
-                message: "You have uncommitted edits in this dialog.".into(),
-                buttons: vec!["Keep editing".into(), "Discard".into()],
+                title: t!("settings.discard_title").to_string(),
+                message: t!("settings.discard_message").to_string(),
+                buttons: vec![
+                    t!("settings.btn_keep_editing").to_string(),
+                    t!("settings.btn_discard").to_string(),
+                ],
                 selected: s.entry_discard_confirm_selection,
                 destructive: 1,
-                help: "Tab/←→: Select   Enter: Confirm   Esc: Keep editing".into(),
+                help: t!("settings.confirm_help_keep_editing").to_string(),
                 grave: false,
                 width: 50,
             }));
@@ -2434,33 +2460,36 @@ impl Editor {
                 heading: false,
             };
             return Some(st::Dialog::Help {
-                title: "Keyboard Shortcuts".into(),
+                title: t!("settings.shortcuts.title").to_string(),
                 lines: vec![
-                    head("Navigation"),
-                    l("↑ / ↓", "Move up/down"),
-                    l("Tab", "Switch between categories and settings"),
-                    l("Enter", "Activate/toggle setting"),
+                    head(&t!("settings.shortcuts.navigation")),
+                    l("↑ / ↓", &t!("settings.shortcuts.move")),
+                    l("Tab", &t!("settings.shortcuts.switch_panel")),
+                    l("Enter", &t!("settings.shortcuts.activate")),
                     gap(),
-                    head("Search"),
-                    l("/", "Start search"),
-                    l("Esc", "Cancel search"),
-                    l("↑ / ↓", "Navigate results"),
-                    l("Enter", "Jump to result"),
+                    head(&t!("settings.shortcuts.search")),
+                    l("/", &t!("settings.shortcuts.start_search")),
+                    l("Esc", &t!("settings.shortcuts.cancel_search")),
+                    l("↑ / ↓", &t!("settings.shortcuts.navigate_results")),
+                    l("Enter", &t!("settings.shortcuts.jump")),
                     gap(),
-                    head("Actions"),
-                    l("Ctrl+S", "Save settings"),
-                    l("Esc", "Close settings"),
-                    l("?", "Toggle this help"),
+                    head(&t!("settings.shortcuts.actions")),
+                    l("Ctrl+S", &t!("settings.shortcuts.save")),
+                    l("Esc", &t!("settings.shortcuts.close")),
+                    l("?", &t!("settings.shortcuts.toggle_help")),
                 ],
             });
         }
-        let help = "←/→/Tab: Select   Enter: Confirm   Esc: Cancel".to_string();
+        let help = t!("settings.choice_help").to_string();
         if s.showing_reset_dialog {
             return Some(st::Dialog::Reset(st::Choice {
-                title: "Reset All Changes".into(),
-                prompt: "Discard all pending changes?".into(),
+                title: t!("settings.reset_title").to_string(),
+                prompt: t!("settings.reset_prompt").to_string(),
                 changes: s.get_change_descriptions(),
-                buttons: vec!["Reset".into(), "Cancel".into()],
+                buttons: vec![
+                    t!("settings.btn_reset").to_string(),
+                    t!("settings.btn_cancel").to_string(),
+                ],
                 selected: s.reset_dialog_selection,
                 hovered: s.reset_dialog_hover,
                 help,

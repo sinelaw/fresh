@@ -442,8 +442,8 @@ pub fn object_array_row(display_field: Option<&str>, item: &serde_json::Value) -
     let action = item
         .get(field)
         .and_then(|v| v.as_str())
-        .unwrap_or("(no action)")
-        .to_string();
+        .map(str::to_string)
+        .unwrap_or_else(|| fresh_i18n::t!("settings.no_action").to_string());
     (combo, action)
 }
 

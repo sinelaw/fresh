@@ -189,10 +189,10 @@ impl EntryDialogState {
         // Add key field as first item (read-only for existing entries)
         let key_item = SettingItem {
             path: "__key__".to_string(),
-            name: "Key".to_string(),
-            description: Some("unique identifier for this entry".to_string()),
+            name: t!("settings.entry_key").to_string(),
+            description: Some(t!("settings.entry_key_desc").to_string()),
             control: SettingControl::Text {
-                label: "Key".to_string(),
+                label: t!("settings.entry_key").to_string(),
                 value: key.clone(),
                 placeholder: String::new(),
             },
@@ -252,9 +252,9 @@ impl EntryDialogState {
         };
 
         let title = if is_new {
-            format!("Add {}", schema.name)
+            t!("settings.entry_add_title", name = schema.name).to_string()
         } else {
-            format!("Edit {}", schema.name)
+            t!("settings.entry_edit_title", name = schema.name).to_string()
         };
 
         let mut result = Self {
@@ -335,9 +335,9 @@ impl EntryDialogState {
         };
 
         let title = if is_new {
-            format!("Add {}", schema.name)
+            t!("settings.entry_add_title", name = schema.name).to_string()
         } else {
-            format!("Edit {}", schema.name)
+            t!("settings.entry_edit_title", name = schema.name).to_string()
         };
 
         Self {
@@ -477,19 +477,19 @@ impl EntryDialogState {
         let pending = self.current_item().and_then(|it| match &it.control {
             SettingControl::TextList { .. } => {
                 Some(match live::text_list::live_row(&self.controls, &it.path) {
-                    None => "Press Enter (or type) to add a new item; ↓/Tab to leave",
+                    None => t!("settings.text_list_add_hint"),
                     Some(None) => match live::text_list::draft(&self.controls, &it.path)
                         .is_some_and(|d| !d.is_empty())
                     {
-                        true => "Editing new item — Enter to add, Esc to cancel",
-                        false => "Type the new item — Enter to add, Esc to cancel",
+                        true => t!("settings.text_list_editing_new"),
+                        false => t!("settings.text_list_type_new"),
                     },
-                    Some(Some(_)) => "Editing item — ↑↓ other rows, Del removes it, Tab/Esc done",
+                    Some(Some(_)) => t!("settings.text_list_editing"),
                 })
             }
             _ => None,
         });
-        pending.map(String::from).or_else(|| {
+        pending.map(|p| p.to_string()).or_else(|| {
             self.current_item()
                 .and_then(|it| it.description.as_deref())
                 .filter(|d| !d.is_empty())
@@ -511,19 +511,19 @@ impl EntryDialogState {
             })
             .unwrap_or((false, false));
         let text = if invalid && !is_json {
-            return ("⚠ Invalid JSON - fix before leaving field".into(), true);
+            return (t!("settings.invalid_json_fix").to_string(), true);
         } else if invalid {
-            return ("⚠ Invalid JSON".into(), true);
+            return (t!("settings.invalid_json").to_string(), true);
         } else if is_json {
-            "↑↓←→:Move  Enter:Newline  Tab/Esc:Exit"
+            t!("settings.legend_json")
         } else if self.is_editing() {
-            "Enter/Tab:Commit field  Esc:Cancel"
+            t!("settings.legend_editing")
         } else {
             // The `●:modified` legend is the only place that explains the
             // row indicator.
-            "↑↓:Navigate  Tab:Fields/Buttons  Enter:Edit/Apply  Ctrl+S:Save  Esc:Cancel  ●:modified"
+            t!("settings.legend_default")
         };
-        (text.into(), false)
+        (text.to_string(), false)
     }
 
     pub fn is_dirty(&self) -> bool {

@@ -659,7 +659,7 @@ fn determine_type(
                 if v.is_null() {
                     // null in enum represents "auto-detect" or "default"
                     Some(EnumOption {
-                        name: "Auto-detect".to_string(),
+                        name: t!("settings.auto_detect").to_string(),
                         value: String::new(), // Empty string represents null
                     })
                 } else {
@@ -699,7 +699,12 @@ fn determine_type(
                         .dual_list_options
                         .iter()
                         .map(|entry| EnumOption {
-                            name: entry.name.clone().unwrap_or_else(|| entry.value.clone()),
+                            name: i18n_lookup(&format!(
+                                "settings.option.{}",
+                                i18n_slug(&entry.value)
+                            ))
+                            .or_else(|| entry.name.clone())
+                            .unwrap_or_else(|| entry.value.clone()),
                             value: entry.value.clone(),
                         })
                         .collect();
@@ -721,7 +726,7 @@ fn determine_type(
                 // Check if items reference an object type
                 if items.ref_path.is_some() {
                     // Parse the item schema from the referenced definition
-                    let item_schema = parse_setting(
+                    let mut item_schema = parse_setting(
                         "item",
                         "",
                         &format!("{}/*", key_path),
@@ -729,6 +734,8 @@ fn determine_type(
                         defs,
                         enum_values_map,
                     );
+                    // What one row of any list is called: no key path names it.
+                    item_schema.name = t!("settings.entry_item").to_string();
 
                     // Only create ObjectArray if the item is an object with properties
                     if matches!(item_schema.setting_type, SettingType::Object { .. }) {
@@ -749,7 +756,7 @@ fn determine_type(
                 match add_props {
                     AdditionalProperties::Schema(schema_box) => {
                         let inner_resolved = resolve_ref(schema_box, defs);
-                        let value_schema = parse_setting(
+                        let mut value_schema = parse_setting(
                             "value",
                             "",
                             &format!("{}/*", key_path),
@@ -757,6 +764,8 @@ fn determine_type(
                             defs,
                             enum_values_map,
                         );
+                        // What one entry's value of any map is called.
+                        value_schema.name = t!("settings.entry_value").to_string();
 
                         // Get display_field from x-display-field in the referenced schema.
                         // If the value schema is an array, also check the array items for display_field.
