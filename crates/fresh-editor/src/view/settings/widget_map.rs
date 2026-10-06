@@ -101,6 +101,8 @@ pub fn setting_control_to_widget_aligned(
     label_width: Option<u16>,
     cursor: Option<usize>,
 ) -> WidgetSpec {
+    // A control can be mapped before `i18n::init`, e.g. from a test.
+    crate::i18n::embedded::ensure_registered();
     let key = Some(field_key.to_string());
     let lw = label_width.unwrap_or(0) as u32;
     match control {

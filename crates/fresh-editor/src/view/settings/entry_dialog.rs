@@ -184,6 +184,8 @@ impl EntryDialogState {
         no_delete: bool,
         available_status_bar_tokens: &HashMap<String, String>,
     ) -> Self {
+        // A dialog can be built before `i18n::init`, e.g. from a test.
+        crate::i18n::embedded::ensure_registered();
         let mut items = Vec::new();
 
         // Add key field as first item (read-only for existing entries)
@@ -302,6 +304,8 @@ impl EntryDialogState {
         is_new: bool,
         available_status_bar_tokens: &HashMap<String, String>,
     ) -> Self {
+        // A dialog can be built before `i18n::init`, e.g. from a test.
+        crate::i18n::embedded::ensure_registered();
         let mut items = Vec::new();
 
         // Add schema-driven items from object properties (no key field for arrays)

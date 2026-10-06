@@ -338,6 +338,8 @@ impl SettingsState {
         config: &Config,
         plugin_schemas: &HashMap<String, serde_json::Value>,
     ) -> Result<Self, serde_json::Error> {
+        // Settings can be built before `i18n::init`, e.g. from a test.
+        crate::i18n::embedded::ensure_registered();
         let mut categories = parse_schema(schema_json)?;
 
         // Collect enabled plugins that have a schema sidecar.
