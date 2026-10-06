@@ -549,10 +549,19 @@ fn put(buf: &mut Buffer, x: u16, y: u16, ch: char, style: Style, clip: Rect) {
 /// something narrow is painted over the glyph, the stale cell is back on
 /// screen. Blanking it here is what `Buffer::set_stringn` does for the same
 /// reason.
+///
+/// The other direction too: painting into the second column of a wide glyph
+/// cuts it in half, and half a glyph cannot be drawn. Left in place, the
+/// terminal draws all of it and ratatui skips this cell as covered, so a
+/// dialog's left border vanished on every row where the page behind it had
+/// `未` straddling the border's column. What is left of the glyph is a blank,
+/// in its own style, wherever the clip is — the glyph is outside the layer
+/// being painted, which is exactly when this happens.
 fn put_symbol(buf: &mut Buffer, x: u16, y: u16, sym: &str, w: u16, style: Style, clip: Rect) {
     if !contains(clip, x, y) || !contains(buf.area, x, y) {
         return;
     }
+    cut_wide_glyph_before(buf, x, y);
     let cell = &mut buf[(x, y)];
     cell.set_symbol(sym);
     cell.set_style(style);
@@ -564,6 +573,17 @@ fn put_symbol(buf: &mut Buffer, x: u16, y: u16, sym: &str, w: u16, style: Style,
         let cell = &mut buf[(cx, y)];
         cell.set_symbol(" ");
         cell.set_style(style);
+    }
+}
+
+/// Blank a wide glyph that starts left of `(x, y)` and spans into it.
+fn cut_wide_glyph_before(buf: &mut Buffer, x: u16, y: u16) {
+    for back in 1..=x.min(3) {
+        let cell = &mut buf[(x - back, y)];
+        if fresh_ui::glyph::width(cell.symbol()) > back {
+            cell.set_symbol(" ");
+            return;
+        }
     }
 }
 
@@ -932,6 +952,31 @@ mod width_tests {
         let family = "👨\u{200d}👩\u{200d}👧";
         let buf = fold_into(row().children([text(family), text("|")]), 4);
         assert_eq!(symbols(&buf), [family, " ", "|", "~"]);
+    }
+
+    /// Painting into a wide glyph's second column cuts the glyph: its first
+    /// column becomes a blank rather than a glyph the terminal would draw
+    /// over the new cell. A layer's border over a page of Japanese text kept
+    /// losing its left edge to this.
+    #[test]
+    fn painting_over_a_wide_glyphs_second_column_blanks_the_glyph() {
+        let mut buf = Buffer::filled(Rect::new(0, 0, 5, 1), ratatui::buffer::Cell::new("~"));
+        let all = buf.area;
+        put_symbol(&mut buf, 0, 0, "未", 2, Style::default(), all);
+        put_symbol(&mut buf, 2, 0, "設", 2, Style::default(), all);
+        // A clip that starts at the border's column, as a layer's does.
+        put(&mut buf, 1, 0, '│', Style::default(), Rect::new(1, 0, 1, 1));
+        assert_eq!(symbols(&buf), [" ", "│", "設", " ", "~"]);
+    }
+
+    /// A glyph painted right after a whole wide glyph leaves it alone.
+    #[test]
+    fn painting_after_a_whole_wide_glyph_keeps_it() {
+        let mut buf = Buffer::filled(Rect::new(0, 0, 4, 1), ratatui::buffer::Cell::new("~"));
+        let all = buf.area;
+        put_symbol(&mut buf, 0, 0, "未", 2, Style::default(), all);
+        put(&mut buf, 2, 0, '│', Style::default(), all);
+        assert_eq!(symbols(&buf), ["未", " ", "│", "~"]);
     }
 
     /// A wide glyph the clip would halve is a blank in its visible column,
