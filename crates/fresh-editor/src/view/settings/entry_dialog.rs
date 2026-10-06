@@ -204,6 +204,7 @@ impl EntryDialogState {
             nullable: false,
             is_null: false,
             section: None,
+            section_label: None,
             is_section_start: false,
             style: ItemBoxStyle::default(),
             dual_list_sibling: None,
@@ -455,10 +456,11 @@ impl EntryDialogState {
     /// and a form whose labels approach forty columns has a naming problem
     /// rather than a layout one.
     pub fn label_column(&self) -> Option<u16> {
+        use crate::primitives::display_width::str_width;
         const CAP: u16 = 40;
         self.items
             .iter()
-            .map(|item| item.name.len() as u16 + 2)
+            .map(|item| str_width(&item.name) as u16 + 2)
             .filter(|&w| w <= CAP)
             .max()
     }
@@ -1782,6 +1784,23 @@ mod tests {
             dual_list_sibling: None,
             dynamically_extendable_status_bar_elements: false,
         }
+    }
+
+    /// A label is measured in columns, not bytes: `コマンド` is four
+    /// double-width glyphs, eight columns but twelve bytes.
+    #[test]
+    fn label_column_measures_display_width() {
+        let schema = prop_schema("/command", "コマンド", SettingType::String);
+        let dialog = EntryDialogState::from_schema(
+            "k".to_string(),
+            &serde_json::json!({}),
+            &schema,
+            "/test",
+            false,
+            false,
+            &HashMap::new(),
+        );
+        assert_eq!(dialog.label_column(), Some(8 + 2));
     }
 
     /// Focus the field at `path` (leaving button focus), returning its index.

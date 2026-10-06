@@ -635,7 +635,7 @@ pub fn settings_items_to_widget(items: &[super::items::SettingItem]) -> WidgetSp
     let mut children: Vec<WidgetSpec> = Vec::with_capacity(items.len());
     for item in items {
         if item.is_section_start {
-            if let Some(section) = item.section.as_deref() {
+            if let Some(section) = item.section_label.as_deref() {
                 if !children.is_empty() {
                     children.push(WidgetSpec::Divider {
                         ch: "─".to_string(),
@@ -899,6 +899,7 @@ mod tests {
             nullable: false,
             is_null: false,
             section: section.map(|s| s.to_string()),
+            section_label: section.map(|s| s.to_string()),
             is_section_start: section.is_some(),
             style: Default::default(),
             dual_list_sibling: None,

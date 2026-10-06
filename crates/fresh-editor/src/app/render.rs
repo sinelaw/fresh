@@ -1936,7 +1936,7 @@ impl Editor {
                             index,
                             divider_above: divider_at == Some(index),
                             section: item
-                                .section
+                                .section_label
                                 .clone()
                                 .filter(|_| item.is_section_start),
                             spec: crate::view::settings::widget_map::setting_control_to_widget_aligned(
@@ -2051,7 +2051,7 @@ impl Editor {
                     );
                     st::Card {
                         index,
-                        section: item.section.clone().filter(|_| {
+                        section: item.section_label.clone().filter(|_| {
                             item.is_section_start && item.style.section_header_rows > 0
                         }),
                         spec: crate::view::settings::widget_map::setting_control_to_widget_aligned(
@@ -2253,7 +2253,7 @@ impl Editor {
                             },
                             dirty: s.page_has_pending_changes(idx),
                             icon: crate::view::settings::render::category_icon(&page.name, nerd),
-                            label: page.name.clone(),
+                            label: page.display_name.clone(),
                             nested,
                         }
                     }
@@ -2274,7 +2274,7 @@ impl Editor {
                             ),
                             cat: cat_idx,
                             section: section_idx,
-                            label: section.name.clone(),
+                            label: section.display_name.clone(),
                         }
                     }
                 })
@@ -2303,7 +2303,7 @@ impl Editor {
         let page = (!s.search_active).then(|| {
             let p = s.current_page();
             st::Page {
-                title: p.map(|p| p.name.clone()).unwrap_or_default(),
+                title: p.map(|p| p.display_name.clone()).unwrap_or_default(),
                 clear: if p.is_some_and(|p| p.nullable) {
                     s.current_category_has_values()
                 } else {
@@ -2334,7 +2334,7 @@ impl Editor {
                 .map(|idx| (idx, &s.pages[idx]))
                 .map(|(idx, page)| st::StripCat {
                     idx,
-                    label: page.name.clone(),
+                    label: page.display_name.clone(),
                     dirty: s.page_has_pending_changes(idx),
                     selected: idx == s.selected_category,
                 })

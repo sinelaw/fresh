@@ -25,7 +25,7 @@ mod store;
 
 pub use plugins::{register_plugin_strings, translate_plugin_string, unregister_plugin_strings};
 pub use plural::{plural_category, translate_plural, PluralCategory};
-pub use store::{available_locales, register_locales, translate_in};
+pub use store::{available_locales, register_locales, translate_in, unregister_locales};
 
 use store::FALLBACK_LOCALE;
 

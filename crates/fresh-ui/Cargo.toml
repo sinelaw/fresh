@@ -21,6 +21,9 @@ path = "src/lib.rs"
 # measured.
 unicode-width = "0.2"
 unicode-segmentation = "1.12"
+# Where text with no spaces between its words (Chinese, Japanese) may wrap,
+# and which punctuation must stay on its line: see `render::prim::wide_breaks`.
+unicode-linebreak = "0.1"
 
 [dev-dependencies]
 # Test and example support only. The library itself depends on the two

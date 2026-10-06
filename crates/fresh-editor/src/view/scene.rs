@@ -2381,7 +2381,7 @@ fn setting_item_view(
         path: item.path.clone(),
         name: item.name.clone(),
         description: item.description.clone(),
-        section: item.section.clone(),
+        section: item.section_label.clone(),
         section_start: item.is_section_start,
         modified: item.modified,
         read_only: item.read_only,
@@ -2420,12 +2420,12 @@ impl Editor {
                     let p = &st.pages[idx];
                     Some(SettingsCategoryView {
                         index: idx,
-                        name: p.name.clone(),
+                        name: p.display_name.clone(),
                         selected: idx == st.selected_category,
                         expandable,
                         expanded,
                         sections: match p.sections.len() > 1 {
-                            true => p.sections.iter().map(|s| s.name.clone()).collect(),
+                            true => p.sections.iter().map(|s| s.display_name.clone()).collect(),
                             false => Vec::new(),
                         },
                         nested,
