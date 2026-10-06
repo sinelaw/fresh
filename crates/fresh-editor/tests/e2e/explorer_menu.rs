@@ -511,12 +511,7 @@ fn test_refresh_reloads_the_tree_from_a_file_selection() {
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
     harness.wait_for_file_explorer_item("inner.txt").unwrap();
-    harness
-        .editor_mut()
-        .file_explorer_mut()
-        .unwrap()
-        .navigate_to_path(&project_root.join("top.txt"));
-    harness.render().unwrap();
+    select_entry(&mut harness, "top.txt");
 
     fs::write(project_root.join("nest/added.txt"), "added").unwrap();
     fs::write(project_root.join("later.txt"), "later").unwrap();
@@ -573,12 +568,7 @@ fn test_cancelling_an_explorer_prompt_names_what_was_cancelled() {
         "escaping the create prompt should say the create was cancelled: {status:?}"
     );
 
-    harness
-        .editor_mut()
-        .file_explorer_mut()
-        .unwrap()
-        .navigate_to_path(&project_root.join("existing.txt"));
-    harness.render().unwrap();
+    select_entry(&mut harness, "existing.txt");
     harness.send_key(KeyCode::F(2), KeyModifiers::NONE).unwrap();
     harness.wait_for_prompt().unwrap();
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
@@ -777,6 +767,41 @@ fn test_new_file_with_a_path_appears_in_the_tree() {
                 harness.screen_to_string()
             )
         });
+}
+
+/// Put the cursor on `rel`, named from the tree's own root.
+///
+/// `navigate_to_path` matches by path, so the path has to be spelled the way
+/// the tree spells it. `project_dir()` is the temp directory as the *test*
+/// holds it, which is not always what the editor resolved the working
+/// directory to: on macOS the temp directory sits behind the `/var` →
+/// `/private/var` symlink, and on Windows it can carry a short `NAME~1`
+/// component that resolves to its long form. Either way the lookup finds
+/// nothing, the cursor stays on the project root, and whatever the test does
+/// next is done to the wrong entry — or, if it opens a prompt, to nothing at
+/// all, and the test hangs waiting for one. Hence the assertion: the cursor
+/// either moved or the test says so now.
+fn select_entry(harness: &mut EditorTestHarness, rel: &str) {
+    let wanted = {
+        let explorer = harness
+            .editor_mut()
+            .file_explorer_mut()
+            .expect("the file explorer should be open");
+        let wanted = explorer.tree().root_path().join(rel);
+        explorer.navigate_to_path(&wanted);
+        wanted
+    };
+    harness.render().unwrap();
+    let selected = harness
+        .editor()
+        .file_explorer()
+        .and_then(|e| e.get_selected_entry().map(|entry| entry.path.clone()));
+    assert_eq!(
+        selected.as_deref(),
+        Some(wanted.as_path()),
+        "the cursor should be on {rel}: `navigate_to_path` cannot reach a node \
+         the tree has not loaded, and matches by path"
+    );
 }
 
 /// Clear a prompt that opened with text already in it, the way a reader does:
@@ -1629,12 +1654,7 @@ fn test_rename_with_dot_dot_moves_the_entry_up() {
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
     harness.wait_for_file_explorer_item("inner.txt").unwrap();
-    harness
-        .editor_mut()
-        .file_explorer_mut()
-        .unwrap()
-        .navigate_to_path(&project_root.join("nest/inner.txt"));
-    harness.render().unwrap();
+    select_entry(&mut harness, "nest/inner.txt");
 
     harness.send_key(KeyCode::F(2), KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
@@ -1677,12 +1697,7 @@ fn test_rename_onto_an_existing_entry_is_refused() {
     harness.editor_mut().focus_file_explorer();
     harness.wait_for_file_explorer().unwrap();
     harness.wait_for_file_explorer_item("source").unwrap();
-    harness
-        .editor_mut()
-        .file_explorer_mut()
-        .unwrap()
-        .navigate_to_path(&project_root.join("source.txt"));
-    harness.render().unwrap();
+    select_entry(&mut harness, "source.txt");
 
     harness.send_key(KeyCode::F(2), KeyModifiers::NONE).unwrap();
     harness.wait_for_prompt().unwrap();
