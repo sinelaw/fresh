@@ -82,6 +82,10 @@ pub struct Section {
     /// Whether the header carries a `×`. The explorer's always does — it
     /// hides the sidebar, as it always has.
     pub closable: bool,
+    /// The `⟳` button's ink, when this section has one. Only the explorer
+    /// does: it is the one section whose contents come from disk and can
+    /// therefore be out of date.
+    pub refresh_theme: Option<String>,
 }
 
 /// What a section holds.
@@ -109,6 +113,7 @@ impl Section {
             title_theme,
             border_theme,
             close_theme: file_explorer::close_theme(false),
+            refresh_theme: Some(file_explorer::close_theme(false)),
             rows: 0,
             collapsed: false,
             focused: false,
@@ -152,6 +157,10 @@ impl Sidebar {
 /// The keys the readers below look elements up by.
 pub fn close_key(index: usize) -> Key {
     Key::Pair("sidebar_close".into(), index as u64)
+}
+
+pub fn refresh_key(index: usize) -> Key {
+    Key::Pair("sidebar_refresh".into(), index as u64)
 }
 
 pub fn grip_key() -> Key {
@@ -461,6 +470,9 @@ fn header_row(s: &Sidebar, i: usize, sec: &Section) -> Node<UiMsg> {
             .pointer_mode(PointerMode::Transparent),
     );
     cells.push(row().flex(1).pointer_mode(PointerMode::Transparent));
+    if let Some(theme) = &sec.refresh_theme {
+        cells.push(refresh(i, theme.clone()));
+    }
     if sec.closable {
         cells.push(close(i, sec));
     }
@@ -477,7 +489,14 @@ fn header_row(s: &Sidebar, i: usize, sec: &Section) -> Node<UiMsg> {
         // cells would lose every press to it. Sized rather than wrapped in a
         // spacer row for the same reason — a transparent container over the
         // `×` would be one more path for the union box to claim.
-        let close_cols = if sec.closable { 3 } else { 0 };
+        // Every control on the header, so the handle stops short of all of
+        // them rather than just the `×`.
+        let close_cols = if sec.closable { 3 } else { 0 }
+            + if sec.refresh_theme.is_some() {
+                REFRESH_COLS
+            } else {
+                0
+            };
         layers.push(
             super::grip::draggable(
                 super::msg::Grip::SectionDivider(i),
@@ -559,6 +578,36 @@ fn close(i: usize, sec: &Section) -> Node<UiMsg> {
         }),
     )
     .on_enter(hover_msg(Some(hover)))
+    .on_leave(hover_msg(None))
+}
+
+/// How many cells the `⟳` button occupies. Two: the glyph, and one cell of
+/// gap so it does not read as one word with the `×`.
+const REFRESH_COLS: u16 = 2;
+
+/// The explorer's `⟳`: re-read the tree from disk.
+///
+/// Built like [`close`] — the glyph carries the theme, the cells around it stay
+/// transparent — and sized so the section handle above can stop short of it.
+/// `⟳` is already the explorer's glyph for a directory that is loading.
+fn refresh(i: usize, theme: String) -> Node<UiMsg> {
+    gesture(
+        row()
+            .w(Sizing::Cells(REFRESH_COLS))
+            .child(text("⟳").theme(theme)),
+    )
+    .key(refresh_key(i))
+    .on(
+        GestureKind::Press,
+        Rc::new(move |ev: &Event| {
+            if ev.button != fresh_ui::MouseButton::Left {
+                return None;
+            }
+            ev.stop();
+            Some(UiMsg::Ui(UiFact::ExplorerRefresh))
+        }),
+    )
+    .on_enter(hover_msg(Some(HoverTarget::FileExplorerRefreshButton)))
     .on_leave(hover_msg(None))
 }
 
@@ -689,6 +738,7 @@ mod tests {
             title_theme,
             border_theme,
             close_theme: file_explorer::close_theme(false),
+            refresh_theme: None,
             rows,
             collapsed: false,
             focused: false,
@@ -751,7 +801,7 @@ mod tests {
     fn two_sections_share_one_border_row() {
         let got = lines(two(20), 20, 8);
         assert_eq!(
-            got[0], "┌ ▼ Files ───────×─┐",
+            got[0], "┌ ▼ Files ─────⟳─×─┐",
             "the top border is section 0's header"
         );
         assert_eq!(got[1], "│  src             │");
@@ -775,7 +825,7 @@ mod tests {
         let mut s = two(20);
         s.sections[1].collapsed = true;
         let got = lines(s, 20, 8);
-        assert_eq!(got[0], "┌ ▼ Files ───────×─┐");
+        assert_eq!(got[0], "┌ ▼ Files ─────⟳─×─┐");
         assert_eq!(
             got[5], "│                  │",
             "the explorer took the column"
@@ -791,7 +841,7 @@ mod tests {
         s.sections[0].collapsed = true;
         s.sections[1].collapsed = true;
         let got = lines(s, 20, 5);
-        assert_eq!(got[0], "┌ ▶ Files ───────×─┐");
+        assert_eq!(got[0], "┌ ▶ Files ─────⟳─×─┐");
         assert_eq!(got[1], "├ ▶ Outline ─────×─┤");
         assert_eq!(got[2], "                    ", "ground, no walls");
         assert_eq!(got[4], "└──────────────────┘");
@@ -812,7 +862,7 @@ mod tests {
             20,
             5,
         );
-        assert_eq!(got[0], "┌ Files ─────────×─┐");
+        assert_eq!(got[0], "┌ Files ───────⟳─×─┐");
         assert_eq!(got[4], "└──────────────────┘");
     }
 
@@ -854,6 +904,23 @@ mod tests {
                 which: Grip::SectionDivider(1)
             }]
         );
+
+        // The explorer's `⟳` answers its own cells, and it has to sit clear of
+        // the section handle above it — which is sized around the header's
+        // controls, so a button added without widening that sizing would be
+        // covered by the handle rather than pressed.
+        let refresh = ui.rect_of(ui.find_by_key(&refresh_key(0)).expect("refresh"));
+        let got = ui.dispatch(Input::press(
+            Point::new(refresh.x, refresh.y),
+            MouseButton::Left,
+            Mods::NONE,
+        ));
+        assert_eq!(facts(got), vec![UiFact::ExplorerRefresh]);
+        ui.dispatch(Input::release(
+            Point::new(refresh.x, refresh.y),
+            MouseButton::Left,
+            Mods::NONE,
+        ));
 
         let close = ui.rect_of(ui.find_by_key(&close_key(1)).expect("close"));
         let got = ui.dispatch(Input::press(

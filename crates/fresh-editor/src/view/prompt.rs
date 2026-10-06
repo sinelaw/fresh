@@ -146,9 +146,14 @@ pub enum PromptType {
     FileExplorerRename {
         original_path: std::path::PathBuf,
         original_name: String,
-        /// True if this rename is for a newly created file (should switch focus to editor after)
-        /// False if renaming an existing file (should keep focus in file explorer)
-        is_new_file: bool,
+    },
+    /// Name a new file or directory in the file explorer.
+    ///
+    /// Nothing exists yet: the entry is created when this is confirmed, so
+    /// cancelling leaves no trace. `parent` is the directory it will land in.
+    FileExplorerCreate {
+        parent: std::path::PathBuf,
+        is_dir: bool,
     },
     /// Confirm deleting a file or directory in the file explorer
     ConfirmDeleteFile {
@@ -160,12 +165,17 @@ pub enum PromptType {
         src: std::path::PathBuf,
         dst: std::path::PathBuf,
         is_cut: bool,
+        /// Whether the clipboard is what `src` came from — see
+        /// [`PromptType::ConfirmMultiPasteConflict`]. A drag of one entry asks
+        /// this same question, and must not empty a clipboard it never filled.
+        from_clipboard: bool,
     },
     /// Rename destination when pasting (user chose 'r' in conflict prompt)
     FileExplorerPasteRename {
         src: std::path::PathBuf,
         dst_dir: std::path::PathBuf,
         is_cut: bool,
+        from_clipboard: bool,
     },
     /// Confirm deleting multiple items from the file explorer
     ConfirmMultiDelete { paths: Vec<std::path::PathBuf> },
@@ -177,6 +187,10 @@ pub enum PromptType {
         confirmed: Vec<(std::path::PathBuf, std::path::PathBuf)>,
         pending: Vec<(std::path::PathBuf, std::path::PathBuf)>,
         is_cut: bool,
+        /// Whether the clipboard is what these paths came from, and so whether
+        /// finishing them empties it. A paste owns it; a drag does not, and
+        /// must not discard a cut the reader is still holding.
+        from_clipboard: bool,
     },
     /// Confirm loading a large file with non-resynchronizable encoding
     /// (like GB18030, GBK, Shift-JIS, EUC-KR) that requires full file loading

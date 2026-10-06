@@ -25,6 +25,29 @@
 
 use crate::app::types::PointerDrag;
 
+/// An explorer row held by the pointer.
+///
+/// Same shape as [`WidgetDrag`] and for the same reason: the press builds it
+/// whole and the release takes it, because whether the gesture was a drag or a
+/// click is only known when it ends.
+#[derive(Debug, Clone)]
+pub(crate) struct ExplorerDrag {
+    /// The row the press lifted, as the press named it.
+    pub index: usize,
+    pub segment: Option<std::path::PathBuf>,
+    /// The drag has been over a directory other than the one it started in.
+    /// Until it has, the release has nothing left to do — the press that
+    /// started it already selected and opened.
+    pub strayed: bool,
+    /// The directory a drop would land in, as last reported by a row.
+    pub target: Option<std::path::PathBuf>,
+    /// The press landed on a directory, so a release in the same place has an
+    /// expand or collapse to do. Deferred because expanding re-lays out every
+    /// row below it, and doing that under a pointer that is still down slides
+    /// a different row beneath the drag — see `explorer_row_pressed`.
+    pub pending_toggle: bool,
+}
+
 /// A draggable tree row held by the pointer (`TreeNode::draggable`).
 ///
 /// **The press builds it whole, and the release takes it** — the rules of
@@ -1796,6 +1819,7 @@ impl Editor {
         // needs to be told.
         if !dragging {
             self.end_widget_drag();
+            self.explorer_drag = None;
         }
         // **The claim is the tree's word, and only the tree's.** A seam that
         // hands a key to a host interior — the prompt's, a focused panel's —
@@ -2991,7 +3015,20 @@ impl Editor {
                 index,
                 segment,
                 clicks,
-            } => self.explorer_row_pressed(index, segment, clicks),
+            } => {
+                // The press is also the lift: the row took the pointer, so
+                // remember what it took in case the pointer leaves. A drag
+                // whose release was lost ends here rather than leaking into
+                // this one.
+                let pending_toggle = self.explorer_row_pressed(index, segment.clone(), clicks);
+                self.explorer_drag = Some(ExplorerDrag {
+                    index,
+                    segment,
+                    strayed: false,
+                    target: None,
+                    pending_toggle,
+                });
+            }
             UiFact::ExplorerRowContext {
                 index,
                 segment,
@@ -3059,7 +3096,60 @@ impl Editor {
                     tracing::warn!("suggestion confirm failed: {e}");
                 }
             }
+            UiFact::ExplorerRowDragOver { index, segment } => {
+                let Some(dest) = self.explorer_drop_dir(index, segment.as_deref()) else {
+                    return;
+                };
+                let Some((lifted, lifted_segment)) = self
+                    .explorer_drag
+                    .as_ref()
+                    .map(|d| (d.index, d.segment.clone()))
+                else {
+                    return;
+                };
+                // A hover that would move nothing does not make the gesture a
+                // drag: the directory the entry already lives in, the entry
+                // itself, or anywhere inside it. The last two are why this is
+                // not just "somewhere else" — a *directory* row's own drop
+                // target is itself, so a press on one and the smallest wobble
+                // would otherwise read as a drag and swallow the click.
+                let lifted_path = self.explorer_entry_path(lifted, lifted_segment.as_deref());
+                let strayed = lifted_path.is_some_and(|path| {
+                    Some(dest.as_path()) != path.parent()
+                        && dest != path
+                        && !dest.starts_with(&path)
+                });
+                if let Some(drag) = self.explorer_drag.as_mut() {
+                    drag.strayed |= strayed;
+                    drag.target = strayed.then_some(dest);
+                }
+            }
+            UiFact::ExplorerRowDragLeave => {
+                if let Some(drag) = self.explorer_drag.as_mut() {
+                    drag.target = None;
+                }
+            }
+            UiFact::ExplorerRowDrop { index, segment } => {
+                // Released without ever straying: the press that lifted it
+                // already selected and opened, so the only thing left is the
+                // directory toggle the press held back — and only for a
+                // release in the place it was pressed, which is what makes
+                // the gesture a click rather than a drag that came home.
+                if !self.explorer_drag.as_ref().is_some_and(|d| d.strayed) {
+                    let clicked = self.explorer_drag.as_ref().is_some_and(|d| {
+                        d.pending_toggle && d.index == index && d.segment == segment
+                    });
+                    if clicked {
+                        self.file_explorer_toggle_expand();
+                    }
+                    return;
+                }
+                if let Some(dest) = self.explorer_drop_dir(index, segment.as_deref()) {
+                    self.explorer_drop_into(&dest);
+                }
+            }
             UiFact::ExplorerClose => self.toggle_file_explorer(),
+            UiFact::ExplorerRefresh => self.file_explorer_refresh(),
             // A section header's press, move and release, and the two things
             // the header does besides dividing. See `app::sidebar`.
             UiFact::SectionResizeBegin { index, y } => {

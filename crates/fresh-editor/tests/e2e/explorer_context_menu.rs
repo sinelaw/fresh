@@ -241,8 +241,13 @@ fn test_context_menu_new_file_action() {
     h.mouse_right_click(EXPLORER_COL, EXPLORER_ROW).unwrap();
     h.mouse_click(EXPLORER_COL + 2, new_file_row).unwrap();
 
-    // A file should have been created (the explorer creates it immediately
-    // then enters rename mode).
+    h.wait_for_prompt().unwrap();
+    // The prompt opens empty — nothing is created until it is named — so the
+    // name has to be typed where this used to accept a generated one.
+    h.type_text("from_context_menu.txt").unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.wait_for_prompt_closed().unwrap();
+
     h.wait_until(|_| fs::read_dir(&root).unwrap().count() > initial_count)
         .unwrap();
 }
@@ -267,8 +272,10 @@ fn test_context_menu_new_directory_action() {
     h.mouse_right_click(EXPLORER_COL, EXPLORER_ROW).unwrap();
     h.mouse_click(EXPLORER_COL + 2, new_dir_row).unwrap();
 
-    // Wait for prompt (rename mode) then accept default name.
     h.wait_for_prompt().unwrap();
+    // The prompt opens empty — nothing is created until it is named — so the
+    // name has to be typed where this used to accept a generated one.
+    h.type_text("from_context_menu").unwrap();
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
     h.wait_for_prompt_closed().unwrap();
 
@@ -420,8 +427,10 @@ fn test_keyboard_down_enter_executes_item() {
 
     assert!(!context_menu_visible(&h), "Menu should close after Enter");
 
-    // Accept the default folder name.
     h.wait_for_prompt().unwrap();
+    // The prompt opens empty — nothing is created until it is named — so the
+    // name has to be typed where this used to accept a generated one.
+    h.type_text("from_keyboard").unwrap();
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
     h.wait_for_prompt_closed().unwrap();
 
@@ -552,22 +561,48 @@ fn test_context_menu_hover_stays_open() {
     );
 }
 
-// ── second right-click replaces menu ─────────────────────────────────────────
+// ── a second right-click ─────────────────────────────────────────────────────
 
-/// A second right-click at a different position replaces the existing menu
-/// (the menu closes then reopens at the new position).
+/// A press inside the open menu is the menu's, so the menu stays up.
+///
+/// This test used to claim it proved the opposite — that a second right-click
+/// "closes then reopens at the new position" — while clicking two rows down,
+/// which is *inside* the box the first click opened. It passed either way and
+/// so said nothing. What the second press actually does is covered below.
 #[test]
-fn test_second_right_click_replaces_menu() {
+fn test_a_right_click_inside_the_menu_leaves_it_open() {
     let mut h = harness_with_explorer();
 
     h.mouse_right_click(EXPLORER_COL, EXPLORER_ROW).unwrap();
     assert!(context_menu_visible(&h));
 
-    // Right-click at a different row — should reopen at the new position.
+    // The menu is anchored just below the press, so two rows down is in it.
     h.mouse_right_click(EXPLORER_COL, EXPLORER_ROW + 2).unwrap();
     assert!(
         context_menu_visible(&h),
-        "Context menu should be open after second right-click"
+        "a press inside the menu should not dismiss it"
+    );
+}
+
+/// A press outside the menu dismisses it, and is spent doing so.
+///
+/// Deliberate, and the library says why: "A click outside a menu is spent
+/// closing the menu: that *is* the gesture, and the menu was in the way of
+/// it" (`fresh_ui::Dismiss::pass_through`). So the press does not also open a
+/// menu where it landed, the way a desktop file manager would — noted here
+/// because it reads as a missing feature until you find that sentence.
+#[test]
+fn test_a_right_click_outside_the_menu_only_dismisses_it() {
+    let mut h = harness_with_explorer();
+
+    h.mouse_right_click(EXPLORER_COL, EXPLORER_ROW + 1).unwrap();
+    assert!(context_menu_visible(&h));
+
+    // The menu hangs below its anchor, so the row above the anchor is outside.
+    h.mouse_right_click(EXPLORER_COL, EXPLORER_ROW).unwrap();
+    assert!(
+        !context_menu_visible(&h),
+        "a press outside the menu should dismiss it"
     );
 }
 
@@ -799,6 +834,13 @@ fn test_root_menu_new_file_works() {
     h.mouse_right_click(EXPLORER_COL, ROOT_ROW).unwrap();
     h.mouse_click(EXPLORER_COL + 2, new_file_row).unwrap();
 
+    h.wait_for_prompt().unwrap();
+    // The prompt opens empty — nothing is created until it is named — so the
+    // name has to be typed where this used to accept a generated one.
+    h.type_text("from_root_menu.txt").unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.wait_for_prompt_closed().unwrap();
+
     h.wait_until(|_| fs::read_dir(&root).unwrap().count() > initial_count)
         .unwrap();
 }
@@ -822,6 +864,9 @@ fn test_root_menu_new_directory_works() {
     h.mouse_click(EXPLORER_COL + 2, new_dir_row).unwrap();
 
     h.wait_for_prompt().unwrap();
+    // The prompt opens empty — nothing is created until it is named — so the
+    // name has to be typed where this used to accept a generated one.
+    h.type_text("from_root_menu").unwrap();
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
     h.wait_for_prompt_closed().unwrap();
 
@@ -981,4 +1026,307 @@ fn test_right_click_compact_chain_segment_selects_that_directory() {
         );
         h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
     }
+}
+
+// ── drag to move ─────────────────────────────────────────────────────────────
+
+/// Dragging an entry onto a directory moves it there.
+///
+/// The first of #3427's unimplemented items: before this, the press selected
+/// and previewed the entry and the release did nothing, so the only way to
+/// move anything was cut and paste.
+#[test]
+fn test_dragging_an_entry_onto_a_directory_moves_it() {
+    let mut h = EditorTestHarness::with_temp_project(100, 30).unwrap();
+    let root = h.project_dir().unwrap();
+    fs::create_dir_all(root.join("dest")).unwrap();
+    fs::write(root.join("moved.txt"), "payload").unwrap();
+
+    h.editor_mut().focus_file_explorer();
+    h.wait_for_file_explorer().unwrap();
+    h.wait_for_file_explorer_item("moved.txt").unwrap();
+    h.render().unwrap();
+
+    let (from, to) = (
+        explorer_row_of(&h, "moved.txt").expect("the file's row"),
+        explorer_row_of(&h, "dest").expect("the directory's row"),
+    );
+    h.mouse_drag(EXPLORER_COL, from, EXPLORER_COL, to).unwrap();
+    h.render().unwrap();
+
+    assert!(
+        root.join("dest/moved.txt").is_file(),
+        "the entry should have moved into the directory it was dropped on.\n{}",
+        h.screen_to_string()
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("dest/moved.txt")).unwrap(),
+        "payload",
+        "it should be the same file"
+    );
+    assert!(
+        !root.join("moved.txt").exists(),
+        "and it should be gone from the root"
+    );
+}
+
+/// A press and release on one row is a click, not a move.
+///
+/// The press takes the pointer so a drag *can* start, so the thing to prove is
+/// that an ordinary click still reads as one and nothing is moved.
+#[test]
+fn test_a_click_on_a_row_moves_nothing() {
+    let mut h = EditorTestHarness::with_temp_project(100, 30).unwrap();
+    let root = h.project_dir().unwrap();
+    fs::create_dir_all(root.join("dest")).unwrap();
+    fs::write(root.join("stay.txt"), "payload").unwrap();
+
+    h.editor_mut().focus_file_explorer();
+    h.wait_for_file_explorer().unwrap();
+    h.wait_for_file_explorer_item("stay.txt").unwrap();
+    h.render().unwrap();
+
+    let row = explorer_row_of(&h, "stay.txt").expect("the file's row");
+    h.mouse_click(EXPLORER_COL, row).unwrap();
+    h.render().unwrap();
+
+    assert!(
+        root.join("stay.txt").is_file(),
+        "a click must leave the entry where it is.\n{}",
+        h.screen_to_string()
+    );
+    assert!(!root.join("dest/stay.txt").exists());
+}
+
+/// Dropping an entry back into the directory it already lives in does nothing,
+/// and says nothing: it is not a move and not an error.
+#[test]
+fn test_dropping_an_entry_where_it_already_is_does_nothing() {
+    let mut h = EditorTestHarness::with_temp_project(100, 30).unwrap();
+    let root = h.project_dir().unwrap();
+    fs::write(root.join("a.txt"), "a").unwrap();
+    fs::write(root.join("b.txt"), "b").unwrap();
+
+    h.editor_mut().focus_file_explorer();
+    h.wait_for_file_explorer().unwrap();
+    h.wait_for_file_explorer_item("b.txt").unwrap();
+    h.render().unwrap();
+
+    let (from, to) = (
+        explorer_row_of(&h, "a.txt").expect("a's row"),
+        explorer_row_of(&h, "b.txt").expect("b's row"),
+    );
+    h.mouse_drag(EXPLORER_COL, from, EXPLORER_COL, to).unwrap();
+    h.render().unwrap();
+
+    assert!(root.join("a.txt").is_file(), "a.txt should still be there");
+    assert_eq!(
+        fs::read_to_string(root.join("b.txt")).unwrap(),
+        "b",
+        "and b.txt must not have been replaced by it"
+    );
+}
+
+/// A drag that starts on a directory lands where the reader aimed it.
+///
+/// The press used to expand the directory there and then, which re-lays out
+/// every row below it — so by the time the pointer had moved one row down,
+/// the row under it was not the one the reader had been looking at. Dragging
+/// `outer` onto the directory below it put `outer` inside whatever had slid
+/// into that row. Found by driving the real editor, not by a test.
+#[test]
+fn test_a_drag_from_a_directory_lands_where_it_was_aimed() {
+    let mut h = EditorTestHarness::with_temp_project(100, 30).unwrap();
+    let root = h.project_dir().unwrap();
+    // `outer` holds enough that expanding it would push `target` off its row.
+    fs::create_dir_all(root.join("outer/inner")).unwrap();
+    fs::write(root.join("outer/one.txt"), "one").unwrap();
+    fs::write(root.join("outer/two.txt"), "two").unwrap();
+    fs::create_dir_all(root.join("target")).unwrap();
+
+    h.editor_mut().focus_file_explorer();
+    h.wait_for_file_explorer().unwrap();
+    h.wait_for_file_explorer_item("target").unwrap();
+    h.render().unwrap();
+
+    let (from, to) = (
+        explorer_row_of(&h, "outer").expect("the directory's row"),
+        explorer_row_of(&h, "target").expect("the destination's row"),
+    );
+    h.mouse_drag(EXPLORER_COL, from, EXPLORER_COL, to).unwrap();
+    h.render().unwrap();
+
+    assert!(
+        root.join("target/outer").is_dir(),
+        "the directory should have landed in the row it was dragged onto.\n{}",
+        h.screen_to_string()
+    );
+    assert!(
+        root.join("target/outer/one.txt").is_file(),
+        "with what was inside it"
+    );
+    assert!(
+        !root.join("outer").exists(),
+        "and it should be gone from where it was"
+    );
+}
+
+/// A click on a directory still opens it — the toggle the press holds back for
+/// the drag above is spent by a release in the same place.
+#[test]
+fn test_a_click_on_a_directory_still_opens_it() {
+    let mut h = EditorTestHarness::with_temp_project(100, 30).unwrap();
+    let root = h.project_dir().unwrap();
+    fs::create_dir_all(root.join("folder")).unwrap();
+    fs::write(root.join("folder/inside.txt"), "inside").unwrap();
+
+    h.editor_mut().focus_file_explorer();
+    h.wait_for_file_explorer().unwrap();
+    h.wait_for_file_explorer_item("folder").unwrap();
+    h.render().unwrap();
+
+    let row = explorer_row_of(&h, "folder").expect("the directory's row");
+    h.mouse_click(EXPLORER_COL, row).unwrap();
+    h.wait_for_file_explorer_item("inside.txt")
+        .unwrap_or_else(|e| {
+            panic!(
+                "a click should have opened the directory: {e}\n{}",
+                h.screen_to_string()
+            )
+        });
+}
+
+/// A click that wobbles without leaving the row is still a click.
+///
+/// The pointer moving is what tells a drag from a click, but a *directory's*
+/// own drop target is the directory itself, so hovering the row the press came
+/// from read as "gone somewhere else" and ate the click: the folder neither
+/// opened nor moved. A hover that would move nothing is not a drag.
+#[test]
+fn test_a_click_that_wobbles_still_opens_a_directory() {
+    let mut h = EditorTestHarness::with_temp_project(100, 30).unwrap();
+    let root = h.project_dir().unwrap();
+    fs::create_dir_all(root.join("folder")).unwrap();
+    fs::write(root.join("folder/inside.txt"), "inside").unwrap();
+
+    h.editor_mut().focus_file_explorer();
+    h.wait_for_file_explorer().unwrap();
+    h.wait_for_file_explorer_item("folder").unwrap();
+    h.render().unwrap();
+
+    let row = explorer_row_of(&h, "folder").expect("the directory's row");
+    // Press, move with the button down but not off the row, release.
+    h.mouse_drag(EXPLORER_COL, row, EXPLORER_COL, row).unwrap();
+    h.wait_for_file_explorer_item("inside.txt")
+        .unwrap_or_else(|e| {
+            panic!(
+                "a click that did not leave the row should still have opened \
+                 the directory: {e}\n{}",
+                h.screen_to_string()
+            )
+        });
+    assert!(
+        root.join("folder/inside.txt").is_file(),
+        "and nothing should have been moved"
+    );
+}
+
+/// A drop onto a name that is taken asks the one-entry question — the same one
+/// a paste of a single file asks, "keep both" included — and leaves a cut the
+/// reader is still holding alone.
+///
+/// The drag reuses paste's machinery; the one thing it must not reuse is
+/// paste's ownership of the clipboard.
+#[test]
+fn test_dropping_onto_a_taken_name_asks_and_spares_the_clipboard() {
+    let mut h = EditorTestHarness::with_temp_project(100, 30).unwrap();
+    let root = h.project_dir().unwrap();
+    fs::create_dir_all(root.join("dest")).unwrap();
+    fs::write(root.join("dest/same.txt"), "theirs").unwrap();
+    fs::write(root.join("same.txt"), "mine").unwrap();
+    fs::write(root.join("held.txt"), "held").unwrap();
+
+    h.editor_mut().focus_file_explorer();
+    h.wait_for_file_explorer().unwrap();
+    h.wait_for_file_explorer_item("same.txt").unwrap();
+    h.render().unwrap();
+
+    // Something cut and waiting, which the drag has no business touching.
+    let held = explorer_row_of(&h, "held.txt").expect("the held file's row");
+    h.mouse_click(EXPLORER_COL, held).unwrap();
+    h.send_key(KeyCode::Char('x'), KeyModifiers::CONTROL)
+        .unwrap();
+    h.render().unwrap();
+
+    let (from, to) = (
+        explorer_row_of(&h, "same.txt").expect("the file's row"),
+        explorer_row_of(&h, "dest").expect("the directory's row"),
+    );
+    h.mouse_drag(EXPLORER_COL, from, EXPLORER_COL, to).unwrap();
+    h.wait_for_prompt().unwrap();
+
+    let asked = h.screen_to_string();
+    assert!(
+        asked.contains("Rename"),
+        "one colliding entry should be asked about one at a time, so that \
+         keeping both is on offer.\n{asked}"
+    );
+
+    // Keep both. The name the prompt starts with is the one that collided, so
+    // adding to it is enough whichever end the cursor sits at.
+    h.send_key(KeyCode::Char('r'), KeyModifiers::NONE).unwrap();
+    h.type_text("kept-").unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.wait_for_prompt_closed().unwrap();
+    h.render().unwrap();
+
+    let mut landed: Vec<(String, String)> = fs::read_dir(root.join("dest"))
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| {
+            (
+                e.file_name().to_string_lossy().to_string(),
+                fs::read_to_string(e.path()).unwrap_or_default(),
+            )
+        })
+        .collect();
+    landed.sort();
+    let contents: Vec<&str> = landed.iter().map(|(_, c)| c.as_str()).collect();
+    assert_eq!(
+        contents.len(),
+        2,
+        "both files should be in the directory now: {landed:?}"
+    );
+    assert!(
+        contents.contains(&"theirs") && contents.contains(&"mine"),
+        "neither of them overwritten: {landed:?}"
+    );
+    assert!(
+        !root.join("same.txt").exists(),
+        "and the dragged entry is gone from where it was"
+    );
+
+    // The cut is still the reader's to paste.
+    let dest = explorer_row_of(&h, "dest").expect("the directory's row");
+    h.mouse_click(EXPLORER_COL, dest).unwrap();
+    h.send_key(KeyCode::Char('v'), KeyModifiers::CONTROL)
+        .unwrap();
+    h.render().unwrap();
+    assert!(
+        root.join("dest/held.txt").is_file(),
+        "the drag must not have emptied the clipboard.\n{}",
+        h.screen_to_string()
+    );
+}
+
+/// The screen row an entry is drawn on, by its name.
+fn explorer_row_of(h: &EditorTestHarness, name: &str) -> Option<u16> {
+    h.screen_to_string()
+        .lines()
+        .enumerate()
+        .find(|(_, line)| {
+            let lane: String = line.chars().take(30).collect();
+            lane.contains(name)
+        })
+        .map(|(i, _)| i as u16)
 }

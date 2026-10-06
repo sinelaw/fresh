@@ -948,6 +948,14 @@ impl Editor {
                     // where it was before the prompt was opened.
                     self.restore_goto_line_preview_snapshot();
                 }
+                // Without these two the explorer's prompts fall through to the
+                // default "Search cancelled.", which names the wrong feature.
+                PromptType::FileExplorerCreate { .. } => {
+                    cancelled_message = t!("explorer.create_cancelled").to_string();
+                }
+                PromptType::FileExplorerRename { .. } => {
+                    cancelled_message = t!("explorer.rename_cancelled").to_string();
+                }
                 PromptType::GotoLine => {
                     // Undo any live goto-line preview so the cursor returns to
                     // where it was before the prompt was opened.

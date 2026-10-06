@@ -484,6 +484,18 @@ pub enum UiFact {
         segment: Option<std::path::PathBuf>,
         clicks: u8,
     },
+    /// A held drag came onto this row, or left it. The row it is over decides
+    /// where a drop would land, so the row says which one it is.
+    ExplorerRowDragOver {
+        index: usize,
+        segment: Option<std::path::PathBuf>,
+    },
+    ExplorerRowDragLeave,
+    /// A drag was released over this row.
+    ExplorerRowDrop {
+        index: usize,
+        segment: Option<std::path::PathBuf>,
+    },
     /// A right click on a tree row: select it and open its context menu at the
     /// pointer. `segment` as on `ExplorerRowPress`.
     ExplorerRowContext {
@@ -562,6 +574,8 @@ pub enum UiFact {
     SuggestionConfirm(usize),
     /// The `×` on the panel's title line.
     ExplorerClose,
+    /// The `⟳` on the panel's title line: re-read the tree from disk.
+    ExplorerRefresh,
     /// A press on the panel's right-edge grip: start a width drag from here.
     ExplorerResizeBegin {
         x: u16,

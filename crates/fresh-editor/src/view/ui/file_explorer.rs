@@ -39,6 +39,8 @@ pub struct RowDesc<'a> {
     pub focused: bool,
     pub unsaved: &'a HashSet<PathBuf>,
     pub cut: &'a [PathBuf],
+    /// The directory a held drag would drop into, if the pointer is over one.
+    pub drop_target: Option<&'a std::path::Path>,
     pub fuzzy: Option<&'a FuzzyMatch>,
     pub decorations: &'a crate::view::file_tree::FileExplorerDecorationCache,
     pub slot_overrides: &'a crate::view::file_tree::FileExplorerSlotOverrideCache,
@@ -75,12 +77,16 @@ pub fn describe_row(d: RowDesc<'_>) -> crate::view::shell::file_explorer::Row {
         .map(|m| m.is_hidden)
         .unwrap_or(false);
     let neutral = fe::neutral_key(is_hidden, node.entry.is_symlink(), node.is_dir());
-    let ground = if d.is_cursor && d.focused {
+    // Three ways to wear the selected ground: the keyboard is on this row, the
+    // row is in the reader's set, or a held drag would land here. The drop
+    // target comes first because it outranks a cursor sitting elsewhere — it
+    // is the only one of the three that is about the pointer.
+    let selected = d.drop_target == Some(node.entry.path.as_path())
+        || (d.focused && (d.is_cursor || d.is_multi));
+    let ground = if selected {
         "editor.selection_bg"
     } else if d.is_cursor {
         "editor.current_line_bg"
-    } else if d.is_multi && d.focused {
-        "editor.selection_bg"
     } else {
         "editor.bg"
     };
@@ -160,12 +166,22 @@ pub fn describe_row(d: RowDesc<'_>) -> crate::view::shell::file_explorer::Row {
     let chain: Vec<fe::ChainPart> = node
         .chain
         .iter()
-        .map(|seg| fe::ChainPart {
-            runs: vec![
-                (seg.name.clone(), pair("syntax.keyword", ground)),
-                ("/".to_string(), pair("editor.line_number_fg", ground)),
-            ],
-            path: seg.path.clone(),
+        .map(|seg| {
+            // A drag over one of the folded names would land in *that*
+            // directory, so that is the part that lights up. The row's own
+            // ground cannot say it: the anchor is a directory further down,
+            // and the row would otherwise show nothing at all.
+            let ground = match d.drop_target == Some(seg.path.as_path()) {
+                true => "editor.selection_bg",
+                false => ground,
+            };
+            fe::ChainPart {
+                runs: vec![
+                    (seg.name.clone(), pair("syntax.keyword", ground)),
+                    ("/".to_string(), pair("editor.line_number_fg", ground)),
+                ],
+                path: seg.path.clone(),
+            }
         })
         .collect();
 
@@ -294,6 +310,7 @@ mod tests {
             focused: false,
             unsaved: &HashSet::new(),
             cut: &[],
+            drop_target: None,
             fuzzy: None,
             decorations,
             slot_overrides,
@@ -478,6 +495,52 @@ mod tests {
             .any(|(text, style)| text == "M" && style.fg == Some(theme.file_status_modified_fg)));
     }
 
+    /// A directory a held drag is over wears the selection ground, so a reader
+    /// can see where a drop would land — and it outranks the keyboard cursor,
+    /// which is on some other row entirely while the pointer is dragging.
+    #[tokio::test]
+    async fn the_drop_target_shows_where_a_drag_would_land() {
+        let (_temp_dir, view) = create_renderer_view().await;
+        let theme = Theme::load_builtin("dark").unwrap();
+        let src_path = view.tree().root_path().join("src");
+        let src_id = view.tree().get_node_by_path(&src_path).unwrap().id;
+
+        let resolver = crate::view::file_tree::default_slot_providers().resolver();
+        let projection = view.projection();
+        let node = &projection.rows[projection.index_of(src_id).expect("a row")];
+        let describe = |drop_target: Option<&std::path::Path>| {
+            describe_row(RowDesc {
+                node,
+                row: 0,
+                is_cursor: false,
+                is_multi: false,
+                focused: false,
+                unsaved: &HashSet::new(),
+                cut: &[],
+                drop_target,
+                fuzzy: None,
+                decorations: &FileExplorerDecorationCache::default(),
+                slot_overrides: &FileExplorerSlotOverrideCache::default(),
+                slot_resolver: &resolver,
+                theme: &theme,
+                collapsed: ">",
+                expanded: "▼",
+            })
+        };
+
+        let plain = describe(None);
+        let under_drag = describe(Some(&src_path));
+        assert_ne!(
+            plain.theme, under_drag.theme,
+            "the row a drop would land in should not look like an idle one"
+        );
+        assert_eq!(
+            describe(Some(&view.tree().root_path().join("README.md"))).theme,
+            plain.theme,
+            "and only that row should change"
+        );
+    }
+
     /// A compact row's label comes apart the way presses need it to: the indent
     /// and indicator are the row's, each folded directory is its own part with
     /// its own path, and the anchor's name is the row's again.
@@ -503,6 +566,7 @@ mod tests {
             focused: false,
             unsaved: &HashSet::new(),
             cut: &[],
+            drop_target: None,
             fuzzy: None,
             decorations: &FileExplorerDecorationCache::default(),
             slot_overrides: &FileExplorerSlotOverrideCache::default(),
@@ -531,6 +595,69 @@ mod tests {
         assert_eq!(drawn(&row.left), "    ▼ ", "the indent and the indicator");
         // The anchor's own name is no segment's, so a press on it is the row's.
         assert_eq!(drawn(&row.name), "c");
+    }
+
+    /// A drag held over one of a compact row's folded names shows on *that*
+    /// name. The row's ground cannot say it — the row is anchored at `c`,
+    /// several directories below where the entry would land — so without this
+    /// a drop into a folded directory is drawn exactly like no drop at all.
+    #[tokio::test]
+    async fn a_drag_over_a_folded_name_shows_on_that_name() {
+        let (_temp_dir, view) = create_chain_renderer_view().await;
+        let theme = Theme::load_builtin("dark").unwrap();
+        let root = view.tree().root_path().to_path_buf();
+        let anchor_id = view
+            .tree()
+            .get_node_by_path(&root.join("chain/a/b/c"))
+            .unwrap()
+            .id;
+
+        let resolver = crate::view::file_tree::default_slot_providers().resolver();
+        let projection = view.projection();
+        let node = &projection.rows[projection.index_of(anchor_id).expect("a visible node")];
+        let describe = |drop_target: Option<&std::path::Path>| {
+            describe_row(RowDesc {
+                node,
+                row: 0,
+                is_cursor: false,
+                is_multi: false,
+                focused: false,
+                unsaved: &HashSet::new(),
+                cut: &[],
+                drop_target,
+                fuzzy: None,
+                decorations: &FileExplorerDecorationCache::default(),
+                slot_overrides: &FileExplorerSlotOverrideCache::default(),
+                slot_resolver: &resolver,
+                theme: &theme,
+                collapsed: ">",
+                expanded: "▼",
+            })
+        };
+        let themes = |row: &crate::view::shell::file_explorer::Row| {
+            row.chain
+                .iter()
+                .map(|part| part.runs.iter().map(|(_, t)| t.clone()).collect::<Vec<_>>())
+                .collect::<Vec<_>>()
+        };
+
+        let idle = describe(None);
+        let over_a = describe(Some(&root.join("chain/a")));
+        assert_eq!(
+            themes(&idle)[0],
+            themes(&over_a)[0],
+            "`chain/` is not where the drop would land, so it is untouched"
+        );
+        assert_ne!(
+            themes(&idle)[1],
+            themes(&over_a)[1],
+            "`a/` is, so it has to look different"
+        );
+        assert_eq!(themes(&idle)[2], themes(&over_a)[2], "and `b/` is not");
+        assert_eq!(
+            idle.theme, over_a.theme,
+            "the row itself is not the drop target"
+        );
     }
 
     async fn create_chain_renderer_view() -> (TempDir, FileTreeView) {

@@ -2422,10 +2422,10 @@ fn test_file_explorer_new_file_flat_name_in_symlinked_directory() {
     );
 }
 
-/// Now that a new item's name may contain separators, it can address a file
-/// that already exists. `rename` would replace it without asking, so the
-/// contents of an unrelated file would be gone with no way back. The
-/// collision must be refused and the temporary item left alone.
+/// A new item's name may be a relative path, so it can address a file that
+/// already exists. `rename` would replace it without asking, and the contents
+/// of an unrelated file would be gone with no way back, so the collision is
+/// refused — before anything is written, which leaves nothing behind either.
 #[test]
 fn test_file_explorer_new_file_does_not_overwrite_existing_file() {
     let mut harness = EditorTestHarness::with_temp_project(120, 40).unwrap();
@@ -2455,22 +2455,18 @@ fn test_file_explorer_new_file_does_not_overwrite_existing_file() {
         "an existing file must survive a colliding new-item name"
     );
 
-    // The temporary item was not moved, so the user can rename it again.
-    let untitled_files: Vec<_> = fs::read_dir(&project_root)
+    // And nothing was created: the refusal happens before anything is written,
+    // so there is no placeholder to clean up or rename again.
+    let created: Vec<_> = fs::read_dir(&project_root)
         .unwrap()
         .filter_map(|entry| entry.ok())
-        .filter(|entry| entry.file_name().to_string_lossy().starts_with("untitled_"))
+        .map(|entry| entry.file_name().to_string_lossy().to_string())
+        .filter(|name| name != "src")
         .collect();
-    assert_eq!(
-        untitled_files.len(),
-        1,
-        "the temporary file should stay put after a refused rename"
-    );
-    let screen = harness.screen_to_string();
     assert!(
-        screen.contains("untitled_"),
-        "the temporary file should still be open and visible. Screen:\n{}",
-        screen
+        created.is_empty(),
+        "a refused name should leave nothing behind: {:?}",
+        created
     );
 }
 
