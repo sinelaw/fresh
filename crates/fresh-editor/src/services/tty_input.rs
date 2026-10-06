@@ -45,6 +45,14 @@ use fresh_input_parser::{Event as InputEvent, InputParser};
 /// terminal (sinelaw/fresh#2793, a residue of #2745).
 const ESC_GRACE: Duration = Duration::from_millis(15);
 
+/// How long teardown waits for the button-release report matching a press the
+/// editor already acted on. A real click holds the button for tens of
+/// milliseconds, so the release lands in a later `read()` than the press —
+/// after the quit has been decided. 50ms covers an ordinary click (and ssh
+/// jitter on top of it) while staying short enough that a keyboard quit, where
+/// nothing is pending, returns immediately on the poll timeout.
+const MOUSE_RELEASE_GRACE: Duration = Duration::from_millis(50);
+
 /// Set to true by the `SIGWINCH` handler; consumed by [`TtyReader::take_resize`].
 static SIGWINCH_PENDING: AtomicBool = AtomicBool::new(false);
 
@@ -92,6 +100,86 @@ fn poll_readable(fd: RawFd, timeout: Duration) -> bool {
             .revents()
             .is_some_and(|r| r.contains(PollFlags::POLLIN)),
         _ => false,
+    }
+}
+
+/// Read exactly one byte from `fd`, or `None` if the read did not yield one.
+fn read_one_byte(fd: RawFd) -> Option<u8> {
+    let mut b = 0u8;
+    // SAFETY: a one-byte read into a local we own, from a borrowed stdin fd.
+    let n = unsafe { libc::read(fd, std::ptr::addr_of_mut!(b).cast::<libc::c_void>(), 1) };
+    (n == 1).then_some(b)
+}
+
+/// Consume the mouse report still in flight when the editor quits on a press.
+///
+/// A terminal reports a click as two sequences: the press when the button goes
+/// down, the release when it comes back up. Quitting from the menu bar acts on
+/// the *press*, so the editor tears the terminal down while the release is
+/// still unsent — it then arrives after raw mode is already off and lands at
+/// the shell prompt. bash binds `ESC <` to `beginning-of-history`, which
+/// swallows the report's `ESC[<` prefix and leaves the rest on the command
+/// line, e.g. `0;37;17m` (sinelaw/fresh#3474).
+///
+/// Call this at teardown *before* mouse reporting and raw mode are turned off —
+/// the release is only readable as a report while both are still on. It is
+/// deliberately narrow rather than a blanket drain of pending input: bytes are
+/// taken one at a time, and only while they continue a well-formed SGR
+/// (`ESC [ < params M|m`) or X10 (`ESC [ M b x y`) report, so it stops at the
+/// first byte that cannot belong to one instead of eating ahead into something
+/// the user meant for their shell. It returns as soon as one report is
+/// consumed; a press that is still pending is swallowed on the same grounds,
+/// since its own release can no longer be read either.
+///
+/// On a keyboard quit nothing is pending, so the first poll simply times out.
+pub fn drain_pending_mouse_report() {
+    use std::time::Instant;
+
+    // Bounds the work if a terminal streams something unexpected: no report we
+    // accept is longer than this, so the exit is never held open past the grace.
+    const MAX_BYTES: usize = 32;
+
+    #[derive(Clone, Copy)]
+    enum St {
+        /// Nothing consumed yet; only an introducing `ESC` may be taken.
+        Esc,
+        /// Seen `ESC`; expect `[`.
+        Bracket,
+        /// Seen `ESC[`; expect `<` (SGR) or `M` (X10).
+        Kind,
+        /// Inside SGR parameters: digits and `;` until the final `M`/`m`.
+        Sgr,
+        /// Inside an X10 report: exactly three fixed bytes follow `ESC[M`.
+        X10(u8),
+    }
+
+    let fd = std::io::stdin().as_raw_fd();
+    let deadline = Instant::now() + MOUSE_RELEASE_GRACE;
+    let mut st = St::Esc;
+
+    for _ in 0..MAX_BYTES {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() || !poll_readable(fd, remaining) {
+            return;
+        }
+        let Some(b) = read_one_byte(fd) else {
+            return;
+        };
+        st = match (st, b) {
+            (St::Esc, 0x1b) => St::Bracket,
+            (St::Bracket, b'[') => St::Kind,
+            (St::Kind, b'<') => St::Sgr,
+            (St::Kind, b'M') => St::X10(0),
+            (St::Sgr, b'0'..=b'9' | b';') => St::Sgr,
+            // `M` ends a press, `m` a release; either completes the report.
+            (St::Sgr, b'M' | b'm') => return,
+            (St::X10(n), _) if n < 2 => St::X10(n + 1),
+            // The third byte closes an X10 report.
+            (St::X10(_), _) => return,
+            // Anything else cannot continue a mouse report. This byte is gone,
+            // but stopping here is what keeps the drain off the user's input.
+            _ => return,
+        };
     }
 }
 
