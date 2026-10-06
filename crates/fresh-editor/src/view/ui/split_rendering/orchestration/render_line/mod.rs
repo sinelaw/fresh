@@ -688,10 +688,27 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
                 .iter()
                 .find_map(|opt| *opt)
                 .or_else(|| {
-                    // Trailing empty line (after final newline) has no source bytes,
-                    // but its logical position is buffer.len() — needed for diagnostic
-                    // gutter markers placed at the end of the file.
-                    if line_content.is_empty() && line_start_type == LineStart::AfterSourceNewline {
+                    // A row with no source bytes still has a logical position,
+                    // and two of them sit at `buffer.len()`:
+                    //
+                    // - the trailing empty line after the final newline, which
+                    //   is where a diagnostic at the end of the file lands;
+                    // - the single row of an empty buffer, which has no
+                    //   preceding newline to take a source byte from, so it
+                    //   reaches here as `Beginning` rather than
+                    //   `AfterSourceNewline`. Its logical position is 0, which
+                    //   is also `buffer.len()` for an empty buffer.
+                    //
+                    // Every diagnostic lookup — the gutter marker and the
+                    // inline message alike — is keyed off this byte, so
+                    // leaving it `None` drops them from the only line a
+                    // brand-new file has (issue #3484).
+                    let anchors_at_buffer_end = match line_start_type {
+                        LineStart::AfterSourceNewline => true,
+                        LineStart::Beginning => state.buffer.is_empty(),
+                        _ => false,
+                    };
+                    if line_content.is_empty() && anchors_at_buffer_end {
                         Some(state.buffer.len())
                     } else {
                         None
