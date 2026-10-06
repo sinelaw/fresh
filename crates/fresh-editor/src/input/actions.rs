@@ -2068,6 +2068,8 @@ fn handle_insert_tab(
 ///
 /// When `extend_selection` is false (MoveUp): collapses any selection to the top edge first
 /// (VSCode/Sublime behavior, issue #1566), then respects Emacs mark mode via deselect_on_move.
+/// With no line above that top edge the collapse still happens on its own, so Up never sits
+/// dead on a selection that began on the first line (issue #3486).
 /// When `extend_selection` is true (SelectUp): keeps the existing anchor fixed and extends it,
 /// and on the first line extends the head to the buffer start instead of doing nothing.
 fn handle_vertical_up(
@@ -2155,6 +2157,27 @@ fn handle_vertical_up(
                 old_sticky_column: cursor.sticky_column,
                 new_sticky_column: Some(goal_visual_column),
             });
+        } else if !extend_selection && cursor.deselect_on_move && cursor.anchor.is_some() {
+            // No line above the collapse target, but there is a selection to
+            // drop. Up still cancels it and lands on its top edge, so the key
+            // is never dead (issue #3486): a selection whose start is on the
+            // first line left nothing for the arm above to move to, the anchor
+            // survived untouched, and Up did nothing at all.
+            //
+            // `from_pos` is already that top edge, so this is the same collapse
+            // the `Found` arm performs — only without the line step that has
+            // nowhere to go. It covers `OutOfReach` as well as `TopOfBuffer`:
+            // not knowing where the line above starts is a reason not to move,
+            // never a reason to keep the selection.
+            events.push(Event::MoveCursor {
+                cursor_id,
+                old_position: cursor.position,
+                new_position: from_pos,
+                old_anchor: cursor.anchor,
+                new_anchor: None,
+                old_sticky_column: cursor.sticky_column,
+                new_sticky_column: Some(goal_visual_column),
+            });
         }
         // Extending with the head already at the buffer start emits nothing, so
         // the sticky column and any existing anchor survive untouched.
@@ -2164,7 +2187,8 @@ fn handle_vertical_up(
 /// Move or extend selection down by one line, using visual columns for wide-character accuracy.
 ///
 /// See [`handle_vertical_up`] for the `extend_selection` contract; on the last line an extending
-/// move takes the head to the buffer end.
+/// move takes the head to the buffer end, and a non-extending one still collapses a selection
+/// that reaches it (issue #3486).
 fn handle_vertical_down(
     state: &mut EditorState,
     cursors: &Cursors,
@@ -2246,6 +2270,21 @@ fn handle_vertical_down(
                 cursor_id,
                 old_position: cursor.position,
                 new_position: state.buffer.len(),
+                old_anchor: cursor.anchor,
+                new_anchor: None,
+                old_sticky_column: cursor.sticky_column,
+                new_sticky_column: Some(goal_visual_column),
+            });
+        } else if !extend_selection && cursor.deselect_on_move && cursor.anchor.is_some() {
+            // The mirror of the collapse arm in `handle_vertical_up`
+            // (issue #3486): no line below the collapse target, but a
+            // selection to drop. `from_pos` is its bottom edge. Without this,
+            // a selection reaching the last line made Down dead the same way
+            // a selection reaching the first line made Up dead.
+            events.push(Event::MoveCursor {
+                cursor_id,
+                old_position: cursor.position,
+                new_position: from_pos,
                 old_anchor: cursor.anchor,
                 new_anchor: None,
                 old_sticky_column: cursor.sticky_column,
@@ -2769,8 +2808,20 @@ fn select_word(state: &mut EditorState, cursors: &Cursors, events: &mut Vec<Even
     }
 }
 
-/// `Action::SelectLine` — select the entire line (including its newline)
-/// under each cursor.
+/// `Action::SelectLine` — grow each cursor's selection to whole lines, taking
+/// in the line the head is on.
+///
+/// With no selection that is the line under the cursor, newline included. With
+/// one, the existing selection is kept and squared off to line boundaries
+/// rather than thrown away (VS Code's `expandLineSelection`, issue #3495).
+/// Because the head lands on the *next* line's first byte — a line's end and
+/// the next line's start are the same offset — repeating the action walks one
+/// line further down each time, which is what `Ctrl+L` held down should do.
+/// Dropping the anchor instead made every press select exactly one line and
+/// march it down the file.
+///
+/// The span is read lowest-edge-first, so an upward selection squares off over
+/// the lines it already covers instead of shrinking to the head's line.
 fn select_line(
     state: &mut EditorState,
     cursors: &Cursors,
@@ -2778,22 +2829,42 @@ fn select_line(
     estimated_line_length: usize,
 ) {
     for (cursor_id, cursor) in cursors.iter() {
-        let mut iter = state
-            .buffer
-            .line_iterator(cursor.position, estimated_line_length);
-        if let Some((line_start, line_content)) = iter.next_line() {
-            let line_end = line_start + line_content.len();
-            add_move_cursor_event(
-                events,
-                cursor_id,
-                cursor.position,
-                line_end,
-                cursor.anchor,
-                Some(line_start),
-                cursor.sticky_column,
-            );
-        }
+        let (low, high) = match cursor.anchor {
+            Some(anchor) if anchor > cursor.position => (cursor.position, anchor),
+            Some(anchor) => (anchor, cursor.position),
+            None => (cursor.position, cursor.position),
+        };
+        let Some((low_line_start, _)) = line_at(state, low, estimated_line_length) else {
+            continue;
+        };
+        let Some((high_line_start, high_line_content)) =
+            line_at(state, high, estimated_line_length)
+        else {
+            continue;
+        };
+        add_move_cursor_event(
+            events,
+            cursor_id,
+            cursor.position,
+            high_line_start + high_line_content.len(),
+            cursor.anchor,
+            Some(low_line_start),
+            cursor.sticky_column,
+        );
     }
+}
+
+/// The start of the logical line holding `pos`, and its text with the newline
+/// still on, so a caller can name the line's end as well as its start.
+fn line_at(
+    state: &mut EditorState,
+    pos: usize,
+    estimated_line_length: usize,
+) -> Option<(usize, String)> {
+    state
+        .buffer
+        .line_iterator(pos, estimated_line_length)
+        .next_line()
 }
 
 /// `Action::ExpandSelection` — grow each cursor's selection by a word. With an
