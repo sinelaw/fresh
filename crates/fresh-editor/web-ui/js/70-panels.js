@@ -74,18 +74,35 @@ function fileExplorerEl(fe){
   // Right-edge resize handle: the editor treats the explorer's rightmost column
   // as a drag border (handle_file_explorer_border_drag). The .fileexplorer div
   // is in onChrome, so the document drag won't fire here — wire it explicitly.
-  el.appendChild(borderDragHandle(fe.rect.x + fe.rect.w - 1, fe.rect.y, fe.rect.h));
+  //
+  // **Below the header row, above the bottom border** — the rows the TUI gives
+  // its own grip (`view/shell/sidebar.rs`, `overlay`: "the top border row is the
+  // header's: its close button lives there ... so the grip starts below"). The
+  // header row's right end is the close button's three cells, and the
+  // explorer's close hides the sidebar, so pressing at `fe.rect.y` closed the
+  // panel instead of starting a drag — it vanished the moment you grabbed its
+  // edge.
+  el.appendChild(borderDragHandle(fe.rect, fe.rect.x + fe.rect.w - 1,
+                                  fe.rect.y + 1, Math.max(1, fe.rect.h - 2)));
   return el;
 }
 
-// A 1-cell-wide vertical resize grip at editor column `bx`. Drives a real
-// editor drag: mousedown sends a `down` at that cell, pointer moves send
-// `drag` at the current column (same row), release sends `up` — exactly what
-// the TUI does for the file-explorer / dock borders. Uses window listeners so
-// the drag continues even when the pointer leaves the chrome element.
-function borderDragHandle(bx, by, h){
+// A 1-cell-wide vertical resize grip at editor column `bx`, row `by`, `h` rows
+// tall. Drives a real editor drag: mousedown sends a `down` at that cell,
+// pointer moves send `drag` at the current column (same row), release sends
+// `up` — exactly what the TUI does for the file-explorer / dock borders. Uses
+// window listeners so the drag continues even when the pointer leaves the
+// chrome element.
+//
+// `panel` is the rect of the absolutely-positioned region the grip is appended
+// to. `bx`/`by` are SCREEN cells, because that is what the editor's hit test
+// reads, but CSS offsets inside `panel` are measured from *its* corner — so
+// they are converted here. Placing the grip at the raw screen cell added the
+// panel's origin a second time: with a dock open that put the grip out over the
+// editor, where other elements covered it and no drag could ever start.
+function borderDragHandle(panel, bx, by, h){
   const grip=div("resize-grip");
-  grip.style.left=px(bx,CW)+"px"; grip.style.top=px(by,CH)+"px";
+  grip.style.left=px(bx-panel.x,CW)+"px"; grip.style.top=px(by-panel.y,CH)+"px";
   grip.style.width=px(1,CW)+"px"; grip.style.height=px(h,CH)+"px";
   grip.onmousedown=e=>{
     e.preventDefault(); e.stopPropagation();

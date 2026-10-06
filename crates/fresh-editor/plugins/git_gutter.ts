@@ -302,6 +302,33 @@ async function updateGitGutter(bufferId: number): Promise<void> {
 
     // Export hunks for other plugins (e.g. diff_nav) via shared view state
     editor.setViewState(bufferId, "git_gutter_hunks", hunks);
+  } catch (e) {
+    // **A buffer that closed under us is not an error.** The host drops a
+    // buffer's diff baselines when the buffer closes, so a close landing while
+    // this update is in flight rejects the reload below with either
+    // "unknown baseline id N" (the entry was already gone when the reload was
+    // asked for) or "baseline released during load" (it went while the load
+    // ran). Nothing used to catch that: every call site invokes
+    // `updateGitGutter` without a `.catch()`, so the rejection escaped as an
+    // "Unhandled Promise rejection" in the editor log.
+    //
+    // Forget the ids either way. If the buffer really is gone this state goes
+    // with it; if it is still open — a save racing a revert, say — the next
+    // update re-registers both baselines from scratch rather than reusing ids
+    // the host has already dropped.
+    const msg = String(e);
+    state.diskBaselineId = null;
+    state.headBaselineId = null;
+    if (
+      msg.includes("unknown baseline id") ||
+      msg.includes("baseline released during load")
+    ) {
+      editor.debug(
+        `Git Gutter: baselines for buffer ${bufferId} were released mid-update; skipping`,
+      );
+    } else {
+      editor.warn(`Git Gutter: update failed for buffer ${bufferId}: ${msg}`);
+    }
   } finally {
     state.updating = false;
   }

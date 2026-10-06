@@ -49,15 +49,29 @@ function popupEl(p){
     // chrome skin.
     body.classList.add("ink");
     const lines=p.content.lines||[];
-    for(let j=0;j<n;j++){
-      const ln=lines[start+j]; if(ln===undefined) break;
+    // **The whole content, not the window.** A list's window is the editor's
+    // and moves with its selection, but a text / markdown popup (an LSP hover)
+    // is drawn through a `viewport().scrollbar()` whose scrolling never reaches
+    // the popup's `scroll_offset` — so that offset stays 0 for the life of the
+    // popup. Slicing to `contentRect.h` rows against it pinned the view to the
+    // first screenful: whenever the editor had to clip the box to fit the
+    // window, the rest of the documentation was simply absent, and no wheel or
+    // key could bring it back. `.popup-body` is `overflow:auto`, so handing it
+    // every line gives the browser a real scrollbar over the same box.
+    for(const ln of lines){
       const d=div("popup-line");
       for(const run of ln) d.appendChild(popupRun(run));
       body.appendChild(d);
     }
+    // Follow an offset the editor *did* move, so the two never disagree.
+    if(start) requestAnimationFrame(()=>{ body.scrollTop=start*CH; });
   }
   el.appendChild(body);
-  el.addEventListener("wheel",e=>{ e.stopPropagation(); sendMouse({kind:e.deltaY>0?"scrolldown":"scrollup",col:cr.x+1,row:cr.y,n:Math.min(5,Math.max(1,Math.round(Math.abs(e.deltaY)/40)))}); },{passive:true});
+  // The wheel over a LIST belongs to the editor, which owns that window and
+  // its selection. A text body scrolls itself now, so its wheel stays in the
+  // browser — forwarding it as well would fight the native scroll.
+  if(p.content.type==="list")
+    el.addEventListener("wheel",e=>{ e.stopPropagation(); sendMouse({kind:e.deltaY>0?"scrolldown":"scrollup",col:cr.x+1,row:cr.y,n:Math.min(5,Math.max(1,Math.round(Math.abs(e.deltaY)/40)))}); },{passive:true});
   return el;
 }
 
