@@ -82,8 +82,8 @@ function fileExplorerEl(fe){
   // explorer's close hides the sidebar, so pressing at `fe.rect.y` closed the
   // panel instead of starting a drag — it vanished the moment you grabbed its
   // edge.
-  el.appendChild(borderDragHandle(fe.rect, fe.rect.x + fe.rect.w - 1,
-                                  fe.rect.y + 1, Math.max(1, fe.rect.h - 2)));
+  el.appendChild(borderDragHandle(fe.rect.x + fe.rect.w - 1, fe.rect.y + 1,
+                                  Math.max(1, fe.rect.h - 2), fe.rect));
   return el;
 }
 
@@ -94,15 +94,19 @@ function fileExplorerEl(fe){
 // window listeners so the drag continues even when the pointer leaves the
 // chrome element.
 //
-// `panel` is the rect of the absolutely-positioned region the grip is appended
-// to. `bx`/`by` are SCREEN cells, because that is what the editor's hit test
-// reads, but CSS offsets inside `panel` are measured from *its* corner — so
-// they are converted here. Placing the grip at the raw screen cell added the
-// panel's origin a second time: with a dock open that put the grip out over the
-// editor, where other elements covered it and no drag could ever start.
-function borderDragHandle(panel, bx, by, h){
+// `bx`/`by` are SCREEN cells, because that is what the editor's hit test reads,
+// but CSS offsets are measured from the grip's offset parent. `origin` is that
+// parent's own cell position when it has one — the file explorer appends its
+// grip inside its own positioned region, so the region's corner is subtracted
+// here. The dock's grip goes on the full-grid tree layer, which sits at the
+// screen origin, so it passes none and stays absolute. The explorer's grip used
+// to be placed at the raw screen cell inside its region, adding that region's
+// origin a second time: with a dock open that put the grip out over the editor,
+// where other elements covered it and no drag could ever start.
+function borderDragHandle(bx, by, h, origin){
   const grip=div("resize-grip");
-  grip.style.left=px(bx-panel.x,CW)+"px"; grip.style.top=px(by-panel.y,CH)+"px";
+  const ox=origin?origin.x:0, oy=origin?origin.y:0;
+  grip.style.left=px(bx-ox,CW)+"px"; grip.style.top=px(by-oy,CH)+"px";
   grip.style.width=px(1,CW)+"px"; grip.style.height=px(h,CH)+"px";
   grip.onmousedown=e=>{
     e.preventDefault(); e.stopPropagation();
