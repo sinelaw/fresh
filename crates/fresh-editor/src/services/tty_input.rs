@@ -46,12 +46,18 @@ use fresh_input_parser::{Event as InputEvent, InputParser};
 const ESC_GRACE: Duration = Duration::from_millis(15);
 
 /// How long teardown waits for the button-release report matching a press the
-/// editor already acted on. A real click holds the button for tens of
-/// milliseconds, so the release lands in a later `read()` than the press —
-/// after the quit has been decided. 50ms covers an ordinary click (and ssh
-/// jitter on top of it) while staying short enough that a keyboard quit, where
-/// nothing is pending, returns immediately on the poll timeout.
-const MOUSE_RELEASE_GRACE: Duration = Duration::from_millis(50);
+/// editor already acted on. Only ever paid when a button is actually still
+/// down (see [`mouse_button_down`]), and returned from the moment the release
+/// lands, so in practice this is the slack between the user clicking Quit and
+/// letting go — not a delay added to every exit. A keyboard quit owes no
+/// release and never reaches the wait at all.
+///
+/// It needs to outlast a whole click, including a deliberate one: people hold
+/// a button for roughly 50-150ms and a slow click runs past 300ms. The cost of
+/// erring long is only paid when a release never comes at all — a press the
+/// terminal never completes — because any release that does arrive ends the
+/// wait immediately.
+const MOUSE_RELEASE_GRACE: Duration = Duration::from_millis(400);
 
 /// Set to true by the `SIGWINCH` handler; consumed by [`TtyReader::take_resize`].
 static SIGWINCH_PENDING: AtomicBool = AtomicBool::new(false);
@@ -59,6 +65,117 @@ static SIGWINCH_PENDING: AtomicBool = AtomicBool::new(false);
 /// True while a [`TtyReader`] owns stdin. Lets `coalesce_mouse_moves` know it
 /// must not also poke crossterm's global reader (which would race us on fd 0).
 static RAW_INPUT_ACTIVE: AtomicBool = AtomicBool::new(false);
+
+/// True while a mouse button is held, i.e. a press has been reported and its
+/// release has not. Teardown reads this to decide whether a release is still
+/// owed (sinelaw/fresh#3474).
+static MOUSE_BUTTON_DOWN: AtomicBool = AtomicBool::new(false);
+
+/// Cross-call state for [`note_mouse_bytes`], which sees host input in
+/// whatever chunks `read()` hands back — a report can straddle two of them.
+static MOUSE_SCAN: std::sync::Mutex<MouseScan> = std::sync::Mutex::new(MouseScan::new());
+
+/// Where [`note_mouse_bytes`] is within a mouse report.
+#[derive(Clone, Copy, PartialEq)]
+enum ScanAt {
+    /// Not inside a sequence.
+    Ground,
+    /// Seen `ESC`.
+    Esc,
+    /// Seen `ESC[`.
+    Csi,
+    /// Inside SGR parameters, accumulating the button code.
+    Sgr,
+    /// Inside an X10 report; the payload byte index that follows `ESC[M`.
+    X10(u8),
+}
+
+struct MouseScan {
+    at: ScanAt,
+    /// The SGR report's first parameter (`Cb`), while it is being read.
+    cb: u32,
+    /// Still accumulating `Cb` (true until the first `;`).
+    on_cb: bool,
+}
+
+impl MouseScan {
+    const fn new() -> Self {
+        Self {
+            at: ScanAt::Ground,
+            cb: 0,
+            on_cb: true,
+        }
+    }
+}
+
+/// Is the button code of a press report one that gets a matching release?
+///
+/// Bit 5 (`0x20`) marks motion and bit 6 (`0x40`) a wheel notch. Neither is a
+/// held button: a wheel reports no release at all, and a drag's release is
+/// already accounted for by the press that began it.
+fn press_holds_button(cb: u32) -> bool {
+    cb & 0x20 == 0 && cb & 0x40 == 0
+}
+
+/// Track button state from raw host input.
+///
+/// Both input paths feed this: direct mode as it parses stdin, and the daemon
+/// client as it relays stdin to the server. Neither one parses mouse reports
+/// for this purpose, so the scan is its own small state machine over the bytes.
+pub fn note_mouse_bytes(bytes: &[u8]) {
+    let Ok(mut sc) = MOUSE_SCAN.lock() else {
+        return;
+    };
+    for &b in bytes {
+        sc.at = match (sc.at, b) {
+            (_, 0x1b) => ScanAt::Esc,
+            (ScanAt::Esc, b'[') => ScanAt::Csi,
+            (ScanAt::Csi, b'<') => {
+                sc.cb = 0;
+                sc.on_cb = true;
+                ScanAt::Sgr
+            }
+            (ScanAt::Csi, b'M') => ScanAt::X10(0),
+            (ScanAt::Sgr, b'0'..=b'9') => {
+                if sc.on_cb {
+                    sc.cb = sc.cb.saturating_mul(10).saturating_add(u32::from(b - b'0'));
+                }
+                ScanAt::Sgr
+            }
+            (ScanAt::Sgr, b';') => {
+                sc.on_cb = false;
+                ScanAt::Sgr
+            }
+            (ScanAt::Sgr, b'M') => {
+                if press_holds_button(sc.cb) {
+                    MOUSE_BUTTON_DOWN.store(true, Ordering::Relaxed);
+                }
+                ScanAt::Ground
+            }
+            (ScanAt::Sgr, b'm') => {
+                MOUSE_BUTTON_DOWN.store(false, Ordering::Relaxed);
+                ScanAt::Ground
+            }
+            // X10 encodes button and coordinates as three fixed bytes, the
+            // first of which is `Cb + 32`; a release is the low two bits set.
+            (ScanAt::X10(0), _) => {
+                let cb = u32::from(b).saturating_sub(32);
+                let down = cb & 3 != 3 && press_holds_button(cb);
+                MOUSE_BUTTON_DOWN.store(down, Ordering::Relaxed);
+                ScanAt::X10(1)
+            }
+            (ScanAt::X10(n), _) if n < 2 => ScanAt::X10(n + 1),
+            (ScanAt::X10(_), _) => ScanAt::Ground,
+            _ => ScanAt::Ground,
+        };
+    }
+}
+
+/// Whether a mouse button is currently held — a press was reported and no
+/// release has followed it.
+pub fn mouse_button_down() -> bool {
+    MOUSE_BUTTON_DOWN.load(Ordering::Relaxed)
+}
 
 /// Whether host input is being read by a [`TtyReader`] (rather than crossterm).
 pub fn raw_input_active() -> bool {
@@ -131,9 +248,15 @@ fn read_one_byte(fd: RawFd) -> Option<u8> {
 /// consumed; a press that is still pending is swallowed on the same grounds,
 /// since its own release can no longer be read either.
 ///
-/// On a keyboard quit nothing is pending, so the first poll simply times out.
+/// Returns immediately unless a button is actually still down, so a keyboard
+/// quit — which owes no release — costs nothing.
 pub fn drain_pending_mouse_report() {
     use std::time::Instant;
+
+    // Nothing is owed: either no click, or its release already came through.
+    if !mouse_button_down() {
+        return;
+    }
 
     // Bounds the work if a terminal streams something unexpected: no report we
     // accept is longer than this, so the exit is never held open past the grace.
@@ -172,7 +295,10 @@ pub fn drain_pending_mouse_report() {
             (St::Kind, b'M') => St::X10(0),
             (St::Sgr, b'0'..=b'9' | b';') => St::Sgr,
             // `M` ends a press, `m` a release; either completes the report.
-            (St::Sgr, b'M' | b'm') => return,
+            (St::Sgr, b'M' | b'm') => {
+                MOUSE_BUTTON_DOWN.store(false, Ordering::Relaxed);
+                return;
+            }
             (St::X10(n), _) if n < 2 => St::X10(n + 1),
             // The third byte closes an X10 report.
             (St::X10(_), _) => return,
@@ -274,6 +400,7 @@ impl TtyReader {
         if n <= 0 {
             return false;
         }
+        note_mouse_bytes(&buf[..n as usize]);
         let events = self.parser.parse(&buf[..n as usize]);
         for ev in events {
             self.push_coalesced(ev);

@@ -80,6 +80,10 @@ pub fn relay_loop(
                     return Ok(ClientExitReason::Detached);
                 }
                 Ok(n) => {
+                    // The server does the parsing, but teardown here needs to
+                    // know whether a click is still held (#3474).
+                    #[cfg(feature = "runtime")]
+                    crate::services::tty_input::note_mouse_bytes(&stdin_buf[..n]);
                     conn.write_data(&stdin_buf[..n])?;
                 }
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => {}
