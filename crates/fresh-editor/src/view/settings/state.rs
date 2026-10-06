@@ -1225,13 +1225,17 @@ impl SettingsState {
 
     /// Get a display name for the current target layer.
     pub fn target_layer_name(&self) -> String {
+        t!(self.target_layer_key()).to_string()
+    }
+
+    /// The catalog key of the current target layer's name.
+    fn target_layer_key(&self) -> &'static str {
         match self.target_layer {
-            ConfigLayer::System => t!("settings.layer.system"),
-            ConfigLayer::User => t!("settings.layer.user"),
-            ConfigLayer::Project => t!("settings.layer.project"),
-            ConfigLayer::Session => t!("settings.layer.session"),
+            ConfigLayer::System => "settings.layer.system",
+            ConfigLayer::User => "settings.layer.user",
+            ConfigLayer::Project => "settings.layer.project",
+            ConfigLayer::Session => "settings.layer.session",
         }
-        .to_string()
     }
 
     /// Set the layer sources map (called by Editor when opening settings).
@@ -3469,19 +3473,22 @@ mod tests {
     fn test_layer_selection() {
         let config = test_config();
         let mut state = SettingsState::new(TEST_SCHEMA, &config).unwrap();
+        // The name follows the active locale, which other tests in this
+        // binary change; what the layer is called in English is fixed.
+        let english = |key| fresh_i18n::translate_in("en", key);
 
         // Default is User layer
         assert_eq!(state.target_layer, ConfigLayer::User);
-        assert_eq!(state.target_layer_name(), "User");
+        assert_eq!(english(state.target_layer_key()), Some("User"));
 
         // Cycle through layers
         state.cycle_target_layer();
         assert_eq!(state.target_layer, ConfigLayer::Project);
-        assert_eq!(state.target_layer_name(), "Project");
+        assert_eq!(english(state.target_layer_key()), Some("Project"));
 
         state.cycle_target_layer();
         assert_eq!(state.target_layer, ConfigLayer::Session);
-        assert_eq!(state.target_layer_name(), "Session");
+        assert_eq!(english(state.target_layer_key()), Some("Session"));
 
         state.cycle_target_layer();
         assert_eq!(state.target_layer, ConfigLayer::User);

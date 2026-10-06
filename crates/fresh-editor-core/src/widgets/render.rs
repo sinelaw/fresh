@@ -1903,13 +1903,12 @@ pub fn render_dropdown(
     };
     let option = options.get(selected).map(|s| s.as_str()).unwrap_or("");
     // Width the value cell to the widest option so the button doesn't
-    // resize as the selection changes (capped like the old control).
-    let max_option_len = options
-        .iter()
-        .map(|s| s.chars().count())
-        .max()
-        .unwrap_or(10);
-    let display_width = max_option_len.max(option.chars().count()).min(20);
+    // resize as the selection changes (capped like the old control). In
+    // columns, as `cell` cuts: counted in chars, `自動検出` got a five-column
+    // cell and showed as `自動`.
+    use crate::primitives::display_width::str_width;
+    let max_option_len = options.iter().map(|s| str_width(s)).max().unwrap_or(10);
+    let display_width = max_option_len.max(str_width(option)).min(20);
 
     let marker = focus_gutter_prefix(focused, marker_gutter);
     let mut text = String::new();
@@ -5376,6 +5375,38 @@ pub mod tests {
         assert_eq!(r.option_rows.len(), 3);
         assert!(r.option_rows[0].1.text.contains("Red"));
         assert_eq!(r.option_rows[2].0, 2);
+    }
+
+    /// The value cell is as wide as the widest option in columns, so a
+    /// wide-glyph option beside short ASCII ones shows whole, closed and open.
+    #[test]
+    fn dropdown_sizes_its_value_cell_in_columns() {
+        let options: Vec<String> = vec!["自動検出".into(), "bg".into(), "zh-CN".into()];
+        let r = render_dropdown(
+            &options,
+            0,
+            "Locale",
+            false,
+            0,
+            LabelAlign::Left,
+            true,
+            0,
+            false,
+        );
+        assert_eq!(r.entry.text, "Locale: [自動検出 ▲]");
+        assert!(r.option_rows[0].1.text.contains("自動検出"));
+        let r = render_dropdown(
+            &options,
+            1,
+            "Locale",
+            false,
+            0,
+            LabelAlign::Left,
+            false,
+            0,
+            false,
+        );
+        assert_eq!(r.entry.text, "Locale: [bg       ▼]");
     }
 
     #[test]

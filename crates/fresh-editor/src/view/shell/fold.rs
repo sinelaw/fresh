@@ -578,7 +578,8 @@ fn put_symbol(buf: &mut Buffer, x: u16, y: u16, sym: &str, w: u16, style: Style,
 
 /// Blank a wide glyph that starts left of `(x, y)` and spans into it.
 fn cut_wide_glyph_before(buf: &mut Buffer, x: u16, y: u16) {
-    for back in 1..=x.min(3) {
+    // Only as far back as the buffer goes: its area need not start at 0.
+    for back in 1..=x.saturating_sub(buf.area.x).min(3) {
         let cell = &mut buf[(x - back, y)];
         if fresh_ui::glyph::width(cell.symbol()) > back {
             cell.set_symbol(" ");
@@ -967,6 +968,15 @@ mod width_tests {
         // A clip that starts at the border's column, as a layer's does.
         put(&mut buf, 1, 0, '│', Style::default(), Rect::new(1, 0, 1, 1));
         assert_eq!(symbols(&buf), [" ", "│", "設", " ", "~"]);
+    }
+
+    /// A buffer whose area starts right of column 0 is not read left of it.
+    #[test]
+    fn cutting_stops_at_the_buffers_own_left_edge() {
+        let mut buf = Buffer::filled(Rect::new(10, 0, 3, 1), ratatui::buffer::Cell::new("~"));
+        let all = buf.area;
+        put(&mut buf, 10, 0, '│', Style::default(), all);
+        assert_eq!(buf[(10, 0)].symbol(), "│");
     }
 
     /// A glyph painted right after a whole wide glyph leaves it alone.

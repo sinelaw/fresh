@@ -699,12 +699,7 @@ fn determine_type(
                         .dual_list_options
                         .iter()
                         .map(|entry| EnumOption {
-                            name: i18n_lookup(&format!(
-                                "settings.option.{}",
-                                i18n_slug(&entry.value)
-                            ))
-                            .or_else(|| entry.name.clone())
-                            .unwrap_or_else(|| entry.value.clone()),
+                            name: dual_list_option_name(&entry.value, entry.name.as_deref()),
                             value: entry.value.clone(),
                         })
                         .collect();
@@ -868,6 +863,20 @@ fn i18n_slug(label: &str) -> String {
         .join("_")
 }
 
+/// A dual-list option's label: the catalog's `settings.option.<value>` when
+/// the option is the built-in one the catalog names — no label of its own, or
+/// the very label the catalog gives it in English — else the option's own.
+/// A plugin's `{language}` labelled "Grammar Language" keeps that label.
+fn dual_list_option_name(value: &str, name: Option<&str>) -> String {
+    let key = format!("settings.option.{}", i18n_slug(value));
+    let built_in = name.is_none_or(|n| fresh_i18n::translate_in("en", &key) == Some(n));
+    built_in
+        .then(|| i18n_lookup(&key))
+        .flatten()
+        .or_else(|| name.map(str::to_string))
+        .unwrap_or_else(|| value.to_string())
+}
+
 fn i18n_category_name(name: &str) -> String {
     i18n_lookup(&format!("settings.category.{}", i18n_slug(name)))
         .unwrap_or_else(|| name.to_string())
@@ -944,6 +953,53 @@ mod tests {
   }
 }
 "##;
+
+    /// A plugin's option that shares a built-in value keeps its own label.
+    #[test]
+    fn a_plugin_dual_list_option_keeps_its_own_label() {
+        assert_eq!(
+            dual_list_option_name("{language}", Some("Grammar Language")),
+            "Grammar Language"
+        );
+        assert_eq!(dual_list_option_name("{nope}", None), "{nope}");
+    }
+
+    /// Every built-in status bar element is labelled exactly as the catalog
+    /// says in English, so it is the catalog's entry that names it in every
+    /// locale. A label changed in one place and not the other stays English.
+    #[test]
+    fn every_built_in_dual_list_option_matches_its_catalog_entry() {
+        fn walk(v: &serde_json::Value, found: &mut usize) {
+            match v {
+                serde_json::Value::Object(o) => {
+                    for e in o
+                        .get("x-dual-list-options")
+                        .and_then(|l| l.as_array())
+                        .into_iter()
+                        .flatten()
+                    {
+                        let value = e["value"].as_str().unwrap();
+                        let key = format!("settings.option.{}", i18n_slug(value));
+                        assert_eq!(
+                            fresh_i18n::translate_in("en", &key),
+                            e["name"].as_str(),
+                            "{key}"
+                        );
+                        *found += 1;
+                    }
+                    o.values().for_each(|v| walk(v, found));
+                }
+                serde_json::Value::Array(a) => a.iter().for_each(|v| walk(v, found)),
+                _ => {}
+            }
+        }
+        crate::i18n::embedded::ensure_registered();
+        let schema: serde_json::Value =
+            serde_json::from_str(include_str!("../../../plugins/config-schema.json")).unwrap();
+        let mut found = 0;
+        walk(&schema, &mut found);
+        assert!(found > 0, "no dual-list options in the schema");
+    }
 
     #[test]
     fn test_parse_schema() {
