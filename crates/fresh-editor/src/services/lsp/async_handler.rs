@@ -171,6 +171,42 @@ fn log_response_error(code: i64, message: &str, server_name: &str, language: &st
     }
 }
 
+/// The LSP position one past the last character of `text` — the document's end.
+///
+/// Lines are separated by `\n` (a trailing `\r` belongs to the preceding line and
+/// counts as one UTF-16 unit like any other character), and the column is measured
+/// in UTF-16 code units, which is the encoding LSP positions use.
+///
+/// This mirrors `Buffer::lsp_end_position` for callers that hold the text rather
+/// than the buffer; the two must agree, and a test pins that they do.
+pub(crate) fn lsp_text_end_position(text: &str) -> Position {
+    let line = text.matches('\n').count();
+    let last_line = match text.rfind('\n') {
+        Some(nl) => &text[nl + 1..],
+        None => text,
+    };
+    Position::new(line as u32, last_line.encode_utf16().count() as u32)
+}
+
+/// The change-sync kind the server negotiated (`textDocumentSync.change`).
+///
+/// Unknown / unset reads as `NONE`. Callers only ask one question of this — "is it
+/// FULL?" — and for anything else they send ranged changes, which is the safe answer
+/// when the server never told us: a ranged change is what INCREMENTAL servers require,
+/// and a server that asked for no sync at all is not listening either way.
+fn negotiated_change_sync_kind(
+    caps: Option<&ServerCapabilities>,
+) -> lsp_types::TextDocumentSyncKind {
+    use lsp_types::{TextDocumentSyncCapability, TextDocumentSyncKind};
+    match caps.and_then(|c| c.text_document_sync.as_ref()) {
+        Some(TextDocumentSyncCapability::Kind(k)) => *k,
+        Some(TextDocumentSyncCapability::Options(o)) => {
+            o.change.unwrap_or(TextDocumentSyncKind::NONE)
+        }
+        None => TextDocumentSyncKind::NONE,
+    }
+}
+
 /// Check if a document is already open and should skip didOpen.
 /// Returns true if the document is already open (should skip), false if it should proceed.
 fn should_skip_did_open(
@@ -785,6 +821,10 @@ enum LspCommand {
     DidChange {
         uri: Uri,
         content_changes: Vec<TextDocumentContentChangeEvent>,
+        /// The document's end position *after* these changes have been applied.
+        /// Carried forward so the next full-document (`range: None`) change can be
+        /// expressed as a ranged change over the text the server currently holds.
+        end_position: Position,
     },
 
     /// Notify document closed
@@ -1041,6 +1081,13 @@ struct LspState {
     /// The LSP server needs time to process didOpen before it can handle didChange
     pending_opens: Arc<std::sync::Mutex<HashMap<PathBuf, Instant>>>,
 
+    /// End position of each open document as the server currently holds it, updated
+    /// on every didOpen/didChange. A full-document (`range: None`) change is rewritten
+    /// into a ranged change spanning `(0,0)..extent` before it goes out, because a
+    /// range-less change is only valid under FULL text sync — see
+    /// `handle_did_change_sequential`.
+    document_extents: Arc<std::sync::Mutex<HashMap<PathBuf, Position>>>,
+
     /// Whether initialized
     initialized: Arc<AtomicBool>,
 
@@ -1106,10 +1153,11 @@ impl LspState {
                 LspCommand::DidChange {
                     uri,
                     content_changes,
+                    end_position,
                 } => {
                     tracing::info!("Replaying DidChange for {}", uri.as_str());
                     let _ = self
-                        .handle_did_change_sequential(uri, content_changes, pending)
+                        .handle_did_change_sequential(uri, content_changes, end_position, pending)
                         .await;
                 }
                 LspCommand::DidClose { uri } => {
@@ -1528,6 +1576,13 @@ impl LspState {
             .cloned()
             .unwrap_or(language_id);
 
+        // Remember the extent the server now holds, so a later full-document change
+        // can name the range it replaces.
+        self.document_extents
+            .lock()
+            .unwrap()
+            .insert(path.clone(), lsp_text_end_position(&text));
+
         let params = DidOpenTextDocumentParams {
             text_document: TextDocumentItem {
                 uri: uri.clone(),
@@ -1555,7 +1610,8 @@ impl LspState {
     async fn handle_did_change_sequential(
         &self,
         uri: Uri,
-        content_changes: Vec<TextDocumentContentChangeEvent>,
+        mut content_changes: Vec<TextDocumentContentChangeEvent>,
+        end_position: Position,
         _pending: &PendingRequests,
     ) -> Result<(), String> {
         tracing::trace!("LSP: did_change for {}", uri.as_str());
@@ -1591,6 +1647,62 @@ impl LspState {
             // Remove from pending_opens after grace period has passed
             self.pending_opens.lock().unwrap().remove(&path);
         }
+
+        // A content change with `range: None` is a full-document replacement, which is
+        // only valid when the server negotiated FULL text sync. Fresh emits one from
+        // every path that can't produce incremental ranges — file reload, workspace
+        // restore, hot-exit replay, plugin bulk edits, and any buffer-modifying event
+        // `collect_lsp_changes` doesn't decompose — but it tells servers it speaks
+        // INCREMENTAL. Strict servers reject the mismatch: Roslyn
+        // (Microsoft.CodeAnalysis.LanguageServer) threw a NullReferenceException in
+        // ProtocolConversions.RangeToLinePositionSpan on the null range, which faulted
+        // its request queue and closed stdout, so edits stopped syncing and
+        // completion/hover died on the line being typed.
+        //
+        // The payload is fine; only the envelope is wrong. A change carrying the whole
+        // text with a range spanning the entire previous document says exactly the same
+        // thing and is legal under INCREMENTAL, so rewrite it rather than dropping to
+        // didClose+didOpen (which would make the server discard diagnostics and re-analyse)
+        // or asking callers to compute diffs (which would trade a loud crash for silent
+        // desync). `document_extents` holds the extent the server currently believes in,
+        // recorded from the previous didOpen/didChange.
+        //
+        // Only a lone full-replace is rewritten. Every `range: None` construction site
+        // emits it as the sole change in its batch, and a range-less change sitting mid-
+        // batch has no well-defined extent to span — the changes before it have already
+        // moved the document.
+        if let [only] = content_changes.as_mut_slice() {
+            if only.range.is_none()
+                && negotiated_change_sync_kind(self.capabilities.lock().unwrap().as_ref())
+                    != lsp_types::TextDocumentSyncKind::FULL
+            {
+                let extent = self
+                    .document_extents
+                    .lock()
+                    .unwrap()
+                    .get(&path)
+                    .copied()
+                    .unwrap_or(end_position);
+                tracing::debug!(
+                    "LSP ({}): rewriting full-document change as a ranged change over {:?}: {}",
+                    self.language,
+                    extent,
+                    uri.as_str()
+                );
+                only.range = Some(Range::new(Position::new(0, 0), extent));
+            }
+        } else {
+            debug_assert!(
+                content_changes.iter().all(|c| c.range.is_some()),
+                "a range-less (full-document) change must be the only change in its batch"
+            );
+        }
+
+        // The server's document now ends here; the next full-document change spans to it.
+        self.document_extents
+            .lock()
+            .unwrap()
+            .insert(path.clone(), end_position);
 
         let new_version = {
             let mut versions = self.document_versions.lock().unwrap();
@@ -1644,8 +1756,9 @@ impl LspState {
             );
         }
 
-        // Also remove from pending_opens
+        // Also remove from pending_opens and the tracked extent
         self.pending_opens.lock().unwrap().remove(&path);
+        self.document_extents.lock().unwrap().remove(&path);
 
         let params = DidCloseTextDocumentParams {
             text_document: TextDocumentIdentifier { uri },
@@ -3302,6 +3415,7 @@ impl LspTask {
             active_requests: Arc::new(Mutex::new(HashMap::new())),
             language_id_overrides: Arc::new(self.language_id_overrides.clone()),
             timeout_streak: Arc::new(Mutex::new(TimeoutStreak::default())),
+            document_extents: Arc::new(Mutex::new(HashMap::new())),
         };
 
         let pending = Arc::new(Mutex::new(self.pending));
@@ -3475,13 +3589,19 @@ impl LspTask {
                 LspCommand::DidChange {
                     uri,
                     content_changes,
+                    end_position,
                 } => {
                     if initialized {
                         tracing::trace!("Processing DidChange for {}", uri.as_str());
                         // Notification: write inline so it reaches the server
                         // even while earlier requests are still in flight.
                         let _ = state
-                            .handle_did_change_sequential(uri, content_changes, &pending)
+                            .handle_did_change_sequential(
+                                uri,
+                                content_changes,
+                                end_position,
+                                &pending,
+                            )
                             .await;
                     } else {
                         tracing::trace!(
@@ -3491,6 +3611,7 @@ impl LspTask {
                         pending_commands.push(LspCommand::DidChange {
                             uri,
                             content_changes,
+                            end_position,
                         });
                     }
                 }
@@ -5025,10 +5146,17 @@ impl LspHandle {
     /// and its version is advanced so that the reader task's stale-diagnostics
     /// guard discards everything the server derives from its stale copy until
     /// the resync lands (#3038).
+    ///
+    /// `end_position` is the document's end position *after* `content_changes` have
+    /// been applied — `Buffer::lsp_end_position()` on the edited buffer, or
+    /// `lsp_text_end_position()` when the caller holds the new text. It is not used
+    /// for this notification; it is remembered so that a later full-document change
+    /// can name the extent it replaces (see `handle_did_change_sequential`).
     pub fn did_change(
         &self,
         uri: Uri,
         content_changes: Vec<TextDocumentContentChangeEvent>,
+        end_position: Position,
     ) -> Result<(), String> {
         let path = PathBuf::from(uri.path().as_str());
         // A single change with no range replaces the whole document, so a
@@ -5041,6 +5169,7 @@ impl LspHandle {
         match self.command_tx.try_send(LspCommand::DidChange {
             uri,
             content_changes,
+            end_position,
         }) {
             Ok(()) => {
                 if replaces_whole_document {
@@ -5675,6 +5804,281 @@ mod tests {
     /// A `workspace/configuration` request item asking for `section`.
     fn config_item(section: &str) -> Value {
         serde_json::json!({ "section": section })
+    }
+
+    // ---- full-document change → ranged change -------------------------------------
+
+    /// An `LspState` writing into a `cat` child, whose stdout echoes every byte back:
+    /// a loopback that lets a test read the exact JSON-RPC Fresh put on the wire.
+    /// `change_sync` sets the negotiated `textDocumentSync.change` capability
+    /// (`None` = server advertised no capability at all). The child is returned so
+    /// the caller keeps it (and its pipes) alive; `kill_on_drop` reaps it.
+    fn loopback_state(
+        change_sync: Option<lsp_types::TextDocumentSyncKind>,
+    ) -> (LspState, tokio::process::Child, BufReader<ChildStdout>) {
+        let mut child = tokio::process::Command::new("cat")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
+            .expect("spawn cat as an LSP stdio loopback");
+        let stdin = child.stdin.take().expect("child stdin");
+        let stdout = BufReader::new(child.stdout.take().expect("child stdout"));
+        // async_tx is unused by the didOpen/didChange paths under test; sends are
+        // best-effort, so dropping the receiver cannot affect the assertions.
+        let (async_tx, _async_rx) = std_mpsc::channel();
+        let caps = change_sync.map(|k| ServerCapabilities {
+            text_document_sync: Some(lsp_types::TextDocumentSyncCapability::Kind(k)),
+            ..Default::default()
+        });
+        let state = LspState {
+            stdin: Arc::new(tokio::sync::Mutex::new(stdin)),
+            next_id: Arc::new(AtomicI64::new(1)),
+            capabilities: Arc::new(Mutex::new(caps)),
+            document_versions: Arc::new(Mutex::new(HashMap::new())),
+            pending_opens: Arc::new(Mutex::new(HashMap::new())),
+            initialized: Arc::new(AtomicBool::new(true)),
+            async_tx,
+            language: Arc::new("rust".to_string()),
+            server_name: Arc::new("test-server".to_string()),
+            active_requests: Arc::new(Mutex::new(HashMap::new())),
+            language_id_overrides: Arc::new(HashMap::new()),
+            timeout_streak: Arc::new(Mutex::new(TimeoutStreak::default())),
+            document_extents: Arc::new(Mutex::new(HashMap::new())),
+        };
+        (state, child, stdout)
+    }
+
+    /// Read one `Content-Length`-framed JSON-RPC message back off the loopback.
+    async fn read_message(stdout: &mut BufReader<ChildStdout>) -> Value {
+        let mut content_length = None;
+        loop {
+            let mut line = String::new();
+            let n = stdout.read_line(&mut line).await.expect("read header line");
+            assert_ne!(n, 0, "loopback closed before a full message arrived");
+            let line = line.trim_end_matches(['\r', '\n']);
+            if line.is_empty() {
+                break;
+            }
+            if let Some(len) = line.strip_prefix("Content-Length: ") {
+                content_length = Some(len.parse::<usize>().expect("Content-Length value"));
+            }
+        }
+        let len = content_length.expect("message had no Content-Length header");
+        let mut body = vec![0u8; len];
+        stdout.read_exact(&mut body).await.expect("read body");
+        serde_json::from_slice(&body).expect("body is JSON")
+    }
+
+    /// Read messages until one with `method` arrives, and return its `params`.
+    async fn read_params_of(stdout: &mut BufReader<ChildStdout>, method: &str) -> Value {
+        for _ in 0..8 {
+            let msg = read_message(stdout).await;
+            if msg.get("method").and_then(Value::as_str) == Some(method) {
+                return msg.get("params").cloned().expect("notification params");
+            }
+        }
+        panic!("no {} notification appeared on the wire", method);
+    }
+
+    /// The fix: Fresh emits full-document (`range: None`) changes from every path that
+    /// can't produce incremental ranges, but it negotiates INCREMENTAL sync, where a
+    /// range-less change is illegal — Roslyn threw a NullReferenceException on the null
+    /// range and stopped syncing. The change must go out as a ranged change spanning
+    /// the whole of the previous document instead. Asserts on the actual bytes written,
+    /// because a version counter cannot tell a correct range from a wrong one.
+    ///
+    /// Without the fix `contentChanges[0].range` is absent and this fails.
+    #[tokio::test]
+    async fn full_document_change_under_incremental_goes_out_as_a_ranged_change() {
+        let (state, _child, mut stdout) =
+            loopback_state(Some(lsp_types::TextDocumentSyncKind::INCREMENTAL));
+        let pending: PendingRequests = Arc::new(Mutex::new(HashMap::new()));
+        let uri: Uri = "file:///test.rs".parse().unwrap();
+
+        // Open a two-line document; its end is line 1, UTF-16 column 1 ("}").
+        state
+            .handle_did_open_sequential(
+                uri.clone(),
+                "fn main() {\n}".into(),
+                "rust".into(),
+                &pending,
+            )
+            .await
+            .unwrap();
+        // Drop the didOpen grace marker so the change below doesn't sleep on it.
+        state.pending_opens.lock().unwrap().clear();
+        let _ = read_params_of(&mut stdout, "textDocument/didOpen").await;
+
+        let new_text = "fn main() {\n    println!(\"hi\");\n}\n";
+        state
+            .handle_did_change_sequential(
+                uri.clone(),
+                vec![TextDocumentContentChangeEvent {
+                    range: None,
+                    range_length: None,
+                    text: new_text.to_string(),
+                }],
+                lsp_text_end_position(new_text),
+                &pending,
+            )
+            .await
+            .unwrap();
+
+        let params = read_params_of(&mut stdout, "textDocument/didChange").await;
+        let change = &params["contentChanges"][0];
+        assert_eq!(
+            change["range"],
+            serde_json::json!({
+                "start": {"line": 0, "character": 0},
+                "end": {"line": 1, "character": 1},
+            }),
+            "a full-document change must span the whole previous document, not be range-less"
+        );
+        assert_eq!(
+            change["text"], new_text,
+            "the payload is unchanged — only the envelope is rewritten"
+        );
+
+        // The extent moved with the document: the next full replace spans to the new end.
+        let newer = "fn main() {}\n";
+        state
+            .handle_did_change_sequential(
+                uri,
+                vec![TextDocumentContentChangeEvent {
+                    range: None,
+                    range_length: None,
+                    text: newer.to_string(),
+                }],
+                lsp_text_end_position(newer),
+                &pending,
+            )
+            .await
+            .unwrap();
+        let params = read_params_of(&mut stdout, "textDocument/didChange").await;
+        assert_eq!(
+            params["contentChanges"][0]["range"]["end"],
+            serde_json::json!({"line": 3, "character": 0}),
+            "the tracked extent must follow the previous change, not the original didOpen"
+        );
+    }
+
+    /// The other side of the condition: a server that negotiated FULL sync expects the
+    /// range-less form, so it must be left exactly as the caller built it.
+    #[tokio::test]
+    async fn full_document_change_under_full_sync_stays_range_less() {
+        let (state, _child, mut stdout) =
+            loopback_state(Some(lsp_types::TextDocumentSyncKind::FULL));
+        let pending: PendingRequests = Arc::new(Mutex::new(HashMap::new()));
+        let uri: Uri = "file:///test.rs".parse().unwrap();
+
+        state
+            .handle_did_open_sequential(uri.clone(), "fn main() {}".into(), "rust".into(), &pending)
+            .await
+            .unwrap();
+        state.pending_opens.lock().unwrap().clear();
+        let _ = read_params_of(&mut stdout, "textDocument/didOpen").await;
+
+        state
+            .handle_did_change_sequential(
+                uri,
+                vec![TextDocumentContentChangeEvent {
+                    range: None,
+                    range_length: None,
+                    text: "fn main() {}\n".into(),
+                }],
+                lsp_text_end_position("fn main() {}\n"),
+                &pending,
+            )
+            .await
+            .unwrap();
+
+        let params = read_params_of(&mut stdout, "textDocument/didChange").await;
+        assert!(
+            params["contentChanges"][0].get("range").is_none(),
+            "under FULL sync the range-less form is what the server wants: {}",
+            params
+        );
+    }
+
+    /// Per-keystroke ranged edits are the common path and must pass through untouched.
+    #[tokio::test]
+    async fn ranged_change_is_forwarded_unmodified() {
+        let (state, _child, mut stdout) =
+            loopback_state(Some(lsp_types::TextDocumentSyncKind::INCREMENTAL));
+        let pending: PendingRequests = Arc::new(Mutex::new(HashMap::new()));
+        let uri: Uri = "file:///test.rs".parse().unwrap();
+
+        state
+            .handle_did_open_sequential(uri.clone(), "fn main() {}".into(), "rust".into(), &pending)
+            .await
+            .unwrap();
+        state.pending_opens.lock().unwrap().clear();
+        let _ = read_params_of(&mut stdout, "textDocument/didOpen").await;
+
+        state
+            .handle_did_change_sequential(
+                uri,
+                vec![TextDocumentContentChangeEvent {
+                    range: Some(Range::new(Position::new(0, 3), Position::new(0, 7))),
+                    range_length: None,
+                    text: String::new(),
+                }],
+                Position::new(0, 8),
+                &pending,
+            )
+            .await
+            .unwrap();
+
+        let params = read_params_of(&mut stdout, "textDocument/didChange").await;
+        assert_eq!(
+            params["contentChanges"][0]["range"],
+            serde_json::json!({
+                "start": {"line": 0, "character": 3},
+                "end": {"line": 0, "character": 7},
+            })
+        );
+    }
+
+    /// `lsp_text_end_position` measures columns in UTF-16 code units (LSP's encoding),
+    /// counts a trailing newline as opening an empty final line, and treats a lone `\r`
+    /// as an ordinary character. Getting any of these wrong silently corrupts the
+    /// server's copy on the next full-document change.
+    #[test]
+    fn lsp_text_end_position_measures_the_document_end_in_utf16() {
+        assert_eq!(lsp_text_end_position(""), Position::new(0, 0));
+        assert_eq!(lsp_text_end_position("abc"), Position::new(0, 3));
+        assert_eq!(lsp_text_end_position("abc\n"), Position::new(1, 0));
+        assert_eq!(lsp_text_end_position("a\nbc"), Position::new(1, 2));
+        // é is one UTF-16 unit but two UTF-8 bytes; 𝄞 is a surrogate pair (two units).
+        assert_eq!(lsp_text_end_position("é"), Position::new(0, 1));
+        assert_eq!(lsp_text_end_position("𝄞"), Position::new(0, 2));
+        // CRLF: the \r belongs to the line it ends, so the final line is still empty.
+        assert_eq!(lsp_text_end_position("a\r\n"), Position::new(1, 0));
+        assert_eq!(lsp_text_end_position("a\rb"), Position::new(0, 3));
+    }
+
+    /// The text-based and buffer-based extent helpers feed the same field from
+    /// different call sites (file reload vs. an edited buffer), so they must agree —
+    /// a disagreement would desync the server silently.
+    #[test]
+    fn buffer_and_text_end_positions_agree() {
+        for text in [
+            "",
+            "abc",
+            "abc\n",
+            "fn main() {\n    println!(\"hi\");\n}\n",
+            "let s = \"héllo 𝄞\";\nlet t = 1;",
+        ] {
+            let buffer = crate::model::buffer::Buffer::from_str_test(text);
+            let (line, character) = buffer.lsp_end_position();
+            assert_eq!(
+                Position::new(line as u32, character as u32),
+                lsp_text_end_position(text),
+                "buffer and text extents disagree for {:?}",
+                text
+            );
+        }
     }
 
     /// Reproducer for sinelaw/fresh#2603: rust-analyzer only offers
@@ -6481,6 +6885,7 @@ mod tests {
                 range_length: None,
                 text: "fn main() {}".to_string(),
             }],
+            lsp_types::Position::new(0, 12),
         );
 
         // Should succeed (command is queued)
@@ -6511,6 +6916,8 @@ mod tests {
         (handle, command_rx, path)
     }
 
+    // The end position `did_change` takes is only remembered by the task, which
+    // these queue-bookkeeping tests never run, so they pass `Position::default()`.
     fn insert_at_origin(text: &str) -> Vec<TextDocumentContentChangeEvent> {
         vec![TextDocumentContentChangeEvent {
             range: Some(lsp_types::Range::new(
@@ -6665,7 +7072,8 @@ mod tests {
                     ChangeToSend::Incremental => changes,
                     ChangeToSend::Skip => return,
                 };
-                let r = self.handle.did_change(self.uri.clone(), payload);
+                let end = lsp_text_end_position(&self.buffer);
+                let r = self.handle.did_change(self.uri.clone(), payload, end);
                 self.record(r);
             }
 
@@ -6934,10 +7342,10 @@ mod tests {
 
         // Fill the queue; nothing is draining it.
         assert!(handle
-            .did_change(uri.clone(), insert_at_origin("a"))
+            .did_change(uri.clone(), insert_at_origin("a"), Position::default())
             .is_ok());
         assert!(handle
-            .did_change(uri.clone(), insert_at_origin("b"))
+            .did_change(uri.clone(), insert_at_origin("b"), Position::default())
             .is_ok());
         assert!(
             !handle.needs_full_resync(&path),
@@ -6946,7 +7354,9 @@ mod tests {
         let version_before = handle.document_version(&path).unwrap();
 
         // This one has nowhere to go.
-        assert!(handle.did_change(uri, insert_at_origin("c")).is_err());
+        assert!(handle
+            .did_change(uri, insert_at_origin("c"), Position::default())
+            .is_err());
 
         assert!(
             handle.needs_full_resync(&path),
@@ -6971,10 +7381,10 @@ mod tests {
         let uri: Uri = "file:///test.rs".parse().unwrap();
 
         assert!(handle
-            .did_change(uri.clone(), insert_at_origin("a"))
+            .did_change(uri.clone(), insert_at_origin("a"), Position::default())
             .is_ok());
         assert!(handle
-            .did_change(uri.clone(), insert_at_origin("b"))
+            .did_change(uri.clone(), insert_at_origin("b"), Position::default())
             .is_err());
         assert!(handle.needs_full_resync(&path));
 
@@ -7001,10 +7411,10 @@ mod tests {
         let uri: Uri = "file:///test.rs".parse().unwrap();
 
         assert!(handle
-            .did_change(uri.clone(), insert_at_origin("a"))
+            .did_change(uri.clone(), insert_at_origin("a"), Position::default())
             .is_ok());
         assert!(handle
-            .did_change(uri.clone(), insert_at_origin("b"))
+            .did_change(uri.clone(), insert_at_origin("b"), Position::default())
             .is_err());
         assert!(handle.needs_full_resync(&path));
 
@@ -7027,10 +7437,10 @@ mod tests {
         let uri: Uri = "file:///test.rs".parse().unwrap();
 
         assert!(handle
-            .did_change(uri.clone(), insert_at_origin("a"))
+            .did_change(uri.clone(), insert_at_origin("a"), Position::default())
             .is_ok());
         assert!(handle
-            .did_change(uri.clone(), insert_at_origin("b"))
+            .did_change(uri.clone(), insert_at_origin("b"), Position::default())
             .is_err());
         assert!(handle.needs_full_resync(&path));
 
@@ -7038,7 +7448,7 @@ mod tests {
         // the dropped one, so this must not clear the flag.
         let _ = command_rx.recv().await;
         assert!(handle
-            .did_change(uri.clone(), insert_at_origin("c"))
+            .did_change(uri.clone(), insert_at_origin("c"), Position::default())
             .is_ok());
         assert!(
             handle.needs_full_resync(&path),
@@ -7055,6 +7465,7 @@ mod tests {
                     range_length: None,
                     text: "whole buffer".to_string(),
                 }],
+                lsp_text_end_position("whole buffer"),
             )
             .is_ok());
         assert!(
@@ -7086,7 +7497,9 @@ mod tests {
         );
 
         // The queue is now full, and the task has not run.
-        assert!(handle.did_change(fresh_doc, insert_at_origin("a")).is_err());
+        assert!(handle
+            .did_change(fresh_doc, insert_at_origin("a"), Position::default())
+            .is_err());
 
         assert!(
             handle.needs_full_resync(&fresh_path),
@@ -7125,6 +7538,7 @@ mod tests {
                 range_length: None,
                 text: String::new(), // Empty string for deletion
             }],
+            lsp_types::Position::new(0, 8),
         );
 
         // Should succeed (command is queued)

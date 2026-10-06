@@ -4700,6 +4700,24 @@ impl Window {
             })
             .flatten();
 
+        // The buffer already has these changes applied, so its end position is the
+        // extent the server will hold once they land. The LSP task remembers it so a
+        // later full-document change can be expressed as a ranged change instead of
+        // an (INCREMENTAL-illegal) range-less one.
+        let end_position = match self.buffers.get(&buffer_id) {
+            Some(state) => {
+                let (line, character) = state.buffer.lsp_end_position();
+                lsp_types::Position::new(line as u32, character as u32)
+            }
+            None => {
+                tracing::debug!(
+                    "send_lsp_changes_for_buffer: buffer state gone before didChange for {:?}",
+                    buffer_id
+                );
+                return false;
+            }
+        };
+
         let lsp = &mut self.lsp;
         let mut any_sent = false;
         for sh in lsp.get_handles_mut(&language) {
@@ -4719,7 +4737,10 @@ impl Window {
                 ChangeToSend::Incremental => changes.clone(),
                 ChangeToSend::Skip => continue,
             };
-            if let Err(e) = sh.handle.did_change(uri.as_uri().clone(), outgoing) {
+            if let Err(e) = sh
+                .handle
+                .did_change(uri.as_uri().clone(), outgoing, end_position)
+            {
                 tracing::warn!("Failed to send didChange to '{}': {}", sh.name, e);
             } else {
                 any_sent = true;
