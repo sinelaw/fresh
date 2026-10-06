@@ -211,4 +211,7 @@ fn entry_dialog_sections_follow_the_locale() {
     let screen = read(&harness);
     assert!(screen.contains("── 詳細 ──"), "{screen}");
     assert!(!screen.contains("── Advanced ──"), "{screen}");
+    // A list item's name is its own, not its key path's `*`: a catalog
+    // entry for `settings.field.lsp.*.*` once titled this "Edit *".
+    assert!(screen.contains("Edit Item"), "{screen}");
 }
