@@ -2067,17 +2067,26 @@ pub fn dual_sanitize_included(options: &[DualListOption], included: &[String]) -
         .collect()
 }
 
-/// Truncate-or-pad a string to exactly `width` display columns
-/// (char-approximate; adequate for the ASCII labels DualList shows).
+/// Truncate-or-pad a string to exactly `width` display columns.
+///
+/// Measured in columns, not chars: a translated label (`Git: ブランチ`)
+/// has wide glyphs, and padding it by its char count pushed the column
+/// beside it out of line. A wide glyph that would straddle the edge is
+/// left out and its column padded, so the cell is never wider than asked.
 pub fn cell(s: &str, width: usize) -> String {
-    let chars: Vec<char> = s.chars().collect();
-    if chars.len() >= width {
-        chars[..width].iter().collect()
-    } else {
-        let mut out: String = chars.iter().collect();
-        out.extend(std::iter::repeat_n(' ', width - chars.len()));
-        out
+    use crate::primitives::display_width::char_width;
+    let mut out = String::new();
+    let mut used = 0;
+    for c in s.chars() {
+        let w = char_width(c);
+        if used + w > width {
+            break;
+        }
+        out.push(c);
+        used += w;
     }
+    out.extend(std::iter::repeat_n(' ', width - used));
+    out
 }
 
 /// Column width used for each DualList column given the panel width.
@@ -3862,6 +3871,20 @@ fn pad_or_truncate_line(line: &str, target: usize) -> String {
 
 #[cfg(test)]
 pub mod tests {
+    use super::cell;
+
+    #[test]
+    fn a_cell_is_measured_in_columns() {
+        // ASCII as before: padded, or cut at the width.
+        assert_eq!(cell("abc", 5), "abc  ");
+        assert_eq!(cell("abcdef", 4), "abcd");
+        // Wide glyphs are two columns each.
+        assert_eq!(cell("日本", 6), "日本  ");
+        assert_eq!(cell("Git: ブランチ", 14), "Git: ブランチ ");
+        // A glyph that would straddle the edge is left out, not half-drawn.
+        assert_eq!(cell("日本語", 5), "日本 ");
+    }
+
     use super::*;
 
     /// **A completion row is budgeted in columns, and a CJK candidate has
