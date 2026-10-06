@@ -7,6 +7,8 @@
 use crate::config::{Config, ConfigError};
 use crate::partial_config::{Merge, PartialConfig};
 use serde_json::Value;
+#[cfg(any(target_os = "macos", test))]
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 // ============================================================================
@@ -752,17 +754,27 @@ fn diff_partial_config(current: &PartialConfig, parent: &PartialConfig) -> Parti
 impl Config {
     /// Get the system config file paths (without local/working directory).
     ///
-    /// On macOS, prioritizes `~/.config/fresh/config.json` if it exists.
-    /// Then checks the standard system config directory.
+    /// On macOS, prioritizes the resolved config directory (`$XDG_CONFIG_HOME/fresh`
+    /// when that variable is absolute, otherwise `~/.config/fresh`) if its file exists.
+    /// An absolute `XDG_CONFIG_HOME` does not also search the personal macOS locations.
+    /// Otherwise this checks the standard system config directory.
     fn system_config_paths() -> Vec<PathBuf> {
         let mut paths = Vec::with_capacity(2);
 
-        // macOS: Prioritize ~/.config/fresh/config.json
         #[cfg(target_os = "macos")]
-        if let Some(home) = dirs::home_dir() {
-            let path = home.join(".config").join("fresh").join(Config::FILENAME);
-            if path.exists() {
-                paths.push(path);
+        {
+            if let Some(config_dir) = DirectoryContext::default_config_dir() {
+                let path = config_dir.join(Config::FILENAME);
+                if path.exists() {
+                    paths.push(path);
+                }
+            }
+            // The variable selected a directory. Do not fall through to the
+            // personal config when that file is not there yet.
+            if DirectoryContext::fresh_dir_from_xdg(std::env::var_os("XDG_CONFIG_HOME").as_deref())
+                .is_some()
+            {
+                return paths;
             }
         }
 
@@ -932,14 +944,12 @@ impl DirectoryContext {
     /// Create a DirectoryContext from the system directories
     /// This should ONLY be called from main()
     pub fn from_system() -> std::io::Result<Self> {
-        let data_dir = dirs::data_dir()
-            .ok_or_else(|| {
-                std::io::Error::new(
-                    std::io::ErrorKind::NotFound,
-                    "Could not determine data directory",
-                )
-            })?
-            .join("fresh");
+        let data_dir = Self::system_data_dir().ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "Could not determine data directory",
+            )
+        })?;
 
         let config_dir = Self::default_config_dir().ok_or_else(|| {
             std::io::Error::new(
@@ -1052,16 +1062,41 @@ impl DirectoryContext {
         self.config_dir.join("plugins")
     }
 
+    /// Data directory for `from_system()`.
+    ///
+    /// On macOS, an absolute `XDG_DATA_HOME` selects `$XDG_DATA_HOME/fresh`.
+    /// Otherwise this stays `dirs::data_dir()/fresh` (`~/Library/Application Support/fresh`).
+    /// A relative or empty value is ignored. `HOME` is not consulted for this override.
+    fn system_data_dir() -> Option<PathBuf> {
+        #[cfg(target_os = "macos")]
+        {
+            Self::macos_data_dir(
+                std::env::var_os("XDG_DATA_HOME").as_deref(),
+                dirs::data_dir().as_deref(),
+            )
+        }
+
+        #[cfg(not(target_os = "macos"))]
+        {
+            dirs::data_dir().map(|p| p.join("fresh"))
+        }
+    }
+
     /// Get the default config directory path (static/internal version).
     ///
     /// This is used internally by `from_system()` to determine the config directory.
     ///
-    /// On macOS, this prioritizes `~/.config/fresh` over `~/Library/Application Support/fresh`
-    /// to match the documented configuration location.
-    fn default_config_dir() -> Option<std::path::PathBuf> {
+    /// On macOS, an absolute `XDG_CONFIG_HOME` selects `$XDG_CONFIG_HOME/fresh`.
+    /// Otherwise this is `~/.config/fresh`, matching the documented location.
+    /// A relative or empty value is ignored. Linux already follows the variable
+    /// through `dirs::config_dir()`.
+    fn default_config_dir() -> Option<PathBuf> {
         #[cfg(target_os = "macos")]
         {
-            dirs::home_dir().map(|p| p.join(".config").join("fresh"))
+            Self::macos_config_dir(
+                std::env::var_os("XDG_CONFIG_HOME").as_deref(),
+                dirs::home_dir().as_deref(),
+            )
         }
 
         #[cfg(not(target_os = "macos"))]
@@ -1069,12 +1104,95 @@ impl DirectoryContext {
             dirs::config_dir().map(|p| p.join("fresh"))
         }
     }
+
+    /// `$XDG_*/fresh` when `value` is an absolute path. Empty and relative values
+    /// are ignored, per the XDG base directory spec.
+    #[cfg(any(target_os = "macos", test))]
+    fn fresh_dir_from_xdg(value: Option<&OsStr>) -> Option<PathBuf> {
+        let value = value?;
+        if value.is_empty() {
+            return None;
+        }
+        let path = PathBuf::from(value);
+        if path.is_absolute() {
+            Some(path.join("fresh"))
+        } else {
+            None
+        }
+    }
+
+    /// macOS config directory: the XDG override, or `home/.config/fresh`.
+    #[cfg(any(target_os = "macos", test))]
+    fn macos_config_dir(xdg_config_home: Option<&OsStr>, home: Option<&Path>) -> Option<PathBuf> {
+        Self::fresh_dir_from_xdg(xdg_config_home)
+            .or_else(|| home.map(|p| p.join(".config").join("fresh")))
+    }
+
+    /// macOS data directory: the XDG override, or `platform_data_dir/fresh`.
+    #[cfg(any(target_os = "macos", test))]
+    fn macos_data_dir(
+        xdg_data_home: Option<&OsStr>,
+        platform_data_dir: Option<&Path>,
+    ) -> Option<PathBuf> {
+        Self::fresh_dir_from_xdg(xdg_data_home)
+            .or_else(|| platform_data_dir.map(|p| p.join("fresh")))
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    #[test]
+    fn absolute_xdg_dir_selects_fresh_subdirectory() {
+        let base = std::env::temp_dir().join("xdg-base");
+        let resolved = DirectoryContext::fresh_dir_from_xdg(Some(base.as_os_str())).unwrap();
+        assert_eq!(resolved, base.join("fresh"));
+    }
+
+    #[test]
+    fn relative_or_empty_xdg_dir_is_ignored() {
+        assert!(
+            DirectoryContext::fresh_dir_from_xdg(Some(std::ffi::OsStr::new("relative"))).is_none()
+        );
+        assert!(DirectoryContext::fresh_dir_from_xdg(Some(std::ffi::OsStr::new(""))).is_none());
+        assert!(DirectoryContext::fresh_dir_from_xdg(None).is_none());
+    }
+
+    #[test]
+    fn macos_config_dir_uses_xdg_without_changing_home() {
+        let xdg = std::env::temp_dir().join("config-home");
+        let home = std::env::temp_dir().join("real-home");
+        let resolved =
+            DirectoryContext::macos_config_dir(Some(xdg.as_os_str()), Some(&home)).unwrap();
+        assert_eq!(resolved, xdg.join("fresh"));
+        assert_ne!(resolved, home.join(".config").join("fresh"));
+    }
+
+    #[test]
+    fn macos_config_dir_keeps_dot_config_when_xdg_is_unset() {
+        let home = std::env::temp_dir().join("real-home");
+        let resolved = DirectoryContext::macos_config_dir(None, Some(&home)).unwrap();
+        assert_eq!(resolved, home.join(".config").join("fresh"));
+    }
+
+    #[test]
+    fn macos_data_dir_uses_xdg_and_otherwise_the_platform_dir() {
+        let xdg = std::env::temp_dir().join("data-home");
+        let platform = std::env::temp_dir()
+            .join("Library")
+            .join("Application Support");
+        let overridden =
+            DirectoryContext::macos_data_dir(Some(xdg.as_os_str()), Some(&platform)).unwrap();
+        assert_eq!(overridden, xdg.join("fresh"));
+        let fallback = DirectoryContext::macos_data_dir(
+            Some(std::ffi::OsStr::new("relative")),
+            Some(&platform),
+        )
+        .unwrap();
+        assert_eq!(fallback, platform.join("fresh"));
+    }
 
     fn create_test_resolver() -> (TempDir, ConfigResolver) {
         let temp_dir = TempDir::new().unwrap();
