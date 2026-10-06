@@ -2328,7 +2328,7 @@ fn setting_control_view(
                     .collect(),
                 column: display_field
                     .as_deref()
-                    .map(crate::view::settings::widget_map::column_title),
+                    .map(|f| crate::view::settings::widget_map::column_title(path, f)),
                 no_add: *no_add,
                 focused: cursor.filter(|r| *r < entries.len()),
                 add_focused: cursor.is_some() && cursor == c.add_row(),

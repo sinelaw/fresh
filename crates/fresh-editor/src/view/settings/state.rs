@@ -12,6 +12,7 @@ use super::search::{search_settings, DeepMatch, SearchResult};
 use super::surface::SettingsSurface;
 use crate::config::Config;
 use crate::config_io::ConfigLayer;
+use fresh_i18n::t;
 use std::collections::HashMap;
 
 /// Set a value at a JSON pointer path, creating intermediate objects as
@@ -337,6 +338,8 @@ impl SettingsState {
         config: &Config,
         plugin_schemas: &HashMap<String, serde_json::Value>,
     ) -> Result<Self, serde_json::Error> {
+        // Settings can be built before `i18n::init`, e.g. from a test.
+        crate::i18n::embedded::ensure_registered();
         let mut categories = parse_schema(schema_json)?;
 
         // Collect enabled plugins that have a schema sidecar.
@@ -1221,12 +1224,17 @@ impl SettingsState {
     }
 
     /// Get a display name for the current target layer.
-    pub fn target_layer_name(&self) -> &'static str {
+    pub fn target_layer_name(&self) -> String {
+        t!(self.target_layer_key()).to_string()
+    }
+
+    /// The catalog key of the current target layer's name.
+    fn target_layer_key(&self) -> &'static str {
         match self.target_layer {
-            ConfigLayer::System => "System (read-only)",
-            ConfigLayer::User => "User",
-            ConfigLayer::Project => "Project",
-            ConfigLayer::Session => "Session",
+            ConfigLayer::System => "settings.layer.system",
+            ConfigLayer::User => "settings.layer.user",
+            ConfigLayer::Project => "settings.layer.project",
+            ConfigLayer::Session => "settings.layer.session",
         }
     }
 
@@ -2761,7 +2769,11 @@ impl SettingsState {
             .collect();
         // Also include pending deletions (resets)
         for path in &self.pending_deletions {
-            descriptions.push(format!("{}: (reset to default)", path));
+            descriptions.push(format!(
+                "{}: {}",
+                path,
+                t!("settings.change_reset_to_default")
+            ));
         }
         descriptions.sort();
         descriptions
@@ -3461,19 +3473,22 @@ mod tests {
     fn test_layer_selection() {
         let config = test_config();
         let mut state = SettingsState::new(TEST_SCHEMA, &config).unwrap();
+        // The name follows the active locale, which other tests in this
+        // binary change; what the layer is called in English is fixed.
+        let english = |key| fresh_i18n::translate_in("en", key);
 
         // Default is User layer
         assert_eq!(state.target_layer, ConfigLayer::User);
-        assert_eq!(state.target_layer_name(), "User");
+        assert_eq!(english(state.target_layer_key()), Some("User"));
 
         // Cycle through layers
         state.cycle_target_layer();
         assert_eq!(state.target_layer, ConfigLayer::Project);
-        assert_eq!(state.target_layer_name(), "Project");
+        assert_eq!(english(state.target_layer_key()), Some("Project"));
 
         state.cycle_target_layer();
         assert_eq!(state.target_layer, ConfigLayer::Session);
-        assert_eq!(state.target_layer_name(), "Session");
+        assert_eq!(english(state.target_layer_key()), Some("Session"));
 
         state.cycle_target_layer();
         assert_eq!(state.target_layer, ConfigLayer::User);
