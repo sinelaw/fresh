@@ -401,6 +401,13 @@ fn test_drag_to_the_screen_edges_scrolls_with_the_chrome_hidden() {
     for _ in 0..20 {
         harness.mouse_scroll_down(30, 8).unwrap();
     }
+    // The config is this test's own, so smooth scrolling is on and the
+    // notches leave lines owed that the wall clock walks out frame by frame.
+    // Let the walk finish first: on a slow runner the drag's frames would
+    // otherwise still carry wheel lines down while the drag scrolls up.
+    harness
+        .wait_until(|h| !h.editor().has_pending_wheel_scroll())
+        .unwrap();
     harness.render().unwrap();
     let bottom = harness.buffer().area.height - 1;
     assert!(

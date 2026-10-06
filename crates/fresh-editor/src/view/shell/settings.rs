@@ -89,7 +89,7 @@ pub fn layer(c: Option<&Chrome>) -> Node<UiMsg> {
             // already; this is the message where the box would be.
             return match &c {
                 None => col().key(key()).pointer_mode(PointerMode::Ignore),
-                Some(_) => text(TOO_SMALL)
+                Some(_) => text(too_small())
                     .theme(pair("diagnostic.warning_fg", "editor.bg"))
                     .key(too_small_key()),
             };
@@ -350,7 +350,9 @@ fn absorb(n: Node<UiMsg>) -> Node<UiMsg> {
 
 /// The painter's message where the box would be, when the area is under
 /// `MIN_AREA`.
-pub const TOO_SMALL: &str = "[Terminal too small for settings]";
+pub fn too_small() -> String {
+    fresh_i18n::t!("settings.terminal_too_small").to_string()
+}
 
 pub fn too_small_key() -> fresh_ui::Key {
     fresh_ui::Key::Str("settings_too_small".into())
@@ -1041,7 +1043,7 @@ fn description(c: &Card) -> Option<Node<UiMsg>> {
         .as_deref()
         .map(|d| d.split_whitespace().collect::<Vec<_>>().join(" "))
         .unwrap_or_default();
-    if let Some(l) = c.layer {
+    if let Some(l) = &c.layer {
         match body.is_empty() {
             true => body = format!("({l})"),
             false => body.push_str(&format!(" ({l})")),
@@ -1385,7 +1387,7 @@ pub struct Card {
     pub description: Option<String>,
     /// `user`, `project` or `session` — the layer the value came from, shown
     /// after the description. `None` for a schema default.
-    pub layer: Option<&'static str>,
+    pub layer: Option<String>,
     /// The keyboard cursor is on this card and the body has the keyboard.
     pub selected: bool,
     /// The pointer is on it.
@@ -2478,7 +2480,7 @@ mod tests {
         let msg = ui.rect_of(ui.find_by_key(&too_small_key()).expect("the message"));
         assert_eq!(
             msg.w as usize,
-            TOO_SMALL.len().min(30),
+            too_small().len().min(30),
             "clipped to the frame"
         );
     }

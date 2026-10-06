@@ -8,6 +8,7 @@
 
 use super::entry_dialog::EntryDialogState;
 use super::search::{DeepMatch, SearchResult};
+use fresh_i18n::t;
 
 /// Get an icon for a settings category name.
 ///
@@ -155,9 +156,9 @@ fn highlight_spans(
 pub(crate) fn entry_delete_button_label(dialog: &EntryDialogState) -> String {
     const MAX_KEY_IN_LABEL: usize = 24;
     if dialog.is_array_item {
-        "[ Delete item ]".to_string()
+        format!("[ {} ]", t!("settings.btn_delete_item"))
     } else if dialog.entry_key.is_empty() {
-        "[ Delete entry ]".to_string()
+        format!("[ {} ]", t!("settings.btn_delete_entry"))
     } else {
         let key = if dialog.entry_key.chars().count() > MAX_KEY_IN_LABEL {
             let truncated: String = dialog
@@ -169,6 +170,6 @@ pub(crate) fn entry_delete_button_label(dialog: &EntryDialogState) -> String {
         } else {
             dialog.entry_key.clone()
         };
-        format!("[ Delete \"{}\" ]", key)
+        format!("[ {} ]", t!("settings.btn_delete_named", name = key))
     }
 }

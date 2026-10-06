@@ -630,7 +630,7 @@ fn teleporting_the_same_session_twice_gives_each_copy_its_own_worktree() {
     let (_tmp, root, mut h) = teleport_setup();
     start_teleport(&mut h);
     h.send_key(KeyCode::Enter, KeyModifiers::CONTROL).unwrap();
-    h.wait_until(|h| {
+    h.wait_until(|_| {
         worktree_names(&root)
             .iter()
             .any(|n| n == "fix-the-auth-bug")
@@ -641,7 +641,7 @@ fn teleporting_the_same_session_twice_gives_each_copy_its_own_worktree() {
 
     start_teleport(&mut h);
     h.send_key(KeyCode::Enter, KeyModifiers::CONTROL).unwrap();
-    h.wait_until(|h| {
+    h.wait_until(|_| {
         worktree_names(&root)
             .iter()
             .any(|n| n == "fix-the-auth-bug-2")
@@ -682,7 +682,7 @@ fn a_name_typed_over_the_proposed_one_names_the_copy() {
         .unwrap();
     h.send_key(KeyCode::Enter, KeyModifiers::CONTROL).unwrap();
 
-    h.wait_until(|h| worktree_names(&root).iter().any(|n| n == "auth-work"))
+    h.wait_until(|_| worktree_names(&root).iter().any(|n| n == "auth-work"))
         .unwrap();
     h.wait_until(|h| h.screen_to_string().contains("· auth-work"))
         .unwrap();

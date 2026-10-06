@@ -7154,17 +7154,16 @@ mod tests {
         // The error will be sent to async_bridge
         assert!(result.is_ok());
 
-        // Give the task time to fail
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-
-        // Check that we received an error message
-        let messages = async_bridge.try_recv_all();
-        assert!(!messages.is_empty());
-
-        let has_error = messages
+        // Wait for the spawn task to report the missing binary. The lookup
+        // walks PATH x PATHEXT on Windows, so how long it takes is up to the
+        // runner; nextest bounds the wait.
+        while !async_bridge
+            .try_recv_all()
             .iter()
-            .any(|msg| matches!(msg, AsyncMessage::LspError { .. }));
-        assert!(has_error, "Expected LspError message");
+            .any(|msg| matches!(msg, AsyncMessage::LspError { .. }))
+        {
+            tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+        }
     }
 
     #[test]
@@ -7389,17 +7388,9 @@ mod tests {
 
         // Wait until the spawn task observes the missing binary and
         // pushes the state to Error.
-        for _ in 0..200 {
-            if handle.state() == LspClientState::Error {
-                break;
-            }
+        while handle.state() != LspClientState::Error {
             tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
         }
-        assert_eq!(
-            handle.state(),
-            LspClientState::Error,
-            "spawn task should have transitioned to Error after failed spawn"
-        );
 
         // Shutdown from Error: the channel send may fail because the
         // spawn task already exited, but state must advance past Error.

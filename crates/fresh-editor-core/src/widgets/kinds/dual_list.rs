@@ -431,7 +431,7 @@ pub fn header_row(st: &Resolved, col_w: usize) -> TextPropertyEntry {
         } else {
             DUAL_GUTTER_BLANK
         },
-        cell("Available", col_w)
+        cell(&fresh_i18n::t!("settings.dual_list_available"), col_w)
     );
     let incl_head = format!(
         "{}{}",
@@ -440,7 +440,7 @@ pub fn header_row(st: &Resolved, col_w: usize) -> TextPropertyEntry {
         } else {
             DUAL_GUTTER_BLANK
         },
-        cell("Included", col_w)
+        cell(&fresh_i18n::t!("settings.dual_list_included"), col_w)
     );
     let header = format!("{avail_head}  {incl_head}");
     let head_left = 0..avail_head.len();

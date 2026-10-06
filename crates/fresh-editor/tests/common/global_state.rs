@@ -24,12 +24,13 @@
 //! The discipline is a reader/writer split, so the cost lands only where it
 //! has to:
 //!
-//!   * every harness construction takes the **read** side for the length of
-//!     the construction ([`guard_harness_construction`]) — uncontended in
-//!     the common case, so ordinary tests keep building editors in parallel;
+//!   * every harness takes the **read** side for as long as it lives
+//!     ([`lease_config_globals`]) — uncontended in the common case, so
+//!     ordinary tests keep building and driving editors in parallel;
 //!   * a test that depends on one of these globals holding still takes the
 //!     **write** side for its whole body ([`pin_config_globals`]), which
-//!     keeps every other construction out until it drops.
+//!     waits for every live harness to drop and keeps new ones out until
+//!     the pin drops.
 //!
 //! The pin is re-entrant for its own thread: a pinned test builds harnesses
 //! of its own, and those constructions skip the read side rather than
@@ -39,17 +40,20 @@
 //! and this costs nothing; under `cargo test` it is what makes the pinning
 //! tests independent of their neighbours.
 //!
-//! What this deliberately does *not* cover: a test that built its editor
-//! before the pin was taken keeps rendering while the pin is held, and for
-//! the locale half that means it renders in whatever language the pin
-//! selected. The pin narrows that window — such a test now blocks at its
-//! *next* construction rather than resetting the locale mid-pin — but it
-//! cannot close it. Closing it properly means either giving the locale
-//! tests a test binary of their own (nothing else in the process would then
-//! read a pinned locale) or taking the locale off a process global
-//! entirely; both are larger changes than the flakes here call for. The
-//! indent half has no such gap: `USER_RULES` is read by config id, and no
-//! test but the pinning one has a rule registered under its id.
+//! The read side is held for the harness's whole life, not just its
+//! construction, because the locale is read at *render* time: `t!()` looks
+//! up the process-global locale on every frame. A lease that ended with
+//! construction let a test whose editor already existed keep rendering
+//! while a pin held `es`, `fr` or `ja`, so an English assertion such as
+//! `[Reset]` met `[Restablecer]` — intermittently, only under `cargo test`.
+//!
+//! The lease is counted per thread, so a test holding two harnesses takes
+//! the lock once. That matters: `std`'s `RwLock` may queue a second read
+//! behind a waiting writer, and a thread already holding the read side
+//! would then wait on a writer that waits on it. A harness holds an `Rc`
+//! and never leaves its thread, so the count always drops where it was
+//! raised. Taking a pin while this thread still holds a harness would wait
+//! on itself; [`pin_config_globals`] panics instead, naming the fix.
 //!
 //! Two more process-globals live here for the same reason, with their own
 //! shapes: the `fresh` data directory ([`pin_data_dir`], a thread-local
@@ -58,7 +62,7 @@
 //! directories under `tests/fixtures/` all provide a program called `ssh`).
 //! See their docs below.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::sync::{RwLock, RwLockReadGuard};
 
 static CONFIG_GLOBALS: RwLock<()> = RwLock::new(());
@@ -67,6 +71,11 @@ thread_local! {
     /// Set while this thread holds the write side, so its own harness
     /// constructions skip the (non-reentrant) read acquisition.
     static PINNED_BY_THIS_THREAD: Cell<bool> = const { Cell::new(false) };
+
+    /// The live harness leases on this thread, and the one read guard they
+    /// share while there is at least one.
+    static HARNESS_LEASES: RefCell<(usize, Option<RwLockReadGuard<'static, ()>>)> =
+        const { RefCell::new((0, None)) };
 }
 
 /// Pin the config-derived process globals for the rest of the test.
@@ -93,24 +102,55 @@ pub fn pin_config_globals() -> impl Drop {
     // A poisoned lock means some other test panicked while holding the pin.
     // The globals it left behind are re-initialized by whoever takes the pin
     // next, so the poison carries no information worth failing on.
+    assert_eq!(
+        HARNESS_LEASES.with(|l| l.borrow().0),
+        0,
+        "pin_config_globals() must be taken before this test builds any \
+         harness: a live harness holds the read side, so the pin would wait \
+         on this very thread"
+    );
     let guard = CONFIG_GLOBALS.write().unwrap_or_else(|e| e.into_inner());
     PINNED_BY_THIS_THREAD.with(|p| p.set(true));
     fresh::i18n::set_locale("en");
     Guard(guard)
 }
 
-/// Hold the read side for the length of one harness construction.
+/// A harness's share of the read side; see [`lease_config_globals`].
+#[must_use = "the read side is released as soon as the lease drops"]
+pub struct HarnessLease(());
+
+impl Drop for HarnessLease {
+    fn drop(&mut self) {
+        HARNESS_LEASES.with(|l| {
+            let mut l = l.borrow_mut();
+            l.0 -= 1;
+            if l.0 == 0 {
+                l.1 = None;
+            }
+        });
+    }
+}
+
+/// Hold the read side for as long as one harness lives.
 ///
-/// Call this around the part of `EditorTestHarness::create` that writes the
-/// config-derived globals, and let the returned guard drop as soon as the
-/// editor exists. Returns `None` — i.e. takes nothing — when this thread is
-/// already inside its own [`pin_config_globals`], which is what lets a
-/// pinned test build harnesses without deadlocking on its own write guard.
-pub fn guard_harness_construction() -> Option<RwLockReadGuard<'static, ()>> {
+/// Take it before `EditorTestHarness::create` writes the config-derived
+/// globals and keep it in the harness, so no pin can change the locale
+/// while this editor can still render. Returns `None` — i.e. takes
+/// nothing — when this thread is already inside its own
+/// [`pin_config_globals`], which is what lets a pinned test build harnesses
+/// without deadlocking on its own write guard.
+pub fn lease_config_globals() -> Option<HarnessLease> {
     if PINNED_BY_THIS_THREAD.with(|p| p.get()) {
         return None;
     }
-    Some(CONFIG_GLOBALS.read().unwrap_or_else(|e| e.into_inner()))
+    HARNESS_LEASES.with(|l| {
+        let mut l = l.borrow_mut();
+        if l.0 == 0 {
+            l.1 = Some(CONFIG_GLOBALS.read().unwrap_or_else(|e| e.into_inner()));
+        }
+        l.0 += 1;
+    });
+    Some(HarnessLease(()))
 }
 
 /// The other process-global the harness derives from: the `fresh` **data
