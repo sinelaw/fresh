@@ -1610,6 +1610,7 @@ dependencies = [
  "jsonc-parser",
  "lsp-types",
  "oxc_allocator",
+ "oxc_ast",
  "oxc_codegen",
  "oxc_diagnostics",
  "oxc_parser",

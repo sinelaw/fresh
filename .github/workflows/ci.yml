@@ -84,6 +84,31 @@ jobs:
       - name: Check schema is up-to-date
         run: diff -u crates/fresh-editor/plugins/config-schema.json /tmp/config-schema.json
 
+  # fresh.d.ts and the plugin API reference (docs/plugins/api/) are generated
+  # from the Rust source. Regenerate both and fail if the committed copies differ.
+  plugin-api:
+    name: plugin API types and docs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Cache Cargo dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - name: Regenerate fresh.d.ts and the API reference
+        run: cargo test -p fresh-plugin-runtime --lib write_fresh_dts_file -- --ignored
+      - name: Check they are up-to-date
+        run: |
+          if ! git diff --exit-code -- crates/fresh-editor/plugins/lib/fresh.d.ts docs/plugins/api; then
+            echo "::error::fresh.d.ts or docs/plugins/api is out of date. Run: cargo test -p fresh-plugin-runtime write_fresh_dts_file -- --ignored"
+            exit 1
+          fi
+          untracked=$(git ls-files --others --exclude-standard -- docs/plugins/api)
+          if [ -n "$untracked" ]; then
+            echo "::error::New generated API pages are not committed: $untracked"
+            exit 1
+          fi
+
   check-no-plugins:
     name: check (no plugins)
     runs-on: ubuntu-latest

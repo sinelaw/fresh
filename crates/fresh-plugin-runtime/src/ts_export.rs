@@ -39,46 +39,51 @@ use fresh_core::text_property::InlineOverlay;
 ///
 /// Returns None if the type is not known (not registered in this mapping).
 /// Add new types here when they're added to api.rs with `#[derive(TS)]`.
+/// A ts-rs declaration with the type's Rust doc comment as its JSDoc.
+fn decl_with_docs<T: TS>(cfg: &TsConfig) -> String {
+    format!("{}{}", T::docs().unwrap_or_default(), T::decl(cfg))
+}
+
 fn get_type_decl(type_name: &str) -> Option<String> {
     let cfg = TsConfig::default();
     // Map TypeScript type names to their ts-rs declarations
     // The type name should match either the Rust struct name or the ts(rename = "...") value
     match type_name {
         // Animation types
-        "AnimationRect" => Some(AnimationRect::decl(&cfg)),
-        "PluginAnimationEdge" => Some(PluginAnimationEdge::decl(&cfg)),
-        "PluginAnimationKind" => Some(PluginAnimationKind::decl(&cfg)),
+        "AnimationRect" => Some(decl_with_docs::<AnimationRect>(&cfg)),
+        "PluginAnimationEdge" => Some(decl_with_docs::<PluginAnimationEdge>(&cfg)),
+        "PluginAnimationKind" => Some(decl_with_docs::<PluginAnimationKind>(&cfg)),
 
         // Core types
-        "BufferInfo" => Some(BufferInfo::decl(&cfg)),
-        "WindowInfo" => Some(WindowInfo::decl(&cfg)),
-        "RemoteBackendInfo" => Some(RemoteBackendInfo::decl(&cfg)),
-        "CursorInfo" => Some(CursorInfo::decl(&cfg)),
-        "ViewportInfo" => Some(ViewportInfo::decl(&cfg)),
-        "ScreenSize" => Some(ScreenSize::decl(&cfg)),
-        "KeyEventPayload" => Some(KeyEventPayload::decl(&cfg)),
-        "SplitSnapshot" => Some(SplitSnapshot::decl(&cfg)),
-        "SplitCreated" => Some(fresh_core::api::SplitCreated::decl(&cfg)),
-        "SplitWindowOptions" => Some(fresh_core::api::SplitWindowOptions::decl(&cfg)),
-        "SplitAxis" => Some(fresh_core::api::SplitAxis::decl(&cfg)),
-        "SplitPlacement" => Some(fresh_core::api::SplitPlacement::decl(&cfg)),
-        "LineTarget" => Some(fresh_core::api::LineTarget::decl(&cfg)),
-        "PaneDescription" => Some(fresh_core::api::PaneDescription::decl(&cfg)),
-        "WorkspaceDescription" => Some(fresh_core::api::WorkspaceDescription::decl(&cfg)),
-        "ActionSpec" => Some(ActionSpec::decl(&cfg)),
-        "BufferSavedDiff" => Some(BufferSavedDiff::decl(&cfg)),
-        "LineDiffHunk" => Some(LineDiffHunk::decl(&cfg)),
-        "DiffBaselineResult" => Some(DiffBaselineResult::decl(&cfg)),
-        "LayoutHints" => Some(LayoutHints::decl(&cfg)),
+        "BufferInfo" => Some(decl_with_docs::<BufferInfo>(&cfg)),
+        "WindowInfo" => Some(decl_with_docs::<WindowInfo>(&cfg)),
+        "RemoteBackendInfo" => Some(decl_with_docs::<RemoteBackendInfo>(&cfg)),
+        "CursorInfo" => Some(decl_with_docs::<CursorInfo>(&cfg)),
+        "ViewportInfo" => Some(decl_with_docs::<ViewportInfo>(&cfg)),
+        "ScreenSize" => Some(decl_with_docs::<ScreenSize>(&cfg)),
+        "KeyEventPayload" => Some(decl_with_docs::<KeyEventPayload>(&cfg)),
+        "SplitSnapshot" => Some(decl_with_docs::<SplitSnapshot>(&cfg)),
+        "SplitCreated" => Some(decl_with_docs::<fresh_core::api::SplitCreated>(&cfg)),
+        "SplitWindowOptions" => Some(decl_with_docs::<fresh_core::api::SplitWindowOptions>(&cfg)),
+        "SplitAxis" => Some(decl_with_docs::<fresh_core::api::SplitAxis>(&cfg)),
+        "SplitPlacement" => Some(decl_with_docs::<fresh_core::api::SplitPlacement>(&cfg)),
+        "LineTarget" => Some(decl_with_docs::<fresh_core::api::LineTarget>(&cfg)),
+        "PaneDescription" => Some(decl_with_docs::<fresh_core::api::PaneDescription>(&cfg)),
+        "WorkspaceDescription" => Some(decl_with_docs::<fresh_core::api::WorkspaceDescription>(&cfg)),
+        "ActionSpec" => Some(decl_with_docs::<ActionSpec>(&cfg)),
+        "BufferSavedDiff" => Some(decl_with_docs::<BufferSavedDiff>(&cfg)),
+        "LineDiffHunk" => Some(decl_with_docs::<LineDiffHunk>(&cfg)),
+        "DiffBaselineResult" => Some(decl_with_docs::<DiffBaselineResult>(&cfg)),
+        "LayoutHints" => Some(decl_with_docs::<LayoutHints>(&cfg)),
 
         // Process types
-        "SpawnResult" => Some(SpawnResult::decl(&cfg)),
-        "BackgroundProcessResult" => Some(BackgroundProcessResult::decl(&cfg)),
+        "SpawnResult" => Some(decl_with_docs::<SpawnResult>(&cfg)),
+        "BackgroundProcessResult" => Some(decl_with_docs::<BackgroundProcessResult>(&cfg)),
 
         // Grep/Replace types
-        "GrepMatch" => Some(GrepMatch::decl(&cfg)),
-        "ReplaceResult" => Some(ReplaceResult::decl(&cfg)),
-        "SearchTakeResult" => Some(SearchTakeResult::decl(&cfg)),
+        "GrepMatch" => Some(decl_with_docs::<GrepMatch>(&cfg)),
+        "ReplaceResult" => Some(decl_with_docs::<ReplaceResult>(&cfg)),
+        "SearchTakeResult" => Some(decl_with_docs::<SearchTakeResult>(&cfg)),
         // SearchHandle is the JS-side wrapper over a numeric handle id.
         // The Rust type can't be exported (non-serializable runtime state).
         "SearchHandle" => Some(
@@ -86,104 +91,104 @@ fn get_type_decl(type_name: &str) -> Option<String> {
         ),
 
         // Terminal types
-        "TerminalResult" => Some(TerminalResult::decl(&cfg)),
-        "CreateTerminalOptions" => Some(CreateTerminalOptions::decl(&cfg)),
+        "TerminalResult" => Some(decl_with_docs::<TerminalResult>(&cfg)),
+        "CreateTerminalOptions" => Some(decl_with_docs::<CreateTerminalOptions>(&cfg)),
         "CreateWindowWithTerminalOptions" => {
-            Some(fresh_core::api::CreateWindowWithTerminalOptions::decl(&cfg))
+            Some(decl_with_docs::<fresh_core::api::CreateWindowWithTerminalOptions>(&cfg))
         }
         "SessionWithTerminalResult" => {
-            Some(fresh_core::api::SessionWithTerminalResult::decl(&cfg))
+            Some(decl_with_docs::<fresh_core::api::SessionWithTerminalResult>(&cfg))
         }
         "CreatePreparingWindowOptions" => {
-            Some(fresh_core::api::CreatePreparingWindowOptions::decl(&cfg))
+            Some(decl_with_docs::<fresh_core::api::CreatePreparingWindowOptions>(&cfg))
         }
-        "PreparingWindowResult" => Some(fresh_core::api::PreparingWindowResult::decl(&cfg)),
+        "PreparingWindowResult" => Some(decl_with_docs::<fresh_core::api::PreparingWindowResult>(&cfg)),
 
         // Composite buffer types (ts-rs renames these with Ts prefix)
         "TsCompositeLayoutConfig" | "CompositeLayoutConfig" => {
-            Some(CompositeLayoutConfig::decl(&cfg))
+            Some(decl_with_docs::<CompositeLayoutConfig>(&cfg))
         }
         "TsCompositeSourceConfig" | "CompositeSourceConfig" => {
-            Some(CompositeSourceConfig::decl(&cfg))
+            Some(decl_with_docs::<CompositeSourceConfig>(&cfg))
         }
-        "TsCompositePaneStyle" | "CompositePaneStyle" => Some(CompositePaneStyle::decl(&cfg)),
-        "TsCompositeHunk" | "CompositeHunk" => Some(CompositeHunk::decl(&cfg)),
-        "TsSyntaxRegion" | "SyntaxRegion" => Some(fresh_core::api::SyntaxRegion::decl(&cfg)),
+        "TsCompositePaneStyle" | "CompositePaneStyle" => Some(decl_with_docs::<CompositePaneStyle>(&cfg)),
+        "TsCompositeHunk" | "CompositeHunk" => Some(decl_with_docs::<CompositeHunk>(&cfg)),
+        "TsSyntaxRegion" | "SyntaxRegion" => Some(decl_with_docs::<fresh_core::api::SyntaxRegion>(&cfg)),
         "TsCreateCompositeBufferOptions" | "CreateCompositeBufferOptions" => {
-            Some(CreateCompositeBufferOptions::decl(&cfg))
+            Some(decl_with_docs::<CreateCompositeBufferOptions>(&cfg))
         }
 
         // View transform types
-        "ViewTokenWireKind" => Some(ViewTokenWireKind::decl(&cfg)),
-        "TokenColor" => Some(TokenColor::decl(&cfg)),
-        "ViewTokenStyle" => Some(ViewTokenStyle::decl(&cfg)),
-        "ViewTokenWire" => Some(ViewTokenWire::decl(&cfg)),
+        "ViewTokenWireKind" => Some(decl_with_docs::<ViewTokenWireKind>(&cfg)),
+        "TokenColor" => Some(decl_with_docs::<TokenColor>(&cfg)),
+        "ViewTokenStyle" => Some(decl_with_docs::<ViewTokenStyle>(&cfg)),
+        "ViewTokenWire" => Some(decl_with_docs::<ViewTokenWire>(&cfg)),
 
         // UI types (ts-rs renames these with Ts prefix)
-        "TsActionPopupAction" | "ActionPopupAction" => Some(ActionPopupAction::decl(&cfg)),
-        "ActionPopupOptions" => Some(ActionPopupOptions::decl(&cfg)),
-        "AddMenuItemOptions" => Some(fresh_core::api::AddMenuItemOptions::decl(&cfg)),
-        "TsLspMenuItem" | "LspMenuItem" => Some(fresh_core::api::LspMenuItem::decl(&cfg)),
-        "TsHighlightSpan" => Some(TsHighlightSpan::decl(&cfg)),
-        "FileExplorerDecoration" => Some(FileExplorerDecoration::decl(&cfg)),
-        "FileExplorerSlotEntry" => Some(FileExplorerSlotEntry::decl(&cfg)),
-        "FileExplorerLeadingSlot" => Some(FileExplorerLeadingSlot::decl(&cfg)),
-        "FileExplorerTrailingSlot" => Some(FileExplorerTrailingSlot::decl(&cfg)),
-        "FileExplorerTooltip" => Some(FileExplorerTooltip::decl(&cfg)),
+        "TsActionPopupAction" | "ActionPopupAction" => Some(decl_with_docs::<ActionPopupAction>(&cfg)),
+        "ActionPopupOptions" => Some(decl_with_docs::<ActionPopupOptions>(&cfg)),
+        "AddMenuItemOptions" => Some(decl_with_docs::<fresh_core::api::AddMenuItemOptions>(&cfg)),
+        "TsLspMenuItem" | "LspMenuItem" => Some(decl_with_docs::<fresh_core::api::LspMenuItem>(&cfg)),
+        "TsHighlightSpan" => Some(decl_with_docs::<TsHighlightSpan>(&cfg)),
+        "FileExplorerDecoration" => Some(decl_with_docs::<FileExplorerDecoration>(&cfg)),
+        "FileExplorerSlotEntry" => Some(decl_with_docs::<FileExplorerSlotEntry>(&cfg)),
+        "FileExplorerLeadingSlot" => Some(decl_with_docs::<FileExplorerLeadingSlot>(&cfg)),
+        "FileExplorerTrailingSlot" => Some(decl_with_docs::<FileExplorerTrailingSlot>(&cfg)),
+        "FileExplorerTooltip" => Some(decl_with_docs::<FileExplorerTooltip>(&cfg)),
 
         // Virtual buffer option types
-        "TextPropertyEntry" | "JsTextPropertyEntry" => Some(JsTextPropertyEntry::decl(&cfg)),
-        "CreateVirtualBufferOptions" => Some(CreateVirtualBufferOptions::decl(&cfg)),
-        "CreateVirtualBufferInSplitOptions" => Some(CreateVirtualBufferInSplitOptions::decl(&cfg)),
+        "TextPropertyEntry" | "JsTextPropertyEntry" => Some(decl_with_docs::<JsTextPropertyEntry>(&cfg)),
+        "CreateVirtualBufferOptions" => Some(decl_with_docs::<CreateVirtualBufferOptions>(&cfg)),
+        "CreateVirtualBufferInSplitOptions" => Some(decl_with_docs::<CreateVirtualBufferInSplitOptions>(&cfg)),
         "CreateVirtualBufferInExistingSplitOptions" => {
-            Some(CreateVirtualBufferInExistingSplitOptions::decl(&cfg))
+            Some(decl_with_docs::<CreateVirtualBufferInExistingSplitOptions>(&cfg))
         }
 
         // Return types
-        "TextPropertiesAtCursor" => Some(TextPropertiesAtCursor::decl(&cfg)),
-        "VirtualBufferResult" => Some(VirtualBufferResult::decl(&cfg)),
-        "BufferGroupResult" => Some(BufferGroupResult::decl(&cfg)),
+        "TextPropertiesAtCursor" => Some(decl_with_docs::<TextPropertiesAtCursor>(&cfg)),
+        "VirtualBufferResult" => Some(decl_with_docs::<VirtualBufferResult>(&cfg)),
+        "BufferGroupResult" => Some(decl_with_docs::<BufferGroupResult>(&cfg)),
 
         // Prompt and directory types
-        "PromptSuggestion" | "Suggestion" => Some(Suggestion::decl(&cfg)),
-        "DirEntry" => Some(DirEntry::decl(&cfg)),
+        "PromptSuggestion" | "Suggestion" => Some(decl_with_docs::<Suggestion>(&cfg)),
+        "DirEntry" => Some(decl_with_docs::<DirEntry>(&cfg)),
 
         // Diagnostic types
-        "JsDiagnostic" => Some(JsDiagnostic::decl(&cfg)),
-        "JsRange" => Some(JsRange::decl(&cfg)),
-        "JsPosition" => Some(JsPosition::decl(&cfg)),
+        "JsDiagnostic" => Some(decl_with_docs::<JsDiagnostic>(&cfg)),
+        "JsRange" => Some(decl_with_docs::<JsRange>(&cfg)),
+        "JsPosition" => Some(decl_with_docs::<JsPosition>(&cfg)),
 
         // Grammar info types
-        "GrammarInfoSnapshot" => Some(GrammarInfoSnapshot::decl(&cfg)),
+        "GrammarInfoSnapshot" => Some(decl_with_docs::<GrammarInfoSnapshot>(&cfg)),
 
         // Language pack types
-        "LanguagePackConfig" => Some(LanguagePackConfig::decl(&cfg)),
-        "LspServerPackConfig" => Some(LspServerPackConfig::decl(&cfg)),
-        "ProcessLimitsPackConfig" => Some(ProcessLimitsPackConfig::decl(&cfg)),
-        "FormatterPackConfig" => Some(FormatterPackConfig::decl(&cfg)),
+        "LanguagePackConfig" => Some(decl_with_docs::<LanguagePackConfig>(&cfg)),
+        "LspServerPackConfig" => Some(decl_with_docs::<LspServerPackConfig>(&cfg)),
+        "ProcessLimitsPackConfig" => Some(decl_with_docs::<ProcessLimitsPackConfig>(&cfg)),
+        "FormatterPackConfig" => Some(decl_with_docs::<FormatterPackConfig>(&cfg)),
 
         // Overlay/inline styling types
-        "OverlayOptions" => Some(OverlayOptions::decl(&cfg)),
-        "OverlayColorSpec" => Some(OverlayColorSpec::decl(&cfg)),
-        "ScrollbarMarker" => Some(ScrollbarMarker::decl(&cfg)),
-        "InlineOverlay" => Some(InlineOverlay::decl(&cfg)),
-        "OffsetUnit" => Some(fresh_core::text_property::OffsetUnit::decl(&cfg)),
-        "StyledSegment" => Some(fresh_core::text_property::StyledSegment::decl(&cfg)),
-        "StyledText" => Some(fresh_core::api::StyledText::decl(&cfg)),
+        "OverlayOptions" => Some(decl_with_docs::<OverlayOptions>(&cfg)),
+        "OverlayColorSpec" => Some(decl_with_docs::<OverlayColorSpec>(&cfg)),
+        "ScrollbarMarker" => Some(decl_with_docs::<ScrollbarMarker>(&cfg)),
+        "InlineOverlay" => Some(decl_with_docs::<InlineOverlay>(&cfg)),
+        "OffsetUnit" => Some(decl_with_docs::<fresh_core::text_property::OffsetUnit>(&cfg)),
+        "StyledSegment" => Some(decl_with_docs::<fresh_core::text_property::StyledSegment>(&cfg)),
+        "StyledText" => Some(decl_with_docs::<fresh_core::api::StyledText>(&cfg)),
 
         // Widget library types — declarative plugin UI.
         // See docs/internal/plugin-widget-library-design.md.
-        "WidgetSpec" => Some(fresh_core::api::WidgetSpec::decl(&cfg)),
-        "WidgetPanelOptions" => Some(fresh_core::api::WidgetPanelOptions::decl(&cfg)),
-        "ScrollAlign" => Some(fresh_core::api::ScrollAlign::decl(&cfg)),
-        "HintEntry" => Some(fresh_core::api::HintEntry::decl(&cfg)),
-        "ButtonKind" => Some(fresh_core::api::ButtonKind::decl(&cfg)),
-        "LabelAlign" => Some(fresh_core::api::LabelAlign::decl(&cfg)),
-        "Elide" => Some(fresh_core::api::Elide::decl(&cfg)),
-        "WidgetAction" => Some(fresh_core::api::WidgetAction::decl(&cfg)),
-        "WidgetMutation" => Some(fresh_core::api::WidgetMutation::decl(&cfg)),
-        "TreeNode" => Some(fresh_core::api::TreeNode::decl(&cfg)),
-        "TextWindowAnchor" => Some(fresh_core::api::TextWindowAnchor::decl(&cfg)),
+        "WidgetSpec" => Some(decl_with_docs::<fresh_core::api::WidgetSpec>(&cfg)),
+        "WidgetPanelOptions" => Some(decl_with_docs::<fresh_core::api::WidgetPanelOptions>(&cfg)),
+        "ScrollAlign" => Some(decl_with_docs::<fresh_core::api::ScrollAlign>(&cfg)),
+        "HintEntry" => Some(decl_with_docs::<fresh_core::api::HintEntry>(&cfg)),
+        "ButtonKind" => Some(decl_with_docs::<fresh_core::api::ButtonKind>(&cfg)),
+        "LabelAlign" => Some(decl_with_docs::<fresh_core::api::LabelAlign>(&cfg)),
+        "Elide" => Some(decl_with_docs::<fresh_core::api::Elide>(&cfg)),
+        "WidgetAction" => Some(decl_with_docs::<fresh_core::api::WidgetAction>(&cfg)),
+        "WidgetMutation" => Some(decl_with_docs::<fresh_core::api::WidgetMutation>(&cfg)),
+        "TreeNode" => Some(decl_with_docs::<fresh_core::api::TreeNode>(&cfg)),
+        "TextWindowAnchor" => Some(decl_with_docs::<fresh_core::api::TextWindowAnchor>(&cfg)),
 
         // Authority — payload schema for `editor.setAuthority(...)`.
         // Hand-written because the authoritative struct lives in
@@ -511,7 +516,23 @@ pub fn format_typescript(source: &str) -> String {
     Codegen::new().build(&parser_ret.program).code
 }
 
-/// Generate and write the complete fresh.d.ts file
+/// API reference sections for the `EditorAPI` methods declared in
+/// `plugin_api_trailer` below. They bypass the proc macro, so they can't
+/// carry `#[plugin_api(section = "...")]`. Overloads of macro methods
+/// (`getPluginApi`, `on`, `off`) take their section from the macro.
+const TRAILER_SECTIONS: &[(&str, &str)] = &[
+    ("openMachine", "Machines"),
+    ("walkTree", "Machines"),
+    ("readFilePrefixes", "Machines"),
+    ("runOnTarget", "Machines"),
+    ("machineEnv", "Machines"),
+    ("defineConfigEnum", "Config"),
+    ("getPluginConfig", "Config"),
+    ("createBufferGroup", "Buffer Groups"),
+];
+
+/// Generate and write the complete fresh.d.ts file, and the API
+/// reference pages under `docs/plugins/api/` that are rendered from it.
 ///
 /// Combines ts-rs generated types with proc macro output,
 /// validates the syntax, formats the output, and writes to disk.
@@ -850,9 +871,20 @@ interface HookEventMap {
   resize: { width: number; height: number };
 
   // ── prompts ──────────────────────────────────────────────────────────────
+  /**
+   * The text in a prompt opened with `editor.startPrompt` changed. Fires on
+   * every keystroke, so a plugin can refilter its suggestions.
+   */
   prompt_changed: { prompt_type: string; input: string };
+  /**
+   * The user pressed Enter in a prompt opened with `editor.startPrompt`.
+   * `input` is the chosen suggestion's `value`, or the typed text when no
+   * suggestion is chosen.
+   */
   prompt_confirmed: { prompt_type: string; input: string; selected_index: number | null };
+  /** The user pressed Esc in a prompt opened with `editor.startPrompt`. */
   prompt_cancelled: { prompt_type: string; input: string };
+  /** The highlighted suggestion in a prompt changed. */
   prompt_selection_changed: { prompt_type: string; selected_index: number };
 
   // ── mouse ────────────────────────────────────────────────────────────────
@@ -870,6 +902,11 @@ interface HookEventMap {
     symbol: string;
     locations: { file: string; line: number; column: number }[];
   };
+  /**
+   * A language server sent a request (server to client) with a method the
+   * editor does not handle itself. `params` is a JSON string, or `null`.
+   * The editor answers the server with `null`.
+   */
   lsp_server_request: {
     language: string;
     method: string;
@@ -881,6 +918,14 @@ interface HookEventMap {
    * itself (e.g. clangd's `textDocument/clangd.fileStatus`, `$/memoryUsage`).
    * Unlike `lsp_server_request`, `params` is the parsed JSON value, not a
    * string. `server_name` tells apart several servers for one language.
+   *
+   * ```ts
+   * editor.on("lsp/custom_notification", (e) => {
+   *   if (e.method === "textDocument/clangd.fileStatus" && e.params) {
+   *     editor.setStatus(`clangd: ${(e.params as { status: string }).status}`);
+   *   }
+   * });
+   * ```
    */
   "lsp/custom_notification": {
     language: string;
@@ -903,6 +948,7 @@ interface HookEventMap {
   };
 
   // ── UI events ────────────────────────────────────────────────────────────
+  /** The user chose an action in a popup opened with `editor.showActionPopup`. */
   action_popup_result: { popup_id: string; action_id: string };
   /**
    * User clicked a plugin-registered status-bar token. Subscribers
@@ -916,15 +962,20 @@ interface HookEventMap {
   theme_inspect_key: { theme_name: string; key: string };
   keyboard_shortcuts: { bindings: { key: string; action: string }[] };
 
-  // ── PTY terminals (see crates/fresh-core/src/hooks.rs) ───────────────────
-  // `window_id` is the editor window owning the terminal (== session id),
-  // so a plugin can attribute output to a session: output from ANY terminal
-  // in the window counts, and it fires on every PTY read (in-place redraws
-  // and carriage-return progress bars register, not just newlines).
+  // ── terminals ────────────────────────────────────────────────────────────
+  // Payloads match crates/fresh-core/src/hooks.rs.
+  /**
+   * A terminal produced output. Fires on every read from the terminal, so
+   * in-place redraws and progress bars count, not only new lines.
+   * `window_id` is the window that owns the terminal, so a plugin can tell
+   * which session the output belongs to.
+   */
   terminal_output: { terminal_id: number; window_id: number; last_line: string };
+  /** A terminal's process exited. `exit_code` is `null` when a signal ended it. */
   terminal_exit: { terminal_id: number; window_id: number; exit_code: number | null };
 
-  // ── filesystem watching (watchPath plugin API) ────────────────────────────
+  // ── file watching ────────────────────────────────────────────────────────
+  /** A path watched with `editor.watchPath` changed. */
   path_changed: {
     handle: number;
     path: string;
@@ -932,9 +983,17 @@ interface HookEventMap {
     kind: string;
   };
 
-  // ── editor sessions (Orchestrator; see orchestrator-sessions-design.md) ────────
+  // ── windows ──────────────────────────────────────────────────────────────
+  // A window is what the Orchestrator shows as a session. See
+  // docs/internal/orchestrator-sessions-design.md.
+  /**
+   * A window (an Orchestrator session) was created, by `editor.createWindow`
+   * or when sessions are restored at startup.
+   */
   window_created: { id: number; label: string; root: string };
+  /** A window was closed. */
   window_closed: { id: number };
+  /** The active window changed, once the switch has finished. */
   active_window_changed: { previous_id: number | null; active_id: number };
   /**
    * What the user is looking at changed: the active buffer of the active
@@ -981,8 +1040,11 @@ interface HookEventMap {
    * widget spec node, or empty when the spec did not assign one).
    *
    * `event_type` and `payload` shapes:
+   *   * Text field: `event_type = "change"`, `payload = { value, cursorByte }`.
    *   * Toggle: `event_type = "toggle"`, `payload = { checked: <new> }`.
    *   * Button: `event_type = "activate"`, `payload = {}`.
+   *   * Esc, a click outside, or the `[×]` of a closable panel:
+   *     `event_type = "cancel"`. The host has already unmounted the panel.
    */
   widget_event: {
     window_id: number;
@@ -1045,28 +1107,50 @@ interface EditorAPI {
     // Format the TypeScript
     let formatted = format_typescript(&content);
 
-    // Determine output path - write to fresh-editor/plugins/lib/fresh.d.ts
-    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
-    let output_path = std::path::Path::new(&manifest_dir)
-        .parent() // crates/
-        .and_then(|p| p.parent()) // workspace root
-        .map(|p| p.join("crates/fresh-editor/plugins/lib/fresh.d.ts"))
-        .unwrap_or_else(|| std::path::PathBuf::from("plugins/lib/fresh.d.ts"));
+    let root = workspace_root();
+    write_if_changed(
+        &root.join("crates/fresh-editor/plugins/lib/fresh.d.ts"),
+        &formatted,
+    )?;
 
-    // Only write if content changed
-    let should_write = match std::fs::read_to_string(&output_path) {
-        Ok(existing) => existing != formatted,
-        Err(_) => true,
-    };
-
-    if should_write {
-        if let Some(parent) = output_path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-        }
-        std::fs::write(&output_path, &formatted).map_err(|e| e.to_string())?;
+    for page in crate::api_docs::render(&formatted, &api_sections())? {
+        write_if_changed(
+            &root.join("docs/plugins/api").join(page.file),
+            &page.content,
+        )?;
     }
 
     Ok(())
+}
+
+/// Every `EditorAPI` method's API reference section.
+fn api_sections() -> std::collections::HashMap<&'static str, &'static str> {
+    use crate::backend::quickjs_backend::JSEDITORAPI_TS_SECTIONS;
+    JSEDITORAPI_TS_SECTIONS
+        .iter()
+        .chain(TRAILER_SECTIONS)
+        .copied()
+        .collect()
+}
+
+fn workspace_root() -> std::path::PathBuf {
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
+    std::path::Path::new(&manifest_dir)
+        .parent() // crates/
+        .and_then(|p| p.parent()) // workspace root
+        .map(std::path::Path::to_path_buf)
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+}
+
+/// Write `content` to `path` unless it already holds exactly that.
+fn write_if_changed(path: &std::path::Path, content: &str) -> Result<(), String> {
+    if std::fs::read_to_string(path).ok().as_deref() == Some(content) {
+        return Ok(());
+    }
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(path, content).map_err(|e| format!("{}: {}", path.display(), e))
 }
 
 #[cfg(test)]

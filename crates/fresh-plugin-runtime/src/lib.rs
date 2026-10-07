@@ -1,3 +1,4 @@
+pub mod api_docs;
 pub mod backend;
 pub mod process;
 pub mod thread;

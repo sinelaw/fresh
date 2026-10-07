@@ -10,7 +10,7 @@ Asks for text on the bottom line. This takes the least code.
 const value = await editor.prompt("Issue number:", "");
 ```
 
-[Example code](https://github.com/sinelaw/fresh/blob/master/docs/plugins/examples/asking-for-input/1_prompt_line.ts) · API: [`prompt`](../../api/buffer#prompt)
+[Example code](https://github.com/sinelaw/fresh/blob/master/docs/plugins/examples/asking-for-input/1_prompt_line.ts) · API: [`prompt`](../../api/ui#prompt)
 
 ![Prompt line](./screenshots/1.png)
 
@@ -18,7 +18,7 @@ const value = await editor.prompt("Issue number:", "");
 
 Asks for text in a box in the middle of the screen, with a list under it. The list can update as the user types.
 
-[Example code](https://github.com/sinelaw/fresh/blob/master/docs/plugins/examples/asking-for-input/2_floating_prompt.ts) · API: [`startPrompt`](../../api/buffer#startprompt), [`setPromptSuggestions`](../../api/buffer#setpromptsuggestions), [`setPromptFooter`](../../api/buffer#setpromptfooter), [prompt events](../../api/events#prompt-popup-and-dialog-events)
+[Example code](https://github.com/sinelaw/fresh/blob/master/docs/plugins/examples/asking-for-input/2_floating_prompt.ts) · API: [`startPrompt`](../../api/ui#startprompt), [`setPromptSuggestions`](../../api/ui#setpromptsuggestions), [`setPromptFooter`](../../api/ui#setpromptfooter), [prompt events](../../api/events#prompts)
 
 ![Floating prompt](./screenshots/2.png)
 
@@ -26,7 +26,7 @@ Asks for text in a box in the middle of the screen, with a list under it. The li
 
 Shows a list of choices on the bottom line. The user picks one.
 
-[Example code](https://github.com/sinelaw/fresh/blob/master/docs/plugins/examples/asking-for-input/3_pick_list.ts) · API: [`startPrompt`](../../api/buffer#startprompt), [`setPromptSuggestions`](../../api/buffer#setpromptsuggestions), [prompt events](../../api/events#prompt-popup-and-dialog-events)
+[Example code](https://github.com/sinelaw/fresh/blob/master/docs/plugins/examples/asking-for-input/3_pick_list.ts) · API: [`startPrompt`](../../api/ui#startprompt), [`setPromptSuggestions`](../../api/ui#setpromptsuggestions), [prompt events](../../api/events#prompts)
 
 ![Pick list](./screenshots/3.png)
 
@@ -34,7 +34,7 @@ Shows a list of choices on the bottom line. The user picks one.
 
 Shows a dialog box with fields, checkboxes and buttons. Use it to ask for several things at once.
 
-[Example code](https://github.com/sinelaw/fresh/blob/master/docs/plugins/examples/asking-for-input/4_modal_dialog.ts) · API: [`mountFloatingWidget`](../../api/buffer#mountfloatingwidget), [`updateFloatingWidget`](../../api/buffer#updatefloatingwidget), [`unmountFloatingWidget`](../../api/buffer#unmountfloatingwidget), [`widget_event`](../../api/events#prompt-popup-and-dialog-events)
+[Example code](https://github.com/sinelaw/fresh/blob/master/docs/plugins/examples/asking-for-input/4_modal_dialog.ts) · API: [`mountFloatingWidget`](../../api/ui#mountfloatingwidget), [`updateFloatingWidget`](../../api/ui#updatefloatingwidget), [`unmountFloatingWidget`](../../api/ui#unmountfloatingwidget), [`widget_event`](../../api/events#widget-event)
 
 ![Dialog](./screenshots/4.png)
 
@@ -42,7 +42,7 @@ Shows a dialog box with fields, checkboxes and buttons. Use it to ask for severa
 
 Shows a short message with a few choices.
 
-[Example code](https://github.com/sinelaw/fresh/blob/master/docs/plugins/examples/asking-for-input/5_action_popup.ts) · API: [`showActionPopup`](../../api/buffer#showactionpopup), [`action_popup_result`](../../api/events#prompt-popup-and-dialog-events)
+[Example code](https://github.com/sinelaw/fresh/blob/master/docs/plugins/examples/asking-for-input/5_action_popup.ts) · API: [`showActionPopup`](../../api/ui#showactionpopup), [`action_popup_result`](../../api/events#action-popup-result)
 
 ![Popup](./screenshots/5.png)
 
@@ -50,7 +50,7 @@ Shows a short message with a few choices.
 
 Waits for the user to press one key. The user doesn't press Enter.
 
-[Example code](https://github.com/sinelaw/fresh/blob/master/docs/plugins/examples/asking-for-input/6_single_key.ts) · API: [`getNextKey`](../../api/buffer#getnextkey)
+[Example code](https://github.com/sinelaw/fresh/blob/master/docs/plugins/examples/asking-for-input/6_single_key.ts) · API: [`getNextKey`](../../api/ui#getnextkey)
 
 ![Single key](./screenshots/6.png)
 
@@ -58,6 +58,6 @@ Waits for the user to press one key. The user doesn't press Enter.
 
 Lets the user choose a file. Returns the file's path.
 
-[Example code](https://github.com/sinelaw/fresh/blob/master/docs/plugins/examples/asking-for-input/7_file_picker.ts) · API: [`pickFile`](../../api/buffer#pickfile)
+[Example code](https://github.com/sinelaw/fresh/blob/master/docs/plugins/examples/asking-for-input/7_file_picker.ts) · API: [`pickFile`](../../api/ui#pickfile)
 
 ![File picker](./screenshots/7.png)
