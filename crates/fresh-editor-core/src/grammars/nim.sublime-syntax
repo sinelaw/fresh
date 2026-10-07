@@ -27,13 +27,10 @@ contexts:
           scope: constant.character.escape.nim
         - match: '"'
           pop: true
-    - match: "'"
-      push:
-        - meta_scope: string.quoted.single.nim
-        - match: '\\.'
-          scope: constant.character.escape.nim
-        - match: "'"
-          pop: true
+    # Matched whole, not pushed: an unpaired `'` must not scope the rest of
+    # the file (issue #3455). YAML writes a literal apostrophe as two.
+    - match: '''(?:\\(?:x[0-9a-fA-F]{2}|.)|[^''\\])'''
+      scope: string.quoted.single.nim
   keywords:
     - match: '\b(proc|func|method|converter|macro|template|iterator|type|object|enum|concept|tuple|ref|ptr|var|let|const|import|include|from|export|except|discard|return|yield|block|defer|asm|bind|mixin|static|using)\b'
       scope: keyword.declaration.nim
@@ -46,13 +43,18 @@ contexts:
     - match: '\b(int|int8|int16|int32|int64|uint|uint8|uint16|uint32|uint64|float|float32|float64|bool|char|string|cstring|pointer|range|array|seq|set|openArray|varargs|Natural|Positive|BiggestInt|BiggestFloat|Ordinal|SomeInteger|SomeFloat|SomeNumber|void|auto|typedesc)\b'
       scope: storage.type.nim
   numbers:
-    - match: '\b0[xX][0-9a-fA-F_]+\b'
+    # The `'suffix` tail is a type suffix. It is an identifier, not a fixed
+    # list, because a library can define one (`'big` in std/jsbigints).
+    - match: '\b0[xX][0-9a-fA-F][0-9a-fA-F_]*(?:''[a-zA-Z][a-zA-Z0-9_]*)?'
       scope: constant.numeric.hex.nim
-    - match: '\b0[oO][0-7_]+\b'
+    - match: '\b0[oO][0-7][0-7_]*(?:''[a-zA-Z][a-zA-Z0-9_]*)?'
       scope: constant.numeric.octal.nim
-    - match: '\b0[bB][01_]+\b'
+    - match: '\b0[bB][01][01_]*(?:''[a-zA-Z][a-zA-Z0-9_]*)?'
       scope: constant.numeric.binary.nim
-    - match: "\b\\d[\\d_]*(\\.[\\d_]*)?(e[+-]?\\d+)?('?[iIuUfFdD](8|16|32|64))?\\b"
+    # Single-quoted: in double quotes YAML reads `\b` as a backspace, not a
+    # word boundary, and this rule matched nothing. The fraction needs a digit
+    # after the dot so a slice's `..` stays out of it.
+    - match: '\b\d[\d_]*(?:\.\d[\d_]*)?(?:[eE][+-]?\d+)?(?:''[a-zA-Z][a-zA-Z0-9_]*)?'
       scope: constant.numeric.nim
   pragmas:
     - match: '\{\.[\w, ]+\.\}'

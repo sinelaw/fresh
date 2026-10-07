@@ -594,14 +594,20 @@ impl BracketHighlightOverlay {
             let pos = scan_start + idx;
             let c = *byte as char;
 
-            // Brackets inside comments/strings are prose/data, not structural
-            // punctuation — don't colorize them and don't let them affect the
-            // nesting depth of real brackets (issue #2405).
+            let opening = is_opening_bracket(c, angle_brackets);
+            if !opening && !is_closing_bracket(c, angle_brackets) {
+                continue;
+            }
+
+            // Brackets inside comments/strings are prose, not structure: don't
+            // colorize them and don't let them affect the nesting depth of
+            // real brackets (issue #2405). Checked only for brackets, because
+            // that is the only thing it can veto and this runs per byte.
             if pos_in_ranges(skip_ranges, pos) {
                 continue;
             }
 
-            if is_opening_bracket(c, angle_brackets) {
+            if opening {
                 let depth = stack.len();
                 stack.push(c);
                 if pos >= viewport_start {
@@ -610,16 +616,14 @@ impl BracketHighlightOverlay {
                 continue;
             }
 
-            if is_closing_bracket(c, angle_brackets) {
-                let depth = stack.len().saturating_sub(1);
-                if let Some(expected_open) = opening_for_closing(c, angle_brackets) {
-                    if stack.last() == Some(&expected_open) {
-                        stack.pop();
-                    }
+            let depth = stack.len().saturating_sub(1);
+            if let Some(expected_open) = opening_for_closing(c, angle_brackets) {
+                if stack.last() == Some(&expected_open) {
+                    stack.pop();
                 }
-                if pos >= viewport_start {
-                    wanted.insert(pos, depth % self.rainbow_colors.len());
-                }
+            }
+            if pos >= viewport_start {
+                wanted.insert(pos, depth % self.rainbow_colors.len());
             }
         }
 
@@ -699,6 +703,55 @@ mod tests {
         markers: &mut MarkerList,
     ) -> bool {
         overlay.update_colorization(buffer, overlays, markers, 0, buffer.len(), &[], false)
+    }
+
+    /// The colour painted at `byte`, scanning the whole buffer.
+    fn colour_at(buffer: &Buffer, byte: usize, skip_ranges: &[Range<usize>]) -> Option<Color> {
+        let mut overlays = OverlayManager::new();
+        let mut markers = MarkerList::new();
+        let mut overlay = BracketHighlightOverlay::new();
+        overlay.update_colorization(
+            buffer,
+            &mut overlays,
+            &mut markers,
+            0,
+            buffer.len(),
+            skip_ranges,
+            false,
+        );
+        let ns = bracket_colorization_namespace();
+        let found = overlays.in_namespace(&ns).find_map(|o| {
+            let range = o.range(&markers);
+            match o.face {
+                OverlayFace::Foreground { color } if range.start == byte => Some(color),
+                _ => None,
+            }
+        });
+        found
+    }
+
+    /// The skip check sits behind the test for a bracket, so this pins that a
+    /// brace in a comment is still neither painted nor counted (issue #2405).
+    #[test]
+    fn a_bracket_in_a_skipped_span_is_neither_painted_nor_counted() {
+        // Two skipped spans, so the binary search has more than one entry.
+        let text = "# prose brace: {\n()\n# and a tail: }\n";
+        let prose = text.find('{').expect("the prose brace");
+        let pair = text.find('(').expect("the real pair");
+        let tail = text.find('}').expect("the tail brace");
+        let buffer = Buffer::from_str_test(text);
+        let skips = [prose..prose + 1, tail..tail + 1];
+
+        assert_eq!(colour_at(&buffer, prose, &skips), None, "not painted");
+
+        // The same file without the stray braces: the pair is at depth 0 both
+        // ways, so a skipped brace did not push it to 1.
+        let clean = Buffer::from_str_test(&text.replace(['{', '}'], " "));
+        assert_eq!(
+            colour_at(&buffer, pair, &skips),
+            colour_at(&clean, pair, &[]),
+            "a skipped brace must not shift the depth of real brackets"
+        );
     }
 
     /// One `update` as the renderer makes it, for a cursor that does not move.

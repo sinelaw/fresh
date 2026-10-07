@@ -312,3 +312,91 @@ fn test_asm_language_detection() {
 test_highlighting_works!(test_highlight_cjs, "hello.cjs", 2);
 test_highlighting_works!(test_highlight_mts, "hello.mts", 2);
 test_highlighting_works!(test_highlight_jenkinsfile, "Jenkinsfile", 2);
+
+// --- Nim: an unpaired apostrophe must not scope the rest of the file (#3455) ---
+
+/// Foreground of the first cell of `text` on screen.
+fn fg_of(harness: &EditorTestHarness, text: &str) -> Option<Color> {
+    let (col, row) = harness.find_text_on_screen(text).unwrap_or_else(|| {
+        panic!(
+            "expected {text:?} on screen:\n{}",
+            harness.screen_to_string()
+        )
+    });
+    harness.get_cell_style(col, row).unwrap_or_default().fg
+}
+
+fn nim_harness(dir: &tempfile::TempDir, source: &str) -> EditorTestHarness {
+    let path = dir.path().join("literals.nim");
+    std::fs::write(&path, source).unwrap();
+    let mut harness = EditorTestHarness::create(
+        120,
+        30,
+        HarnessOptions::new()
+            .with_project_root()
+            .with_full_grammar_registry(),
+    )
+    .unwrap();
+    harness.open_file(&path).unwrap();
+    harness.render().unwrap();
+    harness
+}
+
+/// Each of these fails if the apostrophe opens a string: `discard` then shares
+/// the string's colour instead of a keyword's. They also fail if the Nim
+/// grammar is missing from the pack, which `build.rs` only warns about.
+#[test]
+fn nim_typed_literal_does_not_scope_the_rest_of_the_file() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let harness = nim_harness(&dir, "let a = 1'i8\nlet s = \"str\"\nproc f() = discard\n");
+
+    let string_fg = fg_of(&harness, "\"str\"");
+    let keyword_fg = fg_of(&harness, "discard");
+    assert_ne!(
+        keyword_fg, string_fg,
+        "`discard` is a keyword, not string content"
+    );
+}
+
+/// `'big` is a suffix std/jsbigints defines, so a fixed list of Nim's own
+/// suffixes would miss it.
+#[test]
+fn nim_custom_literal_suffix_does_not_scope_the_rest_of_the_file() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let harness = nim_harness(
+        &dir,
+        "let a = 11111111111111111111'big\nlet s = \"str\"\nproc f() = discard\n",
+    );
+
+    let string_fg = fg_of(&harness, "\"str\"");
+    let keyword_fg = fg_of(&harness, "discard");
+    assert_ne!(
+        keyword_fg, string_fg,
+        "a custom literal suffix must not open a string"
+    );
+}
+
+/// The general case behind both of the above.
+#[test]
+fn nim_stray_apostrophe_does_not_scope_the_rest_of_the_file() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let harness = nim_harness(&dir, "let a = foo'\nlet s = \"str\"\nproc f() = discard\n");
+
+    let string_fg = fg_of(&harness, "\"str\"");
+    let keyword_fg = fg_of(&harness, "discard");
+    assert_ne!(
+        keyword_fg, string_fg,
+        "an unpaired apostrophe must not open a string"
+    );
+}
+
+/// The control: bounding the rule must not stop `'x'` highlighting.
+#[test]
+fn nim_char_literal_still_highlights_as_a_string() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let harness = nim_harness(&dir, "let c = 'x'\nlet s = \"str\"\nproc f() = discard\n");
+
+    let string_fg = fg_of(&harness, "\"str\"");
+    let char_fg = fg_of(&harness, "'x'");
+    assert_eq!(char_fg, string_fg, "a char literal is still a string");
+}
