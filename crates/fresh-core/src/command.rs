@@ -53,7 +53,7 @@ pub struct Suggestion {
     pub id: String,
     /// The text to display
     pub text: String,
-    /// Optional description
+    /// Optional description, shown in the row alongside `text`
     #[serde(default)]
     #[ts(optional)]
     pub description: Option<String>,
@@ -72,7 +72,7 @@ pub struct Suggestion {
     #[serde(default)]
     #[ts(optional)]
     pub description_spans: Option<Vec<crate::api::StyledText>>,
-    /// Optional keyboard shortcut
+    /// Optional keyboard shortcut, shown in the row as a hint
     #[serde(default)]
     #[ts(optional)]
     pub keybinding: Option<String>,

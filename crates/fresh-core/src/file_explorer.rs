@@ -3,15 +3,18 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use ts_rs::TS;
 
-/// Decoration metadata for a file explorer entry.
+/// Decoration metadata for a file explorer entry, provided by a plugin
+/// through `setFileExplorerDecorations`.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(deny_unknown_fields)]
 #[ts(export)]
 pub struct FileExplorerDecoration {
-    /// File path to decorate
+    /// File path to decorate: absolute, or relative to the file explorer's
+    /// root. Paths outside the root are ignored.
     #[ts(type = "string")]
     pub path: PathBuf,
-    /// Symbol to display (e.g., "●", "M", "A")
+    /// Symbol to display (e.g., "●", "M", "A"). Only its first character is
+    /// shown, so use a single character.
     pub symbol: String,
     /// Color as RGB array or theme key string (e.g., "ui.file_status_added_fg")
     pub color: OverlayColorSpec,

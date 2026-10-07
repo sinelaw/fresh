@@ -106,11 +106,13 @@ interface FreshPluginRegistry {}
 */
 type TextPropertyEntry = {
 	/**
-	* Text content for this entry
+	* Text content for this entry. Entries are concatenated verbatim, so
+	* end the text with a newline to put the entry on a line of its own.
 	*/
 	text: string;
 	/**
-	* Optional properties attached to this text (e.g., file path, line number)
+	* Optional properties attached to this text (e.g., file path, line
+	* number): arbitrary metadata, read back with `getTextPropertiesAtCursor`
 	*/
 	properties?: Record<string, unknown>;
 	/**
@@ -173,11 +175,11 @@ type TsCompositeLayoutConfig = {
 */
 type TsCompositeSourceConfig = {
 	/**
-	* Buffer ID of the source buffer (required)
+	* ID of the source buffer this pane displays (required)
 	*/
 	bufferId: number;
 	/**
-	* Label for this pane (e.g., "OLD", "NEW")
+	* Label for this pane (e.g., "OLD", "NEW"), shown in the pane's header
 	*/
 	label: string;
 	/**
@@ -348,11 +350,11 @@ type ViewportInfo = {
 	*/
 	leftColumn: number;
 	/**
-	* Viewport width
+	* Viewport width in columns
 	*/
 	width: number;
 	/**
-	* Viewport height
+	* Viewport height in rows
 	*/
 	height: number;
 };
@@ -726,7 +728,7 @@ type PromptSuggestion = {
 	*/
 	text: string;
 	/**
-	* Optional description
+	* Optional description, shown in the row alongside `text`
 	*/
 	description?: string;
 	/**
@@ -745,7 +747,7 @@ type PromptSuggestion = {
 	*/
 	description_spans?: Array<StyledText>;
 	/**
-	* Optional keyboard shortcut
+	* Optional keyboard shortcut, shown in the row as a hint
 	*/
 	keybinding?: string;
 };
@@ -754,7 +756,8 @@ type PromptSuggestion = {
 */
 type DirEntry = {
 	/**
-	* File/directory name
+	* File/directory name only, not the full path: join it with the
+	* directory that was read to get the entry's path
 	*/
 	name: string;
 	/**
@@ -762,7 +765,8 @@ type DirEntry = {
 	*/
 	is_file: boolean;
 	/**
-	* True if this is a directory
+	* True if this is a directory. A symlink reports the type of its
+	* target, so a link to a directory is a directory here
 	*/
 	is_dir: boolean;
 };
@@ -798,7 +802,7 @@ type BufferInfo = {
 	*/
 	name: string;
 	/**
-	* Whether the buffer has been modified
+	* Whether the buffer has unsaved changes
 	*/
 	modified: boolean;
 	/**
@@ -1130,15 +1134,18 @@ type TsLspMenuItem = {
 	label: string;
 };
 /**
-* Decoration metadata for a file explorer entry.
+* Decoration metadata for a file explorer entry, provided by a plugin
+* through `setFileExplorerDecorations`.
 */
 type FileExplorerDecoration = {
 	/**
-	* File path to decorate
+	* File path to decorate: absolute, or relative to the file explorer's
+	* root. Paths outside the root are ignored.
 	*/
 	path: string;
 	/**
-	* Symbol to display (e.g., "●", "M", "A")
+	* Symbol to display (e.g., "●", "M", "A"). Only its first character is
+	* shown, so use a single character.
 	*/
 	symbol: string;
 	/**
@@ -1268,7 +1275,7 @@ type ProcessLimitsPackConfig = {
 	enabled: boolean | null;
 };
 /**
-* Result of creating a terminal
+* Result of creating a terminal, returned by `createTerminal`
 */
 type TerminalResult = {
 	/**
@@ -1547,7 +1554,8 @@ type CreateTerminalOptions = {
 	allowScript?: boolean;
 };
 /**
-* Information about a cursor in the editor
+* Information about a cursor in the editor: its position, its line, and
+* its selection if it has one
 */
 type CursorInfo = {
 	/**
@@ -2983,7 +2991,8 @@ type PathTranslationSpec = {
 */
 type BackgroundProcessResult = {
 	/**
-	* Unique process ID for later reference
+	* Unique process ID for later reference, e.g. with `killProcess` or
+	* `isProcessRunning`
 	*/
 	process_id: number;
 	/**
@@ -3004,11 +3013,11 @@ type BufferSavedDiff = {
 */
 type CreateVirtualBufferInExistingSplitOptions = {
 	/**
-	* Buffer name (displayed in tabs/title)
+	* Buffer name (displayed in tabs/title), e.g. `"*Commit Details*"`
 	*/
 	name: string;
 	/**
-	* Target split ID (required)
+	* ID of the existing split to show the buffer in (required)
 	*/
 	splitId: number;
 	/**
@@ -3061,11 +3070,13 @@ type CreateVirtualBufferInExistingSplitOptions = {
 */
 type CreateVirtualBufferInSplitOptions = {
 	/**
-	* Buffer name (displayed in tabs/title)
+	* Buffer name (displayed in tabs/title). By convention it is wrapped
+	* in asterisks, e.g. `"*Diagnostics*"`
 	*/
 	name: string;
 	/**
-	* Mode for keybindings (e.g., "git-log", "search-results")
+	* Mode for keybindings (e.g., "git-log", "search-results"); define
+	* it with `defineMode` first
 	*/
 	mode?: string;
 	/**
@@ -3073,7 +3084,8 @@ type CreateVirtualBufferInSplitOptions = {
 	*/
 	readOnly?: boolean;
 	/**
-	* Split ratio 0.0-1.0 (default: 0.5)
+	* Split ratio 0.0-1.0 (default: 0.5): the share of the first pane,
+	* which is the existing content unless `before` is set
 	*/
 	ratio?: number;
 	/**
@@ -3082,6 +3094,7 @@ type CreateVirtualBufferInSplitOptions = {
 	* The name describes the **divider**, not the arrangement:
 	* `"vertical"` puts the panes side by side (a vertical divider between
 	* them), `"horizontal"` stacks them. Same convention as `splitWindow`.
+	* Default: `"horizontal"`.
 	*/
 	direction?: string;
 	/**
@@ -3097,11 +3110,14 @@ type CreateVirtualBufferInSplitOptions = {
 	*/
 	showCursors?: boolean;
 	/**
-	* Disable text editing (default: false)
+	* Disable text editing (default: false): typing, deletion, cut,
+	* paste, undo and redo are refused, while navigation, selection and
+	* copy still work
 	*/
 	editingDisabled?: boolean;
 	/**
-	* Enable line wrapping
+	* Enable line wrapping (default: follow the editor's line-wrap
+	* setting)
 	*/
 	lineWrap?: boolean;
 	/**
@@ -3143,11 +3159,13 @@ type CreateVirtualBufferInSplitOptions = {
 */
 type CreateVirtualBufferOptions = {
 	/**
-	* Buffer name (displayed in tabs/title)
+	* Buffer name (displayed in tabs/title). By convention it is wrapped
+	* in asterisks, e.g. `"*Diagnostics*"`
 	*/
 	name: string;
 	/**
-	* Mode for keybindings (e.g., "git-log", "search-results")
+	* Mode for keybindings (e.g., "git-log", "search-results"); define
+	* it with `defineMode` first
 	*/
 	mode?: string;
 	/**
@@ -3163,7 +3181,9 @@ type CreateVirtualBufferOptions = {
 	*/
 	showCursors?: boolean;
 	/**
-	* Disable text editing (default: false)
+	* Disable text editing (default: false): typing, deletion, cut,
+	* paste, undo and redo are refused, while navigation, selection and
+	* copy still work
 	*/
 	editingDisabled?: boolean;
 	/**
@@ -3517,11 +3537,13 @@ type ScrollbarMarker = {
 */
 type SpawnResult = {
 	/**
-	* Complete stdout as string
+	* Complete stdout as string, exactly as the process wrote it: newlines,
+	* including the trailing one, are kept
 	*/
 	stdout: string;
 	/**
-	* Complete stderr as string
+	* Complete stderr as string. When the process could not be started,
+	* it holds the error message instead (and `exit_code` is -1)
 	*/
 	stderr: string;
 	/**

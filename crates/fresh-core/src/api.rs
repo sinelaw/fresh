@@ -136,7 +136,7 @@ impl std::fmt::Display for JsCallbackId {
     }
 }
 
-/// Result of creating a terminal
+/// Result of creating a terminal, returned by `createTerminal`
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export, rename_all = "camelCase")]
@@ -374,7 +374,8 @@ pub enum PluginAsyncMessage {
     },
 }
 
-/// Information about a cursor in the editor
+/// Information about a cursor in the editor: its position, its line, and
+/// its selection if it has one
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct CursorInfo {
@@ -548,7 +549,7 @@ pub struct BufferInfo {
     /// apart — or two panels of your own.
     #[serde(default)]
     pub name: String,
-    /// Whether the buffer has been modified
+    /// Whether the buffer has unsaved changes
     pub modified: bool,
     /// Length of buffer in bytes
     pub length: usize,
@@ -686,9 +687,9 @@ pub struct ViewportInfo {
     pub top_line: Option<usize>,
     /// Left column offset (horizontal scroll)
     pub left_column: usize,
-    /// Viewport width
+    /// Viewport width in columns
     pub width: u16,
-    /// Viewport height
+    /// Viewport height in rows
     pub height: u16,
 }
 
@@ -1320,11 +1321,11 @@ fn default_true() -> bool {
 #[serde(deny_unknown_fields)]
 #[ts(export, rename = "TsCompositeSourceConfig")]
 pub struct CompositeSourceConfig {
-    /// Buffer ID of the source buffer (required)
+    /// ID of the source buffer this pane displays (required)
     #[serde(rename = "bufferId")]
     #[ts(rename = "bufferId")]
     pub buffer_id: usize,
-    /// Label for this pane (e.g., "OLD", "NEW")
+    /// Label for this pane (e.g., "OLD", "NEW"), shown in the pane's header
     pub label: String,
     /// Whether this pane is editable
     #[serde(default)]
@@ -6688,9 +6689,11 @@ pub struct TsHighlightSpan {
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct SpawnResult {
-    /// Complete stdout as string
+    /// Complete stdout as string, exactly as the process wrote it: newlines,
+    /// including the trailing one, are kept
     pub stdout: String,
-    /// Complete stderr as string
+    /// Complete stderr as string. When the process could not be started,
+    /// it holds the error message instead (and `exit_code` is -1)
     pub stderr: String,
     /// Process exit code (0 usually means success, -1 if killed)
     pub exit_code: i32,
@@ -6700,7 +6703,8 @@ pub struct SpawnResult {
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct BackgroundProcessResult {
-    /// Unique process ID for later reference
+    /// Unique process ID for later reference, e.g. with `killProcess` or
+    /// `isProcessRunning`
     #[ts(type = "number")]
     pub process_id: u64,
     /// Process exit code (0 usually means success, -1 if killed)
@@ -6821,9 +6825,11 @@ pub struct ReplaceResult {
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 #[ts(export, rename = "TextPropertyEntry", rename_all = "camelCase")]
 pub struct JsTextPropertyEntry {
-    /// Text content for this entry
+    /// Text content for this entry. Entries are concatenated verbatim, so
+    /// end the text with a newline to put the entry on a line of its own.
     pub text: String,
-    /// Optional properties attached to this text (e.g., file path, line number)
+    /// Optional properties attached to this text (e.g., file path, line
+    /// number): arbitrary metadata, read back with `getTextPropertiesAtCursor`
     #[serde(default)]
     #[ts(optional, type = "Record<string, unknown>")]
     pub properties: Option<HashMap<String, JsonValue>>,
@@ -6866,11 +6872,13 @@ pub struct JsTextPropertyEntry {
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct DirEntry {
-    /// File/directory name
+    /// File/directory name only, not the full path: join it with the
+    /// directory that was read to get the entry's path
     pub name: String,
     /// True if this is a file
     pub is_file: bool,
-    /// True if this is a directory
+    /// True if this is a directory. A symlink reports the type of its
+    /// target, so a link to a directory is a directory here
     pub is_dir: bool,
 }
 
@@ -6916,9 +6924,11 @@ pub struct JsDiagnostic {
 #[serde(deny_unknown_fields)]
 #[ts(export)]
 pub struct CreateVirtualBufferOptions {
-    /// Buffer name (displayed in tabs/title)
+    /// Buffer name (displayed in tabs/title). By convention it is wrapped
+    /// in asterisks, e.g. `"*Diagnostics*"`
     pub name: String,
-    /// Mode for keybindings (e.g., "git-log", "search-results")
+    /// Mode for keybindings (e.g., "git-log", "search-results"); define
+    /// it with `defineMode` first
     #[serde(default)]
     #[ts(optional)]
     pub mode: Option<String>,
@@ -6934,7 +6944,9 @@ pub struct CreateVirtualBufferOptions {
     #[serde(default, rename = "showCursors")]
     #[ts(optional, rename = "showCursors")]
     pub show_cursors: Option<bool>,
-    /// Disable text editing (default: false)
+    /// Disable text editing (default: false): typing, deletion, cut,
+    /// paste, undo and redo are refused, while navigation, selection and
+    /// copy still work
     #[serde(default, rename = "editingDisabled")]
     #[ts(optional, rename = "editingDisabled")]
     pub editing_disabled: Option<bool>,
@@ -7019,9 +7031,11 @@ pub struct CreateVirtualBufferOptions {
 #[serde(deny_unknown_fields)]
 #[ts(export)]
 pub struct CreateVirtualBufferInSplitOptions {
-    /// Buffer name (displayed in tabs/title)
+    /// Buffer name (displayed in tabs/title). By convention it is wrapped
+    /// in asterisks, e.g. `"*Diagnostics*"`
     pub name: String,
-    /// Mode for keybindings (e.g., "git-log", "search-results")
+    /// Mode for keybindings (e.g., "git-log", "search-results"); define
+    /// it with `defineMode` first
     #[serde(default)]
     #[ts(optional)]
     pub mode: Option<String>,
@@ -7029,7 +7043,8 @@ pub struct CreateVirtualBufferInSplitOptions {
     #[serde(default, rename = "readOnly")]
     #[ts(optional, rename = "readOnly")]
     pub read_only: Option<bool>,
-    /// Split ratio 0.0-1.0 (default: 0.5)
+    /// Split ratio 0.0-1.0 (default: 0.5): the share of the first pane,
+    /// which is the existing content unless `before` is set
     #[serde(default)]
     #[ts(optional)]
     pub ratio: Option<f32>,
@@ -7038,6 +7053,7 @@ pub struct CreateVirtualBufferInSplitOptions {
     /// The name describes the **divider**, not the arrangement:
     /// `"vertical"` puts the panes side by side (a vertical divider between
     /// them), `"horizontal"` stacks them. Same convention as `splitWindow`.
+    /// Default: `"horizontal"`.
     #[serde(default)]
     #[ts(optional)]
     pub direction: Option<String>,
@@ -7053,11 +7069,14 @@ pub struct CreateVirtualBufferInSplitOptions {
     #[serde(default, rename = "showCursors")]
     #[ts(optional, rename = "showCursors")]
     pub show_cursors: Option<bool>,
-    /// Disable text editing (default: false)
+    /// Disable text editing (default: false): typing, deletion, cut,
+    /// paste, undo and redo are refused, while navigation, selection and
+    /// copy still work
     #[serde(default, rename = "editingDisabled")]
     #[ts(optional, rename = "editingDisabled")]
     pub editing_disabled: Option<bool>,
-    /// Enable line wrapping
+    /// Enable line wrapping (default: follow the editor's line-wrap
+    /// setting)
     #[serde(default, rename = "lineWrap")]
     #[ts(optional, rename = "lineWrap")]
     pub line_wrap: Option<bool>,
@@ -7101,9 +7120,9 @@ pub struct CreateVirtualBufferInSplitOptions {
 #[serde(deny_unknown_fields)]
 #[ts(export)]
 pub struct CreateVirtualBufferInExistingSplitOptions {
-    /// Buffer name (displayed in tabs/title)
+    /// Buffer name (displayed in tabs/title), e.g. `"*Commit Details*"`
     pub name: String,
-    /// Target split ID (required)
+    /// ID of the existing split to show the buffer in (required)
     #[serde(rename = "splitId")]
     #[ts(rename = "splitId")]
     pub split_id: usize,
