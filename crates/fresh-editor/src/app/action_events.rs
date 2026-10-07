@@ -470,7 +470,20 @@ impl crate::app::window::Window {
                                 _estimated_line_length,
                             ) {
                                 Some((pos, goal)) => (pos, Some(goal)),
-                                None => continue, // Genuinely at buffer boundary
+                                // Either wrap is off, or this cursor is at the
+                                // buffer's edge. Both are cases the byte-based
+                                // movers answer — including the edge, where
+                                // they clear the selection and take the cursor
+                                // as far as there is — so hand them the whole
+                                // action.
+                                //
+                                // Skipping just this cursor instead left it
+                                // stranded whenever another cursor did produce
+                                // an event: the vector came back non-empty, so
+                                // nothing fell through, and the cursor at the
+                                // edge kept its selection and never moved. That
+                                // is issue #3486 surviving under multi-cursor.
+                                None => return None,
                             }
                         }
                     }
@@ -505,13 +518,14 @@ impl crate::app::window::Window {
                 VisualAction::LineStart { is_select } => *is_select,
             };
 
-            let new_anchor = if is_select {
-                Some(anchor.unwrap_or(position))
-            } else if deselect_on_move {
-                None
-            } else {
-                anchor
-            };
+            // The same rule the byte-based movers use, from the same place:
+            // it does not depend on the cursor having found anywhere to go.
+            let new_anchor = crate::input::actions::vertical_move_anchor(
+                position,
+                anchor,
+                deselect_on_move,
+                is_select,
+            );
 
             events.push(Event::MoveCursor {
                 cursor_id,

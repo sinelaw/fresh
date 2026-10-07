@@ -3494,6 +3494,13 @@ impl MenuConfig {
                         checkbox: None,
                     },
                     MenuItem::Action {
+                        label: t!("menu.selection.expand_line_selection").to_string(),
+                        action: "expand_line_selection".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
                         label: t!("menu.selection.expand_selection").to_string(),
                         action: "expand_selection".to_string(),
                         args: HashMap::new(),

@@ -413,6 +413,7 @@ pub enum Action {
     SelectWord,
     SelectLine,
     ExpandSelection,
+    ExpandLineSelection,
 
     // Block/rectangular selection (column-wise)
     BlockSelectLeft,
@@ -1015,6 +1016,7 @@ impl Action {
             "select_word" => SelectWord,
             "select_line" => SelectLine,
             "expand_selection" => ExpandSelection,
+            "expand_line_selection" => ExpandLineSelection,
 
             "block_select_left" => BlockSelectLeft,
             "block_select_right" => BlockSelectRight,
@@ -1549,6 +1551,7 @@ impl Action {
                 | Action::SelectWord
                 | Action::SelectLine
                 | Action::ExpandSelection
+                | Action::ExpandLineSelection
                 // Block selection
                 | Action::BlockSelectLeft
                 | Action::BlockSelectRight
@@ -3051,6 +3054,7 @@ impl KeybindingResolver {
             Action::SelectWord => t!("action.select_word"),
             Action::SelectLine => t!("action.select_line"),
             Action::ExpandSelection => t!("action.expand_selection"),
+            Action::ExpandLineSelection => t!("action.expand_line_selection"),
             Action::BlockSelectLeft => t!("action.block_select_left"),
             Action::BlockSelectRight => t!("action.block_select_right"),
             Action::BlockSelectUp => t!("action.block_select_up"),
