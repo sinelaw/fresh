@@ -1239,6 +1239,208 @@ fn sgr_mouse_event(params: &[u8], pressed: bool) -> Option<Event> {
     // Left/Middle/Right — and, when bit 6 is set too (buttons 12-15), onto the
     // wheel. Decoding them would manufacture clicks and scrolls the user never
     // made, so drop them, as crossterm does.
+    let kind = sgr_mouse_kind(cb, pressed)?;
+    let modifiers = mouse_modifiers(cb);
+
+    Some(Event::Mouse(MouseEvent {
+        kind,
+        column: cx.saturating_sub(1),
+        row: cy.saturating_sub(1),
+        modifiers,
+    }))
+}
+
+/// What one byte did to a [`MouseReportScanner`].
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum MouseScan {
+    /// The byte cannot belong to a mouse report, even as the start of one.
+    NotAReport,
+    /// The byte began or continued a report that is not finished yet.
+    Partial,
+    /// The byte closed a report. `kind` is `None` for a report with no
+    /// `MouseEventKind` counterpart (buttons 8-15): still a real report whose
+    /// bytes were consumed, just not one that maps to an event.
+    Complete { kind: Option<MouseEventKind> },
+}
+
+/// Where a [`MouseReportScanner`] is within a report.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ScanState {
+    /// Between reports.
+    Ground,
+    /// Seen `ESC`.
+    Esc,
+    /// Seen `ESC[`.
+    Csi,
+    /// Inside SGR parameters.
+    Sgr,
+    /// Inside an X10 report: how many of its three payload bytes have arrived.
+    X10(u8),
+}
+
+/// Recognises mouse reports in a raw byte stream, one byte at a time, and
+/// tracks whether a button is currently held.
+///
+/// This is deliberately *not* [`InputParser`]. That one decodes everything and
+/// yields events; this one answers two narrower questions a caller may have
+/// while holding raw bytes it is not otherwise parsing:
+///
+/// * "Is a button down right now?" — for a client that only relays bytes
+///   onwards and never parses them itself.
+/// * "Do these bytes form a mouse report, and was it the release?" — for
+///   teardown, which reads byte by byte and must stop at the first byte that is
+///   not part of a report rather than consuming input meant for the shell
+///   (sinelaw/fresh#3474).
+///
+/// Classification goes through the same `Cb` logic as the full decoders, so the
+/// two cannot drift apart on questions like whether `Cb` 3 counts as a press.
+pub struct MouseReportScanner {
+    state: ScanState,
+    /// The SGR report's first parameter (`Cb`) while it is being read.
+    cb: u32,
+    /// Still accumulating `Cb` — true until the first `;`.
+    on_first_param: bool,
+    /// The X10 report's button byte, held until its third byte closes it.
+    x10_cb: u8,
+    button_down: bool,
+}
+
+impl Default for MouseReportScanner {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl MouseReportScanner {
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            state: ScanState::Ground,
+            cb: 0,
+            on_first_param: true,
+            x10_cb: 0,
+            button_down: false,
+        }
+    }
+
+    /// Whether a button is held: a press has been seen and no release since.
+    #[must_use]
+    pub const fn button_down(&self) -> bool {
+        self.button_down
+    }
+
+    /// Feed a run of bytes, keeping [`button_down`](Self::button_down) current.
+    ///
+    /// Bytes that are not part of a report are skipped, so this is safe to hand
+    /// a stream with ordinary keystrokes mixed in.
+    pub fn feed(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            let _ = self.step(b);
+        }
+    }
+
+    /// Offer one byte.
+    ///
+    /// A byte that does not fit where the scanner is resyncs it and is retried
+    /// from the start, so an `ESC` arriving mid-report begins a new one rather
+    /// than being discarded. Only a byte that cannot start a report either
+    /// comes back as [`MouseScan::NotAReport`].
+    pub fn step(&mut self, byte: u8) -> MouseScan {
+        if let Some(scan) = self.offer(byte) {
+            return scan;
+        }
+        self.state = ScanState::Ground;
+        self.offer(byte).unwrap_or(MouseScan::NotAReport)
+    }
+
+    /// One transition, or `None` when the byte does not fit the current state.
+    fn offer(&mut self, byte: u8) -> Option<MouseScan> {
+        match (self.state, byte) {
+            (ScanState::Ground, 0x1b) => {
+                self.state = ScanState::Esc;
+                Some(MouseScan::Partial)
+            }
+            (ScanState::Esc, b'[') => {
+                self.state = ScanState::Csi;
+                Some(MouseScan::Partial)
+            }
+            (ScanState::Csi, b'<') => {
+                self.cb = 0;
+                self.on_first_param = true;
+                self.state = ScanState::Sgr;
+                Some(MouseScan::Partial)
+            }
+            (ScanState::Csi, b'M') => {
+                self.state = ScanState::X10(0);
+                Some(MouseScan::Partial)
+            }
+            (ScanState::Sgr, b'0'..=b'9') => {
+                if self.on_first_param {
+                    self.cb = self
+                        .cb
+                        .saturating_mul(10)
+                        .saturating_add(u32::from(byte - b'0'));
+                }
+                Some(MouseScan::Partial)
+            }
+            (ScanState::Sgr, b';') => {
+                self.on_first_param = false;
+                Some(MouseScan::Partial)
+            }
+            // `M` closes a press, `m` a release.
+            (ScanState::Sgr, b'M' | b'm') => {
+                // `Cb` is one byte in every mouse protocol, so a parameter past
+                // 255 is malformed rather than a high button.
+                let kind = u8::try_from(self.cb)
+                    .ok()
+                    .and_then(|cb| sgr_mouse_kind(cb, byte == b'M'));
+                Some(self.complete(kind))
+            }
+            (ScanState::X10(0), _) => {
+                self.x10_cb = byte.wrapping_sub(32);
+                self.state = ScanState::X10(1);
+                Some(MouseScan::Partial)
+            }
+            (ScanState::X10(n), _) if n < 2 => {
+                self.state = ScanState::X10(n + 1);
+                Some(MouseScan::Partial)
+            }
+            // The third payload byte closes an X10 report.
+            (ScanState::X10(_), _) => Some(self.complete(x10_mouse_kind(self.x10_cb))),
+            _ => None,
+        }
+    }
+
+    /// Finish a report: update the held-button state and return to ground.
+    fn complete(&mut self, kind: Option<MouseEventKind>) -> MouseScan {
+        match kind {
+            Some(MouseEventKind::Down(_)) => self.button_down = true,
+            Some(MouseEventKind::Up(_)) => self.button_down = false,
+            // Drag implies a button is held, but the press that began it has
+            // already said so; motion and wheel notches say nothing about it.
+            _ => {}
+        }
+        self.state = ScanState::Ground;
+        MouseScan::Complete { kind }
+    }
+}
+
+/// Classify an SGR report from its `Cb` byte and which terminator closed it
+/// (`M` pressed, `m` released).
+///
+/// Shared by [`sgr_mouse_event`], which also needs the coordinates, and by
+/// [`MouseReportScanner`], which only needs to know what the report was. Having
+/// one copy is what stops the two disagreeing about, say, whether `Cb` 3 is a
+/// press.
+///
+/// `None` for reports with no `MouseEventKind` counterpart.
+fn sgr_mouse_kind(cb: u8, pressed: bool) -> Option<MouseEventKind> {
+    // Bit 7 is xterm's high-button extension: the button number is
+    // `(cb & 3) | (cb & 0xC0) >> 4`, so bit 7 marks buttons 8-15. `MouseButton`
+    // has no representation for those, and their low bits alias onto
+    // Left/Middle/Right — and, when bit 6 is set too (buttons 12-15), onto the
+    // wheel. Decoding them would manufacture clicks and scrolls the user never
+    // made, so drop them, as crossterm does.
     if cb & 0b1000_0000 != 0 {
         return None;
     }
@@ -1251,9 +1453,7 @@ fn sgr_mouse_event(params: &[u8], pressed: bool) -> Option<Event> {
         _ => MouseButton::Left, // 3 = no button; never used as a real button
     };
 
-    let modifiers = mouse_modifiers(cb);
-
-    let kind = if cb & 64 != 0 {
+    Some(if cb & 64 != 0 {
         match button_bits {
             0 => MouseEventKind::ScrollUp,
             1 => MouseEventKind::ScrollDown,
@@ -1273,14 +1473,52 @@ fn sgr_mouse_event(params: &[u8], pressed: bool) -> Option<Event> {
         MouseEventKind::Down(button)
     } else {
         MouseEventKind::Up(button)
+    })
+}
+
+/// Classify a legacy X10 report from its already de-biased `Cb` byte.
+///
+/// Same bit layout as SGR, but there is no `m` terminator: a release is
+/// reported as button 3, so which button came up is simply not encoded.
+///
+/// `None` for reports with no `MouseEventKind` counterpart.
+fn x10_mouse_kind(cb: u8) -> Option<MouseEventKind> {
+    // Buttons 8-15 are unrepresentable — see `sgr_mouse_kind`.
+    if cb & 0b1000_0000 != 0 {
+        return None;
+    }
+
+    let button_bits = cb & 0b11;
+    let button = match button_bits {
+        0 => MouseButton::Left,
+        1 => MouseButton::Middle,
+        2 => MouseButton::Right,
+        _ => MouseButton::Left, // 3 = no button / release
     };
 
-    Some(Event::Mouse(MouseEvent {
-        kind,
-        column: cx.saturating_sub(1),
-        row: cy.saturating_sub(1),
-        modifiers,
-    }))
+    Some(if cb & 64 != 0 {
+        // Wheel: buttons 4-7 are up, down, left and right.
+        match button_bits {
+            0 => MouseEventKind::ScrollUp,
+            1 => MouseEventKind::ScrollDown,
+            2 => MouseEventKind::ScrollLeft,
+            _ => MouseEventKind::ScrollRight,
+        }
+    } else if cb & 32 != 0 {
+        // Motion. With a button held this is a drag; button 3 means no button
+        // is down, i.e. bare pointer movement under DECSET 1003. Reading the
+        // whole class as a press produced a click flood on every mouse move —
+        // the X10 half of the same bug `sgr_mouse_kind` documents.
+        if button_bits == 3 {
+            MouseEventKind::Moved
+        } else {
+            MouseEventKind::Drag(button)
+        }
+    } else if button_bits == 3 {
+        MouseEventKind::Up(MouseButton::Left)
+    } else {
+        MouseEventKind::Down(button)
+    })
 }
 
 /// Decode the Shift/Alt/Ctrl bits of a mouse report's `Cb` byte. The bit
@@ -1314,41 +1552,7 @@ fn x10_mouse_event(buf: [u8; 3]) -> Option<Event> {
     let cy = buf[2].wrapping_sub(32);
 
     // Buttons 8-15 are unrepresentable — see `sgr_mouse_event`.
-    if cb & 0b1000_0000 != 0 {
-        return None;
-    }
-
-    let button_bits = cb & 0b11;
-    let button = match button_bits {
-        0 => MouseButton::Left,
-        1 => MouseButton::Middle,
-        2 => MouseButton::Right,
-        _ => MouseButton::Left, // 3 = no button / release
-    };
-
-    let kind = if cb & 64 != 0 {
-        // Wheel: buttons 4-7 are up, down, left and right.
-        match button_bits {
-            0 => MouseEventKind::ScrollUp,
-            1 => MouseEventKind::ScrollDown,
-            2 => MouseEventKind::ScrollLeft,
-            _ => MouseEventKind::ScrollRight,
-        }
-    } else if cb & 32 != 0 {
-        // Motion. With a button held this is a drag; button 3 means no button
-        // is down, i.e. bare pointer movement under DECSET 1003. Reading the
-        // whole class as a press produced a click flood on every mouse move —
-        // the X10 half of the same bug `sgr_mouse_event` documents.
-        if button_bits == 3 {
-            MouseEventKind::Moved
-        } else {
-            MouseEventKind::Drag(button)
-        }
-    } else if button_bits == 3 {
-        MouseEventKind::Up(MouseButton::Left)
-    } else {
-        MouseEventKind::Down(button)
-    };
+    let kind = x10_mouse_kind(cb)?;
 
     Some(Event::Mouse(MouseEvent {
         kind,

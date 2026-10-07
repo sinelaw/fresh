@@ -5558,6 +5558,12 @@ fn run_attach(
     // Run the client relay loop (handshake already done)
     let result = client::run_client_relay(conn);
 
+    // The server drove mouse reporting through us, so a click we quit on leaves
+    // its release in our stdin. Take it before the modes below go away, or it
+    // surfaces at the shell prompt (#3474).
+    #[cfg(all(unix, feature = "runtime"))]
+    fresh::services::tty_input::drain_pending_mouse_report();
+
     // Best-effort: restore terminal state before printing any messages.
     // The server sends terminal setup sequences (alternate screen, mouse capture, etc.)
     // through us, so we must undo all of them, not just raw mode.
@@ -6416,6 +6422,13 @@ fn real_main() -> AnyhowResult<()> {
 
         (loop_result, update_result)
     };
+
+    // Swallow the release of a click we quit on, before mouse reporting and
+    // raw mode go away and it ends up at the shell prompt (#3474).
+    #[cfg(all(unix, feature = "runtime"))]
+    if terminal_modes.mouse_capture_enabled() {
+        fresh::services::tty_input::drain_pending_mouse_report();
+    }
 
     // Restore terminal state
     terminal_modes.undo();
