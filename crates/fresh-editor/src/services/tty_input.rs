@@ -258,9 +258,11 @@ pub fn drain_pending_mouse_report() {
         return;
     }
 
-    // Bounds the work if a terminal streams something unexpected: no report we
-    // accept is longer than this, so the exit is never held open past the grace.
-    const MAX_BYTES: usize = 32;
+    // Bounds the work if a terminal streams something unexpected. It has to be
+    // generous rather than one report's worth: motion tracking is still on, so
+    // a pointer that drifts while the button is held puts a run of drag reports
+    // in front of the release. The grace is what really bounds this.
+    const MAX_BYTES: usize = 4096;
 
     #[derive(Clone, Copy)]
     enum St {
@@ -279,6 +281,8 @@ pub fn drain_pending_mouse_report() {
     let fd = std::io::stdin().as_raw_fd();
     let deadline = Instant::now() + MOUSE_RELEASE_GRACE;
     let mut st = St::Esc;
+    // An X10 report's button byte, kept until its third byte closes the report.
+    let mut x10_cb = 0u32;
 
     for _ in 0..MAX_BYTES {
         let remaining = deadline.saturating_duration_since(Instant::now());
@@ -294,14 +298,31 @@ pub fn drain_pending_mouse_report() {
             (St::Kind, b'<') => St::Sgr,
             (St::Kind, b'M') => St::X10(0),
             (St::Sgr, b'0'..=b'9' | b';') => St::Sgr,
-            // `M` ends a press, `m` a release; either completes the report.
-            (St::Sgr, b'M' | b'm') => {
+            // `m` is the release — the report we came for, and the only one
+            // that ends the wait.
+            (St::Sgr, b'm') => {
                 MOUSE_BUTTON_DOWN.store(false, Ordering::Relaxed);
                 return;
             }
+            // `M` is a press, a drag or a bare motion report. Stopping on one
+            // would leave the release behind it in the queue, which is the
+            // whole leak — so swallow it and keep waiting.
+            (St::Sgr, b'M') => St::Esc,
+            // X10 spells the button out in the first of three payload bytes.
+            (St::X10(0), _) => {
+                x10_cb = u32::from(b).saturating_sub(32);
+                St::X10(1)
+            }
             (St::X10(n), _) if n < 2 => St::X10(n + 1),
-            // The third byte closes an X10 report.
-            (St::X10(_), _) => return,
+            // The third byte closes the report; in X10 a release sets the low
+            // two bits of the button code.
+            (St::X10(_), _) => {
+                if x10_cb & 3 == 3 {
+                    MOUSE_BUTTON_DOWN.store(false, Ordering::Relaxed);
+                    return;
+                }
+                St::Esc
+            }
             // Anything else cannot continue a mouse report. This byte is gone,
             // but stopping here is what keeps the drain off the user's input.
             _ => return,
