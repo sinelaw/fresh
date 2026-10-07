@@ -173,6 +173,37 @@ fn humanize(d: Duration) -> String {
     }
 }
 
+/// The trust anchors every HTTPS request in this process verifies against.
+///
+/// Everywhere but Android this is the platform's own verifier, so a corporate
+/// root CA or a TLS-intercepting proxy — neither of which is in Mozilla's
+/// bundled set — is honoured.
+///
+/// Android is the one target that cannot have it. There
+/// `rustls-platform-verifier` reads the trust store through the JVM, and
+/// requires one of its `android::init_*` calls, with a JNI handle, before the
+/// first verification; without one it *panics* rather than failing the request
+/// (#3453). A Termux process is a plain native process with no JVM to hand it,
+/// so there is nothing to initialize it with and the bundled WebPKI roots are
+/// the only anchors available. They cost nothing to reach: ureq's `rustls`
+/// feature enables `rustls-webpki-roots` whatever this returns, so the set is
+/// already linked.
+///
+/// `cfg!` rather than `#[cfg]` so both arms are type-checked on every target —
+/// the branch is still resolved at compile time and folded away.
+///
+/// One value for the whole process, not a per-request choice: verifying an
+/// artifact against one set of anchors and the checksum that vouches for it
+/// against another is not one coherent decision, and when the two disagreed
+/// the updater became unusable behind a proxy. See the module docs.
+pub fn root_certs() -> ureq::tls::RootCerts {
+    if cfg!(target_os = "android") {
+        ureq::tls::RootCerts::WebPki
+    } else {
+        ureq::tls::RootCerts::PlatformVerifier
+    }
+}
+
 /// An HTTP client configured for one set of release endpoints.
 pub struct Transport {
     agent: ureq::Agent,
@@ -190,7 +221,7 @@ impl Transport {
     /// permitted to speak http to a local test server.
     pub fn new(endpoints: &Endpoints) -> Self {
         let tls_config = ureq::tls::TlsConfig::builder()
-            .root_certs(ureq::tls::RootCerts::PlatformVerifier)
+            .root_certs(root_certs())
             .build();
 
         let agent = ureq::Agent::config_builder()
@@ -442,6 +473,23 @@ fn token_from_env() -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Android must not reach the platform verifier: it panics there unless
+    /// something hands it a JNI handle, and nothing can (#3453). Every other
+    /// target must keep it, so a proxy's or an enterprise CA's root still
+    /// verifies. Both arms are checked on every target, so whichever host
+    /// runs this guards the pair.
+    #[test]
+    fn android_uses_bundled_roots_and_everything_else_the_platform_verifier() {
+        if cfg!(target_os = "android") {
+            assert!(matches!(root_certs(), ureq::tls::RootCerts::WebPki));
+        } else {
+            assert!(matches!(
+                root_certs(),
+                ureq::tls::RootCerts::PlatformVerifier
+            ));
+        }
+    }
 
     fn headers(pairs: &[(&str, &str)]) -> ureq::http::HeaderMap {
         let mut map = ureq::http::HeaderMap::new();

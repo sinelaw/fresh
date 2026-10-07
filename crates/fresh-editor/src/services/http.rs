@@ -76,9 +76,12 @@ mod imp {
     ) -> Result<u16, String> {
         // Use the platform's native certificate verifier so requests work in
         // environments with TLS-intercepting proxies or custom enterprise root
-        // CAs that aren't in Mozilla's bundled webpki-roots.
+        // CAs that aren't in Mozilla's bundled webpki-roots. Shared with the
+        // updater's transport, which carries the Android caveat: there the
+        // platform verifier needs a JNI handle nothing can supply, so that
+        // target falls back to the bundled roots instead of panicking (#3453).
         let tls_config = ureq::tls::TlsConfig::builder()
-            .root_certs(ureq::tls::RootCerts::PlatformVerifier)
+            .root_certs(fresh_update::net::root_certs())
             .build();
 
         let agent = ureq::Agent::config_builder()
