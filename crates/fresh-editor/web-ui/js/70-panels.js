@@ -71,19 +71,20 @@ function fileExplorerEl(fe){
   }
   el.appendChild(list);
   el.addEventListener("wheel",e=>{ e.stopPropagation(); sendMouse({kind:e.deltaY>0?"scrolldown":"scrollup",col:fe.rect.x+1,row:fe.rect.y+1,n:Math.min(5,Math.max(1,Math.round(Math.abs(e.deltaY)/40)))}); },{passive:true});
-  // Right-edge resize handle: the editor treats the explorer's rightmost column
-  // as a drag border (handle_file_explorer_border_drag). The .fileexplorer div
-  // is in onChrome, so the document drag won't fire here — wire it explicitly.
+  // Resize handle: the editor treats the explorer's width grip as a drag
+  // border (handle_file_explorer_border_drag). The .fileexplorer div is in
+  // onChrome, so the document drag won't fire here — wire it explicitly.
   //
-  // **Below the header row, above the bottom border** — the rows the TUI gives
-  // its own grip (`view/shell/sidebar.rs`, `overlay`: "the top border row is the
-  // header's: its close button lives there ... so the grip starts below"). The
-  // header row's right end is the close button's three cells, and the
-  // explorer's close hides the sidebar, so pressing at `fe.rect.y` closed the
-  // panel instead of starting a drag — it vanished the moment you grabbed its
-  // edge.
-  el.appendChild(borderDragHandle(fe.rect.x + fe.rect.w - 1, fe.rect.y + 1,
-                                  Math.max(1, fe.rect.h - 2), fe.rect));
+  // **Where the tree put it, not where we think it should be.** The grip is
+  // the column's *inner* edge and runs below the header row and above the
+  // bottom border, and on a right-side explorer it is the LEFT wall
+  // (`sidebar::grip_strip`). Re-deriving that here got the row wrong — the
+  // header row's right end is the close button, whose press hides the sidebar,
+  // so grabbing the edge made the panel vanish — and got the column wrong for
+  // `file_explorer.side = right`, where the press never reached the grip at
+  // all. The core projects the real rect now (`FileExplorerView::grip_rect`).
+  const g = fe.gripRect;
+  if (g) el.appendChild(borderDragHandle(g.x, g.y, g.h, fe.rect));
   return el;
 }
 
@@ -94,19 +95,22 @@ function fileExplorerEl(fe){
 // window listeners so the drag continues even when the pointer leaves the
 // chrome element.
 //
-// `bx`/`by` are SCREEN cells, because that is what the editor's hit test reads,
-// but CSS offsets are measured from the grip's offset parent. `origin` is that
-// parent's own cell position when it has one — the file explorer appends its
-// grip inside its own positioned region, so the region's corner is subtracted
-// here. The dock's grip goes on the full-grid tree layer, which sits at the
-// screen origin, so it passes none and stays absolute. The explorer's grip used
-// to be placed at the raw screen cell inside its region, adding that region's
-// origin a second time: with a dock open that put the grip out over the editor,
-// where other elements covered it and no drag could ever start.
+// A grip drawn straight onto the grid: its CSS frame IS the screen.
+const ORIGIN_SCREEN = {x:0, y:0};
+
+// `bx`/`by` are SCREEN cells, because that is what the editor's hit test reads.
+// CSS offsets are measured from the grip's offset parent instead, so `origin`
+// is that parent's own cell position and is REQUIRED — every caller states the
+// frame it is drawing in rather than leaving it to be inferred from how many
+// arguments were passed. The file explorer appends its grip inside its own
+// positioned region and passes that region's rect; the dock's goes on the
+// full-grid tree layer, which sits at the screen origin, so it passes
+// `ORIGIN_SCREEN`. Drawing the explorer's grip at the raw screen cell inside
+// its region added that region's origin a second time, and with a dock open
+// `.region{overflow:hidden}` then clipped the grip away entirely.
 function borderDragHandle(bx, by, h, origin){
   const grip=div("resize-grip");
-  const ox=origin?origin.x:0, oy=origin?origin.y:0;
-  grip.style.left=px(bx-ox,CW)+"px"; grip.style.top=px(by-oy,CH)+"px";
+  grip.style.left=px(bx-origin.x,CW)+"px"; grip.style.top=px(by-origin.y,CH)+"px";
   grip.style.width=px(1,CW)+"px"; grip.style.height=px(h,CH)+"px";
   grip.onmousedown=e=>{
     e.preventDefault(); e.stopPropagation();

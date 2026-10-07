@@ -215,12 +215,38 @@ async function updateGitGutter(bufferId: number): Promise<void> {
     // the disk content (and possibly HEAD) just changed, so re-fetch
     // both references before diffing. The diff itself runs host-side;
     // no file content crosses the plugin bridge.
-    await editor.refreshDiffBaseline(state.diskBaselineId!);
-    await editor.refreshDiffBaseline(state.headBaselineId!);
-    const result = await editor.diffBaselinePair(
-      state.headBaselineId!,
-      state.diskBaselineId!,
-    );
+    //
+    // **A buffer that closed under us is not an error, and only these three
+    // awaits can see it.** The host drops a buffer's diff baselines when the
+    // buffer closes (`app/buffer_close.rs`) and fires `buffer_closed` only
+    // afterwards — and that hook is where this plugin deletes `bufferStates`.
+    // So a missing entry is exactly "the buffer went away while we were
+    // reloading": the ids below are gone, there is nothing left to decorate,
+    // and the host's rejection is noise. Without this the rejection escaped as
+    // an "Unhandled Promise rejection" in the log, because every call site
+    // invokes `updateGitGutter` without a `.catch()`.
+    //
+    // Discriminated by STATE, not by the host's error text. The two messages
+    // ("unknown baseline id N", "baseline released during load") are `format!`
+    // internals with no contract behind them, so a reworded string would
+    // silently restore the old behaviour with nothing to catch it; and
+    // matching them would also swallow the save-as path below, where
+    // `after_file_save` calls `releaseBaselines` with no regard for
+    // `state.updating` and so can pull these ids out from under an update in
+    // flight. That one is a real ordering bug and keeps its stack.
+    // `live_diff.ts` answers the same race the same way.
+    let result: DiffBaselineResult;
+    try {
+      await editor.refreshDiffBaseline(state.diskBaselineId!);
+      await editor.refreshDiffBaseline(state.headBaselineId!);
+      result = await editor.diffBaselinePair(
+        state.headBaselineId!,
+        state.diskBaselineId!,
+      );
+    } catch (e) {
+      if (!bufferStates.has(bufferId)) return;
+      throw e;
+    }
     const hunks = hostHunksToGutterHunks(result.hunks);
     editor.debug(`Git Gutter: ${hunks.length} hunks from host diff`);
 
@@ -302,33 +328,6 @@ async function updateGitGutter(bufferId: number): Promise<void> {
 
     // Export hunks for other plugins (e.g. diff_nav) via shared view state
     editor.setViewState(bufferId, "git_gutter_hunks", hunks);
-  } catch (e) {
-    // **A buffer that closed under us is not an error.** The host drops a
-    // buffer's diff baselines when the buffer closes, so a close landing while
-    // this update is in flight rejects the reload below with either
-    // "unknown baseline id N" (the entry was already gone when the reload was
-    // asked for) or "baseline released during load" (it went while the load
-    // ran). Nothing used to catch that: every call site invokes
-    // `updateGitGutter` without a `.catch()`, so the rejection escaped as an
-    // "Unhandled Promise rejection" in the editor log.
-    //
-    // Forget the ids either way. If the buffer really is gone this state goes
-    // with it; if it is still open — a save racing a revert, say — the next
-    // update re-registers both baselines from scratch rather than reusing ids
-    // the host has already dropped.
-    const msg = String(e);
-    state.diskBaselineId = null;
-    state.headBaselineId = null;
-    if (
-      msg.includes("unknown baseline id") ||
-      msg.includes("baseline released during load")
-    ) {
-      editor.debug(
-        `Git Gutter: baselines for buffer ${bufferId} were released mid-update; skipping`,
-      );
-    } else {
-      editor.warn(`Git Gutter: update failed for buffer ${bufferId}: ${msg}`);
-    }
   } finally {
     state.updating = false;
   }

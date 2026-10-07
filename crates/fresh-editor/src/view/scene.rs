@@ -771,17 +771,33 @@ impl Editor {
     /// hand, in two copy-pasted blocks of border arithmetic. Both are keyed
     /// nodes (`popup::rects_of`, `popup::inner_rects_of`), the popups' order in
     /// the description is `Editor::popup_counts`' — the buffer's stack, then
-    /// the top of the global one — and the scroll offset was never geometry at
-    /// all: it is on the popup.
+    /// the top of the global one.
+    ///
+    /// **The scroll offset is the tree's too, where the tree owns it.** It was
+    /// read off the popup for every kind, which is right only for a `List`:
+    /// there the content slot is a plain column and the selection moves
+    /// `Popup::scroll_offset`. `Text` and `Markdown` are drawn through a
+    /// viewport that owns its own window, so that field is never written for
+    /// them and reads 0 for the popup's whole life — publishing it told the
+    /// frontend a hover was at the top no matter where the reader had
+    /// scrolled, and clipped off everything past the first screenful. The
+    /// window the viewport actually has is `popup::scroll_offsets_of`, read
+    /// by key the way `file_explorer::window_rows` reads the explorer's.
     pub fn popups_view(&self) -> Vec<ScenePopup> {
         let (buffer_n, total) = self.popup_counts();
         let outers = self.popup_rects();
         let inners = self.popup_content_rects();
+        let scrolls = self.popup_scroll_offsets();
         let at = |i: usize| -> (ratatui::layout::Rect, ratatui::layout::Rect) {
             (
                 outers.get(i).copied().unwrap_or_default(),
                 inners.get(i).copied().unwrap_or_default(),
             )
+        };
+        // The viewport's window when the tree owns it, the popup's field when
+        // it does not (a list, whose selection moves it).
+        let scroll_at = |i: usize, p: &crate::view::popup::Popup| -> usize {
+            scrolls.get(i).copied().flatten().unwrap_or(p.scroll_offset)
         };
         let mut out = Vec::new();
         for (idx, p) in self.active_state().popups.all().iter().enumerate() {
@@ -789,14 +805,14 @@ impl Editor {
                 break;
             }
             let (outer, inner) = at(idx);
-            out.push(project_popup(p, outer, inner, p.scroll_offset));
+            out.push(project_popup(p, outer, inner, scroll_at(idx, p)));
         }
         // The description carries at most the top of the global stack, after
         // the buffer's — so it is the last entry, and only when there is one.
         if total > buffer_n {
             if let Some(p) = self.global_popups.top() {
                 let (outer, inner) = at(buffer_n);
-                out.push(project_popup(p, outer, inner, p.scroll_offset));
+                out.push(project_popup(p, outer, inner, scroll_at(buffer_n, p)));
             }
         }
         out
@@ -818,6 +834,14 @@ pub struct FileRow {
 #[serde(rename_all = "camelCase")]
 pub struct FileExplorerView {
     pub rect: RectView,
+    /// Where the tree put the width grip — the one column a drag resizes the
+    /// panel by. **Projected rather than derived**: it is the column's *inner*
+    /// edge, which is the right wall only while the explorer is on the left
+    /// (`sidebar::grip_strip` puts it on the left wall otherwise), and it
+    /// spans neither the header row nor the bottom border. A frontend that
+    /// recomputed that from `rect` had the arithmetic wrong on both counts.
+    /// `None` when the tree has not placed it.
+    pub grip_rect: Option<RectView>,
     pub title: String,
     pub scroll_offset: usize,
     pub viewport_height: usize,
@@ -885,6 +909,9 @@ impl Editor {
             .unwrap_or_default();
         Some(FileExplorerView {
             rect: RectView::from(rect),
+            grip_rect: self
+                .panel_rect(&crate::view::shell::sidebar::grip_key())
+                .map(RectView::from),
             title,
             scroll_offset,
             viewport_height,
