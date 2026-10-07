@@ -478,6 +478,25 @@ impl Editor {
         if self.preparing_windows.contains_key(&id) {
             return Ok(());
         }
+        // A window that could not restore one of its unnamed buffers knows
+        // less than its workspace file does: the buffer's content is in a
+        // recovery store this editor cannot see, because standalone mode
+        // scopes the store by launch directory (#1550). The snapshot below
+        // rebuilds `unnamed_buffers` and the split layout from the live
+        // buffers, so saving here would drop the reference and the tab —
+        // the loss in issue #3475.
+        if self
+            .windows
+            .get(&id)
+            .is_some_and(|w| !w.unresolved_unnamed_buffers.is_empty())
+        {
+            tracing::debug!(
+                "Not saving workspace for window {id}: {} unnamed buffer(s) \
+                 could not be restored, so leaving the file on disk alone",
+                self.windows[&id].unresolved_unnamed_buffers.len()
+            );
+            return Ok(());
+        }
         let Some(win) = self.windows.get(&id) else {
             return Ok(());
         };
@@ -2436,6 +2455,7 @@ impl crate::app::window::Window {
         unnamed_buffers: &[UnnamedBufferRef],
     ) -> HashMap<String, BufferId> {
         let mut unnamed_buffer_map: HashMap<String, BufferId> = HashMap::new();
+        self.unresolved_unnamed_buffers.clear();
         if !self.resources.config.editor.hot_exit || unnamed_buffers.is_empty() {
             return unnamed_buffer_map;
         }
@@ -2443,6 +2463,7 @@ impl crate::app::window::Window {
             "Restoring {} unnamed buffers from recovery",
             unnamed_buffers.len()
         );
+        let root = self.root.clone();
         for unnamed_ref in unnamed_buffers {
             let entries = match self
                 .resources
@@ -2458,10 +2479,33 @@ impl crate::app::window::Window {
                 }
             };
             let Some(entry) = entries.iter().find(|e| e.id == unnamed_ref.recovery_id) else {
-                tracing::debug!(
-                    "Recovery file not found for unnamed buffer {}",
-                    unnamed_ref.recovery_id
-                );
+                // Missing means two different things. In the store that owns
+                // this project the content really is gone (saved, discarded,
+                // or lost to a crash), so the reference is stale and dropping
+                // it keeps the workspace file writable. In any other store —
+                // this editor was launched elsewhere, so it is looking at a
+                // different directory's store (#1550) — missing only means we
+                // cannot see it, so the file has to keep the record (#3475).
+                let ours = self
+                    .resources
+                    .recovery_service
+                    .lock()
+                    .unwrap()
+                    .covers_root(&root);
+                if ours {
+                    tracing::warn!(
+                        "Dropping stale reference to unnamed buffer {}: not in \
+                         this workspace's own recovery store",
+                        unnamed_ref.recovery_id
+                    );
+                } else {
+                    tracing::debug!(
+                        "Unnamed buffer {} is not in the store this editor can \
+                         see; leaving the workspace file as it is",
+                        unnamed_ref.recovery_id
+                    );
+                    self.unresolved_unnamed_buffers.push(unnamed_ref.clone());
+                }
                 continue;
             };
             let loaded = self
@@ -2485,6 +2529,11 @@ impl crate::app::window::Window {
                         unnamed_ref.recovery_id
                     );
                 }
+                // Present but unusable (`Corrupted`, or a read error). These
+                // will never resolve, so counting them as unrestored would
+                // stop this workspace being saved ever again. The entry stays
+                // on disk — exit accounting keeps what no buffer claimed — so
+                // the bytes can still be recovered by hand.
                 Ok(other) => {
                     tracing::warn!(
                         "Unexpected recovery result for unnamed buffer {}: {:?}",
@@ -3056,7 +3105,7 @@ impl crate::app::window::Window {
             })
             .collect();
 
-        let unnamed_buffers: Vec<UnnamedBufferRef> = if self.resources.config.editor.hot_exit {
+        let mut unnamed_buffers: Vec<UnnamedBufferRef> = if self.resources.config.editor.hot_exit {
             self.buffer_metadata
                 .iter()
                 .filter_map(|(buffer_id, meta)| {
@@ -3081,6 +3130,11 @@ impl crate::app::window::Window {
         } else {
             Vec::new()
         };
+        // One record per recovery entry. A buffer adopted twice was saved
+        // twice, and the list grew by one on every switch back to this
+        // workspace (issue #3476). A list already duplicated heals here.
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+        unnamed_buffers.retain(|r| seen.insert(r.recovery_id.clone()));
 
         Workspace {
             version: WORKSPACE_VERSION,

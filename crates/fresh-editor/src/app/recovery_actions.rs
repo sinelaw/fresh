@@ -241,13 +241,25 @@ impl Editor {
             .iter()
             .filter_map(|(_, state)| state.buffer.file_path().map(|p| p.to_path_buf()))
             .collect();
+        // Entries this workspace already has a buffer for. An unnamed buffer
+        // has no path, so the path filter below cannot match it, and adoption
+        // runs on every activation — so each switch back adopted the same
+        // entry into a new tab and saved another copy of the record for it
+        // (issue #3476).
+        let already_adopted: std::collections::HashSet<String> = self
+            .active_window()
+            .buffer_metadata
+            .values()
+            .filter_map(|meta| meta.recovery_id.clone())
+            .collect();
 
         let mine: Vec<_> = entries
-            .into_iter()
+            .iter()
             .filter(|entry| match self.recovery_entry_owner(entry) {
                 Some(owner) => owner == active,
                 None => claim_unowned,
             })
+            .filter(|entry| !already_adopted.contains(&entry.id))
             .filter(|entry| {
                 entry
                     .metadata
@@ -255,6 +267,7 @@ impl Editor {
                     .as_ref()
                     .is_none_or(|p| !already_open.contains(p))
             })
+            .cloned()
             .collect();
 
         let mut adopted = 0;
