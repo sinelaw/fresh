@@ -2068,8 +2068,13 @@ fn handle_insert_tab(
 ///
 /// When `extend_selection` is false (MoveUp): collapses any selection to the top edge first
 /// (VSCode/Sublime behavior, issue #1566), then respects Emacs mark mode via deselect_on_move.
-/// When `extend_selection` is true (SelectUp): keeps the existing anchor fixed and extends it,
-/// and on the first line extends the head to the buffer start instead of doing nothing.
+/// When `extend_selection` is true (SelectUp): keeps the existing anchor fixed and extends it.
+///
+/// With nothing above to move to, an extending move still takes the head to the start of the
+/// buffer (issue #3006) and a plain one leaves the cursor where it is — but either way the
+/// selection goes, because the anchor comes from [`vertical_move_anchor`] outside the
+/// branches. Deciding it inside the branch that found somewhere to move is what left Up dead
+/// on a selection starting at the first line (issue #3486).
 fn handle_vertical_up(
     state: &mut EditorState,
     cursors: &Cursors,
@@ -2110,22 +2115,48 @@ fn handle_vertical_up(
             calculate_visual_column(&mut state.buffer, from_pos, estimated_line_length);
         let goal_visual_column = cursor.sticky_column.unwrap_or(current_visual_column);
 
-        let above = previous_logical_line(&mut state.buffer, from_pos, goal_visual_column);
-        if let LineAbove::Found(prev_line_start, prev_line_content) = above {
-            let prev_line_text = prev_line_content.trim_end_matches('\n');
-            let byte_offset = byte_offset_at_visual_column(prev_line_text, goal_visual_column);
-            let mut new_pos = prev_line_start + byte_offset;
-            if clamp_to_last_char {
-                new_pos = clamp_to_last_char_on_line(prev_line_start, &prev_line_content, new_pos);
+        let new_anchor = vertical_move_anchor(
+            cursor.position,
+            cursor.anchor,
+            cursor.deselect_on_move,
+            extend_selection,
+        );
+        let new_pos = match previous_logical_line(&mut state.buffer, from_pos, goal_visual_column) {
+            LineAbove::Found(prev_line_start, prev_line_content) => {
+                let prev_line_text = prev_line_content.trim_end_matches('\n');
+                let byte_offset = byte_offset_at_visual_column(prev_line_text, goal_visual_column);
+                let landed = prev_line_start + byte_offset;
+                if clamp_to_last_char {
+                    clamp_to_last_char_on_line(prev_line_start, &prev_line_content, landed)
+                } else {
+                    landed
+                }
             }
+            // The cursor is on the first line, so Up goes as far up as there
+            // is: the start of the buffer (VSCode/Sublime, issue #3006 for an
+            // extending move, and the same answer for a plain one — an arrow
+            // that cannot take a whole line still takes the caret to the line
+            // start rather than doing nothing at all).
+            //
+            // Only when the buffer really does start above the cursor. A line
+            // that merely begins further back than the search reaches is not
+            // the first line, and going to byte 0 on the strength of that
+            // would swallow the file — `OutOfReach` stays put below.
+            //
+            // Already at byte 0 with nothing selected there is neither a move
+            // nor an anchor to drop, so that falls through too and emits
+            // nothing, leaving the sticky column alone.
+            LineAbove::TopOfBuffer if cursor.position > 0 || cursor.anchor.is_some() => 0,
+            LineAbove::TopOfBuffer | LineAbove::OutOfReach => from_pos,
+        };
 
-            let new_anchor = if extend_selection {
-                Some(cursor.anchor.unwrap_or(cursor.position))
-            } else if cursor.deselect_on_move {
-                None
-            } else {
-                cursor.anchor
-            };
+        // One event, emitted unless it would say nothing: a non-extending move
+        // clears the selection whether or not the cursor had anywhere to go,
+        // which is what Up and Down failed to do at the buffer's edges
+        // (issue #3486). Saying nothing leaves the sticky column and the
+        // anchor untouched, which is what an extending move already at the
+        // buffer start wants.
+        if new_pos != cursor.position || new_anchor != cursor.anchor {
             events.push(Event::MoveCursor {
                 cursor_id,
                 old_position: cursor.position,
@@ -2135,36 +2166,40 @@ fn handle_vertical_up(
                 old_sticky_column: cursor.sticky_column,
                 new_sticky_column: Some(goal_visual_column),
             });
-        } else if matches!(above, LineAbove::TopOfBuffer) && extend_selection && cursor.position > 0
-        {
-            // No line above: the cursor sits on the first line. Shift+Up still
-            // extends the selection head to the very start of the buffer
-            // (VSCode/Sublime behaviour, issue #3006). The goal column is kept
-            // so a later Shift+Down returns to the original column.
-            //
-            // Only when the buffer really does start above the cursor. A line
-            // that merely begins further back than the search reaches is not
-            // the first line, and taking the selection to byte 0 on the
-            // strength of it would swallow the file.
-            events.push(Event::MoveCursor {
-                cursor_id,
-                old_position: cursor.position,
-                new_position: 0,
-                old_anchor: cursor.anchor,
-                new_anchor: Some(cursor.anchor.unwrap_or(cursor.position)),
-                old_sticky_column: cursor.sticky_column,
-                new_sticky_column: Some(goal_visual_column),
-            });
         }
-        // Extending with the head already at the buffer start emits nothing, so
-        // the sticky column and any existing anchor survive untouched.
+    }
+}
+
+/// What a vertical move leaves behind as the anchor.
+///
+/// Stated once because three movers perform one — [`handle_vertical_up`],
+/// [`handle_vertical_down`] and the cached-layout mover in `action_events.rs`
+/// — and the rule does not depend on whether the cursor found anywhere to go.
+/// Each of them used to fold it into the branch that computed the new
+/// position, so a cursor with nowhere to move kept its selection and the key
+/// read as dead (issue #3486). Keeping it out here is what stops the next
+/// mover from forgetting it.
+pub(crate) fn vertical_move_anchor(
+    position: usize,
+    anchor: Option<usize>,
+    deselect_on_move: bool,
+    extend_selection: bool,
+) -> Option<usize> {
+    if extend_selection {
+        Some(anchor.unwrap_or(position))
+    } else if deselect_on_move {
+        None
+    } else {
+        anchor
     }
 }
 
 /// Move or extend selection down by one line, using visual columns for wide-character accuracy.
 ///
-/// See [`handle_vertical_up`] for the `extend_selection` contract; on the last line an extending
-/// move takes the head to the buffer end.
+/// The mirror of [`handle_vertical_up`], including its boundary rule: on the last line the move
+/// takes the cursor to the buffer's end rather than nowhere, and the anchor is decided outside
+/// the branches either way. Virtual space is the one case where the position deliberately does
+/// not change and an event still goes out.
 fn handle_vertical_down(
     state: &mut EditorState,
     cursors: &Cursors,
@@ -2196,58 +2231,55 @@ fn handle_vertical_down(
         // line it never left (issue #1806). A line break or nothing.
         let next = next_logical_line(&mut state.buffer, from_pos, goal_visual_column);
 
-        if let Some((next_line_start, next_line_content)) = next {
+        let new_anchor = vertical_move_anchor(
+            cursor.position,
+            cursor.anchor,
+            cursor.deselect_on_move,
+            extend_selection,
+        );
+        // Floating below the buffer's end is a move of its own: the byte
+        // position parks at the end while the virtual line count grows, so the
+        // event has to go out even though the position does not change.
+        let mut floated = false;
+        let new_pos = if let Some((next_line_start, next_line_content)) = next {
             let next_line_text = next_line_content.trim_end_matches('\n');
             let byte_offset = byte_offset_at_visual_column(next_line_text, goal_visual_column);
-            let mut new_pos = next_line_start + byte_offset;
+            let landed = next_line_start + byte_offset;
             if clamp_to_last_char {
-                new_pos = clamp_to_last_char_on_line(next_line_start, &next_line_content, new_pos);
-            }
-
-            let new_anchor = if extend_selection {
-                Some(cursor.anchor.unwrap_or(cursor.position))
-            } else if cursor.deselect_on_move {
-                None
+                clamp_to_last_char_on_line(next_line_start, &next_line_content, landed)
             } else {
-                cursor.anchor
-            };
+                landed
+            }
+        } else if !extend_selection && cursor.anchor.is_none() && vs_mode.cursor_beyond_eol() {
+            // Virtual space: float one line deeper below the buffer's end,
+            // keeping the goal column. The byte position parks at the end; the
+            // line count is installed when the event applies (see
+            // pending_virtual_lines). This comes before the plain boundary
+            // answer below, which would otherwise swallow the float.
+            let vlines = cursor_virtual_lines(vs_mode, &state.buffer, cursor);
+            state.pending_virtual_lines.push((cursor_id, vlines + 1));
+            floated = true;
+            state.buffer.len()
+        } else if cursor.position < state.buffer.len() || cursor.anchor.is_some() {
+            // The cursor is on the last line, so Down goes as far down as
+            // there is: the end of the buffer. The mirror of the first-line
+            // answer in `handle_vertical_up`, for an extending move (issue
+            // #3006) and a plain one alike.
+            state.buffer.len()
+        } else {
+            // Already at the end with nothing selected: no move and no anchor
+            // to drop, so nothing is emitted and the sticky column survives.
+            from_pos
+        };
+
+        // See the mirror of this in `handle_vertical_up`.
+        if floated || new_pos != cursor.position || new_anchor != cursor.anchor {
             events.push(Event::MoveCursor {
                 cursor_id,
                 old_position: cursor.position,
                 new_position: new_pos,
                 old_anchor: cursor.anchor,
                 new_anchor,
-                old_sticky_column: cursor.sticky_column,
-                new_sticky_column: Some(goal_visual_column),
-            });
-        } else if extend_selection && cursor.position < state.buffer.len() {
-            // No line below: the cursor sits on the last line. Shift+Down still
-            // extends the selection head to the end of the buffer
-            // (VSCode/Sublime behaviour, issue #3006). Once the head is already
-            // there nothing is emitted, so the sticky column and any existing
-            // anchor survive untouched.
-            events.push(Event::MoveCursor {
-                cursor_id,
-                old_position: cursor.position,
-                new_position: state.buffer.len(),
-                old_anchor: cursor.anchor,
-                new_anchor: Some(cursor.anchor.unwrap_or(cursor.position)),
-                old_sticky_column: cursor.sticky_column,
-                new_sticky_column: Some(goal_visual_column),
-            });
-        } else if !extend_selection && cursor.anchor.is_none() && vs_mode.cursor_beyond_eol() {
-            // No line below: float onto (or one deeper into) the virtual
-            // lines below the buffer end, keeping the goal column. The byte
-            // position parks at the buffer end; the virtual line count is
-            // installed when the event applies (see pending_virtual_lines).
-            let vlines = cursor_virtual_lines(vs_mode, &state.buffer, cursor);
-            state.pending_virtual_lines.push((cursor_id, vlines + 1));
-            events.push(Event::MoveCursor {
-                cursor_id,
-                old_position: cursor.position,
-                new_position: state.buffer.len(),
-                old_anchor: cursor.anchor,
-                new_anchor: None,
                 old_sticky_column: cursor.sticky_column,
                 new_sticky_column: Some(goal_visual_column),
             });
@@ -2771,28 +2803,83 @@ fn select_word(state: &mut EditorState, cursors: &Cursors, events: &mut Vec<Even
 
 /// `Action::SelectLine` — select the entire line (including its newline)
 /// under each cursor.
-fn select_line(
-    state: &mut EditorState,
-    cursors: &Cursors,
-    events: &mut Vec<Event>,
-    estimated_line_length: usize,
-) {
+///
+/// Literally that, and only that: the Selection menu, the palette command and
+/// the keybinding list all name it "the current line", and the gutter and
+/// terminal-grid gestures dispatch it to select the one line they were aimed
+/// at. [`expand_line_selection`] is the one that grows a selection.
+fn select_line(state: &mut EditorState, cursors: &Cursors, events: &mut Vec<Event>) {
     for (cursor_id, cursor) in cursors.iter() {
-        let mut iter = state
+        // Both edges come from the piece tree, not the line *reader*: the
+        // reader hands a long line back in `MAX_LINE_BYTES` pieces, and a piece
+        // boundary is a read budget rather than the end of anything, so on a
+        // file that is one enormous line this used to select the first ~100 KB
+        // and call it the line (the hazard #1806 names, and the reason
+        // `logical_line_start` exists).
+        let line_start = logical_line_start(&mut state.buffer, cursor.position);
+        let len = state.buffer.len();
+        // One past the terminator, so the newline is taken in; a last line
+        // without one ends where the buffer does.
+        let line_end = state
             .buffer
-            .line_iterator(cursor.position, estimated_line_length);
-        if let Some((line_start, line_content)) = iter.next_line() {
-            let line_end = line_start + line_content.len();
-            add_move_cursor_event(
-                events,
-                cursor_id,
-                cursor.position,
-                line_end,
-                cursor.anchor,
-                Some(line_start),
-                cursor.sticky_column,
-            );
-        }
+            .next_line_start_within(cursor.position, len)
+            .unwrap_or(len);
+        add_move_cursor_event(
+            events,
+            cursor_id,
+            cursor.position,
+            line_end,
+            cursor.anchor,
+            Some(line_start),
+            cursor.sticky_column,
+        );
+    }
+}
+
+/// `Action::ExpandLineSelection` — grow each cursor's selection to whole lines,
+/// taking in the line the head is on.
+///
+/// With no selection that is the line under the cursor, newline included; with
+/// one, the existing selection is kept and squared off to line boundaries
+/// rather than thrown away. Because a line's end and the next line's start are
+/// the same offset, the head lands on the next line and repeating the action
+/// walks one line further down each time — VS Code's `expandLineSelection`,
+/// which is what `Ctrl+L` is bound to (issue #3495). Pressing `Ctrl+L` twice
+/// used to select exactly one line and march it down the file.
+///
+/// The span is read lowest-edge-first, so an upward selection squares off over
+/// the lines it already covers instead of shrinking to the head's line.
+///
+/// The line edges come from the piece tree, not from the line *reader*: the
+/// reader hands back a long line in `MAX_LINE_BYTES` pieces, and a piece
+/// boundary is a read budget rather than the end of anything, so on a file that
+/// is one enormous line it would select to byte 100,000 and call it a line (the
+/// hazard [`logical_line_start`] and [`logical_line_end`] exist to keep out).
+fn expand_line_selection(state: &mut EditorState, cursors: &Cursors, events: &mut Vec<Event>) {
+    for (cursor_id, cursor) in cursors.iter() {
+        let (low, high) = match cursor.anchor {
+            Some(anchor) if anchor > cursor.position => (cursor.position, anchor),
+            Some(anchor) => (anchor, cursor.position),
+            None => (cursor.position, cursor.position),
+        };
+        let low_line_start = logical_line_start(&mut state.buffer, low);
+        let len = state.buffer.len();
+        // One past the line's terminator — so the newline is taken in, and the
+        // head sits where the next line begins, ready for the next press. A
+        // last line without a terminator ends where the buffer does.
+        let high_line_end = state
+            .buffer
+            .next_line_start_within(high, len)
+            .unwrap_or(len);
+        add_move_cursor_event(
+            events,
+            cursor_id,
+            cursor.position,
+            high_line_end,
+            cursor.anchor,
+            Some(low_line_start),
+            cursor.sticky_column,
+        );
     }
 }
 
@@ -3920,7 +4007,11 @@ pub fn action_to_events(
         }
 
         Action::SelectLine => {
-            select_line(state, cursors, &mut events, estimated_line_length);
+            select_line(state, cursors, &mut events);
+        }
+
+        Action::ExpandLineSelection => {
+            expand_line_selection(state, cursors, &mut events);
         }
 
         Action::ExpandSelection => {
@@ -5286,7 +5377,8 @@ mod tests {
             },
         );
 
-        // Try to move up (no previous line exists)
+        // Up with no previous line: the column arithmetic still has to hold at
+        // the edge. The move goes as far up as there is — the line's start.
         let events = action_to_events(
             &mut state,
             &mut cursors,
@@ -5299,13 +5391,38 @@ mod tests {
             24,
         )
         .unwrap();
+        assert_eq!(events.len(), 1, "Up at the first line still answers");
+        let Event::MoveCursor { new_position, .. } = &events[0] else {
+            panic!("expected a cursor move, got {:?}", events[0]);
+        };
         assert_eq!(
-            events.len(),
-            0,
-            "Should not generate event when at first line"
+            *new_position, 0,
+            "Up on the only line rests at its start, without underflowing"
         );
 
-        // Try to move down (no next line exists)
+        // And having landed there, Down is at the end of the only line, so
+        // there is nowhere left for it to go.
+        state.apply(&mut cursors, &events[0]);
+        let events = action_to_events(
+            &mut state,
+            &mut cursors,
+            Action::MoveDown,
+            4,
+            false,
+            false,
+            true,
+            80,
+            24,
+        )
+        .unwrap();
+        assert_eq!(events.len(), 1, "Down crosses the only line");
+        let Event::MoveCursor { new_position, .. } = &events[0] else {
+            panic!("expected a cursor move, got {:?}", events[0]);
+        };
+        assert_eq!(*new_position, 5, "Down on the only line rests at its end");
+
+        // Once there, it has nowhere to go and says nothing.
+        state.apply(&mut cursors, &events[0]);
         let events = action_to_events(
             &mut state,
             &mut cursors,
@@ -5321,7 +5438,7 @@ mod tests {
         assert_eq!(
             events.len(),
             0,
-            "Should not generate event when at last line"
+            "Should not generate event when already at the last line's end"
         );
     }
 

@@ -450,7 +450,7 @@
     {
       "key": "l",
       "modifiers": ["ctrl"],
-      "action": "select_line",
+      "action": "expand_line_selection",
       "args": {},
       "when": "normal"
     },

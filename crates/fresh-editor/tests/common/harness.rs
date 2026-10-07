@@ -2964,13 +2964,23 @@ impl EditorTestHarness {
         self.render()?;
         Ok(())
     }
-    /// Wait indefinitely for async operations until condition is met.
+    /// Wait for async operations until the condition is met.
     /// Runs a full editor tick each iteration — the same work the real event
     /// loop performs between frames — so that hover timers, debounced requests,
     /// diagnostic pulls, and all other periodic checks fire naturally.
     ///
     /// Note: Uses a short real wall-clock sleep between iterations to allow
     /// async I/O operations (running on tokio runtime) time to complete.
+    ///
+    /// The condition is one that *must* arrive, so the wait is generous — but
+    /// it is not unbounded, because "must arrive" is exactly the assumption
+    /// that breaks. Past [`WAIT_DEADLINE`] it gives up out loud, the way
+    /// [`EditorTestHarness::wait_for_async_quiescence`] does: a caller that
+    /// waited for something that never came should see a named failure with
+    /// the screen it was waiting on, in the test that did the waiting.
+    /// Without the bound the test simply hung until nextest killed the run
+    /// three slow-timeout periods later (180s), which reads as a broken build
+    /// rather than as this one test's unmet condition.
     pub fn wait_until<F>(&mut self, mut condition: F) -> anyhow::Result<()>
     where
         F: FnMut(&Self) -> bool,
@@ -2978,6 +2988,11 @@ impl EditorTestHarness {
         const WAIT_SLEEP: std::time::Duration = std::time::Duration::from_millis(50);
         // Dump the screen periodically so CI logs show what the test sees while stuck
         const SCREEN_DUMP_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10);
+        // Twice `.config/nextest.toml`'s 60s slow-timeout period, and well
+        // inside the 180s at which it terminates the test: long enough that no
+        // healthy wait reaches it, early enough to fail as a test rather than
+        // as a killed run.
+        const WAIT_DEADLINE: std::time::Duration = std::time::Duration::from_secs(120);
 
         tracing::info!("waiting...");
         let start = std::time::Instant::now();
@@ -3004,6 +3019,13 @@ impl EditorTestHarness {
                     elapsed.as_secs_f64()
                 );
                 last_dump = now;
+            }
+            if now.duration_since(start) >= WAIT_DEADLINE {
+                anyhow::bail!(
+                    "wait_until gave up after {:.0}s — the condition never became true. Screen:\n{}",
+                    WAIT_DEADLINE.as_secs_f64(),
+                    self.screen_to_string()
+                );
             }
             // Sleep for real wall-clock time to allow async I/O operations to complete
             // These run on the tokio runtime and need actual time, not logical time

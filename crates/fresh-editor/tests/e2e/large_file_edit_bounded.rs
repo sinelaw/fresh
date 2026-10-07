@@ -211,7 +211,7 @@ fn a_frame_segments_what_it_draws_and_not_the_chop_width() {
 #[test]
 fn soft_wrap_off_draws_one_row_for_a_file_with_no_line_breaks() {
     let dir = tempfile::tempdir().unwrap();
-    let (single_path, _, _) = write_pair(dir.path());
+    let (single_path, _, bytes) = write_pair(dir.path());
 
     let mut harness = opened(&single_path, false);
     let screen = harness.screen_to_string();
@@ -232,18 +232,30 @@ fn soft_wrap_off_draws_one_row_for_a_file_with_no_line_breaks() {
          got {filler} filler rows:\n{screen}"
     );
 
-    // Down has nowhere to go: the cursor stays where it is.
-    let byte_before = status_bar_byte(&screen);
+    // There is no row below the only row, so Down goes as far down as there
+    // is: the end of the line, which here is the end of the file. What it must
+    // never do is land *inside* the line — the reader hands a line this long
+    // back in `MAX_LINE_BYTES` pieces, and a piece boundary is a read budget,
+    // not a row (issue #1806). Repeating it then has nowhere left to go.
     for _ in 0..5 {
         harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     }
     harness.render().unwrap();
     let after = harness.screen_to_string();
-    assert_eq!(
-        status_bar_byte(&after),
-        byte_before,
-        "with soft wrap off there is no row below the only row, so Down must \
-         not move the cursor:\n{after}"
+    let at_line_end = format!("Ln 1, Col {}", bytes + 1);
+    assert!(
+        after.contains(&at_line_end),
+        "Down on the only line should rest at its end ({at_line_end}), still on \
+         line 1 and not at a read-budget boundary part-way along it:\n{after}"
+    );
+    // And the pane still draws that one logical line as one row.
+    let filler_after = after
+        .lines()
+        .filter(|l| l.trim_start().starts_with('~'))
+        .count();
+    assert!(
+        filler_after > H as usize / 2,
+        "it is still one row and filler after the move, got {filler_after}:\n{after}"
     );
 }
 
