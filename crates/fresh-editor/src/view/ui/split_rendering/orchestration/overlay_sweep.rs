@@ -42,6 +42,8 @@ pub(super) struct OverlayActiveSet<'a> {
     /// Flat slice mirror of `active` for `compute_char_style`. Only
     /// rebuilt when `active` actually mutates.
     active_refs: Vec<&'a Overlay>,
+    /// The `extend_to_line_end` subset of `active_refs`, same order.
+    band_refs: Vec<&'a Overlay>,
     /// Next overlay (in `position_index`) to consider for admission.
     next_pos: usize,
     /// Byte the sweep was last advanced to. Subsequent cells at the
@@ -66,6 +68,7 @@ impl<'a> OverlayActiveSet<'a> {
             position_index,
             active: Vec::new(),
             active_refs: Vec::new(),
+            band_refs: Vec::new(),
             next_pos: 0,
             last_bp: None,
             row_touched: Vec::new(),
@@ -146,6 +149,13 @@ impl<'a> OverlayActiveSet<'a> {
             self.active_refs.clear();
             self.active_refs
                 .extend(self.active.iter().map(|(_, _, o)| *o));
+            self.band_refs.clear();
+            self.band_refs.extend(
+                self.active
+                    .iter()
+                    .map(|(_, _, o)| *o)
+                    .filter(|o| o.extend_to_line_end),
+            );
         }
         self.last_bp = Some(bp);
     }
@@ -154,6 +164,16 @@ impl<'a> OverlayActiveSet<'a> {
     /// in priority-ascending order. Use for per-cell style composition.
     pub(super) fn at_cursor(&self) -> &[&'a Overlay] {
         &self.active_refs
+    }
+
+    /// Those of [`Self::at_cursor`] that paint a whole row.
+    ///
+    /// Use for a cell with no source byte before the row's first glyph.
+    /// Such a cell is not text, so an overlay over a range of text does
+    /// not apply to it — the rule `SelectionActiveSet::contains` already
+    /// uses for a cell with no byte.
+    pub(super) fn bands_at_cursor(&self) -> &[&'a Overlay] {
+        &self.band_refs
     }
 
     /// Highest-priority overlay with `extend_to_line_end` that touched

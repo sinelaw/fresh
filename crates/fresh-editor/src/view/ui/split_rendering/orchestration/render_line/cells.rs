@@ -695,17 +695,21 @@ impl CellPass<'_, '_, '_> {
         // first glyph the sweep still stands on the previous row, so move it
         // onto this one; after it, it is already on the hint's neighbour.
         let row_start_byte = input.view_line.source_start_byte;
-        if byte_pos.is_none() && self.first_line_byte_pos.is_none() {
+        let before_first_glyph = self.first_line_byte_pos.is_none();
+        if byte_pos.is_none() && before_first_glyph {
             if let Some(bp) = row_start_byte {
                 self.overlay_sweep.advance_to(bp);
             }
         }
         // A row with no source bytes at all (a plugin's virtual line) keeps
-        // its own styling.
-        let cell_overlays: &[&Overlay] = if byte_pos.is_some() || row_start_byte.is_some() {
-            self.overlay_sweep.at_cursor()
-        } else {
-            &[]
+        // its own styling. Before the row's first glyph, only the row-wide
+        // overlays apply: the advance above put the sweep on the row's first
+        // byte, so otherwise a match starting the row painted the wrap's
+        // hanging indent in front of it (#3466).
+        let cell_overlays: &[&Overlay] = match (byte_pos, row_start_byte) {
+            (None, None) => &[],
+            (None, Some(_)) if before_first_glyph => self.overlay_sweep.bands_at_cursor(),
+            _ => self.overlay_sweep.at_cursor(),
         };
 
         let CharStyleOutput {
