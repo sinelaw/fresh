@@ -1,3 +1,4 @@
+use fresh_core::BufferId;
 use std::ops::Range;
 
 /// Pre-calculated line information for an event
@@ -30,6 +31,20 @@ pub struct SearchState {
     /// True if the match count was capped at MAX_MATCHES
     #[allow(dead_code)]
     pub capped: bool,
+    /// The buffer the match set was collected from, and that buffer's
+    /// version at the time.
+    ///
+    /// `matches` is a snapshot of byte offsets, so it only means anything in
+    /// that buffer, unedited. Navigation searches again instead of using it
+    /// once either has changed.
+    pub collected_from: (BufferId, u64),
+    /// True while the search namespace holds one overlay per match, so the
+    /// overlays track edits and are the live match set.
+    ///
+    /// Small files only; `clear_search_overlays` turns it off. While it
+    /// holds, an empty overlay set means the edits removed every match, not
+    /// that the overlays are missing.
+    pub overlays_track_matches: bool,
 }
 
 impl SearchState {

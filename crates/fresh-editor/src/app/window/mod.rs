@@ -3582,6 +3582,10 @@ impl Window {
         let state = self.active_state_mut();
         state.overlays.clear_namespace(&ns, &mut state.marker_list);
         self.clear_current_search_match();
+        // Without the overlays, the stored snapshot is the match set again.
+        if let Some(ss) = self.search_state.as_mut() {
+            ss.overlays_track_matches = false;
+        }
     }
 
     /// Mark `range` as the current search match, replacing any previous one.
@@ -4329,6 +4333,22 @@ impl Window {
         // word-boundary context on either side of the edit is included.
         let start_line = state.buffer.get_line_number(edit_start.min(buf_len));
         let end_line = state.buffer.get_line_number(edit_end);
+        let win_start = state.buffer.line_start_offset(start_line).unwrap_or(0);
+        let win_end = state
+            .buffer
+            .line_start_offset(end_line + 1)
+            .unwrap_or(buf_len)
+            .min(buf_len);
+
+        // Widen again over any match reaching past those lines: the swap
+        // below drops every overlay it touches, and the rescan can only
+        // re-add what it sees whole.
+        let span =
+            state
+                .overlays
+                .namespace_replacement_span(&ns, win_start..win_end, &state.marker_list);
+        let start_line = state.buffer.get_line_number(span.start.min(buf_len));
+        let end_line = state.buffer.get_line_number(span.end.min(buf_len));
         let win_start = state.buffer.line_start_offset(start_line).unwrap_or(0);
         let win_end = state
             .buffer
