@@ -1,0 +1,87 @@
+{
+  "name": "fresh-0.5.2-confirm",
+  "capture": {
+    "geometry": "150x34",
+    "font": "JetBrains Mono 24",
+    "screen": "3200x1700x24",
+    "display": ":98",
+    "term": "xterm",
+    "workdir": "~/repos/fresh/target/clips/fresh-0.5.2-repo",
+    "settle": 10,
+    "copy_dirs": {
+      "~/repos/fresh/scripts/clips/assets/fresh-0.5.2/fresh": "{scratch}/config/fresh"
+    },
+    "env": {
+      "XDG_CONFIG_HOME": "{scratch}/config",
+      "XDG_DATA_HOME": "{scratch}/data-{pane}",
+      "XDG_STATE_HOME": "{scratch}/state-{pane}",
+      "XDG_RUNTIME_DIR": "{scratch}/run-{pane}"
+    },
+    "keys": [
+      {
+        "sleep": 1
+      },
+      {
+        "key": "End"
+      },
+      {
+        "type": " // ebb"
+      },
+      {
+        "key": "alt+w",
+        "settle": 0.8
+      },
+      {
+        "shot": "card"
+      }
+    ],
+    "panes": {
+      "confirm": {
+        "argv": [
+          "~/repos/fresh/target/debug/fresh",
+          "--no-restore",
+          "--no-upgrade-check",
+          "src/tides.rs:24:1"
+        ]
+      }
+    }
+  },
+  "render": {
+    "rows": 34,
+    "cols": 150,
+    "annotations": [
+      {
+        "rows": [
+          19,
+          21
+        ],
+        "view": "card",
+        "band": false,
+        "shot": "card",
+        "cols": [
+          70,
+          106
+        ],
+        "tag": {
+          "text": "Real confirm dialogs",
+          "at": "center",
+          "size": 76,
+          "width": 0.7,
+          "y": 0.18
+        }
+      }
+    ],
+    "views": {
+      "card": {
+        "rows": [
+          8,
+          24
+        ],
+        "cols": [
+          36,
+          114
+        ]
+      }
+    }
+  }
+}

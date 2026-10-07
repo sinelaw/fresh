@@ -1,0 +1,86 @@
+{
+  "name": "fresh-0.5.2-grep",
+  "capture": {
+    "geometry": "150x34",
+    "font": "JetBrains Mono 24",
+    "screen": "3200x1700x24",
+    "display": ":98",
+    "term": "xterm",
+    "workdir": "~/repos/fresh/target/clips/fresh-0.5.2-repo",
+    "settle": 10,
+    "copy_dirs": {
+      "~/repos/fresh/scripts/clips/assets/fresh-0.5.2/fresh": "{scratch}/config/fresh"
+    },
+    "env": {
+      "XDG_CONFIG_HOME": "{scratch}/config",
+      "XDG_DATA_HOME": "{scratch}/data-{pane}",
+      "XDG_STATE_HOME": "{scratch}/state-{pane}",
+      "XDG_RUNTIME_DIR": "{scratch}/run-{pane}"
+    },
+    "keys": [
+      {
+        "sleep": 1
+      },
+      {
+        "key": "alt+slash",
+        "settle": 1.0
+      },
+      {
+        "type": "berth"
+      },
+      {
+        "sleep": 1.0
+      },
+      {
+        "shot": "form"
+      }
+    ],
+    "panes": {
+      "grep": {
+        "argv": [
+          "~/repos/fresh/target/debug/fresh",
+          "--no-restore",
+          "--no-upgrade-check",
+          "docs/moorings.md:1:1"
+        ]
+      }
+    }
+  },
+  "render": {
+    "rows": 34,
+    "cols": 150,
+    "annotations": [
+      {
+        "rows": [
+          2,
+          7
+        ],
+        "view": "form",
+        "band": false,
+        "shot": "form",
+        "cols": [
+          7,
+          142
+        ],
+        "tag": {
+          "text": "Live Grep, redesigned",
+          "at": "bottom-center",
+          "size": 76,
+          "width": 0.7
+        }
+      }
+    ],
+    "views": {
+      "form": {
+        "rows": [
+          1,
+          14
+        ],
+        "cols": [
+          6,
+          143
+        ]
+      }
+    }
+  }
+}
