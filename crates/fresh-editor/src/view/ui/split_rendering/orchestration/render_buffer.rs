@@ -700,16 +700,13 @@ pub(crate) fn draw_buffer_in_split(
     }
 
     Clear.render(render_area, buf);
-    // The ground every cell of the pane starts from, with the text
-    // attributes the theme gives `editor.fg` / `editor.bg` (whichever colors
-    // `use_terminal_bg` picks, the attributes are still the theme's).
+    // Colors only: every cell starts from this and can add attributes but not
+    // clear them, so `editor.fg` / `editor.bg` attributes are applied per
+    // cell (`compute_char_style`), on the cells actually drawn with them.
     let editor_block = Block::default().borders(Borders::NONE).style(
         Style::default()
             .fg(effective_editor_fg)
-            .bg(effective_editor_bg)
-            .add_modifier(
-                theme.resolve_modifier_key("editor.fg") | theme.resolve_modifier_key("editor.bg"),
-            ),
+            .bg(effective_editor_bg),
     );
     Paragraph::new(lines)
         .block(editor_block)

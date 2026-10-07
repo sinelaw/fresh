@@ -220,6 +220,8 @@
     "field.punctuation_delimiter_desc": "Разделители и сепаратори (;, ,, .)",
     "field.punctuation_delimiter_modifier": "Атрибути на ограничители",
     "field.punctuation_delimiter_modifier_desc": "Текстови атрибути прилагани към ограничители",
+    "field.attributes_of": "Атрибути на %{field}",
+    "field.attributes_of_desc": "Текстови атрибути, прилагани с %{field}",
     "field.ruler_bg": "Фон на Линия",
     "field.ruler_bg_desc": "Цвят на вертикалната линия на ред",
     "field.scrollbar_thumb_fg": "Палец на лента за превъртане",
@@ -827,7 +829,9 @@
     "field.punctuation_bracket_modifier": "Bracket Attributes",
     "field.punctuation_bracket_modifier_desc": "Text attributes applied to punctuation brackets",
     "field.punctuation_delimiter_modifier": "Delimiter Attributes",
-    "field.punctuation_delimiter_modifier_desc": "Text attributes applied to punctuation delimiters"
+    "field.punctuation_delimiter_modifier_desc": "Text attributes applied to punctuation delimiters",
+    "field.attributes_of": "Atributy: %{field}",
+    "field.attributes_of_desc": "Textové atributy použité s %{field}"
   },
   "de": {
     "field.indent_rainbow": "Einrückungsregenbogen %{level}",
@@ -1242,7 +1246,9 @@
     "field.punctuation_bracket_modifier": "Bracket Attributes",
     "field.punctuation_bracket_modifier_desc": "Text attributes applied to punctuation brackets",
     "field.punctuation_delimiter_modifier": "Delimiter Attributes",
-    "field.punctuation_delimiter_modifier_desc": "Text attributes applied to punctuation delimiters"
+    "field.punctuation_delimiter_modifier_desc": "Text attributes applied to punctuation delimiters",
+    "field.attributes_of": "%{field} – Attribute",
+    "field.attributes_of_desc": "Textattribute, die mit %{field} gezeichnet werden"
   },
   "en": {
     "field.indent_rainbow": "Indent Rainbow %{level}",
@@ -1624,6 +1630,8 @@
     "field.punctuation_bracket_modifier_desc": "Text attributes applied to punctuation brackets",
     "field.punctuation_delimiter_modifier": "Delimiter Attributes",
     "field.punctuation_delimiter_modifier_desc": "Text attributes applied to punctuation delimiters",
+    "field.attributes_of": "%{field} Attributes",
+    "field.attributes_of_desc": "Text attributes drawn with %{field}",
     "field.settings_selected_bg": "Settings Selected Background",
     "field.settings_selected_bg_desc": "Background color for selected setting",
     "field.settings_selected_fg": "Settings Selected Foreground",
@@ -2072,7 +2080,9 @@
     "field.punctuation_bracket_modifier": "Bracket Attributes",
     "field.punctuation_bracket_modifier_desc": "Text attributes applied to punctuation brackets",
     "field.punctuation_delimiter_modifier": "Delimiter Attributes",
-    "field.punctuation_delimiter_modifier_desc": "Text attributes applied to punctuation delimiters"
+    "field.punctuation_delimiter_modifier_desc": "Text attributes applied to punctuation delimiters",
+    "field.attributes_of": "Atributos de %{field}",
+    "field.attributes_of_desc": "Atributos de texto aplicados con %{field}"
   },
   "fr": {
     "field.indent_rainbow": "Arc-en-ciel d’indentation %{level}",
@@ -2487,7 +2497,9 @@
     "field.punctuation_bracket_modifier": "Bracket Attributes",
     "field.punctuation_bracket_modifier_desc": "Text attributes applied to punctuation brackets",
     "field.punctuation_delimiter_modifier": "Delimiter Attributes",
-    "field.punctuation_delimiter_modifier_desc": "Text attributes applied to punctuation delimiters"
+    "field.punctuation_delimiter_modifier_desc": "Text attributes applied to punctuation delimiters",
+    "field.attributes_of": "Attributs de %{field}",
+    "field.attributes_of_desc": "Attributs de texte appliqués avec %{field}"
   },
   "it": {
     "field.indent_rainbow": "Arcobaleno rientri %{level}",
@@ -2902,7 +2914,9 @@
     "field.punctuation_bracket_modifier": "Bracket Attributes",
     "field.punctuation_bracket_modifier_desc": "Text attributes applied to punctuation brackets",
     "field.punctuation_delimiter_modifier": "Delimiter Attributes",
-    "field.punctuation_delimiter_modifier_desc": "Text attributes applied to punctuation delimiters"
+    "field.punctuation_delimiter_modifier_desc": "Text attributes applied to punctuation delimiters",
+    "field.attributes_of": "Attributi di %{field}",
+    "field.attributes_of_desc": "Attributi del testo applicati con %{field}"
   },
   "ja": {
     "field.indent_rainbow": "インデントレインボー %{level}",
@@ -3317,7 +3331,9 @@
     "field.punctuation_bracket_modifier": "Bracket Attributes",
     "field.punctuation_bracket_modifier_desc": "Text attributes applied to punctuation brackets",
     "field.punctuation_delimiter_modifier": "Delimiter Attributes",
-    "field.punctuation_delimiter_modifier_desc": "Text attributes applied to punctuation delimiters"
+    "field.punctuation_delimiter_modifier_desc": "Text attributes applied to punctuation delimiters",
+    "field.attributes_of": "%{field} の属性",
+    "field.attributes_of_desc": "%{field} と共に適用されるテキスト属性"
   },
   "ko": {
     "field.indent_rainbow": "들여쓰기 무지개 %{level}",
@@ -3732,7 +3748,9 @@
     "field.punctuation_bracket_modifier": "Bracket Attributes",
     "field.punctuation_bracket_modifier_desc": "Text attributes applied to punctuation brackets",
     "field.punctuation_delimiter_modifier": "Delimiter Attributes",
-    "field.punctuation_delimiter_modifier_desc": "Text attributes applied to punctuation delimiters"
+    "field.punctuation_delimiter_modifier_desc": "Text attributes applied to punctuation delimiters",
+    "field.attributes_of": "%{field} 속성",
+    "field.attributes_of_desc": "%{field}와 함께 적용되는 텍스트 속성"
   },
   "pt-BR": {
     "field.indent_rainbow": "Arco-íris de indentação %{level}",
@@ -4147,7 +4165,9 @@
     "field.punctuation_bracket_modifier": "Bracket Attributes",
     "field.punctuation_bracket_modifier_desc": "Text attributes applied to punctuation brackets",
     "field.punctuation_delimiter_modifier": "Delimiter Attributes",
-    "field.punctuation_delimiter_modifier_desc": "Text attributes applied to punctuation delimiters"
+    "field.punctuation_delimiter_modifier_desc": "Text attributes applied to punctuation delimiters",
+    "field.attributes_of": "Atributos de %{field}",
+    "field.attributes_of_desc": "Atributos de texto aplicados com %{field}"
   },
   "ru": {
     "field.indent_rainbow": "Радужный отступ %{level}",
@@ -4562,7 +4582,9 @@
     "field.punctuation_bracket_modifier": "Bracket Attributes",
     "field.punctuation_bracket_modifier_desc": "Text attributes applied to punctuation brackets",
     "field.punctuation_delimiter_modifier": "Delimiter Attributes",
-    "field.punctuation_delimiter_modifier_desc": "Text attributes applied to punctuation delimiters"
+    "field.punctuation_delimiter_modifier_desc": "Text attributes applied to punctuation delimiters",
+    "field.attributes_of": "Атрибуты: %{field}",
+    "field.attributes_of_desc": "Атрибуты текста, применяемые вместе с %{field}"
   },
   "th": {
     "field.indent_rainbow": "แนวเยื้องสีรุ้ง %{level}",
@@ -4977,7 +4999,9 @@
     "field.punctuation_bracket_modifier": "Bracket Attributes",
     "field.punctuation_bracket_modifier_desc": "Text attributes applied to punctuation brackets",
     "field.punctuation_delimiter_modifier": "Delimiter Attributes",
-    "field.punctuation_delimiter_modifier_desc": "Text attributes applied to punctuation delimiters"
+    "field.punctuation_delimiter_modifier_desc": "Text attributes applied to punctuation delimiters",
+    "field.attributes_of": "แอตทริบิวต์ของ %{field}",
+    "field.attributes_of_desc": "แอตทริบิวต์ข้อความที่ใช้กับ %{field}"
   },
   "uk": {
     "field.indent_rainbow": "Райдужний відступ %{level}",
@@ -5392,7 +5416,9 @@
     "field.punctuation_bracket_modifier": "Bracket Attributes",
     "field.punctuation_bracket_modifier_desc": "Text attributes applied to punctuation brackets",
     "field.punctuation_delimiter_modifier": "Delimiter Attributes",
-    "field.punctuation_delimiter_modifier_desc": "Text attributes applied to punctuation delimiters"
+    "field.punctuation_delimiter_modifier_desc": "Text attributes applied to punctuation delimiters",
+    "field.attributes_of": "Атрибути: %{field}",
+    "field.attributes_of_desc": "Атрибути тексту, що застосовуються разом із %{field}"
   },
   "vi": {
     "field.indent_rainbow": "Cầu vồng thụt lề %{level}",
@@ -5807,7 +5833,9 @@
     "field.punctuation_bracket_modifier": "Bracket Attributes",
     "field.punctuation_bracket_modifier_desc": "Text attributes applied to punctuation brackets",
     "field.punctuation_delimiter_modifier": "Delimiter Attributes",
-    "field.punctuation_delimiter_modifier_desc": "Text attributes applied to punctuation delimiters"
+    "field.punctuation_delimiter_modifier_desc": "Text attributes applied to punctuation delimiters",
+    "field.attributes_of": "Thuộc tính của %{field}",
+    "field.attributes_of_desc": "Thuộc tính văn bản áp dụng cùng %{field}"
   },
   "zh-CN": {
     "field.indent_rainbow": "彩虹缩进 %{level}",
@@ -6222,6 +6250,8 @@
     "field.punctuation_bracket_modifier": "Bracket Attributes",
     "field.punctuation_bracket_modifier_desc": "Text attributes applied to punctuation brackets",
     "field.punctuation_delimiter_modifier": "Delimiter Attributes",
-    "field.punctuation_delimiter_modifier_desc": "Text attributes applied to punctuation delimiters"
+    "field.punctuation_delimiter_modifier_desc": "Text attributes applied to punctuation delimiters",
+    "field.attributes_of": "%{field} 属性",
+    "field.attributes_of_desc": "与 %{field} 一起应用的文本属性"
   }
 }

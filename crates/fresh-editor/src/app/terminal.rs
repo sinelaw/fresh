@@ -2818,7 +2818,15 @@ pub mod render {
         // cells past the PTY grid (e.g. transiently smaller than the rect
         // mid-resize) show the theme background rather than leaking the
         // host terminal's default bg. Issue #1890.
-        buf.set_style(area, default_fg.patch(default_bg));
+        //
+        // Colors only: a cell takes the area's style as its base and
+        // `set_string` can add text attributes but not clear them, so the
+        // default keys' attributes here would reach cells that carry colors
+        // of their own. Those go on default-colored cells, below.
+        let mut ground = Style::default();
+        ground.fg = default_fg.fg;
+        ground.bg = default_bg.bg;
+        buf.set_style(area, ground);
 
         for (row_idx, row) in content.iter().enumerate() {
             if row_idx as u16 >= area.height {

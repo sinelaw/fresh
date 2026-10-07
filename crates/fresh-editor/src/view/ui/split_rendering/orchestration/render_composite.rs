@@ -525,6 +525,12 @@ fn render_view_line_content(
     let mut current_span_text = String::new();
     let mut current_style: Option<Style> = None;
     let mut hl_cursor = 0usize;
+    // Resolved once, not per character.
+    let selection = Style::default().theme_bg(theme, "editor.selection_bg");
+    let plain = Style::default().theme_fg(theme, "editor.fg");
+    let cursor_cell = Style::default()
+        .theme_fg(theme, "editor.bg")
+        .theme_bg(theme, "editor.fg");
     for (char_idx, ch) in chars.iter().enumerate() {
         let cw = char_width(*ch);
         // Skip characters before left_column
@@ -542,7 +548,7 @@ fn render_view_line_content(
             .map(|(start, end)| col >= start && col < end)
             .unwrap_or(false);
         let char_bg = if in_selection {
-            Style::default().theme_bg(theme, "editor.selection_bg")
+            selection
         } else if in_inline_range {
             highlight_bg.unwrap_or(bg)
         } else {
@@ -558,12 +564,10 @@ fn render_view_line_content(
                 .add_modifier(attrs)
                 .patch(char_bg)
         } else {
-            Style::default().theme_fg(theme, "editor.fg").patch(char_bg)
+            plain.patch(char_bg)
         };
         let final_style = if show_cursor && col == cursor_column {
-            Style::default()
-                .theme_fg(theme, "editor.bg")
-                .theme_bg(theme, "editor.fg")
+            cursor_cell
         } else {
             char_style
         };

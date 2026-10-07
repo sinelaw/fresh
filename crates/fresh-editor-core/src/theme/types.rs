@@ -1800,11 +1800,18 @@ fn apply_theme_overrides(theme: &mut Theme, theme_file: &ThemeFile, raw: &serde_
         // A value is a bare color or a `{color, modifier}` bundle; the
         // richer form also accepts a bare color (empty modifier). The
         // whole value defines the style, so a bare color clears any
-        // modifier the base theme set for this key.
+        // modifier the base theme set for this key — except on a key whose
+        // attributes an attribute-only key also sets. Those attributes were
+        // never part of the color's value (a theme extending `terminal` that
+        // recolors its selection keeps the reverse video), so only a bundle
+        // replaces them.
         let Ok(styled) = serde_json::from_value::<StyledColorDef>(value.clone()) else {
             continue;
         };
-        if theme.set_theme_key(&key, styled.color().clone().into()) {
+        let bare = matches!(styled, StyledColorDef::Plain(_));
+        if theme.set_theme_key(&key, styled.color().clone().into())
+            && !(bare && Theme::has_modifier_only_key(&key))
+        {
             theme.set_modifier_key(&key, styled.modifier());
         }
     }
@@ -1949,6 +1956,9 @@ impl Theme {
             }
             self.set_modifier_key(key, modifier);
         }
+        // An attribute-only key the theme names is a statement of its own:
+        // a fallback filled into its color key must not overwrite it.
+        self.apply_modifier_only_keys(raw);
     }
 
     /// Set the text attributes of every key the theme JSON `raw` names, from
@@ -2004,6 +2014,15 @@ impl Theme {
             "ui.popup_fg" => "ui.popup_text_fg",
             other => other,
         }
+    }
+
+    /// Whether a color key's attributes can also be set by an attribute-only
+    /// key (`editor.selection_bg` by `editor.selection_modifier`, …).
+    pub fn has_modifier_only_key(color_key: &str) -> bool {
+        matches!(
+            color_key,
+            "editor.selection_bg" | "ui.semantic_highlight_bg"
+        )
     }
 
     /// Whether `key` names text attributes alone, with no color of its own.
@@ -3963,5 +3982,42 @@ mod tests {
         ))
         .unwrap_err();
         assert!(err.contains("`diagnostic.error_bg`"), "{err}");
+    }
+
+    #[test]
+    fn attribute_only_key_survives_a_fallback_of_its_color_key() {
+        // A standalone theme that leaves out `semantic_highlight_bg` (so it
+        // falls back) but names the attribute-only key keeps the attributes.
+        let theme = standalone(serde_json::json!({
+            "ui": { "semantic_highlight_modifier": ["bold"] }
+        }));
+        assert_eq!(theme.semantic_highlight_modifier, Modifier::BOLD);
+    }
+
+    #[test]
+    fn recoloring_keeps_attributes_set_by_an_attribute_only_key() {
+        // `terminal` draws its selection with reverse video, set through
+        // `editor.selection_modifier`; recoloring the selection keeps it.
+        let theme = Theme::from_json(
+            r#"{
+                "name": "recolored",
+                "extends": "builtin://terminal",
+                "editor": { "selection_bg": "Blue" },
+                "ui": { "semantic_highlight_bg": "Blue" }
+            }"#,
+        )
+        .unwrap();
+        assert!(theme.selection_modifier.contains(Modifier::REVERSED));
+        assert!(theme.semantic_highlight_modifier.contains(Modifier::BOLD));
+        // A bundle states the attributes, so it replaces them.
+        let bundled = Theme::from_json(
+            r#"{
+                "name": "recolored",
+                "extends": "builtin://terminal",
+                "editor": { "selection_bg": { "color": "Blue", "modifier": ["italic"] } }
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(bundled.selection_modifier, Modifier::ITALIC);
     }
 }

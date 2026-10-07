@@ -60,6 +60,18 @@ pub(super) struct CharStyleOutput {
     pub region: &'static str,
 }
 
+/// The text attributes of a key that keeps them in `Theme::key_modifiers`
+/// (`editor.fg`, `editor.bg`, `editor.current_line_bg`): per-cell keys, read
+/// with a check that skips the key lookup entirely for the common theme that
+/// gives none of those keys attributes.
+fn ground_attrs(theme: &Theme, key: &'static str) -> Modifier {
+    if theme.key_modifiers.is_empty() {
+        Modifier::empty()
+    } else {
+        theme.resolve_modifier_key(key)
+    }
+}
+
 /// Whether an overlay paints a background of its own (not `Reset`).
 fn overlay_has_own_bg(overlay: &Overlay, theme: &Theme) -> bool {
     let bg = match &overlay.face {
@@ -96,7 +108,9 @@ pub(super) fn compute_char_style(ctx: &CharStyleContext) -> CharStyleOutput {
         if let Some(ref fg) = ts.fg {
             s = s.fg(fg.to_ratatui(ctx.theme));
         } else {
-            s = s.theme_fg(ctx.theme, "editor.fg");
+            s = s
+                .fg(ctx.theme.editor_fg)
+                .add_modifier(ground_attrs(ctx.theme, "editor.fg"));
             fg_theme_key = Some("editor.fg");
         }
         if let Some(ref bg) = ts.bg {
@@ -122,7 +136,9 @@ pub(super) fn compute_char_style(ctx: &CharStyleContext) -> CharStyleOutput {
         if let Some(fg) = ctx.ansi_style.fg {
             s = s.fg(fg);
         } else {
-            s = s.theme_fg(ctx.theme, "editor.fg");
+            s = s
+                .fg(ctx.theme.editor_fg)
+                .add_modifier(ground_attrs(ctx.theme, "editor.fg"));
             fg_theme_key = Some("editor.fg");
         }
         if let Some(bg) = ctx.ansi_style.bg {
@@ -139,7 +155,9 @@ pub(super) fn compute_char_style(ctx: &CharStyleContext) -> CharStyleOutput {
     } else {
         // Default color from theme
         fg_theme_key = Some("editor.fg");
-        Style::default().theme_fg(ctx.theme, "editor.fg")
+        Style::default()
+            .fg(ctx.theme.editor_fg)
+            .add_modifier(ground_attrs(ctx.theme, "editor.fg"))
     };
 
     // If we have ANSI style but also syntax highlighting, syntax takes precedence for color
@@ -285,14 +303,13 @@ pub(super) fn compute_char_style(ctx: &CharStyleContext) -> CharStyleOutput {
     if ctx.is_cursor_line_highlighted && !ctx.is_selected && style.bg.is_none() {
         style = style
             .bg(ctx.current_line_bg)
-            .add_modifier(ctx.theme.resolve_modifier_key("editor.current_line_bg"));
+            .add_modifier(ground_attrs(ctx.theme, "editor.current_line_bg"));
     }
 
     // Apply selection highlighting (preserve fg/syntax colors, only change bg).
     // Themes may also opt into SGR text attributes here (e.g. `Reversed`)
     // so a native-palette theme can swap fg/bg via the terminal instead
-    // of relying on a fixed bg color — `theme_bg` adds the attributes the
-    // theme gives `editor.selection_bg` (see `Theme::selection_modifier`).
+    // of relying on a fixed bg color — see `Theme::selection_modifier`.
     //
     // An overlay marked `above_selection` (the current search match, which
     // Find Next also selects) keeps its own look instead, when it has a
@@ -312,7 +329,10 @@ pub(super) fn compute_char_style(ctx: &CharStyleContext) -> CharStyleOutput {
             }
         });
     if (ctx.is_selected && !above_with_bg) || above_without_bg {
-        style = style.theme_bg(ctx.theme, "editor.selection_bg");
+        // `selection_modifier` is `editor.selection_bg`'s attributes.
+        style = style
+            .bg(ctx.theme.selection_bg)
+            .add_modifier(ctx.theme.selection_modifier);
         bg_theme_key = Some("editor.selection_bg");
         region = "Selection";
     }
@@ -337,6 +357,13 @@ pub(super) fn compute_char_style(ctx: &CharStyleContext) -> CharStyleOutput {
         fg_theme_key = Some("editor.fg");
         bg_theme_key = Some("editor.inactive_cursor");
         region = "Inactive Cursor";
+    }
+
+    // A cell left on the pane's own ground is drawn with `editor.bg`. The
+    // ground itself is painted with colors only, so its attributes go on
+    // exactly these cells, as every other key's go on the cells drawn with it.
+    if bg_theme_key == Some("editor.bg") && style.bg.is_none() {
+        style = style.add_modifier(ground_attrs(ctx.theme, "editor.bg"));
     }
 
     CharStyleOutput {
