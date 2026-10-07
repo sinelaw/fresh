@@ -242,6 +242,32 @@ fn theorem_select_line_first_line_includes_trailing_newline() {
 }
 
 #[test]
+fn theorem_select_line_on_a_line_longer_than_the_reader_cap() {
+    // The line *reader* hands a line back in `MAX_LINE_BYTES` (100_000) pieces,
+    // and a piece boundary is a read budget rather than the end of anything
+    // (issue #1806). Reading the line's extent through it made SelectLine stop
+    // at byte 100_000 of a longer line and call that the line.
+    let long = "x".repeat(120_000);
+    let text = format!("first\n{long}\nlast");
+    let line_two_start = "first\n".len();
+    let line_two_end = line_two_start + long.len() + "\n".len();
+    assert_buffer_scenario(BufferScenario {
+        description: "SelectLine takes the whole line, not the reader's first piece of it".into(),
+        initial_text: text.clone(),
+        actions: vec![
+            Action::MoveDocumentStart,
+            Action::MoveDown,
+            Action::SelectLine,
+        ],
+        expected_text: text,
+        expected_primary: CursorExpect::range(line_two_start, line_two_end),
+        expected_extra_cursors: vec![],
+        expected_selection_text: Some(format!("{long}\n")),
+        ..Default::default()
+    });
+}
+
+#[test]
 fn theorem_select_line_last_line_no_trailing_newline() {
     // Replaces test_select_line_last.
     // Cursor lands on the last line (no trailing newline in the

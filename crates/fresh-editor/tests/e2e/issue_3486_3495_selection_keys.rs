@@ -190,6 +190,74 @@ fn up_cancels_every_cursors_selection_not_only_the_ones_that_can_move() {
     );
 }
 
+/// With no selection either, Up on the first line goes as far up as there is:
+/// the start of the line. It used to do nothing at all, which is the same dead
+/// key #3486 reports, one case over.
+#[test]
+fn up_on_the_first_line_moves_to_its_start() {
+    let temp_dir = TempDir::new().unwrap();
+    let mut harness = EditorTestHarness::new(100, 20).unwrap();
+    open_fixture(&mut harness, &temp_dir);
+
+    for _ in 0..10 {
+        harness
+            .send_key(KeyCode::Right, KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness.render().unwrap();
+    assert!(
+        harness.get_status_bar().contains("Ln 1, Col 11"),
+        "precondition: cursor on line 1 column 11, status bar says: {}",
+        harness.get_status_bar()
+    );
+
+    harness.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    assert!(
+        harness.get_status_bar().contains("Ln 1, Col 1"),
+        "Up on the first line should move to its start, status bar says: {}",
+        harness.get_status_bar()
+    );
+}
+
+/// The mirror: Down on the last line rests at its end.
+#[test]
+fn down_on_the_last_line_moves_to_its_end() {
+    let temp_dir = TempDir::new().unwrap();
+    let mut harness = EditorTestHarness::new(100, 20).unwrap();
+    open_fixture(&mut harness, &temp_dir);
+
+    for _ in 0..3 {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    }
+    harness.render().unwrap();
+    assert!(
+        harness.get_status_bar().contains("Ln 4, Col 1"),
+        "precondition: cursor at the start of the last line, status bar says: {}",
+        harness.get_status_bar()
+    );
+
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    let at_end = format!("Ln 4, Col {}", LINE4.chars().count() + 1);
+    assert!(
+        harness.get_status_bar().contains(&at_end),
+        "Down on the last line should rest at its end ({at_end}), status bar says: {}",
+        harness.get_status_bar()
+    );
+
+    // And once there it has nowhere left to go.
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    assert!(
+        harness.get_status_bar().contains(&at_end),
+        "a second Down should stay put, status bar says: {}",
+        harness.get_status_bar()
+    );
+}
+
 /// Ctrl+L takes in another line on every press instead of moving a one-line
 /// selection down the file.
 #[test]

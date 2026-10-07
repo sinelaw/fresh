@@ -2132,19 +2132,21 @@ fn handle_vertical_up(
                     landed
                 }
             }
-            // The cursor is on the first line. An *extending* move still takes
-            // the head to the very start of the buffer (VSCode/Sublime, issue
-            // #3006) — but only when the buffer really does start above it: a
-            // line that merely begins further back than the search reaches is
-            // not the first line, and going to byte 0 on the strength of that
-            // would swallow the file.
-            LineAbove::TopOfBuffer if extend_selection && cursor.position > 0 => 0,
-            // Otherwise there is nowhere above to go, so the cursor rests on
-            // the collapse edge: the top of a selection, or where it already
-            // was. A plain arrow at the buffer's edge deliberately does not
-            // move (`soft_wrap_off_draws_one_row_for_a_file_with_no_line_breaks`
-            // pins the mirror of this for Down). What it must still do is let
-            // the selection go — the half that made the key read as dead.
+            // The cursor is on the first line, so Up goes as far up as there
+            // is: the start of the buffer (VSCode/Sublime, issue #3006 for an
+            // extending move, and the same answer for a plain one — an arrow
+            // that cannot take a whole line still takes the caret to the line
+            // start rather than doing nothing at all).
+            //
+            // Only when the buffer really does start above the cursor. A line
+            // that merely begins further back than the search reaches is not
+            // the first line, and going to byte 0 on the strength of that
+            // would swallow the file — `OutOfReach` stays put below.
+            //
+            // Already at byte 0 with nothing selected there is neither a move
+            // nor an anchor to drop, so that falls through too and emits
+            // nothing, leaving the sticky column alone.
+            LineAbove::TopOfBuffer if cursor.position > 0 || cursor.anchor.is_some() => 0,
             LineAbove::TopOfBuffer | LineAbove::OutOfReach => from_pos,
         };
 
@@ -2248,23 +2250,25 @@ fn handle_vertical_down(
             } else {
                 landed
             }
-        } else if extend_selection && cursor.position < state.buffer.len() {
-            // The cursor is on the last line. An extending move still takes the
-            // head to the end of the buffer (VSCode/Sublime, issue #3006).
-            state.buffer.len()
         } else if !extend_selection && cursor.anchor.is_none() && vs_mode.cursor_beyond_eol() {
             // Virtual space: float one line deeper below the buffer's end,
             // keeping the goal column. The byte position parks at the end; the
             // line count is installed when the event applies (see
-            // pending_virtual_lines).
+            // pending_virtual_lines). This comes before the plain boundary
+            // answer below, which would otherwise swallow the float.
             let vlines = cursor_virtual_lines(vs_mode, &state.buffer, cursor);
             state.pending_virtual_lines.push((cursor_id, vlines + 1));
             floated = true;
             state.buffer.len()
+        } else if cursor.position < state.buffer.len() || cursor.anchor.is_some() {
+            // The cursor is on the last line, so Down goes as far down as
+            // there is: the end of the buffer. The mirror of the first-line
+            // answer in `handle_vertical_up`, for an extending move (issue
+            // #3006) and a plain one alike.
+            state.buffer.len()
         } else {
-            // Nowhere below to go, so the cursor rests on the collapse edge —
-            // the bottom of a selection, or where it already was. See the
-            // mirror of this in `handle_vertical_up`.
+            // Already at the end with nothing selected: no move and no anchor
+            // to drop, so nothing is emitted and the sticky column survives.
             from_pos
         };
 
@@ -2804,28 +2808,31 @@ fn select_word(state: &mut EditorState, cursors: &Cursors, events: &mut Vec<Even
 /// the keybinding list all name it "the current line", and the gutter and
 /// terminal-grid gestures dispatch it to select the one line they were aimed
 /// at. [`expand_line_selection`] is the one that grows a selection.
-fn select_line(
-    state: &mut EditorState,
-    cursors: &Cursors,
-    events: &mut Vec<Event>,
-    estimated_line_length: usize,
-) {
+fn select_line(state: &mut EditorState, cursors: &Cursors, events: &mut Vec<Event>) {
     for (cursor_id, cursor) in cursors.iter() {
-        let mut iter = state
+        // Both edges come from the piece tree, not the line *reader*: the
+        // reader hands a long line back in `MAX_LINE_BYTES` pieces, and a piece
+        // boundary is a read budget rather than the end of anything, so on a
+        // file that is one enormous line this used to select the first ~100 KB
+        // and call it the line (the hazard #1806 names, and the reason
+        // `logical_line_start` exists).
+        let line_start = logical_line_start(&mut state.buffer, cursor.position);
+        let len = state.buffer.len();
+        // One past the terminator, so the newline is taken in; a last line
+        // without one ends where the buffer does.
+        let line_end = state
             .buffer
-            .line_iterator(cursor.position, estimated_line_length);
-        if let Some((line_start, line_content)) = iter.next_line() {
-            let line_end = line_start + line_content.len();
-            add_move_cursor_event(
-                events,
-                cursor_id,
-                cursor.position,
-                line_end,
-                cursor.anchor,
-                Some(line_start),
-                cursor.sticky_column,
-            );
-        }
+            .next_line_start_within(cursor.position, len)
+            .unwrap_or(len);
+        add_move_cursor_event(
+            events,
+            cursor_id,
+            cursor.position,
+            line_end,
+            cursor.anchor,
+            Some(line_start),
+            cursor.sticky_column,
+        );
     }
 }
 
@@ -4000,7 +4007,7 @@ pub fn action_to_events(
         }
 
         Action::SelectLine => {
-            select_line(state, cursors, &mut events, estimated_line_length);
+            select_line(state, cursors, &mut events);
         }
 
         Action::ExpandLineSelection => {

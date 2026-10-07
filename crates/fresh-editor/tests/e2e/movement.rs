@@ -759,15 +759,20 @@ fn column_zero_preserved_descending_through_wrapped_indented_line() {
     // Cursor at column 0 of line 1.
     harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
 
-    // Descend well past the wrapped line; the cursor ends on the last line.
+    // Descend until the cursor reaches the last line, and stop there. Pressing
+    // on past it would no longer be a no-op: Down on the last line now rests at
+    // its end, which would mask the very drift this is watching for.
+    let buf = harness.get_buffer_content().unwrap();
+    let last_line_start = buf.rfind('\n').map(|i| i + 1).unwrap_or(0);
     for _ in 0..10 {
+        if harness.cursor_position() >= last_line_start {
+            break;
+        }
         harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     }
 
     // The last logical line is "    lower two". Column 0 means the cursor sits
     // at that line's start byte, not `start + indent`.
-    let buf = harness.get_buffer_content().unwrap();
-    let last_line_start = buf.rfind('\n').map(|i| i + 1).unwrap_or(0);
     let pos = harness.cursor_position();
     assert_eq!(
         pos, last_line_start,
