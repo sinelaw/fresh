@@ -215,12 +215,38 @@ async function updateGitGutter(bufferId: number): Promise<void> {
     // the disk content (and possibly HEAD) just changed, so re-fetch
     // both references before diffing. The diff itself runs host-side;
     // no file content crosses the plugin bridge.
-    await editor.refreshDiffBaseline(state.diskBaselineId!);
-    await editor.refreshDiffBaseline(state.headBaselineId!);
-    const result = await editor.diffBaselinePair(
-      state.headBaselineId!,
-      state.diskBaselineId!,
-    );
+    //
+    // **A buffer that closed under us is not an error, and only these three
+    // awaits can see it.** The host drops a buffer's diff baselines when the
+    // buffer closes (`app/buffer_close.rs`) and fires `buffer_closed` only
+    // afterwards — and that hook is where this plugin deletes `bufferStates`.
+    // So a missing entry is exactly "the buffer went away while we were
+    // reloading": the ids below are gone, there is nothing left to decorate,
+    // and the host's rejection is noise. Without this the rejection escaped as
+    // an "Unhandled Promise rejection" in the log, because every call site
+    // invokes `updateGitGutter` without a `.catch()`.
+    //
+    // Discriminated by STATE, not by the host's error text. The two messages
+    // ("unknown baseline id N", "baseline released during load") are `format!`
+    // internals with no contract behind them, so a reworded string would
+    // silently restore the old behaviour with nothing to catch it; and
+    // matching them would also swallow the save-as path below, where
+    // `after_file_save` calls `releaseBaselines` with no regard for
+    // `state.updating` and so can pull these ids out from under an update in
+    // flight. That one is a real ordering bug and keeps its stack.
+    // `live_diff.ts` answers the same race the same way.
+    let result: DiffBaselineResult;
+    try {
+      await editor.refreshDiffBaseline(state.diskBaselineId!);
+      await editor.refreshDiffBaseline(state.headBaselineId!);
+      result = await editor.diffBaselinePair(
+        state.headBaselineId!,
+        state.diskBaselineId!,
+      );
+    } catch (e) {
+      if (!bufferStates.has(bufferId)) return;
+      throw e;
+    }
     const hunks = hostHunksToGutterHunks(result.hunks);
     editor.debug(`Git Gutter: ${hunks.length} hunks from host diff`);
 

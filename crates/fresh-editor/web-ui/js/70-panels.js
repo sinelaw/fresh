@@ -71,21 +71,46 @@ function fileExplorerEl(fe){
   }
   el.appendChild(list);
   el.addEventListener("wheel",e=>{ e.stopPropagation(); sendMouse({kind:e.deltaY>0?"scrolldown":"scrollup",col:fe.rect.x+1,row:fe.rect.y+1,n:Math.min(5,Math.max(1,Math.round(Math.abs(e.deltaY)/40)))}); },{passive:true});
-  // Right-edge resize handle: the editor treats the explorer's rightmost column
-  // as a drag border (handle_file_explorer_border_drag). The .fileexplorer div
-  // is in onChrome, so the document drag won't fire here — wire it explicitly.
-  el.appendChild(borderDragHandle(fe.rect.x + fe.rect.w - 1, fe.rect.y, fe.rect.h));
+  // Resize handle: the editor treats the explorer's width grip as a drag
+  // border (handle_file_explorer_border_drag). The .fileexplorer div is in
+  // onChrome, so the document drag won't fire here — wire it explicitly.
+  //
+  // **Where the tree put it, not where we think it should be.** The grip is
+  // the column's *inner* edge and runs below the header row and above the
+  // bottom border, and on a right-side explorer it is the LEFT wall
+  // (`sidebar::grip_strip`). Re-deriving that here got the row wrong — the
+  // header row's right end is the close button, whose press hides the sidebar,
+  // so grabbing the edge made the panel vanish — and got the column wrong for
+  // `file_explorer.side = right`, where the press never reached the grip at
+  // all. The core projects the real rect now (`FileExplorerView::grip_rect`).
+  const g = fe.gripRect;
+  if (g) el.appendChild(borderDragHandle(g.x, g.y, g.h, fe.rect));
   return el;
 }
 
-// A 1-cell-wide vertical resize grip at editor column `bx`. Drives a real
-// editor drag: mousedown sends a `down` at that cell, pointer moves send
-// `drag` at the current column (same row), release sends `up` — exactly what
-// the TUI does for the file-explorer / dock borders. Uses window listeners so
-// the drag continues even when the pointer leaves the chrome element.
-function borderDragHandle(bx, by, h){
+// A 1-cell-wide vertical resize grip at editor column `bx`, row `by`, `h` rows
+// tall. Drives a real editor drag: mousedown sends a `down` at that cell,
+// pointer moves send `drag` at the current column (same row), release sends
+// `up` — exactly what the TUI does for the file-explorer / dock borders. Uses
+// window listeners so the drag continues even when the pointer leaves the
+// chrome element.
+//
+// A grip drawn straight onto the grid: its CSS frame IS the screen.
+const ORIGIN_SCREEN = {x:0, y:0};
+
+// `bx`/`by` are SCREEN cells, because that is what the editor's hit test reads.
+// CSS offsets are measured from the grip's offset parent instead, so `origin`
+// is that parent's own cell position and is REQUIRED — every caller states the
+// frame it is drawing in rather than leaving it to be inferred from how many
+// arguments were passed. The file explorer appends its grip inside its own
+// positioned region and passes that region's rect; the dock's goes on the
+// full-grid tree layer, which sits at the screen origin, so it passes
+// `ORIGIN_SCREEN`. Drawing the explorer's grip at the raw screen cell inside
+// its region added that region's origin a second time, and with a dock open
+// `.region{overflow:hidden}` then clipped the grip away entirely.
+function borderDragHandle(bx, by, h, origin){
   const grip=div("resize-grip");
-  grip.style.left=px(bx,CW)+"px"; grip.style.top=px(by,CH)+"px";
+  grip.style.left=px(bx-origin.x,CW)+"px"; grip.style.top=px(by-origin.y,CH)+"px";
   grip.style.width=px(1,CW)+"px"; grip.style.height=px(h,CH)+"px";
   grip.onmousedown=e=>{
     e.preventDefault(); e.stopPropagation();

@@ -1518,6 +1518,18 @@ impl Editor {
         }
     }
 
+    /// How far each popup's content viewport has scrolled, indexed like
+    /// [`Self::popup_rects`]. `None` where the window is not the tree's — a
+    /// list popup keeps its own, moved by the selection — or where the tree
+    /// did not place the popup.
+    pub(crate) fn popup_scroll_offsets(&self) -> Vec<Option<usize>> {
+        let (_, total) = self.popup_counts();
+        match self.shell_ui.as_ref() {
+            Some(ui) => crate::view::shell::popup::scroll_offsets_of(ui, total),
+            None => vec![None; total],
+        }
+    }
+
     /// Draw the software mouse cursor (GPM, which can't paint its own caret on
     /// the alt-screen) and the keyboard-capture dimming. Both read cells that
     /// the main draw already painted, so they run near the end of `render`.

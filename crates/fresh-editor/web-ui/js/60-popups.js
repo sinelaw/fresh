@@ -49,6 +49,10 @@ function popupEl(p){
     // chrome skin.
     body.classList.add("ink");
     const lines=p.content.lines||[];
+    // The window is the editor's, for a text popup as much as for a list: the
+    // scene now carries the offset of the viewport the TUI scrolls (see
+    // `popups_view`), so slicing against it shows exactly the rows the
+    // terminal shows, and the wheel below moves both at once.
     for(let j=0;j<n;j++){
       const ln=lines[start+j]; if(ln===undefined) break;
       const d=div("popup-line");

@@ -637,6 +637,26 @@ pub fn inner_rects_of(ui: &fresh_ui::Ui<UiMsg>, n: usize) -> Vec<ratatui::layout
         .collect()
 }
 
+/// How far each popup's content has scrolled, in declaration order.
+///
+/// **A text popup's window is the tree's, not the popup's.** `Text` and
+/// `Markdown` are drawn through a `viewport().scrollbar()` and
+/// [`popup_content_key`] names *that* node, so the framework owns the offset
+/// and moves it — `Popup::scroll_offset` is never written for those two and
+/// reads 0 for the popup's whole life. A `List` is the other way round: its
+/// content slot is a plain column, the popup owns the window, and the
+/// selection moves it. So this answers `None` there, and the caller keeps
+/// reading the popup's own field.
+pub fn scroll_offsets_of(ui: &fresh_ui::Ui<UiMsg>, n: usize) -> Vec<Option<usize>> {
+    (0..n)
+        .map(|i| {
+            ui.find_by_key(&popup_content_key(i))
+                .and_then(|id| ui.window(id))
+                .map(|w| w.y.max(0) as usize)
+        })
+        .collect()
+}
+
 /// A popup's frame: its ring and its ground.
 pub fn frame(bordered: bool, body: Node<UiMsg>) -> Node<UiMsg> {
     let n = col()
