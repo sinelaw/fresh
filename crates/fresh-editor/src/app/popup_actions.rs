@@ -625,9 +625,9 @@ impl Editor {
 
         let popup_data = build_completion_popup_from_items(all_popup_items, selected);
         let accept_hint = self.completion_accept_key_hint();
-        let (popup_bg, popup_border_fg) = {
+        let (popup_bg, popup_border) = {
             let theme = self.theme();
-            (theme.popup_bg, theme.popup_border_fg)
+            crate::state::popup_styles(&theme)
         };
 
         // Close old popup and show new one
@@ -641,7 +641,7 @@ impl Editor {
             .get_mut(&buffer_id)
             .unwrap();
         let mut popup_obj =
-            crate::state::convert_popup_data_to_popup(&popup_data, popup_bg, popup_border_fg);
+            crate::state::convert_popup_data_to_popup(&popup_data, popup_bg, popup_border);
         popup_obj.accept_key_hint = accept_hint;
         popup_obj.resolver = crate::view::popup::PopupResolver::Completion;
         state.popups.show_or_replace(popup_obj);

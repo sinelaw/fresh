@@ -4556,12 +4556,12 @@ impl Editor {
         // The resolver carries the popup_id so confirm/cancel fires
         // `action_popup_result` for exactly THIS popup, even when
         // multiple plugin popups are stacked concurrently.
-        let (popup_bg, popup_border_fg) = {
+        let (popup_bg, popup_border) = {
             let theme = self.theme();
-            (theme.popup_bg, theme.popup_border_fg)
+            crate::state::popup_styles(&theme)
         };
         let mut popup_obj =
-            crate::state::convert_popup_data_to_popup(&popup_data, popup_bg, popup_border_fg);
+            crate::state::convert_popup_data_to_popup(&popup_data, popup_bg, popup_border);
         popup_obj.resolver = crate::view::popup::PopupResolver::PluginAction {
             popup_id: popup_id.clone(),
         };

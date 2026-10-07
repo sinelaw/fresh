@@ -66,8 +66,16 @@ pub struct RowDesc<'a> {
 /// second derivation that existed only so a hover could find the slot the
 /// painter had already placed.
 pub fn describe_row(d: RowDesc<'_>) -> crate::view::shell::file_explorer::Row {
-    use crate::app::shell_host::shell_theme::{literal, pair};
+    use crate::app::shell_host::shell_theme::{literal, pair, Paint};
     use crate::view::shell::file_explorer as fe;
+
+    // A slot color as a name: the theme key it came from, so the key's text
+    // attributes apply too, over the resolved color for a key the theme does
+    // not know; or the color itself when no key named it.
+    let slot_paint = |fg: ratatui::style::Color, key: &Option<String>| match key {
+        Some(k) => Paint::asked(k.clone(), Paint::Lit(fg)).to_string(),
+        None => literal(fg),
+    };
 
     let node = d.node;
     let is_hidden = node
@@ -117,7 +125,7 @@ pub fn describe_row(d: RowDesc<'_>) -> crate::view::shell::file_explorer::Row {
     let name_fg = if is_cut {
         "editor.line_number_fg".to_string()
     } else if let Some(c) = slots.name_color_hint {
-        literal(c)
+        slot_paint(c, &slots.name_color_key)
     } else if (d.is_cursor || d.is_multi) && d.focused {
         "editor.fg".to_string()
     } else {
@@ -157,7 +165,10 @@ pub fn describe_row(d: RowDesc<'_>) -> crate::view::shell::file_explorer::Row {
     if let Some(slot) = &slots.leading {
         let text_w = str_width(&slot.text);
         let pad = slot.width().saturating_sub(text_w) + 1;
-        left.push((slot.text.clone(), pair(&literal(slot.fg), ground)));
+        left.push((
+            slot.text.clone(),
+            pair(&slot_paint(slot.fg, &slot.fg_key), ground),
+        ));
         left.push((" ".repeat(pad), pair(neutral, ground)));
     }
 
@@ -232,7 +243,7 @@ pub fn describe_row(d: RowDesc<'_>) -> crate::view::shell::file_explorer::Row {
         name,
         trailing: slots.trailing.as_ref().map(|slot| fe::Slot {
             text: slot.text.clone(),
-            theme: pair(&literal(slot.fg), ground),
+            theme: pair(&slot_paint(slot.fg, &slot.fg_key), ground),
             path: node.entry.path.clone(),
         }),
         error: matches!(node.state, crate::view::file_tree::NodeState::Error(_))

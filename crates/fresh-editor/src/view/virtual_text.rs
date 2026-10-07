@@ -164,14 +164,19 @@ impl VirtualText {
     /// always survive.
     pub fn resolved_style(&self, theme: &crate::view::theme::Theme) -> Style {
         let mut style = self.style;
+        // A key brings its text attributes along with its color.
         if let Some(ref key) = self.fg_theme_key {
             if let Some(color) = theme.resolve_theme_key(key) {
-                style = style.fg(color);
+                style = style
+                    .fg(color)
+                    .add_modifier(theme.resolve_modifier_key(key));
             }
         }
         if let Some(ref key) = self.bg_theme_key {
             if let Some(color) = theme.resolve_theme_key(key) {
-                style = style.bg(color);
+                style = style
+                    .bg(color)
+                    .add_modifier(theme.resolve_modifier_key(key));
             }
         }
         style

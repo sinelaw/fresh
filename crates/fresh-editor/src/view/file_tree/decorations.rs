@@ -45,15 +45,21 @@ impl<'a> ExplorerRowStatus<'a> {
         theme: &Theme,
         is_dir: bool,
     ) -> Option<ExplorerTrailingSlotPayload> {
-        let (text, fg) = match self.resolved {
-            Some(ResolvedExplorerStatus::Unsaved) => ("●".to_string(), theme.diagnostic_warning_fg),
+        let (text, fg, fg_key) = match self.resolved {
+            Some(ResolvedExplorerStatus::Unsaved) => (
+                "●".to_string(),
+                theme.diagnostic_warning_fg,
+                Some("diagnostic.warning_fg".to_string()),
+            ),
             Some(ResolvedExplorerStatus::Decoration(decoration)) => (
                 decoration_symbol(&decoration.symbol),
                 compatibility_decoration_color(decoration, theme),
+                super::slots::overlay_color_key(&decoration.color),
             ),
             Some(ResolvedExplorerStatus::BubbledDecoration(decoration)) => (
                 "●".to_string(),
                 compatibility_decoration_color(decoration, theme),
+                super::slots::overlay_color_key(&decoration.color),
             ),
             None => return None,
         };
@@ -61,6 +67,7 @@ impl<'a> ExplorerRowStatus<'a> {
         Some(ExplorerTrailingSlotPayload {
             text,
             fg,
+            fg_key,
             tooltip: self.tooltip_summary(is_dir),
         })
     }
@@ -113,6 +120,7 @@ impl ExplorerTrailingSlotProvider for CompatibilityTrailingSlotProvider {
         ExplorerTrailingSlotResolution {
             payload: row_status.compatibility_trailing_slot(context.theme, context.is_dir),
             name_color_hint: None,
+            name_color_key: None,
         }
     }
 }

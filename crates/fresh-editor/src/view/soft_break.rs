@@ -44,18 +44,23 @@ pub struct SoftBreakPrefix {
 
 impl SoftBreakPrefix {
     /// Resolve the on-screen `Style` against a live theme. Theme keys win
-    /// over the fallback's colours; modifiers from the fallback survive.
+    /// over the fallback's colours and bring their text attributes; modifiers
+    /// from the fallback survive.
     /// Same contract as [`crate::view::virtual_text::VirtualText::resolved_style`].
     pub fn resolved_style(&self, theme: &Theme) -> Style {
         let mut style = self.style;
         if let Some(key) = &self.fg_theme_key {
             if let Some(color) = theme.resolve_theme_key(key) {
-                style = style.fg(color);
+                style = style
+                    .fg(color)
+                    .add_modifier(theme.resolve_modifier_key(key));
             }
         }
         if let Some(key) = &self.bg_theme_key {
             if let Some(color) = theme.resolve_theme_key(key) {
-                style = style.bg(color);
+                style = style
+                    .bg(color)
+                    .add_modifier(theme.resolve_modifier_key(key));
             }
         }
         style

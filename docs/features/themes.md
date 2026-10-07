@@ -43,7 +43,7 @@ Fresh includes a visual Theme Editor for creating and customizing themes:
    - Press `Enter` on any color field to edit it
    - Enter a hex color (`#RRGGBB`) or named color (e.g., `red`, `blue`)
    - Colors are applied immediately as you edit
-   - Each syntax color has an `Attributes` row accepting comma-separated text
+   - Each color has an `Attributes` row accepting comma-separated text
      attributes: `bold`, `italic`, `underlined`, `dim`, and `reversed`
 
 4. **Theme Editor Shortcuts**:
@@ -89,10 +89,43 @@ Themes are stored as JSON files. You can also edit them directly at `~/.config/f
 }
 ```
 
-Colors are specified as `[R, G, B]` arrays with values from 0-255.
-A syntax category is either a bare color or an object bundling that color with
+Colors are specified as `[R, G, B]` arrays with values from 0-255, or by
+name (`"Red"`, `"LightBlue"`, …; `"Default"` is the terminal's own color).
+
+### Text attributes
+
+Every color in a theme — in `editor`, `ui`, `search`, `diagnostic` and
+`syntax` alike — is either a bare color or an object bundling that color with
 a `modifier` list of `bold`, `italic`, `underlined`, `dim`, or `reversed`. Use
-a bare color (or omit `modifier`) for normal text.
+a bare color (or omit `modifier`) for no attributes. A cell gets the
+attributes of every color it is drawn with, foreground and background, so an
+attribute on a `*_bg` color applies to the text drawn over it.
+
+For example, to show LSP errors and warnings as underlines rather than as a
+background wash (`"Default"` leaves the background as it is):
+
+```json
+{
+  "name": "underlined-diagnostics",
+  "extends": "builtin://dark",
+  "diagnostic": {
+    "error_bg": { "color": "Default", "modifier": ["underlined"] },
+    "warning_bg": { "color": "Default", "modifier": ["underlined"] }
+  }
+}
+```
+
+Attributes mean nothing on colors that are not drawn behind or as text, such
+as the scrollbar colors; those colors use only the color.
+
+The older attribute-only keys `editor.selection_modifier` and
+`ui.semantic_highlight_modifier` still work, and win over attributes bundled
+with `editor.selection_bg` / `ui.semantic_highlight_bg` when a theme gives
+both.
+
+A key Fresh does not know (a typo, or a key from another editor's theme
+format) is ignored, with a warning naming it. A theme with a value Fresh
+cannot read is not loaded, with a warning naming the file and the key.
 
 Only `name` is required. A color you omit comes from another color, never
 from a value built into Fresh: from a **base theme** (see

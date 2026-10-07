@@ -2717,14 +2717,16 @@ impl Window {
             .and_then(|h| (h.buffer_id == buffer_id).then(|| (h.row, h.cols.clone())));
         ratatui::widgets::Widget::render(ratatui::widgets::Clear, content_rect, buf);
         let theme = self.resources.theme.read().unwrap();
+        use crate::view::theme::ThemeStyle;
+        use ratatui::style::Style;
         render::render_terminal_content(
             &content,
             cursor_pos,
             cursor_visible,
             content_rect,
             buf,
-            theme.terminal_fg,
-            theme.terminal_bg,
+            Style::default().theme_fg(&theme, "ui.terminal_fg"),
+            Style::default().theme_bg(&theme, "ui.terminal_bg"),
             link_highlight,
         );
     }
@@ -2808,15 +2810,15 @@ pub mod render {
         cursor_visible: bool,
         area: Rect,
         buf: &mut Buffer,
-        default_fg: Color,
-        default_bg: Color,
+        default_fg: Style,
+        default_bg: Style,
         link_highlight: Option<(u16, std::ops::Range<usize>)>,
     ) {
         // Fill the rendered area with the theme's terminal bg first so any
         // cells past the PTY grid (e.g. transiently smaller than the rect
         // mid-resize) show the theme background rather than leaking the
         // host terminal's default bg. Issue #1890.
-        buf.set_style(area, Style::default().fg(default_fg).bg(default_bg));
+        buf.set_style(area, default_fg.patch(default_bg));
 
         for (row_idx, row) in content.iter().enumerate() {
             if row_idx as u16 >= area.height {
@@ -2832,17 +2834,17 @@ pub mod render {
 
                 let x = area.x + col_idx as u16;
 
-                // Build style from cell attributes, using theme defaults
-                let mut style = Style::default().fg(default_fg).bg(default_bg);
-
-                // Override with cell-specific colors if present
-                if let Some((r, g, b)) = cell.fg {
-                    style = style.fg(Color::Rgb(r, g, b));
-                }
-
-                if let Some((r, g, b)) = cell.bg {
-                    style = style.bg(Color::Rgb(r, g, b));
-                }
+                // Build style from cell attributes. A cell without a color of
+                // its own takes the theme's default — with that key's text
+                // attributes, which belong to the default, not to the cell.
+                let mut style = match cell.fg {
+                    Some((r, g, b)) => Style::default().fg(Color::Rgb(r, g, b)),
+                    None => default_fg,
+                };
+                style = match cell.bg {
+                    Some((r, g, b)) => style.bg(Color::Rgb(r, g, b)),
+                    None => style.patch(default_bg),
+                };
 
                 // Apply modifiers
                 if cell.bold {
@@ -2907,8 +2909,8 @@ pub mod render {
                 false,
                 area,
                 &mut buf,
-                default_fg,
-                default_bg,
+                Style::default().fg(default_fg),
+                Style::default().bg(default_bg),
                 None,
             );
 
@@ -2945,8 +2947,8 @@ pub mod render {
                 false,
                 area,
                 &mut buf,
-                Color::White,
-                Color::Black,
+                Style::default().fg(Color::White),
+                Style::default().bg(Color::Black),
                 Some((0, 2..5)), // underline columns 2,3,4
             );
 

@@ -4274,9 +4274,11 @@ impl Window {
             let overlay = crate::view::overlay::Overlay::with_namespace_fixed_end(
                 &mut state.marker_list,
                 absolute_pos..(absolute_pos + match_len),
-                crate::view::overlay::OverlayFace::Style {
-                    style: search_style,
-                },
+                crate::view::overlay::OverlayFace::themed(
+                    "search.match_fg",
+                    "search.match_bg",
+                    search_style,
+                ),
                 ns.clone(),
             )
             .with_priority_value(10);
@@ -4347,9 +4349,11 @@ impl Window {
                 crate::view::overlay::Overlay::with_namespace_fixed_end(
                     &mut state.marker_list,
                     absolute_pos..(absolute_pos + match_len),
-                    crate::view::overlay::OverlayFace::Style {
-                        style: search_style,
-                    },
+                    crate::view::overlay::OverlayFace::themed(
+                        "search.match_fg",
+                        "search.match_bg",
+                        search_style,
+                    ),
                     ns.clone(),
                 )
                 .with_priority_value(10),

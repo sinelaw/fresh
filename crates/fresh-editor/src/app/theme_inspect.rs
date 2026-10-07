@@ -4,6 +4,7 @@ use super::types::{ThemeInfoPopup, ThemeKeyInfo};
 use super::Editor;
 use crate::services::plugins::hooks::HookArgs;
 use crate::view::theme::color_to_rgb;
+use crate::view::theme::ThemeStyle;
 use anyhow::Result as AnyhowResult;
 use ratatui::style::{Color, Style};
 
@@ -241,9 +242,9 @@ impl Editor {
         // `menu_highlight_bg` and on some themes (e.g. dracula) equals
         // popup_bg, so the key vanished.
         let key_style = Style::default()
-            .fg(theme.popup_text_fg)
+            .theme_fg(theme, "ui.popup_text_fg")
             .add_modifier(ratatui::style::Modifier::BOLD);
-        let plain = Style::default().fg(theme.popup_text_fg);
+        let plain = Style::default().theme_fg(theme, "ui.popup_text_fg");
         let line = |spans: Vec<(String, Style)>| StyledLine {
             spans: spans
                 .into_iter()
@@ -268,7 +269,7 @@ impl Editor {
             lines.push(one(" No theme key recorded here. ".into(), plain));
             lines.push(one(
                 " This element isn't inspectable yet. ".into(),
-                Style::default().fg(theme.menu_disabled_fg),
+                Style::default().theme_fg(theme, "ui.menu_disabled_fg"),
             ));
             return Some(ThemeInfo {
                 at: popup.position,

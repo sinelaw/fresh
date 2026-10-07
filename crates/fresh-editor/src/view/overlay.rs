@@ -45,6 +45,19 @@ pub enum OverlayFace {
 }
 
 impl OverlayFace {
+    /// A face painted with a foreground and a background theme key, both
+    /// resolved — color and text attributes — when the cell is drawn, so it
+    /// follows theme changes. `fallback` stands where a key does not resolve.
+    pub fn themed(fg_key: &str, bg_key: &str, fallback: Style) -> Self {
+        OverlayFace::ThemedStyle {
+            fallback_style: fallback,
+            fg_theme: Some(fg_key.to_string()),
+            bg_theme: Some(bg_key.to_string()),
+            fg_on_collision_only: false,
+            fg_on_low_contrast: false,
+        }
+    }
+
     /// Create an OverlayFace from OverlayOptions
     ///
     /// If the options contain theme key references, creates a ThemedStyle

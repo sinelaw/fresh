@@ -18,6 +18,7 @@ use super::contexts::{DecorationContext, SelectionContext};
 use super::overlay_sweep::OverlayActiveSet;
 use super::selection_sweep::SelectionActiveSet;
 use super::tail_fill::{overlay_bg_style, resolve_tail_fill, TailFillInput};
+use crate::view::theme::ThemeStyle;
 use cells::{render_line_cells, CellPassInput};
 use trailing::{fill_eof_rows, render_implicit_trailing_line, PostRowAccumulator, PostRowContext};
 
@@ -455,7 +456,10 @@ fn append_blank_line_guides(
         let tab_size = normalized_tab_size(tab_size);
         for col in start..=end_col {
             let (ch, cell_style) = if guide_columns.contains(&col) {
-                (glyph, style.fg(theme.indent_rainbow_color(col / tab_size)))
+                (
+                    glyph,
+                    style.theme_fg(theme, Theme::indent_rainbow_key(col / tab_size)),
+                )
             } else {
                 (' ', style)
             };
@@ -920,7 +924,7 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
                         &mut line_spans,
                         &mut line_view_map,
                         " ".repeat(sel_len),
-                        Style::default().bg(theme.selection_bg),
+                        Style::default().theme_bg(theme, "editor.selection_bg"),
                         None,
                     );
                     rendered_cols += sel_len;
@@ -994,9 +998,9 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
                 IndentationGuideMode::Active => active_guide_col.as_slice(),
                 IndentationGuideMode::None => &[],
             };
-            let mut guide_style = Style::default().fg(theme.indentation_guide_fg);
+            let mut guide_style = Style::default().theme_fg(theme, "editor.indentation_guide_fg");
             if cursor_line_active {
-                guide_style = guide_style.bg(theme.current_line_bg);
+                guide_style = guide_style.theme_bg(theme, "editor.current_line_bg");
             } else if cells.first_line_byte_pos.is_some() && cells.last_line_byte_pos.is_some() {
                 // Match the tail fill: a full-width overlay band must run
                 // under the synthesised guide cells too, or blank rows in
@@ -1033,7 +1037,7 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
                     diag_style,
                     content_width,
                     cursor_line_active,
-                    theme.current_line_bg,
+                    Style::default().theme_bg(theme, "editor.current_line_bg"),
                     &mut rendered_cols,
                     &mut line_spans,
                     &mut line_view_map,
@@ -1069,7 +1073,7 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
         if cursor_line_active && remaining_cols > 0 {
             line_spans.push(Span::styled(
                 " ".repeat(remaining_cols),
-                Style::default().bg(theme.current_line_bg),
+                Style::default().theme_bg(theme, "editor.current_line_bg"),
             ));
         }
 
@@ -1266,13 +1270,13 @@ fn prefill_cell_theme_map(
 fn cursor_indicator_style(theme: &Theme, is_active: bool) -> Style {
     if is_active {
         Style::default()
-            .fg(theme.editor_fg)
-            .bg(theme.editor_bg)
+            .theme_fg(theme, "editor.fg")
+            .theme_bg(theme, "editor.bg")
             .add_modifier(Modifier::REVERSED)
     } else {
         Style::default()
-            .fg(theme.editor_fg)
-            .bg(theme.inactive_cursor)
+            .theme_fg(theme, "editor.fg")
+            .theme_bg(theme, "editor.inactive_cursor")
     }
 }
 
@@ -1490,7 +1494,7 @@ fn append_inline_diagnostic(
     diag_style: &Style,
     content_width: usize,
     cursor_line_active: bool,
-    current_line_bg: Color,
+    current_line_bg: Style,
     rendered_cols: &mut usize,
     line_spans: &mut Vec<Span<'static>>,
     line_view_map: &mut Vec<Option<usize>>,
@@ -1516,7 +1520,7 @@ fn append_inline_diagnostic(
     let padding = available.saturating_sub(display_width);
     if padding > 0 {
         let pad_style = if cursor_line_active {
-            Style::default().bg(current_line_bg)
+            current_line_bg
         } else {
             Style::default()
         };
@@ -1532,7 +1536,7 @@ fn append_inline_diagnostic(
 
     // Apply current line background to diagnostic text when on cursor line
     let effective_diag_style = if cursor_line_active && diag_style.bg.is_none() {
-        diag_style.bg(current_line_bg)
+        diag_style.patch(current_line_bg)
     } else {
         *diag_style
     };

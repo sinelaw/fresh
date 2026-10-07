@@ -219,6 +219,16 @@ struct ColorizationCache {
     removal_epochs: (u64, u64),
 }
 
+/// The theme keys of the rainbow depths, in the order of `rainbow_colors`.
+const RAINBOW_KEYS: [&str; 6] = [
+    "editor.bracket_rainbow_1",
+    "editor.bracket_rainbow_2",
+    "editor.bracket_rainbow_3",
+    "editor.bracket_rainbow_4",
+    "editor.bracket_rainbow_5",
+    "editor.bracket_rainbow_6",
+];
+
 impl BracketHighlightOverlay {
     /// Create a new bracket highlight overlay manager
     pub fn new() -> Self {
@@ -371,14 +381,20 @@ impl BracketHighlightOverlay {
         // the two passes can't disagree about depth — and emphasize the pair
         // instead, with the theme's attributes. With rainbow off, the pair
         // gets the match color.
-        let face = if settings.rainbow {
-            OverlayFace::Style {
-                style: Style::default().add_modifier(self.rainbow_match_modifier),
-            }
+        let (face, theme_key) = if settings.rainbow {
+            (
+                OverlayFace::Style {
+                    style: Style::default().add_modifier(self.rainbow_match_modifier),
+                },
+                None,
+            )
         } else {
-            OverlayFace::Foreground {
-                color: self.match_color,
-            }
+            (
+                OverlayFace::Foreground {
+                    color: self.match_color,
+                },
+                Some("editor.bracket_match_fg"),
+            )
         };
 
         // Create overlay for the bracket at cursor
@@ -389,6 +405,10 @@ impl BracketHighlightOverlay {
             ns.clone(),
         )
         .with_priority_value(10);
+        let cursor_overlay = match theme_key {
+            Some(key) => cursor_overlay.with_theme_key(key),
+            None => cursor_overlay,
+        };
         overlays.add(cursor_overlay);
 
         // Create overlay for the matching bracket if found
@@ -396,6 +416,10 @@ impl BracketHighlightOverlay {
             let match_overlay =
                 Overlay::with_namespace(marker_list, match_pos..match_pos + 1, face, ns.clone())
                     .with_priority_value(10);
+            let match_overlay = match theme_key {
+                Some(key) => match_overlay.with_theme_key(key),
+                None => match_overlay,
+            };
             overlays.add(match_overlay);
         }
 
@@ -562,7 +586,9 @@ impl BracketHighlightOverlay {
 
         let mut stack: Vec<char> = Vec::new();
         // What the viewport's brackets should look like: byte -> colour.
-        let mut wanted: std::collections::HashMap<usize, Color> = std::collections::HashMap::new();
+        // Position -> nesting level (an index into `rainbow_colors` and
+        // `RAINBOW_KEYS`).
+        let mut wanted: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
 
         for (idx, byte) in bytes.iter().enumerate() {
             let pos = scan_start + idx;
@@ -579,7 +605,7 @@ impl BracketHighlightOverlay {
                 let depth = stack.len();
                 stack.push(c);
                 if pos >= viewport_start {
-                    wanted.insert(pos, self.rainbow_colors[depth % self.rainbow_colors.len()]);
+                    wanted.insert(pos, depth % self.rainbow_colors.len());
                 }
                 continue;
             }
@@ -592,7 +618,7 @@ impl BracketHighlightOverlay {
                     }
                 }
                 if pos >= viewport_start {
-                    wanted.insert(pos, self.rainbow_colors[depth % self.rainbow_colors.len()]);
+                    wanted.insert(pos, depth % self.rainbow_colors.len());
                 }
             }
         }
@@ -606,10 +632,15 @@ impl BracketHighlightOverlay {
             .filter(|o| {
                 let range = o.range(marker_list);
                 let current = match o.face {
-                    OverlayFace::Foreground { color } if range.len() == 1 => Some(color),
+                    OverlayFace::Foreground { color } if range.len() == 1 => {
+                        Some((color, o.theme_key))
+                    }
                     _ => None,
                 };
-                if current.is_some() && wanted.get(&range.start).copied() == current {
+                let want = wanted
+                    .get(&range.start)
+                    .map(|&level| (self.rainbow_colors[level], Some(RAINBOW_KEYS[level])));
+                if current.is_some() && want == current {
                     wanted.remove(&range.start);
                     false
                 } else {
@@ -621,14 +652,19 @@ impl BracketHighlightOverlay {
         for handle in &stale {
             overlays.remove_by_handle(handle, marker_list);
         }
-        overlays.extend(wanted.into_iter().map(|(pos, color)| {
+        overlays.extend(wanted.into_iter().map(|(pos, level)| {
+            // The level's key rides along, so the theme's attributes for that
+            // level apply too (and the inspector names it).
             Overlay::with_namespace(
                 marker_list,
                 pos..pos + 1,
-                OverlayFace::Foreground { color },
+                OverlayFace::Foreground {
+                    color: self.rainbow_colors[level],
+                },
                 ns.clone(),
             )
             .with_priority_value(6)
+            .with_theme_key(RAINBOW_KEYS[level])
         }));
         self.colorization_cache = Some(ColorizationCache {
             scan: scan_start..scan_end,

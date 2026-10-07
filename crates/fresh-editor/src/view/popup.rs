@@ -8,6 +8,7 @@
 //! the keymap's answer, declared on the popup's own layer as shortcuts and
 //! resolved by the tree (`view::shell::popup::keyboard`).
 
+use crate::view::theme::ThemeStyle;
 use ratatui::{layout::Rect, style::Style};
 
 use super::markdown::{parse_markdown, wrap_styled_lines, wrap_text_lines, StyledLine};
@@ -312,8 +313,8 @@ impl Popup {
             width: 50,
             max_height: 15,
             bordered: true,
-            border_style: Style::default().fg(theme.popup_border_fg),
-            background_style: Style::default().bg(theme.popup_bg),
+            border_style: Style::default().theme_fg(theme, "ui.popup_border_fg"),
+            background_style: Style::default().theme_bg(theme, "ui.popup_bg"),
             scroll_offset: 0,
             pager: Default::default(),
             text_selection: None,
@@ -344,8 +345,8 @@ impl Popup {
             width: 60,      // Wider for markdown content
             max_height: 20, // Taller for documentation
             bordered: true,
-            border_style: Style::default().fg(theme.popup_border_fg),
-            background_style: Style::default().bg(theme.popup_bg),
+            border_style: Style::default().theme_fg(theme, "ui.popup_border_fg"),
+            background_style: Style::default().theme_bg(theme, "ui.popup_bg"),
             scroll_offset: 0,
             pager: Default::default(),
             text_selection: None,
@@ -368,8 +369,8 @@ impl Popup {
             width: 50,
             max_height: 15,
             bordered: true,
-            border_style: Style::default().fg(theme.popup_border_fg),
-            background_style: Style::default().bg(theme.popup_bg),
+            border_style: Style::default().theme_fg(theme, "ui.popup_border_fg"),
+            background_style: Style::default().theme_bg(theme, "ui.popup_bg"),
             scroll_offset: 0,
             pager: Default::default(),
             text_selection: None,

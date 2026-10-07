@@ -7,6 +7,7 @@
 //! never leak to callers outside `split_rendering`.
 
 use crate::view::overlay::{Overlay, OverlayFace};
+use crate::view::theme::ThemeStyle;
 use crate::view::theme::{Theme, TokenColorExt};
 use fresh_core::api::ViewTokenStyle;
 use ratatui::style::{Color, Modifier, Style};
@@ -95,7 +96,7 @@ pub(super) fn compute_char_style(ctx: &CharStyleContext) -> CharStyleOutput {
         if let Some(ref fg) = ts.fg {
             s = s.fg(fg.to_ratatui(ctx.theme));
         } else {
-            s = s.fg(ctx.theme.editor_fg);
+            s = s.theme_fg(ctx.theme, "editor.fg");
             fg_theme_key = Some("editor.fg");
         }
         if let Some(ref bg) = ts.bg {
@@ -121,7 +122,7 @@ pub(super) fn compute_char_style(ctx: &CharStyleContext) -> CharStyleOutput {
         if let Some(fg) = ctx.ansi_style.fg {
             s = s.fg(fg);
         } else {
-            s = s.fg(ctx.theme.editor_fg);
+            s = s.theme_fg(ctx.theme, "editor.fg");
             fg_theme_key = Some("editor.fg");
         }
         if let Some(bg) = ctx.ansi_style.bg {
@@ -138,7 +139,7 @@ pub(super) fn compute_char_style(ctx: &CharStyleContext) -> CharStyleOutput {
     } else {
         // Default color from theme
         fg_theme_key = Some("editor.fg");
-        Style::default().fg(ctx.theme.editor_fg)
+        Style::default().theme_fg(ctx.theme, "editor.fg")
     };
 
     // If we have ANSI style but also syntax highlighting, syntax takes precedence for color
@@ -170,6 +171,7 @@ pub(super) fn compute_char_style(ctx: &CharStyleContext) -> CharStyleOutput {
         style = style.bg(bg);
         if let Some(key) = ctx.highlight_bg_theme_key {
             bg_theme_key = Some(key);
+            style = style.add_modifier(ctx.theme.resolve_modifier_key(key));
         }
     }
 
@@ -192,6 +194,7 @@ pub(super) fn compute_char_style(ctx: &CharStyleContext) -> CharStyleOutput {
                 style = style.add_modifier(Modifier::UNDERLINED).fg(*color);
                 if let Some(key) = overlay.theme_key {
                     fg_theme_key = Some(key);
+                    style = style.add_modifier(ctx.theme.resolve_modifier_key(key));
                 }
             }
             OverlayFace::Background { color } => {
@@ -201,7 +204,7 @@ pub(super) fn compute_char_style(ctx: &CharStyleContext) -> CharStyleOutput {
                     // Pick up any SGR modifier the theme associates with
                     // this bg slot (e.g. terminal-adaptive themes ship
                     // `Reversed` for `ui.semantic_highlight_bg`).
-                    let m = ctx.theme.modifier_for_bg_key(key);
+                    let m = ctx.theme.resolve_modifier_key(key);
                     if !m.is_empty() {
                         style = style.add_modifier(m);
                     }
@@ -211,6 +214,7 @@ pub(super) fn compute_char_style(ctx: &CharStyleContext) -> CharStyleOutput {
                 style = style.fg(*color);
                 if let Some(key) = overlay.theme_key {
                     fg_theme_key = Some(key);
+                    style = style.add_modifier(ctx.theme.resolve_modifier_key(key));
                 }
             }
             OverlayFace::Style {
@@ -218,6 +222,7 @@ pub(super) fn compute_char_style(ctx: &CharStyleContext) -> CharStyleOutput {
             } => {
                 style = style.patch(*overlay_style);
                 if let Some(key) = overlay.theme_key {
+                    style = style.add_modifier(ctx.theme.resolve_modifier_key(key));
                     if overlay_style.bg.is_some() {
                         bg_theme_key = Some(key);
                     }
@@ -239,7 +244,7 @@ pub(super) fn compute_char_style(ctx: &CharStyleContext) -> CharStyleOutput {
                     if let Some(color) = ctx.theme.resolve_theme_key(bg_key) {
                         themed_style = themed_style.bg(color);
                     }
-                    let m = ctx.theme.modifier_for_bg_key(bg_key);
+                    let m = ctx.theme.resolve_modifier_key(bg_key);
                     if !m.is_empty() {
                         themed_style = themed_style.add_modifier(m);
                     }
@@ -253,7 +258,9 @@ pub(super) fn compute_char_style(ctx: &CharStyleContext) -> CharStyleOutput {
                             true
                         };
                         if apply {
-                            themed_style = themed_style.fg(color);
+                            themed_style = themed_style
+                                .fg(color)
+                                .add_modifier(ctx.theme.resolve_modifier_key(fg_key));
                         }
                     }
                 }
@@ -276,13 +283,16 @@ pub(super) fn compute_char_style(ctx: &CharStyleContext) -> CharStyleOutput {
 
     // Apply current line background highlight (before selection, so selection overrides it)
     if ctx.is_cursor_line_highlighted && !ctx.is_selected && style.bg.is_none() {
-        style = style.bg(ctx.current_line_bg);
+        style = style
+            .bg(ctx.current_line_bg)
+            .add_modifier(ctx.theme.resolve_modifier_key("editor.current_line_bg"));
     }
 
     // Apply selection highlighting (preserve fg/syntax colors, only change bg).
     // Themes may also opt into SGR text attributes here (e.g. `Reversed`)
     // so a native-palette theme can swap fg/bg via the terminal instead
-    // of relying on a fixed bg color — see `Theme::selection_modifier`.
+    // of relying on a fixed bg color — `theme_bg` adds the attributes the
+    // theme gives `editor.selection_bg` (see `Theme::selection_modifier`).
     //
     // An overlay marked `above_selection` (the current search match, which
     // Find Next also selects) keeps its own look instead, when it has a
@@ -302,10 +312,7 @@ pub(super) fn compute_char_style(ctx: &CharStyleContext) -> CharStyleOutput {
             }
         });
     if (ctx.is_selected && !above_with_bg) || above_without_bg {
-        style = style.bg(ctx.theme.selection_bg);
-        if !ctx.theme.selection_modifier.is_empty() {
-            style = style.add_modifier(ctx.theme.selection_modifier);
-        }
+        style = style.theme_bg(ctx.theme, "editor.selection_bg");
         bg_theme_key = Some("editor.selection_bg");
         region = "Selection";
     }
@@ -324,7 +331,9 @@ pub(super) fn compute_char_style(ctx: &CharStyleContext) -> CharStyleOutput {
             region = "Cursor";
         }
     } else if ctx.is_cursor {
-        style = style.fg(ctx.theme.editor_fg).bg(ctx.theme.inactive_cursor);
+        style = style
+            .theme_fg(ctx.theme, "editor.fg")
+            .theme_bg(ctx.theme, "editor.inactive_cursor");
         fg_theme_key = Some("editor.fg");
         bg_theme_key = Some("editor.inactive_cursor");
         region = "Inactive Cursor";
@@ -396,6 +405,78 @@ mod tests {
             "editor.diff_add_bg",
             true,
         )
+    }
+
+    #[test]
+    fn diagnostic_overlay_takes_its_keys_attributes() {
+        // Issue #3494: a theme can draw diagnostics as an underline by
+        // giving the diagnostic background key `["underlined"]`.
+        let theme = Theme::from_json(
+            r#"{
+                "name": "underlined-diagnostics",
+                "extends": "builtin://dark",
+                "diagnostic": {
+                    "error_bg": { "color": "Default", "modifier": ["underlined"] }
+                }
+            }"#,
+        )
+        .unwrap();
+        let mut ml = MarkerList::new();
+        ml.set_buffer_size(100);
+        // The face and key `diagnostic_to_overlay` gives an error.
+        let error = Overlay::new(
+            &mut ml,
+            0..10,
+            OverlayFace::Background {
+                color: theme.diagnostic_error_bg,
+            },
+        )
+        .with_theme_key("diagnostic.error_bg");
+        let out = run(&theme, &error, Some(theme.syntax_keyword));
+        assert!(out.style.add_modifier.contains(Modifier::UNDERLINED));
+        assert_eq!(out.style.fg, Some(theme.syntax_keyword));
+
+        // The stock theme gives the key no attributes.
+        let dark = Theme::load_builtin(crate::view::theme::THEME_DARK).unwrap();
+        let out = run(&dark, &error, Some(dark.syntax_keyword));
+        assert!(!out.style.add_modifier.contains(Modifier::UNDERLINED));
+    }
+
+    #[test]
+    fn foreground_overlay_and_default_text_take_their_keys_attributes() {
+        let mut theme = Theme::load_builtin(crate::view::theme::THEME_DARK).unwrap();
+        theme.set_modifier_key("editor.bracket_match_fg", Modifier::BOLD);
+        theme.set_modifier_key("editor.fg", Modifier::ITALIC);
+        let mut ml = MarkerList::new();
+        ml.set_buffer_size(100);
+        let bracket = Overlay::new(
+            &mut ml,
+            0..10,
+            OverlayFace::Foreground {
+                color: theme.bracket_match_fg,
+            },
+        )
+        .with_theme_key("editor.bracket_match_fg");
+        let out = run(&theme, &bracket, None);
+        assert!(out.style.add_modifier.contains(Modifier::BOLD));
+        // Plain text (no syntax color) is drawn with `editor.fg`.
+        assert!(out.style.add_modifier.contains(Modifier::ITALIC));
+    }
+
+    #[test]
+    fn themed_overlay_takes_both_keys_attributes() {
+        let mut theme = Theme::load_builtin(crate::view::theme::THEME_DARK).unwrap();
+        theme.set_modifier_key("search.match_fg", Modifier::BOLD);
+        theme.set_modifier_key("search.match_bg", Modifier::UNDERLINED);
+        let mut ml = MarkerList::new();
+        ml.set_buffer_size(100);
+        let o = themed_overlay(&mut ml, "search.match_fg", "search.match_bg", false);
+        let out = run(&theme, &o, Some(theme.syntax_keyword));
+        assert!(out
+            .style
+            .add_modifier
+            .contains(Modifier::BOLD | Modifier::UNDERLINED));
+        assert_eq!(out.style.fg, Some(theme.search_match_fg));
     }
 
     #[test]

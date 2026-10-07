@@ -7,6 +7,7 @@
 use crate::primitives::grammar::GrammarRegistry;
 use crate::primitives::highlight_engine::highlight_string;
 use crate::primitives::highlighter::HighlightSpan;
+use crate::theme::ThemeStyle;
 use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 use ratatui::style::{Color, Modifier, Style};
 
@@ -354,12 +355,14 @@ fn highlight_code_to_styled_lines(
     theme: &crate::theme::Theme,
 ) -> Vec<StyledLine> {
     let mut result = vec![StyledLine::new()];
-    let code_bg = theme.inline_code_bg;
     // Markdown is rendered into popup surfaces (LSP hover, signature help,
     // …). `help_key_fg` is the keybinding/heading accent — wrong role for
     // code body. Use the popup body color so the text reads against
     // `inline_code_bg` regardless of host terminal defaults. See issue #2033.
-    let default_fg = theme.popup_text_fg;
+    let plain = Style::default()
+        .theme_fg(theme, "ui.popup_text_fg")
+        .theme_bg(theme, "ui.inline_code_bg");
+    let code_bg = Style::default().theme_bg(theme, "ui.inline_code_bg");
 
     let bytes = code.as_bytes();
     let mut pos = 0;
@@ -368,20 +371,19 @@ fn highlight_code_to_styled_lines(
         // Add unhighlighted text before this span
         if span.range.start > pos {
             let text = String::from_utf8_lossy(&bytes[pos..span.range.start]);
-            add_text_to_lines(
-                &mut result,
-                &text,
-                Style::default().fg(default_fg).bg(code_bg),
-                None,
-            );
+            add_text_to_lines(&mut result, &text, plain, None);
         }
 
         // Add highlighted text
         let text = String::from_utf8_lossy(&bytes[span.range.start..span.range.end]);
+        let category_attrs = span
+            .category
+            .map(|c| theme.resolve_modifier_key(c.theme_key()))
+            .unwrap_or_default();
         add_text_to_lines(
             &mut result,
             &text,
-            Style::default().fg(span.color).bg(code_bg),
+            code_bg.fg(span.color).add_modifier(category_attrs),
             None,
         );
 
@@ -391,12 +393,7 @@ fn highlight_code_to_styled_lines(
     // Add remaining unhighlighted text
     if pos < bytes.len() {
         let text = String::from_utf8_lossy(&bytes[pos..]);
-        add_text_to_lines(
-            &mut result,
-            &text,
-            Style::default().fg(default_fg).bg(code_bg),
-            None,
-        );
+        add_text_to_lines(&mut result, &text, plain, None);
     }
 
     result
@@ -465,7 +462,7 @@ pub fn parse_markdown(
     // instead of inheriting the host terminal's default fg — which on a
     // dark-terminal host running the light theme paints near-white text
     // on the near-white popup background. See issue #2033.
-    let mut style_stack: Vec<Style> = vec![Style::default().fg(theme.popup_text_fg)];
+    let mut style_stack: Vec<Style> = vec![Style::default().theme_fg(theme, "ui.popup_text_fg")];
     let mut in_code_block = false;
     let mut code_block_lang = String::new();
     // Track current link URL (if inside a link)
@@ -506,8 +503,11 @@ pub fn parse_markdown(
                     }
                     Tag::Heading { .. } => {
                         let current = *style_stack.last().unwrap_or(&Style::default());
-                        style_stack
-                            .push(current.add_modifier(Modifier::BOLD).fg(theme.help_key_fg));
+                        style_stack.push(
+                            current
+                                .add_modifier(Modifier::BOLD)
+                                .theme_fg(theme, "ui.help_key_fg"),
+                        );
                     }
                     Tag::Link { dest_url, .. } => {
                         let current = *style_stack.last().unwrap_or(&Style::default());
@@ -638,8 +638,8 @@ pub fn parse_markdown(
                         // Uses `popup_text_fg` (popup body) rather than
                         // `help_key_fg` (key/heading accent) — see issue #2033.
                         let code_style = Style::default()
-                            .fg(theme.popup_text_fg)
-                            .bg(theme.inline_code_bg);
+                            .theme_fg(theme, "ui.popup_text_fg")
+                            .theme_bg(theme, "ui.inline_code_bg");
                         add_text_to_lines(&mut lines, &text, code_style, None);
                     }
                 } else {
@@ -652,8 +652,8 @@ pub fn parse_markdown(
                 // Uses `popup_text_fg` (popup body) rather than `help_key_fg`
                 // (key/heading accent) — see issue #2033.
                 let style = Style::default()
-                    .fg(theme.popup_text_fg)
-                    .bg(theme.inline_code_bg);
+                    .theme_fg(theme, "ui.popup_text_fg")
+                    .theme_bg(theme, "ui.inline_code_bg");
                 if let Some(line) = lines.last_mut() {
                     line.push(code.to_string(), style);
                 }
