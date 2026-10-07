@@ -89,6 +89,9 @@ impl Default for RecoveryConfig {
 pub struct RecoveryService {
     /// Storage backend
     storage: RecoveryStorage,
+    /// The scope `storage` was built from, so callers can ask whether a given
+    /// workspace's entries would live in this store at all.
+    scope: RecoveryScope,
     /// Configuration
     config: RecoveryConfig,
     /// Last auto-recovery-save time per buffer
@@ -112,9 +115,28 @@ impl RecoveryService {
         }
         Self {
             storage: RecoveryStorage::with_scope(base_recovery_dir, scope),
+            scope: scope.clone(),
             config,
             last_save_times: HashMap::new(),
             session_started: false,
+        }
+    }
+
+    /// Whether this store is the one that would hold `root`'s entries.
+    ///
+    /// A session-scoped store — a named daemon, and the Orchestrator — keeps
+    /// one store for the whole editor and stamps each entry with the workspace
+    /// that owns it, so it holds them all. A standalone store is scoped to the
+    /// launch directory (#1550), so an entry for another project is invisible
+    /// here rather than gone.
+    ///
+    /// This decides what a missing entry means: in the store that owns the
+    /// project, missing proves the content is gone and a workspace reference
+    /// to it is safe to drop; anywhere else it proves nothing.
+    pub fn covers_root(&self, root: &Path) -> bool {
+        match self.scope {
+            RecoveryScope::Session { .. } => true,
+            RecoveryScope::Standalone { ref working_dir } => working_dir == root,
         }
     }
 
@@ -406,6 +428,12 @@ mod tests {
         let storage = RecoveryStorage::with_dir(temp_dir.path().to_path_buf());
         let service = RecoveryService {
             storage,
+            // `with_dir` points storage at the temp directory itself rather
+            // than at a scope under it, so the matching scope is the
+            // standalone one for that directory.
+            scope: RecoveryScope::Standalone {
+                working_dir: temp_dir.path().to_path_buf(),
+            },
             config: RecoveryConfig::default(),
             last_save_times: HashMap::new(),
             session_started: false,

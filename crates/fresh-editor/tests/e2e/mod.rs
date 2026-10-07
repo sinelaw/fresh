@@ -149,6 +149,7 @@ pub mod issue_3398_page_motion_keeps_row_and_column;
 pub mod issue_3407_click_on_edge_row_does_not_scroll;
 pub mod issue_3426_window_scratch_view_config;
 pub mod issue_3452_empty_pane_ground;
+pub mod issue_3475_unnamed_buffers_across_workspaces;
 pub mod issue_3486_3495_selection_keys;
 pub mod issue_623_prompt_dropdown_scrollbar;
 pub mod issue_722_inlay_hint_split_drift;
