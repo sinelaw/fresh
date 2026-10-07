@@ -255,3 +255,49 @@ fn test_multiline_diagnostic_highlight_visible_when_partially_scrolled() {
         "Overlay background should still be visible on line 4 after scrolling lines 1-3 out of view"
     );
 }
+
+/// A brand-new file is empty, and an empty buffer is a single row holding no
+/// characters — so it has no source byte of its own, and with no preceding
+/// newline it is not the trailing-empty-line case either. A diagnostic on it
+/// was counted but never drawn: no gutter marker and no inline message, until
+/// a typed line break brought it out (issue #3484).
+#[test]
+fn test_inline_diagnostic_on_empty_buffer() {
+    let mut config = fresh::config::Config::default();
+    config.editor.diagnostics_inline_text = true;
+    config.editor.line_numbers = false;
+
+    let mut harness = EditorTestHarness::with_config(80, 10, config).unwrap();
+    harness.new_buffer().unwrap();
+    // Deliberately type nothing: the buffer stays zero bytes, exactly as a
+    // newly created file is when a language server first reports on it.
+    harness.render().unwrap();
+
+    // The only position an empty buffer can carry a diagnostic at.
+    harness
+        .apply_event(diagnostic_overlay(0..0, 100, "main function not found"))
+        .unwrap();
+    harness.render().unwrap();
+
+    harness.assert_screen_contains("main function not found");
+}
+
+/// The gutter marker is the half of #3484 that shows under the default config,
+/// where the inline message is switched off.
+#[test]
+fn test_diagnostic_gutter_marker_on_empty_buffer() {
+    let mut config = fresh::config::Config::default();
+    config.editor.diagnostics_inline_text = false;
+    config.editor.line_numbers = true;
+
+    let mut harness = EditorTestHarness::with_config(80, 10, config).unwrap();
+    harness.new_buffer().unwrap();
+    harness.render().unwrap();
+
+    harness
+        .apply_event(diagnostic_overlay(0..0, 100, "main function not found"))
+        .unwrap();
+    harness.render().unwrap();
+
+    harness.assert_screen_contains("●");
+}
