@@ -68,7 +68,7 @@ pub struct FileExplorerTrailingSlot {
 
 /// Additive slot override for a file explorer entry.
 ///
-/// Any field left as `None` falls back to the editor's compatibility providers,
+/// Any field left `null` falls back to the editor's compatibility providers,
 /// so plugins can override just the piece they care about.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

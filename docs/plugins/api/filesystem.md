@@ -113,9 +113,9 @@ Always uses forward slashes for cross-platform consistency (like Node.js path.po
 Empty segments are skipped. If a segment is absolute, earlier segments are
 discarded.
 
-Preserves up to 2 leading slashes, which matters on Windows: Rust's
-`Path::canonicalize` returns `\\?\`-prefixed paths, and `editor.getCwd()`
-surfaces that to plugin code verbatim. After the backslash→slash
+Preserves up to 2 leading slashes, which matters on Windows: paths the
+editor hands to plugins, such as `editor.getCwd()`, can carry the
+`\\?\` prefix (`\\?\C:\...`). After the backslash→slash
 normalization the prefix becomes `//?/C:/...`; collapsing the leading
 `//` to a single `/` yields `/?/C:/...`, which every filesystem API on
 Windows rejects, breaking `findConfig()`-style plugin logic.
@@ -243,10 +243,10 @@ authorityPath(path: string): AuthorityPath;
 
 ### `watchPath`
 
-Register a `notify`-backed watch on `path`. Returns a
+Register a watch on `path`. Returns a
 promise that resolves to a numeric `handle` (also passed
 in subsequent `path_changed` event payloads). The promise
-rejects on `notify` errors (path missing, kernel limit).
+rejects when the watch cannot be set up (path missing, kernel limit).
 
 Each change fires a `path_changed` hook with the handle, the changed
 path and the change kind. Release the watch with
@@ -254,8 +254,7 @@ path and the change kind. Release the watch with
 
 `recursive` defaults to `false`. Non-recursive watches
 cover the path itself plus its direct children for
-directories — see `services/file_watcher.rs` for the
-rationale.
+directories.
 
 ```typescript
 watchPath(path: string, recursive?: boolean): Promise<number>;
@@ -293,8 +292,8 @@ getCwd(): string;
 ### `workspaceTrustLevel`
 
 Current Workspace Trust level for the active project: `"restricted"`,
-`"trusted"`, or `"blocked"` (empty when unavailable). Exposed to JS as
-`editor.workspaceTrustLevel()`. Plugins that run repo-controlled work
+`"trusted"`, or `"blocked"` (empty when unavailable). Plugins that run
+repo-controlled work
 should treat anything other than `"trusted"` as "do not execute".
 
 ```typescript
@@ -304,7 +303,7 @@ workspaceTrustLevel(): string;
 ### `envActive`
 
 Whether an environment is currently active (set via `editor.setEnv`).
-Exposed to JS as `editor.envActive()`. Lets the env-manager plugin
+Lets the env-manager plugin
 reflect activation and re-establish its file watch after the restart
 that `setEnv` triggers.
 
@@ -314,9 +313,9 @@ envActive(): boolean;
 
 ### `detectedEnv`
 
-The environment core detected in the workspace, as a JSON string
-(`{name, kind, snippet}`) or empty when none. Exposed to JS as
-`editor.detectedEnv()`. Detection lives only in core; the env-manager
+The environment the editor detected in the workspace, as a JSON string
+(`{name, kind, snippet}`) or empty when none. Detection lives only in
+the editor; the env-manager
 plugin consumes this result instead of probing the filesystem itself.
 
 ```typescript
@@ -487,9 +486,11 @@ stateDelete(namespace: string, key: string): boolean;
 
 ### `setGlobalState`
 
-Set plugin-managed global state (write-through to snapshot + command for persistence).
+Set plugin-managed global state.
 State is automatically isolated per plugin using the plugin's name.
-TODO: Need to think about plugin isolation / namespacing strategy for these APIs.
+`getGlobalState` returns the new value straight away; `null` or
+`undefined` deletes the key. The state is saved to disk as soon as the
+editor applies the change, so it survives restarts.
 
 ```typescript
 setGlobalState(key: string, value: unknown): boolean;
@@ -497,9 +498,9 @@ setGlobalState(key: string, value: unknown): boolean;
 
 ### `getGlobalState`
 
-Get plugin-managed global state (reads from snapshot).
+Get plugin-managed global state, as set by `setGlobalState`.
+`undefined` if missing.
 State is automatically isolated per plugin using the plugin's name.
-TODO: Need to think about plugin isolation / namespacing strategy for these APIs.
 
 ```typescript
 getGlobalState(key: string): unknown;
@@ -508,10 +509,10 @@ getGlobalState(key: string): unknown;
 ### `setWindowState`
 
 Set per-session state on the **active** session. Same
-shape as `setGlobalState` (write-through to snapshot +
-dispatched to editor; null/undefined deletes), but the
-underlying storage lives on `Session.plugin_state` and
-swaps with the rest of session state on `setActiveWindow`.
+shape as `setGlobalState` (`getWindowState` returns the new value
+straight away; null/undefined deletes), but the state belongs to
+the active session and swaps with the rest of session state on
+`setActiveWindow`.
 Plugins that genuinely want per-project state use this;
 Orchestrator itself uses `setGlobalState` because its session
 list lives above session boundaries.
@@ -525,8 +526,8 @@ setWindowState(key: string, value: unknown): boolean;
 
 ### `getWindowState`
 
-Get per-session state from the **active** session
-(snapshot read). `undefined` if missing.
+Get per-session state from the **active** session.
+`undefined` if missing.
 
 The state is per plugin, as written by `setWindowState`.
 
@@ -544,8 +545,8 @@ Empty means the local (default) authority. A non-empty value
 means a plugin-installed or SSH authority is in effect (e.g.
 `"Container:abc123def456"` for a devcontainer). Intended as a
 simple "am I already attached?" check that survives editor
-restarts — the label lives on the `Editor` state snapshot so it
-is fresh after the authority-transition restart flow.
+restarts: after the restart the editor goes through when the
+authority changes, it already reports the new label.
 
 ```typescript
 getAuthorityLabel(): string;

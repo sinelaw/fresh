@@ -17,18 +17,13 @@ defaults) that the editor is actually using, including all default values
 for LSP servers, languages, keybindings and so on. Use `getUserConfig` for
 the user's config file alone.
 
-The snapshot holds an `Arc<serde_json::Value>` that was serialized
-on the editor side the last time the underlying `Arc<Config>`
-changed. Cloning the Arc inside the read lock is a refcount bump;
-the actual walk into the JS runtime happens outside the lock.
-
 ```typescript
-getConfig(): unknown;
+getConfig(): FreshConfig;
 ```
 
 ### `getUserConfig`
 
-Get user config as JS object. Same Arc-clone pattern as `get_config`.
+Get user config as JS object.
 
 Returns only the values explicitly set in the config file, not defaults.
 The file read is the first that exists: a `config.json` in the working
@@ -37,7 +32,7 @@ their default values. Use this with `getConfig()` to tell which values are
 defaults.
 
 ```typescript
-getUserConfig(): unknown;
+getUserConfig(): FreshConfig;
 ```
 
 ### `defineConfigBoolean`
@@ -219,8 +214,8 @@ getConfigDir(): string;
 
 ### `getDataDir`
 
-Get the persistent data directory path (DirectoryContext::data_dir).
-Intended for plugin state that should outlive a single session — e.g.
+Get the path of the editor's persistent data directory (e.g.
+`~/.local/share/fresh` on Linux). Intended for plugin state that should outlive a single session — e.g.
 review-diff comments keyed off git state.
 
 ```typescript
@@ -324,8 +319,8 @@ overrideThemeColors(overrides: unknown): boolean;
 
 Get theme schema as JS object
 
-Returns the raw JSON Schema that schemars generates for `ThemeFile`, for use
-by the theme editor. The schema uses standard JSON Schema format with `$ref`
+Returns the raw JSON Schema for theme files, for use by the theme
+editor. The schema uses standard JSON Schema format with `$ref`
 for type references. Plugins must parse the schema and resolve `$ref`
 references themselves.
 
@@ -455,7 +450,7 @@ setBufferLanguage(bufferId: number, name: string): boolean;
 
 Contribute (or replace, or clear) menu rows for the LSP-Servers
 popup. Pass an empty `items` to clear this plugin's slice for
-the given language. See `PluginCommand::SetLspMenuContributions`.
+the given language.
 
 Each item's `id` is its row's key and must be unique among the
 items; a repeated one throws.

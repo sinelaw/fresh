@@ -460,6 +460,10 @@ pub fn collect_ts_types() -> String {
 
     // Collect types referenced by the API
     for type_name in JSEDITORAPI_REFERENCED_TYPES {
+        // Declared from the config schema in write_fresh_dts instead.
+        if *type_name == crate::config_types::CONFIG_TYPE {
+            continue;
+        }
         if let Some(decl) = get_type_decl(type_name) {
             if included_decls.insert(decl.clone()) {
                 types.push(decl);
@@ -847,10 +851,10 @@ interface HookEventMap {
      * Gate decoration work on this, not on
      * `getBufferInfo(buffer_id).is_composing_in_any_split`. The editor marks
      * these lines as seen the moment it sends the batch, so the batch is the
-     * only offer they get, while `getBufferInfo` reads a state snapshot
-     * refreshed on the editor thread's own schedule — early in a mode change
-     * it still reports the mode the buffer just left. Gating on the snapshot
-     * therefore drops the first decoration pass at random, leaving the
+     * only offer they get, while `getBufferInfo` reads the editor's cached
+     * state, which the editor refreshes on its own schedule — early in a mode
+     * change it still reports the mode the buffer just left. Gating on
+     * `getBufferInfo` therefore drops the first decoration pass at random, leaving the
      * document undecorated until an edit or a scroll produces another
      * batch. */
     is_composing_in_any_split: boolean;
@@ -1086,7 +1090,6 @@ interface EditorAPI {
   off<K extends keyof HookEventMap>(eventName: K, handlerName: string): void;
   /**
    * Create a buffer group: multiple panels appearing as one tab.
-   * This is an async runtime binding (not a direct #[qjs] method).
    */
   createBufferGroup(
     name: string,
@@ -1096,9 +1099,24 @@ interface EditorAPI {
 }
 "#;
 
+    let root = workspace_root();
+
+    // The config's type comes from its JSON Schema (see config_types.rs).
+    let schema_path = root.join("crates/fresh-editor/plugins/config-schema.json");
+    let schema: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(&schema_path)
+            .map_err(|e| format!("{}: {}", schema_path.display(), e))?,
+    )
+    .map_err(|e| format!("{}: {}", schema_path.display(), e))?;
+    let config_types = crate::config_types::schema_to_ts(&schema)?;
+
     let content = format!(
-        "{}\n{}\n{}{}",
-        JSEDITORAPI_TS_PREAMBLE, ts_types, JSEDITORAPI_TS_EDITOR_API, plugin_api_trailer
+        "{}\n{}\n{}\n{}{}",
+        JSEDITORAPI_TS_PREAMBLE,
+        ts_types,
+        config_types,
+        JSEDITORAPI_TS_EDITOR_API,
+        plugin_api_trailer
     );
 
     // Validate the generated TypeScript syntax
@@ -1107,7 +1125,6 @@ interface EditorAPI {
     // Format the TypeScript
     let formatted = format_typescript(&content);
 
-    let root = workspace_root();
     write_if_changed(
         &root.join("crates/fresh-editor/plugins/lib/fresh.d.ts"),
         &formatted,
@@ -1463,6 +1480,8 @@ mod tests {
             "BufferId",
             "SplitId",
             "EditorAPI",
+            // Declared from the config schema in write_fresh_dts.
+            crate::config_types::CONFIG_TYPE,
         ] {
             defined_types.insert(builtin.to_string());
         }

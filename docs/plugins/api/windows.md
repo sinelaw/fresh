@@ -60,8 +60,8 @@ This is the primitive for arranging panes. `direction` names the
 the new pane lands on — `"before"` is left/top, `"after"` (the
 default, and what the keyboard split does) is right/bottom.
 
-Resolves *after* the layout has been applied and the readable
-snapshot refreshed, with the new pane's id and geometry — so
+Resolves *after* the layout has been applied and the editor's cached
+state refreshed, with the new pane's id and geometry — so
 `listSplits()` / `describeWorkspace()` called next observe the split
 that was just made, and "did it land on the left" is answered by the
 `x` that comes back rather than by guessing.
@@ -222,10 +222,10 @@ getScreenSize(): ScreenSize;
 
 ### `orchestratorMode`
 
-Launched by a bare `fresh` in Orchestrator mode. Exposed to JS as
-`editor.orchestratorMode()`. The launch, not the `orchestrator_mode`
-preference, which stays on for `fresh FILE`. Plugins in the mode use
-it to override their own settings.
+Whether the editor was launched by a bare `fresh` in Orchestrator mode.
+This reflects the launch, not the `orchestrator_mode` preference,
+which stays on for `fresh FILE`. Plugins in the mode use it to
+override their own settings.
 
 ```typescript
 orchestratorMode(): boolean;
@@ -234,8 +234,8 @@ orchestratorMode(): boolean;
 ### `dockOpen`
 
 Whether the left dock slot is open: a panel is in it, or the host is
-holding the column for one its manifest declared. Exposed to JS as
-`editor.dockOpen()`. The plugin that fills the dock mounts it at
+holding the column for one its manifest declared. The plugin that
+fills the dock mounts it at
 `ready` iff this is true.
 
 ```typescript
@@ -245,8 +245,7 @@ dockOpen(): boolean;
 ### `dockCols`
 
 The dock column's width in cells, open or not; `0` when the terminal
-is too narrow for a dock. Exposed to JS as `editor.dockCols()`. Lay
-dock content out to this: the host owns the width and re-fits it on
+is too narrow for a dock. Lay dock content out to this: the host owns the width and re-fits it on
 resize.
 
 ```typescript
@@ -264,8 +263,9 @@ left", "is that a terminal or a file", and "what am I pointed at"
 in one read, instead of stitching `listSplits` + `getBufferInfo` +
 `getActiveSplitId` together and still not knowing pane order.
 
-Reads the snapshot, so it is cheap and synchronous — but it
-observes the state as of the last applied batch. After a mutation,
+It reads the editor's cached state, so it is cheap and synchronous —
+but that state only reflects changes the editor has already applied.
+After a mutation,
 `await editor.flush()` first (or await the mutation itself, if it
 returns a promise) or this reports what was true before it.
 
@@ -283,8 +283,9 @@ describeWorkspace(): WorkspaceDescription;
 
 Wait for every mutation queued so far to be applied, then resolve.
 
-Commands are queued and drained on the editor thread, so a read
-issued right after a mutation reports the state from *before* it:
+Mutating calls are queued and the editor applies them after the call
+returns, so a read issued right after a mutation reports the state
+from *before* it:
 `setSplitRatio(...)` followed by `listSplits()` returns the old
 widths. Awaiting this closes that window, which is what lets a
 single script change the layout and then verify what it changed.
@@ -311,8 +312,8 @@ polling `listWindows`.
 It does not switch to the new session. Call `setActiveWindow` for
 that.
 
-Returns `false` only when the IPC channel to the editor is
-closed (editor is shutting down).
+Returns `false` only when the editor can no longer take commands (for
+example while it shuts down).
 
 ```typescript
 createWindow(root: string, label: string): boolean;
@@ -341,11 +342,7 @@ returns `false`; to open such a workspace use
 `getPluginApi("orchestrator").focusWorkspace(workspaceId)`, which
 attaches a session at the worktree first.
 
-Returns `false` for any non-positive id rather than throwing. It used
-to be declared as an unsigned integer, so a negative id failed inside
-the JS→Rust conversion with `Error converting from js 'f64' into type
-'u64': Underflow` — an exception, from a line that looked fine, naming
-nothing the caller had written.
+Returns `false` for any non-positive id rather than throwing.
 
 ```typescript
 setActiveWindow(id: number): boolean;
@@ -354,8 +351,8 @@ setActiveWindow(id: number): boolean;
 ### `setActiveWindowAnimated`
 
 Switch the active window with a directional wipe on the
-incoming content. `from_edge`: "top" | "bottom" | "left" |
-"right". See `PluginCommand::SetActiveWindowAnimated`.
+incoming content. `fromEdge`: "top" | "bottom" | "left" |
+"right".
 
 Same id rules as `setActiveWindow`: a non-positive id returns `false`.
 
@@ -368,7 +365,7 @@ setActiveWindowAnimated(id: number, fromEdge: string): boolean;
 Restrict (and order) the windows that Next/Prev Window cycle
 through to `ids`, in this order. An empty array clears the
 override (back to every window, by id). Non-open ids are skipped
-at cycle time. See `PluginCommand::SetWindowCycleOrder`.
+at cycle time.
 
 ```typescript
 setWindowCycleOrder(ids: number[]): boolean;
@@ -510,7 +507,8 @@ Update the progress line (and displayed name) on a preparing window
 state with `done` so the window renders as an ordinary session
 again. An empty `label` leaves the displayed name alone.
 
-Returns `false` only when the channel to the editor is closed.
+Returns `false` only when the editor can no longer take commands (for
+example while it shuts down).
 
 ```typescript
 setWindowPreparing(id: number, message: string, label: string | null, failed: boolean, done: boolean): boolean;
@@ -544,7 +542,8 @@ to every process group the window `id` is tracking. The
 window's authority decides delivery; this is the
 canonical entry point for "stop everything this window
 owns" rather than reaching at the terminal level. Returns
-`false` only when the command channel is closed.
+`false` only when the editor can no longer take commands (for
+example while it shuts down).
 
 ```typescript
 signalWindow(id: number, signal: string): boolean;

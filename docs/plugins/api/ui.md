@@ -74,8 +74,9 @@ executeAction(actionName: string): boolean;
 
 ### `completeCommand`
 
-Answer a command that was dispatched with a request id (a `RunCommand`
-from the agent command channel).
+Answer a command that was dispatched with a request id: one started
+from outside the editor (for example by an agent driving it) whose
+caller waits for the command's result.
 
 Plugins do not normally call this: the host wraps every such dispatch so
 that whatever the handler *returns* — or the promise it returns, once it
@@ -92,7 +93,9 @@ completeCommand(requestId: number, ok: boolean, output: string | null, error: st
 
 Execute multiple actions in sequence
 
-Takes typed ActionSpec array - serde validates field names at runtime
+The actions are checked when the call is made; an entry that doesn't
+match the type (for example one with a misspelled field name) makes the
+call throw.
 
 Each action has an optional repeat count. Vi mode uses this for count
 prefixes (e.g., "3dw" deletes 3 words). All actions run in one batch,
@@ -248,7 +251,6 @@ getInputMode(): string | null;
 ### `listMacros`
 
 Register keys of all recorded macros in the active session, sorted.
-Reads the per-tick snapshot, so it never crosses the IPC boundary.
 
 ```typescript
 listMacros(): string[];
@@ -376,7 +378,9 @@ startPromptWithInitial(label: string, promptType: string, initialValue: string, 
 
 Set suggestions for the current prompt
 
-Uses typed Vec&lt;Suggestion> - serde validates field names at runtime
+The suggestions are checked when the call is made; a suggestion that
+doesn't match the type (for example one with a misspelled field name)
+makes the call throw.
 
 Every suggestion's `id` must be unique in the array; a list that repeats one
 throws instead of being shown.
@@ -590,8 +594,9 @@ shape). The host renders the spec into the buffer; subsequent
 `updateWidgetPanel` calls re-render the panel against the
 previously-mounted spec.
 
-Returns true on successful queue, false if the IPC channel is
-closed.
+Returns `true` once the mount is queued. Returns `false` when `spec`
+or `options` is malformed (the error is logged), or when the editor
+can no longer take commands (for example while it shuts down).
 
 ```typescript
 mountWidgetPanel(panelId: number, bufferId: number, specObj: unknown, optionsObj?: WidgetPanelOptions): boolean;
@@ -632,8 +637,8 @@ widgetCommand(panelId: number, actionObj: unknown): boolean;
 
 ### `widgetMutate`
 
-Apply a targeted mutation to a mounted widget panel — the
-IPC fast path. Use instead of `updateWidgetPanel` when the
+Apply a targeted mutation to a mounted widget panel. Use instead of
+`updateWidgetPanel` when the
 model change touches a single widget; the host applies the
 mutation in place without re-transmitting the full spec.
 See `WidgetMutation` in fresh.d.ts for the shapes.
@@ -730,7 +735,7 @@ a centered panel cover the whole frame over the dock), "sidebar"
 (`arg` = requested rows; re-anchors the panel as a sidebar section
 under the file explorer — "dock" / "center" re-anchor it back out),
 "sidebar_rows" (`arg` = requested rows for a section; a divider the
-user has dragged wins). See `PluginCommand::FloatingPanelControl`.
+user has dragged wins).
 
 ```typescript
 floatingPanelControl(panelId: number, op: string, arg: number): boolean;
@@ -742,7 +747,8 @@ floatingPanelControl(panelId: number, op: string, arg: number): boolean;
 
 Show an action popup
 
-Takes a typed ActionPopupOptions struct - serde validates field names at runtime
+The options are checked when the call is made; options that don't match
+the type (for example a misspelled field name) make the call throw.
 
 Each action's `id` is its row's key and must be unique among the
 actions; a repeated one throws.
@@ -766,8 +772,8 @@ toggle under "View"). The target menu and the neighbour named by
 `action`) as well as by display label, so the placement survives a
 locale change. Naming a menu that doesn't exist is a no-op.
 
-Takes a typed AddMenuItemOptions struct - serde validates field
-names at runtime.
+The options are checked when the call is made; options that don't match
+the type (for example a misspelled field name) make the call throw.
 
 ```typescript
 addMenuItem(opts: AddMenuItemOptions): boolean;

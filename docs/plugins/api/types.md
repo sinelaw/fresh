@@ -66,8 +66,8 @@ type ActionSpec = {
 
 ### `AddMenuItemOptions`
 
-Options for `addMenuItem` — one plugin-contributed row in an existing
-menu bar menu. See `PluginCommand::AddMenuItem`.
+Options for `editor.addMenuItem` — one plugin-contributed row in an
+existing menu bar menu.
 
 Every string here is matched or displayed by the host, so the plugin
 never reaches into menu internals: it names the *target* menu and,
@@ -263,7 +263,7 @@ type BufferInfo = {
   */
   length: number;
   /**
-  * Number of lines, when the buffer has been indexed. `None` for a very
+  * Number of lines, when the buffer has been indexed. `null` for a very
   * large file whose line index hasn't been built yet — the one case
   * where the count genuinely isn't known.
   *
@@ -437,9 +437,9 @@ type CreateTerminalOptions = {
   windowId?: WindowId;
   /**
   * Argv to spawn directly inside the PTY instead of the host's
-  * configured shell. `None` (default) keeps the historical
+  * configured shell. Omit it (the default) to keep the historical
   * behaviour: spawn the user's shell and let the caller type into
-  * it via `sendTerminalInput`. `Some([cmd, ...args])` runs that
+  * it via `sendTerminalInput`. Set to `[cmd, ...args]`, it runs that
   * exact command as the PTY child — no shell middleman, so the
   * process exits cleanly when the agent does and the
   * terminal-buffer's `terminal_exit` plugin hook reflects the
@@ -453,24 +453,24 @@ type CreateTerminalOptions = {
   * (when `command` is set) or `"Terminal N"` (the historical
   * auto-numbered title). If another terminal in the same window
   * already uses the requested title, the host appends `" (k)"`
-  * to disambiguate. Empty string is treated the same as `None`.
+  * to disambiguate. An empty string is treated the same as omitting it.
   */
   title?: string;
   /**
   * Extra environment variables to set in the spawned terminal's
   * child process, on top of the inherited/activated env. Mirrors
-  * `CreateWindowWithTerminalOptions::env`. `None` (the default)
+  * `CreateWindowWithTerminalOptions.env`. Omitted (the default), it
   * adds nothing, so existing callers behave exactly as before.
   */
   env?: { [key in string] : string };
   /**
   * Argv to run when this terminal is *restored* or *restarted*,
   * instead of re-running `command`. The exact counterpart of
-  * `CreateWindowWithTerminalOptions::resume`, so an agent launched
+  * `CreateWindowWithTerminalOptions.resume`, so an agent launched
   * into an existing window rejoins its conversation on restart the
   * same way one born in its own window does — a session started with
   * `claude --session-id <id>` sets `resume` to
-  * `["claude", "--resume", "<id>"]`. `None` keeps `command` as the
+  * `["claude", "--resume", "<id>"]`. Omit it to keep `command` as the
   * restore argv. The id is a plain argv element — never interpolated
   * into a shell string.
   *
@@ -791,8 +791,8 @@ type CreateWindowWithTerminalOptions = {
   */
   cwd?: string;
   /**
-  * Argv to spawn directly inside the PTY. `None` keeps the
-  * shell-and-type behaviour; `Some([cmd, ...args])` runs the
+  * Argv to spawn directly inside the PTY. Omit it to keep the
+  * shell-and-type behaviour; set to `[cmd, ...args]`, it runs the
   * command as the PTY child (used by Orchestrator so the
   * agent process is the PTY's direct child).
   */
@@ -809,7 +809,7 @@ type CreateWindowWithTerminalOptions = {
   * `claude --session-id <id>` sets `resume` to
   * `["claude", "--resume", "<id>"]` (or `["claude", "--continue"]`),
   * so a restored session rejoins its conversation rather than starting
-  * a fresh agent. `None` keeps `command` as the restore command. The id
+  * a fresh agent. Omit it to keep `command` as the restore command. The id
   * is a plain argv element — never interpolated into a shell string.
   */
   resume?: Array<string>;
@@ -818,7 +818,7 @@ type CreateWindowWithTerminalOptions = {
   * terminal's child process, on top of the inherited/activated
   * env. Applied after the editor's control vars (`TERM`,
   * `FRESH_SESSION`), so a plugin's entry wins over those only
-  * when it names the same key. `None` (the default) adds
+  * when it names the same key. Omitted (the default), it adds
   * nothing — old callers behave exactly as before.
   */
   env?: { [key in string] : string };
@@ -998,7 +998,7 @@ type FileExplorerLeadingSlot = {
 
 Additive slot override for a file explorer entry.
 
-Any field left as `None` falls back to the editor's compatibility providers,
+Any field left `null` falls back to the editor's compatibility providers,
 so plugins can override just the piece they care about.
 
 ```typescript
@@ -1103,6 +1103,1640 @@ type FormatterPackConfig = {
   */
   args: Array<string>;
 };
+```
+
+### `FreshConfig`
+
+The editor's configuration, as returned by `editor.getConfig()` and `editor.getUserConfig()`. Generated from the config's JSON Schema.
+
+Every property is optional: `getUserConfig()` returns only the values the user set, and `getConfig()` the full merged config.
+
+```typescript
+interface FreshConfig {
+  /**
+  * Config format version, used for migration. Missing means version 0.
+  *
+  * Default: `0`
+  */
+  version?: number;
+  /**
+  * Color theme name
+  *
+  * Default: `"high-contrast"`
+  */
+  theme?: FreshConfig.ThemeOptions;
+  /**
+  * UI language. If not set, detected from LC_ALL, LC_MESSAGES or LANG.
+  */
+  locale?: FreshConfig.LocaleOptions;
+  /**
+  * Check for new versions on startup (default: true).
+  * Also sends basic anonymous telemetry (version, OS, terminal type).
+  *
+  * Default: `true`
+  */
+  check_for_updates?: boolean;
+  /**
+  * Offer to update from inside the editor when a new version is found (default: true).
+  * When off, the status-bar indicator only tells you an update exists.
+  * Needs `check_for_updates` and an install method that can self-update.
+  *
+  * Default: `true`
+  */
+  self_update?: boolean;
+  /**
+  * When on (default), `fresh` with no arguments reattaches to a single background
+  * editor with the workspace dock and your last workspace. When off, it opens a
+  * plain editor in the current directory; runs with files or flags are unaffected.
+  *
+  * Default: `true`
+  */
+  orchestrator_mode?: boolean;
+  /**
+  * Editor behavior settings (indentation, line numbers, wrapping, etc.)
+  */
+  editor?: FreshConfig.EditorConfig;
+  /**
+  * File explorer panel settings
+  */
+  file_explorer?: FreshConfig.FileExplorerConfig;
+  /**
+  * Sidebar settings (the column that holds the file explorer).
+  *
+  * Default: `{"accordion":"free"}`
+  */
+  sidebar?: FreshConfig.SidebarConfig;
+  /**
+  * File browser settings (Open File dialog)
+  *
+  * Default: `{"show_hidden":false}`
+  */
+  file_browser?: FreshConfig.FileBrowserConfig;
+  /**
+  * Clipboard settings (which clipboard methods to use)
+  *
+  * Default: `{"use_osc52":true,"use_system_clipboard":true}`
+  */
+  clipboard?: FreshConfig.ClipboardConfig;
+  /**
+  * Terminal settings
+  */
+  terminal?: FreshConfig.TerminalConfig;
+  /**
+  * Custom keybindings (overrides for the active map)
+  */
+  keybindings?: FreshConfig.Keybinding[];
+  /**
+  * Custom named keybinding maps. A map can inherit from another map.
+  */
+  keybinding_maps?: Record<string, FreshConfig.KeymapConfig>;
+  /**
+  * Active keybinding map name
+  *
+  * Default: `"default"`
+  */
+  active_keybinding_map?: FreshConfig.KeybindingMapOptions;
+  /**
+  * Per-language configuration overrides (tab size, formatters, etc.)
+  */
+  languages?: Record<string, FreshConfig.LanguageConfig>;
+  /**
+  * Language used for files whose type can't be detected.
+  * Must be a key in `languages` (e.g. "bash"); its full settings apply.
+  */
+  default_language?: string | null;
+  /**
+  * Master switch for language servers. When off, no server starts automatically;
+  * you can still start one with "Start/Restart LSP Server".
+  *
+  * Default: `true`
+  */
+  lsp_enabled?: boolean;
+  /**
+  * Language servers per language. Each language takes one server or a list.
+  */
+  lsp?: Record<string, FreshConfig.LspLanguageConfig>;
+  /**
+  * Language servers for all languages, run alongside those in `lsp`.
+  * Keyed by a unique server name (e.g. "quicklsp").
+  */
+  universal_lsp?: Record<string, FreshConfig.LspLanguageConfig>;
+  /**
+  * Warning notification settings
+  *
+  * Default: `{"show_status_indicator":true}`
+  */
+  warnings?: FreshConfig.WarningsConfig;
+  /**
+  * Per-plugin settings, by plugin name. Use it to turn plugins on or off.
+  */
+  plugins?: Record<string, FreshConfig.PluginConfig>;
+  /**
+  * Package manager settings for plugin/theme installation
+  */
+  packages?: FreshConfig.PackagesConfig;
+  /**
+  * Auto-activation of project environments (venv, direnv, mise, …).
+  */
+  env?: FreshConfig.EnvConfig;
+}
+```
+
+### `FreshConfig.ClipboardConfig`
+
+Which clipboard methods copy/paste uses, tried in order: OSC 52 (modern
+terminals like Kitty, WezTerm), the system clipboard (X11/Wayland), then an
+internal clipboard. Disable a method if it hangs (e.g. PuTTY, some SSH setups).
+
+```typescript
+interface ClipboardConfig {
+    /**
+    * Use the terminal's OSC 52 clipboard (default: true). Turn off if unsupported
+    * or it hangs.
+    *
+    * Default: `true`
+    */
+    use_osc52?: boolean;
+    /**
+    * Use the X11/Wayland system clipboard (default: true). Turn off if there's
+    * no display server or it causes problems.
+    *
+    * Default: `true`
+    */
+    use_system_clipboard?: boolean;
+  }
+```
+
+### `FreshConfig.CursorStyle`
+
+Terminal cursor style
+
+```typescript
+type CursorStyle = "default" | "blinking_block" | "steady_block" | "blinking_bar" | "steady_bar" | "blinking_underline" | "steady_underline";
+```
+
+### `FreshConfig.EditorConfig`
+
+Editor behavior configuration
+
+```typescript
+interface EditorConfig {
+    /**
+    * Enable UI animations (tab-switch slides, dashboard, plugin effects).
+    * Turn off for a fully static UI, e.g. on slow terminals or over SSH.
+    *
+    * Default: `true`
+    */
+    animations?: boolean;
+    /**
+    * Show a trail animation when the cursor jumps far (search, go-to-definition,
+    * pane switch). Needs `animations` on.
+    *
+    * Default: `true`
+    */
+    cursor_jump_animation?: boolean;
+    /**
+    * Fade out the top and bottom two rows of each pane when there is more
+    * text beyond that edge. The edge the cursor is on is never faded.
+    *
+    * Default: `true`
+    */
+    viewport_edge_fade?: boolean;
+    /**
+    * Show line numbers in the gutter (default for new buffers).
+    *
+    * Default: `true`
+    */
+    line_numbers?: boolean;
+    /**
+    * Show line numbers relative to the cursor line.
+    *
+    * Default: `false`
+    */
+    relative_line_numbers?: boolean;
+    /**
+    * Highlight the line containing the cursor
+    *
+    * Default: `true`
+    */
+    highlight_current_line?: boolean;
+    /**
+    * Highlight all occurrences of the word under the cursor
+    *
+    * Default: `true`
+    */
+    highlight_occurrences?: boolean;
+    /**
+    * Hide the current-line highlight while text is selected. Default: false
+    *
+    * Default: `false`
+    */
+    hide_current_line_on_selection?: boolean;
+    /**
+    * Highlight the column containing the cursor
+    *
+    * Default: `false`
+    */
+    highlight_current_column?: boolean;
+    /**
+    * Wrap long lines to fit the window width (default for new views)
+    *
+    * Default: `true`
+    */
+    line_wrap?: boolean;
+    /**
+    * Indent wrapped lines to match the original line's indentation.
+    *
+    * Default: `true`
+    */
+    wrap_indent?: boolean;
+    /**
+    * Number of text columns to wrap lines at (e.g. `80`), not counting the
+    * line-number gutter. Never wider than the window.
+    * `null` or `0` (default) wraps at the window edge.
+    */
+    wrap_column?: number | null;
+    /**
+    * Text width in columns in page view, centered with margins. Default: 80.
+    * `null` or `0` uses the full window width.
+    *
+    * Default: `80`
+    */
+    page_width?: number | null;
+    /**
+    * Enable syntax highlighting for code files.
+    *
+    * Default: `true`
+    */
+    syntax_highlighting?: boolean;
+    /**
+    * Show the menu bar (File, Edit, View, …) at the top. Can be toggled at any time.
+    * Default: true
+    *
+    * Default: `true`
+    */
+    show_menu_bar?: boolean;
+    /**
+    * Show a wave-animation screensaver after `screensaver_idle_minutes` with no
+    * input. Any key or mouse move ends it. Default: false
+    *
+    * Default: `false`
+    */
+    screensaver_enabled?: boolean;
+    /**
+    * Idle minutes before the screensaver starts. `0` disables it. Default: 5
+    *
+    * Default: `5`
+    */
+    screensaver_idle_minutes?: number;
+    /**
+    * Alt+letter opens menus (Alt+F for File, Alt+E for Edit, …). Turn off to free
+    * Alt+letter keys for other bindings. Default: true
+    *
+    * Default: `true`
+    */
+    menu_bar_mnemonics?: boolean;
+    /**
+    * Show the tab bar of open files in each pane. Can be toggled at any time.
+    * Default: true
+    *
+    * Default: `true`
+    */
+    show_tab_bar?: boolean;
+    /**
+    * Show the status bar at the bottom. Can be toggled at any time.
+    * Default: true
+    *
+    * Default: `true`
+    */
+    show_status_bar?: boolean;
+    /**
+    * Which elements appear in the status bar and in what order.
+    */
+    status_bar?: StatusBarConfig;
+    /**
+    * Starting state of the Case / Word / Regex search toggles. Toggles you
+    * change are remembered per workspace and take priority.
+    */
+    search?: SearchConfig;
+    /**
+    * Always keep the bottom prompt line (search, open file, …) visible.
+    * When off (default), it only appears while a prompt is open.
+    *
+    * Default: `false`
+    */
+    show_prompt_line?: boolean;
+    /**
+    * Show a vertical scrollbar in each pane. Can be toggled at any time.
+    * Default: true
+    *
+    * Default: `true`
+    */
+    show_vertical_scrollbar?: boolean;
+    /**
+    * Show a horizontal scrollbar in each pane when line wrap is off and lines
+    * are wider than the window. Can be toggled at any time. Default: false
+    *
+    * Default: `false`
+    */
+    show_horizontal_scrollbar?: boolean;
+    /**
+    * Show vim-style `~` markers on empty lines past the end of the file.
+    * Default: true
+    *
+    * Default: `true`
+    */
+    show_tilde?: boolean;
+    /**
+    * Use Nerd Font icons in the UI (e.g. settings category icons). Only turn on
+    * if your terminal uses a Nerd Font, or icons show as `?` or boxes. Default: false
+    *
+    * Default: `false`
+    */
+    nerd_font_icons?: boolean;
+    /**
+    * Use the terminal's background instead of the theme's, so terminal
+    * transparency or custom backgrounds show through. Default: false
+    *
+    * Default: `false`
+    */
+    use_terminal_bg?: boolean;
+    /**
+    * Set the terminal window title to "<file> — Fresh" for the active buffer.
+    * Default: true
+    *
+    * Default: `true`
+    */
+    set_window_title?: boolean;
+    /**
+    * Name terminal tabs after the running program (e.g. `python3`) and its title,
+    * instead of the fixed `*Terminal N*`. Default: true
+    *
+    * Default: `true`
+    */
+    terminal_auto_title?: boolean;
+    /**
+    * Cursor shape: block, bar or underline, blinking or steady.
+    * Default: the terminal's own style.
+    *
+    * Default: `"default"`
+    */
+    cursor_style?: CursorStyle;
+    /**
+    * Draw vertical lines at these columns, e.g. [80, 120]. Default: none.
+    * Columns count screen cells from 1, so tabs and wide characters (CJK, emoji)
+    * can differ from the status bar's column.
+    */
+    rulers?: number[];
+    /**
+    * Vertical lines at each indent level (based on tab size). Display only.
+    * `none` (default): off. `all`: every level. `active`: only the cursor's block.
+    *
+    * Default: `"none"`
+    */
+    indentation_guide?: IndentationGuideMode;
+    /**
+    * Character for indentation guides; use a single-width one. Blank resets
+    * to the default. Default: ▏
+    *
+    * Default: `"▏"`
+    */
+    indentation_guide_glyph?: string;
+    /**
+    * Color indentation guides by level, using the theme's `indent_rainbow_1`–`6`
+    * colors. Default: false
+    *
+    * Default: `false`
+    */
+    rainbow_indentation?: boolean;
+    /**
+    * Master switch for whitespace markers (·, →). When off, none are shown,
+    * whatever the settings below say. Default: true
+    *
+    * Default: `true`
+    */
+    whitespace_show?: boolean;
+    /**
+    * Show · for spaces used as indentation. Default: false
+    *
+    * Default: `false`
+    */
+    whitespace_spaces_leading?: boolean;
+    /**
+    * Show · for spaces between words. Default: false
+    *
+    * Default: `false`
+    */
+    whitespace_spaces_inner?: boolean;
+    /**
+    * Show · for spaces at the end of a line. Default: false
+    *
+    * Default: `false`
+    */
+    whitespace_spaces_trailing?: boolean;
+    /**
+    * Show → for tabs used as indentation. Languages can override this with
+    * `show_whitespace_tabs`. Default: true
+    *
+    * Default: `true`
+    */
+    whitespace_tabs_leading?: boolean;
+    /**
+    * Show → for tabs between words. Languages can override this with
+    * `show_whitespace_tabs`. Default: true
+    *
+    * Default: `true`
+    */
+    whitespace_tabs_inner?: boolean;
+    /**
+    * Show → for tabs at the end of a line. Languages can override this with
+    * `show_whitespace_tabs`. Default: true
+    *
+    * Default: `true`
+    */
+    whitespace_tabs_trailing?: boolean;
+    /**
+    * Show ↵ at the end of every line. Default: false
+    *
+    * Default: `false`
+    */
+    whitespace_newlines?: boolean;
+    /**
+    * Show ␍ for the CR in CRLF line endings. Stray CR characters always show
+    * as `<0D>`. Default: false
+    *
+    * Default: `false`
+    */
+    whitespace_carriage_returns?: boolean;
+    /**
+    * Show whitespace markers (·, →) inside a selection, even if they are
+    * hidden elsewhere. Default: true
+    *
+    * Default: `true`
+    */
+    whitespace_in_selection?: boolean;
+    /**
+    * Tab key inserts a tab character instead of spaces. Languages can
+    * override this. Default: false (spaces)
+    *
+    * Default: `false`
+    */
+    use_tabs?: boolean;
+    /**
+    * Spaces per tab. `0` means the default (4).
+    *
+    * Default: `4`
+    */
+    tab_size?: number;
+    /**
+    * Indent new lines to match the previous line.
+    *
+    * Default: `true`
+    */
+    auto_indent?: boolean;
+    /**
+    * Typing `(`, `[`, `{`, `"`, `'` or `` ` `` inserts the closing one too. Typing a
+    * closer skips over an existing one; Backspace between a pair deletes both. Default: true
+    *
+    * Default: `true`
+    */
+    auto_close?: boolean;
+    /**
+    * Typing `(`, `[`, `{`, `"`, `'` or `` ` `` with text selected wraps the
+    * selection instead of replacing it. Default: true
+    *
+    * Default: `true`
+    */
+    auto_surround?: boolean;
+    /**
+    * Let the cursor go past the end of a line. "off" (default): never.
+    * "block": only block selections. "on": also arrows and clicks; typing there fills with spaces.
+    *
+    * Default: `"off"`
+    */
+    virtual_space?: VirtualSpaceMode;
+    /**
+    * Lines to keep visible above and below the cursor when scrolling.
+    *
+    * Default: `3`
+    */
+    scroll_offset?: number;
+    /**
+    * Line ending for new files; opened files keep their own. "lf" (Unix/macOS,
+    * default), "crlf" (Windows) or "cr" (classic Mac).
+    *
+    * Default: `"lf"`
+    */
+    default_line_ending?: LineEndingOption;
+    /**
+    * Remove spaces at line ends when saving. Default: false
+    *
+    * Default: `false`
+    */
+    trim_trailing_whitespace_on_save?: boolean;
+    /**
+    * Add a final newline when saving, if missing. Default: false
+    *
+    * Default: `false`
+    */
+    ensure_final_newline_on_save?: boolean;
+    /**
+    * Open files read-only if they aren't writable or are in a library folder
+    * (node_modules, rustup, /usr/include, /nix/store, …). Binary files are
+    * always read-only. Default: true
+    *
+    * Default: `true`
+    */
+    auto_read_only?: boolean;
+    /**
+    * Highlight the matching bracket when the cursor is on a bracket. Default: true
+    *
+    * Default: `true`
+    */
+    highlight_matching_brackets?: boolean;
+    /**
+    * Color nested brackets by depth. Needs `highlight_matching_brackets`. Default: true
+    *
+    * Default: `true`
+    */
+    rainbow_brackets?: boolean;
+    /**
+    * Show the completion popup automatically while typing. When off (default),
+    * it only opens on request (e.g. Ctrl+Space).
+    *
+    * Default: `false`
+    */
+    completion_popup_auto_show?: boolean;
+    /**
+    * Suggest completions on any typing, not just after `.` or `::`.
+    * Needs `completion_popup_auto_show`. Default: true
+    *
+    * Default: `true`
+    */
+    quick_suggestions?: boolean;
+    /**
+    * Milliseconds to wait before showing suggestions. Trigger characters like `.`
+    * skip the wait. Default: 150
+    *
+    * Default: `150`
+    */
+    quick_suggestions_delay_ms?: number;
+    /**
+    * Show completions right away after `.`, `::` or `->`, with no delay. Default: true
+    *
+    * Default: `true`
+    */
+    suggest_on_trigger_characters?: boolean;
+    /**
+    * Show inline type and parameter hints from the language server.
+    *
+    * Default: `true`
+    */
+    enable_inlay_hints?: boolean;
+    /**
+    * Request semantic highlighting for the whole file, not just the visible
+    * range. Default: false (lighter).
+    *
+    * Default: `false`
+    */
+    enable_semantic_tokens_full?: boolean;
+    /**
+    * Show the most severe error/warning message at the end of its line. Default: false
+    *
+    * Default: `false`
+    */
+    diagnostics_inline_text?: boolean;
+    /**
+    * Lines scrolled per mouse wheel notch, everywhere (minimum 1). Shift+wheel
+    * is not affected. Default: 3
+    *
+    * Default: `3`
+    */
+    mouse_wheel_scroll_lines?: number;
+    /**
+    * Scroll a wheel notch one line at a time instead of jumping. Slow terminals
+    * fall back to a jump. Needs `animations` on.
+    *
+    * Default: `true`
+    */
+    smooth_scroll?: boolean;
+    /**
+    * Show documentation when hovering the mouse over code.
+    * On Windows it also turns on full mouse-motion tracking, which may garble input
+    * on some systems. Default: true (macOS/Linux), false (Windows)
+    *
+    * Default: `true`
+    */
+    mouse_hover_enabled?: boolean;
+    /**
+    * Milliseconds before hover info appears. Lower is faster but loads the
+    * language server more. Default: 500
+    *
+    * Default: `500`
+    */
+    mouse_hover_delay_ms?: number;
+    /**
+    * Max milliseconds between two clicks to count as a double-click. Default: 500
+    *
+    * Default: `500`
+    */
+    double_click_time_ms?: number;
+    /**
+    * Auto-save changed files to disk every `auto_save_interval_secs`. Default: false
+    *
+    * Default: `false`
+    */
+    auto_save_enabled?: boolean;
+    /**
+    * Seconds between auto-saves, when `auto_save_enabled` is on. Default: 30
+    *
+    * Default: `30`
+    */
+    auto_save_interval_secs?: number;
+    /**
+    * Keep unsaved changes, including unnamed buffers, when you quit, and restore
+    * them next time. Default: true
+    *
+    * Default: `true`
+    */
+    hot_exit?: boolean;
+    /**
+    * Always ask before quitting, even with nothing unsaved. (Unsaved changes are
+    * always confirmed.) Default: false
+    *
+    * Default: `false`
+    */
+    confirm_quit?: boolean;
+    /**
+    * Restore tabs, splits, cursors and the file explorer from the last exit in
+    * the same directory. The session is still saved when off; `--no-restore`
+    * skips both. Default: true
+    *
+    * Default: `true`
+    */
+    restore_previous_session?: boolean;
+    /**
+    * When started with files (e.g. `fresh main.rs`), open only those files
+    * instead of the last session. Unsaved changes are still restored. Default: true
+    *
+    * Default: `true`
+    */
+    skip_session_restore_when_files_passed?: boolean;
+    /**
+    * Files whose cursor, scroll and folds are never remembered, because other tools
+    * rewrite them. Plain names match exactly; `*`/`?` globs match the full path if they
+    * include folders, else the file name. Default: `["**\/.git/**"]` (e.g. `COMMIT_EDITMSG`)
+    *
+    * Default: `["**\/.git/**"]`
+    */
+    ephemeral_file_patterns?: string[];
+    /**
+    * Open an empty `[No Name]` tab when the last tab is closed. When off, the
+    * workspace stays blank (with `file_explorer.auto_open_on_last_buffer_close`
+    * also off, nothing opens). Default: true
+    *
+    * Default: `true`
+    */
+    auto_create_empty_buffer_on_last_buffer_close?: boolean;
+    /**
+    * Periodically save changes to recovery files, so work survives a crash.
+    *
+    * Default: `true`
+    */
+    recovery_enabled?: boolean;
+    /**
+    * Seconds between recovery saves, when `recovery_enabled` is on. Default: 2
+    *
+    * Default: `2`
+    */
+    auto_recovery_save_interval_secs?: number;
+    /**
+    * How often (ms) to check open files for outside changes when auto-revert is
+    * on. Lower is faster but uses more CPU. Default: 2000
+    *
+    * Default: `2000`
+    */
+    auto_revert_poll_interval_ms?: number;
+    /**
+    * Read Escape and modified keys reliably (kitty keyboard protocol, needs
+    * terminal support). Default: true
+    *
+    * Default: `true`
+    */
+    keyboard_disambiguate_escape_codes?: boolean;
+    /**
+    * Report key repeat and release events (kitty keyboard protocol, needs
+    * terminal support). Default: false
+    *
+    * Default: `false`
+    */
+    keyboard_report_event_types?: boolean;
+    /**
+    * Report alternate keycodes as well as the base key (kitty keyboard protocol,
+    * needs terminal support). Default: true
+    *
+    * Default: `true`
+    */
+    keyboard_report_alternate_keys?: boolean;
+    /**
+    * Report every key as an escape code; needed for repeat/release on plain
+    * keys (kitty keyboard protocol, needs terminal support). Default: false
+    *
+    * Default: `false`
+    */
+    keyboard_report_all_keys_as_escape_codes?: boolean;
+    /**
+    * Edits between undo history snapshots.
+    *
+    * Default: `100`
+    */
+    snapshot_interval?: number;
+    /**
+    * Bytes around the visible area read for syntax highlighting. More is more
+    * accurate for long strings/comments but slower on big files. Default: 10000
+    *
+    * Default: `10000`
+    */
+    highlight_context_bytes?: number;
+    /**
+    * Files over this size (bytes) count as large: they load lazily, skip
+    * language servers, and get a fixed-size scrollbar thumb. Default: 10 MB
+    *
+    * Default: `10485760`
+    */
+    large_file_threshold_bytes?: number;
+    /**
+    * Assumed average line length in bytes, used to estimate line positions in
+    * large files. Typical: 80–120.
+    *
+    * Default: `80`
+    */
+    estimated_line_length?: number;
+    /**
+    * Max parallel file reads during bulk I/O. Higher helps on remote
+    * filesystems. Default: 64
+    *
+    * Default: `64`
+    */
+    read_concurrency?: number;
+    /**
+    * How often (ms) the file explorer checks open folders for added or removed
+    * files. Lower is faster but uses more CPU. Default: 3000
+    *
+    * Default: `3000`
+    */
+    file_tree_poll_interval_ms?: number;
+  }
+```
+
+### `FreshConfig.EnvConfig`
+
+Which marker files identify a project environment and how to activate it.
+The same markers drive the Workspace Trust prompt. You can add or override detectors.
+
+```typescript
+interface EnvConfig {
+    /**
+    * Detectors in order; the first that matches the workspace root wins.
+    * Defaults cover venv, direnv, mise, pipenv and poetry.
+    */
+    detectors?: EnvDetector[];
+  }
+```
+
+### `FreshConfig.EnvDetector`
+
+One environment detector: its markers, risk, activation command and name.
+
+```typescript
+interface EnvDetector {
+    /**
+    * Short label shown in the status pill (e.g. ".venv", "direnv", "mise").
+    */
+    name?: string;
+    /**
+    * Files or folders at the workspace root; the detector matches if any exists.
+    */
+    markers?: string[];
+    /**
+    * Activation risk class.
+    */
+    kind?: EnvKind;
+    /**
+    * Shell command that activates the environment, run from the workspace root.
+    * Prefer relative paths (e.g. `source .venv/bin/activate`). `{dir}` expands to the
+    * workspace root, but avoid it unless you control the path (shell-injection risk).
+    */
+    snippet?: string;
+    /**
+    * Paths (relative to the workspace root) of which at least one must also exist,
+    * e.g. the Python interpreter inside `.venv`. Empty means markers are enough.
+    */
+    require?: string[];
+  }
+```
+
+### `FreshConfig.EnvKind`
+
+How risky activation is; decides whether a trust prompt is needed first.
+
+```typescript
+type EnvKind = "path-only" | "shell";
+```
+
+### `FreshConfig.ExplorerWidth`
+
+Either a percent like "30%" (0–100) or an absolute column count like "24".
+
+```typescript
+type ExplorerWidth = string;
+```
+
+### `FreshConfig.FileBrowserConfig`
+
+Open File dialog settings.
+
+```typescript
+interface FileBrowserConfig {
+    /**
+    * Show hidden files (starting with `.`) by default.
+    *
+    * Default: `false`
+    */
+    show_hidden?: boolean;
+  }
+```
+
+### `FreshConfig.FileExplorerConfig`
+
+File explorer settings.
+
+```typescript
+interface FileExplorerConfig {
+    /**
+    * Apply `.gitignore` rules. When off, ignored files are neither hidden nor
+    * grayed out. Default: true
+    *
+    * Default: `true`
+    */
+    respect_gitignore?: boolean;
+    /**
+    * Show hidden files (starting with `.`) by default.
+    *
+    * Default: `false`
+    */
+    show_hidden?: boolean;
+    /**
+    * Show gitignored files by default.
+    *
+    * Default: `false`
+    */
+    show_gitignored?: boolean;
+    /**
+    * Extra patterns to ignore, on top of `.gitignore`.
+    */
+    custom_ignore_patterns?: string[];
+    /**
+    * Explorer width: a percent (`"30%"`, 0–100) or a column count (`"24"`).
+    * A plain number is read as a percent; `0.3` means 30%.
+    *
+    * Default: `"30%"`
+    */
+    width?: ExplorerWidth;
+    /**
+    * A single click opens a temporary preview tab that the next click replaces.
+    * Editing, double-click, Enter or dragging the tab makes it permanent. Default: true
+    *
+    * Default: `true`
+    */
+    preview_tabs?: boolean;
+    /**
+    * Screen side for the file explorer. Default: left
+    *
+    * Default: `"left"`
+    */
+    side?: FileExplorerSide;
+    /**
+    * Reveal and select the current file in the tree whenever you switch files.
+    * Skipped while the sidebar is hidden or focused, and for files outside the
+    * project. Default: false
+    *
+    * Default: `false`
+    */
+    follow_active_buffer?: boolean;
+    /**
+    * Focus the file explorer when the last tab is closed. Turn off for a blank
+    * workspace where nothing opens by itself. Default: true
+    *
+    * Default: `true`
+    */
+    auto_open_on_last_buffer_close?: boolean;
+    /**
+    * Show chains of folders that each hold only one folder on one line, e.g.
+    * `src/main/java/com/example`. Default: true
+    *
+    * Default: `true`
+    */
+    compact_directories?: boolean;
+    /**
+    * Symbol before a closed folder (one character recommended). Default: ">"
+    *
+    * Default: `">"`
+    */
+    tree_indicator_collapsed?: string;
+    /**
+    * Symbol before an open folder (one character recommended). Default: "▼"
+    *
+    * Default: `"▼"`
+    */
+    tree_indicator_expanded?: string;
+  }
+```
+
+### `FreshConfig.FileExplorerSide`
+
+Side placement for the file explorer panel.
+
+```typescript
+type FileExplorerSide = "left" | "right";
+```
+
+### `FreshConfig.FormatterConfig`
+
+Formatter for a language.
+
+```typescript
+interface FormatterConfig {
+    /**
+    * Formatter command (e.g. "rustfmt", "prettier").
+    */
+    command?: string;
+    /**
+    * Arguments for the formatter. "$FILE" is replaced by the file path.
+    */
+    args?: string[];
+    /**
+    * Send the text on stdin and read the result from stdout (default: true).
+    *
+    * Default: `true`
+    */
+    stdin?: boolean;
+    /**
+    * Timeout in milliseconds (default: 10000)
+    *
+    * Default: `10000`
+    */
+    timeout_ms?: number;
+  }
+```
+
+### `FreshConfig.IndentationGuideMode`
+
+Indentation guide rendering mode.
+
+Default: `"none"`
+
+```typescript
+type IndentationGuideMode = "none" | "all" | "active";
+```
+
+### `FreshConfig.IndentRulesConfig`
+
+Auto-indent rules used when you press Enter. Each is an optional regex (no
+look-around or back-references), matched with strings and comments ignored.
+Unset patterns keep the language's built-in rules.
+
+```typescript
+interface IndentRulesConfig {
+    /**
+    * If the current line matches, the new line is indented one level deeper.
+    * E.g. `[\{\[\(]\s*$` (ends with an open bracket) or `:\s*$` (Python).
+    */
+    increase_indent_pattern?: string | null;
+    /**
+    * If a line matches, it is dedented one level, also while typing.
+    * E.g. `^\s*[\}\]\)]` (starts with a closing bracket). Include terminators
+    * like Python's `:` so words starting with a keyword don't dedent.
+    */
+    decrease_indent_pattern?: string | null;
+    /**
+    * Like `increase_indent_pattern`, but only for the next line.
+    * E.g. `^\s*(if|for|while)\b.*\)\s*$` (an `if` without braces).
+    */
+    indent_next_line_pattern?: string | null;
+    /**
+    * If the current line matches, the next line is dedented one level.
+    * E.g. `^\s*(return|pass|raise|break|continue)\b` (Python).
+    */
+    dedent_next_line_pattern?: string | null;
+    /**
+    * Cancels `increase_indent_pattern` when the line also closes its block,
+    * e.g. Ruby `\bend\b` for `def f; end`.
+    */
+    self_close_pattern?: string | null;
+  }
+```
+
+### `FreshConfig.Keybinding`
+
+Keybinding definition
+
+```typescript
+interface Keybinding {
+    /**
+    * Key name (e.g. "a", "Enter", "F1") for a single-key binding.
+    */
+    key?: string;
+    /**
+    * Modifiers (e.g. ["ctrl"], ["ctrl", "shift"]) for a single-key binding.
+    */
+    modifiers?: string[];
+    /**
+    * Key sequence for a chord, e.g. [{"key": "x", "modifiers": ["ctrl"]}, {"key": "s", "modifiers": ["ctrl"]}].
+    * Overrides `key` + `modifiers`.
+    */
+    keys?: KeyPress[];
+    /**
+    * The whole binding as one string, e.g. `"C-x"`, `"C-S-Left"`, `"C-x C-s"`.
+    * `key` + `modifiers` and `keys` win if set.
+    */
+    chord?: string;
+    /**
+    * Action to run (e.g. "move_left"), or "unbind" to remove the built-in binding for this key.
+    */
+    action?: string;
+    /**
+    * Arguments for the action (optional).
+    */
+    args?: Record<string, unknown>;
+    /**
+    * Condition for when the binding applies (optional, e.g. "mode == insert").
+    */
+    when?: string | null;
+  }
+```
+
+### `FreshConfig.KeybindingMapOptions`
+
+Available keybinding maps
+
+```typescript
+type KeybindingMapOptions = "default" | "emacs" | "vscode" | "macos" | "macos-gui";
+```
+
+### `FreshConfig.KeymapConfig`
+
+A keymap (built-in or custom).
+
+```typescript
+interface KeymapConfig {
+    /**
+    * Keymap to inherit from (optional).
+    */
+    inherits?: string | null;
+    /**
+    * Keybindings in this keymap.
+    */
+    bindings?: Keybinding[];
+  }
+```
+
+### `FreshConfig.KeyPress`
+
+A single key in a sequence
+
+```typescript
+interface KeyPress {
+    /**
+    * Key name (e.g., "a", "Enter", "F1")
+    */
+    key?: string;
+    /**
+    * Modifiers (e.g., ["ctrl"], ["ctrl", "shift"])
+    */
+    modifiers?: string[];
+  }
+```
+
+### `FreshConfig.LanguageConfig`
+
+Settings for one language.
+
+```typescript
+interface LanguageConfig {
+    /**
+    * File extensions (e.g. ["rs"] for Rust).
+    */
+    extensions?: string[];
+    /**
+    * Exact file names (e.g. ["Makefile", "GNUmakefile"]).
+    */
+    filenames?: string[];
+    /**
+    * Tree-sitter grammar name.
+    *
+    * Default: `""`
+    */
+    grammar?: string;
+    /**
+    * Line comment prefix (e.g. "//").
+    */
+    comment_prefix?: string | null;
+    /**
+    * Auto-indent new lines.
+    *
+    * Default: `true`
+    */
+    auto_indent?: boolean;
+    /**
+    * Auto-close brackets and quotes. `null` uses `editor.auto_close`.
+    */
+    auto_close?: boolean | null;
+    /**
+    * Wrap selections in typed brackets/quotes. `null` uses `editor.auto_surround`.
+    */
+    auto_surround?: boolean | null;
+    /**
+    * Custom grammar file for files with this language's extensions (optional).
+    * Must be a Sublime Text `.sublime-syntax` file; `.tmLanguage` is not supported.
+    */
+    textmate_grammar?: string | null;
+    /**
+    * Show → for tabs (default: true). Turn off for tab-indented languages like Go.
+    *
+    * Default: `true`
+    */
+    show_whitespace_tabs?: boolean;
+    /**
+    * Wrap long lines (e.g. for Markdown). `null` uses `editor.line_wrap`.
+    */
+    line_wrap?: boolean | null;
+    /**
+    * Number of text columns to wrap lines at, not counting the line-number
+    * gutter. `null` or `0` uses `editor.wrap_column`.
+    */
+    wrap_column?: number | null;
+    /**
+    * Open in page view: centered text, hidden formatting marks, smart wrapping.
+    * `null` means off.
+    */
+    page_view?: boolean | null;
+    /**
+    * Text width in columns in page view. `null` or `0` uses `editor.page_width`.
+    */
+    page_width?: number | null;
+    /**
+    * Tab key inserts a tab character (e.g. for Go, Makefile). `null` uses `editor.use_tabs`.
+    */
+    use_tabs?: boolean | null;
+    /**
+    * Spaces per tab. `null` or `0` uses `editor.tab_size`.
+    */
+    tab_size?: number | null;
+    /**
+    * Formatter used by the Format Buffer command.
+    */
+    formatter?: FormatterConfig | null;
+    /**
+    * Run the formatter on save.
+    *
+    * Default: `false`
+    */
+    format_on_save?: boolean;
+    /**
+    * Commands to run on save (e.g. linters), in order; stops at the first failure.
+    * For formatting, use `formatter` + `format_on_save` instead.
+    */
+    on_save?: OnSaveAction[];
+    /**
+    * Extra characters (besides letters, digits and `_`) that count as part of a
+    * word for word completion, e.g. `"-"` for Lisp/CSS, `"$"` for PHP/Bash, `"?!"` for Ruby.
+    */
+    word_characters?: string | null;
+    /**
+    * Custom auto-indent rules. Unset patterns keep the built-in ones. Works
+    * without a tree-sitter grammar.
+    */
+    indent?: IndentRulesConfig | null;
+    /**
+    * Show indentation guides. `null` follows `editor.indentation_guide`,
+    * except plain text, where guides are off unless set to `true`.
+    */
+    indentation_guide?: boolean | null;
+  }
+```
+
+### `FreshConfig.LineEndingOption`
+
+Default line ending format for new files
+
+Default: `"lf"`
+
+```typescript
+type LineEndingOption = "lf" | "crlf" | "cr";
+```
+
+### `FreshConfig.LocaleOptions`
+
+UI locale (language). Use null for auto-detection from environment.
+
+```typescript
+type LocaleOptions = null | "bg" | "cs" | "de" | "en" | "es" | "fr" | "it" | "ja" | "ko" | "pt-BR" | "ru" | "th" | "uk" | "vi" | "zh-CN";
+```
+
+### `FreshConfig.LspFeature`
+
+Language server feature, for routing features to servers when a language has
+several. "Merged" features combine results from all servers; "exclusive" ones use the first.
+
+```typescript
+type LspFeature = "diagnostics" | "completion" | "code_action" | "document_symbols" | "workspace_symbols" | "hover" | "definition" | "implementation" | "references" | "format" | "rename" | "signature_help" | "inlay_hints" | "folding_range" | "semantic_tokens" | "document_highlight";
+```
+
+### `FreshConfig.LspLanguageConfig`
+
+One or more LSP server configs for this language.
+Accepts both a single object and an array for backwards compatibility.
+
+```typescript
+type LspLanguageConfig = LspServerConfig[];
+```
+
+### `FreshConfig.LspServerConfig`
+
+Language server settings.
+
+```typescript
+interface LspServerConfig {
+    /**
+    * Command that starts the server. Required when enabled.
+    *
+    * Default: `""`
+    */
+    command?: string;
+    /**
+    * Enable this server.
+    *
+    * Default: `true`
+    */
+    enabled?: boolean;
+    /**
+    * Display name (e.g. "tsserver"). Defaults to the command's file name.
+    */
+    name?: string | null;
+    /**
+    * Arguments for the server. If omitted, the default server's arguments are
+    * used; any list, even `[]`, replaces them.
+    */
+    args?: string[] | null;
+    /**
+    * Start the server when a matching file opens (default: true). When off,
+    * start it from the command palette.
+    *
+    * Default: `true`
+    */
+    auto_start?: boolean;
+    /**
+    * Files or folders that mark the project root: the nearest folder above the
+    * file that contains one is used. Empty means `[".git"]`. With no match, the
+    * file's own folder is used.
+    */
+    root_markers?: string[];
+    /**
+    * Extra environment variables for the server (override inherited ones).
+    */
+    env?: Record<string, string>;
+    /**
+    * Language ID to send to the server per file extension (no dot),
+    * e.g. `{"tsx": "typescriptreact"}`.
+    */
+    language_id_overrides?: Record<string, string>;
+    /**
+    * Server-specific `initializationOptions` sent at startup.
+    */
+    initialization_options?: unknown;
+    /**
+    * Use this server only for these features. Don't combine with
+    * `except_features`; if neither is set, it handles everything.
+    */
+    only_features?: LspFeature[] | null;
+    /**
+    * Use this server for everything except these features. Don't combine with
+    * `only_features`.
+    */
+    except_features?: LspFeature[] | null;
+    /**
+    * Memory and CPU limits for the server.
+    */
+    process_limits?: ProcessLimits;
+  }
+```
+
+### `FreshConfig.OnSaveAction`
+
+Command to run when a file is saved (e.g. a linter).
+
+```typescript
+interface OnSaveAction {
+    /**
+    * Shell command to run. The file path is available as $FILE.
+    */
+    command?: string;
+    /**
+    * Arguments for the command. "$FILE" is replaced by the file path.
+    */
+    args?: string[];
+    /**
+    * Working directory (default: project root).
+    */
+    working_dir?: string | null;
+    /**
+    * Send the file's text on stdin.
+    *
+    * Default: `false`
+    */
+    stdin?: boolean;
+    /**
+    * Timeout in milliseconds (default: 10000)
+    *
+    * Default: `10000`
+    */
+    timeout_ms?: number;
+    /**
+    * Set to false to turn the action off without removing it (default: true).
+    *
+    * Default: `true`
+    */
+    enabled?: boolean;
+  }
+```
+
+### `FreshConfig.PackagesConfig`
+
+Package manager settings for plugins and themes.
+
+```typescript
+interface PackagesConfig {
+    /**
+    * Git repository URLs of plugin/theme registries.
+    * Default: ["https://github.com/sinelaw/fresh-plugins-registry"]
+    *
+    * Default: `["https://github.com/sinelaw/fresh-plugins-registry"]`
+    */
+    sources?: string[];
+  }
+```
+
+### `FreshConfig.PluginConfig`
+
+Settings for one plugin.
+
+```typescript
+interface PluginConfig {
+    /**
+    * Load and run this plugin (default: true).
+    *
+    * Default: `true`
+    */
+    enabled?: boolean;
+    /**
+    * Plugin file path. Filled in automatically; don't set it by hand.
+    */
+    path?: string | null;
+    /**
+    * The plugin's own settings, as defined by its `<plugin_name>.schema.json`.
+    * Shown in Settings as the plugin's page under "Plugins".
+    */
+    settings?: unknown;
+  }
+```
+
+### `FreshConfig.ProcessLimits`
+
+Resource limits for a process.
+
+```typescript
+interface ProcessLimits {
+    /**
+    * Max memory as a percent of system memory (default: 50). `null` means no limit.
+    */
+    max_memory_percent?: number | null;
+    /**
+    * Max CPU as a percent, where 100 = one core, 200 = two cores. `null` means no limit.
+    */
+    max_cpu_percent?: number | null;
+    /**
+    * Apply these limits. Default: true (the built-in config turns them on
+    * only on Linux).
+    *
+    * Default: `true`
+    */
+    enabled?: boolean;
+  }
+```
+
+### `FreshConfig.SearchConfig`
+
+Starting state of the search toggles in every search UI (search/replace
+prompt, Live Grep, Search & Replace panel).
+
+```typescript
+interface SearchConfig {
+    /**
+    * Match case (default: false, so `todo` also finds `TODO`). Flipping the
+    * toggle overrides this and is saved with the workspace.
+    *
+    * Default: `false`
+    */
+    case_sensitive?: boolean;
+    /**
+    * Match whole words only (default: false).
+    *
+    * Default: `false`
+    */
+    whole_word?: boolean;
+    /**
+    * Treat the query as a regular expression (default: false).
+    *
+    * Default: `false`
+    */
+    regex?: boolean;
+    /**
+    * Ask before each replacement (default: false).
+    *
+    * Default: `false`
+    */
+    confirm_each?: boolean;
+  }
+```
+
+### `FreshConfig.SidebarAccordion`
+
+How the sidebar's sections share the column.
+
+```typescript
+type SidebarAccordion = "free" | "exclusive";
+```
+
+### `FreshConfig.SidebarConfig`
+
+The sidebar column: the file explorer plus any plugin sections below it.
+
+```typescript
+interface SidebarConfig {
+    /**
+    * Open sections freely (`free`, default) or one at a time (`exclusive`).
+    *
+    * Default: `"free"`
+    */
+    accordion?: SidebarAccordion;
+  }
+```
+
+### `FreshConfig.StatusBarConfig`
+
+Which elements appear in the status bar, split into a left and a right
+group. Elements can be freely reordered.
+
+Example: `{"left": ["{filename}", "{cursor:compact}"], "right": ["{language}", "{encoding}"]}`
+
+```typescript
+interface StatusBarConfig {
+    /**
+    * Elements on the left side of the status bar.
+    * Default: ["{trust}", "{remote}", "{terminal_restart}", "{cursor}", "{diagnostics}", "{cursor_count}", "{messages}"]
+    */
+    left?: StatusBarElement[];
+    /**
+    * Elements on the right side of the status bar.
+    * Default: ["{read_only}", "{line_ending}", "{encoding}", "{language}", "{lsp}", "{warnings}", "{update}", "{palette}"]
+    */
+    right?: StatusBarElement[];
+    /**
+    * Text drawn between status bar elements, used as-is. Each element already
+    * has a one-space margin, so `"|"` shows as `LF | UTF-8`. Empty (default) means no separator.
+    *
+    * Default: `""`
+    */
+    separator?: string;
+  }
+```
+
+### `FreshConfig.StatusBarElement`
+
+```typescript
+type StatusBarElement = string;
+```
+
+### `FreshConfig.TerminalConfig`
+
+Integrated terminal settings.
+
+```typescript
+interface TerminalConfig {
+    /**
+    * Jump back to the live terminal when new output arrives while you're in
+    * scrollback (default: true).
+    *
+    * Default: `true`
+    */
+    jump_to_end_on_output?: boolean;
+    /**
+    * Shell for the terminal. Unset (default) uses `$SHELL` or the system default.
+    * Doesn't change `$SHELL` for other features, and doesn't apply to remote
+    * or container terminals.
+    */
+    shell?: TerminalShellConfig | null;
+    /**
+    * Windows only: when picking a shell, skip Microsoft Store app aliases, which
+    * can crash on start. Turn off to use the first `pwsh.exe` on `PATH`.
+    * Ignored if `terminal.shell` is set. Default: true
+    *
+    * Default: `true`
+    */
+    skip_app_execution_alias?: boolean;
+    /**
+    * When restoring Orchestrator agent sessions, resume the previous
+    * conversation (e.g. `claude --resume`) instead of starting clean. Default: true
+    *
+    * Default: `true`
+    */
+    resume_agents?: boolean;
+    /**
+    * Dragging in a terminal selects text for Ctrl+C, switching to scrollback
+    * (Ctrl+Space returns). A click only focuses. Default: true
+    *
+    * Default: `true`
+    */
+    mouse_drag_selects?: boolean;
+    /**
+    * When programs in the terminal get mouse events. `requested` (default):
+    * only programs that ask for the mouse (plus wheel for full-screen apps);
+    * Shift+drag still selects. `alt_screen`: every full-screen program gets all events.
+    *
+    * Default: `"requested"`
+    */
+    mouse_forwarding?: TerminalMouseForwarding;
+  }
+```
+
+### `FreshConfig.TerminalMouseForwarding`
+
+When programs in the terminal get mouse events.
+
+```typescript
+type TerminalMouseForwarding = "requested" | "alt_screen";
+```
+
+### `FreshConfig.TerminalShellConfig`
+
+Shell command and arguments for the terminal.
+
+```typescript
+interface TerminalShellConfig {
+    /**
+    * Program to run (e.g. `/usr/bin/fish`, `bash`, or a script). Looked up in
+    * `$PATH` if not absolute.
+    */
+    command?: string;
+    /**
+    * Arguments for the shell.
+    */
+    args?: string[];
+  }
+```
+
+### `FreshConfig.ThemeOptions`
+
+Available color themes
+
+```typescript
+type ThemeOptions = string;
+```
+
+### `FreshConfig.VirtualSpaceMode`
+
+Where the cursor may move beyond the end of a line
+
+Default: `"off"`
+
+```typescript
+type VirtualSpaceMode = "off" | "block" | "on";
+```
+
+### `FreshConfig.WarningsConfig`
+
+Warning notification settings.
+
+```typescript
+interface WarningsConfig {
+    /**
+    * Show a colored status-bar indicator for errors and warnings (default: true).
+    *
+    * Default: `true`
+    */
+    show_status_indicator?: boolean;
+  }
 ```
 
 ### `FreshMachine`
@@ -1694,7 +3328,7 @@ type PaneDescription = {
   */
   label: string | null;
   /**
-  * Absolute path when this pane shows a file, else `None`.
+  * Absolute path when this pane shows a file, else `null`.
   */
   path: string | null;
   /**
@@ -1842,7 +3476,7 @@ type PromptSuggestion = {
   */
   description?: string;
   /**
-  * The value to use when selected (defaults to text if None)
+  * The value to use when selected (defaults to `text` when omitted)
   */
   value?: string;
   /**
@@ -1929,8 +3563,7 @@ type RemoteAgentTransport = {
 ### `RemoteBackendInfo`
 
 Backend identity of a non-local session, as surfaced to plugins on
-[`WindowInfo`]. Mirrors the persisted `SessionAuthoritySpec::RemoteAgent`
-transport, reduced to what the dock renders.
+`WindowInfo.remote`, reduced to what the dock renders.
 
 ```typescript
 type RemoteBackendInfo = {
@@ -2337,9 +3970,9 @@ type StyledSegment = {
 ### `StyledText`
 
 A run of text with optional styling. `style` reuses
-[`OverlayOptions`] — the same primitive plugins use for virtual
+`OverlayOptions` — the same primitive plugins use for virtual
 text — so a hint is just `{ text: "Alt+P cycle", style: { fg:
-"ui.help_key_fg" } }`. `None` style means "no styling override";
+"ui.help_key_fg" } }`. Omitting `style` means "no styling override";
 each consumer applies its own default (e.g. the floating-prompt
 title uses `prompt_fg` + bold).
 
@@ -2384,7 +4017,7 @@ type TextPropertiesAtCursor = Array<Record<string, unknown>>;
 
 ### `TextPropertyEntry`
 
-Entry for virtual buffer content with optional text properties (JS API version)
+Entry for virtual buffer content with optional text properties
 
 ```typescript
 type TextPropertyEntry = {
@@ -2407,28 +4040,33 @@ type TextPropertyEntry = {
   */
   inlineOverlays?: Array<InlineOverlay>;
   /**
-  * Pad this entry's text with spaces to this many columns when drawing.
+  * Pad this entry's text with spaces to this many columns (Unicode
+  * codepoints) when drawing. No-op when the text already has at least
+  * this many codepoints. Applied before overlays are resolved.
   *
   * **Render-only**: the padding is applied at draw time, so
   * `getBufferText()` returns the unpadded text you supplied. Column
   * alignment cannot be checked by reading the buffer back — if you need
   * that, embed real spaces with `padEnd` instead.
-  *
-  * See `TextPropertyEntry::pad_to_chars`.
   */
   padToChars?: number;
   /**
-  * Truncate this entry's text to at most this many columns when drawing,
-  * with an ellipsis when the budget allows one.
+  * Truncate this entry's text to at most this many columns (Unicode
+  * codepoints) when drawing. When the budget is greater than 3 the
+  * truncated tail is replaced with `...`; when it is 3 or less the text
+  * is cut at exactly the budget. Applied before `padToChars` and before
+  * overlays are resolved.
   *
   * **Render-only**, like `padToChars`: `getBufferText()` returns the full
   * untruncated text.
-  *
-  * See `TextPropertyEntry::truncate_to_chars`.
   */
   truncateToChars?: number;
   /**
-  * See `TextPropertyEntry::segments`.
+  * Build the entry from styled pieces. When non-empty, the host joins
+  * the segments' text into `text` (replacing any `text` you supplied)
+  * and adds an inline overlay over each styled segment, plus each
+  * segment's own `overlays` shifted to its position. Resolved before
+  * `truncateToChars` and `padToChars`.
   */
   segments?: Array<StyledSegment>;
 };
@@ -2437,7 +4075,7 @@ type TextPropertyEntry = {
 ### `TextWindowAnchor`
 
 How a row asks to be windowed when it is wider than the panel.
-See [`TreeNode::window_anchor`].
+See `TreeNode.windowAnchor`.
 
 ```typescript
 type TextWindowAnchor = {
@@ -2473,9 +4111,8 @@ ANSI colors (`"Red"`, `"LightGreen"`, `"Default"`) or theme keys
 strings against the active theme at draw time; unknown strings
 fall through to the terminal's default color.
 
-`Color::Indexed(N)` round-trips through the `"Indexed:N"` form so
-256-color values from a ratatui `Color` survive the
-`ViewTokenStyle` boundary.
+A 256-color palette value is written as `"Indexed:N"` (N from 0 to
+255).
 
 ```typescript
 type TokenColor = [number, number, number] | string;
@@ -2525,11 +4162,11 @@ type TreeNode = {
   draggable?: boolean;
   /**
   * Per-node checkbox state. Only rendered when the parent
-  * `Tree` has `checkable: true`. `None` = no checkbox glyph;
-  * `Some(true)` = `[v]`; `Some(false)` = `[ ]`. The plugin
+  * `Tree` has `checkable: true`. Omitted = no checkbox glyph;
+  * `true` = `[v]`; `false` = `[ ]`. The plugin
   * owns the truth — the host fires `widget_event { event_type:
   * "toggle" }` and the plugin pushes the new state back via
-  * `WidgetMutation::SetCheckedKeys`.
+  * `editor.widgetMutate(panel, { kind: "setCheckedKeys", ... })`.
   */
   checked?: boolean | null;
   /**
@@ -2559,7 +4196,7 @@ type TreeNode = {
   /**
   * A button drawn at the row's tail: what this row is *for*, said on
   * the row itself rather than only in a footer the eye has to travel
-  * to. `Some(label)` renders `[ label ]` against the panel's right
+  * to. When set to `label`, it renders `[ label ]` against the panel's right
   * edge and emits a hit area over it that fires the `action` event
   * with the row's `index` and `key`; the keyboard reaches the same
   * thing through the tree's `activate`.
@@ -2665,7 +4302,6 @@ Style configuration for a composite pane
 type TsCompositePaneStyle = {
   /**
   * Background color for added lines (RGB)
-  * Using [u8; 3] instead of (u8, u8, u8) for better rquickjs_serde compatibility
   */
   addBg?: [number, number, number];
   /**
@@ -2759,8 +4395,8 @@ type TsHighlightSpan = {
 
 ### `TsLspMenuItem`
 
-Plugin-contributed row in the LSP-Servers popup.
-See `PluginCommand::SetLspMenuContributions`.
+Plugin-contributed row in the LSP-Servers popup, passed to
+`editor.setLspMenuContributions`.
 
 ```typescript
 type TsLspMenuItem = {
@@ -2851,7 +4487,7 @@ type ViewportInfo = {
   */
   topByte: number;
   /**
-  * Line number of the first visible line (None when line index unavailable, e.g. large file before scan)
+  * Line number of the first visible line (`null` when the line index is unavailable, e.g. a large file before its scan)
   */
   topLine: number | null;
   /**
@@ -2874,19 +4510,19 @@ type ViewportInfo = {
 Styling for view tokens (used for injected annotations)
 
 This allows plugins to specify styling for tokens that don't have a source
-mapping (sourceOffset: None), such as annotation headers in git blame.
-For tokens with sourceOffset: Some(_), syntax highlighting is applied instead.
+mapping (`source_offset: null`), such as annotation headers in git blame.
+For tokens with a `source_offset`, syntax highlighting is applied instead.
 
 ```typescript
 type ViewTokenStyle = {
   /**
   * Foreground color. Either `[r, g, b]` or a named/theme string —
-  * see [`TokenColor`].
+  * see `TokenColor`.
   */
   fg: TokenColor | null;
   /**
   * Background color. Either `[r, g, b]` or a named/theme string —
-  * see [`TokenColor`].
+  * see `TokenColor`.
   */
   bg: TokenColor | null;
   /**
@@ -2911,7 +4547,7 @@ Wire-format view token with optional source mapping and styling
 ```typescript
 type ViewTokenWire = {
   /**
-  * Source byte offset in the buffer. None for injected content (annotations).
+  * Source byte offset in the buffer. `null` for injected content (annotations).
   */
   source_offset: number | null;
   /**
@@ -2919,7 +4555,7 @@ type ViewTokenWire = {
   */
   kind: ViewTokenWireKind;
   /**
-  * Optional styling for injected content (only used when source_offset is None)
+  * Optional styling for injected content (only used when `source_offset` is `null`)
   */
   style?: ViewTokenStyle;
 };
@@ -2995,10 +4631,7 @@ interface WalkTreeResult {
 ### `WidgetAction`
 
 Action a plugin can request the widget runtime to perform on a
-mounted panel. Bundled into a single `WidgetCommand` PluginCommand
-so the plugin's TypeScript layer exposes one routing method
-(`editor.widgetCommand(panel_id, action)`) rather than a fanout
-of per-key IPC.
+mounted panel, sent with `editor.widgetCommand(panelId, action)`.
 
 All actions target the panel's currently focused widget (the host
 tracks focus per panel). They are fired by the plugin's mode
@@ -3029,13 +4662,13 @@ type WidgetAction = {
 
 ### `WidgetMutation`
 
-Targeted in-place mutation of a mounted widget panel — the
-IPC fast path. Plugins use these when the model change touches
-one widget; the host applies the mutation directly to the
-panel's spec / instance state and re-renders without
-re-transmitting the full spec.
+Targeted in-place mutation of a mounted widget panel, sent with
+`editor.widgetMutate(panelId, mutation)` — a faster way to apply a
+small change than re-sending the whole spec. Plugins use these when
+the model change touches one widget; the host applies the mutation
+directly to the panel's spec / instance state and re-renders.
 
-`UpdateWidgetPanel` remains the right tool for structural
+`editor.updateWidgetPanel` remains the right tool for structural
 changes (adding/removing widgets, restructuring layout). Both
 paths preserve instance state via widget keys.
 
@@ -3103,13 +4736,10 @@ type WidgetMutation = {
 How the host should treat a mounted panel, beyond rendering its
 spec.
 
-Grows by adding fields, so every field is optional in both
-directions: `Option<T>` with `#[ts(optional)]`, so adding one is not
-a TypeScript break for plugins that already construct the bag; and
-no `deny_unknown_fields`, so a plugin written against a newer host
-does not fail to deserialize wholesale on an older one and silently
-lose the options it *did* set. Each unspecified field reads as what
-the host did before that field existed.
+Every field is optional, and each one you leave out reads as what
+the host did before that field existed. Unknown fields are ignored,
+so options written for a newer editor don't stop an older one from
+applying the ones it knows.
 
 ```typescript
 type WidgetPanelOptions = {
@@ -3127,7 +4757,7 @@ type WidgetPanelOptions = {
   * screen on startup", so the next Space turned the page off with
   * nothing on screen to say why.
   *
-  * `None` is what every plugin written before this field said, and
+  * Leaving it out is what every plugin written before this field said, and
   * reads as `true`.
   */
   autoFocusFirst?: boolean;
@@ -3146,7 +4776,7 @@ type WidgetPanelOptions = {
   /**
   * Keep this panel's focus and the reader's place on the same thing.
   *
-  * For a [`page`](WidgetPanelOptions::page) — a document laid out by
+  * For a `page` — a document laid out by
   * widgets, in one window the host scrolls — focus and where the reader is
   * are two answers
   * to one question: what am I looking at. Left independent they contradict
@@ -3169,11 +4799,10 @@ type WidgetPanelOptions = {
   * `autoFocusFirst: false` too, and the Tab ring seeds from the reader
   * rather than from the top of the document.
   *
-  * `None` reads as `false`: every panel written before this field keeps
+  * Leaving it out reads as `false`: every panel written before this field keeps
   * focus and the window independent.
   *
-  * It makes `autoFocusFirst` false whatever the panel said — see
-  * [`WidgetPanelOptions::auto_focus_first`]. The pair is not a
+  * It makes `autoFocusFirst` false whatever the panel said. The pair is not a
   * setting with two useful values; it is one broken combination, so
   * it is not representable rather than advised against.
   */
@@ -3290,7 +4919,7 @@ type WidgetSpec = {
   step: number;
   /**
   * Render the value as an integer (no decimal point). The
-  * value is still carried as `f64`; only the display is
+  * value itself is not rounded; only the display is
   * truncated. Defaults to `false`.
   */
   integer: boolean;
@@ -3508,8 +5137,8 @@ type WidgetSpec = {
   */
   fullWidth: boolean;
   /**
-  * Style applied while the pointer is over this button. `None`
-  * (the default) leaves it looking the same hovered as not.
+  * Style applied while the pointer is over this button. Omit it
+  * (the default) to leave it looking the same hovered as not.
   *
   * Hover is host state — it changes with mouse motion and no
   * plugin round-trip — so the plugin declares the *appearance*
@@ -3524,15 +5153,11 @@ type WidgetSpec = {
   * shared "close affordance under the pointer" key — the tab
   * `×` and the file explorer's `×` both read it, so a plugin
   * naming it gets the same highlight users already know.
-  *
-  * `Button` is the first kind to carry this; other widget kinds
-  * adopt it with the same field plus a `ctx.is_hovered(key)`
-  * check in their renderer.
   */
   hoverStyle?: Partial<OverlayOptions>;
   /**
   * How the button looks at rest — not focused, not hovered,
-  * not disabled. `None` (the default) keeps the look its
+  * not disabled. Omit it (the default) to keep the look its
   * `intent` gives it.
   *
   * The sibling of `hover_style`, and the answer to the same
@@ -3586,7 +5211,7 @@ type WidgetSpec = {
   selectedIndex: number;
   /**
   * Number of rows of the panel's available height the list
-  * should occupy. `None` (omitted) = auto: the host sizes the
+  * should occupy. Omitted = auto: the host sizes the
   * window from the panel height it already knows, so the
   * plugin never re-derives layout arithmetic. An explicit
   * value pins the window to that many rows, exactly as
@@ -3621,7 +5246,7 @@ type WidgetSpec = {
   selectedIndex: number;
   /**
   * Rows of the panel's available height the tree occupies.
-  * `None` (omitted) = auto from the host-known panel height;
+  * Omitted = auto from the host-known panel height;
   * an explicit value pins the window as before. (Legacy
   * fallback when the host has no height: 20 rows.)
   */
@@ -3629,20 +5254,20 @@ type WidgetSpec = {
   /**
   * Seed set of expanded item keys, drawn until the host's
   * instance state has an expansion of its own (a Right/Left,
-  * a disclosure click, a selection write, or
-  * `WidgetMutation::SetExpandedKeys`). From then on the
+  * a disclosure click, a selection write, or a
+  * `setExpandedKeys` mutation). From then on the
   * instance state is what is drawn and navigated, and
   * changing this field on later specs has no effect — use
-  * `WidgetMutation::SetExpandedKeys` to change it.
+  * `editor.widgetMutate(panel, { kind: "setExpandedKeys", ... })` to change it.
   */
   expandedKeys: Array<string>;
   /**
-  * When true, every node with `checked: Some(_)` renders a
+  * When true, every node with `checked` set renders a
   * `[v]` / `[ ]` glyph and emits a `toggle` hit area over
   * the glyph. Click on the glyph fires `widget_event {
   * event_type: "toggle", payload: { key, checked: <new> } }`;
   * the plugin updates its model and pushes the new state
-  * back via `WidgetMutation::SetCheckedKeys`.
+  * back via `editor.widgetMutate(panel, { kind: "setCheckedKeys", ... })`.
   */
   checkable: boolean;
   /**
@@ -3699,9 +5324,9 @@ type WidgetSpec = {
   */
   value: string;
   /**
-  * Initial byte-offset cursor within `value`. Negative
-  * (encoded as `i32` in JSON) means "no cursor" — clamped
-  * to `[0, value.len()]` host-side.
+  * Initial byte-offset cursor within `value`. A negative
+  * number means "no cursor"; other values are clamped
+  * host-side to the byte length of `value`.
   */
   cursorByte: number;
   /**
@@ -3769,7 +5394,7 @@ type WidgetSpec = {
   *
   * Plugins push candidates in response to the text
   * widget's `change` event via
-  * `WidgetMutation::SetCompletions`. An empty `items`
+  * `editor.widgetMutate(panel, { kind: "setCompletions", ... })`. An empty `items`
   * closes the popup.
   */
   completions?: Array<string | CompletionItem>;
@@ -3909,9 +5534,6 @@ type WidgetSpec = {
   * Numeric editor-window id, matching `WindowId(N).0`.
   * `0` (or any unknown id) renders empty placeholder
   * rows without dispatching the per-window render.
-  * `u32` rather than `u64` to keep the TS binding a
-  * plain `number`; window ids never exceed 4B in
-  * practice.
   */
   windowId: number;
   /**
@@ -3950,7 +5572,7 @@ type WidgetSpec = {
   */
   wrap: boolean;
   /**
-  * How the row marks itself when it does not fit. See [`Elide`].
+  * How the row marks itself when it does not fit. See `Elide`.
   * Ignored when `wrap` is set.
   */
   elide: Elide;
@@ -3974,7 +5596,7 @@ type WidgetSpec = {
   * Anchor `[row, col]` in the panel's inner coordinates the
   * popup drops from (the host resolves the final screen rect
   * — opening below the anchor, flipping above near the frame
-  * edge, clamped on screen). `None` anchors at the popup's
+  * edge, clamped on screen). Omitted, it anchors at the popup's
   * own position in the tree.
   */
   anchor?: [number, number] | null;
@@ -3990,10 +5612,7 @@ type WidgetSpec = {
 ### `WindowInfo`
 
 Information about an editor session (plugin-visible). Returned
-by `editor.listWindows()` and carried in the snapshot. Mirrors
-the editor-side `Session` struct — see
-`crates/fresh-editor/src/app/session.rs` and
-`docs/internal/orchestrator-sessions-design.md`.
+by `editor.listWindows()` and carried in the snapshot.
 
 ```typescript
 type WindowInfo = {
@@ -4023,13 +5642,8 @@ type WindowInfo = {
   * (or arbitrary directory) the user pointed the new-session
   * form at. For sessions without an explicit project (legacy
   * sessions, the launch session, sessions created outside the
-  * orchestrator's new-session form) this equals `root` — the
-  * host normalises at the API boundary so plugins never have
-  * to deal with `null`/`undefined`/`""` ambiguity (`??` only
-  * falls through on `null`, but the orchestrator's
-  * `WindowInfo` round-trips a `Some(PathBuf::new())` as `""`,
-  * which then becomes a poisoned lex sort key — observed as
-  * the Windows-only dock reorder).
+  * orchestrator's new-session form) this equals `root`, so it
+  * is never empty, `null` or `undefined`.
   */
   project_path: string;
   /**
@@ -4045,7 +5659,7 @@ type WindowInfo = {
   * host-local (SSH / Kubernetes). Carried for live remote windows
   * *and* for dormant (not-yet-connected / disconnected) sessions, so
   * the dock can badge a restored SSH session before any connection
-  * exists. `None` for local sessions and plugin-managed backends
+  * exists. Omitted for local sessions and plugin-managed backends
   * (devcontainer), whose facet the owning plugin supplies itself.
   */
   remote?: RemoteBackendInfo | null;

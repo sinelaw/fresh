@@ -357,8 +357,9 @@ becomes a permanent tab as soon as they commit to it (open it,
 edit it, or move focus to another split). Focus does not move, so
 the panel or prompt driving the browse keeps the keys.
 
-`line` / `column` are 1-indexed and optional. Returns false only
-when the command channel is dead; a file that cannot be previewed
+`line` / `column` are 1-indexed and optional. Returns `false` only
+when the editor can no longer take commands (for example while it
+shuts down); a file that cannot be previewed
 (unreadable, or large enough that loading it would have to ask the
 user about its encoding) is skipped quietly on the editor side —
 a browse never raises a dialog. Pair with `dismissPreview` when the

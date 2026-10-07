@@ -410,10 +410,10 @@ lines_changed: {
   * Gate decoration work on this, not on
   * `getBufferInfo(buffer_id).is_composing_in_any_split`. The editor marks
   * these lines as seen the moment it sends the batch, so the batch is the
-  * only offer they get, while `getBufferInfo` reads a state snapshot
-  * refreshed on the editor thread's own schedule — early in a mode change
-  * it still reports the mode the buffer just left. Gating on the snapshot
-  * therefore drops the first decoration pass at random, leaving the
+  * only offer they get, while `getBufferInfo` reads the editor's cached
+  * state, which the editor refreshes on its own schedule — early in a mode
+  * change it still reports the mode the buffer just left. Gating on
+  * `getBufferInfo` therefore drops the first decoration pass at random, leaving the
   * document undecorated until an edit or a scroll produces another
   * batch. */
   is_composing_in_any_split: boolean;

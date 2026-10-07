@@ -17,7 +17,9 @@
 use std::collections::{BTreeMap, HashMap};
 
 use oxc_allocator::Allocator;
-use oxc_ast::ast::{Comment, Statement, TSSignature};
+use oxc_ast::ast::{
+    Comment, Statement, TSModuleDeclarationBody, TSModuleDeclarationName, TSSignature,
+};
 use oxc_parser::Parser;
 use oxc_span::{GetSpan, SourceType, Span};
 
@@ -268,7 +270,88 @@ pub fn render(dts: &str, sections: &HashMap<&str, &str>) -> Result<Vec<Page>, St
             unknown.join(", ")
         ));
     }
-    render_pages(dts, sections, METHOD_PAGES)
+    let pages = render_pages(dts, sections, METHOD_PAGES)?;
+    let leaks: Vec<String> = pages
+        .iter()
+        .flat_map(|p| {
+            rust_leaks(&p.content)
+                .into_iter()
+                .map(move |l| format!("{}: {}", p.file, l))
+        })
+        .collect();
+    if !leaks.is_empty() {
+        return Err(format!(
+            "plugin API docs mention Rust internals. Reword these doc comments for plugin \
+             authors, or move implementation notes to `//` comments:\n  {}",
+            leaks.join("\n  ")
+        ));
+    }
+    Ok(pages)
+}
+
+/// Lines of a rendered page that talk about Rust instead of the JS API:
+/// Rust types and paths, `None`/`Some(..)`, source files, internal names.
+/// Doc comments double as the plugin docs, so implementation notes belong
+/// in `//` comments.
+fn rust_leaks(page: &str) -> Vec<String> {
+    const PHRASES: &[&str] = &[
+        "Arc<",
+        "serde",
+        "rquickjs",
+        "schemars",
+        "Exposed to JS",
+        "#[",
+        "PluginCommand",
+        "Option<",
+        "Vec<",
+        "Vec&lt;",
+        "Option&lt;",
+        "HashMap",
+        "Some(",
+        "crates/",
+        "IPC",
+    ];
+    const WORDS: &[&str] = &["u8", "u16", "u32", "u64", "usize", "i32", "i64", "f64"];
+    let mut out = Vec::new();
+    let mut entry = String::new();
+    for line in page.lines().skip(1) {
+        if let Some(name) = line
+            .strip_prefix("### `")
+            .or_else(|| line.strip_prefix("#### `"))
+        {
+            entry = name.trim_end_matches('`').to_string();
+        }
+        let words: Vec<&str> = line
+            .split(|c: char| !(c.is_alphanumeric() || c == '_' || c == '.' || c == ':'))
+            .map(|w| w.trim_end_matches(['.', ':']))
+            .filter(|w| !w.is_empty())
+            .collect();
+        let none = line.match_indices("None").any(|(i, _)| {
+            let before = line[..i].chars().last();
+            let after = &line[i + 4..];
+            !before.is_some_and(|c| c.is_alphanumeric() || c == '_')
+                && !after.starts_with(|c: char| c.is_alphanumeric() || c == '_')
+                && !after.starts_with(" of")
+        });
+        let rust_path = words.iter().any(|w| {
+            w.split_once("::").is_some_and(|(a, b)| {
+                a.starts_with(|c: char| c.is_ascii_uppercase())
+                    && b.starts_with(|c: char| c.is_ascii_alphabetic())
+            })
+        });
+        let rust_file = words
+            .iter()
+            .any(|w| w.ends_with(".rs") && !matches!(*w, "main.rs" | "lib.rs") && w.len() > 3);
+        if none
+            || rust_path
+            || rust_file
+            || PHRASES.iter().any(|p| line.contains(p))
+            || words.iter().any(|w| WORDS.contains(w))
+        {
+            out.push(format!("[{}] {}", entry, line.trim()));
+        }
+    }
+    out
 }
 
 fn render_pages(
@@ -328,6 +411,28 @@ fn render_pages(
                 doc: leading_doc(dts, comments, alias.span),
                 code: code_of(dts, alias.span),
             }),
+            // `declare namespace NS { ... }`: its types are listed as `NS.Name`.
+            Statement::TSModuleDeclaration(module) => {
+                let (
+                    TSModuleDeclarationName::Identifier(ns),
+                    Some(TSModuleDeclarationBody::TSModuleBlock(block)),
+                ) = (&module.id, &module.body)
+                else {
+                    continue;
+                };
+                for inner in &block.body {
+                    let (name, span) = match inner {
+                        Statement::TSInterfaceDeclaration(i) => (i.id.name.as_str(), i.span),
+                        Statement::TSTypeAliasDeclaration(a) => (a.id.name.as_str(), a.span),
+                        _ => continue,
+                    };
+                    types.push(Decl {
+                        name: format!("{}.{}", ns.name, name),
+                        doc: leading_doc(dts, comments, span),
+                        code: code_of(dts, span),
+                    });
+                }
+            }
             Statement::FunctionDeclaration(func) => {
                 if let Some(id) = &func.id {
                     globals.push(Decl {
@@ -720,6 +825,12 @@ declare function getEditor(): EditorAPI;
 type Thing = {
 	id: number;
 };
+declare namespace NS {
+	/** Inner thing. */
+	interface Inner {
+		a: number;
+	}
+}
 interface EditorAPI {
 	/**
 	* Ask for text.
@@ -817,6 +928,10 @@ interface HookEventMap {
             ),
             "{types}"
         );
+        assert!(
+            types.contains("### `NS.Inner`\n\nInner thing.\n\n```typescript\ninterface Inner {\n  a: number;\n}\n```"),
+            "{types}"
+        );
         let events = &pages
             .iter()
             .find(|p| p.file == "events.md")
@@ -852,6 +967,23 @@ interface HookEventMap {
             assert!(pos > last, "docs sidebar lists {title} out of order");
             last = pos;
         }
+    }
+
+    #[test]
+    fn rust_leaks_flags_rust_terms_only() {
+        let page = "header\n### `a`\nReturns `None` when missing.\nNone of these throws.\n\
+                    See `PluginCommand::Foo`.\nTakes a u64.\nOpen `src/main.rs` or `session.rs`.\n\
+                    Plain text about `.` and `::` in Rust.";
+        let leaks = rust_leaks(page);
+        assert_eq!(
+            leaks,
+            vec![
+                "[a] Returns `None` when missing.",
+                "[a] See `PluginCommand::Foo`.",
+                "[a] Takes a u64.",
+                "[a] Open `src/main.rs` or `session.rs`.",
+            ]
+        );
     }
 
     #[test]

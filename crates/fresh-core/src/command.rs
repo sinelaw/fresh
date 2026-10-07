@@ -57,7 +57,7 @@ pub struct Suggestion {
     #[serde(default)]
     #[ts(optional)]
     pub description: Option<String>,
-    /// The value to use when selected (defaults to text if None)
+    /// The value to use when selected (defaults to `text` when omitted)
     #[serde(default)]
     #[ts(optional)]
     pub value: Option<String>,

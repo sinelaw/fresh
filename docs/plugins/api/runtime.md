@@ -169,8 +169,8 @@ utf8ByteLength(text: string): number;
 
 ### `computeLineDiff`
 
-Line-level diff of two texts (native patience diff; see
-`fresh_core::diff`). Returns hunks of differing line ranges in
+Line-level diff of two texts, using the patience diff algorithm.
+Returns hunks of differing line ranges in
 increasing order; equal regions are not reported. Lines are
 0-indexed `\n`-terminated segments (a final unterminated segment
 counts as a line), matching the `text.split("\n")`-and-drop-
@@ -178,8 +178,8 @@ trailing-empty convention plugins already use for line arrays.
 
 Never refuses an input: pathological chunks degrade to coarser
 hunks instead of failing, so callers don't need a "diff too
-large" path. Runs synchronously on the plugin thread — cost is
-near-linear in input size, far below the JS it replaces.
+large" path. The call is synchronous and returns the hunks directly;
+its cost is near-linear in input size.
 
 ```typescript
 computeLineDiff(oldText: string, newText: string): LineDiffHunk[];

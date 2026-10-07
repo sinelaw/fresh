@@ -678,7 +678,9 @@ Say where a buffer this plugin composed carries code, and in what
 language, so the host highlights it. Replaces the buffer's
 previous regions; setting the buffer's content clears them.
 
-Uses typed Vec&lt;SyntaxRegion> - serde validates field names at runtime
+The regions are checked when the call is made; a region that doesn't
+match the type (for example one with a misspelled field name) makes the
+call throw.
 
 ```typescript
 setSyntaxRegions(bufferId: number, regions: TsSyntaxRegion[]): boolean;

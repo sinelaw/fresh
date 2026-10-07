@@ -224,7 +224,6 @@ setBufferGroupPanelBuffer(groupId: number, panelName: string, bufferId: number):
 ### `createBufferGroup`
 
 Create a buffer group: multiple panels appearing as one tab.
-This is an async runtime binding (not a direct #[qjs] method).
 
 ```typescript
 createBufferGroup(name: string, mode: string, layout: unknown): Promise<BufferGroupResult>;
@@ -258,8 +257,9 @@ A composite buffer displays several source buffers in a single tab/view area
 with a custom layout (side-by-side, stacked or unified). This is useful for
 diff views, merge conflict resolution, etc.
 
-Uses typed CreateCompositeBufferOptions - serde validates field names at runtime
-via `deny_unknown_fields` attribute
+The options are checked when the call is made; options that don't
+match the type (for example a misspelled field name) make the call
+throw.
 
 ```typescript
 createCompositeBuffer(opts: TsCreateCompositeBufferOptions): Promise<number>;
@@ -273,7 +273,9 @@ createCompositeBuffer(opts: TsCreateCompositeBufferOptions): Promise<number>;
 
 Update alignment hunks for a composite buffer
 
-Uses typed Vec&lt;CompositeHunk> - serde validates field names at runtime
+The hunks are checked when the call is made; a hunk that doesn't match
+the type (for example one with a misspelled field name) makes the call
+throw.
 
 ```typescript
 updateCompositeAlignment(bufferId: number, hunks: TsCompositeHunk[]): boolean;
@@ -387,7 +389,10 @@ removeScrollSyncGroup(groupId: number): boolean;
 
 ### `setViewState`
 
-Set plugin-managed per-buffer view state (write-through to snapshot + command for persistence)
+Set plugin-managed per-buffer view state, as seen in the active split.
+`getViewState` returns the new value straight away; `null` or
+`undefined` deletes the key. For a buffer backed by a file, the state
+is saved with the workspace and comes back when it is restored.
 
 ```typescript
 setViewState(bufferId: number, key: string, value: unknown): boolean;
@@ -395,7 +400,8 @@ setViewState(bufferId: number, key: string, value: unknown): boolean;
 
 ### `getViewState`
 
-Get plugin-managed per-buffer view state (reads from snapshot)
+Get plugin-managed per-buffer view state, as set by `setViewState`.
+`undefined` if missing.
 
 ```typescript
 getViewState(bufferId: number, key: string): unknown;
