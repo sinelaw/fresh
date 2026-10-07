@@ -2,6 +2,7 @@
 //! tree's messages land in.
 
 use crate::app::types::HoverTarget;
+use crate::view::theme::ThemeStyle;
 use anyhow::Result as AnyhowResult;
 
 use super::Editor;
@@ -307,8 +308,10 @@ impl Editor {
         popup.position = PopupPosition::Fixed { x: col, y: row + 1 };
         popup.width = 50;
         popup.max_height = 15;
-        popup.border_style = Style::default().fg(self.theme.read().unwrap().popup_border_fg);
-        popup.background_style = Style::default().bg(self.theme.read().unwrap().popup_bg);
+        popup.border_style =
+            Style::default().theme_fg(&self.theme.read().unwrap(), "ui.popup_border_fg");
+        popup.background_style =
+            Style::default().theme_bg(&self.theme.read().unwrap(), "ui.popup_bg");
 
         // Show the popup
         let __buffer_id = self.active_buffer();

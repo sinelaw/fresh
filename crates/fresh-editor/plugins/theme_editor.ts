@@ -337,10 +337,25 @@ function loadThemeSections(): ThemeSection[] {
       const indentRainbow = /^indent_rainbow_([1-6])$/.exec(key);
       const i18nKey = indentRainbow ? "indent_rainbow" : key;
       const params = indentRainbow ? { level: indentRainbow[1] } : undefined;
+      // A missing translation comes back as the key itself; treat it as none.
+      const tr = (k: string, p?: Record<string, string>): string | undefined => {
+        const s = editor.t(k, p);
+        return s && s !== k ? s : undefined;
+      };
+      // Every color key has a synthetic attributes row. One without a
+      // translation of its own is named after its color field.
+      const colorKey = kind === "modifier" ? key.replace(/_modifier$/, "") : undefined;
+      const colorName = colorKey ? (tr(`field.${colorKey}`) ?? colorKey) : undefined;
+      const displayName = tr(`field.${i18nKey}`, params)
+        ?? (colorName ? tr("field.attributes_of", { field: colorName }) : undefined)
+        ?? (fallbackDesc || key);
+      const description = tr(`field.${i18nKey}_desc`, params)
+        ?? (colorName ? tr("field.attributes_of_desc", { field: colorName }) : undefined)
+        ?? fallbackDesc;
       return {
         key,
-        displayName: editor.t(`field.${i18nKey}`, params) || fallbackDesc || key,
-        description: editor.t(`field.${i18nKey}_desc`, params) || fallbackDesc,
+        displayName,
+        description,
         section: sectionName,
         kind,
       };

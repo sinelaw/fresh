@@ -11,6 +11,7 @@ use super::spans::push_span_with_map;
 use crate::state::{EditorState, ViewMode};
 use crate::view::margin::{LineIndicator, MarginPosition};
 use crate::view::theme::Theme;
+use crate::view::theme::ThemeStyle;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
 use ratatui::text::Span;
@@ -70,7 +71,7 @@ pub(super) fn render_left_margin(
     // Pre-compute indicator bg for cursor line highlighting
     let indicator_is_cursor_line = lookup_key.is_some_and(|k| k == ctx.cursor_line_start_byte);
     let indicator_bg = if indicator_is_cursor_line && ctx.highlight_current_line && ctx.is_active {
-        Some(ctx.theme.current_line_bg)
+        Some(Style::default().theme_bg(ctx.theme, "editor.current_line_bg"))
     } else {
         None
     };
@@ -84,14 +85,14 @@ pub(super) fn render_left_margin(
     if let Some((glyph, color)) = ctx.virtual_gutter_glyph {
         let mut style = Style::default().fg(*color);
         if let Some(bg) = indicator_bg {
-            style = style.bg(bg);
+            style = style.patch(bg);
         }
         push_span_with_map(line_spans, line_view_map, glyph.clone(), style, None);
     } else if ctx.is_continuation {
         // For continuation lines, don't show any indicators
         let mut style = Style::default();
         if let Some(bg) = indicator_bg {
-            style = style.bg(bg);
+            style = style.patch(bg);
         }
         push_span_with_map(line_spans, line_view_map, " ".to_string(), style, None);
     } else if ctx
@@ -101,7 +102,7 @@ pub(super) fn render_left_margin(
         // Diagnostic indicators have highest priority
         let mut style = Style::default().fg(Color::Red);
         if let Some(bg) = indicator_bg {
-            style = style.bg(bg);
+            style = style.patch(bg);
         }
         push_span_with_map(line_spans, line_view_map, "●".to_string(), style, None);
     } else if ctx.state.diff_gutter.is_none()
@@ -115,15 +116,15 @@ pub(super) fn render_left_margin(
         // question.
         let fold = ctx.fold_indicators.get(&lookup_key.unwrap()).unwrap();
         let symbol = if fold.collapsed { "▸" } else { "▾" };
-        let mut style = Style::default().fg(ctx.theme.line_number_fg);
+        let mut style = Style::default().theme_fg(ctx.theme, "editor.line_number_fg");
         if let Some(bg) = indicator_bg {
-            style = style.bg(bg);
+            style = style.patch(bg);
         }
         push_span_with_map(line_spans, line_view_map, symbol.to_string(), style, None);
     } else if let Some(indicator) = lookup_key.and_then(|k| ctx.line_indicators.get(&k)) {
         let mut style = Style::default().fg(indicator.color);
         if let Some(bg) = indicator_bg {
-            style = style.bg(bg);
+            style = style.patch(bg);
         }
         push_span_with_map(
             line_spans,
@@ -135,7 +136,7 @@ pub(super) fn render_left_margin(
     } else {
         let mut style = Style::default();
         if let Some(bg) = indicator_bg {
-            style = style.bg(bg);
+            style = style.patch(bg);
         }
         push_span_with_map(line_spans, line_view_map, " ".to_string(), style, None);
     }
@@ -145,9 +146,9 @@ pub(super) fn render_left_margin(
 
     if ctx.is_continuation {
         let blank = " ".repeat(ctx.margin.width);
-        let mut style = Style::default().fg(ctx.theme.line_number_fg);
+        let mut style = Style::default().theme_fg(ctx.theme, "editor.line_number_fg");
         if use_cursor_line_bg {
-            style = style.bg(ctx.theme.current_line_bg);
+            style = style.theme_bg(ctx.theme, "editor.current_line_bg");
         }
         push_span_with_map(line_spans, line_view_map, blank, style, None);
     } else if let Some(gutter) = ctx.state.diff_gutter.as_ref() {
@@ -155,23 +156,23 @@ pub(super) fn render_left_margin(
         // their position in the buffer.
         let rendered_text = gutter.render(ctx.gutter_num);
         let mut margin_style = if is_cursor_line {
-            Style::default().fg(ctx.theme.editor_fg)
+            Style::default().theme_fg(ctx.theme, "editor.fg")
         } else {
-            Style::default().fg(ctx.theme.line_number_fg)
+            Style::default().theme_fg(ctx.theme, "editor.line_number_fg")
         };
         if use_cursor_line_bg {
-            margin_style = margin_style.bg(ctx.theme.current_line_bg);
+            margin_style = margin_style.theme_bg(ctx.theme, "editor.current_line_bg");
         }
         push_span_with_map(line_spans, line_view_map, rendered_text, margin_style, None);
     } else if ctx.byte_offset_mode && ctx.show_line_numbers {
         let rendered_text = format!("{:>width$}", ctx.gutter_num, width = ctx.margin.width);
         let mut margin_style = if is_cursor_line {
-            Style::default().fg(ctx.theme.editor_fg)
+            Style::default().theme_fg(ctx.theme, "editor.fg")
         } else {
-            Style::default().fg(ctx.theme.line_number_fg)
+            Style::default().theme_fg(ctx.theme, "editor.line_number_fg")
         };
         if use_cursor_line_bg {
-            margin_style = margin_style.bg(ctx.theme.current_line_bg);
+            margin_style = margin_style.theme_bg(ctx.theme, "editor.current_line_bg");
         }
         push_span_with_map(line_spans, line_view_map, rendered_text, margin_style, None);
     } else if ctx.relative_line_numbers {
@@ -182,12 +183,12 @@ pub(super) fn render_left_margin(
         };
         let rendered_text = format!("{:>width$}", display_num, width = ctx.margin.width);
         let mut margin_style = if is_cursor_line {
-            Style::default().fg(ctx.theme.editor_fg)
+            Style::default().theme_fg(ctx.theme, "editor.fg")
         } else {
-            Style::default().fg(ctx.theme.line_number_fg)
+            Style::default().theme_fg(ctx.theme, "editor.line_number_fg")
         };
         if use_cursor_line_bg {
-            margin_style = margin_style.bg(ctx.theme.current_line_bg);
+            margin_style = margin_style.theme_bg(ctx.theme, "editor.current_line_bg");
         }
         push_span_with_map(line_spans, line_view_map, rendered_text, margin_style, None);
     } else {
@@ -199,19 +200,19 @@ pub(super) fn render_left_margin(
         );
         let (rendered_text, style_opt) = margin_content.render(ctx.margin.width);
 
-        let mut margin_style =
-            style_opt.unwrap_or_else(|| Style::default().fg(ctx.theme.line_number_fg));
+        let mut margin_style = style_opt
+            .unwrap_or_else(|| Style::default().theme_fg(ctx.theme, "editor.line_number_fg"));
         if use_cursor_line_bg {
-            margin_style = margin_style.bg(ctx.theme.current_line_bg);
+            margin_style = margin_style.theme_bg(ctx.theme, "editor.current_line_bg");
         }
 
         push_span_with_map(line_spans, line_view_map, rendered_text, margin_style, None);
     }
 
     if ctx.margin.show_separator {
-        let mut separator_style = Style::default().fg(ctx.theme.line_number_fg);
+        let mut separator_style = Style::default().theme_fg(ctx.theme, "editor.line_number_fg");
         if use_cursor_line_bg {
-            separator_style = separator_style.bg(ctx.theme.current_line_bg);
+            separator_style = separator_style.theme_bg(ctx.theme, "editor.current_line_bg");
         }
         push_span_with_map(
             line_spans,
@@ -240,7 +241,7 @@ pub(super) fn render_compose_margins(
     // Layout: [desk][paper edge][content][paper edge][desk]
     const PAPER_EDGE_WIDTH: u16 = 1;
 
-    let desk_style = Style::default().bg(theme.compose_margin_bg);
+    let desk_style = Style::default().theme_bg(theme, "ui.compose_margin_bg");
     let paper_style = Style::default().bg(effective_editor_bg);
 
     if layout.left_pad > 0 {

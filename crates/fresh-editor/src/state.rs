@@ -1306,10 +1306,9 @@ impl EditorState {
     /// `state.apply` directly (no surrounding `Editor`).
     fn apply_show_popup(&mut self, popup: &PopupData) {
         use crate::view::theme::{Theme, THEME_DARK};
-        static POPUP_COLORS: std::sync::OnceLock<(Color, Color)> = std::sync::OnceLock::new();
-        let &(bg, border) = POPUP_COLORS.get_or_init(|| {
-            let theme = Theme::load_builtin(THEME_DARK).expect("dark builtin theme");
-            (theme.popup_bg, theme.popup_border_fg)
+        static POPUP_STYLES: std::sync::OnceLock<(Style, Style)> = std::sync::OnceLock::new();
+        let &(bg, border) = POPUP_STYLES.get_or_init(|| {
+            popup_styles(&Theme::load_builtin(THEME_DARK).expect("dark builtin theme"))
         });
         let popup_obj = convert_popup_data_to_popup(popup, bg, border);
         self.popups.show_or_replace(popup_obj);
@@ -1615,16 +1614,26 @@ fn convert_event_face_to_overlay_face(event_face: &EventOverlayFace) -> OverlayF
     }
 }
 
+/// A popup's background and border styles: the theme's `ui.popup_bg` and
+/// `ui.popup_border_fg`, each with its text attributes.
+pub(crate) fn popup_styles(theme: &crate::view::theme::Theme) -> (Style, Style) {
+    use crate::view::theme::ThemeStyle;
+    (
+        Style::default().theme_bg(theme, "ui.popup_bg"),
+        Style::default().theme_fg(theme, "ui.popup_border_fg"),
+    )
+}
+
 /// Convert popup data to the actual popup object.
 ///
-/// `popup_bg` and `popup_border_fg` come from the active theme (the
-/// caller resolves them from `Theme::popup_bg` / `Theme::popup_border_fg`,
-/// which are already `ratatui::style::Color`). The replay path inside
-/// `EditorState::apply` has no theme handle and falls back to theme defaults.
+/// `popup_bg` and `popup_border` are the active theme's `ui.popup_bg` and
+/// `ui.popup_border_fg`, resolved with their text attributes (see
+/// [`popup_styles`]). The replay path inside `EditorState::apply` has no
+/// theme handle and falls back to theme defaults.
 pub(crate) fn convert_popup_data_to_popup(
     data: &PopupData,
-    popup_bg: Color,
-    popup_border_fg: Color,
+    popup_bg: Style,
+    popup_border: Style,
 ) -> Popup {
     let content = match &data.content {
         crate::model::event::PopupContentData::Text(lines) => PopupContent::Text(lines.clone()),
@@ -1709,8 +1718,8 @@ pub(crate) fn convert_popup_data_to_popup(
         width: data.width,
         max_height: data.max_height,
         bordered: data.bordered,
-        border_style: Style::default().fg(popup_border_fg),
-        background_style: Style::default().bg(popup_bg),
+        border_style: popup_border,
+        background_style: popup_bg,
         scroll_offset: 0,
         pager: Default::default(),
         text_selection: None,

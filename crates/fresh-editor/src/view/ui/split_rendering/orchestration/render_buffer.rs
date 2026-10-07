@@ -31,6 +31,7 @@ use crate::state::{EditorState, ViewMode};
 use crate::view::bracket_highlight_overlay::BracketHighlightSettings;
 use crate::view::folding::FoldManager;
 use crate::view::theme::Theme;
+use crate::view::theme::ThemeStyle;
 use crate::view::viewport::Viewport;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
@@ -675,8 +676,8 @@ pub(crate) fn draw_buffer_in_split(
         tint_columns_in_lines(
             &mut lines,
             &ruler_columns,
-            theme.ruler_bg,
-            theme.editor_fg,
+            Style::default().theme_bg(theme, "editor.ruler_bg"),
+            Style::default().theme_fg(theme, "editor.fg"),
             height,
         );
     }
@@ -690,8 +691,8 @@ pub(crate) fn draw_buffer_in_split(
                 tint_columns_in_lines(
                     &mut lines,
                     &[cx as usize],
-                    theme.current_line_bg,
-                    theme.editor_fg,
+                    Style::default().theme_bg(theme, "editor.current_line_bg"),
+                    Style::default().theme_fg(theme, "editor.fg"),
                     layout_output.render_output.content_lines_rendered,
                 );
             }
@@ -699,6 +700,9 @@ pub(crate) fn draw_buffer_in_split(
     }
 
     Clear.render(render_area, buf);
+    // Colors only: every cell starts from this and can add attributes but not
+    // clear them, so `editor.fg` / `editor.bg` attributes are applied per
+    // cell (`compute_char_style`), on the cells actually drawn with them.
     let editor_block = Block::default().borders(Borders::NONE).style(
         Style::default()
             .fg(effective_editor_fg)
@@ -711,7 +715,7 @@ pub(crate) fn draw_buffer_in_split(
     // Render compose column guides
     if let Some(guides) = compose_column_guides {
         let guide_style = Style::default()
-            .fg(theme.line_number_fg)
+            .theme_fg(theme, "editor.line_number_fg")
             .add_modifier(Modifier::DIM);
         render_column_guides(
             buf,

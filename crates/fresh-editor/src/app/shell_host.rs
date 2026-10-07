@@ -1069,7 +1069,7 @@ pub mod shell_theme {
 
     use ratatui::style::{Color, Modifier, Style};
 
-    use crate::view::theme::Theme;
+    use crate::view::theme::{Theme, ThemeStyle};
 
     /// One half of an [`Ink`]: where a colour comes from.
     #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1392,14 +1392,16 @@ pub mod shell_theme {
 
         /// What ratatui paints for this.
         ///
-        /// The attribute the theme declares for the foreground key composes
-        /// with the structural ones the ink asked for.
+        /// The attributes the theme declares for either key compose with the
+        /// structural ones the ink asked for — every key may carry them, so a
+        /// background key's (an underlined `diagnostic.error_bg`, say) counts
+        /// as much as a foreground key's.
         pub fn style(&self, theme: &Theme) -> Option<Style> {
             let (fg, bg) = (self.fg.color(theme)?, self.bg.color(theme)?);
-            let declared = match self.fg.name() {
-                Some(k) => theme.resolve_modifier_key(k),
-                None => Modifier::empty(),
-            };
+            let declared = [self.fg.name(), self.bg.name()]
+                .into_iter()
+                .flatten()
+                .fold(Modifier::empty(), |m, k| m | theme.resolve_modifier_key(k));
             Some(
                 Style::default()
                     .fg(fg)
@@ -1501,7 +1503,9 @@ pub mod shell_theme {
     }
 
     fn base(theme: &Theme) -> Style {
-        Style::default().fg(theme.editor_fg).bg(theme.editor_bg)
+        Style::default()
+            .theme_fg(theme, "editor.fg")
+            .theme_bg(theme, "editor.bg")
     }
 }
 
@@ -3829,7 +3833,7 @@ impl Editor {
 #[cfg(test)]
 mod shell_theme_tests {
     use super::shell_theme::{literal, names, pair, resolve, Attrs, Ink, Paint};
-    use ratatui::style::Color;
+    use ratatui::style::{Color, Modifier};
 
     fn theme() -> crate::view::theme::Theme {
         crate::view::theme::Theme::from_json(r#"{"name":"test"}"#)
@@ -3909,6 +3913,19 @@ mod shell_theme_tests {
     /// the editor's plain ground. Nothing can *write* such a word — [`Attrs`]
     /// has five constants and no other constructor — so this is the reading
     /// half being forgiving, not the writing half being loose.
+    #[test]
+    fn a_background_keys_attributes_reach_the_style() {
+        // Every key may carry attributes, a background key included.
+        let mut t = theme();
+        t.set_modifier_key("ui.status_bar_bg", Modifier::UNDERLINED);
+        t.set_modifier_key("ui.status_bar_fg", Modifier::BOLD);
+        let style = resolve(&pair("ui.status_bar_fg", "ui.status_bar_bg"), &t);
+        assert!(style
+            .add_modifier
+            .contains(Modifier::BOLD | Modifier::UNDERLINED));
+        assert_eq!(style.bg, Some(t.status_bar_bg));
+    }
+
     #[test]
     fn an_unknown_attribute_is_dropped_not_fatal() {
         let ink = Ink::parse("editor.fg/editor.bg+bold+wobble").expect("the pair is readable");

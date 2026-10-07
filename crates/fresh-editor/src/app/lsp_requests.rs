@@ -10,6 +10,7 @@
 //! - Rename operations
 //! - Inlay hints
 
+use crate::view::theme::ThemeStyle;
 use anyhow::Result as AnyhowResult;
 use fresh_i18n::t;
 use std::io;
@@ -207,9 +208,9 @@ impl Editor {
             crate::app::popup_actions::build_completion_popup_from_items(all_popup_items, 0);
         let accept_hint = self.completion_accept_key_hint();
         let focus_hint = self.popup_focus_key_hint();
-        let (popup_bg, popup_border_fg) = {
+        let (popup_bg, popup_border) = {
             let theme = self.theme();
-            (theme.popup_bg, theme.popup_border_fg)
+            crate::state::popup_styles(&theme)
         };
 
         {
@@ -223,7 +224,7 @@ impl Editor {
                 .unwrap();
             // Convert PopupData to Popup and use show_or_replace to avoid stacking
             let mut popup_obj =
-                crate::state::convert_popup_data_to_popup(&popup_data, popup_bg, popup_border_fg);
+                crate::state::convert_popup_data_to_popup(&popup_data, popup_bg, popup_border);
             popup_obj.accept_key_hint = accept_hint;
             popup_obj.resolver = crate::view::popup::PopupResolver::Completion;
             popup_obj.focus_key_hint = focus_hint;
@@ -746,9 +747,9 @@ impl Editor {
         let popup_data = crate::app::popup_actions::build_completion_popup_from_items(items, 0);
         let accept_hint = self.completion_accept_key_hint();
         let focus_hint = self.popup_focus_key_hint();
-        let (popup_bg, popup_border_fg) = {
+        let (popup_bg, popup_border) = {
             let theme = self.theme();
-            (theme.popup_bg, theme.popup_border_fg)
+            crate::state::popup_styles(&theme)
         };
 
         let buffer_id = self.active_buffer();
@@ -760,7 +761,7 @@ impl Editor {
             .get_mut(&buffer_id)
             .unwrap();
         let mut popup_obj =
-            crate::state::convert_popup_data_to_popup(&popup_data, popup_bg, popup_border_fg);
+            crate::state::convert_popup_data_to_popup(&popup_data, popup_bg, popup_border);
         popup_obj.accept_key_hint = accept_hint;
         popup_obj.resolver = crate::view::popup::PopupResolver::Completion;
         popup_obj.focus_key_hint = focus_hint;
@@ -1273,7 +1274,8 @@ impl Editor {
                         let mut sl = StyledLine::new();
                         sl.push(
                             s.to_string(),
-                            Style::default().fg(self.theme.read().unwrap().popup_text_fg),
+                            Style::default()
+                                .theme_fg(&self.theme.read().unwrap(), "ui.popup_text_fg"),
                         );
                         sl
                     })
@@ -1292,7 +1294,7 @@ impl Editor {
             let mut sep = StyledLine::new();
             sep.push(
                 "─".repeat(12),
-                Style::default().fg(self.theme.read().unwrap().popup_border_fg),
+                Style::default().theme_fg(&self.theme.read().unwrap(), "ui.popup_border_fg"),
             );
             sep
         };
@@ -1348,8 +1350,10 @@ impl Editor {
         };
         popup.width = popup_width;
         popup.max_height = dynamic_height;
-        popup.border_style = Style::default().fg(self.theme.read().unwrap().popup_border_fg);
-        popup.background_style = Style::default().bg(self.theme.read().unwrap().popup_bg);
+        popup.border_style =
+            Style::default().theme_fg(&self.theme.read().unwrap(), "ui.popup_border_fg");
+        popup.background_style =
+            Style::default().theme_bg(&self.theme.read().unwrap(), "ui.popup_bg");
         popup.focus_key_hint = self.popup_focus_key_hint();
 
         // Show the popup. Replace any existing transient (hover/signature)
@@ -1449,7 +1453,7 @@ impl Editor {
                 header.push(
                     format!("  ({})", source),
                     Style::default()
-                        .fg(self.theme.read().unwrap().tab_inactive_fg)
+                        .theme_fg(&self.theme.read().unwrap(), "ui.tab_inactive_fg")
                         .add_modifier(Modifier::ITALIC),
                 );
             }
@@ -1462,7 +1466,7 @@ impl Editor {
                 let mut line = StyledLine::new();
                 line.push(
                     message_line.to_string(),
-                    Style::default().fg(self.theme.read().unwrap().popup_text_fg),
+                    Style::default().theme_fg(&self.theme.read().unwrap(), "ui.popup_text_fg"),
                 );
                 out.push(line);
             }
@@ -1882,8 +1886,10 @@ impl Editor {
         popup.position = PopupPosition::BelowCursor;
         popup.width = 60;
         popup.max_height = 20;
-        popup.border_style = Style::default().fg(self.theme.read().unwrap().popup_border_fg);
-        popup.background_style = Style::default().bg(self.theme.read().unwrap().popup_bg);
+        popup.border_style =
+            Style::default().theme_fg(&self.theme.read().unwrap(), "ui.popup_border_fg");
+        popup.background_style =
+            Style::default().theme_bg(&self.theme.read().unwrap(), "ui.popup_bg");
         popup.focus_key_hint = self.popup_focus_key_hint();
 
         // Show the popup
@@ -2153,8 +2159,10 @@ impl Editor {
         popup.position = PopupPosition::BelowCursor;
         popup.width = 60;
         popup.max_height = 15;
-        popup.border_style = Style::default().fg(self.theme.read().unwrap().popup_border_fg);
-        popup.background_style = Style::default().bg(self.theme.read().unwrap().popup_bg);
+        popup.border_style =
+            Style::default().theme_fg(&self.theme.read().unwrap(), "ui.popup_border_fg");
+        popup.background_style =
+            Style::default().theme_bg(&self.theme.read().unwrap(), "ui.popup_bg");
         // Confirm reads the selected row's `data` as an index into
         // `self.active_window_mut().pending_code_actions` — the heavy lsp_types payload
         // stays on the Editor to keep the view crate LSP-free.

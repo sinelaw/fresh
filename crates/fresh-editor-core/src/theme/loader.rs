@@ -464,7 +464,7 @@ impl ThemeLoader {
                         let theme_path = pkg_dir.join(file);
                         if theme_path.exists() {
                             if let Ok(content) = std::fs::read_to_string(&theme_path) {
-                                if let Ok(theme) = Theme::from_json(&content) {
+                                if let Some(theme) = parse_theme_file(&theme_path, &content) {
                                     let normalized_name = normalize_theme_name(name);
                                     let info = if let Some(ref repo) = repository {
                                         ThemeInfo::with_key(
@@ -535,7 +535,7 @@ impl ThemeLoader {
                 self.scan_directory(&path, &new_pack, repository, themes, theme_list);
             } else if path.extension().is_some_and(|ext| ext == "json") {
                 if let Ok(content) = std::fs::read_to_string(&path) {
-                    if let Ok(theme) = Theme::from_json(&content) {
+                    if let Some(theme) = parse_theme_file(&path, &content) {
                         let name = normalize_theme_name(&theme.name);
                         let info = if let Some(repo) = repository {
                             ThemeInfo::with_key(&name, pack, format!("{}#{}", repo, name))
@@ -590,6 +590,19 @@ impl ThemeLoader {
 // cursor-jump animation's head, and the accent a focused dock or explorer
 // border wears. The *cursor style* (block, bar, underline) stays the editor's
 // to set — that one is a config the user asked for, not a guess we made.
+
+/// Parse a theme file found on disk, saying why when it cannot be used. A
+/// theme that fails to parse is left out of the registry, so selecting it
+/// later only reports it as not found; this warning is where the reason is.
+fn parse_theme_file(path: &Path, content: &str) -> Option<Theme> {
+    match Theme::from_json(content) {
+        Ok(theme) => Some(theme),
+        Err(e) => {
+            tracing::warn!("Theme file {} was not loaded: {}", path.display(), e);
+            None
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {

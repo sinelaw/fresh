@@ -30,6 +30,7 @@ use crate::state::EditorState;
 use crate::view::shell::geometry::PaneRects;
 use crate::view::shell::splits::PaneChrome;
 use crate::view::split::{SplitManager, SplitViewState};
+use crate::view::theme::ThemeStyle;
 use crate::view::ui::RenderStyle;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
@@ -870,6 +871,6 @@ fn render_placeholder_hint(
     let x = area.x + area.width.saturating_sub(needed_width) / 2;
     let y = area.y + area.height / 2;
     let hint_area = Rect::new(x, y, needed_width, 1);
-    let style = Style::default().fg(theme.syntax_comment);
+    let style = Style::default().theme_fg(theme, "syntax.comment");
     Paragraph::new(HINT).style(style).render(hint_area, buf);
 }

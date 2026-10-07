@@ -4,6 +4,7 @@
 
 use crate::primitives::display_width::char_width;
 use crate::primitives::visual_layout::wrap_str_to_width;
+use crate::view::theme::ThemeStyle;
 use crate::view::theme::{color_to_rgb, Theme, TokenColorExt};
 use crate::view::ui::view_pipeline::{LineStart, ViewLine};
 use fresh_core::api::{TokenColor, ViewTokenStyle};
@@ -32,10 +33,10 @@ pub(super) fn token_style_from_ratatui(style: Style) -> ViewTokenStyle {
 /// Priority values: 100=error, 50=warning, 30=info, 10=hint.
 pub(super) fn inline_diagnostic_style(priority: i32, theme: &Theme) -> Style {
     match priority {
-        100 => Style::default().fg(theme.diagnostic_error_fg),
-        50 => Style::default().fg(theme.diagnostic_warning_fg),
-        30 => Style::default().fg(theme.diagnostic_info_fg),
-        _ => Style::default().fg(theme.diagnostic_hint_fg),
+        100 => Style::default().theme_fg(theme, "diagnostic.error_fg"),
+        50 => Style::default().theme_fg(theme, "diagnostic.warning_fg"),
+        30 => Style::default().theme_fg(theme, "diagnostic.info_fg"),
+        _ => Style::default().theme_fg(theme, "diagnostic.hint_fg"),
     }
 }
 

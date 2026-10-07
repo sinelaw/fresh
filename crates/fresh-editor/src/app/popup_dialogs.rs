@@ -8,6 +8,7 @@
 //! and `present_lsp_status_popup` (pin width + show), orchestrated by
 //! `build_and_show_lsp_status_popup`.
 
+use crate::view::theme::ThemeStyle;
 use fresh_i18n::t;
 
 use crate::app::warning_domains::WarningDomain;
@@ -671,8 +672,9 @@ impl Editor {
             width: popup_width,
             max_height: 15,
             bordered: true,
-            border_style: Style::default().fg(self.theme.read().unwrap().popup_border_fg),
-            background_style: Style::default().bg(self.theme.read().unwrap().popup_bg),
+            border_style: Style::default()
+                .theme_fg(&self.theme.read().unwrap(), "ui.popup_border_fg"),
+            background_style: Style::default().theme_bg(&self.theme.read().unwrap(), "ui.popup_bg"),
             scroll_offset: 0,
             pager: Default::default(),
             text_selection: None,
@@ -981,8 +983,9 @@ impl Editor {
             width: popup_width.clamp(28, 50),
             max_height: 10,
             bordered: true,
-            border_style: Style::default().fg(self.theme.read().unwrap().popup_border_fg),
-            background_style: Style::default().bg(self.theme.read().unwrap().popup_bg),
+            border_style: Style::default()
+                .theme_fg(&self.theme.read().unwrap(), "ui.popup_border_fg"),
+            background_style: Style::default().theme_bg(&self.theme.read().unwrap(), "ui.popup_bg"),
             scroll_offset: 0,
             pager: Default::default(),
             text_selection: None,
@@ -1059,8 +1062,9 @@ impl Editor {
             width: popup_width.clamp(28, 50),
             max_height: 10,
             bordered: true,
-            border_style: Style::default().fg(self.theme.read().unwrap().popup_border_fg),
-            background_style: Style::default().bg(self.theme.read().unwrap().popup_bg),
+            border_style: Style::default()
+                .theme_fg(&self.theme.read().unwrap(), "ui.popup_border_fg"),
+            background_style: Style::default().theme_bg(&self.theme.read().unwrap(), "ui.popup_bg"),
             scroll_offset: 0,
             pager: Default::default(),
             text_selection: None,
@@ -1301,8 +1305,9 @@ impl Editor {
             },
             max_height: if has_body { 16 } else { 10 },
             bordered: true,
-            border_style: Style::default().fg(self.theme.read().unwrap().popup_border_fg),
-            background_style: Style::default().bg(self.theme.read().unwrap().popup_bg),
+            border_style: Style::default()
+                .theme_fg(&self.theme.read().unwrap(), "ui.popup_border_fg"),
+            background_style: Style::default().theme_bg(&self.theme.read().unwrap(), "ui.popup_bg"),
             scroll_offset: 0,
             pager: Default::default(),
             text_selection: None,
@@ -1573,8 +1578,9 @@ impl Editor {
             width: popup_width.clamp(40, 70),
             max_height: 10,
             bordered: true,
-            border_style: Style::default().fg(self.theme.read().unwrap().popup_border_fg),
-            background_style: Style::default().bg(self.theme.read().unwrap().popup_bg),
+            border_style: Style::default()
+                .theme_fg(&self.theme.read().unwrap(), "ui.popup_border_fg"),
+            background_style: Style::default().theme_bg(&self.theme.read().unwrap(), "ui.popup_bg"),
             scroll_offset: 0,
             pager: Default::default(),
             text_selection: None,
@@ -1742,8 +1748,10 @@ impl Editor {
         popup.position = PopupPosition::BelowCursor;
         popup.width = popup_width;
         popup.max_height = 15;
-        popup.border_style = Style::default().fg(self.theme.read().unwrap().popup_border_fg);
-        popup.background_style = Style::default().bg(self.theme.read().unwrap().popup_bg);
+        popup.border_style =
+            Style::default().theme_fg(&self.theme.read().unwrap(), "ui.popup_border_fg");
+        popup.background_style =
+            Style::default().theme_bg(&self.theme.read().unwrap(), "ui.popup_bg");
 
         let buffer_id = self.active_buffer();
         if let Some(state) = self
@@ -1810,8 +1818,8 @@ impl Editor {
             p.width = WIDTH;
             p.max_height = 14;
             // Red border to read as an error, not a neutral info popup.
-            p.border_style = Style::default().fg(theme.diagnostic_error_fg);
-            p.background_style = Style::default().bg(theme.popup_bg);
+            p.border_style = Style::default().theme_fg(&theme, "diagnostic.error_fg");
+            p.background_style = Style::default().theme_bg(&theme, "ui.popup_bg");
             p.resolver = PopupResolver::SettingsSaveError { layer };
             p
         };

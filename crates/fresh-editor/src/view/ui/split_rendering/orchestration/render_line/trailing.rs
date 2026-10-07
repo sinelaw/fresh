@@ -20,6 +20,7 @@ use super::LastLineEnd;
 use crate::app::types::ViewLineMapping;
 use crate::state::EditorState;
 use crate::view::theme::Theme;
+use crate::view::theme::ThemeStyle;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
@@ -101,7 +102,7 @@ fn render_implicit_line_into(
     let implicit_is_cursor_line = implicit_line_byte == ctx.cursor_line_start_byte;
     let implicit_cursor_bg =
         if implicit_is_cursor_line && ctx.highlight_current_line && ctx.is_active {
-            Some(ctx.theme.current_line_bg)
+            Some(Style::default().theme_bg(ctx.theme, "editor.current_line_bg"))
         } else {
             None
         };
@@ -125,10 +126,7 @@ fn render_implicit_line_into(
         };
         let content_width = ctx.render_area.width.saturating_sub(gutter_w as u16) as usize;
         if content_width > 0 {
-            implicit_line_spans.push(Span::styled(
-                " ".repeat(content_width),
-                Style::default().bg(bg),
-            ));
+            implicit_line_spans.push(Span::styled(" ".repeat(content_width), bg));
         }
     }
 
@@ -163,7 +161,7 @@ fn push_left_margin(
     ctx: &PostRowContext<'_>,
     implicit_line_byte: usize,
     implicit_gutter_num: usize,
-    implicit_cursor_bg: Option<Color>,
+    implicit_cursor_bg: Option<Style>,
 ) {
     // Diagnostic indicator column.
     if ctx
@@ -173,13 +171,13 @@ fn push_left_margin(
     {
         let mut style = Style::default().fg(Color::Red);
         if let Some(bg) = implicit_cursor_bg {
-            style = style.bg(bg);
+            style = style.patch(bg);
         }
         spans.push(Span::styled("●", style));
     } else {
         let mut style = Style::default();
         if let Some(bg) = implicit_cursor_bg {
-            style = style.bg(bg);
+            style = style.patch(bg);
         }
         spans.push(Span::styled(" ", style));
     }
@@ -203,16 +201,16 @@ fn push_left_margin(
         );
         margin_content.render(ctx.margin.width).0
     };
-    let mut margin_style = Style::default().fg(ctx.theme.line_number_fg);
+    let mut margin_style = Style::default().theme_fg(ctx.theme, "editor.line_number_fg");
     if let Some(bg) = implicit_cursor_bg {
-        margin_style = margin_style.bg(bg);
+        margin_style = margin_style.patch(bg);
     }
     spans.push(Span::styled(rendered_text, margin_style));
 
     if ctx.margin.show_separator {
-        let mut sep_style = Style::default().fg(ctx.theme.line_number_fg);
+        let mut sep_style = Style::default().theme_fg(ctx.theme, "editor.line_number_fg");
         if let Some(bg) = implicit_cursor_bg {
-            sep_style = sep_style.bg(bg);
+            sep_style = sep_style.patch(bg);
         }
         spans.push(Span::styled(ctx.margin.separator.to_string(), sep_style));
     }
@@ -254,7 +252,8 @@ pub(super) fn fill_eof_rows(
     let eof_fg = dim_color_for_tilde(theme.line_number_fg);
     let eof_style = Style::default()
         .fg(eof_fg)
-        .bg(theme.post_eof_bg(effective_editor_bg));
+        .bg(theme.post_eof_bg(effective_editor_bg))
+        .add_modifier(theme.resolve_modifier_key("editor.after_eof_bg"));
     while lines.len() < render_area.height as usize {
         let width = render_area.width as usize;
         let eof_line = if show_tilde && width > 0 {

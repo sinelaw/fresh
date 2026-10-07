@@ -206,7 +206,7 @@
           "description": "Editor background color",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -218,7 +218,7 @@
           "description": "Default text color",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -230,7 +230,7 @@
           "description": "Cursor color",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -242,7 +242,7 @@
           "description": "Cursor color in unfocused splits",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -254,7 +254,7 @@
           "description": "Selected text background",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -263,7 +263,7 @@
           "default": null
         },
         "selection_modifier": {
-          "description": "Optional text-attribute modifiers (e.g. `[\"reversed\"]`) layered\non top of `selection_bg`. Themes that want a terminal-adaptive\nvisual selection (the canonical pattern for native-palette\nthemes — vim/neovim Visual, helix term16, htop, less) set\n`[\"reversed\"]` here; the renderer ORs `Modifier::REVERSED` into\nthe selected cells, which works on any terminal because it\ninverts whatever fg/bg the terminal already uses.",
+          "description": "Optional text-attribute modifiers (e.g. `[\"reversed\"]`) layered\non top of `selection_bg`. Themes that want a terminal-adaptive\nvisual selection (the canonical pattern for native-palette\nthemes — vim/neovim Visual, helix term16, htop, less) set\n`[\"reversed\"]` here; the renderer ORs `Modifier::REVERSED` into\nthe selected cells, which works on any terminal because it\ninverts whatever fg/bg the terminal already uses.\n\nThe same as bundling the attributes with `selection_bg`\n(`{\"color\": …, \"modifier\": […]}`), the form every other key uses;\nwhen a theme gives both, this key wins.",
           "anyOf": [
             {
               "$ref": "#/$defs/ModifierDef"
@@ -278,7 +278,7 @@
           "description": "Background of the line containing cursor",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -290,7 +290,7 @@
           "description": "Line number text color",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -302,7 +302,7 @@
           "description": "Line number gutter background",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -314,7 +314,7 @@
           "description": "Diff added line background",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -326,7 +326,7 @@
           "description": "Diff removed line background",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -338,7 +338,7 @@
           "description": "Diff added word-level highlight background (optional override)\nWhen not set, computed by brightening diff_add_bg",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -350,7 +350,7 @@
           "description": "Diff removed word-level highlight background (optional override)\nWhen not set, computed by brightening diff_remove_bg",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -362,7 +362,7 @@
           "description": "Diff modified line background",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -374,7 +374,7 @@
           "description": "Fallback fg for cells whose existing fg matches `diff_add_bg`\n(e.g. ANSI Green-on-Green). Only applied on collision; other\ntokens keep their syntax colour.",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -386,7 +386,7 @@
           "description": "Collision-only fallback fg for `diff_remove_bg`.",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -398,7 +398,7 @@
           "description": "Collision-only fallback fg for `diff_modify_bg`.",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -410,7 +410,7 @@
           "description": "Vertical ruler background color",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -422,7 +422,7 @@
           "description": "Indentation guide foreground color. When omitted, inherits\n`whitespace_indicator_fg` so guides remain subtle in both dark and\nlight themes while still allowing a dedicated override.",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -434,7 +434,7 @@
           "description": "Rainbow indentation-guide color (nesting level 1)",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -446,7 +446,7 @@
           "description": "Rainbow indentation-guide color (nesting level 2)",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -458,7 +458,7 @@
           "description": "Rainbow indentation-guide color (nesting level 3)",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -470,7 +470,7 @@
           "description": "Rainbow indentation-guide color (nesting level 4)",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -482,7 +482,7 @@
           "description": "Rainbow indentation-guide color (nesting level 5)",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -494,7 +494,7 @@
           "description": "Rainbow indentation-guide color (nesting level 6)",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -506,7 +506,7 @@
           "description": "Whitespace indicator foreground color (for tab arrows and space dots)",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -518,7 +518,7 @@
           "description": "Whitespace indicator foreground color *inside a selection*. Selected\ncells keep their own foreground, so the plain\n`whitespace_indicator_fg` — picked to sit on the editor background —\nis often invisible on `selection_bg` (several themes use the very\nsame color for both). When omitted, this is derived from\n`selection_bg` by shifting it toward contrast: legible against the\nselection, still clearly dimmer than the selected text.",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -530,7 +530,7 @@
           "description": "Bracket match highlight color (used when rainbow is disabled)",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -550,7 +550,7 @@
           "description": "Rainbow bracket color (nesting level 1)",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -562,7 +562,7 @@
           "description": "Rainbow bracket color (nesting level 2)",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -574,7 +574,7 @@
           "description": "Rainbow bracket color (nesting level 3)",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -586,7 +586,7 @@
           "description": "Rainbow bracket color (nesting level 4)",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -598,7 +598,7 @@
           "description": "Rainbow bracket color (nesting level 5)",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -610,7 +610,7 @@
           "description": "Rainbow bracket color (nesting level 6)",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -622,7 +622,7 @@
           "description": "Background color for lines after end-of-file (optional override).\nWhen not set, post-EOF rows keep the theme's editor `bg`, so the\nspace below a short buffer reads as part of the same surface as the\ntext. Themes that want the post-EOF area called out (issue #779) can\nname a shade here; `~` markers (`editor.show_tilde`) mark the end of\nthe buffer either way.",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -631,6 +631,37 @@
           "default": null
         }
       }
+    },
+    "StyledColorDef": {
+      "description": "A syntax color that may carry text attributes.\n\nA theme key is either a bare color (`[156, 220, 254]` or `\"Blue\"`) or an\nobject bundling that color with a modifier list\n(`{\"color\": [156, 220, 254], \"modifier\": [\"bold\"]}`). Bundling keeps the\ncolor and its attributes in one value, so nothing has to declare a separate\n`*_modifier` sibling key or map one to the other. A bare color carries no\nattributes.\n\n`Plain` must precede `Styled`: untagged deserialization tries variants in\norder, and only an object can match `Styled`, so an array/string settles on\n`Plain` and an object falls through to `Styled`.",
+      "anyOf": [
+        {
+          "description": "A color with no text attributes.",
+          "$ref": "#/$defs/ColorDef"
+        },
+        {
+          "description": "A color bundled with the text attributes to render it with.",
+          "type": "object",
+          "properties": {
+            "color": {
+              "$ref": "#/$defs/ColorDef"
+            },
+            "modifier": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ModifierDef"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "color"
+          ]
+        }
+      ]
     },
     "ColorDef": {
       "description": "Serializable color representation",
@@ -682,7 +713,7 @@
           "description": "Active tab text color",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -694,7 +725,7 @@
           "description": "Active tab background color",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -706,7 +737,7 @@
           "description": "Inactive tab text color",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -718,7 +749,7 @@
           "description": "Inactive tab background color",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -730,7 +761,7 @@
           "description": "Tab bar separator color",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -742,7 +773,7 @@
           "description": "Tab close button hover color",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -754,7 +785,7 @@
           "description": "Tab hover background color",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -766,7 +797,7 @@
           "description": "Menu bar background",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -778,7 +809,7 @@
           "description": "Menu bar text color",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -790,7 +821,7 @@
           "description": "Active menu item background",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -802,7 +833,7 @@
           "description": "Active menu item text color",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -814,7 +845,7 @@
           "description": "Dropdown menu background",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -826,7 +857,7 @@
           "description": "Dropdown menu text color",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -838,7 +869,7 @@
           "description": "Highlighted menu item background",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -850,7 +881,7 @@
           "description": "Highlighted menu item text color",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -862,7 +893,7 @@
           "description": "Menu border color",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -874,7 +905,7 @@
           "description": "Menu separator line color",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -886,7 +917,7 @@
           "description": "Menu item hover background",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -898,7 +929,7 @@
           "description": "Menu item hover text color",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -910,7 +941,7 @@
           "description": "Disabled menu item text color",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -922,7 +953,7 @@
           "description": "Disabled menu item background",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -934,7 +965,7 @@
           "description": "Status bar text color",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -946,7 +977,7 @@
           "description": "Status bar background color",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -958,7 +989,7 @@
           "description": "Command palette shortcut hint text color in status bar (falls back to status_bar_fg)",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -970,7 +1001,7 @@
           "description": "Command palette shortcut hint background in status bar (falls back to status_bar_bg)",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -982,7 +1013,7 @@
           "description": "Status bar separator glyph text color (falls back to status_bar_fg)",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -994,7 +1025,7 @@
           "description": "Status bar separator glyph background (falls back to status_bar_bg)",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -1006,7 +1037,7 @@
           "description": "Status bar LSP indicator text color when LSP is running (falls back to status_bar_fg)",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -1018,7 +1049,7 @@
           "description": "Status bar LSP indicator background when LSP is running (falls back to status_bar_bg)",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -1030,7 +1061,7 @@
           "description": "Status bar LSP indicator text color when LSP options are available\nto act on (configured-but-not-running). Drawn prominently to signal\n\"click here to enable\". Falls back to `status_warning_indicator_fg`.",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -1042,7 +1073,7 @@
           "description": "Status bar LSP indicator background when LSP options are available\nto act on. Falls back to `status_warning_indicator_bg`.",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -1054,7 +1085,7 @@
           "description": "Command prompt text color",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -1066,7 +1097,7 @@
           "description": "Command prompt background",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -1078,7 +1109,7 @@
           "description": "Prompt selected text color",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -1090,7 +1121,7 @@
           "description": "Prompt selection background",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -1102,7 +1133,7 @@
           "description": "Popup window border color",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -1114,7 +1145,7 @@
           "description": "Popup window background",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -1126,7 +1157,7 @@
           "description": "Popup selected item background",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -1138,7 +1169,7 @@
           "description": "Selection background inside a widget Text input. Reads\nagainst `prompt_bg`, so it needs higher contrast against\nthat tint than `editor.selection_bg` (which targets the\neditor surface). Defaults to the same `popup_selection_bg`\nblue used everywhere \"selected item inside a chrome\nsurface\" is shown — same key the prompt selection uses, so\nthe cue reads consistently across selection UIs.",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -1150,7 +1181,7 @@
           "description": "Popup selected item text color",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -1162,7 +1193,7 @@
           "description": "Popup window text color. Per the `*_bg`/`*_fg` convention this\nis the foreground for `popup_bg`; `popup_fg` is accepted as an\nalias so theme JSON can use the convention-consistent name.",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -1174,7 +1205,7 @@
           "description": "Autocomplete suggestion background",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -1186,7 +1217,7 @@
           "description": "Text color for content drawn on `suggestion_bg` (autocomplete\nitems, the overlay-prompt title/input field). Falls back to\n`popup_text_fg` so existing themes need no change.",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -1198,7 +1229,7 @@
           "description": "Selected suggestion background",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -1210,7 +1241,7 @@
           "description": "Help panel background",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -1222,7 +1253,7 @@
           "description": "Help panel text color",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -1234,7 +1265,7 @@
           "description": "Help keybinding text color",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -1246,7 +1277,7 @@
           "description": "Help panel separator color",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -1258,7 +1289,7 @@
           "description": "Help indicator text color",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -1270,7 +1301,7 @@
           "description": "Help indicator background",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -1282,7 +1313,7 @@
           "description": "Inline code block background",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -1294,7 +1325,7 @@
           "description": "Split pane separator color",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -1306,7 +1337,7 @@
           "description": "Split separator hover color",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -1318,7 +1349,7 @@
           "description": "Scrollbar track color",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -1330,7 +1361,7 @@
           "description": "Scrollbar thumb color",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -1342,7 +1373,7 @@
           "description": "Scrollbar track hover color",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -1354,7 +1385,7 @@
           "description": "Scrollbar thumb hover color",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -1366,7 +1397,7 @@
           "description": "Compose mode margin background",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -1378,7 +1409,7 @@
           "description": "Text color of a git-blame block header band. Falls back to\n`ui.menu_fg` — see `blame_header_bg` for why that pair.",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -1390,7 +1421,7 @@
           "description": "Background of a git-blame block header band. Falls back to\n`ui.menu_bg` (and the text to its `ui.menu_fg`): a menu is the\nclosest thing a theme already names to what a blame header is — a\nchrome band carrying its own text over the editor — so an\nunspecified header borrows a surface a theme has already made\nlegible rather than a color computed from another one.\n\nEvery shipped theme names both keys explicitly (a test enforces it),\nso this fallback only ever serves user themes. It is exact, not\nderived: a theme whose menu shares the editor background hands the\nheader that background too, and the fix is for it to name the keys.\n\nThe band used to borrow `ui.status_bar_bg`, which several themes set\nto their editor background (`dark` sets exactly it; `high-contrast`\npairs `[20, 20, 20]` with a black editor) — so the header that is\nmeant to separate one commit's block from the next drew on an\neffectively invisible background.",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -1402,7 +1433,7 @@
           "description": "Occurrence highlight (word under cursor, or the selected text)",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -1411,7 +1442,7 @@
           "default": null
         },
         "semantic_highlight_modifier": {
-          "description": "Optional text-attribute modifiers (e.g. `[\"bold\"]` or\n`[\"reversed\"]`) layered on top of `semantic_highlight_bg`.\nPer the canonical native-palette pattern, current-word\nhighlights are often shown via `Bold` (so the word stands\nout against other variables without altering its color slot)\nor `Reversed`. See `EditorColors::selection_modifier`.",
+          "description": "Optional text-attribute modifiers (e.g. `[\"bold\"]` or\n`[\"reversed\"]`) layered on top of `semantic_highlight_bg`.\nPer the canonical native-palette pattern, current-word\nhighlights are often shown via `Bold` (so the word stands\nout against other variables without altering its color slot)\nor `Reversed`. See `EditorColors::selection_modifier`.\n\nThe same as bundling the attributes with `semantic_highlight_bg`\n(`{\"color\": …, \"modifier\": […]}`), the form every other key uses;\nwhen a theme gives both, this key wins.",
           "anyOf": [
             {
               "$ref": "#/$defs/ModifierDef"
@@ -1426,7 +1457,7 @@
           "description": "Code tour step band background",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -1438,7 +1469,7 @@
           "description": "Embedded terminal background (use Default for transparency)",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -1450,7 +1481,7 @@
           "description": "Embedded terminal default text color",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -1462,7 +1493,7 @@
           "description": "Warning indicator background in status bar",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -1474,7 +1505,7 @@
           "description": "Warning indicator text color in status bar",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -1486,7 +1517,7 @@
           "description": "Error indicator background in status bar",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -1498,7 +1529,7 @@
           "description": "Error indicator text color in status bar",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -1510,7 +1541,7 @@
           "description": "Warning indicator hover background",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -1522,7 +1553,7 @@
           "description": "Warning indicator hover text color",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -1534,7 +1565,7 @@
           "description": "Error indicator hover background",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -1546,7 +1577,7 @@
           "description": "Error indicator hover text color",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -1558,7 +1589,7 @@
           "description": "Tab drop zone background during drag",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -1570,7 +1601,7 @@
           "description": "Tab drop zone border during drag",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -1582,7 +1613,7 @@
           "description": "A list row a drag would drop into (the Orchestrator dock's target\nfolder). Must read apart from the selection and hover bands, which\nare on screen at the same time.",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -1594,7 +1625,7 @@
           "description": "Settings UI selected item background",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -1606,7 +1637,7 @@
           "description": "Settings UI selected item foreground (text on selected background)",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -1618,7 +1649,7 @@
           "description": "File status: added file color in file explorer (falls back to diagnostic.info_fg)",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -1630,7 +1661,7 @@
           "description": "File status: modified file color in file explorer (falls back to diagnostic.warning_fg)",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -1642,7 +1673,7 @@
           "description": "File status: deleted file color in file explorer (falls back to diagnostic.error_fg)",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -1654,7 +1685,7 @@
           "description": "File status: renamed file color in file explorer (falls back to diagnostic.info_fg)",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -1666,7 +1697,7 @@
           "description": "File status: untracked file color in file explorer (falls back to diagnostic.hint_fg)",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -1678,7 +1709,7 @@
           "description": "File status: conflicted file color in file explorer (falls back to diagnostic.error_fg)",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -1696,7 +1727,7 @@
           "description": "Search match background color",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -1708,7 +1739,7 @@
           "description": "Search match text color",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -1720,7 +1751,7 @@
           "description": "Background of the *current* search match: the one Find Next / Find\nPrevious just landed on, or the one Query Replace is asking about.\nShould stand out from `match_bg` so the current match is obvious\namong the other highlighted matches.",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -1744,7 +1775,7 @@
           "description": "Background color for jump labels (e.g. flash plugin labels).\nShould be visually distinct from `match_bg` so labels stand\nout against highlighted matches.  Default: bright magenta.",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -1756,7 +1787,7 @@
           "description": "Foreground color for jump labels.  Should be high contrast\nagainst `label_bg` so the single label letter is unambiguous\neven on small terminal cells.  Default: white.",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -1766,37 +1797,6 @@
         }
       }
     },
-    "StyledColorDef": {
-      "description": "A syntax color that may carry text attributes.\n\nA theme key is either a bare color (`[156, 220, 254]` or `\"Blue\"`) or an\nobject bundling that color with a modifier list\n(`{\"color\": [156, 220, 254], \"modifier\": [\"bold\"]}`). Bundling keeps the\ncolor and its attributes in one value, so nothing has to declare a separate\n`*_modifier` sibling key or map one to the other. A bare color carries no\nattributes.\n\n`Plain` must precede `Styled`: untagged deserialization tries variants in\norder, and only an object can match `Styled`, so an array/string settles on\n`Plain` and an object falls through to `Styled`.",
-      "anyOf": [
-        {
-          "description": "A color with no text attributes.",
-          "$ref": "#/$defs/ColorDef"
-        },
-        {
-          "description": "A color bundled with the text attributes to render it with.",
-          "type": "object",
-          "properties": {
-            "color": {
-              "$ref": "#/$defs/ColorDef"
-            },
-            "modifier": {
-              "anyOf": [
-                {
-                  "$ref": "#/$defs/ModifierDef"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            }
-          },
-          "required": [
-            "color"
-          ]
-        }
-      ]
-    },
     "DiagnosticColors": {
       "description": "LSP diagnostic colors (errors, warnings, etc.)",
       "type": "object",
@@ -1805,7 +1805,7 @@
           "description": "Error message text color",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -1817,7 +1817,7 @@
           "description": "Error highlight background",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -1829,7 +1829,7 @@
           "description": "Warning message text color",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -1841,7 +1841,7 @@
           "description": "Warning highlight background",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -1853,7 +1853,7 @@
           "description": "Info message text color",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -1865,7 +1865,7 @@
           "description": "Info highlight background",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -1877,7 +1877,7 @@
           "description": "Hint message text color",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"
@@ -1889,7 +1889,7 @@
           "description": "Hint highlight background",
           "anyOf": [
             {
-              "$ref": "#/$defs/ColorDef"
+              "$ref": "#/$defs/StyledColorDef"
             },
             {
               "type": "null"

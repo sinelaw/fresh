@@ -19,6 +19,10 @@ pub struct ExplorerTooltipSummary {
 pub struct ExplorerLeadingSlotPayload {
     pub text: String,
     pub fg: Color,
+    /// The theme key `fg` was resolved from, when it was one — so the slot is
+    /// drawn with that key's text attributes too, and the inspector can name
+    /// it. `None` for a literal color.
+    pub fg_key: Option<String>,
     pub min_width: usize,
 }
 
@@ -32,6 +36,8 @@ impl ExplorerLeadingSlotPayload {
 pub struct ExplorerTrailingSlotPayload {
     pub text: String,
     pub fg: Color,
+    /// See [`ExplorerLeadingSlotPayload::fg_key`].
+    pub fg_key: Option<String>,
     pub tooltip: Option<ExplorerTooltipSummary>,
 }
 
@@ -45,6 +51,8 @@ impl ExplorerTrailingSlotPayload {
 pub struct ExplorerTrailingSlotResolution {
     pub payload: Option<ExplorerTrailingSlotPayload>,
     pub name_color_hint: Option<Color>,
+    /// The theme key `name_color_hint` was resolved from, when it was one.
+    pub name_color_key: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -52,6 +60,8 @@ pub struct ExplorerSlotResolution {
     pub leading: Option<ExplorerLeadingSlotPayload>,
     pub trailing: Option<ExplorerTrailingSlotPayload>,
     pub name_color_hint: Option<Color>,
+    /// See [`ExplorerTrailingSlotResolution::name_color_key`].
+    pub name_color_key: Option<String>,
 }
 
 pub struct ExplorerSlotContext<'a> {
@@ -113,6 +123,7 @@ impl<'a> ExplorerSlotResolver<'a> {
             leading: self.leading.resolve(context),
             trailing: trailing.payload,
             name_color_hint: trailing.name_color_hint,
+            name_color_key: trailing.name_color_key,
         }
     }
 }
@@ -271,6 +282,7 @@ impl ExplorerLeadingSlotProvider for DefaultLeadingSlotProvider {
                     .map(|slot| ExplorerLeadingSlotPayload {
                         text: slot.text.clone(),
                         fg: resolve_overlay_color(&slot.color, context.theme, context.neutral_fg),
+                        fg_key: overlay_color_key(&slot.color),
                         min_width: slot.min_width,
                     })
             })
@@ -306,6 +318,7 @@ impl ExplorerTrailingSlotProvider for DefaultTrailingSlotProvider {
                                 context.theme,
                                 context.neutral_fg,
                             ),
+                            fg_key: overlay_color_key(&slot.color),
                             tooltip: slot.tooltip.clone(),
                         })
                 }
@@ -318,7 +331,19 @@ impl ExplorerTrailingSlotProvider for DefaultTrailingSlotProvider {
                     .map(|color| resolve_overlay_color(color, context.theme, context.neutral_fg)),
                 None => compatibility.name_color_hint,
             },
+            name_color_key: match override_name_color {
+                Some(override_entry) => override_entry.color.as_ref().and_then(overlay_color_key),
+                None => compatibility.name_color_key,
+            },
         }
+    }
+}
+
+/// The theme key a color spec names, if it names one.
+pub(crate) fn overlay_color_key(spec: &OverlayColorSpec) -> Option<String> {
+    match spec {
+        OverlayColorSpec::Rgb(..) => None,
+        OverlayColorSpec::ThemeKey(key) => Some(key.clone()),
     }
 }
 

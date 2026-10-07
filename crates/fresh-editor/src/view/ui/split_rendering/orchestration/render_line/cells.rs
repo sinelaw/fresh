@@ -28,6 +28,7 @@ use crate::primitives::display_width::char_width;
 use crate::state::EditorState;
 use crate::view::overlay::Overlay;
 use crate::view::theme::Theme;
+use crate::view::theme::ThemeStyle;
 use crate::view::ui::view_pipeline::{LineStart, ViewLine};
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
@@ -420,10 +421,10 @@ impl CellPass<'_, '_, '_> {
         // full-contrast text — louder than the code it sits between.
         let mut style = resolved.style;
         if is_indentation_guide && !is_cursor {
-            style = style.fg(self.indentation_guide_color());
+            style = style.theme_fg(self.input.theme, self.indentation_guide_key());
         } else if is_whitespace_indicator && !style_as_cursor {
             if !is_selected {
-                style = style.fg(self.input.theme.whitespace_indicator_fg);
+                style = style.theme_fg(self.input.theme, "editor.whitespace_indicator_fg");
             } else if !self
                 .input
                 .theme
@@ -433,7 +434,7 @@ impl CellPass<'_, '_, '_> {
                 // A theme that draws its selection by REVERSED swaps fg and
                 // bg, so a subdued foreground there would dim the selection
                 // block rather than the glyph. Those keep the swap intact.
-                style = style.fg(self.input.theme.whitespace_indicator_selected_fg);
+                style = style.theme_fg(self.input.theme, "editor.whitespace_indicator_selected_fg");
             }
         }
 
@@ -593,18 +594,16 @@ impl CellPass<'_, '_, '_> {
         }
     }
 
-    fn indentation_guide_color(&self) -> Color {
+    fn indentation_guide_key(&self) -> &'static str {
         if !self.input.rainbow_indentation {
-            return self.input.theme.indentation_guide_fg;
+            return "editor.indentation_guide_fg";
         }
 
         // The palette slot is a pure function of the guide's column: one slot
         // per tab stop. Both guide modes therefore give a guide at a given
         // column the same color, stable under scrolling and cursor movement.
         let tab_size = super::normalized_tab_size(self.input.state.buffer_settings.tab_size);
-        self.input
-            .theme
-            .indent_rainbow_color(self.col_offset / tab_size)
+        Theme::indent_rainbow_key(self.col_offset / tab_size)
     }
 
     fn is_leading_indent_cell(&self) -> bool {

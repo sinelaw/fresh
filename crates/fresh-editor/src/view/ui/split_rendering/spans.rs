@@ -267,6 +267,16 @@ pub(super) fn span_color_at(
     cursor: &mut usize,
     byte_pos: usize,
 ) -> Option<Color> {
+    span_at(spans, cursor, byte_pos).map(|span| span.color)
+}
+
+/// The highlight span covering `byte_pos`, advancing `cursor` the way
+/// [`span_color_at`] does.
+pub(super) fn span_at<'a>(
+    spans: &'a [HighlightSpan],
+    cursor: &mut usize,
+    byte_pos: usize,
+) -> Option<&'a HighlightSpan> {
     while *cursor < spans.len() {
         let span = &spans[*cursor];
         if span.range.end <= byte_pos {
@@ -274,7 +284,7 @@ pub(super) fn span_color_at(
         } else if span.range.start > byte_pos {
             return None;
         } else {
-            return Some(span.color);
+            return Some(span);
         }
     }
     None

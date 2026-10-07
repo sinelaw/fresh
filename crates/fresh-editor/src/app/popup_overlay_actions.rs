@@ -81,14 +81,14 @@ impl Editor {
         // tracks the user's active theme (e.g. an ANSI-16 dark theme
         // overrides the default `Rgb(30, 30, 30)` here).
         let hint = self.popup_focus_key_hint();
-        let (popup_bg, popup_border_fg) = {
+        let (popup_bg, popup_border) = {
             let theme = self.theme();
-            (theme.popup_bg, theme.popup_border_fg)
+            crate::state::popup_styles(&theme)
         };
         if let Some(top) = self.active_state_mut().popups.top_mut() {
             top.focus_key_hint = hint;
-            top.background_style = ratatui::style::Style::default().bg(popup_bg);
-            top.border_style = ratatui::style::Style::default().fg(popup_border_fg);
+            top.background_style = popup_bg;
+            top.border_style = popup_border;
         }
     }
 
