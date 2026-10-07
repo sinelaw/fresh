@@ -1,16 +1,13 @@
 /// <reference path="./types/fresh.d.ts" />
 const editor = getEditor();
 
-// 4. Modal dialog — `mountFloatingWidget` with a WidgetSpec.
-// The same machinery as the Orchestrator's "New Folder" dialog: a framed,
-// centred panel with real controls (text fields, a checkbox, buttons).
-// The host owns typing/focus/Tab; the plugin hears `widget_event`s.
-//
-// The bundled plugins build specs with helpers from lib/widgets.ts
-// (text(), button(), row(), ...); a standalone init.ts writes them out.
+// 4. Dialog
+// Shows a dialog box with two text fields, a checkbox and two buttons.
+// Fresh handles typing and moving between fields.
+// The plugin is told about each change in widget_event.
 
-const PANEL = 1;          // any id unique within this plugin
-const MODE = "ask-dialog"; // keymap for the dialog (Enter = submit)
+const PANEL = 1;          // any number, used to match events to this dialog
+const MODE = "ask-dialog"; // keys for the dialog: Enter submits
 const form = { issue: "", title: "", urgent: false };
 
 const field = (key: string, label: string, value: string, placeholder: string) => ({
@@ -62,11 +59,11 @@ editor.on("widget_event", (e) => {
     form[e.widget_key] = String(p.value ?? "");
   else if (e.event_type === "toggle" && e.widget_key === "urgent") {
     form.urgent = typeof p.checked === "boolean" ? p.checked : !form.urgent;
-    editor.updateFloatingWidget(PANEL, spec()); // the checkbox is plugin state: re-render it
+    editor.updateFloatingWidget(PANEL, spec()); // redraw so the checkbox shows the change
   }
   else if (e.event_type === "activate" && e.widget_key === "ok") submit();
   else if (e.event_type === "activate" && e.widget_key === "cancel") close();
-  // "cancel" event_type (Esc / [×]): the host already unmounted the panel.
+  // Esc or [×] closes the dialog by itself, so there is nothing to do for it.
 });
 
 editor.registerCommand("Ask: Modal Dialog", "Ask via a dialog with fields and buttons", "ask_modal_dialog");

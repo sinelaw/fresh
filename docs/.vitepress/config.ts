@@ -110,6 +110,7 @@ export default defineConfig({
               { text: "Project Setup (TypeScript)", link: "/plugins/development/setup" },
               { text: "Language Packs", link: "/plugins/development/language-packs" },
               { text: "Common Patterns", link: "/plugins/development/patterns" },
+              { text: "Asking for Input", link: "/plugins/examples/asking-for-input/" },
               { text: "Utilities Library", link: "/plugins/development/utilities" },
               { text: "Internationalization", link: "/plugins/development/i18n" },
             ],

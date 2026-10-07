@@ -1,9 +1,9 @@
 /// <reference path="./types/fresh.d.ts" />
 const editor = getEditor();
 
-// 1. Prompt line — `await editor.prompt(label, initial)`.
-// Opens the one-line prompt at the bottom of the screen and resolves with
-// the typed text, or null if the user pressed Esc.
+// 1. Prompt line
+// Asks for text on the bottom line.
+// Returns what the user typed, or null if they pressed Esc.
 
 registerHandler("ask_prompt_line", async () => {
   const value = await editor.prompt("Issue number:", "");

@@ -75,6 +75,16 @@ for the full window model.
 | `terminal_exit` | `{ terminal_id, exit_code }` | A terminal's child process exited. `exit_code` may be `null` on signal-terminated processes. |
 | `path_changed` | `{ handle, path, kind }` | A path watched via `editor.watchPath(...)` changed. `kind` is `"create"`, `"modify"`, or `"remove"`. |
 
+## Prompt, popup and dialog events
+
+| Event | Payload | When it fires |
+|-------|---------|---------------|
+| `prompt_changed` | `{ prompt_type, input }` | The text in a prompt opened with `startPrompt` changed |
+| `prompt_confirmed` | `{ prompt_type, input, selected_index }` | The user pressed Enter in that prompt. `input` is the chosen suggestion's `value`, or the typed text |
+| `prompt_cancelled` | `{ prompt_type, input }` | The user pressed Esc in that prompt |
+| `action_popup_result` | `{ popup_id, action_id }` | The user chose an action in a popup opened with `showActionPopup` |
+| `widget_event` | `{ panel_id, widget_key, event_type, payload, focus_key }` | The user did something in a dialog. `event_type` is e.g. `"change"` (a field changed, `payload.value`), `"toggle"` (a checkbox, `payload.checked`), `"activate"` (a button) or `"cancel"` (Esc or `[×]` closed it) |
+
 ## LSP events
 
 | Event | Payload | When it fires |

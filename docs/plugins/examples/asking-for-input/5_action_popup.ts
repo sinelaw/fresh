@@ -1,9 +1,9 @@
 /// <reference path="./types/fresh.d.ts" />
 const editor = getEditor();
 
-// 5. Action popup — `showActionPopup` with a list of buttons.
-// For a choice between a few actions (Yes / No / ...). The pick arrives
-// in `action_popup_result`.
+// 5. Popup
+// Shows a short message with a few choices.
+// The choice comes in action_popup_result.
 
 registerHandler("ask_action_popup", () => {
   editor.showActionPopup({

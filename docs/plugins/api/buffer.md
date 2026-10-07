@@ -393,6 +393,97 @@ setPromptFullscreen(fullscreen: boolean): boolean
 |------|------|-------------|
 | `fullscreen` | `boolean` | `true` to size the card on the whole screen, `false` to size it beside the dock |
 
+### `prompt`
+
+Ask for one line of text on the prompt line and wait for the answer.
+Resolves with the text, or `null` if the user pressed Esc.
+
+```typescript
+prompt(label: string, initialValue: string): Promise<string | null>
+```
+
+| Name | Type | Description |
+|------|------|-------------|
+| `label` | `string` | Text shown before the input |
+| `initialValue` | `string` | Text already in the input when it opens |
+
+### `pickFile`
+
+Open the Open File browser and wait for the user to choose a file.
+Resolves with the file's absolute path, or `null` if cancelled. Nothing
+is opened.
+
+```typescript
+pickFile(label: string, directory?: string | null, showHidden?: boolean | null): Promise<string | null>
+```
+
+| Name | Type | Description |
+|------|------|-------------|
+| `label` | `string` | Text shown before the input |
+| `directory` | `string \| null` | Where the browser starts. Relative paths start from the working directory. Default: the active file's directory |
+| `showHidden` | `boolean \| null` | Show dotfiles for this pick |
+
+### `getNextKey`
+
+Wait for the next keypress and resolve with it. The key is not passed on
+to the editor. To read several keys in a row without losing any, call
+`beginKeyCapture()` before the loop and `endKeyCapture()` after it.
+
+```typescript
+getNextKey(): Promise<KeyEventPayload>
+```
+
+`KeyEventPayload` has `key` (e.g. `"a"`, `"escape"`, `"f1"`) and the
+modifier flags `ctrl`, `alt`, `shift` and `meta`.
+
+## Dialogs
+
+A dialog is a floating panel built from widgets: text fields, checkboxes,
+dropdowns, buttons and labels. The editor draws it and handles typing,
+focus and Tab. The plugin hears what the user does through the
+`widget_event` hook (see [Events](./events#prompt-popup-and-dialog-events)).
+The bundled plugins build the widget spec with the helpers in
+`plugins/lib/widgets.ts`.
+
+### `mountFloatingWidget`
+
+Show a dialog in the middle of the screen.
+
+```typescript
+mountFloatingWidget(panelId: number, spec: WidgetSpec, widthPct: number, heightPct: number,
+  asDock?: boolean, focusMarker?: boolean, title?: string, closable?: boolean,
+  startBlurred?: boolean, mode?: string, labelAlign?: string): boolean
+```
+
+| Name | Type | Description |
+|------|------|-------------|
+| `panelId` | `number` | Your id for this panel. Events for it carry the same id |
+| `spec` | `WidgetSpec` | The widgets to show |
+| `widthPct` / `heightPct` | `number` | Size, as a percent of the screen |
+| `asDock` | `boolean` | Dock it at the side instead of centring it |
+| `focusMarker` | `boolean` | Draw `▸` next to the focused control |
+| `title` | `string` | Title in the frame |
+| `closable` | `boolean` | Show a `[×]` that closes the dialog like Esc |
+| `startBlurred` | `boolean` | Open without taking the keyboard |
+| `mode` | `string` | A `defineMode` keymap for the dialog (e.g. Enter to submit) |
+| `labelAlign` | `string` | `"left"` or `"right"` alignment of field labels |
+
+### `updateFloatingWidget`
+
+Redraw a dialog from a new spec. What the user typed into keyed fields is kept.
+
+```typescript
+updateFloatingWidget(panelId: number, spec: WidgetSpec): boolean
+```
+
+### `unmountFloatingWidget`
+
+Close a dialog.
+
+```typescript
+unmountFloatingWidget(panelId: number): boolean
+```
+
 ## Buffer Mutations
 
 ### `applyTheme`

@@ -1,10 +1,9 @@
 /// <reference path="./types/fresh.d.ts" />
 const editor = getEditor();
 
-// 7. File picker — `await editor.pickFile(label, dir?)`.
-// Opens Fresh's own Open File browser and resolves with the chosen path
-// (or null). Nothing is opened; you just get the path back. The optional
-// second argument picks the starting directory.
+// 7. File picker
+// Lets the user choose a file. Returns its path, or null if cancelled.
+// The second argument is the folder to start in.
 
 registerHandler("ask_file", async () => {
   const path = await editor.pickFile("Fixture file:", "tests/fixtures");

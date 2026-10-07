@@ -1,11 +1,10 @@
 /// <reference path="./types/fresh.d.ts" />
 const editor = getEditor();
 
-// 2. Floating prompt — `startPrompt(label, type, floatingOverlay = true)`.
-// A centred card with an input row and a results pane, as Live Grep uses.
-// It suits "type to search, then pick", and free text still works.
-// `prompt_changed` fires on every keystroke so you can refilter.
-// The answer arrives in `prompt_confirmed`.
+// 2. Floating prompt
+// Asks for text in a box in the middle of the screen, with a list under it.
+// The list is filtered as the user types (prompt_changed).
+// The answer comes in prompt_confirmed.
 
 const PROMPT = "ask-floating";
 const RECENT = [
@@ -19,7 +18,7 @@ function show(filter: string) {
   const f = filter.toLowerCase();
   editor.setPromptSuggestions(
     RECENT.filter((i) => (i.n + " " + i.title).toLowerCase().includes(f))
-      // Fresh 0.5.x. Newer builds also need a unique `id` on each suggestion.
+      // Newer Fresh versions also need an `id` on each item.
       .map((i) => ({ text: `#${i.n}`, value: i.n, description: i.title })),
   );
 }

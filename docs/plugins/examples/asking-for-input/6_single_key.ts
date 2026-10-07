@@ -1,9 +1,8 @@
 /// <reference path="./types/fresh.d.ts" />
 const editor = getEditor();
 
-// 6. Single keypress — `await editor.getNextKey()`.
-// No prompt line at all: show a hint, take the very next key.
-// Good for "pick 1-9" or y/n where Enter would be one key too many.
+// 6. Single key
+// Shows a hint, then waits for one key. The user doesn't press Enter.
 
 registerHandler("ask_single_key", async () => {
   editor.setStatus("Level? 1-6");
