@@ -5377,7 +5377,8 @@ mod tests {
             },
         );
 
-        // Try to move up (no previous line exists)
+        // Up with no previous line: the column arithmetic still has to hold at
+        // the edge. The move goes as far up as there is — the line's start.
         let events = action_to_events(
             &mut state,
             &mut cursors,
@@ -5390,13 +5391,38 @@ mod tests {
             24,
         )
         .unwrap();
+        assert_eq!(events.len(), 1, "Up at the first line still answers");
+        let Event::MoveCursor { new_position, .. } = &events[0] else {
+            panic!("expected a cursor move, got {:?}", events[0]);
+        };
         assert_eq!(
-            events.len(),
-            0,
-            "Should not generate event when at first line"
+            *new_position, 0,
+            "Up on the only line rests at its start, without underflowing"
         );
 
-        // Try to move down (no next line exists)
+        // And having landed there, Down is at the end of the only line, so
+        // there is nowhere left for it to go.
+        state.apply(&mut cursors, &events[0]);
+        let events = action_to_events(
+            &mut state,
+            &mut cursors,
+            Action::MoveDown,
+            4,
+            false,
+            false,
+            true,
+            80,
+            24,
+        )
+        .unwrap();
+        assert_eq!(events.len(), 1, "Down crosses the only line");
+        let Event::MoveCursor { new_position, .. } = &events[0] else {
+            panic!("expected a cursor move, got {:?}", events[0]);
+        };
+        assert_eq!(*new_position, 5, "Down on the only line rests at its end");
+
+        // Once there, it has nowhere to go and says nothing.
+        state.apply(&mut cursors, &events[0]);
         let events = action_to_events(
             &mut state,
             &mut cursors,
@@ -5412,7 +5438,7 @@ mod tests {
         assert_eq!(
             events.len(),
             0,
-            "Should not generate event when at last line"
+            "Should not generate event when already at the last line's end"
         );
     }
 
