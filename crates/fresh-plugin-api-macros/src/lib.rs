@@ -34,6 +34,7 @@
 //! Apply to the impl block to enable TypeScript generation. Generates:
 //! - `{IMPL_NAME}_TYPESCRIPT_DEFINITIONS: &str` - Full `.d.ts` content
 //! - `{IMPL_NAME}_JS_METHODS: &[&str]` - List of all JS method names
+//! - `{IMPL_NAME}_TS_SECTIONS: &[(&str, &str)]` - `(js_name, section)` for each method
 //!
 //! ### `#[plugin_api(...)]`
 //!
@@ -47,6 +48,11 @@
 //! | `async_thenable` | Returns `ProcessHandle<T>` (cancellable) | `#[plugin_api(async_thenable)]` |
 //! | `ts_type = "..."` | Custom TypeScript type for parameter | `#[plugin_api(ts_type = "BufferInfo")]` |
 //! | `ts_return = "..."` | Custom TypeScript return type | `#[plugin_api(ts_return = "string")]` |
+//! | `section = "..."` | API reference section for this and the following methods | `#[plugin_api(section = "Prompts")]` |
+//!
+//! `section` is sticky: it applies to the method it is on and every method
+//! after it, until the next `section`. Every exported method must fall under
+//! one, because the API reference (`docs/plugins/api/`) is grouped by it.
 //!
 //! ## Type Mapping
 //!
@@ -148,6 +154,9 @@ struct ApiMethod {
     /// Raw TypeScript signature override (from `ts_raw = "..."`)
     /// When set, replaces the entire auto-generated signature line.
     ts_raw: Option<String>,
+    /// API reference section (from the nearest `section = "..."` at or
+    /// above this method). Filled in by `plugin_api_impl`.
+    section: Option<String>,
 }
 
 /// Parsed parameter information
@@ -219,7 +228,11 @@ fn extract_doc_comment(attrs: &[Attribute]) -> String {
             if let Meta::NameValue(meta) = &attr.meta {
                 if let syn::Expr::Lit(expr_lit) = &meta.value {
                     if let syn::Lit::Str(lit_str) = &expr_lit.lit {
-                        return Some(lit_str.value().trim().to_string());
+                        // Drop only the space after `///`, so indentation
+                        // inside code examples survives.
+                        let value = lit_str.value();
+                        let line = value.strip_prefix(' ').unwrap_or(&value);
+                        return Some(line.trim_end().to_string());
                     }
                 }
             }
@@ -251,11 +264,38 @@ fn has_plugin_api_flag(attrs: &[Attribute], flag: &str) -> bool {
             return false;
         }
         if let Meta::List(meta_list) = &attr.meta {
-            meta_list.tokens.to_string().contains(flag)
+            // Ignore string values, so a `section = "..."` name can't
+            // read as a flag.
+            strip_string_literals(&meta_list.tokens.to_string()).contains(flag)
         } else {
             false
         }
     })
+}
+
+/// Remove the contents of `"..."` literals from attribute tokens.
+fn strip_string_literals(tokens: &str) -> String {
+    let mut out = String::with_capacity(tokens.len());
+    let mut in_str = false;
+    let mut escaped = false;
+    for c in tokens.chars() {
+        if in_str {
+            if escaped {
+                escaped = false;
+            } else if c == '\\' {
+                escaped = true;
+            } else if c == '"' {
+                in_str = false;
+                out.push(c);
+            }
+        } else {
+            if c == '"' {
+                in_str = true;
+            }
+            out.push(c);
+        }
+    }
+    out
 }
 
 /// Get a string value from `#[plugin_api(key = "value")]`
@@ -575,6 +615,7 @@ fn parse_method(method: &ImplItemFn) -> Option<ApiMethod> {
         return_type,
         doc,
         ts_raw,
+        section: None,
     })
 }
 
@@ -907,18 +948,33 @@ pub fn plugin_api_impl(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let editor_api_const = format_ident!("{}_TS_EDITOR_API", impl_name.to_uppercase());
     let methods_const = format_ident!("{}_JS_METHODS", impl_name.to_uppercase());
 
-    // Parse methods into intermediate representation
-    let methods: Vec<ApiMethod> = input
-        .items
-        .iter()
-        .filter_map(|item| {
-            if let ImplItem::Fn(method) = item {
-                parse_method(method)
-            } else {
-                None
+    // Parse methods into intermediate representation. `section` is sticky:
+    // it applies from the method that carries it until the next one.
+    let mut methods: Vec<ApiMethod> = Vec::new();
+    let mut current_section: Option<String> = None;
+    for item in &input.items {
+        let ImplItem::Fn(method) = item else {
+            continue;
+        };
+        if let Some(section) = get_plugin_api_value(&method.attrs, "section") {
+            current_section = Some(section);
+        }
+        let Some(mut api_method) = parse_method(method) else {
+            continue;
+        };
+        match &current_section {
+            Some(section) => api_method.section = Some(section.clone()),
+            None => {
+                return compile_error(
+                    method.sig.ident.span(),
+                    "exported method has no API reference section: add \
+                     `#[plugin_api(section = \"...\")]` to it or to a method above it",
+                )
+                .into();
             }
-        })
-        .collect();
+        }
+        methods.push(api_method);
+    }
 
     // Generate TypeScript parts
     let preamble = generate_ts_preamble();
@@ -926,6 +982,13 @@ pub fn plugin_api_impl(_attr: TokenStream, item: TokenStream) -> TokenStream {
 
     // Collect JS method names
     let js_names: Vec<&str> = methods.iter().map(|m| m.js_name.as_str()).collect();
+
+    // `(js_name, section)` pairs, in source order, for the API reference
+    let sections_const = format_ident!("{}_TS_SECTIONS", impl_name.to_uppercase());
+    let section_names: Vec<&str> = methods
+        .iter()
+        .map(|m| m.section.as_deref().unwrap_or_default())
+        .collect();
 
     // Collect referenced types (for ts-rs export)
     let referenced_types = collect_referenced_types(&methods);
@@ -966,6 +1029,11 @@ pub fn plugin_api_impl(_attr: TokenStream, item: TokenStream) -> TokenStream {
         /// Useful for verification and debugging.
         pub const #methods_const: &[&str] = &[#(#js_names),*];
 
+        /// `(js_name, section)` for every exported method, in source order
+        ///
+        /// The API reference (`docs/plugins/api/`) groups methods by section.
+        pub const #sections_const: &[(&str, &str)] = &[#((#js_names, #section_names)),*];
+
         /// List of TypeScript types referenced in method signatures
         ///
         /// These types need to be defined (via ts-rs or manually) in fresh.d.ts.
@@ -989,6 +1057,7 @@ pub fn plugin_api_impl(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// - `ts_type = "..."` - Custom TypeScript type for a parameter
 /// - `ts_return = "..."` - Custom TypeScript return type
 /// - `ts_raw = "..."` - Raw TypeScript signature (replaces auto-generated signature)
+/// - `section = "..."` - API reference section for this and the following methods
 ///
 /// # Examples
 ///
@@ -1031,6 +1100,15 @@ mod tests {
         assert_eq!(to_camel_case(""), "");
         assert_eq!(to_camel_case("_leading"), "Leading");
         assert_eq!(to_camel_case("trailing_"), "trailing");
+    }
+
+    #[test]
+    fn test_strip_string_literals() {
+        assert_eq!(
+            strip_string_literals(r#"section = "Skip lists", async_promise"#),
+            r#"section = "", async_promise"#
+        );
+        assert_eq!(strip_string_literals(r#"a = "x\"y", b"#), r#"a = "", b"#);
     }
 
     #[test]
@@ -1145,6 +1223,7 @@ mod tests {
                 return_type: "SpawnResult".to_string(),
                 doc: "".to_string(),
                 ts_raw: None,
+                section: None,
             },
             ApiMethod {
                 js_name: "listBuffers".to_string(),
@@ -1153,6 +1232,7 @@ mod tests {
                 return_type: "BufferInfo[]".to_string(),
                 doc: "".to_string(),
                 ts_raw: None,
+                section: None,
             },
         ];
 
@@ -1170,6 +1250,7 @@ mod tests {
             return_type: "number".to_string(),
             doc: "Get the active buffer ID".to_string(),
             ts_raw: None,
+            section: None,
         };
 
         let ts = generate_ts_method(&method);
@@ -1191,6 +1272,7 @@ mod tests {
             return_type: "void".to_string(),
             doc: "".to_string(),
             ts_raw: None,
+            section: None,
         };
 
         let ts = generate_ts_method(&method);
@@ -1219,6 +1301,7 @@ mod tests {
             return_type: "SpawnResult".to_string(),
             doc: "Spawn a process".to_string(),
             ts_raw: None,
+            section: None,
         };
 
         let ts = generate_ts_method(&method);
@@ -1345,6 +1428,7 @@ mod tests {
             return_type: "boolean".to_string(),
             doc: "Update alignment hunks".to_string(),
             ts_raw: None,
+            section: None,
         };
 
         let ts = generate_ts_method(&method);
@@ -1362,6 +1446,7 @@ mod tests {
             return_type: "CursorInfo | null".to_string(),
             doc: "Get primary cursor".to_string(),
             ts_raw: None,
+            section: None,
         };
         let ts = generate_ts_method(&method);
         assert!(ts.contains("getPrimaryCursor(): CursorInfo | null;"));
@@ -1373,6 +1458,7 @@ mod tests {
             return_type: "CursorInfo[]".to_string(),
             doc: "Get all cursors".to_string(),
             ts_raw: None,
+            section: None,
         };
         let ts = generate_ts_method(&method);
         assert!(ts.contains("getAllCursors(): CursorInfo[];"));
@@ -1384,6 +1470,7 @@ mod tests {
             return_type: "number[]".to_string(),
             doc: "Get all cursor positions".to_string(),
             ts_raw: None,
+            section: None,
         };
         let ts = generate_ts_method(&method);
         assert!(ts.contains("getAllCursorPositions(): number[];"));
@@ -1403,6 +1490,7 @@ mod tests {
             return_type: "TerminalResult".to_string(),
             doc: "Create a terminal".to_string(),
             ts_raw: None,
+            section: None,
         };
 
         let ts = generate_ts_method(&method);
@@ -1426,6 +1514,7 @@ mod tests {
                 return_type: "boolean".to_string(),
                 doc: "".to_string(),
                 ts_raw: None,
+                section: None,
             },
             ApiMethod {
                 js_name: "setSuggestions".to_string(),
@@ -1439,6 +1528,7 @@ mod tests {
                 return_type: "boolean".to_string(),
                 doc: "".to_string(),
                 ts_raw: None,
+                section: None,
             },
             ApiMethod {
                 js_name: "getPrimaryCursor".to_string(),
@@ -1447,6 +1537,7 @@ mod tests {
                 return_type: "CursorInfo | null".to_string(),
                 doc: "".to_string(),
                 ts_raw: None,
+                section: None,
             },
             ApiMethod {
                 js_name: "createTerminal".to_string(),
@@ -1460,6 +1551,7 @@ mod tests {
                 return_type: "TerminalResult".to_string(),
                 doc: "".to_string(),
                 ts_raw: None,
+                section: None,
             },
         ];
 

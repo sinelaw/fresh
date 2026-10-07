@@ -2001,7 +2001,7 @@ impl<M> Node<M> {
 
     /// Which end of this run survives a width it did not ask for.
     ///
-    /// See [`Elide`]. A no-op on anything but a text run, and on a wrapped one.
+    /// See `Elide`. A no-op on anything but a text run, and on a wrapped one.
     /// Which way this window scrolls: the axis its offset counts along, its
     /// affordance is drawn on, and its wheel and [`Anchor`](crate::behavior::Anchor)
     /// commands move it in. Default [`Axis::Vertical`](crate::event::Axis).

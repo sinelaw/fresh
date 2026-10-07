@@ -136,7 +136,7 @@ impl std::fmt::Display for JsCallbackId {
     }
 }
 
-/// Result of creating a terminal
+/// Result of creating a terminal, returned by `createTerminal`
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export, rename_all = "camelCase")]
@@ -374,7 +374,8 @@ pub enum PluginAsyncMessage {
     },
 }
 
-/// Information about a cursor in the editor
+/// Information about a cursor in the editor: its position, its line, and
+/// its selection if it has one
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct CursorInfo {
@@ -426,11 +427,11 @@ fn default_window_id() -> WindowId {
     WindowId(1)
 }
 
+// Mirrors the editor-side `Session` struct — see
+// `crates/fresh-editor/src/app/session.rs` and
+// `docs/internal/orchestrator-sessions-design.md`.
 /// Information about an editor session (plugin-visible). Returned
-/// by `editor.listWindows()` and carried in the snapshot. Mirrors
-/// the editor-side `Session` struct — see
-/// `crates/fresh-editor/src/app/session.rs` and
-/// `docs/internal/orchestrator-sessions-design.md`.
+/// by `editor.listWindows()` and carried in the snapshot.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct WindowInfo {
@@ -450,17 +451,18 @@ pub struct WindowInfo {
     /// Absolute project root.
     #[ts(type = "string")]
     pub root: PathBuf,
+    // The host normalises this at the API boundary so plugins never
+    // have to deal with `null`/`undefined`/`""` ambiguity (`??` only
+    // falls through on `null`, but the orchestrator's `WindowInfo`
+    // round-trips a `Some(PathBuf::new())` as `""`, which then becomes
+    // a poisoned lex sort key — observed as the Windows-only dock
+    // reorder).
     /// Project this session belongs to — the canonical repo root
     /// (or arbitrary directory) the user pointed the new-session
     /// form at. For sessions without an explicit project (legacy
     /// sessions, the launch session, sessions created outside the
-    /// orchestrator's new-session form) this equals `root` — the
-    /// host normalises at the API boundary so plugins never have
-    /// to deal with `null`/`undefined`/`""` ambiguity (`??` only
-    /// falls through on `null`, but the orchestrator's
-    /// `WindowInfo` round-trips a `Some(PathBuf::new())` as `""`,
-    /// which then becomes a poisoned lex sort key — observed as
-    /// the Windows-only dock reorder).
+    /// orchestrator's new-session form) this equals `root`, so it
+    /// is never empty, `null` or `undefined`.
     #[ts(type = "string")]
     pub project_path: PathBuf,
     /// `true` when the session shares its working tree with
@@ -475,7 +477,7 @@ pub struct WindowInfo {
     /// host-local (SSH / Kubernetes). Carried for live remote windows
     /// *and* for dormant (not-yet-connected / disconnected) sessions, so
     /// the dock can badge a restored SSH session before any connection
-    /// exists. `None` for local sessions and plugin-managed backends
+    /// exists. Omitted for local sessions and plugin-managed backends
     /// (devcontainer), whose facet the owning plugin supplies itself.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub remote: Option<RemoteBackendInfo>,
@@ -485,9 +487,9 @@ fn is_false_field(b: &bool) -> bool {
     !b
 }
 
+// Mirrors the persisted `SessionAuthoritySpec::RemoteAgent` transport.
 /// Backend identity of a non-local session, as surfaced to plugins on
-/// [`WindowInfo`]. Mirrors the persisted `SessionAuthoritySpec::RemoteAgent`
-/// transport, reduced to what the dock renders.
+/// `WindowInfo.remote`, reduced to what the dock renders.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct RemoteBackendInfo {
@@ -548,11 +550,11 @@ pub struct BufferInfo {
     /// apart — or two panels of your own.
     #[serde(default)]
     pub name: String,
-    /// Whether the buffer has been modified
+    /// Whether the buffer has unsaved changes
     pub modified: bool,
     /// Length of buffer in bytes
     pub length: usize,
-    /// Number of lines, when the buffer has been indexed. `None` for a very
+    /// Number of lines, when the buffer has been indexed. `null` for a very
     /// large file whose line index hasn't been built yet — the one case
     /// where the count genuinely isn't known.
     ///
@@ -682,13 +684,13 @@ pub struct LineDiffHunk {
 pub struct ViewportInfo {
     /// Byte position of the first visible line
     pub top_byte: usize,
-    /// Line number of the first visible line (None when line index unavailable, e.g. large file before scan)
+    /// Line number of the first visible line (`null` when the line index is unavailable, e.g. a large file before its scan)
     pub top_line: Option<usize>,
     /// Left column offset (horizontal scroll)
     pub left_column: usize,
-    /// Viewport width
+    /// Viewport width in columns
     pub width: u16,
-    /// Viewport height
+    /// Viewport height in rows
     pub height: u16,
 }
 
@@ -746,7 +748,7 @@ pub struct PaneDescription {
     /// finds a pane it named in an earlier run.
     #[serde(default)]
     pub label: Option<String>,
-    /// Absolute path when this pane shows a file, else `None`.
+    /// Absolute path when this pane shows a file, else `null`.
     pub path: Option<PathBuf>,
     /// Short label — the file name, or the buffer's name for the rest.
     pub name: String,
@@ -1179,9 +1181,9 @@ impl<'js> rquickjs::FromJs<'js> for ScrollbarMarker {
 }
 
 /// A run of text with optional styling. `style` reuses
-/// [`OverlayOptions`] — the same primitive plugins use for virtual
+/// `OverlayOptions` — the same primitive plugins use for virtual
 /// text — so a hint is just `{ text: "Alt+P cycle", style: { fg:
-/// "ui.help_key_fg" } }`. `None` style means "no styling override";
+/// "ui.help_key_fg" } }`. Omitting `style` means "no styling override";
 /// each consumer applies its own default (e.g. the floating-prompt
 /// title uses `prompt_fg` + bold).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -1320,11 +1322,11 @@ fn default_true() -> bool {
 #[serde(deny_unknown_fields)]
 #[ts(export, rename = "TsCompositeSourceConfig")]
 pub struct CompositeSourceConfig {
-    /// Buffer ID of the source buffer (required)
+    /// ID of the source buffer this pane displays (required)
     #[serde(rename = "bufferId")]
     #[ts(rename = "bufferId")]
     pub buffer_id: usize,
-    /// Label for this pane (e.g., "OLD", "NEW")
+    /// Label for this pane (e.g., "OLD", "NEW"), shown in the pane's header
     pub label: String,
     /// Whether this pane is editable
     #[serde(default)]
@@ -1339,8 +1341,8 @@ pub struct CompositeSourceConfig {
 #[serde(deny_unknown_fields)]
 #[ts(export, rename = "TsCompositePaneStyle")]
 pub struct CompositePaneStyle {
+    // Using [u8; 3] instead of (u8, u8, u8) for better rquickjs_serde compatibility
     /// Background color for added lines (RGB)
-    /// Using [u8; 3] instead of (u8, u8, u8) for better rquickjs_serde compatibility
     #[serde(default, rename = "addBg")]
     #[ts(optional, rename = "addBg", type = "[number, number, number]")]
     pub add_bg: Option<[u8; 3]>,
@@ -1503,9 +1505,11 @@ pub enum ViewTokenWireKind {
 /// strings against the active theme at draw time; unknown strings
 /// fall through to the terminal's default color.
 ///
-/// `Color::Indexed(N)` round-trips through the `"Indexed:N"` form so
-/// 256-color values from a ratatui `Color` survive the
-/// `ViewTokenStyle` boundary.
+/// A 256-color palette value is written as `"Indexed:N"` (N from 0 to
+/// 255).
+// `Color::Indexed(N)` round-trips through the `"Indexed:N"` form so
+// 256-color values from a ratatui `Color` survive the `ViewTokenStyle`
+// boundary.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(untagged)]
 #[ts(export)]
@@ -1520,18 +1524,18 @@ pub enum TokenColor {
 /// Styling for view tokens (used for injected annotations)
 ///
 /// This allows plugins to specify styling for tokens that don't have a source
-/// mapping (sourceOffset: None), such as annotation headers in git blame.
-/// For tokens with sourceOffset: Some(_), syntax highlighting is applied instead.
+/// mapping (`source_offset: null`), such as annotation headers in git blame.
+/// For tokens with a `source_offset`, syntax highlighting is applied instead.
 #[derive(Debug, Clone, Serialize, Deserialize, Default, TS)]
 #[serde(deny_unknown_fields)]
 #[ts(export)]
 pub struct ViewTokenStyle {
     /// Foreground color. Either `[r, g, b]` or a named/theme string —
-    /// see [`TokenColor`].
+    /// see `TokenColor`.
     #[serde(default)]
     pub fg: Option<TokenColor>,
     /// Background color. Either `[r, g, b]` or a named/theme string —
-    /// see [`TokenColor`].
+    /// see `TokenColor`.
     #[serde(default)]
     pub bg: Option<TokenColor>,
     /// Whether to render in bold
@@ -1550,12 +1554,12 @@ pub struct ViewTokenStyle {
 #[serde(deny_unknown_fields)]
 #[ts(export)]
 pub struct ViewTokenWire {
-    /// Source byte offset in the buffer. None for injected content (annotations).
+    /// Source byte offset in the buffer. `null` for injected content (annotations).
     #[ts(type = "number | null")]
     pub source_offset: Option<usize>,
     /// The token content
     pub kind: ViewTokenWireKind,
-    /// Optional styling for injected content (only used when source_offset is None)
+    /// Optional styling for injected content (only used when `source_offset` is `null`)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub style: Option<ViewTokenStyle>,
@@ -1958,16 +1962,19 @@ pub enum ScrollAlign {
     Minimal,
 }
 
+// Grows by adding fields, so every field is optional in both
+// directions: `Option<T>` with `#[ts(optional)]`, so adding one is not
+// a TypeScript break for plugins that already construct the bag; and
+// no `deny_unknown_fields`, so a plugin written against a newer host
+// does not fail to deserialize wholesale on an older one and silently
+// lose the options it *did* set.
 /// How the host should treat a mounted panel, beyond rendering its
 /// spec.
 ///
-/// Grows by adding fields, so every field is optional in both
-/// directions: `Option<T>` with `#[ts(optional)]`, so adding one is not
-/// a TypeScript break for plugins that already construct the bag; and
-/// no `deny_unknown_fields`, so a plugin written against a newer host
-/// does not fail to deserialize wholesale on an older one and silently
-/// lose the options it *did* set. Each unspecified field reads as what
-/// the host did before that field existed.
+/// Every field is optional, and each one you leave out reads as what
+/// the host did before that field existed. Unknown fields are ignored,
+/// so options written for a newer editor don't stop an older one from
+/// applying the ones it knows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase", default)]
 pub struct WidgetPanelOptions {
@@ -1984,7 +1991,7 @@ pub struct WidgetPanelOptions {
     /// screen on startup", so the next Space turned the page off with
     /// nothing on screen to say why.
     ///
-    /// `None` is what every plugin written before this field said, and
+    /// Leaving it out is what every plugin written before this field said, and
     /// reads as `true`.
     #[serde(default)]
     #[ts(optional)]
@@ -2003,7 +2010,7 @@ pub struct WidgetPanelOptions {
     pub page: Option<bool>,
     /// Keep this panel's focus and the reader's place on the same thing.
     ///
-    /// For a [`page`](WidgetPanelOptions::page) — a document laid out by
+    /// For a `page` — a document laid out by
     /// widgets, in one window the host scrolls — focus and where the reader is
     /// are two answers
     /// to one question: what am I looking at. Left independent they contradict
@@ -2026,11 +2033,10 @@ pub struct WidgetPanelOptions {
     /// `autoFocusFirst: false` too, and the Tab ring seeds from the reader
     /// rather than from the top of the document.
     ///
-    /// `None` reads as `false`: every panel written before this field keeps
+    /// Leaving it out reads as `false`: every panel written before this field keeps
     /// focus and the window independent.
     ///
-    /// It makes `autoFocusFirst` false whatever the panel said — see
-    /// [`WidgetPanelOptions::auto_focus_first`]. The pair is not a
+    /// It makes `autoFocusFirst` false whatever the panel said. The pair is not a
     /// setting with two useful values; it is one broken combination, so
     /// it is not representable rather than advised against.
     #[serde(default)]
@@ -2199,11 +2205,11 @@ pub struct TreeNode {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub draggable: bool,
     /// Per-node checkbox state. Only rendered when the parent
-    /// `Tree` has `checkable: true`. `None` = no checkbox glyph;
-    /// `Some(true)` = `[v]`; `Some(false)` = `[ ]`. The plugin
+    /// `Tree` has `checkable: true`. Omitted = no checkbox glyph;
+    /// `true` = `[v]`; `false` = `[ ]`. The plugin
     /// owns the truth — the host fires `widget_event { event_type:
     /// "toggle" }` and the plugin pushes the new state back via
-    /// `WidgetMutation::SetCheckedKeys`.
+    /// `editor.widgetMutate(panel, { kind: "setCheckedKeys", ... })`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub checked: Option<bool>,
     /// Continuation lines rendered below the node's primary `text`
@@ -2230,7 +2236,7 @@ pub struct TreeNode {
     pub window_anchor: Option<TextWindowAnchor>,
     /// A button drawn at the row's tail: what this row is *for*, said on
     /// the row itself rather than only in a footer the eye has to travel
-    /// to. `Some(label)` renders `[ label ]` against the panel's right
+    /// to. When set to `label`, it renders `[ label ]` against the panel's right
     /// edge and emits a hit area over it that fires the `action` event
     /// with the row's `index` and `key`; the keyboard reaches the same
     /// thing through the tree's `activate`.
@@ -2251,7 +2257,7 @@ pub struct TreeNode {
     pub cells: Vec<TableCell>,
 }
 
-/// One cell of a table row (`TreeNode::cells`).
+/// One cell of a table row (`TreeNode.cells`).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, TS)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 #[ts(export, rename_all = "camelCase")]
@@ -2263,7 +2269,7 @@ pub struct TableCell {
     pub style: Option<OverlayOptions>,
 }
 
-/// One column of a table (`Tree::columns`).
+/// One column of a table (`Tree.columns`).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, TS)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 #[ts(export, rename_all = "camelCase")]
@@ -2282,7 +2288,7 @@ pub struct TableColumn {
 }
 
 /// How a row asks to be windowed when it is wider than the panel.
-/// See [`TreeNode::window_anchor`].
+/// See `TreeNode.windowAnchor`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 #[ts(export, rename_all = "camelCase")]
@@ -2494,7 +2500,7 @@ pub enum WidgetSpec {
     /// after first render: the spec's `value` is initial-only. Every
     /// adjustment fires `widget_event { event_type: "change",
     /// payload: { value } }`; plugins can also push a new value via
-    /// `WidgetMutation::SetNumber`.
+    /// `editor.widgetMutate(panel, { kind: "setNumber", ... })`.
     Number {
         /// Initial value. Read at first render only; instance state
         /// takes over thereafter.
@@ -2510,7 +2516,7 @@ pub enum WidgetSpec {
         #[serde(default = "default_number_step")]
         step: f64,
         /// Render the value as an integer (no decimal point). The
-        /// value is still carried as `f64`; only the display is
+        /// value itself is not rounded; only the display is
         /// truncated. Defaults to `false`.
         #[serde(default)]
         integer: bool,
@@ -2545,7 +2551,7 @@ pub enum WidgetSpec {
     /// state after first render; the spec's `selected_index` is a
     /// seed only. Every change fires `widget_event { event_type:
     /// "change", payload: { index, value } }`; plugins can also set
-    /// it via `WidgetMutation::SetDropdown`.
+    /// it via `editor.widgetMutate(panel, { kind: "setDropdown", ... })`.
     Dropdown {
         /// The selectable options, in display order.
         options: Vec<String>,
@@ -2625,7 +2631,7 @@ pub enum WidgetSpec {
     /// cross-exclusion the Settings status-bar picker uses). Every
     /// change fires `widget_event { event_type: "change", payload:
     /// { included: [values] } }`; plugins can also set the order via
-    /// `WidgetMutation::SetDualIncluded`.
+    /// `editor.widgetMutate(panel, { kind: "setDualIncluded", ... })`.
     DualList {
         /// The full universe of selectable options.
         options: Vec<DualListOption>,
@@ -2748,8 +2754,8 @@ pub enum WidgetSpec {
         /// the tail with an `…`.
         #[serde(default)]
         full_width: bool,
-        /// Style applied while the pointer is over this button. `None`
-        /// (the default) leaves it looking the same hovered as not.
+        /// Style applied while the pointer is over this button. Omit it
+        /// (the default) to leave it looking the same hovered as not.
         ///
         /// Hover is host state — it changes with mouse motion and no
         /// plugin round-trip — so the plugin declares the *appearance*
@@ -2764,15 +2770,15 @@ pub enum WidgetSpec {
         /// shared "close affordance under the pointer" key — the tab
         /// `×` and the file explorer's `×` both read it, so a plugin
         /// naming it gets the same highlight users already know.
-        ///
-        /// `Button` is the first kind to carry this; other widget kinds
-        /// adopt it with the same field plus a `ctx.is_hovered(key)`
-        /// check in their renderer.
+        //
+        // `Button` is the first kind to carry this; other widget kinds
+        // adopt it with the same field plus a `ctx.is_hovered(key)`
+        // check in their renderer.
         #[ts(type = "Partial<OverlayOptions>")]
         #[serde(default, skip_serializing_if = "Option::is_none")]
         hover_style: Option<OverlayOptions>,
         /// How the button looks at rest — not focused, not hovered,
-        /// not disabled. `None` (the default) keeps the look its
+        /// not disabled. Omit it (the default) to keep the look its
         /// `intent` gives it.
         ///
         /// The sibling of `hover_style`, and the answer to the same
@@ -2870,7 +2876,7 @@ pub enum WidgetSpec {
         #[serde(default = "default_list_selected")]
         selected_index: i32,
         /// Number of rows of the panel's available height the list
-        /// should occupy. `None` (omitted) = auto: the host sizes the
+        /// should occupy. Omitted = auto: the host sizes the
         /// window from the panel height it already knows, so the
         /// plugin never re-derives layout arithmetic. An explicit
         /// value pins the window to that many rows, exactly as
@@ -2915,12 +2921,12 @@ pub enum WidgetSpec {
     /// what the tree shows until something first sets the host's
     /// state, and is ignored after that. Right/Left, a click on the
     /// disclosure glyph (or on the row, with `toggle_on_click`) and
-    /// `WidgetMutation::SetExpandedKeys` all write that state and
+    /// `editor.widgetMutate(panel, { kind: "setExpandedKeys", ... })` all write that state and
     /// redraw without the plugin re-emitting the spec. Plugins that
     /// need to react to expansion changes listen for
     /// `widget_event { event_type: "expand" }`, and a plugin that
     /// decides expansion itself (expand-all, open every group while
-    /// filtering) says so with `SetExpandedKeys`, never with a later
+    /// filtering) says so with `setExpandedKeys`, never with a later
     /// spec's `expanded_keys`.
     ///
     /// `selected_index` is the *absolute* index into `nodes`
@@ -2936,26 +2942,26 @@ pub enum WidgetSpec {
         #[serde(default = "default_tree_selected")]
         selected_index: i32,
         /// Rows of the panel's available height the tree occupies.
-        /// `None` (omitted) = auto from the host-known panel height;
+        /// Omitted = auto from the host-known panel height;
         /// an explicit value pins the window as before. (Legacy
         /// fallback when the host has no height: 20 rows.)
         #[serde(default, skip_serializing_if = "Option::is_none")]
         visible_rows: Option<u32>,
         /// Seed set of expanded item keys, drawn until the host's
         /// instance state has an expansion of its own (a Right/Left,
-        /// a disclosure click, a selection write, or
-        /// `WidgetMutation::SetExpandedKeys`). From then on the
+        /// a disclosure click, a selection write, or a
+        /// `setExpandedKeys` mutation). From then on the
         /// instance state is what is drawn and navigated, and
         /// changing this field on later specs has no effect — use
-        /// `WidgetMutation::SetExpandedKeys` to change it.
+        /// `editor.widgetMutate(panel, { kind: "setExpandedKeys", ... })` to change it.
         #[serde(default)]
         expanded_keys: Vec<String>,
-        /// When true, every node with `checked: Some(_)` renders a
+        /// When true, every node with `checked` set renders a
         /// `[v]` / `[ ]` glyph and emits a `toggle` hit area over
         /// the glyph. Click on the glyph fires `widget_event {
         /// event_type: "toggle", payload: { key, checked: <new> } }`;
         /// the plugin updates its model and pushes the new state
-        /// back via `WidgetMutation::SetCheckedKeys`.
+        /// back via `editor.widgetMutate(panel, { kind: "setCheckedKeys", ... })`.
         #[serde(default)]
         checkable: bool,
         /// Fixed number of screen rows each node occupies. `1` (the
@@ -3032,7 +3038,7 @@ pub enum WidgetSpec {
     ///   current line. The host auto-scrolls vertically to keep
     ///   the cursor's line visible.
     ///
-    /// Smart-key dispatch (`WidgetCommand::Key`) selects the right
+    /// Smart-key dispatch (`editor.widgetCommand(panel, { kind: "key", key })`) selects the right
     /// behaviour from `rows`. Plugins that want a different `Enter`
     /// binding intercept the key in their own mode binding before
     /// dispatching it through the smart-key router.
@@ -3050,9 +3056,9 @@ pub enum WidgetSpec {
         /// instance state takes over thereafter.
         #[serde(default)]
         value: String,
-        /// Initial byte-offset cursor within `value`. Negative
-        /// (encoded as `i32` in JSON) means "no cursor" — clamped
-        /// to `[0, value.len()]` host-side.
+        /// Initial byte-offset cursor within `value`. A negative
+        /// number means "no cursor"; other values are clamped
+        /// host-side to the byte length of `value`.
         #[serde(default = "default_cursor_byte")]
         cursor_byte: i32,
         /// Whether this widget has visual focus.
@@ -3112,7 +3118,7 @@ pub enum WidgetSpec {
         ///
         /// Plugins push candidates in response to the text
         /// widget's `change` event via
-        /// `WidgetMutation::SetCompletions`. An empty `items`
+        /// `editor.widgetMutate(panel, { kind: "setCompletions", ... })`. An empty `items`
         /// closes the popup.
         #[serde(
             default,
@@ -3281,9 +3287,9 @@ pub enum WidgetSpec {
         /// Numeric editor-window id, matching `WindowId(N).0`.
         /// `0` (or any unknown id) renders empty placeholder
         /// rows without dispatching the per-window render.
-        /// `u32` rather than `u64` to keep the TS binding a
-        /// plain `number`; window ids never exceed 4B in
-        /// practice.
+        // `u32` rather than `u64` to keep the TS binding a
+        // plain `number`; window ids never exceed 4B in
+        // practice.
         window_id: u32,
         /// Number of visible rows the embed should occupy.
         rows: u32,
@@ -3324,7 +3330,7 @@ pub enum WidgetSpec {
         /// plugin's: see `fresh_ui::desc::Wrap`.
         #[serde(default)]
         wrap: bool,
-        /// How the row marks itself when it does not fit. See [`Elide`].
+        /// How the row marks itself when it does not fit. See `Elide`.
         /// Ignored when `wrap` is set.
         #[serde(default)]
         elide: Elide,
@@ -3402,7 +3408,7 @@ pub enum WidgetSpec {
         /// Anchor `[row, col]` in the panel's inner coordinates the
         /// popup drops from (the host resolves the final screen rect
         /// — opening below the anchor, flipping above near the frame
-        /// edge, clamped on screen). `None` anchors at the popup's
+        /// edge, clamped on screen). Omitted, it anchors at the popup's
         /// own position in the tree.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         anchor: Option<[u32; 2]>,
@@ -3523,11 +3529,11 @@ impl WidgetSpec {
     }
 }
 
+// Bundled into a single `WidgetCommand` PluginCommand so the plugin's
+// TypeScript layer exposes one routing method rather than a fanout of
+// per-key IPC.
 /// Action a plugin can request the widget runtime to perform on a
-/// mounted panel. Bundled into a single `WidgetCommand` PluginCommand
-/// so the plugin's TypeScript layer exposes one routing method
-/// (`editor.widgetCommand(panel_id, action)`) rather than a fanout
-/// of per-key IPC.
+/// mounted panel, sent with `editor.widgetCommand(panelId, action)`.
 ///
 /// All actions target the panel's currently focused widget (the host
 /// tracks focus per panel). They are fired by the plugin's mode
@@ -3597,13 +3603,13 @@ pub enum WidgetAction {
     Key { key: String },
 }
 
-/// Targeted in-place mutation of a mounted widget panel — the
-/// IPC fast path. Plugins use these when the model change touches
-/// one widget; the host applies the mutation directly to the
-/// panel's spec / instance state and re-renders without
-/// re-transmitting the full spec.
+/// Targeted in-place mutation of a mounted widget panel, sent with
+/// `editor.widgetMutate(panelId, mutation)` — a faster way to apply a
+/// small change than re-sending the whole spec. Plugins use these when
+/// the model change touches one widget; the host applies the mutation
+/// directly to the panel's spec / instance state and re-renders.
 ///
-/// `UpdateWidgetPanel` remains the right tool for structural
+/// `editor.updateWidgetPanel` remains the right tool for structural
 /// changes (adding/removing widgets, restructuring layout). Both
 /// paths preserve instance state via widget keys.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -6571,8 +6577,8 @@ pub fn first_duplicate_id<'a>(ids: impl IntoIterator<Item = &'a str>) -> Option<
     ids.into_iter().find(|id| !seen.insert(*id))
 }
 
-/// Plugin-contributed row in the LSP-Servers popup.
-/// See `PluginCommand::SetLspMenuContributions`.
+/// Plugin-contributed row in the LSP-Servers popup, passed to
+/// `editor.setLspMenuContributions`.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(deny_unknown_fields)]
 #[ts(export, rename = "TsLspMenuItem")]
@@ -6584,8 +6590,8 @@ pub struct LspMenuItem {
     pub label: String,
 }
 
-/// Options for `addMenuItem` — one plugin-contributed row in an existing
-/// menu bar menu. See `PluginCommand::AddMenuItem`.
+/// Options for `editor.addMenuItem` — one plugin-contributed row in an
+/// existing menu bar menu.
 ///
 /// Every string here is matched or displayed by the host, so the plugin
 /// never reaches into menu internals: it names the *target* menu and,
@@ -6688,9 +6694,11 @@ pub struct TsHighlightSpan {
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct SpawnResult {
-    /// Complete stdout as string
+    /// Complete stdout as string, exactly as the process wrote it: newlines,
+    /// including the trailing one, are kept
     pub stdout: String,
-    /// Complete stderr as string
+    /// Complete stderr as string. When the process could not be started,
+    /// it holds the error message instead (and `exit_code` is -1)
     pub stderr: String,
     /// Process exit code (0 usually means success, -1 if killed)
     pub exit_code: i32,
@@ -6700,7 +6708,8 @@ pub struct SpawnResult {
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct BackgroundProcessResult {
-    /// Unique process ID for later reference
+    /// Unique process ID for later reference, e.g. with `killProcess` or
+    /// `isProcessRunning`
     #[ts(type = "number")]
     pub process_id: u64,
     /// Process exit code (0 usually means success, -1 if killed)
@@ -6816,14 +6825,17 @@ pub struct ReplaceResult {
     pub buffer_id: usize,
 }
 
-/// Entry for virtual buffer content with optional text properties (JS API version)
+// JS API version of `text_property::TextPropertyEntry`.
+/// Entry for virtual buffer content with optional text properties
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 #[ts(export, rename = "TextPropertyEntry", rename_all = "camelCase")]
 pub struct JsTextPropertyEntry {
-    /// Text content for this entry
+    /// Text content for this entry. Entries are concatenated verbatim, so
+    /// end the text with a newline to put the entry on a line of its own.
     pub text: String,
-    /// Optional properties attached to this text (e.g., file path, line number)
+    /// Optional properties attached to this text (e.g., file path, line
+    /// number): arbitrary metadata, read back with `getTextPropertiesAtCursor`
     #[serde(default)]
     #[ts(optional, type = "Record<string, unknown>")]
     pub properties: Option<HashMap<String, JsonValue>>,
@@ -6835,28 +6847,33 @@ pub struct JsTextPropertyEntry {
     #[serde(default)]
     #[ts(optional)]
     pub inline_overlays: Option<Vec<crate::text_property::InlineOverlay>>,
-    /// Pad this entry's text with spaces to this many columns when drawing.
+    /// Pad this entry's text with spaces to this many columns (Unicode
+    /// codepoints) when drawing. No-op when the text already has at least
+    /// this many codepoints. Applied before overlays are resolved.
     ///
     /// **Render-only**: the padding is applied at draw time, so
     /// `getBufferText()` returns the unpadded text you supplied. Column
     /// alignment cannot be checked by reading the buffer back — if you need
     /// that, embed real spaces with `padEnd` instead.
-    ///
-    /// See `TextPropertyEntry::pad_to_chars`.
     #[serde(default)]
     #[ts(optional)]
     pub pad_to_chars: Option<u32>,
-    /// Truncate this entry's text to at most this many columns when drawing,
-    /// with an ellipsis when the budget allows one.
+    /// Truncate this entry's text to at most this many columns (Unicode
+    /// codepoints) when drawing. When the budget is greater than 3 the
+    /// truncated tail is replaced with `...`; when it is 3 or less the text
+    /// is cut at exactly the budget. Applied before `padToChars` and before
+    /// overlays are resolved.
     ///
     /// **Render-only**, like `padToChars`: `getBufferText()` returns the full
     /// untruncated text.
-    ///
-    /// See `TextPropertyEntry::truncate_to_chars`.
     #[serde(default)]
     #[ts(optional)]
     pub truncate_to_chars: Option<u32>,
-    /// See `TextPropertyEntry::segments`.
+    /// Build the entry from styled pieces. When non-empty, the host joins
+    /// the segments' text into `text` (replacing any `text` you supplied)
+    /// and adds an inline overlay over each styled segment, plus each
+    /// segment's own `overlays` shifted to its position. Resolved before
+    /// `truncateToChars` and `padToChars`.
     #[serde(default)]
     #[ts(optional)]
     pub segments: Option<Vec<crate::text_property::StyledSegment>>,
@@ -6866,11 +6883,13 @@ pub struct JsTextPropertyEntry {
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct DirEntry {
-    /// File/directory name
+    /// File/directory name only, not the full path: join it with the
+    /// directory that was read to get the entry's path
     pub name: String,
     /// True if this is a file
     pub is_file: bool,
-    /// True if this is a directory
+    /// True if this is a directory. A symlink reports the type of its
+    /// target, so a link to a directory is a directory here
     pub is_dir: bool,
 }
 
@@ -6916,9 +6935,11 @@ pub struct JsDiagnostic {
 #[serde(deny_unknown_fields)]
 #[ts(export)]
 pub struct CreateVirtualBufferOptions {
-    /// Buffer name (displayed in tabs/title)
+    /// Buffer name (displayed in tabs/title). By convention it is wrapped
+    /// in asterisks, e.g. `"*Diagnostics*"`
     pub name: String,
-    /// Mode for keybindings (e.g., "git-log", "search-results")
+    /// Mode for keybindings (e.g., "git-log", "search-results"); define
+    /// it with `defineMode` first
     #[serde(default)]
     #[ts(optional)]
     pub mode: Option<String>,
@@ -6934,7 +6955,9 @@ pub struct CreateVirtualBufferOptions {
     #[serde(default, rename = "showCursors")]
     #[ts(optional, rename = "showCursors")]
     pub show_cursors: Option<bool>,
-    /// Disable text editing (default: false)
+    /// Disable text editing (default: false): typing, deletion, cut,
+    /// paste, undo and redo are refused, while navigation, selection and
+    /// copy still work
     #[serde(default, rename = "editingDisabled")]
     #[ts(optional, rename = "editingDisabled")]
     pub editing_disabled: Option<bool>,
@@ -7019,9 +7042,11 @@ pub struct CreateVirtualBufferOptions {
 #[serde(deny_unknown_fields)]
 #[ts(export)]
 pub struct CreateVirtualBufferInSplitOptions {
-    /// Buffer name (displayed in tabs/title)
+    /// Buffer name (displayed in tabs/title). By convention it is wrapped
+    /// in asterisks, e.g. `"*Diagnostics*"`
     pub name: String,
-    /// Mode for keybindings (e.g., "git-log", "search-results")
+    /// Mode for keybindings (e.g., "git-log", "search-results"); define
+    /// it with `defineMode` first
     #[serde(default)]
     #[ts(optional)]
     pub mode: Option<String>,
@@ -7029,7 +7054,8 @@ pub struct CreateVirtualBufferInSplitOptions {
     #[serde(default, rename = "readOnly")]
     #[ts(optional, rename = "readOnly")]
     pub read_only: Option<bool>,
-    /// Split ratio 0.0-1.0 (default: 0.5)
+    /// Split ratio 0.0-1.0 (default: 0.5): the share of the first pane,
+    /// which is the existing content unless `before` is set
     #[serde(default)]
     #[ts(optional)]
     pub ratio: Option<f32>,
@@ -7038,6 +7064,7 @@ pub struct CreateVirtualBufferInSplitOptions {
     /// The name describes the **divider**, not the arrangement:
     /// `"vertical"` puts the panes side by side (a vertical divider between
     /// them), `"horizontal"` stacks them. Same convention as `splitWindow`.
+    /// Default: `"horizontal"`.
     #[serde(default)]
     #[ts(optional)]
     pub direction: Option<String>,
@@ -7053,11 +7080,14 @@ pub struct CreateVirtualBufferInSplitOptions {
     #[serde(default, rename = "showCursors")]
     #[ts(optional, rename = "showCursors")]
     pub show_cursors: Option<bool>,
-    /// Disable text editing (default: false)
+    /// Disable text editing (default: false): typing, deletion, cut,
+    /// paste, undo and redo are refused, while navigation, selection and
+    /// copy still work
     #[serde(default, rename = "editingDisabled")]
     #[ts(optional, rename = "editingDisabled")]
     pub editing_disabled: Option<bool>,
-    /// Enable line wrapping
+    /// Enable line wrapping (default: follow the editor's line-wrap
+    /// setting)
     #[serde(default, rename = "lineWrap")]
     #[ts(optional, rename = "lineWrap")]
     pub line_wrap: Option<bool>,
@@ -7101,9 +7131,9 @@ pub struct CreateVirtualBufferInSplitOptions {
 #[serde(deny_unknown_fields)]
 #[ts(export)]
 pub struct CreateVirtualBufferInExistingSplitOptions {
-    /// Buffer name (displayed in tabs/title)
+    /// Buffer name (displayed in tabs/title), e.g. `"*Commit Details*"`
     pub name: String,
-    /// Target split ID (required)
+    /// ID of the existing split to show the buffer in (required)
     #[serde(rename = "splitId")]
     #[ts(rename = "splitId")]
     pub split_id: usize,
@@ -7198,9 +7228,9 @@ pub struct CreateTerminalOptions {
     #[ts(optional, rename = "windowId")]
     pub window_id: Option<WindowId>,
     /// Argv to spawn directly inside the PTY instead of the host's
-    /// configured shell. `None` (default) keeps the historical
+    /// configured shell. Omit it (the default) to keep the historical
     /// behaviour: spawn the user's shell and let the caller type into
-    /// it via `sendTerminalInput`. `Some([cmd, ...args])` runs that
+    /// it via `sendTerminalInput`. Set to `[cmd, ...args]`, it runs that
     /// exact command as the PTY child — no shell middleman, so the
     /// process exits cleanly when the agent does and the
     /// terminal-buffer's `terminal_exit` plugin hook reflects the
@@ -7214,24 +7244,24 @@ pub struct CreateTerminalOptions {
     /// (when `command` is set) or `"Terminal N"` (the historical
     /// auto-numbered title). If another terminal in the same window
     /// already uses the requested title, the host appends `" (k)"`
-    /// to disambiguate. Empty string is treated the same as `None`.
+    /// to disambiguate. An empty string is treated the same as omitting it.
     #[serde(default)]
     #[ts(optional)]
     pub title: Option<String>,
     /// Extra environment variables to set in the spawned terminal's
     /// child process, on top of the inherited/activated env. Mirrors
-    /// `CreateWindowWithTerminalOptions::env`. `None` (the default)
+    /// `CreateWindowWithTerminalOptions.env`. Omitted (the default), it
     /// adds nothing, so existing callers behave exactly as before.
     #[serde(default)]
     #[ts(optional)]
     pub env: Option<std::collections::HashMap<String, String>>,
     /// Argv to run when this terminal is *restored* or *restarted*,
     /// instead of re-running `command`. The exact counterpart of
-    /// `CreateWindowWithTerminalOptions::resume`, so an agent launched
+    /// `CreateWindowWithTerminalOptions.resume`, so an agent launched
     /// into an existing window rejoins its conversation on restart the
     /// same way one born in its own window does — a session started with
     /// `claude --session-id <id>` sets `resume` to
-    /// `["claude", "--resume", "<id>"]`. `None` keeps `command` as the
+    /// `["claude", "--resume", "<id>"]`. Omit it to keep `command` as the
     /// restore argv. The id is a plain argv element — never interpolated
     /// into a shell string.
     ///
@@ -7282,8 +7312,8 @@ pub struct CreateWindowWithTerminalOptions {
     #[serde(default)]
     #[ts(optional)]
     pub cwd: Option<String>,
-    /// Argv to spawn directly inside the PTY. `None` keeps the
-    /// shell-and-type behaviour; `Some([cmd, ...args])` runs the
+    /// Argv to spawn directly inside the PTY. Omit it to keep the
+    /// shell-and-type behaviour; set to `[cmd, ...args]`, it runs the
     /// command as the PTY child (used by Orchestrator so the
     /// agent process is the PTY's direct child).
     #[serde(default)]
@@ -7300,7 +7330,7 @@ pub struct CreateWindowWithTerminalOptions {
     /// `claude --session-id <id>` sets `resume` to
     /// `["claude", "--resume", "<id>"]` (or `["claude", "--continue"]`),
     /// so a restored session rejoins its conversation rather than starting
-    /// a fresh agent. `None` keeps `command` as the restore command. The id
+    /// a fresh agent. Omit it to keep `command` as the restore command. The id
     /// is a plain argv element — never interpolated into a shell string.
     #[serde(default)]
     #[ts(optional)]
@@ -7309,7 +7339,7 @@ pub struct CreateWindowWithTerminalOptions {
     /// terminal's child process, on top of the inherited/activated
     /// env. Applied after the editor's control vars (`TERM`,
     /// `FRESH_SESSION`), so a plugin's entry wins over those only
-    /// when it names the same key. `None` (the default) adds
+    /// when it names the same key. Omitted (the default), it adds
     /// nothing — old callers behave exactly as before.
     #[serde(default)]
     #[ts(optional)]

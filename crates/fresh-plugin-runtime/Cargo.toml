@@ -23,6 +23,7 @@ fresh-plugin-api-macros.workspace = true
 ts-rs.workspace = true
 lsp-types.workspace = true
 oxc_allocator.workspace = true
+oxc_ast.workspace = true
 oxc_parser.workspace = true
 oxc_codegen.workspace = true
 oxc_span.workspace = true
