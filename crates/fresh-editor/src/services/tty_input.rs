@@ -28,7 +28,8 @@ use std::os::unix::io::{AsRawFd, BorrowedFd, RawFd};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-use fresh_input_parser::{Event as InputEvent, InputParser};
+use crossterm::event::MouseEventKind;
+use fresh_input_parser::{Event as InputEvent, InputParser, MouseReportScanner, MouseScan};
 
 /// How long a buffered lone `ESC` waits for a continuation before it is
 /// resolved as the Escape key. This bounds two waits: the in-`drain_stdin`
@@ -66,115 +67,31 @@ static SIGWINCH_PENDING: AtomicBool = AtomicBool::new(false);
 /// must not also poke crossterm's global reader (which would race us on fd 0).
 static RAW_INPUT_ACTIVE: AtomicBool = AtomicBool::new(false);
 
-/// True while a mouse button is held, i.e. a press has been reported and its
-/// release has not. Teardown reads this to decide whether a release is still
-/// owed (sinelaw/fresh#3474).
-static MOUSE_BUTTON_DOWN: AtomicBool = AtomicBool::new(false);
-
-/// Cross-call state for [`note_mouse_bytes`], which sees host input in
-/// whatever chunks `read()` hands back — a report can straddle two of them.
-static MOUSE_SCAN: std::sync::Mutex<MouseScan> = std::sync::Mutex::new(MouseScan::new());
-
-/// Where [`note_mouse_bytes`] is within a mouse report.
-#[derive(Clone, Copy, PartialEq)]
-enum ScanAt {
-    /// Not inside a sequence.
-    Ground,
-    /// Seen `ESC`.
-    Esc,
-    /// Seen `ESC[`.
-    Csi,
-    /// Inside SGR parameters, accumulating the button code.
-    Sgr,
-    /// Inside an X10 report; the payload byte index that follows `ESC[M`.
-    X10(u8),
-}
-
-struct MouseScan {
-    at: ScanAt,
-    /// The SGR report's first parameter (`Cb`), while it is being read.
-    cb: u32,
-    /// Still accumulating `Cb` (true until the first `;`).
-    on_cb: bool,
-}
-
-impl MouseScan {
-    const fn new() -> Self {
-        Self {
-            at: ScanAt::Ground,
-            cb: 0,
-            on_cb: true,
-        }
-    }
-}
-
-/// Is the button code of a press report one that gets a matching release?
+/// Tracks whether a mouse button is held, from the raw bytes both input paths
+/// already handle. Teardown reads it to decide whether a release is still owed
+/// (sinelaw/fresh#3474).
 ///
-/// Bit 5 (`0x20`) marks motion and bit 6 (`0x40`) a wheel notch. Neither is a
-/// held button: a wheel reports no release at all, and a drag's release is
-/// already accounted for by the press that began it.
-fn press_holds_button(cb: u32) -> bool {
-    cb & 0x20 == 0 && cb & 0x40 == 0
-}
+/// The grammar lives in `fresh-input-parser` rather than here: recognising a
+/// mouse report is parser work, and keeping a second copy next to the I/O is
+/// how the two come to disagree.
+static MOUSE_SCAN: std::sync::Mutex<MouseReportScanner> =
+    std::sync::Mutex::new(MouseReportScanner::new());
 
 /// Track button state from raw host input.
 ///
-/// Both input paths feed this: direct mode as it parses stdin, and the daemon
-/// client as it relays stdin to the server. Neither one parses mouse reports
-/// for this purpose, so the scan is its own small state machine over the bytes.
+/// Both input paths feed this: direct mode as it reads stdin, and the daemon
+/// client as it relays stdin to the server. The client never parses the bytes
+/// itself — the server does — so it has no event stream to learn this from.
 pub fn note_mouse_bytes(bytes: &[u8]) {
-    let Ok(mut sc) = MOUSE_SCAN.lock() else {
-        return;
-    };
-    for &b in bytes {
-        sc.at = match (sc.at, b) {
-            (_, 0x1b) => ScanAt::Esc,
-            (ScanAt::Esc, b'[') => ScanAt::Csi,
-            (ScanAt::Csi, b'<') => {
-                sc.cb = 0;
-                sc.on_cb = true;
-                ScanAt::Sgr
-            }
-            (ScanAt::Csi, b'M') => ScanAt::X10(0),
-            (ScanAt::Sgr, b'0'..=b'9') => {
-                if sc.on_cb {
-                    sc.cb = sc.cb.saturating_mul(10).saturating_add(u32::from(b - b'0'));
-                }
-                ScanAt::Sgr
-            }
-            (ScanAt::Sgr, b';') => {
-                sc.on_cb = false;
-                ScanAt::Sgr
-            }
-            (ScanAt::Sgr, b'M') => {
-                if press_holds_button(sc.cb) {
-                    MOUSE_BUTTON_DOWN.store(true, Ordering::Relaxed);
-                }
-                ScanAt::Ground
-            }
-            (ScanAt::Sgr, b'm') => {
-                MOUSE_BUTTON_DOWN.store(false, Ordering::Relaxed);
-                ScanAt::Ground
-            }
-            // X10 encodes button and coordinates as three fixed bytes, the
-            // first of which is `Cb + 32`; a release is the low two bits set.
-            (ScanAt::X10(0), _) => {
-                let cb = u32::from(b).saturating_sub(32);
-                let down = cb & 3 != 3 && press_holds_button(cb);
-                MOUSE_BUTTON_DOWN.store(down, Ordering::Relaxed);
-                ScanAt::X10(1)
-            }
-            (ScanAt::X10(n), _) if n < 2 => ScanAt::X10(n + 1),
-            (ScanAt::X10(_), _) => ScanAt::Ground,
-            _ => ScanAt::Ground,
-        };
+    if let Ok(mut scan) = MOUSE_SCAN.lock() {
+        scan.feed(bytes);
     }
 }
 
 /// Whether a mouse button is currently held — a press was reported and no
 /// release has followed it.
 pub fn mouse_button_down() -> bool {
-    MOUSE_BUTTON_DOWN.load(Ordering::Relaxed)
+    MOUSE_SCAN.lock().is_ok_and(|scan| scan.button_down())
 }
 
 /// Whether host input is being read by a [`TtyReader`] (rather than crossterm).
@@ -244,54 +161,40 @@ fn read_one_byte(fd: RawFd) -> Option<u8> {
 /// * **Motion reports** the pointer produced during the shutdown window. Those
 ///   are already queued, so they need no wait at all, only taking.
 ///
+/// So the two differ only in their deadline, and one loop serves both.
+///
 /// Call this at teardown *before* mouse reporting and raw mode are turned off:
 /// the bytes are only identifiable as reports while both are still on.
 pub fn drain_pending_mouse_report() {
     let fd = std::io::stdin().as_raw_fd();
+    let Ok(mut scan) = MOUSE_SCAN.lock() else {
+        return;
+    };
     // A release is owed only while a button is still down. Otherwise there is
     // nothing to wait for — but whatever is already queued is still ours.
-    let deadline = if mouse_button_down() {
+    let deadline = if scan.button_down() {
         Instant::now() + MOUSE_RELEASE_GRACE
     } else {
         Instant::now()
     };
-    consume_mouse_reports(fd, deadline);
+    consume_mouse_reports(fd, deadline, &mut scan);
 }
 
 /// Take whole mouse reports off `fd` until the release lands, the queue runs
 /// dry, or `deadline` passes.
 ///
 /// Deliberately narrow rather than a blanket flush of pending input (the shape
-/// of both the reporter's shell-wrapper workaround and of `tcflush`): bytes are
-/// taken one at a time and only while they continue a well-formed SGR
-/// (`ESC [ < params M|m`) or X10 (`ESC [ M b x y`) report, so it stops at the
-/// first byte that cannot belong to one instead of eating ahead into something
-/// the user typed for their shell. A `deadline` of now makes it a non-blocking
+/// of both the reporter's shell-wrapper workaround and of `tcflush`): the
+/// scanner is offered one byte at a time and the loop stops at the first byte
+/// that cannot belong to a report, instead of eating ahead into something the
+/// user typed for their shell. A `deadline` of now makes it a non-blocking
 /// sweep of what is already queued, since the poll below still runs once.
-fn consume_mouse_reports(fd: RawFd, mut deadline: Instant) {
+fn consume_mouse_reports(fd: RawFd, mut deadline: Instant, scan: &mut MouseReportScanner) {
     // Backstop only — `deadline` is what really bounds this. It has to be far
     // more than one report's worth: motion tracking is still on, so a pointer
     // that drifts while the button is held puts a run of drag reports in front
     // of the release.
     const MAX_BYTES: usize = 4096;
-
-    #[derive(Clone, Copy)]
-    enum St {
-        /// Between reports; only an introducing `ESC` may be taken.
-        Esc,
-        /// Seen `ESC`; expect `[`.
-        Bracket,
-        /// Seen `ESC[`; expect `<` (SGR) or `M` (X10).
-        Kind,
-        /// Inside SGR parameters: digits and `;` until the final `M`/`m`.
-        Sgr,
-        /// Inside an X10 report: exactly three fixed bytes follow `ESC[M`.
-        X10(u8),
-    }
-
-    let mut st = St::Esc;
-    // An X10 report's button byte, kept until its third byte closes the report.
-    let mut x10_cb = 0u32;
 
     for _ in 0..MAX_BYTES {
         // A zero remainder leaves this a non-blocking probe rather than a skip,
@@ -304,42 +207,21 @@ fn consume_mouse_reports(fd: RawFd, mut deadline: Instant) {
         let Some(b) = read_one_byte(fd) else {
             return;
         };
-        st = match (st, b) {
-            (St::Esc, 0x1b) => St::Bracket,
-            (St::Bracket, b'[') => St::Kind,
-            (St::Kind, b'<') => St::Sgr,
-            (St::Kind, b'M') => St::X10(0),
-            (St::Sgr, b'0'..=b'9' | b';') => St::Sgr,
-            // `m` is the release — the report the wait exists for. Stop waiting,
-            // but keep sweeping whatever else is already queued behind it.
-            (St::Sgr, b'm') => {
-                MOUSE_BUTTON_DOWN.store(false, Ordering::Relaxed);
-                deadline = Instant::now();
-                St::Esc
-            }
-            // `M` is a press, a drag or a bare motion report. Stopping on one
-            // would leave the release behind it in the queue, which is the very
-            // leak this exists to prevent — so swallow it and carry on.
-            (St::Sgr, b'M') => St::Esc,
-            // X10 spells the button out in the first of three payload bytes.
-            (St::X10(0), _) => {
-                x10_cb = u32::from(b).saturating_sub(32);
-                St::X10(1)
-            }
-            (St::X10(n), _) if n < 2 => St::X10(n + 1),
-            // The third byte closes the report; in X10 a release is the low two
-            // bits of the button code rather than a terminator of its own.
-            (St::X10(_), _) => {
-                if x10_cb & 3 == 3 {
-                    MOUSE_BUTTON_DOWN.store(false, Ordering::Relaxed);
+        match scan.step(b) {
+            // The byte is gone, but stopping here is what keeps the sweep off
+            // the user's own input.
+            MouseScan::NotAReport => return,
+            MouseScan::Partial => {}
+            MouseScan::Complete { kind } => {
+                // The release is the report the wait exists for. Stop waiting,
+                // but keep sweeping whatever is already queued behind it. A
+                // press, drag or motion report is not it: returning on one
+                // would leave the release behind, which is the leak itself.
+                if matches!(kind, Some(MouseEventKind::Up(_))) {
                     deadline = Instant::now();
                 }
-                St::Esc
             }
-            // Anything else cannot continue a mouse report. This byte is gone,
-            // but stopping here is what keeps the drain off the user's input.
-            _ => return,
-        };
+        }
     }
 }
 
