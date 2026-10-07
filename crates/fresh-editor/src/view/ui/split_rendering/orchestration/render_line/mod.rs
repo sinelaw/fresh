@@ -701,6 +701,26 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
             None
         };
 
+        // Byte the diagnostics on this row are keyed off. Normally the row's
+        // own start, but the single row of an empty buffer has none: it holds
+        // no characters, and with no preceding newline it arrives here as
+        // `Beginning` rather than `AfterSourceNewline`, so the fallback above
+        // does not catch it. Its logical position is byte 0. Without this, a
+        // diagnostic on a brand-new file — "`main` function not found", say —
+        // was counted in the status bar but drew neither its gutter marker nor
+        // its inline message, and only a typed line break brought it out
+        // (issue #3484).
+        //
+        // Deliberately separate from `line_start_byte`: that value also decides
+        // whether the row takes the cursor-line highlight, and a row with no
+        // content cells can only have its gutter painted, so widening it there
+        // would half-light the first row of every empty file. That is a change
+        // this fix has no reason to make.
+        // `is_empty_buffer` is the same flag that decides whether this row
+        // exists at all, so the row's existence and its position cannot drift.
+        let diagnostic_anchor_byte: Option<usize> =
+            line_start_byte.or_else(|| (!is_continuation && is_empty_buffer).then_some(0));
+
         // Track whether this line is the cursor line (for current line highlighting).
         // Non-continuation lines check their start byte; continuation lines inherit.
         // We use a range check (rather than equality with the logical-line start)
@@ -749,6 +769,7 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
                 theme,
                 is_continuation,
                 line_start_byte,
+                diagnostic_anchor_byte,
                 gutter_num,
                 estimated_lines,
                 diagnostic_lines: &decorations.diagnostic_lines,
@@ -1026,7 +1047,7 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
 
         // Inline diagnostic text: render after line content (before extend_to_line_end fill).
         // Only for non-continuation lines that have a diagnostic overlay.
-        if let Some(lsb) = line_start_byte {
+        if let Some(lsb) = diagnostic_anchor_byte {
             if let Some((message, diag_style)) = decorations.diagnostic_inline_texts.get(&lsb) {
                 append_inline_diagnostic(
                     message,

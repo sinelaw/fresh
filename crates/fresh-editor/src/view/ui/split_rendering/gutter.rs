@@ -28,8 +28,13 @@ pub(super) struct LeftMarginContext<'a> {
     pub margin: &'a crate::view::margin::MarginConfig,
     pub theme: &'a Theme,
     pub is_continuation: bool,
-    /// Line-start byte offset for fold/diagnostic/indicator lookups (None for continuations).
+    /// Line-start byte offset for fold/indicator lookups (None for continuations).
     pub line_start_byte: Option<usize>,
+    /// Byte the row's diagnostics are keyed off. Same as `line_start_byte`
+    /// except on the single row of an empty buffer, which has no source byte
+    /// of its own but still sits at byte 0 and can still carry a diagnostic
+    /// (issue #3484).
+    pub diagnostic_anchor_byte: Option<usize>,
     /// Display line number or byte offset for the gutter.
     pub gutter_num: usize,
     pub estimated_lines: usize,
@@ -89,7 +94,10 @@ pub(super) fn render_left_margin(
             style = style.bg(bg);
         }
         push_span_with_map(line_spans, line_view_map, " ".to_string(), style, None);
-    } else if lookup_key.is_some_and(|k| ctx.diagnostic_lines.contains(&k)) {
+    } else if ctx
+        .diagnostic_anchor_byte
+        .is_some_and(|k| ctx.diagnostic_lines.contains(&k))
+    {
         // Diagnostic indicators have highest priority
         let mut style = Style::default().fg(Color::Red);
         if let Some(bg) = indicator_bg {
