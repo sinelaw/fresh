@@ -1251,7 +1251,7 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
 
 /// Fill the content area with default gutter/editor theme info so the
 /// theme inspector has an answer for cells the per-cell pass never touches.
-fn prefill_cell_theme_map(
+pub(super) fn prefill_cell_theme_map(
     cell_theme_map: &mut [crate::app::types::CellThemeInfo],
     screen_width: u16,
     render_area: Rect,

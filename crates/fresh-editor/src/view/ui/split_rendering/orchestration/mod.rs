@@ -278,7 +278,19 @@ pub(crate) fn paint_leaf(
         .get(&buffer_id)
         .is_some_and(|m| m.synthetic_placeholder);
     if is_synthetic_placeholder {
-        render_placeholder_hint(buf, content_rect, theme);
+        let (effective_fg, effective_bg) = match use_terminal_bg {
+            true => (ratatui::style::Color::Reset, ratatui::style::Color::Reset),
+            false => (theme.editor_fg, theme.editor_bg),
+        };
+        render_placeholder_hint(
+            buf,
+            content_rect,
+            theme,
+            effective_fg,
+            effective_bg,
+            s.cell_theme_map,
+            f.screen_width,
+        );
         return;
     }
 
@@ -853,19 +865,42 @@ pub(crate) fn build_base_tokens_for_hook(
     )
 }
 
-/// Render a centered, subdued hint in the empty pane left behind when the
-/// user closes the last buffer with both `file_explorer.auto_open_on_last_buffer_close`
-/// and `editor.auto_create_empty_buffer_on_last_buffer_close` set to false.
-/// Tells the user how to escape the blank-workspace state.
+/// Paint the empty pane left behind when the user closes the last buffer:
+/// the editor's ground, then a centered hint on how to leave it.
+///
+/// The ground matters because nothing else paints this pane. Cells left at
+/// `Color::Reset` cannot be darkened by a modal's scrim: `dim_color` returns
+/// `None` for `Reset`, and its `Modifier::DIM` fallback needs a foreground
+/// (#3452).
 fn render_placeholder_hint(
     buf: &mut ratatui::buffer::Buffer,
     area: Rect,
     theme: &crate::view::theme::Theme,
+    effective_fg: ratatui::style::Color,
+    effective_bg: ratatui::style::Color,
+    cell_theme_map: &mut [crate::app::types::CellThemeInfo],
+    screen_width: u16,
 ) {
+    if area.height == 0 || area.width == 0 {
+        return;
+    }
+    // `reset()` so a modifier left by whatever stood here before is cleared.
+    let ground = Style::reset().fg(effective_fg).bg(effective_bg);
+    for y in area.y..area.y.saturating_add(area.height) {
+        for x in area.x..area.x.saturating_add(area.width) {
+            if let Some(cell) = buf.cell_mut((x, y)) {
+                cell.set_symbol(" ");
+                cell.set_style(ground);
+            }
+        }
+    }
+    // The text pass does this for a pane with a buffer and never runs here.
+    render_line::prefill_cell_theme_map(cell_theme_map, screen_width, area, 0);
+
     const HINT: &str =
         "Ctrl+P  command palette   ·   Ctrl+O  open file   ·   Ctrl+E  file explorer";
     let needed_width = HINT.chars().count() as u16;
-    if area.width < needed_width || area.height == 0 {
+    if area.width < needed_width {
         return;
     }
     let x = area.x + area.width.saturating_sub(needed_width) / 2;
