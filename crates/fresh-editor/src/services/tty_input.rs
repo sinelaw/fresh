@@ -26,7 +26,7 @@
 use std::collections::VecDeque;
 use std::os::unix::io::{AsRawFd, BorrowedFd, RawFd};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use fresh_input_parser::{Event as InputEvent, InputParser};
 
@@ -228,45 +228,56 @@ fn read_one_byte(fd: RawFd) -> Option<u8> {
     (n == 1).then_some(b)
 }
 
-/// Consume the mouse report still in flight when the editor quits on a press.
+/// Consume mouse reports left in the terminal's input queue at teardown.
 ///
-/// A terminal reports a click as two sequences: the press when the button goes
-/// down, the release when it comes back up. Quitting from the menu bar acts on
-/// the *press*, so the editor tears the terminal down while the release is
-/// still unsent — it then arrives after raw mode is already off and lands at
-/// the shell prompt. bash binds `ESC <` to `beginning-of-history`, which
-/// swallows the report's `ESC[<` prefix and leaves the rest on the command
-/// line, e.g. `0;37;17m` (sinelaw/fresh#3474).
+/// Two different things end up there, and either reaches the shell as text if
+/// it is left behind:
 ///
-/// Call this at teardown *before* mouse reporting and raw mode are turned off —
-/// the release is only readable as a report while both are still on. It is
-/// deliberately narrow rather than a blanket drain of pending input: bytes are
-/// taken one at a time, and only while they continue a well-formed SGR
+/// * The **release** of the click the editor quit on. Quitting from the menu
+///   bar acts on the press, so the terminal is torn down while the release is
+///   still unsent; over a link with any latency the disable is in flight when
+///   the user lets go, so the release is sent anyway and arrives once raw mode
+///   is already off. bash binds `ESC <` to `beginning-of-history`, which
+///   swallows the report's `ESC[<` prefix and leaves the rest on the command
+///   line as e.g. `0;37;17m` (sinelaw/fresh#3474). This one has to be *waited*
+///   for: at teardown it has not been sent yet.
+/// * **Motion reports** the pointer produced during the shutdown window. Those
+///   are already queued, so they need no wait at all, only taking.
+///
+/// Call this at teardown *before* mouse reporting and raw mode are turned off:
+/// the bytes are only identifiable as reports while both are still on.
+pub fn drain_pending_mouse_report() {
+    let fd = std::io::stdin().as_raw_fd();
+    // A release is owed only while a button is still down. Otherwise there is
+    // nothing to wait for — but whatever is already queued is still ours.
+    let deadline = if mouse_button_down() {
+        Instant::now() + MOUSE_RELEASE_GRACE
+    } else {
+        Instant::now()
+    };
+    consume_mouse_reports(fd, deadline);
+}
+
+/// Take whole mouse reports off `fd` until the release lands, the queue runs
+/// dry, or `deadline` passes.
+///
+/// Deliberately narrow rather than a blanket flush of pending input (the shape
+/// of both the reporter's shell-wrapper workaround and of `tcflush`): bytes are
+/// taken one at a time and only while they continue a well-formed SGR
 /// (`ESC [ < params M|m`) or X10 (`ESC [ M b x y`) report, so it stops at the
 /// first byte that cannot belong to one instead of eating ahead into something
-/// the user meant for their shell. It returns as soon as one report is
-/// consumed; a press that is still pending is swallowed on the same grounds,
-/// since its own release can no longer be read either.
-///
-/// Returns immediately unless a button is actually still down, so a keyboard
-/// quit — which owes no release — costs nothing.
-pub fn drain_pending_mouse_report() {
-    use std::time::Instant;
-
-    // Nothing is owed: either no click, or its release already came through.
-    if !mouse_button_down() {
-        return;
-    }
-
-    // Bounds the work if a terminal streams something unexpected. It has to be
-    // generous rather than one report's worth: motion tracking is still on, so
-    // a pointer that drifts while the button is held puts a run of drag reports
-    // in front of the release. The grace is what really bounds this.
+/// the user typed for their shell. A `deadline` of now makes it a non-blocking
+/// sweep of what is already queued, since the poll below still runs once.
+fn consume_mouse_reports(fd: RawFd, mut deadline: Instant) {
+    // Backstop only — `deadline` is what really bounds this. It has to be far
+    // more than one report's worth: motion tracking is still on, so a pointer
+    // that drifts while the button is held puts a run of drag reports in front
+    // of the release.
     const MAX_BYTES: usize = 4096;
 
     #[derive(Clone, Copy)]
     enum St {
-        /// Nothing consumed yet; only an introducing `ESC` may be taken.
+        /// Between reports; only an introducing `ESC` may be taken.
         Esc,
         /// Seen `ESC`; expect `[`.
         Bracket,
@@ -278,15 +289,16 @@ pub fn drain_pending_mouse_report() {
         X10(u8),
     }
 
-    let fd = std::io::stdin().as_raw_fd();
-    let deadline = Instant::now() + MOUSE_RELEASE_GRACE;
     let mut st = St::Esc;
     // An X10 report's button byte, kept until its third byte closes the report.
     let mut x10_cb = 0u32;
 
     for _ in 0..MAX_BYTES {
+        // A zero remainder leaves this a non-blocking probe rather than a skip,
+        // which is what lets one deadline express both "wait for the release"
+        // and "take what is already here".
         let remaining = deadline.saturating_duration_since(Instant::now());
-        if remaining.is_zero() || !poll_readable(fd, remaining) {
+        if !poll_readable(fd, remaining) {
             return;
         }
         let Some(b) = read_one_byte(fd) else {
@@ -298,15 +310,16 @@ pub fn drain_pending_mouse_report() {
             (St::Kind, b'<') => St::Sgr,
             (St::Kind, b'M') => St::X10(0),
             (St::Sgr, b'0'..=b'9' | b';') => St::Sgr,
-            // `m` is the release — the report we came for, and the only one
-            // that ends the wait.
+            // `m` is the release — the report the wait exists for. Stop waiting,
+            // but keep sweeping whatever else is already queued behind it.
             (St::Sgr, b'm') => {
                 MOUSE_BUTTON_DOWN.store(false, Ordering::Relaxed);
-                return;
+                deadline = Instant::now();
+                St::Esc
             }
             // `M` is a press, a drag or a bare motion report. Stopping on one
-            // would leave the release behind it in the queue, which is the
-            // whole leak — so swallow it and keep waiting.
+            // would leave the release behind it in the queue, which is the very
+            // leak this exists to prevent — so swallow it and carry on.
             (St::Sgr, b'M') => St::Esc,
             // X10 spells the button out in the first of three payload bytes.
             (St::X10(0), _) => {
@@ -314,12 +327,12 @@ pub fn drain_pending_mouse_report() {
                 St::X10(1)
             }
             (St::X10(n), _) if n < 2 => St::X10(n + 1),
-            // The third byte closes the report; in X10 a release sets the low
-            // two bits of the button code.
+            // The third byte closes the report; in X10 a release is the low two
+            // bits of the button code rather than a terminator of its own.
             (St::X10(_), _) => {
                 if x10_cb & 3 == 3 {
                     MOUSE_BUTTON_DOWN.store(false, Ordering::Relaxed);
-                    return;
+                    deadline = Instant::now();
                 }
                 St::Esc
             }
