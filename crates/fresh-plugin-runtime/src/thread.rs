@@ -1409,7 +1409,9 @@ fn prepare_plugin(path: &Path) -> Result<PreparedPlugin> {
     // the plugin author wrote) so downstream plugins and init.ts
     // reach the plugin's public types without casts. Failures are
     // non-fatal — the plugin still runs.
-    let declarations = if filename.ends_with(".ts") {
+    // Only the oxc backend can emit declarations; without it (an esbuild
+    // build) plugins simply export no types.
+    let declarations = if filename.ends_with(".ts") && fresh_parser_js::CAN_EMIT_DECLARATIONS {
         match fresh_parser_js::emit_isolated_declarations(&source, filename) {
             Ok(dts) => Some(dts),
             Err(e) => {

@@ -21,7 +21,7 @@ By contributing, you agree that your contributions are licensed under GPL-3.0-or
 | `fresh-quickjs-sys` | Bindings to the system QuickJS (Debian's `libquickjs`) for `fresh-js`'s system backend |
 | `fresh-js-macros` | Proc-macros for `fresh-js`'s system backend |
 | `fresh-plugin-api-macros` | Proc-macros for the plugin API |
-| `fresh-parser-js` | JavaScript/TypeScript parser |
+| `fresh-parser-js` | TypeScript transpile/bundle for plugins (oxc, or an external `esbuild` without the `oxc` feature) |
 
 The `gui` feature on `fresh-editor` pulls in `fresh-gui` as an optional dependency.
 When it is disabled (the default), no windowing or GPU crates are compiled.

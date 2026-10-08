@@ -201,10 +201,73 @@ editor's end-to-end plugin tests on the system backend cover those paths.
 - **The rest of the editor's end-to-end suite** (beyond the plugin tests) runs
   only on the default backend in CI.
 
+## TypeScript without oxc: esbuild
+
+oxc (Fresh's in-process TypeScript toolchain, a few dozen crates) is not in
+Debian either. Debian does ship `esbuild` (a Go binary, `Depends: libc6`), so a
+Debian build drops oxc and runs esbuild instead:
+
+- `fresh-parser-js` has a cargo feature `oxc` (default, forwarded by
+  `fresh-plugin-runtime` and `fresh-editor`). Without it, the same five
+  functions (`transpile_typescript`, `bundle_module`,
+  `strip_imports_and_exports`, `syntax_errors`, `emit_isolated_declarations`)
+  run `esbuild` (`$FRESH_ESBUILD`, else `esbuild` on `PATH`).
+- Every plugin load goes through those functions, so they all take the esbuild
+  path: bundled plugins, user plugins, plugins and language packs installed by
+  the package manager (`pkg.ts` → `editor.loadPlugin` → the plugin thread's
+  loader), `init.ts`, and plugin scripts. `init.ts` syntax checks go through
+  `syntax_errors`, with esbuild's positions mapped to 1-based columns.
+- Results are cached under `$XDG_CACHE_HOME/fresh/esbuild` (else
+  `~/.cache/fresh/esbuild`), keyed on the source, Fresh's version and
+  esbuild's version; a bundle's entry records the content hash of every input
+  file esbuild read, so editing an imported file invalidates it. A cold
+  transform costs one esbuild process (a few milliseconds); a warm start runs
+  only `esbuild --version`, once per session.
+- Bundles use `--tree-shaking=false` so that functions a plugin registers by
+  name (and never references) survive, `--packages=external` for
+  `fresh:`-style imports, and the import/export lines esbuild leaves are
+  stripped so the result runs as a script, as with oxc.
+- `.d.ts` emit (`emit_isolated_declarations`) has no esbuild equivalent and
+  returns an error; the plugin runtime skips declaration emit when
+  `fresh_parser_js::CAN_EMIT_DECLARATIONS` is false, and the oxc-only
+  `api_docs`/`ts_export` modules (type generation for `fresh.d.ts`, a
+  development task) are compiled only with `oxc`.
+- If esbuild is missing, loading a TypeScript plugin fails with a message that
+  says to `apt install esbuild` or set `FRESH_ESBUILD`.
+
+The Debian CI job builds with `--no-default-features` (so no oxc) and runs the
+`fresh-parser-js` tests (including ones against the real esbuild), the plugin
+runtime's tests and the editor's plugin end-to-end tests that way.
+
 ## What remains for a Debian package
 
-Together with the rest of the Debian plan (ts-rs dev-only, oxc replaced by
-esbuild at build time, no tree-sitter, manifest version bumps), this leaves
-**no new Rust packages for Debian**: `fresh-editor` builds from what is already
-in the archive plus `libquickjs`, with `RUSTFLAGS="--cfg fresh_js_system"`. The
-package declares `Built-Using: quickjs` because it links QuickJS statically.
+With the system QuickJS, esbuild in place of oxc, and no tree-sitter, this
+leaves **no new JavaScript-engine or TypeScript Rust packages for Debian**:
+`fresh-editor` builds from what is in the archive plus `libquickjs` and
+`esbuild`. The remaining items are outside this work: aligning a few manifest
+versions with the archive (`which`, `jsonc-parser`, `nix`, `libloading`,
+`notify`), and making `ts-rs` a dev-dependency.
+
+A sketch of the packaging (not in the upstream `debian/` directory, which
+builds the upstream `.deb` with the default features):
+
+```
+Build-Depends: debhelper-compat (= 13), dh-cargo, cargo, rustc,
+ libquickjs, esbuild, libclang-dev, pkg-config,
+ librust-…-dev (the crates in Cargo.toml)
+Depends: ${shlibs:Depends}, ${misc:Depends}, esbuild
+Built-Using: ${cargo:Built-Using}, quickjs (= <version>)
+```
+
+```make
+export RUSTFLAGS += --cfg fresh_js_system
+export RUSTDOCFLAGS += --cfg fresh_js_system
+override_dh_auto_build:
+	cargo build --release -p fresh-editor --no-default-features \
+	    --features runtime,plugins,embed-plugins
+```
+
+`Built-Using: quickjs` is needed because QuickJS is linked statically
+(`libquickjs` ships only a static library). `esbuild` is a run-time
+dependency because plugins are TypeScript and are compiled when they load;
+it is needed at build time only for the tests.

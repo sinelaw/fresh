@@ -616,10 +616,6 @@ pub fn check(config_dir: &Path) -> CheckReport {
 
 #[cfg(feature = "plugins")]
 pub fn check(config_dir: &Path) -> CheckReport {
-    use oxc_allocator::Allocator;
-    use oxc_parser::Parser;
-    use oxc_span::SourceType;
-
     let path = init_ts_path(config_dir);
 
     let source = match std::fs::read_to_string(&path) {
@@ -645,47 +641,24 @@ pub fn check(config_dir: &Path) -> CheckReport {
         }
     };
 
-    let allocator = Allocator::default();
-    let source_type = SourceType::from_path(&path).unwrap_or_default();
-    let parser_ret = Parser::new(&allocator, &source, source_type).parse();
-
-    let mut diagnostics = Vec::new();
-    for err in &parser_ret.errors {
-        // oxc errors carry labels/spans but the formatting is embedded in
-        // the miette-style Display impl. Pull the primary message + try to
-        // recover line/column from the start of the first label.
-        let (line, column) = err
-            .labels
-            .as_ref()
-            .and_then(|v| v.first())
-            .map(|l| line_col(&source, l.offset()))
-            .unwrap_or((0, 0));
-        diagnostics.push(CheckDiagnostic {
+    // The same parser the runtime compiles init.ts with: oxc in-process, or
+    // the `esbuild` executable in builds without the `oxc` feature.
+    let filename = path.to_string_lossy();
+    let diagnostics: Vec<CheckDiagnostic> = fresh_parser_js::syntax_errors(&source, &filename)
+        .into_iter()
+        .map(|e| CheckDiagnostic {
             severity: CheckSeverity::Error,
-            message: err.message.to_string(),
-            line,
-            column,
-        });
-    }
+            message: e.message,
+            line: e.line,
+            column: e.column,
+        })
+        .collect();
 
     CheckReport {
-        ok: parser_ret.errors.is_empty(),
+        ok: diagnostics.is_empty(),
         diagnostics,
         path,
     }
-}
-
-/// Convert a byte offset into a (line, column) pair, 1-based, for display.
-#[cfg(feature = "plugins")]
-fn line_col(source: &str, offset: usize) -> (u32, u32) {
-    let clipped = source.get(..offset).unwrap_or(source);
-    let line = 1 + clipped.bytes().filter(|&b| b == b'\n').count();
-    let col = 1 + clipped
-        .rsplit('\n')
-        .next()
-        .map(|s| s.chars().count())
-        .unwrap_or(0);
-    (line as u32, col as u32)
 }
 
 #[cfg(test)]

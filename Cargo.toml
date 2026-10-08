@@ -68,9 +68,11 @@ fresh-core = { version = "0.5.2", path = "crates/fresh-core" }
 # and with them the whole bundled tree-sitter grammar set.
 fresh-editor-core = { version = "0.5.2", path = "crates/fresh-editor-core", default-features = false }
 fresh-gui = { version = "0.5.2", path = "crates/fresh-gui" }
-fresh-parser-js = { version = "0.5.2", path = "crates/fresh-parser-js" }
+# `default-features = false` on these two so a member can build them without
+# oxc (their `oxc` feature); members that want it enable it explicitly.
+fresh-parser-js = { version = "0.5.2", path = "crates/fresh-parser-js", default-features = false }
 fresh-languages = { version = "0.5.2", path = "crates/fresh-languages" }
-fresh-plugin-runtime = { version = "0.5.2", path = "crates/fresh-plugin-runtime" }
+fresh-plugin-runtime = { version = "0.5.2", path = "crates/fresh-plugin-runtime", default-features = false }
 fresh-plugin-api-macros = { version = "0.5.2", path = "crates/fresh-plugin-api-macros" }
 fresh-winterm = { version = "0.5.2", path = "crates/fresh-winterm" }
 fresh-input-parser = { version = "0.5.2", path = "crates/fresh-input-parser" }

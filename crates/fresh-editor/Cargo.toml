@@ -63,15 +63,16 @@ path = "tests/scene_parity.rs"
 required-features = ["web"]
 
 [features]
-default = ["plugins", "runtime", "embed-plugins", "tree-sitter", "http", "self-update"]
+default = ["plugins", "runtime", "embed-plugins", "tree-sitter", "http", "self-update", "oxc"]
 plugins = [
     "dep:fresh-plugin-runtime",
     "dep:fresh-parser-js",
-    # oxc parses init.ts, which only the plugin runtime can execute.
-    "dep:oxc_allocator",
-    "dep:oxc_parser",
-    "dep:oxc_span",
 ]
+# Compile plugin TypeScript (bundled plugins, user and package-manager plugins,
+# init.ts, scripts) in-process with oxc. Without it, the same code runs the
+# `esbuild` executable instead — what a Debian build does, since esbuild is a
+# Debian package and oxc's crates are not.
+oxc = ["fresh-plugin-runtime?/oxc", "fresh-parser-js?/oxc"]
 # Tree-sitter AST features (precise indent, scope-aware reference highlighting,
 # and tree-sitter syntax highlighting for the languages syntect can't cover).
 # Enabled by default, but only bundles the grammars that *must* use tree-sitter
@@ -193,14 +194,6 @@ fresh-plugin-runtime = { workspace = true, optional = true }
 # Terminal input (VT/ANSI) parser — turns the raw client byte stream into
 # crossterm events. Pulled in wherever crossterm is (runtime / wasm).
 fresh-input-parser = { workspace = true, optional = true }
-
-# oxc syntax-checks the user's `init.ts` (`fresh --cmd init check` and the
-# pre-load check). `init.ts` is config-as-code executed by the QuickJS plugin
-# runtime, so it is only meaningful when `plugins` is enabled — these deps are
-# pulled in by that feature and dropped from plugin-less builds.
-oxc_allocator = { workspace = true, optional = true }
-oxc_parser = { workspace = true, optional = true }
-oxc_span = { workspace = true, optional = true }
 
 # Always required (for schema generation and runtime)
 serde.workspace = true
