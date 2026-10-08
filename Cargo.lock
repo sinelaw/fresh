@@ -1566,8 +1566,21 @@ dependencies = [
 name = "fresh-js"
 version = "0.5.2"
 dependencies = [
+ "fresh-js-macros",
+ "fresh-quickjs-sys",
  "rquickjs",
  "rquickjs-serde",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "fresh-js-macros"
+version = "0.5.2"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
 ]
 
 [[package]]

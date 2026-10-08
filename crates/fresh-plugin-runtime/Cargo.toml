@@ -9,12 +9,8 @@ homepage.workspace = true
 description = "JavaScript plugin runtime for Fresh editor"
 
 [dependencies]
-# The JS engine. Code reaches it through `fresh-js`, macros included; the
-# direct `rquickjs` dependency is only there because rquickjs's proc macros
-# (re-exported as `fresh_js::{class, methods}` and the `Trace`/`JsLifetime`
-# derives) find rquickjs through the manifest of the crate that invokes them.
+# The JS engine. Code reaches it through `fresh-js`, macros included.
 fresh-js.workspace = true
-rquickjs.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 jsonc-parser.workspace = true
@@ -32,6 +28,13 @@ oxc_parser.workspace = true
 oxc_codegen.workspace = true
 oxc_span.workspace = true
 oxc_diagnostics.workspace = true
+
+# With the default (rquickjs) backend, rquickjs's proc macros (re-exported as
+# `fresh_js::{class, methods}` and the `Trace`/`JsLifetime` derives) find
+# rquickjs through the manifest of the crate that invokes them, so it is listed
+# here for them alone. The system backend brings its own macros.
+[target.'cfg(not(fresh_js_system))'.dependencies]
+rquickjs.workspace = true
 
 [lints]
 workspace = true

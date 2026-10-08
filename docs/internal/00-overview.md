@@ -17,7 +17,9 @@ The workspace declares 8 members. `fresh-gui` is a member but **not** in `defaul
 | `fresh-parser-js` | JS/TS transpile, bundle, `.d.ts` emit (oxc toolchain) | — (leaf) |
 | `fresh-languages` | tree-sitter grammars + `Language`/`HighlightCategory` enums | — (leaf) |
 | `fresh-plugin-runtime` | QuickJS (rquickjs) plugin host on a dedicated thread | core (feature `plugins`), js, parser-js, plugin-api-macros |
-| `fresh-js` | The JS engine boundary: the only crate that names the engine (re-exports of rquickjs today) | — (leaf) |
+| `fresh-js` | The JS engine boundary: the only crate that names the engine. rquickjs re-exports by default; with `--cfg fresh_js_system`, Fresh's own backend over the system QuickJS | quickjs-sys, js-macros (system backend only) |
+| `fresh-quickjs-sys` | bindgen bindings + C shim over the system QuickJS (Debian's `libquickjs`); empty unless `--cfg fresh_js_system` | — (leaf) |
+| `fresh-js-macros` | proc-macros: `#[class]`/`#[methods]` and the `Trace`/`JsLifetime` derives for the system backend | — (leaf, proc-macro) |
 | `fresh-plugin-api-macros` | proc-macro: Rust API impl → TypeScript `.d.ts` | — (leaf, proc-macro) |
 | `fresh-gui` | winit + wgpu native window backend (`publish = false`) | core |
 | `fresh-winterm` | Windows console VT input + relay; empty crate off-Windows | — (leaf) |

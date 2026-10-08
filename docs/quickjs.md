@@ -30,7 +30,7 @@ Fresh uses QuickJS for its JavaScript plugin runtime (with oxc_transformer for T
 
 The plugin API is exposed via `JsEditorApi` using rquickjs class bindings with automatic camelCase conversion.
 
-The rest of Fresh reaches rquickjs through `crates/fresh-js`, which re-exports the engine items Fresh uses (as `fresh_js::Ctx`, `fresh_js::function::Opt`, `fresh_js::serde::to_value`, …). That keeps the engine swappable; see `docs/internal/debian-quickjs-spike.md`. The class/methods attributes go through it too (`#[fresh_js::class]`, `#[fresh_js::methods]`), but rquickjs's macros find rquickjs through the calling crate's manifest, so `fresh-plugin-runtime` still lists rquickjs as a direct dependency for them.
+The rest of Fresh reaches rquickjs through `crates/fresh-js`, which re-exports the engine items Fresh uses (as `fresh_js::Ctx`, `fresh_js::function::Opt`, `fresh_js::serde::to_value`, …). That keeps the engine swappable: building with `RUSTFLAGS="--cfg fresh_js_system"` switches `fresh-js` to Fresh's own backend over the system QuickJS (Debian's `libquickjs`); see `docs/internal/debian-quickjs-spike.md`. The class/methods attributes go through it too (`#[fresh_js::class]`, `#[fresh_js::methods]`), but rquickjs's macros find rquickjs through the calling crate's manifest, so `fresh-plugin-runtime` still lists rquickjs as a direct dependency for them.
 
 **Key patterns:**
 - `#[fresh_js::class]` - Expose struct to JS

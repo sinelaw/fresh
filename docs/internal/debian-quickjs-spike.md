@@ -1,29 +1,91 @@
-# Spike: plugins on Debian's system QuickJS
+# Plugins on Debian's system QuickJS
 
 > _AI-generated: describes Fresh's architecture and design rationale, not implementation details; where it disagrees with the source, the source is authoritative._
 
-**Status: SPIKE.** Nothing here ships. The measurements are from the spike as it
-was run (Debian testing's `libquickjs` 2025.04.26, amd64), not live figures.
+**Status: IMPLEMENTED (second backend), not the default.** Fresh's plugin
+runtime builds on either rquickjs (the default) or the system QuickJS that
+Debian ships, chosen at build time. Measurements below are from Debian
+testing's `libquickjs` 2025.04.26 on amd64.
 
 **Question.** For a Debian package of Fresh, rquickjs is the blocker. It is not
 in Debian, and it bundles quickjs-ng, while Debian ships Bellard's QuickJS
-(`libquickjs`, 2025.04.26). Can Fresh bind its own crate to the system QuickJS,
-and do the plugins still work on that engine?
+(`libquickjs`, 2025.04.26). Can Fresh run its plugins on the system QuickJS?
 
-**Answer so far: yes, on amd64.** The binding builds and links against Debian's
-library. It covers what the plugin runtime needs from rquickjs. Every bundled
-plugin behaves the same on both engines under the harness below. The open work
-is the port itself: moving `fresh-plugin-runtime` off rquickjs onto the
-binding.
+**Answer: yes, on amd64.** `crates/fresh-js` is the one crate that names the JS
+engine, and it has two backends:
 
-Everything lives in [`spikes/debian-quickjs/`](../../spikes/debian-quickjs), a
-separate Cargo workspace. It needs `libquickjs` to build, so it stays out of the
-main workspace and out of CI for now. To rerun everything from a clean checkout
-(it fetches Debian's `.deb` if `libquickjs` isn't installed):
+- **rquickjs** (default): plain re-exports of rquickjs.
+- **system** (`RUSTFLAGS="--cfg fresh_js_system"`): Fresh's own implementation
+  of the same names over Debian's `libquickjs`, through `crates/fresh-quickjs-sys`
+  and the proc macros in `crates/fresh-js-macros`.
+
+The plugin runtime builds unchanged on either. Its test suite and the editor's
+plugin end-to-end tests pass on the system backend, and a CI job runs them in a
+`debian:testing` container with `apt install libquickjs`.
+
+To build and test against the system QuickJS locally (with `libquickjs`
+installed, or with `QUICKJS_INCLUDE_DIR`/`QUICKJS_LIB_DIR` pointing at an
+unpacked `.deb`):
 
 ```sh
-spikes/debian-quickjs/run-compat.sh
+RUSTFLAGS="--cfg fresh_js_system" cargo test -p fresh-js -p fresh-plugin-runtime
 ```
+
+The backend is a cfg rather than a cargo feature on purpose: CI builds with
+`--all-features` on Linux, macOS and Windows, and a feature would make every one
+of those jobs need `libquickjs`. The cfg is declared to `check-cfg` in the
+workspace lints.
+
+The investigation that led here (the engine comparison and plugin harness)
+lives in [`spikes/debian-quickjs/`](../../spikes/debian-quickjs), a separate
+Cargo workspace; `spikes/debian-quickjs/run-compat.sh` reruns it.
+
+## The system backend
+
+`fresh-js`'s export list is the contract: the types `Runtime`, `Context`,
+`Ctx`, `Value`, `Object`, `Array`, `String`, `Function`, `Persistent`, `Class`,
+`Type`, `Error`, `Result`; the traits `FromJs`, `IntoJs`, `JsLifetime` and
+`class::Trace`; `function::{Opt, Rest}`, `context::EvalOptions`,
+`serde::{from_value, to_value}`; and the `#[class]`/`#[methods]` attributes and
+`Trace`/`JsLifetime` derives. The system backend provides exactly those, with
+rquickjs's signatures, for the parts Fresh calls. Code outside `fresh-js` names
+nothing else, so it compiles against either backend.
+
+What it copies from rquickjs, because Fresh depends on it:
+
+- **Memory model.** A `Ctx<'js>` holds one reference to its `JSContext`, a
+  `Value<'js>` holds one reference to its `JSValue` plus a `Ctx`, and the `'js`
+  lifetime keeps values from escaping the `Context::with` that produced them. A
+  `Persistent` holds a reference against the runtime and must be dropped before
+  it, as with rquickjs.
+- **Conversion rules and messages.** Which JS types each Rust type accepts,
+  numeric range checks ("Underflow"/"Overflow"), `Option` from
+  `undefined`/`null`, and the error text plugins and tests match on, such as
+  `Error converting from js 'undefined' into type 'string'`. Conversion errors
+  raised in a native call surface in JS as `TypeError`s, as with rquickjs.
+- **Native-call parameters.** A required parameter missing from the call is an
+  error; `Opt<T>` is `None` only when the caller passed fewer arguments; `Rest<T>`
+  takes the remainder; a `Ctx` parameter is injected.
+- **`#[methods]`.** Every method not marked `#[qjs(skip)]` is exported (private
+  ones too), under its camelCase name or `#[qjs(rename)]`.
+- **Strict mode.** `eval` is a strict global script by default.
+- **Panics.** A panic in a native call is caught at the FFI boundary, carried
+  through JS as an exception and resumed once control is back in Rust.
+
+Where it differs:
+
+- **serde goes through JSON** (`JSON.stringify`/`JSON.parse` plus `serde_json`)
+  instead of walking values. For the plain data the plugin API exchanges, the
+  result is the same; `NaN`, BigInts and lone surrogates are where it is not.
+- **Bellard-only shapes are handled.** Long concatenations come back as rope
+  strings (`JS_TAG_STRING_ROPE`), which read as ordinary strings.
+
+Each test frees its runtime at the end, and Debian's `libquickjs` keeps
+QuickJS's teardown assertion (`JS_FreeRuntime: Assertion
+'list_empty(&rt->gc_obj_list)'`), so a reference leak in the backend aborts the
+test run. That assertion caught one while the backend was being written (a
+handle that leaked its context reference when its value was handed to the
+engine).
 
 ## Why not just point rquickjs at Debian's library
 
@@ -41,7 +103,12 @@ that compile and then break at runtime:
 - Bellard's engine has a rope-string tag (`JS_TAG_STRING_ROPE = -6`) that
   rquickjs does not know.
 
-## What was built
+## The spike
+
+The spike that preceded the backend built a smaller wrapper and ran every
+bundled plugin on both engines. Its results still stand.
+
+### What was built
 
 | Piece | What it does |
 | --- | --- |
@@ -60,8 +127,6 @@ Debian specifics handled by `build.rs`:
 
 `bindgen` 0.72 and `cc` 1.2 are both in Debian testing.
 
-## Results
-
 ### Engine tests (`fresh-quickjs/tests/engine.rs`): 16/16 pass
 
 The tests cover:
@@ -78,9 +143,12 @@ The tests cover:
   native closures freed with the runtime.
 
 Debian's `libquickjs` keeps QuickJS's own teardown assertion
-(`JS_FreeRuntime: Assertion 'list_empty(&rt->gc_obj_list)'`). I checked that it
-fires on a deliberately leaked reference. So a refcount bug in the wrapper would
-abort the test run instead of passing quietly.
+(`JS_FreeRuntime: Assertion 'list_empty(&rt->gc_obj_list)'`), which fires on a
+deliberately leaked reference. A correction: as first written, the spike's
+wrapper leaked the context handle of every value it handed to the engine, so
+its runtimes were never freed and the assertion never ran for those tests. The
+same mistake in the system backend was caught by that assertion; the spike's
+wrapper now has the fix too, and its 16 tests still pass with real teardown.
 
 ### Bundled plugins on both engines: no differences
 
@@ -115,61 +183,23 @@ positive. For example, the `Iterator` hits are Rust code inside a string in
 User plugins and `init.ts` are type-checked against `lib: ["ES2020"]`
 (`init_script.rs`), so TypeScript already flags those built-ins for authors.
 
-## What this does not show
+The harness only reaches plugin entry points: the stub never answers host
+promises, so code after a handler's first `await` on the host never ran. The
+editor's end-to-end plugin tests on the system backend cover those paths.
 
-- **Only plugin entry points are exercised.** The stub never answers host
-  promises, so code after the first `await` on the host (the 50 waiting handlers)
-  never runs on either engine. The full end-to-end suite has to run on the
-  ported runtime to cover those paths.
-- **Only amd64 was tested.** The shim is meant to make 32-bit (NaN-boxed) targets
-  work, but nothing has run there yet.
-- **rquickjs's lifetime-branded API is not reproduced.** Values here are
-  refcounted handles that keep their context alive. That is simpler and safe. The
-  catch: a native closure that captures a `Value` forms a cycle through the JS
-  heap and leaks the runtime. The real port needs a rule or a weak handle type
-  for that.
-- **`bundled` mode** (compiling a vendored QuickJS for non-Debian builds) is not
-  in the spike.
+## What is not covered
 
-## What the port would take
+- **Only amd64 has run.** The shim is meant to make the 32-bit (NaN-boxed)
+  targets work, but nothing has run there yet.
+- **No `bundled` mode.** Upstream builds stay on rquickjs; there is no option to
+  compile a vendored Bellard QuickJS for non-Debian builds.
+- **The rest of the editor's end-to-end suite** (beyond the plugin tests) runs
+  only on the default backend in CI.
 
-**Engine boundary (done).** `crates/fresh-js` is now the one crate that names
-the JS engine. `fresh-core` and `fresh-plugin-runtime` reach rquickjs only
-through it. Today every item in it is a plain re-export of rquickjs, so it
-changes no behaviour. Its explicit export list is the contract a second
-backend has to meet:
-- the types `Runtime`, `Context`, `Ctx`, `Value`, `Object`, `Array`, `String`,
-  `Function`, `Persistent`, `Class`, `Type`, `Error`, `Result`;
-- the traits `FromJs`, `IntoJs`, `JsLifetime` and `class::Trace`;
-- `function::{Opt, Rest}` and `context::EvalOptions`;
-- `serde::{from_value, to_value}`.
-
-rquickjs's proc macros (`#[class]`, `#[methods]`, `#[derive(Trace,
-JsLifetime)]`) cannot go through the boundary: they find rquickjs by reading
-the calling crate's manifest. So the plugin runtime keeps a direct rquickjs
-dependency for those four attributes alone.
-
-**Remaining:**
-1. Add an `engine-system` backend to `fresh-js` that provides the same names
-   over the spike's binding:
-   - `'js` lifetimes become marker types only, and values are reference-counted
-     handles;
-   - `Opt`/`Rest` and the `FromJs`/`IntoJs` conversions are implemented for the
-     types Fresh uses;
-   - `serde::{from_value, to_value}` becomes the JSON bridge above.
-
-   The two backends are mutually exclusive features.
-2. Have `fresh-plugin-api-macros` generate the method glue. It already parses the
-   `#[qjs(rename)]` methods. That replaces the four rquickjs attributes and drops
-   the runtime's direct rquickjs dependency.
-3. Add a `bundled` feature that vendors the same Bellard release, so upstream
-   builds and CI run the engine Debian ships. Debian's source package then
-   excludes the vendored copy.
-4. Build and test both backends in CI, with the end-to-end suite on the system
-   engine.
+## What remains for a Debian package
 
 Together with the rest of the Debian plan (ts-rs dev-only, oxc replaced by
 esbuild at build time, no tree-sitter, manifest version bumps), this leaves
 **no new Rust packages for Debian**: `fresh-editor` builds from what is already
-in the archive plus `libquickjs`. The package declares `Built-Using: quickjs`
-because it links QuickJS statically.
+in the archive plus `libquickjs`, with `RUSTFLAGS="--cfg fresh_js_system"`. The
+package declares `Built-Using: quickjs` because it links QuickJS statically.

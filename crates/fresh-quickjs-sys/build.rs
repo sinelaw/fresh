@@ -60,7 +60,7 @@ fn main() {
         .header("wrapper.h")
         .clang_arg(format!("-I{}", include_dir.display()))
         .clang_arg("-I.")
-        .allowlist_function("JS_.*|__JS_.*|fqjs_.*")
+        .allowlist_function("JS_.*|__JS_.*|fqjs_.*|js_free")
         .allowlist_type("JS.*")
         .allowlist_var("JS_.*")
         // Static-inline functions have no symbol in libquickjs.a; the shim
