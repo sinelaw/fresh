@@ -1,0 +1,155 @@
+Source: fresh-editor
+Section: editors
+Priority: optional
+Maintainer: Noam Lewis <i9uqoqj7k@mozmail.com>
+# The librust-*-dev entries are generated:
+#   scripts/debian.py packages --control Packages.xz
+# (Debian testing's index), which lists every crate dependency of every
+# workspace crate that the archive can satisfy; debian/rules drops the rest
+# (oxc, ts-rs, three tree-sitter grammars, fresh-gui) from the manifests.
+Build-Depends:
+ debhelper-compat (= 13),
+ dh-cargo (>= 34),
+ cargo:native (>= 1.95),
+ rustc:native (>= 1.95),
+ python3:native,
+ python3-tomlkit,
+ libclang-dev,
+ libquickjs,
+ pkgconf,
+ esbuild <!nocheck>,
+ librust-alacritty-terminal-0.26+default-dev (>= 0.26-~~),
+ librust-anyhow-1-dev (>= 1.0.100-~~),
+ librust-arboard-3+wayland-data-control-dev (>= 3.6-~~),
+ librust-async-trait-0.1+default-dev (>= 0.1-~~),
+ librust-base64-0.22+default-dev (>= 0.22-~~),
+ librust-bindgen-0.72+runtime-dev (>= 0.72-~~),
+ librust-cc-1+default-dev (>= 1.2-~~),
+ librust-chardetng-0.1+default-dev (>= 0.1-~~),
+ librust-chrono-0.4+clock-dev (>= 0.4-~~),
+ librust-chrono-0.4+std-dev (>= 0.4-~~),
+ librust-clap-4+derive-dev (>= 4.5-~~),
+ librust-clap-4+error-context-dev (>= 4.5-~~),
+ librust-clap-4+help-dev (>= 4.5-~~),
+ librust-clap-4+std-dev (>= 4.5-~~),
+ librust-clap-4+usage-dev (>= 4.5-~~),
+ librust-crossterm-0.29+default-dev (>= 0.29-~~),
+ librust-crossterm-0.29+osc52-dev (>= 0.29.0-~~),
+ librust-ctor-1+default-dev <!nocheck>,
+ librust-dirs-6+default-dev (>= 6.0-~~),
+ librust-encoding-rs-0.8+default-dev (>= 0.8-~~),
+ librust-flate2-1+default-dev (>= 1-~~),
+ librust-ignore-0.4-dev (>= 0.4-~~),
+ librust-include-dir-0.7+default-dev (>= 0.7-~~),
+ librust-insta-1+default-dev (>= 1.46-~~) <!nocheck>,
+ librust-insta-1+yaml-dev (>= 1.46-~~) <!nocheck>,
+ librust-interprocess-2+default-dev (>= 2.2-~~),
+ librust-interprocess-2+tokio-dev (>= 2.2-~~),
+ librust-jsonc-parser-0.33+cst-dev (>= 0.33-~~),
+ librust-jsonc-parser-0.33+default-dev (>= 0.33-~~),
+ librust-jsonc-parser-0.33+serde-dev (>= 0.33-~~),
+ librust-jsonc-parser-0.33+serde-json-dev (>= 0.33-~~),
+ librust-libc-0.2+default-dev (>= 0.2-~~),
+ librust-libloading-0.8+default-dev (>= 0.8-~~),
+ librust-lsp-types-0.97+default-dev (>= 0.97-~~),
+ librust-nix-0.30+default-dev (>= 0.30-~~),
+ librust-nix-0.30+fs-dev (>= 0.30-~~),
+ librust-nix-0.30+poll-dev (>= 0.30-~~),
+ librust-nix-0.30+pthread-dev (>= 0.30-~~),
+ librust-nix-0.30+resource-dev (>= 0.30-~~),
+ librust-nix-0.30+signal-dev (>= 0.30-~~),
+ librust-notify-8-dev (>= 8.2-~~),
+ librust-once-cell-1+default-dev (>= 1.20-~~),
+ librust-open-5+default-dev (>= 5.3-~~),
+ librust-portable-pty-0.9+default-dev (>= 0.9-~~),
+ librust-proc-macro2-1+default-dev (>= 1.0-~~),
+ librust-proptest-1+default-dev (>= 1.9-~~) <!nocheck>,
+ librust-pulldown-cmark-0.13-dev (>= 0.13-~~),
+ librust-quote-1+default-dev (>= 1.0-~~),
+ librust-ratatui-0.30+std-dev (>= 0.30.0-~~),
+ librust-ratatui-0.30+underline-color-dev (>= 0.30.0-~~),
+ librust-regex-1+default-dev (>= 1.12-~~),
+ librust-schemars-1+default-dev (>= 1.2-~~),
+ librust-schemars-1+preserve-order-dev (>= 1.2-~~),
+ librust-serde-1+default-dev (>= 1.0-~~),
+ librust-serde-1+derive-dev (>= 1.0-~~),
+ librust-serde-1+rc-dev (>= 1.0-~~),
+ librust-serde-json-1+default-dev (>= 1.0-~~),
+ librust-sha1-0.11+default-dev (>= 0.11-~~),
+ librust-sha2-0.10+default-dev (>= 0.10-~~),
+ librust-syn-2+default-dev (>= 2.0-~~),
+ librust-syn-2+extra-traits-dev (>= 2.0-~~),
+ librust-syn-2+full-dev (>= 2.0-~~),
+ librust-syn-2+parsing-dev (>= 2.0-~~),
+ librust-syn-2+visit-mut-dev (>= 2.0-~~),
+ librust-syntect-5+default-syntaxes-dev (>= 5.3-~~),
+ librust-syntect-5+dump-create-dev (>= 5.3-~~),
+ librust-syntect-5+dump-load-dev (>= 5.3-~~),
+ librust-syntect-5+parsing-dev (>= 5.3-~~),
+ librust-syntect-5+regex-onig-dev (>= 5.3-~~),
+ librust-syntect-5+yaml-load-dev (>= 5.3-~~),
+ librust-syntect-5-dev (>= 5.3-~~),
+ librust-tar-0.4+default-dev (>= 0.4-~~),
+ librust-tempfile-3+default-dev (>= 3.25-~~),
+ librust-thiserror-2+default-dev (>= 2.0-~~),
+ librust-tiny-http-0.12+default-dev (>= 0.12-~~) <!nocheck>,
+ librust-tokio-1+default-dev (>= 1.49-~~),
+ librust-tokio-1+fs-dev (>= 1.49-~~),
+ librust-tokio-1+io-util-dev (>= 1.49-~~),
+ librust-tokio-1+macros-dev (>= 1.49-~~),
+ librust-tokio-1+process-dev (>= 1.49-~~),
+ librust-tokio-1+rt-dev (>= 1.49-~~),
+ librust-tokio-1+rt-multi-thread-dev (>= 1.49-~~),
+ librust-tokio-1+sync-dev (>= 1.49-~~),
+ librust-tokio-1+time-dev (>= 1.49-~~),
+ librust-toml-0.8+default-dev (>= 0.8-~~),
+ librust-tracing-0.1+default-dev (>= 0.1-~~),
+ librust-tracing-subscriber-0.3+default-dev (>= 0.3-~~),
+ librust-tracing-subscriber-0.3+env-filter-dev (>= 0.3-~~),
+ librust-trash-5+default-dev (>= 5.2.5-~~),
+ librust-tree-sitter-0.26+default-dev (>= 0.26.5-~~),
+ librust-tree-sitter-go-0.25+default-dev (>= 0.25.0-~~),
+ librust-tree-sitter-highlight-0.26+default-dev (>= 0.26.3-~~),
+ librust-tree-sitter-json-0.24+default-dev (>= 0.24.8-~~),
+ librust-unicode-linebreak-0.1+default-dev (>= 0.1-~~),
+ librust-unicode-segmentation-1+default-dev (>= 1.12-~~),
+ librust-unicode-width-0.2+default-dev (>= 0.2-~~),
+ librust-ureq-3+platform-verifier-dev (>= 3.1.4-~~),
+ librust-ureq-3+rustls-dev (>= 3.1.4-~~),
+ librust-uuid-1+default-dev (>= 1-~~),
+ librust-uuid-1+v4-dev (>= 1-~~),
+ librust-vt100-0.16+default-dev (>= 0.16-~~),
+ librust-vte-0.15+default-dev (>= 0.15-~~),
+ librust-which-8+default-dev (>= 8-~~),
+ librust-xattr-1+default-dev (>= 1.6-~~),
+ librust-xz2-0.1+default-dev (>= 0.1-~~),
+Standards-Version: 4.7.2
+Homepage: https://sinelaw.github.io/fresh/
+Vcs-Browser: https://github.com/sinelaw/fresh
+Vcs-Git: https://github.com/sinelaw/fresh.git
+Rules-Requires-Root: no
+
+Package: fresh-editor
+Architecture: any
+Depends:
+ ${shlibs:Depends},
+ ${misc:Depends},
+ esbuild,
+Recommends:
+ git,
+Built-Using: ${cargo:Built-Using}
+Static-Built-Using: ${cargo:Static-Built-Using}
+Description: terminal text editor with LSP support and TypeScript plugins
+ Fresh is a fast terminal-based text editor with mouse support, multiple
+ cursors, splits, a command palette, a file explorer, an integrated terminal
+ and Language Server Protocol support (completion, diagnostics,
+ go-to-definition and more).
+ .
+ It is extended with plugins written in TypeScript, which run in an embedded
+ QuickJS engine. Plugins, including the bundled ones, are compiled with
+ esbuild when they are loaded and cached; a package manager installs more
+ from git repositories.
+ .
+ This build uses Debian's QuickJS and esbuild, and leaves out the network
+ features (update checks, telemetry, self-update) and the tree-sitter
+ grammars for JavaScript, TypeScript and Templ.

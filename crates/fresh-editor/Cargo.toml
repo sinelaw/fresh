@@ -309,7 +309,7 @@ proptest = "1.9"
 tempfile = "3.25"
 insta = { version = "1.46", features = ["yaml"] }
 vt100 = "0.16"  # Virtual terminal emulator for testing real ANSI output
-ctor = "0.6.3"
+ctor = ">=0.6.3, <2"  # 1.x is what Debian ships
 tiny_http = "0.12"  # Lightweight HTTP server for testing release checker
 unicode-segmentation = "1.12"  # For grapheme cluster testing
 

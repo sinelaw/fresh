@@ -2,9 +2,11 @@
 
 use anyhow::Result as AnyhowResult;
 
-// Common initialization (non-plugin related)
+// Common initialization (non-plugin related). An `unsafe fn` is the form both
+// ctor 0.6 and 1.x (which Debian ships) accept: 1.x requires the ctor to be
+// marked unsafe, and 0.6 rejects its `#[ctor(unsafe)]` spelling.
 #[ctor::ctor]
-fn init_test_environment() {
+unsafe fn init_test_environment() {
     // Force Linux-style keybindings (Ctrl/Alt/Shift instead of ⌘/⌥/⇧)
     // to ensure consistent visual test output across platforms
     fresh::input::keybindings::set_force_linux_keybindings(true);
