@@ -22,5 +22,5 @@ mod ffi;
 mod types;
 
 pub use client::GpmClient;
-pub use convert::gpm_to_crossterm;
+pub use convert::{gpm_to_crossterm, mouse_to_sgr};
 pub use types::{GpmButtons, GpmEvent, GpmEventType, GpmModifiers};

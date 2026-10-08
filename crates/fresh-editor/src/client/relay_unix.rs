@@ -34,6 +34,22 @@ pub fn relay_loop(
     let mut ctrl_buf: Vec<u8> = Vec::new();
     let mut ctrl_read = [0u8; 4096];
 
+    // On a Linux VT the mouse reaches us over GPM's socket, not stdin, so it
+    // has to be read here and forwarded like the keyboard — the server has
+    // no terminal of its own to ask (#3517). `None` everywhere else.
+    #[cfg(target_os = "linux")]
+    let gpm = match crate::services::gpm::GpmClient::connect() {
+        Ok(gpm) => gpm,
+        Err(e) => {
+            tracing::warn!("Failed to connect to GPM: {}", e);
+            None
+        }
+    };
+    #[cfg(target_os = "linux")]
+    if gpm.is_some() {
+        tracing::info!("Forwarding the GPM mouse to the server");
+    }
+
     loop {
         // Check for resize
         if resize_flag.swap(false, Ordering::SeqCst) {
@@ -52,11 +68,19 @@ pub fn relay_loop(
         let stdin_borrowed = unsafe { BorrowedFd::borrow_raw(stdin_fd) };
         let data_borrowed = unsafe { BorrowedFd::borrow_raw(data_fd) };
         let ctrl_borrowed = unsafe { BorrowedFd::borrow_raw(ctrl_fd) };
-        let mut fds = [
+        // A `Vec` for the GPM fd that only Linux pushes.
+        #[cfg_attr(not(target_os = "linux"), allow(clippy::useless_vec))]
+        let mut fds = vec![
             PollFd::new(stdin_borrowed, PollFlags::POLLIN),
             PollFd::new(data_borrowed, PollFlags::POLLIN),
             PollFd::new(ctrl_borrowed, PollFlags::POLLIN),
         ];
+        #[cfg(target_os = "linux")]
+        if let Some(gpm) = &gpm {
+            // SAFETY: the GPM connection outlives this scope.
+            let gpm_borrowed = unsafe { BorrowedFd::borrow_raw(gpm.fd()) };
+            fds.push(PollFd::new(gpm_borrowed, PollFlags::POLLIN));
+        }
 
         match poll(&mut fds, nix::poll::PollTimeout::from(100u8)) {
             // 100ms timeout for resize check
@@ -88,6 +112,16 @@ pub fn relay_loop(
                 }
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => {}
                 Err(e) => return Err(e),
+            }
+        }
+
+        #[cfg(target_os = "linux")]
+        if let Some(gpm) = &gpm {
+            if fds[3]
+                .revents()
+                .is_some_and(|r| r.contains(PollFlags::POLLIN))
+            {
+                forward_gpm_events(gpm, conn)?;
             }
         }
 
@@ -179,6 +213,45 @@ pub fn relay_loop(
             return Ok(ClientExitReason::ServerQuit);
         }
     }
+}
+
+/// Send the server every report GPM has ready, as the SGR mouse reports a
+/// terminal would have written to stdin.
+///
+/// `read_event` blocks when nothing is pending, so the fd is re-polled with
+/// a zero timeout before each further read.
+#[cfg(target_os = "linux")]
+fn forward_gpm_events(
+    gpm: &crate::services::gpm::GpmClient,
+    conn: &mut ClientConnection,
+) -> io::Result<()> {
+    use crate::services::gpm::{gpm_to_crossterm, mouse_to_sgr};
+
+    let mut reports = Vec::new();
+    loop {
+        match gpm.read_event() {
+            Ok(Some(event)) => {
+                if let Some(mouse) = gpm_to_crossterm(&event) {
+                    reports.extend_from_slice(&mouse_to_sgr(&mouse));
+                }
+            }
+            Ok(None) => break,
+            Err(e) => {
+                tracing::warn!("GPM: read_event error: {}", e);
+                break;
+            }
+        }
+        // SAFETY: the GPM connection outlives this scope.
+        let fd = unsafe { BorrowedFd::borrow_raw(gpm.fd()) };
+        let mut again = [PollFd::new(fd, PollFlags::POLLIN)];
+        if poll(&mut again, nix::poll::PollTimeout::from(0u16)).unwrap_or(0) == 0 {
+            break;
+        }
+    }
+    if !reports.is_empty() {
+        conn.write_data(&reports)?;
+    }
+    Ok(())
 }
 
 /// Suspend the client with SIGTSTP and restore its terminal on resume.

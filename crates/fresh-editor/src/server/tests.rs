@@ -977,6 +977,91 @@ mod integration_tests {
         eprintln!("[multi] === END test_second_client_gets_full_screen ===");
     }
 
+    /// Read until the latest full repaint (everything after the last erase)
+    /// has drawn row `rows` and nothing below it — i.e. the session is now
+    /// rendered `rows` tall. No timeout, like `read_until_contains`.
+    fn read_until_grid_rows(conn: &ClientConnection, output: &mut Vec<u8>, rows: u16) {
+        let mut buf = [0u8; 8192];
+        loop {
+            let text = String::from_utf8_lossy(output);
+            if let Some(at) = text.rfind("\x1b[2J") {
+                let frame = &text[at..];
+                if frame.contains(&format!("\x1b[{rows};"))
+                    && !frame.contains(&format!("\x1b[{};", rows + 1))
+                {
+                    return;
+                }
+            }
+            match conn.data.try_read(&mut buf) {
+                Ok(0) => panic!("server closed the connection while waiting for {rows} rows"),
+                Ok(n) => output.extend_from_slice(&buf[..n]),
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    thread::sleep(Duration::from_millis(5));
+                }
+                Err(e) => panic!("read error while waiting for {rows} rows: {e}"),
+            }
+        }
+    }
+
+    /// The session follows the terminal in use, not the first to attach
+    /// (#3517): with Fresh left open on a Linux VT, a desktop terminal
+    /// attached to the same session was drawn at the VT's size, and resizing
+    /// its window did nothing.
+    #[test]
+    fn test_session_is_sized_for_the_terminal_in_use() {
+        let temp_dir = test_temp_dir("sized-for-use");
+        let session_name = unique_session_name("sized-for-use");
+        let (socket_paths, shutdown, server) =
+            spawn_editor_server(&temp_dir, &session_name, Some(Duration::from_secs(30)));
+
+        let hello = |conn: &ClientConnection, cols, rows| {
+            let hello = ClientHello::new(TermSize::new(cols, rows));
+            conn.write_control(&serde_json::to_string(&ClientControl::Hello(hello)).unwrap())
+                .unwrap();
+            drop(conn.read_control().unwrap());
+        };
+        let resize = |conn: &ClientConnection, cols, rows| {
+            conn.write_control(
+                &serde_json::to_string(&ClientControl::Resize { cols, rows }).unwrap(),
+            )
+            .unwrap();
+        };
+
+        // The first terminal (the VT) attaches at 80x24.
+        let vt = ClientConnection::connect(&socket_paths).unwrap();
+        hello(&vt, 80, 24);
+        let mut vt_out = Vec::new();
+        read_until_grid_rows(&vt, &mut vt_out, 24);
+
+        // A second terminal attaches at 60x18 and, as the relay does when it
+        // starts, reports its size: the session is fitted to it.
+        let desktop = ClientConnection::connect(&socket_paths).unwrap();
+        hello(&desktop, 60, 18);
+        resize(&desktop, 60, 18);
+        let mut desktop_out = Vec::new();
+        read_until_grid_rows(&desktop, &mut desktop_out, 18);
+        read_until_grid_rows(&vt, &mut vt_out, 18);
+
+        // Resizing the desktop window resizes the session.
+        resize(&desktop, 70, 20);
+        read_until_grid_rows(&desktop, &mut desktop_out, 20);
+        read_until_grid_rows(&vt, &mut vt_out, 20);
+
+        // Typing on the VT takes the session back to the VT's size.
+        vt.write_data(b"x").unwrap();
+        read_until_grid_rows(&vt, &mut vt_out, 24);
+        read_until_grid_rows(&desktop, &mut desktop_out, 24);
+
+        // And typing in the desktop terminal takes it back again.
+        desktop.write_data(b"y").unwrap();
+        read_until_grid_rows(&desktop, &mut desktop_out, 20);
+
+        shutdown.store(true, Ordering::SeqCst);
+        drop(server.join());
+        drop(socket_paths.cleanup());
+        std::fs::remove_dir_all(&temp_dir).ok();
+    }
+
     // ===========================================================================
     // E2E regression tests for issue #1089:
     //   "Mouse codes after pressing Escape"
@@ -1626,8 +1711,9 @@ mod integration_tests {
             "both transports write to the same buffer"
         );
 
-        // (5) The primary terminal sizes the session, so when it goes away the
-        //     next client inherits that role and the grid refits to IT. Without
+        // (5) The terminal in use sizes the session, so when it goes away the
+        //     oldest remaining one inherits that role and the grid refits to
+        //     IT. Without
         //     the refit on disconnect the survivor keeps being rendered at the
         //     dead client's size and shows a clipped screen until it happens to
         //     send a resize of its own.
@@ -1637,7 +1723,8 @@ mod integration_tests {
             .write_control(&serde_json::to_string(&ClientControl::Hello(hello)).unwrap())
             .unwrap();
         drop(second.read_control().unwrap());
-        // A second client is not the primary — it must not resize the session.
+        // A second client that has only said Hello (a one-shot `fresh FILE`,
+        // say) is not in use — it must not resize the session.
         thread::sleep(Duration::from_millis(300));
         let still = state_until(port, |v| v["w"].as_u64().is_some());
         assert_eq!(
