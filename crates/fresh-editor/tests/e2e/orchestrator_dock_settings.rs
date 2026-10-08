@@ -312,7 +312,11 @@ fn move_auto_open_dock_in_settings(h: &mut EditorTestHarness, steps: i32) {
     // Enter opens the list, arrows move the selection, Enter keeps it.
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
     h.render().unwrap();
-    let key = if steps > 0 { KeyCode::Down } else { KeyCode::Up };
+    let key = if steps > 0 {
+        KeyCode::Down
+    } else {
+        KeyCode::Up
+    };
     for _ in 0..steps.unsigned_abs() {
         h.send_key(key, KeyModifiers::NONE).unwrap();
         h.render().unwrap();
