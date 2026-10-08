@@ -7,7 +7,8 @@
 //!
 //! - **rquickjs** (the default): rquickjs with its bundled quickjs-ng. Every
 //!   item is a plain re-export, so this layer costs nothing.
-//! - **system** (`RUSTFLAGS="--cfg fresh_js_system"`): Fresh's own backend over
+//! - **system** (`--cfg fresh_js_system`, in both `RUSTFLAGS` and
+//!   `RUSTDOCFLAGS` so doctests agree): Fresh's own backend over
 //!   the system QuickJS that Debian ships (`libquickjs`, through
 //!   `fresh-quickjs-sys`). It provides the same names with the same
 //!   signatures and the same conversion and error behaviour, for the parts of

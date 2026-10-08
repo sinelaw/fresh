@@ -220,7 +220,10 @@ jobs:
     runs-on: ubuntu-latest
     container: debian:testing
     env:
+      # rustdoc (doctests) reads RUSTDOCFLAGS, not RUSTFLAGS; both must select
+      # the backend or doctests build fresh-js against the absent rquickjs.
       RUSTFLAGS: --cfg fresh_js_system
+      RUSTDOCFLAGS: --cfg fresh_js_system
     steps:
       - name: Install libquickjs and build tools
         run: |
