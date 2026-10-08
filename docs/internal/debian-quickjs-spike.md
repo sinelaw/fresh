@@ -285,49 +285,48 @@ dev-only and other-target dependency included, before building anything, so
 the manifests need the kind of patch a Debian source package carries.
 `scripts/debian.py` does both halves:
 
-- `packages PACKAGES` lists the packages to install: those that provide every
-  dependency of every workspace crate, optional ones included, that the
-  archive can satisfy (64 for testing today; apt brings in their
-  dependencies, about 750 packages, and the C libraries the `-sys` crates
-  link, such as `libonig-dev`).
+- `packages PACKAGES [--control]` lists the packages to install: those that
+  provide every dependency of every workspace crate, optional and dev ones
+  included, that the archive can satisfy. apt brings in their dependencies
+  (about 750 packages) and the C libraries the `-sys` crates link, such as
+  `libonig-dev`. `--control` prints them as `debian/control` Build-Depends.
 - `patch-manifests [REGISTRY]` rewrites the manifests in place. It drops
-  dev-dependencies, dependencies for other targets (Windows, macOS, the
-  rquickjs backend), and the optional dependencies the registry lacks (oxc,
-  ts-rs, the three tree-sitter grammars, self-update's `zip` 2) with the
-  feature entries naming them. It also leaves out `fresh-gui`, whose wgpu
-  renderer is not packaged and which only the optional `gui` feature uses. A
-  required dependency the registry lacks is an error.
+  dependencies for other targets (Windows, macOS, the rquickjs backend) and
+  the optional and dev-dependencies the registry lacks (oxc, ts-rs, the three
+  tree-sitter grammars, self-update's `zip` 2), with the feature entries
+  naming them. It also leaves out `fresh-gui`, whose wgpu renderer is not
+  packaged and which only the optional `gui` feature uses. A required
+  dependency the registry lacks is an error.
 
-The last step of the Debian CI job runs these and then builds `fresh-editor`
-offline with Debian's own `cargo` and `rustc`. In a `debian:testing`
-container the whole thing is:
+**`packaging/debian/`** is a Debian source package built this way (its
+`README.source` has the details). It is separate from the repository's own
+`debian/`, which builds the release `.deb` from crates.io with the default
+features:
+
+- `debian/control` lists the `librust-*-dev` Build-Depends that
+  `scripts/debian.py packages --control` generates (debcargo-style:
+  `librust-<crate>-<semver>+<feature>-dev`, dev-only ones `<!nocheck>`),
+  plus `libquickjs`, `dh-cargo`, `python3-tomlkit` and, for the tests,
+  `esbuild`. The binary package `Depends: esbuild` and records QuickJS in
+  `Static-Built-Using` (`fresh-quickjs-sys`'s build script tells
+  `dh-cargo-built-using` that QuickJS is MIT and comes from `libquickjs`).
+- `debian/rules` runs `patch-manifests` (restoring the originals on `clean`),
+  builds through dh-cargo's cargo wrapper with `--cfg fresh_js_system`, and
+  in `dh_auto_test` runs the `fresh-js`, `fresh-parser-js` (against the real
+  esbuild) and `fresh-plugin-runtime` tests. Fresh's dev-dependencies are all
+  in Debian too, once the test harness's `ctor` accepts 1.x.
+
+The last step of the Debian CI job builds it with `dpkg-buildpackage`. In a
+`debian:testing` container:
 
 ```sh
-apt-get install -y ca-certificates curl git build-essential pkg-config \
-    libclang-dev libquickjs esbuild python3 python3-tomlkit cargo rustc
+apt-get update && apt-get install -y git dpkg-dev
 git clone https://github.com/sinelaw/fresh && cd fresh
-export RUSTFLAGS="--cfg fresh_js_system" RUSTDOCFLAGS="--cfg fresh_js_system"
-curl -fsSLo /tmp/Packages.xz \
-    https://deb.debian.org/debian/dists/testing/main/binary-amd64/Packages.xz
-apt-get install -y $(python3 scripts/debian.py packages /tmp/Packages.xz)
-python3 scripts/debian.py patch-manifests       # rewrites Cargo.toml files
-rm Cargo.lock
-mkdir -p .cargo && cat > .cargo/config.toml <<'TOML'
-[source.crates-io]
-replace-with = "debian"
-
-[source.debian]
-directory = "/usr/share/cargo/registry"
-
-[net]
-offline = true
-TOML
-cargo build --release -p fresh-editor --no-default-features \
-    --features runtime,plugins,embed-plugins
+rm -rf debian && cp -r packaging/debian debian
+apt-get build-dep -y ./
+dpkg-buildpackage -us -uc -b
+apt-get install -y ../fresh-editor_*.deb
 ```
-
-(`packages` reads the manifests with `cargo metadata --no-deps`, which needs
-no network or registry, so Debian's own `cargo` is enough.)
 
 What this build found that the archive check could not: Debian's
 `lsp-types` 0.97.0 is patched to use `fluent-uri` 0.4 instead of the 0.1

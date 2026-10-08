@@ -16,20 +16,23 @@ build. Run it from the workspace root; see docs/internal/debian-quickjs-spike.md
       so they are not followed; a crate it lacks would have to be packaged, so
       its dependencies are checked too. Exits 1 if anything is missing.
 
-  packages PACKAGES
+  packages PACKAGES [--control]
       Print the librust-*-dev packages to install: those providing every
-      dependency of every workspace crate, optional ones included, that the
-      archive can satisfy (cargo resolves the whole workspace before building).
+      dependency of every workspace crate, optional and dev ones included,
+      that the archive can satisfy (cargo resolves the whole workspace before
+      building). With --control, print them as debcargo-style Build-Depends
+      entries (librust-<crate>-<semver>+<feature>-dev), dev-only ones marked
+      <!nocheck>.
 
   patch-manifests [REGISTRY]
       Rewrite the workspace's manifests in place so cargo can resolve them
       from REGISTRY (default /usr/share/cargo/registry) alone, as a Debian
-      source package's patches would. Removes dev-dependencies, dependencies
-      for other targets (Windows, macOS, the rquickjs backend), optional
-      dependencies the registry lacks with the feature entries naming them,
-      and workspace members that cannot build from it and that nothing needs
-      except optionally (fresh-gui). A required dependency the registry lacks
-      is an error. Needs python3-tomlkit.
+      source package's patches would. Removes dependencies for other targets
+      (Windows, macOS, the rquickjs backend); optional and dev-dependencies
+      the registry lacks, with the feature entries naming them; and workspace
+      members that cannot build from it and that nothing needs except
+      optionally (fresh-gui). A required dependency the registry lacks is an
+      error. Needs python3-tomlkit.
 """
 
 import argparse
@@ -310,36 +313,100 @@ def cmd_check(args):
 # ── packages ─────────────────────────────────────────────────────────────
 
 
+def semver_prefix(version):
+    """The part of a version that semver-compatible versions share."""
+    major, minor, patch = parse_version(version)
+    if major:
+        return str(major)
+    if minor:
+        return f"0.{minor}"
+    return f"0.0.{patch}"
+
+
+def minimum_version(req):
+    """The lowest version a requirement accepts, as written (e.g. "0.33")."""
+    for part in req.split(","):
+        m = re.match(r"\s*(\^|~|>=|=)?\s*([\d.]+)$", part.strip())
+        if m:
+            return m.group(2)
+    return None
+
+
+def build_depends(archive, crate_name, req, features, version, packages):
+    """debcargo-style Build-Depends entries for one dependency.
+
+    `librust-<crate>-<semver prefix>[+<feature>]-dev`, versioned by the
+    requirement's minimum, so the entry says which API and features Fresh
+    needs rather than naming whichever binary package provides them today.
+    """
+    crate = debian_name(crate_name)
+    prefix = semver_prefix(version)
+    names = [f"librust-{crate}-{prefix}+{debian_name(f)}-dev" for f in features]
+    names = names or [f"librust-{crate}-{prefix}-dev"]
+    if not all(n in archive.providers for n in names):
+        return [(p, "") for p in packages]
+    low = minimum_version(req)
+    if not (low and semver_prefix(low) == prefix):
+        low = None
+    return [(n, low) for n in names]
+
+
+def merge(table, name, low, dev):
+    """Record `name`, keeping the highest minimum version; dev-only if only dev deps need it."""
+    if name in table:
+        old_low, old_dev = table[name]
+        if old_low and (not low or parse_version(old_low) > parse_version(low)):
+            low = old_low
+        dev = dev and old_dev
+    table[name] = (low, dev)
+
+
 def cmd_packages(args):
     env = build_env()
     target = host_target()
     cfgs = target_cfgs(env, target)
     metadata = json.loads(cargo(["metadata", "--format-version", "1", "--no-deps"], env))
     archive = Archive(args.packages)
-    wanted = set()
+    wanted = {}  # name -> (constraint, build-only?)
     for package in metadata["packages"]:
-        found, unsatisfied_required = set(), False
+        found, unsatisfied_required = {}, False
         for d in package["dependencies"]:
-            if d["kind"] == "dev" or d.get("path"):
+            if d.get("path"):
                 continue
             if d["target"] and not cfg_holds(d["target"], cfgs, target):
                 continue
-            features = set(d["features"]) | ({"default"} if d["uses_default_features"] else set())
-            result = archive.lookup(d["name"], d["req"], sorted(features))
+            features = sorted(
+                set(d["features"]) | ({"default"} if d["uses_default_features"] else set())
+            )
+            result = archive.lookup(d["name"], d["req"], features)
             if result[0] == "ok":
-                found.update(result[2])
-            elif d["optional"]:
+                dev = d["kind"] == "dev"
+                entries = (
+                    build_depends(archive, d["name"], d["req"], features, result[1], result[2])
+                    if args.control else [(p, None) for p in result[2]]
+                )
+                for name, low in entries:
+                    merge(found, name, low, dev)
+            elif d["optional"] or d["kind"] == "dev":
                 # patch-manifests drops it.
-                print(f"{package['name']}: skip optional {d['name']} {d['req']} ({result[0]})",
-                      file=sys.stderr)
+                print(f"{package['name']}: skip {d['kind'] or 'optional'} {d['name']} {d['req']} "
+                      f"({result[0]})", file=sys.stderr)
             else:
                 unsatisfied_required = True
                 print(f"{package['name']}: {d['name']} {d['req']} is required ({result[0]}); "
                       f"patch-manifests leaves {package['name']} out if nothing requires it",
                       file=sys.stderr)
-        if not unsatisfied_required:
-            wanted |= found
-    print("\n".join(sorted(wanted)))
+        if unsatisfied_required:
+            continue
+        for name, (low, dev) in found.items():
+            merge(wanted, name, low, dev)
+    for name in sorted(wanted):
+        low, dev = wanted[name]
+        if args.control:
+            constraint = f" (>= {low}-~~)" if low else ""
+            print(f" {name}{constraint}{' <!nocheck>' if dev else ''},")
+        else:
+            print(name)
     return 0
 
 
@@ -426,14 +493,14 @@ def cmd_patch_manifests(args):
             for dname in list(table.keys()):
                 pkg, req, optional = dep_info(dname, table[dname])
                 why = None
-                if kind == "dev-dependencies":
-                    why = "dev-dependency"
-                elif not applies(t):
+                if not applies(t):
                     why = f"for another target ({t})"
                 elif pkg in dropped:
                     why = "workspace member left out"
                 elif req is not None and not in_registry(pkg, req):
-                    if optional:
+                    if kind == "dev-dependencies":
+                        why = f"dev-dependency, not in the registry ({pkg} {req})"
+                    elif optional:
                         why = f"optional, not in the registry ({pkg} {req})"
                     else:
                         errors.append(f"{name}: {pkg} {req} is required and not in the registry")
@@ -500,6 +567,8 @@ def main():
     p.add_argument("--features", default="runtime,plugins,embed-plugins")
     p = sub.add_parser("packages")
     p.add_argument("packages", help="Debian Packages index (plain or .xz)")
+    p.add_argument("--control", action="store_true",
+                   help="print debcargo-style Build-Depends entries for debian/control")
     p = sub.add_parser("patch-manifests")
     p.add_argument("registry", nargs="?", default="/usr/share/cargo/registry")
     args = parser.parse_args()

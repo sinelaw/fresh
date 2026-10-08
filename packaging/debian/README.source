@@ -1,0 +1,41 @@
+fresh-editor for the Debian archive
+===================================
+
+This directory is a debian/ directory for building Fresh the way the Debian
+archive would. It is separate from the repository's own debian/, which
+builds the .deb attached to upstream releases from crates.io with every
+default feature.
+
+How it differs from an upstream build:
+
+ * Rust crates come from Debian's librust-*-dev packages, offline, through
+   dh-cargo's cargo wrapper; the upstream Cargo.lock is not used.
+ * The JS engine is Debian's QuickJS (libquickjs, linked statically, hence
+   Static-Built-Using) through Fresh's own binding, selected with
+   RUSTFLAGS="--cfg fresh_js_system", instead of rquickjs.
+ * Plugin TypeScript is compiled by Debian's esbuild at run time (cached
+   under ~/.cache/fresh/esbuild), instead of the oxc crates; hence
+   Depends: esbuild.
+ * Features: runtime, plugins, embed-plugins. No tree-sitter (its JavaScript,
+   TypeScript and Templ grammars are not packaged), no http/self-update
+   (update checks, telemetry, self-update), no gui.
+
+The manifests still name the crates Debian lacks, as optional or
+other-target dependencies, and cargo resolves those too. debian/rules runs
+`scripts/debian.py patch-manifests`, which rewrites the manifests so the
+workspace resolves from /usr/share/cargo/registry alone (and `clean` puts
+the originals back). It prints each dependency it drops and why.
+
+The librust-*-dev Build-Depends are generated from Debian testing's index:
+
+    scripts/debian.py packages --control Packages.xz
+
+and `scripts/debian.py check Packages.xz` checks that the archive can supply
+every dependency of the build. Both are run by upstream CI.
+
+To build from a checkout:
+
+    git archive --prefix=fresh-editor-0.5.2/ HEAD | xz > ../fresh-editor_0.5.2.orig.tar.xz
+    rm -rf debian && cp -r packaging/debian debian
+    sudo apt-get build-dep ./
+    dpkg-buildpackage -us -uc

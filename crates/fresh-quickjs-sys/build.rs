@@ -55,6 +55,11 @@ fn main() {
     println!("cargo:rustc-link-search=native={}", lib_dir.display());
     println!("cargo:rustc-link-lib=static=quickjs");
     println!("cargo:rustc-link-lib=m");
+    // For Debian's dh-cargo-built-using, which records statically linked
+    // libraries in Static-Built-Using: libquickjs.a comes from the libquickjs
+    // package, and QuickJS's MIT license does not require shipping its source
+    // with the binary (the 0). Without this it guesses from d/copyright.
+    println!("dh-cargo:deb-built-using=quickjs=0~=libquickjs .*");
 
     let bindings = bindgen::Builder::default()
         .header("wrapper.h")
