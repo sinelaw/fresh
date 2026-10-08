@@ -821,8 +821,8 @@ fn parse_animation_kind(
 
 /// JavaScript-exposed Editor API using rquickjs class system
 /// This allows proper lifetime handling for methods returning JS values
-#[derive(rquickjs::class::Trace, rquickjs::JsLifetime)]
-#[rquickjs::class]
+#[derive(fresh_js::class::Trace, fresh_js::JsLifetime)]
+#[fresh_js::class]
 pub struct JsEditorApi {
     #[qjs(skip_trace)]
     state_snapshot: Arc<RwLock<EditorStateSnapshot>>,
@@ -1196,7 +1196,7 @@ fn parse_label_align(v: Option<&str>) -> fresh_core::api::LabelAlign {
 }
 
 #[plugin_api_impl]
-#[rquickjs::methods(rename_all = "camelCase")]
+#[fresh_js::methods(rename_all = "camelCase")]
 impl JsEditorApi {
     #[plugin_api(section = "Plugin Info")]
     /// Get the plugin API version. Plugins can check this to verify

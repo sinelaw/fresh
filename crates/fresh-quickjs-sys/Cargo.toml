@@ -1,0 +1,25 @@
+[package]
+name = "fresh-quickjs-sys"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Raw FFI bindings to the system QuickJS library (Debian's libquickjs), generated at build time from the installed quickjs.h"
+links = "fresh_quickjs"
+
+[lib]
+name = "fresh_quickjs_sys"
+path = "src/lib.rs"
+
+# Everything here only happens when building with `--cfg fresh_js_system`
+# (Fresh's system-QuickJS backend, see crates/fresh-js). Without it the crate is
+# empty and needs neither libquickjs nor these build tools, so the rest of the
+# workspace builds anywhere.
+[target.'cfg(fresh_js_system)'.build-dependencies]
+bindgen = { version = "0.72", default-features = false, features = ["runtime"] }
+cc = "1.2"
+
+[lints]
+workspace = true

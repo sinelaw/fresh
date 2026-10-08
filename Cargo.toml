@@ -15,6 +15,7 @@ members = [
     "crates/fresh-update",
     "crates/fresh-i18n",
     "crates/fresh-js",
+    "crates/fresh-quickjs-sys",
 ]
 default-members = [
     "crates/fresh-editor",
@@ -37,6 +38,12 @@ default-members = [
 # member via `[lints] workspace = true`, so the rule reaches integration-test
 # crates too — which a crate-root `#![deny]` cannot. See `clippy.toml` for what
 # to hold instead and for the few places a borrowed `Handle` is still right.
+# `fresh_js_system` selects Fresh's system-QuickJS backend (crates/fresh-js);
+# it is set with RUSTFLAGS="--cfg fresh_js_system", not a cargo feature, so
+# `--all-features` builds never require libquickjs.
+[workspace.lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(fresh_js_system)"] }
+
 [workspace.lints.clippy]
 disallowed_types = "deny"
 disallowed_methods = "deny"
@@ -70,6 +77,7 @@ fresh-update = { version = "0.5.2", path = "crates/fresh-update" }
 fresh-ui = { version = "0.5.2", path = "crates/fresh-ui" }
 fresh-i18n = { version = "0.5.2", path = "crates/fresh-i18n" }
 fresh-js = { version = "0.5.2", path = "crates/fresh-js" }
+fresh-quickjs-sys = { version = "0.5.2", path = "crates/fresh-quickjs-sys" }
 
 # External crates
 serde = { version = "1.0", features = ["derive", "rc"] }

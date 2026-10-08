@@ -30,11 +30,11 @@ Fresh uses QuickJS for its JavaScript plugin runtime (with oxc_transformer for T
 
 The plugin API is exposed via `JsEditorApi` using rquickjs class bindings with automatic camelCase conversion.
 
-The rest of Fresh reaches rquickjs through `crates/fresh-js`, which re-exports the engine items Fresh uses (as `fresh_js::Ctx`, `fresh_js::function::Opt`, `fresh_js::serde::to_value`, …). That keeps the engine swappable; see `docs/internal/debian-quickjs-spike.md`. The class/methods attributes below are the exception: rquickjs's macros find the crate through the calling crate's manifest, so they are still written as `rquickjs::`.
+The rest of Fresh reaches rquickjs through `crates/fresh-js`, which re-exports the engine items Fresh uses (as `fresh_js::Ctx`, `fresh_js::function::Opt`, `fresh_js::serde::to_value`, …). That keeps the engine swappable; see `docs/internal/debian-quickjs-spike.md`. The class/methods attributes go through it too (`#[fresh_js::class]`, `#[fresh_js::methods]`), but rquickjs's macros find rquickjs through the calling crate's manifest, so `fresh-plugin-runtime` still lists rquickjs as a direct dependency for them.
 
 **Key patterns:**
-- `#[rquickjs::class]` - Expose struct to JS
-- `#[rquickjs::methods(rename_all = "camelCase")]` - Auto-convert method names
+- `#[fresh_js::class]` - Expose struct to JS
+- `#[fresh_js::methods(rename_all = "camelCase")]` - Auto-convert method names
 - `fresh_js::function::Opt<T>` - Optional parameters
 - `fresh_js::function::Rest<T>` - Variadic arguments
 - `fresh_js::serde::to_value()` - Rust → JS conversion

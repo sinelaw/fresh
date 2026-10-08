@@ -1633,6 +1633,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "fresh-quickjs-sys"
+version = "0.5.2"
+dependencies = [
+ "bindgen",
+ "cc",
+]
+
+[[package]]
 name = "fresh-ui"
 version = "0.5.2"
 dependencies = [
