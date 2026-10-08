@@ -1011,7 +1011,7 @@ editor.defineConfigEnum("autoOpenDock", {
   values: ["auto", "always", "never"] as const,
   default: "auto",
   description:
-    "Whether the workspace dock opens when Fresh starts. 'auto' brings it back the way you left it, open or closed, and on a first run opens it for a bare `fresh` (Orchestrator mode) — the default. 'always' opens it every time; 'never' leaves it closed until you open it. Replaces the old true/false, which are still read as 'auto' and 'never'.",
+    "Whether the workspace dock opens when Fresh starts. Opening or closing the dock yourself (View ▸ Orchestrator Dock, Orchestrator: Toggle Dock, the dock's ×) sets this to 'always' or 'never', so Fresh starts the way you last asked; choosing 'always' or 'never' here also opens or closes the dock now. 'auto' (the default, until you first open or close the dock) brings it back the way it was at quit, and on a first run opens it for a bare `fresh` (Orchestrator mode). Replaces the old true/false, which are still read as 'auto' and 'never'.",
 });
 editor.defineConfigEnum("defaultView", {
   values: ["compact", "card"] as const,
@@ -7394,14 +7394,53 @@ function diveDockSelectionFromClick(fromEdge: "top" | "bottom" | null): void {
 function toggleDock(): void {
   if (openPanel && dockMode) {
     closeOpenDialog();
+    rememberDockOpen(false);
     return;
   }
   // A centered modal picker is open — leave it alone.
   if (openPanel) return;
   openControlRoom({ dock: true });
+  rememberDockOpen(true);
 }
 
 registerHandler("orchestrator_dock_toggle", toggleDock);
+
+// `autoOpenDock` as the host reads it at startup (`DockOpenPolicy::read`):
+// the pre-#3442 booleans are `false` → never, `true` → auto, and anything
+// unrecognised is auto. The host rewrites a boolean on disk at startup, but
+// this module can load before that rewrite lands in memory.
+function configuredDockMode(): "auto" | "always" | "never" {
+  const v = dockSettings().autoOpenDock as unknown;
+  if (v === false || v === "never") return "never";
+  if (v === "always") return "always";
+  return "auto";
+}
+
+// The user's last explicit open or close is what the next start follows, so
+// it is written to `autoOpenDock` as `always` / `never` — the setting the host
+// obeys before the first frame (`Editor::apply_startup_dock_chrome`) and the
+// Settings UI shows. Without this, `never` silently undid an open from the
+// View menu at every restart, and `always` a close.
+//
+// Called only from the routes that *are* the user saying so: the toggle
+// command (View ▸ Orchestrator Dock, the palette, `toggle_dock_focus` on a
+// hidden dock) and the dock's `×`. Not from the opens and closes the plugin
+// does for itself (attaching to a discovered worktree, a new or recovered
+// workspace via `showDockUnfocused`): those are events, not preferences.
+function rememberDockOpen(open: boolean): void {
+  const mode = open ? "always" : "never";
+  // Deduped against `lastDockMode`, never against `configuredDockMode()`:
+  // `saveSetting` only queues the write, so the config snapshot reads the old
+  // value for a tick or two, and a second toggle inside that window would
+  // compare against a value already superseded and skip its write.
+  if (lastDockMode === mode) return;
+  lastDockMode = mode;
+  editor.saveSetting("plugins.orchestrator.settings.autoOpenDock", mode);
+}
+
+// The last mode this plugin wrote or adopted, so a `config_changed` that did
+// not touch `autoOpenDock` is not mistaken for one that did.
+let lastDockMode = configuredDockMode();
 
 // Stop every process one session owns. Sends SIGTERM first via the
 // host's `signalWindow` (which fans out through the window's
@@ -18393,7 +18432,10 @@ editor.on("widget_event", (e) => {
       return;
     }
     if (e.event_type === "activate" && e.widget_key === "dock-close") {
-      if (dockMode) closeOpenDialog();
+      if (dockMode) {
+        closeOpenDialog();
+        rememberDockOpen(false);
+      }
       return;
     }
     if (e.event_type === "activate" && e.widget_key === "search-toggle") {
@@ -18628,6 +18670,37 @@ editor.on("ready", () => {
   // launch mode); the column is already carved, and the mount fills it.
   if (editor.dockOpen()) {
     showDockUnfocused();
+  }
+});
+
+// A Settings-UI edit to `always` / `never` is an instruction too, so it opens
+// or closes the dock now rather than at the next start. `auto` asks for
+// nothing now.
+//
+// Guarded on a change to *this* setting, not on the dock's state:
+// `config_changed` fires for every config save, and the dock is legitimately
+// closed at moments nobody asked for it to open (the plugin's own close
+// around a dive). The plugin's own `saveSetting` does not fire this hook, and
+// `rememberDockOpen` has already moved `lastDockMode`, so a later save does
+// not replay it.
+//
+// The hook does not say which keys changed, so a value that reached the file
+// another way (a hand edit, another Fresh process) is adopted at the next
+// Settings save or config reload. That is still the user's latest
+// instruction, so acting on it then is the rule, not a leak.
+editor.on("config_changed", () => {
+  const mode = configuredDockMode();
+  if (mode === lastDockMode) return;
+  lastDockMode = mode;
+  // `editor.dockOpen()` — the host's "a dock is mounted" — not the plugin's
+  // `openPanel`/`dockMode`: with the modal picker floating over a live dock
+  // those read "no dock" while the column is still on screen. A picker that
+  // owns the screen is left alone; the edit is on disk, so the next start
+  // follows it either way.
+  if (mode === "always" && !editor.dockOpen()) {
+    if (!openPanel) showDockUnfocused();
+  } else if (mode === "never" && editor.dockOpen()) {
+    if (dockMode) closeOpenDialog();
   }
 });
 
