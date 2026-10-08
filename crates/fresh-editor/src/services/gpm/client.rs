@@ -28,7 +28,7 @@ impl GpmClient {
         tracing::debug!("GPM: libgpm loaded successfully");
 
         // Check if we're on a Linux virtual console
-        let is_console = Self::is_linux_console();
+        let is_console = ffi::test_lib_path().is_some() || Self::is_linux_console();
         tracing::debug!("GPM: is_linux_console() = {}", is_console);
         if !is_console {
             tracing::debug!("GPM: Not a Linux console, skipping GPM");
