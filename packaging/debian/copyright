@@ -15,7 +15,9 @@ Comment:
   * the themes under crates/fresh-editor-core/themes/; the Dracula, Nord,
     Solarized, Gruvbox and Tokyo Night ones take their colour values from
     those palettes and contain nothing else from those projects;
-  * screenshots, recordings, icons and other images, made by upstream.
+  * screenshots, recordings, icons and other images (including
+    crates/fresh-editor/scripts/landscape*.png and
+    docs/public/images/nostalgia.jpeg), all created by Noam Lewis.
 
 Files: *
 Copyright: 2024-2026 Noam Lewis <i9uqoqj7k@mozmail.com> and the Fresh contributors

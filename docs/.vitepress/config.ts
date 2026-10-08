@@ -168,7 +168,7 @@ export default defineConfig({
     },
 
     footer: {
-      message: "Released under the Apache 2.0 License",
+      message: "Released under the GNU General Public License v3.0 or later",
     },
   },
 });
