@@ -11,10 +11,12 @@ description = "JavaScript plugin runtime for Fresh editor"
 [features]
 default = ["oxc"]
 # Compile plugin TypeScript in-process with oxc (fresh-parser-js's `oxc`), and
-# build the fresh.d.ts / API-doc generators. Without it, plugins are compiled by
-# the `esbuild` executable and the generators are left out.
+# build the fresh.d.ts / API-doc generators (with ts-rs). Without it, plugins
+# are compiled by the `esbuild` executable and the generators are left out.
 oxc = [
     "fresh-parser-js/oxc",
+    "fresh-core/ts",
+    "dep:ts-rs",
     "dep:oxc_allocator",
     "dep:oxc_ast",
     "dep:oxc_parser",
@@ -35,9 +37,9 @@ tracing.workspace = true
 fresh-core = { workspace = true, features = ["plugins"] }
 fresh-parser-js.workspace = true
 fresh-plugin-api-macros.workspace = true
-ts-rs.workspace = true
 lsp-types.workspace = true
 # Only for generating fresh.d.ts and the plugin API docs (ts_export, api_docs).
+ts-rs = { workspace = true, optional = true }
 oxc_allocator = { workspace = true, optional = true }
 oxc_ast = { workspace = true, optional = true }
 oxc_parser = { workspace = true, optional = true }

@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Opaque handle for an overlay
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, ts_rs::TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, crate::TS)]
 #[ts(export)]
 pub struct OverlayHandle(pub String);
 
@@ -31,7 +31,7 @@ impl Default for OverlayHandle {
 }
 
 /// Namespace for grouping overlays
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, ts_rs::TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, crate::TS)]
 #[ts(export)]
 pub struct OverlayNamespace(pub String);
 

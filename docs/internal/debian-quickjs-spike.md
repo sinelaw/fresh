@@ -237,16 +237,53 @@ Debian build drops oxc and runs esbuild instead:
 
 The Debian CI job builds with `--no-default-features` (so no oxc) and runs the
 `fresh-parser-js` tests (including ones against the real esbuild), the plugin
-runtime's tests and the editor's plugin end-to-end tests that way.
+runtime's tests, and the editor's plugin end-to-end tests with exactly the
+Debian package's features (`runtime,plugins,embed-plugins`).
+
+## The Debian build's dependencies
+
+With the system QuickJS, esbuild in place of oxc, and the Debian feature set
+(`runtime,plugins,embed-plugins`), **Debian needs no new Rust packages**:
+every dependency of `fresh-editor` is in testing at a version Fresh accepts,
+with the features Fresh asks for. Getting there also took:
+
+- **`ts-rs` is optional.** Its `#[derive(TS)]` only feeds the `fresh.d.ts`
+  generator. `fresh-core`'s `ts` feature selects the real derive, and the
+  plugin runtime's `oxc` feature (which builds the generator) turns it on.
+  Without it, `TS` is a no-op derive from `fresh-plugin-api-macros` that
+  accepts the same `#[ts(...)]` attributes.
+- **Versions aligned with the archive:** `which` 8 and `jsonc-parser` 0.33
+  (what Debian has); `nix` `>=0.30, <0.32` and `libloading` `>=0.8, <0.10`
+  (Debian has 0.30 and 0.8; upstream builds keep resolving to the newer
+  ones); `notify`'s `macos_kqueue` feature, which Debian's package lacks, is
+  now requested on macOS only.
+- **No `tree-sitter`:** the JavaScript, TypeScript and Templ grammars are not
+  in Debian. Indentation falls back to the regex rules.
+- **No `http`** is a choice, not a constraint: Debian has everything it needs.
+  It is off because it carries the update checker and anonymous telemetry. The
+  package manager does not need it (it uses `git`); only installing a single
+  theme from a direct file URL, and the `editor.httpFetch` plugin API, return
+  an error without it.
+
+`scripts/debian-deps.py PACKAGES[.xz]` checks this against a Debian
+`Packages` index. It walks the Debian build's graph from the workspace crates,
+and for every dependency it checks that the archive has the crate at a
+matching version with the requested features (crates the archive has bring
+their own, archive-consistent dependencies). The Debian CI job runs it against
+testing's live index, and also compiles against the exact `nix`,
+`libloading` and `jsonc-parser` versions Debian ships, so the widened ranges
+stay true. With `tree-sitter` on, it lists the three missing grammars; with
+`oxc` on, the 30-odd oxc crates.
 
 ## What remains for a Debian package
 
-With the system QuickJS, esbuild in place of oxc, and no tree-sitter, this
-leaves **no new JavaScript-engine or TypeScript Rust packages for Debian**:
-`fresh-editor` builds from what is in the archive plus `libquickjs` and
-`esbuild`. The remaining items are outside this work: aligning a few manifest
-versions with the archive (`which`, `jsonc-parser`, `nix`, `libloading`,
-`notify`), and making `ts-rs` a dev-dependency.
+- **Other architectures.** Only amd64 has run (see above).
+- **The source package.** The plan is one source package that builds Fresh's
+  workspace crates (`fresh-core`, `fresh-js`, …) from its own tree, rather
+  than packaging each as a `librust-*-dev`; this needs agreeing with the
+  Debian Rust team.
+- **Process:** an upstream release with this work, an ITP bug, a sponsor, and
+  an upload to unstable, from where it migrates to testing.
 
 A sketch of the packaging (not in the upstream `debian/` directory, which
 builds the upstream `.deb` with the default features):

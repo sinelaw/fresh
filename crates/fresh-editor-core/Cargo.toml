@@ -83,7 +83,7 @@ ratatui = { version = "0.30.0", default-features = false, features = ["std", "un
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"], optional = true }
 tokio = { version = "1.49", features = ["fs", "io-util", "process", "rt", "rt-multi-thread", "sync", "time", "macros"], optional = true }
 libc = { version = "0.2", optional = true }
-nix = { version = "0.31", features = ["signal", "pthread", "resource", "poll", "fs"], optional = true }
+nix = { version = ">=0.30, <0.32", features = ["signal", "pthread", "resource", "poll", "fs"], optional = true }
 pulldown-cmark = { version = "0.13", default-features = false, optional = true }
 syntect = { version = "5.3", default-features = false, optional = true }
 tempfile = { version = "3.25", optional = true }

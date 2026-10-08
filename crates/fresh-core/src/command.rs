@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Source of a command (builtin or from a plugin)
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, crate::TS)]
 #[ts(export)]
 pub enum CommandSource {
     /// Built-in editor command
@@ -12,7 +12,7 @@ pub enum CommandSource {
 
 /// A command registered by a plugin via the service bridge.
 /// This is a simplified version that the editor converts to its internal Command type.
-#[derive(Debug, Clone, Serialize, Deserialize, ts_rs::TS)]
+#[derive(Debug, Clone, Serialize, Deserialize, crate::TS)]
 #[ts(export)]
 pub struct Command {
     /// Command name (e.g., "Open File")
@@ -38,7 +38,7 @@ pub struct Command {
 }
 
 /// A single suggestion item for autocomplete
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, crate::TS)]
 #[serde(deny_unknown_fields)]
 #[ts(export, rename = "PromptSuggestion")]
 pub struct Suggestion {

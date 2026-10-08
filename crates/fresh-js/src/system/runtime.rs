@@ -5,8 +5,10 @@ use std::cell::RefCell;
 use std::ffi::c_void;
 use std::rc::Rc;
 
-/// Evaluation options, as rquickjs's (strict global script by default).
+/// Evaluation options, as rquickjs's (strict global script by default, and
+/// non-exhaustive, so code builds them from `Default` on either backend).
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct EvalOptions {
     pub global: bool,
     pub strict: bool,
