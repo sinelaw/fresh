@@ -219,6 +219,9 @@ jobs:
     name: plugins on Debian's system QuickJS
     runs-on: ubuntu-latest
     container: debian:testing
+    # cargo test has no per-test timeout; cap the job so a hang fails it
+    # instead of holding a runner for hours.
+    timeout-minutes: 60
     env:
       # rustdoc (doctests) reads RUSTDOCFLAGS, not RUSTFLAGS; both must select
       # the backend or doctests build fresh-js against the absent rquickjs.
@@ -228,7 +231,8 @@ jobs:
       - name: Install libquickjs and build tools
         run: |
           apt-get update
-          apt-get install -y --no-install-recommends ca-certificates curl git build-essential pkg-config libclang-dev libquickjs
+          # python3: the e2e tests' fake LSP server and devcontainer helpers.
+          apt-get install -y --no-install-recommends ca-certificates curl git build-essential pkg-config libclang-dev libquickjs python3
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
