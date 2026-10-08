@@ -8,16 +8,34 @@ repository.workspace = true
 homepage.workspace = true
 description = "JavaScript/TypeScript parser for Fresh editor plugins"
 
+[features]
+default = ["oxc"]
+# Transpile/bundle TypeScript in-process with oxc. Without it, the same
+# functions run the `esbuild` executable instead (oxc is not packaged in
+# Debian; esbuild is) — see the crate docs.
+oxc = [
+    "dep:oxc_allocator",
+    "dep:oxc_ast",
+    "dep:oxc_parser",
+    "dep:oxc_transformer",
+    "dep:oxc_codegen",
+    "dep:oxc_span",
+    "dep:oxc_semantic",
+    "dep:oxc_isolated_declarations",
+]
+
 [dependencies]
 anyhow.workspace = true
-oxc_allocator.workspace = true
-oxc_ast.workspace = true
-oxc_parser.workspace = true
-oxc_transformer.workspace = true
-oxc_codegen.workspace = true
-oxc_span.workspace = true
-oxc_semantic.workspace = true
-oxc_isolated_declarations.workspace = true
+# Reads esbuild's metafile (the esbuild backend's bundle cache).
+serde_json.workspace = true
+oxc_allocator = { workspace = true, optional = true }
+oxc_ast = { workspace = true, optional = true }
+oxc_parser = { workspace = true, optional = true }
+oxc_transformer = { workspace = true, optional = true }
+oxc_codegen = { workspace = true, optional = true }
+oxc_span = { workspace = true, optional = true }
+oxc_semantic = { workspace = true, optional = true }
+oxc_isolated_declarations = { workspace = true, optional = true }
 
 [lints]
 workspace = true

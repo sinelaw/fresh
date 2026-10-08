@@ -14,7 +14,7 @@ The workspace declares 8 members. `fresh-gui` is a member but **not** in `defaul
 |---|---|---|
 | `fresh-editor` | The `fresh` binary + all runtime subsystems | core, parser-js, languages, plugin-runtime, plugin-api-macros, gui, winterm (all optional / target-gated) |
 | `fresh-core` | Dependency-light shared models, ID types, plugin API surface | — (leaf) |
-| `fresh-parser-js` | JS/TS transpile, bundle, `.d.ts` emit (oxc toolchain) | — (leaf) |
+| `fresh-parser-js` | JS/TS transpile, bundle, `.d.ts` emit (oxc toolchain; feature `oxc`, default) or an external `esbuild` (without it) | — (leaf) |
 | `fresh-languages` | tree-sitter grammars + `Language`/`HighlightCategory` enums | — (leaf) |
 | `fresh-plugin-runtime` | QuickJS (rquickjs) plugin host on a dedicated thread | core (feature `plugins`), js, parser-js, plugin-api-macros |
 | `fresh-js` | The JS engine boundary: the only crate that names the engine. rquickjs re-exports by default; with `--cfg fresh_js_system`, Fresh's own backend over the system QuickJS | quickjs-sys, js-macros (system backend only) |
@@ -56,10 +56,11 @@ The crate was introduced when the project was refactored into a Cargo workspace 
 
 ## 2. Feature gating: `runtime` / `wasm` / `dev-bins`
 
-`fresh-editor` defines the workspace's feature surface. The default set is `plugins`, `runtime`, `embed-plugins`, `tree-sitter`, and `http`.
+`fresh-editor` defines the workspace's feature surface. The default set is `plugins`, `runtime`, `embed-plugins`, `tree-sitter`, `http`, `self-update`, and `oxc`.
 
 - **`runtime`** — the big one: all heavy native deps (crossterm, ratatui, tokio, syntect, alacritty_terminal, portable-pty, lsp-types, notify, libc/nix, `fresh-languages`). The `fresh` binary requires this feature.
-- **`plugins`** — pulls in `fresh-plugin-runtime`/`fresh-parser-js`/`fresh-plugin-api-macros` + oxc to syntax-check `init.ts`.
+- **`plugins`** — pulls in `fresh-plugin-runtime`/`fresh-parser-js`/`fresh-plugin-api-macros`.
+- **`oxc`** — compiles TypeScript in-process with the oxc toolchain. Off ⇒ `fresh-parser-js` runs the system `esbuild` binary for every plugin load (bundled, user, package-manager, `init.ts`) and syntax check, with an on-disk cache; `.d.ts` emit for plugins is unavailable. This is the Debian build, where oxc is not packaged (see `debian-quickjs-spike.md`).
 - **`tree-sitter`** — enables `fresh-languages`' bundled grammars and the tree-sitter AST features; off ⇒ indentation falls back to regex pattern rules.
 - **`embed-plugins`** — bakes plugins into the binary as a fallback.
 - **`http`** — adds the HTTP client; drops the whole TLS stack when off.

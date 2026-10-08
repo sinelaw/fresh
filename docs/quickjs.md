@@ -64,7 +64,7 @@ plugins/lib/fresh.d.ts          # Generated TypeScript definitions
 
 - `rquickjs` 0.11 - QuickJS bindings
 - `rquickjs-serde` 0.4 - Serde integration
-- `oxc_*` 0.108 - TypeScript transpilation
+- `oxc_*` 0.108 - TypeScript transpilation (feature `oxc`, default; without it `fresh-parser-js` runs the system `esbuild`)
 - `fresh-plugin-api-macros` - Proc macros
 
 ## Next Steps: API Completion

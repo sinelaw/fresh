@@ -209,14 +209,20 @@ jobs:
         if: runner.os != 'Linux'
         run: cargo nextest run -j=4 --no-fail-fast --locked --all-features --all-targets
 
-  # The plugin runtime on Debian's own QuickJS (libquickjs), through fresh-js's
-  # system backend, inside a Debian testing container so the library and header
-  # are exactly what a Debian package builds against. The backend is selected
-  # with `--cfg fresh_js_system` rather than a cargo feature, so the
-  # --all-features jobs above never need libquickjs. See
-  # docs/internal/debian-quickjs-spike.md.
+  # Fresh as a Debian package would build it, inside a Debian testing
+  # container so every system tool is what Debian ships:
+  #
+  # - the plugin runtime on Debian's own QuickJS (libquickjs), through
+  #   fresh-js's system backend, selected with `--cfg fresh_js_system` rather
+  #   than a cargo feature so the --all-features jobs above never need
+  #   libquickjs;
+  # - plugin TypeScript compiled by Debian's `esbuild` instead of oxc (whose
+  #   crates Debian does not package): the `oxc` feature is off.
+  #
+  # Other default features stay on so the e2e tests compare like with like.
+  # See docs/internal/debian-quickjs-spike.md.
   system-quickjs:
-    name: plugins on Debian's system QuickJS
+    name: Debian build (system QuickJS, esbuild)
     runs-on: ubuntu-latest
     container: debian:testing
     # cargo test has no per-test timeout; cap the job so a hang fails it
@@ -228,11 +234,11 @@ jobs:
       RUSTFLAGS: --cfg fresh_js_system
       RUSTDOCFLAGS: --cfg fresh_js_system
     steps:
-      - name: Install libquickjs and build tools
+      - name: Install libquickjs, esbuild and build tools
         run: |
           apt-get update
           # python3: the e2e tests' fake LSP server and devcontainer helpers.
-          apt-get install -y --no-install-recommends ca-certificates curl git build-essential pkg-config libclang-dev libquickjs python3
+          apt-get install -y --no-install-recommends ca-certificates curl git build-essential pkg-config libclang-dev libquickjs esbuild python3
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
@@ -240,10 +246,10 @@ jobs:
         uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable branch
       - name: Cache Cargo dependencies
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
-      - name: Engine boundary and plugin runtime
-        run: cargo test --locked -p fresh-js -p fresh-core -p fresh-plugin-runtime --features fresh-core/plugins
+      - name: Engine boundary, TypeScript (esbuild) and plugin runtime
+        run: cargo test --locked -p fresh-js -p fresh-core -p fresh-parser-js -p fresh-plugin-runtime --no-default-features --features fresh-core/plugins
       - name: Editor plugin tests
-        run: cargo test --locked -p fresh-editor --test all_tests plugin
+        run: cargo test --locked -p fresh-editor --no-default-features --features plugins,runtime,embed-plugins,tree-sitter,http,self-update --test all_tests plugin
 
   # The release pipeline gets one shot per tag: a typo in a workflow expression
   # or a `run:` block surfaces when a release is already half-published, where

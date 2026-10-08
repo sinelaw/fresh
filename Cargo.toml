@@ -80,6 +80,7 @@ fresh-i18n = { version = "0.5.3", path = "crates/fresh-i18n" }
 fresh-js = { version = "0.5.3", path = "crates/fresh-js" }
 fresh-quickjs-sys = { version = "0.5.3", path = "crates/fresh-quickjs-sys" }
 fresh-js-macros = { version = "0.5.3", path = "crates/fresh-js-macros" }
+# `default-features = false` on these two so a member can build them without
 
 # External crates
 serde = { version = "1.0", features = ["derive", "rc"] }
