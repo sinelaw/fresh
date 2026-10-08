@@ -16,7 +16,8 @@ The workspace declares 8 members. `fresh-gui` is a member but **not** in `defaul
 | `fresh-core` | Dependency-light shared models, ID types, plugin API surface | — (leaf) |
 | `fresh-parser-js` | JS/TS transpile, bundle, `.d.ts` emit (oxc toolchain) | — (leaf) |
 | `fresh-languages` | tree-sitter grammars + `Language`/`HighlightCategory` enums | — (leaf) |
-| `fresh-plugin-runtime` | QuickJS (rquickjs) plugin host on a dedicated thread | core (feature `plugins`), parser-js, plugin-api-macros |
+| `fresh-plugin-runtime` | QuickJS (rquickjs) plugin host on a dedicated thread | core (feature `plugins`), js, parser-js, plugin-api-macros |
+| `fresh-js` | The JS engine boundary: the only crate that names the engine (re-exports of rquickjs today) | — (leaf) |
 | `fresh-plugin-api-macros` | proc-macro: Rust API impl → TypeScript `.d.ts` | — (leaf, proc-macro) |
 | `fresh-gui` | winit + wgpu native window backend (`publish = false`) | core |
 | `fresh-winterm` | Windows console VT input + relay; empty crate off-Windows | — (leaf) |
@@ -27,7 +28,8 @@ Dependency DAG (local path deps only):
 fresh-editor ──┬─► fresh-core
                ├─► fresh-parser-js
                ├─► fresh-languages
-               ├─► fresh-plugin-runtime ─► fresh-core (feature=plugins)
+               ├─► fresh-plugin-runtime ─► fresh-core (feature=plugins) ─► fresh-js
+               │                          ├► fresh-js
                │                          ├► fresh-parser-js
                │                          └► fresh-plugin-api-macros
                ├─► fresh-gui ─► fresh-core
@@ -38,7 +40,7 @@ fresh-editor ──┬─► fresh-core
 
 ### Why `fresh-core` is separate from `fresh-editor`
 
-`fresh-core` is deliberately **dependency-light**: only serde/serde_json/schemars/anyhow/lsp-types/ts-rs/unicode-width plus an *optional* `rquickjs` gated behind feature `plugins`. No tree-sitter, ratatui, crossterm, tokio, or platform crates. It holds pure-data ID types (cursor, split/leaf/container, buffer, terminal, window) and shared models — the action, plugin-api, command, hooks, config, menu, overlay, services, text-property, file-explorer, file-uri, and display-width surfaces. The reasons for the boundary:
+`fresh-core` is deliberately **dependency-light**: only serde/serde_json/schemars/anyhow/lsp-types/ts-rs/unicode-width plus an *optional* `fresh-js` (the JS engine, rquickjs today) gated behind feature `plugins`. No tree-sitter, ratatui, crossterm, tokio, or platform crates. It holds pure-data ID types (cursor, split/leaf/container, buffer, terminal, window) and shared models — the action, plugin-api, command, hooks, config, menu, overlay, services, text-property, file-explorer, file-uri, and display-width surfaces. The reasons for the boundary:
 
 - **Shared by three crates** — `fresh-plugin-runtime` and `fresh-gui` need the command/action/hook/menu/ID models without dragging in the editor's heavy dependency tree (e.g. `fresh-gui` consumes the core menu types as the single menu source of truth).
 - **`ts-rs` export boundary** — these types are exported so the plugin API and `.d.ts` generation reference one canonical definition.

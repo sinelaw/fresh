@@ -17,6 +17,7 @@ By contributing, you agree that your contributions are licensed under GPL-3.0-or
 | `fresh-core` | Shared core types and plugin API |
 | `fresh-languages` | Tree-sitter language grammars |
 | `fresh-plugin-runtime` | QuickJS-based plugin runtime |
+| `fresh-js` | The JS engine boundary: the only crate that names the engine (rquickjs today) |
 | `fresh-plugin-api-macros` | Proc-macros for the plugin API |
 | `fresh-parser-js` | JavaScript/TypeScript parser |
 
