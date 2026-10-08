@@ -265,7 +265,7 @@ with the features Fresh asks for. Getting there also took:
   theme from a direct file URL, and the `editor.httpFetch` plugin API, return
   an error without it.
 
-`scripts/debian-deps.py PACKAGES[.xz]` checks this against a Debian
+`scripts/debian.py check PACKAGES[.xz]` checks this against a Debian
 `Packages` index. It walks the Debian build's graph from the workspace crates,
 and for every dependency it checks that the archive has the crate at a
 matching version with the requested features (crates the archive has bring
@@ -274,6 +274,70 @@ testing's live index, and also compiles against the exact `nix`,
 `libloading` and `jsonc-parser` versions Debian ships, so the widened ranges
 stay true. With `tree-sitter` on, it lists the three missing grammars; with
 `oxc` on, the 30-odd oxc crates.
+
+## Building from Debian's packaged crates
+
+Debian does not build from crates.io or `Cargo.lock`: it builds offline
+against the `librust-*-dev` packages, which unpack into
+`/usr/share/cargo/registry`, with cargo's `crates-io` source replaced by that
+directory. Cargo then resolves the *whole* workspace from it, every optional,
+dev-only and other-target dependency included, before building anything, so
+the manifests need the kind of patch a Debian source package carries.
+`scripts/debian.py` does both halves:
+
+- `packages PACKAGES` lists the packages to install: those that provide every
+  dependency of every workspace crate, optional ones included, that the
+  archive can satisfy (64 for testing today; apt brings in their
+  dependencies, about 750 packages, and the C libraries the `-sys` crates
+  link, such as `libonig-dev`).
+- `patch-manifests [REGISTRY]` rewrites the manifests in place. It drops
+  dev-dependencies, dependencies for other targets (Windows, macOS, the
+  rquickjs backend), and the optional dependencies the registry lacks (oxc,
+  ts-rs, the three tree-sitter grammars, self-update's `zip` 2) with the
+  feature entries naming them. It also leaves out `fresh-gui`, whose wgpu
+  renderer is not packaged and which only the optional `gui` feature uses. A
+  required dependency the registry lacks is an error.
+
+The last step of the Debian CI job runs these and then builds `fresh-editor`
+offline with Debian's own `cargo` and `rustc`. In a `debian:testing`
+container the whole thing is:
+
+```sh
+apt-get install -y ca-certificates curl git build-essential pkg-config \
+    libclang-dev libquickjs esbuild python3 python3-tomlkit cargo rustc
+git clone https://github.com/sinelaw/fresh && cd fresh
+export RUSTFLAGS="--cfg fresh_js_system" RUSTDOCFLAGS="--cfg fresh_js_system"
+curl -fsSLo /tmp/Packages.xz \
+    https://deb.debian.org/debian/dists/testing/main/binary-amd64/Packages.xz
+apt-get install -y $(python3 scripts/debian.py packages /tmp/Packages.xz)
+python3 scripts/debian.py patch-manifests       # rewrites Cargo.toml files
+rm Cargo.lock
+mkdir -p .cargo && cat > .cargo/config.toml <<'TOML'
+[source.crates-io]
+replace-with = "debian"
+
+[source.debian]
+directory = "/usr/share/cargo/registry"
+
+[net]
+offline = true
+TOML
+cargo build --release -p fresh-editor --no-default-features \
+    --features runtime,plugins,embed-plugins
+```
+
+(`packages` reads the manifests with `cargo metadata --no-deps`, which needs
+no network or registry, so Debian's own `cargo` is enough.)
+
+What this build found that the archive check could not: Debian's
+`lsp-types` 0.97.0 is patched to use `fluent-uri` 0.4 instead of the 0.1
+upstream uses, and `Uri::scheme()` returns `&Scheme` there instead of
+`Option<&Scheme>`. Fresh's three callers now read the scheme from
+`Uri::as_str()`, which both have. With that, the build resolves 310 crates,
+all from Debian, and compiles. The resulting editor loads all 49 bundled
+plugins with no errors, compiled by esbuild and run on Debian's QuickJS
+(debug build, cold cache: 263 ms preparing and 314 ms running them; warm
+cache: 73 ms preparing).
 
 ## What remains for a Debian package
 

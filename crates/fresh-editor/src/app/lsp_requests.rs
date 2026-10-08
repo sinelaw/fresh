@@ -49,6 +49,18 @@ fn space_doc_paragraphs(text: &str) -> String {
 /// `(line, character)` LSP position. Zero-length ranges (start == end) are
 /// treated as containing their single anchor point so point-style diagnostics
 /// still match a hover that lands exactly on them.
+/// A URI's scheme (`file`, `jdt`, …), read from its text. `Uri::scheme()`
+/// returns `Option<&Scheme>` with the fluent-uri 0.1 that lsp-types uses
+/// upstream but `&Scheme` with the fluent-uri 0.4 Debian builds it against,
+/// so this sticks to `as_str()`, which both have.
+fn uri_scheme(uri: &lsp_types::Uri) -> Option<&str> {
+    let (scheme, _) = uri.as_str().split_once(':')?;
+    let mut chars = scheme.chars();
+    let valid = chars.next()?.is_ascii_alphabetic()
+        && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'));
+    valid.then_some(scheme)
+}
+
 fn lsp_range_contains(range: &lsp_types::Range, line: u32, character: u32) -> bool {
     let start = range.start;
     let end = range.end;
@@ -276,10 +288,8 @@ impl Editor {
         // class-file contents, and so on. `open_lsp_uri_target` would
         // decode those to nothing and surface the opaque "URI is not a
         // file path" error with no log trail.
-        if let Some(scheme) = location
-            .uri
-            .scheme()
-            .map(|s| s.as_str().to_string())
+        if let Some(scheme) = uri_scheme(&location.uri)
+            .map(str::to_string)
             .filter(|s| s != "file")
         {
             let uri = location.uri.as_str().to_string();
@@ -2530,7 +2540,7 @@ impl Editor {
                 // plugin-side file ops resolve. Fall back to the raw
                 // string for non-`file://` URIs so callers can still
                 // see *something*.
-                let file = if loc.uri.scheme().map(|s| s.as_str()) == Some("file") {
+                let file = if uri_scheme(&loc.uri) == Some("file") {
                     wire.to_host_path(translation.as_ref())
                         .map(|p| p.to_string_lossy().into_owned())
                         .unwrap_or_else(|| loc.uri.path().as_str().to_string())
@@ -2604,7 +2614,7 @@ impl Editor {
             .iter()
             .map(|loc| {
                 let wire = crate::app::types::LspUri::from_wire(loc.uri.clone());
-                let file = if loc.uri.scheme().map(|s| s.as_str()) == Some("file") {
+                let file = if uri_scheme(&loc.uri) == Some("file") {
                     wire.to_host_path(translation.as_ref())
                         .map(|p| p.to_string_lossy().into_owned())
                         .unwrap_or_else(|| loc.uri.path().as_str().to_string())

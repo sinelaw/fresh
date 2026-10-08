@@ -223,7 +223,8 @@ jobs:
   # embed-plugins: no tree-sitter, http, self-update or oxc). The job also
   # checks that Debian testing's archive can supply every Rust dependency of
   # that build, and that it compiles against the older crate versions Debian
-  # ships where Fresh's version ranges were widened for it.
+  # ships where Fresh's version ranges were widened for it, and finally builds
+  # it the way Debian would: offline, from Debian's packaged crates.
   # See docs/internal/debian-quickjs-spike.md.
   system-quickjs:
     name: Debian build (system QuickJS, esbuild)
@@ -257,7 +258,7 @@ jobs:
       - name: Debian testing can supply every Rust dependency
         run: |
           curl -fsSL -o /tmp/Packages.xz https://deb.debian.org/debian/dists/testing/main/binary-amd64/Packages.xz
-          python3 scripts/debian-deps.py /tmp/Packages.xz --features runtime,plugins,embed-plugins
+          python3 scripts/debian.py check /tmp/Packages.xz --features runtime,plugins,embed-plugins
       # Fresh accepts these crates' older versions for Debian's sake; build
       # against exactly what Debian testing ships so the ranges stay honest.
       - name: Build against Debian's versions of nix, libloading and jsonc-parser
@@ -266,6 +267,20 @@ jobs:
           cargo update -p libloading@0.9 --precise 0.8.9
           cargo update -p jsonc-parser --precise 0.33.0
           cargo check -p fresh-editor --no-default-features --features runtime,plugins,embed-plugins
+      # The way Debian builds it: offline, from the librust-*-dev packages in
+      # /usr/share/cargo/registry instead of crates.io and Cargo.lock, with
+      # Debian's cargo and rustc. Last, because it rewrites the manifests.
+      - name: Build from Debian's packaged crates
+        run: |
+          packages=$(python3 scripts/debian.py packages /tmp/Packages.xz)
+          # shellcheck disable=SC2086 # one package name per word
+          apt-get install -y --no-install-recommends cargo rustc python3-tomlkit $packages
+          python3 scripts/debian.py patch-manifests /usr/share/cargo/registry
+          rm Cargo.lock
+          mkdir -p .cargo
+          printf '[source.crates-io]\nreplace-with = "debian"\n\n[source.debian]\ndirectory = "/usr/share/cargo/registry"\n\n[net]\noffline = true\n' > .cargo/config.toml
+          RUSTC=/usr/bin/rustc CARGO_TARGET_DIR=/tmp/debian-target /usr/bin/cargo build \
+              -p fresh-editor --no-default-features --features runtime,plugins,embed-plugins
 
   # The release pipeline gets one shot per tag: a typo in a workflow expression
   # or a `run:` block surfaces when a release is already half-published, where
