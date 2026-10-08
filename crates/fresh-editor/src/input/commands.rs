@@ -943,6 +943,13 @@ static COMMAND_DEFS: &[CommandDef] = &[
         custom_contexts: &[],
     },
     CommandDef {
+        name_key: "cmd.toggle_zen_mode",
+        desc_key: "cmd.toggle_zen_mode_desc",
+        action: || Action::ToggleZenMode,
+        contexts: &[Normal, FileExplorer, Terminal],
+        custom_contexts: &[],
+    },
+    CommandDef {
         name_key: "cmd.toggle_tab_bar",
         desc_key: "cmd.toggle_tab_bar_desc",
         action: || Action::ToggleTabBar,

@@ -995,6 +995,7 @@ impl Editor {
             Action::ToggleFileExplorer => self.toggle_file_explorer(),
             Action::ToggleFileExplorerSide => self.toggle_file_explorer_side(),
             Action::ToggleMenuBar => self.toggle_menu_bar(),
+            Action::ToggleZenMode => self.toggle_zen_mode(),
             Action::ToggleTabBar => self.toggle_tab_bar(),
             Action::ToggleStatusBar => self.toggle_status_bar(),
             Action::TogglePromptLine => self.toggle_prompt_line(),

@@ -3839,6 +3839,7 @@ pub fn action_to_events(
         | Action::ToggleFileExplorer
         | Action::ToggleFileExplorerSide
         | Action::ToggleMenuBar
+        | Action::ToggleZenMode
         | Action::ToggleTabBar
         | Action::ToggleStatusBar
         | Action::TogglePromptLine
