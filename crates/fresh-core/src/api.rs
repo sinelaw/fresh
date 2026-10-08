@@ -53,6 +53,7 @@ use crate::BufferId;
 use crate::SplitId;
 use crate::TerminalId;
 use crate::WindowId;
+use crate::TS;
 use lsp_types;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
@@ -60,7 +61,6 @@ use std::collections::HashMap;
 use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
-use ts_rs::TS;
 
 /// Minimal command registry for PluginApi.
 /// This is a stub that provides basic command storage for plugin use.

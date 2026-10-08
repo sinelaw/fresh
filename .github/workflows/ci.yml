@@ -219,7 +219,11 @@ jobs:
   # - plugin TypeScript compiled by Debian's `esbuild` instead of oxc (whose
   #   crates Debian does not package): the `oxc` feature is off.
   #
-  # Other default features stay on so the e2e tests compare like with like.
+  # The editor is built with the Debian package's features (runtime, plugins,
+  # embed-plugins: no tree-sitter, http, self-update or oxc). The job also
+  # checks that Debian testing's archive can supply every Rust dependency of
+  # that build, and that it compiles against the older crate versions Debian
+  # ships where Fresh's version ranges were widened for it.
   # See docs/internal/debian-quickjs-spike.md.
   system-quickjs:
     name: Debian build (system QuickJS, esbuild)
@@ -248,8 +252,20 @@ jobs:
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       - name: Engine boundary, TypeScript (esbuild) and plugin runtime
         run: cargo test --locked -p fresh-js -p fresh-core -p fresh-parser-js -p fresh-plugin-runtime --no-default-features --features fresh-core/plugins
-      - name: Editor plugin tests
-        run: cargo test --locked -p fresh-editor --no-default-features --features plugins,runtime,embed-plugins,tree-sitter,http,self-update --test all_tests plugin
+      - name: Editor plugin tests (Debian package features)
+        run: cargo test --locked -p fresh-editor --no-default-features --features runtime,plugins,embed-plugins --test all_tests plugin
+      - name: Debian testing can supply every Rust dependency
+        run: |
+          curl -fsSL -o /tmp/Packages.xz https://deb.debian.org/debian/dists/testing/main/binary-amd64/Packages.xz
+          python3 scripts/debian-deps.py /tmp/Packages.xz --features runtime,plugins,embed-plugins
+      # Fresh accepts these crates' older versions for Debian's sake; build
+      # against exactly what Debian testing ships so the ranges stay honest.
+      - name: Build against Debian's versions of nix, libloading and jsonc-parser
+        run: |
+          cargo update -p nix@0.31 --precise 0.30.1
+          cargo update -p libloading@0.9 --precise 0.8.9
+          cargo update -p jsonc-parser --precise 0.33.0
+          cargo check -p fresh-editor --no-default-features --features runtime,plugins,embed-plugins
 
   # The release pipeline gets one shot per tag: a typo in a workflow expression
   # or a `run:` block surfaces when a release is already half-published, where

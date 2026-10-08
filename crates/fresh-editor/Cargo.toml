@@ -210,7 +210,7 @@ once_cell.workspace = true
 # (.CMD/.BAT/.PS1 wrappers that npm -g creates for Node-based LSPs),
 # the Unix executable bit, symlinks, and App Execution Aliases on
 # Windows — all of which our previous hand-rolled probe missed.
-which = "6"
+which = "8"
 
 # Runtime dependencies (optional, enabled by "runtime" feature)
 crossterm = { version = "0.29.0", features = ["osc52"], optional = true }
@@ -232,11 +232,14 @@ ignore = { version = "0.4", default-features = false, optional = true }
 # features stay off; we want raw events forwarded straight to
 # plugins so the collision-radar matrix can dedupe at the plugin
 # level (different debouncing policy than auto-revert wants).
-notify = { version = "8.2", default-features = false, features = ["macos_kqueue"], optional = true }
+# `macos_kqueue` is added for macOS only, below: Debian's notify
+# package does not offer it.
+notify = { version = "8.2", default-features = false, optional = true }
 # regex is always needed for model::buffer search functionality
 regex = { version = "1.12" }
 libc = { version = "0.2", optional = true }
-nix = { version = "0.31", features = ["signal", "pthread", "resource", "poll", "fs"], optional = true }
+# nix accepts the version Debian ships (0.30) as well as the current one.
+nix = { version = ">=0.30, <0.32", features = ["signal", "pthread", "resource", "poll", "fs"], optional = true }
 
 # anyhow is always needed for model error handling
 anyhow = { workspace = true }
@@ -309,6 +312,9 @@ vt100 = "0.16"  # Virtual terminal emulator for testing real ANSI output
 ctor = "0.6.3"
 tiny_http = "0.12"  # Lightweight HTTP server for testing release checker
 unicode-segmentation = "1.12"  # For grapheme cluster testing
+
+[target.'cfg(target_os = "macos")'.dependencies]
+notify = { version = "8.2", default-features = false, features = ["macos_kqueue"], optional = true }
 
 [target.'cfg(windows)'.dependencies]
 fresh-winterm.workspace = true

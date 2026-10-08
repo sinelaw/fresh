@@ -1,7 +1,7 @@
 use crate::api::OverlayColorSpec;
+use crate::TS;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use ts_rs::TS;
 
 /// Decoration metadata for a file explorer entry, provided by a plugin
 /// through `setFileExplorerDecorations`.
