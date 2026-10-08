@@ -194,8 +194,10 @@ editor's end-to-end plugin tests on the system backend cover those paths.
 
 ## What is not covered
 
-- **Only amd64 has run.** The shim is meant to make the 32-bit (NaN-boxed)
-  targets work, but nothing has run there yet.
+- **64-bit only so far.** The `Debian package` workflow builds and tests the
+  package on amd64 and arm64 (native runners). The shim is meant to make the
+  32-bit (NaN-boxed) targets, armhf and i386, work too, but nothing has run
+  there yet.
 - **No `bundled` mode.** Upstream builds stay on rquickjs; there is no option to
   compile a vendored Bellard QuickJS for non-Debian builds.
 - **The rest of the editor's end-to-end suite** (beyond the plugin tests) runs
@@ -366,7 +368,9 @@ cache: 73 ms preparing).
 
 ## What remains for a Debian package
 
-- **Other architectures.** Only amd64 has run (see above).
+- **Other architectures.** amd64 and arm64 are built in CI; the 32-bit ones
+  and Debian's other release architectures (ppc64el, s390x, riscv64, …) are
+  untested (see above).
 - **The source package.** The plan is one source package that builds Fresh's
   workspace crates (`fresh-core`, `fresh-js`, …) from its own tree, rather
   than packaging each as a `librust-*-dev`; this needs agreeing with the

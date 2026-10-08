@@ -26,8 +26,18 @@ concurrency:
 
 jobs:
   debian-package:
-    name: Debian package (testing, amd64)
-    runs-on: ubuntu-latest
+    name: Debian package (testing, ${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          # A native arm64 runner rather than emulation: the build compiles
+          # several hundred crates and runs the package's tests.
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     container: debian:testing
     timeout-minutes: 90
     env:
@@ -72,6 +82,7 @@ jobs:
 
       - name: Install and smoke-test
         run: |
+          test "$(dpkg --print-architecture)" = "${{ matrix.arch }}"
           apt-get install -y /build/fresh-editor_*.deb
           dpkg-deb --field /build/fresh-editor_*.deb Depends Built-Using Static-Built-Using
           fresh --version
@@ -82,7 +93,7 @@ jobs:
 
       - uses: actions/upload-artifact@v6
         with:
-          name: fresh-editor-debian-testing-amd64
+          name: fresh-editor-debian-testing-${{ matrix.arch }}
           if-no-files-found: error
           path: |
             /build/*.deb
