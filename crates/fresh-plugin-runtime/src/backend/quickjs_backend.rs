@@ -97,12 +97,12 @@ use fresh_core::command::Command;
 use fresh_core::overlay::OverlayNamespace;
 use fresh_core::text_property::TextPropertyEntry;
 use fresh_core::{BufferId, SplitId};
+use fresh_js::{Context, Function, Object, Runtime, Value};
 use fresh_parser_js::{
     bundle_module, has_es_imports, has_es_module_syntax, strip_imports_and_exports,
     transpile_typescript,
 };
 use fresh_plugin_api_macros::{plugin_api, plugin_api_impl};
-use rquickjs::{Context, Function, Object, Runtime, Value};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -113,7 +113,7 @@ use std::sync::{mpsc, Arc, RwLock};
 /// `QuickJsBackend` instance on a single runtime. Maps an export name to
 /// `(exporter plugin name, persistent JS object)`.
 type PluginApiExports =
-    Rc<RefCell<HashMap<String, (String, rquickjs::Persistent<rquickjs::Object<'static>>)>>>;
+    Rc<RefCell<HashMap<String, (String, fresh_js::Persistent<fresh_js::Object<'static>>)>>>;
 
 /// A `WidgetSpec` from a plugin, or why it isn't one: malformed JSON, or
 /// a `List`/`Tree` whose item keys don't match its items one to one (see
@@ -142,8 +142,8 @@ fn parse_widget_mutation(
 
 /// Convert a QuickJS Value to serde_json::Value
 #[allow(clippy::only_used_in_recursion)]
-fn js_to_json(ctx: &rquickjs::Ctx<'_>, val: Value<'_>) -> serde_json::Value {
-    use rquickjs::Type;
+fn js_to_json(ctx: &fresh_js::Ctx<'_>, val: Value<'_>) -> serde_json::Value {
+    use fresh_js::Type;
     match val.type_of() {
         Type::Null | Type::Undefined | Type::Uninitialized => serde_json::Value::Null,
         Type::Bool => val
@@ -204,9 +204,9 @@ fn js_to_json(ctx: &rquickjs::Ctx<'_>, val: Value<'_>) -> serde_json::Value {
 
 /// Convert a serde_json::Value to a QuickJS Value
 fn json_to_js_value<'js>(
-    ctx: &rquickjs::Ctx<'js>,
+    ctx: &fresh_js::Ctx<'js>,
     val: &serde_json::Value,
-) -> rquickjs::Result<Value<'js>> {
+) -> fresh_js::Result<Value<'js>> {
     match val {
         serde_json::Value::Null => Ok(Value::new_null(ctx.clone())),
         serde_json::Value::Bool(b) => Ok(Value::new_bool(ctx.clone(), *b)),
@@ -225,11 +225,11 @@ fn json_to_js_value<'js>(
             }
         }
         serde_json::Value::String(s) => {
-            let js_str = rquickjs::String::from_str(ctx.clone(), s)?;
+            let js_str = fresh_js::String::from_str(ctx.clone(), s)?;
             Ok(js_str.into_value())
         }
         serde_json::Value::Array(arr) => {
-            let js_arr = rquickjs::Array::new(ctx.clone())?;
+            let js_arr = fresh_js::Array::new(ctx.clone())?;
             for (i, item) in arr.iter().enumerate() {
                 let js_val = json_to_js_value(ctx, item)?;
                 js_arr.set(i, js_val)?;
@@ -237,7 +237,7 @@ fn json_to_js_value<'js>(
             Ok(js_arr.into_value())
         }
         serde_json::Value::Object(map) => {
-            let obj = rquickjs::Object::new(ctx.clone())?;
+            let obj = fresh_js::Object::new(ctx.clone())?;
             for (key, val) in map {
                 let js_val = json_to_js_value(ctx, val)?;
                 obj.set(key.as_str(), js_val)?;
@@ -249,7 +249,7 @@ fn json_to_js_value<'js>(
 
 /// Call a JS handler function directly with structured data, bypassing JSON
 /// string serialization and JS-side `JSON.parse()` + source re-parsing.
-fn call_handler(ctx: &rquickjs::Ctx<'_>, handler_name: &str, event_data: &serde_json::Value) {
+fn call_handler(ctx: &fresh_js::Ctx<'_>, handler_name: &str, event_data: &serde_json::Value) {
     let js_data = match json_to_js_value(ctx, event_data) {
         Ok(v) => v,
         Err(e) => {
@@ -259,11 +259,11 @@ fn call_handler(ctx: &rquickjs::Ctx<'_>, handler_name: &str, event_data: &serde_
     };
 
     let globals = ctx.globals();
-    let Ok(func) = globals.get::<_, rquickjs::Function>(handler_name) else {
+    let Ok(func) = globals.get::<_, fresh_js::Function>(handler_name) else {
         return;
     };
 
-    match func.call::<_, rquickjs::Value>((js_data,)) {
+    match func.call::<_, fresh_js::Value>((js_data,)) {
         Ok(result) => attach_promise_catch(ctx, &globals, handler_name, result),
         Err(e) => log_js_error(ctx, e, &format!("handler {}", handler_name)),
     }
@@ -273,15 +273,15 @@ fn call_handler(ctx: &rquickjs::Ctx<'_>, handler_name: &str, event_data: &serde_
 
 /// If `result` is a thenable (Promise), attach `.catch()` to surface async rejections.
 fn attach_promise_catch<'js>(
-    ctx: &rquickjs::Ctx<'js>,
-    globals: &rquickjs::Object<'js>,
+    ctx: &fresh_js::Ctx<'js>,
+    globals: &fresh_js::Object<'js>,
     handler_name: &str,
-    result: rquickjs::Value<'js>,
+    result: fresh_js::Value<'js>,
 ) {
     let Some(obj) = result.as_object() else {
         return;
     };
-    if obj.get::<_, rquickjs::Function>("then").is_err() {
+    if obj.get::<_, fresh_js::Function>("then").is_err() {
         return;
     }
     let _ = globals.set("__pendingPromise", result);
@@ -359,8 +359,8 @@ fn get_text_properties_at_cursor_typed(
 }
 
 /// Convert a JavaScript value to a string representation for console output
-fn js_value_to_string(ctx: &rquickjs::Ctx<'_>, val: &Value<'_>) -> String {
-    use rquickjs::Type;
+fn js_value_to_string(ctx: &fresh_js::Ctx<'_>, val: &Value<'_>) -> String {
+    use fresh_js::Type;
     match val.type_of() {
         Type::Null => "null".to_string(),
         Type::Undefined => "undefined".to_string(),
@@ -414,8 +414,8 @@ fn js_value_to_string(ctx: &rquickjs::Ctx<'_>, val: &Value<'_>) -> String {
 
 /// Format a JavaScript error with full details including stack trace
 fn format_js_error(
-    ctx: &rquickjs::Ctx<'_>,
-    err: rquickjs::Error,
+    ctx: &fresh_js::Ctx<'_>,
+    err: fresh_js::Error,
     source_name: &str,
 ) -> anyhow::Error {
     // Check if this is an exception that we can catch for more details
@@ -448,7 +448,7 @@ fn format_js_error(
                 // Exception is not an object, try to convert to string
                 let exc_str: String = exc
                     .as_string()
-                    .and_then(|s: &rquickjs::String| s.to_string().ok())
+                    .and_then(|s: &fresh_js::String| s.to_string().ok())
                     .unwrap_or_else(|| format!("{:?}", exc));
                 return anyhow::anyhow!("JS error in {}: {}", source_name, exc_str);
             }
@@ -479,7 +479,7 @@ fn js_global_accessor(name: &str) -> String {
     format!("globalThis[\"{escaped}\"]")
 }
 
-fn log_js_error(ctx: &rquickjs::Ctx<'_>, err: rquickjs::Error, context: &str) {
+fn log_js_error(ctx: &fresh_js::Ctx<'_>, err: fresh_js::Error, context: &str) {
     let error = format_js_error(ctx, err, context);
     tracing::error!("{}", error);
 
@@ -541,11 +541,11 @@ pub fn take_fatal_js_error() -> Option<String> {
 
 /// Run all pending jobs and check for unhandled exceptions
 /// If panic_on_js_errors is enabled, this will panic on unhandled exceptions
-fn run_pending_jobs_checked(ctx: &rquickjs::Ctx<'_>, context: &str) -> usize {
+fn run_pending_jobs_checked(ctx: &fresh_js::Ctx<'_>, context: &str) -> usize {
     let mut count = 0;
     loop {
         // Check for unhandled exception before running more jobs
-        let exc: rquickjs::Value = ctx.catch();
+        let exc: fresh_js::Value = ctx.catch();
         // Only treat it as an exception if it's actually an Error object
         if exc.is_exception() {
             let error_msg = if let Some(err) = exc.as_exception() {
@@ -570,7 +570,7 @@ fn run_pending_jobs_checked(ctx: &rquickjs::Ctx<'_>, context: &str) -> usize {
     }
 
     // Final check for exceptions after all jobs completed
-    let exc: rquickjs::Value = ctx.catch();
+    let exc: fresh_js::Value = ctx.catch();
     if exc.is_exception() {
         let error_msg = if let Some(err) = exc.as_exception() {
             format!(
@@ -599,7 +599,7 @@ fn run_pending_jobs_checked(ctx: &rquickjs::Ctx<'_>, context: &str) -> usize {
 
 /// Parse a TextPropertyEntry from a JS Object
 fn parse_text_property_entry(
-    ctx: &rquickjs::Ctx<'_>,
+    ctx: &fresh_js::Ctx<'_>,
     obj: &Object<'_>,
 ) -> Option<TextPropertyEntry> {
     let text: String = obj.get("text").ok()?;
@@ -626,7 +626,7 @@ fn parse_text_property_entry(
 
     // Parse optional inlineOverlays array
     let inline_overlays: Vec<fresh_core::text_property::InlineOverlay> = obj
-        .get::<_, rquickjs::Array>("inlineOverlays")
+        .get::<_, fresh_js::Array>("inlineOverlays")
         .ok()
         .map(|arr| {
             arr.iter::<Object>()
@@ -649,7 +649,7 @@ fn parse_text_property_entry(
         .map(|v| v.max(0.0) as u32);
 
     let segments: Vec<fresh_core::text_property::StyledSegment> = obj
-        .get::<_, rquickjs::Array>("segments")
+        .get::<_, fresh_js::Array>("segments")
         .ok()
         .map(|arr| {
             arr.iter::<Object>()
@@ -776,8 +776,8 @@ pub struct PluginHandler {
 /// Parse an `AnimationRect` from a JS object. Missing fields are treated
 /// as 0, which renders as a zero-area rect the runner drops immediately.
 fn parse_animation_rect(
-    obj: &rquickjs::Object<'_>,
-) -> rquickjs::Result<fresh_core::api::AnimationRect> {
+    obj: &fresh_js::Object<'_>,
+) -> fresh_js::Result<fresh_core::api::AnimationRect> {
     Ok(fresh_core::api::AnimationRect {
         x: obj.get::<_, u16>("x").unwrap_or(0),
         y: obj.get::<_, u16>("y").unwrap_or(0),
@@ -790,8 +790,8 @@ fn parse_animation_rect(
 /// kinds fall back to the default `slideIn` shape so the editor side can
 /// still construct something sensible rather than crash.
 fn parse_animation_kind(
-    obj: &rquickjs::Object<'_>,
-) -> rquickjs::Result<fresh_core::api::PluginAnimationKind> {
+    obj: &fresh_js::Object<'_>,
+) -> fresh_js::Result<fresh_core::api::PluginAnimationKind> {
     use fresh_core::api::{PluginAnimationEdge, PluginAnimationKind};
     let kind: String = obj.get::<_, String>("kind").unwrap_or_default();
     match kind.as_str() {
@@ -811,7 +811,7 @@ fn parse_animation_kind(
                 delay_ms,
             })
         }
-        other => Err(rquickjs::Error::new_from_js_message(
+        other => Err(fresh_js::Error::new_from_js_message(
             "string",
             "PluginAnimationKind",
             format!("unknown animation kind: {}", other),
@@ -883,21 +883,21 @@ pub struct JsEditorApi {
 // Free functions kept out of the impl block (which is processed by the
 // `plugin_api_impl` macro and would otherwise try to export them).
 
-fn throw_js<'js>(ctx: &rquickjs::Ctx<'js>, msg: &str) -> rquickjs::Error {
-    match rquickjs::String::from_str(ctx.clone(), msg) {
+fn throw_js<'js>(ctx: &fresh_js::Ctx<'js>, msg: &str) -> fresh_js::Error {
+    match fresh_js::String::from_str(ctx.clone(), msg) {
         Ok(s) => ctx.throw(s.into_value()),
         Err(e) => e,
     }
 }
 
 fn parse_options<'js>(
-    ctx: &rquickjs::Ctx<'js>,
+    ctx: &fresh_js::Ctx<'js>,
     method: &str,
     field: &str,
-    options: rquickjs::Object<'js>,
-) -> rquickjs::Result<serde_json::Map<String, serde_json::Value>> {
-    let value: serde_json::Value = rquickjs_serde::from_value(options.into_value())
-        .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string()))?;
+    options: fresh_js::Object<'js>,
+) -> fresh_js::Result<serde_json::Map<String, serde_json::Value>> {
+    let value: serde_json::Value = fresh_js::serde::from_value(options.into_value())
+        .map_err(|e| fresh_js::Error::new_from_js_message("serialize", "", &e.to_string()))?;
     match value {
         serde_json::Value::Object(m) => Ok(m),
         _ => Err(throw_js(
@@ -908,12 +908,12 @@ fn parse_options<'js>(
 }
 
 fn validate_allowed_keys<'js>(
-    ctx: &rquickjs::Ctx<'js>,
+    ctx: &fresh_js::Ctx<'js>,
     method: &str,
     field: &str,
     opts: &serde_json::Map<String, serde_json::Value>,
     allowed: &[&str],
-) -> rquickjs::Result<()> {
+) -> fresh_js::Result<()> {
     for k in opts.keys() {
         if !allowed.contains(&k.as_str()) {
             return Err(throw_js(
@@ -938,12 +938,12 @@ fn string_opt(opts: &serde_json::Map<String, serde_json::Value>, key: &str) -> O
 }
 
 fn require_integer<'js>(
-    ctx: &rquickjs::Ctx<'js>,
+    ctx: &fresh_js::Ctx<'js>,
     method: &str,
     field: &str,
     opts: &serde_json::Map<String, serde_json::Value>,
     key: &str,
-) -> rquickjs::Result<i64> {
+) -> fresh_js::Result<i64> {
     match opts.get(key) {
         Some(v) => v.as_i64().ok_or_else(|| {
             throw_js(
@@ -959,12 +959,12 @@ fn require_integer<'js>(
 }
 
 fn optional_integer<'js>(
-    ctx: &rquickjs::Ctx<'js>,
+    ctx: &fresh_js::Ctx<'js>,
     method: &str,
     field: &str,
     opts: &serde_json::Map<String, serde_json::Value>,
     key: &str,
-) -> rquickjs::Result<Option<i64>> {
+) -> fresh_js::Result<Option<i64>> {
     match opts.get(key) {
         None => Ok(None),
         Some(v) => v.as_i64().map(Some).ok_or_else(|| {
@@ -977,12 +977,12 @@ fn optional_integer<'js>(
 }
 
 fn require_number<'js>(
-    ctx: &rquickjs::Ctx<'js>,
+    ctx: &fresh_js::Ctx<'js>,
     method: &str,
     field: &str,
     opts: &serde_json::Map<String, serde_json::Value>,
     key: &str,
-) -> rquickjs::Result<f64> {
+) -> fresh_js::Result<f64> {
     match opts.get(key) {
         Some(v) => v.as_f64().ok_or_else(|| {
             throw_js(
@@ -998,12 +998,12 @@ fn require_number<'js>(
 }
 
 fn optional_number<'js>(
-    ctx: &rquickjs::Ctx<'js>,
+    ctx: &fresh_js::Ctx<'js>,
     method: &str,
     field: &str,
     opts: &serde_json::Map<String, serde_json::Value>,
     key: &str,
-) -> rquickjs::Result<Option<f64>> {
+) -> fresh_js::Result<Option<f64>> {
     match opts.get(key) {
         None => Ok(None),
         Some(v) => v.as_f64().map(Some).ok_or_else(|| {
@@ -1016,13 +1016,13 @@ fn optional_number<'js>(
 }
 
 fn check_range<'js>(
-    ctx: &rquickjs::Ctx<'js>,
+    ctx: &fresh_js::Ctx<'js>,
     method: &str,
     field: &str,
     default: f64,
     minimum: Option<f64>,
     maximum: Option<f64>,
-) -> rquickjs::Result<()> {
+) -> fresh_js::Result<()> {
     if let Some(min) = minimum {
         if default < min {
             return Err(throw_js(
@@ -1143,11 +1143,11 @@ impl JsEditorApi {
     /// indistinguishable from no prefix, and storing one would make the
     /// renderer emit a zero-width token per wrapped row for nothing.
     fn parse_soft_break_prefix(
-        obj: rquickjs::Object<'_>,
+        obj: fresh_js::Object<'_>,
     ) -> Option<fresh_core::api::SoftBreakPrefix> {
         use fresh_core::api::OverlayColorSpec;
 
-        fn parse_color_spec(key: &str, obj: &rquickjs::Object<'_>) -> Option<OverlayColorSpec> {
+        fn parse_color_spec(key: &str, obj: &fresh_js::Object<'_>) -> Option<OverlayColorSpec> {
             if let Ok(theme_key) = obj.get::<_, String>(key) {
                 if !theme_key.is_empty() {
                     return Some(OverlayColorSpec::ThemeKey(theme_key));
@@ -1225,26 +1225,26 @@ impl JsEditorApi {
     #[plugin_api(ts_return = "boolean")]
     pub fn export_plugin_api<'js>(
         &self,
-        ctx: rquickjs::Ctx<'js>,
+        ctx: fresh_js::Ctx<'js>,
         name: String,
-        api: rquickjs::Value<'js>,
-    ) -> rquickjs::Result<bool> {
+        api: fresh_js::Value<'js>,
+    ) -> fresh_js::Result<bool> {
         if name.is_empty() {
             let msg =
-                rquickjs::String::from_str(ctx.clone(), "exportPluginApi: name must be non-empty")?;
+                fresh_js::String::from_str(ctx.clone(), "exportPluginApi: name must be non-empty")?;
             return Err(ctx.throw(msg.into_value()));
         }
         let obj = match api.as_object() {
             Some(o) => o.clone(),
             None => {
-                let msg = rquickjs::String::from_str(
+                let msg = fresh_js::String::from_str(
                     ctx.clone(),
                     "exportPluginApi: api must be an object",
                 )?;
                 return Err(ctx.throw(msg.into_value()));
             }
         };
-        let persistent = rquickjs::Persistent::save(&ctx, obj);
+        let persistent = fresh_js::Persistent::save(&ctx, obj);
         self.plugin_api_exports
             .borrow_mut()
             .insert(name, (self.plugin_name.clone(), persistent));
@@ -1257,9 +1257,9 @@ impl JsEditorApi {
     #[plugin_api(ts_return = "unknown | null")]
     pub fn get_plugin_api<'js>(
         &self,
-        ctx: rquickjs::Ctx<'js>,
+        ctx: fresh_js::Ctx<'js>,
         name: String,
-    ) -> rquickjs::Result<rquickjs::Value<'js>> {
+    ) -> fresh_js::Result<fresh_js::Value<'js>> {
         let persistent = self
             .plugin_api_exports
             .borrow()
@@ -1270,7 +1270,7 @@ impl JsEditorApi {
                 let restored = p.restore(&ctx)?;
                 Ok(restored.into_value())
             }
-            None => Ok(rquickjs::Value::new_null(ctx)),
+            None => Ok(fresh_js::Value::new_null(ctx)),
         }
     }
 
@@ -1311,14 +1311,14 @@ impl JsEditorApi {
     #[plugin_api(section = "Buffer Queries")]
     /// List all open buffers - returns array of BufferInfo objects
     #[plugin_api(ts_return = "BufferInfo[]")]
-    pub fn list_buffers<'js>(&self, ctx: rquickjs::Ctx<'js>) -> rquickjs::Result<Value<'js>> {
+    pub fn list_buffers<'js>(&self, ctx: fresh_js::Ctx<'js>) -> fresh_js::Result<Value<'js>> {
         let buffers: Vec<BufferInfo> = if let Ok(s) = self.state_snapshot.read() {
             s.buffers.values().cloned().collect()
         } else {
             Vec::new()
         };
-        rquickjs_serde::to_value(ctx, &buffers)
-            .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string()))
+        fresh_js::serde::to_value(ctx, &buffers)
+            .map_err(|e| fresh_js::Error::new_from_js_message("serialize", "", &e.to_string()))
     }
 
     #[plugin_api(section = "Languages & LSP")]
@@ -1329,14 +1329,14 @@ impl JsEditorApi {
     /// (where the grammar is from, e.g. "built-in" or "plugin (myplugin)") and
     /// `file_extensions` (the file extensions associated with the grammar).
     #[plugin_api(ts_return = "GrammarInfoSnapshot[]")]
-    pub fn list_grammars<'js>(&self, ctx: rquickjs::Ctx<'js>) -> rquickjs::Result<Value<'js>> {
+    pub fn list_grammars<'js>(&self, ctx: fresh_js::Ctx<'js>) -> fresh_js::Result<Value<'js>> {
         let grammars: Vec<GrammarInfoSnapshot> = if let Ok(s) = self.state_snapshot.read() {
             s.available_grammars.clone()
         } else {
             Vec::new()
         };
-        rquickjs_serde::to_value(ctx, &grammars)
-            .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string()))
+        fresh_js::serde::to_value(ctx, &grammars)
+            .map_err(|e| fresh_js::Error::new_from_js_message("serialize", "", &e.to_string()))
     }
 
     // Reads the per-tick snapshot, so it never crosses the IPC boundary.
@@ -1359,9 +1359,9 @@ impl JsEditorApi {
     #[plugin_api(ts_return = "ActionSpec[] | null")]
     pub fn get_macro<'js>(
         &self,
-        ctx: rquickjs::Ctx<'js>,
+        ctx: fresh_js::Ctx<'js>,
         register: String,
-    ) -> rquickjs::Result<Value<'js>> {
+    ) -> fresh_js::Result<Value<'js>> {
         let steps = if let Ok(s) = self.state_snapshot.read() {
             s.macros
                 .iter()
@@ -1371,8 +1371,8 @@ impl JsEditorApi {
             None
         };
         match steps {
-            Some(steps) => rquickjs_serde::to_value(ctx, &steps)
-                .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string())),
+            Some(steps) => fresh_js::serde::to_value(ctx, &steps)
+                .map_err(|e| fresh_js::Error::new_from_js_message("serialize", "", &e.to_string())),
             None => Ok(Value::new_null(ctx)),
         }
     }
@@ -1491,16 +1491,16 @@ impl JsEditorApi {
     /// @param handlerName - Name of the `globalThis` function to call
     pub fn register_command<'js>(
         &self,
-        ctx: rquickjs::Ctx<'js>,
+        ctx: fresh_js::Ctx<'js>,
         name: String,
         description: String,
         handler_name: String,
-        #[plugin_api(ts_type = "string | null")] context: rquickjs::function::Opt<
-            rquickjs::Value<'js>,
+        #[plugin_api(ts_type = "string | null")] context: fresh_js::function::Opt<
+            fresh_js::Value<'js>,
         >,
         #[plugin_api(ts_type = "{ terminalBypass?: boolean } | null")]
-        options: rquickjs::function::Opt<rquickjs::Value<'js>>,
-    ) -> rquickjs::Result<bool> {
+        options: fresh_js::function::Opt<fresh_js::Value<'js>>,
+    ) -> fresh_js::Result<bool> {
         // Use stored plugin name instead of global lookup
         let plugin_name = self.plugin_name.clone();
         // Extract context string - handle null, undefined, or missing
@@ -1537,7 +1537,7 @@ impl JsEditorApi {
                     );
                     tracing::warn!("registerCommand collision: {}", msg);
                     return Err(
-                        ctx.throw(rquickjs::String::from_str(ctx.clone(), &msg)?.into_value())
+                        ctx.throw(fresh_js::String::from_str(ctx.clone(), &msg)?.into_value())
                     );
                 }
                 // Same plugin re-registering its own command is allowed (hot-reload)
@@ -1714,9 +1714,9 @@ impl JsEditorApi {
     /// Args is optional - can be omitted, undefined, null, or an object
     pub fn t<'js>(
         &self,
-        _ctx: rquickjs::Ctx<'js>,
+        _ctx: fresh_js::Ctx<'js>,
         key: String,
-        args: rquickjs::function::Rest<Value<'js>>,
+        args: fresh_js::function::Rest<Value<'js>>,
     ) -> String {
         // Use stored plugin name instead of global lookup
         let plugin_name = self.plugin_name.clone();
@@ -1808,16 +1808,16 @@ impl JsEditorApi {
     #[plugin_api(ts_return = "BufferInfo | null")]
     pub fn get_buffer_info<'js>(
         &self,
-        ctx: rquickjs::Ctx<'js>,
+        ctx: fresh_js::Ctx<'js>,
         buffer_id: u32,
-    ) -> rquickjs::Result<Value<'js>> {
+    ) -> fresh_js::Result<Value<'js>> {
         let info = if let Ok(s) = self.state_snapshot.read() {
             s.buffers.get(&BufferId(buffer_id as usize)).cloned()
         } else {
             None
         };
-        rquickjs_serde::to_value(ctx, &info)
-            .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string()))
+        fresh_js::serde::to_value(ctx, &info)
+            .map_err(|e| fresh_js::Error::new_from_js_message("serialize", "", &e.to_string()))
     }
 
     #[plugin_api(section = "Cursors & Viewport")]
@@ -1825,26 +1825,26 @@ impl JsEditorApi {
     /// The result includes the cursor's selection, if any. Returns null if there
     /// is no active cursor.
     #[plugin_api(ts_return = "CursorInfo | null")]
-    pub fn get_primary_cursor<'js>(&self, ctx: rquickjs::Ctx<'js>) -> rquickjs::Result<Value<'js>> {
+    pub fn get_primary_cursor<'js>(&self, ctx: fresh_js::Ctx<'js>) -> fresh_js::Result<Value<'js>> {
         let cursor = if let Ok(s) = self.state_snapshot.read() {
             s.primary_cursor.clone()
         } else {
             None
         };
-        rquickjs_serde::to_value(ctx, &cursor)
-            .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string()))
+        fresh_js::serde::to_value(ctx, &cursor)
+            .map_err(|e| fresh_js::Error::new_from_js_message("serialize", "", &e.to_string()))
     }
 
     /// Get all cursors for active buffer
     #[plugin_api(ts_return = "CursorInfo[]")]
-    pub fn get_all_cursors<'js>(&self, ctx: rquickjs::Ctx<'js>) -> rquickjs::Result<Value<'js>> {
+    pub fn get_all_cursors<'js>(&self, ctx: fresh_js::Ctx<'js>) -> fresh_js::Result<Value<'js>> {
         let cursors = if let Ok(s) = self.state_snapshot.read() {
             s.all_cursors.clone()
         } else {
             Vec::new()
         };
-        rquickjs_serde::to_value(ctx, &cursors)
-            .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string()))
+        fresh_js::serde::to_value(ctx, &cursors)
+            .map_err(|e| fresh_js::Error::new_from_js_message("serialize", "", &e.to_string()))
     }
 
     /// Get all cursor positions as byte offsets
@@ -1854,27 +1854,27 @@ impl JsEditorApi {
     #[plugin_api(ts_return = "number[]")]
     pub fn get_all_cursor_positions<'js>(
         &self,
-        ctx: rquickjs::Ctx<'js>,
-    ) -> rquickjs::Result<Value<'js>> {
+        ctx: fresh_js::Ctx<'js>,
+    ) -> fresh_js::Result<Value<'js>> {
         let positions: Vec<u32> = if let Ok(s) = self.state_snapshot.read() {
             s.all_cursors.iter().map(|c| c.position as u32).collect()
         } else {
             Vec::new()
         };
-        rquickjs_serde::to_value(ctx, &positions)
-            .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string()))
+        fresh_js::serde::to_value(ctx, &positions)
+            .map_err(|e| fresh_js::Error::new_from_js_message("serialize", "", &e.to_string()))
     }
 
     /// Get viewport info for active buffer
     #[plugin_api(ts_return = "ViewportInfo | null")]
-    pub fn get_viewport<'js>(&self, ctx: rquickjs::Ctx<'js>) -> rquickjs::Result<Value<'js>> {
+    pub fn get_viewport<'js>(&self, ctx: fresh_js::Ctx<'js>) -> fresh_js::Result<Value<'js>> {
         let viewport = if let Ok(s) = self.state_snapshot.read() {
             s.viewport.clone()
         } else {
             None
         };
-        rquickjs_serde::to_value(ctx, &viewport)
-            .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string()))
+        fresh_js::serde::to_value(ctx, &viewport)
+            .map_err(|e| fresh_js::Error::new_from_js_message("serialize", "", &e.to_string()))
     }
 
     #[plugin_api(section = "Windows")]
@@ -1883,7 +1883,7 @@ impl JsEditorApi {
     /// split layout), this reflects the full terminal — what a
     /// floating overlay sized by `heightPct` actually gets.
     #[plugin_api(ts_return = "ScreenSize")]
-    pub fn get_screen_size<'js>(&self, ctx: rquickjs::Ctx<'js>) -> rquickjs::Result<Value<'js>> {
+    pub fn get_screen_size<'js>(&self, ctx: fresh_js::Ctx<'js>) -> fresh_js::Result<Value<'js>> {
         let size = if let Ok(s) = self.state_snapshot.read() {
             fresh_core::api::ScreenSize {
                 width: s.terminal_width,
@@ -1895,8 +1895,8 @@ impl JsEditorApi {
                 height: 0,
             }
         };
-        rquickjs_serde::to_value(ctx, size)
-            .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string()))
+        fresh_js::serde::to_value(ctx, size)
+            .map_err(|e| fresh_js::Error::new_from_js_message("serialize", "", &e.to_string()))
     }
 
     #[plugin_api(section = "Splits")]
@@ -1907,14 +1907,14 @@ impl JsEditorApi {
     /// across panes, …) iterate this list rather than only seeing
     /// `getViewport()`'s active-split data.  Order is unspecified.
     #[plugin_api(ts_return = "SplitSnapshot[]")]
-    pub fn list_splits<'js>(&self, ctx: rquickjs::Ctx<'js>) -> rquickjs::Result<Value<'js>> {
+    pub fn list_splits<'js>(&self, ctx: fresh_js::Ctx<'js>) -> fresh_js::Result<Value<'js>> {
         let splits = if let Ok(s) = self.state_snapshot.read() {
             s.splits.clone()
         } else {
             Vec::new()
         };
-        rquickjs_serde::to_value(ctx, &splits)
-            .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string()))
+        fresh_js::serde::to_value(ctx, &splits)
+            .map_err(|e| fresh_js::Error::new_from_js_message("serialize", "", &e.to_string()))
     }
 
     #[plugin_api(section = "Cursors & Viewport")]
@@ -1944,11 +1944,11 @@ impl JsEditorApi {
     #[qjs(rename = "_openMachineStart")]
     pub fn open_machine_start<'js>(
         &self,
-        ctx: rquickjs::Ctx<'js>,
-        #[plugin_api(ts_type = "unknown")] spec: rquickjs::Value<'js>,
-    ) -> rquickjs::Result<u64> {
-        let payload: serde_json::Value = rquickjs_serde::from_value(spec)
-            .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string()))?;
+        ctx: fresh_js::Ctx<'js>,
+        #[plugin_api(ts_type = "unknown")] spec: fresh_js::Value<'js>,
+    ) -> fresh_js::Result<u64> {
+        let payload: serde_json::Value = fresh_js::serde::from_value(spec)
+            .map_err(|e| fresh_js::Error::new_from_js_message("serialize", "", &e.to_string()))?;
         if !payload.is_object() {
             return Err(throw_js(&ctx, "openMachine: spec must be an object"));
         }
@@ -1967,7 +1967,7 @@ impl JsEditorApi {
     /// Close a machine opened by `openMachine`. Idempotent.
     #[plugin_api(async_promise, js_name = "_closeMachineRaw", ts_return = "boolean")]
     #[qjs(rename = "_closeMachineStart")]
-    pub fn close_machine_start(&self, _ctx: rquickjs::Ctx<'_>, machine: i64) -> u64 {
+    pub fn close_machine_start(&self, _ctx: fresh_js::Ctx<'_>, machine: i64) -> u64 {
         let id = self.alloc_request_id();
         let _ = self.command_sender.send(PluginCommand::CloseMachine {
             machine: machine.max(0) as u64,
@@ -1987,12 +1987,12 @@ impl JsEditorApi {
     #[qjs(rename = "_machineEnvStart")]
     pub fn machine_env_start<'js>(
         &self,
-        ctx: rquickjs::Ctx<'js>,
+        ctx: fresh_js::Ctx<'js>,
         machine: i64,
-        #[plugin_api(ts_type = "string[]")] names: rquickjs::Value<'js>,
-    ) -> rquickjs::Result<u64> {
-        let parsed: serde_json::Value = rquickjs_serde::from_value(names)
-            .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string()))?;
+        #[plugin_api(ts_type = "string[]")] names: fresh_js::Value<'js>,
+    ) -> fresh_js::Result<u64> {
+        let parsed: serde_json::Value = fresh_js::serde::from_value(names)
+            .map_err(|e| fresh_js::Error::new_from_js_message("serialize", "", &e.to_string()))?;
         let serde_json::Value::Array(items) = parsed else {
             return Err(throw_js(&ctx, "machineEnv: `names` must be an array"));
         };
@@ -2022,14 +2022,14 @@ impl JsEditorApi {
     #[qjs(rename = "_walkTreeStart")]
     pub fn walk_tree_start<'js>(
         &self,
-        ctx: rquickjs::Ctx<'js>,
+        ctx: fresh_js::Ctx<'js>,
         machine: i64,
         root: String,
         #[plugin_api(
             ts_type = "{ skipDirs?: string[]; includeHidden?: boolean; includeDirs?: boolean; maxDepth?: number; maxEntries?: number }"
         )]
-        options: rquickjs::Object<'js>,
-    ) -> rquickjs::Result<u64> {
+        options: fresh_js::Object<'js>,
+    ) -> fresh_js::Result<u64> {
         let opts = parse_options(&ctx, "walkTree", &root, options)?;
         validate_allowed_keys(
             &ctx,
@@ -2084,14 +2084,14 @@ impl JsEditorApi {
     #[qjs(rename = "_readFilePrefixesStart")]
     pub fn read_file_prefixes_start<'js>(
         &self,
-        ctx: rquickjs::Ctx<'js>,
+        ctx: fresh_js::Ctx<'js>,
         machine: i64,
-        #[plugin_api(ts_type = "{ path: string; maxBytes: number }[]")] requests: rquickjs::Value<
+        #[plugin_api(ts_type = "{ path: string; maxBytes: number }[]")] requests: fresh_js::Value<
             'js,
         >,
-    ) -> rquickjs::Result<u64> {
-        let parsed: serde_json::Value = rquickjs_serde::from_value(requests)
-            .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string()))?;
+    ) -> fresh_js::Result<u64> {
+        let parsed: serde_json::Value = fresh_js::serde::from_value(requests)
+            .map_err(|e| fresh_js::Error::new_from_js_message("serialize", "", &e.to_string()))?;
         let serde_json::Value::Array(items) = parsed else {
             return Err(throw_js(
                 &ctx,
@@ -2133,14 +2133,14 @@ impl JsEditorApi {
     #[qjs(rename = "_runOnTargetStart")]
     pub fn run_on_target_start<'js>(
         &self,
-        ctx: rquickjs::Ctx<'js>,
+        ctx: fresh_js::Ctx<'js>,
         machine: i64,
         program: String,
-        #[plugin_api(ts_type = "string[]")] args: rquickjs::Value<'js>,
+        #[plugin_api(ts_type = "string[]")] args: fresh_js::Value<'js>,
         cwd: String,
-    ) -> rquickjs::Result<u64> {
-        let parsed: serde_json::Value = rquickjs_serde::from_value(args)
-            .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string()))?;
+    ) -> fresh_js::Result<u64> {
+        let parsed: serde_json::Value = fresh_js::serde::from_value(args)
+            .map_err(|e| fresh_js::Error::new_from_js_message("serialize", "", &e.to_string()))?;
         let serde_json::Value::Array(items) = parsed else {
             return Err(throw_js(&ctx, "runOnTarget: `args` must be an array"));
         };
@@ -2172,7 +2172,7 @@ impl JsEditorApi {
         ts_return = "number | null"
     )]
     #[qjs(rename = "_getLineStartPositionStart")]
-    pub fn get_line_start_position_start(&self, _ctx: rquickjs::Ctx<'_>, line: u32) -> u64 {
+    pub fn get_line_start_position_start(&self, _ctx: fresh_js::Ctx<'_>, line: u32) -> u64 {
         let id = self.alloc_request_id();
         // Use buffer_id 0 for active buffer
         let _ = self
@@ -2194,7 +2194,7 @@ impl JsEditorApi {
         ts_return = "number | null"
     )]
     #[qjs(rename = "_getLineEndPositionStart")]
-    pub fn get_line_end_position_start(&self, _ctx: rquickjs::Ctx<'_>, line: u32) -> u64 {
+    pub fn get_line_end_position_start(&self, _ctx: fresh_js::Ctx<'_>, line: u32) -> u64 {
         let id = self.alloc_request_id();
         // Use buffer_id 0 for active buffer
         let _ = self.command_sender.send(PluginCommand::GetLineEndPosition {
@@ -2213,7 +2213,7 @@ impl JsEditorApi {
         ts_return = "number | null"
     )]
     #[qjs(rename = "_getBufferLineCountStart")]
-    pub fn get_buffer_line_count_start(&self, _ctx: rquickjs::Ctx<'_>) -> u64 {
+    pub fn get_buffer_line_count_start(&self, _ctx: fresh_js::Ctx<'_>) -> u64 {
         let id = self.alloc_request_id();
         // Use buffer_id 0 for active buffer
         let _ = self.command_sender.send(PluginCommand::GetBufferLineCount {
@@ -2237,7 +2237,7 @@ impl JsEditorApi {
         ts_return = "{ focusedPane: number, paneCount: number, lines: Array<number | null> } | null"
     )]
     #[qjs(rename = "_getCompositeCursorInfoStart")]
-    pub fn get_composite_cursor_info_start(&self, _ctx: rquickjs::Ctx<'_>) -> u64 {
+    pub fn get_composite_cursor_info_start(&self, _ctx: fresh_js::Ctx<'_>) -> u64 {
         let id = self.alloc_request_id();
         let _ = self
             .command_sender
@@ -2295,9 +2295,9 @@ impl JsEditorApi {
     #[plugin_api(ts_return = "BufferSavedDiff | null")]
     pub fn get_buffer_saved_diff<'js>(
         &self,
-        ctx: rquickjs::Ctx<'js>,
+        ctx: fresh_js::Ctx<'js>,
         buffer_id: u32,
-    ) -> rquickjs::Result<Value<'js>> {
+    ) -> fresh_js::Result<Value<'js>> {
         let diff = if let Ok(s) = self.state_snapshot.read() {
             s.buffer_saved_diffs
                 .get(&BufferId(buffer_id as usize))
@@ -2305,8 +2305,8 @@ impl JsEditorApi {
         } else {
             None
         };
-        rquickjs_serde::to_value(ctx, &diff)
-            .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string()))
+        fresh_js::serde::to_value(ctx, &diff)
+            .map_err(|e| fresh_js::Error::new_from_js_message("serialize", "", &e.to_string()))
     }
 
     #[plugin_api(section = "Text Editing")]
@@ -2365,8 +2365,8 @@ impl JsEditorApi {
     pub fn open_file(
         &self,
         path: String,
-        line: rquickjs::function::Opt<Option<u32>>,
-        column: rquickjs::function::Opt<Option<u32>>,
+        line: fresh_js::function::Opt<Option<u32>>,
+        column: fresh_js::function::Opt<Option<u32>>,
     ) -> bool {
         // `Opt<Option<T>>` accepts all three forms callers actually write:
         // omitted, explicit `null`, and a number.
@@ -2401,7 +2401,7 @@ impl JsEditorApi {
     pub fn open_file_in_background(
         &self,
         path: String,
-        window_id: rquickjs::function::Opt<u64>,
+        window_id: fresh_js::function::Opt<u64>,
     ) -> bool {
         self.command_sender
             .send(PluginCommand::OpenFileInBackground {
@@ -2422,8 +2422,8 @@ impl JsEditorApi {
         &self,
         split_id: u32,
         path: String,
-        line: rquickjs::function::Opt<u32>,
-        column: rquickjs::function::Opt<u32>,
+        line: fresh_js::function::Opt<u32>,
+        column: fresh_js::function::Opt<u32>,
     ) -> bool {
         // `line` and `column` are optional: "show this file in that pane" is
         // the whole request most of the time, and requiring a cursor position
@@ -2464,8 +2464,8 @@ impl JsEditorApi {
         &self,
         split_id: u32,
         path: String,
-        line: rquickjs::function::Opt<u32>,
-        column: rquickjs::function::Opt<u32>,
+        line: fresh_js::function::Opt<u32>,
+        column: fresh_js::function::Opt<u32>,
     ) -> bool {
         self.command_sender
             .send(PluginCommand::PreviewFileInSplit {
@@ -2504,7 +2504,7 @@ impl JsEditorApi {
         ts_return = "number | null"
     )]
     #[qjs(rename = "_openFileStreamingStart")]
-    pub fn open_file_streaming_start(&self, _ctx: rquickjs::Ctx<'_>, path: String) -> u64 {
+    pub fn open_file_streaming_start(&self, _ctx: fresh_js::Ctx<'_>, path: String) -> u64 {
         let id = self.alloc_request_id();
         let _ = self.command_sender.send(PluginCommand::OpenFileStreaming {
             path: PathBuf::from(path),
@@ -2526,7 +2526,7 @@ impl JsEditorApi {
         ts_return = "number | null"
     )]
     #[qjs(rename = "_refreshBufferFromDiskStart")]
-    pub fn refresh_buffer_from_disk_start(&self, _ctx: rquickjs::Ctx<'_>, buffer_id: u32) -> u64 {
+    pub fn refresh_buffer_from_disk_start(&self, _ctx: fresh_js::Ctx<'_>, buffer_id: u32) -> u64 {
         let id = self.alloc_request_id();
         let _ = self
             .command_sender
@@ -2566,7 +2566,7 @@ impl JsEditorApi {
     pub fn close_buffer(
         &self,
         buffer_id: u32,
-        force: rquickjs::function::Opt<Option<bool>>,
+        force: fresh_js::function::Opt<Option<bool>>,
     ) -> bool {
         // Nested `Opt<Option<_>>` so omitted, `null`, and `true`/`false` all
         // work — see `open_file` for why the two simpler spellings each
@@ -2664,9 +2664,9 @@ impl JsEditorApi {
     /// Returns an animation id usable with `cancelAnimation`.
     pub fn animate_area<'js>(
         &self,
-        #[plugin_api(ts_type = "AnimationRect")] rect: rquickjs::Object<'js>,
-        #[plugin_api(ts_type = "PluginAnimationKind")] kind: rquickjs::Object<'js>,
-    ) -> rquickjs::Result<u64> {
+        #[plugin_api(ts_type = "AnimationRect")] rect: fresh_js::Object<'js>,
+        #[plugin_api(ts_type = "PluginAnimationKind")] kind: fresh_js::Object<'js>,
+    ) -> fresh_js::Result<u64> {
         let rect = parse_animation_rect(&rect)?;
         let kind = parse_animation_kind(&kind)?;
         let id = self.alloc_animation_id();
@@ -2681,8 +2681,8 @@ impl JsEditorApi {
     pub fn animate_virtual_buffer<'js>(
         &self,
         buffer_id: u32,
-        #[plugin_api(ts_type = "PluginAnimationKind")] kind: rquickjs::Object<'js>,
-    ) -> rquickjs::Result<u64> {
+        #[plugin_api(ts_type = "PluginAnimationKind")] kind: fresh_js::Object<'js>,
+    ) -> fresh_js::Result<u64> {
         let kind = parse_animation_kind(&kind)?;
         let id = self.alloc_animation_id();
         let _ = self
@@ -2719,7 +2719,7 @@ impl JsEditorApi {
     ///
     /// @param eventName - Event to subscribe to
     /// @param handlerName - Name of globalThis function to call with event data
-    pub fn on<'js>(&self, _ctx: rquickjs::Ctx<'js>, event_name: String, handler_name: String) {
+    pub fn on<'js>(&self, _ctx: fresh_js::Ctx<'js>, event_name: String, handler_name: String) {
         // If registering for lines_changed, clear all seen_byte_ranges so lines
         // that were already marked "seen" (before this plugin initialized) get
         // re-sent via the hook.
@@ -2872,7 +2872,7 @@ impl JsEditorApi {
     /// editor.pathJoin("/home", "user", "file.txt"); // "/home/user/file.txt"
     /// editor.pathJoin("relative", "/absolute"); // "/absolute"
     /// ```
-    pub fn path_join(&self, parts: rquickjs::function::Rest<String>) -> String {
+    pub fn path_join(&self, parts: fresh_js::function::Rest<String>) -> String {
         let mut result_parts: Vec<String> = Vec::new();
         // 0 = no leading slash, 1 = POSIX absolute, 2 = Windows UNC (`\\?\` etc).
         let mut leading_slashes: u8 = 0;
@@ -3029,13 +3029,13 @@ impl JsEditorApi {
     #[plugin_api(ts_return = "LineDiffHunk[]")]
     pub fn compute_line_diff<'js>(
         &self,
-        ctx: rquickjs::Ctx<'js>,
+        ctx: fresh_js::Ctx<'js>,
         old_text: String,
         new_text: String,
-    ) -> rquickjs::Result<Value<'js>> {
+    ) -> fresh_js::Result<Value<'js>> {
         let hunks = fresh_core::diff::compute_line_diff(&old_text, &new_text);
-        rquickjs_serde::to_value(ctx, &hunks)
-            .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string()))
+        fresh_js::serde::to_value(ctx, &hunks)
+            .map_err(|e| fresh_js::Error::new_from_js_message("serialize", "", &e.to_string()))
     }
 
     #[plugin_api(section = "Files")]
@@ -3117,13 +3117,13 @@ impl JsEditorApi {
     #[plugin_api(ts_return = "DirEntry[]")]
     pub fn read_dir<'js>(
         &self,
-        ctx: rquickjs::Ctx<'js>,
+        ctx: fresh_js::Ctx<'js>,
         #[plugin_api(ts_type = "string | LocalPath | WindowPath | AuthorityPath")]
         path: fresh_core::api::PluginPath,
-    ) -> rquickjs::Result<Value<'js>> {
+    ) -> fresh_js::Result<Value<'js>> {
         let entries = self.fs_for(&path).read_dir(Path::new(path.as_str()));
-        rquickjs_serde::to_value(ctx, &entries)
-            .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string()))
+        fresh_js::serde::to_value(ctx, &entries)
+            .map_err(|e| fresh_js::Error::new_from_js_message("serialize", "", &e.to_string()))
     }
 
     /// Create a directory (and all parent directories) recursively on the
@@ -3250,12 +3250,12 @@ impl JsEditorApi {
     #[plugin_api(ts_return = "string[]")]
     pub fn state_keys<'js>(
         &self,
-        ctx: rquickjs::Ctx<'js>,
+        ctx: fresh_js::Ctx<'js>,
         namespace: String,
-    ) -> rquickjs::Result<Value<'js>> {
+    ) -> fresh_js::Result<Value<'js>> {
         let keys = self.services.state_keys(&namespace);
-        rquickjs_serde::to_value(ctx, &keys)
-            .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string()))
+        fresh_js::serde::to_value(ctx, &keys)
+            .map_err(|e| fresh_js::Error::new_from_js_message("serialize", "", &e.to_string()))
     }
 
     /// Clear a namespaced state entry. Returns true if it is gone afterwards,
@@ -3271,22 +3271,22 @@ impl JsEditorApi {
     #[plugin_api(ts_return = "LocalPath")]
     pub fn local_path<'js>(
         &self,
-        ctx: rquickjs::Ctx<'js>,
+        ctx: fresh_js::Ctx<'js>,
         path: String,
-    ) -> rquickjs::Result<Value<'js>> {
+    ) -> fresh_js::Result<Value<'js>> {
         #[derive(serde::Serialize)]
         struct LocalPathJs<'a> {
             kind: &'static str,
             value: &'a str,
         }
-        rquickjs_serde::to_value(
+        fresh_js::serde::to_value(
             ctx,
             &LocalPathJs {
                 kind: "local",
                 value: &path,
             },
         )
-        .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string()))
+        .map_err(|e| fresh_js::Error::new_from_js_message("serialize", "", &e.to_string()))
     }
 
     /// Construct a `WindowPath` — a path that resolves on a specific window's
@@ -3294,17 +3294,17 @@ impl JsEditorApi {
     #[plugin_api(ts_return = "WindowPath")]
     pub fn window_path<'js>(
         &self,
-        ctx: rquickjs::Ctx<'js>,
+        ctx: fresh_js::Ctx<'js>,
         window_id: u64,
         path: String,
-    ) -> rquickjs::Result<Value<'js>> {
+    ) -> fresh_js::Result<Value<'js>> {
         #[derive(serde::Serialize)]
         struct WindowPathJs<'a> {
             kind: &'static str,
             window: u64,
             value: &'a str,
         }
-        rquickjs_serde::to_value(
+        fresh_js::serde::to_value(
             ctx,
             &WindowPathJs {
                 kind: "authority",
@@ -3312,7 +3312,7 @@ impl JsEditorApi {
                 value: &path,
             },
         )
-        .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string()))
+        .map_err(|e| fresh_js::Error::new_from_js_message("serialize", "", &e.to_string()))
     }
 
     /// Construct an `AuthorityPath` — the active window's authority filesystem,
@@ -3322,22 +3322,22 @@ impl JsEditorApi {
     #[plugin_api(ts_return = "AuthorityPath")]
     pub fn authority_path<'js>(
         &self,
-        ctx: rquickjs::Ctx<'js>,
+        ctx: fresh_js::Ctx<'js>,
         path: String,
-    ) -> rquickjs::Result<Value<'js>> {
+    ) -> fresh_js::Result<Value<'js>> {
         #[derive(serde::Serialize)]
         struct AuthorityPathJs<'a> {
             kind: &'static str,
             value: &'a str,
         }
-        rquickjs_serde::to_value(
+        fresh_js::serde::to_value(
             ctx,
             &AuthorityPathJs {
                 kind: "authority",
                 value: &path,
             },
         )
-        .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string()))
+        .map_err(|e| fresh_js::Error::new_from_js_message("serialize", "", &e.to_string()))
     }
 
     #[plugin_api(section = "Directories")]
@@ -3358,15 +3358,15 @@ impl JsEditorApi {
     #[plugin_api(ts_return = "unknown")]
     pub fn parse_jsonc<'js>(
         &self,
-        ctx: rquickjs::Ctx<'js>,
+        ctx: fresh_js::Ctx<'js>,
         text: String,
-    ) -> rquickjs::Result<Value<'js>> {
+    ) -> fresh_js::Result<Value<'js>> {
         let value: serde_json::Value =
             jsonc_parser::parse_to_serde_value(&text, &Default::default()).map_err(|e| {
-                rquickjs::Error::new_from_js_message("parseJsonc", "", &e.to_string())
+                fresh_js::Error::new_from_js_message("parseJsonc", "", &e.to_string())
             })?;
-        rquickjs_serde::to_value(ctx, &value)
-            .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string()))
+        fresh_js::serde::to_value(ctx, &value)
+            .map_err(|e| fresh_js::Error::new_from_js_message("serialize", "", &e.to_string()))
     }
 
     // The snapshot holds an `Arc<serde_json::Value>` that was serialized
@@ -3381,15 +3381,15 @@ impl JsEditorApi {
     /// for LSP servers, languages, keybindings and so on. Use `getUserConfig` for
     /// the user's config file alone.
     #[plugin_api(ts_return = "FreshConfig")]
-    pub fn get_config<'js>(&self, ctx: rquickjs::Ctx<'js>) -> rquickjs::Result<Value<'js>> {
+    pub fn get_config<'js>(&self, ctx: fresh_js::Ctx<'js>) -> fresh_js::Result<Value<'js>> {
         let config = self
             .state_snapshot
             .read()
             .map(|s| std::sync::Arc::clone(&s.config))
             .unwrap_or_else(|_| std::sync::Arc::new(serde_json::json!({})));
 
-        rquickjs_serde::to_value(ctx, &*config)
-            .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string()))
+        fresh_js::serde::to_value(ctx, &*config)
+            .map_err(|e| fresh_js::Error::new_from_js_message("serialize", "", &e.to_string()))
     }
 
     // Same Arc-clone pattern as `get_config`.
@@ -3401,15 +3401,15 @@ impl JsEditorApi {
     /// their default values. Use this with `getConfig()` to tell which values are
     /// defaults.
     #[plugin_api(ts_return = "FreshConfig")]
-    pub fn get_user_config<'js>(&self, ctx: rquickjs::Ctx<'js>) -> rquickjs::Result<Value<'js>> {
+    pub fn get_user_config<'js>(&self, ctx: fresh_js::Ctx<'js>) -> fresh_js::Result<Value<'js>> {
         let config = self
             .state_snapshot
             .read()
             .map(|s| std::sync::Arc::clone(&s.user_config))
             .unwrap_or_else(|_| std::sync::Arc::new(serde_json::json!({})));
 
-        rquickjs_serde::to_value(ctx, &*config)
-            .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string()))
+        fresh_js::serde::to_value(ctx, &*config)
+            .map_err(|e| fresh_js::Error::new_from_js_message("serialize", "", &e.to_string()))
     }
 
     /// Declare a boolean config field for the calling plugin.
@@ -3422,11 +3422,11 @@ impl JsEditorApi {
     #[plugin_api(ts_return = "boolean")]
     pub fn define_config_boolean<'js>(
         &self,
-        ctx: rquickjs::Ctx<'js>,
+        ctx: fresh_js::Ctx<'js>,
         name: String,
         #[plugin_api(ts_type = "{ default: boolean; description?: string }")]
-        options: rquickjs::Object<'js>,
-    ) -> rquickjs::Result<bool> {
+        options: fresh_js::Object<'js>,
+    ) -> fresh_js::Result<bool> {
         let opts = parse_options(&ctx, "defineConfigBoolean", &name, options)?;
         validate_allowed_keys(
             &ctx,
@@ -3466,13 +3466,13 @@ impl JsEditorApi {
     #[plugin_api(ts_return = "number")]
     pub fn define_config_integer<'js>(
         &self,
-        ctx: rquickjs::Ctx<'js>,
+        ctx: fresh_js::Ctx<'js>,
         name: String,
         #[plugin_api(
             ts_type = "{ default: number; description?: string; minimum?: number; maximum?: number }"
         )]
-        options: rquickjs::Object<'js>,
-    ) -> rquickjs::Result<i64> {
+        options: fresh_js::Object<'js>,
+    ) -> fresh_js::Result<i64> {
         let opts = parse_options(&ctx, "defineConfigInteger", &name, options)?;
         validate_allowed_keys(
             &ctx,
@@ -3517,13 +3517,13 @@ impl JsEditorApi {
     #[plugin_api(ts_return = "number")]
     pub fn define_config_number<'js>(
         &self,
-        ctx: rquickjs::Ctx<'js>,
+        ctx: fresh_js::Ctx<'js>,
         name: String,
         #[plugin_api(
             ts_type = "{ default: number; description?: string; minimum?: number; maximum?: number }"
         )]
-        options: rquickjs::Object<'js>,
-    ) -> rquickjs::Result<f64> {
+        options: fresh_js::Object<'js>,
+    ) -> fresh_js::Result<f64> {
         let opts = parse_options(&ctx, "defineConfigNumber", &name, options)?;
         validate_allowed_keys(
             &ctx,
@@ -3560,11 +3560,11 @@ impl JsEditorApi {
     #[plugin_api(ts_return = "string")]
     pub fn define_config_string<'js>(
         &self,
-        ctx: rquickjs::Ctx<'js>,
+        ctx: fresh_js::Ctx<'js>,
         name: String,
         #[plugin_api(ts_type = "{ default: string; description?: string }")]
-        options: rquickjs::Object<'js>,
-    ) -> rquickjs::Result<String> {
+        options: fresh_js::Object<'js>,
+    ) -> fresh_js::Result<String> {
         let opts = parse_options(&ctx, "defineConfigString", &name, options)?;
         validate_allowed_keys(
             &ctx,
@@ -3608,10 +3608,10 @@ impl JsEditorApi {
     #[plugin_api(skip)]
     pub fn define_config_enum<'js>(
         &self,
-        ctx: rquickjs::Ctx<'js>,
+        ctx: fresh_js::Ctx<'js>,
         name: String,
-        options: rquickjs::Object<'js>,
-    ) -> rquickjs::Result<String> {
+        options: fresh_js::Object<'js>,
+    ) -> fresh_js::Result<String> {
         let opts = parse_options(&ctx, "defineConfigEnum", &name, options)?;
         validate_allowed_keys(
             &ctx,
@@ -3693,11 +3693,11 @@ impl JsEditorApi {
     #[plugin_api(ts_return = "string[]")]
     pub fn define_config_string_array<'js>(
         &self,
-        ctx: rquickjs::Ctx<'js>,
+        ctx: fresh_js::Ctx<'js>,
         name: String,
         #[plugin_api(ts_type = "{ default: string[]; description?: string }")]
-        options: rquickjs::Object<'js>,
-    ) -> rquickjs::Result<Vec<String>> {
+        options: fresh_js::Object<'js>,
+    ) -> fresh_js::Result<Vec<String>> {
         let opts = parse_options(&ctx, "defineConfigStringArray", &name, options)?;
         validate_allowed_keys(
             &ctx,
@@ -3763,7 +3763,7 @@ impl JsEditorApi {
     /// `editor.definePluginConfig(...)` (defaults pre-populated by the
     /// host, user overrides on top from the Settings UI). Returns `null`
     /// if the plugin hasn't declared a schema and has no user-set value.
-    pub fn get_plugin_config<'js>(&self, ctx: rquickjs::Ctx<'js>) -> rquickjs::Result<Value<'js>> {
+    pub fn get_plugin_config<'js>(&self, ctx: fresh_js::Ctx<'js>) -> fresh_js::Result<Value<'js>> {
         let config = self
             .state_snapshot
             .read()
@@ -3775,8 +3775,8 @@ impl JsEditorApi {
             .cloned()
             .unwrap_or(serde_json::Value::Null);
 
-        rquickjs_serde::to_value(ctx, &settings)
-            .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string()))
+        fresh_js::serde::to_value(ctx, &settings)
+            .map_err(|e| fresh_js::Error::new_from_js_message("serialize", "", &e.to_string()))
     }
 
     /// Reload configuration from file
@@ -3802,12 +3802,12 @@ impl JsEditorApi {
     /// editor processes the command.
     pub fn set_setting<'js>(
         &self,
-        _ctx: rquickjs::Ctx<'js>,
+        _ctx: fresh_js::Ctx<'js>,
         path: String,
         value: Value<'js>,
-    ) -> rquickjs::Result<bool> {
-        let json: serde_json::Value = rquickjs_serde::from_value(value)
-            .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string()))?;
+    ) -> fresh_js::Result<bool> {
+        let json: serde_json::Value = fresh_js::serde::from_value(value)
+            .map_err(|e| fresh_js::Error::new_from_js_message("serialize", "", &e.to_string()))?;
         Ok(self
             .command_sender
             .send(PluginCommand::SetSetting {
@@ -3836,12 +3836,12 @@ impl JsEditorApi {
     /// processes the command.
     pub fn save_setting<'js>(
         &self,
-        _ctx: rquickjs::Ctx<'js>,
+        _ctx: fresh_js::Ctx<'js>,
         path: String,
         value: Value<'js>,
-    ) -> rquickjs::Result<bool> {
-        let json: serde_json::Value = rquickjs_serde::from_value(value)
-            .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string()))?;
+    ) -> fresh_js::Result<bool> {
+        let json: serde_json::Value = fresh_js::serde::from_value(value)
+            .map_err(|e| fresh_js::Error::new_from_js_message("serialize", "", &e.to_string()))?;
         Ok(self
             .command_sender
             .send(PluginCommand::SaveSetting {
@@ -3873,11 +3873,11 @@ impl JsEditorApi {
     /// The grammar will be pending until reload_grammars() is called
     pub fn register_grammar<'js>(
         &self,
-        ctx: rquickjs::Ctx<'js>,
+        ctx: fresh_js::Ctx<'js>,
         language: String,
         grammar_path: String,
         extensions: Vec<String>,
-    ) -> rquickjs::Result<bool> {
+    ) -> fresh_js::Result<bool> {
         // First-writer-wins: check if another plugin already registered a grammar for this language
         {
             let langs = self.registered_grammar_languages.borrow();
@@ -3889,7 +3889,7 @@ impl JsEditorApi {
                     );
                     tracing::warn!("registerGrammar collision: {}", msg);
                     return Err(
-                        ctx.throw(rquickjs::String::from_str(ctx.clone(), &msg)?.into_value())
+                        ctx.throw(fresh_js::String::from_str(ctx.clone(), &msg)?.into_value())
                     );
                 }
             }
@@ -3911,10 +3911,10 @@ impl JsEditorApi {
     /// Register language configuration (comment prefix, indentation, formatter)
     pub fn register_language_config<'js>(
         &self,
-        ctx: rquickjs::Ctx<'js>,
+        ctx: fresh_js::Ctx<'js>,
         language: String,
         config: LanguagePackConfig,
-    ) -> rquickjs::Result<bool> {
+    ) -> fresh_js::Result<bool> {
         // First-writer-wins
         {
             let langs = self.registered_language_configs.borrow();
@@ -3926,7 +3926,7 @@ impl JsEditorApi {
                     );
                     tracing::warn!("registerLanguageConfig collision: {}", msg);
                     return Err(
-                        ctx.throw(rquickjs::String::from_str(ctx.clone(), &msg)?.into_value())
+                        ctx.throw(fresh_js::String::from_str(ctx.clone(), &msg)?.into_value())
                     );
                 }
             }
@@ -3944,10 +3944,10 @@ impl JsEditorApi {
     /// Register an LSP server for a language
     pub fn register_lsp_server<'js>(
         &self,
-        ctx: rquickjs::Ctx<'js>,
+        ctx: fresh_js::Ctx<'js>,
         language: String,
         config: LspServerPackConfig,
-    ) -> rquickjs::Result<bool> {
+    ) -> fresh_js::Result<bool> {
         // First-writer-wins
         {
             let langs = self.registered_lsp_servers.borrow();
@@ -3959,7 +3959,7 @@ impl JsEditorApi {
                     );
                     tracing::warn!("registerLspServer collision: {}", msg);
                     return Err(
-                        ctx.throw(rquickjs::String::from_str(ctx.clone(), &msg)?.into_value())
+                        ctx.throw(fresh_js::String::from_str(ctx.clone(), &msg)?.into_value())
                     );
                 }
             }
@@ -3979,7 +3979,7 @@ impl JsEditorApi {
     /// Returns a Promise that resolves when the grammar rebuild completes.
     #[plugin_api(async_promise, js_name = "reloadGrammars", ts_return = "void")]
     #[qjs(rename = "_reloadGrammarsStart")]
-    pub fn reload_grammars_start(&self, _ctx: rquickjs::Ctx<'_>) -> u64 {
+    pub fn reload_grammars_start(&self, _ctx: fresh_js::Ctx<'_>) -> u64 {
         let id = self.alloc_request_id();
         let _ = self.command_sender.send(PluginCommand::ReloadGrammars {
             callback_id: fresh_core::api::JsCallbackId::new(id),
@@ -4094,18 +4094,18 @@ impl JsEditorApi {
     /// loops from `init.ts` — no disk I/O, no theme-registry rescan.
     pub fn override_theme_colors<'js>(
         &self,
-        _ctx: rquickjs::Ctx<'js>,
+        _ctx: fresh_js::Ctx<'js>,
         overrides: Value<'js>,
-    ) -> rquickjs::Result<bool> {
+    ) -> fresh_js::Result<bool> {
         // rquickjs_serde can't deserialize a fixed-size `[i32; 3]` from a
         // JS Array at the nested-map position (it asks for a "top level
         // sequence value" and fails). Round-trip through serde_json::Value
         // instead — same pattern as `set_setting` — and hand-roll the
         // triple validation.
-        let json: serde_json::Value = rquickjs_serde::from_value(overrides)
-            .map_err(|e| rquickjs::Error::new_from_js_message("deserialize", "", &e.to_string()))?;
+        let json: serde_json::Value = fresh_js::serde::from_value(overrides)
+            .map_err(|e| fresh_js::Error::new_from_js_message("deserialize", "", &e.to_string()))?;
         let Some(obj) = json.as_object() else {
-            return Err(rquickjs::Error::new_from_js_message(
+            return Err(fresh_js::Error::new_from_js_message(
                 "type",
                 "",
                 "overrideThemeColors expects an object of \"key\": [r, g, b]",
@@ -4143,25 +4143,25 @@ impl JsEditorApi {
     /// editor. The schema uses standard JSON Schema format with `$ref`
     /// for type references. Plugins must parse the schema and resolve `$ref`
     /// references themselves.
-    pub fn get_theme_schema<'js>(&self, ctx: rquickjs::Ctx<'js>) -> rquickjs::Result<Value<'js>> {
+    pub fn get_theme_schema<'js>(&self, ctx: fresh_js::Ctx<'js>) -> fresh_js::Result<Value<'js>> {
         let schema = self.services.get_theme_schema();
-        rquickjs_serde::to_value(ctx, &schema)
-            .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string()))
+        fresh_js::serde::to_value(ctx, &schema)
+            .map_err(|e| fresh_js::Error::new_from_js_message("serialize", "", &e.to_string()))
     }
 
     /// Get list of builtin themes as JS object
-    pub fn get_builtin_themes<'js>(&self, ctx: rquickjs::Ctx<'js>) -> rquickjs::Result<Value<'js>> {
+    pub fn get_builtin_themes<'js>(&self, ctx: fresh_js::Ctx<'js>) -> fresh_js::Result<Value<'js>> {
         let themes = self.services.get_builtin_themes();
-        rquickjs_serde::to_value(ctx, &themes)
-            .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string()))
+        fresh_js::serde::to_value(ctx, &themes)
+            .map_err(|e| fresh_js::Error::new_from_js_message("serialize", "", &e.to_string()))
     }
 
     /// Full theme registry (builtins + user themes + packages + bundles).
     /// Keyed by canonical registry key; each value carries `_key` / `_pack`.
-    pub fn get_all_themes<'js>(&self, ctx: rquickjs::Ctx<'js>) -> rquickjs::Result<Value<'js>> {
+    pub fn get_all_themes<'js>(&self, ctx: fresh_js::Ctx<'js>) -> fresh_js::Result<Value<'js>> {
         let themes = self.services.get_all_themes();
-        rquickjs_serde::to_value(ctx, &themes)
-            .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string()))
+        fresh_js::serde::to_value(ctx, &themes)
+            .map_err(|e| fresh_js::Error::new_from_js_message("serialize", "", &e.to_string()))
     }
 
     /// Delete a custom theme file (sync)
@@ -4187,21 +4187,21 @@ impl JsEditorApi {
     /// Get theme data (JSON) by name from the in-memory cache
     pub fn get_theme_data<'js>(
         &self,
-        ctx: rquickjs::Ctx<'js>,
+        ctx: fresh_js::Ctx<'js>,
         name: String,
-    ) -> rquickjs::Result<Value<'js>> {
+    ) -> fresh_js::Result<Value<'js>> {
         match self.services.get_theme_data(&name) {
-            Some(data) => rquickjs_serde::to_value(ctx, &data)
-                .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string())),
+            Some(data) => fresh_js::serde::to_value(ctx, &data)
+                .map_err(|e| fresh_js::Error::new_from_js_message("serialize", "", &e.to_string())),
             None => Ok(Value::new_null(ctx)),
         }
     }
 
     /// Save a theme file to the user themes directory, returns the saved path
-    pub fn save_theme_file(&self, name: String, content: String) -> rquickjs::Result<String> {
+    pub fn save_theme_file(&self, name: String, content: String) -> fresh_js::Result<String> {
         self.services
             .save_theme_file(&name, &content)
-            .map_err(|e| rquickjs::Error::new_from_js_message("io", "", &e))
+            .map_err(|e| fresh_js::Error::new_from_js_message("io", "", &e))
     }
 
     /// Check if a user theme file exists
@@ -4217,10 +4217,10 @@ impl JsEditorApi {
     /// in bytes.
     pub fn file_stat<'js>(
         &self,
-        ctx: rquickjs::Ctx<'js>,
+        ctx: fresh_js::Ctx<'js>,
         #[plugin_api(ts_type = "string | LocalPath | WindowPath | AuthorityPath")]
         path: fresh_core::api::PluginPath,
-    ) -> rquickjs::Result<Value<'js>> {
+    ) -> fresh_js::Result<Value<'js>> {
         let stat = self.fs_for(&path).stat(Path::new(path.as_str())).map(|s| {
             serde_json::json!({
                 "isFile": s.is_file,
@@ -4229,8 +4229,8 @@ impl JsEditorApi {
                 "readonly": s.readonly,
             })
         });
-        rquickjs_serde::to_value(ctx, &stat)
-            .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string()))
+        fresh_js::serde::to_value(ctx, &stat)
+            .map_err(|e| fresh_js::Error::new_from_js_message("serialize", "", &e.to_string()))
     }
 
     #[plugin_api(section = "Processes")]
@@ -4261,10 +4261,10 @@ impl JsEditorApi {
     /// Translate a key for a specific plugin
     pub fn plugin_translate<'js>(
         &self,
-        _ctx: rquickjs::Ctx<'js>,
+        _ctx: fresh_js::Ctx<'js>,
         plugin_name: String,
         key: String,
-        args: rquickjs::function::Opt<rquickjs::Object<'js>>,
+        args: fresh_js::function::Opt<fresh_js::Object<'js>>,
     ) -> String {
         let args_map: HashMap<String, String> = args
             .0
@@ -4360,10 +4360,10 @@ impl JsEditorApi {
     /// const term = ws.panes.find(p => p.kind === "terminal");
     /// ```
     #[plugin_api(js_name = "describeWorkspace", ts_return = "WorkspaceDescription")]
-    pub fn describe_workspace<'js>(&self, ctx: rquickjs::Ctx<'js>) -> rquickjs::Result<Value<'js>> {
+    pub fn describe_workspace<'js>(&self, ctx: fresh_js::Ctx<'js>) -> fresh_js::Result<Value<'js>> {
         let snapshot = match self.state_snapshot.read() {
             Ok(s) => s,
-            Err(_) => return Ok(rquickjs::Value::new_null(ctx)),
+            Err(_) => return Ok(fresh_js::Value::new_null(ctx)),
         };
         let active_split_id = snapshot.active_split_id;
         let panes: Vec<fresh_core::api::PaneDescription> = snapshot
@@ -4425,8 +4425,8 @@ impl JsEditorApi {
             panes,
             active_split_id,
         };
-        rquickjs_serde::to_value(ctx, &description)
-            .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string()))
+        fresh_js::serde::to_value(ctx, &description)
+            .map_err(|e| fresh_js::Error::new_from_js_message("serialize", "", &e.to_string()))
     }
 
     #[plugin_api(section = "Splits")]
@@ -4627,11 +4627,11 @@ impl JsEditorApi {
     #[qjs(rename = "_getHighlightsStart")]
     pub fn get_highlights_start<'js>(
         &self,
-        _ctx: rquickjs::Ctx<'js>,
+        _ctx: fresh_js::Ctx<'js>,
         buffer_id: u32,
         start: u32,
         end: u32,
-    ) -> rquickjs::Result<u64> {
+    ) -> fresh_js::Result<u64> {
         let id = self.alloc_request_id();
 
         let _ = self.command_sender.send(PluginCommand::RequestHighlights {
@@ -4687,17 +4687,17 @@ impl JsEditorApi {
     /// @param end - End byte offset
     pub fn add_overlay<'js>(
         &self,
-        _ctx: rquickjs::Ctx<'js>,
+        _ctx: fresh_js::Ctx<'js>,
         buffer_id: u32,
         namespace: String,
         start: u32,
         end: u32,
-        options: rquickjs::Object<'js>,
-    ) -> rquickjs::Result<bool> {
+        options: fresh_js::Object<'js>,
+    ) -> fresh_js::Result<bool> {
         use fresh_core::api::OverlayColorSpec;
 
         // Parse color spec from JS value (can be [r,g,b] array or "theme.key" string)
-        fn parse_color_spec(key: &str, obj: &rquickjs::Object<'_>) -> Option<OverlayColorSpec> {
+        fn parse_color_spec(key: &str, obj: &fresh_js::Object<'_>) -> Option<OverlayColorSpec> {
             // Try as string first (theme key)
             if let Ok(theme_key) = obj.get::<_, String>(key) {
                 if !theme_key.is_empty() {
@@ -4775,15 +4775,15 @@ impl JsEditorApi {
     #[qjs(rename = "setCursorLineOverlay")]
     pub fn set_cursor_line_overlay<'js>(
         &self,
-        _ctx: rquickjs::Ctx<'js>,
+        _ctx: fresh_js::Ctx<'js>,
         buffer_id: u32,
-        options: rquickjs::Value<'js>,
-    ) -> rquickjs::Result<bool> {
+        options: fresh_js::Value<'js>,
+    ) -> fresh_js::Result<bool> {
         use fresh_core::api::OverlayColorSpec;
 
         // Same parser shape as addOverlay; accepts `[r, g, b]` arrays or
         // theme-key strings.
-        fn parse_color_spec(key: &str, obj: &rquickjs::Object<'_>) -> Option<OverlayColorSpec> {
+        fn parse_color_spec(key: &str, obj: &fresh_js::Object<'_>) -> Option<OverlayColorSpec> {
             if let Ok(theme_key) = obj.get::<_, String>(key) {
                 if !theme_key.is_empty() {
                     return Some(OverlayColorSpec::ThemeKey(theme_key));
@@ -4900,9 +4900,9 @@ impl JsEditorApi {
         start: u32,
         end: u32,
         replacement: Option<String>,
-        activation: rquickjs::function::Opt<String>,
-        scope_start: rquickjs::function::Opt<u32>,
-        scope_end: rquickjs::function::Opt<u32>,
+        activation: fresh_js::function::Opt<String>,
+        scope_start: fresh_js::function::Opt<u32>,
+        scope_end: fresh_js::function::Opt<u32>,
     ) -> bool {
         // Track namespace for cleanup on unload
         self.plugin_tracked_state
@@ -4998,7 +4998,7 @@ impl JsEditorApi {
         buffer_id: u32,
         start: u32,
         end: u32,
-        placeholder: rquickjs::function::Opt<String>,
+        placeholder: fresh_js::function::Opt<String>,
     ) -> bool {
         self.command_sender
             .send(PluginCommand::AddFold {
@@ -5033,10 +5033,10 @@ impl JsEditorApi {
     /// folds.
     pub fn set_folding_ranges<'js>(
         &self,
-        _ctx: rquickjs::Ctx<'js>,
+        _ctx: fresh_js::Ctx<'js>,
         buffer_id: u32,
-        ranges_arr: Vec<rquickjs::Object<'js>>,
-    ) -> rquickjs::Result<bool> {
+        ranges_arr: Vec<fresh_js::Object<'js>>,
+    ) -> fresh_js::Result<bool> {
         let mut ranges: Vec<lsp_types::FoldingRange> = Vec::with_capacity(ranges_arr.len());
         for obj in ranges_arr {
             let start_line: u32 = obj.get("startLine").unwrap_or(0);
@@ -5087,10 +5087,10 @@ impl JsEditorApi {
         namespace: String,
         position: u32,
         indent: u32,
-        activation: rquickjs::function::Opt<Option<String>>,
-        scope_start: rquickjs::function::Opt<Option<u32>>,
-        scope_end: rquickjs::function::Opt<Option<u32>>,
-        prefix: rquickjs::function::Opt<Option<rquickjs::Object<'js>>>,
+        activation: fresh_js::function::Opt<Option<String>>,
+        scope_start: fresh_js::function::Opt<Option<u32>>,
+        scope_end: fresh_js::function::Opt<Option<u32>>,
+        prefix: fresh_js::function::Opt<Option<fresh_js::Object<'js>>>,
     ) -> bool {
         // Track namespace for cleanup on unload
         self.plugin_tracked_state
@@ -5149,8 +5149,8 @@ impl JsEditorApi {
         &self,
         buffer_id: u32,
         split_id: Option<u32>,
-        #[plugin_api(ts_type = "LayoutHints")] hints: rquickjs::Object<'js>,
-    ) -> rquickjs::Result<bool> {
+        #[plugin_api(ts_type = "LayoutHints")] hints: fresh_js::Object<'js>,
+    ) -> fresh_js::Result<bool> {
         use fresh_core::api::LayoutHints;
 
         let compose_width: Option<u16> = hints.get("composeWidth").ok();
@@ -5183,10 +5183,10 @@ impl JsEditorApi {
     /// `path`, `symbol`, `color` as an RGB array or theme key, optional `priority`)
     pub fn set_file_explorer_decorations<'js>(
         &self,
-        _ctx: rquickjs::Ctx<'js>,
+        _ctx: fresh_js::Ctx<'js>,
         namespace: String,
-        decorations: Vec<rquickjs::Object<'js>>,
-    ) -> rquickjs::Result<bool> {
+        decorations: Vec<fresh_js::Object<'js>>,
+    ) -> fresh_js::Result<bool> {
         use fresh_core::file_explorer::FileExplorerDecoration;
         let scoped_namespace = format!("{}::{}", self.plugin_name, namespace);
 
@@ -5198,14 +5198,14 @@ impl JsEditorApi {
                 let priority: i32 = obj.get("priority").unwrap_or(0);
 
                 // Color can be an RGB array [r, g, b] or a theme key string
-                let color_val: rquickjs::Value = obj.get("color")?;
+                let color_val: fresh_js::Value = obj.get("color")?;
                 let color = if color_val.is_string() {
                     let key: String = color_val.get()?;
                     fresh_core::api::OverlayColorSpec::ThemeKey(key)
                 } else if color_val.is_array() {
                     let arr: Vec<u8> = color_val.get()?;
                     if arr.len() < 3 {
-                        return Err(rquickjs::Error::FromJs {
+                        return Err(fresh_js::Error::FromJs {
                             from: "array",
                             to: "color",
                             message: Some(format!(
@@ -5216,7 +5216,7 @@ impl JsEditorApi {
                     }
                     fresh_core::api::OverlayColorSpec::Rgb(arr[0], arr[1], arr[2])
                 } else {
-                    return Err(rquickjs::Error::FromJs {
+                    return Err(fresh_js::Error::FromJs {
                         from: "value",
                         to: "color",
                         message: Some("color must be an RGB array or theme key string".to_string()),
@@ -5230,7 +5230,7 @@ impl JsEditorApi {
                     priority,
                 })
             })
-            .collect::<rquickjs::Result<Vec<_>>>()?;
+            .collect::<fresh_js::Result<Vec<_>>>()?;
 
         // Track namespace for cleanup on unload
         self.plugin_tracked_state
@@ -5283,17 +5283,17 @@ impl JsEditorApi {
     /// @param slots - Slot override entries (`FileExplorerSlotEntry` objects)
     pub fn set_file_explorer_slots<'js>(
         &self,
-        ctx: rquickjs::Ctx<'js>,
+        ctx: fresh_js::Ctx<'js>,
         namespace: String,
-        slots: Vec<rquickjs::Object<'js>>,
-    ) -> rquickjs::Result<bool> {
+        slots: Vec<fresh_js::Object<'js>>,
+    ) -> fresh_js::Result<bool> {
         use fresh_core::file_explorer::FileExplorerSlotEntry;
         let scoped_namespace = format!("{}::{}", self.plugin_name, namespace);
 
         let slots: Vec<FileExplorerSlotEntry> = slots
             .into_iter()
-            .map(|obj| <FileExplorerSlotEntry as rquickjs::FromJs>::from_js(&ctx, obj.into()))
-            .collect::<rquickjs::Result<Vec<_>>>()?;
+            .map(|obj| <FileExplorerSlotEntry as fresh_js::FromJs>::from_js(&ctx, obj.into()))
+            .collect::<fresh_js::Result<Vec<_>>>()?;
 
         self.plugin_tracked_state
             .borrow_mut()
@@ -5396,19 +5396,19 @@ impl JsEditorApi {
     #[allow(clippy::too_many_arguments)]
     pub fn add_virtual_text_styled<'js>(
         &self,
-        _ctx: rquickjs::Ctx<'js>,
+        _ctx: fresh_js::Ctx<'js>,
         buffer_id: u32,
         virtual_text_id: String,
         position: u32,
         text: String,
-        options: rquickjs::Object<'js>,
+        options: fresh_js::Object<'js>,
         before: bool,
-    ) -> rquickjs::Result<bool> {
+    ) -> fresh_js::Result<bool> {
         use fresh_core::api::OverlayColorSpec;
 
         // Same parser shape as addOverlay; accepts `[r, g, b]` arrays
         // or theme-key strings.
-        fn parse_color_spec(key: &str, obj: &rquickjs::Object<'_>) -> Option<OverlayColorSpec> {
+        fn parse_color_spec(key: &str, obj: &fresh_js::Object<'_>) -> Option<OverlayColorSpec> {
             if let Ok(theme_key) = obj.get::<_, String>(key) {
                 if !theme_key.is_empty() {
                     return Some(OverlayColorSpec::ThemeKey(theme_key));
@@ -5551,20 +5551,20 @@ impl JsEditorApi {
     #[allow(clippy::too_many_arguments)]
     pub fn add_virtual_line<'js>(
         &self,
-        _ctx: rquickjs::Ctx<'js>,
+        _ctx: fresh_js::Ctx<'js>,
         buffer_id: u32,
         position: u32,
         text: String,
-        options: rquickjs::Object<'js>,
+        options: fresh_js::Object<'js>,
         above: bool,
         namespace: String,
         priority: i32,
-    ) -> rquickjs::Result<bool> {
+    ) -> fresh_js::Result<bool> {
         use fresh_core::api::OverlayColorSpec;
 
         // Same flexible parser as add_overlay: accepts theme key string or
         // RGB array.  Returns None when the key is missing or unusable.
-        fn parse_color_spec(key: &str, obj: &rquickjs::Object<'_>) -> Option<OverlayColorSpec> {
+        fn parse_color_spec(key: &str, obj: &fresh_js::Object<'_>) -> Option<OverlayColorSpec> {
             if let Ok(theme_key) = obj.get::<_, String>(key) {
                 if !theme_key.is_empty() {
                     return Some(OverlayColorSpec::ThemeKey(theme_key));
@@ -5596,10 +5596,10 @@ impl JsEditorApi {
         // accepts (camelCase keys, default-initialised modifier flags).
         // Drops empty/inverted ranges defensively.
         let text_overlays: Vec<fresh_core::api::VirtualLineTextOverlay> = options
-            .get::<_, rquickjs::Value<'js>>("textOverlays")
+            .get::<_, fresh_js::Value<'js>>("textOverlays")
             .ok()
             .filter(|v| !v.is_undefined() && !v.is_null())
-            .and_then(|v| rquickjs_serde::from_value(v).ok())
+            .and_then(|v| fresh_js::serde::from_value(v).ok())
             .map(|v: Vec<fresh_core::api::VirtualLineTextOverlay>| {
                 v.into_iter().filter(|o| o.end > o.start).collect()
             })
@@ -5642,7 +5642,7 @@ impl JsEditorApi {
     #[qjs(rename = "_promptStart")]
     pub fn prompt_start(
         &self,
-        _ctx: rquickjs::Ctx<'_>,
+        _ctx: fresh_js::Ctx<'_>,
         label: String,
         initial_value: String,
     ) -> u64 {
@@ -5681,10 +5681,10 @@ impl JsEditorApi {
     #[qjs(rename = "_pickFileStart")]
     pub fn pick_file_start(
         &self,
-        _ctx: rquickjs::Ctx<'_>,
+        _ctx: fresh_js::Ctx<'_>,
         label: String,
-        directory: rquickjs::function::Opt<Option<String>>,
-        show_hidden: rquickjs::function::Opt<Option<bool>>,
+        directory: fresh_js::function::Opt<Option<String>>,
+        show_hidden: fresh_js::function::Opt<Option<bool>>,
     ) -> u64 {
         let id = self.alloc_request_id();
 
@@ -5715,7 +5715,7 @@ impl JsEditorApi {
         &self,
         label: String,
         prompt_type: String,
-        floating_overlay: rquickjs::function::Opt<bool>,
+        floating_overlay: fresh_js::function::Opt<bool>,
     ) -> bool {
         self.command_sender
             .send(PluginCommand::StartPrompt {
@@ -5767,7 +5767,7 @@ impl JsEditorApi {
     /// modifier flags `ctrl`, `alt`, `shift` and `meta`.
     #[plugin_api(async_promise, js_name = "getNextKey", ts_return = "KeyEventPayload")]
     #[qjs(rename = "_getNextKeyStart")]
-    pub fn get_next_key_start(&self, _ctx: rquickjs::Ctx<'_>) -> u64 {
+    pub fn get_next_key_start(&self, _ctx: fresh_js::Ctx<'_>) -> u64 {
         let id = self.alloc_request_id();
         let _ = self.command_sender.send(PluginCommand::AwaitNextKey {
             callback_id: JsCallbackId::new(id),
@@ -5787,7 +5787,7 @@ impl JsEditorApi {
         label: String,
         prompt_type: String,
         initial_value: String,
-        floating_overlay: rquickjs::function::Opt<bool>,
+        floating_overlay: fresh_js::function::Opt<bool>,
     ) -> bool {
         self.command_sender
             .send(PluginCommand::StartPromptWithInitial {
@@ -5822,12 +5822,12 @@ impl JsEditorApi {
     #[plugin_api(ts_return = "boolean")]
     pub fn set_prompt_suggestions<'js>(
         &self,
-        ctx: rquickjs::Ctx<'js>,
+        ctx: fresh_js::Ctx<'js>,
         suggestions: Vec<fresh_core::command::Suggestion>,
-        selected_index: rquickjs::function::Opt<Option<u32>>,
-    ) -> rquickjs::Result<bool> {
+        selected_index: fresh_js::function::Opt<Option<u32>>,
+    ) -> fresh_js::Result<bool> {
         if let Some(id) = fresh_core::command::Suggestion::duplicate_id(&suggestions) {
-            let msg = rquickjs::String::from_str(
+            let msg = fresh_js::String::from_str(
                 ctx.clone(),
                 &format!("setPromptSuggestions: duplicate suggestion id {id:?}"),
             )?;
@@ -5910,9 +5910,9 @@ impl JsEditorApi {
     #[qjs(rename = "setPromptToolbar")]
     pub fn set_prompt_toolbar<'js>(
         &self,
-        ctx: rquickjs::Ctx<'js>,
-        spec_obj: rquickjs::Value<'js>,
-    ) -> rquickjs::Result<bool> {
+        ctx: fresh_js::Ctx<'js>,
+        spec_obj: fresh_js::Value<'js>,
+    ) -> fresh_js::Result<bool> {
         let spec = if spec_obj.is_null() || spec_obj.is_undefined() {
             None
         } else {
@@ -5997,9 +5997,9 @@ impl JsEditorApi {
         &self,
         name: String,
         bindings_arr: Vec<Vec<String>>,
-        read_only: rquickjs::function::Opt<bool>,
-        allow_text_input: rquickjs::function::Opt<bool>,
-        inherit_normal_bindings: rquickjs::function::Opt<bool>,
+        read_only: fresh_js::function::Opt<bool>,
+        allow_text_input: fresh_js::function::Opt<bool>,
+        inherit_normal_bindings: fresh_js::function::Opt<bool>,
     ) -> bool {
         // A binding's optional third element `"shortcut"` declares it a
         // dialog-wide shortcut: on a widget panel it runs before the focused
@@ -6376,10 +6376,10 @@ impl JsEditorApi {
     #[qjs(rename = "_watchPathStart")]
     pub fn watch_path_start(
         &self,
-        _ctx: rquickjs::Ctx<'_>,
+        _ctx: fresh_js::Ctx<'_>,
         path: String,
-        recursive: rquickjs::function::Opt<bool>,
-    ) -> rquickjs::Result<u64> {
+        recursive: fresh_js::function::Opt<bool>,
+    ) -> fresh_js::Result<u64> {
         let id = self.alloc_request_id();
         if let Ok(mut owners) = self.async_resource_owners.lock() {
             owners.insert(id, self.plugin_name.clone());
@@ -6437,14 +6437,14 @@ impl JsEditorApi {
     /// Each entry gives the session's id, label and root, among other
     /// fields.
     #[plugin_api(ts_return = "WindowInfo[]")]
-    pub fn list_windows<'js>(&self, ctx: rquickjs::Ctx<'js>) -> rquickjs::Result<Value<'js>> {
+    pub fn list_windows<'js>(&self, ctx: fresh_js::Ctx<'js>) -> fresh_js::Result<Value<'js>> {
         let sessions: Vec<fresh_core::api::WindowInfo> = self
             .state_snapshot
             .read()
             .map(|s| s.windows.clone())
             .unwrap_or_default();
-        rquickjs_serde::to_value(ctx, &sessions).map_err(|e| {
-            rquickjs::Error::new_from_js_message("serialize", "WindowInfo", &e.to_string())
+        fresh_js::serde::to_value(ctx, &sessions).map_err(|e| {
+            fresh_js::Error::new_from_js_message("serialize", "WindowInfo", &e.to_string())
         })
     }
 
@@ -6477,7 +6477,7 @@ impl JsEditorApi {
         &self,
         buffer_id: u32,
         key: String,
-        #[plugin_api(ts_type = "ScrollAlign")] align: rquickjs::function::Opt<String>,
+        #[plugin_api(ts_type = "ScrollAlign")] align: fresh_js::function::Opt<String>,
     ) -> bool {
         // An unrecognised alignment keeps the historical one rather than
         // dropping the scroll: a page that mistypes it should look
@@ -6566,7 +6566,7 @@ impl JsEditorApi {
         ts_return = "number | null"
     )]
     #[qjs(rename = "_getSplitByLabelStart")]
-    pub fn get_split_by_label_start(&self, _ctx: rquickjs::Ctx<'_>, label: String) -> u64 {
+    pub fn get_split_by_label_start(&self, _ctx: fresh_js::Ctx<'_>, label: String) -> u64 {
         let id = self.alloc_request_id();
         let _ = self.command_sender.send(PluginCommand::GetSplitByLabel {
             label,
@@ -6957,7 +6957,7 @@ impl JsEditorApi {
     /// is saved with the workspace and comes back when it is restored.
     pub fn set_view_state<'js>(
         &self,
-        ctx: rquickjs::Ctx<'js>,
+        ctx: fresh_js::Ctx<'js>,
         buffer_id: u32,
         key: String,
         value: Value<'js>,
@@ -7005,10 +7005,10 @@ impl JsEditorApi {
     /// `undefined` if missing.
     pub fn get_view_state<'js>(
         &self,
-        ctx: rquickjs::Ctx<'js>,
+        ctx: fresh_js::Ctx<'js>,
         buffer_id: u32,
         key: String,
-    ) -> rquickjs::Result<Value<'js>> {
+    ) -> fresh_js::Result<Value<'js>> {
         let bid = BufferId(buffer_id as usize);
         if let Ok(snapshot) = self.state_snapshot.read() {
             if let Some(map) = snapshot.plugin_view_states.get(&bid) {
@@ -7035,7 +7035,7 @@ impl JsEditorApi {
     /// (via after_insert/after_delete) to re-parse and update or delete it.
     pub fn create_marker<'js>(
         &self,
-        ctx: rquickjs::Ctx<'js>,
+        ctx: fresh_js::Ctx<'js>,
         buffer_id: u32,
         key: String,
         start: u32,
@@ -7065,7 +7065,7 @@ impl JsEditorApi {
     /// Returns false if no marker with `key` exists on the buffer.
     pub fn update_marker<'js>(
         &self,
-        ctx: rquickjs::Ctx<'js>,
+        ctx: fresh_js::Ctx<'js>,
         buffer_id: u32,
         key: String,
         payload: Value<'js>,
@@ -7105,15 +7105,15 @@ impl JsEditorApi {
     /// markers (a handful for typical documents).
     pub fn query_markers<'js>(
         &self,
-        ctx: rquickjs::Ctx<'js>,
+        ctx: fresh_js::Ctx<'js>,
         buffer_id: u32,
         start: u32,
         end: u32,
-    ) -> rquickjs::Result<Value<'js>> {
+    ) -> fresh_js::Result<Value<'js>> {
         let bid = BufferId(buffer_id as usize);
         let qs = start as usize;
         let qe = end as usize;
-        let arr = rquickjs::Array::new(ctx.clone())?;
+        let arr = fresh_js::Array::new(ctx.clone())?;
         if let Ok(snapshot) = self.state_snapshot.read() {
             if let Some(map) = snapshot.plugin_markers.get(&bid) {
                 let mut idx = 0usize;
@@ -7133,7 +7133,7 @@ impl JsEditorApi {
                     if m.end < qs || m.start > qe {
                         continue;
                     }
-                    let obj = rquickjs::Object::new(ctx.clone())?;
+                    let obj = fresh_js::Object::new(ctx.clone())?;
                     obj.set("id", key.clone())?;
                     obj.set("start", m.start as u32)?;
                     obj.set("end", m.end as u32)?;
@@ -7149,10 +7149,10 @@ impl JsEditorApi {
     /// Return a single marker by key as `{ id, start, end, payload }`, or null.
     pub fn get_marker<'js>(
         &self,
-        ctx: rquickjs::Ctx<'js>,
+        ctx: fresh_js::Ctx<'js>,
         buffer_id: u32,
         key: String,
-    ) -> rquickjs::Result<Value<'js>> {
+    ) -> fresh_js::Result<Value<'js>> {
         let bid = BufferId(buffer_id as usize);
         if let Ok(snapshot) = self.state_snapshot.read() {
             if let Some(m) = snapshot
@@ -7160,7 +7160,7 @@ impl JsEditorApi {
                 .get(&bid)
                 .and_then(|map| map.get(&key))
             {
-                let obj = rquickjs::Object::new(ctx.clone())?;
+                let obj = fresh_js::Object::new(ctx.clone())?;
                 obj.set("id", key)?;
                 obj.set("start", m.start as u32)?;
                 obj.set("end", m.end as u32)?;
@@ -7181,7 +7181,7 @@ impl JsEditorApi {
     /// editor applies the change, so it survives restarts.
     pub fn set_global_state<'js>(
         &self,
-        ctx: rquickjs::Ctx<'js>,
+        ctx: fresh_js::Ctx<'js>,
         key: String,
         value: Value<'js>,
     ) -> bool {
@@ -7228,9 +7228,9 @@ impl JsEditorApi {
     /// State is automatically isolated per plugin using the plugin's name.
     pub fn get_global_state<'js>(
         &self,
-        ctx: rquickjs::Ctx<'js>,
+        ctx: fresh_js::Ctx<'js>,
         key: String,
-    ) -> rquickjs::Result<Value<'js>> {
+    ) -> fresh_js::Result<Value<'js>> {
         if let Ok(snapshot) = self.state_snapshot.read() {
             if let Some(map) = snapshot.plugin_global_states.get(&self.plugin_name) {
                 if let Some(json_val) = map.get(&key) {
@@ -7256,7 +7256,7 @@ impl JsEditorApi {
     /// restores instead of applying globally.
     pub fn set_window_state<'js>(
         &self,
-        ctx: rquickjs::Ctx<'js>,
+        ctx: fresh_js::Ctx<'js>,
         key: String,
         value: Value<'js>,
     ) -> bool {
@@ -7308,9 +7308,9 @@ impl JsEditorApi {
     /// The state is per plugin, as written by `setWindowState`.
     pub fn get_window_state<'js>(
         &self,
-        ctx: rquickjs::Ctx<'js>,
+        ctx: fresh_js::Ctx<'js>,
         key: String,
-    ) -> rquickjs::Result<Value<'js>> {
+    ) -> fresh_js::Result<Value<'js>> {
         if let Ok(snapshot) = self.state_snapshot.read() {
             if let Some(map) = snapshot.active_session_plugin_states.get(&self.plugin_name) {
                 if let Some(json_val) = map.get(&key) {
@@ -7363,7 +7363,7 @@ impl JsEditorApi {
     /// @param anchors - `[leftLine, rightLine]` pairs marking matching positions
     pub fn set_scroll_sync_anchors<'js>(
         &self,
-        _ctx: rquickjs::Ctx<'js>,
+        _ctx: fresh_js::Ctx<'js>,
         group_id: u32,
         anchors: Vec<Vec<u32>>,
     ) -> bool {
@@ -7424,13 +7424,13 @@ impl JsEditorApi {
     #[plugin_api(ts_return = "boolean")]
     pub fn show_action_popup<'js>(
         &self,
-        ctx: rquickjs::Ctx<'js>,
+        ctx: fresh_js::Ctx<'js>,
         opts: fresh_core::api::ActionPopupOptions,
-    ) -> rquickjs::Result<bool> {
+    ) -> fresh_js::Result<bool> {
         if let Some(id) =
             fresh_core::api::first_duplicate_id(opts.actions.iter().map(|a| a.id.as_str()))
         {
-            let msg = rquickjs::String::from_str(
+            let msg = fresh_js::String::from_str(
                 ctx.clone(),
                 &format!("showActionPopup: duplicate action id {id:?}"),
             )?;
@@ -7478,13 +7478,13 @@ impl JsEditorApi {
     #[plugin_api(ts_return = "boolean")]
     pub fn set_lsp_menu_contributions<'js>(
         &self,
-        ctx: rquickjs::Ctx<'js>,
+        ctx: fresh_js::Ctx<'js>,
         plugin_id: String,
         language: String,
         items: Vec<fresh_core::api::LspMenuItem>,
-    ) -> rquickjs::Result<bool> {
+    ) -> fresh_js::Result<bool> {
         if let Some(id) = fresh_core::api::first_duplicate_id(items.iter().map(|i| i.id.as_str())) {
-            let msg = rquickjs::String::from_str(
+            let msg = fresh_js::String::from_str(
                 ctx.clone(),
                 &format!("setLspMenuContributions: duplicate item id {id:?}"),
             )?;
@@ -7555,8 +7555,8 @@ impl JsEditorApi {
     #[plugin_api(ts_return = "JsDiagnostic[]")]
     pub fn get_all_diagnostics<'js>(
         &self,
-        ctx: rquickjs::Ctx<'js>,
-    ) -> rquickjs::Result<Value<'js>> {
+        ctx: fresh_js::Ctx<'js>,
+    ) -> fresh_js::Result<Value<'js>> {
         use fresh_core::api::{JsDiagnostic, JsPosition, JsRange};
 
         let diagnostics = if let Ok(s) = self.state_snapshot.read() {
@@ -7592,8 +7592,8 @@ impl JsEditorApi {
         } else {
             Vec::new()
         };
-        rquickjs_serde::to_value(ctx, &diagnostics)
-            .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string()))
+        fresh_js::serde::to_value(ctx, &diagnostics)
+            .map_err(|e| fresh_js::Error::new_from_js_message("serialize", "", &e.to_string()))
     }
 
     #[plugin_api(section = "Event Handlers")]
@@ -7630,9 +7630,9 @@ impl JsEditorApi {
     #[qjs(rename = "_createVirtualBufferStart")]
     pub fn create_virtual_buffer_start(
         &self,
-        _ctx: rquickjs::Ctx<'_>,
+        _ctx: fresh_js::Ctx<'_>,
         mut opts: fresh_core::api::CreateVirtualBufferOptions,
-    ) -> rquickjs::Result<u64> {
+    ) -> fresh_js::Result<u64> {
         let id = self.alloc_request_id();
 
         let entries = initial_entries(opts.entries.take());
@@ -7730,9 +7730,9 @@ impl JsEditorApi {
     #[qjs(rename = "_createVirtualBufferInSplitStart")]
     pub fn create_virtual_buffer_in_split_start(
         &self,
-        _ctx: rquickjs::Ctx<'_>,
+        _ctx: fresh_js::Ctx<'_>,
         mut opts: fresh_core::api::CreateVirtualBufferInSplitOptions,
-    ) -> rquickjs::Result<u64> {
+    ) -> fresh_js::Result<u64> {
         let id = self.alloc_request_id();
 
         let entries = initial_entries(opts.entries.take());
@@ -7772,9 +7772,9 @@ impl JsEditorApi {
     #[qjs(rename = "_createVirtualBufferInExistingSplitStart")]
     pub fn create_virtual_buffer_in_existing_split_start(
         &self,
-        _ctx: rquickjs::Ctx<'_>,
+        _ctx: fresh_js::Ctx<'_>,
         mut opts: fresh_core::api::CreateVirtualBufferInExistingSplitOptions,
-    ) -> rquickjs::Result<u64> {
+    ) -> fresh_js::Result<u64> {
         let id = self.alloc_request_id();
 
         let entries = initial_entries(opts.entries.take());
@@ -7805,11 +7805,11 @@ impl JsEditorApi {
     #[qjs(rename = "_createBufferGroupStart")]
     pub fn create_buffer_group_start(
         &self,
-        _ctx: rquickjs::Ctx<'_>,
+        _ctx: fresh_js::Ctx<'_>,
         name: String,
         mode: String,
         layout_json: String,
-    ) -> rquickjs::Result<u64> {
+    ) -> fresh_js::Result<u64> {
         let id = self.alloc_request_id();
         if let Ok(mut owners) = self.async_resource_owners.lock() {
             owners.insert(id, self.plugin_name.clone());
@@ -7828,11 +7828,11 @@ impl JsEditorApi {
     #[qjs(rename = "setPanelContent")]
     pub fn set_panel_content<'js>(
         &self,
-        ctx: rquickjs::Ctx<'js>,
+        ctx: fresh_js::Ctx<'js>,
         group_id: u32,
         panel_name: String,
-        entries_arr: Vec<rquickjs::Object<'js>>,
-    ) -> rquickjs::Result<bool> {
+        entries_arr: Vec<fresh_js::Object<'js>>,
+    ) -> fresh_js::Result<bool> {
         let entries: Vec<TextPropertyEntry> = entries_arr
             .iter()
             .filter_map(|obj| parse_text_property_entry(&ctx, obj))
@@ -7936,7 +7936,7 @@ impl JsEditorApi {
     #[qjs(rename = "_setBufferGroupPanelBufferStart")]
     pub fn set_buffer_group_panel_buffer_start(
         &self,
-        _ctx: rquickjs::Ctx<'_>,
+        _ctx: fresh_js::Ctx<'_>,
         group_id: u32,
         panel_name: String,
         buffer_id: u32,
@@ -7972,10 +7972,10 @@ impl JsEditorApi {
     /// keybindings.
     pub fn set_virtual_buffer_content<'js>(
         &self,
-        ctx: rquickjs::Ctx<'js>,
+        ctx: fresh_js::Ctx<'js>,
         buffer_id: u32,
-        entries_arr: Vec<rquickjs::Object<'js>>,
-    ) -> rquickjs::Result<bool> {
+        entries_arr: Vec<fresh_js::Object<'js>>,
+    ) -> fresh_js::Result<bool> {
         let entries: Vec<TextPropertyEntry> = entries_arr
             .iter()
             .filter_map(|obj| parse_text_property_entry(&ctx, obj))
@@ -8023,14 +8023,14 @@ impl JsEditorApi {
     #[qjs(rename = "mountWidgetPanel")]
     pub fn mount_widget_panel<'js>(
         &self,
-        ctx: rquickjs::Ctx<'js>,
+        ctx: fresh_js::Ctx<'js>,
         panel_id: f64,
         buffer_id: u32,
-        spec_obj: rquickjs::Value<'js>,
-        #[plugin_api(ts_type = "WidgetPanelOptions")] options_obj: rquickjs::function::Opt<
-            rquickjs::Value<'js>,
+        spec_obj: fresh_js::Value<'js>,
+        #[plugin_api(ts_type = "WidgetPanelOptions")] options_obj: fresh_js::function::Opt<
+            fresh_js::Value<'js>,
         >,
-    ) -> rquickjs::Result<bool> {
+    ) -> fresh_js::Result<bool> {
         let json = js_to_json(&ctx, spec_obj);
         let spec = match parse_widget_spec(json) {
             Ok(s) => s,
@@ -8076,10 +8076,10 @@ impl JsEditorApi {
     #[qjs(rename = "updateWidgetPanel")]
     pub fn update_widget_panel<'js>(
         &self,
-        ctx: rquickjs::Ctx<'js>,
+        ctx: fresh_js::Ctx<'js>,
         panel_id: f64,
-        spec_obj: rquickjs::Value<'js>,
-    ) -> rquickjs::Result<bool> {
+        spec_obj: fresh_js::Value<'js>,
+    ) -> fresh_js::Result<bool> {
         let json = js_to_json(&ctx, spec_obj);
         let spec = match parse_widget_spec(json) {
             Ok(s) => s,
@@ -8121,10 +8121,10 @@ impl JsEditorApi {
     #[qjs(rename = "widgetCommand")]
     pub fn widget_command<'js>(
         &self,
-        ctx: rquickjs::Ctx<'js>,
+        ctx: fresh_js::Ctx<'js>,
         panel_id: f64,
-        action_obj: rquickjs::Value<'js>,
-    ) -> rquickjs::Result<bool> {
+        action_obj: fresh_js::Value<'js>,
+    ) -> fresh_js::Result<bool> {
         let json = js_to_json(&ctx, action_obj);
         let action: fresh_core::api::WidgetAction = match serde_json::from_value(json) {
             Ok(a) => a,
@@ -8152,10 +8152,10 @@ impl JsEditorApi {
     #[qjs(rename = "widgetMutate")]
     pub fn widget_mutate<'js>(
         &self,
-        ctx: rquickjs::Ctx<'js>,
+        ctx: fresh_js::Ctx<'js>,
         panel_id: f64,
-        mutation_obj: rquickjs::Value<'js>,
-    ) -> rquickjs::Result<bool> {
+        mutation_obj: fresh_js::Value<'js>,
+    ) -> fresh_js::Result<bool> {
         let json = js_to_json(&ctx, mutation_obj);
         let mutation = match parse_widget_mutation(json) {
             Ok(m) => m,
@@ -8208,29 +8208,29 @@ impl JsEditorApi {
     #[qjs(rename = "mountFloatingWidget")]
     pub fn mount_floating_widget<'js>(
         &self,
-        ctx: rquickjs::Ctx<'js>,
+        ctx: fresh_js::Ctx<'js>,
         panel_id: f64,
-        spec_obj: rquickjs::Value<'js>,
+        spec_obj: fresh_js::Value<'js>,
         width_pct: f64,
         height_pct: f64,
-        as_dock: rquickjs::function::Opt<bool>,
-        focus_marker: rquickjs::function::Opt<bool>,
+        as_dock: fresh_js::function::Opt<bool>,
+        focus_marker: fresh_js::function::Opt<bool>,
         // Native modal-frame chrome for a centered panel: an optional title
         // bar and an optional `[×]` close button, drawn by the host around
         // the declarative `WidgetSpec` content. Both default off for
         // back-compat with existing mount calls.
-        title: rquickjs::function::Opt<String>,
-        closable: rquickjs::function::Opt<bool>,
+        title: fresh_js::function::Opt<String>,
+        closable: fresh_js::function::Opt<bool>,
         // Mount without taking keyboard focus (the auto-opened dock).
         // Optional trailing arg, default false, for call-site back-compat.
-        start_blurred: rquickjs::function::Opt<bool>,
+        start_blurred: fresh_js::function::Opt<bool>,
         // The panel's own keymap: a `defineMode` name whose bindings its
         // keys resolve against first. Optional trailing arg, default none.
-        mode: rquickjs::function::Opt<String>,
+        mode: fresh_js::function::Opt<String>,
         // How the panel's form controls align their labels in the shared
         // column: `"right"` or `"left"` (default). Optional trailing arg.
-        label_align: rquickjs::function::Opt<String>,
-    ) -> rquickjs::Result<bool> {
+        label_align: fresh_js::function::Opt<String>,
+    ) -> fresh_js::Result<bool> {
         let json = js_to_json(&ctx, spec_obj);
         let spec = match parse_widget_spec(json) {
             Ok(s) => s,
@@ -8284,16 +8284,16 @@ impl JsEditorApi {
     #[qjs(rename = "mountSidebarSection")]
     pub fn mount_sidebar_section<'js>(
         &self,
-        ctx: rquickjs::Ctx<'js>,
+        ctx: fresh_js::Ctx<'js>,
         panel_id: f64,
-        spec_obj: rquickjs::Value<'js>,
+        spec_obj: fresh_js::Value<'js>,
         title: String,
         rows: f64,
         #[plugin_api(
             ts_type = "{ closable?: boolean; startBlurred?: boolean; scope?: { buffer: number } | { window: number } | 'editor' }"
         )]
-        opts: rquickjs::function::Opt<rquickjs::Value<'js>>,
-    ) -> rquickjs::Result<bool> {
+        opts: fresh_js::function::Opt<fresh_js::Value<'js>>,
+    ) -> fresh_js::Result<bool> {
         let json = js_to_json(&ctx, spec_obj);
         let spec = match parse_widget_spec(json) {
             Ok(s) => s,
@@ -8345,10 +8345,10 @@ impl JsEditorApi {
     #[qjs(rename = "updateFloatingWidget")]
     pub fn update_floating_widget<'js>(
         &self,
-        ctx: rquickjs::Ctx<'js>,
+        ctx: fresh_js::Ctx<'js>,
         panel_id: f64,
-        spec_obj: rquickjs::Value<'js>,
-    ) -> rquickjs::Result<bool> {
+        spec_obj: fresh_js::Value<'js>,
+    ) -> fresh_js::Result<bool> {
         let json = js_to_json(&ctx, spec_obj);
         let spec = match parse_widget_spec(json) {
             Ok(s) => s,
@@ -8432,11 +8432,11 @@ impl JsEditorApi {
     #[qjs(rename = "_spawnProcessStart")]
     pub fn spawn_process_start(
         &self,
-        _ctx: rquickjs::Ctx<'_>,
+        _ctx: fresh_js::Ctx<'_>,
         command: String,
         args: Vec<String>,
-        cwd: rquickjs::function::Opt<String>,
-        stdout_to: rquickjs::function::Opt<String>,
+        cwd: fresh_js::function::Opt<String>,
+        stdout_to: fresh_js::function::Opt<String>,
     ) -> u64 {
         let id = self.alloc_request_id();
         // Use provided cwd, or fall back to snapshot's working_dir.
@@ -8487,10 +8487,10 @@ impl JsEditorApi {
     #[qjs(rename = "_spawnHostProcessStart")]
     pub fn spawn_host_process_start(
         &self,
-        _ctx: rquickjs::Ctx<'_>,
+        _ctx: fresh_js::Ctx<'_>,
         command: String,
         args: Vec<String>,
-        cwd: rquickjs::function::Opt<String>,
+        cwd: fresh_js::function::Opt<String>,
     ) -> u64 {
         let id = self.alloc_request_id();
         let effective_cwd = cwd.0.or_else(|| {
@@ -8536,8 +8536,8 @@ impl JsEditorApi {
     #[plugin_api(js_name = "setAuthority")]
     pub fn set_authority(
         &self,
-        ctx: rquickjs::Ctx<'_>,
-        #[plugin_api(ts_type = "AuthorityPayload")] payload: rquickjs::Value<'_>,
+        ctx: fresh_js::Ctx<'_>,
+        #[plugin_api(ts_type = "AuthorityPayload")] payload: fresh_js::Value<'_>,
     ) -> bool {
         let json = js_to_json(&ctx, payload);
         let _ = self
@@ -8572,8 +8572,8 @@ impl JsEditorApi {
     #[qjs(rename = "_attachRemoteAgentStart")]
     pub fn attach_remote_agent(
         &self,
-        ctx: rquickjs::Ctx<'_>,
-        #[plugin_api(ts_type = "RemoteAgentSpec")] payload: rquickjs::Value<'_>,
+        ctx: fresh_js::Ctx<'_>,
+        #[plugin_api(ts_type = "RemoteAgentSpec")] payload: fresh_js::Value<'_>,
     ) -> u64 {
         let json = js_to_json(&ctx, payload);
         let id = self.alloc_request_id();
@@ -8630,8 +8630,8 @@ impl JsEditorApi {
     #[plugin_api(js_name = "setRemoteIndicatorState")]
     pub fn set_remote_indicator_state(
         &self,
-        ctx: rquickjs::Ctx<'_>,
-        #[plugin_api(ts_type = "RemoteIndicatorStatePayload")] state: rquickjs::Value<'_>,
+        ctx: fresh_js::Ctx<'_>,
+        #[plugin_api(ts_type = "RemoteIndicatorStatePayload")] state: fresh_js::Value<'_>,
     ) -> bool {
         let json = js_to_json(&ctx, state);
         let _ = self
@@ -8669,11 +8669,11 @@ impl JsEditorApi {
     #[qjs(rename = "_httpFetchStart")]
     pub fn http_fetch_start<'js>(
         &self,
-        ctx: rquickjs::Ctx<'js>,
+        ctx: fresh_js::Ctx<'js>,
         url: String,
         target_path: String,
-        #[plugin_api(ts_type = "Record<string, string> | null")] headers: rquickjs::function::Opt<
-            rquickjs::Value<'js>,
+        #[plugin_api(ts_type = "Record<string, string> | null")] headers: fresh_js::function::Opt<
+            fresh_js::Value<'js>,
         >,
     ) -> u64 {
         let id = self.alloc_request_id();
@@ -8712,7 +8712,7 @@ impl JsEditorApi {
     /// Wait for a process to complete and get its result (async)
     #[plugin_api(async_promise, js_name = "spawnProcessWait", ts_return = "SpawnResult")]
     #[qjs(rename = "_spawnProcessWaitStart")]
-    pub fn spawn_process_wait_start(&self, _ctx: rquickjs::Ctx<'_>, process_id: u64) -> u64 {
+    pub fn spawn_process_wait_start(&self, _ctx: fresh_js::Ctx<'_>, process_id: u64) -> u64 {
         let id = self.alloc_request_id();
         let _ = self.command_sender.send(PluginCommand::SpawnProcessWait {
             process_id,
@@ -8734,10 +8734,10 @@ impl JsEditorApi {
     #[qjs(rename = "_getBufferTextStart")]
     pub fn get_buffer_text_start(
         &self,
-        _ctx: rquickjs::Ctx<'_>,
+        _ctx: fresh_js::Ctx<'_>,
         buffer_id: u32,
-        start: rquickjs::function::Opt<u32>,
-        end: rquickjs::function::Opt<u32>,
+        start: fresh_js::function::Opt<u32>,
+        end: fresh_js::function::Opt<u32>,
     ) -> u64 {
         let id = self.alloc_request_id();
         // No end offset means "to the end of the buffer": resolve it from the
@@ -8774,7 +8774,7 @@ impl JsEditorApi {
     #[qjs(rename = "_registerDiffBaselineStart")]
     pub fn register_diff_baseline_start(
         &self,
-        _ctx: rquickjs::Ctx<'_>,
+        _ctx: fresh_js::Ctx<'_>,
         buffer_id: u32,
         kind: String,
         git_ref: Option<String>,
@@ -8803,7 +8803,7 @@ impl JsEditorApi {
     #[qjs(rename = "_diffAgainstBaselineStart")]
     pub fn diff_against_baseline_start(
         &self,
-        _ctx: rquickjs::Ctx<'_>,
+        _ctx: fresh_js::Ctx<'_>,
         buffer_id: u32,
         baseline_id: u64,
     ) -> u64 {
@@ -8829,7 +8829,7 @@ impl JsEditorApi {
     #[qjs(rename = "_diffBaselinePairStart")]
     pub fn diff_baseline_pair_start(
         &self,
-        _ctx: rquickjs::Ctx<'_>,
+        _ctx: fresh_js::Ctx<'_>,
         old_baseline_id: u64,
         new_baseline_id: u64,
     ) -> u64 {
@@ -8850,7 +8850,7 @@ impl JsEditorApi {
     #[qjs(rename = "_getBaselineLinesStart")]
     pub fn get_baseline_lines_start(
         &self,
-        _ctx: rquickjs::Ctx<'_>,
+        _ctx: fresh_js::Ctx<'_>,
         baseline_id: u64,
         ranges: Vec<Vec<u32>>,
     ) -> u64 {
@@ -8875,7 +8875,7 @@ impl JsEditorApi {
     /// serving.
     #[plugin_api(async_promise, js_name = "refreshDiffBaseline", ts_return = "void")]
     #[qjs(rename = "_refreshDiffBaselineStart")]
-    pub fn refresh_diff_baseline_start(&self, _ctx: rquickjs::Ctx<'_>, baseline_id: u64) -> u64 {
+    pub fn refresh_diff_baseline_start(&self, _ctx: fresh_js::Ctx<'_>, baseline_id: u64) -> u64 {
         let id = self.alloc_request_id();
         let _ = self
             .command_sender
@@ -9052,7 +9052,7 @@ impl JsEditorApi {
     /// @param durationMs - Number of milliseconds to delay
     #[plugin_api(async_promise, js_name = "delay", ts_return = "void")]
     #[qjs(rename = "_delayStart")]
-    pub fn delay_start(&self, _ctx: rquickjs::Ctx<'_>, duration_ms: u64) -> u64 {
+    pub fn delay_start(&self, _ctx: fresh_js::Ctx<'_>, duration_ms: u64) -> u64 {
         let id = self.alloc_request_id();
         let _ = self.command_sender.send(PluginCommand::Delay {
             callback_id: JsCallbackId::new(id),
@@ -9069,7 +9069,7 @@ impl JsEditorApi {
     #[qjs(rename = "_grepProjectStart")]
     pub fn grep_project_start(
         &self,
-        _ctx: rquickjs::Ctx<'_>,
+        _ctx: fresh_js::Ctx<'_>,
         pattern: String,
         fixed_string: Option<bool>,
         case_sensitive: Option<bool>,
@@ -9105,7 +9105,7 @@ impl JsEditorApi {
     #[qjs(rename = "_beginSearch")]
     pub fn begin_search(
         &self,
-        _ctx: rquickjs::Ctx<'_>,
+        _ctx: fresh_js::Ctx<'_>,
         pattern: String,
         fixed_string: bool,
         case_sensitive: bool,
@@ -9142,9 +9142,9 @@ impl JsEditorApi {
     #[qjs(rename = "_searchHandleTake")]
     pub fn search_handle_take<'js>(
         &self,
-        ctx: rquickjs::Ctx<'js>,
+        ctx: fresh_js::Ctx<'js>,
         handle_id: u64,
-    ) -> rquickjs::Result<Value<'js>> {
+    ) -> fresh_js::Result<Value<'js>> {
         let entry = self
             .search_handles
             .lock()
@@ -9182,8 +9182,8 @@ impl JsEditorApi {
                 error: None,
             },
         };
-        rquickjs_serde::to_value(ctx, &result)
-            .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string()))
+        fresh_js::serde::to_value(ctx, &result)
+            .map_err(|e| fresh_js::Error::new_from_js_message("serialize", "", &e.to_string()))
     }
 
     /// Cancel a streaming search. Idempotent and safe to call after the
@@ -9217,14 +9217,14 @@ impl JsEditorApi {
     #[qjs(rename = "_replaceInFileStart")]
     pub fn replace_in_file_start(
         &self,
-        _ctx: rquickjs::Ctx<'_>,
+        _ctx: fresh_js::Ctx<'_>,
         file_path: String,
         matches: Vec<Vec<u32>>,
         replacement: String,
-        buffer_id: rquickjs::function::Opt<u32>,
-        regex_pattern: rquickjs::function::Opt<String>,
-        case_sensitive: rquickjs::function::Opt<bool>,
-        whole_words: rquickjs::function::Opt<bool>,
+        buffer_id: fresh_js::function::Opt<u32>,
+        regex_pattern: fresh_js::function::Opt<String>,
+        case_sensitive: fresh_js::function::Opt<bool>,
+        whole_words: fresh_js::function::Opt<bool>,
     ) -> u64 {
         let id = self.alloc_request_id();
         // Convert [[offset, length], ...] to Vec<(usize, usize)>
@@ -9262,11 +9262,11 @@ impl JsEditorApi {
     #[qjs(rename = "_sendLspRequestStart")]
     pub fn send_lsp_request_start<'js>(
         &self,
-        ctx: rquickjs::Ctx<'js>,
+        ctx: fresh_js::Ctx<'js>,
         language: String,
         method: String,
-        params: Option<rquickjs::Object<'js>>,
-    ) -> rquickjs::Result<u64> {
+        params: Option<fresh_js::Object<'js>>,
+    ) -> fresh_js::Result<u64> {
         let id = self.alloc_request_id();
         // Convert params object to serde_json::Value
         let params_json: Option<serde_json::Value> = params.map(|obj| {
@@ -9313,10 +9313,10 @@ impl JsEditorApi {
     #[qjs(rename = "_spawnBackgroundProcessStart")]
     pub fn spawn_background_process_start(
         &self,
-        _ctx: rquickjs::Ctx<'_>,
+        _ctx: fresh_js::Ctx<'_>,
         command: String,
         args: Vec<String>,
-        cwd: rquickjs::function::Opt<String>,
+        cwd: fresh_js::function::Opt<String>,
     ) -> u64 {
         let id = self.alloc_request_id();
         // Use id as process_id for simplicity
@@ -9367,9 +9367,9 @@ impl JsEditorApi {
     #[qjs(rename = "_createTerminalStart")]
     pub fn create_terminal_start(
         &self,
-        _ctx: rquickjs::Ctx<'_>,
-        opts: rquickjs::function::Opt<fresh_core::api::CreateTerminalOptions>,
-    ) -> rquickjs::Result<u64> {
+        _ctx: fresh_js::Ctx<'_>,
+        opts: fresh_js::function::Opt<fresh_core::api::CreateTerminalOptions>,
+    ) -> fresh_js::Result<u64> {
         let id = self.alloc_request_id();
 
         let opts = opts.0.unwrap_or(fresh_core::api::CreateTerminalOptions {
@@ -9423,9 +9423,9 @@ impl JsEditorApi {
     #[qjs(rename = "_createWindowWithTerminalStart")]
     pub fn create_window_with_terminal_start(
         &self,
-        _ctx: rquickjs::Ctx<'_>,
+        _ctx: fresh_js::Ctx<'_>,
         opts: fresh_core::api::CreateWindowWithTerminalOptions,
-    ) -> rquickjs::Result<u64> {
+    ) -> fresh_js::Result<u64> {
         let id = self.alloc_request_id();
         if let Ok(mut owners) = self.async_resource_owners.lock() {
             owners.insert(id, self.plugin_name.clone());
@@ -9464,9 +9464,9 @@ impl JsEditorApi {
     #[qjs(rename = "_createPreparingWindowStart")]
     pub fn create_preparing_window_start(
         &self,
-        _ctx: rquickjs::Ctx<'_>,
+        _ctx: fresh_js::Ctx<'_>,
         opts: fresh_core::api::CreatePreparingWindowOptions,
-    ) -> rquickjs::Result<u64> {
+    ) -> fresh_js::Result<u64> {
         let id = self.alloc_request_id();
         if let Ok(mut owners) = self.async_resource_owners.lock() {
             owners.insert(id, self.plugin_name.clone());
@@ -9567,7 +9567,7 @@ impl JsEditorApi {
     /// Load a plugin from a file path (async)
     #[plugin_api(async_promise, js_name = "loadPlugin", ts_return = "boolean")]
     #[qjs(rename = "_loadPluginStart")]
-    pub fn load_plugin_start(&self, _ctx: rquickjs::Ctx<'_>, path: String) -> u64 {
+    pub fn load_plugin_start(&self, _ctx: fresh_js::Ctx<'_>, path: String) -> u64 {
         let id = self.alloc_request_id();
         let _ = self.command_sender.send(PluginCommand::LoadPlugin {
             path: std::path::PathBuf::from(path),
@@ -9579,7 +9579,7 @@ impl JsEditorApi {
     /// Unload a plugin by name (async)
     #[plugin_api(async_promise, js_name = "unloadPlugin", ts_return = "boolean")]
     #[qjs(rename = "_unloadPluginStart")]
-    pub fn unload_plugin_start(&self, _ctx: rquickjs::Ctx<'_>, name: String) -> u64 {
+    pub fn unload_plugin_start(&self, _ctx: fresh_js::Ctx<'_>, name: String) -> u64 {
         let id = self.alloc_request_id();
         let _ = self.command_sender.send(PluginCommand::UnloadPlugin {
             name,
@@ -9591,7 +9591,7 @@ impl JsEditorApi {
     /// Reload a plugin by name (async)
     #[plugin_api(async_promise, js_name = "reloadPlugin", ts_return = "boolean")]
     #[qjs(rename = "_reloadPluginStart")]
-    pub fn reload_plugin_start(&self, _ctx: rquickjs::Ctx<'_>, name: String) -> u64 {
+    pub fn reload_plugin_start(&self, _ctx: fresh_js::Ctx<'_>, name: String) -> u64 {
         let id = self.alloc_request_id();
         let _ = self.command_sender.send(PluginCommand::ReloadPlugin {
             name,
@@ -9608,7 +9608,7 @@ impl JsEditorApi {
         ts_return = "Array<{name: string, path: string, enabled: boolean}>"
     )]
     #[qjs(rename = "_listPluginsStart")]
-    pub fn list_plugins_start(&self, _ctx: rquickjs::Ctx<'_>) -> u64 {
+    pub fn list_plugins_start(&self, _ctx: fresh_js::Ctx<'_>) -> u64 {
         let id = self.alloc_request_id();
         let _ = self.command_sender.send(PluginCommand::ListPlugins {
             callback_id: JsCallbackId::new(id),
@@ -9633,7 +9633,7 @@ impl JsEditorApi {
     /// Calling this *from* init.ts re-enters the reload; guard it if you do.
     #[plugin_api(async_promise, js_name = "reloadInit", ts_return = "boolean")]
     #[qjs(rename = "_reloadInitStart")]
-    pub fn reload_init_start(&self, _ctx: rquickjs::Ctx<'_>) -> u64 {
+    pub fn reload_init_start(&self, _ctx: fresh_js::Ctx<'_>) -> u64 {
         let id = self.alloc_request_id();
         let _ = self.command_sender.send(PluginCommand::ReloadInit {
             callback_id: JsCallbackId::new(id),
@@ -9655,7 +9655,7 @@ impl JsEditorApi {
     /// `fresh --cmd command run "<name>"` is this call from a shell.
     #[plugin_api(async_promise, js_name = "runCommand", ts_return = "boolean")]
     #[qjs(rename = "_runCommandStart")]
-    pub fn run_command_start(&self, _ctx: rquickjs::Ctx<'_>, name: String) -> u64 {
+    pub fn run_command_start(&self, _ctx: fresh_js::Ctx<'_>, name: String) -> u64 {
         let id = self.alloc_request_id();
         let _ = self.command_sender.send(PluginCommand::RunEditorCommand {
             name,
@@ -9678,7 +9678,7 @@ impl JsEditorApi {
         ts_return = "Array<{name: string, description: string, source: string, plugin: string}>"
     )]
     #[qjs(rename = "_listCommandsStart")]
-    pub fn list_commands_start(&self, _ctx: rquickjs::Ctx<'_>) -> u64 {
+    pub fn list_commands_start(&self, _ctx: fresh_js::Ctx<'_>) -> u64 {
         let id = self.alloc_request_id();
         let _ = self.command_sender.send(PluginCommand::ListEditorCommands {
             callback_id: JsCallbackId::new(id),
@@ -9718,7 +9718,7 @@ fn initial_entries(
 /// and `setup_context_api` publishes that name as `__pluginName__`. Reading it
 /// back is what lets a runtime-level event — which knows a context but no
 /// request — be attributed to the caller waiting on it.
-fn agent_script_request_id(ctx: &rquickjs::Ctx<'_>) -> Option<u64> {
+fn agent_script_request_id(ctx: &fresh_js::Ctx<'_>) -> Option<u64> {
     let name: String = ctx.globals().get("__pluginName__").ok()?;
     name.strip_prefix("agent-script-")?.parse().ok()
 }
@@ -10189,15 +10189,15 @@ const EDITOR_PROMISE_BOOTSTRAP: &str = r#"
 /// Install a `console` object (`log` / `warn` / `error`) that forwards to
 /// `tracing`, stringifying each variadic argument via `js_value_to_string`.
 fn install_console<'js>(
-    ctx: &rquickjs::Ctx<'js>,
-    globals: &rquickjs::Object<'js>,
-) -> rquickjs::Result<()> {
+    ctx: &fresh_js::Ctx<'js>,
+    globals: &fresh_js::Object<'js>,
+) -> fresh_js::Result<()> {
     let console = Object::new(ctx.clone())?;
     console.set(
         "log",
         Function::new(
             ctx.clone(),
-            |ctx: rquickjs::Ctx, args: rquickjs::function::Rest<rquickjs::Value>| {
+            |ctx: fresh_js::Ctx, args: fresh_js::function::Rest<fresh_js::Value>| {
                 let parts: Vec<String> =
                     args.0.iter().map(|v| js_value_to_string(&ctx, v)).collect();
                 tracing::info!("console.log: {}", parts.join(" "));
@@ -10208,7 +10208,7 @@ fn install_console<'js>(
         "warn",
         Function::new(
             ctx.clone(),
-            |ctx: rquickjs::Ctx, args: rquickjs::function::Rest<rquickjs::Value>| {
+            |ctx: fresh_js::Ctx, args: fresh_js::function::Rest<fresh_js::Value>| {
                 let parts: Vec<String> =
                     args.0.iter().map(|v| js_value_to_string(&ctx, v)).collect();
                 tracing::warn!("console.warn: {}", parts.join(" "));
@@ -10219,7 +10219,7 @@ fn install_console<'js>(
         "error",
         Function::new(
             ctx.clone(),
-            |ctx: rquickjs::Ctx, args: rquickjs::function::Rest<rquickjs::Value>| {
+            |ctx: fresh_js::Ctx, args: fresh_js::function::Rest<fresh_js::Value>| {
                 let parts: Vec<String> =
                     args.0.iter().map(|v| js_value_to_string(&ctx, v)).collect();
                 tracing::error!("console.error: {}", parts.join(" "));
@@ -10416,7 +10416,7 @@ impl QuickJsBackend {
                 // Create the `editor` object from the JsEditorApi class (which
                 // gives proper lifetime handling for methods returning JS
                 // values) and export it as a global.
-                let editor = rquickjs::Class::<JsEditorApi>::instance(
+                let editor = fresh_js::Class::<JsEditorApi>::instance(
                     ctx.clone(),
                     self.build_editor_api(plugin_name),
                 )?;
@@ -10431,7 +10431,7 @@ impl QuickJsBackend {
                 install_console(&ctx, &globals)?;
                 ctx.eval::<(), _>(EDITOR_PROMISE_BOOTSTRAP.as_bytes())?;
 
-                Ok::<_, rquickjs::Error>(())
+                Ok::<_, fresh_js::Error>(())
             })
             .map_err(|e| anyhow!("Failed to set up global API: {}", e))?;
 
@@ -10532,7 +10532,7 @@ impl QuickJsBackend {
             tracing::debug!("execute_js: executing plugin code for '{}'", plugin_name);
 
             // Execute the plugin code with filename for better stack traces
-            let mut eval_options = rquickjs::context::EvalOptions::default();
+            let mut eval_options = fresh_js::context::EvalOptions::default();
             eval_options.global = true;
             eval_options.filename = Some(source_name.to_string());
             let result = ctx
@@ -11116,7 +11116,7 @@ impl QuickJsBackend {
 
         tracing::info!("start_action: evaluating JS code");
         context.with(|ctx| {
-            if let Err(e) = ctx.eval::<rquickjs::Value, _>(code.as_bytes()) {
+            if let Err(e) = ctx.eval::<fresh_js::Value, _>(code.as_bytes()) {
                 log_js_error(&ctx, e, &format!("action {}", action_name));
             }
             tracing::info!("start_action: running pending microtasks");
@@ -11179,13 +11179,13 @@ impl QuickJsBackend {
 
         context.with(|ctx| {
             // Eval returns a Promise for the async IIFE, which we need to drive
-            match ctx.eval::<rquickjs::Value, _>(code.as_bytes()) {
+            match ctx.eval::<fresh_js::Value, _>(code.as_bytes()) {
                 Ok(value) => {
                     // If it's a Promise, we need to drive the runtime to completion
                     if value.is_object() {
                         if let Some(obj) = value.as_object() {
                             // Check if it's a Promise by looking for 'then' method
-                            if obj.get::<_, rquickjs::Function>("then").is_ok() {
+                            if obj.get::<_, fresh_js::Function>("then").is_ok() {
                                 // Drive the runtime to process the promise
                                 // QuickJS processes promises synchronously when we call execute_pending_job
                                 run_pending_jobs_checked(
@@ -11330,7 +11330,7 @@ impl QuickJsBackend {
             };
 
             // Convert to JS value using rquickjs_serde
-            let js_value = match rquickjs_serde::to_value(ctx.clone(), &json_value) {
+            let js_value = match fresh_js::serde::to_value(ctx.clone(), &json_value) {
                 Ok(v) => v,
                 Err(e) => {
                     tracing::error!(
@@ -11344,7 +11344,7 @@ impl QuickJsBackend {
 
             // Get _resolveCallback function from globalThis
             let globals = ctx.globals();
-            let resolve_fn: rquickjs::Function = match globals.get("_resolveCallback") {
+            let resolve_fn: fresh_js::Function = match globals.get("_resolveCallback") {
                 Ok(f) => f,
                 Err(e) => {
                     tracing::error!(
@@ -11397,7 +11397,7 @@ impl QuickJsBackend {
         context.with(|ctx| {
             // Get _rejectCallback function from globalThis
             let globals = ctx.globals();
-            let reject_fn: rquickjs::Function = match globals.get("_rejectCallback") {
+            let reject_fn: fresh_js::Function = match globals.get("_rejectCallback") {
                 Ok(f) => f,
                 Err(e) => {
                     tracing::error!(
@@ -14629,7 +14629,7 @@ mod tests {
             .with(|ctx| {
                 let global = ctx.globals();
                 let count: i64 = global
-                    .get::<_, rquickjs::Object>("_result")
+                    .get::<_, fresh_js::Object>("_result")
                     .unwrap()
                     .get("count")
                     .unwrap();
@@ -14637,7 +14637,7 @@ mod tests {
                     count, 7,
                     "getWindowState should return the value set by setWindowState"
                 );
-                let missing = global.get::<_, rquickjs::Value>("_missing").unwrap();
+                let missing = global.get::<_, fresh_js::Value>("_missing").unwrap();
                 assert!(
                     missing.is_undefined(),
                     "getWindowState for an unset key must be undefined"

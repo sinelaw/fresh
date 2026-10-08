@@ -1143,9 +1143,9 @@ pub struct ScrollbarMarker {
 }
 
 #[cfg(feature = "plugins")]
-impl<'js> rquickjs::FromJs<'js> for LineTarget {
-    fn from_js(_ctx: &rquickjs::Ctx<'js>, value: rquickjs::Value<'js>) -> rquickjs::Result<Self> {
-        rquickjs_serde::from_value(value).map_err(|e| rquickjs::Error::FromJs {
+impl<'js> fresh_js::FromJs<'js> for LineTarget {
+    fn from_js(_ctx: &fresh_js::Ctx<'js>, value: fresh_js::Value<'js>) -> fresh_js::Result<Self> {
+        fresh_js::serde::from_value(value).map_err(|e| fresh_js::Error::FromJs {
             from: "object",
             to: "LineTarget",
             message: Some(e.to_string()),
@@ -1154,14 +1154,14 @@ impl<'js> rquickjs::FromJs<'js> for LineTarget {
 }
 
 #[cfg(feature = "plugins")]
-impl<'js> rquickjs::FromJs<'js> for SplitWindowOptions {
-    fn from_js(_ctx: &rquickjs::Ctx<'js>, value: rquickjs::Value<'js>) -> rquickjs::Result<Self> {
+impl<'js> fresh_js::FromJs<'js> for SplitWindowOptions {
+    fn from_js(_ctx: &fresh_js::Ctx<'js>, value: fresh_js::Value<'js>) -> fresh_js::Result<Self> {
         // An omitted options bag means "all defaults", so `splitWindow()`
         // with no argument is the plain vertical split a caller expects.
         if value.is_undefined() || value.is_null() {
             return Ok(Self::default());
         }
-        rquickjs_serde::from_value(value).map_err(|e| rquickjs::Error::FromJs {
+        fresh_js::serde::from_value(value).map_err(|e| fresh_js::Error::FromJs {
             from: "object",
             to: "SplitWindowOptions",
             message: Some(e.to_string()),
@@ -1170,9 +1170,9 @@ impl<'js> rquickjs::FromJs<'js> for SplitWindowOptions {
 }
 
 #[cfg(feature = "plugins")]
-impl<'js> rquickjs::FromJs<'js> for ScrollbarMarker {
-    fn from_js(_ctx: &rquickjs::Ctx<'js>, value: rquickjs::Value<'js>) -> rquickjs::Result<Self> {
-        rquickjs_serde::from_value(value).map_err(|e| rquickjs::Error::FromJs {
+impl<'js> fresh_js::FromJs<'js> for ScrollbarMarker {
+    fn from_js(_ctx: &fresh_js::Ctx<'js>, value: fresh_js::Value<'js>) -> fresh_js::Result<Self> {
+        fresh_js::serde::from_value(value).map_err(|e| fresh_js::Error::FromJs {
             from: "object",
             to: "ScrollbarMarker",
             message: Some(e.to_string()),
@@ -1197,9 +1197,9 @@ pub struct StyledText {
 }
 
 #[cfg(feature = "plugins")]
-impl<'js> rquickjs::FromJs<'js> for StyledText {
-    fn from_js(_ctx: &rquickjs::Ctx<'js>, value: rquickjs::Value<'js>) -> rquickjs::Result<Self> {
-        rquickjs_serde::from_value(value).map_err(|e| rquickjs::Error::FromJs {
+impl<'js> fresh_js::FromJs<'js> for StyledText {
+    fn from_js(_ctx: &fresh_js::Ctx<'js>, value: fresh_js::Value<'js>) -> fresh_js::Result<Self> {
+        fresh_js::serde::from_value(value).map_err(|e| fresh_js::Error::FromJs {
             from: "object",
             to: "StyledText",
             message: Some(e.to_string()),
@@ -1415,9 +1415,9 @@ pub struct SyntaxRegion {
 }
 
 #[cfg(feature = "plugins")]
-impl<'js> rquickjs::FromJs<'js> for SyntaxRegion {
-    fn from_js(_ctx: &rquickjs::Ctx<'js>, value: rquickjs::Value<'js>) -> rquickjs::Result<Self> {
-        rquickjs_serde::from_value(value).map_err(|e| rquickjs::Error::FromJs {
+impl<'js> fresh_js::FromJs<'js> for SyntaxRegion {
+    fn from_js(_ctx: &fresh_js::Ctx<'js>, value: fresh_js::Value<'js>) -> fresh_js::Result<Self> {
+        fresh_js::serde::from_value(value).map_err(|e| fresh_js::Error::FromJs {
             from: "object",
             to: "SyntaxRegion",
             message: Some(e.to_string()),
@@ -7499,7 +7499,7 @@ impl PluginPath {
 #[cfg(feature = "plugins")]
 mod fromjs_impls {
     use super::*;
-    use rquickjs::{Ctx, FromJs, Value};
+    use fresh_js::{Ctx, FromJs, Value};
 
     // All types that deserialize from a JS value via rquickjs_serde follow
     // the same 8-line pattern differing only in the type name. This macro
@@ -7509,8 +7509,8 @@ mod fromjs_impls {
         ($($T:ty),+ $(,)?) => {
             $(
                 impl<'js> FromJs<'js> for $T {
-                    fn from_js(_ctx: &Ctx<'js>, value: Value<'js>) -> rquickjs::Result<Self> {
-                        rquickjs_serde::from_value(value).map_err(|e| rquickjs::Error::FromJs {
+                    fn from_js(_ctx: &Ctx<'js>, value: Value<'js>) -> fresh_js::Result<Self> {
+                        fresh_js::serde::from_value(value).map_err(|e| fresh_js::Error::FromJs {
                             from: "object",
                             to: stringify!($T),
                             message: Some(e.to_string()),
@@ -7543,15 +7543,15 @@ mod fromjs_impls {
         CreatePreparingWindowOptions,
     );
 
-    impl<'js> rquickjs::IntoJs<'js> for TextPropertiesAtCursor {
-        fn into_js(self, ctx: &Ctx<'js>) -> rquickjs::Result<Value<'js>> {
-            rquickjs_serde::to_value(ctx.clone(), &self.0)
-                .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string()))
+    impl<'js> fresh_js::IntoJs<'js> for TextPropertiesAtCursor {
+        fn into_js(self, ctx: &Ctx<'js>) -> fresh_js::Result<Value<'js>> {
+            fresh_js::serde::to_value(ctx.clone(), &self.0)
+                .map_err(|e| fresh_js::Error::new_from_js_message("serialize", "", &e.to_string()))
         }
     }
 
     impl<'js> FromJs<'js> for PluginPath {
-        fn from_js(_ctx: &Ctx<'js>, value: Value<'js>) -> rquickjs::Result<Self> {
+        fn from_js(_ctx: &Ctx<'js>, value: Value<'js>) -> fresh_js::Result<Self> {
             // A bare string is an active-window authority path (backward compatible).
             if let Some(s) = value.as_string() {
                 let s = s.to_string()?;
@@ -7571,14 +7571,14 @@ mod fromjs_impls {
                         window: obj.get::<_, u64>("window").ok(),
                         path,
                     }),
-                    other => Err(rquickjs::Error::new_from_js_message(
+                    other => Err(fresh_js::Error::new_from_js_message(
                         "object",
                         "PluginPath",
                         format!("unknown path kind: {other}"),
                     )),
                 };
             }
-            Err(rquickjs::Error::new_from_js_message(
+            Err(fresh_js::Error::new_from_js_message(
                 "value",
                 "PluginPath",
                 "expected a string path or a { kind, value } path object".to_string(),
@@ -7587,16 +7587,16 @@ mod fromjs_impls {
     }
 
     impl<'js> FromJs<'js> for CreateCompositeBufferOptions {
-        fn from_js(_ctx: &Ctx<'js>, value: Value<'js>) -> rquickjs::Result<Self> {
+        fn from_js(_ctx: &Ctx<'js>, value: Value<'js>) -> fresh_js::Result<Self> {
             // Two-step deserialization: rquickjs_serde cannot handle the nested
             // enums in this struct directly, so go via serde_json as an intermediary.
             let json: serde_json::Value =
-                rquickjs_serde::from_value(value).map_err(|e| rquickjs::Error::FromJs {
+                fresh_js::serde::from_value(value).map_err(|e| fresh_js::Error::FromJs {
                     from: "object",
                     to: "CreateCompositeBufferOptions (json)",
                     message: Some(e.to_string()),
                 })?;
-            serde_json::from_value(json).map_err(|e| rquickjs::Error::FromJs {
+            serde_json::from_value(json).map_err(|e| fresh_js::Error::FromJs {
                 from: "json",
                 to: "CreateCompositeBufferOptions",
                 message: Some(e.to_string()),
@@ -7618,7 +7618,7 @@ mod fromjs_impls {
     #[cfg(test)]
     mod tests {
         use super::*;
-        use rquickjs::{Context, Runtime};
+        use fresh_js::{Context, Runtime};
 
         /// Run a closure within a fresh QuickJS context so that `FromJs`
         /// impls can be exercised end-to-end.
@@ -7631,7 +7631,7 @@ mod fromjs_impls {
         /// Evaluate a JS object literal and decode it as `T` via `FromJs`.
         fn eval_as<T>(src: &str) -> T
         where
-            for<'js> T: rquickjs::FromJs<'js>,
+            for<'js> T: fresh_js::FromJs<'js>,
         {
             with_js(|ctx| {
                 let value: Value = ctx
@@ -7796,7 +7796,7 @@ mod fromjs_impls {
         /// the array check or the length check.
         #[test]
         fn text_properties_at_cursor_into_js_preserves_length() {
-            use rquickjs::IntoJs;
+            use fresh_js::IntoJs;
             with_js(|ctx| {
                 let mut entry = std::collections::HashMap::new();
                 entry.insert("k".to_string(), serde_json::json!("v"));

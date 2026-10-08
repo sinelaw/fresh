@@ -83,9 +83,9 @@ pub struct Suggestion {
 }
 
 #[cfg(feature = "plugins")]
-impl<'js> rquickjs::FromJs<'js> for Suggestion {
-    fn from_js(_ctx: &rquickjs::Ctx<'js>, value: rquickjs::Value<'js>) -> rquickjs::Result<Self> {
-        rquickjs_serde::from_value(value).map_err(|e| rquickjs::Error::FromJs {
+impl<'js> fresh_js::FromJs<'js> for Suggestion {
+    fn from_js(_ctx: &fresh_js::Ctx<'js>, value: fresh_js::Value<'js>) -> fresh_js::Result<Self> {
+        fresh_js::serde::from_value(value).map_err(|e| fresh_js::Error::FromJs {
             from: "object",
             to: "Suggestion",
             message: Some(e.to_string()),
@@ -142,7 +142,7 @@ mod tests {
     #[cfg(feature = "plugins")]
     #[test]
     fn suggestion_from_js_decodes_distinguishing_fields() {
-        use rquickjs::{Context, FromJs, Runtime, Value};
+        use fresh_js::{Context, FromJs, Runtime, Value};
         let rt = Runtime::new().unwrap();
         let ctx = Context::full(&rt).unwrap();
         ctx.with(|ctx| {

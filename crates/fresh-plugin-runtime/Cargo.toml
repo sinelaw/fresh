@@ -9,8 +9,11 @@ homepage.workspace = true
 description = "JavaScript plugin runtime for Fresh editor"
 
 [dependencies]
+# The JS engine. Code reaches it through `fresh-js`; the direct `rquickjs`
+# dependency is only for its proc macros (`#[class]`, `#[methods]` and the
+# `Trace`/`JsLifetime` derives), which find rquickjs through this manifest.
+fresh-js.workspace = true
 rquickjs.workspace = true
-rquickjs-serde.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 jsonc-parser.workspace = true
@@ -28,14 +31,6 @@ oxc_parser.workspace = true
 oxc_codegen.workspace = true
 oxc_span.workspace = true
 oxc_diagnostics.workspace = true
-
-# rquickjs-sys has no pre-generated bindings for FreeBSD
-[target.'cfg(target_os = "freebsd")'.dependencies]
-rquickjs = { workspace = true, features = ["bindgen"] }
-
-# rquickjs-sys has no pre-generated bindings for NetBSD
-[target.'cfg(target_os = "netbsd")'.dependencies]
-rquickjs = { workspace = true, features = ["bindgen"] }
 
 [lints]
 workspace = true

@@ -14,6 +14,7 @@ members = [
     "crates/fresh-input-parser",
     "crates/fresh-update",
     "crates/fresh-i18n",
+    "crates/fresh-js",
 ]
 default-members = [
     "crates/fresh-editor",
@@ -28,6 +29,7 @@ default-members = [
     "crates/fresh-input-parser",
     "crates/fresh-update",
     "crates/fresh-i18n",
+    "crates/fresh-js",
 ]
 
 # A bare `tokio::runtime::Handle` keeps nothing alive, so a runtime can be shut
@@ -67,6 +69,7 @@ fresh-input-parser = { version = "0.5.2", path = "crates/fresh-input-parser" }
 fresh-update = { version = "0.5.2", path = "crates/fresh-update" }
 fresh-ui = { version = "0.5.2", path = "crates/fresh-ui" }
 fresh-i18n = { version = "0.5.2", path = "crates/fresh-i18n" }
+fresh-js = { version = "0.5.2", path = "crates/fresh-js" }
 
 # External crates
 serde = { version = "1.0", features = ["derive", "rc"] }
