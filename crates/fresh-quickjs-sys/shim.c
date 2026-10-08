@@ -16,6 +16,7 @@ double fqjs_get_float64(JSValue v) { return JS_VALUE_GET_FLOAT64(v); }
 void fqjs_free_value(JSContext *ctx, JSValue v) { JS_FreeValue(ctx, v); }
 void fqjs_free_value_rt(JSRuntime *rt, JSValue v) { JS_FreeValueRT(rt, v); }
 JSValue fqjs_dup_value(JSContext *ctx, JSValue v) { return JS_DupValue(ctx, v); }
+JSValue fqjs_dup_value_rt(JSRuntime *rt, JSValue v) { return JS_DupValueRT(rt, v); }
 
 const char *fqjs_to_cstring_len(JSContext *ctx, size_t *plen, JSValue v)
 {

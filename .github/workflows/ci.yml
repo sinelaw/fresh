@@ -209,6 +209,35 @@ jobs:
         if: runner.os != 'Linux'
         run: cargo nextest run -j=4 --no-fail-fast --locked --all-features --all-targets
 
+  # The plugin runtime on Debian's own QuickJS (libquickjs), through fresh-js's
+  # system backend, inside a Debian testing container so the library and header
+  # are exactly what a Debian package builds against. The backend is selected
+  # with `--cfg fresh_js_system` rather than a cargo feature, so the
+  # --all-features jobs above never need libquickjs. See
+  # docs/internal/debian-quickjs-spike.md.
+  system-quickjs:
+    name: plugins on Debian's system QuickJS
+    runs-on: ubuntu-latest
+    container: debian:testing
+    env:
+      RUSTFLAGS: --cfg fresh_js_system
+    steps:
+      - name: Install libquickjs and build tools
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends ca-certificates curl git build-essential pkg-config libclang-dev libquickjs
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable branch
+      - name: Cache Cargo dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - name: Engine boundary and plugin runtime
+        run: cargo test --locked -p fresh-js -p fresh-core -p fresh-plugin-runtime --features fresh-core/plugins
+      - name: Editor plugin tests
+        run: cargo test --locked -p fresh-editor --test all_tests plugin
+
   # The release pipeline gets one shot per tag: a typo in a workflow expression
   # or a `run:` block surfaces when a release is already half-published, where
   # immutability means it cannot be fixed in place. This is the check that keeps

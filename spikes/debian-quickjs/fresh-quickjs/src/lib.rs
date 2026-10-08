@@ -480,10 +480,13 @@ impl fmt::Debug for Value {
 }
 
 impl Value {
-    /// Give up ownership of the reference (for returning to the engine).
+    /// Give up ownership of the value's reference (for returning to the
+    /// engine). The `Context` handle is still released: forgetting it would
+    /// leak the context, and with it the runtime.
     fn into_raw(self) -> sys::JSValue {
-        let raw = self.raw;
-        std::mem::forget(self);
+        let this = std::mem::ManuallyDrop::new(self);
+        let raw = this.raw;
+        drop(unsafe { std::ptr::read(&this.ctx) });
         raw
     }
 

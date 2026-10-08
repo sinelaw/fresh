@@ -32,6 +32,7 @@ double fqjs_get_float64(JSValue v);
 void fqjs_free_value(JSContext *ctx, JSValue v);
 void fqjs_free_value_rt(JSRuntime *rt, JSValue v);
 JSValue fqjs_dup_value(JSContext *ctx, JSValue v);
+JSValue fqjs_dup_value_rt(JSRuntime *rt, JSValue v);
 
 const char *fqjs_to_cstring_len(JSContext *ctx, size_t *plen, JSValue v);
 int fqjs_is_array(JSContext *ctx, JSValue v);
