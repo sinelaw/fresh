@@ -27,6 +27,7 @@ use std::ffi::OsString;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
 
 /// Flags every invocation shares: quiet except errors, plain text, no
@@ -378,22 +379,34 @@ pub fn bundle_module(entry_path: &Path) -> Result<String> {
         return Ok(hit);
     }
 
-    let metafile = std::env::temp_dir().join(format!(
-        "fresh-esbuild-meta-{}-{:016x}.json",
+    // esbuild refuses `--metafile` without an output path, so the bundle goes
+    // to a temporary file rather than stdout.
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let stem = std::env::temp_dir().join(format!(
+        "fresh-esbuild-{}-{}",
         std::process::id(),
-        fnv1a(&[entry_str.as_bytes()])
+        SEQ.fetch_add(1, Ordering::Relaxed)
     ));
+    let outfile = stem.with_extension("js");
+    let metafile = stem.with_extension("json");
     let mut args = vec![
         entry_str.clone(),
         "--packages=external".to_string(),
+        format!("--outfile={}", outfile.display()),
         format!("--metafile={}", metafile.display()),
     ];
     args.extend(BUNDLE_ARGS.iter().map(|s| s.to_string()));
     args.extend(COMMON_ARGS.iter().map(|s| s.to_string()));
-    let result = run(&args, None).with_context(|| format!("bundling {}", entry.display()));
+    let result = run(&args, None)
+        .and_then(|_| {
+            std::fs::read_to_string(&outfile)
+                .with_context(|| format!("reading esbuild output {}", outfile.display()))
+        })
+        .with_context(|| format!("bundling {}", entry.display()));
     let inputs = std::fs::read_to_string(&metafile)
         .ok()
         .and_then(|m| metafile_inputs(&m));
+    let _ = std::fs::remove_file(&outfile);
     let _ = std::fs::remove_file(&metafile);
     let js = strip_esm_module_syntax(&result?);
 
