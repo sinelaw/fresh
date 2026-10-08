@@ -6,12 +6,17 @@
 # A home directory, $DEMO_HOME (default /home/dev), holding what a week of
 # agent work leaves behind:
 #
-#   ~/src/payments-api                main                   two Claude sessions
-#   ~/src/payments-api-idempotency    feat/idempotency-keys  a worktree, one session
-#   ~/src/web-dashboard               chore/date-fns         one session, and a live
-#                                                            one in tmux (start-live.sh)
-#   ~/src/dotfiles                    main                   one session
-#   ~/scratch/csv-dedupe              (no repository)        one session
+#   ~/src/payments-api                          main              one session
+#   ~/src/payments-api.worktrees/idempotency    feat/idempotency  a worktree, one session
+#   ~/src/web-dashboard                         chore/date-fns    one session, and a live
+#                                                                 one in tmux (start-live.sh)
+#   ~/src/dotfiles                              main              one session
+#   ~/scratch/csv-dedupe                        (no repository)   one session
+#
+# The names are short on purpose. The dialog is a fixed share of the
+# terminal's width, so the clip films a narrow terminal to get large type,
+# and a session's title is its directory's basename: a long one is cut to
+# "payments-api…" in the list the clip is about.
 #
 # The transcripts are real: every one is written by the claude CLI doing the
 # task its prompt asks for, against the code below, with $HOME pointed at
@@ -35,7 +40,7 @@ mkdir -p "$DEMO_HOME" || { echo "make-fixture: cannot create $DEMO_HOME; set DEM
 SRC="$DEMO_HOME/src"
 MANIFEST="$DEMO_HOME/.clip-sessions"
 
-SESSIONS=6
+SESSIONS=5
 if [ "${FRESH_CLIP_RERUN:-0}" != 1 ] && [ -d "$DEMO_HOME/.clip-pristine" ] \
    && [ "$(wc -l < "$MANIFEST" 2>/dev/null || echo 0)" -ge "$SESSIONS" ]; then
   echo "fixture already built: $DEMO_HOME (FRESH_CLIP_RERUN=1 rebuilds it)"
@@ -220,7 +225,9 @@ commit "$P" 4 "Retry webhooks up to five times"
 
 # The idempotency work happens in its own worktree, the way an agent's
 # branch usually does.
-git -C "$P" worktree add -q -b feat/idempotency-keys "$SRC/payments-api-idempotency"
+WT="$SRC/payments-api.worktrees/idempotency"
+mkdir -p "$(dirname "$WT")"
+git -C "$P" worktree add -q -b feat/idempotency "$WT"
 
 # ── web-dashboard: a TypeScript app still on moment.js ────────────────
 
@@ -381,9 +388,7 @@ echo "sessions in $DEMO_HOME/.claude/projects:"
 session flaky-test "$P" \
   "tests/test_webhooks.py::test_retry_backs_off fails about one run in five on CI. Find out why it is flaky and fix it without making the suite slower. Run the tests with: python3 -m unittest discover -s tests" \
   "Run that test file ten times in a row to show it is stable now."
-session rounding "$P" \
-  "Review app/charges.py for money-handling bugs. Amounts come in as JSON floats. Fix anything real and add a test for it."
-session idempotency "$SRC/payments-api-idempotency" \
+session idempotency "$WT" \
   "Add Idempotency-Key support to POST /charges in app/charges.py: the same key with the same body returns the original charge with a 200; the same key with a different body is a 422. Keep keys in memory for now. Add tests and run them with: python3 -m unittest discover -s tests"
 session date-fns "$W" \
   "We are dropping moment.js. Port src/utils/dates.ts to date-fns, keeping every exported function's signature and output identical, and update package.json. There is no node_modules here, so do not try to install or run anything." \

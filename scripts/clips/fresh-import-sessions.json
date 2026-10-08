@@ -1,7 +1,7 @@
 {
   "name": "fresh-import-sessions",
   "capture": {
-    "geometry": "144x34",
+    "geometry": "122x30",
     "font": "JetBrains Mono 17",
     "screen": "2600x1600x24",
     "display": ":99",
@@ -63,8 +63,8 @@
       },
       {
         "click": {
-          "col": 81,
-          "row": 6
+          "col": 78,
+          "row": 5
         }
       },
       {
@@ -85,15 +85,15 @@
       },
       {
         "click": {
-          "col": 30,
+          "col": 32,
           "row": 10
         },
         "settle": 0.7
       },
       {
         "move": {
-          "col": 110,
-          "row": 14
+          "col": 91,
+          "row": 12
         }
       },
       {
@@ -101,8 +101,8 @@
       },
       {
         "click": {
-          "col": 110,
-          "row": 14
+          "col": 91,
+          "row": 12
         },
         "settle": 0.1
       },
@@ -114,8 +114,8 @@
       },
       {
         "click": {
-          "col": 107,
-          "row": 30
+          "col": 87,
+          "row": 23
         }
       },
       {
@@ -132,8 +132,8 @@
       1080
     ],
     "fps": 60,
-    "rows": 34,
-    "cols": 144,
+    "rows": 30,
+    "cols": 122,
     "title": "fresh — import sessions",
     "note_size": 46,
     "labels": {
@@ -142,32 +142,32 @@
     "views": {
       "scan": {
         "rows": [
-          3,
-          17
+          4,
+          16
         ],
         "cols": [
-          17,
-          126
+          16,
+          105
         ]
       },
       "list": {
         "rows": [
-          9,
-          25
+          10,
+          22
         ],
         "cols": [
-          17,
-          126
+          16,
+          105
         ]
       },
       "dock": {
         "rows": [
           0,
-          14
+          11
         ],
         "cols": [
           0,
-          96
+          78
         ]
       }
     },
@@ -185,12 +185,12 @@
         "shots": "scan",
         "view": "scan",
         "rows": [
-          6,
-          7
+          5,
+          6
         ],
         "cols": [
-          76,
-          88
+          72,
+          84
         ],
         "band": false,
         "hold": 2.4,
@@ -208,11 +208,11 @@
         "view": "list",
         "rows": [
           10,
-          15
+          14
         ],
         "cols": [
-          21,
-          121
+          18,
+          103
         ],
         "band": false,
         "hold": 2.6,
@@ -239,7 +239,7 @@
         "hold": 3.0,
         "transition": "wipe",
         "note": "resumed in the dock",
-        "note_at": "below-right"
+        "note_at": "below-left"
       }
     ]
   },
