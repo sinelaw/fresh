@@ -65,7 +65,10 @@ override_dh_auto_install:
 	sh scripts/write-install-receipt.sh apt \
 		debian/fresh-editor/usr/share/fresh-editor/install-receipt.toml \
 		target=$(DEB_HOST_RUST_TYPE) pkg_arch=$(DEB_HOST_ARCH)
-	/usr/share/cargo/bin/dh-cargo-built-using fresh-editor
+	# fresh-quickjs-sys's C shim is built from this source package; telling
+	# dh-cargo-built-using where that crate lives keeps it out of Built-Using.
+	CARGO_BUILT_USING_SRC_DIR=$(CURDIR)/crates/fresh-quickjs-sys \
+		/usr/share/cargo/bin/dh-cargo-built-using fresh-editor
 
 override_dh_installchangelogs:
 	dh_installchangelogs CHANGELOG.md
