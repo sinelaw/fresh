@@ -28,7 +28,7 @@ rquickjs = { workspace = true, features = ["bindgen"] }
 rquickjs = { workspace = true, features = ["bindgen"] }
 
 [target.'cfg(fresh_js_system)'.dependencies]
-fresh-quickjs-sys.workspace = true
+fresh-quickjs-sys = { workspace = true, features = ["system"] }
 fresh-js-macros.workspace = true
 serde.workspace = true
 serde_json.workspace = true

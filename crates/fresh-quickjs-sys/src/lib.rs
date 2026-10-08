@@ -5,9 +5,9 @@
 //! `shim.c` that stand in for the header's static-inline helpers and value
 //! macros. `fresh-js` builds its system backend on these.
 //!
-//! Empty unless built with `--cfg fresh_js_system`.
+//! Empty unless built with the `system` feature and `--cfg fresh_js_system`.
 #![allow(non_upper_case_globals, non_camel_case_types, non_snake_case)]
 #![allow(clippy::all)]
 
-#[cfg(fresh_js_system)]
+#[cfg(all(fresh_js_system, feature = "system"))]
 include!(concat!(env!("OUT_DIR"), "/bindings.rs"));

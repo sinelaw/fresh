@@ -13,13 +13,23 @@ links = "fresh_quickjs"
 name = "fresh_quickjs_sys"
 path = "src/lib.rs"
 
-# Everything here only happens when building with `--cfg fresh_js_system`
-# (Fresh's system-QuickJS backend, see crates/fresh-js). Without it the crate is
-# empty and needs neither libquickjs nor these build tools, so the rest of the
-# workspace builds anywhere.
-[target.'cfg(fresh_js_system)'.build-dependencies]
-bindgen = { version = "0.72", default-features = false, features = ["runtime"] }
-cc = "1.2"
+# Everything here only happens for Fresh's system-QuickJS backend (see
+# crates/fresh-js): fresh-js depends on this crate, with `system`, only under
+# `--cfg fresh_js_system`. Without both the crate is empty and needs neither
+# libquickjs nor these build tools, so the rest of the workspace builds
+# anywhere, `--all-features` included.
+#
+# The build tools hang off a feature rather than the cfg because cargo compiles
+# build scripts without the target's RUSTFLAGS whenever `--target` is given (as
+# Debian's dh-cargo always does), so a cfg-gated build script would see no
+# cfg. The build script checks the cfg at run time, through
+# CARGO_CFG_FRESH_JS_SYSTEM, which cargo sets from the target's flags.
+[features]
+system = ["dep:bindgen", "dep:cc"]
+
+[build-dependencies]
+bindgen = { version = "0.72", default-features = false, features = ["runtime"], optional = true }
+cc = { version = "1.2", optional = true }
 
 [lints]
 workspace = true
