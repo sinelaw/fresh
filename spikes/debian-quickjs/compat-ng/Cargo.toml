@@ -1,0 +1,15 @@
+[package]
+name = "compat-ng"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+description = "Baseline for the Debian QuickJS spike: runs the same plugin harness on quickjs-ng via rquickjs, the engine Fresh uses today"
+
+# Its own binary, so rquickjs's bundled quickjs-ng never links into the same
+# executable as the system QuickJS (both define the JS_* symbols).
+[dependencies]
+rquickjs = { version = "=0.11.0", features = ["futures", "macro"] }
+serde_json.workspace = true
