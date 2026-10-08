@@ -21,24 +21,31 @@ const PLUGIN_NAME: &str = "bgkill";
 
 /// Kills via `editor.killBackgroundProcess(id)`, learning the id from the
 /// first stdout line's hook payload.
+///
+/// The kill's reply and the process's exit can reach the plugin in the same
+/// tick, and the status line only shows the last message, so the exit status
+/// repeats the `bgkill-sent` one: otherwise the exit can overwrite it before
+/// any frame shows it, and the wait for it never ends.
 const PLUGIN_SOURCE_BY_ID: &str = r#"
 /// <reference path="./lib/fresh.d.ts" />
 const editor = getEditor();
 const PIDFILE = "__PIDFILE__";
 let killed = false;
+let sent = "";
 
 registerHandler("bgkill_on_stdout", (e: { process_id: number; data: string }) => {
     if (killed || e.data.indexOf("ready") < 0) return;
     killed = true;
     const ok = editor.killBackgroundProcess(e.process_id);
-    editor.setStatus(`bgkill-sent ok=${ok}`);
+    sent = `bgkill-sent ok=${ok}`;
+    editor.setStatus(sent);
 });
 editor.on("onProcessStdout", "bgkill_on_stdout");
 
 editor
     .spawnBackgroundProcess("sh", ["-c", `echo $$ > '${PIDFILE}'; echo ready; exec sleep 300`])
     .then((r: BackgroundProcessResult) => {
-        editor.setStatus(`bgkill-exit=${r.exit_code}`);
+        editor.setStatus(`${sent} bgkill-exit=${r.exit_code}`);
     });
 "#;
 
@@ -49,6 +56,7 @@ const PLUGIN_SOURCE_BY_HANDLE: &str = r#"
 const editor = getEditor();
 const PIDFILE = "__PIDFILE__";
 let killed = false;
+let sent = "";
 
 const handle = editor.spawnBackgroundProcess(
     "sh",
@@ -60,13 +68,14 @@ registerHandler("bgkill_on_stdout", (e: { process_id: number; data: string }) =>
     killed = true;
     const sameId = e.process_id === handle.processId;
     handle.kill().then((ok: boolean) => {
-        editor.setStatus(`bgkill-sent ok=${ok} same_id=${sameId}`);
+        sent = `bgkill-sent ok=${ok} same_id=${sameId}`;
+        editor.setStatus(sent);
     });
 });
 editor.on("onProcessStdout", "bgkill_on_stdout");
 
 handle.then((r: BackgroundProcessResult) => {
-    editor.setStatus(`bgkill-exit=${r.exit_code}`);
+    editor.setStatus(`${sent} bgkill-exit=${r.exit_code}`);
 });
 "#;
 
