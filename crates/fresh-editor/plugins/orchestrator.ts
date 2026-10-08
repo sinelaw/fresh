@@ -18673,31 +18673,35 @@ editor.on("ready", () => {
   }
 });
 
-// A Settings-UI edit (or a hand-edited config) to `always` / `never` is an
-// instruction too, so it opens or closes the dock now rather than at the next
-// start. `auto` asks for nothing now.
+// A Settings-UI edit to `always` / `never` is an instruction too, so it opens
+// or closes the dock now rather than at the next start. `auto` asks for
+// nothing now.
 //
 // Guarded on a change to *this* setting, not on the dock's state:
 // `config_changed` fires for every config save, and the dock is legitimately
 // closed at moments nobody asked for it to open (the plugin's own close
-// around a dive). Our own `rememberDockOpen` write arrives here already
-// matching `lastDockMode`, so it is a no-op.
+// around a dive). The plugin's own `saveSetting` does not fire this hook, and
+// `rememberDockOpen` has already moved `lastDockMode`, so a later save does
+// not replay it.
+//
+// The hook does not say which keys changed, so a value that reached the file
+// another way (a hand edit, another Fresh process) is adopted at the next
+// Settings save or config reload. That is still the user's latest
+// instruction, so acting on it then is the rule, not a leak.
 editor.on("config_changed", () => {
   const mode = configuredDockMode();
   if (mode === lastDockMode) return;
+  lastDockMode = mode;
   // `editor.dockOpen()` — the host's "a dock is mounted" — not the plugin's
   // `openPanel`/`dockMode`: with the modal picker floating over a live dock
-  // those read "no dock" while the column is still on screen.
+  // those read "no dock" while the column is still on screen. A picker that
+  // owns the screen is left alone; the edit is on disk, so the next start
+  // follows it either way.
   if (mode === "always" && !editor.dockOpen()) {
-    // A picker owns the screen: leave it, and leave `lastDockMode` behind so
-    // the next save reconsiders (the edit is on disk either way).
-    if (openPanel) return;
-    showDockUnfocused();
+    if (!openPanel) showDockUnfocused();
   } else if (mode === "never" && editor.dockOpen()) {
-    if (!dockMode) return;
-    closeOpenDialog();
+    if (dockMode) closeOpenDialog();
   }
-  lastDockMode = mode;
 });
 
 // Grace window after a session becomes active during which terminal

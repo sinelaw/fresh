@@ -61,8 +61,9 @@ else on a first launch the launch mode, then the manifest's `open`.
 
 ## Implementation
 
-All in the orchestrator plugin (`plugins/orchestrator.ts`); the host is
-unchanged and still only reads the setting at startup.
+All in the orchestrator plugin (`plugins/orchestrator.ts`). The host is
+unchanged: it reads the setting at startup, and rewrites a legacy boolean as
+its mode.
 
 - `rememberDockOpen(open)` writes `always` / `never` with `editor.saveSetting`.
   It is called from `toggleDock` (the command behind the View row, the palette
@@ -73,11 +74,18 @@ unchanged and still only reads the setting at startup.
   write, so the snapshot reads the old value for a tick or two, and a second
   toggle inside that window would otherwise skip its write.
 - `config_changed` compares `autoOpenDock` (normalised as the host reads it:
-  `false` → never, `true` / unknown → auto) with `lastDockMode`. On a change
-  to `always` it shows the dock unfocused; to `never` it closes it. Our own
-  write arrives already matching and is a no-op. A modal picker on screen
-  defers the change and leaves `lastDockMode` behind, so the next save
-  reconsiders.
+  `false` → never, `true` / unknown → auto) with `lastDockMode`, adopts the
+  new value, and on `always` shows the dock unfocused; on `never` it closes
+  it. The plugin's own `saveSetting` does not fire `config_changed`. A modal
+  picker on screen is left alone; the value is on disk, so the next start
+  follows it.
+- The hook does not say which keys changed, so a value written another way
+  (a hand edit, another Fresh process sharing the user config) is adopted at
+  the next Settings save or config reload, opening or closing the dock then.
+  That is the user's latest instruction, so it follows the rule.
+- `saveSetting` writes to whichever config layer already defines the key, the
+  same rule the Settings UI uses: a project that sets `autoOpenDock` keeps its
+  own value.
 
 `chrome.json`'s `open` and the quit-time `save_dock_chrome` stay: they serve
 row 1, including users upgrading with a dock state they left before this
@@ -90,5 +98,6 @@ change.
 - `orchestrator_dock_startup::a_close_with_the_x_outlives_always`: row 5.
 - `orchestrator_dock_settings::a_settings_edit_opens_and_closes_the_dock`:
   rows 10–11 through the Settings UI.
-- The existing across-launch walks (`*_remembers_the_dock_across_launches`)
-  cover rows 1–3 and 6/9.
+- `orchestrator_dock_startup::*_remembers_the_dock_across_launches`: rows 1,
+  3 and 9 then 2 (close, relaunch closed, open, relaunch open), in both
+  launch modes, each launch reading the config from disk.
