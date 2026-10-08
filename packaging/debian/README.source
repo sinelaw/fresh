@@ -31,7 +31,9 @@ The librust-*-dev Build-Depends are generated from Debian testing's index:
     scripts/debian.py packages --control Packages.xz
 
 and `scripts/debian.py check Packages.xz` checks that the archive can supply
-every dependency of the build. Both are run by upstream CI.
+every dependency of the build. Upstream CI runs the check, and the
+`Debian package` workflow (.github/workflows/debian-package.yml) builds
+this package from a fresh orig tarball on every pull request.
 
 To build from a checkout:
 
