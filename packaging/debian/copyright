@@ -59,8 +59,10 @@ Files: crates/fresh-editor-core/src/grammars/typst.sublime-syntax
 Copyright: 2026 the Fresh contributors
            2023-2026 The Typst Project Developers
 License: GPL-3+ and Apache-2.0
-Comment: Based on the Typst TextMate grammar from the Typst project
- (https://github.com/typst/typst, Apache-2.0).
+Comment: Derived from tools/support/typst.tmLanguage.json in
+ https://github.com/typst/typst (Apache-2.0), as of early 2026: about 40 of its
+ 74 patterns are taken unchanged. Typst's NOTICE file has nothing that
+ applies to this file.
 
 Files: crates/fresh-editor/fonts/*
        crates/fresh-gui/fonts/*
