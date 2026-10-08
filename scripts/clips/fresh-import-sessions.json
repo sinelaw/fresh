@@ -129,45 +129,35 @@
   "render": {
     "size": [
       1920,
-      1080
+      1150
     ],
     "fps": 60,
     "rows": 30,
     "cols": 122,
-    "title": "fresh — import sessions",
+    "title": "",
     "note_size": 46,
     "labels": {
       "solo": ""
     },
     "views": {
-      "scan": {
+      "dialog": {
         "rows": [
-          4,
-          16
+          4.12,
+          24.88
         ],
         "cols": [
-          16,
-          105
-        ]
-      },
-      "list": {
-        "rows": [
-          10,
-          22
-        ],
-        "cols": [
-          16,
-          105
+          20.48,
+          100.52
         ]
       },
       "dock": {
         "rows": [
-          0,
-          11
+          0.97,
+          19.03
         ],
         "cols": [
-          0,
-          78
+          2.16,
+          71.8
         ]
       }
     },
@@ -183,7 +173,7 @@
     "annotations": [
       {
         "shots": "scan",
-        "view": "scan",
+        "view": "dialog",
         "rows": [
           5,
           6
@@ -205,7 +195,7 @@
       },
       {
         "shots": "pick",
-        "view": "list",
+        "view": "dialog",
         "rows": [
           10,
           14
@@ -241,7 +231,8 @@
         "note": "resumed in the dock",
         "note_at": "below-left"
       }
-    ]
+    ],
+    "header_height": 0
   },
   "encode": {
     "crf": 18,
