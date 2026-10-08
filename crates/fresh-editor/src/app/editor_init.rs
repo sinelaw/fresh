@@ -783,7 +783,7 @@ impl Editor {
             dock_covered: false,
             dock: None,
             dock_reserved: false,
-            dock_width: None,
+            dock_width_percent: None,
             dock_width_rule: crate::view::shell::frame::DockWidthRule::default(),
             dock_resizing: false,
             sidebar_sections: vec![sidebar::SidebarSection::explorer()],

@@ -15,11 +15,16 @@ use super::Editor;
 use crate::model::filesystem::FileSystem;
 use crate::services::plugins::manifest::PluginManifest;
 
-/// What `chrome.json` remembers about the dock. Either may be unknown.
+/// What `chrome.json` remembers about the dock. Any may be unknown.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct DockChromeState {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) open: Option<bool>,
+    /// The width as a percent of the frame.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) width_percent: Option<u8>,
+    /// The width in columns, as an older Fresh wrote it. Read once, as a
+    /// share of the terminal it is read on, and dropped at the next write.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) width: Option<u16>,
 }
@@ -34,7 +39,7 @@ struct ChromeState {
 /// The narrowest a drag (or a plugin's `dock_width`) may make the dock.
 /// Below `DOCK_MIN` on purpose: that floor is where the dock stops being
 /// opened by default, not where the user stops being allowed to squeeze it.
-const DOCK_DRAG_MIN: u16 = 10;
+const DOCK_DRAG_MIN: u16 = crate::view::shell::frame::DOCK_NARROWEST;
 
 fn chrome_state_path(data_dir: &Path) -> PathBuf {
     data_dir.join("chrome.json")
@@ -117,7 +122,10 @@ impl Editor {
     ) {
         let remembered =
             read_dock_chrome_state(&*self.local_filesystem, &self.dir_context.data_dir);
-        self.dock_width = remembered.width;
+        self.dock_width_percent = remembered.width_percent;
+        if let (None, Some(cols)) = (self.dock_width_percent, remembered.width) {
+            self.set_dock_width_cols(cols);
+        }
 
         // One slot, so one declaration: the lowest name wins, deterministically.
         let docks = || {
@@ -151,7 +159,7 @@ impl Editor {
         tracing::debug!(
             plugin = %name,
             reserved = self.dock_reserved,
-            width = ?self.dock_width,
+            width_percent = ?self.dock_width_percent,
             ?policy,
             "startup dock chrome"
         );
@@ -220,8 +228,25 @@ impl Editor {
     /// do not recompute it elsewhere. Whether a column is carved at all is
     /// `frame::dock_width`'s call.
     pub(crate) fn requested_dock_width(&self, frame_width: u16) -> u16 {
-        self.dock_width
-            .unwrap_or_else(|| self.dock_width_rule.width(frame_width))
+        match self.dock_width_percent {
+            Some(pct) => crate::config::ExplorerWidth::Percent(pct).to_cols(frame_width),
+            None => self.dock_width_rule.width(frame_width),
+        }
+    }
+
+    /// Make the dock `cols` wide on the terminal as it is now, kept as the
+    /// share of it that renders nearest — so it narrows and widens with the
+    /// terminal from here on, as the file explorer does.
+    pub(crate) fn set_dock_width_cols(&mut self, cols: u16) {
+        if self.terminal_width == 0 {
+            return; // no terminal yet to take a share of
+        }
+        let crate::config::ExplorerWidth::Percent(pct) =
+            crate::config::ExplorerWidth::Percent(0).with_cols(cols, self.terminal_width)
+        else {
+            unreachable!("with_cols keeps the variant")
+        };
+        self.dock_width_percent = Some(pct);
     }
 
     /// Clamp an explicit width so the editor keeps its `EDITOR_MIN` columns.
@@ -258,7 +283,8 @@ impl Editor {
         let fs = &*self.local_filesystem;
         let path = chrome_state_path(&self.dir_context.data_dir);
         let mut dock = read_dock_chrome_state(fs, &self.dir_context.data_dir);
-        dock.width = self.dock_width;
+        dock.width_percent = self.dock_width_percent;
+        dock.width = None;
         if let Some(open) = open {
             dock.open = Some(open);
         }
@@ -298,11 +324,13 @@ impl Editor {
     /// the new width, clamped. Disk waits for the release
     /// (`persist_dock_width`).
     pub(crate) fn handle_dock_resize_drag(&mut self, col: u16) {
-        let new_w = self.clamp_dock_width(col.saturating_add(1));
-        if self.dock.is_none() || self.dock_width == Some(new_w) {
+        if self.dock.is_none() {
             return;
         }
-        self.dock_width = Some(new_w);
-        self.relayout();
+        let before = self.dock_width_percent;
+        self.set_dock_width_cols(self.clamp_dock_width(col.saturating_add(1)));
+        if self.dock_width_percent != before {
+            self.relayout();
+        }
     }
 }

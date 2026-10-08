@@ -395,6 +395,10 @@ pub const EDITOR_MIN: u16 = 20;
 pub const DOCK_MIN: u16 = 24;
 /// Wider than this and the dock is taking room it has no content for.
 pub const DOCK_MAX: u16 = 40;
+/// The narrowest the dock gets: what its share of a small terminal shrinks
+/// to, and what a drag may squeeze it to. Below `DOCK_MIN` on purpose — that
+/// is where a dock stops being shown at all, not how narrow a shown one is.
+pub const DOCK_NARROWEST: u16 = 10;
 
 /// How wide the dock opens before any user drag: a share of the frame,
 /// clamped. Declared by the plugin's manifest (`chrome.dock.width`) and
@@ -418,7 +422,7 @@ impl DockWidthRule {
         0.28
     }
     fn default_min() -> u16 {
-        DOCK_MIN
+        DOCK_NARROWEST
     }
     fn default_max() -> u16 {
         DOCK_MAX
@@ -1730,7 +1734,16 @@ mod tests {
         let rule = DockWidthRule::default();
         assert_eq!(rule.width(120), 34, "0.28 of 120, rounded");
         assert_eq!(rule.width(100), 28, "0.28 of 100");
-        assert_eq!(rule.width(80), DOCK_MIN, "0.28 of 80 is under the floor");
+        assert_eq!(
+            rule.width(80),
+            22,
+            "0.28 of 80: the dock narrows with the frame, as the explorer does"
+        );
+        assert_eq!(
+            rule.width(20),
+            DOCK_NARROWEST,
+            "0.28 of 20 is under the floor"
+        );
         assert_eq!(rule.width(300), DOCK_MAX, "0.28 of 300 is over the ceiling");
     }
 
@@ -1738,7 +1751,7 @@ mod tests {
     #[test]
     fn a_declared_rule_fills_in_from_the_default() {
         let rule: DockWidthRule = serde_json::from_str(r#"{"fraction": 0.5}"#).unwrap();
-        assert_eq!((rule.min, rule.max), (DOCK_MIN, DOCK_MAX));
+        assert_eq!((rule.min, rule.max), (DOCK_NARROWEST, DOCK_MAX));
         assert_eq!(
             rule.width(100),
             DOCK_MAX,

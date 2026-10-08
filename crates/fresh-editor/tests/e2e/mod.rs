@@ -271,6 +271,7 @@ pub mod orchestrator_dialog_trust_repro;
 pub mod orchestrator_dock;
 pub mod orchestrator_dock_settings;
 pub mod orchestrator_dock_startup;
+pub mod orchestrator_dock_width;
 pub mod orchestrator_external_sessions;
 pub mod orchestrator_new_workspace_open_file;
 pub mod orchestrator_window_lsp;

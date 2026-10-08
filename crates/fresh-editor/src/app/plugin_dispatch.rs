@@ -6415,7 +6415,7 @@ impl Editor {
         // across resizes and launches, until the next one.
         if op == "dock_width" {
             if slot == super::PanelSlot::Dock {
-                self.dock_width = Some(self.clamp_dock_width(arg.max(0.0) as u16));
+                self.set_dock_width_cols(self.clamp_dock_width(arg.max(0.0) as u16));
                 self.persist_dock_width();
                 self.relayout();
             }

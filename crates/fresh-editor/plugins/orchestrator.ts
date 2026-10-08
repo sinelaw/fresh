@@ -5936,12 +5936,21 @@ function dockAttentionRow(att: { blocked: number; done: number }): WidgetSpec {
 // when the binding really is a single letter that appears in the title.
 // The title strip is the Menu's button: `Orchestrator  Menu ▾`, padded to the
 // dock's width so a press anywhere on it drops the Menu, with the `×` that
-// hides the dock at its end.
+// hides the dock at its end. The dock narrows with the terminal, so on a
+// narrow one the label shortens — `Orchestrator ▾`, then `Menu ▾` — rather
+// than being cut off along with the `×`.
 function dockTitleRow(): WidgetSpec {
   const base = { fg: "ui.menu_fg", bg: "ui.menu_bg" };
-  const text = `${editor.t("dock.title")}  ${editor.t("dock.menu_button")}`;
+  const title = editor.t("dock.title");
+  const menu = editor.t("dock.menu_button");
   // The `×` and the gap before it take the last three columns.
-  const width = Math.max(editor.stringWidth(text), dockWidth() - 3);
+  const room = dockWidth() - 3;
+  const caret = menu.slice(menu.lastIndexOf(" ") + 1);
+  const text =
+    [`${title}  ${menu}`, `${title} ${caret}`, menu].find(
+      (label) => editor.stringWidth(label) <= room,
+    ) ?? menu;
+  const width = Math.max(editor.stringWidth(text), room);
   return row(
     button(text + " ".repeat(Math.max(0, width - editor.stringWidth(text))), {
       key: "dock-menu",
