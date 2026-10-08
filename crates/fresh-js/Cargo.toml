@@ -18,6 +18,7 @@ description = "The JavaScript engine boundary for Fresh's plugin runtime: the on
 [target.'cfg(not(fresh_js_system))'.dependencies]
 rquickjs.workspace = true
 rquickjs-serde.workspace = true
+serde.workspace = true
 
 # rquickjs-sys has no pre-generated bindings for FreeBSD
 [target.'cfg(all(not(fresh_js_system), target_os = "freebsd"))'.dependencies]

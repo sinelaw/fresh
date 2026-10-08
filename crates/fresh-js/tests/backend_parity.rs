@@ -335,6 +335,42 @@ fn serde_round_trips_plain_data() {
     });
 }
 
+/// Converting an object with `null` and `undefined` fields leaves no exception
+/// pending. rquickjs-serde's `toJSON` lookup throws on such fields; the plugin
+/// runtime checks the context for a pending exception after every job and
+/// reports one as the plugin's error.
+#[test]
+fn serde_leaves_no_exception_pending() {
+    #[derive(serde::Deserialize, PartialEq, Debug)]
+    struct Config {
+        name: String,
+        formatter: Option<String>,
+        extra: Option<u32>,
+        nested: Vec<Option<String>>,
+    }
+    with_ctx(|ctx| {
+        let value: Value = ctx
+            .eval("({ name: 'x', formatter: null, extra: undefined, nested: [null, 'y'] })")
+            .unwrap();
+        let config: Config = fresh_js::serde::from_value(value).unwrap();
+        assert_eq!(
+            config,
+            Config {
+                name: "x".into(),
+                formatter: None,
+                extra: None,
+                nested: vec![None, Some("y".into())],
+            }
+        );
+        let pending = ctx.catch();
+        assert!(
+            pending.as_exception().is_none(),
+            "the conversion left an exception pending: {:?}",
+            pending.as_exception().and_then(|e| e.message())
+        );
+    });
+}
+
 #[test]
 fn persistent_values_outlive_with() {
     let rt = Runtime::new().unwrap();
