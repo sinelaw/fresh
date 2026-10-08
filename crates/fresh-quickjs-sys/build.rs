@@ -6,21 +6,28 @@
 //! defaults below are those paths. Override them with `QUICKJS_INCLUDE_DIR` and
 //! `QUICKJS_LIB_DIR` (for example to point at an unpacked .deb).
 //!
-//! All of this only runs when building with `--cfg fresh_js_system`; otherwise
-//! the build script does nothing and the crate is empty.
+//! All of this only runs with the `system` feature and `--cfg fresh_js_system`;
+//! otherwise the build script does nothing and the crate is empty. The cfg is
+//! read at run time from CARGO_CFG_FRESH_JS_SYSTEM: with `--target`, cargo
+//! compiles build scripts without the target's RUSTFLAGS, so `#[cfg]` here
+//! would not see it (see Cargo.toml).
 
-#[cfg(fresh_js_system)]
+#[cfg(feature = "system")]
 use std::env;
-#[cfg(fresh_js_system)]
+#[cfg(feature = "system")]
 use std::path::{Path, PathBuf};
-#[cfg(fresh_js_system)]
+#[cfg(feature = "system")]
 use std::process::Command;
 
-#[cfg(not(fresh_js_system))]
+#[cfg(not(feature = "system"))]
 fn main() {}
 
-#[cfg(fresh_js_system)]
+#[cfg(feature = "system")]
 fn main() {
+    println!("cargo:rerun-if-env-changed=CARGO_CFG_FRESH_JS_SYSTEM");
+    if env::var_os("CARGO_CFG_FRESH_JS_SYSTEM").is_none() {
+        return;
+    }
     for var in [
         "QUICKJS_INCLUDE_DIR",
         "QUICKJS_LIB_DIR",
@@ -80,7 +87,7 @@ fn main() {
     bindings.write_to_file(out).expect("writing bindings.rs");
 }
 
-#[cfg(fresh_js_system)]
+#[cfg(feature = "system")]
 fn require(path: &Path, var: &str) {
     if !path.exists() {
         panic!(
@@ -93,7 +100,7 @@ fn require(path: &Path, var: &str) {
 
 /// `/usr/lib/<multiarch>/quickjs`, with the multiarch triplet taken from
 /// dpkg-buildpackage's `DEB_HOST_MULTIARCH` when set, else from the C compiler.
-#[cfg(fresh_js_system)]
+#[cfg(feature = "system")]
 fn default_lib_dir() -> PathBuf {
     let multiarch = env::var("DEB_HOST_MULTIARCH").ok().or_else(|| {
         let cc = env::var("CC").unwrap_or_else(|_| "cc".to_string());
