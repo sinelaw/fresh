@@ -316,7 +316,11 @@ features:
   esbuild) and `fresh-plugin-runtime` tests. Fresh's dev-dependencies are all
   in Debian too, once the test harness's `ctor` accepts 1.x.
 
-The last step of the Debian CI job builds it with `dpkg-buildpackage`. In a
+The `Debian package` workflow (`.github/workflows/debian-package.yml`) builds
+it on every pull request in a `debian:testing` container: an orig tarball from
+`git archive`, `apt-get build-dep`, a source and binary `dpkg-buildpackage`,
+lintian, then installing the `.deb` and checking an `init.ts` (which runs the
+packaged esbuild); the packages are kept as build artifacts. By hand, in a
 `debian:testing` container:
 
 ```sh
