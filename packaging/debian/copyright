@@ -39,6 +39,11 @@ Files: crates/fresh-editor/fonts/* crates/fresh-gui/fonts/*
 Copyright: 2020 The JetBrains Mono Project Authors
 License: OFL-1.1
 
+Files: crates/fresh-editor/flatpak/io.github.sinelaw.fresh.metainfo.xml
+Copyright: 2024-2026 Noam Lewis <i9uqoqj7k@mozmail.com>
+License: CC0-1.0
+Comment: AppStream metadata, under the metadata license AppStream asks for.
+
 Files: debian/*
 Copyright: 2026 Noam Lewis <i9uqoqj7k@mozmail.com>
 License: GPL-3+
@@ -83,3 +88,11 @@ License: OFL-1.1
  This Font Software is licensed under the SIL Open Font License, Version 1.1.
  The full text is in crates/fresh-editor/fonts/LICENSE-OFL.txt and at
  https://openfontlicense.org/open-font-license-official-text/
+
+License: CC0-1.0
+ To the extent possible under law, the author(s) have dedicated all
+ copyright and related and neighboring rights to this software to the public
+ domain worldwide. This software is distributed without any warranty.
+ .
+ On Debian systems, the complete text of the CC0 1.0 Universal license can be
+ found in "/usr/share/common-licenses/CC0-1.0".
