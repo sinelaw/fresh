@@ -212,3 +212,155 @@ fn an_ordinary_launch_remembers_the_dock_across_launches() {
 fn orchestrator_mode_remembers_the_dock_across_launches() {
     the_dock_is_remembered_across_launches(true);
 }
+
+/// The user config every launch of the walk below resolves, and the
+/// `autoOpenDock` in it.
+struct UserConfig {
+    dir_context: fresh::config_io::DirectoryContext,
+}
+
+impl UserConfig {
+    fn new(settings: serde_json::Value) -> Self {
+        let home = tempfile::TempDir::new().unwrap();
+        let dir_context = fresh::config_io::DirectoryContext::for_testing(home.path());
+        // The context outlives this frame; the harness's own homes leak too.
+        std::mem::forget(home);
+        fs::create_dir_all(&dir_context.config_dir).unwrap();
+        let body = serde_json::json!({ "plugins": { "orchestrator": { "settings": settings } } });
+        fs::write(
+            dir_context.config_dir.join("config.json"),
+            serde_json::to_vec_pretty(&body).unwrap(),
+        )
+        .unwrap();
+        Self { dir_context }
+    }
+
+    /// A bare `fresh` (Orchestrator mode) handed the config as it stands on
+    /// disk. The harness injects the config rather than resolving layers, so
+    /// this is what a real launch would resolve.
+    fn launch(&self, root: &std::path::Path) -> EditorTestHarness {
+        let config =
+            Config::load_from_file(self.dir_context.config_dir.join("config.json")).unwrap();
+        let options = HarnessOptions::new()
+            .with_config(config)
+            .with_working_dir(root.to_path_buf())
+            .with_shared_dir_context(self.dir_context.clone())
+            .without_empty_plugins_dir()
+            .with_startup_chrome()
+            .with_orchestrator_mode();
+        EditorTestHarness::create(COLS, ROWS, options).unwrap()
+    }
+
+    /// Wait for `autoOpenDock` on disk to read `want`. A file, not a model
+    /// accessor (CONTRIBUTING §2): it is what the next launch reads, and the
+    /// plugin's write is queued behind its thread, so this waits rather than
+    /// sampling once.
+    fn wait_for(&self, h: &mut EditorTestHarness, want: &str) {
+        let path = self.dir_context.config_dir.join("config.json");
+        h.wait_until(|_| {
+            fs::read_to_string(&path)
+                .ok()
+                .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+                .and_then(|v| {
+                    v.pointer("/plugins/orchestrator/settings/autoOpenDock")
+                        .cloned()
+                })
+                == Some(serde_json::json!(want))
+        })
+        .unwrap_or_else(|e| panic!("`autoOpenDock` never reached {want:?}: {e}"));
+    }
+}
+
+/// Click a top-level menu, then one of its rows, by their rendered text.
+fn click_menu_row(h: &mut EditorTestHarness, menu: &str, row: &str) {
+    let (col, line) = h
+        .find_text_on_screen(menu)
+        .unwrap_or_else(|| panic!("no {menu:?} on screen:\n{}", h.screen_to_string()));
+    h.mouse_click(col, line).unwrap();
+    h.wait_until(|h| h.find_text_on_screen(row).is_some())
+        .unwrap();
+    let (col, line) = h.find_text_on_screen(row).unwrap();
+    h.mouse_click(col, line).unwrap();
+}
+
+/// Let the `ready` hook round-trip, then check nothing mounted.
+fn assert_no_dock_after_ready(h: &mut EditorTestHarness) {
+    h.editor_mut().fire_ready_hook();
+    for _ in 0..20 {
+        h.tick_and_render().unwrap();
+    }
+    assert!(
+        !h.screen_to_string().contains("+ New"),
+        "{}",
+        h.screen_to_string()
+    );
+}
+
+/// The reported bug: a config holding the pre-#3442 `autoOpenDock: false`
+/// (read, and rewritten, as `never`) kept the dock closed at every launch, and
+/// opening it from `View ▸ Orchestrator Dock` lasted only until the restart.
+/// The open is the user's latest instruction, so the next launch follows it.
+#[test]
+fn an_open_from_the_view_menu_outlives_never() {
+    let (_tmp, root) = setup_project();
+    let user = UserConfig::new(serde_json::json!({ "autoOpenDock": false }));
+
+    let mut h = user.launch(&root);
+    h.render().unwrap();
+    assert!(
+        chrome_left_edge(&h) < DOCK_COLS,
+        "`never` holds no column:\n{}",
+        h.screen_to_string()
+    );
+    assert_no_dock_after_ready(&mut h);
+    click_menu_row(&mut h, "View", "Orchestrator Dock");
+    h.wait_until(|h| h.screen_to_string().contains("+ New"))
+        .unwrap();
+    user.wait_for(&mut h, "always");
+    h.shutdown(false).unwrap();
+    drop(h);
+
+    let mut h = user.launch(&root);
+    h.render().unwrap();
+    assert!(
+        wall_column(&h).iter().all(|c| *c == '\u{2502}'),
+        "the dock the user opened comes back on the first frame:\n{}",
+        h.screen_to_string()
+    );
+    h.editor_mut().fire_ready_hook();
+    h.wait_until(|h| h.screen_to_string().contains("+ New"))
+        .unwrap();
+}
+
+/// The mirror case: under `always`, a close with the dock's own `×` is the
+/// latest instruction, so the next launch starts without the dock.
+#[test]
+fn a_close_with_the_x_outlives_always() {
+    let (_tmp, root) = setup_project();
+    let user = UserConfig::new(serde_json::json!({ "autoOpenDock": "always" }));
+
+    let mut h = user.launch(&root);
+    h.render().unwrap();
+    h.editor_mut().fire_ready_hook();
+    h.wait_until(|h| h.screen_to_string().contains("+ New"))
+        .unwrap();
+    // The header's `×` sits against the dock's wall.
+    let (col, row) = h
+        .find_text_on_screen("×\u{2502}")
+        .unwrap_or_else(|| panic!("no dock `×`:\n{}", h.screen_to_string()));
+    h.mouse_click(col, row).unwrap();
+    h.wait_until(|h| !h.screen_to_string().contains("+ New"))
+        .unwrap();
+    user.wait_for(&mut h, "never");
+    h.shutdown(false).unwrap();
+    drop(h);
+
+    let mut h = user.launch(&root);
+    h.render().unwrap();
+    assert!(
+        chrome_left_edge(&h) < DOCK_COLS,
+        "the dock the user closed must not be held open:\n{}",
+        h.screen_to_string()
+    );
+    assert_no_dock_after_ready(&mut h);
+}

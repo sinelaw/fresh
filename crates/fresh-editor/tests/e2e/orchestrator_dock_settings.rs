@@ -280,3 +280,82 @@ fn never_keeps_the_dock_closed_in_orchestrator_mode() {
 fn a_legacy_false_keeps_the_dock_closed_in_orchestrator_mode() {
     dock_stays_closed_in_orchestrator_mode(serde_json::json!(false));
 }
+
+/// Walk the Settings-UI category list until `name` is the selected row
+/// (mirrors `plugins/config_changed_adoption.rs`).
+fn focus_category(h: &mut EditorTestHarness, name: &str) {
+    for _ in 0..40 {
+        if h.screen_to_string()
+            .lines()
+            .any(|line| line.contains('>') && line.contains(name))
+        {
+            return;
+        }
+        h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+        h.render().unwrap();
+    }
+    panic!(
+        "category {name:?} never became selected. Screen:\n{}",
+        h.screen_to_string()
+    );
+}
+
+/// Move `AutoOpenDock` (the orchestrator page's first field; options `auto`,
+/// `always`, `never` in that order) by `steps` through the Settings UI by
+/// keyboard, save and close. Only the Settings UI's own save fires the
+/// `config_changed` the plugin reacts to.
+fn move_auto_open_dock_in_settings(h: &mut EditorTestHarness, steps: i32) {
+    h.open_settings().unwrap();
+    focus_category(h, "orchestrator");
+    h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    h.render().unwrap();
+    // Enter opens the list, arrows move the selection, Enter keeps it.
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.render().unwrap();
+    let key = if steps > 0 { KeyCode::Down } else { KeyCode::Up };
+    for _ in 0..steps.unsigned_abs() {
+        h.send_key(key, KeyModifiers::NONE).unwrap();
+        h.render().unwrap();
+    }
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.render().unwrap();
+    h.send_key(KeyCode::Char('s'), KeyModifiers::CONTROL)
+        .unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Settings saved"))
+        .unwrap_or_else(|e| panic!("settings never saved: {e}\n{}", h.screen_to_string()));
+    h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| !h.screen_to_string().contains("Settings ["))
+        .unwrap();
+}
+
+/// A Settings edit to `never` / `always` is an instruction like the toggle,
+/// so it closes or opens the dock now, not only at the next start.
+#[test]
+fn a_settings_edit_opens_and_closes_the_dock() {
+    let (_tmp, root, config) = setup(serde_json::json!({ "autoOpenDock": "always" }));
+    let mut h = launch_orchestrator_mode(config, root);
+    h.render().unwrap();
+    h.editor_mut().fire_ready_hook();
+    h.wait_until(|h| h.screen_to_string().contains("+ New"))
+        .unwrap();
+
+    // always → never
+    move_auto_open_dock_in_settings(&mut h, 1);
+    h.wait_until(|h| !h.screen_to_string().contains("+ New"))
+        .unwrap_or_else(|e| {
+            panic!(
+                "choosing `never` must close the dock: {e}\n{}",
+                h.screen_to_string()
+            )
+        });
+
+    // never → always
+    move_auto_open_dock_in_settings(&mut h, -1);
+    h.wait_until(|h| h.screen_to_string().contains("+ New"))
+        .unwrap_or_else(|e| {
+            panic!(
+                "choosing `always` must reopen the dock: {e}\n{}",
+                h.screen_to_string()
+            )
+        });
+}

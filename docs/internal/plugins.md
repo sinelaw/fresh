@@ -341,7 +341,10 @@ says: `never` keeps the slot closed and `always` opens it, both outright;
 `auto` (the default) brings it back as the user left it
 (`<data>/chrome.json`), and on a first launch lets a bare `fresh` in
 Orchestrator mode open it, else `open` decides. So the launch mode is the
-default *under* the setting, not an override over it (#3442). The width rule
+default *under* the setting, not an override over it (#3442). The host only
+reads the setting; keeping it in step with the user is the plugin's job — the
+orchestrator writes `always` / `never` when the user opens or closes the dock,
+so a start follows their last instruction. The width rule
 is the host's from then on; the plugin reads it back with
 `editor.dockCols()`.
 
