@@ -332,7 +332,29 @@ dpkg-buildpackage -us -uc -b
 apt-get install -y ../fresh-editor_*.deb
 ```
 
-What this build found that the archive check could not: Debian's
+Building the package the way Debian does found three more things, now
+handled:
+
+- **Build scripts and `--target`.** dh-cargo always passes `--target`, and
+  cargo then compiles build scripts without the target's `RUSTFLAGS`, so
+  `fresh-quickjs-sys`'s build script never saw `--cfg fresh_js_system`. Its
+  build tools now hang off a `system` feature (which `fresh-js` turns on) and
+  it reads the cfg at run time from `CARGO_CFG_FRESH_JS_SYSTEM`.
+- **No LTO.** dh-cargo adds full debug info (for the `-dbgsym` package) and
+  links with GNU ld; with upstream's fat LTO the debug info refers to statics
+  LTO dropped, which ld.bfd rejects. The package builds with
+  `profile.release.lto=false`.
+- **Built-Using.** `dh-cargo-built-using` stops at any static library whose
+  license it cannot place. `fresh-quickjs-sys`'s build script declares
+  `libquickjs.a` (MIT, from `libquickjs`) and its own C shim (GPL-3+, built
+  from this source package).
+
+The resulting package depends on `libc6`, `libgcc-s1`, `libonig5` and
+`esbuild`, lists QuickJS in `Static-Built-Using`, installs, and checks an
+`init.ts` through the packaged esbuild; lintian reports only
+`initial-upload-closes-no-bugs`, until there is an ITP bug.
+
+What the first offline build found that the archive check could not: Debian's
 `lsp-types` 0.97.0 is patched to use `fluent-uri` 0.4 instead of the 0.1
 upstream uses, and `Uri::scheme()` returns `&Scheme` there instead of
 `Option<&Scheme>`. Fresh's three callers now read the scheme from
