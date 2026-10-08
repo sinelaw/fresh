@@ -1539,6 +1539,26 @@ impl EditorServer {
             .draw(|frame| editor.render(frame))
             .map_err(|e| io::Error::other(e.to_string()))?;
 
+        // A client owed a full render (just attached, or resumed) missed the
+        // change that set the current title.
+        let changed_title = editor.take_pending_window_title();
+        let title_for = |needs_full: bool| -> Option<&str> {
+            changed_title
+                .as_deref()
+                .or_else(|| needs_full.then(|| editor.current_window_title()).flatten())
+        };
+        for client in &mut self.clients {
+            if let Some(title) = title_for(client.needs_full_render) {
+                let msg = serde_json::to_string(&ServerControl::SetTitle {
+                    title: title.to_string(),
+                })
+                .unwrap_or_default();
+                // Best-effort: client may already be disconnected
+                #[allow(clippy::let_underscore_must_use)]
+                let _ = client.conn.write_control(&msg);
+            }
+        }
+
         // Get the captured output
         let output = terminal.backend_mut().take_buffer();
 

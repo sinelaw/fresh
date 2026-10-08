@@ -703,6 +703,7 @@ impl Editor {
             session_display_name: None,
             pending_escape_sequences: Vec::new(),
             last_window_title: None,
+            pending_window_title: None,
             mode_registry: ModeRegistry::new(),
             remote_indicator_override: None,
             menus: crate::config::MenuConfig::translated(),

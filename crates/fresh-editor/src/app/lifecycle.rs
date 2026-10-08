@@ -113,6 +113,14 @@ impl Editor {
         std::mem::take(&mut self.pending_escape_sequences)
     }
 
+    pub fn take_pending_window_title(&mut self) -> Option<String> {
+        self.pending_window_title.take()
+    }
+
+    pub fn current_window_title(&self) -> Option<&str> {
+        self.last_window_title.as_deref()
+    }
+
     /// Take pending clipboard data queued in session mode, clearing the request
     pub fn take_pending_clipboard(
         &mut self,
