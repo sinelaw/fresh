@@ -9,9 +9,10 @@ homepage.workspace = true
 description = "JavaScript plugin runtime for Fresh editor"
 
 [dependencies]
-# The JS engine. Code reaches it through `fresh-js`; the direct `rquickjs`
-# dependency is only for its proc macros (`#[class]`, `#[methods]` and the
-# `Trace`/`JsLifetime` derives), which find rquickjs through this manifest.
+# The JS engine. Code reaches it through `fresh-js`, macros included; the
+# direct `rquickjs` dependency is only there because rquickjs's proc macros
+# (re-exported as `fresh_js::{class, methods}` and the `Trace`/`JsLifetime`
+# derives) find rquickjs through the manifest of the crate that invokes them.
 fresh-js.workspace = true
 rquickjs.workspace = true
 serde.workspace = true
