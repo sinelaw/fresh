@@ -539,24 +539,29 @@ pub fn take_fatal_js_error() -> Option<String> {
     }
 }
 
+/// Take the context's pending exception, if it is an `Error` object, as
+/// "message: stack".
+///
+/// `Value::is_exception` is not the test for this: it means the engine's
+/// exception *marker*, which a value returned by `ctx.catch()` never is, so a
+/// check on it silently dropped every exception a job left behind.
+fn take_pending_js_error(ctx: &fresh_js::Ctx<'_>) -> Option<String> {
+    let exc: fresh_js::Value = ctx.catch();
+    let err = exc.as_exception()?;
+    Some(format!(
+        "{}: {}",
+        err.message().unwrap_or_default(),
+        err.stack().unwrap_or_default()
+    ))
+}
+
 /// Run all pending jobs and check for unhandled exceptions
 /// If panic_on_js_errors is enabled, this will panic on unhandled exceptions
 fn run_pending_jobs_checked(ctx: &fresh_js::Ctx<'_>, context: &str) -> usize {
     let mut count = 0;
     loop {
         // Check for unhandled exception before running more jobs
-        let exc: fresh_js::Value = ctx.catch();
-        // Only treat it as an exception if it's actually an Error object
-        if exc.is_exception() {
-            let error_msg = if let Some(err) = exc.as_exception() {
-                format!(
-                    "{}: {}",
-                    err.message().unwrap_or_default(),
-                    err.stack().unwrap_or_default()
-                )
-            } else {
-                format!("{:?}", exc)
-            };
+        if let Some(error_msg) = take_pending_js_error(ctx) {
             tracing::error!("Unhandled JS exception during {}: {}", context, error_msg);
             if should_panic_on_js_errors() {
                 panic!("Unhandled JS exception during {}: {}", context, error_msg);
@@ -570,17 +575,7 @@ fn run_pending_jobs_checked(ctx: &fresh_js::Ctx<'_>, context: &str) -> usize {
     }
 
     // Final check for exceptions after all jobs completed
-    let exc: fresh_js::Value = ctx.catch();
-    if exc.is_exception() {
-        let error_msg = if let Some(err) = exc.as_exception() {
-            format!(
-                "{}: {}",
-                err.message().unwrap_or_default(),
-                err.stack().unwrap_or_default()
-            )
-        } else {
-            format!("{:?}", exc)
-        };
+    if let Some(error_msg) = take_pending_js_error(ctx) {
         tracing::error!(
             "Unhandled JS exception after running jobs in {}: {}",
             context,
@@ -14953,6 +14948,23 @@ mod tests {
     /// (`_finder_git-grep_preview_tick`). Interpolated after a dot those
     /// parse as arithmetic and the call dies with a ReferenceError naming a
     /// function nobody wrote, so the accessor must quote the key.
+    /// An exception left pending (here by an `eval` whose error was ignored,
+    /// as `attach_promise_catch` does) is reported by the pending-job check,
+    /// and taking it clears it. The check used to test `Value::is_exception`,
+    /// which is never true for a caught value, so it reported nothing.
+    #[test]
+    fn pending_js_errors_are_reported_and_cleared() {
+        let rt = Runtime::new().unwrap();
+        let context = Context::full(&rt).unwrap();
+        context.with(|ctx| {
+            assert_eq!(take_pending_js_error(&ctx), None);
+            let _ = ctx.eval::<(), _>("throw new TypeError('left behind')");
+            let msg = take_pending_js_error(&ctx).expect("pending error reported");
+            assert!(msg.starts_with("left behind: "), "{msg}");
+            assert_eq!(take_pending_js_error(&ctx), None);
+        });
+    }
+
     #[test]
     fn a_hyphenated_handler_name_is_looked_up_by_key() {
         assert_eq!(
