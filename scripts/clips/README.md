@@ -33,6 +33,7 @@ specific to filming *this* program.
 | `fresh-review-syntax.json` | comparison | source highlighted inside a Review Diff stream |
 | `fresh-ui-anatomy.json` | explode | the retained UI tree, one element at a time |
 | `fresh-welcome-scroll.json` | solo, stepped | the Welcome screen, scrolled from the wordmark to the theme card, then restyled live |
+| `fresh-import-sessions.json` | solo | the dock's Menu → Import sessions…: scan the machine, find a Claude Code session, resume it as a workspace |
 
 `assets/<clip>/fresh/config.json` is a config directory a spec copies in, so a
 capture gets a deliberate theme and a known set of enabled plugins instead of
@@ -44,6 +45,8 @@ straight out of git, checking that the lines it films are still the ones it
 means to. `assets/fresh-welcome-scroll/make-repo.sh` builds a small repo with no
 project manifest in it, which is the only way the Welcome screen's live cards
 film as live — see below.
+`assets/fresh-import-sessions/record.sh` stages a whole developer machine for
+the Import sessions clip and films it — see below.
 
 ## Filming fresh specifically
 
@@ -142,3 +145,29 @@ session Restricted — which blocks the `spawnProcess` calls the welcome screen'
 finder and git cards are made of, and puts a red pill in the status bar besides.
 A demo repo of prose and a couple of scripts has no marker in it, opens Trusted,
 and films with its cards alive.
+
+**Import sessions needs a machine with sessions on it, and they have to be
+real.** `assets/fresh-import-sessions/make-fixture.sh` builds one under
+`$DEMO_HOME` (default `/home/dev`): two GitHub-remote repos, a worktree on a
+feature branch, a dotfiles repo and a scratch directory with no repository,
+then runs the `claude` CLI against each with a real task — fix a flaky test,
+add idempotency keys, port moment.js to date-fns — so the transcripts in
+`$DEMO_HOME/.claude/projects` are what Claude Code actually writes, not a
+guess at it. That costs a few minutes of claude time once; later runs reuse
+the fixture (`FRESH_CLIP_RERUN=1` rebuilds it). `start-live.sh` then puts a
+live interactive `claude` and a dev shell in tmux under `$DEMO_HOME/.tmux`,
+which the scan finds as running sessions. The editor runs with
+`HOME=$DEMO_HOME` and that `TMUX_TMPDIR`, so it can see nothing of yours.
+
+```sh
+cargo build --release -p fresh-editor
+TUI_CLIPS=~/repos/tui-clips scripts/clips/assets/fresh-import-sessions/record.sh
+```
+
+Every take restores the transcript store from the copy `make-fixture.sh` left
+(`$DEMO_HOME/.clip-pristine`): the live claude writes a transcript of its own,
+and the import appends to the one it resumes, so without it the second take
+scans a different machine from the first. The config turns off the dock's
+Claude cloud sessions, which would otherwise list the filming account's own.
+Film it in `xfce4-terminal`: xterm leaves the overhang of the `↔` link mark
+behind when a row is redrawn.

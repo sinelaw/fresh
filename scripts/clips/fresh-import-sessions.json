@@ -1,0 +1,547 @@
+{
+  "name": "fresh-import-sessions",
+  "capture": {
+    "geometry": "144x46",
+    "font": "JetBrains Mono 17",
+    "screen": "2600x1600x24",
+    "display": ":99",
+    "settle": 10,
+    "term": "xfce4-terminal",
+    "workdir": "$DEMO_HOME/src/payments-api",
+    "key_settle": 0.25,
+    "type_settle": 0.5,
+    "copy_dirs": {
+      "$CLIP_ASSETS/fresh": "{scratch}/config/fresh"
+    },
+    "env": {
+      "HOME": "$DEMO_HOME",
+      "TMUX_TMPDIR": "$DEMO_HOME/.tmux",
+      "XDG_CONFIG_HOME": "{scratch}/config",
+      "XDG_DATA_HOME": "{scratch}/data-{pane}",
+      "XDG_STATE_HOME": "{scratch}/state-{pane}",
+      "XDG_CACHE_HOME": "{scratch}/cache-{pane}",
+      "XDG_RUNTIME_DIR": "{scratch}/run-{pane}"
+    },
+    "panes": {
+      "import": {
+        "argv": [
+          "$FRESH_BIN",
+          "--no-upgrade-check",
+          "--no-restore",
+          "$DEMO_HOME/src/payments-api",
+          "$DEMO_HOME/src/payments-api/app/webhooks.py"
+        ]
+      }
+    },
+    "keys": [
+      {
+        "sleep": 1.0
+      },
+      {
+        "shot": "start"
+      },
+      {
+        "record": "open",
+        "seconds": 4.0
+      },
+      {
+        "sleep": 0.7
+      },
+      {
+        "click": {
+          "col": 16,
+          "row": 0
+        },
+        "settle": 1.3
+      },
+      {
+        "click": {
+          "col": 9,
+          "row": 7
+        },
+        "settle": 0.4
+      },
+      {
+        "sleep": 1.6
+      },
+      {
+        "shot": "dialog"
+      },
+      {
+        "record": "scan",
+        "seconds": 4.0
+      },
+      {
+        "sleep": 0.6
+      },
+      {
+        "key": "Return"
+      },
+      {
+        "sleep": 3.4
+      },
+      {
+        "sleep": 1.0
+      },
+      {
+        "shot": "scanned"
+      },
+      {
+        "key": "Return",
+        "settle": 0.5
+      },
+      {
+        "shot": "e1"
+      },
+      {
+        "key": "Down",
+        "repeat": 5
+      },
+      {
+        "key": "Return",
+        "settle": 0.5
+      },
+      {
+        "shot": "e2"
+      },
+      {
+        "key": "Down",
+        "repeat": 5
+      },
+      {
+        "key": "Return",
+        "settle": 0.5
+      },
+      {
+        "shot": "e3"
+      },
+      {
+        "key": "Down",
+        "repeat": 2
+      },
+      {
+        "key": "Return",
+        "settle": 0.5
+      },
+      {
+        "shot": "all"
+      },
+      {
+        "key": "shift+Tab"
+      },
+      {
+        "key": "shift+Tab",
+        "settle": 0.4
+      },
+      {
+        "type": "i"
+      },
+      {
+        "shot": "f1"
+      },
+      {
+        "type": "d"
+      },
+      {
+        "shot": "f2"
+      },
+      {
+        "type": "e"
+      },
+      {
+        "shot": "f3"
+      },
+      {
+        "type": "m"
+      },
+      {
+        "shot": "f4"
+      },
+      {
+        "key": "Return",
+        "settle": 1.5
+      },
+      {
+        "shot": "form"
+      },
+      {
+        "record": "launch",
+        "seconds": 5.5
+      },
+      {
+        "sleep": 0.8
+      },
+      {
+        "click": {
+          "col": 107,
+          "row": 36
+        }
+      },
+      {
+        "sleep": 9.6
+      },
+      {
+        "shot": "resumed"
+      }
+    ]
+  },
+  "render": {
+    "size": [
+      1920,
+      1080
+    ],
+    "fps": 60,
+    "rows": 46,
+    "cols": 144,
+    "title": "fresh — import sessions",
+    "note_size": 44,
+    "labels": {
+      "solo": ""
+    },
+    "views": {
+      "full": {
+        "rows": [
+          0,
+          46
+        ],
+        "cols": [
+          0,
+          144
+        ]
+      },
+      "dock": {
+        "rows": [
+          0,
+          22
+        ],
+        "cols": [
+          0,
+          72
+        ]
+      },
+      "dialog": {
+        "rows": [
+          3,
+          25
+        ],
+        "cols": [
+          20,
+          124
+        ]
+      },
+      "list": {
+        "rows": [
+          6,
+          28
+        ],
+        "cols": [
+          22,
+          122
+        ]
+      },
+      "form": {
+        "rows": [
+          6,
+          24
+        ],
+        "cols": [
+          16,
+          128
+        ]
+      },
+      "where": {
+        "rows": [
+          22,
+          39
+        ],
+        "cols": [
+          16,
+          128
+        ]
+      },
+      "term": {
+        "rows": [
+          0,
+          38
+        ],
+        "cols": [
+          36,
+          144
+        ]
+      }
+    },
+    "intro_caption": [
+      "Import sessions",
+      "rejoin agent work started anywhere"
+    ],
+    "outro_caption": [
+      "fresh",
+      "github.com/sinelaw/fresh"
+    ],
+    "timing": {
+      "intro": 1.8,
+      "zoom": 0.8,
+      "hold": 2.4,
+      "pan": 0.45,
+      "push": 0.8,
+      "wipe": 0.6,
+      "outro": 1.4
+    },
+    "annotations": [
+      {
+        "shot": "start",
+        "view": "dock",
+        "rows": [
+          3,
+          6
+        ],
+        "cols": [
+          0,
+          39
+        ],
+        "hold": 2.6,
+        "note": "a claude already running in tmux",
+        "note_at": "below-right"
+      },
+      {
+        "shots": "open",
+        "view": "dock",
+        "rows": [
+          0,
+          14
+        ],
+        "cols": [
+          0,
+          52
+        ],
+        "band": false,
+        "hold": 4.0,
+        "tag": {
+          "text": "Menu > Import sessions",
+          "at": "bottom-right",
+          "width": 0.5,
+          "size": 50,
+          "color": "after",
+          "bg": true
+        }
+      },
+      {
+        "shots": "scan",
+        "view": "dialog",
+        "rows": [
+          6,
+          8
+        ],
+        "cols": [
+          22,
+          120
+        ],
+        "band": false,
+        "hold": 4.0,
+        "transition": "wipe",
+        "tag": {
+          "text": "scan this machine",
+          "at": "bottom-center",
+          "width": 0.6,
+          "size": 50,
+          "color": "after",
+          "bg": true
+        }
+      },
+      {
+        "shots": [
+          "scanned",
+          "e1",
+          "e2",
+          "e3",
+          "all"
+        ],
+        "view": "list",
+        "rows": [
+          11,
+          27
+        ],
+        "cols": [
+          24,
+          118
+        ],
+        "band": false,
+        "hold": 2.2,
+        "tag": {
+          "text": "every agent session, grouped by repo",
+          "at": "bottom-center",
+          "width": 0.8,
+          "size": 50,
+          "color": "after",
+          "bg": true
+        }
+      },
+      {
+        "shot": "all",
+        "view": "list",
+        "rows": [
+          13,
+          16
+        ],
+        "cols": [
+          24,
+          118
+        ],
+        "hold": 2.4,
+        "note": "Claude Code transcripts",
+        "note_at": "below-right"
+      },
+      {
+        "shot": "all",
+        "view": "list",
+        "rows": [
+          15,
+          16
+        ],
+        "cols": [
+          24,
+          118
+        ],
+        "hold": 2.2,
+        "note": "worktree, on its own branch",
+        "note_at": "below-right"
+      },
+      {
+        "shot": "all",
+        "view": "list",
+        "rows": [
+          17,
+          19
+        ],
+        "cols": [
+          24,
+          118
+        ],
+        "hold": 2.4,
+        "note": "live tmux panes",
+        "note_at": "below-right"
+      },
+      {
+        "shots": [
+          "f1",
+          "f2",
+          "f3",
+          "f4"
+        ],
+        "view": "list",
+        "rows": [
+          7,
+          13
+        ],
+        "cols": [
+          24,
+          118
+        ],
+        "band": false,
+        "hold": 2.2,
+        "tag": {
+          "text": "find by title, path, tool or branch",
+          "at": "bottom-center",
+          "width": 0.8,
+          "size": 50,
+          "color": "after",
+          "bg": true
+        }
+      },
+      {
+        "shot": "form",
+        "view": "form",
+        "rows": [
+          14,
+          15
+        ],
+        "cols": [
+          20,
+          124
+        ],
+        "hold": 2.8,
+        "transition": "wipe",
+        "note": "the resume command, filled in",
+        "note_at": "below-right"
+      },
+      {
+        "shot": "form",
+        "view": "where",
+        "rows": [
+          28,
+          30
+        ],
+        "cols": [
+          20,
+          124
+        ],
+        "hold": 2.4,
+        "note": "attaches to the worktree",
+        "note_at": "below-right"
+      },
+      {
+        "shots": "launch",
+        "view": "full",
+        "rows": [
+          0,
+          46
+        ],
+        "cols": [
+          0,
+          144
+        ],
+        "band": false,
+        "hold": 5.5,
+        "tag": {
+          "text": "Launch",
+          "at": "bottom-right",
+          "width": 0.3,
+          "size": 50,
+          "color": "after",
+          "bg": true
+        }
+      },
+      {
+        "shot": "resumed",
+        "view": "term",
+        "rows": [
+          7,
+          34
+        ],
+        "cols": [
+          39,
+          144
+        ],
+        "band": false,
+        "hold": 3.0,
+        "tag": {
+          "text": "back in the conversation, right where it left off",
+          "at": "bottom-center",
+          "width": 0.7,
+          "size": 50,
+          "color": "after",
+          "bg": true
+        }
+      },
+      {
+        "shot": "resumed",
+        "view": "dock",
+        "rows": [
+          4,
+          5
+        ],
+        "cols": [
+          0,
+          39
+        ],
+        "hold": 2.2,
+        "note": "now a workspace in the dock",
+        "note_at": "below-right"
+      }
+    ]
+  },
+  "encode": {
+    "crf": 18,
+    "preset": "slow"
+  }
+}
