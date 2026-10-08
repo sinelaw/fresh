@@ -1,23 +1,59 @@
 # Release Notes
 
-## Unreleased
+## 0.5.3
+
+For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
+
+> Most config options below can be changed in the **Settings UI** - run **Open Settings** from the command palette (`Ctrl+P`).
 
 ### Features
 
-* **Find Next selects the whole match and marks it as the current match** - F3 / Shift+F3 (and Enter in the search bar) select the entire match, so a regex shows exactly how far it reaches and Delete removes the whole match; F3 after a Delete lands on a match that slid into its place. The current match, in Find Next and in Query Replace alike, is drawn bold in its own color, set by the new theme keys `search.current_match_bg` / `search.current_match_fg`. Reopening Ctrl+F on it brings back the query (e.g. the regex), not the matched text
+* **Find Next selects the whole match** - F3 / Shift+F3 select the entire match, and the current match is drawn in its own color (new `search.current_match_*` theme keys)
+* **Themes**
+  - Any theme color accepts text attributes (bold, italic, underline…), so a theme can draw LSP diagnostics as underlines (#3494, requested by @zeevro)
+  - Colors a theme leaves out are derived from its other colors instead of built-in grays, and `extends` takes precedence. Complete user themes may look slightly different after upgrading. See [Themes → Fallbacks](https://getfresh.dev/docs/features/themes#fallbacks)
+* **Settings is translated** - every setting's name, description and the screen's chrome, in all locales (#3479 by @neatsorg)
+* **Orchestrator: external sessions in the dock**
+  - Claude and Codex sessions open outside the editor (local, cloud, Desktop) are listed in the dock, grouped by product
+  - Open one as a workspace, or fork a cloud session here (teleport); the row notes where its copy went
+  - File workspaces and external sessions into folders with **Move to Folder** by click or drag
+* **Explorer** (#3427, requested by @akarinotomoshibi)
+  - Drag to move entries
+  - Rename accepts a path, so it can move the entry
+  - Refresh button re-reads the tree
+* **Plugin docs**
+  - The [plugin API reference](https://getfresh.dev/docs/plugins/api/) is now generated from the source
+  - New "Asking for Input" guide
 
 ### Bug Fixes
 
-* **`AutoOpenDock` works, and a workspace dock you closed stays closed** - a bare `fresh` (Orchestrator mode, the default since 0.5.2) opened the dock whatever you had asked for, so turning the setting off did nothing and a dock closed from `View ▸ Orchestrator Dock` was back on the next start. The launch mode is now only the default for a first launch, under both the setting and what you left behind (#3442)
-* **`AutoOpenDock` is now `auto` / `always` / `never`** - the old on/off couldn't say "dock in the orchestrator, never in a plain `fresh .`", and its "on" meant *allow* rather than *open*, so ticking it on while you had left the dock closed appeared to do nothing. `auto` (the default) keeps today's behaviour until you first open or close the dock yourself - the dock comes back as you left it, and a bare `fresh` opens it on a first run - while `always` and `never` settle it outright. Your existing setting is carried over: `false` becomes `never`, `true` becomes `auto` (#3442)
-* **The workspace dock starts the way you last left it, whatever `AutoOpenDock` said** - opening the dock from `View ▸ Orchestrator Dock` while `AutoOpenDock` was `never` (which an old `false` becomes) lasted only until the next start, and closing it under `always` likewise. Opening or closing the dock yourself now sets `AutoOpenDock` to `always` or `never`, and choosing `always` or `never` in Settings opens or closes the dock right away, so the next start follows your last instruction either way (#3516)
-* **A global View toggle reaches every open document** - toggling **View | Line Numbers** or **View | Line Wrap** changed the document in front of you, Settings and `config.json`, but left every other open document rendering the old setting, and the View menu's checkmark reported that stale state once one of them became current. Both are editor-wide preferences, so they now apply to all open documents at once and the menu shows the resolved setting whichever document you are on. Setting either through **Settings** has the same effect, as does a plugin reloading the config. **View | Current Line Highlight** had the same fault and is fixed with them. A per-buffer pin from the matching **(Current Buffer)** toggles, a language's own `line_wrap`, and the gutter a mode hides (Markdown page view, terminals, grouped panels) all keep winning as before (#3449)
+* **Explorer fixes** (#3427, reported by @akarinotomoshibi)
+  - New File / New Folder create the entry only once you confirm the name, so cancelling leaves nothing behind
+  - Renaming onto an existing file no longer overwrites it silently
+  - Right-click acts on the entry under the pointer: blank area selects the project root, and each segment of a `dir1/dir2/dir3` row is reachable
+* **Project Search/Replace** - `$1` capture groups expand in regex mode, and the current file is searched even if hidden; replace is confirmed in a modal dialog
+* **`AutoOpenDock` works, and a closed dock stays closed** - the setting is now `auto` / `always` / `never`; existing values carry over. Opening or closing the dock yourself updates the setting, so the next start follows your last choice (#3442, #3516; reported by @sjsepan3)
+* **View toggles reach every open document** - Line Numbers, Line Wrap and Current Line Highlight now apply editor-wide, and the menu checkmark is correct (#3449, reported by @sjsepan3)
+* **Plugin timers and recovery saves work in daemon sessions** (#3440, reported by @neatsorg)
+* **Restored unnamed buffers follow the editor config** - e.g. `highlight_current_line: false` (#3426, reported by @neatsorg)
+* **Selection keys fixed**
+  - Up/Down under a selection touching the first/last line no longer do nothing (#3486, reported by @Korkman)
+  - Ctrl+L keeps extending the selection a line per press (#3495, reported by @sjsepan3)
+* **Diagnostics on the only line of an empty file are drawn** (#3484, reported by @akarinotomoshibi)
+* **Quitting with a mouse click no longer leaks `0;37;17m` into the shell** (#3474, reported by @odjbo)
+* **Android: update check no longer panics** on TLS verification (#3453, reported by @dsvarela)
+* **Nim: an unpaired apostrophe no longer colors the rest of the file**, and `'suffix` numeric literals highlight correctly (#3455, reported by @codic12)
+* **Settings backdrop darkens the empty pane** left after closing the last buffer (#3452, reported by @akarinotomoshibi)
+* **Lists behave consistently**
+  - Selection follows its item when a list changes (re-sorting Open File, searching the keybinding editor)
+  - Page keys move by the visible rows in Live Grep and Open File
+* **Long wide-character words wrap correctly** instead of losing the end of the line (#3438 by @neatsorg)
+* **A pane showing a group tab (e.g. Review Diff) no longer paints or reacts as the hidden buffer** (#3434)
 
-### Themes
+### Internals
 
-* **Theme colors come from other colors, never from values built into Fresh** - the 49 colors of the first theme format are required; every other color names a fallback color, and a theme that sets all 49 takes each color it leaves out from its fallback chain. The built-in themes look the same, except that Dracula, Nord, Solarized Dark, Nostalgia, Light and Terminal now derive colors they never set (menus, diff and indicator backgrounds, bracket colors…) from their own palette instead of generic dark-theme grays. See [Themes → Fallbacks](https://getfresh.dev/docs/features/themes#fallbacks)
-* **`extends` takes precedence** - a theme with `extends` takes every color it doesn't set from its base, even when it changes the color that one would fall back to. Themes that extend a built-in and change `editor.selection_bg` or `editor.whitespace_indicator_fg` no longer get the selected-whitespace and indentation-guide colors re-derived from them; set those keys explicitly if the base's clash
-* **Complete user themes stand on their own** - a user theme that sets all 49 required colors (as most full themes and theme packs do) no longer takes its remaining colors from the built-in dark or light theme but from its own fallback colors, so its menus, diff backgrounds and similar may look different after upgrading. A theme missing any required color still gets a light or dark base as before
+* **Plugin API breaking change** - `setPromptSuggestions` now throws unless every suggestion has a unique `id` (new, required), and `showActionPopup` / `setLspMenuContributions` throw on duplicate ids; widget `List` / `Tree` specs with `itemKeys` that don't match their items one to one are refused
+* Flaky e2e test fixes and internal cleanups
 
 ## 0.5.2
 
@@ -47,7 +83,6 @@ Fresh is now licensed **GPL-3.0-or-later**, up from GPL-2.0-only (#3328).
 
 ### Bug Fixes
 
-* **A selection stays on its item when the list changes under it** - re-sorting the Open File browser kept the same row number selected, so a different file was highlighted; searching the keybinding editor did the same to the selected binding. Both now follow the item
 * **`echo 123 | fresh` opens the pipe instead of hanging** - piping into `fresh` with no file and no `-` brought up an editor that took no input at all, spun on a full CPU core, and could not even be quit with Ctrl+Q. Stdin with nothing else to open now means `fresh -`; with a file to open it is left unread, but the keyboard works either way. Any redirect counts, not just a pipe - `fresh < file` and `fresh < /dev/null` hung the same way (#3252)
 * **Orchestrator dock polish** - the welcome screen and dock could fail to appear in a daemon session, a context menu could close itself too fast, and a workspace just created from the dock could end up not taking keyboard input (#3306, #3275)
 * **The workspace dock is there from the first frame** - the editor used to come up full width and the dock shoved it aside a moment later, once the plugins had loaded. The column is now laid out before any plugin runs. The dock also **remembers whether you left it open and how wide you dragged it** across launches; `autoOpenDock: false` keeps it closed until you open it, and a bare `fresh` always opens it (#3321)
@@ -123,9 +158,6 @@ Fresh is now licensed **GPL-3.0-or-later**, up from GPL-2.0-only (#3328).
 * **`writeFile` refuses to overwrite an existing file, as it always claimed to.** The docs said it "fails if the file already exists to prevent plugins from accidentally overwriting user data"; the implementation wrote a temp file and renamed it over whatever was there, so a plugin trusting the documentation destroyed the file. Replacing one is now `replaceFile`, asked for by name
 * **`editor.setInputMode(name | null)` sets an editor-wide input mode** for modal-editing plugins like vi, beside `setEditorMode`, which is now documented as window-scoped. Keys resolve against a focused panel's mode, then the buffer's, the window's editor mode, the input mode, and the base keymap. `getInputMode()` reads it and `input_mode_changed` announces changes (#3395)
 * **The orchestrator's saved machines moved into the editor-owned state store** and are imported from the old directory on first load. The old files are left in place — a plugin can no longer delete a path it names — and are inert
-* **Prompt suggestions carry a required `id`**, unique in the list: `setPromptSuggestions` throws on a missing or repeated one. The list keys its rows by it, so a re-ranked or growing list keeps each row's selection and state on the item rather than on a position. The finder library's `DisplayEntry` gains the same required `id`. Third-party plugins that set suggestions will need to supply one
-* **Widget `List` and `Tree` specs require `itemKeys`, one per item and no two alike**, and so do `setItems` and `appendTreeNodes`. A spec or mutation whose keys don't match its items one to one is refused (the call returns `false` and the reason is logged), and an append whose key the tree already has is dropped. The host keeps rows, selection, hover and expansion by these keys and no longer falls back to row positions. The `list()`/`tree()` helpers in `lib/widgets.ts` now require the field
-* **Action popups and LSP menu contributions require unique ids**; `showActionPopup` and `setLspMenuContributions` throw on a repeated one
 
 ## 0.5.1
 
